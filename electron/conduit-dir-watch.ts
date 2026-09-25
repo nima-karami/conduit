@@ -5,9 +5,9 @@
 // each watcher only supplies WHAT it watches and HOW it reacts on settle — not the
 // fs.watch / debounce / teardown boilerplate (which had drifted into a near-duplicate).
 
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { conduitDir } from './conduit-fs';
+import { type DirWatch, watchDirWhilePresent } from './watch-dir';
 
 const DEFAULT_DEBOUNCE_MS = 250;
 
@@ -21,13 +21,14 @@ export type OnDirEvent = (filename: string | null) => boolean | undefined;
 /**
  * A debounced watch on one project's `.conduit/` directory, or a subdirectory of it
  * (`{ subdir: 'plans' }` — the plan watcher's whole tree of interest). `start` attaches the watch
- * (a no-op if the dir doesn't exist yet — watching must never create the committed dir);
- * `stop` tears it down and clears the debounce. The owner passes an `onEvent` that runs on
- * each raw fs event (to accumulate state) and an `onSettle` that runs once the debounce
- * elapses. Filtering by filename is the owner's job inside `onEvent`.
+ * — or, while the dir is missing, waits for it to appear (watching must never create the committed
+ * dir), and does so again whenever it is deleted and recreated; `stop` tears it down and clears the
+ * debounce. The owner passes an `onEvent` that runs on each raw fs event (to accumulate state) and
+ * an `onSettle` that runs once the debounce elapses. Filtering by filename is the owner's job
+ * inside `onEvent`.
  */
 export class ConduitDirWatch {
-  private fsWatcher: fs.FSWatcher | null = null;
+  private watch: DirWatch | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
@@ -35,7 +36,11 @@ export class ConduitDirWatch {
     private readonly label = 'conduit-dir-watch',
   ) {}
 
-  /** Attach to `<projectRoot>/.conduit/<subdir>`. Replaces any prior watch. */
+  /**
+   * Attach to `<projectRoot>/.conduit/<subdir>`. Replaces any prior watch. A debounce pending when
+   * the directory vanishes or the watch errors still settles (the events for its entries arrive
+   * before the vanish).
+   */
   start(
     projectRoot: string,
     onEvent: OnDirEvent,
@@ -44,20 +49,14 @@ export class ConduitDirWatch {
   ): void {
     this.stop();
     const dir = path.join(conduitDir(projectRoot), opts?.subdir ?? '');
-    // Never mkdir here: watching must not have the side effect of creating a committed
-    // `.conduit/` dir merely because a view opened. If absent, the first write creates it
-    // and a later re-arm picks it up.
-    if (!fs.existsSync(dir)) return;
-    try {
-      this.fsWatcher = fs.watch(dir, (_event, filename) => {
+    this.watch = watchDirWhilePresent(
+      dir,
+      { log: (message, err) => console.warn(`[${this.label}] ${message}`, dir, err) },
+      (_event, filename) => {
         if (onEvent(filename) === false) return; // event vetoed (unrelated file)
         this.schedule(onSettle);
-      });
-    } catch (err) {
-      // Watching is best-effort — persistence still works without it. Don't crash the host.
-      console.warn(`[${this.label}] could not watch`, dir, err);
-      this.fsWatcher = null;
-    }
+      },
+    );
   }
 
   /** Detach the watch and cancel any pending debounce. */
@@ -66,10 +65,8 @@ export class ConduitDirWatch {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
-    if (this.fsWatcher) {
-      this.fsWatcher.close();
-      this.fsWatcher = null;
-    }
+    this.watch?.close();
+    this.watch = null;
   }
 
   private schedule(onSettle: () => void): void {

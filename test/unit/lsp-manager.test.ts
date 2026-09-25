@@ -132,6 +132,7 @@ interface Setup {
     root: string;
     onChanges: (c: WatchedChange[]) => void;
     onMarker: () => void;
+    onGone: () => void;
     close: ReturnType<typeof vi.fn>;
   }[];
   files: Set<string>;
@@ -200,9 +201,9 @@ function setup(
     resolveBinary,
     resolveRoot,
     startServer,
-    watchRoot: (root, _spec, onChanges, onMarker) => {
+    watchRoot: (root, _spec, onChanges, onMarker, onGone) => {
       const close = vi.fn();
-      watchers.push({ root, onChanges, onMarker, close });
+      watchers.push({ root, onChanges, onMarker, onGone, close });
       return { close };
     },
     readTarget: async (p) => targets.get(p) ?? null,
@@ -1145,6 +1146,28 @@ describe('LspManager — replies, re-home and status', () => {
     expect(t.servers[0]?.notifies.at(-1)).toEqual({
       method: 'workspace/didChangeWatchedFiles',
       params: { changes: [{ uri: 'file:///w/m/helper.go', type: 2 }] },
+    });
+  });
+
+  it('a restart keeps a live root watch, but re-arms one whose root went away', async () => {
+    const t = setup();
+    await t.open('/w/m/main.go');
+    await t.ready();
+    t.servers[0]?.emitExit(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await t.ready(1);
+    expect(t.watchers).toHaveLength(1);
+
+    t.watchers[0]?.onGone();
+    t.servers[1]?.emitExit(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await t.ready(2);
+    expect(t.watchers).toHaveLength(2);
+    expect(t.watchers[1]?.root).toBe('/w/m');
+    t.watchers[1]?.onChanges([{ path: '/w/m/back.go', type: 1 }]);
+    expect(t.servers[2]?.notifies.at(-1)).toEqual({
+      method: 'workspace/didChangeWatchedFiles',
+      params: { changes: [{ uri: 'file:///w/m/back.go', type: 1 }] },
     });
   });
 

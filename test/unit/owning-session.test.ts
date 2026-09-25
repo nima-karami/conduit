@@ -1,18 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { resolveOwningSession } from '../../src/owning-session';
 
-const sessions = (list: { id: string; projectPath: string }[]) => list;
+const sessions = (list: { id: string; home: string }[]) => list;
 
 describe('resolveOwningSession', () => {
-  const sessA = { id: 'A', projectPath: '/projects/alpha' };
-  const sessB = { id: 'B', projectPath: '/projects/beta' };
-  const sessC = { id: 'C', projectPath: '/projects/alpha/sub' };
+  const sessA = { id: 'A', home: '/projects/alpha' };
+  const sessB = { id: 'B', home: '/projects/beta' };
+  const sessC = { id: 'C', home: '/projects/alpha/sub' };
 
   it('originSessionId wins when two sessions share a folder (the split-view bug)', () => {
     // A is active; B is the session whose terminal was clicked. Both roots are equal,
     // so prefix-matching ties and the old code routed to active (A). Origin must win.
-    const sameFolderA = { id: 'A', projectPath: '/projects/alpha' };
-    const sameFolderB = { id: 'B', projectPath: '/projects/alpha' };
+    const sameFolderA = { id: 'A', home: '/projects/alpha' };
+    const sameFolderB = { id: 'B', home: '/projects/alpha' };
     expect(
       resolveOwningSession({
         path: '/projects/alpha/foo.ts',
@@ -136,8 +136,8 @@ describe('resolveOwningSession', () => {
     expect(result).toBe('A');
   });
 
-  it('handles Windows-style backslash paths in both path and projectPath', () => {
-    const winSess = { id: 'W', projectPath: 'C:\\Users\\foo\\project' };
+  it('handles Windows-style backslash paths in both path and home', () => {
+    const winSess = { id: 'W', home: 'C:\\Users\\foo\\project' };
     const result = resolveOwningSession({
       path: 'C:\\Users\\foo\\project\\src\\index.ts',
       sessions: sessions([winSess]),
@@ -145,6 +145,38 @@ describe('resolveOwningSession', () => {
       activeId: null,
     });
     expect(result).toBe('W');
+  });
+
+  it('a file under an attached root resolves to that session', () => {
+    const result = resolveOwningSession({
+      path: 'C:\\ref\\lib\\x.ts',
+      sessions: [
+        { id: 'A', home: '/projects/alpha' },
+        { id: 'B', home: '/projects/beta', roots: ['C:\\ref\\lib'] },
+      ],
+      openDocs: [],
+      activeId: 'A',
+    });
+    expect(result).toBe('B');
+  });
+
+  it("tie between one session's home and another's root → the home owner", () => {
+    const shared = '/projects/shared';
+    const rootHolder = { id: 'R', home: '/projects/other', roots: [shared] };
+    const homeOwner = { id: 'H', home: shared, roots: [] };
+    for (const order of [
+      [rootHolder, homeOwner],
+      [homeOwner, rootHolder],
+    ]) {
+      expect(
+        resolveOwningSession({
+          path: '/projects/shared/src/a.ts',
+          sessions: order,
+          openDocs: [],
+          activeId: 'R',
+        }),
+      ).toBe('H');
+    }
   });
 
   it('fallback to activeId null when no match', () => {

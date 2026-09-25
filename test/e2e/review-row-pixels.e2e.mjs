@@ -30,7 +30,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, launchApp, makeLog, openSession } from './harness.mjs';
+import { assert, closeApp, launchApp, makeLog, openReview, openSession } from './harness.mjs';
 import { decodePng, hex, pxAt } from './png.mjs';
 import { contrast, installRowProbe, toHex } from './row-color.mjs';
 
@@ -142,8 +142,7 @@ async function measure(theme, root) {
   const { app, page } = launched;
   try {
     await openSession(page, { path: root.replace(/\\/g, '/') });
-    await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 25000 });
-    await page.click('.git-indicator__review');
+    await openReview(page);
     await page.waitForFunction(
       () => {
         const c = document.querySelector('.review .rcard[data-path="app.ts"]');

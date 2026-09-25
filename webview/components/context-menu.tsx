@@ -4,13 +4,19 @@ import type { PopoverSide, Rect } from '../../src/menu-position';
 import { middleClickProps } from '../middle-click';
 import { Popover } from './popover';
 
+/** How a row was activated — its rect, so an item can anchor what it opens beside the row. */
+export interface MenuActivation {
+  rect: Rect;
+}
+
 /** Matches `.ctxmenu`'s `min-width` in styles.css — the floor when no anchor supplies a width. */
 const MENU_MIN_W = 184;
 
 export interface MenuItem {
   label: string;
   icon?: ReactNode;
-  onClick: () => void;
+  /** The activation is optional because programmatic callers invoke items bare. */
+  onClick: (activation?: MenuActivation) => void;
   danger?: boolean;
   separatorBefore?: boolean;
   disabled?: boolean;
@@ -22,6 +28,8 @@ export interface MenuItem {
    *  control). */
   title?: string;
   checked?: boolean;
+  /** With `checked` set, one of a mutually exclusive set (menuitemradio, not checkbox). */
+  radio?: boolean;
   /** A middle-click on the row (a file list's background open). Absent → the row has no middle
    *  action. Either way the menu's own middle-click default is suppressed. */
   onMiddleClick?: () => void;
@@ -37,6 +45,8 @@ export interface MenuState {
   /** When set, the menu anchors to this trigger rect (via `Popover`) instead of `{x, y}`. */
   anchor?: Rect;
   side?: PopoverSide;
+  /** Fires once when this menu stops being the open one — picked, dismissed or replaced. */
+  onClosed?: () => void;
 }
 
 /**
@@ -110,17 +120,19 @@ export function ContextMenu({
         e.preventDefault();
         setActive(enabled[enabled.length - 1]);
       } else if (e.key === 'Enter') {
-        const it = menu.items[activeRef.current];
+        const i = activeRef.current;
+        const it = menu.items[i];
         if (it && !it.disabled) {
           e.preventDefault();
-          it.onClick();
+          const rect = document.getElementById(`${baseId}-item-${i}`)?.getBoundingClientRect();
+          it.onClick(rect ? { rect } : undefined);
           onClose();
         }
       }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [menu.items, onClose, setActive]);
+  }, [menu.items, onClose, setActive, baseId]);
 
   const activeId = activeIndex >= 0 ? `${baseId}-item-${activeIndex}` : undefined;
 
@@ -135,7 +147,13 @@ export function ContextMenu({
           <button
             id={`${baseId}-item-${i}`}
             type="button"
-            role={it.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+            role={
+              it.checked === undefined
+                ? 'menuitem'
+                : it.radio
+                  ? 'menuitemradio'
+                  : 'menuitemcheckbox'
+            }
             aria-checked={it.checked}
             className={`ctxmenu__item ${it.danger ? 'ctxmenu__item--danger' : ''} ${
               i === activeIndex ? 'ctxmenu__item--active' : ''
@@ -143,8 +161,8 @@ export function ContextMenu({
             disabled={it.disabled}
             aria-disabled={it.disabled || undefined}
             onMouseEnter={() => setActive(it.disabled ? -1 : i)}
-            onClick={() => {
-              it.onClick();
+            onClick={(e) => {
+              it.onClick({ rect: e.currentTarget.getBoundingClientRect() });
               onClose();
             }}
             {...middleClickProps(

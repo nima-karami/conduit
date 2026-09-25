@@ -287,7 +287,7 @@ export function useChangeMarkers({
     }, RECOMPUTE_DEBOUNCE_MS);
     const unsubscribe = subscribe((msg: HostToWebview) => {
       if (msg.type !== 'fsChanged') return;
-      if (!isUnderRoot(msg.root, path)) return;
+      if (!msg.folders.some((f) => isUnderRoot(f, path))) return;
       debounced.schedule();
     });
     const offSaved = onFileSaved((saved) => {

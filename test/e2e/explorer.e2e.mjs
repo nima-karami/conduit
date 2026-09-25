@@ -90,17 +90,22 @@ runScenario('explorer', async ({ page, log }) => {
   log('tree expansion restored after session switch ✓');
 
   // ── Bug #3: opening from search reveals + highlights in the tree ──────────────
-  // Collapse everything so the reveal genuinely has to re-expand ancestors.
-  await page.locator('button[aria-label="Collapse all folders"]').click();
+  // Collapse the home section (D3: every subfolder with it) so the reveal genuinely has to
+  // re-expand the section and its ancestors.
+  await page.locator(`.files__bar button[aria-label="Collapse ${NAME_A}"]`).click();
+  await page
+    .locator(`.files__bar button[aria-label="Expand ${NAME_A}"]`)
+    .waitFor({ state: 'visible', timeout: 5000 });
   await fileRowByName(page, 'app.tsx')
     .first()
     .waitFor({ state: 'detached', timeout: 10000 })
     .catch(() => {});
 
   // Search for a token that lives ONLY in webview/components/right-pane.tsx (two levels
-  // deep). Built by concatenation so this test file doesn't itself contain the contiguous
-  // string (which would make it a search hit that sorts ahead of the intended target).
-  const token = ['FilesView', 'Handle'].join('');
+  // deep). If a refactor deletes it the wait below just times out, as if search hung — check
+  // `git grep -w` first. Built by concatenation so this test file doesn't itself contain the
+  // contiguous string (which would make it a search hit that sorts ahead of the intended target).
+  const token = ['nextStatus', 'Text'].join('');
   const input = page.locator('.search__inputbox textarea');
   await input.click();
   await input.fill(token);

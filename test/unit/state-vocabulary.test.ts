@@ -80,10 +80,12 @@ const HOVER_FILL_ALLOW = new Map<string, string>([
   ['.winctl__btn--close:hover', 'OS convention: the close button goes red, not grey'],
   ['.ctxmenu__item--danger:hover:not(:disabled)', 'destructive menu item — red is the meaning'],
   ['.btn--danger:hover', 'destructive button — red is the meaning'],
+  ['.btn--warn:hover:not(:disabled)', 'warn action — amber is the meaning'],
   ['.attnchip:hover', 'amber is session STATUS (needs you), not interaction state'],
   ['.session--attention:hover', 'amber is session status'],
   ['.session--review:hover', 'amber is session status'],
   ['.session__btn--primary:hover', 'the amber act-on-it button of an attention card'],
+  ['.session__kill:hover, .session__kill:focus-visible', 'destructive close — red is the meaning'],
   ['.bcard--proposed, .bcard--proposed:hover', 'amber marks an agent-proposed card'],
   ['.gh__resizer:hover, .gh__resizer:focus-visible', 'drag affordance, not a control'],
   ['.panel__resize:hover::after, body.resizing .panel__resize::after', 'drag affordance'],
@@ -132,6 +134,22 @@ describe('interaction state vocabulary', () => {
     expect([...values.keys()]).toEqual(['var(--state-disabled-o)']);
   });
 
+  it('dims a disabled .btn only through the shared rule', () => {
+    const own = RULES.filter(
+      (r) => /(^|[\s,(])\.btn:disabled/.test(r.selector) && /opacity/.test(r.body),
+    ).map((r) => `styles.css:${r.line}`);
+    expect(own).toEqual([]);
+  });
+
+  it('never repaints the edge of a fill that carries meaning on hover', () => {
+    const edge = RULES.find(
+      (r) => /--state-edge-hover/.test(r.body) && r.selector.includes('.btn--danger,'),
+    );
+    for (const role of ['.btn--primary', '.btn--danger', '.btn--warn']) {
+      expect(edge?.selector, role).toContain(`${role},`);
+    }
+  });
+
   it('defines every --state-* token it references', () => {
     const defined = new Set([...SRC.matchAll(/^\s*(--state-[\w-]+)\s*:/gm)].map((m) => m[1]));
     const used = new Set([...SRC.matchAll(/var\((--state-[\w-]+)/g)].map((m) => m[1]));
@@ -148,7 +166,7 @@ describe('interaction state vocabulary', () => {
     );
     expect(named.size).toBeGreaterThan(50);
     // Live means one of two things, because neither alone covers the sheet: a surface may
-    // own no rule outside the vocabulary (.git-indicator__branch--switchable), and a
+    // own no rule outside the vocabulary (.branch-chip), and a
     // modifier may be assembled at runtime rather than written out (`session--${state}`).
     const outside = RULES.filter((r) => r.at < SECTION_START || r.at > SECTION_END);
     const missing = [...named].filter((cls) => {

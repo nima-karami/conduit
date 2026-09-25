@@ -21,7 +21,15 @@ import {
   tabTitles,
   waitActiveTab,
 } from './changes-fixture.mjs';
-import { assert, closeApp, launchApp, makeLog, openSession, tapBridge } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  launchApp,
+  makeLog,
+  openReview,
+  openSession,
+  tapBridge,
+} from './harness.mjs';
 
 const NAME = 'scoped-diff-tabs';
 if (process.platform !== 'win32') {
@@ -242,7 +250,7 @@ async function unscopedOpenerUnchanged(page) {
 
 async function reviewCardAtScope(page) {
   await closeTab(page, 'both.ts (Working Tree)');
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review .rcard', { state: 'visible', timeout: 15000 });
   await page.getByRole('radio', { name: 'Unstaged', exact: true }).click();
   await page.waitForFunction(

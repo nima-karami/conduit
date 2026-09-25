@@ -26,15 +26,16 @@ export interface PinnedSourceInput {
   branchPoint: ResolvedRange | null;
 }
 
-export function buildPinnedSources(input: PinnedSourceInput): PinnedSourceRow[] {
+export function buildPinnedSources(input: PinnedSourceInput, repoRoot?: string): PinnedSourceRow[] {
   const rows: PinnedSourceRow[] = [];
+  const root = repoRoot === undefined ? {} : { repoRoot };
   if (input.head) {
     const { sha, subject } = input.head;
     rows.push({
       id: 'lastCommit',
       label: 'Last commit',
       hint: subject ? `${shortSha(sha)} ${subject}` : shortSha(sha),
-      source: { kind: 'commit', sha, ...(subject ? { subject } : {}) },
+      source: { kind: 'commit', sha, ...(subject ? { subject } : {}), ...root },
     });
   }
   if (input.unpushed) {
@@ -42,7 +43,7 @@ export function buildPinnedSources(input: PinnedSourceInput): PinnedSourceRow[] 
       id: 'unpushed',
       label: 'Unpushed',
       hint: 'Commits that are not on the upstream branch yet',
-      source: { kind: 'range', base: input.unpushed.base, head: input.unpushed.head },
+      source: { kind: 'range', base: input.unpushed.base, head: input.unpushed.head, ...root },
     });
   }
   if (input.branchPoint) {
@@ -50,7 +51,12 @@ export function buildPinnedSources(input: PinnedSourceInput): PinnedSourceRow[] 
       id: 'branchPoint',
       label: 'Since branch point',
       hint: 'Everything since this branch left the default branch',
-      source: { kind: 'range', base: input.branchPoint.base, head: input.branchPoint.head },
+      source: {
+        kind: 'range',
+        base: input.branchPoint.base,
+        head: input.branchPoint.head,
+        ...root,
+      },
     });
   }
   return rows;

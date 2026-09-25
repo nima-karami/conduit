@@ -22,17 +22,18 @@ export function useNoteMarkers({
   editor: monaco.editor.IStandaloneCodeEditor | null;
   /** Absolute path of the open file. */
   path: string;
-  onOpenNote: (note: ReviewNote, line: number) => void;
+  onOpenNote: (note: ReviewNote, line: number, root: string) => void;
 }): void {
   const snapshot = useSyncExternalStore(subscribeNotes, getNotesSnapshot, getNotesSnapshot);
   const collectionRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
   const markersRef = useRef<NoteMarker[]>([]);
+  const rootRef = useRef('');
   const onOpenRef = useRef(onOpenNote);
   onOpenRef.current = onOpenNote;
 
   // Which repo this file belongs to: the longest loaded root that contains it. No new IPC — the
   // store already holds every root Review or app.tsx has asked for.
-  const notesForPath = useCallback((): ReviewNote[] => {
+  const notesForPath = useCallback((): { root: string; notes: ReviewNote[] } => {
     let best = '';
     let bestRel: string | null = null;
     for (const root of snapshot.byRoot.keys()) {
@@ -42,9 +43,12 @@ export function useNoteMarkers({
       best = root;
       bestRel = rel;
     }
-    if (bestRel === null) return [];
+    if (bestRel === null) return { root: '', notes: [] };
     const want = foldRelPath(best, bestRel);
-    return (snapshot.byRoot.get(best) ?? []).filter((n) => foldRelPath(best, n.path) === want);
+    const notes = (snapshot.byRoot.get(best) ?? []).filter(
+      (n) => foldRelPath(best, n.path) === want,
+    );
+    return { root: best, notes };
   }, [snapshot, path]);
 
   useEffect(() => {
@@ -66,8 +70,10 @@ export function useNoteMarkers({
     // hash every line with a trailing \r and detach every note on the file. Lane A takes the
     // same care for the same reason (use-change-markers.ts).
     const text = model.getValue(monaco.editor.EndOfLinePreference.LF);
-    const markers = notesToMarkers(reanchor(notesForPath(), text.split('\n')));
+    const { root, notes } = notesForPath();
+    const markers = notesToMarkers(reanchor(notes, text.split('\n')));
     markersRef.current = markers;
+    rootRef.current = root;
     collectionRef.current.set(notesToDecorations(markers));
     // The margin appears with the first note on a file and goes away with the last, rather than
     // reserving an empty column on every file in the app (Lane F plan, assumption 14).
@@ -104,7 +110,7 @@ export function useNoteMarkers({
       if (line === undefined) return;
       const marker = markersRef.current.find((m) => m.line === line);
       if (!marker) return;
-      onOpenRef.current(marker.notes[0], line);
+      onOpenRef.current(marker.notes[0], line, rootRef.current);
     });
     return () => sub.dispose();
   }, [editor]);

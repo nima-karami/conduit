@@ -57,6 +57,8 @@ export interface LspManagerDeps {
     spec: LanguageServerSpec,
     onChanges: (c: WatchedChange[]) => void,
     onMarker: () => void,
+    /** The root vanished or its watch failed: the handle is dead, and the next launch re-arms. */
+    onGone: () => void,
   ): LspWatcherHandle;
   /** null if > 2 MB, unreadable, or not a regular file. */
   readTarget(path: string): Promise<string | null>;
@@ -598,12 +600,18 @@ export class LspManager {
       if (gen !== rec.generation || !rec.live) return;
       this.setState(rec, loading ? 'loading' : 'ready', loading ? title : undefined);
     });
-    rec.watcher ??= this.deps.watchRoot(
-      rec.lexicalRoot,
-      rec.spec,
-      (changes) => this.forwardWatched(rec, changes),
-      () => this.rehome(rec),
-    );
+    if (!rec.watcher) {
+      const watcher = this.deps.watchRoot(
+        rec.lexicalRoot,
+        rec.spec,
+        (changes) => this.forwardWatched(rec, changes),
+        () => this.rehome(rec),
+        () => {
+          if (rec.watcher === watcher) rec.watcher = null;
+        },
+      );
+      rec.watcher = watcher;
+    }
     try {
       await handle.initialized;
     } catch (err) {

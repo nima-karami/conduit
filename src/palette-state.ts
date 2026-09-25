@@ -25,6 +25,7 @@ const TONE_BY_SESSION_STATE: Record<SessionIconVisualState, PaletteBadgeTone> = 
   review: 'warn',
   idle: 'neutral',
   stale: 'quiet',
+  cantStart: 'quiet',
 };
 
 /**

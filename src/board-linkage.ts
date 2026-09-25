@@ -1,43 +1,75 @@
 // Pure derivations of a feature-board card's state from things that live OUTSIDE the
-// board document: the live session list (N2) and the pending agent proposal (N1).
+// board document: the sessions linked to a card (its rows) and the pending agent proposal (N1).
 // No I/O, no React — unit-tested.
 import { type BoardCard, STAGES, type Stage } from './board';
 import type { BoardDiff } from './conduit-proposal';
-import type { Session } from './types';
+import { folderKey } from './folder-key';
+import { type NewSessionPrefill, projectForNewSession } from './new-session-seed';
+import { sessionHasFolderKey } from './session-folders';
+import type { Project, Session } from './types';
 
-/** Badge status shown on a card. `running` if any linked session is live, else `exited`. */
-export type BadgeStatus = 'running' | 'exited';
+// ---- Linked sessions (spec 2026-09-23-mf-board §3.2–3.3) -------------------
 
-export interface CardBadge {
-  /** Aggregate status: running if any linked session runs, otherwise exited. */
-  status: BadgeStatus;
-  /** The session the badge jumps to when clicked (a running one is preferred). */
-  sessionId: string;
-  /** How many sessions link to the card (drives a small count when > 1). */
-  count: number;
+export type LinkedRowState = 'running' | 'stopped';
+
+/** Sessions linked to `cardId` on the board at `boardHome` — a card id is only unique per
+ *  board, so the home-or-root check stops false links across boards (D2, D13). Input order. */
+export function linkedSessionsForCard(
+  sessions: readonly Session[],
+  cardId: string,
+  boardHome: string | undefined,
+): Session[] {
+  if (!boardHome) return [];
+  const key = folderKey(boardHome);
+  return sessions.filter((s) => s.cardId === cardId && sessionHasFolderKey(s, key));
 }
 
-/** All sessions linked to `cardId`, in list order. A session with no cardId never matches. */
-export function sessionsForCard(sessions: Session[], cardId: string): Session[] {
-  return sessions.filter((s) => s.cardId === cardId);
+export function linkedRowState(s: Pick<Session, 'status'>): LinkedRowState {
+  return s.status === 'running' ? 'running' : 'stopped';
 }
 
-/**
- * Derive the card's badge from the live session list, or null when nothing links.
- * A running linked session makes the badge `running` and the badge jumps to the
- * most-recently-active running session; otherwise the badge is `exited` (stale counts
- * as not-running) and points at the most-recently-active linked session.
- */
-export function badgeStateForCard(sessions: Session[], cardId: string): CardBadge | null {
-  const linked = sessionsForCard(sessions, cardId);
-  if (linked.length === 0) return null;
-  const running = linked.filter((s) => s.status === 'running');
-  const mostRecent = (arr: Session[]): Session =>
-    arr.reduce((best, s) => (s.lastActiveAt > best.lastActiveAt ? s : best));
-  if (running.length > 0) {
-    return { status: 'running', sessionId: mostRecent(running).id, count: linked.length };
-  }
-  return { status: 'exited', sessionId: mostRecent(linked).id, count: linked.length };
+/** The most recently active linked session; the first wins a tie. */
+export function lastLinkedSession(linked: readonly Session[]): Session | undefined {
+  return linked.reduce<Session | undefined>(
+    (best, s) => (best && best.lastActiveAt >= s.lastActiveAt ? best : s),
+    undefined,
+  );
+}
+
+export function linkedRowName(s: Pick<Session, 'name'>): string {
+  return s.name.trim() || 'Untitled session';
+}
+
+export function linkedRowLabel(s: Pick<Session, 'name' | 'status'>, agentLabel: string): string {
+  const state = linkedRowState(s) === 'running' ? 'running' : 'not running';
+  return `${linkedRowName(s)}, ${agentLabel}, ${state}`;
+}
+
+export interface CardPrefillContext {
+  sessions: readonly Session[];
+  active: Session | undefined;
+  projects: readonly Project[];
+}
+
+/** New session prefill for a card; null with no board home. Missing roots are kept for the
+ *  dialog to show Not found (L11). projectId is always set, so the dialog never derives it.
+ *  agentId is passed raw: seedNewSession decides whether it is registered (D20 aliases). */
+export function cardSessionPrefill(
+  card: Pick<BoardCard, 'id' | 'title'>,
+  ctx: CardPrefillContext,
+): NewSessionPrefill | null {
+  const { active } = ctx;
+  if (!active?.home) return null;
+  const last = lastLinkedSession(linkedSessionsForCard(ctx.sessions, card.id, active.home));
+  const source = last ?? active;
+  return {
+    home: source.home,
+    roots: [...source.roots],
+    projectId: projectForNewSession(source, ctx.projects),
+    cardId: card.id,
+    cardTitle: card.title,
+    ...(last ? { agentId: last.agentId } : {}),
+  };
 }
 
 // ---- Agent-proposed flag (N1) ----------------------------------------------

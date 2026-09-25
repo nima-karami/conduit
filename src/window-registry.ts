@@ -248,20 +248,3 @@ export function clampBoundsToDisplays(bounds: Rect, displays: Rect[]): Rect {
   const d = displays[0];
   return { x: d.x, y: d.y, width: bounds.width, height: bounds.height };
 }
-
-/**
- * Group a session list by its stable `projectPath` key. A local analogue of
- * SessionManager.groupByProject that operates on an already-filtered (per-window)
- * list, so a window's `state` only carries groups for the sessions it owns.
- */
-export function groupByProject(
-  sessions: Session[],
-): { projectPath: string; sessions: Session[] }[] {
-  const map = new Map<string, Session[]>();
-  for (const s of sessions) {
-    const arr = map.get(s.projectPath) ?? [];
-    arr.push(s);
-    map.set(s.projectPath, arr);
-  }
-  return [...map.entries()].map(([projectPath, group]) => ({ projectPath, sessions: group }));
-}

@@ -1,3 +1,5 @@
+import type { AppSettings } from '../src/settings';
+
 // Keybinding registry + matching. Combos use a `Mod` token that means Ctrl on
 // Windows/Linux and ⌘ on macOS, plus a literal `Ctrl` token that means the control key
 // on EVERY platform (the built-in nav set is Ctrl-based because ⌘+Tab/⌘+` are OS-reserved
@@ -253,4 +255,13 @@ export function formatComboCompact(combo: string): string {
 /** Effective combo for an action: user override (if any) else default. */
 export function effectiveCombo(action: ShortcutAction, overrides: Record<string, string>): string {
   return overrides[action.id] || action.defaultCombo;
+}
+
+/** Display form of an action's bound combo; undefined for an unknown action. */
+export function comboLabel(
+  actionId: string,
+  shortcuts: AppSettings['shortcuts'],
+): string | undefined {
+  const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
+  return action ? formatCombo(effectiveCombo(action, shortcuts)) : undefined;
 }

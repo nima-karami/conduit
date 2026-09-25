@@ -150,3 +150,56 @@ export function resolveReviewAnchor(
   for (let i = 0; i < idx; i++) top += heightOf(i);
   return top + Math.max(0, anchor.offset);
 }
+
+/** How far to move the scroller when the card at `itemTop` is measured `prevSlot` → `nextSlot`, so
+ *  the content under the viewport stays put: only a card that sat wholly above the viewport top. */
+export function measuredScrollShift(
+  scrollTop: number,
+  itemTop: number,
+  prevSlot: number,
+  nextSlot: number,
+): number {
+  return itemTop + prevSlot <= scrollTop ? nextSlot - prevSlot : 0;
+}
+
+export type ReviewListItem =
+  | { kind: 'group'; groupIndex: number }
+  | { kind: 'file'; fileIndex: number };
+
+export interface ReviewListItems {
+  items: ReviewListItem[];
+  itemOfFile: number[];
+}
+
+/** Fixed, never measured, and includes the gap — see spec 2026-09-23-mf-review §2.4. */
+export const REVIEW_GROUP_HEAD_H = 36;
+
+export function reviewListItems(
+  groupSizes: readonly number[] | null,
+  fileCount: number,
+): ReviewListItems {
+  const items: ReviewListItem[] = [];
+  const itemOfFile: number[] = [];
+  const pushFile = (fileIndex: number) => {
+    itemOfFile.push(items.length);
+    items.push({ kind: 'file', fileIndex });
+  };
+  if (groupSizes === null) {
+    for (let f = 0; f < fileCount; f++) pushFile(f);
+    return { items, itemOfFile };
+  }
+  let f = 0;
+  groupSizes.forEach((size, groupIndex) => {
+    items.push({ kind: 'group', groupIndex });
+    for (let k = 0; k < size; k++) pushFile(f++);
+  });
+  return { items, itemOfFile };
+}
+
+export function fileAtOrAfter(list: ReviewListItems, itemIndex: number): number {
+  for (let i = Math.max(0, itemIndex); i < list.items.length; i++) {
+    const item = list.items[i];
+    if (item.kind === 'file') return item.fileIndex;
+  }
+  return -1;
+}

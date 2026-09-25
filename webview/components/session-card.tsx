@@ -2,14 +2,15 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { sessionRowClass } from '../../src/session-dot';
 import {
   type ResolvedSessionIcon,
+  resolveSessionIcon,
   SESSION_STATE_WORD,
   sessionIconState,
 } from '../../src/session-icon';
 import type { CardField } from '../../src/settings';
+import { canRelaunch } from '../../src/stale-sessions';
 import type { Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
-import { IconClock, IconReview, SessionGlyph } from '../icons';
-import { shortAge } from '../relative-time';
+import { IconClock, IconClose, SessionGlyph } from '../icons';
 import { getTimerSnapshot, subscribeTimers, waitingCountFor } from '../timer-store';
 
 export interface CardRoles {
@@ -26,17 +27,10 @@ export interface SessionDragProps {
 }
 
 /**
- * One session card in the rail — the whole status system in a component.
- *
- * Every state carries a glyph AND a word (`.dot` + `.session__state`): the design's
- * accessibility story is that no state is expressed by colour alone, so there is no
- * separate a11y path to keep in sync. What each state adds below the subtitle is its
- * "so what": Busy gets the indeterminate meter, Needs you gets the prompt plus Go to /
- * Snooze, Review gets the diffstat and a way into Review changes.
- *
- * The meter is deliberately indeterminate (D7). The frames show a percentage; a CLI agent
- * emits no progress signal, and a number we made up would be a lie in the one place the
- * user is trusting the UI to tell them what an agent is doing.
+ * One session card in the rail (the 9b card, mf-sidebar spec §2.3): glyph, name, the
+ * subtitle/detail fields, the status pill and a hover ×. Every state carries the glyph AND
+ * a word, so no state is colour alone. The only per-state extras are the ones that are
+ * actions: Go to / Snooze while it needs you, ↻ while stale, and the timer chip.
  */
 export function SessionCard({
   session,
@@ -49,7 +43,6 @@ export function SessionCard({
   onRelaunch,
   onContextMenu,
   onSnooze,
-  onOpenReview,
   editing,
   onEditStart,
   onEditEnd,
@@ -67,7 +60,6 @@ export function SessionCard({
   onRelaunch: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   onSnooze: () => void;
-  onOpenReview?: () => void;
   editing: boolean;
   onEditStart: () => void;
   onEditEnd: () => void;
@@ -88,10 +80,6 @@ export function SessionCard({
   const titleText = fieldValue(session, agentLabel, roles.title) || session.name;
   const subtitle = roles.subtitle !== 'none' ? fieldValue(session, agentLabel, roles.subtitle) : '';
   const detail = roles.detail !== 'none' ? fieldValue(session, agentLabel, roles.detail) : '';
-  // The age answers "how long has this been sitting there?" — only meaningful for the two
-  // states that ARE sitting there. Busy/Needs you/Review are about now, by definition.
-  const age = state === 'idle' || state === 'stale' ? shortAge(session.lastActiveAt) : '';
-  const changed = session.git?.dirtyFiles ?? 0;
   const timerSnap = useSyncExternalStore(subscribeTimers, getTimerSnapshot, getTimerSnapshot);
   const waitingTimers = waitingCountFor(timerSnap, session.id);
 
@@ -109,8 +97,8 @@ export function SessionCard({
       onDrop={drag?.onDrop}
       onDragEnd={drag?.onDragEnd}
     >
-      <div className="session__head">
-        <SessionGlyph icon={resolvedIcon} size={15} />
+      <SessionGlyph icon={resolvedIcon} size={15} />
+      <div className="session__text">
         {editing ? (
           <input
             className="session__edit"
@@ -135,7 +123,18 @@ export function SessionCard({
             {titleText}
           </span>
         )}
-        {!editing && age && <span className="session__age">{age}</span>}
+        {subtitle && (
+          <span className="session__meta" title={subtitle}>
+            <span className="session__metaitem">{subtitle}</span>
+          </span>
+        )}
+        {detail && (
+          <span className="session__path" title={session.cwd ?? session.home}>
+            {detail}
+          </span>
+        )}
+      </div>
+      <div className="session__side">
         {!editing && <span className="session__state">{SESSION_STATE_WORD[state]}</span>}
         {!editing && waitingTimers > 0 && (
           <>
@@ -156,7 +155,7 @@ export function SessionCard({
         )}
         {/* Row actions keep their slot at all times and only fade in — revealing them by
             display would reflow the name on every hover. */}
-        {session.status === 'stale' && (
+        {session.status === 'stale' && canRelaunch(session) && (
           <button
             type="button"
             className="session__relaunch"
@@ -174,37 +173,16 @@ export function SessionCard({
             type="button"
             className="session__kill"
             title="Close session"
+            aria-label="Close session"
             onClick={(e) => {
               stop(e);
               onKill();
             }}
           >
-            ✕
+            <IconClose size={12} />
           </button>
         )}
       </div>
-
-      {subtitle && (
-        <span className="session__meta" title={subtitle}>
-          <span className="session__metaitem">{subtitle}</span>
-        </span>
-      )}
-      {detail && (
-        <span className="session__path" title={session.cwd ?? session.projectPath}>
-          {detail}
-        </span>
-      )}
-
-      {state === 'busy' && (
-        <span
-          className="session__meter"
-          role="progressbar"
-          aria-label="Working"
-          title="Working — no progress signal from a CLI agent, so the meter does not claim one"
-        >
-          <span className="session__meterfill" />
-        </span>
-      )}
 
       {state === 'attention' && (
         <div className="session__actions">
@@ -233,21 +211,47 @@ export function SessionCard({
           </button>
         </div>
       )}
+    </div>
+  );
+}
 
-      {state === 'review' && (
-        <button
-          type="button"
-          className="session__diffstat"
-          title="Review changes"
-          onClick={(e) => {
-            stop(e);
-            onOpenReview?.();
-          }}
-        >
-          <IconReview size={13} />
-          {changed > 0 ? `${changed} file${changed === 1 ? '' : 's'} changed` : 'Changes to review'}
-        </button>
-      )}
+const PREVIEW_AGENT_LABEL = 'PowerShell 7';
+
+/** The Settings "Session card" preview: a real SessionCard over a fixed sample session (AC 13). */
+export function SessionCardPreview({ roles }: { roles: CardRoles }) {
+  const [sample] = useState<Session>(() => {
+    const now = Date.now();
+    return {
+      id: 'preview',
+      name: 'Portfolio Redesign',
+      agentId: 'preview',
+      home: 'G:/awby/projects/nextjs-portfolio',
+      roots: [],
+      status: 'running',
+      createdAt: now - 4 * 60_000,
+      lastActiveAt: now - 2 * 60_000,
+      lastLine: 'Edit webview/styles.css',
+      worktree: 'feature/auth',
+    };
+  });
+  const noop = () => {};
+  return (
+    <div className="cardcfg__card" inert>
+      <SessionCard
+        session={sample}
+        agentLabel={PREVIEW_AGENT_LABEL}
+        resolvedIcon={resolveSessionIcon(sample, [])}
+        active
+        onSelect={noop}
+        onKill={noop}
+        onRename={noop}
+        onRelaunch={noop}
+        onSnooze={noop}
+        editing={false}
+        onEditStart={noop}
+        onEditEnd={noop}
+        roles={roles}
+      />
     </div>
   );
 }

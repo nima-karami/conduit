@@ -3,7 +3,9 @@
  * host-side; the active-repo state rides the `state` broadcast), so it must drive the REAL
  * app, not the mock preview. Verifies, against the real renderer + host, that a folder
  * containing two git repos:
- *  - shows the repo picker listing both;
+ *  - the All view shows both repos at once, one head each;
+ *  - under changesView 'active' the one repo head's picker lists both
+ *    (docs/specs/archive/2026-09-23-mf-changes.md §7.4);
  *  - picking a repo pins it and re-scopes the host's active repo (asserted via bridge state);
  *  - **Changes follow the active repo** — the renderer re-requests the project scoped to the
  *    pinned repo, so the change list shows that repo's dirty file and not the other's;
@@ -16,7 +18,9 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openChangesTab, openHistory, openSession, runScenario } from './harness.mjs';
+
+const PER_REPO_TITLE = 'Works on one repo. Right-click a repo header, or switch to Active repo.';
 
 function makeRepo(dir, file, committed, working, subject) {
   mkdirSync(dir, { recursive: true });
@@ -58,7 +62,121 @@ runScenario('multi-repo', async ({ page, log }) => {
   );
   log('two sub-repos detected ✓');
 
-  const picker = page.locator('.repo-picker__trigger');
+  // The reply to the re-request the repo set triggers carries every repo, in display order, each
+  // listing only its own dirty file.
+  await page.waitForFunction(() => (window.__proj?.repoChanges?.length ?? 0) === 2, null, {
+    timeout: 20000,
+  });
+  const perRepo = await page.evaluate(() =>
+    window.__proj.repoChanges.map((r) => ({
+      root: r.root.replace(/\\/g, '/'),
+      name: r.name,
+      paths: r.changes.map((c) => c.path),
+    })),
+  );
+  assert(
+    perRepo[0].root.endsWith('/repo-a') && perRepo[1].root.endsWith('/repo-b'),
+    `repoChanges in display order (repo-a, repo-b): ${JSON.stringify(perRepo)}`,
+  );
+  assert(
+    perRepo[0].name === 'repo-a' && perRepo[1].name === 'repo-b',
+    `repoChanges names are the repo basenames: ${JSON.stringify(perRepo)}`,
+  );
+  assert(
+    JSON.stringify(perRepo[0].paths) === '["a.txt"]' &&
+      JSON.stringify(perRepo[1].paths) === '["b.txt"]',
+    `each repo lists only its own file: ${JSON.stringify(perRepo)}`,
+  );
+  log('project.repoChanges lists repo-a (a.txt) then repo-b (b.txt) ✓');
+
+  // The All view (the default): one head per repo in display order, each list holding only its
+  // own repo's file (docs/specs/archive/2026-09-23-mf-changes.md §2.2).
+  await openChangesTab(page);
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('.repo-head').length === 2 &&
+      document.querySelectorAll('.repo-head__list .change').length === 2,
+    null,
+    { timeout: 15000 },
+  );
+  const heads = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('.repo-head'), (h) => {
+      const list = h.nextElementSibling?.classList.contains('repo-head__list')
+        ? h.nextElementSibling
+        : null;
+      return {
+        name: h.querySelector('.repo-head__name')?.textContent ?? '',
+        files: list ? Array.from(list.querySelectorAll('.change__file'), (f) => f.textContent) : [],
+      };
+    }),
+  );
+  assert(
+    JSON.stringify(heads) ===
+      JSON.stringify([
+        { name: 'repo-a', files: ['a.txt'] },
+        { name: 'repo-b', files: ['b.txt'] },
+      ]),
+    `All view: repo-a then repo-b, each listing only its own file: ${JSON.stringify(heads)}`,
+  );
+  log('All view: two repo heads in display order, each with only its own file ✓');
+
+  // The header ··· holds the View radio pair; the per-repo bulk items are listed disabled (L11).
+  await page.click('.changes__kebab');
+  await page.waitForSelector('.ctxmenu [role="menuitemradio"]', {
+    state: 'visible',
+    timeout: 5000,
+  });
+  const kebab = await page.evaluate(() => {
+    const menu = document.querySelector('.ctxmenu');
+    const item = (label) =>
+      Array.from(menu?.querySelectorAll('.ctxmenu__item') ?? []).find(
+        (b) => b.textContent?.trim() === label,
+      );
+    const state = (label) => {
+      const b = item(label);
+      return b
+        ? {
+            disabled: b.disabled && b.getAttribute('aria-disabled') === 'true',
+            title: b.parentElement?.getAttribute('title') ?? '',
+          }
+        : null;
+    };
+    return {
+      radios: Array.from(menu?.querySelectorAll('[role="menuitemradio"]') ?? [], (r) => ({
+        label: r.textContent?.trim(),
+        checked: r.getAttribute('aria-checked'),
+      })),
+      stageAll: state('Stage all'),
+      perRepo: ['Stash changes', 'Pop stash', 'Discard all changes'].map(state),
+    };
+  });
+  assert(
+    JSON.stringify(kebab.radios) ===
+      JSON.stringify([
+        { label: 'All repos', checked: 'true' },
+        { label: 'Active repo', checked: 'false' },
+      ]),
+    `header ··· shows the View radio pair, All checked: ${JSON.stringify(kebab.radios)}`,
+  );
+  assert(kebab.stageAll && !kebab.stageAll.disabled, 'All view: Stage all fans out, enabled');
+  assert(
+    kebab.perRepo.every((x) => x?.disabled && x.title === PER_REPO_TITLE),
+    `All view: Stash / Pop / Discard all disabled with the per-repo title: ${JSON.stringify(kebab.perRepo)}`,
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
+  log('header ··· : 2 menuitemradio; Stash / Pop / Discard disabled with the per-repo title ✓');
+
+  // Switch to the Active repo view through the header ··· radio; the pin/Auto assertions below
+  // run against its single head's picker.
+  await page.click('.changes__kebab');
+  await page
+    .locator('.ctxmenu [role="menuitemradio"]', { hasText: 'Active repo' })
+    .click({ timeout: 5000 });
+  await page.waitForFunction(() => document.querySelectorAll('.repo-head').length === 1, null, {
+    timeout: 10000,
+  });
+  const picker = page.locator('.repo-head .repo-head__picker');
   await picker.waitFor({ state: 'visible', timeout: 10000 });
 
   // The picker lists both repos.
@@ -76,9 +194,9 @@ runScenario('multi-repo', async ({ page, log }) => {
   await page.keyboard.press('Escape');
   log('picker lists repo-a + repo-b ✓');
 
-  // The picker and the branch chip are two triggers in one band and must read as one fixture.
-  // The picker's wrapper had no height, so the trigger's `height: 100%` resolved against an
-  // auto-height parent and shrink-wrapped its text — 19px beside a 37px branch chip.
+  // The picker and the branch chip are two triggers in one repo head and must read as one row.
+  // In the old tab-row band the picker's wrapper had no height, so it shrink-wrapped its text —
+  // 19px beside a 37px branch chip.
   const chips = await page.evaluate(() => {
     const box = (s) => {
       const el = document.querySelector(s);
@@ -92,18 +210,21 @@ runScenario('multi-repo', async ({ page, log }) => {
         border: cs.borderTopWidth,
       };
     };
-    return { picker: box('.repo-picker__trigger'), branch: box('.git-indicator__branch') };
+    return {
+      picker: box('.repo-head .repo-head__picker'),
+      branch: box('.repo-head .branch-chip'),
+    };
   });
   assert(chips.picker && chips.branch, 'both the repo picker and the branch chip should render');
   assert(
     chips.picker.h === chips.branch.h && chips.picker.top === chips.branch.top,
-    `picker and branch chip must share the band's height and baseline — picker ${JSON.stringify(
+    `picker and branch chip must share the head's height and baseline — picker ${JSON.stringify(
       chips.picker,
     )} vs branch ${JSON.stringify(chips.branch)}`,
   );
   assert(
     chips.picker.radius === chips.branch.radius && chips.picker.border === chips.branch.border,
-    `picker and branch chip must wear the same field treatment — picker ${JSON.stringify(
+    `picker and branch chip must share radius and border width — picker ${JSON.stringify(
       chips.picker,
     )} vs branch ${JSON.stringify(chips.branch)}`,
   );
@@ -176,6 +297,23 @@ runScenario('multi-repo', async ({ page, log }) => {
   await expectActiveRepo('repo-b', 'b.txt', 'a.txt', 'beta-commit', 'alpha-commit');
   log('repo-b active → Changes + History flipped to repo-b ✓');
 
+  // The active list and repo-b's entry in the same reply are one computation, so they match.
+  await page.waitForFunction(
+    () => {
+      const p = window.__proj;
+      const b = p?.repoChanges?.find((r) => r.root.replace(/\\/g, '/').endsWith('/repo-b'));
+      return (
+        !!b &&
+        p.repoChanges.length === 2 &&
+        JSON.stringify(p.changes) === JSON.stringify(b.changes) &&
+        p.changes.some((c) => c.path === 'b.txt')
+      );
+    },
+    null,
+    { timeout: 10000 },
+  );
+  log('pinned repo-b: project.changes equals its repoChanges entry ✓');
+
   // A pin survives an auto-follow trigger: a repo:context for repo-a must be ignored while pinned.
   await page.evaluate(
     ({ id, p }) => window.agentDeck.post({ type: 'repo:context', sessionId: id, path: p }),
@@ -192,12 +330,72 @@ runScenario('multi-repo', async ({ page, log }) => {
   }, sid);
   assert(stillB, 'pin holds across an auto-follow trigger (repo:context ignored while pinned)');
 
-  // The git band (repo picker) must stay visible over the git-scoped History view, so the
-  // active repo is visible — and still switchable — while History is open.
-  await page.locator('.git-indicator__history').first().click();
-  await page.locator('.gh').waitFor({ state: 'visible', timeout: 10000 });
-  await page.locator('.repo-picker__trigger').waitFor({ state: 'visible', timeout: 5000 });
-  log('repo picker stays visible over the History view ✓');
+  // History follows the active repo: opened from the (pinned repo-b) head's chip menu, its own
+  // repo chip names repo-b. The Changes head's picker stays visible — and switchable — beside it.
+  await openHistory(page);
+  await page.waitForFunction(
+    () => document.querySelector('.gh__head .gh__repo')?.textContent?.trim() === 'repo-b',
+    null,
+    { timeout: 10000 },
+  );
+  await page.locator('.repo-head .repo-head__picker').waitFor({ state: 'visible', timeout: 5000 });
+  log('History opened on repo-b (its repo chip), picker still visible ✓');
+
+  // History's own repo chip retargets the view: its menu lists both repos, each pick shows only
+  // that repo's commits, and the search text survives (docs/specs/archive/2026-09-23-mf-changes.md §2.5).
+  const subjects = () =>
+    page.evaluate(() =>
+      Array.from(document.querySelectorAll('.gh__row .gh__subject'), (n) => n.textContent),
+    );
+  await page.waitForFunction(
+    () =>
+      Array.from(
+        document.querySelectorAll('.gh__row .gh__subject'),
+        (n) => n.textContent,
+      ).join() === 'beta-commit',
+    null,
+    { timeout: 10000 },
+  );
+  await page.fill('.gh__searchbox input', 'commit');
+  const historyMenu = page.locator('[role="menu"][aria-label="History repository"]');
+  const pickHistoryRepo = async (name, other) => {
+    await page.locator('.gh__head .gh__repo').click();
+    await historyMenu.waitFor({ state: 'visible', timeout: 5000 });
+    const rows = await historyMenu.locator('.repo-picker-menu__name').allInnerTexts();
+    assert(
+      JSON.stringify(rows) === JSON.stringify(['repo-a', 'repo-b']),
+      `History repo menu lists repo-a then repo-b: ${JSON.stringify(rows)}`,
+    );
+    await historyMenu.locator('.repo-picker-menu__row', { hasText: name }).click();
+    await page.waitForFunction(
+      (want) =>
+        Array.from(
+          document.querySelectorAll('.gh__row .gh__subject'),
+          (n) => n.textContent,
+        ).join() === want,
+      `${name === 'repo-a' ? 'alpha' : 'beta'}-commit`,
+      { timeout: 10000 },
+    );
+    const shown = await subjects();
+    const state = await page.evaluate(() => ({
+      chip: document.querySelector('.gh__head .gh__repo')?.textContent?.trim(),
+      query: document.querySelector('.gh__searchbox input')?.value,
+      live: document.querySelector('.gh__head [aria-live="polite"]')?.textContent,
+      focused: document.activeElement?.classList.contains('gh__repo') ?? false,
+    }));
+    assert(!shown.some((t) => t.startsWith(other)), `${name}: no ${other} commits: ${shown}`);
+    assert(state.chip === name, `chip names ${name}: ${JSON.stringify(state)}`);
+    assert(state.query === 'commit', `search text survives the retarget: ${JSON.stringify(state)}`);
+    assert(
+      state.live === `Showing history for ${name}`,
+      `retarget is announced: ${JSON.stringify(state)}`,
+    );
+    assert(state.focused, `focus returns to the repo chip: ${JSON.stringify(state)}`);
+  };
+  await pickHistoryRepo('repo-a', 'beta');
+  log('History chip → repo-a: only alpha-commit, query kept, announced, focus on chip ✓');
+  await pickHistoryRepo('repo-b', 'alpha');
+  log('History chip → repo-b: only beta-commit, query kept ✓');
 
   log('PASS ✓ multi-repo: picker, pin, Changes + History both follow the active repo');
 });

@@ -1,16 +1,29 @@
-import type { ChangeDTO } from '../src/protocol';
 import type { ReviewSource } from './docs';
+import type { ReviewFile } from './review-repos';
+
+export interface ReviewNavGroup {
+  root: string;
+  name: string;
+  sub?: string;
+  files: readonly ReviewFile[];
+  reviewed: number;
+}
 
 export interface ReviewNavModel {
   source: ReviewSource | undefined;
-  files: readonly ChangeDTO[];
+  files: readonly ReviewFile[];
+  groups: readonly ReviewNavGroup[] | null;
+  /** null = All repos. */
+  repoRoot: string | null;
+  repoCount: number;
   totalCount: number;
-  activePath: string | null;
+  activeKey: string | null;
+  /** `reviewFileKey`s, never bare paths. */
   reviewed: ReadonlySet<string>;
-  canMark: (path: string) => boolean;
+  canMark: (file: ReviewFile) => boolean;
   filter: string;
-  onPick: (path: string) => void;
-  onToggleReviewed: (path: string) => void;
+  onPick: (file: ReviewFile) => void;
+  onToggleReviewed: (file: ReviewFile) => void;
   onFilter: (text: string) => void;
 }
 

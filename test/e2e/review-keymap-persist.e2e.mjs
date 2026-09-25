@@ -23,6 +23,7 @@ import {
   closeApp,
   loadPlaywright,
   makeLog,
+  openReview,
   openSession,
   REPO,
   tapBridge,
@@ -93,10 +94,9 @@ async function launch() {
 }
 
 /** Open the fixture repo and put the Review tab on screen with its cards rendered. */
-async function openReview(page) {
+async function openFixtureReview(page) {
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 25000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review .rcard', { state: 'visible', timeout: 20000 });
   // Every mark control is gated on the first review:marks push; nothing below may click early.
   await page.waitForFunction(
@@ -154,7 +154,7 @@ try {
   firstApp = first.app;
   firstPage = first.page;
   const page = first.page;
-  await openReview(page);
+  await openFixtureReview(page);
   log('Review open with the fixture changeset ✓');
 
   // (1) j / k walk hunks INSIDE a file; J / K walk files. Both wrap.
@@ -321,10 +321,15 @@ try {
     !pickerText.includes('Since branch point'),
     'a repo that IS its default branch must not offer Since branch point',
   );
-  // Close by re-clicking the trigger: Escape here would also reach Review's own handler.
-  await page.click('.review__source');
+  // Escape closes the picker ONLY — Review itself stays (QA mf-review R2).
+  await page.keyboard.press('Escape');
   await page.waitForSelector('.commit-picker__row', { state: 'detached', timeout: 8000 });
-  log('picker shows Last commit only ✓');
+  await page.waitForTimeout(300);
+  assert(
+    await page.locator('.review .rcard').first().isVisible(),
+    'Escape in the source picker must not close Review',
+  );
+  log('picker shows Last commit only; Escape closed just the picker ✓');
 
   // (8) The marks file exists, and marking left the repo alone.
   const marksPath = join(userDataDir, 'review-marks.json');
@@ -367,7 +372,7 @@ try {
   secondApp = second.app;
   secondPage = second.page;
   const page2 = second.page;
-  await openReview(page2);
+  await openFixtureReview(page2);
 
   await page2.waitForFunction(
     () => /^1 \/ 5 reviewed$/.test(document.querySelector('.review__count')?.textContent ?? ''),

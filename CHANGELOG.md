@@ -6,6 +6,164 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Review covers every repo in the session.** With two or more repos, Review opens on
+  **All repos ▾**: each repo's changes sit under their own heading (name, Home/Nested/Attached,
+  branch, file count), and the navigator groups its files the same way with a reviewed count per
+  repo. Pick a repo in the chip to review only that one, including its commits and comparisons;
+  in All repos the source stays on the working tree and says why. **Stage all** stages every repo;
+  **Discard**, **Stash** and **Pop** ask you to pick one repo first. The same file path in two
+  repos gets its own card, mark and notes, and **Send to agent** groups the notes by repo with
+  paths the agent can open. A single-repo session looks exactly as before.
+- **A new New session dialog: pick what to launch, which project, and every folder it covers.**
+  The **Launch** row shows your three most-used launchers plus **Shell**; `claude`, `codex`,
+  `cursor-agent`, `gemini`, `aider` and `opencode` are found on your PATH on their own, and
+  **More ▾** lists the rest with where each came from. **+ Custom command…** saves any command
+  line as a launcher you can pick again (and remove from More). A project chip puts the session
+  in a project, or none, and can create one when you start. **Folders** lists the home folder
+  and any attached ones with their branch; **Make home** swaps them, and **+ Add folder…** offers
+  recent folders or **Browse…**. **Launches as** shows the exact command that will run, including
+  one `--add-dir` per attached folder for claude.
+- **Start is blocked, with the reason, when a folder can't be passed safely.** A `.cmd`/`.bat`
+  install of claude can't take a folder whose name contains `& | < > ^ % ! "`; the dialog says
+  which folder and character, and suggests renaming it or using the `.exe` install. A home folder
+  that no longer exists disables Start the same way.
+- If an `agents.json` entry runs one of the detected CLIs, it replaces the detected pill, and
+  sessions saved with the detected one launch it.
+- **The Files tab shows every folder in the session.** The home folder comes first, then each
+  attached folder, each with its own bar (tagged Home or Attached) and tree. A bar's `···` menu
+  can **Make home**, reveal or copy the folder's path, or **Remove from session** (with Undo;
+  refused while a file in it has unsaved changes). **+ Add folder…** attaches another one.
+- **A folder that disappears from disk shows a Not found box** with **Locate…** (pick where it
+  went; it is swapped in place) and **Remove**. It turns back into its tree when the folder
+  returns.
+- **Drop a folder from Explorer onto the Files tab to attach it.** A folder from outside the
+  session opens a menu with **Attach to session** (the default), **Copy into <folder>/** and
+  **Cancel**. Dropping files still copies them, as before.
+- **The sessions rail groups by project.** Each project gets a header (in your project order, or
+  by name when you sort), with sessions outside any project under **Standalone** at the bottom.
+  Empty projects still show, so you can rename or delete them. Hover a header for its **+**,
+  which opens New session on that project. Right-click it (or press Shift+F10 on it) for
+  **New session in project**, **Open board**, **Rename…** and **Delete project…**. Deleting a
+  project keeps its sessions running; they become standalone, and folders and their
+  `.conduit/` data aren't touched. Drag a header to reorder projects.
+- **Move a session to another project without restarting it.** The card menu has **Move to
+  project…**, a small filterable list with **+ New project…**; dropping a card on another
+  group's header does the same. The filter now also matches project names and every attached
+  folder's name.
+- **A running claude hears about folder changes.** Attach a folder to a session whose claude is
+  already running and a strip above its terminal says **claude can't see <folder> yet**.
+  **Run /add-dir** puts `/add-dir <path>` in claude's input for you, one folder per click, and
+  you press Enter in claude to add it; the strip clears a folder only once claude says it added it
+  (it waits while claude is busy),
+  **Restart claude** starts it again with every folder (after a confirm, since the conversation
+  ends), and **×** hides it until the next change. Removing a folder claude can still read says
+  so until it restarts. Shells and other agents never show the strip.
+- **A session whose home folder is gone says "Can't start" and never starts somewhere else.**
+  Its card reads **Can't start** with no relaunch button, and the centre shows **Home folder not
+  found** with the path, **Locate…** to point it at the folder's new place, and **Use <folder>
+  as home** when an attached folder is still there. Once the folder is back or located, the
+  usual **Relaunch** returns; nothing starts on its own. A session whose agent command isn't
+  installed also reads **Can't start**, and the centre names the command it couldn't find, with
+  **Relaunch** to try again.
+- **Board cards list every linked session (click to jump) and start another with the same
+  project and folders.** Each row shows the session's name and agent, with a hollow dot once it
+  has stopped; **+ Start session** opens New session already set to the card's last session's
+  project and folders, linked to the card. This replaces the single Running/Exited badge. Cards
+  also show a tracker ticket (key, source, status) when one is written to the board file.
+- **Copy in the Files tree now reaches Windows Explorer.** Copy (menu or Ctrl+C) still copies
+  inside Conduit as before, and also puts the files on the Windows clipboard, so Paste in Explorer
+  creates real copies, non-ASCII names included. If they can't be put there (a file was moved away,
+  or sits outside the session's folders) a toast says which one and why. Cut is unchanged.
+
+### Changed
+- **A simpler session card.** Each card is its own bordered tile: the icon, the name with the
+  agent right under it, and a status pill (Busy, Idle, Review, Needs you, Stale) on the right,
+  with a close × on hover. The selected card is outlined in the accent colour. The age label, the busy bar and the
+  Review file count are gone; Go to / Snooze, the timed-message chip and Relaunch stay. The
+  card's second line now defaults to the agent: if yours was on Live output (the old default),
+  it switches once, and you can pick Live again in Settings → Session card, whose preview is now
+  the real card.
+- The card menu's **Copy path** is now **Copy home path**.
+- **Git moves out of the terminal tab row and into the Changes tab, one section per repo.** A
+  session that spans several folders lists every repo it found (Home, Nested, Attached), each
+  with its own Staged / Changes lists and a branch chip. Stage, unstage, discard, hunk actions and
+  diffs act on the repo the row belongs to. The header has one **Review** button, and its `···`
+  switches between **All repos** and **Active repo** (also in Settings → Changes view). Stage all /
+  Unstage all span every repo; Discard, Stash and Pop work one repo at a time, from a repo
+  header's right-click menu or the Active repo view. Discard all names the repo it will wipe and
+  warns that untracked files are deleted too.
+- **A repo's branch chip opens View history and the branch switcher for that repo.** History
+  shows one repo at a time, and the repo chip in its header switches between them.
+- Opening New session from a project, the board ("Start session for this card") or the Explorer
+  ("Open as new session") fills in the project and folders that fit where you came from.
+- Attached folders now show up in recent folders too.
+- **Search in files and quick open cover every folder in the session.** With more than one
+  folder, search results are grouped by folder ("5 results in 3 files · 2 folders") and each
+  quick-open file row carries its folder's name. Go to definition works inside attached folders,
+  and TypeScript settings come from the home folder's tsconfig.
+- **The Files tab no longer follows `cd` in the terminal.** It always shows the session's
+  folders; Open as new session on a folder says which project the new session will join.
+
+### Removed
+- The **Show git indicator** and **Multi-repo picker** settings. Repo detection always runs; if
+  you had turned the picker off, the Changes tab starts in the Active repo view.
+- The dialog's **Terminal** dropdown and recent-folders list; both now live in the Launch row and
+  **+ Add folder…**.
+
+### Fixed
+- **Picking a file in Review's navigator stays on that file.** As the cards around it loaded,
+  the selection used to slide to the file above, or on to the next repo's first file, and the
+  next `j` started from there.
+- **Clicking a review note's gutter glyph lands Review on that note** and announces it. Review
+  sometimes opened at the top instead.
+- Ctrl+X / Ctrl+C / Ctrl+V in the Files tree work with Caps Lock on.
+- **Escape in Review's source picker closes only the picker.** It used to close the whole Review
+  tab along with it; a second Escape now does that. Likewise, Escape in History's repo picker no
+  longer also closes the commit details.
+- Dropping a file on an empty part of the window no longer replaces Conduit with that file.
+  The drop is refused (no-drop cursor), and the app window only ever loads its own page.
+- Review's **Discard all changes** no longer deletes your review notes, and **Stage all** /
+  **Unstage all** no longer stage or unstage them. They act on exactly the files Review lists,
+  which never includes its own `.conduit/review-notes.json`, and the Discard confirm counts those
+  files, so it no longer said "3 changes" over a list of 2. The Changes tab still acts on
+  everything it lists.
+- Files with accented, CJK or other non-ASCII names (`café.txt`, `日本.txt`) now work in Changes
+  and Review. Stage, Unstage and Discard used to fail on them with a git "did not match" error,
+  and one such file made Review's **Stage all**, **Unstage all** and **Discard all** fail for
+  every file. Their line counts show up now too, and so do they in quick open and search, and the
+  Explorer dims them when git ignores them.
+- **Unstage all** and **Discard all** now handle both sides of a staged rename. Unstaging used to
+  leave the old name's deletion staged, and discarding left the new file behind. Discard all also
+  removes a newly added file you had staged instead of failing on it.
+- **Discard all** stops at the first step that fails and says so, instead of carrying on. When
+  another git program was busy with the repo (a shell prompt, an editor), the unstage step could
+  fail silently, and Discard all then deleted a staged rename's file from disk while the rename
+  stayed staged. Nothing is deleted now unless the unstage worked.
+- A staged rename's badge in Changes, Review and the Explorer reads **R** instead of **M**.
+- Stage, Unstage and Discard on a file whose name has `[ ]`, `*` or `?` in it act on that one file
+  only. Staging `n[1].txt` used to stage `n1.txt` as well.
+- Review's **Stage all** and **Unstage all** need git 2.25 or newer. An older git now says so
+  instead of showing git's usage text.
+- The Sessions and Changes **···** menus, the Review **···** menu and Settings dropdowns now line
+  up with their button's right edge. They used to stop 12–16 px short in Aero. A menu wider than
+  the room beside its button is held 8 px inside the window instead, so Neon's Sessions **···**
+  menu still reaches past its button, by 38 px rather than 58.
+- A dropdown or menu no longer closes as soon as it opens because of a scroll that finished just
+  before it opened, such as a Settings select scrolled into view to be clicked.
+- Context menus and popovers now open above toasts. A toast in the corner used to cover a
+  menu opened next to it and take its clicks until it faded.
+- An `agents.json` entry whose command is a bare name, such as `claude` or `aider`, failed to
+  start on Windows with "File not found". It now launches whatever that name finds on your PATH,
+  and **Launches as** shows that exact file. If the command can't be found, the dialog says
+  `Can't resolve …` and Start stays disabled.
+- Commands are no longer looked up in relative PATH entries such as `.` or `bin`, which point
+  into whatever folder Conduit was started from. A custom command given as a relative path is
+  refused; enter an absolute path instead.
+- If `launchers.json` can't be read at startup, Conduit leaves the file alone instead of replacing
+  your custom launchers with an empty list.
+- Long launcher names in **More ▾** no longer get cut off in the Neon theme.
+
 ## [0.40.0] — 2026-09-23
 
 ### Added

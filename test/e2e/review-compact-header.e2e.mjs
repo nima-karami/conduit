@@ -7,14 +7,15 @@
  * ResizeObserver on the live `.review__head` box, which the preview mock cannot produce.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, runScenario, waitForRepoGit } from './harness.mjs';
 
 const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
 
 function makeRepo(dir) {
+  mkdirSync(dir, { recursive: true });
   const base = {
     'alpha.ts': `${Array.from({ length: 10 }, (_, i) => `const a${i} = ${i};`).join('\n')}\n`,
     'beta.ts': 'export const beta = 1;\n',
@@ -51,7 +52,7 @@ runScenario('review-compact-header', async ({ page, log }) => {
   makeRepo(root);
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
+  await waitForRepoGit(page);
   await page.click('.topbar__logo');
 
   await page.setViewportSize({ width: 900, height: 700 });
@@ -64,6 +65,10 @@ runScenario('review-compact-header', async ({ page, log }) => {
   );
   // Let the head's ResizeObserver settle before measuring.
   await page.waitForTimeout(200);
+  assert(
+    (await page.locator('.review__chip').count()) === 0,
+    'a single-repo Review has no repo chip',
+  );
 
   const head = await overflowMeasure(page, '.review__head');
   assert(!!head, '.review__head must be present');
@@ -253,5 +258,51 @@ runScenario('review-compact-header', async ({ page, log }) => {
   await page.keyboard.press('Escape');
   await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
 
-  log('PASS ✓ compact header + scope rows + bar menu above');
+  // ── multi-repo: the repo chip goes glyph-only in a compact header (spec 2026-09-23-mf-review §7.3)
+  const home = mkdtempSync(join(tmpdir(), 'conduit-review-compact-multi-'));
+  makeRepo(join(home, 'app'));
+  makeRepo(join(home, 'lib'));
+  await openSession(page, { path: home.replace(/\\/g, '/') });
+  await page.click('.topbar__logo');
+  await page.setViewportSize({ width: 900, height: 700 });
+  if (!(await page.isVisible('.review'))) await page.keyboard.press('Control+Shift+R');
+  await page.waitForSelector('.review__chip', { state: 'visible', timeout: 20000 });
+  // `compact` comes from a ResizeObserver, which the hidden e2e window delivers late (measured
+  // ~1s after the chip appeared). Wait for it to settle; the assertions below still decide.
+  await page
+    .waitForFunction(() => !document.querySelector('.review__chip .gh__reffilter-label'), null, {
+      timeout: 5000,
+    })
+    .catch(() => {});
+
+  const chip = await page.evaluate(() => {
+    const el = document.querySelector('.review__chip');
+    const headEl = document.querySelector('.review__head');
+    if (!el || !headEl) return null;
+    const r = el.getBoundingClientRect();
+    const h = headEl.getBoundingClientRect();
+    return {
+      headWidth: h.width,
+      headScroll: headEl.scrollWidth,
+      headClient: headEl.clientWidth,
+      hasLabel: !!el.querySelector('.gh__reffilter-label'),
+      ariaLabel: el.getAttribute('aria-label') ?? '',
+      inside: r.left >= h.left - 0.5 && r.right <= h.right + 0.5,
+    };
+  });
+  log(`multi-repo chip=${JSON.stringify(chip)}`);
+  assert(!!chip, '.review__chip and .review__head must be present in a multi-repo session');
+  assert(chip.headWidth <= 480, `the header must be compact (<=480px) here; was ${chip.headWidth}`);
+  assert(!chip.hasLabel, 'the compact chip must be glyph-only (no .gh__reffilter-label)');
+  assert(
+    chip.ariaLabel.startsWith('Review repo:'),
+    `the compact chip must keep its accessible name; aria-label was "${chip.ariaLabel}"`,
+  );
+  assert(chip.inside, 'the compact chip must sit inside .review__head');
+  assert(
+    chip.headScroll <= chip.headClient,
+    `.review__head must not overflow with the chip: scrollWidth ${chip.headScroll} > clientWidth ${chip.headClient}`,
+  );
+
+  log('PASS ✓ compact header + scope rows + bar menu above + glyph-only repo chip');
 });

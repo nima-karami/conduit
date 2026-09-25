@@ -1,23 +1,26 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import type { ChangeDTO, FileContentDTO, FileDiffDTO, RepoDTO } from '../../src/protocol';
+import type { FileContentDTO, FileDiffDTO, RepoChanges, RepoDTO } from '../../src/protocol';
+import { historyRepoFor, orderRepos } from '../../src/repo-display';
+import type { RepoInfo } from '../../src/repo-scan';
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { RightPaneTab } from '../../src/settings';
-import type { AgentDefinition, Session } from '../../src/types';
+import type { AgentDefinition, GitInfo, Session } from '../../src/types';
 import { diffTabKey } from '../diff-tab-scope';
 import type { OpenDoc, OpenMode, ReviewSource } from '../docs';
 import type { GitActionIntent } from '../git-intent';
 import { IconClock } from '../icons';
+import { reviewRequestRoot } from '../review-repos';
 import type { ReviewScope } from '../review-scope';
 import { getTimerSnapshot, subscribeTimers, waitingCountFor } from '../timer-store';
+import { AgentScopeBanner } from './agent-scope-banner';
 import { CommitDiffView } from './commit-view';
 import { CompareDialog } from './compare-dialog';
 import { DocTabs } from './doc-tabs';
 import { DocView } from './doc-view';
 import { CenterEmptyState } from './empty-state';
 import { GitHistoryView } from './git-history-view';
-import { GitIndicatorBar } from './git-indicator-bar';
+import { MissingHomeState, StartRefusedState } from './missing-home-state';
 import type { DockHandlers } from './panel-frame';
-import { RepoPicker } from './repo-picker';
 import { ReviewView } from './review-view';
 import { TerminalPane } from './terminal-pane';
 import { TrustPrompt } from './trust-prompt';
@@ -69,8 +72,11 @@ export function CenterPane({
   onOpenFileAt,
   onRevealFolder,
   onOpenCommitReview,
-  changesRoot,
-  changes,
+  reviewRepos,
+  reviewRepoChanges,
+  reviewRepoGit,
+  reviewFallbackRoot,
+  home,
   onReviewRequestDiff,
   onJumpToHunk,
   onOpenReviewDiff,
@@ -78,10 +84,8 @@ export function CenterPane({
   onCloseReview,
   onSetReviewSource,
   onNewSession,
-  showGitIndicator,
-  onOpenGitHistory,
-  onOpenReview,
   onOpenCommitFile,
+  onRetargetHistory,
   onReviewCommit,
   onDocTitle,
   onOpenWeb,
@@ -132,30 +136,28 @@ export function CenterPane({
    * `repoRoot` is the terminal's cwd repo so Review reads the commit from there, not the pinned repo. */
   onOpenCommitReview?: (sha: string, sessionId: string, repoRoot?: string) => void;
   // Review tab (R5.5): the singleton Review-changes doc renders ReviewView in the doc
-  // area instead of DocView. changesRoot = the active repo, so change paths resolve right.
-  changesRoot?: string | undefined;
-  changes: ChangeDTO[];
+  // area instead of DocView. See ReviewView's props for these four.
+  reviewRepos: readonly RepoInfo[];
+  reviewRepoChanges: readonly RepoChanges[] | undefined;
+  reviewRepoGit: Readonly<Record<string, GitInfo>> | undefined;
+  reviewFallbackRoot: string | undefined;
+  home: string | undefined;
   onReviewRequestDiff: (absPath: string, scope: ReviewScope) => void;
   onJumpToHunk: (absPath: string, line: number, mode?: OpenMode) => void;
   /** Review card "Open side-by-side": open this file's Monaco diff starting side-by-side, at
    *  Review's scope. */
   onOpenReviewDiff: (absPath: string, scope: ReviewScope, mode?: OpenMode) => void;
   /** Review action bar: Stage all / Discard all, through the app's existing git-intent handler. */
-  onReviewGitAction: (intent: GitActionIntent) => void;
+  onReviewGitAction: (intent: GitActionIntent) => Promise<void>;
   onCloseReview: () => void;
   /** Switch the Review tab's source from its breadcrumb (back to working / to a commit). */
   onSetReviewSource: (next: ReviewSource) => void;
   // Start the new-session flow from the empty-state CTA.
   onNewSession?: () => void;
-  // Git indicator (Slice A): show the branch/worktree strip atop a terminal tab.
-  showGitIndicator?: boolean;
-  /** Open the git-history graph for the active session (from the indicator's button). */
-  onOpenGitHistory?: () => void;
-  /** Open the whole-changeset Review tab (from the git band, beside the history button). */
-  onOpenReview?: () => void;
   /** Open one of a commit's files as a `commit-diff` tab (pin = double-click) — from the
    *  commit detail rendered inline in the history view. */
-  onOpenCommitFile?: (sha: string, file: string, mode: OpenMode) => void;
+  onOpenCommitFile?: (sha: string, file: string, mode: OpenMode, repoRoot?: string) => void;
+  onRetargetHistory?: (repoRoot: string) => void;
   /** Review a commit's changes in the singleton Review tab — from the commit detail's button or
    * the code-viewer blame lens (which also passes the file's repo root + owning session so the
    * commit is looked up in that repo, not the pinned one). */
@@ -177,7 +179,16 @@ export function CenterPane({
   onOpenFullDiff: (doc: OpenDoc) => void;
 }) {
   const [compareOpen, setCompareOpen] = useState(false);
+  // Locate / Use-as-home fixed the home: focus the block's Relaunch once it renders (spec §9).
+  const [focusRelaunchFor, setFocusRelaunchFor] = useState<string | null>(null);
   const active = sessions.find((s) => s.id === activeId);
+  // A fresh callback each render, so a flag set after the block mounted still lands.
+  const relaunchRef = (el: HTMLButtonElement | null) => {
+    if (el && active && focusRelaunchFor === active.id) {
+      el.focus();
+      setFocusRelaunchFor(null);
+    }
+  };
   const running = sessions.filter((s) => s.status === 'running');
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? null;
   // A diff tab keeps showing what it last rendered while its key is re-read or evicted, so a
@@ -194,16 +205,6 @@ export function CenterPane({
   // live comparison rather than starting blank (spec 2026-06-30 §2).
   const reviewSourcePrefill = docs.find((d) => d.kind === 'review')?.reviewSource;
   const showDoc = activeDoc !== null;
-  // Git band visibility: branch/dirty state, Review, History and Compare are REPO-scoped, not
-  // document-scoped, so the band rides every surface in a session that has a repo. It used to
-  // hide over any non-git doc, which meant opening a file silently removed the only entry
-  // points to Review and History and left no way to tell why. The trailing slot's width is
-  // reserved outside the scrollable tab strip, so tabs overflow past it rather than collide.
-  // Shown when the indicator is enabled OR the repo picker has something to show (≥2 repos —
-  // matches RepoPicker's own self-hide), so an empty bordered strip never renders.
-  const indicatorOn = showGitIndicator !== false;
-  const repoPickerVisible = (active?.repos?.length ?? 0) >= 2;
-  const showGitBand = !!active && (indicatorOn || repoPickerVisible);
   // Web tabs stay mounted across tab/session switches (like terminals) so a page never
   // reloads when you switch away and back; only the active one is visible.
   const webDocs = docs.filter((d) => d.kind === 'web');
@@ -242,29 +243,6 @@ export function CenterPane({
             moveGrip={
               dock ? { onDragStart: dock.onDragStart, onDragEnd: dock.onDragEnd } : undefined
             }
-            trailing={
-              /* §7.7: the git chrome is right-aligned INSIDE the tab row, not a fourth stacked
-             band. Each piece still self-hides — the picker below 2 repos, the indicator when
-             the setting is off or git is kind 'none'. */
-              showGitBand && active ? (
-                <>
-                  <RepoPicker
-                    sessionId={active.id}
-                    repos={active.repos ?? []}
-                    activeRepoRoot={active.activeRepoRoot}
-                    pinned={active.repoPinned}
-                  />
-                  {indicatorOn && (
-                    <GitIndicatorBar
-                      git={active.git}
-                      sessionId={active.id}
-                      onOpenHistory={onOpenGitHistory}
-                      onOpenReview={onOpenReview}
-                    />
-                  )}
-                </>
-              ) : undefined
-            }
           />
           <TrustPrompt />
 
@@ -294,10 +272,12 @@ export function CenterPane({
                       </div>
                     )}
                     <div className="termhost__body">
+                      <AgentScopeBanner session={s} />
                       <TerminalPane
+                        key={`${s.id}:${s.restartSeq ?? 0}`}
                         sessionId={s.id}
                         agentId={s.agentId}
-                        cwd={s.cwd ?? s.projectPath}
+                        cwd={s.cwd ?? s.home}
                         onOpenFile={onOpenFileAt}
                         onRevealFolder={onRevealFolder}
                         onOpenCommitReview={onOpenCommitReview}
@@ -307,12 +287,12 @@ export function CenterPane({
                   </div>
                 );
               })}
-              {active && active.status === 'stale' && (
+              {active && active.status !== 'running' && active.homeMissing && (
                 <div className="stale">
-                  <p className="stale__title">Session not running</p>
-                  <button className="btn btn--primary" onClick={() => onRelaunch(active.id)}>
-                    ↻ Relaunch
-                  </button>
+                  <MissingHomeState
+                    session={active}
+                    onFixed={() => setFocusRelaunchFor(active.id)}
+                  />
                   {onOpenTimedMessages && (
                     <WaitingLine
                       sessionId={active.id}
@@ -321,20 +301,66 @@ export function CenterPane({
                   )}
                 </div>
               )}
-              {active && active.status === 'exited' && (
-                <div className="stale">
-                  <p className="stale__title">Process exited</p>
-                  <button className="btn btn--primary" onClick={() => onRelaunch(active.id)}>
-                    ↻ Restart
-                  </button>
-                  {onOpenTimedMessages && (
-                    <WaitingLine
-                      sessionId={active.id}
-                      onOpen={() => onOpenTimedMessages(active.id)}
+              {active &&
+                active.status !== 'running' &&
+                !active.homeMissing &&
+                active.startRefusal && (
+                  <div className="stale">
+                    <StartRefusedState
+                      session={active}
+                      onRelaunch={onRelaunch}
+                      relaunchRef={relaunchRef}
                     />
-                  )}
-                </div>
-              )}
+                    {onOpenTimedMessages && (
+                      <WaitingLine
+                        sessionId={active.id}
+                        onOpen={() => onOpenTimedMessages(active.id)}
+                      />
+                    )}
+                  </div>
+                )}
+              {active &&
+                active.status === 'stale' &&
+                !active.homeMissing &&
+                !active.startRefusal && (
+                  <div className="stale">
+                    <p className="stale__title">Session not running</p>
+                    <button
+                      ref={relaunchRef}
+                      className="btn btn--primary"
+                      onClick={() => onRelaunch(active.id)}
+                    >
+                      ↻ Relaunch
+                    </button>
+                    {onOpenTimedMessages && (
+                      <WaitingLine
+                        sessionId={active.id}
+                        onOpen={() => onOpenTimedMessages(active.id)}
+                      />
+                    )}
+                  </div>
+                )}
+              {active &&
+                active.status === 'exited' &&
+                !active.homeMissing &&
+                !active.startRefusal && (
+                  <div className="stale">
+                    <p className="stale__title">Process exited</p>
+                    <button
+                      ref={relaunchRef}
+                      className="btn btn--primary"
+                      onClick={() => onRelaunch(active.id)}
+                    >
+                      ↻ Restart
+                    </button>
+                    {onOpenTimedMessages && (
+                      <WaitingLine
+                        sessionId={active.id}
+                        onOpen={() => onOpenTimedMessages(active.id)}
+                      />
+                    )}
+                  </div>
+                )}
             </div>
 
             {/* Web tabs: always mounted, only the active one visible (keeps pages warm). */}
@@ -359,8 +385,11 @@ export function CenterPane({
               activeDoc.kind !== 'web' &&
               (activeDoc.kind === 'review' ? (
                 <ReviewView
-                  changesRoot={changesRoot}
-                  changes={changes}
+                  reviewRepos={reviewRepos}
+                  repoChanges={reviewRepoChanges}
+                  repoGit={reviewRepoGit}
+                  fallbackRoot={reviewFallbackRoot}
+                  home={home}
                   diffs={diffs}
                   onRequestDiff={onReviewRequestDiff}
                   onJumpToHunk={onJumpToHunk}
@@ -381,12 +410,19 @@ export function CenterPane({
               ) : activeDoc.kind === 'git-history' ? (
                 <GitHistoryView
                   sessionId={activeDoc.sessionId}
+                  repoRoot={historyRepoFor(activeDoc.repoRoot, active)}
+                  repos={orderRepos(active?.repos ?? [], active?.roots ?? [])}
+                  onRetarget={(root) => onRetargetHistory?.(root)}
                   viewStateId={activeDoc.id}
                   onOpenCommitFile={onOpenCommitFile}
                   onReviewCommit={onReviewCommit}
                 />
               ) : activeDoc.kind === 'commit-diff' ? (
-                <CommitDiffView sessionId={activeDoc.sessionId} path={activeDoc.path} />
+                <CommitDiffView
+                  sessionId={activeDoc.sessionId}
+                  path={activeDoc.path}
+                  root={activeDoc.repoRoot}
+                />
               ) : (
                 // Diff/file viewer state (Monaco model, side-by-side toggle) is per doc; without
                 // this key React reuses one instance across docs and the first diff ever opened
@@ -412,6 +448,7 @@ export function CenterPane({
       {compareOpen && active && (
         <CompareDialog
           sessionId={active.id}
+          repoRoot={reviewRequestRoot(reviewSourcePrefill, reviewRepos, reviewFallbackRoot)}
           source={reviewSourcePrefill}
           onCompare={(next) => {
             setCompareOpen(false);

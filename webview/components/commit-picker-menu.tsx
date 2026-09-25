@@ -4,7 +4,7 @@
  * tree, any recent commit, or a pasted SHA. The picker's final row, Compare refs…, opens the
  * two-ref compare dialog (spec 2026-09-05-review-mode.md §2.2). Commits load via `git:history`
  * (the host enumerates — the renderer never spawns git). Mirrors
- * {@link BranchSwitcherMenu}'s shell + keyboard model.
+ * {@link BranchSwitcherList}'s filter + keyboard model.
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -18,7 +18,8 @@ import { IconCheck, IconCompare, IconReview } from '../icons';
 import { relativeTime } from '../relative-time';
 import { filterCommitsForPicker, isPastedSha } from '../review-commit';
 import { buildPinnedSources, isPinnedRowChecked } from '../review-picker-rows';
-import { useEscapeKey } from '../use-escape-key';
+import { workingSource } from '../review-scope';
+import { useOverlayEntry } from '../use-overlay-entry';
 
 const STR = {
   filterPlaceholder: 'Search commits…',
@@ -65,6 +66,7 @@ type PickerRow = SourceRow | ActionRow;
 
 export function CommitPickerMenu({
   sessionId,
+  repoRoot,
   source,
   triggerRef,
   onSelect,
@@ -72,6 +74,7 @@ export function CommitPickerMenu({
   onOpenCompare,
 }: {
   sessionId?: string;
+  repoRoot: string | undefined;
   source?: ReviewSource;
   triggerRef: React.RefObject<HTMLButtonElement | null>;
   onSelect: (next: ReviewSource) => void;
@@ -96,7 +99,7 @@ export function CommitPickerMenu({
   const latestReqId = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEscapeKey(onClose);
+  useOverlayEntry('popover', onClose);
 
   const requestHistory = useMemo(
     () => () => {
@@ -109,16 +112,23 @@ export function CommitPickerMenu({
       reqCounter.current += 1;
       latestReqId.current = reqCounter.current;
       setPhase('loading');
-      post({ type: 'git:history', sessionId, limit: HISTORY_LIMIT, requestId: reqCounter.current });
+      post({
+        type: 'git:history',
+        sessionId,
+        limit: HISTORY_LIMIT,
+        requestId: reqCounter.current,
+        ...(repoRoot ? { repoRoot } : {}),
+      });
       timer.current = setTimeout(() => setPhase('error'), LOAD_TIMEOUT_MS);
     },
-    [sessionId],
+    [sessionId, repoRoot],
   );
 
   useEffect(() => {
     requestHistory();
     const unsub = subscribe((msg) => {
       if (msg.type !== 'git:historyResult' || msg.sessionId !== sessionId) return;
+      if ((msg.repoRoot ?? '') !== (repoRoot ?? '')) return;
       if (isStaleHistory(msg.requestId, latestReqId.current)) return;
       if (timer.current) clearTimeout(timer.current);
       setCommits(msg.commits);
@@ -128,7 +138,7 @@ export function CommitPickerMenu({
       unsub();
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [sessionId, requestHistory]);
+  }, [sessionId, repoRoot, requestHistory]);
 
   // Both presets are asked for once, when the menu opens. Each reply is latest-wins on its own
   // preset — the two races are independent, and an unresolvable one simply never sets a row.
@@ -138,19 +148,28 @@ export function CommitPickerMenu({
     reqCounter.current += 2;
     const unsub = subscribe((msg) => {
       if (msg.type !== 'git:resolveRangeResult' || msg.sessionId !== sessionId) return;
+      if ((msg.repoRoot ?? '') !== (repoRoot ?? '')) return;
       if (msg.requestId !== ids[msg.preset]) return;
       const resolved = msg.base && msg.head ? { base: msg.base, head: msg.head } : null;
       setPresets((p) => ({ ...p, [msg.preset]: resolved }));
     });
-    post({ type: 'git:resolveRange', sessionId, preset: 'unpushed', requestId: ids.unpushed });
+    const root = repoRoot ? { repoRoot } : {};
+    post({
+      type: 'git:resolveRange',
+      sessionId,
+      preset: 'unpushed',
+      requestId: ids.unpushed,
+      ...root,
+    });
     post({
       type: 'git:resolveRange',
       sessionId,
       preset: 'branchPoint',
       requestId: ids.branchPoint,
+      ...root,
     });
     return unsub;
-  }, [sessionId]);
+  }, [sessionId, repoRoot]);
 
   // Position below the trigger, clamped to the viewport (portaled + fixed). Re-run when the body
   // height changes (phase/filter) so a flip-above near the viewport bottom stays correct.
@@ -174,7 +193,7 @@ export function CommitPickerMenu({
     inputRef.current?.focus();
   }, []);
 
-  // Dismiss on outside click / resize (mirrors BranchSwitcherMenu); the trigger is excluded so
+  // Dismiss on outside click / resize; the trigger is excluded so
   // its toggle click doesn't double-fire.
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -203,15 +222,18 @@ export function CommitPickerMenu({
     out.push({
       kind: 'source',
       id: `${baseId}-working`,
-      source: { kind: 'working' },
+      source: workingSource('all', repoRoot),
       checked: !source || source.kind === 'working',
       render: () => <span className="commit-picker__working">{STR.workingTree}</span>,
     });
-    const pinned = buildPinnedSources({
-      head: commits[0] ? { sha: commits[0].sha, subject: commits[0].subject } : null,
-      unpushed: presets.unpushed,
-      branchPoint: presets.branchPoint,
-    });
+    const pinned = buildPinnedSources(
+      {
+        head: commits[0] ? { sha: commits[0].sha, subject: commits[0].subject } : null,
+        unpushed: presets.unpushed,
+        branchPoint: presets.branchPoint,
+      },
+      repoRoot,
+    );
     for (const p of pinned) {
       out.push({
         kind: 'source',
@@ -251,7 +273,12 @@ export function CommitPickerMenu({
       out.push({
         kind: 'source',
         id: `${baseId}-c-${c.sha}`,
-        source: { kind: 'commit', sha: c.sha, subject: c.subject },
+        source: {
+          kind: 'commit',
+          sha: c.sha,
+          subject: c.subject,
+          ...(repoRoot ? { repoRoot } : {}),
+        },
         checked: c.sha === currentSha,
         render: () => (
           <>
@@ -270,7 +297,7 @@ export function CommitPickerMenu({
       out.push({
         kind: 'source',
         id: `${baseId}-pasted`,
-        source: { kind: 'commit', sha: pastedSha },
+        source: { kind: 'commit', sha: pastedSha, ...(repoRoot ? { repoRoot } : {}) },
         checked: false,
         render: () => (
           <>
@@ -290,6 +317,7 @@ export function CommitPickerMenu({
     return out;
   }, [
     baseId,
+    repoRoot,
     source,
     currentSha,
     currentOffWindow,

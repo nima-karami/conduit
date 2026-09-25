@@ -14,8 +14,8 @@ export interface PopoverProps extends Omit<HTMLAttributes<HTMLDivElement>, 'chil
   /** Exactly one of `at` (a raw viewport point) or `anchor` (a trigger's rect) is given. */
   at?: { x: number; y: number };
   anchor?: Rect;
-  /** Anchor mode: alignment width; also applied as min-width (a caller wanting an exact width
-   *  passes `style={{ width }}`). */
+  /** Min-width; the frame grows with its content and aligns by its measured width (a caller
+   *  wanting an exact width passes `style={{ width }}`). */
   width?: number;
   align?: PopoverAlign;
   /** A PREFERENCE, no flip: a box that does not fit is pinned to the viewport margin and may
@@ -24,6 +24,9 @@ export interface PopoverProps extends Omit<HTMLAttributes<HTMLDivElement>, 'chil
   gap?: number;
   /** Idempotent; fired from outside-mousedown / outside-scroll / blur / resize / Escape (stack). */
   onClose: () => void;
+  /** Escape from the overlay stack, in place of `onClose` — for a popover whose Escape steps back
+   *  rather than closes. The stack binds keydown in the capture phase, so no inner handler can. */
+  onEscape?: () => void;
   triggerRef?: RefObject<Element | null>;
   ref?: Ref<HTMLDivElement>;
   children: ReactNode;
@@ -43,6 +46,7 @@ export function Popover({
   side = 'below',
   gap = 4,
   onClose,
+  onEscape,
   triggerRef,
   ref,
   className,
@@ -52,8 +56,9 @@ export function Popover({
 }: PopoverProps) {
   const measureRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x: 0, y: 0 });
+  const scrollArmed = useRef(false);
 
-  useOverlayEntry('popover', onClose);
+  useOverlayEntry('popover', onEscape ?? onClose);
 
   const mergedRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -74,11 +79,7 @@ export function Popover({
       const r = el.getBoundingClientRect();
       const requested =
         at ??
-        anchorPopover(
-          anchor as Rect,
-          { width: width ?? r.width, height: r.height },
-          { align, side, gap },
-        );
+        anchorPopover(anchor as Rect, { width: r.width, height: r.height }, { align, side, gap });
       const next = clampMenuPosition(
         requested,
         { width: r.width, height: r.height },
@@ -94,6 +95,16 @@ export function Popover({
     return () => ro.disconnect();
   }, [at?.x, at?.y, anchor, width, align, side, gap]);
 
+  // A scroll event is delivered in the NEXT frame's scroll steps, which run before that frame's
+  // rAF callbacks. So one whose scroll ended before this popover opened (the trigger scrolled into
+  // view on the way to its click) still arrives after mount, and must not read as the anchor moving.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      scrollArmed.current = true;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node;
@@ -108,7 +119,7 @@ export function Popover({
     // scroll — EXCEPT a scroll inside the frame's own overflow (tall popovers scroll
     // themselves), or it would dismiss the instant you drag its scrollbar.
     const onScroll = (e: Event) => {
-      if (measureRef.current?.contains(e.target as Node)) return;
+      if (!scrollArmed.current || measureRef.current?.contains(e.target as Node)) return;
       onClose();
     };
     window.addEventListener('scroll', onScroll, true);

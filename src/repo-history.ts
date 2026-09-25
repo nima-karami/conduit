@@ -26,6 +26,15 @@ export function upsertRepo(list: RepoDTO[], entry: RepoDTO): RepoDTO[] {
   return [entry, ...rest].slice(0, CAP);
 }
 
+/** Move an attached folder to the front, keeping an existing entry's lastAgentId (D14). */
+export function upsertAttachedRepo(
+  list: RepoDTO[],
+  entry: { path: string; name: string; lastOpened: number },
+): RepoDTO[] {
+  const prior = list.find((r) => r.path === entry.path)?.lastAgentId;
+  return upsertRepo(list, prior === undefined ? { ...entry } : { ...entry, lastAgentId: prior });
+}
+
 /**
  * Drop recent-folder entries whose path is no longer an existing directory. Pure over the
  * injected `existsDir` predicate so it's testable without the filesystem; the host passes a

@@ -1,47 +1,77 @@
 /**
- * Repo picker dropdown (multi-repo awareness). Opens from the RepoPicker trigger and lists the
- * detected sub-repos plus a top "Auto" entry that unpins (resumes context-following). Reuses the
- * app's `.ctxmenu` styling and the BranchSwitcherMenu interaction pattern: portaled + fixed,
- * clamped to the viewport, ↑/↓ + Enter + Esc, outside-click/scroll/resize close. Picking a repo
- * pins it; picking "Auto" clears the pin. The host validates the chosen root — the renderer
- * never spawns git.
+ * Repo picker dropdown (multi-repo awareness). Lists the session's repos (name, tag, sub-path),
+ * optionally led by an "Auto" row that unpins and followed by a footer action. Reuses the app's
+ * `.ctxmenu` styling: portaled + fixed, clamped to the viewport, ↑/↓ + Enter + Esc,
+ * outside-click/scroll/resize close. The host validates the chosen root — the renderer never
+ * spawns git.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { clampMenuPosition } from '../../src/menu-position';
-import type { RepoInfo } from '../../src/protocol';
+import type { RepoTag } from '../../src/repo-scan';
 import { IconCheck } from '../icons';
-import { useEscapeKey } from '../use-escape-key';
+import { useOverlayEntry } from '../use-overlay-entry';
+
+const TAG_LABEL: Record<RepoTag, string> = {
+  home: 'Home',
+  nested: 'Nested',
+  attached: 'Attached',
+};
+
+export const repoTagLabel = (tag: RepoTag): string => TAG_LABEL[tag];
+
+export function RepoTagPill({ tag }: { tag: RepoTag }) {
+  return <span className={`repo-head__tag repo-head__tag--${tag}`}>{TAG_LABEL[tag]}</span>;
+}
+
+export interface RepoMenuRow {
+  root: string;
+  name: string;
+  tag: RepoTag;
+  sub?: string;
+  checked: boolean;
+}
+
+type Entry =
+  | { kind: 'auto'; label: string; checked: boolean }
+  | { kind: 'repo'; row: RepoMenuRow }
+  | { kind: 'footer'; label: string; onPick: () => void };
 
 export function RepoPickerMenu({
-  repos,
-  activeRepoRoot,
-  pinned,
-  autoLabel,
+  rows,
+  auto,
+  footer,
   triggerRef,
+  ariaLabel,
   onPick,
   onClose,
 }: {
-  repos: RepoInfo[];
-  activeRepoRoot?: string;
-  pinned?: boolean;
-  autoLabel: string;
+  rows: RepoMenuRow[];
+  /** Absent → no Auto row. */
+  auto?: { label: string; checked: boolean };
+  /** Rendered after a separator. */
+  footer?: { label: string; onPick: () => void };
   triggerRef: React.RefObject<HTMLButtonElement | null>;
-  /** `null` = pick the "Auto" (unpin) row; a string = pin that repo root. */
+  ariaLabel: string;
+  /** `null` = the Auto row. */
   onPick: (root: string | null) => void;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  // Row 0 is "Auto"; rows 1..n are repos. Active row starts on the current selection.
-  const initialIndex = useMemo(() => {
-    if (!pinned) return 0;
-    const i = repos.findIndex((r) => r.root === activeRepoRoot);
-    return i >= 0 ? i + 1 : 0;
-  }, [pinned, repos, activeRepoRoot]);
-  const [activeIndex, setActiveIndex] = useState(initialIndex);
+  const entries: Entry[] = [
+    ...(auto ? [{ kind: 'auto' as const, ...auto }] : []),
+    ...rows.map((row) => ({ kind: 'repo' as const, row })),
+    ...(footer ? [{ kind: 'footer' as const, ...footer }] : []),
+  ];
+  const [activeIndex, setActiveIndex] = useState(() => {
+    const i = entries.findIndex((e) =>
+      e.kind === 'auto' ? e.checked : e.kind === 'repo' && e.row.checked,
+    );
+    return i >= 0 ? i : 0;
+  });
 
-  useEscapeKey(onClose);
+  useOverlayEntry('popover', onClose);
 
   useEffect(() => {
     const t = triggerRef.current;
@@ -80,24 +110,33 @@ export function RepoPickerMenu({
     };
   }, [onClose, triggerRef]);
 
-  const rowCount = repos.length + 1; // +1 for the Auto row
-  const pickIndex = (i: number) => {
-    if (i === 0) onPick(null);
-    else onPick(repos[i - 1].root);
+  const pickEntry = (e: Entry) => {
+    if (e.kind === 'auto') onPick(null);
+    else if (e.kind === 'repo') onPick(e.row.root);
+    else e.onPick();
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setActiveIndex((i) => Math.min(i + 1, rowCount - 1));
+      setActiveIndex((i) => Math.min(i + 1, entries.length - 1));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setActiveIndex((i) => Math.max(i - 1, 0));
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      pickIndex(activeIndex);
+      const entry = entries[activeIndex];
+      if (entry) pickEntry(entry);
     }
   };
+
+  const itemClass = (i: number) =>
+    `ctxmenu__item repo-picker-menu__row${activeIndex === i ? ' ctxmenu__item--active' : ''}`;
+  const check = (on: boolean) => (
+    <span className="ctxmenu__icon">
+      {on ? <IconCheck size={13} /> : <span className="repo-picker-menu__nocheck" />}
+    </span>
+  );
 
   return createPortal(
     <div
@@ -109,49 +148,57 @@ export function RepoPickerMenu({
         visibility: pos ? 'visible' : 'hidden',
       }}
       role="menu"
-      aria-label="Active repo"
+      aria-label={ariaLabel}
       onKeyDown={onKeyDown}
       tabIndex={0}
     >
-      <button
-        type="button"
-        role="menuitemradio"
-        aria-checked={!pinned}
-        className={`ctxmenu__item repo-picker-menu__row${
-          activeIndex === 0 ? ' ctxmenu__item--active' : ''
-        }`}
-        onMouseEnter={() => setActiveIndex(0)}
-        onClick={() => onPick(null)}
-      >
-        <span className="ctxmenu__icon">
-          {!pinned ? <IconCheck size={13} /> : <span style={{ width: 13 }} />}
-        </span>
-        <span className="repo-picker-menu__name">{autoLabel}</span>
-      </button>
-
-      {repos.map((r, i) => {
-        const isActive = r.root === activeRepoRoot && pinned;
-        const idx = i + 1;
-        return (
+      {entries.flatMap((e, i) => {
+        if (e.kind === 'footer')
+          return [
+            <div key="footer-sep" className="ctxmenu__sep" />,
+            <button
+              key="footer"
+              type="button"
+              role="menuitem"
+              className={itemClass(i)}
+              onMouseEnter={() => setActiveIndex(i)}
+              onClick={() => pickEntry(e)}
+            >
+              {check(false)}
+              <span className="repo-picker-menu__name">{e.label}</span>
+            </button>,
+          ];
+        const checked = e.kind === 'auto' ? e.checked : e.row.checked;
+        return [
           <button
-            key={r.root}
+            key={e.kind === 'auto' ? 'auto' : e.row.root}
             type="button"
             role="menuitemradio"
-            aria-checked={isActive}
-            className={`ctxmenu__item repo-picker-menu__row${
-              activeIndex === idx ? ' ctxmenu__item--active' : ''
-            }`}
-            onMouseEnter={() => setActiveIndex(idx)}
-            onClick={() => onPick(r.root)}
+            aria-checked={checked}
+            className={itemClass(i)}
+            onMouseEnter={() => setActiveIndex(i)}
+            onClick={() => pickEntry(e)}
           >
-            <span className="ctxmenu__icon">
-              {isActive ? <IconCheck size={13} /> : <span style={{ width: 13 }} />}
-            </span>
-            <span className="repo-picker-menu__name" dir="ltr">
-              {r.name}
-            </span>
-          </button>
-        );
+            {check(checked)}
+            {e.kind === 'auto' ? (
+              <span className="repo-picker-menu__name">{e.label}</span>
+            ) : (
+              <span className="repo-picker-menu__text">
+                <span className="repo-picker-menu__line">
+                  <span className="repo-picker-menu__name" dir="ltr" title={e.row.root}>
+                    {e.row.name}
+                  </span>
+                  <RepoTagPill tag={e.row.tag} />
+                </span>
+                {e.row.sub && (
+                  <span className="repo-picker-menu__sub" dir="ltr">
+                    {e.row.sub}
+                  </span>
+                )}
+              </span>
+            )}
+          </button>,
+        ];
       })}
     </div>,
     document.body,

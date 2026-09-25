@@ -45,6 +45,7 @@ export type HtmlDefaultView = 'preview' | 'source';
 /** Explorer file-icon style: no icons, monochrome line icons, or per-type coloured icons. */
 export type IconPack = 'none' | 'minimal' | 'colored';
 export type LimitResumeMode = 'off' | 'offer' | 'arm';
+export type ChangesViewMode = 'all' | 'active';
 
 export interface AppSettings {
   theme: string; // theme id (see webview/themes.ts)
@@ -85,6 +86,7 @@ export interface AppSettings {
   cardTitle: CardField;
   cardSubtitle: CardField;
   cardDetail: CardField;
+  cardLayoutRev: number; // see mf-sidebar spec §5 D4
   // sessions pane
   sessionSort: SessionSort;
   sessionGroupByProject: boolean;
@@ -137,13 +139,9 @@ export interface AppSettings {
   // Behaviour: track the terminal's live working directory (via OSC escape sequences)
   // and re-root the Files + Changes views to it. Default ON.
   trackCwd: boolean;
-  // Behaviour: show the git branch/worktree indicator at the top of a terminal tab.
-  // Default ON; a durable per-user preference (power users may want quieter chrome).
-  showGitIndicator: boolean;
-  // Behaviour: detect sub-repos under the opened folder and show a repo picker that scopes the
-  // git surfaces to one active repo. Default ON (self-hides for single-repo projects). See
-  // docs/specs/archive/2026-06-25-multi-repo-awareness.md.
-  multiRepoPicker: boolean;
+  // Behaviour: the Changes tab lists every repo of the session, or only the active one.
+  // See docs/specs/archive/2026-09-23-mf-changes.md.
+  changesView: ChangesViewMode;
   // Behaviour: persist each terminal session's recent output (bounded ring) and replay
   // it into xterm on reopen/relaunch so prior history survives a restart. Default ON —
   // replay runs no process, unlike autoRelaunchStale, but it DOES re-apply the history's
@@ -183,10 +181,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sidebarCollapsed: false,
   explorerCollapsed: false,
   cardTitle: 'name',
-  // The live line is the design's subtitle in every state; the age it displaced now sits
-  // on the card's status row, so the third field defaults to off rather than repeating it.
-  cardSubtitle: 'live',
+  cardSubtitle: 'agent', // see mf-sidebar spec §5 D4
   cardDetail: 'none',
+  cardLayoutRev: 2,
   sessionSort: 'manual',
   sessionGroupByProject: true,
   collapsedProjects: [],
@@ -210,8 +207,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoResumeOnLimit: 'arm',
   autoRelaunchStale: false,
   trackCwd: true,
-  showGitIndicator: true,
-  multiRepoPicker: true,
+  changesView: 'all',
   scrollbackPersistence: true,
   logging: true,
   logLevel: 'info',
@@ -219,6 +215,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 const LOG_LEVELS: LogLevel[] = ['off', 'error', 'warn', 'info', 'debug', 'trace'];
 const LIMIT_RESUME_MODES: LimitResumeMode[] = ['off', 'offer', 'arm'];
+const CHANGES_VIEWS: ChangesViewMode[] = ['all', 'active'];
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
 const FONT_SIZES: FontSize[] = ['small', 'medium', 'large', 'xlarge'];
@@ -354,6 +351,14 @@ function surfaceColorFrom(raw: Record<string, unknown>, fallback: string): strin
   return hexColor(legacy, fallback);
 }
 
+/** `live` was the old default, so a pre-rev-2 `live` is upgraded once (mf-sidebar spec §5 D4). */
+function cardSubtitleFrom(payload: Record<string, unknown>): CardField {
+  const v = oneOf(payload.cardSubtitle, CARD_FIELDS, DEFAULT_SETTINGS.cardSubtitle);
+  const rev = payload.cardLayoutRev;
+  const upgraded = typeof rev === 'number' && rev >= DEFAULT_SETTINGS.cardLayoutRev;
+  return v === 'live' && !upgraded ? 'agent' : v;
+}
+
 export function serializeSettings(s: AppSettings): string {
   return JSON.stringify({ version: VERSION, settings: s });
 }
@@ -411,14 +416,16 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     sidebarCollapsed: bool(payload.sidebarCollapsed, DEFAULT_SETTINGS.sidebarCollapsed),
     explorerCollapsed: bool(payload.explorerCollapsed, DEFAULT_SETTINGS.explorerCollapsed),
     cardTitle: oneOf(payload.cardTitle, CARD_FIELDS, DEFAULT_SETTINGS.cardTitle),
-    cardSubtitle: oneOf(payload.cardSubtitle, CARD_FIELDS, DEFAULT_SETTINGS.cardSubtitle),
+    cardSubtitle: cardSubtitleFrom(payload),
     cardDetail: oneOf(payload.cardDetail, CARD_FIELDS, DEFAULT_SETTINGS.cardDetail),
+    cardLayoutRev: DEFAULT_SETTINGS.cardLayoutRev,
     sessionSort: oneOf(payload.sessionSort, SESSION_SORTS, DEFAULT_SETTINGS.sessionSort),
     sessionGroupByProject: bool(
       payload.sessionGroupByProject,
       DEFAULT_SETTINGS.sessionGroupByProject,
     ),
-    collapsedProjects: strArr(payload.collapsedProjects),
+    // Pre-project entries were absolute folder paths; ids and 'standalone' never hold a separator.
+    collapsedProjects: strArr(payload.collapsedProjects).filter((k) => !/[\\/]/.test(k)),
     shortcuts: strMap(payload.shortcuts),
     defaultAgentId: strOr(payload.defaultAgentId, DEFAULT_SETTINGS.defaultAgentId),
     restoreSessions: bool(payload.restoreSessions, DEFAULT_SETTINGS.restoreSessions),
@@ -456,8 +463,14 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     ),
     autoRelaunchStale: bool(payload.autoRelaunchStale, DEFAULT_SETTINGS.autoRelaunchStale),
     trackCwd: bool(payload.trackCwd, DEFAULT_SETTINGS.trackCwd),
-    showGitIndicator: bool(payload.showGitIndicator, DEFAULT_SETTINGS.showGitIndicator),
-    multiRepoPicker: bool(payload.multiRepoPicker, DEFAULT_SETTINGS.multiRepoPicker),
+    // A retired `multiRepoPicker: false` migrates to the active-repo view (spec §13 D4).
+    changesView: oneOf(
+      payload.changesView,
+      CHANGES_VIEWS,
+      payload.changesView === undefined && payload.multiRepoPicker === false
+        ? 'active'
+        : DEFAULT_SETTINGS.changesView,
+    ),
     scrollbackPersistence: bool(
       payload.scrollbackPersistence,
       DEFAULT_SETTINGS.scrollbackPersistence,

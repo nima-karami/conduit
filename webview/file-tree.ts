@@ -3,7 +3,8 @@
 // must reconcile a fresh on-disk listing WITHOUT discarding the user's expanded dirs or
 // already-loaded children (see `mergeEntries`).
 
-import type { ChangeDTO, ChangeKind, DirEntryDTO } from '../src/protocol';
+import { folderKey } from '../src/folder-key';
+import type { ChangeDTO, ChangeKind, DirEntryDTO, RepoChanges } from '../src/protocol';
 
 export interface TreeNode {
   name: string;
@@ -138,14 +139,24 @@ export function applyEntries(
   if (dirPath === rootPath) {
     return mergeEntries(roots, dirPath, entries);
   }
-  const recurse = (nodes: TreeNode[]): TreeNode[] =>
-    nodes.map((n) => {
+  // Untouched branches keep their identity, so a reply for a dir this tree doesn't hold is free.
+  const recurse = (nodes: TreeNode[]): TreeNode[] => {
+    let out: TreeNode[] | undefined;
+    nodes.forEach((n, i) => {
+      let next = n;
       if (n.path === dirPath) {
-        return { ...n, children: mergeEntries(n.children, dirPath, entries) };
+        next = { ...n, children: mergeEntries(n.children, dirPath, entries) };
+      } else if (n.children) {
+        const children = recurse(n.children);
+        if (children !== n.children) next = { ...n, children };
       }
-      if (n.children) return { ...n, children: recurse(n.children) };
-      return n;
+      if (next !== n) {
+        out ??= nodes.slice();
+        out[i] = next;
+      }
     });
+    return out ?? nodes;
+  };
   return recurse(roots);
 }
 
@@ -296,6 +307,16 @@ export function nearestSurvivor(
   return null;
 }
 
+/** Basename of a path (forward or back slashes), trailing separators stripped. */
+export function nameOf(p: string): string {
+  return (
+    p
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .pop() ?? p
+  );
+}
+
 /** Parent directory of an absolute path (host-agnostic; trailing separators stripped). */
 export function parentDir(path: string): string {
   return path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
@@ -325,7 +346,7 @@ function resolveKindPrecedence(_staged: ChangeKind, unstaged: ChangeKind): Chang
 /**
  * Build a `Map<relativePath, ChangeKind>` from a flat `ChangeDTO[]` for the Files-tree
  * overlay. Decorates every changed file plus every ancestor folder of one (folder kind =
- * most alarming descendant, D > M > A > U). On MM (staged + unstaged) the unstaged kind wins.
+ * most alarming descendant, D > M > R > A > U). On MM (staged + unstaged) the unstaged kind wins.
  */
 export function buildChangeMap(changes: ChangeDTO[]): Map<string, ChangeKind> {
   // Forward slashes so matching against host-separator tree paths is consistent.
@@ -348,7 +369,7 @@ export function buildChangeMap(changes: ChangeDTO[]): Map<string, ChangeKind> {
   const out = new Map<string, ChangeKind>(fileMap);
 
   // Roll up to ancestor folders, keeping the highest-priority kind.
-  const kindPriority: Record<ChangeKind, number> = { D: 3, M: 2, A: 1, U: 0 };
+  const kindPriority: Record<ChangeKind, number> = { D: 4, M: 3, R: 2, A: 1, U: 0 };
   for (const [filePath, kind] of fileMap) {
     const segments = filePath.split('/');
     for (let i = 1; i < segments.length; i++) {
@@ -360,5 +381,24 @@ export function buildChangeMap(changes: ChangeDTO[]): Map<string, ChangeKind> {
     }
   }
 
+  return out;
+}
+
+/** Row decoration map keyed by folderKey(absolute path) (spec D13): a row under no repo in this
+ *  data gets no dot, never a lookup relative to another folder's root. */
+export function buildRowChangeMap(input: {
+  repoChanges: readonly RepoChanges[] | undefined;
+  changes: readonly ChangeDTO[];
+  changesRoot: string | undefined;
+}): Map<string, ChangeKind> {
+  const repos =
+    input.repoChanges ??
+    (input.changesRoot !== undefined ? [{ root: input.changesRoot, changes: input.changes }] : []);
+  const out = new Map<string, ChangeKind>();
+  for (const r of repos) {
+    for (const [rel, kind] of buildChangeMap([...r.changes])) {
+      out.set(folderKey(`${r.root}/${rel}`), kind);
+    }
+  }
   return out;
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveTitleSync } from '../../src/session-title';
 
-const base = { name: 'conduit', projectPath: 'C:\\dev\\conduit' };
+const base = { name: 'conduit', home: 'C:\\dev\\conduit' };
 
 describe('resolveTitleSync', () => {
   it('adopts a meaningful app title', () => {
@@ -37,9 +37,7 @@ describe('resolveTitleSync', () => {
   });
 
   it('adopts another recognizable app title', () => {
-    expect(resolveTitleSync({ name: 'conduit', projectPath: 'C:\\dev\\conduit' }, 'Aider')).toBe(
-      'Aider',
-    );
+    expect(resolveTitleSync({ name: 'conduit', home: 'C:\\dev\\conduit' }, 'Aider')).toBe('Aider');
   });
 
   it('ignores tool/command titles a shell or runner sets while a command runs', () => {

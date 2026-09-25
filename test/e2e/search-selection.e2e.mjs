@@ -141,5 +141,15 @@ runScenario('search-selection', async ({ page, log }) => {
   assert(hits > 0, 'a multi-line query must actually find its span in the file');
   log('the multi-line query matches across the line boundary ✓');
 
+  // mf-files AC11: a one-folder session renders exactly as before — no folder headings, and a
+  // summary without the `· K folders` tail.
+  const summary = (await page.locator('.search__summary').innerText()).trim();
+  assert(
+    (await page.locator('.searchfolder').count()) === 0,
+    'a single-folder session shows no folder groups',
+  );
+  assert(!/folder/.test(summary), `single-folder summary has no folder count, got "${summary}"`);
+  log(`single-folder rendering unchanged (${summary}) ✓`);
+
   log('PASS — selection seeds the search box, multi-line survives and matches');
 });

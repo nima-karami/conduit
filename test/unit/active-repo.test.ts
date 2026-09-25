@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { repoForPath, resolveActiveRepo } from '../../src/active-repo';
+import {
+  repoForPath,
+  requestGitRoot,
+  resolveActiveRepo,
+  resolveRequestRepoRoot,
+} from '../../src/active-repo';
 import type { RepoInfo } from '../../src/repo-scan';
 
 const repos: RepoInfo[] = [
-  { root: '/work/A', name: '.' },
-  { root: '/work/A/sub', name: 'sub' },
-  { root: '/work/B', name: 'B' },
+  { root: '/work/A', name: '.', folder: '/work/A', tag: 'home' },
+  { root: '/work/A/sub', name: 'sub', folder: '/work/A', tag: 'nested' },
+  { root: '/work/B', name: '.', folder: '/work/B', tag: 'attached' },
 ];
 
 describe('repoForPath', () => {
@@ -21,7 +26,12 @@ describe('repoForPath', () => {
     expect(repoForPath(repos, '/work/B')).toBe('/work/B');
   });
   it('handles Windows backslashes', () => {
-    expect(repoForPath([{ root: 'C:/work/A', name: '.' }], 'C:\\work\\A\\x.ts')).toBe('C:/work/A');
+    expect(
+      repoForPath(
+        [{ root: 'C:/work/A', name: '.', folder: 'C:/work/A', tag: 'home' }],
+        'C:\\work\\A\\x.ts',
+      ),
+    ).toBe('C:/work/A');
   });
 });
 
@@ -45,12 +55,68 @@ describe('resolveActiveRepo', () => {
   });
   it('falls back to the first repo when opened root is not itself a repo', () => {
     const r: RepoInfo[] = [
-      { root: '/work/X/r1', name: 'r1' },
-      { root: '/work/X/r2', name: 'r2' },
+      { root: '/work/X/r1', name: 'r1', folder: '/work/X', tag: 'nested' },
+      { root: '/work/X/r2', name: 'r2', folder: '/work/X', tag: 'nested' },
     ];
     expect(resolveActiveRepo({ repos: r, openedRoot: '/work/X' })).toBe('/work/X/r1');
   });
   it('returns undefined when there are no repos', () => {
     expect(resolveActiveRepo({ repos: [], openedRoot })).toBeUndefined();
+  });
+});
+
+describe('requestGitRoot', () => {
+  const win: RepoInfo[] = [
+    { root: 'C:/Work/A', name: '.', folder: 'C:/Work/A', tag: 'home' },
+    { root: 'C:/Work/B', name: '.', folder: 'C:/Work/B', tag: 'attached' },
+  ];
+  const s = { repos: win, activeRepoRoot: 'C:/Work/A', cwd: 'C:/Work/A/src', home: 'C:/Work/A' };
+  it('undefined → gitRootForSession', () => {
+    expect(requestGitRoot(s, undefined)).toBe('C:/Work/A');
+    expect(requestGitRoot({ ...s, activeRepoRoot: undefined }, undefined)).toBe('C:/Work/A/src');
+  });
+  it('a detected root in other case/slashes → that root', () => {
+    expect(requestGitRoot(s, 'c:\\work\\b\\')).toBe('C:/Work/B');
+  });
+  it('unknown or non-string → null', () => {
+    expect(requestGitRoot(s, 'C:/Work/nope')).toBeNull();
+    expect(requestGitRoot(s, 'C:/Work')).toBeNull();
+    expect(requestGitRoot(s, 42)).toBeNull();
+    expect(requestGitRoot(s, null)).toBeNull();
+    expect(requestGitRoot(s, '')).toBeNull();
+    expect(requestGitRoot({ ...s, repos: undefined }, 'C:/Work/B')).toBeNull();
+    expect(requestGitRoot({ repos, home: '/work/A' }, '/WORK/B')).toBeNull();
+  });
+});
+
+describe('resolveRequestRepoRoot', () => {
+  const win: RepoInfo[] = [
+    { root: 'C:/Work/A', name: '.', folder: 'C:/Work/A', tag: 'home' },
+    { root: 'C:/Work/B', name: '.', folder: 'C:/Work/B', tag: 'attached' },
+  ];
+  const s = { repos: win, activeRepoRoot: 'C:/Work/A', cwd: 'C:/Work/A/src', home: 'C:/Work/A' };
+  const never = () => Promise.reject(new Error('liveRepo must not be called'));
+
+  it('undefined → gitRootForSession, liveRepo not called', async () => {
+    expect(await resolveRequestRepoRoot(s, undefined, never)).toBe('C:/Work/A');
+  });
+  it('detected root in other case → that detected root', async () => {
+    expect(await resolveRequestRepoRoot(s, 'c:\\work\\b', never)).toBe('C:/Work/B');
+  });
+  it('undetected root equal to the live cwd repo (C:/ vs c:\\) → the host-resolved live root', async () => {
+    const live = async () => 'c:\\Other\\Repo';
+    expect(await resolveRequestRepoRoot(s, 'C:/Other/Repo', live)).toBe('c:\\Other\\Repo');
+  });
+  it('undetected root, live repo differs → null', async () => {
+    const live = async () => 'C:/Work/A';
+    expect(await resolveRequestRepoRoot(s, 'C:/Other/Repo', live)).toBeNull();
+  });
+  it('non-string → null', async () => {
+    expect(await resolveRequestRepoRoot(s, 42, never)).toBeNull();
+    expect(await resolveRequestRepoRoot(s, null, never)).toBeNull();
+  });
+  it('liveRepo "" → null', async () => {
+    expect(await resolveRequestRepoRoot(s, 'C:/Other/Repo', async () => '')).toBeNull();
+    expect(await resolveRequestRepoRoot(s, '', async () => '')).toBeNull();
   });
 });

@@ -28,7 +28,8 @@ const latestReq = new Map<string, number>();
 let reqCounter = 0;
 let wired = false;
 
-const keyFor = (sessionId: string, rk: string) => `${sessionId}\0${rk}`;
+const keyFor = (sessionId: string, rk: string, repoRoot: string | undefined) =>
+  `${sessionId}\0${rk}\0${repoRoot ?? ''}`;
 
 function emit(key: string) {
   for (const l of listeners.get(key) ?? []) l();
@@ -39,7 +40,7 @@ function ensureWired() {
   wired = true;
   subscribe((msg: HostToWebview) => {
     if (msg.type !== 'git:rangeDiffResult') return;
-    const key = keyFor(msg.sessionId, msg.key);
+    const key = keyFor(msg.sessionId, msg.key, msg.repoRoot);
     // Latest-wins: drop a reply older than the newest request issued for this key.
     if ((latestReq.get(key) ?? 0) > msg.requestId) return;
     cache.set(
@@ -52,18 +53,36 @@ function ensureWired() {
   });
 }
 
-function send(sessionId: string, base: RefEndpoint, head: RefEndpoint, key: string) {
+function send(
+  sessionId: string,
+  base: RefEndpoint,
+  head: RefEndpoint,
+  key: string,
+  repoRoot: string | undefined,
+) {
   ensureWired();
   reqCounter += 1;
   latestReq.set(key, reqCounter);
   cache.set(key, LOADING);
-  post({ type: 'git:rangeDiff', sessionId, base, head, requestId: reqCounter });
+  post({
+    type: 'git:rangeDiff',
+    sessionId,
+    base,
+    head,
+    requestId: reqCounter,
+    ...(repoRoot ? { repoRoot } : {}),
+  });
 }
 
 /** Re-issue a comparison (clears any error/ready entry); used by the Review error state's Retry. */
-export function retryRangeDiff(sessionId: string, base: RefEndpoint, head: RefEndpoint) {
-  const key = keyFor(sessionId, rangeKey(base, head));
-  send(sessionId, base, head, key);
+export function retryRangeDiff(
+  sessionId: string,
+  base: RefEndpoint,
+  head: RefEndpoint,
+  repoRoot?: string,
+) {
+  const key = keyFor(sessionId, rangeKey(base, head), repoRoot);
+  send(sessionId, base, head, key, repoRoot);
   emit(key);
 }
 
@@ -71,13 +90,14 @@ export function useRangeFiles(
   sessionId: string | undefined,
   base: RefEndpoint | undefined,
   head: RefEndpoint | undefined,
+  repoRoot?: string,
 ): RangeFiles {
   const active = sessionId && base && head;
-  const key = active ? keyFor(sessionId, rangeKey(base, head)) : '';
+  const key = active ? keyFor(sessionId, rangeKey(base, head), repoRoot) : '';
   const subscribeFn = useCallback(
     (cb: () => void) => {
       if (!active) return () => {};
-      if (!cache.has(key)) send(sessionId, base, head, key);
+      if (!cache.has(key)) send(sessionId, base, head, key, repoRoot);
       let set = listeners.get(key);
       if (!set) {
         set = new Set();
@@ -88,7 +108,7 @@ export function useRangeFiles(
         set.delete(cb);
       };
     },
-    [active, key, sessionId, base, head],
+    [active, key, sessionId, base, head, repoRoot],
   );
   const getSnapshot = () => (key ? (cache.get(key) ?? LOADING) : LOADING);
   return useSyncExternalStore(subscribeFn, getSnapshot, getSnapshot);

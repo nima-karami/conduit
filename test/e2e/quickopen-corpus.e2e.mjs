@@ -69,4 +69,34 @@ runScenario('quickopen-corpus', async ({ page, log }) => {
     'git-ignored vendor/ files must not appear in the quick-open corpus',
   );
   log('git-ignored tree excluded ✓');
+
+  // mf-files AC12: the palette itself, for this one-folder session — rows untagged.
+  const late = `file${String(FILE_COUNT - 1).padStart(4, '0')}.ts`;
+  await page.evaluate(() => document.activeElement?.blur?.());
+  await page.keyboard.press('Control+P');
+  await page.locator('.palette__input').waitFor({ state: 'visible', timeout: 5000 });
+  await page.locator('.palette__input').fill(late);
+  const rows = await page
+    .waitForFunction(
+      (name) => {
+        const group = [...document.querySelectorAll('.palette__group')].find(
+          (g) => g.querySelector('.palette__gtitle')?.textContent === 'Files',
+        );
+        const rs = [...(group?.querySelectorAll('.palette__row') ?? [])];
+        return rs.some((r) => r.querySelector('.palette__title')?.textContent?.endsWith(name))
+          ? rs.map((r) => !!r.querySelector('.palette__badge'))
+          : null;
+      },
+      late,
+      { timeout: 15000 },
+    )
+    .then((h) => h.jsonValue())
+    .catch(() => null);
+  assert(rows !== null, `the palette lists ${late} from the corpus`);
+  assert(
+    rows.every((tagged) => !tagged),
+    'a single-folder session shows no folder tag on quick-open rows',
+  );
+  await page.keyboard.press('Escape');
+  log('palette rows for a one-folder session carry no folder tag ✓');
 });

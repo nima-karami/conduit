@@ -37,11 +37,56 @@ const DIALOG_FILES = [
   'timed-message-dialog',
 ];
 
-const ALL_FILES = [...DIALOG_FILES, 'mermaid-zoom-overlay', 'context-menu', 'popover'];
+const ALL_FILES = [
+  ...DIALOG_FILES,
+  'mermaid-zoom-overlay',
+  'context-menu',
+  'popover',
+  'branch-chip',
+  'repo-head',
+  'changes-view',
+  'new-session-launch-row',
+  'new-session-project-chip',
+  'new-session-folders',
+  'new-session-preview',
+  'files-view',
+  'folder-section',
+  'review-repo-chip',
+  'project-picker',
+  'commit-picker-menu',
+  'repo-picker-menu',
+];
 
 /** Every dismiss-shaped prop/callback name used across the migrated dialogs. */
 const DISMISS_CALLS = ['onClose', 'onDismiss', 'onCancel', 'onResolve', 'requestClose'];
 const DISMISS_CALL_RE = new RegExp(`(?:${DISMISS_CALLS.join('|')})\\(`);
+
+describe('new-session menus', () => {
+  // The dialog adds no overlay root of its own: its menus ride Popover, whose .popover already
+  // declares no-drag (drag-region.test.ts), so a menu over .topbar stays clickable.
+  it.each(['new-session-launch-row', 'new-session-project-chip', 'new-session-folders'])(
+    '%s renders its menus in a Popover and positions nothing itself',
+    (name) => {
+      const src = readSrc(name);
+      expect(src).toMatch(/<Popover\b/);
+      expect(src).not.toMatch(/position:\s*['"]?fixed/);
+      expect(src).not.toMatch(/createPortal\(/);
+    },
+  );
+});
+
+describe('files tab menus', () => {
+  // The folder, row and drop-intent menus all go through the app's one ContextMenu (setMenu),
+  // whose .ctxmenu/.popover already declare no-drag; the Files tab builds no layer of its own.
+  it.each(['files-view', 'folder-section', 'folder-bar', 'missing-folder'])(
+    '%s positions nothing itself',
+    (name) => {
+      const src = readSrc(name);
+      expect(src).not.toMatch(/position:\s*['"]?fixed/);
+      expect(src).not.toMatch(/createPortal\(/);
+    },
+  );
+});
 
 describe('overlay migration static guard', () => {
   it.each(ALL_FILES)('%s never writes className="modal__backdrop" directly', (name) => {
@@ -66,8 +111,8 @@ describe('overlay migration static guard', () => {
 
 /**
  * `ContextMenu` renders `.popover .ctxmenu` and gets its positioning from `.popover`, but
- * `BranchSwitcherMenu`, `CommitPickerMenu` and `RepoPickerMenu` portal themselves and set inline
- * left/top on `.ctxmenu` alone. Strip the positioning from that class and those three lay out in
+ * `CommitPickerMenu` and `RepoPickerMenu` portal themselves and set inline left/top on `.ctxmenu`
+ * alone. Strip the positioning from that class and those two lay out in
  * body flow with their coordinates inert — invisible to any click-based e2e, because Playwright
  * scrolls a target into view before clicking it.
  */
@@ -84,7 +129,7 @@ describe('portaled menu classes keep a positioning scheme', () => {
     expect(body).toMatch(/z-index:/);
   });
 
-  it.each(['branch-switcher-menu', 'commit-picker-menu', 'repo-picker-menu'])(
+  it.each(['commit-picker-menu', 'repo-picker-menu'])(
     '%s still renders the .ctxmenu class it depends on',
     (name) => {
       expect(readSrc(name)).toMatch(/className="ctxmenu/);
@@ -92,9 +137,35 @@ describe('portaled menu classes keep a positioning scheme', () => {
   );
 });
 
+// The switcher list sits inside the chip's Popover; a nested .ctxmenu would be position: fixed
+// inside a positioned popover.
+describe('the branch chip menu', () => {
+  it('branch-chip renders its menu in a Popover', () => {
+    expect(readSrc('branch-chip')).toMatch(/<Popover/);
+    expect(readSrc('branch-switcher-menu')).not.toMatch(/className="ctxmenu[ "]/);
+    expect(readSrc('branch-switcher-menu')).not.toMatch(/createPortal/);
+  });
+});
+
 describe('modal-layer.tsx is the one legitimate modal__backdrop site', () => {
   it('still declares the default backdropClass', () => {
     const src = readFileSync(join(ROOT, 'modal-layer.tsx'), 'utf8');
     expect(src).toMatch(/modal__backdrop/);
+  });
+});
+
+// QA mf-files F2: a toast covered the lowest folder's ··· menu and took its clicks for 5 s.
+describe('the --layer-* bands', () => {
+  it('stack modal band < toast < popover < theatre', () => {
+    const css = readFileSync(join(ROOT, '..', 'styles.css'), 'utf8');
+    const layer = (name: string) => {
+      const m = css.match(new RegExp(`--layer-${name}:\\s*(\\d+);`));
+      if (!m) throw new Error(`--layer-${name} not found`);
+      return Number(m[1]);
+    };
+    const modalBandTop = layer('modal') + 19;
+    expect(layer('toast')).toBeGreaterThan(modalBandTop);
+    expect(layer('popover')).toBeGreaterThan(layer('toast'));
+    expect(layer('theatre')).toBeGreaterThan(layer('popover'));
   });
 });

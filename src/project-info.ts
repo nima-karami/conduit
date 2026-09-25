@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { GIT_TIMEOUT, mapWithConcurrency, runGit } from './git-exec';
+import { parseNumstatZ } from './git-history';
 import { IGNORED_DIRS } from './ignore-dirs';
 import type { ChangeDTO, ChangeKind, CustomizationCount, FileNodeDTO } from './protocol';
 
@@ -25,21 +26,33 @@ function kindFromCode(code: string): ChangeKind {
   if (code === '?') return 'U';
   if (code === 'A') return 'A';
   if (code === 'D') return 'D';
+  if (code === 'R') return 'R';
   return 'M';
 }
 
-function parseNumstat(out: string): Map<string, { added: number; removed: number }> {
-  const stats = new Map<string, { added: number; removed: number }>();
-  for (const line of out.split('\n')) {
-    const m = line.match(/^(\d+|-)\t(\d+|-)\t(.+)$/);
-    if (m) {
-      stats.set(m[3].trim(), {
-        added: m[1] === '-' ? 0 : Number(m[1]),
-        removed: m[2] === '-' ? 0 : Number(m[2]),
-      });
-    }
+interface StatusEntry {
+  x: string;
+  y: string;
+  p: string;
+  /** A rename's or copy's source. */
+  orig?: string;
+}
+
+/** Parse `git status --porcelain -z`: NUL-terminated, never C-quoted, and a rename or copy
+ *  record is followed by one more field holding its SOURCE path. */
+export function parseStatusZ(out: string): StatusEntry[] {
+  const entries: StatusEntry[] = [];
+  const fields = out.split('\0');
+  for (let i = 0; i < fields.length; i++) {
+    const f = fields[i];
+    if (f.length < 4) continue;
+    const x = f[0];
+    const y = f[1];
+    const moved = x === 'R' || x === 'C' || y === 'R' || y === 'C';
+    const orig = moved ? fields[++i] : undefined;
+    entries.push({ x, y, p: f.slice(3), ...(orig ? { orig } : {}) });
   }
-  return stats;
+  return entries;
 }
 
 /**
@@ -122,39 +135,24 @@ export function resolveLineCounts(
   }
 }
 
-async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
+export async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
   // --untracked-files=all expands a new untracked directory into its individual files;
   // the default collapses them to a single `dir/` entry (only the folder shows up).
-  const status = await run('git', ['status', '--porcelain', '--untracked-files=all'], cwd);
-  if (!status.trim()) return [];
+  const status = await run('git', ['status', '--porcelain', '-z', '--untracked-files=all'], cwd);
+  if (!status) return [];
 
   // Two numstat passes: staged side (index vs HEAD, --cached) and unstaged side
   // (worktree vs index). Newly-added staged files, deleted files, and untracked
   // files do not appear in numstat (they are absent from one of the two compared
   // trees). We handle those separately by counting lines directly.
   const [stagedOut, unstagedOut] = await Promise.all([
-    run('git', ['diff', '--numstat', '--cached'], cwd),
-    run('git', ['diff', '--numstat'], cwd),
+    run('git', ['diff', '--numstat', '-z', '--cached'], cwd),
+    run('git', ['diff', '--numstat', '-z'], cwd),
   ]);
-  const stagedStats = parseNumstat(stagedOut);
-  const unstagedStats = parseNumstat(unstagedOut);
+  const stagedStats = parseNumstatZ(stagedOut);
+  const unstagedStats = parseNumstatZ(unstagedOut);
 
-  // Parse all porcelain lines first so we know which files need extra fetches.
-  type RawEntry = {
-    p: string;
-    x: string;
-    y: string;
-  };
-  const rawEntries: RawEntry[] = [];
-  for (const line of status.split('\n')) {
-    if (!line.trim()) continue;
-    const x = line[0]; // index (staged) status
-    const y = line[1]; // worktree (unstaged) status
-    let p = line.slice(3).trim();
-    if (p.includes(' -> ')) p = p.split(' -> ')[1]; // renames
-    p = p.replace(/^"(.*)"$/, '$1');
-    rawEntries.push({ p, x, y });
-  }
+  const rawEntries = parseStatusZ(status);
 
   // Identify files that need HEAD content (deleted) or working-tree content
   // (added staged or untracked). Batch all fetches in parallel.
@@ -210,6 +208,7 @@ async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
     numstatMap: Map<string, { added: number; removed: number }>,
     staged: boolean,
     conflicted = false,
+    orig?: string,
   ) => {
     if (code === ' ' || code === '?') return;
     const kind = kindFromCode(code);
@@ -219,9 +218,17 @@ async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
       fileLineCounts.get(p),
       headContents.get(p),
     );
-    changes.push({ path: p, added, removed, kind, staged, ...(conflicted ? { conflicted } : {}) });
+    changes.push({
+      path: p,
+      added,
+      removed,
+      kind,
+      staged,
+      ...(conflicted ? { conflicted } : {}),
+      ...(staged && orig !== undefined ? { origPath: orig } : {}),
+    });
   };
-  for (const { p, x, y } of rawEntries) {
+  for (const { p, x, y, orig } of rawEntries) {
     if (x === '?' && y === '?') {
       // Untracked: a single unstaged entry.
       const { added, removed } = resolveLineCounts(
@@ -234,7 +241,7 @@ async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
       continue;
     }
     const conflicted = isConflicted(x, y);
-    pushSide(p, x, stagedStats, true, conflicted); // staged side (index vs HEAD)
+    pushSide(p, x, stagedStats, true, conflicted, orig); // staged side (index vs HEAD)
     pushSide(p, y, unstagedStats, false, conflicted); // unstaged side (worktree vs index)
   }
   return changes;

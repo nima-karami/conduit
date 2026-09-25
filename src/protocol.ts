@@ -1,28 +1,31 @@
+import type { AgentScopeReason } from './add-dir-delivery';
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
 import type { SearchFileResult, SearchQuery } from './content-search';
+import type { DroppedRoot, SessionOpReason } from './folder-validation';
 import type { RefEndpoint } from './git-range';
+import type { LauncherDTO } from './launchers';
 import type { LogLevel } from './logging';
 import type { LspServerStatus, LspTrustState } from './lsp-protocol';
+import type { DragOutRefusal } from './outgoing-paths';
 import type { TokenResolution } from './path-resolve';
 import type { PipelineConfig } from './pipeline';
 import type { PlanCommentPatch, PlanCommentsData } from './plan-comments';
 import type { PreviewReason } from './preview-url';
 import type { QueueSummary } from './queue-summary';
 import type { RangePreset } from './range-preset';
+import type { RepoTag } from './repo-scan';
 import type { ReviewMark, ReviewMarksRepo } from './review-marks';
 import type { ReviewNote, ReviewNotePatch } from './review-notes';
 import type { AppSettings } from './settings';
 import type { FireFailure, TimedMessage, TimedMessageInput } from './timed-messages';
 import type { TsconfigDTO } from './tsconfig-map';
-import type { AgentDefinition, Session } from './types';
+import type { AgentDefinition, Project, Session } from './types';
 
+export type { DragOutRefusal } from './outgoing-paths';
 export type { RepoInfo } from './repo-scan';
 
-export interface ProjectGroupDTO {
-  projectPath: string;
-  sessions: Session[];
-}
+export type OsClipboardFailure = DragOutRefusal | 'unsupported' | 'failed';
 
 /**
  * A persisted editor tab, round-tripped renderer → host → docs.json → renderer to restore the
@@ -50,7 +53,7 @@ export interface PersistedDoc {
 /** Which side of a file a diff TAB shows. See spec 2026-09-22-scoped-diff-tabs §2. */
 export type DiffTabScope = 'staged' | 'unstaged';
 
-export type ChangeKind = 'M' | 'A' | 'D' | 'U';
+export type ChangeKind = 'M' | 'A' | 'D' | 'R' | 'U';
 
 export interface ChangeDTO {
   path: string;
@@ -69,6 +72,18 @@ export interface ChangeDTO {
    * apply target on a conflicted path (no stage-0 index blob), so the surfaces disable them.
    */
   conflicted?: boolean;
+  /** Staged renames and copies only: the source path. Unstaging only `path` would leave the
+   *  source's deletion staged, and discarding needs both sides. */
+  origPath?: string;
+}
+
+/** One detected repo's changes, pinned for downstream readers: docs/specs/archive/2026-09-23-mf-changes.md §3. */
+export interface RepoChanges {
+  root: string;
+  name: string;
+  tag: RepoTag;
+  sub?: string;
+  changes: ChangeDTO[];
 }
 
 /** Which blob each side of a diff is read from. `base:'head'` + `side:'worktree'` (the
@@ -92,6 +107,29 @@ export interface FileNodeDTO {
 export interface CustomizationCount {
   id: string;
   count: number;
+}
+
+/** New session dialog folder probe (mf-new-session spec §3.2): one `folder:probe` carries at most this many. */
+export const MAX_PROBE_PATHS = 16;
+export interface FolderProbeResult {
+  path: string;
+  exists: boolean;
+  branch?: string;
+  detached?: boolean;
+}
+export type LaunchPreviewError =
+  | 'home-missing'
+  | 'unknown-launcher'
+  | 'unresolvable'
+  | 'invalid-request';
+/** Shared here so the renderer never type-imports the host-only preview module. */
+export interface LaunchPreviewResult {
+  cwd?: string;
+  command?: string;
+  args?: string[];
+  display?: string;
+  error?: LaunchPreviewError;
+  skippedAddDirRoots: string[];
 }
 
 /** A previously-opened repository/folder, with the terminal last used in it. */
@@ -313,15 +351,21 @@ export interface AboutInfo {
   chromeVersion: string;
   /** True for an unpacked dev build (!app.isPackaged) — drives the visible DEV badge. */
   isDev: boolean;
+  /** CONDUIT_E2E=1: gates renderer test seams that can widen writeRoots (mf-files spec §3.3). */
+  e2e: boolean;
 }
+
+export type LocateReason = SessionOpReason | 'cancelled';
 
 export type HostToWebview =
   | {
       type: 'state';
       agents: AgentDefinition[];
-      groups: ProjectGroupDTO[];
       sessions: Session[];
+      projects: Project[];
       repos: RepoDTO[];
+      /** Registry members joined with launchers.json usage, in `agents` order (mf-new-session §3.2). */
+      launchers: LauncherDTO[];
       settings: AppSettings;
       about: AboutInfo;
       // The id of the window receiving this state (multi-window Slice B). The renderer
@@ -334,6 +378,9 @@ export type HostToWebview =
       changes: ChangeDTO[];
       files: FileNodeDTO[];
       customizations: CustomizationCount[];
+      /** Present iff the request carried a sessionId whose repos are scanned; display order. */
+      repoChanges?: RepoChanges[];
+      requestId: number;
     }
   | { type: 'error'; message: string }
   // Terminal output streamed from the PTY in the extension host.
@@ -371,6 +418,7 @@ export type HostToWebview =
       truncated?: DiffTruncation;
       error?: string;
       requestId: number;
+      repoRoot?: string;
     }
   // The active repo's commit history + computed lane layout (git-history Slice A).
   | {
@@ -388,6 +436,7 @@ export type HostToWebview =
       // Echoes a non-empty search `query` so the renderer routes this as a full-history search
       // result (a separate slice, latest-wins) rather than the base paged read.
       query?: string;
+      repoRoot?: string;
     }
   // Per-line blame for one open file (git-blame). `path` echoes the request so the viewer
   // matches the reply to its doc; `error` set ⇒ a resolution failure (not a repo / read
@@ -464,6 +513,7 @@ export type HostToWebview =
       base?: RefEndpoint;
       head?: RefEndpoint;
       error?: string;
+      repoRoot?: string;
     }
   // A file's HEAD blob, for the editor's change decorations. `headSha` pins the cache key
   // (path + sha) so split panes and re-mounts don't refetch; `requestId` is latest-wins.
@@ -577,7 +627,51 @@ export type HostToWebview =
   // Live working-tree change for an open project root (debounced, noise-filtered). The
   // renderer re-reads git changes + the file tree without waiting for a window focus.
   // See electron/project-watcher.ts.
-  | { type: 'fsChanged'; root: string }
+  | { type: 'fsChanged'; root: string; folders: string[] }
+  | { type: 'session:opResult'; requestId: number; ok: boolean; reason?: SessionOpReason }
+  | {
+      type: 'session:locateResult';
+      requestId: number;
+      ok: boolean;
+      path?: string;
+      reason?: LocateReason;
+    }
+  // Replies to session:addDirsToAgent / session:restart, to the sender only (mf-live-edits §3.1).
+  | {
+      type: 'agentScope:result';
+      requestId: number;
+      sessionId: string;
+      ok: boolean;
+      reason?: AgentScopeReason;
+    }
+  | { type: 'project:created'; requestId: number; id: string }
+  // Posted after the `state` that carries the new launcher, so its id is already in `agents`.
+  | { type: 'launcher:added'; requestId: number; id?: string; error?: string }
+  | { type: 'folder:picked'; requestId: number; path: string | null }
+  | { type: 'folder:probeResult'; requestId: number; results: FolderProbeResult[] }
+  | { type: 'fs:osClipboardResult'; requestId: number; ok: true }
+  | {
+      type: 'fs:osClipboardResult';
+      requestId: number;
+      ok: false;
+      reason: OsClipboardFailure;
+      path?: string;
+      detail?: string;
+    }
+  | ({ type: 'launch:previewResult'; requestId: number } & LaunchPreviewResult)
+  | {
+      type: 'project:opResult';
+      requestId: number;
+      ok: false;
+      reason: 'invalid-name' | 'store-unavailable';
+    }
+  | {
+      type: 'openRepo:result';
+      requestId: number;
+      sessionId?: string;
+      droppedRoots: DroppedRoot[];
+      error?: 'home-missing' | 'invalid-path' | 'unknown-agent';
+    }
   | {
       type: 'updateStatus';
       status: 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error';
@@ -623,6 +717,8 @@ export type HostToWebview =
       current: string | null;
       remotes: string[];
       tags: string[];
+      error?: string;
+      repoRoot?: string;
     }
   // Outcome of a `git:switch`. `ok:true` → the host scheduled a git refresh; the new branch
   // arrives on the next `state`. A refusal/failure carries a reason + pre-localized message
@@ -633,6 +729,7 @@ export type HostToWebview =
       ok: boolean;
       reason?: 'busy' | 'dirty' | 'failed';
       message?: string;
+      repoRoot?: string;
     }
   // Windows delivers the mouse thumb buttons as the per-window `app-command` OS event
   // (browser-backward/forward), not as DOM button 3/4. The host forwards them here so the
@@ -688,10 +785,52 @@ export type WebviewToHost =
   | { type: 'revealLogs' }
   // Open a known folder in the chosen terminal. Optional `cardId` (N2) stamps the
   // created session with the feature-board card it was started for, linking the two.
-  | { type: 'openRepo'; path: string; agentId: string; cardId?: string }
-  | { type: 'browseRepo'; agentId: string } // host shows a folder dialog, then opens it in the chosen terminal
+  // With a `requestId` the host answers `openRepo:result` (mf-model spec §3.2).
+  | {
+      type: 'openRepo';
+      path: string;
+      agentId: string;
+      cardId?: string;
+      roots?: string[];
+      projectId?: string | null;
+      requestId?: number;
+    }
+  // New session launchers (mf-new-session spec §3.2). A rescan posts `state` only on a change.
+  | { type: 'launchers:rescan' }
+  | { type: 'launcher:addCustom'; requestId: number; commandLine: string; label?: string }
+  | { type: 'launcher:removeCustom'; id: string }
+  // The one folder-pick seam (locked L11); e2e answers it through `__pickDirHook`.
+  | { type: 'folder:pick'; requestId: number }
+  | { type: 'folder:probe'; requestId: number; paths: string[] }
+  | { type: 'fs:copyToOsClipboard'; requestId: number; sessionId: string; paths: string[] }
+  | { type: 'launch:preview'; requestId: number; agentId: string; home: string; roots: string[] }
   // Ask host for git changes (scoped to `changesRoot`, the active repo) + file tree (from `path`).
-  | { type: 'requestProject'; path: string; changesRoot?: string }
+  | {
+      type: 'requestProject';
+      path: string;
+      changesRoot?: string;
+      sessionId?: string;
+      /** Echoed on the `project` reply so the renderer can drop an out-of-order one. Required:
+       *  an untagged post would bypass that ordering (review N-3). */
+      requestId: number;
+    }
+  // Folder and project ops (mf-model spec §3.2). A `requestId` asks for a reply; the next
+  // `state` is authoritative either way.
+  | { type: 'session:addRoot'; sessionId: string; path: string; requestId?: number }
+  | { type: 'session:removeRoot'; sessionId: string; path: string; requestId?: number }
+  | { type: 'session:setHome'; sessionId: string; path: string; requestId?: number }
+  // The host picks a replacement and swaps it in place, home or attached (locked L11).
+  | { type: 'session:locateFolder'; sessionId: string; path: string; requestId: number }
+  // A running claude and its folders (mf-live-edits spec §3.1). The host types only its own
+  // typeable list; the renderer never names a path.
+  | { type: 'session:addDirsToAgent'; sessionId: string; requestId: number }
+  | { type: 'session:restart'; sessionId: string; requestId: number }
+  | { type: 'session:dismissAgentScope'; sessionId: string }
+  | { type: 'session:setProject'; sessionId: string; projectId: string | null; requestId?: number }
+  | { type: 'project:create'; name: string; requestId: number }
+  | { type: 'project:rename'; id: string; name: string }
+  | { type: 'project:delete'; id: string }
+  | { type: 'project:reorder'; ids: string[] }
   | { type: 'readDir'; path: string }
   | { type: 'readFile'; path: string }
   // The full set of files currently open in editor/markdown tabs. The host watches them
@@ -718,6 +857,7 @@ export type WebviewToHost =
       before?: string;
       requestId?: number;
       query?: string;
+      repoRoot?: string;
     }
   // Inspect one commit's diff; host replies with a single sha-tagged `git:commitDiffResult`
   // carrying every changed file. `path` is reserved for a future single-file request. `root`
@@ -747,6 +887,7 @@ export type WebviewToHost =
       base: RefEndpoint;
       head: RefEndpoint;
       requestId: number;
+      repoRoot?: string;
     }
   // Set or clear ONE reviewed mark. The host owns the file and echoes the repo's new list to
   // every window, so two windows on one repo converge on the last writer (§4).
@@ -781,7 +922,13 @@ export type WebviewToHost =
   | { type: 'timer:test'; op: 'advance'; ms: number }
   // Resolve `unpushed` / `branchPoint` to sha endpoints for the picker's pinned rows.
   // `requestId` is latest-wins: the picker fires both presets when it opens.
-  | { type: 'git:resolveRange'; sessionId: string; preset: RangePreset; requestId: number }
+  | {
+      type: 'git:resolveRange';
+      sessionId: string;
+      preset: RangePreset;
+      requestId: number;
+      repoRoot?: string;
+    }
   | { type: 'rename'; id: string; name: string }
   // Set (or clear) a user-chosen Lucide icon override for a session (D3).
   // `icon` is a Lucide icon name in kebab-case (e.g. "rocket"); null clears the
@@ -901,7 +1048,7 @@ export type WebviewToHost =
   | { type: 'session:dragEnd'; sessionId: string; screenX: number; screenY: number }
   // Branch switcher (git-indicator Slice B). Fetch the dropdown's branch list for a
   // session's activeCwd; the host replies with `git:refsResult` to the requesting window.
-  | { type: 'git:refs'; sessionId: string }
+  | { type: 'git:refs'; sessionId: string; repoRoot?: string }
   // Request an in-place branch switch. `target` is a discriminated union so a future
   // `worktree` kind slots in without a breaking change (only `branch` is implemented). The
   // host validates `ref` against its own enumerated branch set, refuses if the session is
@@ -910,6 +1057,7 @@ export type WebviewToHost =
       type: 'git:switch';
       sessionId: string;
       target: { kind: 'branch'; ref: string };
+      repoRoot?: string;
     }
   // Multi-repo picker: pin the active repo to `repoRoot` (host validates against the detected
   // set), clear the pin, or report a context path so the host auto-follows the containing repo.

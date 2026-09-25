@@ -2,16 +2,24 @@ import { describe, expect, it } from 'vitest';
 import { type PaletteBadgeTone, sessionPaletteFields } from '../../src/palette-state';
 import { SESSION_STATE_WORD, type SessionIconVisualState } from '../../src/session-icon';
 
-const STATES: SessionIconVisualState[] = ['busy', 'attention', 'review', 'idle', 'stale'];
+const STATES: SessionIconVisualState[] = [
+  'busy',
+  'attention',
+  'review',
+  'idle',
+  'stale',
+  'cantStart',
+];
 
 /** Minimal sessions in each of the five states, built through the real flags. */
-const dirty = { kind: 'branch', branch: 'main', dirty: true } as const;
+const dirty = { '/r': { kind: 'branch', branch: 'main', dirty: true } } as const;
 const SAMPLE: Record<SessionIconVisualState, Parameters<typeof sessionPaletteFields>[0]> = {
   busy: { id: 's', status: 'running', busy: true },
   attention: { id: 's', status: 'running', needsAttention: true },
-  review: { id: 's', status: 'running', completedRun: true, git: dirty },
+  review: { id: 's', status: 'running', completedRun: true, repoGit: dirty },
   idle: { id: 's', status: 'running' },
   stale: { id: 's', status: 'exited' },
+  cantStart: { id: 's', status: 'stale', homeMissing: true },
 };
 
 describe('sessionPaletteFields', () => {
@@ -40,6 +48,7 @@ describe('sessionPaletteFields', () => {
     expect(tone('busy')).toBe('accent');
     expect(tone('idle')).toBe('neutral');
     expect(tone('stale')).toBe('quiet');
+    expect(tone('cantStart')).toBe('quiet');
   });
 
   it('marks only the session the user is already in', () => {

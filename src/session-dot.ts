@@ -5,7 +5,7 @@ import type { SessionIconVisualState } from './session-icon';
  * so the CSS can render them distinctly (R4.4):
  *   - `session--active`  — the selection cue. Driven by a single `selected` boolean derived
  *     upstream from `id === activeId`, so by construction at most one card is ever active.
- *   - `session--<state>` — the status cue, one of the five. The CSS resolves the cases
+ *   - `session--<state>` — the status cue, one of the six. The CSS resolves the cases
  *     where the two would compete.
  *
  * A selected card always carries `session--active`, and an unselected card never does — so

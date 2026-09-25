@@ -126,10 +126,10 @@ describe('planGitAction for hunk ops', () => {
     ).toEqual({ kind: 'reject', error: 'No hunk range provided.' });
   });
 
-  it('leaves the existing per-file ops exactly as they were', () => {
+  it('still plans a per-file op as a plain git command, not a hunk', () => {
     expect(planGitAction({ root: ROOT, op: 'stageFile', path: 'src/a.ts' })).toEqual({
       kind: 'git',
-      args: ['add', '--', 'src/a.ts'],
+      args: ['--literal-pathspecs', 'add', '--', 'src/a.ts'],
     });
   });
 });

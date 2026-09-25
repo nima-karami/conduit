@@ -9,35 +9,68 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { activeCwd, gitRootForSession } from '../src/active-cwd';
+import { repoForPath } from '../src/active-repo';
 import { visibleSessionIds } from '../src/attention';
+import type { BoardCard } from '../src/board';
+import { cardSessionPrefill } from '../src/board-linkage';
 import { canonicalPath } from '../src/canonical-path';
+import {
+  acceptRepoChanges,
+  changesModel,
+  createProjectReplyOrder,
+} from '../src/changes-view-model';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
 import {
   type DeleteOutcome,
   permanentConfirmMessage,
   trashConfirmMessage,
 } from '../src/delete-confirm';
+import { folderKey } from '../src/folder-key';
 import { langFromPath } from '../src/lang';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import { isHtmlDocPath } from '../src/media-kind';
 import type { ApplyResult } from '../src/nav-history';
+import { type NewSessionPrefill, projectForNewSession } from '../src/new-session-seed';
 import { resolveOwningSession } from '../src/owning-session';
 import { sessionPaletteFields } from '../src/palette-state';
 import { PLANS_DIR } from '../src/plan-path';
 import type {
+  ChangeDTO,
   DiffTabScope,
   FileContentDTO,
   FileDiffDTO,
   HostToWebview,
   PersistedDoc,
-  SearchHit,
+  RepoChanges,
 } from '../src/protocol';
+import {
+  acceptSearchResults,
+  type FolderCorpus,
+  foldersToRequest,
+  pruneCorpus,
+  quickOpenFileRows,
+} from '../src/quick-open-folders';
 import { quitConfirmCopy } from '../src/quit-guard';
-import { foldRelPath, isUnderRoot } from '../src/repo-rel';
+import {
+  historyRepoFor,
+  orderRepos,
+  repoBaseName,
+  repoLabel,
+  repoSetKey,
+} from '../src/repo-display';
+import { gitOf } from '../src/repo-git';
+import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
 import { resolveSessionIcon } from '../src/session-icon';
-import type { RightPaneTab } from '../src/settings';
-import { staleSessionIds } from '../src/stale-sessions';
+import { sessionNameFromPath } from '../src/session-name';
+import {
+  folderForPath,
+  foldersLeft,
+  presentFolders,
+  sessionSections,
+} from '../src/session-sections';
+import type { ChangesViewMode, RightPaneTab } from '../src/settings';
+import { canRelaunch, relaunchableSessionIds, staleSessionIds } from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
 import { formatDuration } from '../src/timed-messages';
 import type { AgentDefinition, Session } from '../src/types';
@@ -54,10 +87,12 @@ import {
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { goToChangeInActiveDoc } from './change-nav-registry';
+import { buildBulkMenuItems, discardAllPlan, runDiscardAll } from './changes-actions';
 import { type ClosedTab, popClosedTab, pushClosedTab, toClosedTab } from './closed-tabs';
 import { AnimatedBg } from './components/animated-bg';
 import { ArchitectureView } from './components/architecture-view';
 import { BoardView } from './components/board-view';
+import { BranchChip } from './components/branch-chip';
 import { CenterPane } from './components/center-pane';
 import { CommandPalette, type PaletteEntry } from './components/command-palette';
 import { ConfirmDialog, type ConfirmState } from './components/confirm-dialog';
@@ -66,6 +101,7 @@ import { ErrorBoundary } from './components/error-boundary';
 import { IconPickerModal } from './components/icon-picker-modal';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
+import { ProjectPicker } from './components/project-picker';
 import { RightPane, type RightPaneHandle } from './components/right-pane';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
@@ -100,6 +136,7 @@ import {
   navEntryFor,
 } from './editor-nav';
 import { shouldReplaceContent } from './file-freshness';
+import { buildRowChangeMap } from './file-tree';
 import {
   affectedDirs,
   applyRedo,
@@ -111,7 +148,7 @@ import {
   pushOp,
   redoActions,
 } from './fs-undo';
-import type { GitActionIntent } from './git-intent';
+import type { BulkTarget, GitActionIntent } from './git-intent';
 import { bumpHtmlReload, clearHtmlView, getHtmlView, toggleHtmlView } from './html-view-store';
 import { type HunkActionHost, setHunkActionHost } from './hunk-actions';
 import {
@@ -126,6 +163,7 @@ import {
   IconDoc,
   IconDuplicate,
   IconExternal,
+  IconFolder,
   IconGraph,
   IconPencil,
   IconPlus,
@@ -159,12 +197,14 @@ import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from '
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
 import { loadNotesFor } from './review-notes-store';
+import { reviewRepoChangesFor } from './review-repos';
 import {
   diffKey,
   REVIEW_SCOPES,
   type ReviewScope,
   scopeDiffArgs,
   scopeFromDiffArgs,
+  workingSource,
 } from './review-scope';
 import {
   getSaveEntry,
@@ -176,7 +216,7 @@ import {
 import { selectionInActiveDoc } from './selection-registry';
 import { selectionSourceFor } from './selection-source';
 import { useSettings } from './settings';
-import { effectiveCombo, formatCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
+import { comboLabel, effectiveCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { closeTabSelection } from './tab-close-selection';
 import {
   requestTerminalFocus,
@@ -187,7 +227,7 @@ import { THEMES } from './themes';
 import { cancelTimedMessage, renewTimedMessage, subscribeTimerEvents } from './timer-store';
 import { pushToast } from './toast-store';
 import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';
-import { applyProjectFiles } from './ts-project';
+import { applyProjectFiles, setCompilerOptionsRoot } from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
 import { useBackgroundOpenFeedback } from './use-background-open-feedback';
 import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-history';
@@ -262,7 +302,7 @@ function sessionOwningRoot(
   activeId: string | null,
 ): string | null {
   const want = normalizeRoot(root);
-  const owners = sessions.filter((s) => normalizeRoot(s.projectPath) === want).map((s) => s.id);
+  const owners = sessions.filter((s) => normalizeRoot(s.home) === want).map((s) => s.id);
   if (owners.length === 0) return null;
   if (activeId !== null && owners.includes(activeId)) return activeId;
   return owners[0] ?? null;
@@ -272,17 +312,11 @@ export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
   const [activeId, setActiveId] = useState<string | undefined>();
   const [project, setProject] = useState<ProjectMsg | null>(null);
-  // The new-session flow. `null` = closed. A non-null object opens the modal; an
-  // optional prefill (N2) preselects the board's project + carries the originating
-  // card id so the created session can be stamped with it.
-  const [newSession, setNewSession] = useState<{
-    path?: string;
-    cardId?: string;
-    cardTitle?: string;
-    // R4.13: when the omni-bar picks an Agent, preselect that agent/terminal in the flow.
-    agentId?: string;
-  } | null>(null);
-  const openNewSession = useCallback((path?: string) => setNewSession(path ? { path } : {}), []);
+  const [repoChanges, setRepoChanges] = useState<RepoChanges[] | undefined>();
+  // The new-session flow. `null` = closed; the prefill shape is the public contract other
+  // callers pass (mf-new-session spec §3.1).
+  const [newSession, setNewSession] = useState<NewSessionPrefill | null>(null);
+  const openNewSession = useCallback((home?: string) => setNewSession(home ? { home } : {}), []);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [webPromptOpen, setWebPromptOpen] = useState(false);
@@ -309,11 +343,12 @@ export function App() {
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
   const [recentsBySession, setRecentsBySession] = useState<Record<string, RecentDoc[]>>({});
-  const [search, setSearch] = useState<{ root: string; results: SearchHit[] }>({
-    root: '',
-    results: [],
-  });
+  const [corpus, setCorpus] = useState<FolderCorpus>({});
   const [menu, setMenu] = useState<MenuState | null>(null);
+  useEffect(() => {
+    const open = menu;
+    return () => open?.onClosed?.();
+  }, [menu]);
   // Multi-window Slice B: the other open windows for the "Move to window…" picker. Updated
   // from the host's `win:list` broadcast; this window's own id comes from `state.windowId`.
   const [winList, setWinList] = useState<{ id: number; title: string; sessionCount: number }[]>([]);
@@ -323,6 +358,11 @@ export function App() {
   const [updateDismissed, setUpdateDismissed] = useState(false);
   // D3: session icon-picker modal state. `null` = closed; non-null = picker open for session.id.
   const [iconPickerSessionId, setIconPickerSessionId] = useState<string | null>(null);
+  const [movePicker, setMovePicker] = useState<{
+    sessionId: string;
+    at: { x: number; y: number };
+  } | null>(null);
+  const closeMovePicker = useCallback(() => setMovePicker(null), []);
   const [timedMessageFor, setTimedMessageFor] = useState<string | null>(null);
 
   /** The palette acts on the ACTIVE session; the chip, the card menu and the stale card name one. */
@@ -382,14 +422,21 @@ export function App() {
     [toggleSidebar, toggleExplorer],
   );
 
+  const projectReplies = useRef(createProjectReplyOrder());
+
   useEffect(() => {
     return subscribe((msg) => {
       if (msg.type === 'state') {
         setState(msg);
         hydrate(msg.settings);
       } else if (msg.type === 'win:list') setWinList(msg.windows);
-      else if (msg.type === 'project') setProject(msg);
-      else if (msg.type === 'fileContent') {
+      else if (msg.type === 'project') {
+        if (!projectReplies.current.accept(msg.requestId)) return;
+        setProject(msg);
+        setRepoChanges((prev) =>
+          acceptRepoChanges(prev, msg.repoChanges, activeRef.current?.repos),
+        );
+      } else if (msg.type === 'fileContent') {
         // K3 dirty-buffer protection: a fresh disk read must NOT replace the map entry
         // for a path whose Monaco buffer is dirty — CodeViewer's seed effect is keyed on
         // `doc.content`, so re-seeding would destroy the user's unsaved edits. A clean
@@ -402,8 +449,9 @@ export function App() {
         const key = diffKey(msg.doc.path, scopeFromDiffArgs(msg));
         setDiffs((m) => new Map(m).set(key, msg.doc));
         diffReadQueueRef.current.settle(key);
-      } else if (msg.type === 'searchResults') setSearch({ root: msg.root, results: msg.results });
-      else if (msg.type === 'projectFiles') {
+      } else if (msg.type === 'searchResults') {
+        setCorpus((c) => acceptSearchResults(c, msg, presentFolders(activeRef.current)));
+      } else if (msg.type === 'projectFiles') {
         // Content to the language worker as extraLibs — NOT a Monaco model per project file
         // (that loop was what made opening a file janky). See webview/ts-project.ts.
         applyProjectFiles(msg);
@@ -460,7 +508,8 @@ export function App() {
           id: `run-${i}`,
           name: '',
           agentId: '',
-          projectPath: '',
+          home: '',
+          roots: [],
           status: 'running' as const,
           createdAt: 0,
           lastActiveAt: 0,
@@ -522,10 +571,7 @@ export function App() {
     return () => window.removeEventListener('beforeunload', onUnload);
   }, []);
 
-  const hostSessions: Session[] = useMemo(
-    () => state?.sessions ?? (state?.groups ?? []).flatMap((g) => g.sessions),
-    [state],
-  );
+  const hostSessions: Session[] = useMemo(() => state?.sessions ?? [], [state]);
   // Snooze is applied here, above everything that reads a session's attention state, so the
   // rail and the topbar's aggregate chip can never disagree about who is waiting (D16).
   const { sessions, snooze } = useSnooze(hostSessions);
@@ -552,7 +598,7 @@ export function App() {
     if (!state) return;
     autoRelaunchDoneRef.current = true;
     if (!settings.autoRelaunchStale) return;
-    const targets = staleSessionIds(sessions);
+    const targets = relaunchableSessionIds(sessions);
     for (const id of targets) {
       post({ type: 'relaunch', id });
     }
@@ -588,7 +634,7 @@ export function App() {
   // Relaunch all sessions that are currently stale (manual trigger — also used by
   // the "Relaunch all stale" command palette entry).
   const relaunchAllStale = useCallback(() => {
-    const targets = staleSessionIds(sessions);
+    const targets = relaunchableSessionIds(sessions);
     for (const id of targets) {
       post({ type: 'relaunch', id });
     }
@@ -629,34 +675,15 @@ export function App() {
   // `openReviewTab` stays argument-less: it is wired straight to onClick in several places,
   // where an extra parameter would be handed a MouseEvent.
   const openReviewScoped = useCallback(
-    (scope: ReviewScope) => {
+    (scope: ReviewScope, repoRoot?: string) => {
       const sessionId = activeIdRef.current ?? '';
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
       setCenterView('editor');
-      dispatchDocs({
-        type: 'openReview',
-        sessionId,
-        source: { kind: 'working', ...(scope === 'all' ? {} : { scope }) },
-      });
+      dispatchDocs({ type: 'openReview', sessionId, source: workingSource(scope, repoRoot) });
     },
     [recordNav],
   );
   const openReviewTab = useCallback(() => openReviewScoped('all'), [openReviewScoped]);
-
-  // The Review state's entry point on a session card: switch to that session first (like
-  // openFile does), so the working-tree review reads ITS repo and not the active one's.
-  const openReviewForSession = useCallback(
-    (sessionId: string) => {
-      recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
-      setCenterView('editor');
-      if (sessionId !== activeIdRef.current) {
-        setActiveId(sessionId);
-        dispatchDocs({ type: 'switchSession', sessionId });
-      }
-      dispatchDocs({ type: 'openReview', sessionId, source: { kind: 'working' } });
-    },
-    [recordNav],
-  );
 
   // Open/activate the singleton Review tab scoped to a COMMIT (source = that commit). Switches
   // the active session first when a target is given (like openFile), so a later terminal
@@ -667,6 +694,10 @@ export function App() {
   const openReviewForCommit = useCallback(
     (sha: string, targetSessionId?: string, subject?: string, repoRoot?: string) => {
       const sessionId = targetSessionId ?? activeIdRef.current ?? '';
+      // Every commit source names its repo (docs/specs/archive/2026-09-23-mf-review.md §2.1 S1) — but only
+      // a detected one: with none, the unstamped source already reads the session's git root.
+      const owner = sessionsRef.current.find((s) => s.id === sessionId);
+      const root = repoRoot ?? (owner?.repos?.length ? gitRootForSession(owner) : undefined);
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
       setCenterView('editor');
       if (targetSessionId && targetSessionId !== activeIdRef.current) {
@@ -680,7 +711,7 @@ export function App() {
           kind: 'commit',
           sha,
           ...(subject ? { subject } : {}),
-          ...(repoRoot ? { repoRoot } : {}),
+          ...(root ? { repoRoot: root } : {}),
         },
       });
     },
@@ -690,8 +721,8 @@ export function App() {
   // Retarget the open Review tab from its breadcrumb selector (working ⇄ a commit ⇄ a compare).
   const setReviewSource = useCallback(
     (s: ReviewSource) => {
-      if (s.kind === 'working') return openReviewScoped(s.scope ?? 'all');
-      if (s.kind === 'commit') return openReviewForCommit(s.sha, undefined, s.subject);
+      if (s.kind === 'working') return openReviewScoped(s.scope ?? 'all', s.repoRoot);
+      if (s.kind === 'commit') return openReviewForCommit(s.sha, undefined, s.subject, s.repoRoot);
       // range: a two-ref comparison rides the singleton review doc like any other source.
       const sessionId = activeIdRef.current ?? '';
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
@@ -702,14 +733,34 @@ export function App() {
   );
 
   // git-history Slice A: open the commit-graph as a singleton center-pane doc for the
-  // active session (scoped to its repo), mirroring openReviewTab. Re-opening just
-  // re-activates the one tab (and transfers ownership to the now-active session).
-  const openGitHistoryTab = useCallback(() => {
-    const sessionId = activeIdRef.current ?? '';
-    recordNav({ sessionId, doc: { kind: 'git-history', path: GIT_HISTORY_DOC_PATH } });
-    setCenterView('editor');
-    dispatchDocs({ type: 'open', kind: 'git-history', path: GIT_HISTORY_DOC_PATH, sessionId });
-  }, [recordNav]);
+  // active session, mirroring openReviewTab. Re-opening just re-activates the one tab (and
+  // transfers ownership to the now-active session). Without `repoRoot` it shows the active repo
+  // (docs/specs/archive/2026-09-23-mf-changes.md §2.5).
+  const openGitHistoryTab = useCallback(
+    (repoRoot?: string) => {
+      const sessionId = activeIdRef.current ?? '';
+      recordNav({ sessionId, doc: { kind: 'git-history', path: GIT_HISTORY_DOC_PATH } });
+      setCenterView('editor');
+      const session = sessionsRef.current.find((s) => s.id === sessionId);
+      dispatchDocs({
+        type: 'open',
+        kind: 'git-history',
+        path: GIT_HISTORY_DOC_PATH,
+        sessionId,
+        repoRoot: repoRoot ?? historyRepoFor(undefined, session),
+      });
+    },
+    [recordNav],
+  );
+  const retargetGitHistory = useCallback((repoRoot: string) => {
+    dispatchDocs({
+      type: 'open',
+      kind: 'git-history',
+      path: GIT_HISTORY_DOC_PATH,
+      sessionId: activeIdRef.current ?? '',
+      repoRoot,
+    });
+  }, []);
 
   // Latest docs snapshot in a ref so the global Mod+S handler (bound once) can route to
   // the ACTIVE doc's registered save without re-binding the listener on every doc change.
@@ -743,7 +794,7 @@ export function App() {
   // Open one of a commit's files as a `commit-diff` tab — from the commit detail rendered
   // inline in the history view (single-click = preview, double-click = pin, middle = background).
   const openCommitFile = useCallback(
-    (sha: string, file: string, mode: OpenMode) => {
+    (sha: string, file: string, mode: OpenMode, repoRoot?: string) => {
       const sessionId = activeIdRef.current ?? '';
       if (mode === 'background') {
         reportBackgroundOpen('commit-diff', commitDiffPath(sha, file), sessionId);
@@ -751,7 +802,7 @@ export function App() {
         recordNav({ sessionId, doc: { kind: 'commit-diff', path: commitDiffPath(sha, file) } });
         setCenterView('editor');
       }
-      dispatchDocs({ type: 'openCommitFile', sha, file, sessionId, mode });
+      dispatchDocs({ type: 'openCommitFile', sha, file, sessionId, mode, repoRoot });
     },
     [recordNav, reportBackgroundOpen],
   );
@@ -915,7 +966,7 @@ export function App() {
       openBoard: () => openView('openBoard'),
       openArchitecture: () => openView('openArchitecture'),
       openReview: openReviewTab,
-      openGitHistory: openGitHistoryTab,
+      openGitHistory: () => openGitHistoryTab(),
       openEditor: () => openView('openEditor'),
       openGlobalSearch: openGlobalSearchSeeded,
       toggleSidebar,
@@ -1111,18 +1162,23 @@ export function App() {
   }, [activeId, splitId]);
 
   const active = sessions.find((s) => s.id === activeId);
-  // Keep the notes store loaded for the active repo even when Review was never opened, so the
-  // editor's note glyphs work on their own — they read the same store.
+  // Review's repo set — the repo chip's choices, in display order (spec 2026-09-23-mf-review §2.1).
+  const reviewRepos = useMemo(
+    () => orderRepos(active?.repos ?? [], active?.roots ?? []),
+    [active?.repos, active?.roots],
+  );
+  const reviewFallbackRoot = active ? gitRootForSession(active) : undefined;
+  // Keep the notes store loaded for every repo even when Review was never opened, so the
+  // editor's note glyphs work on their own in any of them — they read the same store.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the repo-set key is the identity of reviewRepos.
   useEffect(() => {
-    const root = active ? gitRootForSession(active) : undefined;
-    if (root) loadNotesFor(root);
-  }, [active]);
+    for (const r of reviewRepos) loadNotesFor(r.root);
+    if (reviewFallbackRoot) loadNotesFor(reviewFallbackRoot);
+  }, [repoSetKey(reviewRepos), reviewFallbackRoot]);
 
   // A glyph click in the editor opens Review; ReviewView itself lands on the note.
   useEffect(() => subscribeNoteTarget(openReviewTab), [openReviewTab]);
-  const activeProject = active
-    ? active.projectPath.split(/[\\/]/).filter(Boolean).pop()
-    : undefined;
+  const activeProject = active ? active.home.split(/[\\/]/).filter(Boolean).pop() : undefined;
 
   // Editor tabs are scoped to their session: only the active session's docs are shown,
   // so you never see another session's editors. Switching sessions restores that
@@ -1231,14 +1287,32 @@ export function App() {
   activeFilePathRef.current = activeFilePath;
 
   // Ask the host for git changes + file tree whenever the active cwd changes.
-  // activeCwd(active) prefers the live cd-tracked dir (cwd) over projectPath.
-  // Depend on projectPath + cwd (not the whole session object) so a rename or
+  // activeCwd(active) prefers the live cd-tracked dir (cwd) over home.
+  // Depend on home + cwd (not the whole session object) so a rename or
   // icon change does NOT retrigger a potentially-expensive project reload.
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep
   useEffect(() => {
     if (active)
-      post({ type: 'requestProject', path: activeCwd(active), changesRoot: active.activeRepoRoot });
-  }, [active?.projectPath, active?.cwd, active?.activeRepoRoot]);
+      post({
+        type: 'requestProject',
+        requestId: projectReplies.current.next(),
+        path: activeCwd(active),
+        changesRoot: active.activeRepoRoot,
+        sessionId: active.id,
+      });
+  }, [
+    active?.id,
+    active?.home,
+    active?.cwd,
+    active?.activeRepoRoot,
+    repoSetKey(active?.repos ?? []),
+    active?.repos === undefined,
+  ]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new session starts with no reply
+  useEffect(() => {
+    setRepoChanges(undefined);
+  }, [active?.id]);
 
   // Multi-repo auto-follow: when the focused editor doc changes, tell the host so the active repo
   // follows the file you're reading (host maps it to the containing sub-repo; ignored while pinned).
@@ -1251,11 +1325,24 @@ export function App() {
 
   // Re-read the working-tree change list (R5.3). Used both by the manual refresh button
   // in the Changes tab and by the focus/visibility auto-refresh below.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + projectPath only)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + home only)
   const refreshChanges = useCallback(() => {
     if (active)
-      post({ type: 'requestProject', path: activeCwd(active), changesRoot: active.activeRepoRoot });
-  }, [active?.projectPath, active?.cwd, active?.activeRepoRoot]);
+      post({
+        type: 'requestProject',
+        requestId: projectReplies.current.next(),
+        path: activeCwd(active),
+        changesRoot: active.activeRepoRoot,
+        sessionId: active.id,
+      });
+  }, [
+    active?.id,
+    active?.home,
+    active?.cwd,
+    active?.activeRepoRoot,
+    repoSetKey(active?.repos ?? []),
+    active?.repos === undefined,
+  ]);
 
   // ---- FS undo/redo: record, execute, and refresh ----
 
@@ -1305,7 +1392,13 @@ export function App() {
     }
     const cur = activeRef.current;
     if (cur)
-      post({ type: 'requestProject', path: activeCwd(cur), changesRoot: cur.activeRepoRoot });
+      post({
+        type: 'requestProject',
+        requestId: projectReplies.current.next(),
+        path: activeCwd(cur),
+        changesRoot: cur.activeRepoRoot,
+        sessionId: cur.id,
+      });
   }, []);
 
   const doUndo = useCallback(async () => {
@@ -1348,7 +1441,7 @@ export function App() {
   // (R5.3). While the app is in the background an edit, an agent, or a terminal command
   // may have changed the working tree; on returning we re-read it so the Changes tab
   // reflects reality without a manual poke — mirrors the Files tree's focus refresh (J5).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + projectPath gate, not full active obj)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + home gate, not full active obj)
   useEffect(() => {
     if (!active) return;
     // On regaining focus, also re-read the active file tab so it reflects any on-disk
@@ -1374,7 +1467,7 @@ export function App() {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [active?.projectPath, active?.cwd, refreshChanges]);
+  }, [active?.home, active?.cwd, refreshChanges]);
 
   // Live working-tree monitoring: the host watches the active project and pushes `fsChanged`
   // (debounced, noise-filtered) when anything changes on disk. Re-read the change list right
@@ -1385,7 +1478,7 @@ export function App() {
     return subscribe((msg) => {
       if (msg.type !== 'fsChanged') return;
       refreshChanges();
-      rereadOpenDiffs((d) => isUnderRoot(msg.root, d.path));
+      rereadOpenDiffs((d) => msg.folders.some((f) => isUnderRoot(f, d.path)));
     });
   }, [refreshChanges, rereadOpenDiffs]);
   // fsChanged only covers the active project, so a session's diff tabs catch up when it
@@ -1394,12 +1487,27 @@ export function App() {
     if (activeId) rereadOpenDiffs((d) => d.sessionId === activeId);
   }, [activeId, rereadOpenDiffs]);
 
-  // When the palette opens, ask the host to (re)index the active project.
+  // Quick open covers every present folder (spec §2.10): on palette open, ask for each folder
+  // not cached yet, once per palette session; a folder that leaves the session is dropped.
+  const presentKeys = presentFolders(active).map(folderKey).join('\n');
+  const requestedCorpus = useRef(new Set<string>());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via presentKeys, as everywhere else in this file
   useEffect(() => {
-    if (palette && active?.projectPath && search.root !== active.projectPath) {
-      post({ type: 'searchFiles', root: active.projectPath, query: '' });
+    if (!palette) {
+      requestedCorpus.current.clear();
+      return;
     }
-  }, [palette, active?.projectPath, search.root]);
+    for (const root of foldersToRequest(presentFolders(active), corpus)) {
+      const k = folderKey(root);
+      if (requestedCorpus.current.has(k)) continue;
+      requestedCorpus.current.add(k);
+      post({ type: 'searchFiles', root, query: '' });
+    }
+  }, [palette, presentKeys, corpus]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via presentKeys, as everywhere else in this file
+  useEffect(() => {
+    setCorpus((c) => pruneCorpus(c, presentFolders(active)));
+  }, [presentKeys]);
 
   // Clear a split that became invalid (equals active, or its session stopped).
   useEffect(() => {
@@ -1412,25 +1520,68 @@ export function App() {
   }, [splitId, activeId, sessions]);
 
   const projectData = project && active && project.path === activeCwd(active) ? project : null;
+  const reviewRepoChanges = useMemo(
+    () =>
+      reviewRepoChangesFor(
+        active?.repos,
+        repoChanges,
+        projectData?.changes ?? [],
+        reviewFallbackRoot,
+      ),
+    [active?.repos, repoChanges, projectData?.changes, reviewFallbackRoot],
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
+  const sections = useMemo(
+    () => sessionSections(active),
+    [active?.home, active?.roots, active?.missingRoots, active?.homeMissing],
+  );
+  const hintProjectId = projectForNewSession(active, state?.projects ?? []);
+  const newSessionReturnFocus = useRef<HTMLElement | null>(null);
+  const startSessionForCard = useCallback(
+    (card: BoardCard, returnFocus: HTMLElement | null) => {
+      const p = cardSessionPrefill(card, {
+        sessions,
+        active,
+        projects: state?.projects ?? [],
+      });
+      if (!p) return;
+      newSessionReturnFocus.current = returnFocus;
+      setNewSession(p);
+    },
+    [sessions, active, state?.projects],
+  );
+  const hintProjectName = state?.projects.find((p) => p.id === hintProjectId)?.name;
+  const openAsSessionHint = hintProjectName !== undefined ? `in ${hintProjectName}` : undefined;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
+  const rowChanges = useMemo(
+    () =>
+      buildRowChangeMap({
+        repoChanges,
+        changes: projectData?.changes ?? [],
+        changesRoot: active ? gitRootForSession(active) : undefined,
+      }),
+    [repoChanges, projectData?.changes, active?.activeRepoRoot, active?.cwd, active?.home],
+  );
 
   // Hunk-level stage/unstage/discard reach app-level capabilities through a module store rather
   // than props — the editor's change peek is four prop hops away, and the ops must be awaited.
   // See webview/hunk-actions.ts and spec 2026-08-27-review-supercharge §2 Lane E.
   // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
   useEffect(() => {
-    const hunkRoot = active ? gitRootForSession(active) : '';
+    const fallbackRoot = active ? gitRootForSession(active) : '';
+    const perRepo = repoChanges ?? [
+      { root: fallbackRoot, changes: fallbackRoot ? (projectData?.changes ?? []) : [] },
+    ];
+    const absKeys = (keep: (c: ChangeDTO) => boolean) =>
+      new Set(
+        perRepo.flatMap((r) =>
+          r.changes.filter(keep).map((c) => folderKey(joinPath(r.root, c.path))),
+        ),
+      );
     const host: HunkActionHost = {
-      root: hunkRoot,
-      stagedPaths: new Set(
-        (projectData?.changes ?? [])
-          .filter((c) => c.staged)
-          .map((c) => foldRelPath(hunkRoot, c.path)),
-      ),
-      conflictedPaths: new Set(
-        (projectData?.changes ?? [])
-          .filter((c) => c.conflicted)
-          .map((c) => foldRelPath(hunkRoot, c.path)),
-      ),
+      rootFor: (abs) => repoForPath(active?.repos ?? [], abs) ?? fallbackRoot,
+      stagedPaths: absKeys((c) => c.staged),
+      conflictedPaths: absKeys((c) => c.conflicted === true),
       confirmDiscard: (state) =>
         new Promise<boolean>((resolve) => {
           // A second discard opened while one was still asking: settle the displaced caller
@@ -1462,10 +1613,12 @@ export function App() {
     };
     return setHunkActionHost(host);
   }, [
-    active?.projectPath,
+    active?.home,
     active?.cwd,
     active?.activeRepoRoot,
+    active?.repos,
     projectData?.changes,
+    repoChanges,
     refreshChanges,
     rereadOpenDiffs,
   ]);
@@ -1547,37 +1700,55 @@ export function App() {
    *  are none on the session-open path (nothing is on screen yet), only when a file is opened
    *  in a root that hasn't been indexed. */
   const indexProjectOnce = useCallback((root: string, seeds: string[] = []) => {
-    if (indexedRoots.current.has(root)) return;
-    indexedRoots.current.add(root);
+    const key = folderKey(root);
+    if (indexedRoots.current.has(key)) return;
+    indexedRoots.current.add(key);
     post({ type: 'indexProject', root, seeds });
   }, []);
+  // Every present folder, home first (spec §2.11): an added or located folder is new here and
+  // gets indexed through the same effect.
+  const lastPresent = useRef<{ id: string | undefined; folders: string[] }>({
+    id: undefined,
+    folders: [],
+  });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via presentKeys, as everywhere else in this file
   useEffect(() => {
-    const root = active?.projectPath;
-    if (!root) return;
+    const folders = presentFolders(active);
+    const now = { id: active?.id, folders };
+    // A folder that left while unwatched may have changed; re-adding it (Undo) must re-index it.
+    for (const k of foldersLeft(lastPresent.current, now)) indexedRoots.current.delete(k);
+    lastPresent.current = now;
+    if (folders.length === 0) return;
     // Deliberately behind the session's own startup (PTY spawn, git interrogation, first
     // paint): indexing reads every source file in the project, and racing it against those
     // makes opening a session feel slower to buy latency nobody is waiting on yet.
-    const t = setTimeout(() => indexProjectOnce(root), 1500);
+    const t = setTimeout(() => {
+      for (const f of folders) indexProjectOnce(f);
+    }, 1500);
     return () => clearTimeout(t);
-  }, [active?.projectPath, indexProjectOnce]);
+  }, [presentKeys, indexProjectOnce]);
+  useEffect(() => setCompilerOptionsRoot(active?.home), [active?.home]);
   // A file created after the index ran was unreachable forever — `indexedRoots` is a once-guard
-  // and nothing invalidated it (spec contract 5, row 35). The watcher reports only the ROOT, so
+  // and nothing invalidated it (spec contract 5, row 35). The watcher reports only FOLDERS, so
   // the host does the diffing: it knows which paths it already streamed. Debounced on top of the
   // watcher's own 300 ms so a `git checkout` or an agent's edit burst costs one top-up, not one
   // per file.
   useEffect(() => {
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
     const stop = subscribe((msg) => {
-      if (msg.type !== 'fsChanged' || !indexedRoots.current.has(msg.root)) return;
-      const root = msg.root;
-      clearTimeout(timers.get(root));
-      timers.set(
-        root,
-        setTimeout(() => {
-          timers.delete(root);
-          post({ type: 'indexProject', root, incremental: true });
-        }, INCREMENTAL_INDEX_DEBOUNCE_MS),
-      );
+      if (msg.type !== 'fsChanged') return;
+      for (const root of msg.folders) {
+        const key = folderKey(root);
+        if (!indexedRoots.current.has(key)) continue;
+        clearTimeout(timers.get(key));
+        timers.set(
+          key,
+          setTimeout(() => {
+            timers.delete(key);
+            post({ type: 'indexProject', root, incremental: true });
+          }, INCREMENTAL_INDEX_DEBOUNCE_MS),
+        );
+      }
     });
     return () => {
       stop();
@@ -1628,8 +1799,11 @@ export function App() {
       // the case where a file is opened in a project that hasn't been indexed yet, and seeds
       // the priority wave with the file the user is actually looking at.
       const effectiveSession = sessions.find((s) => s.id === effectiveSessionId) ?? active;
-      if (effectiveSession?.projectPath)
-        indexProjectOnce(effectiveSession.projectPath, isCodeFile(path) ? [path] : []);
+      if (effectiveSession?.home) {
+        const owner =
+          folderForPath(presentFolders(effectiveSession), path) ?? effectiveSession.home;
+        indexProjectOnce(owner, isCodeFile(path) ? [path] : []);
+      }
     },
     [active, sessions, pushRecent, indexProjectOnce, recordNav, reportBackgroundOpen],
   );
@@ -2032,7 +2206,7 @@ export function App() {
         onClick: () => setSplitId(s.id),
       });
     }
-    if (s.status !== 'running') {
+    if (canRelaunch(s)) {
       lifecycle.push({
         label: 'Relaunch',
         icon: <IconSparkle size={14} />,
@@ -2068,12 +2242,22 @@ export function App() {
           icon: <IconDuplicate size={14} />,
           onClick: () => post({ type: 'duplicate', id: s.id }),
         },
+        {
+          label: 'Move to project…',
+          icon: <IconFolder size={14} />,
+          // Beside the row it was picked from (12e); a bare call has only the right-click point.
+          onClick: (a) =>
+            setMovePicker({
+              sessionId: s.id,
+              at: a ? { x: a.rect.right, y: a.rect.top } : { x: e.clientX, y: e.clientY },
+            }),
+        },
         ...moveMenuItems(s.id),
         {
-          label: 'Copy path',
+          label: 'Copy home path',
           icon: <IconCopy size={14} />,
           separatorBefore: true,
-          onClick: () => copyToClipboard(s.projectPath),
+          onClick: () => copyToClipboard(s.home),
         },
         {
           label: 'Copy name',
@@ -2083,7 +2267,7 @@ export function App() {
         {
           label: 'Reveal in Explorer',
           icon: <IconExternal size={14} />,
-          onClick: () => post({ type: 'revealInExplorer', path: s.projectPath }),
+          onClick: () => post({ type: 'revealInExplorer', path: s.home }),
         },
         {
           label: 'Close',
@@ -2260,7 +2444,7 @@ export function App() {
           label: 'Reveal in Explorer',
           icon: <IconExternal size={14} />,
           separatorBefore: true,
-          onClick: () => post({ type: 'revealInExplorer', path: s.projectPath }),
+          onClick: () => post({ type: 'revealInExplorer', path: s.home }),
         },
         {
           label: 'Close editor tabs',
@@ -2291,7 +2475,7 @@ export function App() {
         pushToast({ message: 'Open a session to mention a selection.', variant: 'error' });
         return;
       }
-      const ref = formatMention(active.projectPath, req.path, req.startLine, req.endLine);
+      const ref = formatMention(active.home, req.path, req.startLine, req.endLine);
       dispatchDocs({ type: 'activate', id: null, sessionId: active.id }); // show the terminal
       post({ type: 'term:input', sessionId: active.id, data: `${ref} ` });
     });
@@ -2385,132 +2569,150 @@ export function App() {
     [dropDocsFor, openFile],
   );
 
-  const onChangeContextMenu = (e: React.MouseEvent, rel: string) => {
+  // The row / repo-head menus reuse the kebab's bulk items; the icons are this menu's own.
+  const withBulkIcons = (items: MenuItem[]): MenuItem[] =>
+    items.map((it) => ({
+      ...it,
+      icon: it.danger ? <IconTrash size={14} /> : <IconBranch size={14} />,
+    }));
+
+  // No repoRoot = the active repo's list, the one `project.changes` carries.
+  const changesOfRepo = useCallback(
+    (repoRoot: string | undefined): ChangeDTO[] =>
+      repoRoot === undefined
+        ? (projectData?.changes ?? [])
+        : (repoChanges?.find((r) => folderKey(r.root) === folderKey(repoRoot))?.changes ?? []),
+    [projectData?.changes, repoChanges],
+  );
+
+  const repoBulkItems = (repoRoot: string): MenuItem[] => {
+    const changes = changesOfRepo(repoRoot);
+    return withBulkIcons(
+      buildBulkMenuItems(
+        changes.filter((c) => c.staged),
+        changes.filter((c) => !c.staged),
+        (intent) => void onGitAction(intent),
+        () => {},
+        { kind: 'repo', repoRoot },
+      ),
+    );
+  };
+
+  const pathMenuItems = (abs: string): MenuItem[] => [
+    {
+      label: 'Copy path',
+      icon: <IconCopy size={14} />,
+      separatorBefore: true,
+      onClick: () => copyToClipboard(abs),
+    },
+    {
+      label: 'Reveal in Explorer',
+      icon: <IconExternal size={14} />,
+      onClick: () => post({ type: 'revealInExplorer', path: abs }),
+    },
+  ];
+
+  const onChangeContextMenu = (e: React.MouseEvent, rel: string, repoRoot: string) => {
     e.preventDefault();
     if (!active) return;
-    // Change paths are relative to the active repo, not the opened/cwd folder.
-    const abs = joinPath(gitRootForSession(active), rel);
-    const changes = projectData?.changes ?? [];
-    const staged = changes.filter((c) => c.staged);
-    const unstaged = changes.filter((c) => !c.staged);
+    const abs = joinPath(repoRoot, rel);
+    const [firstBulk, ...restBulk] = repoBulkItems(repoRoot);
     setMenu({
       x: e.clientX,
       y: e.clientY,
       items: [
         { label: 'Open diff', icon: <IconBranch size={14} />, onClick: () => openDiff(abs) },
         { label: 'Open file', icon: <IconDoc size={14} />, onClick: () => openFile(abs) },
-        {
-          label: 'Copy path',
-          icon: <IconCopy size={14} />,
-          separatorBefore: true,
-          onClick: () => copyToClipboard(abs),
-        },
-        {
-          label: 'Reveal in Explorer',
-          icon: <IconExternal size={14} />,
-          onClick: () => post({ type: 'revealInExplorer', path: abs }),
-        },
-        {
-          label: 'Stage all',
-          icon: <IconBranch size={14} />,
-          separatorBefore: true,
-          disabled: unstaged.length === 0,
-          onClick: () => onGitAction({ op: 'stageAll' }),
-        },
-        {
-          label: 'Unstage all',
-          icon: <IconBranch size={14} />,
-          disabled: staged.length === 0,
-          onClick: () => onGitAction({ op: 'unstageAll' }),
-        },
-        {
-          label: 'Stash changes',
-          icon: <IconBranch size={14} />,
-          separatorBefore: true,
-          onClick: () => onGitAction({ op: 'stashPush' }),
-        },
-        {
-          label: 'Pop stash',
-          icon: <IconBranch size={14} />,
-          onClick: () => onGitAction({ op: 'stashPop' }),
-        },
-        {
-          label: 'Discard all changes',
-          icon: <IconTrash size={14} />,
-          danger: true,
-          separatorBefore: true,
-          disabled: changes.length === 0,
-          onClick: () => onGitAction({ op: 'discardAll' }),
-        },
+        ...pathMenuItems(abs),
+        ...(firstBulk ? [{ ...firstBulk, separatorBefore: true }] : []),
+        ...restBulk,
       ],
     });
   };
 
-  // Run a git action (stage/unstage/discard/stash) in the active repo, then re-fetch the
-  // change list so the UI reflects the new state. Failures toast.
+  const onRepoHeadContextMenu = (e: React.MouseEvent | React.KeyboardEvent, repoRoot: string) => {
+    e.preventDefault();
+    if (!active) return;
+    const keyboard = !('clientX' in e);
+    const at = keyboard
+      ? (e.currentTarget as Element).getBoundingClientRect()
+      : { left: e.clientX, bottom: e.clientY };
+    setMenu({
+      x: at.left,
+      y: at.bottom,
+      keyboard,
+      items: [...repoBulkItems(repoRoot), ...pathMenuItems(repoRoot)],
+    });
+  };
+
+  // Run a git action (stage/unstage/discard/stash) in one repo — `repoRoot`, else the active
+  // one — then re-fetch the change list so the UI reflects the new state. Failures toast.
   // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
   const runGit = useCallback(
-    async (op: GitActionIntent['op'], path?: string) => {
+    async (op: GitActionIntent['op'], path?: string, repoRoot?: string, paths?: string[]) => {
       if (!active) return;
-      // Stage/unstage/discard must run in the active repo — change paths are relative to it.
-      const root = gitRootForSession(active);
+      const root = repoRoot ?? gitRootForSession(active);
       // 'discardAll' is a renderer-only intent; map it to a real bulk discard below.
       const hostOp = op as Exclude<GitActionIntent['op'], 'discardAll'>;
-      const res = await gitAction({ root, op: hostOp, path });
+      const res = await gitAction({ root, op: hostOp, path, ...(paths ? { paths } : {}) });
       if (!res.ok) pushToast({ message: `Git: ${res.error}`, variant: 'error' });
       // Always refresh — even on failure the on-disk state may have partially changed.
       refreshChanges();
       rereadOpenDiffs((d) => isUnderRoot(root, d.path));
     },
-    [active?.projectPath, active?.cwd, active?.activeRepoRoot, refreshChanges, rereadOpenDiffs],
+    [active?.home, active?.cwd, active?.activeRepoRoot, refreshChanges, rereadOpenDiffs],
   );
 
-  // Discard every change: unstage all, then restore tracked files, then delete
-  // untracked. Sequenced so staged-and-modified files end up clean. Refresh once.
+  // One repo after another so a failure names its repo and the rest still run; one refresh.
+  const runGitFanOut = useCallback(
+    async (op: 'stageAll' | 'unstageAll', targets: BulkTarget[]) => {
+      for (const { root, paths } of targets) {
+        const res = await gitAction({ root, op, ...(paths ? { paths } : {}) });
+        if (!res.ok)
+          pushToast({ message: `Git (${repoBaseName(root)}): ${res.error}`, variant: 'error' });
+        rereadOpenDiffs((d) => isUnderRoot(root, d.path));
+      }
+      refreshChanges();
+    },
+    [refreshChanges, rereadOpenDiffs],
+  );
+
+  // Discard every change (or only `paths`). Refresh once, even after a stop part-way.
   // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
-  const discardAll = useCallback(async () => {
-    if (!active) return;
-    const root = gitRootForSession(active);
-    const list = projectData?.changes ?? [];
-    await gitAction({ root, op: 'unstageAll' });
-    // Distinct paths: tracked → restore; untracked → delete.
-    const untracked = new Set<string>();
-    const tracked = new Set<string>();
-    for (const c of list) {
-      if (c.kind === 'U') untracked.add(c.path);
-      else tracked.add(c.path);
-    }
-    for (const p of tracked) {
-      const r = await gitAction({ root, op: 'discardTracked', path: p });
-      if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
-    }
-    for (const p of untracked) {
-      const r = await gitAction({ root, op: 'discardUntracked', path: p });
-      if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
-    }
-    refreshChanges();
-    rereadOpenDiffs((d) => isUnderRoot(root, d.path));
-  }, [
-    active?.projectPath,
-    active?.cwd,
-    active?.activeRepoRoot,
-    projectData?.changes,
-    refreshChanges,
-    rereadOpenDiffs,
-  ]);
+  const discardAll = useCallback(
+    async (repoRoot?: string, paths?: string[]) => {
+      if (!active) return;
+      const root = repoRoot ?? gitRootForSession(active);
+      const plan = discardAllPlan(changesOfRepo(repoRoot), paths);
+      const res = await runDiscardAll(plan, (step) => gitAction({ root, ...step }));
+      if (!res.ok)
+        pushToast({ message: `Discard all stopped. Git: ${res.error}`, variant: 'error' });
+      refreshChanges();
+      rereadOpenDiffs((d) => isUnderRoot(root, d.path));
+    },
+    [
+      active?.home,
+      active?.cwd,
+      active?.activeRepoRoot,
+      changesOfRepo,
+      refreshChanges,
+      rereadOpenDiffs,
+    ],
+  );
 
   // Entry point from the Changes tab. Destructive ops get a 2-way confirm first;
   // everything else runs immediately.
   const onGitAction = useCallback(
-    (intent: GitActionIntent) => {
-      const { op, path } = intent;
+    async (intent: GitActionIntent): Promise<void> => {
+      const { op, path, repoRoot, paths, targets } = intent;
+      if (targets && (op === 'stageAll' || op === 'unstageAll')) return runGitFanOut(op, targets);
       if (op === 'discardUntracked' && path) {
         setConfirm({
           title: 'Delete untracked file',
           message: `Delete untracked file ${baseName(path)}? This cannot be undone.`,
           confirmLabel: 'Delete',
           danger: true,
-          onConfirm: () => void runGit('discardUntracked', path),
+          onConfirm: () => void runGit('discardUntracked', path, repoRoot),
         });
         return;
       }
@@ -2520,24 +2722,66 @@ export function App() {
           message: `Discard changes to ${baseName(path)}? This cannot be undone.`,
           confirmLabel: 'Discard',
           danger: true,
-          onConfirm: () => void runGit('discardTracked', path),
+          onConfirm: () => void runGit('discardTracked', path, repoRoot),
         });
         return;
       }
       if (op === 'discardAll') {
-        const n = projectData?.changes.length ?? 0;
+        const n = discardAllPlan(changesOfRepo(repoRoot), paths).count;
+        const repos = active?.repos ?? [];
+        const repo =
+          repoRoot === undefined
+            ? undefined
+            : repos.find((r) => folderKey(r.root) === folderKey(repoRoot));
+        const where = repo && repos.length >= 2 ? ` in ${repoLabel(repo, repos)}` : '';
         setConfirm({
           title: 'Discard all changes',
-          message: `Discard all ${n} change${n === 1 ? '' : 's'}? This cannot be undone.`,
+          message: `Discard all ${n} change${n === 1 ? '' : 's'}${where}? Untracked files are deleted too. This cannot be undone.`,
           confirmLabel: 'Discard all',
           danger: true,
-          onConfirm: () => void discardAll(),
+          onConfirm: () => void discardAll(repoRoot, paths),
         });
         return;
       }
-      void runGit(op, path);
+      return runGit(op, path, repoRoot, paths);
     },
-    [runGit, discardAll, projectData?.changes.length],
+    [runGit, runGitFanOut, discardAll, changesOfRepo, active?.repos],
+  );
+
+  const changesViewModel = useMemo(
+    () => changesModel({ session: active, repoChanges, view: settings.changesView }),
+    [active, repoChanges, settings.changesView],
+  );
+  const reviewCombo = comboLabel('openReview', settings.shortcuts);
+  const reviewTitle = reviewCombo ? `Review changes (${reviewCombo})` : 'Review changes';
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
+  const onRepoContext = useCallback(
+    (root: string) => {
+      if (active) post({ type: 'repo:context', sessionId: active.id, path: root });
+    },
+    [active?.id],
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
+  const onPickActiveRepo = useCallback(
+    (root: string | null) => {
+      if (!active) return;
+      post(
+        root === null
+          ? { type: 'repo:unpin', sessionId: active.id }
+          : { type: 'repo:pin', sessionId: active.id, repoRoot: root },
+      );
+    },
+    [active?.id],
+  );
+  // The All view has no pin control, so a pin left behind would silently freeze the active
+  // repo (spec §13 D15).
+  const onSetChangesView = useCallback(
+    (view: ChangesViewMode) => {
+      update({ changesView: view });
+      if (view === 'all' && active?.repoPinned) post({ type: 'repo:unpin', sessionId: active.id });
+    },
+    [update, active?.id, active?.repoPinned],
   );
 
   // Right-click anywhere on a side panel (bar or body background) or the top bar
@@ -2641,7 +2885,8 @@ export function App() {
     !!confirm ||
     !!newSession ||
     webPromptOpen ||
-    iconPickerSessionId !== null;
+    iconPickerSessionId !== null ||
+    movePicker !== null;
   const navBack = useCallback(() => {
     if (!isAnyModalOpen) goBack();
   }, [isAnyModalOpen, goBack]);
@@ -2699,7 +2944,7 @@ export function App() {
     const sessionEntries: PaletteEntry[] = sessions.map((s) => ({
       id: `session:${s.id}`,
       title: s.name,
-      subtitle: baseName(s.projectPath),
+      subtitle: baseName(s.home),
       group: 'Sessions',
       icon: <SessionGlyph icon={resolveSessionIcon(s, agents)} size={14} />,
       ...sessionPaletteFields(s, activeId),
@@ -2720,19 +2965,17 @@ export function App() {
         openDocs: docState.docs,
         activeId: activeId ?? null,
       }) ?? undefined;
-    const fileEntries: PaletteEntry[] =
-      active && search.root === active.projectPath
-        ? search.results.map((h) => ({
-            id: `file:${h.abs}`,
-            title: h.rel,
-            group: 'Files',
-            icon: <IconDoc size={14} />,
-            run: () => openFile(h.abs, owningFor(h.abs)),
-            runBackground: () => openFile(h.abs, owningFor(h.abs), 'background'),
-          }))
-        : [];
+    const fileEntries: PaletteEntry[] = quickOpenFileRows(corpus, sections).map(({ hit, tag }) => ({
+      id: `file:${hit.abs}`,
+      title: hit.rel,
+      group: 'Files',
+      icon: <IconDoc size={14} />,
+      ...(tag ? { badge: tag.label, badgeTone: tag.tone, badgeTitle: tag.title } : {}),
+      run: () => openFile(hit.abs, owningFor(hit.abs)),
+      runBackground: () => openFile(hit.abs, owningFor(hit.abs), 'background'),
+    }));
     return [...sessionEntries, ...agentEntries, ...fileEntries];
-  }, [sessions, agents, active, activeId, search, openFile, docState.docs]);
+  }, [sessions, agents, activeId, corpus, sections, openFile, docState.docs]);
 
   // Recently opened documents for the active session (shown when the query is empty).
   const recentItems: PaletteEntry[] = useMemo(() => {
@@ -2758,10 +3001,8 @@ export function App() {
   const commandItems: PaletteEntry[] = useMemo(() => {
     // Show each command's bound key combo for discoverability, resolved through the same
     // (rebindable) registry the global handler uses. Absent for commands with no binding.
-    const comboFor = (actionId: string): string | undefined => {
-      const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
-      return action ? formatCombo(effectiveCombo(action, settings.shortcuts)) : undefined;
-    };
+    const comboFor = (actionId: string): string | undefined =>
+      comboLabel(actionId, settings.shortcuts);
     const cmds: PaletteEntry[] = [
       {
         id: 'cmd:new',
@@ -2831,7 +3072,7 @@ export function App() {
         group: 'Commands',
         icon: <IconBranch size={14} />,
         combo: comboFor('openGitHistory'),
-        run: openGitHistoryTab,
+        run: () => openGitHistoryTab(),
       },
       {
         id: 'cmd:timedMessage',
@@ -2929,7 +3170,7 @@ export function App() {
           keywords: ['finder', 'file manager', 'show in folder'],
           group: 'Commands',
           icon: <IconExternal size={14} />,
-          run: () => post({ type: 'revealInExplorer', path: active.projectPath }),
+          run: () => post({ type: 'revealInExplorer', path: active.home }),
         },
         {
           id: 'cmd:close',
@@ -2948,7 +3189,7 @@ export function App() {
           run: () => post({ type: 'session:move', sessionId: active.id, target: { kind: 'new' } }),
         },
       );
-      if (active.status !== 'running')
+      if (canRelaunch(active))
         cmds.push({
           id: 'cmd:relaunch',
           title: 'Relaunch active session',
@@ -3061,7 +3302,7 @@ export function App() {
         });
       }
     }
-    if (staleSessionIds(sessions).length > 0) {
+    if (relaunchableSessionIds(sessions).length > 0) {
       cmds.push({
         id: 'cmd:relaunchAllStale',
         title: 'Relaunch all stale sessions',
@@ -3070,6 +3311,8 @@ export function App() {
         icon: <IconSparkle size={14} />,
         run: relaunchAllStale,
       });
+    }
+    if (staleSessionIds(sessions).length > 0) {
       cmds.push({
         id: 'cmd:closeAllStale',
         title: 'Close all stale sessions',
@@ -3111,7 +3354,7 @@ export function App() {
     // Workspace Trust (docs/specs/2026-09-23-workspace-trust.md). "Trust" only asks the host to
     // raise its prompt — the host picks the folder and owns the decision.
     const trustLanguage = lspLanguages[0];
-    const trustTarget = activeFilePath ?? active?.projectPath;
+    const trustTarget = activeFilePath ?? active?.home;
     if (trustLanguage && trustTarget) {
       cmds.push({
         id: 'cmd:trustCurrentFolder',
@@ -3307,8 +3550,11 @@ export function App() {
             onOpenCommitReview={(sha, sid, repoRoot) =>
               openReviewForCommit(sha, sid, undefined, repoRoot)
             }
-            changesRoot={active ? gitRootForSession(active) : undefined}
-            changes={projectData?.changes ?? []}
+            reviewRepos={reviewRepos}
+            reviewRepoChanges={reviewRepoChanges}
+            reviewRepoGit={active?.repoGit}
+            reviewFallbackRoot={reviewFallbackRoot}
+            home={active?.home}
             onReviewRequestDiff={requestReviewDiff}
             onJumpToHunk={jumpToHunk}
             onOpenReviewDiff={onOpenReviewDiff}
@@ -3316,10 +3562,8 @@ export function App() {
             onCloseReview={closeReviewTab}
             onSetReviewSource={setReviewSource}
             onNewSession={() => openNewSession()}
-            showGitIndicator={settings.showGitIndicator}
-            onOpenGitHistory={openGitHistoryTab}
-            onOpenReview={openReviewTab}
             onOpenCommitFile={openCommitFile}
+            onRetargetHistory={retargetGitHistory}
             onReviewCommit={(sha, subject, repoRoot, sessionId) =>
               openReviewForCommit(sha, sessionId, subject, repoRoot)
             }
@@ -3356,6 +3600,14 @@ export function App() {
         >
           <Sidebar
             sessions={sessions}
+            projects={state?.projects ?? []}
+            windowCount={Math.max(1, winList.length)}
+            onNewInProject={(projectId) => setNewSession({ projectId })}
+            onOpenBoard={(id) => {
+              setActiveId(id);
+              setCenterView('board');
+            }}
+            onConfirm={setConfirm}
             agents={agents}
             activeId={activeId}
             moveGrip={{ onDragStart: sdock.onDragStart, onDragEnd: sdock.onDragEnd }}
@@ -3375,7 +3627,6 @@ export function App() {
             onOpenSettings={() => openSettingsAt('general')}
             onContextMenu={onSessionContextMenu}
             onSnooze={snooze}
-            onOpenReview={openReviewForSession}
             renamingId={renamingId}
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
             onReorderSessions={(o) => post({ type: 'reorderSessions', order: o })}
@@ -3406,17 +3657,40 @@ export function App() {
         barless
       >
         <RightPane
-          projectPath={active ? activeCwd(active) : undefined}
-          changes={projectData?.changes ?? []}
+          sessionId={active?.id}
+          sections={sections}
+          rowChanges={rowChanges}
+          osDropSeam={state?.about?.e2e === true}
+          openAsSessionHint={openAsSessionHint}
+          reviewRepoChanges={reviewRepoChanges}
+          changesModel={changesViewModel}
+          reviewTitle={reviewTitle}
+          onReview={openReviewTab}
+          onRefresh={refreshChanges}
+          onSetView={onSetChangesView}
+          onAction={onGitAction}
+          onRepoHeadContextMenu={onRepoHeadContextMenu}
+          onRepoContext={onRepoContext}
+          onPickActiveRepo={onPickActiveRepo}
+          renderChip={(repo) =>
+            active ? (
+              <BranchChip
+                sessionId={active.id}
+                repo={repo}
+                git={gitOf(active, repo.root)}
+                onViewHistory={openGitHistoryTab}
+                onSwitched={refreshChanges}
+                onActivate={() => onRepoContext(repo.root)}
+              />
+            ) : null
+          }
           moveGrip={{ onDragStart: edock.onDragStart, onDragEnd: edock.onDragEnd }}
           onOpenFile={(p, mode) => openFile(p, undefined, mode)}
           onOpenMatch={openMatch}
           paneRef={rightPaneRef}
-          onOpenDiff={(rel, diffScope, mode) =>
-            active &&
-            openDiff(joinPath(gitRootForSession(active), rel), undefined, { diffScope, mode })
+          onOpenDiff={(repoRoot, rel, diffScope, mode) =>
+            openDiff(joinPath(repoRoot, rel), undefined, { diffScope, mode })
           }
-          onGitAction={onGitAction}
           setMenu={setMenu}
           revealPath={(path) => post({ type: 'revealInExplorer', path })}
           openExternalApp={(path) => post({ type: 'openExternalPath', path })}
@@ -3426,7 +3700,6 @@ export function App() {
           onDeleteFiles={onDeleteFiles}
           onFileRenamed={onFileRenamed}
           onChangeContextMenu={onChangeContextMenu}
-          onRefreshChanges={refreshChanges}
           onReviewScope={openReviewScoped}
           reviewMode={reviewMode}
           onTabShown={setPaneTab}
@@ -3465,22 +3738,31 @@ export function App() {
       <div className="workbench">{visibleOrder.map(renderRegion)}</div>
       {newSession && (
         <NewSessionModal
-          repos={state?.repos ?? []}
-          agents={agents}
-          initialPath={newSession.path}
-          initialAgentId={newSession.agentId}
-          subtitle={
-            newSession.cardTitle ? `Start a session for "${newSession.cardTitle}"` : undefined
-          }
-          onClose={() => setNewSession(null)}
-          onOpen={(path, agentId) => {
-            // Stamp the originating board card (N2) so the created session links back to it.
-            post({ type: 'openRepo', path, agentId, cardId: newSession.cardId });
-            setNewSession(null);
+          prefill={newSession}
+          ctx={{
+            active,
+            sessions,
+            projects: state?.projects ?? [],
+            repos: state?.repos ?? [],
+            agents,
+            launchers: state?.launchers ?? [],
+            defaultAgentId: settings.defaultAgentId,
           }}
-          onBrowse={(agentId) => {
-            post({ type: 'browseRepo', agentId });
+          onClose={() => {
             setNewSession(null);
+            if (newSessionReturnFocus.current?.isConnected) newSessionReturnFocus.current.focus();
+            newSessionReturnFocus.current = null;
+          }}
+          onStarted={(_id, dropped) => {
+            newSessionReturnFocus.current = null;
+            // The knownIds effect activates the new session; nothing else to do here.
+            setNewSession(null);
+            for (const d of dropped) {
+              pushToast({
+                message: `Skipped ${sessionNameFromPath(d.path)}: not a valid folder`,
+                variant: 'error',
+              });
+            }
           }}
         />
       )}
@@ -3489,11 +3771,12 @@ export function App() {
           agents={agents}
           initialTab={settingsTab}
           about={state?.about}
-          projectPath={active?.projectPath || null}
+          projectPath={active?.home || null}
           onClose={() => setSettingsOpen(false)}
           onCheckUpdate={() => post({ type: 'updateCheck' })}
           onRelaunch={() => post({ type: 'updateRelaunch' })}
           updateStatus={updateStatus}
+          onSetChangesView={onSetChangesView}
         />
       )}
       {webPromptOpen && (
@@ -3512,11 +3795,10 @@ export function App() {
       )}
       {centerView === 'board' && (
         <BoardView
-          projectPath={active?.projectPath}
+          home={active?.home}
           sessions={sessions}
-          onStartSessionForCard={(card) =>
-            setNewSession({ path: active?.projectPath, cardId: card.id, cardTitle: card.title })
-          }
+          agents={agents}
+          onStartSessionForCard={startSessionForCard}
           onActivateSession={(id) => {
             setActiveId(id);
             setCenterView('editor');
@@ -3526,7 +3808,7 @@ export function App() {
       )}
       {centerView === 'canvas' && (
         <ArchitectureView
-          projectPath={active?.projectPath}
+          projectPath={active?.home}
           projectName={activeProject}
           onClose={() => setCenterView('editor')}
         />
@@ -3546,6 +3828,14 @@ export function App() {
             hunkReply?.(false);
             setConfirm(null);
           }}
+        />
+      )}
+      {movePicker && (
+        <ProjectPicker
+          session={sessions.find((x) => x.id === movePicker.sessionId)}
+          projects={state?.projects ?? []}
+          at={movePicker.at}
+          onClose={closeMovePicker}
         />
       )}
       {iconPickerSessionId &&

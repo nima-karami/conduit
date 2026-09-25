@@ -25,7 +25,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { groupMatches, tokenRgb } from './canvas.mjs';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openReview, openSession, runScenario } from './harness.mjs';
 import { contrast } from './row-color.mjs';
 
 const LINES = 2000;
@@ -111,8 +111,7 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
   );
   log("diffSideBySide toggled to false via plain.ts's own diff tab ✓");
 
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 25000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForFunction(
     () => {
       const c = document.querySelector('.review .rcard[data-path="wide.ts"]');

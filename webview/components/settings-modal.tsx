@@ -6,6 +6,7 @@ import type {
   Background,
   BgIntensity,
   CardField,
+  ChangesViewMode,
   Density,
   FontSize,
   HtmlDefaultView,
@@ -33,6 +34,7 @@ import { MONO_FONTS, THEMES, type ThemeDef, UI_FONTS } from '../themes';
 import { useOverlayEntry } from '../use-overlay-entry';
 import { ModalLayer } from './modal-layer';
 import { SelectField } from './select-field';
+import { SessionCardPreview } from './session-card';
 import type { UpdateStatus } from './update-card';
 
 type Tab = 'general' | 'appearance' | 'shortcuts' | 'skills' | 'about';
@@ -42,19 +44,6 @@ const CARD_ROLES: { key: 'cardTitle' | 'cardSubtitle' | 'cardDetail'; label: str
   { key: 'cardSubtitle', label: 'Subtitle' },
   { key: 'cardDetail', label: 'Detail' },
 ];
-// Sample values for the preview card.
-const SAMPLE: Record<CardField, string> = {
-  name: 'Portfolio Redesign',
-  live: 'Edit webview/styles.css',
-  agent: 'PowerShell 7',
-  folder: 'nextjs-portfolio',
-  path: 'G:/awby/projects/nextjs-portfolio',
-  worktree: 'feature/auth',
-  time: '4 min ago',
-  active: '2 mins ago',
-  status: 'running',
-  none: '',
-};
 
 const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'none', label: 'None' },
@@ -74,12 +63,15 @@ export function SettingsModal({
   onCheckUpdate,
   onRelaunch,
   updateStatus,
+  onSetChangesView,
 }: {
   agents: AgentDefinition[];
   initialTab?: Tab;
   about?: AboutInfo;
   projectPath?: string | null;
   onClose: () => void;
+  /** The same path as the Changes header toggle, so switching to All unpins (spec D15). */
+  onSetChangesView: (view: ChangesViewMode) => void;
   onCheckUpdate?: () => void;
   onRelaunch?: () => void;
   updateStatus?: UpdateStatus | null;
@@ -123,7 +115,14 @@ export function SettingsModal({
 
           <div className="settings__pane">
             {tab === 'appearance' && <Appearance settings={settings} update={update} />}
-            {tab === 'general' && <General settings={settings} update={update} agents={agents} />}
+            {tab === 'general' && (
+              <General
+                settings={settings}
+                update={update}
+                agents={agents}
+                onSetChangesView={onSetChangesView}
+              />
+            )}
             {tab === 'shortcuts' && <Shortcuts settings={settings} update={update} />}
             {tab === 'skills' && <Skills projectPath={projectPath} />}
             {tab === 'about' && (
@@ -610,10 +609,6 @@ function SessionCardSection({
   settings: AppSettings;
   update: (p: Partial<AppSettings>) => void;
 }) {
-  const title = SAMPLE[settings.cardTitle] || SAMPLE.name;
-  const subtitle = settings.cardSubtitle !== 'none' ? SAMPLE[settings.cardSubtitle] : '';
-  const detail = settings.cardDetail !== 'none' ? SAMPLE[settings.cardDetail] : '';
-
   return (
     <section className="set set--col">
       <div className="set__label">
@@ -640,26 +635,20 @@ function SessionCardSection({
         </div>
         <div className="cardcfg__preview">
           <span className="cardcfg__previewlabel">Preview</span>
-          <div className="session session--idle session--active cardcfg__card">
-            <div className="session__head">
-              <span className="dot dot--idle" />
-              <span className="session__name">{title}</span>
-              <span className="session__state">Idle</span>
-            </div>
-            {subtitle && (
-              <span className="session__meta">
-                <span className="session__metaitem">{subtitle}</span>
-              </span>
-            )}
-            {detail && <span className="session__path">{detail}</span>}
-          </div>
+          <SessionCardPreview
+            roles={{
+              title: settings.cardTitle,
+              subtitle: settings.cardSubtitle,
+              detail: settings.cardDetail,
+            }}
+          />
         </div>
       </div>
     </section>
   );
 }
 
-function CustomShaderEditor({
+export function CustomShaderEditor({
   settings,
   update,
 }: {
@@ -679,6 +668,12 @@ function CustomShaderEditor({
     }, 350);
     return () => clearTimeout(t);
   }, [src, update]);
+
+  // The unclaimed-drop guard marks every Files drag 'none'; setting the effect is what claims it.
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -701,7 +696,7 @@ function CustomShaderEditor({
           spellCheck={false}
           value={src}
           onChange={(e) => setSrc(e.target.value)}
-          onDragOver={(e) => e.preventDefault()}
+          onDragOver={onDragOver}
           onDrop={onDrop}
         />
         <div className="shadered__foot">
@@ -794,10 +789,12 @@ function General({
   settings,
   update,
   agents,
+  onSetChangesView,
 }: {
   settings: AppSettings;
   update: (p: Partial<AppSettings>) => void;
   agents: AgentDefinition[];
+  onSetChangesView: (view: ChangesViewMode) => void;
 }) {
   return (
     <>
@@ -859,21 +856,17 @@ function General({
           <Toggle value={settings.trackCwd} onChange={(v) => update({ trackCwd: v })} />
         </Section>
         <Section
-          title="Show git branch indicator"
-          desc="Show the current git branch, worktree, and uncommitted-changes status in a strip at the top of each terminal tab"
+          title="Changes view"
+          desc="Show every repo of the session, or only the active one."
         >
-          <Toggle
-            value={settings.showGitIndicator}
-            onChange={(v) => update({ showGitIndicator: v })}
-          />
-        </Section>
-        <Section
-          title="Multi-repo picker"
-          desc="When the opened folder contains several git repos, show a picker that scopes the git surfaces to one active repo (follows your context; pin to hold one). Hidden for single-repo projects"
-        >
-          <Toggle
-            value={settings.multiRepoPicker}
-            onChange={(v) => update({ multiRepoPicker: v })}
+          <SelectField
+            ariaLabel="Changes view"
+            value={settings.changesView}
+            options={[
+              { value: 'all', label: 'All repos' },
+              { value: 'active', label: 'Active repo' },
+            ]}
+            onChange={(v) => onSetChangesView(v as ChangesViewMode)}
           />
         </Section>
       </SetGroup>

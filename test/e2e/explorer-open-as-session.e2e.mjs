@@ -8,7 +8,7 @@
 
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { assert, openSession, runScenario } from './harness.mjs';
 
 const ITEM = 'Open as new session';
@@ -95,6 +95,11 @@ runScenario('explorer-open-as-session', async ({ page, log }) => {
   const i = labels.indexOf(ITEM);
   assert(i >= 0, `a folder row must offer "${ITEM}" (got ${labels.join(', ')})`);
   assert(!rows[i].disabled, 'it must be enabled for a single folder');
+  // AC14: a standalone session joins no project, so the item carries no `in <project>` hint.
+  assert(
+    (await page.locator('.ctxmenu .ctxmenu__hint').count()) === 0,
+    'a standalone session offers the item without a project hint',
+  );
   assert(
     labels.indexOf('Reveal in Explorer') < i && i < labels.indexOf('Delete'),
     'the item belongs after the reveal-style items and before the destructive one',
@@ -106,11 +111,65 @@ runScenario('explorer-open-as-session', async ({ page, log }) => {
   const title = (await page.locator('.modal .modal__title').innerText()).trim();
   assert(title === 'New session', `the New Session dialog should open (got ${title})`);
 
-  const shown = await page.locator('.repo--active .repo__path').first().innerText();
+  const home = page.locator('.ns-folder--home').first();
+  const shown = await home.locator('.ns-folder__path').innerText();
   log('prefilled path:', JSON.stringify(shown));
   assert(
     norm(shown) === norm(join(dir, 'pkg')),
     `the dialog should preselect the folder (got ${shown}, want ${join(dir, 'pkg')})`,
   );
+  // Once the host's probe lands, a real folder must read as present, never Not found.
+  await page.waitForSelector('.ns-folder--home[data-exists]', { timeout: 8000 });
+  assert(
+    (await home.getAttribute('data-exists')) === 'true' &&
+      (await home.locator('.ns-folder__missing').count()) === 0,
+    'the prefilled home must not be marked Not found',
+  );
   log('New Session prefilled with the clicked folder ✓');
+
+  // AC14 (mf-files §2.8): in a session that belongs to project P, the item says where the new
+  // session will land.
+  await page.locator('.ns__foot .btn', { hasText: 'Cancel' }).click();
+  await page.waitForSelector('.modal.ns', { state: 'detached', timeout: 5000 });
+  const created = await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const off = window.agentDeck.subscribe((m) => {
+          if (m.type === 'project:created' && m.requestId === 9101) {
+            off();
+            resolve(m.id);
+          }
+        });
+        window.agentDeck.post({ type: 'project:create', name: 'P', requestId: 9101 });
+      }),
+  );
+  assert(typeof created === 'string', `project:create should reply an id (got ${created})`);
+  const dir2 = mkdtempSync(join(tmpdir(), 'conduit-oas-p-'));
+  mkdirSync(join(dir2, 'pkg'));
+  const before = await page.evaluate(() => (window.__sessions || []).map((x) => x.id));
+  await page.evaluate(
+    ({ path, projectId }) =>
+      window.agentDeck.post({ type: 'openRepo', path, agentId: 'shell:cmd', projectId }),
+    { path: dir2.replace(/\\/g, '/'), projectId: created },
+  );
+  await page.waitForFunction(
+    (ids) => (window.__sessions || []).some((x) => !ids.includes(x.id) && x.projectId),
+    before,
+    { timeout: 20000 },
+  );
+  const pkgRow = page
+    .locator(`.files-section[aria-label="${basename(dir2)}"]`)
+    .locator('.filerow', { hasText: 'pkg' })
+    .first();
+  await pkgRow.waitFor({ state: 'attached', timeout: 20000 });
+  await pkgRow.click({ button: 'right' });
+  await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 8000 });
+  const hint = await page
+    .locator('.ctxmenu .ctxmenu__item', { hasText: ITEM })
+    .locator('.ctxmenu__hint')
+    .innerText()
+    .catch(() => null);
+  assert(hint?.trim() === 'in P', `a project session's item should carry "in P" (got ${hint})`);
+  await closeMenu(page);
+  log('project session → Open as new session hints "in P" ✓');
 });

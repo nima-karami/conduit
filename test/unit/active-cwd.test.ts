@@ -3,15 +3,15 @@ import { activeCwd, gitRootForSession, sessionGitRoot } from '../../src/active-c
 
 describe('activeCwd', () => {
   it('returns cwd when cwd is present', () => {
-    expect(activeCwd({ cwd: '/tmp/work', projectPath: '/home/project' })).toBe('/tmp/work');
+    expect(activeCwd({ cwd: '/tmp/work', home: '/home/project' })).toBe('/tmp/work');
   });
 
-  it('returns projectPath when cwd is undefined', () => {
-    expect(activeCwd({ cwd: undefined, projectPath: '/home/project' })).toBe('/home/project');
+  it('returns home when cwd is undefined', () => {
+    expect(activeCwd({ cwd: undefined, home: '/home/project' })).toBe('/home/project');
   });
 
-  it('returns projectPath when cwd is empty string', () => {
-    expect(activeCwd({ cwd: '', projectPath: '/home/project' })).toBe('/home/project');
+  it('returns home when cwd is empty string', () => {
+    expect(activeCwd({ cwd: '', home: '/home/project' })).toBe('/home/project');
   });
 });
 
@@ -20,7 +20,7 @@ describe('sessionGitRoot', () => {
     // The whole point of the fix: a terminal's resolution keys off cwd, NOT activeRepoRoot.
     const session = {
       cwd: '/repos/cwd-repo/sub',
-      projectPath: '/repos/proj',
+      home: '/repos/proj',
       activeRepoRoot: '/repos/pinned',
     };
     const run = vi.fn().mockResolvedValue('/repos/cwd-repo\n');
@@ -32,20 +32,18 @@ describe('sessionGitRoot', () => {
 
   it('normalizes backslashes in the cwd passed to git', async () => {
     const run = vi.fn().mockResolvedValue('C:/repos/app\n');
-    await sessionGitRoot({ cwd: 'C:\\repos\\app\\sub', projectPath: 'C:\\repos\\app' }, run);
+    await sessionGitRoot({ cwd: 'C:\\repos\\app\\sub', home: 'C:\\repos\\app' }, run);
     expect(run).toHaveBeenCalledWith(['rev-parse', '--show-toplevel'], 'C:/repos/app/sub');
   });
 
   it('falls back to the cwd when it is not inside a repo (empty rev-parse)', async () => {
     const run = vi.fn().mockResolvedValue('');
-    expect(await sessionGitRoot({ cwd: '/tmp/loose', projectPath: '/tmp/loose' }, run)).toBe(
-      '/tmp/loose',
-    );
+    expect(await sessionGitRoot({ cwd: '/tmp/loose', home: '/tmp/loose' }, run)).toBe('/tmp/loose');
   });
 
-  it('falls back to projectPath (via activeCwd) when cwd is unset', async () => {
+  it('falls back to home (via activeCwd) when cwd is unset', async () => {
     const run = vi.fn().mockResolvedValue('');
-    expect(await sessionGitRoot({ projectPath: '/home/proj' }, run)).toBe('/home/proj');
+    expect(await sessionGitRoot({ home: '/home/proj' }, run)).toBe('/home/proj');
     expect(run).toHaveBeenCalledWith(['rev-parse', '--show-toplevel'], '/home/proj');
   });
 });

@@ -2,7 +2,7 @@
  * git-history Slice A — real-runtime IPC/graph smoke (drive the REAL app).
  *
  * Opens a session on THIS repo (a git repo with real linear history + branches), opens the
- * git-history graph from the indicator button, and asserts the full seam end-to-end:
+ * git-history graph from the repo head's branch chip menu, and asserts the full seam end-to-end:
  *   (a) a `git:historyResult` arrives with ≥1 commit and a layout with laneCount ≥ 1;
  *   (b) the graph view renders commit rows in the DOM;
  *   (c) clicking a commit reveals its detail INLINE in the view's resizable bottom pane
@@ -21,7 +21,16 @@
 import { copyFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, launchApp, makeLog, openSession, REPO, tapBridge } from './harness.mjs';
+import {
+  assert,
+  launchApp,
+  makeLog,
+  openChangesTab,
+  openHistory,
+  openSession,
+  REPO,
+  tapBridge,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[git-history] SKIP — suite is Windows-only');
@@ -75,41 +84,27 @@ try {
   assert(hr.laneCount >= 1, 'expected laneCount ≥ 1 in the layout');
   log('PASS (a): git:historyResult has commits + a lane layout ✓');
 
-  // Open the graph from the indicator button (the spec's entry point). The bar+button
-  // appear once the session's git is interrogated (async, off the state broadcast). Under
-  // CONDUIT_E2E the window is hidden, so query by 'attached' (visibility checks need a
-  // shown window). Wait for the bar, then the button, then click it.
-  await page.waitForSelector('.git-indicator', { state: 'attached', timeout: 25000 });
-  await page.waitForSelector('.git-indicator__history', { state: 'attached', timeout: 25000 });
+  // The chip appears once the session's git is interrogated (async, off the state broadcast).
+  await openChangesTab(page);
+  await page.waitForSelector('.repo-head .branch-chip', { state: 'attached', timeout: 25000 });
 
-  // Branch-button polish (regression guard): the switchable branch segment is a real
-  // <button>, and a missing `background` reset let the native buttonface fill paint an
-  // off-palette pill at rest.
-  //
-  // The revamp gave every indicator segment a resting pill fill (5a draws the branch as a
-  // filled chip in the tab row), so "transparent" is no longer the invariant. What still
-  // holds is that the fill is a themed alpha wash: the UA buttonface is opaque, so an alpha
-  // below 1 is what separates our pill from the bug. (Skip only if the repo session isn't
-  // on a named branch — then there's no switchable segment to check.)
+  // Branch-chip polish (regression guard): the chip is a real <button>, and a missing
+  // `background` reset let the native buttonface fill paint an off-palette pill at rest. The fill
+  // is a themed alpha wash: the UA buttonface is opaque, so an alpha below 1 is what separates
+  // our pill from the bug.
   const branchBg = await page.evaluate(() => {
-    const el = document.querySelector('.git-indicator__branch--switchable');
+    const el = document.querySelector('.repo-head .branch-chip');
     return el ? getComputedStyle(el).backgroundColor : null;
   });
-  if (branchBg === null) {
-    log('SKIP (branch): no switchable branch segment in this session state');
-  } else {
-    log(`branch segment resting background: ${branchBg}`);
-    const alpha = branchBg.startsWith('rgba(')
-      ? Number.parseFloat(branchBg.slice(branchBg.lastIndexOf(',') + 1))
-      : 1;
-    assert(
-      alpha < 1,
-      `expected the switchable branch segment to rest on a themed alpha wash, got ${branchBg}`,
-    );
-    log('PASS (branch): switchable branch segment rests on a themed wash, not buttonface ✓');
-  }
+  assert(branchBg !== null, 'expected a .branch-chip in the repo head');
+  log(`branch chip resting background: ${branchBg}`);
+  const alpha = branchBg.startsWith('rgba(')
+    ? Number.parseFloat(branchBg.slice(branchBg.lastIndexOf(',') + 1))
+    : 1;
+  assert(alpha < 1, `expected the branch chip to rest on a themed alpha wash, got ${branchBg}`);
+  log('PASS (branch): branch chip rests on a themed wash, not buttonface ✓');
 
-  await page.click('.git-indicator__history', { force: true });
+  await openHistory(page);
 
   // (b) the graph renders rows in the DOM.
   await page.waitForSelector('.gh', { state: 'attached', timeout: 15000 });
@@ -123,6 +118,20 @@ try {
   );
   assert(nodeCount >= 1, 'expected ≥1 graph node drawn in the SVG gutter');
   log('PASS (b): graph view rendered rows + SVG nodes ✓');
+
+  const repoName = REPO.replace(/\\/g, '/').split('/').filter(Boolean).pop();
+  const chip = await page.evaluate(() => {
+    const el = document.querySelector('.gh__head .gh__repo');
+    return el
+      ? { text: el.textContent?.trim() ?? '', title: el.getAttribute('title') ?? '' }
+      : null;
+  });
+  assert(chip, 'expected the History header repo chip .gh__repo');
+  assert(
+    chip.text === repoName,
+    `expected the repo chip to read "${repoName}", got ${JSON.stringify(chip)}`,
+  );
+  log(`PASS (b2): header repo chip shows ${chip.text} ✓`);
 
   // Screenshot the rendered graph as evidence (before opening tabs switches the view).
   const shot = join(SCRATCH, 'git-history-graph.png');
@@ -149,6 +158,36 @@ try {
   log(`commit-diff result: ${cd.files} file(s), sha-tagged=${cd.hasSha}`);
   assert(cd.hasSha, 'expected git:commitDiffResult to carry its sha');
   assert(cd.files >= 1, 'expected ≥1 changed file in the commit-diff result');
+  // The host echoes the request's `root`, so the reply is where the post's root is observable.
+  const cdRoot = await page.evaluate(() => window.__gh.commitDiffs.at(-1).root ?? null);
+  const norm = (p) => p.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+  assert(
+    cdRoot !== null && norm(cdRoot) === norm(chip.title),
+    `expected git:commitDiff to carry root = the History repo (${chip.title}), got ${cdRoot}`,
+  );
+  log(`PASS (c1a): git:commitDiff carried root ${cdRoot} ✓`);
+
+  // D22: a root that is neither a detected repo nor the terminal's git root runs no git.
+  const nope = join(tmpdir(), 'nope').replace(/\\/g, '/');
+  const unknown = await page.evaluate(
+    async ({ s, root }) => {
+      const sha = window.__gh.commitDiffs.at(-1).sha;
+      window.agentDeck.post({ type: 'git:commitDiff', sessionId: s, sha, root, requestId: 8123 });
+      for (let i = 0; i < 100; i++) {
+        const r = window.__gh.commitDiffs.find((m) => m.requestId === 8123);
+        if (r) return r;
+        await new Promise((res) => setTimeout(res, 100));
+      }
+      return null;
+    },
+    { s: sid, root: nope },
+  );
+  assert(unknown, 'expected a git:commitDiffResult for the unknown root');
+  assert(
+    unknown.error === 'unknown repo' && unknown.files.length === 0 && unknown.root === nope,
+    `expected {error:'unknown repo', files:[], root echoed}, got ${JSON.stringify({ ...unknown, files: unknown.files.length })}`,
+  );
+  log("PASS (c1c): git:commitDiff {root:'<tmp>/nope'} → error 'unknown repo', files [] ✓");
   await page.waitForSelector('.gh__detail .commitview .gh__file', {
     state: 'attached',
     timeout: 12000,

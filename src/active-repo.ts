@@ -1,5 +1,8 @@
+import { gitRootForSession } from './active-cwd';
+import { folderKey } from './folder-key';
 import { isAncestorOf, normalizePath as norm } from './owning-session';
 import type { RepoInfo } from './repo-scan';
+import type { Session } from './types';
 
 /** Longest segment-aware prefix repo root containing `absPath`, else undefined. */
 export function repoForPath(repos: RepoInfo[], absPath: string): string | undefined {
@@ -33,4 +36,27 @@ export function resolveActiveRepo(input: {
   if (exists(repos, autoRoot)) return autoRoot;
   const rootRepo = repos.find((r) => norm(r.root) === norm(openedRoot));
   return rootRepo ? rootRepo.root : repos[0].root;
+}
+
+export function requestGitRoot(
+  s: Pick<Session, 'repos' | 'activeRepoRoot' | 'cwd' | 'home'>,
+  repoRoot: unknown,
+): string | null {
+  if (repoRoot === undefined) return gitRootForSession(s);
+  if (typeof repoRoot !== 'string') return null;
+  const key = folderKey(repoRoot);
+  return s.repos?.find((r) => folderKey(r.root) === key)?.root ?? null;
+}
+
+/** The terminal link rule: the live-cwd repo is accepted even when it is not a detected repo
+ *  (docs/specs/archive/2026-09-23-mf-review.md §2.1 D11). `liveRepo` runs git, so only on a miss. */
+export async function resolveRequestRepoRoot(
+  s: Pick<Session, 'repos' | 'activeRepoRoot' | 'cwd' | 'home'>,
+  repoRoot: unknown,
+  liveRepo: () => Promise<string>,
+): Promise<string | null> {
+  const detected = requestGitRoot(s, repoRoot);
+  if (detected !== null || typeof repoRoot !== 'string' || repoRoot === '') return detected;
+  const live = await liveRepo();
+  return live !== '' && folderKey(live) === folderKey(repoRoot) ? live : null;
 }

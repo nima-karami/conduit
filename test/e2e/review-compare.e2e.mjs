@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openReview, openSession, runScenario } from './harness.mjs';
 
 function git(dir, ...args) {
   return execFileSync('git', args, { cwd: dir }).toString().trim();
@@ -87,8 +87,7 @@ runScenario('review-compare', async ({ app, page, log }) => {
   const { initSha } = makeRepo(root);
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review', { state: 'visible', timeout: 10000 });
   log('Review tab open');
 

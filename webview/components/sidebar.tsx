@@ -1,67 +1,56 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { anchorMenuToRect } from '../../src/menu-position';
-import { menuToggleIntent } from '../../src/menu-toggle';
-import { moveBefore, reorderByGroup, reorderPersists, toggleCollapsed } from '../../src/reorder';
-import { resolveSessionIcon, sessionIconState } from '../../src/session-icon';
-import type { SessionSort } from '../../src/settings';
-import { staleSessionIds } from '../../src/stale-sessions';
-import type { AgentDefinition, Session } from '../../src/types';
 import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
+import { agentLabelFor } from '../../src/agent-label';
+import { type Rect, triggerMenu } from '../../src/menu-position';
+import { menuToggleIntent } from '../../src/menu-toggle';
+import { renamedProjectName } from '../../src/project-name';
+import { moveBefore, reorderPersists, toggleCollapsed } from '../../src/reorder';
+import {
+  cardDropIntent,
+  deleteProjectDialog,
+  groupSessions,
+  openBoardTarget,
+  orderSessions,
+  projectOrderAfterDrop,
+  type SessionGroup,
+  STANDALONE_KEY,
+  sessionMatchesFilter,
+} from '../../src/session-groups';
+import { resolveSessionIcon, sessionIconState } from '../../src/session-icon';
+import { staleSessionIds } from '../../src/stale-sessions';
+import type { AgentDefinition, Project, Session } from '../../src/types';
+import { post } from '../bridge';
+import {
+  IconBoard,
   IconCheck,
-  IconChevron,
-  IconChevronDown,
   IconMore,
+  IconPencil,
   IconPlus,
   IconSearch,
   IconSettings,
   IconTrash,
 } from '../icons';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
+import { projectAnnouncer } from '../project-announcer';
 import { useSettings } from '../settings';
 import { buildSortFilterMenuItems } from '../sort-filter-menu';
+import type { ConfirmState } from './confirm-dialog';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
+import { type HeaderDragHandlers, ProjectGroupHeader } from './project-group-header';
 import { type CardRoles, SessionCard } from './session-card';
 import { UpdateCard, type UpdateStatus } from './update-card';
 
-const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
-
-const STATUS_RANK: Record<Session['status'], number> = { running: 0, stale: 1, exited: 2 };
-
-/** Apply a sort to a session list. 'manual' keeps the incoming (global) order. */
-function sortSessions(list: Session[], sort: SessionSort): Session[] {
-  if (sort === 'manual') return list;
-  const arr = [...list];
-  switch (sort) {
-    case 'name':
-      arr.sort((a, b) => a.name.localeCompare(b.name));
-      break;
-    case 'recent':
-      arr.sort((a, b) => b.createdAt - a.createdAt);
-      break;
-    case 'active':
-      arr.sort(
-        (a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0) || a.name.localeCompare(b.name),
-      );
-      break;
-    case 'status':
-      arr.sort(
-        (a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status] || a.name.localeCompare(b.name),
-      );
-      break;
-    case 'project':
-      arr.sort(
-        (a, b) =>
-          baseName(a.projectPath).localeCompare(baseName(b.projectPath)) ||
-          a.name.localeCompare(b.name),
-      );
-      break;
-  }
-  return arr;
-}
-
 export function Sidebar({
   sessions,
+  projects,
   agents,
   activeId,
   onSelect,
@@ -74,7 +63,6 @@ export function Sidebar({
   onOpenSettings,
   onContextMenu,
   onSnooze,
-  onOpenReview,
   renamingId,
   onSetRenaming,
   onReorderSessions,
@@ -83,8 +71,18 @@ export function Sidebar({
   updateDismissed,
   onUpdateDismiss,
   moveGrip,
+  windowCount,
+  onNewInProject,
+  onOpenBoard,
+  onConfirm,
 }: {
   sessions: Session[]; // flat list in the global (manual) order
+  projects: Project[];
+  /** Open windows; the delete copy can only count this window's sessions (spec D13). */
+  windowCount: number;
+  onNewInProject: (projectId: string | null) => void;
+  onOpenBoard: (sessionId: string) => void;
+  onConfirm: (c: ConfirmState) => void;
   agents: AgentDefinition[];
   activeId: string | undefined;
   onSelect: (id: string) => void;
@@ -99,8 +97,6 @@ export function Sidebar({
   /** Silence one session's "needs you" for 10 minutes (D16). Held above the rail so the
    *  topbar's aggregate chip drops the same session at the same moment. */
   onSnooze: (id: string) => void;
-  /** Open Review changes for a session — the Review state's way into the diff. */
-  onOpenReview?: (id: string) => void;
   renamingId?: string;
   onSetRenaming: (id: string | null) => void;
   onReorderSessions: (order: string[]) => void;
@@ -117,15 +113,36 @@ export function Sidebar({
   moveGrip?: MoveGrip;
 }) {
   const { settings, update } = useSettings();
+  const groupIdBase = useId();
   const sort = settings.sessionSort;
   const grouped = settings.sessionGroupByProject;
   const collapsedProjects = settings.collapsedProjects;
   const [filter, setFilter] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
+  useEffect(() => {
+    const open = menu;
+    return () => open?.onClosed?.();
+  }, [menu]);
+  const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
+  // A project deleted elsewhere closes its rename without posting (spec §4).
+  useEffect(() => {
+    if (renamingProjectId !== null && !projects.some((p) => p.id === renamingProjectId)) {
+      setRenamingProjectId(null);
+    }
+  }, [projects, renamingProjectId]);
+  useEffect(() => projectAnnouncer.observeProjects(projects), [projects]);
+  const announcement = useSyncExternalStore(
+    projectAnnouncer.subscribe,
+    projectAnnouncer.getSnapshot,
+    projectAnnouncer.getSnapshot,
+  );
   // Passed to ContextMenu so a mousedown inside the trigger doesn't dismiss-then-reopen.
   const sortFilterTriggerRef = useRef<HTMLButtonElement | null>(null);
   // Menu-open state at the trigger's last mousedown, read by onClick via menuToggleIntent.
   const wasOpenRef = useRef(false);
+  // The header and pane menus share `menu`; only the one this trigger opened is "its" menu.
+  const [sortMenu, setSortMenu] = useState<MenuState | null>(null);
+  const sortMenuOpen = menu !== null && menu === sortMenu;
 
   const toggleSortFilterMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (menuToggleIntent(wasOpenRef.current) === 'close') {
@@ -162,11 +179,10 @@ export function Sidebar({
       disabled: staleSessionIds(sessions).length === 0,
       onClick: onCloseAllStale,
     });
-    // Right-align to the button so the menu falls back over the narrow panel, not into
-    // the editor. MENU_W is an upper bound; the shared menu clamps to the viewport.
-    const MENU_W = 200;
-    const anchor = anchorMenuToRect(r, MENU_W);
-    setMenu({ x: anchor.x, y: anchor.y, items });
+    // Right-aligned to the button so the menu falls back over the narrow panel, not into the editor.
+    const next = { ...triggerMenu(r), items };
+    setSortMenu(next);
+    setMenu(next);
   };
 
   // Pane-level session menu for empty body space. Bail on defaultPrevented so a card's
@@ -198,14 +214,11 @@ export function Sidebar({
     });
   };
 
-  const labelFor = useCallback(
-    (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId,
-    [agents],
-  );
+  const labelFor = useCallback((agentId: string) => agentLabelFor(agents, agentId), [agents]);
 
   // Drag is enabled in every sort mode; disabled only when a text filter is active
   // (reordering a filtered subset is ambiguous). A drop that violates the active sort
-  // auto-switches to manual (see sessionDrag / groupDrag drop handlers).
+  // auto-switches to manual (see sessionDrag / headerDrag drop handlers).
   const canDrag = filter.trim() === '';
   const dragIdRef = useRef<string | null>(null);
   const dragGroup = useRef<string | null>(null); // grouped mode constrains within a project
@@ -214,6 +227,8 @@ export function Sidebar({
   const dragGroupRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   const [overGroup, setOverGroup] = useState<string | null>(null);
+  // A card over another group's header: the drop-into cue (spec §2.8).
+  const [overHeaderKey, setOverHeaderKey] = useState<string | null>(null);
 
   // Lookup map used by reorderPersists (pure helper, needs Map not array).
   const sessionsById = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions]);
@@ -224,6 +239,7 @@ export function Sidebar({
     dragGroupRef.current = null;
     setOverId(null);
     setOverGroup(null);
+    setOverHeaderKey(null);
   };
 
   // Persist a candidate reorder AND auto-switch to manual, but only if it changes the
@@ -231,23 +247,23 @@ export function Sidebar({
   // not sortedCanonical (which returns the candidate unchanged → would never persist).
   const commitReorder = useCallback(
     (candidateIds: string[], currentIds: string[]) => {
-      if (reorderPersists(candidateIds, currentIds, sort, sessionsById)) {
+      if (reorderPersists(candidateIds, currentIds, sort, sessionsById, projects)) {
         onReorderSessions(candidateIds);
         if (sort !== 'manual') update({ sessionSort: 'manual' });
       }
     },
-    [sort, sessionsById, onReorderSessions, update],
+    [sort, sessionsById, projects, onReorderSessions, update],
   );
 
-  const sessionDrag = (s: Session, groupPath: string | null, renderedIds: string[]) => ({
+  const sessionDrag = (s: Session, groupKey: string | null, renderedIds: string[]) => ({
     onDragStart: (e: React.DragEvent) => {
       dragIdRef.current = s.id;
-      dragGroup.current = groupPath;
+      dragGroup.current = groupKey;
       e.dataTransfer.effectAllowed = 'move';
     },
     onDragOver: (e: React.DragEvent) => {
       const d = dragIdRef.current;
-      if (d && d !== s.id && dragGroup.current === groupPath) {
+      if (d && d !== s.id && dragGroup.current === groupKey) {
         e.preventDefault();
         setOverId(s.id);
       }
@@ -255,7 +271,7 @@ export function Sidebar({
     onDrop: (e: React.DragEvent) => {
       e.preventDefault();
       const d = dragIdRef.current;
-      if (d && d !== s.id && dragGroup.current === groupPath)
+      if (d && d !== s.id && dragGroup.current === groupKey)
         commitReorder(moveBefore(renderedIds, d, s.id), renderedIds);
       reset();
     },
@@ -268,85 +284,106 @@ export function Sidebar({
     },
   });
 
-  // Drag a project header to reorder whole groups: the dragged project's ids move as one
-  // block before the target's, preserving internal order (reorderByGroup). B1 discipline
-  // (header/card/panel drags stay separate) comes from each path acting only on its own
-  // marker — no stopPropagation needed.
-  const groupDrag = (path: string, renderedIds: string[]) => ({
-    onDragStart: (e: React.DragEvent) => {
-      dragGroupRef.current = path;
-      e.dataTransfer.effectAllowed = 'move';
-    },
-    onDragOver: (e: React.DragEvent) => {
-      const d = dragGroupRef.current;
-      if (d && d !== path) {
-        e.preventDefault();
-        setOverGroup(path);
-      }
-    },
-    onDrop: (e: React.DragEvent) => {
-      e.preventDefault();
-      const d = dragGroupRef.current;
-      if (d && d !== path) {
-        const groupOf = (id: string) => sessions.find((s) => s.id === id)?.projectPath ?? '';
-        commitReorder(reorderByGroup(renderedIds, groupOf, d, path), renderedIds);
-      }
-      reset();
-    },
-    onDragEnd: reset,
-  });
-
   const roles: CardRoles = {
     title: settings.cardTitle,
     subtitle: settings.cardSubtitle,
     detail: settings.cardDetail,
   };
 
-  // Filter (name / project / agent), then sort, then optionally group by project.
-  const filtered = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    if (!q) return sessions;
-    return sessions.filter(
-      (s) =>
-        s.name.toLowerCase().includes(q) ||
-        baseName(s.projectPath).toLowerCase().includes(q) ||
-        labelFor(s.agentId).toLowerCase().includes(q),
-    );
-  }, [sessions, filter, labelFor]);
+  const projectName = useCallback(
+    (id: string | undefined) =>
+      id === undefined ? undefined : projects.find((p) => p.id === id)?.name,
+    [projects],
+  );
 
-  const sorted = useMemo(() => sortSessions(filtered, sort), [filtered, sort]);
+  const filtered = useMemo(
+    () =>
+      sessions.filter((s) =>
+        sessionMatchesFilter(s, filter, {
+          projectName: projectName(s.projectId),
+          agentLabel: labelFor(s.agentId),
+        }),
+      ),
+    [sessions, filter, projectName, labelFor],
+  );
 
-  // Float needs-attention sessions to the top, but only for a derived order — never
-  // clobber the user's explicit manual order (D2). Stable within each partition.
-  const ordered = useMemo(() => {
-    if (sort === 'manual') return sorted;
-    const attn = sorted.filter((s) => s.needsAttention);
-    if (attn.length === 0) return sorted;
-    const rest = sorted.filter((s) => !s.needsAttention);
-    return [...attn, ...rest];
-  }, [sorted, sort]);
+  const ordered = useMemo(
+    () => orderSessions(filtered, sort, projects),
+    [filtered, sort, projects],
+  );
 
-  // One headerless group when ungrouped, else one per project (first-appearance order for
-  // manual, by name otherwise).
-  const renderGroups = useMemo<{ path: string | null; sessions: Session[] }[]>(() => {
-    if (!grouped) return [{ path: null, sessions: ordered }];
-    const map = new Map<string, Session[]>();
-    for (const s of ordered) {
-      const arr = map.get(s.projectPath) ?? [];
-      arr.push(s);
-      map.set(s.projectPath, arr);
-    }
-    const paths = [...map.keys()];
-    if (sort !== 'manual') paths.sort((a, b) => baseName(a).localeCompare(baseName(b)));
-    return paths.map((path) => ({ path, sessions: map.get(path) ?? [] }));
-  }, [ordered, grouped, sort]);
+  const renderGroups = useMemo<SessionGroup[] | null>(
+    () => (grouped ? groupSessions(filtered, projects, { sort, filterActive: !canDrag }) : null),
+    [grouped, filtered, projects, sort, canDrag],
+  );
 
-  // The flat rendered order, so drag handlers commit the rendered arrangement (not raw sessions[]).
+  // Header drag is only on while unfiltered, where every project renders, so the rendered
+  // project order is the full one (plan decision 8).
+  const renderedProjectIds = useMemo(
+    () => (renderGroups ?? []).flatMap((g) => (g.project ? [g.project.id] : [])),
+    [renderGroups],
+  );
+
+  // A header takes a card (filing it into that group) or another header (reorder), each on its
+  // own marker. Standalone is neither draggable nor a reorder target (spec §2.2, §2.8).
+  const headerDrag = (key: string, name: string): HeaderDragHandlers => ({
+    ...(key === STANDALONE_KEY
+      ? {}
+      : {
+          onDragStart: (e: React.DragEvent) => {
+            dragGroupRef.current = key;
+            e.dataTransfer.effectAllowed = 'move';
+          },
+        }),
+    onDragOver: (e: React.DragEvent) => {
+      if (dragIdRef.current) {
+        if (dragGroup.current !== null && cardDropIntent(dragGroup.current, key)) {
+          e.preventDefault();
+          setOverHeaderKey(key);
+        }
+        return;
+      }
+      const d = dragGroupRef.current;
+      if (d && d !== key && key !== STANDALONE_KEY) {
+        e.preventDefault();
+        setOverGroup(key);
+      }
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+      setOverGroup((g) => (g === key ? null : g));
+      setOverHeaderKey((g) => (g === key ? null : g));
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      const card = dragIdRef.current ? sessionsById.get(dragIdRef.current) : undefined;
+      if (card) {
+        const intent = dragGroup.current === null ? null : cardDropIntent(dragGroup.current, key);
+        if (intent) {
+          projectAnnouncer.moveSession(card.id, intent.projectId, {
+            session: card.name,
+            target: name,
+          });
+        }
+        reset();
+        return;
+      }
+      const d = dragGroupRef.current;
+      const ids = d === null ? null : projectOrderAfterDrop(renderedProjectIds, d, key);
+      if (ids) {
+        post({ type: 'project:reorder', ids });
+        if (sort !== 'manual') update({ sessionSort: 'manual' });
+      }
+      reset();
+    },
+    onDragEnd: reset,
+  });
+
   const renderedIds = useMemo(() => ordered.map((s) => s.id), [ordered]);
 
   const liveCount = sessions.filter((s) => s.status === 'running').length;
 
-  const renderItem = (s: Session, groupPath: string | null) => (
+  const renderItem = (s: Session, groupKey: string | null) => (
     <SessionCard
       key={s.id}
       session={s}
@@ -359,15 +396,141 @@ export function Sidebar({
       onRelaunch={() => onRelaunch(s.id)}
       onContextMenu={onContextMenu ? (e) => onContextMenu(e, s) : undefined}
       onSnooze={() => onSnooze(s.id)}
-      onOpenReview={onOpenReview ? () => onOpenReview(s.id) : undefined}
       editing={renamingId === s.id}
       onEditStart={() => onSetRenaming(s.id)}
       onEditEnd={() => onSetRenaming(null)}
       roles={roles}
-      drag={canDrag ? sessionDrag(s, grouped ? groupPath : null, renderedIds) : undefined}
+      drag={canDrag ? sessionDrag(s, groupKey, renderedIds) : undefined}
       dropTarget={overId === s.id}
     />
   );
+
+  const renderGroup = (g: SessionGroup) => {
+    const name = g.project?.name ?? 'Standalone';
+    const labelId = `${groupIdBase}-${g.key}`;
+    const isCollapsed = collapsedProjects.includes(g.key);
+    // Surface a hidden busy/attention session on the collapsed header so the group still
+    // signals. Reads the shared derivation, never the raw flags, so it can't drift.
+    const hiddenAttn =
+      isCollapsed &&
+      g.sessions.some((s) => {
+        const st = sessionIconState(s);
+        return st === 'attention' || st === 'busy';
+      });
+    const project = g.project;
+    return (
+      <div className="proj" role="group" aria-labelledby={labelId} key={g.key}>
+        <ProjectGroupHeader
+          groupKey={g.key}
+          name={name}
+          labelId={labelId}
+          count={g.sessions.length}
+          collapsed={isCollapsed}
+          attn={hiddenAttn}
+          renaming={project !== null && renamingProjectId === project.id}
+          dropCue={overGroup === g.key ? 'before' : overHeaderKey === g.key ? 'into' : null}
+          drag={canDrag ? headerDrag(g.key, name) : undefined}
+          onToggle={() => update({ collapsedProjects: toggleCollapsed(collapsedProjects, g.key) })}
+          onNew={() => onNewInProject(project?.id ?? null)}
+          onMenu={(at, returnFocus) => openHeaderMenu(project, at, returnFocus)}
+          onStartRename={() => project && setRenamingProjectId(project.id)}
+          onRenameEnd={(draft) => {
+            setRenamingProjectId(null);
+            const next = project && draft !== null ? renamedProjectName(draft, project.name) : null;
+            if (project && next !== null)
+              post({ type: 'project:rename', id: project.id, name: next });
+          }}
+        />
+        {!isCollapsed && g.sessions.map((s) => renderItem(s, g.key))}
+      </div>
+    );
+  };
+
+  const confirmDelete = (project: Project) => {
+    const count = sessions.filter((s) => s.projectId === project.id).length;
+    onConfirm({
+      ...deleteProjectDialog(project.name, count, windowCount),
+      confirmLabel: 'Delete project',
+      danger: true,
+      focusCancel: true,
+      onConfirm: () => {
+        post({ type: 'project:delete', id: project.id });
+        projectAnnouncer.noteDelete(project.id, project.name);
+        update({ collapsedProjects: collapsedProjects.filter((k) => k !== project.id) });
+      },
+    });
+  };
+
+  const openHeaderMenu = (
+    project: Project | null,
+    at: { x: number; y: number } | { anchor: Rect; keyboard: true },
+    returnFocus: HTMLElement | null,
+  ) => {
+    const items: MenuItem[] = project
+      ? [
+          {
+            label: 'New session in project',
+            icon: <IconPlus size={13} />,
+            onClick: () => onNewInProject(project.id),
+          },
+          (() => {
+            const target = openBoardTarget(project.id, sessions, activeId);
+            return {
+              label: 'Open board',
+              icon: <IconBoard size={13} />,
+              disabled: target === undefined,
+              onClick: () => target !== undefined && onOpenBoard(target),
+            };
+          })(),
+          {
+            label: 'Rename…',
+            icon: <IconPencil size={13} />,
+            onClick: () => setRenamingProjectId(project.id),
+          },
+          {
+            label: 'Delete project…',
+            icon: <IconTrash size={13} />,
+            danger: true,
+            separatorBefore: true,
+            onClick: () => confirmDelete(project),
+          },
+        ]
+      : [
+          {
+            label: 'New standalone session',
+            icon: <IconPlus size={13} />,
+            onClick: () => onNewInProject(null),
+          },
+        ];
+    // Focus goes back to the chevron/+ only on a dismiss: after a pick it belongs to what the
+    // pick opened (the rename input, the delete dialog, New session).
+    let picked = false;
+    const tracked = items.map((it) => ({
+      ...it,
+      onClick: () => {
+        picked = true;
+        it.onClick();
+      },
+    }));
+    const onClosed = returnFocus
+      ? () => {
+          if (!picked && returnFocus.isConnected) returnFocus.focus();
+        }
+      : undefined;
+    setMenu(
+      'anchor' in at
+        ? {
+            ...triggerMenu(at.anchor),
+            keyboard: true,
+            items: tracked,
+            onClosed,
+          }
+        : { x: at.x, y: at.y, items: tracked, onClosed },
+    );
+  };
+
+  // Projects stay reachable with no sessions while grouped (spec §2.11, D10).
+  const firstRun = sessions.length === 0 && (projects.length === 0 || !grouped);
 
   return (
     <aside className="sidebar">
@@ -383,9 +546,9 @@ export function Sidebar({
             title="Sort & filter sessions"
             aria-label="Sort & filter sessions"
             aria-haspopup="menu"
-            aria-expanded={menu !== null}
+            aria-expanded={sortMenuOpen}
             onMouseDown={() => {
-              wasOpenRef.current = menu !== null;
+              wasOpenRef.current = sortMenuOpen;
             }}
             onClick={toggleSortFilterMenu}
           >
@@ -426,69 +589,24 @@ export function Sidebar({
       {/* The list's own padding would stack on the start-state's, pushing it out of line with
           the header label — the empty rail is one block of prose, not an indented row. */}
       <div
-        className={`sidebar__scroll ${sessions.length === 0 ? 'sidebar__scroll--empty' : ''}`}
+        className={`sidebar__scroll ${firstRun ? 'sidebar__scroll--empty' : ''}`}
         onContextMenu={onPaneContextMenu}
       >
-        {sessions.length === 0 && (
+        {firstRun && (
           <EmptyState
             variant="panel"
             title="No sessions yet"
-            hint="A session is one agent in one directory. Run four at once."
+            hint="A session is one terminal working across one or more folders. Run four at once."
           />
         )}
         {sessions.length > 0 && ordered.length === 0 && (
           <EmptyState title={`No sessions match “${filter}”.`} />
         )}
-        {renderGroups.map((g) => {
-          if (g.path === null) {
-            return (
-              <div className="proj proj--flat" key="__flat">
-                {g.sessions.map((s) => renderItem(s, null))}
-              </div>
-            );
-          }
-          const path = g.path;
-          const isCollapsed = grouped && collapsedProjects.includes(path);
-          // Surface a hidden busy/attention session on the collapsed header so the group still
-          // signals. Reads the shared derivation, never the raw flags, so it can't drift.
-          const hiddenAttn =
-            isCollapsed &&
-            g.sessions.some((s) => {
-              const st = sessionIconState(s);
-              return st === 'attention' || st === 'busy';
-            });
-          return (
-            <div className="proj" key={path}>
-              <div
-                className={`proj__label${overGroup === path ? ' proj__label--dropbefore' : ''}`}
-                title={path}
-                draggable={canDrag}
-                {...(canDrag ? groupDrag(path, renderedIds) : {})}
-              >
-                {/* Chevron: separate button so clicks never start a drag */}
-                <button
-                  className="proj__chevron"
-                  aria-expanded={!isCollapsed}
-                  aria-label={
-                    isCollapsed ? `Expand ${baseName(path)}` : `Collapse ${baseName(path)}`
-                  }
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    update({ collapsedProjects: toggleCollapsed(collapsedProjects, path) });
-                  }}
-                  onDragStart={(e) => e.stopPropagation()}
-                >
-                  {isCollapsed ? <IconChevron size={12} /> : <IconChevronDown size={12} />}
-                </button>
-                <span className="proj__name">{baseName(path)}</span>
-                <span className={`proj__count${hiddenAttn ? ' proj__count--attn' : ''}`}>
-                  {g.sessions.length}
-                </span>
-              </div>
-              {!isCollapsed && g.sessions.map((s) => renderItem(s, path))}
-            </div>
-          );
-        })}
+        {renderGroups ? (
+          renderGroups.map(renderGroup)
+        ) : (
+          <div className="proj proj--flat">{ordered.map((s) => renderItem(s, null))}</div>
+        )}
       </div>
 
       {updateStatus && (
@@ -511,6 +629,9 @@ export function Sidebar({
       {menu && (
         <ContextMenu menu={menu} onClose={() => setMenu(null)} triggerRef={sortFilterTriggerRef} />
       )}
+      <div className="sr-only" aria-live="polite">
+        {announcement}
+      </div>
     </aside>
   );
 }

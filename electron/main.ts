@@ -1,10 +1,13 @@
 import { execFile, spawn } from 'node:child_process';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   type IpcMainEvent,
   ipcMain,
@@ -17,13 +20,16 @@ import {
   type WebContents,
   webContents,
 } from 'electron';
-import { activeCwd, gitRootForSession, sessionGitRoot } from '../src/active-cwd';
-import { repoForPath } from '../src/active-repo';
+import { activeCwd, sessionGitRoot } from '../src/active-cwd';
+import { repoForPath, requestGitRoot, resolveRequestRepoRoot } from '../src/active-repo';
+import { type AgentScopeReason, runAddDir } from '../src/add-dir-delivery';
 import { AgentRegistry } from '../src/agent-registry';
+import { scopeFromSpawnArgs } from '../src/agent-scope';
+import { isAppIndexUrl } from '../src/app-navigation';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
-import { loadAgents, readBlob } from '../src/config';
+import { loadAgents, readBlob, readFileState } from '../src/config';
 import { searchContentFs } from '../src/content-search-fs';
 import { decideCrashRecovery } from '../src/crash-recovery';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
@@ -36,6 +42,11 @@ import {
   type Unmerged,
   writeFile,
 } from '../src/file-service';
+import { FolderHealth } from '../src/folder-health';
+import { folderKey } from '../src/folder-key';
+import { locateFolder } from '../src/folder-locate';
+import { probeFolders } from '../src/folder-probe';
+import { type FolderProbeDeps, probeFolder } from '../src/folder-validation';
 import { type DndOpts, fsCopy, fsMove } from '../src/fs-dnd';
 import { fsImport, type ImportConflictPolicy } from '../src/fs-import';
 import {
@@ -57,14 +68,24 @@ import {
   getRangeDiff,
   searchHistory,
 } from '../src/git-history';
-import { interrogateGit, isDirty, listBranches, listRefs, switchBranch } from '../src/git-info';
+import {
+  getGitInfo,
+  interrogateGit,
+  isDirty,
+  listBranches,
+  listRefs,
+  switchBranch,
+} from '../src/git-info';
+import { gitIgnoredNames, gitListedFiles } from '../src/git-listing';
 import { createAsyncMemo } from '../src/git-memo';
 import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range';
 import { decideSwitch, isKnownRef } from '../src/git-switch';
 import { type HeadBlobShow, readHeadBlob } from '../src/head-blob';
-import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
+import { IgnoreCache } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
 import { type BellScanState, countBareBells } from '../src/last-line';
+import { previewLaunch } from '../src/launch-preview';
+import { buildLaunchSpec } from '../src/launch-spec';
 import {
   decideLimitAction,
   type LimitEpisode,
@@ -87,12 +108,17 @@ import {
 import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
-import { isAncestorOf, normalizePath, resolveOwningSession } from '../src/owning-session';
+import {
+  nodeOutgoingPathDeps,
+  outgoingFoldersFor,
+  validateOutgoingPaths,
+} from '../src/outgoing-paths';
+import { resolveOwningSession } from '../src/owning-session';
 import { isInsideAnyRoot, isInsideRoot, realPathLeaf } from '../src/path-guard';
 import { type IndexedFile, resolveToken, type TokenResolution } from '../src/path-resolve';
 import {
   parseDocs,
-  restoreSessions,
+  parseSessions,
   serializeDocs,
   serializeSessions,
   shouldPersistSessions,
@@ -100,7 +126,8 @@ import {
 import { buildQueueEntry } from '../src/pipeline';
 import { applyPlanCommentPatch, commentsFingerprint } from '../src/plan-comments';
 import { buildPreviewUrl, isPreviewUrl } from '../src/preview-url';
-import { getProjectInfo } from '../src/project-info';
+import { getProjectInfo, gitChanges } from '../src/project-info';
+import { ProjectStore, parseProjects, serializeProjects } from '../src/project-store';
 import type {
   AboutInfo,
   DiffBase,
@@ -110,15 +137,24 @@ import type {
   RepoDTO,
   WebviewToHost,
 } from '../src/protocol';
-import { PtyHost, resolveLaunchSpec } from '../src/pty-host';
+import { PtyHost } from '../src/pty-host';
 import { summarizeQueue } from '../src/queue-summary';
 import type { QuitReason } from '../src/quit-guard';
 import { busySessions, needsQuitConfirm, runningSessions } from '../src/quit-guard';
 import { resolveRangePreset } from '../src/range-preset';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
-import { filterExistingRepos, restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
+import { buildRepoChanges } from '../src/repo-changes';
+import { orderRepos, repoSetKey } from '../src/repo-display';
+import { createGitRefresher, HEAD_WATCH_CAP } from '../src/repo-git-refresh';
+import {
+  filterExistingRepos,
+  restoreRepos,
+  serializeRepos,
+  upsertAttachedRepo,
+  upsertRepo,
+} from '../src/repo-history';
 import { repoRelPath } from '../src/repo-rel';
-import { detectRepos } from '../src/repo-scan';
+import { detectRepos, scanSessionRepos } from '../src/repo-scan';
 import { revealActionFor } from '../src/reveal-action';
 import {
   contentHash,
@@ -140,14 +176,17 @@ import {
   serializeScrollback,
 } from '../src/scrollback-persistence';
 import { SessionActivity } from '../src/session-activity';
+import { presentRoots } from '../src/session-folders';
 import { SessionManager } from '../src/session-manager';
+import { buildStartupModel } from '../src/session-migration';
+import { createSessionOps, type SessionOpResult } from '../src/session-ops';
 import {
   type AppSettings,
   coerceSettings,
   restoreSettings,
   serializeSettings,
 } from '../src/settings';
-import { detectShells } from '../src/shells';
+import { detectAgentClis, detectShells, hostCliScanEnv, resolveCommand } from '../src/shells';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 import {
   INDEX_FILE_CAP,
@@ -155,6 +194,12 @@ import {
   newIndexPaths,
   selectIndexCandidates,
 } from '../src/source-index';
+import {
+  PASTE_MODE_OFF,
+  type PasteModeState,
+  scanInertOutput,
+  trackBracketedPaste,
+} from '../src/terminal-output';
 import { groundForTheme } from '../src/theme-ground';
 import {
   MIN_DELAY_MS,
@@ -166,13 +211,12 @@ import {
 import { TimerScheduler } from '../src/timer-scheduler';
 import { loadTsconfigChain } from '../src/tsconfig-discovery';
 import { type TsconfigDTO, toTsconfigDTO } from '../src/tsconfig-map';
-import type { SpawnSpec } from '../src/types';
+import type { Session, StartRefusal } from '../src/types';
 import { createGuestOpenGate, hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
   assignOwner,
   buildWinList,
   clampBoundsToDisplays,
-  groupByProject as groupOwnedByProject,
   type OwnerMap,
   parseLayout,
   planLayoutRestore,
@@ -184,6 +228,7 @@ import {
   windowAtPoint,
 } from '../src/window-registry';
 import { parseTrustStore, serializeTrustStore } from '../src/workspace-trust';
+import { AgentScopeTracker } from './agent-scope-tracker';
 import { extractOpenTarget, gitRootOf } from './arg-utils';
 import { BoardWatcher } from './board-watcher';
 import {
@@ -212,12 +257,16 @@ import {
   writeReviewNotesArtifactFile,
   writeSpec,
 } from './conduit-fs';
+import { createDragOutHost } from './drag-out-host';
+import { createFolderPicker } from './folder-picker';
+import { LauncherHost } from './launcher-host';
 import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
 import { startLanguageServer } from './lsp-server';
 import { watchServerRoot } from './lsp-watcher';
 import { NotesWatcher } from './notes-watcher';
 import { OpenFileWatcher } from './open-file-watcher';
+import { createOsFileClipboard, spawnPowerShell } from './os-file-clipboard';
 import { PlanWatcher } from './plan-watcher';
 import {
   PREVIEW_PARTITION,
@@ -230,6 +279,7 @@ import {
 import { defaultTreeKillDeps } from './process-tree';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
+import { SessionFolderRuntime } from './session-folder-runtime';
 import { installSkill, listSkills } from './skills-service';
 import { checkForUpdate, initUpdater, quitAndInstall } from './updater';
 
@@ -263,6 +313,7 @@ function readAboutInfo(): AboutInfo {
       nodeVersion: process.versions.node ?? '',
       chromeVersion: process.versions.chrome ?? '',
       isDev: !app.isPackaged,
+      e2e: process.env.CONDUIT_E2E === '1',
     };
   } catch {
     return {
@@ -273,6 +324,7 @@ function readAboutInfo(): AboutInfo {
       nodeVersion: process.versions.node ?? '',
       chromeVersion: process.versions.chrome ?? '',
       isDev: !app.isPackaged,
+      e2e: process.env.CONDUIT_E2E === '1',
     };
   }
 }
@@ -337,7 +389,8 @@ const focusedWindow = (): BrowserWindow | undefined =>
   windows.values().next().value;
 
 // Set by the app-ready closure; invoked on window focus so the git indicator self-heals
-// against an external `git checkout` made while the app was unfocused (Slice A refresh).
+// against an external `git checkout` made while the app was unfocused (Slice A refresh), and the
+// active session's folders are health-checked (mf-model spec §2.6).
 let onWindowFocus: (() => void) | null = null;
 
 // Set by the app-ready closure; broadcasts the `win:list` picker payload (needs the engine
@@ -347,7 +400,10 @@ let broadcastWinList: (() => void) | null = null;
 
 const userData = () => app.getPath('userData');
 const sessionsFile = () => path.join(userData(), 'sessions.json');
+const projectsFile = () => path.join(userData(), 'projects.json');
 const agentsFile = () => path.join(userData(), 'agents.json');
+// Launch-row usage + custom launchers (mf-new-session spec §3.3); host-owned, never agents.json.
+const launchersFile = () => path.join(userData(), 'launchers.json');
 const reposFile = () => path.join(userData(), 'repos.json');
 // Per-file "I've reviewed this" marks (spec 2026-08-27-review-supercharge §2 Lane B). Lives in
 // userData beside sessions.json — never in the reviewed repo, where it would read as a change.
@@ -417,14 +473,10 @@ async function projectFileIndexMeta(
     return { files: cached.files, fromGit: cached.fromGit };
   let files: IndexedFile[];
   let fromGit: boolean;
-  const lsFiles = await git(['ls-files', '--cached', '--others', '--exclude-standard'], root);
-  if (lsFiles.trim()) {
+  const listed = await gitListedFiles(root);
+  if (listed.length > 0) {
     fromGit = true;
-    files = lsFiles
-      .split('\n')
-      .map((rel) => rel.trim())
-      .filter(Boolean)
-      .map((rel) => ({ rel, abs: `${root}/${rel}` }));
+    files = listed.map((rel) => ({ rel, abs: `${root}/${rel}` }));
   } else {
     fromGit = false;
     // A generous cap for the non-git fallback: this index also backs the source index for
@@ -725,29 +777,6 @@ async function firstInvalidEndpoint(cwd: string, endpoints: RefEndpoint[]): Prom
   return null;
 }
 
-/**
- * Of `names` (a directory's children), the subset git ignores — via `git check-ignore`
- * with the names piped on stdin (cwd = the dir). check-ignore echoes each matched path
- * exactly as fed in, so the output lines are the child names to mark.
- *
- * Returns `null` when git did NOT answer (timeout, missing binary, crash). An empty Set
- * means "nothing here is ignored" and is only returned when git actually said so — exit 0,
- * exit 1 (nothing matched) or exit 128 (not a repo). Conflating the two is what made the
- * Explorer flicker: a timed-out call also leaves stdout empty, so every entry in the
- * directory briefly lost its dimming. See src/ignore-cache.ts.
- */
-async function ignoredEntries(dir: string, names: string[]): Promise<Set<string> | null> {
-  if (names.length === 0) return new Set();
-  const r = await runGit(['check-ignore', '--stdin'], {
-    cwd: dir,
-    timeoutMs: GIT_TIMEOUT.metadata,
-    maxBuffer: 4 * 1024 * 1024,
-    stdin: `${names.join('\n')}\n`,
-  });
-  if (!isAuthoritative(r)) return null;
-  return new Set(r.stdout.split(/\r?\n/).filter(Boolean));
-}
-
 /** Memo + last-known-good store backing the two fixes above (src/ignore-cache.ts). */
 const ignoreCache = new IgnoreCache();
 
@@ -760,7 +789,7 @@ async function ignoredEntriesCached(dir: string, names: string[]): Promise<Set<s
   const now = Date.now();
   const memo = ignoreCache.getFresh(dir, names, now);
   if (memo) return memo;
-  const fresh = await ignoredEntries(dir, names);
+  const fresh = await gitIgnoredNames(dir, names);
   if (fresh === null) return ignoreCache.getLast(dir) ?? new Set();
   ignoreCache.set(dir, names, fresh, Date.now());
   return fresh;
@@ -831,7 +860,7 @@ async function gitShowBlob(
  * file, and only those cases pay for the extra call.
  */
 async function indexUnmerged(root: string, rel: string): Promise<boolean> {
-  const res = await runGit(['ls-files', '--unmerged', '--', rel], {
+  const res = await runGit(['--literal-pathspecs', 'ls-files', '--unmerged', '--', rel], {
     cwd: root,
     timeoutMs: GIT_TIMEOUT.metadata,
   });
@@ -1008,11 +1037,13 @@ function createWindow(opts: {
     openExternalUrl(url);
     return { action: 'deny' };
   });
+  const indexHtml = path.join(__dirname, 'index.html');
+  const indexUrl = pathToFileURL(indexHtml).href;
   w.webContents.on('will-navigate', (event, url) => {
-    // The app itself is loaded via loadFile(index.html); only that is allowed.
-    if (url.startsWith('file://')) return;
+    if (isAppIndexUrl(url, indexUrl)) return;
     event.preventDefault();
-    openExternalUrl(url);
+    if (url.startsWith('file:')) hostLog?.warn('nav', 'blocked file navigation', { url });
+    else openExternalUrl(url);
   });
 
   // In-app web view (<webview>) guests are untrusted remote pages. Lock each one down
@@ -1052,7 +1083,7 @@ function createWindow(opts: {
     opts.onClosed(w.id);
   });
 
-  void w.loadFile(path.join(__dirname, 'index.html'));
+  void w.loadFile(indexHtml);
   return w;
 }
 
@@ -1102,9 +1133,67 @@ app.whenReady().then(() => {
       flush: () => flushPendingOsOpens(),
     };
   }
+  const folderPicker = createFolderPicker({
+    showOpenDialog: (w, o) => (w ? dialog.showOpenDialog(w, o) : dialog.showOpenDialog(o)),
+    e2e: process.env.CONDUIT_E2E === '1',
+    installHook: (h) => {
+      (global as Record<string, unknown>).__pickDirHook = h;
+    },
+  });
 
-  // Detected shells first (so nothing defaults to an agent), then configured agents.
-  const registry = new AgentRegistry([...detectShells(), ...loadAgents(agentsFile())]);
+  const hostPlatform: HostPlatform =
+    process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
+
+  const outgoingPathDeps = nodeOutgoingPathDeps(process.platform);
+  const dragOutHost = createDragOutHost({
+    platform: hostPlatform,
+    e2e: process.env.CONDUIT_E2E === '1',
+    systemRoot: process.env.SystemRoot,
+    appWindowIdFor: (cid) => [...windows.values()].find((w) => w.webContents.id === cid)?.id,
+    sessionFolders: (sid, wid) => {
+      const s = mgr.get(sid);
+      return s && sessionOwner.get(sid) === wid ? outgoingFoldersFor(s) : undefined;
+    },
+    validate: (p, f) => validateOutgoingPaths(p, f, outgoingPathDeps),
+    clipboard: createOsFileClipboard({
+      runPowerShell: spawnPowerShell,
+      writeBuffer: (f, d) => clipboard.writeBuffer(f, d),
+    }),
+    installProbes: (p) => {
+      (global as Record<string, unknown>).__conduitClipboardLog = p.clipboard;
+    },
+    log: (lvl, msg, d) => log[lvl]('fs', msg, d),
+  });
+
+  // Shells stay first in the registry so `registry.list()[0]` (OS-open, openRepo's fallback)
+  // is still a shell, never an agent.
+  const registry = new AgentRegistry([]);
+  const launcherHost = new LauncherHost({
+    registry,
+    config: loadAgents(agentsFile()),
+    detectShells,
+    detectClis: () => detectAgentClis(hostCliScanEnv()),
+    readFile: () => {
+      const read = readFileState(launchersFile());
+      if (read.kind === 'unreadable') {
+        log.warn('persist', 'launchers.json unreadable; not writing it this run', {
+          code: read.code,
+        });
+      }
+      return read;
+    },
+    persist: (t) => persistFile(launchersFile(), t, 'launchers.json'),
+    backupCorrupt: () => {
+      try {
+        fs.copyFileSync(launchersFile(), path.join(userData(), 'launchers.corrupt.json'));
+      } catch (e) {
+        log.error('persist', `launchers.json backup failed: ${String(e)}`);
+      }
+    },
+    resolveCommand: (c) => resolveCommand(c, hostPlatform),
+    platform: hostPlatform,
+    now: Date.now,
+  });
   const mgr = new SessionManager(registry);
 
   // Runtime busy/needs-attention tracker (output-activity heuristic). Pure; the
@@ -1118,16 +1207,21 @@ app.whenReady().then(() => {
   // Per-session carry for the bare-bell scanner: where the previous term:data chunk left
   // the escape-sequence walk. Same lifecycle as cwdScanners.
   const bellScanState = new Map<string, BellScanState>();
+  // Per-session bracketed-paste mode as a claude child last set it; Run /add-dir writes only
+  // while it is on (mf-live-edits spec §2.3). Same lifecycle as bellScanState.
+  const pasteModes = new Map<string, PasteModeState>();
+  // Per-session escape carry for the inert-output check (review N2). Same lifecycle too.
+  const inertTails = new Map<string, string>();
 
   // ── Git indicator (Slice A) ────────────────────────────────────────────────
-  // Per-session interrogation of activeCwd's git context, delivered on the existing
-  // `state` broadcast (no new channel). Refresh triggers: cwd-change (E2 seam),
-  // best-effort fs.watch of the resolved HEAD (an external `git checkout` that doesn't
+  // Per-session interrogation of every detected repo's git context, delivered on the existing
+  // `state` broadcast (no new channel). Refresh triggers: repo-set change, cwd-change (E2 seam),
+  // best-effort fs.watch of each resolved HEAD (an external `git checkout` that doesn't
   // move cwd), and window-focus. Debounced 150 ms per session; NO interval polling.
   const GIT_DEBOUNCE_MS = 150;
   const gitDebounce = new Map<string, ReturnType<typeof setTimeout>>();
-  const gitWatchers = new Map<string, fs.FSWatcher>();
-  const gitWatchedHead = new Map<string, string>();
+  /** sessionId → headPath → watcher. */
+  const gitWatchers = new Map<string, Map<string, fs.FSWatcher>>();
 
   // Multi-repo: debounced sub-repo scan per session (re-detect on open + project changes).
   const repoScanDebounce = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1140,12 +1234,9 @@ app.whenReady().then(() => {
         repoScanDebounce.delete(sessionId);
         const s = mgr.get(sessionId);
         if (!s) return;
-        if (!settings.multiRepoPicker) {
-          mgr.setRepos(sessionId, []);
-          return;
-        }
         try {
-          mgr.setRepos(sessionId, await detectRepos(s.projectPath));
+          const repos = await scanSessionRepos(s, { detect: detectRepos, enclosing: repoTopLevel });
+          if (mgr.setRepos(sessionId, repos)) scheduleGitRefresh(sessionId);
         } catch (e) {
           log.error('repo', `scan failed for ${sessionId}: ${String(e)}`);
         }
@@ -1153,8 +1244,8 @@ app.whenReady().then(() => {
     );
   };
 
-  // (Re)establish the HEAD watch each interrogation so it always tracks the CURRENT cwd's
-  // HEAD (a worktree/branch switch re-points the git-dir). Best-effort: if fs.watch throws,
+  // Re-sync the HEAD watches each interrogation so they always track the CURRENT repos'
+  // HEADs (a worktree/branch switch re-points the git-dir). Best-effort: if fs.watch throws,
   // log once and lean on cwd-change + focus triggers.
   const loggedWatchFailure = new Set<string>();
   // Sessions whose watch was torn down (term:exit). A `term:exit` keeps the session in
@@ -1165,58 +1256,79 @@ app.whenReady().then(() => {
   // await between the guard checks and fs.watch — two overlapping refreshes cannot both
   // create a watcher, and a teardown that ran during the interrogation is seen here.
   const gitTornDown = new Set<string>();
-  const ensureHeadWatch = (sessionId: string, headPath: string | undefined) => {
-    if (!headPath) return;
+  const syncHeadWatches = (sessionId: string, headPaths: readonly string[]) => {
     if (gitTornDown.has(sessionId) || !mgr.get(sessionId)) return;
-    if (gitWatchedHead.get(sessionId) === headPath) return; // already watching this HEAD
-    gitWatchers.get(sessionId)?.close();
-    gitWatchers.delete(sessionId);
-    try {
-      const watcher = fs.watch(headPath, { persistent: false }, () => {
-        scheduleGitRefresh(sessionId);
-      });
-      watcher.on('error', () => {
-        watcher.close();
-        gitWatchers.delete(sessionId);
-        gitWatchedHead.delete(sessionId);
-      });
-      gitWatchers.set(sessionId, watcher);
-      gitWatchedHead.set(sessionId, headPath);
-    } catch (e) {
-      if (!loggedWatchFailure.has(sessionId)) {
-        loggedWatchFailure.add(sessionId);
-        console.error(`[git-info] HEAD watch unavailable for ${sessionId}: ${String(e)}`);
+    const watched = gitWatchers.get(sessionId) ?? new Map<string, fs.FSWatcher>();
+    gitWatchers.set(sessionId, watched);
+    const wanted = new Set(headPaths);
+    for (const [headPath, watcher] of watched) {
+      if (wanted.has(headPath)) continue;
+      watcher.close();
+      watched.delete(headPath);
+    }
+    for (const headPath of wanted) {
+      if (watched.has(headPath)) continue;
+      try {
+        const watcher = fs.watch(headPath, { persistent: false }, () => {
+          scheduleGitRefresh(sessionId);
+        });
+        watcher.on('error', () => {
+          watcher.close();
+          if (watched.get(headPath) === watcher) watched.delete(headPath);
+        });
+        watched.set(headPath, watcher);
+      } catch (e) {
+        if (!loggedWatchFailure.has(sessionId)) {
+          loggedWatchFailure.add(sessionId);
+          console.error(`[git-info] HEAD watch unavailable for ${sessionId}: ${String(e)}`);
+        }
       }
     }
   };
 
-  // The git root for every surface (indicator, history, changes, switch). Shared with the
-  // renderer via gitRootOf so change paths resolve against the same dir on both sides.
-  const gitRoot = gitRootForSession;
+  const closeHeadWatches = (sessionId: string) => {
+    for (const watcher of gitWatchers.get(sessionId)?.values() ?? []) watcher.close();
+    gitWatchers.delete(sessionId);
+  };
 
-  const runGitRefresh = async (sessionId: string) => {
-    const session = mgr.get(sessionId);
-    if (!session) return;
-    // A relaunched session reuses its id; clear the torn-down latch so its HEAD can be
-    // re-watched (teardown set it on the previous exit).
-    gitTornDown.delete(sessionId);
-    if (!settings.showGitIndicator) {
-      mgr.setGit(sessionId, undefined);
-      return;
-    }
-    const cwd = gitRoot(session);
-    log.debug('git', 'refresh', { sessionId, cwd });
-    let result: Awaited<ReturnType<typeof interrogateGit>>;
-    try {
-      result = await interrogateGit(cwd);
-    } catch {
-      result = { info: { kind: 'none' } };
-    }
-    // Drop a stale result if the active repo / cwd moved on while we were interrogating.
-    const latest = mgr.get(sessionId);
-    if (!latest || gitRoot(latest) !== cwd) return;
-    ensureHeadWatch(sessionId, result.headPath);
-    mgr.setGit(sessionId, result.info.kind === 'none' ? undefined : result.info);
+  // A renderer-chosen root runs git only when it is a detected repo or the terminal's own git
+  // root (docs/specs/archive/2026-09-23-mf-changes.md §3 D22; docs/specs/archive/2026-09-23-mf-review.md D11).
+  const requestRepoRoot = (session: Session, root: unknown): Promise<string | null> =>
+    resolveRequestRepoRoot(session, root, () =>
+      sessionGitRoot(session, git).catch((err) => {
+        log.error('git', `request root check failed: ${String(err)}`);
+        return '';
+      }),
+    );
+
+  type GitRefreshTarget = { sessionId: string; roots: string[]; key: string };
+  const gitRefresher = createGitRefresher<GitRefreshTarget>({
+    interrogate: interrogateGit,
+    apply: (target, results) => {
+      // Drop a stale result if the repo set moved on while we were interrogating.
+      const latest = mgr.get(target.sessionId);
+      if (!latest || repoSetKey(latest.repos ?? []) !== target.key) return;
+      syncHeadWatches(
+        target.sessionId,
+        results.slice(0, HEAD_WATCH_CAP).flatMap((r) => (r.headPath ? [r.headPath] : [])),
+      );
+      mgr.setRepoGit(target.sessionId, Object.fromEntries(results.map((r) => [r.root, r.info])));
+    },
+  });
+
+  const runGitRefresh = (sessionIds: readonly string[]) => {
+    const targets = sessionIds.flatMap((sessionId): GitRefreshTarget[] => {
+      const session = mgr.get(sessionId);
+      if (!session) return [];
+      // A relaunched session reuses its id; clear the torn-down latch so its HEAD can be
+      // re-watched (teardown set it on the previous exit).
+      gitTornDown.delete(sessionId);
+      if (session.repos === undefined) return [];
+      const repos = orderRepos(session.repos, session.roots);
+      log.debug('git', 'refresh', { sessionId, repos: repos.length });
+      return [{ sessionId, roots: repos.map((r) => r.root), key: repoSetKey(repos) }];
+    });
+    if (targets.length > 0) void gitRefresher.refresh(targets);
   };
 
   function scheduleGitRefresh(sessionId: string) {
@@ -1226,31 +1338,39 @@ app.whenReady().then(() => {
       sessionId,
       setTimeout(() => {
         gitDebounce.delete(sessionId);
-        void runGitRefresh(sessionId);
+        runGitRefresh([sessionId]);
       }, GIT_DEBOUNCE_MS),
     );
   }
 
   const teardownGitRefresh = (sessionId: string) => {
     // Latch torn-down BEFORE closing: a refresh awaiting interrogateGit right now must see
-    // this when it resumes and calls ensureHeadWatch, so it won't recreate a watcher behind
+    // this when it resumes and calls syncHeadWatches, so it won't recreate a watcher behind
     // the close below.
     gitTornDown.add(sessionId);
+    gitRefresher.forget(sessionId);
     const t = gitDebounce.get(sessionId);
     if (t) clearTimeout(t);
     gitDebounce.delete(sessionId);
-    gitWatchers.get(sessionId)?.close();
-    gitWatchers.delete(sessionId);
-    gitWatchedHead.delete(sessionId);
+    closeHeadWatches(sessionId);
     loggedWatchFailure.delete(sessionId);
   };
 
-  // Re-evaluate every session's git (window focus, settings toggle). runGitRefresh itself
-  // clears the indicator when showGitIndicator is off, so this needs no enabled-gate.
-  const refreshAllGit = () => {
-    for (const s of mgr.list()) scheduleGitRefresh(s.id);
+  // One wave for every session, so a repo several sessions share is interrogated once.
+  let gitWave: ReturnType<typeof setTimeout> | undefined;
+  const cancelGitWave = () => {
+    if (gitWave) clearTimeout(gitWave);
+    gitWave = undefined;
   };
-  onWindowFocus = refreshAllGit;
+  const refreshAllGit = () => {
+    for (const t of gitDebounce.values()) clearTimeout(t);
+    gitDebounce.clear();
+    cancelGitWave();
+    gitWave = setTimeout(() => {
+      gitWave = undefined;
+      runGitRefresh(mgr.list().map((s) => s.id));
+    }, GIT_DEBOUNCE_MS);
+  };
 
   // Session ids that have been relaunched and are waiting for their next term:start
   // so we can write a brief "— session relaunched —" marker to the fresh terminal.
@@ -1290,8 +1410,23 @@ app.whenReady().then(() => {
         // Only an idle->busy edge is a change worth broadcasting.
         const scan = countBareBells(msg.data, bellScanState.get(msg.sessionId));
         bellScanState.set(msg.sessionId, scan.state);
-        if (activity.recordOutput(msg.sessionId, Date.now(), msg.data.length, scan.bells))
+        // A chunk that draws nothing (a focus-change answer, a mode re-assert) is not work: it
+        // must not make an idle claude read busy (mf-live-edits QA F1).
+        const inert = scanInertOutput(inertTails.get(msg.sessionId) ?? '', msg.data);
+        inertTails.set(msg.sessionId, inert.tail);
+        if (
+          !inert.inert &&
+          activity.recordOutput(msg.sessionId, Date.now(), msg.data.length, scan.bells)
+        )
           scheduleActivityBroadcast();
+
+        if (scopes.tracks(msg.sessionId)) {
+          pasteModes.set(
+            msg.sessionId,
+            trackBracketedPaste(pasteModes.get(msg.sessionId) ?? PASTE_MODE_OFF, msg.data),
+          );
+          scopes.output(msg.sessionId, msg.data);
+        }
 
         // The fourth scanner. Unlike its three neighbours it does not read `msg.data` — it
         // re-reads the session's trailing lines now that the chunk has landed.
@@ -1339,19 +1474,8 @@ app.whenReady().then(() => {
       } else if (msg.type === 'term:exit') {
         log.info('pty', 'exit', { sessionId: msg.sessionId, code: msg.code });
         mgr.setStatus(msg.sessionId, 'exited');
-        // A dead child is not waiting for anyone (spec contract 6) — drop its evidence
-        // so the quiet after its last output can't be read as "finished, needs you".
-        activity.recordExit(msg.sessionId);
-        // Clean up the scanners for this session (E2a + the bell-scan carry).
-        cwdScanners.delete(msg.sessionId);
-        bellScanState.delete(msg.sessionId);
-        // The episode described a live moment; a dead child is not asking to be resumed.
-        limitEpisodes.delete(msg.sessionId);
-        // Git indicator (Slice A): tear down the per-session HEAD watch + debounce.
-        teardownGitRefresh(msg.sessionId);
-        // T2: flush the last screenful now (the process ended); keep the file so the
-        // user can still see the final output until the session is killed.
-        if (settings.scrollbackPersistence) flushScrollback(msg.sessionId);
+        endProcessEpisode(msg.sessionId);
+        scopes.ended(msg.sessionId);
       }
     },
     (m) => log.debug('pty', m),
@@ -1382,6 +1506,25 @@ app.whenReady().then(() => {
       }, 250),
     );
   };
+  // Per-child teardown, shared by a real exit and a restart's retire (mf-live-edits §2.4).
+  const endProcessEpisode = (sessionId: string) => {
+    // A dead child is not waiting for anyone (spec contract 6) — drop its evidence
+    // so the quiet after its last output can't be read as "finished, needs you".
+    activity.recordExit(sessionId);
+    // Clean up the scanners for this session (E2a + the bell-scan carry).
+    cwdScanners.delete(sessionId);
+    bellScanState.delete(sessionId);
+    pasteModes.delete(sessionId);
+    inertTails.delete(sessionId);
+    // The episode described a live moment; a dead child is not asking to be resumed.
+    limitEpisodes.delete(sessionId);
+    // Git indicator (Slice A): tear down the per-session HEAD watch + debounce.
+    teardownGitRefresh(sessionId);
+    // T2: flush the last screenful now (the process ended); keep the file so the
+    // user can still see the final output until the session is killed.
+    if (settings.scrollbackPersistence) flushScrollback(sessionId);
+  };
+
   // Sessions whose persisted scrollback has already been replayed this app-run. Guards
   // against a TerminalPane remount (within one run) re-injecting the whole history again.
   const replayedScrollback = new Set<string>();
@@ -1430,10 +1573,13 @@ app.whenReady().then(() => {
    * and lastActiveAt drives card age, the rail's recency sort and board linkage (§2 "Delivery").
    */
   const deliverTimedMessage = async (sessionId: string, message: string): Promise<boolean> => {
-    if (!pty.isAlive(sessionId)) return false;
+    // Bound to the child live now: a restart inside the gap must not send this Enter into the
+    // new child (mf-live-edits §2.4 R1).
+    const gen = pty.generation(sessionId);
+    if (gen === undefined) return false;
     if (!pty.input(sessionId, message)) return false;
     await new Promise((resolve) => setTimeout(resolve, SUBMIT_GAP_MS));
-    if (!pty.isAlive(sessionId)) return false;
+    if (pty.generation(sessionId) !== gen) return false;
     return pty.input(sessionId, '\r');
   };
 
@@ -1559,10 +1705,53 @@ app.whenReady().then(() => {
   hostLog = log;
   log.info('app', 'ready', { version: aboutInfo.version, e2e: process.env.CONDUIT_E2E === '1' });
 
+  // Startup migration + projects load (mf-model spec §2.3): every write here is synchronous and
+  // lands before the first postState.
+  const sessionsParse = settings.restoreSessions ? parseSessions(readBlob(sessionsFile())) : null;
+  if (sessionsParse?.kind === 'ok' && sessionsParse.dropped > 0)
+    log.warn('persist', 'dropped sessions with no folder', { dropped: sessionsParse.dropped });
+  const startup = buildStartupModel({
+    sessions: sessionsParse,
+    projects: parseProjects(readFileState(projectsFile())),
+  });
+  for (const warning of startup.warnings) log.warn('persist', warning);
+  const startupSources = { 'sessions.json': sessionsFile(), 'projects.json': projectsFile() };
+  for (const backup of startup.backups) {
+    const to = path.join(userData(), backup.to);
+    if (!backup.overwrite && fs.existsSync(to)) continue;
+    try {
+      atomicWriteFileSync(to, fs.readFileSync(startupSources[backup.from]));
+    } catch (err) {
+      log.warn('persist', `backup to ${backup.to} failed`, { err: String(err) });
+    }
+  }
+  let projectsWriteFailed = false;
+  if (startup.writeProjects) {
+    try {
+      atomicWriteFileSync(projectsFile(), serializeProjects(startup.projects));
+    } catch (err) {
+      projectsWriteFailed = true;
+      log.error('persist', `projects.json write failed: ${String(err)}`);
+    }
+  }
+  // Without the projects write the next launch re-migrates; see mf-model spec §2.3.
+  if (startup.writeSessions && !projectsWriteFailed) {
+    try {
+      atomicWriteFileSync(sessionsFile(), serializeSessions(startup.sessions));
+    } catch (err) {
+      log.error('persist', `sessions.json migration write failed: ${String(err)}`);
+    }
+  }
+  let projectsWritable = startup.projectsWritable;
+  let projectsDirty = startup.writeProjects;
+  const projectStore = new ProjectStore(
+    startup.projects,
+    () => `p-${crypto.randomBytes(6).toString('hex')}`,
+  );
+
   // Restore previously persisted sessions (as stale) + save on every change.
   if (settings.restoreSessions) {
-    mgr.restore(restoreSessions(readBlob(sessionsFile())));
-    for (const s of mgr.list()) scheduleRepoScan(s.id); // multi-repo: detect for restored sessions
+    mgr.restore(startup.sessions);
   }
   // AFTER the session set, because a schedule whose session is gone is dropped at load and never
   // re-persisted (§4). Every restored session is `stale` with no PTY, so anything already due
@@ -1666,22 +1855,31 @@ app.whenReady().then(() => {
     const all = mgr.list();
     const agents = registry.list();
     const repos = reposForState();
+    const projects = projectStore.list();
+    const launchers = launcherHost.dtos();
     // D6: the card subtitle. Reads the PtyHost's tail (memoized between broadcasts), so it
     // rides this already-coalesced post rather than a timer or a round trip of its own.
-    const withLastLine = (id: string) => ({ lastLine: pty.lastLine(id) });
+    const runtimeFields = (id: string): Partial<Session> => {
+      const agentScope = scopes.view(id);
+      const seq = restartSeq.get(id);
+      const startRefusal = startRefusals.get(id);
+      return {
+        lastLine: pty.lastLine(id),
+        ...(agentScope ? { agentScope } : {}),
+        ...(seq === undefined ? {} : { restartSeq: seq }),
+        ...(startRefusal ? { startRefusal } : {}),
+      };
+    };
     for (const [windowId, w] of windows) {
       const owned = sessionsOwnedBy(sessionOwner, windowId, all);
-      const sessions = activity.apply(owned, withLastLine);
-      const groups = groupOwnedByProject(owned).map((g) => ({
-        projectPath: g.projectPath,
-        sessions: activity.apply(g.sessions, withLastLine),
-      }));
+      const sessions = activity.apply(owned, runtimeFields);
       w.webContents.send('to-webview', {
         type: 'state',
         agents,
-        groups,
         sessions,
+        projects,
         repos,
+        launchers,
         settings,
         about: aboutInfo,
         windowId,
@@ -1743,6 +1941,9 @@ app.whenReady().then(() => {
     // Startup-snapshot gate (see sessionsPersistGate note) so a restore-off run — even one that
     // toggled restore back on — never overwrites the saved session set on quit.
     if (sessionsPersistGate) write(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
+    // Not gated on restoreSessions; blocked for a run whose projects.json was unreadable (B2).
+    if (projectsWritable && projectsDirty)
+      write(projectsFile(), serializeProjects(projectStore.list()), 'projects.json');
     // Editor tabs are low-stakes vs. sessions, but the same force-kill-on-update hazard applies,
     // so flush the last-known payload atomically alongside sessions (spec §3.2 durability).
     write(docsFile(), serializeDocs(lastDocs), 'docs.json');
@@ -1751,6 +1952,8 @@ app.whenReady().then(() => {
     // on an actual change this run — see reviewMarksDirty.
     if (reviewMarksDirty)
       write(reviewMarksFile(), serializeMarksFile(reviewMarks), 'review-marks.json');
+    const launchersText = launcherHost.pendingFlush();
+    if (launchersText) write(launchersFile(), launchersText, 'launchers.json');
     // Same force-kill-on-update hazard as sessions.json: an interrupted async write would leave
     // an armed timer half-written and the next launch would silently lose it. Gated on an actual
     // change this run — readBlob swallows every read error, so an unconditional flush could
@@ -1807,6 +2010,7 @@ app.whenReady().then(() => {
     agentId: string,
     ownerWindowId: number,
     cardId?: string,
+    extras?: { roots: string[]; missingRoots: string[]; projectId?: string },
   ): string | undefined {
     if (!p) return undefined;
     const agent = registry.get(agentId) ?? registry.list()[0];
@@ -1814,25 +2018,30 @@ app.whenReady().then(() => {
       dialog.showErrorBox('Conduit', 'No terminals available.');
       return undefined;
     }
+    const id = mgr.create(agent.id, p, { cardId, ...extras }).id; // emits change -> postState
+    launcherHost.bump(agent.id);
+    const now = Date.now();
+    const missing = new Set(extras?.missingRoots ?? []);
+    const attached = (extras?.roots ?? []).filter((r) => !missing.has(r));
+    // Reverse, then home last: the home ends up first and attached folders keep their order (D14).
+    for (const r of [...attached].reverse()) {
+      repos = upsertAttachedRepo(repos, { path: r, name: path.basename(r) || r, lastOpened: now });
+    }
     repos = upsertRepo(repos, {
       path: p,
       name: path.basename(p) || p,
       lastAgentId: agent.id,
-      lastOpened: Date.now(),
+      lastOpened: now,
     });
     persistFile(reposFile(), serializeRepos(repos), 'repos.json');
-    const id = mgr.create(agent.id, p, undefined, cardId).id; // emits change -> postState
     // mgr.create's change fired postState BEFORE this assignment, so no window saw the new
     // session yet (it had no owner). Assign ownership, then re-post so the owner window
     // gets it immediately.
     assignOwner(sessionOwner, id, ownerWindowId);
     postState();
-    scheduleRepoScan(id); // multi-repo: detect sub-repos under the opened folder
+    folders.created(id);
     return id;
   }
-
-  const resolveSpec = (agentId?: string, cwd?: string): SpawnSpec =>
-    resolveLaunchSpec(registry, agentId, cwd, (p) => fs.existsSync(p), os.homedir());
 
   // Read-grant store (K2): the set of exact files the host has served via readFile this
   // session. A write to one of these is allowed even when it falls outside every write
@@ -1866,6 +2075,155 @@ app.whenReady().then(() => {
     }
   });
 
+  // Host-owned lexical key → realpath key of every folder seen present (mf-model spec §3.3). A path
+  // cache, never pruned per session: two sessions can hold one folder, and a re-probe overwrites.
+  const realKeys = new Map<string, string>();
+  const probeDeps: FolderProbeDeps = {
+    path,
+    kind: async (p) => {
+      try {
+        return (await fs.promises.stat(p)).isDirectory() ? 'dir' : 'not-dir';
+      } catch {
+        return 'missing';
+      }
+    },
+    realpath: (p) => fs.promises.realpath(p),
+  };
+  const folders = new SessionFolderRuntime({
+    mgr,
+    scheduleRepoScan,
+    reconcilePlans: (homes) => planWatcher.reconcile(homes.map(normalizeRoot)),
+    broadcastFsChanged: (fire) => broadcast({ type: 'fsChanged', ...fire }),
+    // Folder-scoped, not per package: `fsChanged` carries no changed path, and
+    // `shouldIgnoreWatchPath` drops every `node_modules` event before the debounce — so an
+    // npm install emits nothing at all and no finer signal exists to key on. A resolution
+    // costs one bounded walk and is only ever recomputed after a navigation misses.
+    dropResolutionsForRoot: (root) => dropResolutionsForRoot(moduleResolveCache, root),
+    createWatcher: (onFire, onSuspect) =>
+      new ProjectWatcher(onFire, { log: (m) => console.log('[watch]', m), onSuspect }),
+    createHealth: (apply) =>
+      new FolderHealth({
+        isDir: (p) =>
+          fs.promises.stat(p).then(
+            (st) => st.isDirectory(),
+            () => false,
+          ),
+        get: (id) => mgr.get(id),
+        sessions: () => mgr.list(),
+        apply,
+      }),
+    revalidate: (id, folder) => sessionOps.revalidate(id, folder),
+    realpath: (p) => fs.promises.realpath(p),
+    realKeys,
+    log: (level, msg, data) => log[level]('folders', msg, data),
+  });
+  const sessionOps = createSessionOps({
+    mgr,
+    projects: projectStore,
+    probe: (raw) => probeFolder(raw, probeDeps),
+    realKeys,
+    onFoldersChanged: (id, change) => folders.foldersChanged(id, change),
+  });
+  const scopes = new AgentScopeTracker({
+    get: (id) => mgr.get(id),
+    exists: (p) =>
+      fs.promises.stat(p).then(
+        (st) => st.isDirectory(),
+        () => false,
+      ),
+    onChange: () => postState(),
+  });
+  folders.onFoldersChanged((id) => scopes.recompute(id));
+  // Runtime-only (never persisted): keys the terminal pane so a restart remounts it (R2).
+  const restartSeq = new Map<string, number>();
+  // Runtime-only: why the last term:start refused, so the centre can say it (review B1).
+  const startRefusals = new Map<string, StartRefusal>();
+  const launchersChanged = () => {
+    startRefusals.clear();
+    postState();
+  };
+  folders.restored();
+  onWindowFocus = () => {
+    refreshAllGit();
+    folders.focused();
+  };
+  const replyOp = (
+    dispatch: Dispatch,
+    m: { type: string; requestId?: number },
+    r: SessionOpResult,
+  ) => {
+    if (typeof m.requestId === 'number') {
+      dispatch({
+        type: 'session:opResult',
+        requestId: m.requestId,
+        ok: r.ok,
+        ...(r.ok ? {} : { reason: r.reason }),
+      });
+    } else if (!r.ok) {
+      log.info('session', `${m.type} refused`, { reason: r.reason });
+    }
+  };
+
+  // B2: a blocked projects.json is re-read before each project mutation; a clean read unblocks it.
+  const projectsAvailable = (): boolean => {
+    if (projectsWritable) return true;
+    const load = parseProjects(readFileState(projectsFile()));
+    if (load.kind !== 'ok' && load.kind !== 'absent') return false;
+    projectsWritable = true;
+    projectStore.replaceAll(load.kind === 'ok' ? load.projects : []);
+    return true;
+  };
+  // project:delete posts once, from the manager's clearProject emit (N3).
+  let projectPostSuppressed = false;
+  projectStore.onChange(() => {
+    projectsDirty = true;
+    if (projectsWritable)
+      persistFile(projectsFile(), serializeProjects(projectStore.list()), 'projects.json');
+    if (!projectPostSuppressed) postState();
+  });
+
+  async function openRepoRequest(
+    m: Extract<WebviewToHost, { type: 'openRepo' }>,
+    ownerWindowId: number,
+    dispatch: Dispatch,
+  ) {
+    const requestId = typeof m.requestId === 'number' ? m.requestId : undefined;
+    const answer = (
+      r: Omit<Extract<HostToWebview, { type: 'openRepo:result' }>, 'type' | 'requestId'>,
+    ) => {
+      if (requestId !== undefined) dispatch({ type: 'openRepo:result', requestId, ...r });
+      else if (r.error) log.info('session', 'openRepo refused', { error: r.error });
+    };
+    if (typeof m.path !== 'string' || m.path === '') {
+      answer({ droppedRoots: [], error: 'invalid-path' });
+      return;
+    }
+    if (requestId !== undefined && !registry.get(m.agentId)) {
+      answer({ droppedRoots: [], error: 'unknown-agent' });
+      return;
+    }
+    // Only existence is checked: a filesystem-root home stays openable (mf-model spec D12).
+    const kind = await probeDeps.kind(m.path);
+    if (kind !== 'dir') {
+      answer({ droppedRoots: [], error: kind === 'missing' ? 'home-missing' : 'invalid-path' });
+      return;
+    }
+    try {
+      realKeys.set(folderKey(m.path), folderKey(await probeDeps.realpath(m.path)));
+    } catch {
+      // Gone again after the stat: its key stays lexical-only, like a folder first seen missing.
+    }
+    const initial = await sessionOps.resolveInitialRoots(m.path, m.roots);
+    const projectId =
+      typeof m.projectId === 'string' && projectStore.has(m.projectId) ? m.projectId : undefined;
+    const sessionId = openRepo(m.path, m.agentId, ownerWindowId, m.cardId, {
+      roots: initial.roots,
+      missingRoots: initial.missing,
+      projectId,
+    });
+    answer({ sessionId, droppedRoots: initial.dropped });
+  }
+
   // The renderer keys read-only off `EACCES`/`EPERM` in this text, so the errno has to survive.
   const planErrorText = (err: unknown): string => {
     const message = err instanceof Error ? err.message : String(err);
@@ -1898,22 +2256,6 @@ app.whenReady().then(() => {
   // Watcher-originated pushes are path-tagged; the renderer keys them by path and ignores
   // a non-current one, so broadcasting to every window is safe + simplest (multi-window).
   const openFileWatcher = new OpenFileWatcher((p) => broadcast({ type: 'fileChanged', path: p }));
-
-  const projectWatcher = new ProjectWatcher(
-    (root) => {
-      broadcast({ type: 'fsChanged', root });
-      // ROOT-scoped, not per package: `fsChanged` carries no changed path, and
-      // `shouldIgnoreWatchPath` drops every `node_modules` event before the debounce — so an
-      // npm install emits nothing at all and no finer signal exists to key on. A resolution
-      // costs one bounded walk and is only ever recomputed after a navigation misses.
-      dropResolutionsForRoot(moduleResolveCache, root);
-      // Multi-repo: a sub-repo may have been cloned/removed under this root — re-detect.
-      for (const s of mgr.list()) if (s.projectPath === root) scheduleRepoScan(s.id);
-    },
-    {
-      log: (m) => console.log('[watch]', m),
-    },
-  );
 
   const proposalWatcher = new ProposalWatcher();
 
@@ -2024,54 +2366,49 @@ app.whenReady().then(() => {
     proposalWatcher.watch(p, (kind) => sendProposal(broadcast, p, kind));
   }
 
-  async function sendProject(dispatch: Dispatch, p: string, changesRoot?: string) {
-    // Arm/re-point the live watcher at whatever project the renderer is currently showing
-    // (idempotent for the same root). requestProject fires on open + focus + cwd change.
-    if (p) {
-      projectWatcher.watch(p);
-      // `p` is the session's ACTIVE CWD (src/active-cwd.ts), not a project root: arming on it
-      // would add — and never drop — a watch for every directory the user cd's into, each one a
-      // permanent 2 s existsSync poll on the main process. The open projects are the session
-      // list, so the watched set is reconciled against it here instead (plan: one watch per
-      // opened project root, dropped when the project closes).
-      planWatcher.reconcile(mgr.list().map((s) => normalizeRoot(s.projectPath)));
-      // Re-detect sub-repos on every project refresh, not just on open + the fs-watch. The
-      // watcher is rooted at the cwd, so a sibling repo/worktree created OUTSIDE it (but under
-      // the opened folder) never triggers a re-scan — the picker then goes stale until restart.
-      // Focus/cwd-change refreshes here are the reliable recovery (mirrors the explorer's
-      // focus refresh). scheduleRepoScan is debounced and scans the session's projectPath.
-      const np = normalizePath(p);
-      for (const s of mgr.list()) {
-        if (isAncestorOf(normalizePath(s.projectPath), np)) scheduleRepoScan(s.id);
-      }
-    }
+  async function sendProject(
+    dispatch: Dispatch,
+    windowId: number,
+    p: string,
+    changesRoot: string | undefined,
+    sessionId: string | undefined,
+    requestId: number,
+  ) {
+    folders.requestProject(p, sessionId, windowId);
+    const session = () => (sessionId === undefined ? undefined : mgr.get(sessionId));
     try {
-      const info = await getProjectInfo(p, changesRoot ?? p);
+      const activeRoot = changesRoot ?? p;
+      const info = await getProjectInfo(p, activeRoot);
+      const s = session();
+      const repoChanges =
+        s?.repos === undefined
+          ? undefined
+          : await buildRepoChanges({
+              repos: orderRepos(s.repos, s.roots),
+              activeRoot,
+              activeChanges: info.changes,
+              changesFor: gitChanges,
+            });
       dispatch({
         type: 'project',
         path: p,
         changes: info.changes,
         files: info.files,
         customizations: info.customizations,
+        ...(repoChanges === undefined ? {} : { repoChanges }),
+        requestId,
       });
     } catch {
-      dispatch({ type: 'project', path: p, changes: [], files: [], customizations: [] });
+      dispatch({
+        type: 'project',
+        path: p,
+        changes: [],
+        files: [],
+        customizations: [],
+        ...(session()?.repos === undefined ? {} : { repoChanges: [] }),
+        requestId,
+      });
     }
-  }
-
-  // Show a folder dialog (parented to the sender's window), then open the picked folder in
-  // the chosen terminal, owned by that window (multi-window Slice A).
-  async function browseRepo(agentId: string, senderWin: BrowserWindow | null) {
-    const options = {
-      properties: ['openDirectory' as const],
-      title: 'Open a repository',
-    };
-    const picked = senderWin
-      ? await dialog.showOpenDialog(senderWin, options)
-      : await dialog.showOpenDialog(options);
-    if (picked.canceled || !picked.filePaths[0]) return;
-    const ownerId = senderWin?.id ?? focusedWindow()?.id ?? primaryWindowId;
-    openRepo(picked.filePaths[0], agentId, ownerId);
   }
 
   // Fully tear down a session: kill its PTY, drop it from the model + every per-session
@@ -2079,18 +2416,23 @@ app.whenReady().then(() => {
   // handler and the per-window close guard (multi-window Slice A disposes all of a closing
   // window's sessions through this).
   const disposeSession = (id: string) => {
-    const planRoot = mgr.get(id)?.projectPath;
+    const planRoot = mgr.get(id)?.home;
     pty.dispose(id);
     mgr.remove(id);
+    scopes.ended(id);
+    restartSeq.delete(id);
+    startRefusals.delete(id);
     // The project is closed once its last session goes; the plans watch would otherwise hold an
     // fs.watch handle (and a poll interval) on a folder nothing is showing any more.
     if (planRoot) {
       const key = normalizeRoot(planRoot);
-      if (!mgr.list().some((s) => normalizeRoot(s.projectPath) === key)) planWatcher.unwatch(key);
+      if (!mgr.list().some((s) => normalizeRoot(s.home) === key)) planWatcher.unwatch(key);
     }
     activity.forget(id);
     cwdScanners.delete(id);
     bellScanState.delete(id);
+    pasteModes.delete(id);
+    inertTails.delete(id);
     // A session's schedules die WITH it, here — not lazily at some later mutation (§2).
     timers.onSessionDisposed(id);
     limitEpisodes.delete(id);
@@ -2157,13 +2499,235 @@ app.whenReady().then(() => {
           void shell.openPath(log.logsDir());
           break;
         case 'openRepo':
-          openRepo(m.path, m.agentId, senderId, m.cardId);
+          await openRepoRequest(m, senderId, replyHere);
           break;
-        case 'browseRepo':
-          await browseRepo(m.agentId, senderWin);
+        case 'session:addRoot':
+          replyOp(replyHere, m, await sessionOps.addRoot(m.sessionId, m.path));
+          break;
+        case 'session:removeRoot':
+          replyOp(replyHere, m, sessionOps.removeRoot(m.sessionId, m.path));
+          break;
+        case 'session:setHome':
+          replyOp(replyHere, m, await sessionOps.setHome(m.sessionId, m.path));
+          break;
+        case 'session:locateFolder': {
+          const { requestId } = m;
+          if (typeof requestId !== 'number') {
+            log.warn('folder', 'session:locateFolder without a requestId');
+            break;
+          }
+          const outcome = await locateFolder(m.sessionId, m.path, {
+            get: (id) => mgr.get(id),
+            pick: (d) => folderPicker.pick(senderWin, 'Locate folder', d),
+            isDir: (p) =>
+              fs.promises.stat(p).then(
+                (st) => st.isDirectory(),
+                () => false,
+              ),
+            dirname: path.dirname,
+            ops: sessionOps,
+          });
+          replyHere({ type: 'session:locateResult', requestId, ...outcome });
+          break;
+        }
+        case 'session:addDirsToAgent':
+        case 'session:restart': {
+          const { requestId, sessionId } = m;
+          if (typeof requestId !== 'number') {
+            log.warn('agentScope', `${m.type} without a requestId`);
+            break;
+          }
+          const answer = (r: { ok: boolean; reason?: AgentScopeReason }) =>
+            replyHere({
+              type: 'agentScope:result',
+              requestId,
+              sessionId: typeof sessionId === 'string' ? sessionId : '',
+              ...r,
+            });
+          // Only the window showing the session may act on it (review N1).
+          if (typeof sessionId !== 'string' || sessionOwner.get(sessionId) !== senderId) {
+            answer({ ok: false, reason: 'noSession' });
+            break;
+          }
+          if (m.type === 'session:addDirsToAgent') {
+            const r = runAddDir({
+              sessionExists: () => !!mgr.get(sessionId),
+              isAlive: () => pty.isAlive(sessionId),
+              isBusy: () => !!activity.statusOf(sessionId).busy,
+              typeable: () => scopes.typeable(sessionId),
+              bracketedPaste: () => !!pasteModes.get(sessionId)?.on,
+              write: (d) => pty.input(sessionId, d),
+              onPasted: (p) => scopes.pasted(sessionId, p),
+            });
+            log.info('agentScope', r.ok ? 'add-dir pasted' : r.reason, { sessionId });
+            answer(r.ok ? { ok: true } : { ok: false, reason: r.reason });
+            break;
+          }
+          const healthPending = folders.pending(sessionId);
+          if (healthPending) await healthPending;
+          const s = mgr.get(sessionId);
+          if (!s || s.homeMissing) {
+            const reason = s ? 'homeMissing' : 'noSession';
+            log.info('agentScope', `restart refused: ${reason}`, { sessionId });
+            answer({ ok: false, reason });
+            break;
+          }
+          // Kill without the dispose teardown: the session stays, and the remounted pane's cold
+          // term:start spawns with the current folders (spec §2.4 R1–R3).
+          if (pty.isAlive(sessionId)) {
+            pty.retire(sessionId);
+            endProcessEpisode(sessionId);
+            scopes.ended(sessionId);
+            restartSeq.set(sessionId, (restartSeq.get(sessionId) ?? 0) + 1);
+          }
+          log.info('session', 'restart', { sessionId });
+          mgr.setStatus(sessionId, 'running');
+          pendingRelaunchMarker.add(sessionId);
+          postState();
+          answer({ ok: true });
+          break;
+        }
+        case 'session:dismissAgentScope':
+          if (typeof m.sessionId === 'string' && sessionOwner.get(m.sessionId) === senderId)
+            scopes.dismiss(m.sessionId);
+          break;
+        case 'session:setProject':
+          replyOp(replyHere, m, sessionOps.setProject(m.sessionId, m.projectId));
+          break;
+        case 'project:create': {
+          if (typeof m.requestId !== 'number' || typeof m.name !== 'string') {
+            log.warn('project', 'project:create: bad payload');
+            break;
+          }
+          if (!projectsAvailable()) {
+            replyHere({
+              type: 'project:opResult',
+              requestId: m.requestId,
+              ok: false,
+              reason: 'store-unavailable',
+            });
+            break;
+          }
+          const created = projectStore.create(m.name);
+          replyHere(
+            created
+              ? { type: 'project:created', requestId: m.requestId, id: created.id }
+              : {
+                  type: 'project:opResult',
+                  requestId: m.requestId,
+                  ok: false,
+                  reason: 'invalid-name',
+                },
+          );
+          break;
+        }
+        case 'project:rename':
+          if (typeof m.id !== 'string' || typeof m.name !== 'string') {
+            log.warn('project', 'project:rename: bad payload');
+          } else if (!projectsAvailable()) {
+            log.warn('project', 'project:rename: store unavailable');
+          } else if (!projectStore.rename(m.id, m.name)) {
+            log.info('project', 'project:rename refused', { id: m.id });
+          }
+          break;
+        case 'project:delete': {
+          if (typeof m.id !== 'string') {
+            log.warn('project', 'project:delete: bad payload');
+            break;
+          }
+          if (!projectsAvailable()) {
+            log.warn('project', 'project:delete: store unavailable');
+            break;
+          }
+          projectPostSuppressed = true;
+          let deleted: boolean;
+          try {
+            deleted = projectStore.delete(m.id);
+          } finally {
+            projectPostSuppressed = false;
+          }
+          // With no holder the manager never emits, so the store change still needs its post.
+          if (deleted && mgr.clearProject(m.id) === 0) postState();
+          break;
+        }
+        case 'project:reorder':
+          if (!projectsAvailable()) {
+            log.warn('project', 'project:reorder: store unavailable');
+          } else if (!projectStore.reorder(m.ids)) {
+            log.warn('project', 'project:reorder: bad payload');
+          }
+          break;
+        case 'launchers:rescan':
+          if (launcherHost.rescan()) launchersChanged();
+          break;
+        case 'launcher:addCustom': {
+          if (typeof m.requestId !== 'number') {
+            log.warn('launcher', 'launcher:addCustom without a requestId');
+            break;
+          }
+          const r = launcherHost.addCustom(m.commandLine, m.label);
+          if (r.ok) {
+            launchersChanged();
+            replyHere({ type: 'launcher:added', requestId: m.requestId, id: r.id });
+          } else {
+            replyHere({ type: 'launcher:added', requestId: m.requestId, error: r.error });
+          }
+          break;
+        }
+        case 'launcher:removeCustom':
+          if (launcherHost.removeCustom(m.id)) launchersChanged();
+          break;
+        case 'folder:pick':
+          if (typeof m.requestId !== 'number') {
+            log.warn('folder', 'folder:pick without a requestId');
+            break;
+          }
+          replyHere({
+            type: 'folder:picked',
+            requestId: m.requestId,
+            path: await folderPicker.pick(senderWin, 'Add a folder'),
+          });
+          break;
+        case 'folder:probe':
+          if (typeof m.requestId !== 'number') {
+            log.warn('folder', 'folder:probe without a requestId');
+            break;
+          }
+          replyHere({
+            type: 'folder:probeResult',
+            requestId: m.requestId,
+            results: await probeFolders(m.paths, {
+              probe: (raw) => probeFolder(raw, probeDeps),
+              gitInfo: (d) => getGitInfo(d, { timeoutMs: GIT_TIMEOUT.metadata }),
+            }),
+          });
+          break;
+        case 'fs:copyToOsClipboard':
+          await dragOutHost.copyToOsClipboard(m, {
+            senderContentsId: e.sender.id,
+            reply: replyHere,
+          });
+          break;
+        case 'launch:preview':
+          if (typeof m.requestId !== 'number') {
+            log.warn('launcher', 'launch:preview without a requestId');
+            break;
+          }
+          replyHere({
+            type: 'launch:previewResult',
+            requestId: m.requestId,
+            ...(await previewLaunch(m, {
+              registry,
+              probe: (raw) => probeFolder(raw, probeDeps),
+              resolveInitialRoots: (h, r) => sessionOps.resolveInitialRoots(h, r),
+              exists: fs.existsSync,
+              resolveCommand: (c) => resolveCommand(c, hostPlatform),
+              platform: hostPlatform,
+            })),
+          });
           break;
         case 'requestProject':
-          await sendProject(replyHere, m.path, m.changesRoot);
+          await sendProject(replyHere, senderId, m.path, m.changesRoot, m.sessionId, m.requestId);
           break;
         case 'readDir': {
           const entries = await readDir(m.path);
@@ -2282,7 +2846,21 @@ app.whenReady().then(() => {
         case 'git:history': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = gitRoot(session);
+          const cwd = await requestRepoRoot(session, m.repoRoot);
+          const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
+          if (cwd === null) {
+            replyHere({
+              type: 'git:historyResult',
+              sessionId: m.sessionId,
+              commits: [],
+              layout: assignLanes([]),
+              hasMore: false,
+              state: 'error',
+              ...(m.requestId !== undefined ? { requestId: m.requestId } : {}),
+              ...echoRoot,
+            });
+            break;
+          }
           const query = m.query?.trim();
           // A non-empty query searches FULL history (all refs) so a match beyond the loaded
           // window surfaces directly; otherwise the normal paged tip read. See searchHistory.
@@ -2306,6 +2884,7 @@ app.whenReady().then(() => {
             state,
             ...(m.requestId !== undefined ? { requestId: m.requestId } : {}),
             ...(query ? { query } : {}),
+            ...echoRoot,
           });
           break;
         }
@@ -2327,8 +2906,20 @@ app.whenReady().then(() => {
           }
           // A terminal-originated commit review passes `root` (the terminal's cwd repo, from
           // validateCommitsResult) so the diff is read from the SAME repo that validated the
-          // hash; UI-originated reviews (History/branch band) omit it and use the pinned repo.
-          const cwd = m.root ?? gitRoot(session);
+          // hash; History passes the repo it shows.
+          const cwd = await requestRepoRoot(session, m.root);
+          if (cwd === null) {
+            replyHere({
+              type: 'git:commitDiffResult',
+              sessionId: m.sessionId,
+              sha: m.sha,
+              files: [],
+              error: 'unknown repo',
+              root: m.root,
+              requestId: m.requestId,
+            });
+            break;
+          }
           const { files, truncated, error } = await getCommitDiff(cwd, m.sha, {
             log: (msg) => log.error('git', msg),
             timeoutMs: GIT_TIMEOUT.diff,
@@ -2377,7 +2968,9 @@ app.whenReady().then(() => {
           }
           // Only a tracked file can be blamed; an untracked/new file is a silent no-op.
           const tracked =
-            (await git(['ls-files', '--error-unmatch', '--', rel], root)).trim() !== '';
+            (
+              await git(['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', rel], root)
+            ).trim() !== '';
           if (!tracked) {
             replyHere({ type: 'git:blameResult', sessionId: m.sessionId, path: m.path, lines: [] });
             break;
@@ -2408,10 +3001,9 @@ app.whenReady().then(() => {
         case 'git:rangeDiff': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = gitRoot(session);
           const key = rangeKey(m.base, m.head);
-          const error = await firstInvalidEndpoint(cwd, [m.base, m.head]);
-          if (error) {
+          const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
+          const fail = (error: string) =>
             replyHere({
               type: 'git:rangeDiffResult',
               sessionId: m.sessionId,
@@ -2419,7 +3011,16 @@ app.whenReady().then(() => {
               files: [],
               error,
               requestId: m.requestId,
+              ...echoRoot,
             });
+          const cwd = await requestRepoRoot(session, m.repoRoot);
+          if (cwd === null) {
+            fail('unknown repo');
+            break;
+          }
+          const error = await firstInvalidEndpoint(cwd, [m.base, m.head]);
+          if (error) {
+            fail(error);
             break;
           }
           const { files, truncated } = await getRangeDiff(cwd, m.base, m.head, {
@@ -2432,6 +3033,7 @@ app.whenReady().then(() => {
             files,
             ...(truncated ? { truncated } : {}),
             requestId: m.requestId,
+            ...echoRoot,
           });
           break;
         }
@@ -2588,7 +3190,19 @@ app.whenReady().then(() => {
         case 'git:resolveRange': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = gitRoot(session);
+          const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
+          const cwd = await requestRepoRoot(session, m.repoRoot);
+          if (cwd === null) {
+            replyHere({
+              type: 'git:resolveRangeResult',
+              sessionId: m.sessionId,
+              preset: m.preset,
+              requestId: m.requestId,
+              error: 'unknown repo',
+              ...echoRoot,
+            });
+            break;
+          }
           const revParse = async (ref: string): Promise<string | null> => {
             // Never let an option-like token reach the arg array (mirrors git:switch / refExists).
             if (!ref || ref.startsWith('-')) return null;
@@ -2621,13 +3235,28 @@ app.whenReady().then(() => {
             preset: m.preset,
             requestId: m.requestId,
             ...res,
+            ...echoRoot,
           });
           break;
         }
         case 'git:refs': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = gitRoot(session);
+          const cwd = await requestRepoRoot(session, m.repoRoot);
+          const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
+          if (cwd === null) {
+            replyHere({
+              type: 'git:refsResult',
+              sessionId: m.sessionId,
+              branches: [],
+              current: null,
+              remotes: [],
+              tags: [],
+              error: 'unknown repo',
+              ...echoRoot,
+            });
+            break;
+          }
           const { branches, current, remotes, tags } = await listRefs(cwd);
           log.debug('git', 'refs', {
             sessionId: m.sessionId,
@@ -2643,13 +3272,26 @@ app.whenReady().then(() => {
             current,
             remotes,
             tags,
+            ...echoRoot,
           });
           break;
         }
         case 'git:switch': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = gitRoot(session);
+          const cwd = requestGitRoot(session, m.repoRoot);
+          const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
+          if (cwd === null) {
+            replyHere({
+              type: 'git:switchResult',
+              sessionId: m.sessionId,
+              ok: false,
+              reason: 'failed',
+              message: 'unknown repo',
+              ...echoRoot,
+            });
+            break;
+          }
           const ref = m.target.ref;
           // Re-enumerate and validate the ref against the host's own set — the renderer's
           // ref is never trusted into execFile.
@@ -2662,6 +3304,7 @@ app.whenReady().then(() => {
               ok: false,
               reason: 'failed',
               message: 'Unknown branch.',
+              ...echoRoot,
             });
             break;
           }
@@ -2680,13 +3323,14 @@ app.whenReady().then(() => {
               sessionId: m.sessionId,
               ok: false,
               reason: gate.reason,
+              ...echoRoot,
             });
             break;
           }
           const result = await switchBranch(cwd, ref);
           log.info('git', 'switch', { sessionId: m.sessionId, ref, ok: result.ok });
           if (result.ok) {
-            replyHere({ type: 'git:switchResult', sessionId: m.sessionId, ok: true });
+            replyHere({ type: 'git:switchResult', sessionId: m.sessionId, ok: true, ...echoRoot });
             scheduleGitRefresh(m.sessionId);
           } else {
             replyHere({
@@ -2695,6 +3339,7 @@ app.whenReady().then(() => {
               ok: false,
               reason: 'failed',
               message: result.message,
+              ...echoRoot,
             });
           }
           break;
@@ -2728,12 +3373,24 @@ app.whenReady().then(() => {
         case 'term:title':
           mgr.applyTitle(m.sessionId, m.title);
           break;
-        case 'relaunch':
+        case 'relaunch': {
+          const healthPending = folders.pending(m.id);
+          if (healthPending) await healthPending;
+          const s = mgr.get(m.id);
+          // A homeMissing session never spawns; the renderer is not trusted (spec §2.6, D11).
+          if (!s || s.homeMissing) {
+            log.info('session', 'relaunch refused', {
+              sessionId: m.id,
+              reason: s ? 'homeMissing' : 'noSession',
+            });
+            break;
+          }
           mgr.setStatus(m.id, 'running');
           // Remember this session needs a "relaunched" marker the next time its
           // terminal starts (the renderer will send term:start once it remounts).
           pendingRelaunchMarker.add(m.id);
           break;
+        }
         case 'kill':
           disposeSession(m.id);
           break;
@@ -2750,6 +3407,7 @@ app.whenReady().then(() => {
             // Owner = the source session's owner (same window), falling back to the sender.
             assignOwner(sessionOwner, dup.id, sessionOwner.get(m.id) ?? senderId);
             postState();
+            folders.created(dup.id);
           }
           break;
         }
@@ -2774,9 +3432,6 @@ app.whenReady().then(() => {
           // broadcast (terminal output, a git refresh) happened to fire next — which for an
           // idle session can be never.
           postState();
-          // Git indicator (Slice A): re-evaluate every session on a settings change;
-          // runGitRefresh re-interrogates when on and clears the indicator when off.
-          refreshAllGit();
           break;
         case 'revealInExplorer':
           log.info('shell', 'reveal', { path: m.path });
@@ -2810,7 +3465,7 @@ app.whenReady().then(() => {
           await queueProjectIndex(m.root, m.seeds ?? [], replyHere, log, !!m.incremental);
           break;
         case 'resolveModule': {
-          const root = mgr.get(m.sessionId)?.projectPath;
+          const root = mgr.get(m.sessionId)?.home;
           if (!root) {
             replyHere({
               type: 'resolveModuleResult',
@@ -3109,7 +3764,7 @@ app.whenReady().then(() => {
           // guards the one-time cold-start file restore; the attach replay is per-window and
           // intentionally separate. Skipping the spawn path avoids re-running the relaunch
           // marker / padding logic.
-          if (pty.isAlive(m.sessionId)) {
+          const attach = () => {
             const ring = scrollbacks.get(m.sessionId);
             if (settings.scrollbackPersistence && ring) {
               reply(e, {
@@ -3122,6 +3777,9 @@ app.whenReady().then(() => {
             pty.resize(m.sessionId, m.cols, m.rows);
             mgr.touch(m.sessionId);
             log.info('pty', 'attach', { sessionId: m.sessionId, windowId: senderId });
+          };
+          if (pty.isAlive(m.sessionId)) {
+            attach();
             break;
           }
           // T2: replay persisted scrollback BEFORE pty.start, so restored history precedes
@@ -3154,7 +3812,55 @@ app.whenReady().then(() => {
               });
             }
           }
-          const spec = resolveSpec(m.agentId, m.cwd);
+          // A restored session's first health check may still be marking missing folders; a
+          // launch built before it lands could pass a missing root (mf-model spec §2.5).
+          const healthPending = folders.pending(m.sessionId);
+          if (healthPending) await healthPending;
+          const s = mgr.get(m.sessionId);
+          if (!s) break;
+          if (pty.isAlive(m.sessionId)) {
+            attach();
+            break;
+          }
+          const plan = buildLaunchSpec({
+            registry,
+            agentId: m.agentId,
+            cwd: m.cwd,
+            home: s.home,
+            homeMissing: !!s.homeMissing,
+            roots: presentRoots(s),
+            exists: fs.existsSync,
+            resolveCommand: (c) => resolveCommand(c, hostPlatform),
+            platform: hostPlatform,
+          });
+          if (!plan.ok) {
+            const why =
+              plan.reason === 'unresolvable'
+                ? `${plan.command} not found`
+                : `home folder ${s.home} is missing`;
+            sendToOwner(m.sessionId, {
+              type: 'term:data',
+              sessionId: m.sessionId,
+              data: `\r\n\x1b[2m— can't start: ${why} —\x1b[0m\r\n`,
+            });
+            log.warn('pty', 'refused', {
+              sessionId: m.sessionId,
+              reason: plan.reason,
+              home: s.home,
+            });
+            // Re-checks the folders, so a home that has come back clears and the next start works.
+            if (plan.reason === 'home-missing') folders.created(m.sessionId);
+            else startRefusals.set(m.sessionId, { reason: plan.reason, command: plan.command });
+            // Nothing runs, so the session must not read as running; 'stale', never 'exited' —
+            // app.tsx's exit effect auto-closes an exited shell (mf-live-edits plan §Host).
+            pendingRelaunchMarker.delete(m.sessionId);
+            mgr.setStatus(m.sessionId, 'stale');
+            break;
+          }
+          const spec = plan.spec;
+          for (const root of plan.skippedAddDirRoots) {
+            log.warn('pty', 'add-dir skipped', { sessionId: m.sessionId, root });
+          }
           // E2b: inject a prompt-preserving cwd-emit hook for recognized shells when
           // trackCwd is enabled. The augmentation is purely ADDITIVE — it only appends
           // args and/or shallow-merges env; it never removes or reorders anything.
@@ -3174,6 +3880,12 @@ app.whenReady().then(() => {
             cwd: spec.cwd,
           });
           pty.start(m.sessionId, m.cols, m.rows, spec);
+          startRefusals.delete(m.sessionId);
+          // Claude's visible scope is read off the FINAL args, so a user's own --add-dir counts
+          // (mf-live-edits spec §2.1; no session field, L12 S7).
+          if (plan.addDir && pty.isAlive(m.sessionId)) {
+            scopes.captured(m.sessionId, scopeFromSpawnArgs(spec.cwd, spec.args, path.resolve, s));
+          }
           // Opens the spawn grace: shell banners, the relaunch marker's follow-on repaint
           // and autoRelaunchStale's startup bursts are not evidence (spec contract 5).
           activity.recordSpawn(m.sessionId, Date.now());
@@ -3418,7 +4130,10 @@ app.whenReady().then(() => {
   // lets the editor save what it opened while rejecting anything outside the tree.
   const writeRoots = (): string[] => {
     const set = new Set<string>();
-    for (const s of mgr.list()) if (s.projectPath) set.add(s.projectPath);
+    for (const s of mgr.list()) {
+      if (s.home) set.add(s.home);
+      for (const r of s.roots) set.add(r);
+    }
     for (const r of repos) if (r.path) set.add(r.path);
     return [...set];
   };
@@ -3426,11 +4141,9 @@ app.whenReady().then(() => {
   // Language servers (ADR 0006). Built after writeRoots: a server's root must sit inside one.
   // Peek targets are read for the reply only — never a grant, never a fileContent (spec §3.2).
   const LSP_TARGET_MAX_BYTES = 2 * 1024 * 1024;
-  const lspPlatform: HostPlatform =
-    process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
   const lspSearch: SearchContext = {
     env: process.env,
-    platform: lspPlatform,
+    platform: hostPlatform,
     homedir: os.homedir(),
     tmpdir: os.tmpdir(),
     isFile: (p) =>
@@ -3460,7 +4173,7 @@ app.whenReady().then(() => {
       });
     }
   }
-  let trustStore = parseTrustStore(trustRaw, lspPlatform);
+  let trustStore = parseTrustStore(trustRaw, hostPlatform);
   const lspManager = new LspManager({
     trustStore: {
       get: () => trustStore,
@@ -3472,7 +4185,7 @@ app.whenReady().then(() => {
     broadcastTrust: (state) => broadcast({ type: 'lsp:trust', ...state }),
     homeDir: os.homedir(),
     registry: LANGUAGE_SERVERS,
-    platform: lspPlatform,
+    platform: hostPlatform,
     workspaceRoots: writeRoots,
     resolveBinary: (spec) => resolveServerBinary(spec, lspSearch),
     resolveRoot: (p, spec) =>
@@ -3488,7 +4201,7 @@ app.whenReady().then(() => {
             ),
           realpath: (f) => fs.promises.realpath(f),
         },
-        lspPlatform,
+        hostPlatform,
       ),
     startServer: ({ spec, resolved, root }) =>
       startLanguageServer({
@@ -3497,17 +4210,18 @@ app.whenReady().then(() => {
         toolDir: resolved.toolDir,
         root,
         hostEnv: process.env,
-        platform: lspPlatform,
+        platform: hostPlatform,
         spawn: (file, args, o) => spawn(file, [...args], o),
         tree: defaultTreeKillDeps(),
         log,
       }),
-    watchRoot: (root, spec, onChanges, onMarker) =>
+    watchRoot: (root, spec, onChanges, onMarker, onGone) =>
       watchServerRoot(
         root,
         { matches: compileWatchGlobs(spec.watchGlobs), isMarker: (rel) => isRootMarker(spec, rel) },
         onChanges,
         onMarker,
+        onGone,
         { log: (m) => log.warn('lsp', m) },
       ),
     readTarget: async (p) => {
@@ -3751,7 +4465,7 @@ app.whenReady().then(() => {
     boardWatcher.stop();
     notesWatcher.stop();
     planWatcher.stop();
-    projectWatcher.stop();
+    folders.stop();
     proposalWatcher.stop();
     openFileWatcher.stop();
     stopUpdater();
@@ -3760,6 +4474,7 @@ app.whenReady().then(() => {
     for (const sessionId of scrollbackPersistTimers.keys()) flushScrollback(sessionId);
     // Git indicator (Slice A): close every HEAD watcher + cancel pending refreshes so
     // no fs.watch handle keeps the main process alive past quit.
+    cancelGitWave();
     for (const id of [...gitDebounce.keys(), ...gitWatchers.keys()]) teardownGitRefresh(id);
     lspManager.killAllSync();
     pty.disposeAll();
@@ -3808,6 +4523,7 @@ app.whenReady().then(() => {
         // Its visible-session set dies with it, or sessions it was showing would stay
         // exempt from attention forever.
         activity.dropWindow(windowId);
+        folders.windowClosed(windowId);
         log.info('window', 'closed', { windowId });
         // A closed window drops out of the move picker (Slice B).
         broadcastWinList?.();
@@ -3931,7 +4647,7 @@ app.whenReady().then(() => {
   };
 
   // Open a lone file launched from the OS: root its session at the file's git repo (else its
-  // parent dir), reuse an existing session whose projectPath is the nearest ancestor of the
+  // parent dir), reuse an existing session whose home is the nearest ancestor of the
   // file (else create one at the root), then tell the renderer to open the doc. The host has
   // no view of which docs are open in the renderer, so the nearest-ancestor (Rule 2) reuse is
   // all that applies here; the renderer's own resolveOwningSession Rule 1 still de-dupes an
@@ -3940,7 +4656,7 @@ app.whenReady().then(() => {
     const root = gitRootOf(filePath, (p) => fs.existsSync(p)) ?? path.dirname(filePath);
     const existing = resolveOwningSession({
       path: filePath,
-      sessions: mgr.list().map((s) => ({ id: s.id, projectPath: s.projectPath })),
+      sessions: mgr.list().map((s) => ({ id: s.id, home: s.home, roots: s.roots })),
       openDocs: [],
       activeId: null,
     });

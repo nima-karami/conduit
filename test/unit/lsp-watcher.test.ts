@@ -7,6 +7,8 @@ import { compileWatchGlobs, GO_SERVER, isRootMarker } from '../../src/lsp-regist
 
 const ROOT = path.join(path.sep, 'w', 'mod');
 const abs = (rel: string) => path.join(ROOT, rel);
+/** What libuv reports for the deleted root itself: its path resolved against the cwd. */
+const SELF = `\\\\?\\${path.resolve(ROOT)}`;
 
 function fakeWatch() {
   let listener: ((event: string, filename: string | null) => void) | null = null;
@@ -31,14 +33,15 @@ function setup(existing: string[] = [], filter = goFilter) {
   const w = fakeWatch();
   const batches: WatchedChange[][] = [];
   const onMarker = vi.fn();
+  const onGone = vi.fn();
   const log = vi.fn();
   const files = new Set(existing.map(abs));
-  const handle = watchServerRoot(ROOT, filter, (c) => batches.push(c), onMarker, {
+  const handle = watchServerRoot(ROOT, filter, (c) => batches.push(c), onMarker, onGone, {
     watch: w.watch,
     stat: async (p) => files.has(p),
     log,
   });
-  return { ...w, batches, onMarker, log, handle, files };
+  return { ...w, batches, onMarker, onGone, log, handle, files };
 }
 
 beforeEach(() => {
@@ -132,5 +135,92 @@ describe('watchServerRoot', () => {
     s.watcher.emit('error', new Error('EPERM'));
     expect(s.watcher.close).toHaveBeenCalled();
     expect(s.log).toHaveBeenCalledWith(expect.stringContaining('EPERM'));
+  });
+
+  it('the server root itself vanishing closes the watch once and sends nothing', async () => {
+    const s = setup();
+    for (let i = 0; i < 1000; i++) s.emit('rename', SELF);
+    expect(s.watcher.close).toHaveBeenCalledTimes(1);
+    expect(s.log).toHaveBeenCalledWith(expect.stringContaining('vanished'));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(s.batches).toEqual([]);
+    expect(s.onGone).toHaveBeenCalledTimes(1);
+  });
+
+  it('a vanishing root still delivers the deletions reported just before it, marker included', async () => {
+    const s = setup();
+    s.emit('rename', 'go.mod');
+    s.emit('rename', 'a.go');
+    s.emit('rename', SELF);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.batches).toEqual([
+      [
+        { path: abs('go.mod'), type: 3 },
+        { path: abs('a.go'), type: 3 },
+      ],
+    ]);
+    expect(s.onMarker).toHaveBeenCalledTimes(1);
+    expect(s.onGone).toHaveBeenCalledTimes(1);
+    expect(s.onGone.mock.invocationCallOrder[0]).toBeGreaterThan(
+      s.onMarker.mock.invocationCallOrder[0] as number,
+    );
+    await vi.advanceTimersByTimeAsync(500);
+    expect(s.batches).toHaveLength(1);
+  });
+
+  it('a watch error flushes the pending batch too, then reports gone', async () => {
+    const s = setup(['a.go']);
+    s.emit('change', 'a.go');
+    s.watcher.emit('error', new Error('EPERM'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.batches).toEqual([[{ path: abs('a.go'), type: 2 }]]);
+    expect(s.onGone).toHaveBeenCalledTimes(1);
+  });
+
+  // vscode-jsonrpc's sendNotification throws synchronously on a connection closed before the
+  // server's exit event, so a delivery can fail; the batches after it must not be lost.
+  it('a delivery that throws loses only its own batch: later batches and gone still arrive', async () => {
+    const w = fakeWatch();
+    const delivered: WatchedChange[][] = [];
+    const onChanges = vi.fn((c: WatchedChange[]) => {
+      if (onChanges.mock.calls.length === 1) throw new Error('Connection is closed.');
+      delivered.push(c);
+    });
+    const onGone = vi.fn();
+    const log = vi.fn();
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      watchServerRoot(ROOT, goFilter, onChanges, vi.fn(), onGone, {
+        watch: w.watch,
+        stat: async () => true,
+        log,
+      });
+      w.emit('change', 'a.go');
+      await vi.advanceTimersByTimeAsync(200);
+      w.emit('change', 'b.go');
+      await vi.advanceTimersByTimeAsync(200);
+      expect(delivered).toEqual([[{ path: abs('b.go'), type: 2 }]]);
+      w.emit('change', 'c.go');
+      w.emit('rename', SELF);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(delivered).toHaveLength(2);
+      expect(onGone).toHaveBeenCalledTimes(1);
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('Connection is closed.'));
+      vi.useRealTimers();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
+  it('an explicit close is never reported as gone', async () => {
+    const s = setup();
+    s.emit('rename', 'go.mod');
+    s.handle.close();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(s.onGone).not.toHaveBeenCalled();
+    expect(s.batches).toEqual([]);
   });
 });

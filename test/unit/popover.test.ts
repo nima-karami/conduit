@@ -52,6 +52,8 @@ afterEach(async () => {
   host?.remove();
 });
 
+const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+
 describe('Popover', () => {
   it('renders its frame as a child of document.body with class popover plus the caller class', async () => {
     await render({
@@ -106,6 +108,7 @@ describe('Popover', () => {
   it('capture-phase scroll outside closes, scroll inside the frame does not', async () => {
     const onClose = vi.fn();
     await render({ at: { x: 10, y: 10 }, onClose, children: createElement('span', null, 'hi') });
+    await act(nextFrame);
     const frame = document.body.querySelector('.popover') as HTMLElement;
 
     await act(async () => {
@@ -113,6 +116,22 @@ describe('Popover', () => {
     });
     expect(onClose).not.toHaveBeenCalled();
 
+    await act(async () => {
+      document.dispatchEvent(new Event('scroll'));
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('a scroll event delivered before the first frame after opening does not close (it predates it)', async () => {
+    const onClose = vi.fn();
+    await render({ at: { x: 10, y: 10 }, onClose, children: createElement('span', null, 'hi') });
+
+    await act(async () => {
+      document.dispatchEvent(new Event('scroll'));
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(nextFrame);
     await act(async () => {
       document.dispatchEvent(new Event('scroll'));
     });
@@ -160,6 +179,37 @@ describe('Popover', () => {
     const frame = document.body.querySelector('.popover') as HTMLElement;
     expect(frame.style.left).toBe('100px');
     expect(frame.style.top).toBe('34px');
+
+    getRectSpy.mockRestore();
+  });
+
+  it('align end lines the MEASURED right edge up with the anchor when content outgrows `width` (QA F3)', async () => {
+    const rect = { left: 500, right: 600, top: 10, bottom: 30 };
+    const getRectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      width: 260,
+      height: 50,
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0,
+      x: 0,
+      y: 0,
+      toJSON() {},
+    });
+    Object.defineProperty(window, 'innerWidth', { value: 1000, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+
+    await render({
+      anchor: rect,
+      align: 'end',
+      width: 210,
+      onClose: () => {},
+      children: createElement('span', null, 'a label wider than 210px'),
+    });
+    const frame = document.body.querySelector('.popover') as HTMLElement;
+    expect(frame.style.left).toBe(`${600 - 260}px`);
+    expect(frame.style.minWidth).toBe('210px');
+    expect(frame.style.width).toBe('');
 
     getRectSpy.mockRestore();
   });

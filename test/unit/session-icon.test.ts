@@ -4,6 +4,7 @@ import {
   iconForSession,
   iconKindFromText,
   resolveSessionIcon,
+  SESSION_STATE_WORD,
   sessionIconState,
 } from '../../src/session-icon';
 import type { AgentDefinition } from '../../src/types';
@@ -186,29 +187,47 @@ describe('sessionIconState — the Review state (D15)', () => {
   const ran = { status: 'running', completedRun: true } as const;
 
   it('needs BOTH a completed run and a dirty repo', () => {
-    expect(sessionIconState({ ...ran, git: { kind: 'branch', branch: 'main', dirty: true } })).toBe(
-      'review',
-    );
+    expect(
+      sessionIconState({
+        ...ran,
+        repoGit: { '/r': { kind: 'branch', branch: 'main', dirty: true } },
+      }),
+    ).toBe('review');
     // Merely sitting in a dirty repo is Idle — otherwise almost every session would park
     // in Review permanently and the state would mean nothing.
     expect(
       sessionIconState({
         status: 'running',
-        git: { kind: 'branch', branch: 'main', dirty: true },
+        repoGit: { '/r': { kind: 'branch', branch: 'main', dirty: true } },
       }),
     ).toBe('idle');
     // An agent that ran but changed nothing has nothing to review.
     expect(
-      sessionIconState({ ...ran, git: { kind: 'branch', branch: 'main', dirty: false } }),
+      sessionIconState({
+        ...ran,
+        repoGit: { '/r': { kind: 'branch', branch: 'main', dirty: false } },
+      }),
     ).toBe('idle');
     expect(sessionIconState(ran)).toBe('idle');
   });
 
+  it('review when an attached repo is dirty and the run completed', () => {
+    expect(
+      sessionIconState({
+        ...ran,
+        repoGit: {
+          '/h': { kind: 'branch', branch: 'main', dirty: false },
+          '/r/a': { kind: 'branch', branch: 'feat', dirty: true },
+        },
+      }),
+    ).toBe('review');
+  });
+
   it('yields to the states that are about right now', () => {
-    const dirty = { kind: 'branch', branch: 'main', dirty: true } as const;
-    expect(sessionIconState({ ...ran, git: dirty, busy: true })).toBe('busy');
-    expect(sessionIconState({ ...ran, git: dirty, needsAttention: true })).toBe('attention');
-    expect(sessionIconState({ ...ran, git: dirty, status: 'exited' })).toBe('stale');
+    const dirty = { '/r': { kind: 'branch', branch: 'main', dirty: true } } as const;
+    expect(sessionIconState({ ...ran, repoGit: dirty, busy: true })).toBe('busy');
+    expect(sessionIconState({ ...ran, repoGit: dirty, needsAttention: true })).toBe('attention');
+    expect(sessionIconState({ ...ran, repoGit: dirty, status: 'exited' })).toBe('stale');
   });
 });
 
@@ -243,5 +262,32 @@ describe('sessionIconState (D4 — icon visual state)', () => {
     expect(sessionIconState({ status: 'running', busy: false, needsAttention: false })).toBe(
       'idle',
     );
+  });
+});
+
+describe('sessionIconState — cantStart (mf-live-edits AC-4)', () => {
+  it('stale + homeMissing → cantStart', () => {
+    expect(sessionIconState({ status: 'stale', homeMissing: true })).toBe('cantStart');
+    expect(sessionIconState({ status: 'stale', homeMissing: true, busy: true })).toBe('cantStart');
+  });
+
+  it('exited + homeMissing → cantStart', () => {
+    expect(sessionIconState({ status: 'exited', homeMissing: true })).toBe('cantStart');
+  });
+
+  it('running + homeMissing → idle/busy as today', () => {
+    expect(sessionIconState({ status: 'running', homeMissing: true })).toBe('idle');
+    expect(sessionIconState({ status: 'running', homeMissing: true, busy: true })).toBe('busy');
+  });
+
+  it('an unresolvable command reads cantStart too, stale or exited (conductor ruling on B1)', () => {
+    const startRefusal = { reason: 'unresolvable' as const, command: 'claude' };
+    expect(sessionIconState({ status: 'stale', startRefusal })).toBe('cantStart');
+    expect(sessionIconState({ status: 'exited', startRefusal })).toBe('cantStart');
+    expect(sessionIconState({ status: 'running', startRefusal })).toBe('idle');
+  });
+
+  it(`the word is "Can't start"`, () => {
+    expect(SESSION_STATE_WORD.cantStart).toBe("Can't start");
   });
 });

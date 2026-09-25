@@ -1,10 +1,12 @@
 import { type ArchDoc, seedArchitecture } from '../src/architecture';
 import { type BoardData, seedBoard } from '../src/board';
+import { formatCommandLine } from '../src/command-line';
 import { type ContentSearchDeps, type Dirent, searchContent } from '../src/content-search';
 import type { DndOpts, DndResult } from '../src/fs-dnd';
 import type { ImportConflictPolicy, ImportResult } from '../src/fs-import';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
+import { launchArgsFor } from '../src/launch-args';
 import type { LogLevel } from '../src/logging';
 import type { LspCallType, LspMessage, LspResult } from '../src/lsp-protocol';
 import type { WriteResult } from '../src/path-guard';
@@ -17,6 +19,7 @@ import {
 } from '../src/pipeline';
 import type { DirEntryDTO, HostToWebview, WebviewToHost } from '../src/protocol';
 import { summarizeQueue } from '../src/queue-summary';
+import { repoBaseName } from '../src/repo-display';
 import { applyNotePatch, type ReviewNote } from '../src/review-notes';
 import { type AppSettings, DEFAULT_SETTINGS } from '../src/settings';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
@@ -30,11 +33,12 @@ import {
   mockDir,
   files as mockFiles,
   mockFileText,
-  mockGroups,
   mockMarkdown,
+  mockProjects,
   mockRepos,
   mockSearch,
   mockSearchCorpus,
+  mockSessions,
   mockSkills,
 } from './mock';
 import { isMonacoCancellation } from './monaco-cancellation';
@@ -311,7 +315,17 @@ if (host) {
 // Browser-preview fallback: a tiny fake shell so the terminal is visible in screenshots
 // without a real desktop host. Never runs inside the app.
 const lineBuf = new Map<string, string>();
-let mockBoard = seedBoard();
+// The ticket is a bridge-only preview fixture: seedBoard() is Conduit's own seed and must
+// not gain one.
+const previewSeed = seedBoard();
+let mockBoard: BoardData = {
+  ...previewSeed,
+  cards: previewSeed.cards.map((c) =>
+    c.id === 'seed-f9'
+      ? { ...c, ticket: { key: 'CON-12', source: 'Local', status: 'Building' } }
+      : c,
+  ),
+};
 // Preview-only spec store (cardId → markdown) so the board's "Open spec" + has-spec
 // indicator work without a real host.
 const mockSpecs = new Map<string, string>();
@@ -475,7 +489,7 @@ function mockMutate(req: FsMutationRequest): MutationResult {
 
 // Flat ordered session list (global manual order), a mutable copy so the preview can drop
 // sessions on `kill` and re-emit, mirroring the host's kill → remove → re-broadcast.
-const allMockSessions = [...mockGroups.flatMap((g) => g.sessions)];
+const allMockSessions = [...mockSessions];
 let mockOrder = allMockSessions.map((s) => s.id);
 
 function mockState() {
@@ -483,22 +497,17 @@ function mockState() {
   const sessions = mockOrder
     .map((id) => byId.get(id))
     .filter((s): s is NonNullable<typeof s> => !!s);
-  const groupsMap = new Map<string, typeof sessions>();
-  for (const s of sessions) {
-    const arr = groupsMap.get(s.projectPath) ?? [];
-    arr.push(s);
-    groupsMap.set(s.projectPath, arr);
-  }
-  const groups = [...groupsMap.entries()].map(([projectPath, sess]) => ({
-    projectPath,
-    sessions: sess,
-  }));
   return {
     type: 'state' as const,
     agents: mockAgents,
-    groups,
     sessions,
+    projects: mockProjects,
     repos: mockRepos,
+    launchers: mockAgents.map((a) => ({
+      id: a.id,
+      kind: a.id.startsWith('shell:') ? ('shell' as const) : ('config' as const),
+      uses: 0,
+    })),
     settings: DEFAULT_SETTINGS,
     about: {
       version: '0.1.0',
@@ -508,6 +517,7 @@ function mockState() {
       nodeVersion: '22.x',
       chromeVersion: '130.x',
       isDev: false,
+      e2e: false,
     },
     // Preview is a single fake window; a stable id so the move picker excludes "itself".
     windowId: 1,
@@ -793,8 +803,8 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'openRepo') {
-    // Append a running session for the repo; carry the N2 cardId so the new session links
-    // back to its originating board card and the card's status badge appears immediately.
+    // Append a running session for the repo; carry the cardId so the new session links back
+    // to its originating board card and shows as a row there immediately.
     const id = `sess-${Date.now().toString(36)}`;
     // Mirror the host's SessionManager.create default: folder basename only, no suffix.
     const name =
@@ -807,14 +817,71 @@ function mockHost(msg: WebviewToHost) {
       id,
       name,
       agentId: msg.agentId,
-      projectPath: msg.path,
+      home: msg.path,
+      roots: msg.roots ?? [],
+      ...(msg.projectId ? { projectId: msg.projectId } : {}),
       status: 'running',
       createdAt: ts,
       lastActiveAt: ts,
       ...(msg.cardId ? { cardId: msg.cardId } : {}),
     });
     mockOrder = [...mockOrder, id];
-    setTimeout(() => emit(mockState()), 10);
+    const { requestId } = msg;
+    setTimeout(() => {
+      emit(mockState());
+      if (requestId !== undefined) {
+        emit({ type: 'openRepo:result', requestId, sessionId: id, droppedRoots: [] });
+      }
+    }, 10);
+    return;
+  }
+  if (msg.type === 'folder:pick') {
+    const { requestId } = msg;
+    setTimeout(() => emit({ type: 'folder:picked', requestId, path: null }), 10);
+    return;
+  }
+  if (msg.type === 'session:locateFolder') {
+    const { requestId } = msg;
+    setTimeout(
+      () => emit({ type: 'session:locateResult', requestId, ok: false, reason: 'cancelled' }),
+      10,
+    );
+    return;
+  }
+  if (msg.type === 'folder:probe') {
+    const { requestId } = msg;
+    const results = msg.paths.map((path) => ({ path, exists: true }));
+    setTimeout(() => emit({ type: 'folder:probeResult', requestId, results }), 10);
+    return;
+  }
+  if (msg.type === 'launch:preview') {
+    const { requestId, home } = msg;
+    const def = mockAgents.find((a) => a.id === msg.agentId) ?? mockAgents[0];
+    const { args, skippedAddDirRoots } = launchArgsFor(def, msg.roots, {
+      platform: 'win32',
+      resolvedCommand: def.command,
+    });
+    const spec = { command: def.command, args };
+    setTimeout(
+      () =>
+        emit({
+          type: 'launch:previewResult',
+          requestId,
+          cwd: home,
+          ...spec,
+          display: formatCommandLine(spec, 'win32'),
+          skippedAddDirRoots,
+        }),
+      10,
+    );
+    return;
+  }
+  if (msg.type === 'launcher:addCustom') {
+    const { requestId } = msg;
+    setTimeout(
+      () => emit({ type: 'launcher:added', requestId, error: 'Not available in preview' }),
+      10,
+    );
     return;
   }
   if (msg.type === 'reorderSessions') {
@@ -832,6 +899,19 @@ function mockHost(msg: WebviewToHost) {
           changes: mockChanges,
           files: mockFiles,
           customizations: mockCust.map((c) => ({ id: c.id, count: c.count ?? 0 })),
+          requestId: msg.requestId,
+          ...(msg.sessionId
+            ? {
+                repoChanges: [
+                  {
+                    root: msg.path,
+                    name: repoBaseName(msg.path),
+                    tag: 'home' as const,
+                    changes: mockChanges,
+                  },
+                ],
+              }
+            : {}),
         }),
       20,
     );

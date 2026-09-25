@@ -6,14 +6,13 @@
  *
  * exit 0 pass/SKIP · 1 assertion failed · 2 infra error
  */
-import { assert, openSession, REPO, runScenario } from './harness.mjs';
+import { assert, openHistory, openSession, REPO, runScenario } from './harness.mjs';
 
 runScenario('git-ref-dropdown', async ({ page, log }) => {
   // The Conduit repo itself: a real git repo with branches/tags so refOptions is non-empty.
   await openSession(page, { path: REPO });
 
-  await page.waitForSelector('.git-indicator__history', { timeout: 20000 });
-  await page.click('.git-indicator__history');
+  await openHistory(page);
   await page.waitForSelector('.gh__filterbar', { timeout: 15000 });
   // The ref filter renders only once refOptions populates (history loaded); this waits for it.
   await page.waitForSelector('button.gh__reffilter', { timeout: 15000 });

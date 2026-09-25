@@ -11,7 +11,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -150,8 +150,8 @@ export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
- * Install `window.__cap` (accumulated term:data) and `window.__sessions`
- * (latest state.sessions) captures via agentDeck.subscribe. Idempotent.
+ * Install `window.__cap` (accumulated term:data), `window.__sessions` and `window.__projects`
+ * (latest state.sessions / state.projects) captures via agentDeck.subscribe. Idempotent.
  */
 export async function tapBridge(page) {
   await page.evaluate(() => {
@@ -162,12 +162,16 @@ export async function tapBridge(page) {
     // alone cannot: it is one pooled string across every session.
     window.__capBy = {};
     window.__sessions = [];
+    window.__projects = [];
     window.agentDeck.subscribe((m) => {
       if (m.type === 'term:data') {
         window.__cap += m.data;
         window.__capBy[m.sessionId] = (window.__capBy[m.sessionId] ?? '') + m.data;
       }
-      if (m.type === 'state') window.__sessions = m.sessions || [];
+      if (m.type === 'state') {
+        window.__sessions = m.sessions || [];
+        window.__projects = m.projects || [];
+      }
     });
     // Re-send 'ready' so the host broadcasts a fresh postState() even if the
     // initial state message was delivered before we subscribed (e.g. on the
@@ -196,15 +200,30 @@ export async function tapBridge(page) {
  * a quiet agent into a failure.
  *
  * @param {object} page
- * @param {{ path: string, agentId?: string }} opts
+ * @param {{ path: string, agentId?: string, roots?: string[], projectId?: string | null, cardId?: string }} opts
  * @returns {Promise<string>} The new session id.
  */
-export async function openSession(page, { path, agentId = 'shell:cmd' }) {
+export async function openSession(page, { path, agentId = 'shell:cmd', roots, projectId, cardId }) {
   await tapBridge(page);
   const before = await page.evaluate(() => (window.__sessions || []).map((s) => s.id));
   await page.evaluate(
-    ({ p, a }) => window.agentDeck.post({ type: 'openRepo', path: p, agentId: a }),
-    { p: path.replace(/\\/g, '/'), a: agentId },
+    ({ p, a, r, pid, hasPid, cid }) =>
+      window.agentDeck.post({
+        type: 'openRepo',
+        path: p,
+        agentId: a,
+        ...(r ? { roots: r } : {}),
+        ...(hasPid ? { projectId: pid } : {}),
+        ...(cid !== null ? { cardId: cid } : {}),
+      }),
+    {
+      p: path.replace(/\\/g, '/'),
+      a: agentId,
+      r: roots?.map((x) => x.replace(/\\/g, '/')),
+      pid: projectId ?? null,
+      hasPid: projectId !== undefined,
+      cid: cardId ?? null,
+    },
   );
   await page.waitForSelector('.termpane', { state: 'attached', timeout: 25000 });
   const sid = await page
@@ -221,6 +240,88 @@ export async function openSession(page, { path, agentId = 'shell:cmd' }) {
     .waitForFunction((id) => (window.__capBy?.[id] ?? '').length > 0, sid, { timeout: 20000 })
     .catch(() => {});
   return sid;
+}
+
+/**
+ * Create a project through the host and resolve its id once it shows in `state.projects`.
+ * Waits for a NEW entry by that name, because names may repeat (mf-sidebar spec D9).
+ */
+export async function createProject(page, name) {
+  await tapBridge(page);
+  const before = await page.evaluate(() => (window.__projects || []).map((p) => p.id));
+  await page.evaluate(
+    (n) => window.agentDeck.post({ type: 'project:create', name: n, requestId: Date.now() }),
+    name,
+  );
+  return page
+    .waitForFunction(
+      ({ n, ids }) =>
+        (window.__projects || []).find((p) => p.name === n && !ids.includes(p.id))?.id || null,
+      { n: name, ids: before },
+      { timeout: 10000 },
+    )
+    .then((h) => h.jsonValue());
+}
+
+/** Show the right pane's Changes tab (expanding the pane if collapsed) and wait for its header. */
+export async function openChangesTab(page) {
+  if (!(await page.isVisible('.right'))) {
+    await page.keyboard.press('Control+Shift+E');
+    await page.waitForSelector('.right', { state: 'visible', timeout: 8000 });
+  }
+  await page.evaluate(() => {
+    Array.from(document.querySelectorAll('.rtab'))
+      .find((el) => el.textContent?.trim().startsWith('Changes'))
+      ?.click();
+  });
+  await page.waitForSelector('.changes__header', { state: 'visible', timeout: 15000 });
+}
+
+/**
+ * Open Review from the Changes tab header's Review button. While Review is already the active doc
+ * the pane shows its navigator instead of that header, so there is nothing to click.
+ */
+export async function openReview(page) {
+  if (await page.isVisible('.review')) return;
+  await openChangesTab(page);
+  await page.waitForSelector('.changes__review', { state: 'visible', timeout: 25000 });
+  await page.click('.changes__review');
+  await page.waitForSelector('.review', { state: 'visible', timeout: 20000 });
+}
+
+/** Wait until the active session's first repo interrogation has landed (any non-`none` GitInfo). */
+export async function waitForRepoGit(page) {
+  await page.waitForFunction(
+    () =>
+      (window.__sessions || []).some((s) =>
+        Object.values(s.repoGit ?? {}).some((g) => g.kind !== 'none'),
+      ),
+    null,
+    { timeout: 20000 },
+  );
+}
+
+/**
+ * Open History from a repo head's branch chip menu: the head named `repo`, else the first. An
+ * active Review puts the right pane in review mode (its navigator replaces the repo heads), so
+ * leave it for the terminal tab first, as a user would.
+ */
+export async function openHistory(page, { repo } = {}) {
+  if (await page.isVisible('.review')) {
+    await page.click('.tab[data-tabid="__terminal__"]');
+    await page.waitForSelector('.review', { state: 'hidden', timeout: 10000 });
+  }
+  await openChangesTab(page);
+  const heads = page.locator('.repo-head');
+  const head = repo
+    ? heads.filter({ has: page.locator('.repo-head__name').getByText(repo, { exact: true }) })
+    : heads.first();
+  const chip = head.locator('.branch-chip');
+  await chip.waitFor({ state: 'visible', timeout: 25000 });
+  await page.waitForFunction((el) => !el.disabled, await chip.elementHandle(), { timeout: 25000 });
+  await chip.click();
+  await page.locator('.branch-chip-menu [role="menuitem"]', { hasText: 'View history' }).click();
+  await page.waitForSelector('.gh', { state: 'visible', timeout: 20000 });
 }
 
 /**
@@ -576,6 +677,28 @@ export async function runShellReader(page, sid, { script, dumpPath }) {
  */
 export function assert(cond, msg) {
   if (!cond) throw new AssertionError(msg);
+}
+
+/**
+ * Delete a folder the app has just picked up. Windows refuses the delete while any process has
+ * the folder as its cwd — one of the app's ~50 ms one-shot git children, say — and `rmSync`'s
+ * `maxRetries` does not retry a directory's EPERM, so this retries for up to `budgetMs` and then
+ * throws the last error. A folder that is already gone still throws.
+ *
+ * @param {string} dir
+ * @param {{ budgetMs?: number }} [opts]
+ */
+export async function removeDir(dir, { budgetMs = 2000 } = {}) {
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    try {
+      rmSync(dir, { recursive: true });
+      return;
+    } catch (e) {
+      if (!['EPERM', 'EBUSY', 'ENOTEMPTY'].includes(e?.code) || Date.now() >= deadline) throw e;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
 }
 
 /**

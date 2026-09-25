@@ -1,16 +1,19 @@
+import { anyRepoDirty } from './repo-git';
 import type { AgentDefinition, Session, SessionIconKind } from './types';
 
 /**
- * The five states of the status system (handoff §"Status system"). One mutually
+ * The six states of the status system (handoff §"Status system"). One mutually
  * exclusive value per session, derived from its lifecycle plus the host's runtime flags:
  *
+ *   'cantStart' — not running AND its home folder is gone (no relaunch) or its last start was
+ *                 refused (relaunch retries) → the stale look, "Can't start" (mf-live-edits §2.6)
  *   'stale'     — not running (exited / stale) → dimmed card, dashed dot
  *   'busy'      — producing output right now → accent dot + the indeterminate meter
  *   'attention' — a task finished while unfocused → amber, floats to the top, Go to / Snooze
  *   'review'    — an agent ran here AND left the active repo dirty → diffstat + Review changes
  *   'idle'      — running and quiet → hollow dot, no meter, no colour
  *
- * Precedence: not running > busy > attention > review > idle. Busy beats attention
+ * Precedence: can't start > not running > busy > attention > review > idle. Busy beats attention
  * (working outranks finished); attention beats review (a waiting prompt outranks a
  * finished one).
  *
@@ -19,12 +22,18 @@ import type { AgentDefinition, Session, SessionIconKind } from './types';
  *
  * Pure: no side effects; depends only on its argument. Unit-tested.
  */
-export type SessionIconVisualState = 'stale' | 'busy' | 'attention' | 'review' | 'idle';
+export type SessionIconVisualState =
+  | 'stale'
+  | 'cantStart'
+  | 'busy'
+  | 'attention'
+  | 'review'
+  | 'idle';
 
 /** The fields the status system reads. Everything after `status` is host-derived + optional. */
 export type SessionStateFields = Pick<
   Session,
-  'status' | 'busy' | 'needsAttention' | 'completedRun' | 'git'
+  'status' | 'busy' | 'needsAttention' | 'completedRun' | 'repoGit' | 'homeMissing' | 'startRefusal'
 >;
 
 /**
@@ -36,10 +45,12 @@ export type SessionStateFields = Pick<
  * every session in Review permanently, which makes the state meaningless.
  */
 export function sessionIconState(session: SessionStateFields): SessionIconVisualState {
-  if (session.status !== 'running') return 'stale';
+  if (session.status !== 'running') {
+    return session.homeMissing || session.startRefusal ? 'cantStart' : 'stale';
+  }
   if (session.busy) return 'busy';
   if (session.needsAttention) return 'attention';
-  if (session.completedRun && session.git?.dirty) return 'review';
+  if (session.completedRun && anyRepoDirty(session)) return 'review';
   return 'idle';
 }
 
@@ -55,6 +66,7 @@ export const SESSION_STATE_WORD: Record<SessionIconVisualState, string> = {
   review: 'Review',
   idle: 'Idle',
   stale: 'Stale',
+  cantStart: "Can't start",
 };
 
 // Re-export so existing importers (webview/sidebar, icons) keep their import path.

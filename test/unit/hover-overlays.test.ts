@@ -132,7 +132,7 @@ describe('faded overlays', () => {
     // Vacuity guard: a rename that stops the pairing from matching would otherwise turn every
     // assertion below green while guarding nothing.
     const covered = new Set(pairs.map((p) => p.tgt));
-    for (const proven of ['.change__row-actions', '.session__kill']) {
+    for (const proven of ['.change__row-actions', '.session__kill', '.proj__add']) {
       const msg = `${proven} is no longer seen as a fade-in overlay`;
       expect([...covered], msg).toContain(proven);
     }

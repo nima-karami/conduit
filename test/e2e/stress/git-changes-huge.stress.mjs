@@ -10,6 +10,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { openReview } from '../harness.mjs';
 import {
   assertInvariant,
   emitReport,
@@ -35,9 +36,7 @@ runStress('git-changes-huge', async ({ page, log }) => {
   // Measure the Changes load (gitChanges runs on session open / project info).
   await startPerf(page, 'git-changes-huge');
   await openSession(page, { path: repo });
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 25000 });
-  await page.click('.git-indicator__review');
-  await page.waitForSelector('.review', { state: 'visible', timeout: 10000 });
+  await openReview(page);
   // Wait for the big file's card to mount + its diff to resolve to the oversize notice.
   const oversizeShown = await page
     .waitForSelector('.rcard__notice--oversize', { timeout: 20000 })

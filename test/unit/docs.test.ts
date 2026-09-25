@@ -654,6 +654,35 @@ describe('docsReducer — openReview (review source)', () => {
     expect(s.activeBySession.S1).toBe(REVIEW_DOC_ID);
   });
 
+  it('openReview stores {kind:"working", repoRoot} (not undefined)', () => {
+    const s = docsReducer(initialDocs, {
+      type: 'openReview',
+      sessionId: 'S1',
+      source: { kind: 'working', repoRoot: '/r/proto' },
+    });
+    expect(s.docs[0].reviewSource).toEqual({ kind: 'working', repoRoot: '/r/proto' });
+  });
+
+  it('openReview {kind:"working"} still stores undefined', () => {
+    const s = docsReducer(initialDocs, {
+      type: 'openReview',
+      sessionId: 'S1',
+      source: { kind: 'working', scope: 'all' },
+    });
+    expect(s.docs[0].reviewSource).toBeUndefined();
+  });
+
+  it('range repoRoot kept', () => {
+    const source = {
+      kind: 'range' as const,
+      base: { kind: 'branch' as const, ref: 'main' },
+      head: { kind: 'working' as const },
+      repoRoot: '/r/proto',
+    };
+    const s = docsReducer(initialDocs, { type: 'openReview', sessionId: 'S1', source });
+    expect(s.docs[0].reviewSource).toEqual(source);
+  });
+
   it('opens the singleton review doc with a commit source', () => {
     const s = docsReducer(initialDocs, {
       type: 'openReview',
@@ -852,5 +881,56 @@ describe('docsReducer — background open (middle-click)', () => {
       id: `commit-diff:${SHA} src/a.ts`,
       title: `a.ts @ ${SHA.slice(0, 7)}`,
     });
+  });
+});
+
+describe('docsReducer — git-history repoRoot', () => {
+  const HISTORY_ID = 'git-history:@git-history';
+  const openHistory = (s: DocsState, extra: { repoRoot?: string; mode?: OpenMode } = {}) =>
+    docsReducer(s, {
+      type: 'open',
+      kind: 'git-history',
+      path: '@git-history',
+      sessionId: 'S1',
+      ...extra,
+    });
+  const history = (s: DocsState) => s.docs.find((d) => d.id === HISTORY_ID);
+
+  it('open git-history stores repoRoot', () => {
+    expect(history(openHistory(initialDocs, { repoRoot: '/w/a' }))?.repoRoot).toBe('/w/a');
+    expect(
+      history(openHistory(initialDocs, { repoRoot: '/w/a', mode: 'background' }))?.repoRoot,
+    ).toBe('/w/a');
+  });
+
+  it('re-open with another repoRoot retargets the singleton, same id', () => {
+    for (const mode of [undefined, 'background'] as const) {
+      const s = openHistory(openHistory(initialDocs, { repoRoot: '/w/a' }), {
+        repoRoot: '/w/b',
+        ...(mode ? { mode } : {}),
+      });
+      expect(s.docs.filter((d) => d.kind === 'git-history')).toHaveLength(1);
+      expect(history(s)?.repoRoot).toBe('/w/b');
+    }
+  });
+
+  it('re-open without the key keeps the stored repoRoot', () => {
+    const s = openHistory(openHistory(initialDocs, { repoRoot: '/w/a' }));
+    expect(history(s)?.repoRoot).toBe('/w/a');
+  });
+
+  it('openCommitFile stamps the history repo on the commit-diff tab', () => {
+    const sha = 'b'.repeat(40);
+    for (const mode of ['preview', 'permanent', 'background'] as const) {
+      const s = docsReducer(initialDocs, {
+        type: 'openCommitFile',
+        sha,
+        file: 'x.ts',
+        sessionId: 'S1',
+        mode,
+        repoRoot: '/w/b',
+      });
+      expect(s.docs[0].repoRoot).toBe('/w/b');
+    }
   });
 });
