@@ -647,8 +647,20 @@
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 }
 
-* {
-  box-sizing: border-box;
+/* Monaco's CSS assumes the UA's content-box and declares border-box itself where it wants it;
+   reaching into its DOM collapsed the peek tree's twistie under the file name. Conduit DOM
+   mounted inside an editor (the change peek's view zone) opts back in. */
+@scope (:root) to (.monaco-editor, .monaco-diff-editor) {
+  :scope,
+  * {
+    box-sizing: border-box;
+  }
+}
+@scope (.peekzone) {
+  :scope,
+  * {
+    box-sizing: border-box;
+  }
 }
 
 html,
@@ -5585,6 +5597,11 @@ body.gh-resizing {
    scoped with :has() because `.context-view` also hosts Monaco's real context menus. */
 .context-view:has(> .workbench-hover-container) {
   pointer-events: none;
+}
+
+/* The count badge's `margin-left: auto` leaves no floor, so an ellipsized path ran into it. */
+.reference-zone-widget .reference-file {
+  gap: 6px;
 }
 
 /* ---- Monaco's find widget, in the app's find-bar family (spec 2026-08-31-review-fidelity §5).
