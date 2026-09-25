@@ -225,7 +225,7 @@ export function GitHistoryView({
   }, [state.query, search]);
 
   // Load on open + whenever the owning session changes. A repo change is a retarget that keeps
-  // the query (docs/specs/2026-09-23-mf-changes.md §2.5, D16), so it re-searches the new repo.
+  // the query (docs/specs/archive/2026-09-23-mf-changes.md §2.5, D16), so it re-searches the new repo.
   const shownRepo = useRef(repoRoot);
   const [announcedRoot, setAnnouncedRoot] = useState<string | undefined>(undefined);
   useEffect(() => {

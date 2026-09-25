@@ -1292,7 +1292,7 @@ app.whenReady().then(() => {
   };
 
   // A renderer-chosen root runs git only when it is a detected repo or the terminal's own git
-  // root (docs/specs/2026-09-23-mf-changes.md §3 D22; docs/specs/2026-09-23-mf-review.md D11).
+  // root (docs/specs/archive/2026-09-23-mf-changes.md §3 D22; docs/specs/archive/2026-09-23-mf-review.md D11).
   const requestRepoRoot = (session: Session, root: unknown): Promise<string | null> =>
     resolveRequestRepoRoot(session, root, () =>
       sessionGitRoot(session, git).catch((err) => {

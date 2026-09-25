@@ -694,7 +694,7 @@ export function App() {
   const openReviewForCommit = useCallback(
     (sha: string, targetSessionId?: string, subject?: string, repoRoot?: string) => {
       const sessionId = targetSessionId ?? activeIdRef.current ?? '';
-      // Every commit source names its repo (docs/specs/2026-09-23-mf-review.md §2.1 S1) — but only
+      // Every commit source names its repo (docs/specs/archive/2026-09-23-mf-review.md §2.1 S1) — but only
       // a detected one: with none, the unstamped source already reads the session's git root.
       const owner = sessionsRef.current.find((s) => s.id === sessionId);
       const root = repoRoot ?? (owner?.repos?.length ? gitRootForSession(owner) : undefined);
@@ -735,7 +735,7 @@ export function App() {
   // git-history Slice A: open the commit-graph as a singleton center-pane doc for the
   // active session, mirroring openReviewTab. Re-opening just re-activates the one tab (and
   // transfers ownership to the now-active session). Without `repoRoot` it shows the active repo
-  // (docs/specs/2026-09-23-mf-changes.md §2.5).
+  // (docs/specs/archive/2026-09-23-mf-changes.md §2.5).
   const openGitHistoryTab = useCallback(
     (repoRoot?: string) => {
       const sessionId = activeIdRef.current ?? '';

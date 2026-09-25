@@ -49,7 +49,7 @@ export function requestGitRoot(
 }
 
 /** The terminal link rule: the live-cwd repo is accepted even when it is not a detected repo
- *  (docs/specs/2026-09-23-mf-review.md §2.1 D11). `liveRepo` runs git, so only on a miss. */
+ *  (docs/specs/archive/2026-09-23-mf-review.md §2.1 D11). `liveRepo` runs git, so only on a miss. */
 export async function resolveRequestRepoRoot(
   s: Pick<Session, 'repos' | 'activeRepoRoot' | 'cwd' | 'home'>,
   repoRoot: unknown,

@@ -12,7 +12,7 @@ export interface RepoInterrogation {
   headPath?: string;
 }
 
-/** A failed interrogation is kept as `{ kind: 'none' }`, see docs/specs/2026-09-23-mf-changes.md §2.3. */
+/** A failed interrogation is kept as `{ kind: 'none' }`, see docs/specs/archive/2026-09-23-mf-changes.md §2.3. */
 export function interrogateRepos(
   roots: readonly string[],
   interrogate: (root: string) => Promise<GitInterrogation>,

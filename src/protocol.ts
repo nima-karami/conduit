@@ -77,7 +77,7 @@ export interface ChangeDTO {
   origPath?: string;
 }
 
-/** One detected repo's changes, pinned for downstream readers: docs/specs/2026-09-23-mf-changes.md §3. */
+/** One detected repo's changes, pinned for downstream readers: docs/specs/archive/2026-09-23-mf-changes.md §3. */
 export interface RepoChanges {
   root: string;
   name: string;

@@ -140,7 +140,7 @@ export interface AppSettings {
   // and re-root the Files + Changes views to it. Default ON.
   trackCwd: boolean;
   // Behaviour: the Changes tab lists every repo of the session, or only the active one.
-  // See docs/specs/2026-09-23-mf-changes.md.
+  // See docs/specs/archive/2026-09-23-mf-changes.md.
   changesView: ChangesViewMode;
   // Behaviour: persist each terminal session's recent output (bounded ring) and replay
   // it into xterm on reopen/relaunch so prior history survives a restart. Default ON —

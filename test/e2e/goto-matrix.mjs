@@ -167,6 +167,9 @@ export async function openViaTree(page, rootPath, relParts) {
       );
       throw new Error(`openViaTree: no row for ${level}; visible rows: ${seen.join(', ')}`);
     }
+    // A reveal can leave a directory expanded with the leaf still unmounted below the window;
+    // clicking it then would collapse it.
+    if (level !== leaf && at.expanded) continue;
     await page.mouse.click(at.x, at.y);
     await page.waitForTimeout(300);
   }
@@ -193,7 +196,13 @@ async function findRow(page, wantPath, passes = 3) {
       if (!row) return null;
       row.scrollIntoView({ block: 'nearest' });
       const b = row.getBoundingClientRect();
-      return b.height > 0 ? { x: b.left + 24, y: b.top + b.height / 2 } : null;
+      return b.height > 0
+        ? {
+            x: b.left + 24,
+            y: b.top + b.height / 2,
+            expanded: row.getAttribute('aria-expanded') === 'true',
+          }
+        : null;
     }, wantPath);
 
   for (let pass = 0; pass < passes; pass++) {

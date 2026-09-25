@@ -1,6 +1,6 @@
 # mf-sidebar — implementation plan
 
-**Spec:** `docs/specs/2026-09-23-mf-sidebar.md`  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-09-23-mf-sidebar.md`  **Tier:** FULL
 
 Tier reason: four renderer modules plus two new components, a new pure module shared with the
 host tsconfig, a settings migration, two shared-primitive extensions (`ContextMenu`, `Popover`),

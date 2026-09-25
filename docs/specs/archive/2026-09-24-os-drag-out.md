@@ -1,5 +1,5 @@
 ---
-status: draft
+status: shipped
 date: 2026-09-24
 ---
 

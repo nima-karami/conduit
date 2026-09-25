@@ -1,6 +1,6 @@
 # os-drag-out — implementation plan
 
-**Spec:** `docs/specs/2026-09-24-os-drag-out.md`  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-09-24-os-drag-out.md`  **Tier:** FULL
 
 Tier reason: a new host IPC boundary (drag-out + OS clipboard) that is also a disclosure boundary
 (D9), a new host module, a renderer state machine shared by the tree and every drop surface, and a

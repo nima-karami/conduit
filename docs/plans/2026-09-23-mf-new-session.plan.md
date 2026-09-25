@@ -1,6 +1,6 @@
 # mf-new-session — implementation plan
 
-**Spec:** `docs/specs/2026-09-23-mf-new-session.md`  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-09-23-mf-new-session.md`  **Tier:** FULL
 
 Tier reason: new host subsystem (launcher detection, usage store, custom launchers, folder picker,
 probe, preview), six new protocol messages, a rewritten dialog made of five components, and a

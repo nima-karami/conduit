@@ -1,5 +1,5 @@
 ---
-status: draft
+status: shipped
 date: 2026-09-23
 ---
 
@@ -498,7 +498,7 @@ Touch is not applicable (desktop Electron). There is no drag.
 
 ## 12. Assumptions
 
-- mf-model (`docs/specs/2026-09-23-mf-model.md`) delivers:
+- mf-model (`docs/specs/archive/2026-09-23-mf-model.md`) delivers:
   - `session.repos[].tag`/`folder`, with missing folders excluded and the list capped at 200;
   - `requestProject.sessionId`;
   - validated `repoRoot` on history/refs/switch, with the echo on their results;

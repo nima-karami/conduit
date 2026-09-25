@@ -1,6 +1,6 @@
 # mf-changes — implementation plan
 
-**Spec:** `docs/specs/2026-09-23-mf-changes.md`  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-09-23-mf-changes.md`  **Tier:** FULL
 
 Tier reason: new host→renderer contract (`RepoChanges`, `Session.repoGit`) that mf-review and
 mf-files consume, host fan-out, settings migration, five renderer surfaces and ~35 e2e files.
@@ -134,7 +134,7 @@ If one is missing or differently named, the deviation rule applies — the task 
   registration (the runner globs `test/e2e/*.e2e.mjs`).
 - Every new export has a production importer by the end of its slice (fallow). Test-only helpers
   stay module-private and are tested through their public caller.
-- Comments: WHY only; point at the spec (`// see docs/specs/2026-09-23-mf-changes.md §2.3`), never
+- Comments: WHY only; point at the spec (`// see docs/specs/archive/2026-09-23-mf-changes.md §2.3`), never
   restate it.
 - All user copy in `STR` objects in the component that renders it. Plurals as §10.
 - Git only through `runGit`/`runGitBin`; this plan adds no spawn path (fan-out reuses

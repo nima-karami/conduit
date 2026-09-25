@@ -26,7 +26,7 @@ export type DocKind = 'file' | 'diff' | 'review' | 'web' | 'git-history' | 'comm
 export type { RefEndpoint } from '../src/git-range';
 export type ReviewSource =
   // `repoRoot` pins the review to a SPECIFIC repo; what its absence means per kind is
-  // docs/specs/2026-09-23-mf-review.md §2.1.
+  // docs/specs/archive/2026-09-23-mf-review.md §2.1.
   // `scope` narrows the working tree to the staged or unstaged side (spec
   // 2026-08-27-review-supercharge §2 Lane D). Absent ⇒ 'all' — a fresh Review always opens
   // on All, and it is never persisted.
@@ -59,7 +59,7 @@ export interface OpenDoc {
   // identity; see spec 2026-09-22-scoped-diff-tabs §3.
   diffScope?: DiffTabScope;
   // git-history: the repo the view shows; commit-diff: the repo its commit was read from.
-  // Never persisted — a restored doc falls back per docs/specs/2026-09-23-mf-changes.md §2.5.
+  // Never persisted — a restored doc falls back per docs/specs/archive/2026-09-23-mf-changes.md §2.5.
   repoRoot?: string;
 }
 

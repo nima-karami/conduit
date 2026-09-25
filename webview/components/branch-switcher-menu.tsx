@@ -1,6 +1,6 @@
 /**
  * The branch chip menu's "Switch branch" section: an inline list inside the chip's `Popover`,
- * which owns positioning and dismissal (docs/specs/2026-09-23-mf-changes.md §2.3). Fetches the
+ * which owns positioning and dismissal (docs/specs/archive/2026-09-23-mf-changes.md §2.3). Fetches the
  * repo's local branches via `git:refs`; the host enumerates and validates, the renderer never
  * spawns git. Rows are `role="menuitemradio"` with the current branch `aria-checked` and
  * pinned first.

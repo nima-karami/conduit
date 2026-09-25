@@ -1,6 +1,6 @@
 # mf-live-edits — implementation plan
 
-**Spec:** `docs/specs/2026-09-23-mf-live-edits.md`  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-09-23-mf-live-edits.md`  **Tier:** FULL
 
 Tier reason: a new host subsystem (scope tracking + typed delivery), a producer change in `PtyHost`
 exit bookkeeping (R1), three new protocol messages, a new session state consumed by four renderer
