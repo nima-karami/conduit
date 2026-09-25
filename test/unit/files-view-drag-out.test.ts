@@ -134,6 +134,40 @@ describe('FilesView OS clipboard copy', () => {
     expect(host.querySelector('[role="status"]')?.textContent).toBe('Copied 1 item');
   });
 
+  it('Ctrl+C under Caps Lock (key "C") still copies', async () => {
+    await render();
+    const a = `${HOME}/a.txt`;
+    await act(async () => {
+      row(a).click();
+    });
+    await act(async () => {
+      host.querySelector('[role="tree"]')?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'C', ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+    expect(posted.filter((m) => m.type === 'fs:copyToOsClipboard')).toHaveLength(1);
+    expect(host.querySelector('[role="status"]')?.textContent).toBe('Copied 1 item');
+  });
+
+  it('Ctrl+Shift+C is not Copy', async () => {
+    await render();
+    await act(async () => {
+      row(`${HOME}/a.txt`).click();
+    });
+    await act(async () => {
+      host.querySelector('[role="tree"]')?.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'C',
+          ctrlKey: true,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(posted.some((m) => m.type === 'fs:copyToOsClipboard')).toBe(false);
+  });
+
   it('Cut never writes the OS clipboard (D5)', async () => {
     await render();
     await act(async () => {
