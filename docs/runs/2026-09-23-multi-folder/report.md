@@ -27,6 +27,12 @@ test that assumed Windows path separators (fixed in 8115ea5) and was never publi
 
 ## Blocked / not built
 
+- **Resolved after v0.41.1 (fb2beac, unreleased):** the user did the S0 drags by hand. The results:
+  native `startDrag` blocks the main process for the whole drag, and the host gate for
+  `DownloadURL` drags works. The user chose VS Code parity (outcome B). One file per drag now goes
+  out from the Files tree, tabs, Changes rows and search results, through a host-gated
+  `DownloadURL`. Folders and multi-file selections still go out via Copy → paste. The original
+  note follows.
 - **Native drag-out of files and folders to the OS (os-drag-out slices A/A′/B).** The S0 spike needs a
   real-input (SendInput) driver to measure in-window drops, Ctrl and spring-open under
   `webContents.startDrag`; the session's permission classifier refused writing it twice. Copy → paste
