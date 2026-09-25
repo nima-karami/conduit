@@ -102,10 +102,10 @@ runScenario('explorer', async ({ page, log }) => {
     .catch(() => {});
 
   // Search for a token that lives ONLY in webview/components/right-pane.tsx (two levels
-  // deep; FilesView's own names moved to files-view.tsx with mf-files). Built by concatenation
-  // so this test file doesn't itself contain the contiguous string (which would make it a
-  // search hit that sorts ahead of the intended target).
-  const token = ['navRepo', 'Root'].join('');
+  // deep). If a refactor deletes it the wait below just times out, as if search hung — check
+  // `git grep -w` first. Built by concatenation so this test file doesn't itself contain the
+  // contiguous string (which would make it a search hit that sorts ahead of the intended target).
+  const token = ['nextStatus', 'Text'].join('');
   const input = page.locator('.search__inputbox textarea');
   await input.click();
   await input.fill(token);
