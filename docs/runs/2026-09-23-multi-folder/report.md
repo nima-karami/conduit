@@ -3,7 +3,8 @@
 Source: the 2026-09-23 design handoff "Multi-folder sessions and projects" (README, two prototypes,
 screens 9a–12j), plus one item the user added mid-run (os-drag-out). Built on `feat/multi-folder`,
 one worktree per item, each through spec → plan → design review → build → independent review →
-runtime QA → merge. Released as **v0.41.0**.
+runtime QA → merge. Released as **v0.41.1**: the v0.41.0 tag failed the Linux CI gate on a unit
+test that assumed Windows path separators (fixed in 8115ea5) and was never published.
 
 ## Shipped
 
