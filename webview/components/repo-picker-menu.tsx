@@ -10,7 +10,7 @@ import { createPortal } from 'react-dom';
 import { clampMenuPosition } from '../../src/menu-position';
 import type { RepoTag } from '../../src/repo-scan';
 import { IconCheck } from '../icons';
-import { useEscapeKey } from '../use-escape-key';
+import { useOverlayEntry } from '../use-overlay-entry';
 
 const TAG_LABEL: Record<RepoTag, string> = {
   home: 'Home',
@@ -71,7 +71,7 @@ export function RepoPickerMenu({
     return i >= 0 ? i : 0;
   });
 
-  useEscapeKey(onClose);
+  useOverlayEntry('popover', onClose);
 
   useEffect(() => {
     const t = triggerRef.current;
