@@ -158,7 +158,7 @@ describe('DragOutHost.copyToOsClipboard', () => {
     expect(setup({ e2e: false }).installProbes).not.toHaveBeenCalled();
     const t = setup({ e2e: true });
     expect(t.installProbes).toHaveBeenCalledTimes(1);
-    expect(t.probes()).toEqual({ dragOut: [], clipboard: [] });
+    expect(t.probes()).toEqual({ clipboard: [] });
   });
 
   it('a superseded write is logged at info, not warn', async () => {

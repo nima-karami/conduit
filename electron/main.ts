@@ -1160,7 +1160,6 @@ app.whenReady().then(() => {
       writeBuffer: (f, d) => clipboard.writeBuffer(f, d),
     }),
     installProbes: (p) => {
-      (global as Record<string, unknown>).__conduitDragOutLog = p.dragOut;
       (global as Record<string, unknown>).__conduitClipboardLog = p.clipboard;
     },
     log: (lvl, msg, d) => log[lvl]('fs', msg, d),

@@ -4,21 +4,15 @@ import {
   type OsClipboardPayload,
   osClipboardPayload,
 } from '../src/os-clipboard-payload';
-import type { DragOutRefusal, OutgoingFolders, OutgoingVerdict } from '../src/outgoing-paths';
+import type { OutgoingFolders, OutgoingVerdict } from '../src/outgoing-paths';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import type { OsFileClipboard } from './os-file-clipboard';
 
-export interface DragOutLogEntry {
-  paths: unknown;
-  accepted: boolean;
-  reason?: DragOutRefusal;
-}
 export interface ClipboardLogEntry {
   payload: OsClipboardPayload;
   stdinPaths?: string[];
 }
 export interface DragOutProbes {
-  dragOut: DragOutLogEntry[];
   clipboard: ClipboardLogEntry[];
 }
 export interface DragOutRequestCtx {
@@ -35,7 +29,7 @@ export interface DragOutHostDeps {
   sessionFolders(sessionId: string, windowId: number): OutgoingFolders | undefined;
   validate(paths: unknown, folders: OutgoingFolders): OutgoingVerdict;
   clipboard: OsFileClipboard;
-  /** e2e only: main.ts sets globalThis.__conduitDragOutLog / __conduitClipboardLog to these arrays. */
+  /** e2e only: main.ts sets globalThis.__conduitClipboardLog to this array. */
   installProbes(p: DragOutProbes): void;
   log(level: 'info' | 'warn' | 'error', msg: string, data?: Record<string, unknown>): void;
 }
@@ -48,7 +42,7 @@ export interface DragOutHost {
 
 /** The one host owner of drag-out and the OS file clipboard (os-drag-out plan, L12 S1). */
 export function createDragOutHost(deps: DragOutHostDeps): DragOutHost {
-  const probes: DragOutProbes = { dragOut: [], clipboard: [] };
+  const probes: DragOutProbes = { clipboard: [] };
   if (deps.e2e) deps.installProbes(probes);
 
   return {
