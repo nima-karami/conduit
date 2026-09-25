@@ -6,6 +6,15 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Drag a file out of Conduit into Explorer, Finder, a browser upload box or a chat.** Drag a
+  file from the Files tree, an editor tab, a Changes row or a search result, and drop it where
+  files go: you get a copy of the file, and the original stays where it is. One file goes out per
+  drag, as in VS Code. From a multi-selection that's the row you grabbed (or the first file in
+  it), and a folder can't be dragged out. To get folders or several files out, use **Copy** and
+  paste in Explorer or Finder. Changes rows and search results can now also be dropped on the
+  terminal to insert the file's path.
+
 ## [0.41.1] — 2026-09-25
 
 ### Fixed
