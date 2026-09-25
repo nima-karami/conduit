@@ -6,6 +6,13 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.42.1] — 2026-09-25
+
+### Fixed
+- **Peek References / Implementations is readable again.** In the file list, the expand chevron
+  sat on top of the file name and a long path ran into the match count. The chevron is spaced
+  now, and the path cuts off with "…" before the count.
+
 ## [0.42.0] — 2026-09-25
 
 ### Added
