@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.41.0] — 2026-09-25
+
 ### Added
 - **Review covers every repo in the session.** With two or more repos, Review opens on
   **All repos ▾**: each repo's changes sit under their own heading (name, Home/Nested/Attached,
