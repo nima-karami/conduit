@@ -33,7 +33,8 @@
     "release:major": "npm version major && git push --follow-tags",
     "version": "node tools/sync-readme-version.mjs && git add README.md",
     "prepare": "husky",
-    "shots": "node test/e2e/visual/shoot.mjs"
+    "shots": "node test/e2e/visual/shoot.mjs",
+    "text-fit": "node test/e2e/visual/text-fit-sweep.mjs"
   },
   "build": {
     "appId": "com.nimakarami.conduit",
