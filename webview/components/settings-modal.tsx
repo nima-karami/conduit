@@ -648,7 +648,7 @@ function SessionCardSection({
   );
 }
 
-function CustomShaderEditor({
+export function CustomShaderEditor({
   settings,
   update,
 }: {
@@ -668,6 +668,12 @@ function CustomShaderEditor({
     }, 350);
     return () => clearTimeout(t);
   }, [src, update]);
+
+  // The unclaimed-drop guard marks every Files drag 'none'; setting the effect is what claims it.
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -690,7 +696,7 @@ function CustomShaderEditor({
           spellCheck={false}
           value={src}
           onChange={(e) => setSrc(e.target.value)}
-          onDragOver={(e) => e.preventDefault()}
+          onDragOver={onDragOver}
           onDrop={onDrop}
         />
         <div className="shadered__foot">
