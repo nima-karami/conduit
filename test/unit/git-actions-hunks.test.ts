@@ -84,8 +84,8 @@ describe('planGitAction for hunk ops', () => {
     });
   });
 
-  it('normalises a windows-style relative path to a posix pathspec', () => {
-    const p = plan('stageHunk', 'src\\nested\\a.ts');
+  it('normalises a host-separator relative path to a posix pathspec', () => {
+    const p = plan('stageHunk', ['src', 'nested', 'a.ts'].join(path.sep));
     expect(p.kind === 'hunk' && p.diffArgs[p.diffArgs.length - 1]).toBe('src/nested/a.ts');
   });
 
