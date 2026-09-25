@@ -19,7 +19,7 @@ import { relativeTime } from '../relative-time';
 import { filterCommitsForPicker, isPastedSha } from '../review-commit';
 import { buildPinnedSources, isPinnedRowChecked } from '../review-picker-rows';
 import { workingSource } from '../review-scope';
-import { useEscapeKey } from '../use-escape-key';
+import { useOverlayEntry } from '../use-overlay-entry';
 
 const STR = {
   filterPlaceholder: 'Search commits…',
@@ -99,7 +99,7 @@ export function CommitPickerMenu({
   const latestReqId = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEscapeKey(onClose);
+  useOverlayEntry('popover', onClose);
 
   const requestHistory = useMemo(
     () => () => {

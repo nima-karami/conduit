@@ -321,10 +321,15 @@ try {
     !pickerText.includes('Since branch point'),
     'a repo that IS its default branch must not offer Since branch point',
   );
-  // Close by re-clicking the trigger: Escape here would also reach Review's own handler.
-  await page.click('.review__source');
+  // Escape closes the picker ONLY — Review itself stays (QA mf-review R2).
+  await page.keyboard.press('Escape');
   await page.waitForSelector('.commit-picker__row', { state: 'detached', timeout: 8000 });
-  log('picker shows Last commit only ✓');
+  await page.waitForTimeout(300);
+  assert(
+    await page.locator('.review .rcard').first().isVisible(),
+    'Escape in the source picker must not close Review',
+  );
+  log('picker shows Last commit only; Escape closed just the picker ✓');
 
   // (8) The marks file exists, and marking left the repo alone.
   const marksPath = join(userDataDir, 'review-marks.json');

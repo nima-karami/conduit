@@ -53,6 +53,8 @@ const ALL_FILES = [
   'folder-section',
   'review-repo-chip',
   'project-picker',
+  'commit-picker-menu',
+  'repo-picker-menu',
 ];
 
 /** Every dismiss-shaped prop/callback name used across the migrated dialogs. */

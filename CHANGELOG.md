@@ -108,6 +108,9 @@ All notable user-facing changes to Conduit. Format follows
   **+ Add folder…**.
 
 ### Fixed
+- **Escape in Review's source picker closes only the picker.** It used to close the whole Review
+  tab along with it; a second Escape now does that. Likewise, Escape in History's repo picker no
+  longer also closes the commit details.
 - Review's **Discard all changes** no longer deletes your review notes, and **Stage all** /
   **Unstage all** no longer stage or unstage them. They act on exactly the files Review lists,
   which never includes its own `.conduit/review-notes.json`, and the Discard confirm counts those
