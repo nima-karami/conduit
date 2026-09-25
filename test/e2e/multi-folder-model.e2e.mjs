@@ -869,10 +869,30 @@ const PHASES = [
             'the fake claude exited',
           );
           await removeDir(home);
+          // Once homeMissing is known, the relaunch gate (mf-live-edits) refuses before the cold
+          // path runs, so no line is written; the line is term:start's. Before it is known, a
+          // relaunch reaches term:start — which of the two a bare relaunch hit was a race.
+          await waitState(
+            page,
+            (id) => window.__mfmState.sessions.find((x) => x.id === id)?.homeMissing === true,
+            sid,
+            'the deleted home marked missing',
+          );
           await page.evaluate((id) => {
             window.__capBy[id] = '';
             window.agentDeck.post({ type: 'relaunch', id });
           }, sid);
+          await page.waitForTimeout(1500);
+          assert(
+            !(await output(page, sid)).includes('CLAUDE-ARGS') &&
+              sessionIn(await state(), sid)?.status !== 'running',
+            `launch: a relaunch against a missing home spawns nothing (got ${JSON.stringify(await output(page, sid))})`,
+          );
+          await page.evaluate(
+            (id) =>
+              window.agentDeck.post({ type: 'term:start', sessionId: id, cols: 80, rows: 24 }),
+            sid,
+          );
           const line = `— can't start: home folder ${s.home} is missing —`;
           assert(
             await until(async () => (await output(page, sid)).includes(line), 15000),
