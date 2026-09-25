@@ -1364,6 +1364,17 @@ export function ReviewView({
     [files, pathIndex, itemIndexOfKey, itemCount, estimateSlot, heightOf, indexOfKey],
   );
 
+  // onMeasure's shift assumes the offset still belongs to the layout before the card resized.
+  // A scrollIntoView lands against the live layout, so a card that grew in this commit (cap lifted,
+  // card expanded) is measured first; its ResizeObserver report then finds nothing new.
+  const syncCardHeight = useCallback(
+    (inside: HTMLElement, key: string) => {
+      const card = inside.closest<HTMLElement>('.rcard');
+      if (card) onMeasure(key, card.offsetHeight);
+    },
+    [onMeasure],
+  );
+
   // Request-once diff fetch: a card requests its diff when it mounts (enters the window) if
   // not already requested. Only windowed cards mount, so in-flight fetches are bounded by the
   // window size — no explicit concurrency cap needed (Decision D1).
@@ -1540,6 +1551,7 @@ export function ReviewView({
       : null;
     if (!row) return;
     rowRevealedRef.current = rowTarget.nonce;
+    syncCardHeight(row, rowTarget.path);
     row.scrollIntoView({ block: 'center' });
   }, [rowTarget, view.startIndex, view.endIndex, measureTick]);
 
@@ -1663,6 +1675,7 @@ export function ReviewView({
         : card.querySelector<HTMLElement>('.rcard__toggle');
     if (!target) return;
     revealedRef.current = cursor.reveal;
+    syncCardHeight(target, currentPath);
     target.scrollIntoView({ block: 'nearest' });
     target.focus({ preventScroll: true });
   }, [
