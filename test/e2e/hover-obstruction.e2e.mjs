@@ -153,6 +153,9 @@ runScenario('hover-obstruction', async ({ page, log }) => {
     );
     const btn = label?.querySelector('.proj__add');
     if (!btn) return null;
+    // The + fades in on a CSS transition, and in the hidden e2e window its timeline never ticks
+    // (measured: running, currentTime 0 after 400ms) — so read the transition's end state.
+    for (const a of btn.getAnimations()) a.finish();
     const cs = getComputedStyle(btn);
     const r = btn.getBoundingClientRect();
     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
