@@ -11,6 +11,7 @@ export type OsClipboardPayload =
   | { kind: 'powershell'; spawn: PowerShellSpawn }
   | { kind: 'plist'; format: 'NSFilenamesPboardType'; xml: string }
   | { kind: 'unsupported' }
+  /** No SystemRoot on win32, or a darwin name the plist can't carry. */
   | { kind: 'unavailable'; detail: string };
 
 // Paths arrive on stdin as base64 of UTF-8 JSON: PowerShell 5.1 decodes stdin in the OEM
@@ -51,6 +52,17 @@ const XML_ESCAPES: Record<string, string> = {
   "'": '&apos;',
 };
 
+// Outside the XML 1.0 Char production: C0 controls other than tab/LF/CR, and U+FFFE/U+FFFF.
+function xmlCanCarry(p: string): boolean {
+  for (const ch of p) {
+    const c = ch.codePointAt(0) ?? 0;
+    if ((c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) || c === 0xfffe || c === 0xffff) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function buildFilenamesPlist(paths: readonly string[]): string {
   const items = paths
     .map((p) => `<string>${p.replace(/[&<>"']/g, (c) => XML_ESCAPES[c])}</string>`)
@@ -69,6 +81,13 @@ export function osClipboardPayload(
 ): OsClipboardPayload {
   if (!osFileClipboardSupported(platform)) return { kind: 'unsupported' };
   if (platform === 'darwin') {
+    // Escaping can't represent these; stripping them would name a different file.
+    if (!paths.every(xmlCanCarry)) {
+      return {
+        kind: 'unavailable',
+        detail: 'a name contains characters the clipboard format cannot carry',
+      };
+    }
     return { kind: 'plist', format: 'NSFilenamesPboardType', xml: buildFilenamesPlist(paths) };
   }
   if (!systemRoot) return { kind: 'unavailable', detail: 'SystemRoot is not set' };

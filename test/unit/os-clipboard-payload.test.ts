@@ -87,6 +87,22 @@ describe('osClipboardPayload', () => {
     });
   });
 
+  it('darwin refuses a name XML cannot carry instead of writing a broken plist', () => {
+    expect(osClipboardPayload(['/ok', '/a\u0001b'], 'darwin', undefined)).toEqual({
+      kind: 'unavailable',
+      detail: 'a name contains characters the clipboard format cannot carry',
+    });
+    expect(osClipboardPayload(['/a￾b'], 'darwin', undefined)).toMatchObject({
+      kind: 'unavailable',
+    });
+  });
+
+  it('darwin keeps tab and newline, which XML allows', () => {
+    expect(osClipboardPayload(['/a\tb', '/c\nd'], 'darwin', undefined)).toMatchObject({
+      kind: 'plist',
+    });
+  });
+
   it.runIf(osFileClipboardSupported('win32'))('win32 → powershell', () => {
     expect(osClipboardPayload(['C:\\a'], 'win32', 'C:\\Windows')).toEqual({
       kind: 'powershell',
