@@ -1,6 +1,6 @@
 /**
  * Changes tab per repo (real-app smoke): a home repo plus an attached reference repo in one
- * session. docs/specs/2026-09-23-mf-changes.md §7.3 Gherkin step for step, then AC2, AC3 (incl.
+ * session. docs/specs/archive/2026-09-23-mf-changes.md §7.3 Gherkin step for step, then AC2, AC3 (incl.
  * a relaunch on the same userData), AC4, AC8, AC9 and locked L11. Repo detection, per-repo GitInfo
  * and the `repoChanges` fan-out are host-side, so only the real app can prove any of it.
  */

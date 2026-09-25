@@ -1,5 +1,5 @@
 /**
- * Board card ↔ sessions, end to end (spec docs/specs/2026-09-23-mf-board.md §9): the ticket
+ * Board card ↔ sessions, end to end (spec docs/specs/archive/2026-09-23-mf-board.md §9): the ticket
  * header, one row per linked session, + Start session into a prefilled New session dialog, a
  * keyboard and a mouse jump from a row, a closed session leaving the card without a board write,
  * a session on another home not listed, and a drag that starts on the pill still moving the card

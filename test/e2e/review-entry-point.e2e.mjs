@@ -1,6 +1,6 @@
 /**
  * Review-Changes entry point (real-app smoke). Review lives in the Changes tab header now
- * (docs/specs/2026-09-23-mf-changes.md §2.4, D18: the old "visible without opening Changes" rule
+ * (docs/specs/archive/2026-09-23-mf-changes.md §2.4, D18: the old "visible without opening Changes" rule
  * from spec 2026-06-27-review-changes-entry-point is superseded by L8; with the pane collapsed
  * the path is `Mod+Shift+R`). On a clean tree the header's Review button is visible and opens
  * Review's empty state; with the pane collapsed `Mod+Shift+R` opens it; the tab row holds no

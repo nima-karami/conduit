@@ -4,7 +4,7 @@
  * Drives the REAL hidden Electron app: seeds a throwaway git repo with two branches
  * (main + feature) as a session cwd, opens the repo head's branch chip menu, and asserts the
  * host's safe switch semantics across the IPC boundary (a mock wouldn't count). Every
- * git:refsResult / git:switchResult must echo the repo's root (docs/specs/2026-09-23-mf-changes.md
+ * git:refsResult / git:switchResult must echo the repo's root (docs/specs/archive/2026-09-23-mf-changes.md
  * §2.3, AC6):
  *   - git:refsResult lists both branches, current marked; the chip menu lists them too.
  *   - pick feature in the chip menu while idle+clean → ok=true; session.repoGit[root].branch

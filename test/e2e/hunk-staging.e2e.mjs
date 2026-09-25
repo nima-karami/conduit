@@ -11,7 +11,7 @@
  *
  * Flow: stage hunk 2 of two.txt under Unstaged scope → discard on the CRLF and no-EOF fixtures
  * → the blocked buttons under All → a conflict → the editor peek → a hunk staged in an ATTACHED
- * repo lands in that repo's index, not the home repo's (docs/specs/2026-09-23-mf-changes.md §7.4).
+ * repo lands in that repo's index, not the home repo's (docs/specs/archive/2026-09-23-mf-changes.md §7.4).
  */
 
 import { execFileSync } from 'node:child_process';

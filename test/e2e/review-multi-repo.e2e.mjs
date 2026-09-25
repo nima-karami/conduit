@@ -1,6 +1,6 @@
 /**
  * review-multi-repo — Review across every repo of a multi-folder session (spec
- * docs/specs/2026-09-23-mf-review.md §7: EARS 1–10 and 12–14, and the §7.2 Gherkin).
+ * docs/specs/archive/2026-09-23-mf-review.md §7: EARS 1–10 and 12–14, and the §7.2 Gherkin).
  *
  * Real-app only: the grouped list is fed by the host's per-repo `repoChanges`, marks and notes are
  * written by the host under each repo root, the fan-out stages through real git, a root leaving the

@@ -1,5 +1,5 @@
 /**
- * os-drag-out (docs/specs/2026-09-24-os-drag-out.md): Copy → OS clipboard request and the
+ * os-drag-out (docs/specs/archive/2026-09-24-os-drag-out.md): Copy → OS clipboard request and the
  * dead-space navigation guard. S0 chose outcome C (docs/runs/2026-09-24-os-drag-out/s0-spike.md),
  * so there are no native drag-out cases (plan Task 7.1, outcomes A / A′) yet.
  *

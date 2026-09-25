@@ -1,6 +1,6 @@
 /**
  * The git entry points survive opening a document. Git lives in the Changes tab now
- * (docs/specs/2026-09-23-mf-changes.md §2.1, §2.4, §7.4): whatever doc is active, the Changes
+ * (docs/specs/archive/2026-09-23-mf-changes.md §2.1, §2.4, §7.4): whatever doc is active, the Changes
  * header's Review button and the repo head's branch chip stay present and operable, and the tab
  * row holds no git chrome.
  *

@@ -456,7 +456,7 @@ const SCENES = {
 
   /**
    * The Changes tab's All repos view with two repos: the fixture repo as home plus an attached
-   * repo, each under its own head with its tag and branch chip (docs/specs/2026-09-23-mf-changes.md
+   * repo, each under its own head with its tag and branch chip (docs/specs/archive/2026-09-23-mf-changes.md
    * §2.2, §11 — the tag contrast is checked by eye on this frame). Opens its own session, so it
    * runs last.
    */

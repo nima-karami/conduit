@@ -9,7 +9,7 @@
  * Covered: shows branch "main"; detached HEAD renders a 7-char SHA; a non-git cwd shows
  * `No git repos` and no `.repo-head`; the tab row holds no git chrome in any case (AC1); a rebase
  * in progress in a linked worktree with a dirty tree renders in the chip and its accessible name
- * (AC11). See docs/specs/2026-09-23-mf-changes.md §7.1, §7.4.
+ * (AC11). See docs/specs/archive/2026-09-23-mf-changes.md §7.1, §7.4.
  *
  * Skips gracefully if git is unavailable or on non-win32 (the app/harness is Windows-only).
  */

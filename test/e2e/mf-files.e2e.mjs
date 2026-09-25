@@ -1,6 +1,6 @@
 /**
  * mf-files — the Files tab, search and quick open across a session's folders
- * (docs/specs/2026-09-23-mf-files.md §7.2/§7.3). One phase per plan slice, in order, on one
+ * (docs/specs/archive/2026-09-23-mf-files.md §7.2/§7.3). One phase per plan slice, in order, on one
  * session: home `rmb` (a git repo) + attached `ci-image`, later `api-contracts`.
  *
  * Every button is a real click; pickers answer through `__pickDirHook` (locked L11) and OS

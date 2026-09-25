@@ -5,7 +5,7 @@
  * containing two git repos:
  *  - the All view shows both repos at once, one head each;
  *  - under changesView 'active' the one repo head's picker lists both
- *    (docs/specs/2026-09-23-mf-changes.md §7.4);
+ *    (docs/specs/archive/2026-09-23-mf-changes.md §7.4);
  *  - picking a repo pins it and re-scopes the host's active repo (asserted via bridge state);
  *  - **Changes follow the active repo** — the renderer re-requests the project scoped to the
  *    pinned repo, so the change list shows that repo's dirty file and not the other's;
@@ -90,7 +90,7 @@ runScenario('multi-repo', async ({ page, log }) => {
   log('project.repoChanges lists repo-a (a.txt) then repo-b (b.txt) ✓');
 
   // The All view (the default): one head per repo in display order, each list holding only its
-  // own repo's file (docs/specs/2026-09-23-mf-changes.md §2.2).
+  // own repo's file (docs/specs/archive/2026-09-23-mf-changes.md §2.2).
   await openChangesTab(page);
   await page.waitForFunction(
     () =>
@@ -342,7 +342,7 @@ runScenario('multi-repo', async ({ page, log }) => {
   log('History opened on repo-b (its repo chip), picker still visible ✓');
 
   // History's own repo chip retargets the view: its menu lists both repos, each pick shows only
-  // that repo's commits, and the search text survives (docs/specs/2026-09-23-mf-changes.md §2.5).
+  // that repo's commits, and the search text survives (docs/specs/archive/2026-09-23-mf-changes.md §2.5).
   const subjects = () =>
     page.evaluate(() =>
       Array.from(document.querySelectorAll('.gh__row .gh__subject'), (n) => n.textContent),

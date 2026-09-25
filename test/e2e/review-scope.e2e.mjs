@@ -194,7 +194,7 @@ runScenario('review-scope', async ({ page, log }) => {
   log('arrow keys wrap All ⇄ Unstaged inside the radiogroup ✓');
 
   // ── (5) The Changes header's Review button + Review's own Scope control replace the old
-  //        per-section entry points (docs/specs/2026-09-23-mf-changes.md §2.2 item 3) ─────
+  //        per-section entry points (docs/specs/archive/2026-09-23-mf-changes.md §2.2 item 3) ─────
   await closeReviewTab(page);
   await openChangesTab(page);
   await page.waitForSelector('.changes__section', { state: 'visible', timeout: 15000 });
