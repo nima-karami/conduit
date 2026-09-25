@@ -66,3 +66,32 @@ matched). **F4 stays PASS.**
 **[high] for the user:** outcome C comes from the measurement being blocked, not failed. Re-running
 F1, F2, F3 and F5 with the real-input driver allowed (it takes the mouse and focus for about a
 minute) can move this to A, A′ or B, which builds Slices 3–6.
+
+## Re-measure 2026-09-25: user-driven drags (supersedes the UNMEASURED rows)
+
+The session still refused the SendInput driver. So the user did the drags by hand on the same spike
+app (`main.cjs` / `preload.cjs` / `index.html` per Task 0.1). The fixture `s0\src\` held
+`dir\inner.txt`, `one.txt`, `two.txt` and `ünï 日本.txt`. The conductor read `log.jsonl` and the
+destination folders.
+
+| Finding | Result | Evidence |
+|---|---|---|
+| F1 | **PASS** | `dst1` held `dir\inner.txt`, `one.txt`, `two.txt` and `ünï 日本.txt`. The SHA-256 of all three files matched `src`, and `src` still held 4 items. |
+| F2 | **FAIL** (criterion 3) | The drop arrived with the 4 original `getPathForFile` paths, and `started` came before it. No tick gap, and no pointerdown/up between `started` and the drop; a later pointerdown arrived. But **every `rt` sent during the drag completed only after `returned`**: 1109 ms for the in-window drop, 1708 ms for the Explorer drop, 2880 ms for the Ctrl drop. On Windows, `startDrag` blocks the main process for the whole drag. |
+| F3 | **PASS** | On the Ctrl drag, `drop` logged `ctrlKey: true`. |
+| F5 | **PASS** | With `S0_CANCEL` unset, `will-download` logged `file:///…/s0/src/one.txt` and `dst5` received `one.txt`. With `S0_CANCEL=1`, `will-download` logged the same URL and `dst5b` stayed empty. |
+| F6 | UNMEASURED | No macOS. |
+
+## Chosen outcome (2026-09-25)
+
+**B**: not A (F2 fails), and F5 passes. The user was shown the trade-off:
+- a native drag for every drag freezes output and spring-open for as long as the drag lasts;
+- a native drag on Alt only was offered as a middle option.
+
+They chose **VS Code parity**:
+- `DRAG_OUT_MODE = 'download'` on every platform;
+- `DOWNLOAD_URL_GATED = true`;
+- the Windows clipboard is unchanged (F4).
+
+Slices 5 and 6 are built on top of Slices 0, 1, 2 and 7. Only the first file of a drag goes out;
+folders go out through Copy → paste.
