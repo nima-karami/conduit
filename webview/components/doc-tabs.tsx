@@ -11,6 +11,7 @@ import type { ResolvedSessionIcon } from '../../src/session-icon';
 import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
 import type { OpenDoc } from '../docs';
 import { isPanelDragTarget } from '../drag-guard';
+import { stampFileDrag } from '../file-drag-data';
 import {
   IconBranch,
   IconCheck,
@@ -244,7 +245,13 @@ export function DocTabs({
             draggable={!!onReorder}
             onDragStart={(e) => {
               dragIdRef.current = d.id;
-              e.dataTransfer.effectAllowed = 'move';
+              if (d.kind === 'file') {
+                stampFileDrag(e.dataTransfer, d.path, { download: true, terminal: false });
+                // A drop target outside the app can only copy; 'move' alone would refuse it.
+                e.dataTransfer.effectAllowed = 'copyMove';
+              } else {
+                e.dataTransfer.effectAllowed = 'move';
+              }
             }}
             onDragOver={(e) => {
               const dr = dragIdRef.current;

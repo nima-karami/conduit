@@ -11,6 +11,8 @@ import type { ChangesViewMode } from '../../src/settings';
 import { type BulkScope, buildBulkMenuItems, rowActionsFor } from '../changes-actions';
 import { changeRowTooltip, diffScopeForChange } from '../diff-tab-scope';
 import type { OpenMode } from '../docs';
+import { stampFileDrag } from '../file-drag-data';
+import { joinPath } from '../file-tree';
 import type { GitActionIntent } from '../git-intent';
 import { IconCheck, IconMore, IconRefresh } from '../icons';
 import { middleClickProps } from '../middle-click';
@@ -88,6 +90,15 @@ function ChangeRow({
       {...middleClickProps(() => open('background'))}
       onContextMenu={(e) => onChangeContextMenu(e, change.path, repoRoot)}
       title={changeRowTooltip(change)}
+      // A deleted file has nothing on disk to hand out.
+      draggable={change.kind !== 'D'}
+      onDragStart={(e) => {
+        stampFileDrag(e.dataTransfer, joinPath(repoRoot, change.path), {
+          download: true,
+          terminal: true,
+        });
+        e.dataTransfer.effectAllowed = 'copy';
+      }}
     >
       <span className={`change__kind change__kind--${change.kind}`}>{change.kind}</span>
       <span className="change__path">
