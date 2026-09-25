@@ -167,6 +167,7 @@ import {
   computeWindow,
   estimateCardHeight,
   fileAtOrAfter,
+  measuredScrollShift,
   planRowCap,
   REVIEW_GROUP_HEAD_H,
   type ReviewListItem,
@@ -1327,22 +1328,20 @@ export function ReviewView({
       if (measuredRef.current.get(key) === slot) return;
       measuredRef.current.set(key, slot);
 
-      // Scroll anchoring: if a card ABOVE the top-most visible item changes height, shift the
-      // scroller by the delta so the content under the viewport stays put (no jump).
+      // Scroll anchoring: a card ABOVE the viewport that changes height shifts the scroller by
+      // the delta, so the content under the viewport stays put (no jump).
       const el = scrollerRef.current;
       const idx = itemIndexOfKey.get(key);
       if (el && idx !== undefined) {
-        let offset = 0;
-        let topVisible = itemCount;
-        for (let i = 0; i < itemCount; i++) {
-          const h = heightOf(i);
-          if (offset + h > el.scrollTop) {
-            topVisible = i;
-            break;
-          }
-          offset += h;
+        let itemTop = 0;
+        for (let i = 0; i < idx; i++) itemTop += heightOf(i);
+        const shift = measuredScrollShift(el.scrollTop, itemTop, prev, slot);
+        // State follows in the same batch: waiting for the scroll event renders the NEW heights
+        // against the OLD offset, and that frame's anchor names the card above as active.
+        if (shift !== 0) {
+          el.scrollTop += shift;
+          setScrollTop(el.scrollTop);
         }
-        if (idx < topVisible) el.scrollTop += slot - prev;
       }
 
       const keep = keepInViewRef.current;

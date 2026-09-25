@@ -151,6 +151,17 @@ export function resolveReviewAnchor(
   return top + Math.max(0, anchor.offset);
 }
 
+/** How far to move the scroller when the card at `itemTop` is measured `prevSlot` → `nextSlot`, so
+ *  the content under the viewport stays put: only a card that sat wholly above the viewport top. */
+export function measuredScrollShift(
+  scrollTop: number,
+  itemTop: number,
+  prevSlot: number,
+  nextSlot: number,
+): number {
+  return itemTop + prevSlot <= scrollTop ? nextSlot - prevSlot : 0;
+}
+
 export type ReviewListItem =
   | { kind: 'group'; groupIndex: number }
   | { kind: 'file'; fileIndex: number };
