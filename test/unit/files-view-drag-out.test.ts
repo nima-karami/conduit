@@ -142,7 +142,12 @@ describe('FilesView OS clipboard copy', () => {
     });
     await act(async () => {
       host.querySelector('[role="tree"]')?.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'C', ctrlKey: true, bubbles: true, cancelable: true }),
+        new KeyboardEvent('keydown', {
+          key: 'C',
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
       );
     });
     expect(posted.filter((m) => m.type === 'fs:copyToOsClipboard')).toHaveLength(1);
