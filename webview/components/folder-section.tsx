@@ -7,6 +7,7 @@ import {
   useState,
 } from 'react';
 import { type DeleteOutcome, deleteOutcomeAnnouncement } from '../../src/delete-confirm';
+import type { DragOutMode } from '../../src/drag-out-policy';
 import { dropIntent, topLevelPaths } from '../../src/drop-intent';
 import { folderKey } from '../../src/folder-key';
 import { countNoun } from '../../src/menu-selection';
@@ -16,6 +17,7 @@ import type { FolderSectionModel } from '../../src/session-sections';
 import { fsMutate, post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
 import { buildExplorerMenuItems, resolveExplorerTargets } from '../explorer-menu';
+import { stampFileDrag } from '../file-drag-data';
 import { FileTypeIcon } from '../file-icons';
 import {
   ancestorDirChain,
@@ -107,6 +109,7 @@ export interface FilesPaneApi {
   dropTargetPath: string | null;
   committing: boolean;
   hasClipboard: boolean;
+  dragOutMode: DragOutMode;
   setDropTarget(path: string | null): void;
   startDrag(paths: string[], e: React.DragEvent): void;
   endDrag(): void;
@@ -466,7 +469,17 @@ export function FolderSection({
     if (!multi) setSelection(selectOne(node.path));
     // A terminal accepts a single path reference, not the whole multi-selection.
     e.dataTransfer.setData(TERMINAL_PATH_MIME, node.path);
-    pane.startDrag(multi ? [...set] : [node.path], e);
+    const dragSet = multi ? [...set] : [node.path];
+    pane.startDrag(dragSet, e);
+    if (pane.dragOutMode === 'download') {
+      // Only one file can leave through DownloadURL (VS Code parity): the grabbed row when it is
+      // one, else the selection's first file; a folder-only drag carries none.
+      const out =
+        node.kind === 'file'
+          ? node.path
+          : dragSet.find((p) => findNode(rootsRef.current, p)?.kind === 'file');
+      if (out) stampFileDrag(e.dataTransfer, out, { download: true, terminal: false });
+    }
   };
 
   const onDragOver = (e: React.DragEvent, node: TreeNode) => {

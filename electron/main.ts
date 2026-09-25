@@ -1161,9 +1161,36 @@ app.whenReady().then(() => {
     }),
     installProbes: (p) => {
       (global as Record<string, unknown>).__conduitClipboardLog = p.clipboard;
+      (global as Record<string, unknown>).__conduitDownloadLog = p.download;
     },
     log: (lvl, msg, d) => log[lvl]('fs', msg, d),
+    windowFolders: (wid) => {
+      const each = sessionsOwnedBy(sessionOwner, wid, mgr.list()).map(outgoingFoldersFor);
+      return {
+        present: each.flatMap((f) => f.present),
+        missing: each.flatMap((f) => f.missing),
+      };
+    },
+    isDirectory: (p) => {
+      try {
+        return fs.statSync(p).isDirectory();
+      } catch {
+        return false;
+      }
+    },
+    realpath: realPathLeaf,
+    now: Date.now,
   });
+  // The app windows' session: web tabs and previews download through their own partitions.
+  session.defaultSession.on('will-download', (ev, item, wc) => {
+    if (!dragOutHost.allowDownload(item.getURL(), wc.id)) ev.preventDefault();
+  });
+  // Smoke-only: Playwright cannot perform the OS drop that makes Chromium ask for the bytes, so
+  // a scenario spends the grant through the same decision will-download uses.
+  if (process.env.CONDUIT_E2E === '1') {
+    (global as Record<string, unknown>).__conduitAllowDownload = (url: string, cid: number) =>
+      dragOutHost.allowDownload(url, cid);
+  }
 
   // Shells stay first in the registry so `registry.list()[0]` (OS-open, openRepo's fallback)
   // is still a shell, never an agent.
@@ -2707,6 +2734,9 @@ app.whenReady().then(() => {
             senderContentsId: e.sender.id,
             reply: replyHere,
           });
+          break;
+        case 'fs:armDragDownload':
+          dragOutHost.armDragDownload(m, e.sender.id);
           break;
         case 'launch:preview':
           if (typeof m.requestId !== 'number') {

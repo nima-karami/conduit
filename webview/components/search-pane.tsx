@@ -21,6 +21,7 @@ import {
 import type { FolderSectionModel } from '../../src/session-sections';
 import { post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
+import { stampFileDrag } from '../file-drag-data';
 import { IconChevronDown, IconSearch } from '../icons';
 import { middleClickProps } from '../middle-click';
 import { highlightSegments } from '../search-highlight';
@@ -115,6 +116,11 @@ function FileGroup({
         onClick={() => (nameOnly ? onOpenFile(result.abs) : setCollapsed((c) => !c))}
         {...middleClickProps(nameOnly ? () => onOpenFile(result.abs, 'background') : null)}
         title={result.rel}
+        draggable
+        onDragStart={(e) => {
+          stampFileDrag(e.dataTransfer, result.abs, { download: true, terminal: true });
+          e.dataTransfer.effectAllowed = 'copy';
+        }}
       >
         <IconChevronDown
           size={12}

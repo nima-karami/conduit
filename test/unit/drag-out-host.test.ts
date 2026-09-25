@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os';
+import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createDragOutHost,
@@ -5,6 +8,7 @@ import {
   type DragOutProbes,
 } from '../../electron/drag-out-host';
 import type { OsFileClipboard } from '../../electron/os-file-clipboard';
+import { DRAG_DOWNLOAD_TTL_MS } from '../../src/drag-download-gate';
 import { osFileClipboardSupported } from '../../src/drag-out-policy';
 import { decodeClipboardStdin } from '../../src/os-clipboard-payload';
 import type { OutgoingFolders, OutgoingVerdict } from '../../src/outgoing-paths';
@@ -13,10 +17,18 @@ import type { HostToWebview, WebviewToHost } from '../../src/protocol';
 const FOLDERS: OutgoingFolders = { present: ['/w/home'], missing: [] };
 const APP_CONTENTS = 7;
 const APP_WINDOW = 1;
+const OTHER_CONTENTS = 8;
+const OTHER_WINDOW = 2;
+// Host-native absolute paths, so fileURLToPath round-trips them on CI's Linux and on win32 alike.
+const HOME = path.join(tmpdir(), 'dl-home');
+const A = path.join(HOME, 'a.txt');
+const B = path.join(HOME, 'b.txt');
+const urlOf = (p: string) => pathToFileURL(p).href;
 
 function setup(over: Partial<DragOutHostDeps> = {}) {
   const execute = vi.fn<OsFileClipboard['execute']>(async () => ({ ok: true }));
   const log = vi.fn();
+  let clock = 1_000;
   let probes: DragOutProbes | undefined;
   const installProbes = vi.fn((p: DragOutProbes) => {
     probes = p;
@@ -25,12 +37,17 @@ function setup(over: Partial<DragOutHostDeps> = {}) {
     platform: 'darwin',
     e2e: false,
     systemRoot: 'C:\\Windows',
-    appWindowIdFor: (cid) => (cid === APP_CONTENTS ? APP_WINDOW : undefined),
+    appWindowIdFor: (cid) =>
+      cid === APP_CONTENTS ? APP_WINDOW : cid === OTHER_CONTENTS ? OTHER_WINDOW : undefined,
     sessionFolders: (sid, wid) => (sid === 's1' && wid === APP_WINDOW ? FOLDERS : undefined),
     validate: (paths): OutgoingVerdict => ({ ok: true, paths: paths as string[] }),
     clipboard: { execute },
     installProbes,
     log,
+    windowFolders: () => ({ present: [HOME], missing: [] }),
+    isDirectory: () => false,
+    realpath: (p) => p,
+    now: () => clock,
     ...over,
   };
   const host = createDragOutHost(deps);
@@ -39,7 +56,10 @@ function setup(over: Partial<DragOutHostDeps> = {}) {
     senderContentsId,
     reply: (m: HostToWebview) => replies.push(m),
   });
-  return { host, replies, ctx, execute, log, installProbes, probes: () => probes };
+  const advance = (ms: number) => {
+    clock += ms;
+  };
+  return { host, replies, ctx, execute, log, installProbes, probes: () => probes, advance };
 }
 
 const copyMsg = (
@@ -158,7 +178,7 @@ describe('DragOutHost.copyToOsClipboard', () => {
     expect(setup({ e2e: false }).installProbes).not.toHaveBeenCalled();
     const t = setup({ e2e: true });
     expect(t.installProbes).toHaveBeenCalledTimes(1);
-    expect(t.probes()).toEqual({ clipboard: [] });
+    expect(t.probes()).toEqual({ clipboard: [], download: [] });
   });
 
   it('a superseded write is logged at info, not warn', async () => {
@@ -191,6 +211,121 @@ describe('DragOutHost.copyToOsClipboard', () => {
     expect(t.execute).not.toHaveBeenCalled();
     expect(t.replies).toEqual([
       { type: 'fs:osClipboardResult', requestId: 3, ok: false, reason: 'unsupported' },
+    ]);
+  });
+});
+
+const arm = (p: unknown = A) =>
+  ({ type: 'fs:armDragDownload', path: p }) as Extract<
+    WebviewToHost,
+    { type: 'fs:armDragDownload' }
+  >;
+
+describe('DragOutHost drag-download gate', () => {
+  it('a non-file download is not ours to gate (the mermaid export is a blob: URL)', () => {
+    const t = setup();
+    expect(t.host.allowDownload('blob:file:///abc', APP_CONTENTS)).toBe(true);
+    expect(t.host.allowDownload('https://example.com/x.zip', APP_CONTENTS)).toBe(true);
+  });
+
+  it('an armed file downloads once, from the window that armed it', () => {
+    const t = setup();
+    t.host.armDragDownload(arm(A), APP_CONTENTS);
+    expect(t.host.allowDownload(urlOf(A), APP_CONTENTS)).toBe(true);
+    expect(t.host.allowDownload(urlOf(A), APP_CONTENTS)).toBe(false);
+  });
+
+  it('a page-initiated file download (nothing armed) is refused and logged', () => {
+    const t = setup();
+    expect(t.host.allowDownload(urlOf(A), APP_CONTENTS)).toBe(false);
+    expect(t.log).toHaveBeenCalledWith('warn', 'drag-download refused', { url: urlOf(A) });
+  });
+
+  it('another path than the armed one is refused', () => {
+    const t = setup();
+    t.host.armDragDownload(arm(A), APP_CONTENTS);
+    expect(t.host.allowDownload(urlOf(B), APP_CONTENTS)).toBe(false);
+  });
+
+  it('another window cannot spend the grant', () => {
+    const t = setup();
+    t.host.armDragDownload(arm(A), APP_CONTENTS);
+    expect(t.host.allowDownload(urlOf(A), OTHER_CONTENTS)).toBe(false);
+  });
+
+  it('a guest (or unknown contents) is refused, and cannot arm', () => {
+    const t = setup();
+    t.host.armDragDownload(arm(A), 99);
+    expect(t.host.allowDownload(urlOf(A), 99)).toBe(false);
+    expect(t.host.allowDownload(urlOf(A), APP_CONTENTS)).toBe(false);
+  });
+
+  it('a stale grant is refused', () => {
+    const t = setup();
+    t.host.armDragDownload(arm(A), APP_CONTENTS);
+    t.advance(DRAG_DOWNLOAD_TTL_MS + 1);
+    expect(t.host.allowDownload(urlOf(A), APP_CONTENTS)).toBe(false);
+  });
+
+  it('arming validates against the sender window folders; a refusal arms nothing', () => {
+    const validate = vi.fn(
+      (): OutgoingVerdict => ({ ok: false, reason: 'outside-folders', path: A }),
+    );
+    const windowFolders = vi.fn(() => ({ present: [HOME], missing: [] }));
+    const t = setup({ validate, windowFolders });
+    t.host.armDragDownload(arm(A), APP_CONTENTS);
+    expect(windowFolders).toHaveBeenCalledWith(APP_WINDOW);
+    expect(validate).toHaveBeenCalledWith([A], { present: [HOME], missing: [] });
+    expect(t.log).toHaveBeenCalledWith('warn', 'drag-download arm refused', {
+      reason: 'outside-folders',
+      path: A,
+    });
+    expect(t.host.allowDownload(urlOf(A), APP_CONTENTS)).toBe(false);
+  });
+
+  it('a directory is never armed', () => {
+    const t = setup({ isDirectory: () => true });
+    t.host.armDragDownload(arm(HOME), APP_CONTENTS);
+    expect(t.host.allowDownload(urlOf(HOME), APP_CONTENTS)).toBe(false);
+  });
+
+  it('a non-string path is dropped', () => {
+    const validate = vi.fn((): OutgoingVerdict => ({ ok: true, paths: [A] }));
+    const t = setup({ validate });
+    t.host.armDragDownload(arm(42), APP_CONTENTS);
+    expect(validate).not.toHaveBeenCalled();
+  });
+
+  it('compares realpaths: a link swapped in after arming is refused', () => {
+    let target = A;
+    const t = setup({ realpath: (p) => (p === A ? target : p) });
+    t.host.armDragDownload(arm(A), APP_CONTENTS);
+    target = path.join(tmpdir(), 'elsewhere', 'secret.txt');
+    expect(t.host.allowDownload(urlOf(A), APP_CONTENTS)).toBe(false);
+  });
+
+  it('arms the validated spelling, not the requested one', () => {
+    const t = setup({ validate: () => ({ ok: true, paths: [A] }) });
+    t.host.armDragDownload(arm(`${HOME}/./a.txt`), APP_CONTENTS);
+    expect(t.host.allowDownload(urlOf(A), APP_CONTENTS)).toBe(true);
+  });
+
+  it('a malformed file URL is refused', () => {
+    const t = setup();
+    t.host.armDragDownload(arm(A), APP_CONTENTS);
+    expect(t.host.allowDownload('file://', APP_CONTENTS)).toBe(false);
+    expect(t.host.allowDownload('not a url', APP_CONTENTS)).toBe(false);
+  });
+
+  it('e2e records every arm and download decision', () => {
+    const t = setup({ e2e: true });
+    t.host.armDragDownload(arm(A), APP_CONTENTS);
+    t.host.allowDownload(urlOf(B), APP_CONTENTS);
+    t.host.allowDownload(urlOf(A), APP_CONTENTS);
+    expect(t.probes()?.download).toEqual([
+      { kind: 'arm', path: A, accepted: true },
+      { kind: 'download', url: urlOf(B), allowed: false },
+      { kind: 'download', url: urlOf(A), allowed: true },
     ]);
   });
 });

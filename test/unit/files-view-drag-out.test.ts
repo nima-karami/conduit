@@ -81,6 +81,7 @@ async function render() {
     entries: [
       { name: 'a.txt', kind: 'file' },
       { name: 'b.txt', kind: 'file' },
+      { name: 'docs', kind: 'dir' },
     ],
   });
 }
@@ -190,5 +191,89 @@ describe('FilesView OS clipboard copy', () => {
     });
     expect(host.querySelector('[role="status"]')?.textContent).toBe('Cut 1 item');
     expect(posted.some((m) => m.type === 'fs:copyToOsClipboard')).toBe(false);
+  });
+});
+
+/** jsdom has no DataTransfer; React reads the native event's. */
+function dragStart(el: HTMLElement) {
+  const data = new Map<string, string>();
+  const dt = {
+    effectAllowed: 'uninitialized',
+    dropEffect: 'none',
+    setData: (t: string, v: string) => data.set(t, v),
+    getData: (t: string) => data.get(t) ?? '',
+    get types() {
+      return [...data.keys()];
+    },
+  };
+  const ev = new Event('dragstart', { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, 'dataTransfer', { value: dt });
+  el.dispatchEvent(ev);
+  return { ev, data };
+}
+
+const armed = () =>
+  posted.filter(
+    (m): m is Extract<WebviewToHost, { type: 'fs:armDragDownload' }> =>
+      m.type === 'fs:armDragDownload',
+  );
+
+describe('FilesView drag-out (S0 outcome B: DownloadURL)', () => {
+  it('a file row stamps DownloadURL, arms the host, and keeps the HTML5 drag', async () => {
+    await render();
+    const a = `${HOME}/a.txt`;
+    let r: ReturnType<typeof dragStart> | undefined;
+    await act(async () => {
+      r = dragStart(row(a));
+    });
+    expect(r?.data.get('DownloadURL')).toBe('application/octet-stream:a.txt:file:///w/home/a.txt');
+    expect(r?.ev.defaultPrevented).toBe(false);
+    expect(armed()).toEqual([{ type: 'fs:armDragDownload', path: a }]);
+    expect(r?.data.get('text/plain')).toBe(a);
+    expect(r?.data.get('application/x-conduit-path')).toBe(a);
+  });
+
+  it('a folder row carries no DownloadURL and arms nothing', async () => {
+    await render();
+    let r: ReturnType<typeof dragStart> | undefined;
+    await act(async () => {
+      r = dragStart(row(`${HOME}/docs`));
+    });
+    expect(r?.data.has('DownloadURL')).toBe(false);
+    expect(armed()).toEqual([]);
+    expect(r?.data.get('text/plain')).toBe(`${HOME}/docs`);
+  });
+
+  it('a multi-selection sends only one file: the grabbed row', async () => {
+    await render();
+    const a = `${HOME}/a.txt`;
+    const b = `${HOME}/b.txt`;
+    await act(async () => {
+      row(a).click();
+      row(b).dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    });
+    let r: ReturnType<typeof dragStart> | undefined;
+    await act(async () => {
+      r = dragStart(row(b));
+    });
+    expect(r?.data.get('DownloadURL')).toBe('application/octet-stream:b.txt:file:///w/home/b.txt');
+    expect(armed()).toEqual([{ type: 'fs:armDragDownload', path: b }]);
+    expect(r?.data.get('text/plain')?.split('\n').sort()).toEqual([a, b]);
+  });
+
+  it('grabbing a selected folder sends the selection’s first file', async () => {
+    await render();
+    const a = `${HOME}/a.txt`;
+    const docs = `${HOME}/docs`;
+    await act(async () => {
+      row(docs).click();
+      row(a).dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    });
+    let r: ReturnType<typeof dragStart> | undefined;
+    await act(async () => {
+      r = dragStart(row(docs));
+    });
+    expect(armed()).toEqual([{ type: 'fs:armDragDownload', path: a }]);
+    expect(r?.data.get('DownloadURL')).toBe('application/octet-stream:a.txt:file:///w/home/a.txt');
   });
 });

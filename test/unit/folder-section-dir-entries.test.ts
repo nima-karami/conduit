@@ -34,6 +34,7 @@ const pane = {
   dropTargetPath: null,
   committing: false,
   hasClipboard: false,
+  dragOutMode: 'download' as const,
   setDropTarget: noop,
   startDrag: noop,
   endDrag: noop,

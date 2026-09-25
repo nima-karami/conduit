@@ -1,10 +1,12 @@
+import { fileURLToPath } from 'node:url';
+import { createDragDownloadGate } from '../src/drag-download-gate';
 import type { HostPlatform } from '../src/lsp-binary';
 import {
   decodeClipboardStdin,
   type OsClipboardPayload,
   osClipboardPayload,
 } from '../src/os-clipboard-payload';
-import type { OutgoingFolders, OutgoingVerdict } from '../src/outgoing-paths';
+import type { DragOutRefusal, OutgoingFolders, OutgoingVerdict } from '../src/outgoing-paths';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import type { OsFileClipboard } from './os-file-clipboard';
 
@@ -12,8 +14,12 @@ export interface ClipboardLogEntry {
   payload: OsClipboardPayload;
   stdinPaths?: string[];
 }
+export type DownloadLogEntry =
+  | { kind: 'arm'; path: unknown; accepted: boolean; reason?: DragOutRefusal }
+  | { kind: 'download'; url: string; allowed: boolean };
 export interface DragOutProbes {
   clipboard: ClipboardLogEntry[];
+  download: DownloadLogEntry[];
 }
 export interface DragOutRequestCtx {
   senderContentsId: number;
@@ -29,21 +35,54 @@ export interface DragOutHostDeps {
   sessionFolders(sessionId: string, windowId: number): OutgoingFolders | undefined;
   validate(paths: unknown, folders: OutgoingFolders): OutgoingVerdict;
   clipboard: OsFileClipboard;
-  /** e2e only: main.ts sets globalThis.__conduitClipboardLog to this array. */
+  /** e2e only: main.ts sets globalThis.__conduitClipboardLog / __conduitDownloadLog to these. */
   installProbes(p: DragOutProbes): void;
   log(level: 'info' | 'warn' | 'error', msg: string, data?: Record<string, unknown>): void;
+  /** The folders of every session this window owns: a drag-download names no session. */
+  windowFolders(windowId: number): OutgoingFolders;
+  isDirectory(p: string): boolean;
+  /** realPathLeaf semantics. */
+  realpath(p: string): string;
+  now(): number;
 }
 export interface DragOutHost {
   copyToOsClipboard(
     m: Extract<WebviewToHost, { type: 'fs:copyToOsClipboard' }>,
     ctx: DragOutRequestCtx,
   ): Promise<void>;
+  /** Records the file a window's DownloadURL dragstart names, once it validates. */
+  armDragDownload(
+    m: Extract<WebviewToHost, { type: 'fs:armDragDownload' }>,
+    senderContentsId: number,
+  ): void;
+  /** For will-download: true for any non-file: URL; a file: URL must spend a fresh grant armed
+   *  by the same app window for the same real file. */
+  allowDownload(url: string, contentsId: number): boolean;
 }
 
 /** The one host owner of drag-out and the OS file clipboard (os-drag-out plan, L12 S1). */
 export function createDragOutHost(deps: DragOutHostDeps): DragOutHost {
-  const probes: DragOutProbes = { clipboard: [] };
+  const probes: DragOutProbes = { clipboard: [], download: [] };
   if (deps.e2e) deps.installProbes(probes);
+  const gate = createDragDownloadGate({ caseInsensitive: deps.platform === 'win32' });
+  const record = (entry: DownloadLogEntry) => {
+    if (deps.e2e) probes.download.push(entry);
+  };
+  const refuseArm = (path: unknown, reason: DragOutRefusal) => {
+    deps.log('warn', 'drag-download arm refused', { reason, path });
+    record({ kind: 'arm', path, accepted: false, reason });
+  };
+  const decideFileDownload = (url: string, contentsId: number): boolean => {
+    const windowId = deps.appWindowIdFor(contentsId);
+    if (windowId === undefined) return false;
+    let p: string;
+    try {
+      p = fileURLToPath(url);
+    } catch {
+      return false;
+    }
+    return gate.claim(windowId, deps.realpath(p), deps.now());
+  };
 
   return {
     async copyToOsClipboard(m, ctx) {
@@ -93,6 +132,38 @@ export function createDragOutHost(deps: DragOutHostDeps): DragOutHost {
       if (r.detail === 'superseded') deps.log('info', 'os clipboard write superseded');
       else deps.log('warn', 'os clipboard write failed', { detail: r.detail });
       fail('failed', { detail: r.detail });
+    },
+
+    armDragDownload(m, senderContentsId) {
+      const windowId = deps.appWindowIdFor(senderContentsId);
+      if (windowId === undefined) {
+        deps.log('warn', 'drag-download arm from non-app sender', { contentsId: senderContentsId });
+        return;
+      }
+      if (typeof m.path !== 'string') {
+        deps.log('warn', 'drag-download arm without a path');
+        return;
+      }
+      const verdict = deps.validate([m.path], deps.windowFolders(windowId));
+      if (!verdict.ok) return refuseArm(verdict.path ?? m.path, verdict.reason);
+      const [p] = verdict.paths;
+      if (deps.isDirectory(p)) return refuseArm(p, 'bad-request');
+      gate.arm(windowId, deps.realpath(p), deps.now());
+      record({ kind: 'arm', path: p, accepted: true });
+    },
+
+    allowDownload(url, contentsId) {
+      let protocol: string;
+      try {
+        protocol = new URL(url).protocol;
+      } catch {
+        protocol = '';
+      }
+      if (protocol && protocol !== 'file:') return true;
+      const allowed = protocol === 'file:' && decideFileDownload(url, contentsId);
+      if (!allowed) deps.log('warn', 'drag-download refused', { url });
+      record({ kind: 'download', url, allowed });
+      return allowed;
     },
   };
 }

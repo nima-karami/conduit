@@ -1203,6 +1203,16 @@ green.
 - [ ] Run it. It FAILs.
 - [ ] Implement.
 
+**As built (2026-09-25, deviation):** "a file: URL inside the window folders → true" was too wide
+a gate: any page-initiated `file:` download of a project file would pass. The gate is instead a
+**grant**. The renderer's DownloadURL `dragstart` posts `{ type: 'fs:armDragDownload'; path }`.
+`DragOutHost.armDragDownload(m, senderContentsId)` validates it against `windowFolders`, refuses a
+directory, and records the realpath in `src/drag-download-gate.ts`: one grant per window,
+single-use, `DRAG_DOWNLOAD_TTL_MS` = 60 s. `allowDownload` admits a `file:` URL only when
+`realpath(fileURLToPath(url))` spends that window's grant. Non-`file:` URLs still pass (the
+mermaid export downloads a `blob:`). The deps also gain `isDirectory`, `realpath` and `now`. Under
+e2e, decisions go to `__conduitDownloadLog` and `__conduitAllowDownload` exposes the decision.
+
 #### Task 5.3: explorer DownloadURL
 
 **Files:**
