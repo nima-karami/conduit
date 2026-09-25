@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { osFileClipboardSupported, platformFromNavigator } from '../../src/drag-out-policy';
+import {
+  DOWNLOAD_URL_GATED,
+  DRAG_OUT_MODE,
+  osFileClipboardSupported,
+  platformFromNavigator,
+} from '../../src/drag-out-policy';
+
+describe('DRAG_OUT_MODE (S0 outcome B)', () => {
+  it('every platform drags out through the gated DownloadURL', () => {
+    for (const p of ['win32', 'linux', 'darwin'] as const)
+      expect(DRAG_OUT_MODE[p]).toBe('download');
+    expect(DOWNLOAD_URL_GATED).toBe(true);
+  });
+});
 
 describe('platformFromNavigator', () => {
   it('maps navigator.platform to a host platform', () => {

@@ -8,7 +8,11 @@ import {
   useState,
 } from 'react';
 import type { DeleteOutcome } from '../../src/delete-confirm';
-import { osFileClipboardSupported, platformFromNavigator } from '../../src/drag-out-policy';
+import {
+  DRAG_OUT_MODE,
+  osFileClipboardSupported,
+  platformFromNavigator,
+} from '../../src/drag-out-policy';
 import { dropIntent, topLevelPaths } from '../../src/drop-intent';
 import { folderKey } from '../../src/folder-key';
 import type { ConflictPolicy } from '../../src/fs-dnd';
@@ -45,6 +49,7 @@ import { SearchPane, type SearchPaneHandle } from './search-pane';
 
 // Fallback row height (px) used before a real `.filerow` is measured; corrected on first mount.
 const DEFAULT_ROW_HEIGHT = 25;
+const DRAG_OUT = DRAG_OUT_MODE[platformFromNavigator(navigator.platform)];
 
 const STR = {
   addFolder: '+ Add folder…',
@@ -455,6 +460,7 @@ export function FilesView({
     dropTargetPath,
     committing,
     hasClipboard: clipboard !== null,
+    dragOutMode: DRAG_OUT,
     setDropTarget: setDropTargetPath,
     startDrag(paths, e) {
       const top = topLevelPaths(paths);

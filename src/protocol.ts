@@ -803,6 +803,8 @@ export type WebviewToHost =
   | { type: 'folder:pick'; requestId: number }
   | { type: 'folder:probe'; requestId: number; paths: string[] }
   | { type: 'fs:copyToOsClipboard'; requestId: number; sessionId: string; paths: string[] }
+  // Sent at a DownloadURL dragstart; the host's will-download admits only an armed file.
+  | { type: 'fs:armDragDownload'; path: string }
   | { type: 'launch:preview'; requestId: number; agentId: string; home: string; roots: string[] }
   // Ask host for git changes (scoped to `changesRoot`, the active repo) + file tree (from `path`).
   | {

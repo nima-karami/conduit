@@ -8,6 +8,19 @@ const OS_FILE_CLIPBOARD: Readonly<Record<HostPlatform, boolean>> = {
   linux: false,
 };
 
+/** S0 outcome B (docs/runs/2026-09-24-os-drag-out/s0-spike.md, 2026-09-25): a native startDrag
+ *  blocks the main process for the whole drag on Windows (F2), so every platform takes VS Code's
+ *  DownloadURL, first file only. */
+export type DragOutMode = 'download';
+export const DRAG_OUT_MODE: Readonly<Record<HostPlatform, DragOutMode>> = {
+  win32: 'download',
+  linux: 'download',
+  darwin: 'download',
+};
+/** S0 F5: will-download fires for a DownloadURL drop and preventDefault stops it, so the host can
+ *  gate it (electron/drag-out-host.ts allowDownload). */
+export const DOWNLOAD_URL_GATED = true;
+
 export const OS_CLIPBOARD_TIMEOUT_MS = 10_000;
 /** One write in flight plus the one pending behind it (electron/os-file-clipboard.ts), with margin. */
 export const OS_CLIPBOARD_REPLY_TIMEOUT_MS = 2 * OS_CLIPBOARD_TIMEOUT_MS + 5_000;
