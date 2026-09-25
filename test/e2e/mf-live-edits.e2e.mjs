@@ -125,8 +125,9 @@ const raw = (page, sid) => page.evaluate((id) => window.__capBy?.[id] ?? '', sid
 /** Records of `kind` in order, deduped by value — a ConPTY repaint re-prints the screen. */
 const records = (text, kind) => {
   const out = [];
-  for (const m of text.matchAll(new RegExp(`FAKE-CLAUDE ${kind} (.*?) <<END>>`, 'g'))) {
-    out.push(m[1]);
+  // The payload is optional: PASTE-IGNORED, IDLE and CLEARED print none.
+  for (const m of text.matchAll(new RegExp(`FAKE-CLAUDE ${kind}(?: (.*?))? <<END>>`, 'g'))) {
+    out.push(m[1] ?? '');
   }
   return out;
 };
@@ -658,11 +659,24 @@ async function phaseMissingHome({ app, page, sid, t0 }) {
   await page.waitForTimeout(3000);
   assert((await launches(page, sid)).length === launchesBefore, 'E5: no fake launch');
   assert((await sessionOf(page, sid))?.status !== 'running', 'E5: the session is not running');
-  const records0 = logRecordsSince(t0, sid);
-  const refused = records0.filter(
-    (r) => r.scope === 'pty' && r.msg === 'refused' && r.data?.reason === 'home-missing',
+  // The renderer's auto-relaunch skips a homeMissing session, so a startup term:start (and its
+  // refusal) only happens when it outraces the first health check — measured absent. Ask for the
+  // start the pane would: E5 says it must not spawn, and its refusal is the positive control.
+  const startMark = await mark(page, sid);
+  await page.evaluate(
+    (id) => window.agentDeck.post({ type: 'term:start', sessionId: id, cols: 80, rows: 24 }),
+    sid,
   );
-  assert(refused.length > 0, 'E5: the log window sees the startup refusal (positive control)');
+  const isRefusal = (r) =>
+    r.scope === 'pty' && r.msg === 'refused' && r.data?.reason === 'home-missing';
+  await until(async () => logRecordsSince(t0, sid).some(isRefusal), 5000);
+  // term:start replays the persisted scrollback before it refuses, and that history carries the
+  // previous app's LAUNCH lines: E6 counts launches from after the refusal line.
+  await until(async () => (await since(page, sid, startMark)).includes("can't start"), 5000);
+  const launchesAfterStart = (await launches(page, sid)).length;
+  const records0 = logRecordsSince(t0, sid);
+  const refused = records0.filter(isRefusal);
+  assert(refused.length > 0, 'E5: the log window sees the start refusal (positive control)');
   const spawned = records0.filter((r) => r.scope === 'pty' && r.msg === 'spawn');
   assert(spawned.length === 0, `E5: no pty spawn in the host log (got ${JSON.stringify(spawned)})`);
   log("E5: Can't start + 12d, no spawn (autoRelaunchStale on) ✓");
@@ -686,7 +700,7 @@ async function phaseMissingHome({ app, page, sid, t0 }) {
   );
   assert((await cardState.textContent()) === 'Stale', 'E6: the card says Stale');
   await page.waitForTimeout(1000);
-  assert((await launches(page, sid)).length === launchesBefore, 'E6: still no launch');
+  assert((await launches(page, sid)).length === launchesAfterStart, 'E6: still no launch');
   log('E6: home back → Session not running, no spawn ✓');
 }
 
