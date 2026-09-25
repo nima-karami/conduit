@@ -6,6 +6,12 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.41.1] — 2026-09-25
+
+### Fixed
+- Nothing user-facing: the v0.41.0 tag never built (a unit test assumed Windows paths and failed
+  the Linux gate), so 0.41.1 is the first published build of everything under 0.41.0 below.
+
 ## [0.41.0] — 2026-09-25
 
 ### Added
