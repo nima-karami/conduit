@@ -65,7 +65,7 @@ describe('createOsClipboardCopier', () => {
     });
     await done;
     expect(report).toHaveBeenCalledWith(
-      "Couldn't put 2 items on the system clipboard. Can't drag b.txt: it no longer exists.",
+      "Couldn't put 2 items on the system clipboard. b.txt no longer exists.",
     );
   });
 
@@ -77,7 +77,7 @@ describe('createOsClipboardCopier', () => {
     f.pending[0](null);
     await done;
     expect(report).toHaveBeenCalledWith(
-      "Couldn't put 1 item on the system clipboard. PowerShell didn't respond.",
+      "Couldn't put 1 item on the system clipboard. The system clipboard didn't accept them.",
     );
   });
 
