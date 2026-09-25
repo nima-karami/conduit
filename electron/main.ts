@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   type IpcMainEvent,
   ipcMain,
@@ -107,6 +108,11 @@ import {
 import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
+import {
+  nodeOutgoingPathDeps,
+  outgoingFoldersFor,
+  validateOutgoingPaths,
+} from '../src/outgoing-paths';
 import { resolveOwningSession } from '../src/owning-session';
 import { isInsideAnyRoot, isInsideRoot, realPathLeaf } from '../src/path-guard';
 import { type IndexedFile, resolveToken, type TokenResolution } from '../src/path-resolve';
@@ -251,6 +257,7 @@ import {
   writeReviewNotesArtifactFile,
   writeSpec,
 } from './conduit-fs';
+import { createDragOutHost } from './drag-out-host';
 import { createFolderPicker } from './folder-picker';
 import { LauncherHost } from './launcher-host';
 import { Logger } from './logger';
@@ -259,6 +266,7 @@ import { startLanguageServer } from './lsp-server';
 import { watchServerRoot } from './lsp-watcher';
 import { NotesWatcher } from './notes-watcher';
 import { OpenFileWatcher } from './open-file-watcher';
+import { createOsFileClipboard, spawnPowerShell } from './os-file-clipboard';
 import { PlanWatcher } from './plan-watcher';
 import {
   PREVIEW_PARTITION,
@@ -1135,6 +1143,28 @@ app.whenReady().then(() => {
 
   const hostPlatform: HostPlatform =
     process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
+
+  const outgoingPathDeps = nodeOutgoingPathDeps(process.platform);
+  const dragOutHost = createDragOutHost({
+    platform: hostPlatform,
+    e2e: process.env.CONDUIT_E2E === '1',
+    systemRoot: process.env.SystemRoot,
+    appWindowIdFor: (cid) => [...windows.values()].find((w) => w.webContents.id === cid)?.id,
+    sessionFolders: (sid, wid) => {
+      const s = mgr.get(sid);
+      return s && sessionOwner.get(sid) === wid ? outgoingFoldersFor(s) : undefined;
+    },
+    validate: (p, f) => validateOutgoingPaths(p, f, outgoingPathDeps),
+    clipboard: createOsFileClipboard({
+      runPowerShell: spawnPowerShell,
+      writeBuffer: (f, d) => clipboard.writeBuffer(f, d),
+    }),
+    installProbes: (p) => {
+      (global as Record<string, unknown>).__conduitDragOutLog = p.dragOut;
+      (global as Record<string, unknown>).__conduitClipboardLog = p.clipboard;
+    },
+    log: (lvl, msg, d) => log[lvl]('fs', msg, d),
+  });
 
   // Shells stay first in the registry so `registry.list()[0]` (OS-open, openRepo's fallback)
   // is still a shell, never an agent.
@@ -2671,6 +2701,12 @@ app.whenReady().then(() => {
               probe: (raw) => probeFolder(raw, probeDeps),
               gitInfo: (d) => getGitInfo(d, { timeoutMs: GIT_TIMEOUT.metadata }),
             }),
+          });
+          break;
+        case 'fs:copyToOsClipboard':
+          await dragOutHost.copyToOsClipboard(m, {
+            senderContentsId: e.sender.id,
+            reply: replyHere,
           });
           break;
         case 'launch:preview':

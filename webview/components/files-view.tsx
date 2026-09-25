@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import type { DeleteOutcome } from '../../src/delete-confirm';
+import { osFileClipboardSupported, platformFromNavigator } from '../../src/drag-out-policy';
 import { dropIntent, topLevelPaths } from '../../src/drop-intent';
 import { folderKey } from '../../src/folder-key';
 import type { ConflictPolicy } from '../../src/fs-dnd';
@@ -20,7 +21,7 @@ import {
   folderForPath,
   missingTransitions,
 } from '../../src/session-sections';
-import { fsDndCopy, fsDndImport, fsDndMove, pathForDroppedFile, post } from '../bridge';
+import { fsDndCopy, fsDndImport, fsDndMove, isHosted, pathForDroppedFile, post } from '../bridge';
 import { getDirtySnapshot } from '../dirty-store';
 import type { OpenMode } from '../docs';
 import { isSearchActive, joinPath, nameOf, parentDir, type TreeNode } from '../file-tree';
@@ -28,6 +29,7 @@ import { createFolderActions, type FolderActionOutcome } from '../folder-actions
 import { buildFolderMenuItems } from '../folder-menu';
 import type { FsOp } from '../fs-undo';
 import { requestHost } from '../host-request';
+import { createOsClipboardCopier } from '../os-clipboard-copy';
 import { installOsDropSeam } from '../os-drop-seam';
 import { pushToast } from '../toast-store';
 import { ConflictDialog, type ConflictPrompt, type ConflictResolution } from './conflict-dialog';
@@ -282,6 +284,19 @@ export function FilesView({
     if (liveRef.current) liveRef.current.textContent = msg;
   }, []);
 
+  const osCopier = useMemo(
+    () =>
+      createOsClipboardCopier({
+        enabled: isHosted && osFileClipboardSupported(platformFromNavigator(navigator.platform)),
+        request: requestHost,
+        report: (message) => {
+          pushToast({ message, variant: 'error' });
+          announce(message);
+        },
+      }),
+    [announce],
+  );
+
   /** Prompt for a name collision; resolves the batch loop's awaited choice. */
   const promptConflict = (destPath: string, remaining: number) =>
     new Promise<ConflictResolution>((resolve) => {
@@ -482,6 +497,7 @@ export function FilesView({
       if (eff.length === 0) return;
       setClipboard({ op: 'copy', paths: eff });
       announce(`Copied ${eff.length} item${eff.length === 1 ? '' : 's'}`);
+      void osCopier(sessionId, eff);
     },
     paste(targetDir) {
       if (!clipboard) return;
