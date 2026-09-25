@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.42.0] — 2026-09-25
+
 ### Added
 - **Drag a file out of Conduit into Explorer, Finder, a browser upload box or a chat.** Drag a
   file from the Files tree, an editor tab, a Changes row or a search result, and drop it where
