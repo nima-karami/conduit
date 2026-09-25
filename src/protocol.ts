@@ -7,6 +7,7 @@ import type { RefEndpoint } from './git-range';
 import type { LauncherDTO } from './launchers';
 import type { LogLevel } from './logging';
 import type { LspServerStatus, LspTrustState } from './lsp-protocol';
+import type { DragOutRefusal } from './outgoing-paths';
 import type { TokenResolution } from './path-resolve';
 import type { PipelineConfig } from './pipeline';
 import type { PlanCommentPatch, PlanCommentsData } from './plan-comments';
@@ -21,7 +22,10 @@ import type { FireFailure, TimedMessage, TimedMessageInput } from './timed-messa
 import type { TsconfigDTO } from './tsconfig-map';
 import type { AgentDefinition, Project, Session } from './types';
 
+export type { DragOutRefusal } from './outgoing-paths';
 export type { RepoInfo } from './repo-scan';
+
+export type OsClipboardFailure = DragOutRefusal | 'unsupported' | 'failed';
 
 /**
  * A persisted editor tab, round-tripped renderer → host → docs.json → renderer to restore the
@@ -645,6 +649,15 @@ export type HostToWebview =
   | { type: 'launcher:added'; requestId: number; id?: string; error?: string }
   | { type: 'folder:picked'; requestId: number; path: string | null }
   | { type: 'folder:probeResult'; requestId: number; results: FolderProbeResult[] }
+  | { type: 'fs:osClipboardResult'; requestId: number; ok: true }
+  | {
+      type: 'fs:osClipboardResult';
+      requestId: number;
+      ok: false;
+      reason: OsClipboardFailure;
+      path?: string;
+      detail?: string;
+    }
   | ({ type: 'launch:previewResult'; requestId: number } & LaunchPreviewResult)
   | {
       type: 'project:opResult';
@@ -789,6 +802,7 @@ export type WebviewToHost =
   // The one folder-pick seam (locked L11); e2e answers it through `__pickDirHook`.
   | { type: 'folder:pick'; requestId: number }
   | { type: 'folder:probe'; requestId: number; paths: string[] }
+  | { type: 'fs:copyToOsClipboard'; requestId: number; sessionId: string; paths: string[] }
   | { type: 'launch:preview'; requestId: number; agentId: string; home: string; roots: string[] }
   // Ask host for git changes (scoped to `changesRoot`, the active repo) + file tree (from `path`).
   | {

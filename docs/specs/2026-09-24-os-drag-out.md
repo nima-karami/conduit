@@ -138,8 +138,8 @@ and a real OS file clipboard for explorer Copy on Windows and macOS.
 3. **Result:**
    - the existing `Copied N items` announce stays **immediate** (the in-app copy happened) and does not
      wait on the host;
-   - host failure or refusal: an error toast `Couldn't put <n> on the system clipboard: <reason>`. The
-     in-app copy still happened.
+   - host failure or refusal: an error toast `Couldn't put <n> on the system clipboard. <reason>`
+     (sentences in §10). The in-app copy still happened.
 4. **Cut** does not touch the OS clipboard (D5). A later in-app Copy/Cut replaces the in-app clipboard
    as it does today. The OS clipboard keeps whatever was written last by anything.
 
@@ -439,8 +439,17 @@ completes in the background.
   - `symlink-escape`: `Can't drag {name}: it links outside this session's folders.`
   - `too-many`: `Too many items to drag (max 500).`
   - `bad-request` / `unknown-session`: `Couldn't start the drag.`
-  - clipboard: `Couldn't put {count} on the system clipboard.` followed by the same reason sentence,
-    or `PowerShell didn't respond.` for `failed`.
+  - clipboard: `Couldn't put {count} on the system clipboard.` followed by a Copy-specific reason
+    sentence. It never says "drag", and it never names PowerShell, because `failed` also covers a
+    macOS write and a Windows host with no `SystemRoot` (amended 2026-09-24, code review S2):
+    - `outside-folders`: `{name} is outside this session's folders.`
+    - `folder-missing`: `The folder holding {name} can't be found.`
+    - `missing`: `{name} no longer exists.`
+    - `symlink-escape`: `{name} links outside this session's folders.`
+    - `too-many`: `That's more than 500 items.`
+    - `bad-request` / `unknown-session`: `Conduit couldn't send the request.`
+    - `failed`: `The system clipboard didn't accept them.`
+    - `unsupported`: no toast (AC9).
 
   `{count}` is `1 item` / `N items`, pluralised the same inline way as the existing `Copied N items`
   announce at `files-view.tsx:484`. Names render as text (`dir="auto"` where shown).

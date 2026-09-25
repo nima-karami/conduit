@@ -28,7 +28,7 @@ const EXTS = new Set([
 
 const FORBIDDEN =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
-  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFFFE\uFFFF]/g;
 
 // Tracked files only, so a stray local file never fails it; one missing from the working tree
 // is a pending deletion.
@@ -51,7 +51,16 @@ function forbiddenChars(text: string): { line: number; col: number; code: string
 
 describe('source files carry no invisible or control characters', () => {
   it('detects each forbidden class', () => {
-    for (const ch of ['\u0000', '\u001b', '\u007f', '\uFEFF', '\u200B', '\u202E', '\u2066']) {
+    for (const ch of [
+      '\u0000',
+      '\u001b',
+      '\u007f',
+      '\uFEFF',
+      '\u200B',
+      '\u202E',
+      '\u2066',
+      '\uFFFE',
+    ]) {
       expect(forbiddenChars(`a${ch}b`)).toHaveLength(1);
     }
     expect(forbiddenChars('tab\there\r\nnext')).toEqual([]);

@@ -71,6 +71,10 @@ All notable user-facing changes to Conduit. Format follows
   has stopped; **+ Start session** opens New session already set to the card's last session's
   project and folders, linked to the card. This replaces the single Running/Exited badge. Cards
   also show a tracker ticket (key, source, status) when one is written to the board file.
+- **Copy in the Files tree now reaches Windows Explorer.** Copy (menu or Ctrl+C) still copies
+  inside Conduit as before, and also puts the files on the Windows clipboard, so Paste in Explorer
+  creates real copies, non-ASCII names included. If they can't be put there (a file was moved away,
+  or sits outside the session's folders) a toast says which one and why. Cut is unchanged.
 
 ### Changed
 - **A simpler session card.** Each card is its own bordered tile: the icon, the name with the
@@ -111,6 +115,8 @@ All notable user-facing changes to Conduit. Format follows
 - **Escape in Review's source picker closes only the picker.** It used to close the whole Review
   tab along with it; a second Escape now does that. Likewise, Escape in History's repo picker no
   longer also closes the commit details.
+- Dropping a file on an empty part of the window no longer replaces Conduit with that file.
+  The drop is refused (no-drop cursor), and the app window only ever loads its own page.
 - Review's **Discard all changes** no longer deletes your review notes, and **Stage all** /
   **Unstage all** no longer stage or unstage them. They act on exactly the files Review lists,
   which never includes its own `.conduit/review-notes.json`, and the Discard confirm counts those

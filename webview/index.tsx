@@ -4,9 +4,11 @@ import { App } from './app';
 import './styles.css';
 import { installPerfProbe } from './perf-probe';
 import { SettingsProvider } from './settings';
+import { installUnclaimedDropGuard } from './unclaimed-drop-guard';
 
 // window.__conduitPerf — responsiveness probe for the stress lane (idle until started).
 installPerfProbe();
+installUnclaimedDropGuard(window);
 
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('Root element #root not found');
