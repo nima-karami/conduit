@@ -9,10 +9,9 @@ import { SettingsProvider } from '../../webview/settings';
 
 const listeners = vi.hoisted(() => new Set<(m: HostToWebview) => void>());
 const posted = vi.hoisted((): WebviewToHost[] => []);
-// darwin: the one platform whose OS file clipboard is on before S0 F4 records a win32 verdict.
 vi.hoisted(() => {
   Object.defineProperty(globalThis.navigator, 'platform', {
-    value: 'MacIntel',
+    value: 'Win32',
     configurable: true,
   });
 });

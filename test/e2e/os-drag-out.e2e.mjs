@@ -1,7 +1,7 @@
 /**
- * os-drag-out (docs/specs/2026-09-24-os-drag-out.md): the outcome-independent half — Copy →
- * OS clipboard request and the dead-space navigation guard. The native drag-out cases (plan
- * Task 7.1, outcomes A / A′) join this file once the S0 spike picks a branch.
+ * os-drag-out (docs/specs/2026-09-24-os-drag-out.md): Copy → OS clipboard request and the
+ * dead-space navigation guard. S0 chose outcome C (docs/runs/2026-09-24-os-drag-out/s0-spike.md),
+ * so there are no native drag-out cases (plan Task 7.1, outcomes A / A′) yet.
  *
  * Under CONDUIT_E2E the host never writes the real clipboard: it records the payload in
  * globalThis.__conduitClipboardLog instead (electron/drag-out-host.ts).
@@ -12,8 +12,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, closeApp, openSession, runScenario, tapBridge } from './harness.mjs';
 
-// Mirrors OS_FILE_CLIPBOARD.win32 in src/drag-out-policy.ts (S0 F4's verdict); flip both together.
-const WIN32_OS_CLIPBOARD = false;
+// Mirrors OS_FILE_CLIPBOARD.win32 in src/drag-out-policy.ts (S0 F4: PASS); flip both together.
+const WIN32_OS_CLIPBOARD = true;
 
 const project = mkdtempSync(join(tmpdir(), 'conduit-dragout-'));
 const NAME = 'ünï 日本.txt';

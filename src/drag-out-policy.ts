@@ -1,9 +1,9 @@
 import type { HostPlatform } from './lsp-binary';
 
-// win32 is S0 F4's verdict (os-drag-out plan, branch table). F4 is unmeasured, and unmeasured
-// counts as FAIL, so it stays false until the spike records a PASS.
+// win32 is S0 F4's verdict: PASS (docs/runs/2026-09-24-os-drag-out/s0-spike.md). The e2e's
+// WIN32_OS_CLIPBOARD mirrors it; flip both together.
 const OS_FILE_CLIPBOARD: Readonly<Record<HostPlatform, boolean>> = {
-  win32: false,
+  win32: true,
   darwin: true,
   linux: false,
 };

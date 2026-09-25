@@ -15,6 +15,10 @@ describe('osFileClipboardSupported', () => {
     expect(osFileClipboardSupported('linux')).toBe(false);
   });
 
+  it('win32 is on: S0 F4 passed (docs/runs/2026-09-24-os-drag-out/s0-spike.md)', () => {
+    expect(osFileClipboardSupported('win32')).toBe(true);
+  });
+
   it('darwin writes NSFilenamesPboardType', () => {
     expect(osFileClipboardSupported('darwin')).toBe(true);
   });
