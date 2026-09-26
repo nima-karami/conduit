@@ -231,7 +231,7 @@ try {
 
   // The Changes tab is still selected from scenario 2; with no repos it has no header to wait on.
   await page
-    .locator('.right')
+    .locator('.rightpane')
     .getByText('No git repos', { exact: true })
     .waitFor({ state: 'visible', timeout: 6000 });
   const plainDom = await page.evaluate(() => ({

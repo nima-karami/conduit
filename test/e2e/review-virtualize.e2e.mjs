@@ -61,14 +61,14 @@ const waitForTotal = (page, min) =>
  */
 async function navBoundary(page, rootA, rootB) {
   await page.evaluate(() => {
-    const nav = document.querySelector('.right .review__nav');
+    const nav = document.querySelector('.rightpane .review__nav');
     if (nav) nav.scrollTop = nav.scrollHeight / 2 - nav.clientHeight / 2;
   });
   for (let i = 0; i < 40; i++) {
     await page.waitForTimeout(300);
     const r = await page.evaluate(
       ([a, b]) => {
-        const rows = [...document.querySelectorAll('.right .review__navrow')];
+        const rows = [...document.querySelectorAll('.rightpane .review__navrow')];
         const iB = rows.findIndex((row) => row.dataset.root === b);
         if (iB < 0) return { state: 'down' };
         if (iB === 0) return { state: 'up' };
@@ -81,7 +81,7 @@ async function navBoundary(page, rootA, rootB) {
     if (r.state === 'odd') throw new Error('the navigator rows are not grouped by repo');
     await page.evaluate(
       (dir) => {
-        const nav = document.querySelector('.right .review__nav');
+        const nav = document.querySelector('.rightpane .review__nav');
         if (nav) nav.scrollTop += (dir * nav.clientHeight) / 2;
       },
       r.state === 'down' ? 1 : -1,
@@ -170,12 +170,16 @@ runScenario('review-virtualize', async ({ page, log }) => {
   // window is sized by a ResizeObserver, which a hidden window runs on its throttled (~1 s)
   // frames — under load the first read came back 0 before it had measured.
   await page
-    .waitForFunction(() => document.querySelectorAll('.right .review__navrow').length > 0, null, {
-      timeout: 10000,
-    })
+    .waitForFunction(
+      () => document.querySelectorAll('.rightpane .review__navrow').length > 0,
+      null,
+      {
+        timeout: 10000,
+      },
+    )
     .catch(() => {});
   const navRows = await page.evaluate(
-    () => document.querySelectorAll('.right .review__navrow').length,
+    () => document.querySelectorAll('.rightpane .review__navrow').length,
   );
   log(`mounted .review__navrow=${navRows}`);
   assert(
@@ -225,12 +229,16 @@ runScenario('review-virtualize', async ({ page, log }) => {
     `perf mounted count (${gPerf.mountedCardCount}) must count cards only (.rcard=${gCards})`,
   );
   await page
-    .waitForFunction(() => document.querySelectorAll('.right .review__navrow').length > 0, null, {
-      timeout: 10000,
-    })
+    .waitForFunction(
+      () => document.querySelectorAll('.rightpane .review__navrow').length > 0,
+      null,
+      {
+        timeout: 10000,
+      },
+    )
     .catch(() => {});
   const gNavRows = await page.evaluate(
-    () => document.querySelectorAll('.right .review__navrow').length,
+    () => document.querySelectorAll('.rightpane .review__navrow').length,
   );
   log(`grouped: mounted .review__navrow=${gNavRows}`);
   assert(
@@ -242,11 +250,13 @@ runScenario('review-virtualize', async ({ page, log }) => {
   const { lastA, firstB } = await navBoundary(page, keyA, keyB);
   log(`group boundary: ${lastA} (repo-a) → ${firstB} (repo-b)`);
   await page
-    .locator(`.right .review__navrow[data-root="${keyA}"][data-path="${lastA}"] .review__navbtn`)
+    .locator(
+      `.rightpane .review__navrow[data-root="${keyA}"][data-path="${lastA}"] .review__navbtn`,
+    )
     .click();
   await page.waitForFunction(
     ([a, p]) => {
-      const row = document.querySelector('.right .review__navrow--active');
+      const row = document.querySelector('.rightpane .review__navrow--active');
       return row?.getAttribute('data-root') === a && row.getAttribute('data-path') === p;
     },
     [keyA, lastA],

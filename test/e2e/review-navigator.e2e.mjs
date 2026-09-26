@@ -53,21 +53,21 @@ runScenario('review-navigator', async ({ page, log }) => {
   // and action bar in place — they are independent of pane visibility. A visibility toggle is
   // not a mode transition, so reopening does not reassert the Changes tab on its own (spec
   // §2.1) — the header's panel toggle is what a user reaches for, so this exercises that too.
-  await page.waitForSelector('.right .review__navrow', { state: 'visible', timeout: 8000 });
+  await page.waitForSelector('.rightpane .review__navrow', { state: 'visible', timeout: 8000 });
   await page.keyboard.press('Control+Shift+E');
-  await page.waitForSelector('.right', { state: 'detached', timeout: 8000 });
+  await page.waitForSelector('.rightpane', { state: 'detached', timeout: 8000 });
   await page.waitForSelector('.review__head', { state: 'visible', timeout: 8000 });
   await page.waitForSelector('.review__actionbar', { state: 'visible', timeout: 8000 });
   await page.keyboard.press('Control+Shift+E');
-  await page.waitForSelector('.right', { state: 'visible', timeout: 8000 });
+  await page.waitForSelector('.rightpane', { state: 'visible', timeout: 8000 });
   // openReview enters from the Changes tab; put the pane on Files so the panel button's
   // "Show changes" path is the one exercised, as the old tab-row entry left it.
   await page.locator('.rtab', { hasText: 'Files' }).click();
-  await page.waitForSelector('.right .review__navrow', { state: 'detached', timeout: 8000 });
+  await page.waitForSelector('.rightpane .review__navrow', { state: 'detached', timeout: 8000 });
   await page.click('.review__panel');
-  await page.waitForSelector('.right .review__navrow', { state: 'visible', timeout: 8000 });
+  await page.waitForSelector('.rightpane .review__navrow', { state: 'visible', timeout: 8000 });
   const { navRows, cardCount } = await page.evaluate(() => ({
-    navRows: document.querySelectorAll('.right .review__navrow').length,
+    navRows: document.querySelectorAll('.rightpane .review__navrow').length,
     cardCount: document.querySelectorAll('.review .rcard').length,
   }));
   log(`navigator rows: ${navRows} (cards: ${cardCount})`);
@@ -77,11 +77,11 @@ runScenario('review-navigator', async ({ page, log }) => {
 
   // (3) Click the last file in the navigator → its card scrolls into the viewport and expands.
   const lastPath = await page.evaluate(() => {
-    const rows = document.querySelectorAll('.right .review__navrow');
+    const rows = document.querySelectorAll('.rightpane .review__navrow');
     return rows[rows.length - 1]?.getAttribute('data-path') ?? '';
   });
   assert(lastPath, 'navigator row should carry a data-path');
-  await page.locator('.right .review__navrow').last().locator('.review__navbtn').click();
+  await page.locator('.rightpane .review__navrow').last().locator('.review__navbtn').click();
   // The target card must be in the scroll viewport (top within the review body) after the jump.
   await page.waitForFunction(
     (p) => {
@@ -101,9 +101,9 @@ runScenario('review-navigator', async ({ page, log }) => {
   // ends read the SAME set, which only holds across the windowed card list in the real app.
   const before = (await page.textContent('.review__count'))?.trim() ?? '';
   assert(/^0 \/ \d+ reviewed$/.test(before), `meter should start at 0; got "${before}"`);
-  await page.locator('.right .review__navrow').first().locator('.review__check').click();
+  await page.locator('.rightpane .review__navrow').first().locator('.review__check').click();
   const firstPath = await page.evaluate(
-    () => document.querySelector('.right .review__navrow')?.getAttribute('data-path') ?? '',
+    () => document.querySelector('.rightpane .review__navrow')?.getAttribute('data-path') ?? '',
   );
   await page.waitForFunction(
     (p) =>

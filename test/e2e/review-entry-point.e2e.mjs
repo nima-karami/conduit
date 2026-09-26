@@ -87,7 +87,7 @@ runScenario('review-entry-point', async ({ page, log }) => {
   await page.waitForSelector('.review', { state: 'detached', timeout: 10000 });
   await page.click('.topbar__logo');
   await page.keyboard.press('Control+Shift+E');
-  await page.waitForSelector('.right', { state: 'hidden', timeout: 8000 });
+  await page.waitForSelector('.rightpane', { state: 'hidden', timeout: 8000 });
   await page.keyboard.press('Control+Shift+R');
   await assertReviewEmpty(page, 'Mod+Shift+R with the pane collapsed');
   log('pane collapsed: Mod+Shift+R opens Review ✓');

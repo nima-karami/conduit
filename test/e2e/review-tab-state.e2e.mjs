@@ -106,7 +106,7 @@ const chrome = (page) =>
       );
       return c ? c.getAttribute('data-path') : null;
     })(),
-    filter: document.querySelector('.right .review__filterinput')?.value ?? null,
+    filter: document.querySelector('.rightpane .review__filterinput')?.value ?? null,
     query: document.querySelector('.term-find--review .term-find__input')?.value ?? null,
     findOpen: !!document.querySelector('.term-find--review'),
   }));
@@ -140,7 +140,7 @@ runScenario('review-tab-state', async ({ page, log }) => {
 
   // ── 1. Set the state up, in the order the app allows ────────────────────────────────────
   // The file filter resets the scroll on purpose, so it goes FIRST and the scroll last.
-  await page.fill('.right .review__filterinput', FILTER);
+  await page.fill('.rightpane .review__filterinput', FILTER);
   await page.waitForTimeout(200);
 
   // Find bar: `/` is scoped to focus inside the scroller (Lane B keymap).

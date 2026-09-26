@@ -362,7 +362,7 @@ export function ChangesView({
           <IconMore size={15} />
         </button>
       </div>
-      <div ref={bodyRef} className="right__scroll">
+      <div ref={bodyRef} className="rightpane__scroll">
         {model.heads.flatMap((head, i) => {
           const root = head.repo.root;
           const listId = `${baseId}-repo-${i}`;

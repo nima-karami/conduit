@@ -164,8 +164,8 @@ export function RightPane({
   );
 
   return (
-    <aside className="right">
-      <div className="right__tabs" {...panelMoveDragProps(moveGrip)}>
+    <aside className="rightpane">
+      <div className="rightpane__tabs" {...panelMoveDragProps(moveGrip)}>
         <button
           className={`rtab ${tab === 'changes' ? 'rtab--active' : ''}`}
           onClick={() => selectTab('changes')}

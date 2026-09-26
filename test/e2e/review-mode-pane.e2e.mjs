@@ -38,7 +38,7 @@ const rtabActiveText = (page) =>
   page.evaluate(() => document.querySelector('.rtab--active')?.textContent?.trim() ?? '');
 
 const navRowCount = (page) =>
-  page.evaluate(() => document.querySelectorAll('.right .review__navrow').length);
+  page.evaluate(() => document.querySelectorAll('.rightpane .review__navrow').length);
 
 const readRightPaneTab = async (app, { allowMissing = false } = {}) => {
   const userDataDir = await app.evaluate((e) => e.app.getPath('userData'));
@@ -65,14 +65,14 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   await page.click('.topbar__logo');
 
   // ── Gherkin 1: entering Review from a collapsed pane opens the navigator ─────────────────
-  if (await page.isVisible('.right')) {
+  if (await page.isVisible('.rightpane')) {
     await page.keyboard.press('Control+Shift+E');
-    await page.waitForSelector('.right', { state: 'detached', timeout: 8000 });
+    await page.waitForSelector('.rightpane', { state: 'detached', timeout: 8000 });
   }
   await page.keyboard.press('Control+Shift+R');
-  await page.waitForSelector('.right', { state: 'visible', timeout: 15000 });
+  await page.waitForSelector('.rightpane', { state: 'visible', timeout: 15000 });
   await page.waitForFunction(
-    () => document.querySelectorAll('.right .review__navrow').length > 0,
+    () => document.querySelectorAll('.rightpane .review__navrow').length > 0,
     null,
     { timeout: 15000 },
   );
@@ -93,7 +93,7 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   await page.waitForFunction(
     () =>
       document
-        .querySelector('.right__tabs [role="status"]')
+        .querySelector('.rightpane__tabs [role="status"]')
         ?.textContent?.startsWith('Reviewing working tree'),
     null,
     { timeout: 8000 },
@@ -109,7 +109,7 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   log('Gherkin 1: collapsed → Review opens the pane on Changes, 4 rows, source in the header ✓');
 
   // ── B2: hovering a navigator row reveals its Stage action; staging moves it to Staged ─────
-  const firstNavRow = page.locator('.right .review__navrow').first();
+  const firstNavRow = page.locator('.rightpane .review__navrow').first();
   await firstNavRow.hover();
   const stageBtn = firstNavRow.locator('.change__action', { hasText: 'Stage' });
   const rowActions = firstNavRow.locator('.change__row-actions');
@@ -136,7 +136,7 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   await stageBtn.click();
   await page.waitForFunction(
     (path) => {
-      const items = [...document.querySelectorAll('.right .review__navlist > li')];
+      const items = [...document.querySelectorAll('.rightpane .review__navlist > li')];
       const sectionIdx = items.findIndex(
         (li) =>
           li.classList.contains('rnav__section') && li.textContent?.trim().startsWith('Staged'),
@@ -162,7 +162,7 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
     `entering Review must not persist rightPaneTab; was ${rightPaneTabBaseline}, now ${rightPaneTabBeforeClose}`,
   );
   await page.locator('.tab', { hasText: 'Review Changes' }).locator('.tab__close').click();
-  await page.waitForSelector('.right', { state: 'detached', timeout: 8000 });
+  await page.waitForSelector('.rightpane', { state: 'detached', timeout: 8000 });
   log('Gherkin 2a: closing Review collapses the auto-opened pane ✓');
   const rightPaneTabAfterClose = await readRightPaneTab(app);
   assert(
@@ -171,7 +171,7 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   );
 
   await page.keyboard.press('Control+Shift+R');
-  await page.waitForSelector('.right', { state: 'visible', timeout: 15000 });
+  await page.waitForSelector('.rightpane', { state: 'visible', timeout: 15000 });
   await page.waitForFunction(
     () => document.querySelector('.rtab--active')?.textContent?.trim().startsWith('Changes'),
     null,
@@ -181,21 +181,21 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
 
   // ── Gherkin 3: once the user has touched pane visibility, Review closing leaves it alone ─
   await page.keyboard.press('Control+Shift+E');
-  await page.waitForSelector('.right', { state: 'detached', timeout: 8000 });
+  await page.waitForSelector('.rightpane', { state: 'detached', timeout: 8000 });
   await page.keyboard.press('Control+Shift+E');
-  await page.waitForSelector('.right', { state: 'visible', timeout: 8000 });
+  await page.waitForSelector('.rightpane', { state: 'visible', timeout: 8000 });
   await page.locator('.tab', { hasText: 'Review Changes' }).locator('.tab__close').click();
   await page.waitForTimeout(500);
-  assert(await page.isVisible('.right'), 'the pane must stay visible once the user owns it');
+  assert(await page.isVisible('.rightpane'), 'the pane must stay visible once the user owns it');
   log('Gherkin 3: a manual toggle while Review was open keeps the pane visible after closing ✓');
 
   // ── Header panel toggle from a collapsed pane opens it ON CHANGES (spec §2.2) ─────────────
   await page.keyboard.press('Control+Shift+R');
   await page.waitForSelector('.review__head', { state: 'visible', timeout: 15000 });
   await page.keyboard.press('Control+Shift+E');
-  await page.waitForSelector('.right', { state: 'detached', timeout: 8000 });
+  await page.waitForSelector('.rightpane', { state: 'detached', timeout: 8000 });
   await page.click('.review__panel');
-  await page.waitForSelector('.right .rnav', { state: 'visible', timeout: 8000 });
+  await page.waitForSelector('.rightpane .rnav', { state: 'visible', timeout: 8000 });
   assert(
     (await readRightPaneTab(app)) === rightPaneTabBaseline,
     'opening the pane from the header must not persist rightPaneTab',
@@ -204,9 +204,9 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
 
   // ── Board view mid-review: the navigator is an editor-mode surface only ──────────────────
   await page.keyboard.press('Control+Shift+R');
-  await page.waitForSelector('.right', { state: 'visible', timeout: 15000 });
+  await page.waitForSelector('.rightpane', { state: 'visible', timeout: 15000 });
   await page.waitForFunction(
-    () => document.querySelectorAll('.right .review__navrow').length > 0,
+    () => document.querySelectorAll('.rightpane .review__navrow').length > 0,
     null,
     {
       timeout: 15000,
@@ -214,16 +214,16 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   );
 
   await page.click('.viewswitch__btn[title="Feature Board"]');
-  await page.waitForFunction(() => !document.querySelector('.right .rnav'), null, {
+  await page.waitForFunction(() => !document.querySelector('.rightpane .rnav'), null, {
     timeout: 8000,
   });
   await page.waitForFunction(
-    () => document.querySelector('.right__tabs [role="status"]')?.textContent === 'Changes',
+    () => document.querySelector('.rightpane__tabs [role="status"]')?.textContent === 'Changes',
     null,
     { timeout: 8000 },
   );
   const ordinary = await page.evaluate(() => ({
-    changeRows: document.querySelectorAll('.right .change').length,
+    changeRows: document.querySelectorAll('.rightpane .change').length,
   }));
   assert(
     ordinary.changeRows === FILE_COUNT,
@@ -232,7 +232,7 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   log('Board view hides the navigator; the ordinary Changes list shows ✓');
 
   await page.click('.viewswitch__btn[title="Editor"]');
-  await page.waitForSelector('.right .rnav', { state: 'visible', timeout: 8000 });
+  await page.waitForSelector('.rightpane .rnav', { state: 'visible', timeout: 8000 });
   log('back to the editor view: the navigator reappears ✓');
 
   log('PASS ✓ review-mode-pane: mode transitions, restore-on-close, ownership, Board view');

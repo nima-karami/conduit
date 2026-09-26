@@ -681,7 +681,7 @@ export function FilesView({
       <div
         ref={setScrollerRef}
         hidden={searchActive}
-        className="right__scroll right__scroll--files"
+        className="rightpane__scroll rightpane__scroll--files"
         onScroll={() => {
           const el = scrollerRef.current;
           if (el) setScrollTop(el.scrollTop);

@@ -234,7 +234,7 @@ export function FolderSection({
   // without re-rendering it, and the pane re-renders every section when any of them resizes.
   useLayoutEffect(() => {
     const el = treeRef.current;
-    const scroller = el?.closest<HTMLElement>('.right__scroll--files');
+    const scroller = el?.closest<HTMLElement>('.rightpane__scroll--files');
     if (!el || !scroller) return;
     const top =
       el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;

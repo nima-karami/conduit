@@ -55,7 +55,7 @@ runStress('explorer-10k', async ({ page, log }) => {
   // Scroll through the list and measure the frame cadence of the virtualizer.
   await startPerf(page, 'explorer-10k');
   for (let i = 1; i <= 40; i++) {
-    await page.locator('.right__scroll--files').evaluate((el, step) => {
+    await page.locator('.rightpane__scroll--files').evaluate((el, step) => {
       el.scrollTop = step * 400;
       el.dispatchEvent(new Event('scroll'));
     }, i);

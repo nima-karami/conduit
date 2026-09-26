@@ -186,16 +186,16 @@ async function setView(page, label) {
 
 const emptyCopy = (page) =>
   page.evaluate(() => ({
-    title: document.querySelector('.right .emptystate__title')?.textContent ?? null,
-    hint: document.querySelector('.right .emptystate__hint')?.textContent ?? null,
+    title: document.querySelector('.rightpane .emptystate__title')?.textContent ?? null,
+    hint: document.querySelector('.rightpane .emptystate__hint')?.textContent ?? null,
   }));
 
 async function expectEmpty(page, title, hint, what) {
   await waitFor(
     page,
     ([t, h]) =>
-      document.querySelector('.right .emptystate__title')?.textContent === t &&
-      document.querySelector('.right .emptystate__hint')?.textContent === h,
+      document.querySelector('.rightpane .emptystate__title')?.textContent === t &&
+      document.querySelector('.rightpane .emptystate__hint')?.textContent === h,
     [title, hint],
     `${what}: "${title}" / "${hint}"`,
   ).catch(async (e) => {
@@ -625,7 +625,9 @@ async function runSecondLaunch(page, sid) {
     30000,
   ).catch(async (e) => {
     const s = await sessionOf(page, sid);
-    const right = await page.evaluate(() => document.querySelector('.right')?.innerText ?? null);
+    const right = await page.evaluate(
+      () => document.querySelector('.rightpane')?.innerText ?? null,
+    );
     log('after relaunch', JSON.stringify({ status: s?.status, repos: s?.repos, right }));
     throw e;
   });

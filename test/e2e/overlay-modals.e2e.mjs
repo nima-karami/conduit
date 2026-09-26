@@ -6,7 +6,7 @@
  *
  * Findings covered (numbering matches the spec's table):
  *   1. Explorer name-collision confirm (`ConflictDialog`) is centred on the WINDOW, not clipped
- *      inside `.right`'s own stacking context.
+ *      inside `.rightpane`'s own stacking context.
  *   3. A confirm opened over the Timed-message dialog paints above it (z-order) and owns Escape
  *      first (closing the confirm leaves the timed dialog open). At the base commit this is
  *      RED for a sharper reason than just z-order: `ConfirmDialog` registers its OWN
@@ -305,19 +305,19 @@ runScenario('overlay-modals', async ({ page, log }) => {
 
   await openSession(page, { path: rootB });
   await page.click('.topbar__logo');
-  if (await page.isVisible('.right')) {
+  if (await page.isVisible('.rightpane')) {
     await page.keyboard.press('Control+Shift+E');
-    await page.waitForSelector('.right', { state: 'detached', timeout: 8000 });
+    await page.waitForSelector('.rightpane', { state: 'detached', timeout: 8000 });
   }
   await page.keyboard.press('Control+Shift+R');
-  await page.waitForSelector('.right', { state: 'visible', timeout: 15000 });
+  await page.waitForSelector('.rightpane', { state: 'visible', timeout: 15000 });
   await page.waitForFunction(
-    () => document.querySelectorAll('.right .review__navrow').length > 0,
+    () => document.querySelectorAll('.rightpane .review__navrow').length > 0,
     null,
     { timeout: 15000 },
   );
 
-  const navRow = page.locator('.right .review__navrow').first();
+  const navRow = page.locator('.rightpane .review__navrow').first();
   await navRow.hover();
   const discardBtn = navRow.locator('.change__action', { hasText: /^Discard$/ });
   await discardBtn.waitFor({ state: 'visible', timeout: 5000 });

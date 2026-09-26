@@ -180,7 +180,7 @@ function FolderGroups({
   return (
     <>
       {hasResults && <div className="search__summary">{multiSearchSummary(groups)}</div>}
-      <div className="right__scroll search__results">
+      <div className="rightpane__scroll search__results">
         {groups.map((g) => (
           <div className="searchfolder" key={g.key}>
             <div className="searchfolder__head" role="heading" aria-level={3}>
@@ -487,7 +487,7 @@ export function SearchPane({
             {results.length === 1 ? 'file' : 'files'}
             {truncated && <span className="search__truncated"> · partial (limit reached)</span>}
           </div>
-          <div className="right__scroll search__results">
+          <div className="rightpane__scroll search__results">
             {results.map((r) => (
               <FileGroup
                 key={r.abs}

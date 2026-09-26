@@ -125,7 +125,7 @@ const ring = (page) =>
 const meter = (page) => page.textContent('.review__count').then((t) => (t ?? '').trim());
 
 const scrollToCard = async (page, path) => {
-  await page.locator(`.right .review__navrow[data-path="${path}"] .review__navbtn`).click();
+  await page.locator(`.rightpane .review__navrow[data-path="${path}"] .review__navbtn`).click();
   await page.waitForSelector(`.review .rcard[data-path="${path}"]`, { timeout: 10000 });
 };
 
@@ -219,7 +219,7 @@ try {
     null,
     { timeout: 8000 },
   );
-  await page.locator('.right .review__navrow[data-path="alpha.ts"] .review__check').click();
+  await page.locator('.rightpane .review__navrow[data-path="alpha.ts"] .review__check').click();
   await page.waitForFunction(
     () => /^2 \/ 5 reviewed$/.test(document.querySelector('.review__count')?.textContent ?? ''),
     null,
@@ -380,9 +380,9 @@ try {
     { timeout: 20000 },
   );
   const survived = await page2.evaluate(() => ({
-    alpha: document.querySelector('.right .review__navrow[data-path="alpha.ts"] .review__check')
+    alpha: document.querySelector('.rightpane .review__navrow[data-path="alpha.ts"] .review__check')
       ?.checked,
-    beta: document.querySelector('.right .review__navrow[data-path="beta.ts"] .review__check')
+    beta: document.querySelector('.rightpane .review__navrow[data-path="beta.ts"] .review__check')
       ?.checked,
   }));
   assert(survived.alpha === true, 'an unchanged file must still read as reviewed after a restart');

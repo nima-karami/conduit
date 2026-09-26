@@ -512,7 +512,7 @@ async function runPass({ theme, width, height, panels }, sceneNames, fixture) {
     if (pin) await page.dblclick('.tab--preview').catch(() => {});
   };
   const showRightTab = async (label) => {
-    if (!(await page.isVisible('.right'))) await page.keyboard.press('Control+Shift+E');
+    if (!(await page.isVisible('.rightpane'))) await page.keyboard.press('Control+Shift+E');
     await page.evaluate((l) => {
       [...document.querySelectorAll('.rtab')]
         .find((e) => e.textContent.trim().startsWith(l))

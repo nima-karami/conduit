@@ -126,7 +126,8 @@ function repoHomeFixture(work) {
 }
 
 const card = (root, path) => `.rcard[data-root="${root}"][data-path="${path}"]`;
-const navRow = (root, path) => `.right .review__navrow[data-root="${root}"][data-path="${path}"]`;
+const navRow = (root, path) =>
+  `.rightpane .review__navrow[data-root="${root}"][data-path="${path}"]`;
 
 const readGroups = (page) =>
   page.$$eval('.review__group', (els) =>
@@ -295,7 +296,7 @@ async function revealNavRow(page, sel) {
   for (let i = 0; i < 40; i++) {
     if ((await page.locator(sel).count()) > 0) return;
     await page.evaluate(() => {
-      const nav = document.querySelector('.right .review__nav');
+      const nav = document.querySelector('.rightpane .review__nav');
       if (nav) nav.scrollTop += Math.max(nav.clientHeight / 2, 40);
     });
     await page.waitForTimeout(250);
@@ -958,7 +959,7 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
   await waitFor(
     page,
     (a) =>
-      document.querySelector('.right .review__navrow--active')?.getAttribute('data-root') === a,
+      document.querySelector('.rightpane .review__navrow--active')?.getAttribute('data-root') === a,
     g.a,
     'Review parked on the first filler repo',
   );
@@ -978,7 +979,7 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
     ([sel, m]) => {
       const c = document.querySelector(sel);
       const sc = document.querySelector('.review__scroll');
-      const active = document.querySelector('.right .review__navrow--active');
+      const active = document.querySelector('.rightpane .review__navrow--active');
       if (!c || !sc || !active) return false;
       const cr = c.getBoundingClientRect();
       const sr = sc.getBoundingClientRect();

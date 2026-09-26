@@ -57,9 +57,9 @@ runScenario('review-compact-header', async ({ page, log }) => {
 
   await page.setViewportSize({ width: 900, height: 700 });
   await page.keyboard.press('Control+Shift+R');
-  await page.waitForSelector('.right', { state: 'visible', timeout: 15000 });
+  await page.waitForSelector('.rightpane', { state: 'visible', timeout: 15000 });
   await page.waitForFunction(
-    () => document.querySelectorAll('.right .review__navrow').length > 0,
+    () => document.querySelectorAll('.rightpane .review__navrow').length > 0,
     null,
     { timeout: 15000 },
   );
@@ -205,7 +205,7 @@ runScenario('review-compact-header', async ({ page, log }) => {
   await page.getByRole('menuitemcheckbox', { name: 'All', exact: true }).click();
   await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
   await page.waitForFunction(
-    () => document.querySelectorAll('.right .review__navrow').length > 0,
+    () => document.querySelectorAll('.rightpane .review__navrow').length > 0,
     null,
     { timeout: 8000 },
   );

@@ -265,9 +265,9 @@ export async function createProject(page, name) {
 
 /** Show the right pane's Changes tab (expanding the pane if collapsed) and wait for its header. */
 export async function openChangesTab(page) {
-  if (!(await page.isVisible('.right'))) {
+  if (!(await page.isVisible('.rightpane'))) {
     await page.keyboard.press('Control+Shift+E');
-    await page.waitForSelector('.right', { state: 'visible', timeout: 8000 });
+    await page.waitForSelector('.rightpane', { state: 'visible', timeout: 8000 });
   }
   await page.evaluate(() => {
     Array.from(document.querySelectorAll('.rtab'))
