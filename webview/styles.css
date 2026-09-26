@@ -2800,10 +2800,9 @@ body.resizing .panel__resize::after {
 .breadcrumb-bar__seg--dir {
   flex-shrink: 100;
 }
-/* The folded-away outer ancestors (useCollapsedAncestors); the path they hold is its tooltip. */
+/* The folded-away outer ancestors (useCollapsedAncestors). */
 .breadcrumb-bar__seg--more {
   flex-shrink: 0;
-  cursor: default;
 }
 /* The file name is the one segment that names what you are looking at, so it carries the
    emphasis the ancestors don't (8b). Once it starts losing text, the outer ancestors fold

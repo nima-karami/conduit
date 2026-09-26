@@ -57,6 +57,10 @@ interface BreadcrumbBarProps {
 interface PendingDropdown {
   dirPath: string;
   rect: DOMRect;
+  keyboard: boolean;
+  /** The menu whose item asked for this listing. Picking an item closes that menu right after
+   *  the item runs, and that close must not cancel the request the item just made. */
+  opener?: MenuState;
 }
 
 export function BreadcrumbBar({
@@ -187,7 +191,7 @@ export function BreadcrumbBar({
   }, [filePath, isServer]);
 
   const openEntriesDropdown = useCallback(
-    (entries: DirEntryDTO[], dirPath: string, rect: DOMRect) => {
+    (entries: DirEntryDTO[], dirPath: string, rect: DOMRect, keyboard: boolean) => {
       const items = entries.map((entry) => {
         const entryPath = `${dirPath.replace(/\/$/, '')}/${entry.name}`;
         return {
@@ -209,6 +213,7 @@ export function BreadcrumbBar({
         x: rect.left,
         y: rect.bottom + 2,
         items,
+        keyboard,
       });
     },
     [onOpenFile],
@@ -226,26 +231,38 @@ export function BreadcrumbBar({
       // Open a pending dropdown now that its listing arrived.
       const pending = pendingRef.current;
       if (pending && pending.dirPath === msg.path && msg.entries.length > 0) {
-        openEntriesDropdownRef.current(msg.entries, msg.path, pending.rect);
+        openEntriesDropdownRef.current(msg.entries, msg.path, pending.rect, pending.keyboard);
       }
     });
   }, []);
 
-  const handlePathSegmentClick = useCallback(
-    (dirPath: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  const openSiblings = useCallback(
+    (dirPath: string, rect: DOMRect, keyboard: boolean, opener?: MenuState) => {
       const cached = dirCache.get(dirPath);
       if (cached && cached.length > 0) {
-        openEntriesDropdown(cached, dirPath, rect);
+        openEntriesDropdown(cached, dirPath, rect, keyboard);
       } else {
         // Store pending so the dir-listing subscription opens it on arrival.
-        pendingRef.current = { dirPath, rect };
+        pendingRef.current = { dirPath, rect, keyboard, opener };
         post({ type: 'readDir', path: dirPath });
       }
     },
     [dirCache, openEntriesDropdown],
   );
+
+  const handlePathSegmentClick = useCallback(
+    (dirPath: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      openSiblings(dirPath, e.currentTarget.getBoundingClientRect(), e.detail === 0);
+    },
+    [openSiblings],
+  );
+
+  const closeMenu = useCallback((closing: MenuState) => {
+    // An item that opened a new menu has already replaced the one closing now.
+    setMenu((cur) => (cur === closing ? null : cur));
+    if (pendingRef.current?.opener !== closing) pendingRef.current = null;
+  }, []);
 
   const handleSymbolSegmentClick = useCallback(
     (item: SymbolChainItem, e: React.MouseEvent) => {
@@ -280,21 +297,37 @@ export function BreadcrumbBar({
     ...(showSymbols ? symbolChain.map((s) => `${s.kind} ${s.text}`) : []),
   ].join('\n');
   const collapsed = useCollapsedAncestors(barRef, contentKey, pathSegments.length - 1);
+  const folded = pathSegments.slice(0, collapsed);
+  const foldedPath = folded.map((s) => s.name).join('/');
+
+  const openFolded = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const keyboard = e.detail === 0;
+    const foldedMenu: MenuState = { x: rect.left, y: rect.bottom + 2, keyboard, items: [] };
+    foldedMenu.items = folded.map((seg) => ({
+      label: seg.name,
+      title: `Show siblings in ${seg.dirPath}`,
+      onClick: () => openSiblings(seg.dirPath, rect, keyboard, foldedMenu),
+    }));
+    setMenu(foldedMenu);
+  };
 
   if (pathSegments.length === 0) return null;
 
   return (
     <div ref={barRef} className="breadcrumb-bar" aria-label="Breadcrumb navigation">
       {collapsed > 0 && (
-        <span
+        <button
+          type="button"
           className="breadcrumb-bar__seg breadcrumb-bar__seg--more"
-          title={pathSegments
-            .slice(0, collapsed)
-            .map((s) => s.name)
-            .join('/')}
+          title={foldedPath}
+          aria-label={`Folded folders: ${foldedPath}`}
+          aria-haspopup="menu"
+          onClick={openFolded}
         >
           …
-        </span>
+        </button>
       )}
       {pathSegments.map((seg, i) => {
         if (i < collapsed) return null;
@@ -352,15 +385,7 @@ export function BreadcrumbBar({
           </Fragment>
         ))}
 
-      {menu && (
-        <ContextMenu
-          menu={menu}
-          onClose={() => {
-            setMenu(null);
-            pendingRef.current = null;
-          }}
-        />
-      )}
+      {menu && <ContextMenu menu={menu} onClose={() => closeMenu(menu)} />}
     </div>
   );
 }
