@@ -80,23 +80,19 @@ const finiteOrUndef = (n: unknown): number | undefined =>
 const TICKET_CAPS = { key: 40, source: 24, status: 32 } as const;
 
 /** Capped by code point so an astral character is never split (spec 2026-09-23-mf-board §3.5).
- *  A cut value is kept at exactly its cap, never trimmed shorter: that length is how
- *  `ticketDisplay` knows it was cut, and it survives the board being written back. */
+ *  A cut value ends in "…" inside its cap, so it reads as cut and reloads unchanged. */
 function restoreTicket(raw: unknown): BoardTicket | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const ticket: BoardTicket = {};
   for (const field of ['key', 'source', 'status'] as const) {
     const v = (raw as Record<string, unknown>)[field];
     if (typeof v !== 'string' || !v.trim()) continue;
-    ticket[field] = Array.from(v.trim()).slice(0, TICKET_CAPS[field]).join('');
+    const points = Array.from(v.trim());
+    const cap = TICKET_CAPS[field];
+    const head = points.slice(0, cap - 1).join('');
+    ticket[field] = points.length > cap ? `${head.trimEnd()}…` : v.trim();
   }
   return Object.keys(ticket).length > 0 ? ticket : undefined;
-}
-
-/** A ticket part as shown: a value at its cap was (almost always) cut on load, so it ends in "…"
- *  rather than reading as complete. Display only — the stored value is untouched. */
-export function ticketDisplay(field: keyof BoardTicket, value: string): string {
-  return Array.from(value).length >= TICKET_CAPS[field] ? `${value.trimEnd()}…` : value;
 }
 
 let idCounter = 0;

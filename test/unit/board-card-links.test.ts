@@ -75,16 +75,14 @@ describe('TicketHeader', () => {
     }
   });
 
-  it('a part cut at its cap on load ends in an ellipsis', async () => {
+  it('renders a part verbatim, adding nothing at its cap', async () => {
     const h = await render(
       createElement(TicketHeader, {
-        ticket: { key: 'RMB-412', status: 'Needs review from the platform t' },
+        ticket: { key: 'k'.repeat(40), status: 'Needs review from the platform…' },
       }),
     );
-    const status = h.querySelector('.bcard__tstatus');
-    expect(status?.textContent).toBe('Needs review from the platform t…');
-    expect(status?.getAttribute('title')).toBe(status?.textContent);
-    expect(h.querySelector('.bcard__tkey')?.textContent).toBe('RMB-412');
+    expect(h.querySelector('.bcard__tstatus')?.textContent).toBe('Needs review from the platform…');
+    expect(h.querySelector('.bcard__tkey')?.textContent).toBe('k'.repeat(40));
   });
 });
 

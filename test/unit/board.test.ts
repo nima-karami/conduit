@@ -10,7 +10,6 @@ import {
   restoreBoard,
   seedBoard,
   serializeBoard,
-  ticketDisplay,
   updateCard,
   wipFor,
 } from '../../src/board';
@@ -271,28 +270,35 @@ describe('restoreBoard ticket (mf-board §3.5)', () => {
     });
   });
 
-  it('ticket caps by code point', () => {
+  it('ticket caps by code point, ending a cut value in an ellipsis', () => {
     const t = only({ key: '😀'.repeat(41), source: 's'.repeat(25), status: 'x'.repeat(33) }).ticket;
     expect(Array.from(t?.key ?? '').length).toBe(40);
-    expect(t?.key).toBe('😀'.repeat(40));
-    expect(t?.source).toBe('s'.repeat(24));
-    expect(t?.status).toBe('x'.repeat(32));
+    expect(t?.key).toBe(`${'😀'.repeat(39)}…`);
+    expect(t?.source).toBe(`${'s'.repeat(23)}…`);
+    expect(t?.status).toBe(`${'x'.repeat(31)}…`);
   });
 
-  it('a cap that lands on a space still keeps the value at its cap', () => {
-    const t = only({ key: `${'k'.repeat(39)} b`, status: `${'s'.repeat(31)}  tail` }).ticket;
-    expect(t?.key).toBe(`${'k'.repeat(39)} `);
-    expect(t?.status).toBe(`${'s'.repeat(31)} `);
+  it('a value exactly at its cap is not marked as cut', () => {
+    const t = only({ key: '😀'.repeat(40), source: 's'.repeat(24), status: 'x'.repeat(32) }).ticket;
+    expect(t).toEqual({ key: '😀'.repeat(40), source: 's'.repeat(24), status: 'x'.repeat(32) });
   });
 
-  it('a cut value reads as cut, and only at display', () => {
-    const t = only({ status: 'Needs review from the platform team before merge' }).ticket;
-    expect(t?.status).toBe('Needs review from the platform t');
-    expect(ticketDisplay('status', t?.status ?? '')).toBe('Needs review from the platform t…');
-    expect(ticketDisplay('key', `${'k'.repeat(39)} `)).toBe(`${'k'.repeat(39)}…`);
-    expect(ticketDisplay('key', '😀'.repeat(40))).toBe(`${'😀'.repeat(40)}…`);
-    expect(ticketDisplay('source', 'Jira')).toBe('Jira');
-    expect(ticketDisplay('status', 's'.repeat(31))).toBe('s'.repeat(31));
+  it('a cap that lands on a space leaves no trailing whitespace', () => {
+    const t = only({ key: `${'k'.repeat(38)} bb`, status: `${'s'.repeat(30)}  tail` }).ticket;
+    expect(t?.key).toBe(`${'k'.repeat(38)}…`);
+    expect(t?.status).toBe(`${'s'.repeat(30)}…`);
+  });
+
+  it('a cut ticket survives write-back and reload unchanged', () => {
+    const first = restoreBoard(
+      blobWith({
+        key: `${'k'.repeat(38)} bb`,
+        source: '😀'.repeat(30),
+        status: 'Needs review from the platform team before merge',
+      }),
+    );
+    expect(first.cards[0].ticket?.status).toBe('Needs review from the platform…');
+    expect(restoreBoard(serializeBoard(first))).toEqual(first);
   });
 
   it('non-string and blank sub-fields dropped', () => {
