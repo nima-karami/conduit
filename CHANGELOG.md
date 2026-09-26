@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.43.0] — 2026-09-26
+
 ### Fixed
 - **Long names and paths no longer overlap each other or run off the edge.** In the top bar, the
   sidebar, editor breadcrumbs, quick open, the Files, Changes and Search tabs, the New session
