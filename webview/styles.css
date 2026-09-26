@@ -3578,9 +3578,17 @@ body.resizing .panel__resize::after {
   padding: 1px 6px;
   border-radius: 999px;
   white-space: nowrap;
-  max-width: 130px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Each context sets its own cap. A list row caps a ref so a long branch can't crowd out the
+   subject; the detail drawer is where a ref is read in full, so there only the drawer's width
+   caps it. Every chip's tooltip names the ref. */
+.gh__badges > .gh__badge {
+  max-width: 130px;
+}
+.gh__detail-refs > .gh__badge {
+  max-width: 100%;
 }
 .gh__badge--head {
   background: rgba(94, 155, 214, 0.18);

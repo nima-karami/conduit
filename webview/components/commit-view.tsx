@@ -119,7 +119,7 @@ export function CommitView({
               <span
                 key={`${ref.kind}:${ref.name}`}
                 className={`gh__badge gh__badge--${ref.kind}`}
-                title={REF_KIND_LABEL[ref.kind]}
+                title={`${REF_KIND_LABEL[ref.kind]}: ${ref.name}`}
               >
                 {ref.name}
               </span>
