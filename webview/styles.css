@@ -12869,6 +12869,7 @@ button.toggle--on .toggle__knob {
 
 /* ── plan document (docs/specs/2026-09-19-interactive-plan.md §8) ───────────── */
 .plan {
+  container: plan / inline-size;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -13297,6 +13298,21 @@ button.toggle--on .toggle__knob {
   border-left: 1px solid var(--border);
   background: var(--panel);
   font-size: calc(12px * var(--font-scale));
+}
+/* The plan text is primary: where the column beside it would leave the text under ~40ch, the
+   comments stack under the document instead of squeezing it to a word per line. Nothing is placed
+   against the column, so its position is free to change: the gutter and the composer are offset
+   inside .plan__body, and a comment's anchor jumps by block index. */
+@container plan (max-width: 620px) {
+  .plan__body {
+    flex-direction: column;
+  }
+  .plancomment {
+    width: auto;
+    max-height: 40%;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
 }
 .plancomment ul {
   display: flex;
