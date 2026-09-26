@@ -1063,8 +1063,7 @@ body.resizing .panel__resize::after {
    Three columns with equal outer tracks, so the search pill sits at the true centre of the
    window whatever the side groups hold — and when one side outgrows its half (Neon's wide
    uppercase switcher at 1000px), its track grows to its content and pushes the pill aside
-   rather than running underneath it. The pill used to be absolutely positioned for the
-   centring, which is exactly what let the left group slide under it. */
+   rather than running underneath it. */
 .topbar {
   flex: 0 0 var(--density-topbar-h);
   height: var(--density-topbar-h);

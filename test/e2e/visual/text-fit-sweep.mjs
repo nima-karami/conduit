@@ -40,6 +40,7 @@ import {
   openChangesTab,
   openHistory,
   openReview,
+  removeDir,
   tapBridge,
 } from '../harness.mjs';
 import { auditTextFit, cropFinding } from './text-fit.mjs';
@@ -462,10 +463,8 @@ async function runPass({ theme, width, height, panels }, sceneNames, fixture) {
   mkdirSync(crops, { recursive: true });
   console.log(`[text-fit] pass ${pass}`);
 
-  const { app, page } = await launchApp({
-    env: { CONDUIT_E2E: '1' },
-    userDataDir: seedProfile(theme),
-  });
+  const userDataDir = seedProfile(theme);
+  const { app, page } = await launchApp({ env: { CONDUIT_E2E: '1' }, userDataDir });
   const findings = [];
   const covered = [];
 
@@ -704,6 +703,9 @@ async function runPass({ theme, width, height, panels }, sceneNames, fixture) {
     writeFileSync(file, JSON.stringify([...kept, ...findings], null, 2));
     await closeApp(app, page).catch(() => {});
     await app.close().catch(() => {});
+    await removeDir(userDataDir, { budgetMs: 10_000 }).catch((e) =>
+      console.log(`  ! could not remove ${userDataDir}: ${e.message}`),
+    );
   }
   return { pass, covered, count: findings.length };
 }
