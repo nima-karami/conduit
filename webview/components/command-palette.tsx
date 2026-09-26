@@ -67,14 +67,21 @@ function Highlighted({
   from?: number;
   to?: number;
 }) {
-  const chars = [...text].slice(from, to);
+  // `from`/`to` count code points; fuzzyScore's positions are UTF-16 offsets.
+  let unit = 0;
+  const chars = [...text]
+    .map((ch) => {
+      const at = unit;
+      unit += ch.length;
+      return { ch, at };
+    })
+    .slice(from, to);
   const m = query ? fuzzyScore(query, text) : null;
-  if (!m?.positions.length) return <>{chars.join('')}</>;
+  if (!m?.positions.length) return <>{chars.map((c) => c.ch).join('')}</>;
   const set = new Set(m.positions);
   return (
     <>
-      {chars.map((ch, k) => {
-        const i = from + k;
+      {chars.map(({ ch, at: i }) => {
         // Keyed by the character's position in a static, never-reordered string.
         return set.has(i) ? (
           <b key={i} className="palette__hl">

@@ -146,3 +146,60 @@ describe('palette match highlight', () => {
     host.remove();
   });
 });
+
+describe('palette path title', () => {
+  const renderPath = async (title: string, query: string) => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    Element.prototype.scrollIntoView = () => {};
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () =>
+      root.render(
+        createElement(CommandPalette, {
+          items: [{ ...entry('f', title), group: 'Files', titleIsPath: true }],
+          placeholder: 'x',
+          initialQuery: query,
+          onClose: () => {},
+        }),
+      ),
+    );
+    const hl = (sel: string) =>
+      [...document.querySelectorAll(`${sel} .palette__hl`)].map((b) => b.textContent);
+    const text = (sel: string) => document.querySelector(sel)?.textContent ?? null;
+    const out = {
+      dir: text('.palette__dir'),
+      name: text('.palette__name'),
+      whole: text('.palette__title--path'),
+      dirHl: hl('.palette__dir'),
+      nameHl: hl('.palette__name'),
+      allHl: hl('.palette__title--path'),
+    };
+    await act(async () => root.unmount());
+    host.remove();
+    return out;
+  };
+
+  it('splits at the last slash and highlights each part at its own characters', async () => {
+    const r = await renderPath('src/app/main.ts', 'sam');
+    expect([r.dir, r.name]).toEqual(['src/app', '/main.ts']);
+    expect(r.dirHl).toEqual(['s', 'a']);
+    expect(r.nameHl).toEqual(['m']);
+  });
+
+  it('renders a title with no directory part whole', async () => {
+    for (const title of ['README.md', '/README.md']) {
+      const r = await renderPath(title, 'rd');
+      expect(r.dir).toBeNull();
+      expect(r.whole).toBe(title);
+      expect(r.allHl).toEqual(['R', 'D']);
+    }
+  });
+
+  it('highlights the right characters after an astral one', async () => {
+    const r = await renderPath('docs/😀notes.md', 'dn');
+    expect([r.dir, r.name]).toEqual(['docs', '/😀notes.md']);
+    expect(r.dirHl).toEqual(['d']);
+    expect(r.nameHl).toEqual(['n']);
+  });
+});
