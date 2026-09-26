@@ -272,8 +272,14 @@ export function BreadcrumbBar({
     [filePath],
   );
 
+  const showSymbols = isTs || isServer;
   const barRef = useRef<HTMLDivElement>(null);
-  const collapsed = useCollapsedAncestors(barRef, filePath, pathSegments.length - 1);
+  const contentKey = [
+    filePath,
+    restricted && serverInfo ? serverInfo.displayName : '',
+    ...(showSymbols ? symbolChain.map((s) => `${s.kind} ${s.text}`) : []),
+  ].join('\n');
+  const collapsed = useCollapsedAncestors(barRef, contentKey, pathSegments.length - 1);
 
   if (pathSegments.length === 0) return null;
 
@@ -324,7 +330,7 @@ export function BreadcrumbBar({
         </>
       )}
 
-      {(isTs || isServer) &&
+      {showSymbols &&
         symbolChain.map((sym, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: symbol chain is ordered outermost→innermost; stable by position
           <Fragment key={`sym-${i}`}>
@@ -365,16 +371,18 @@ export function BreadcrumbBar({
  * justify-content: flex-end), which would slice the outermost segment mid-glyph. Folding whole
  * segments keeps what is shown legible and gives the width to the file name. The start spill
  * is not scrollable, so scrollWidth cannot see it — the first child's position is measured.
- * Re-derived from zero whenever the path or the bar width changes.
+ * Folding only ever grows, so it is re-derived from zero whenever the bar width or anything it
+ * lays out changes (`contentKey`: the path, the Restricted Mode segment, the symbol chain) —
+ * otherwise content that shrinks would leave dirs folded that now fit.
  */
 function useCollapsedAncestors(
   barRef: RefObject<HTMLDivElement | null>,
-  filePath: string,
+  contentKey: string,
   dirCount: number,
 ): number {
   const [collapsed, setCollapsed] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: filePath is the trigger — a new path starts from zero
-  useLayoutEffect(() => setCollapsed(0), [filePath]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: contentKey is the trigger — new content starts from zero
+  useLayoutEffect(() => setCollapsed(0), [contentKey]);
   const mounted = dirCount >= 0;
   // biome-ignore lint/correctness/useExhaustiveDependencies: `mounted` is the trigger — the bar renders nothing for an empty path, so the ref only fills once there is one
   useLayoutEffect(() => {
