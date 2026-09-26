@@ -5367,21 +5367,30 @@ body.gh-resizing {
 .change__kind--U {
   color: var(--accent);
 }
+/* The dir prefix gives way first so the filename stays readable, and below a 6ch floor it goes
+   whole rather than as a sliver of "…": it wraps onto a second line the one-line box clips. Line
+   breaking takes items in `order`, so the file is laid out first (order -1) and the dir is the
+   one that wraps; row-reverse + flex-end put them back as dir-then-file, left-aligned, so what
+   is seen and read is still the DOM order. When even the filename alone overflows a narrow pane
+   it ellipsizes too, instead of spilling over the diff-stat to its right. The row's tooltip
+   holds the full path. */
 .change__path {
   flex: 1;
   min-width: 0;
   display: flex;
+  flex-direction: row-reverse;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: baseline;
+  height: 1lh;
   font-family: var(--font-mono);
   font-size: calc(11.5px * var(--font-scale));
   white-space: nowrap;
   overflow: hidden;
 }
-/* The dir prefix shrinks/ellipsizes first (high flex-shrink) so the filename
-   stays readable; when even the filename alone overflows a narrow pane it
-   ellipsizes too, instead of spilling over the diff-stat to its right. */
 .change__dir {
-  flex: 0 100 auto;
+  flex: 1 1 6ch;
+  max-width: max-content;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5389,6 +5398,7 @@ body.gh-resizing {
 }
 /* The filename carries the weight so the eye lands on it before the directory it sits in. */
 .change__file {
+  order: -1;
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
