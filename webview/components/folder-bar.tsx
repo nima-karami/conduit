@@ -88,7 +88,7 @@ export function FolderBar({
       </button>
       <button
         type="button"
-        className="iconbtn iconbtn--sm"
+        className="iconbtn iconbtn--sm files__bar-extra"
         title={`Refresh ${label}`}
         aria-label={`Refresh ${label}`}
         onClick={onRefresh}
@@ -97,7 +97,7 @@ export function FolderBar({
       </button>
       <button
         type="button"
-        className="iconbtn iconbtn--sm"
+        className="iconbtn iconbtn--sm files__bar-extra"
         title={newFile}
         aria-label={newFile}
         onClick={onNewFile}
@@ -106,7 +106,7 @@ export function FolderBar({
       </button>
       <button
         type="button"
-        className="iconbtn iconbtn--sm"
+        className="iconbtn iconbtn--sm files__bar-extra"
         title={newFolder}
         aria-label={newFolder}
         onClick={onNewFolder}

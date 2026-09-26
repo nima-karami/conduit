@@ -6642,6 +6642,7 @@ body.gh-resizing {
 /* One bar per session folder (mf-files spec §2.3), on the .repo-head fill so Files and
    Changes heads match; bare iconbtn--sm controls flush right. */
 .files__bar {
+  container: files-bar / inline-size;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -6685,6 +6686,26 @@ body.gh-resizing {
 .files__tag--attached {
   color: var(--text-dim);
   background: var(--raise);
+}
+/* The folder name is what tells two bars apart, so on a narrow bar it wins over the controls:
+   as in VS Code's section headers, Refresh / New file / New folder only show while the bar is
+   hovered or holds focus (the collapse chevron, always shown and first in tab order, is how the
+   keyboard gets in). Narrower still, the tag goes too — its word stays as accessible text, and
+   the home folder is always the first bar. */
+@container files-bar (max-width: 280px) {
+  .files__bar:not(:hover, :focus-within) > .files__bar-extra {
+    display: none;
+  }
+}
+@container files-bar (max-width: 200px) {
+  .files__tag {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
 }
 @media (forced-colors: active) {
   .files__tag,
