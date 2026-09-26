@@ -2450,8 +2450,12 @@ function ReviewGroupHead({ group }: { group: ReviewGroup }) {
       <span className="review__groupname">{group.name}</span>
       <RepoTagPill tag={group.tag} />
       <span className="review__groupmeta">
-        {group.branch ? `${group.branch} · ` : ''}
-        {plural(group.files.length, 'file')}
+        {group.branch && (
+          <span className="review__groupbranch" title={group.branch}>
+            <span className="review__groupbranch-text">{`${group.branch} · `}</span>
+          </span>
+        )}
+        <span className="review__groupcount">{plural(group.files.length, 'file')}</span>
       </span>
       <span className="review__grouprule" aria-hidden />
     </div>

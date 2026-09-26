@@ -11047,12 +11047,37 @@ button.toggle--on .toggle__knob {
   white-space: nowrap;
   font-weight: 600;
 }
+/* The repo name is what the heading is for, so the branch gives way first: its box shrinks
+   before the name does, and below a 6ch floor the branch wraps off behind the empty ::before onto
+   a second line the one-line box clips — gone whole, never a sliver of "…". It keeps its own
+   tooltip; the file count never yields. */
 .review__groupmeta {
-  flex: 0 0 auto;
+  display: contents;
   font-family: var(--font-mono);
   font-size: calc(11px * var(--font-scale));
   color: var(--text-dim);
   white-space: nowrap;
+}
+.review__groupbranch {
+  flex: 0 1000 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  height: 1lh;
+  overflow: hidden;
+}
+.review__groupbranch::before {
+  content: "";
+}
+.review__groupbranch-text {
+  flex: 1 1 6ch;
+  max-width: max-content;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.review__groupcount {
+  flex: 0 0 auto;
 }
 .review__grouprule {
   flex: 1 1 auto;
