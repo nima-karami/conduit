@@ -5631,6 +5631,13 @@ body.gh-resizing {
 .reference-zone-widget .reference-file {
   gap: 6px;
 }
+/* Monaco shrinks the peek title's file name and directory in proportion to their text, and our
+   label service gives it an absolute directory, so the name was cut to a few characters while
+   the path kept its width. As a zero-basis item the directory only gets what the name and the
+   match count leave over, so the name ellipsizes only once the directory is gone. */
+.peekview-title .dirname {
+  flex: 1 1 0;
+}
 
 /* ---- Monaco's find widget, in the app's find-bar family (spec 2026-08-31-review-fidelity §5).
    Colour comes from monaco-theme.ts wherever Monaco owns a token for it; these rules carry only

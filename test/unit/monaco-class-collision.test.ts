@@ -45,7 +45,8 @@ const MONACO = new Set(
 const isMonacoAnchor = (c: string) =>
   c.startsWith('monaco-') ||
   ['find-widget', 'reference-zone-widget', 'zone-widget', 'context-view'].includes(c) ||
-  c.startsWith('workbench-hover');
+  c.startsWith('workbench-hover') ||
+  c.startsWith('peekview');
 
 /** Split on top-level commas only, so `:is(.a, .b)` stays one selector. */
 function splitGroup(group: string): string[] {
