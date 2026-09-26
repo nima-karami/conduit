@@ -122,18 +122,22 @@ export function ReviewNavigator({
     setBulkMenu({ ...placement, items });
   };
 
+  const count =
+    model === null
+      ? '…'
+      : model.groups
+        ? `${plural(files.length, 'change')} · ${plural(model.groups.length, 'repo')}`
+        : working
+          ? plural(files.length, 'change')
+          : plural(files.length, 'file');
+  const stat = [totalAdd > 0 ? `+${totalAdd}` : '', totalDel > 0 ? `-${totalDel}` : '']
+    .filter(Boolean)
+    .join(' ');
+
   const header = (
     <div className="changes__header">
-      <span className="changes__header-summary">
-        <span className="changes__header-count">
-          {model === null
-            ? '…'
-            : model.groups
-              ? `${plural(files.length, 'change')} · ${plural(model.groups.length, 'repo')}`
-              : working
-                ? plural(files.length, 'change')
-                : plural(files.length, 'file')}
-        </span>
+      <span className="changes__header-summary" title={stat ? `${count} ${stat}` : count}>
+        <span className="changes__header-count">{count}</span>
         {model !== null && (
           <span className="diffstat">
             {totalAdd > 0 && <span className="diffstat--add">+{totalAdd}</span>}
