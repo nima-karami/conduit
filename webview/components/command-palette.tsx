@@ -77,7 +77,7 @@ function Highlighted({
         const i = from + k;
         // Keyed by the character's position in a static, never-reordered string.
         return set.has(i) ? (
-          <b key={i} className="pal__hl">
+          <b key={i} className="palette__hl">
             {ch}
           </b>
         ) : (

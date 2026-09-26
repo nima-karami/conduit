@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it } from 'vitest';
@@ -115,6 +117,32 @@ describe('palette badge', () => {
     expect(plain?.textContent).toBe('rmb');
     expect(plain?.hasAttribute('title')).toBe(false);
     await act(async () => root2.unmount());
+    host.remove();
+  });
+});
+
+describe('palette match highlight', () => {
+  it('marks matched characters with the class the stylesheet styles', async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    Element.prototype.scrollIntoView = () => {};
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () =>
+      root.render(
+        createElement(CommandPalette, {
+          items: [entry('a', 'Open settings')],
+          placeholder: 'x',
+          initialQuery: 'set',
+          onClose: () => {},
+        }),
+      ),
+    );
+    const hl = [...document.querySelectorAll('.palette__hl')].map((b) => b.textContent).join('');
+    expect(hl).toBe('set');
+    const css = readFileSync(join(__dirname, '..', '..', 'webview', 'styles.css'), 'utf8');
+    expect(css).toMatch(/\n\.palette__hl \{/);
+    await act(async () => root.unmount());
     host.remove();
   });
 });
