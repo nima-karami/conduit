@@ -6,6 +6,28 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Long names and paths no longer overlap each other or run off the edge.** In the top bar, the
+  sidebar, editor breadcrumbs, quick open, the Files, Changes and Search tabs, the New session
+  dialog's folders, Review, History, the Board, the plan view and Markdown, long text now ends in
+  "…" (or wraps, where it's prose) and gives way in a sensible order: the folder before the file
+  name, the extras before the name they belong to. A narrow session card shows its state as a dot.
+- **Breadcrumbs fold the outer folders into "…" when the file name runs out of room.** Click it,
+  or press Enter on it, to list those folders and browse any of them. They unfold when there's
+  room again.
+- **Toasts are opaque.** The text behind a notification no longer shows through it.
+- **Editor scrollbar thumbs are their real size again.** A settings style had forced every one to
+  at least 220px.
+- **Completion list labels show in full.** They were cut at about a third of the list's width,
+  beside an empty column.
+- **Quick open and the command palette highlight the characters you typed.** The highlight never
+  showed before.
+- **Review's header stats give way in a narrow window** instead of painting under Find and More.
+- **Plan comments move under the text in a narrow editor** instead of squeezing it to a few words
+  per line.
+- **A board ticket value cut at its length limit ends in "…"**, so it no longer reads as the whole
+  value.
+
 ## [0.42.0] — 2026-09-25
 
 ### Added
