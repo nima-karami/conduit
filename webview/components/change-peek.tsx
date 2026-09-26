@@ -127,17 +127,17 @@ export function ChangePeek({
   return (
     <div
       ref={rootRef}
-      className="peek"
+      className="changepeek"
       role="dialog"
       aria-label={label}
       tabIndex={-1}
       onKeyDown={onKeyDown}
     >
-      <div className="peek__head">
-        <span className="peek__title">{label}</span>
+      <div className="changepeek__head">
+        <span className="changepeek__title">{label}</span>
         <button
           type="button"
-          className="peek__act"
+          className="changepeek__act"
           disabled={!canAct}
           title={
             mode === 'unmerged'
@@ -152,7 +152,7 @@ export function ChangePeek({
         </button>
         <button
           type="button"
-          className="peek__act peek__act--danger"
+          className="changepeek__act changepeek__act--danger"
           disabled={!canAct || untracked}
           title={
             mode === 'unmerged'
@@ -167,21 +167,26 @@ export function ChangePeek({
         >
           Discard
         </button>
-        <button type="button" className="peek__nav" aria-label="Previous change" onClick={onPrev}>
+        <button
+          type="button"
+          className="changepeek__nav"
+          aria-label="Previous change"
+          onClick={onPrev}
+        >
           ↑
         </button>
-        <button type="button" className="peek__nav" aria-label="Next change" onClick={onNext}>
+        <button type="button" className="changepeek__nav" aria-label="Next change" onClick={onNext}>
           ↓
         </button>
-        <button type="button" className="peek__nav" aria-label="Close" onClick={onClose}>
+        <button type="button" className="changepeek__nav" aria-label="Close" onClick={onClose}>
           ×
         </button>
       </div>
-      <div className="peek__lines">
+      <div className="changepeek__lines">
         {untracked ? (
-          <p className="peek__note">New file — no previous version.</p>
+          <p className="changepeek__note">New file — no previous version.</p>
         ) : marker.removedText.length === 0 ? (
-          <p className="peek__note">Nothing was removed here — these lines are new.</p>
+          <p className="changepeek__note">Nothing was removed here — these lines are new.</p>
         ) : (
           marker.removedText.map((text, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: removed lines are positional and stable for the life of this peek

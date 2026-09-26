@@ -567,16 +567,16 @@ async function phaseCantStart({ page, sid }) {
   const nope = await openSession(page, { path: S, agentId: 'nope-agent' });
   await page.locator(`.session[data-sessionid="${nope}"]`).click();
   const cardState = page.locator(`.session[data-sessionid="${nope}"] .session__state`);
-  const reason = page.locator('.stale .stale__detail');
+  const reason = page.locator('.session-stale .session-stale__detail');
   const shows = async () =>
     (await cardState.textContent().catch(() => '')) === "Can't start" &&
     (await page
-      .locator('.stale .stale__title')
+      .locator('.session-stale .session-stale__title')
       .textContent()
       .catch(() => '')) === "Can't start" &&
     (await reason.textContent().catch(() => '')) === "conduit-nope-xyz wasn't found";
   assert(await until(shows, 10000), "B1: card + centre say Can't start and name the command");
-  await page.locator('.stale button', { hasText: '↻ Relaunch' }).click();
+  await page.locator('.session-stale button', { hasText: '↻ Relaunch' }).click();
   await page.waitForTimeout(1500);
   assert(await shows(), 'B1: after Relaunch refuses again, the reason is still shown');
   await page.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), nope);
@@ -646,13 +646,15 @@ async function phaseMissingHome({ app, page, sid, t0 }) {
     ),
     `E5: the card says Can't start (got ${JSON.stringify(await cardState.textContent().catch(() => null))})`,
   );
-  const title = await page.locator('.stale .stale__title').textContent();
-  const path = await page.locator('.stale .stale__path').textContent();
+  const title = await page.locator('.session-stale .session-stale__title').textContent();
+  const path = await page.locator('.session-stale .session-stale__path').textContent();
   assert(title === 'Home folder not found', `E5: centre title (got ${JSON.stringify(title)})`);
   assert(path === H, `E5: centre path (got ${JSON.stringify(path)})`);
   const firstRoot = basename(D);
   assert(
-    (await page.locator('.stale button', { hasText: `Use ${firstRoot} as home` }).count()) === 1,
+    (await page
+      .locator('.session-stale button', { hasText: `Use ${firstRoot} as home` })
+      .count()) === 1,
     `E5: Use ${firstRoot} as home is offered`,
   );
   const launchesBefore = (await launches(page, sid)).length;
@@ -687,7 +689,7 @@ async function phaseMissingHome({ app, page, sid, t0 }) {
     await until(
       async () =>
         (await page
-          .locator('.stale .stale__title')
+          .locator('.session-stale .session-stale__title')
           .textContent()
           .catch(() => '')) === 'Session not running',
       6000,
@@ -695,7 +697,7 @@ async function phaseMissingHome({ app, page, sid, t0 }) {
     'E6: the centre reverts to Session not running within 6 s',
   );
   assert(
-    (await page.locator('.stale button', { hasText: '↻ Relaunch' }).count()) === 1,
+    (await page.locator('.session-stale button', { hasText: '↻ Relaunch' }).count()) === 1,
     'E6: Relaunch offered',
   );
   assert((await cardState.textContent()) === 'Stale', 'E6: the card says Stale');
@@ -711,7 +713,7 @@ async function phaseLocate({ app, page, sid }) {
     await until(
       async () =>
         (await page
-          .locator('.stale .stale__title')
+          .locator('.session-stale .session-stale__title')
           .textContent()
           .catch(() => '')) === 'Home folder not found',
       12000,
@@ -720,12 +722,12 @@ async function phaseLocate({ app, page, sid }) {
   );
   await app.evaluate((_e, p) => global.__pickDirHook.queue([p]), P);
   const from = await mark(page, sid);
-  await page.locator('.stale button', { hasText: 'Locate…' }).click();
+  await page.locator('.session-stale button', { hasText: 'Locate…' }).click();
   assert(
     await until(async () => (await sessionOf(page, sid))?.home === P, 10000),
     `Locate: home is P (got ${JSON.stringify((await sessionOf(page, sid))?.home)})`,
   );
-  const relaunch = page.locator('.stale button', { hasText: '↻ Relaunch' });
+  const relaunch = page.locator('.session-stale button', { hasText: '↻ Relaunch' });
   await relaunch.waitFor({ state: 'visible', timeout: 5000 });
   assert(
     await until(

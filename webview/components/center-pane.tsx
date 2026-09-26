@@ -38,7 +38,7 @@ function WaitingLine({ sessionId, onOpen }: { sessionId: string; onOpen: () => v
   return (
     <button
       type="button"
-      className="stale__waiting"
+      className="session-stale__waiting"
       aria-label={`${label} — open`}
       onClick={onOpen}
     >
@@ -211,7 +211,7 @@ export function CenterPane({
 
   return (
     <main
-      className={`center ${dock?.isOver ? 'center--droptarget' : ''}`}
+      className={`centerpane ${dock?.isOver ? 'centerpane--droptarget' : ''}`}
       onDragOver={dock?.onDragOver}
       onDrop={
         dock
@@ -288,7 +288,7 @@ export function CenterPane({
                 );
               })}
               {active && active.status !== 'running' && active.homeMissing && (
-                <div className="stale">
+                <div className="session-stale">
                   <MissingHomeState
                     session={active}
                     onFixed={() => setFocusRelaunchFor(active.id)}
@@ -305,7 +305,7 @@ export function CenterPane({
                 active.status !== 'running' &&
                 !active.homeMissing &&
                 active.startRefusal && (
-                  <div className="stale">
+                  <div className="session-stale">
                     <StartRefusedState
                       session={active}
                       onRelaunch={onRelaunch}
@@ -323,8 +323,8 @@ export function CenterPane({
                 active.status === 'stale' &&
                 !active.homeMissing &&
                 !active.startRefusal && (
-                  <div className="stale">
-                    <p className="stale__title">Session not running</p>
+                  <div className="session-stale">
+                    <p className="session-stale__title">Session not running</p>
                     <button
                       ref={relaunchRef}
                       className="btn btn--primary"
@@ -344,8 +344,8 @@ export function CenterPane({
                 active.status === 'exited' &&
                 !active.homeMissing &&
                 !active.startRefusal && (
-                  <div className="stale">
-                    <p className="stale__title">Process exited</p>
+                  <div className="session-stale">
+                    <p className="session-stale__title">Process exited</p>
                     <button
                       ref={relaunchRef}
                       className="btn btn--primary"

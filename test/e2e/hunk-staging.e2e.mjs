@@ -217,14 +217,14 @@ runScenario('hunk-staging', async ({ app, page, log }) => {
   assert(box !== null, 'the deleted-line gutter marker must have a box to click');
   await page.mouse.click(box.x + Math.max(box.width / 2, 2), box.y + Math.max(box.height / 2, 2));
 
-  const peek = page.locator('.peek[role="dialog"]');
+  const peek = page.locator('.changepeek[role="dialog"]');
   await peek.waitFor({ state: 'attached', timeout: 15000 });
-  const peekLines = await page.locator('.peek .rline--del').count();
+  const peekLines = await page.locator('.changepeek .rline--del').count();
   assert(peekLines === 2, `the peek should quote both removed lines, got ${peekLines}`);
-  const peekLabel = await page.getAttribute('.peek[role="dialog"]', 'aria-label');
+  const peekLabel = await page.getAttribute('.changepeek[role="dialog"]', 'aria-label');
   assert(/^Change \d+ of \d+$/.test(peekLabel ?? ''), `peek aria-label was "${peekLabel}"`);
   const peekActs = await page.evaluate(() =>
-    [...document.querySelectorAll('.peek .peek__act')].map((b) => ({
+    [...document.querySelectorAll('.changepeek .changepeek__act')].map((b) => ({
       text: b.textContent?.trim(),
       disabled: b.disabled,
     })),

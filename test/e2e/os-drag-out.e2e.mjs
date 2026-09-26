@@ -158,7 +158,7 @@ await runScenario('os-drag-out', async ({ app, page, log }) => {
   log('file: navigation blocked ✓');
 
   const over = await page.evaluate(() => {
-    const target = document.querySelector('.center');
+    const target = document.querySelector('.centerpane');
     if (!target) return null;
     const dt = new DataTransfer();
     dt.items.add(new File(['x'], 'x.txt'));
@@ -167,7 +167,7 @@ await runScenario('os-drag-out', async ({ app, page, log }) => {
     target.dispatchEvent(ev);
     return { types: [...dt.types], prevented: ev.defaultPrevented, effect: dt.dropEffect };
   });
-  assert(over, '.center exists');
+  assert(over, '.centerpane exists');
   assert(over.types.includes('Files'), `synthetic drag carries Files: ${over.types}`);
   assert(
     over.prevented && over.effect === 'none',

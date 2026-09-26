@@ -74,8 +74,10 @@ afterEach(async () => {
 describe('MissingHomeState (12d)', () => {
   it('title, full path, Locate…', async () => {
     await render(session());
-    expect(host.querySelector('h2.stale__title')?.textContent).toBe('Home folder not found');
-    const path = host.querySelector('.stale__path');
+    expect(host.querySelector('h2.session-stale__title')?.textContent).toBe(
+      'Home folder not found',
+    );
+    const path = host.querySelector('.session-stale__path');
     expect(path?.textContent).toBe('C:\\src\\room-message-bus');
     expect(path?.getAttribute('dir')).toBe('ltr');
     expect(byText('Locate…')?.className).toBe('btn btn--primary');
@@ -85,11 +87,11 @@ describe('MissingHomeState (12d)', () => {
 
   it('a /-separated windows home is shown with native separators (QA F6)', async () => {
     await render(session({ home: 'C:/Users/u/H2' }));
-    expect(host.querySelector('.stale__path')?.textContent).toBe('C:\\Users\\u\\H2');
+    expect(host.querySelector('.session-stale__path')?.textContent).toBe('C:\\Users\\u\\H2');
     await act(async () => root?.unmount());
     root = null;
     await render(session({ home: '/home/u/h' }));
-    expect(host.querySelector('.stale__path')?.textContent).toBe('/home/u/h');
+    expect(host.querySelector('.session-stale__path')?.textContent).toBe('/home/u/h');
   });
 
   it('Use {first present root} as home shown only with a present root', async () => {
@@ -97,7 +99,9 @@ describe('MissingHomeState (12d)', () => {
     const use = byText('Use bitbucket-ci-image as home');
     expect(use?.title).toBe('D:\\w\\bitbucket-ci-image');
     expect(use?.getAttribute('aria-label')).toBe('Use bitbucket-ci-image as home');
-    expect(use?.querySelector('.stale__usehome-name')?.textContent).toBe('bitbucket-ci-image');
+    expect(use?.querySelector('.session-stale__usehome-name')?.textContent).toBe(
+      'bitbucket-ci-image',
+    );
   });
 
   it('missing attached roots are not candidates', async () => {
@@ -164,9 +168,13 @@ describe('StartRefusedState (review B1)', () => {
     await act(async () =>
       root?.render(createElement(StartRefusedState, { session: s, onRelaunch, relaunchRef: null })),
     );
-    expect(host.querySelector('h2.stale__title')?.textContent).toBe("Can't start");
-    expect(host.querySelector('.stale__detail')?.textContent).toBe("conduit-nope-xyz wasn't found");
-    expect(host.querySelector('.stale__detail .stale__cmd')?.textContent).toBe('conduit-nope-xyz');
+    expect(host.querySelector('h2.session-stale__title')?.textContent).toBe("Can't start");
+    expect(host.querySelector('.session-stale__detail')?.textContent).toBe(
+      "conduit-nope-xyz wasn't found",
+    );
+    expect(host.querySelector('.session-stale__detail .session-stale__cmd')?.textContent).toBe(
+      'conduit-nope-xyz',
+    );
     const relaunch = byText('↻ Relaunch');
     expect(relaunch?.className).toBe('btn btn--primary');
     await click(relaunch);

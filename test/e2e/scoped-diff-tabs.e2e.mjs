@@ -309,7 +309,7 @@ async function editOnDiskRefreshes(page, root) {
 const armLoadingObserver = (page) =>
   page.evaluate(() => {
     window.__loadingSeen = [];
-    const center = document.querySelector('.center');
+    const center = document.querySelector('.centerpane');
     const check = () => {
       if (center?.textContent?.includes('Loading diff…')) window.__loadingSeen.push(Date.now());
     };

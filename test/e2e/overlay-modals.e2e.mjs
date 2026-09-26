@@ -15,7 +15,7 @@
  *      event finishes bubbling to `window` — so the confirm both opens and immediately
  *      self-closes on one keypress. The migrated code (T2.1/T2.3) removes every dialog's own
  *      window listener in favour of the store's single capture-phase one, which fixes this.
- *   5. The Mermaid fullscreen viewer's backdrop fills the real viewport, not `.center`'s box.
+ *   5. The Mermaid fullscreen viewer's backdrop fills the real viewport, not `.centerpane`'s box.
  *   6. A Review navigator row's Discard confirm is a real top-level modal, not embedded in the
  *      pane's clipped stacking context.
  *   7. (Displacement) Pushing a modal (Settings) dismisses an already-open `ContextMenu`

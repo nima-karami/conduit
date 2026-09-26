@@ -289,8 +289,11 @@ try {
     waiting.sessionId,
   );
   await page2.locator('.session', { hasText: waitingName }).first().click();
-  await page2.locator('.stale__waiting').first().waitFor({ state: 'visible', timeout: 15000 });
-  const waitingText = (await page2.locator('.stale__waiting').first().innerText()).trim();
+  await page2
+    .locator('.session-stale__waiting')
+    .first()
+    .waitFor({ state: 'visible', timeout: 15000 });
+  const waitingText = (await page2.locator('.session-stale__waiting').first().innerText()).trim();
   assert(/waiting/i.test(waitingText), `the stale card must say Waiting, got "${waitingText}"`);
   log(`stale card reads "${waitingText}" ✓`);
 

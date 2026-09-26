@@ -142,7 +142,7 @@ describe('the Neon chamfer is one continuous edge', () => {
   it('never notches a full-bleed panel — those ARE the window edge at Neon', () => {
     const chamfer = CSS.slice(CSS.indexOf('the Neon chamfer'), CSS.indexOf('Neon shell:'));
     expect(chamfer).not.toMatch(/:is\([^)]*\.sidebar/);
-    expect(chamfer).not.toMatch(/:is\([^)]*\.right[,)]/);
+    expect(chamfer).not.toMatch(/:is\([^)]*\.rightpane[,)]/);
   });
 });
 

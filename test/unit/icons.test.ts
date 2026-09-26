@@ -72,7 +72,7 @@ describe('chrome icon set', () => {
 });
 
 describe('chrome icon tokens', () => {
-  const iconRule = /\n\.icon \{([^}]*)\}/.exec(CSS)?.[1] ?? '';
+  const iconRule = /\n\.icon:where\(svg\) \{([^}]*)\}/.exec(CSS)?.[1] ?? '';
 
   it('reads its stroke shape off the theme', () => {
     expect(iconRule).toMatch(/stroke-width: var\(--icon-stroke\)/);

@@ -519,7 +519,7 @@ export async function readNavMenu(page) {
       const r = ed.getDomNode().getBoundingClientRect();
       return { x: r.left + vp.left + 2, y: r.top + vp.top + vp.height / 2, editor: true };
     }
-    const host = document.querySelector('.center') ?? document.body;
+    const host = document.querySelector('.centerpane') ?? document.body;
     const r = host.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2, editor: false };
   });

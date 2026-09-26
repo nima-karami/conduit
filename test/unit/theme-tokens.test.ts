@@ -203,7 +203,7 @@ describe('change-marker tokens', () => {
 
   it('opens the peek without motion where motion is unwelcome', () => {
     expect(CSS).toMatch(
-      /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,200}\.peek\s*\{[^}]*animation:\s*none/,
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,200}\.changepeek\s*\{[^}]*animation:\s*none/,
     );
   });
 });
@@ -325,7 +325,7 @@ describe('coupleThemeDefaults', () => {
  * and folding it in would state a value the page may never have.
  */
 /**
- * The centre's `.stale` block ("Session not running", "Home folder not found", "Can't start")
+ * The centre's `.session-stale` block ("Session not running", "Home folder not found", "Can't start")
  * sits inside `.termwrap`, so under Aero it inherits the ink tiers unless it takes the page tiers
  * back. It paints `--surface`, which at :root is the page `--bg` at the surface opacity over the
  * ink panel underneath (mf-live-edits QA F5).
@@ -334,8 +334,8 @@ describe('the centre state block', () => {
   // A missing rule reads as the contrast failure it causes, not as a parse error.
   const optional = (sel: string) => (blockCount(sel) > 0 ? tokensFor(sel) : {});
   const STALE_AERO = {
-    ...optional(':root[data-theme="aero"] :is(.docpage, .stale)'),
-    ...optional(':root[data-theme="aero"] .stale'),
+    ...optional(':root[data-theme="aero"] :is(.docpage, .session-stale)'),
+    ...optional(':root[data-theme="aero"] .session-stale'),
   };
   const staleScope = (id: string) =>
     id === 'aero' ? { ...terminalScope(id), ...STALE_AERO } : terminalScope(id);

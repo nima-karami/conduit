@@ -757,9 +757,9 @@ function Slider({
   // the ratio has to reach CSS as a value.
   const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
   return (
-    <div className="slider" style={{ '--slider-fill': `${pct}%` } as React.CSSProperties}>
+    <div className="range-slider" style={{ '--slider-fill': `${pct}%` } as React.CSSProperties}>
       <input
-        className="slider__range"
+        className="range-slider__range"
         type="range"
         min={min}
         max={max}
@@ -767,7 +767,7 @@ function Slider({
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
       />
-      <span className="slider__val">{format(value)}</span>
+      <span className="range-slider__val">{format(value)}</span>
     </div>
   );
 }

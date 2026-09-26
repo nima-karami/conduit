@@ -23,7 +23,7 @@ import { pushToast } from '../toast-store';
 const SET_HOME_TIMEOUT_MS = 10_000;
 
 /** The 12d centre state for a non-running session whose home is gone (mf-live-edits §2.6).
- *  A fragment: CenterPane owns the `.stale` wrapper and its Waiting line. No autofocus — it
+ *  A fragment: CenterPane owns the `.session-stale` wrapper and its Waiting line. No autofocus — it
  *  must never take focus from the terminal (spec §9). */
 export function MissingHomeState({ session, onFixed }: { session: Session; onFixed: () => void }) {
   const [pending, setPending] = useState(false);
@@ -67,11 +67,11 @@ export function MissingHomeState({ session, onFixed }: { session: Session; onFix
 
   return (
     <>
-      <h2 className="stale__title">{MISSING_HOME_TITLE}</h2>
-      <p className="stale__path" dir="ltr">
+      <h2 className="session-stale__title">{MISSING_HOME_TITLE}</h2>
+      <p className="session-stale__path" dir="ltr">
         {nativePath(session.home)}
       </p>
-      <div className="stale__actions">
+      <div className="session-stale__actions">
         <button
           type="button"
           className="btn btn--primary"
@@ -83,7 +83,7 @@ export function MissingHomeState({ session, onFixed }: { session: Session; onFix
         {candidate !== undefined && (
           <button
             type="button"
-            className="btn stale__usehome"
+            className="btn session-stale__usehome"
             disabled={pending}
             title={candidate}
             aria-label={asHomeLabel(candidateName)}
@@ -91,7 +91,7 @@ export function MissingHomeState({ session, onFixed }: { session: Session; onFix
           >
             {asHomeSegments(candidateName).map((seg) =>
               seg.kind === 'name' ? (
-                <span key="name" className="stale__usehome-name">
+                <span key="name" className="session-stale__usehome-name">
                   {seg.text}
                 </span>
               ) : (
@@ -119,11 +119,11 @@ export function StartRefusedState({
   if (!session.startRefusal) return null;
   return (
     <>
-      <h2 className="stale__title">{CANT_START_TITLE}</h2>
-      <p className="stale__detail">
+      <h2 className="session-stale__title">{CANT_START_TITLE}</h2>
+      <p className="session-stale__detail">
         {notFoundSegments(session.startRefusal.command).map((seg) =>
           seg.kind === 'name' ? (
-            <span key="name" className="stale__cmd" dir="ltr">
+            <span key="name" className="session-stale__cmd" dir="ltr">
               {seg.text}
             </span>
           ) : (
