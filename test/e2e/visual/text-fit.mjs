@@ -515,9 +515,15 @@ function auditInPage(opts) {
   });
   for (const f of flexes) {
     if (!visibleEl(f)) continue;
+    const fr = f.getBoundingClientRect();
+    const clips = cs(f).overflowX !== 'visible' || cs(f).overflowY !== 'visible';
     const items = [...f.children].filter((c) => {
       const s = cs(c);
-      return s.position !== 'absolute' && s.position !== 'fixed' && visibleEl(c);
+      if (s.position === 'absolute' || s.position === 'fixed' || !visibleEl(c)) return false;
+      // An item wrapped onto a line its clipping container cuts off (the wrap-off idiom for a
+      // part that yields whole) is not painted, so it is nobody's rival.
+      const r = c.getBoundingClientRect();
+      return !(clips && (r.top >= fr.bottom || r.bottom <= fr.top));
     });
     const info = items.map((c) => {
       const text = (c.innerText || '').replace(/\s+/g, ' ').trim();
