@@ -20,7 +20,7 @@ per-project context at a glance.
 
 </div>
 
-> **Status:** early but functional, Windows-only for now (`v0.42.1`). **Conduit is also an
+> **Status:** early but functional, Windows-only for now (`v0.43.0`). **Conduit is also an
 > experiment in autonomous AI development — see [How this project is built](#how-this-project-is-built).**
 
 ## Why
