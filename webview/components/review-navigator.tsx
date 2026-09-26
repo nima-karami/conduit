@@ -125,7 +125,7 @@ export function ReviewNavigator({
   const header = (
     <div className="changes__header">
       <span className="changes__header-summary">
-        <span>
+        <span className="changes__header-count">
           {model === null
             ? '…'
             : model.groups

@@ -4863,19 +4863,27 @@ body.gh-resizing {
 }
 /* 8c reads the summary as data, not prose: the count and both diffstat numbers are mono,
    so they line up with the per-row stats down the right edge. */
+/* At a narrow pane the summary gives way first; Review, refresh and the kebab never shrink
+   (spec §10). Within it the count yields to the diffstat: its zero basis leaves the diffstat
+   on the line until the diffstat alone no longer fits, and then the diffstat wraps onto a
+   second line that the one-line box clips — gone whole, never cut or painted under Review,
+   with the count taking the line back. The summary's tooltip carries both. */
 .changes__header-summary {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 10px;
+  height: 1lh;
+  overflow: hidden;
   margin-right: auto;
   min-width: 0;
   font-family: var(--font-mono);
   font-size: calc(11.5px * var(--font-scale));
   color: var(--text-dim);
 }
-/* At a narrow pane the summary gives way first; Review, refresh and the kebab never shrink
-   (spec §10). */
 .changes__header-count {
+  flex: 1 1 0;
+  max-width: max-content;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4952,6 +4960,9 @@ body.gh-resizing {
    than one tag — the alternative was inline styles at the one call site. */
 .searchbox :is(input, textarea) {
   flex: 1;
+  /* A legible floor instead of the field's intrinsic width (a textarea's cols=20), which
+     otherwise set the whole bar's minimum. */
+  min-width: 8ch;
   background: transparent;
   border: 0;
   outline: 0;
@@ -5068,6 +5079,9 @@ body.gh-resizing {
    promoting this to one token belongs with whoever owns those. */
 .search__inputbox {
   flex: 1;
+  /* On a narrow pane the Aa/W/.* toggles wrap under the query rather than squeezing it out. */
+  flex-wrap: wrap;
+  min-width: 0;
   background: rgba(var(--overlay), 0.055);
   border-color: transparent;
 }
@@ -5079,6 +5093,7 @@ body.gh-resizing {
   display: flex;
   align-items: center;
   gap: 2px;
+  margin-left: auto;
 }
 .search__toggle {
   background: transparent;
@@ -5407,6 +5422,7 @@ body.gh-resizing {
 /* Same rhythm as the .files__bar family so Files and Changes heads match; the sub-path wraps
    onto its own line under the name. */
 .repo-head {
+  container: repo-head / inline-size;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -5497,9 +5513,19 @@ body.gh-resizing {
   color: var(--text-dim);
   background: rgba(var(--overlay), 0.06);
 }
+/* On a narrow head the repo name wins over its tag, as on the Files bars. The group's aria-label
+   already names the tag, and the home head keeps its accent tint. */
+@container repo-head (max-width: 200px) {
+  .repo-head > .repo-head__tag {
+    display: none;
+  }
+}
+/* Shrinks once it has wrapped onto a line of its own, so the branch chip's label ellipsizes at
+   the pane edge instead of the chip running past it. */
 .repo-head__chip {
   display: inline-flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   align-self: stretch;
   margin-inline-start: auto;
 }
