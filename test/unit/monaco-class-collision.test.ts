@@ -15,15 +15,10 @@ import { describe, expect, it } from 'vitest';
 const REPO = join(__dirname, '..', '..');
 
 const blank = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, ' ');
-/** Selector text only: declaration blocks emptied, innermost first, so nested @media unwraps. */
-function selectorText(css: string): string {
-  let s = blank(css);
-  for (let prev = ''; prev !== s; ) {
-    prev = s;
-    s = s.replace(/\{[^{}]*\}/g, ';');
-  }
-  return s;
-}
+/** The prelude of every innermost block: a style rule's selector at any @media/@container/
+ *  @scope/@supports depth, or a bodied at-rule such as @font-face. */
+const preludes = (css: string) =>
+  [...blank(css).matchAll(/([^{};}]+)\{[^{}]*\}/g)].map((m) => m[1].trim());
 const classesIn = (s: string) => [...s.matchAll(/\.(-?[A-Za-z_][\w-]*)/g)].map((m) => m[1]);
 
 function cssFiles(dir: string): string[] {
@@ -36,7 +31,7 @@ function cssFiles(dir: string): string[] {
 
 const MONACO = new Set(
   cssFiles(join(REPO, 'node_modules', 'monaco-editor', 'esm')).flatMap((f) =>
-    classesIn(selectorText(readFileSync(f, 'utf8'))),
+    preludes(readFileSync(f, 'utf8')).flatMap(classesIn),
   ),
 );
 
@@ -78,11 +73,9 @@ function subjectOf(sel: string): string {
   return sel.slice(start);
 }
 
-function collisions(): string[] {
-  const src = selectorText(readFileSync(join(REPO, 'webview', 'styles.css'), 'utf8'));
+function collisions(css: string): string[] {
   const found: string[] = [];
-  for (const group of src.split(';')) {
-    const head = group.trim();
+  for (const head of preludes(css)) {
     if (!head || head.startsWith('@')) continue;
     for (const sel of splitGroup(head)) {
       if (classesIn(sel).some(isMonacoAnchor)) continue;
@@ -105,7 +98,15 @@ describe('styles.css vs Monaco class names', () => {
     expect(MONACO.has('slider')).toBe(true);
   });
 
+  it('catches a colliding rule nested inside at-rule blocks', () => {
+    const nested = '@media (width < 9px) { @supports (gap: 0) { .x-ok { a: b } .right { a: b } } }';
+    expect(collisions(nested)).toEqual(['.right']);
+    expect(collisions('@scope (.pane) to (.monaco-editor) { .slider { a: b } }')).toEqual([
+      '.slider',
+    ]);
+  });
+
   it('no Conduit rule styles an element by a class name Monaco also uses', () => {
-    expect(collisions()).toEqual([]);
+    expect(collisions(readFileSync(join(REPO, 'webview', 'styles.css'), 'utf8'))).toEqual([]);
   });
 });
