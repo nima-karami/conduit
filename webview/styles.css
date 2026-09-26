@@ -6444,18 +6444,21 @@ body.gh-resizing {
   gap: 10px;
   padding: 10px 12px;
   border-radius: var(--r-sm);
-  background: var(--surface-panel, var(--panel));
+  /* The menus' opaque raised surface, not the panel material: a toast floats over live text
+     with no backdrop blur of its own, and the translucent panel fill let that text read
+     through the message. */
+  background: var(--raise);
   border: 1px solid var(--border-2);
   color: var(--text);
   font-size: calc(13px * var(--font-scale));
   line-height: 1.4;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--elev-3);
   pointer-events: auto;
   animation: toast-in 140ms ease-out;
 }
 .toast--error {
   border-color: var(--danger, #e5484d);
-  background: color-mix(in srgb, var(--danger, #e5484d) 16%, var(--surface-panel, var(--panel)));
+  background: color-mix(in srgb, var(--danger, #e5484d) 16%, var(--raise));
 }
 .toast__msg {
   flex: 1 1 auto;
