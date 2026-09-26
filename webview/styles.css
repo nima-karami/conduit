@@ -1057,14 +1057,22 @@ body.resizing .panel__resize::after {
 /* ---------- top bar ----------
    A surface in its own right (frame 5a), not a band welded to the window: it takes the
    panel fill, the shared hairline and one elevation step, and floats inside --win-pad like
-   everything else. Height is density's; the theme may never change it. */
+   everything else. Height is density's; the theme may never change it.
+
+   Three columns with equal outer tracks, so the search pill sits at the true centre of the
+   window whatever the side groups hold — and when one side outgrows its half (Neon's wide
+   uppercase switcher at 1000px), its track grows to its content and pushes the pill aside
+   rather than running underneath it. The pill used to be absolutely positioned for the
+   centring, which is exactly what let the left group slide under it. */
 .topbar {
-  position: relative; /* the search pill centres against the WINDOW, not the gap — see below */
   flex: 0 0 var(--density-topbar-h);
   height: var(--density-topbar-h);
-  display: flex;
+  display: grid;
+  grid-template-columns:
+    minmax(max-content, 1fr)
+    minmax(160px, min(420px, 34%))
+    minmax(max-content, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   padding: 0 8px;
   margin-bottom: var(--gutter);
@@ -1078,13 +1086,18 @@ body.resizing .panel__resize::after {
    nudged via trafficLightPosition in main.ts). Logo + tabs + attention chip move to
    topbar__right on mac (see top-bar.tsx); padding-right balances the right edge
    against the traffic lights' left-edge margin so the bar reads symmetric (tuned
-   visually, real hardware). Back/forward is pulled out of topbar__left's normal flow
-   (see .topbar--mac .topbar__nav below) and anchored beside the search pill instead —
-   in fullscreen, where the lights hide, an empty topbar__left no longer leaves a
-   lopsided gap that only exists on one side of the bar. */
+   visually, real hardware). Back/forward is the only thing in topbar__left on mac and sits
+   at its inner end, beside the search pill. The lights' clearance is padding on that
+   column rather than on the bar, so the bar's own padding stays symmetric and the pill
+   stays on the window's centre line (the side tracks are equal only within the bar's
+   padding box). 16px + 76px is the 92px the lights need. */
 .topbar--mac {
-  padding-left: 92px;
+  padding-left: 16px;
   padding-right: 16px;
+}
+.topbar--mac .topbar__left {
+  justify-content: flex-end;
+  padding-left: 76px;
 }
 .topbar button,
 .topbar input,
@@ -1127,19 +1140,11 @@ body.resizing .panel__resize::after {
    The container stays draggable (R5.1) so the empty space on either side of the pill
    drags the window; the pill itself is a <button>, so the `.topbar button` rule above
    keeps it clickable (no-drag). Marking the whole container no-drag was what left the
-   title bar feeling "locked" — it killed the largest drag surface. */
-/* Centred on the TOP BAR, not between its neighbours. As a flex item the pill sat at the
-   midpoint of the leftover gap, so it drifted whenever the switcher or the window controls
-   changed width — visibly off-centre against the window it belongs to. Taking it out of flow
-   pins it to the true centre and leaves the side groups to their own edges. */
+   title bar feeling "locked" — it killed the largest drag surface. Its width is the
+   middle grid track (see .topbar). */
 .topbar__center {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
   display: flex;
   justify-content: center;
-  width: min(420px, 34%);
   min-width: 0;
 }
 .topbar__center .omnibar {
@@ -1182,6 +1187,7 @@ body.resizing .panel__resize::after {
 .topbar__right {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
 }
 /* Segmented control switching the center pane between editor / board / canvas.
@@ -1229,18 +1235,6 @@ body.resizing .panel__resize::after {
   display: flex;
   align-items: center;
   gap: 2px;
-}
-/* macOS only: anchor nav beside the search pill instead of letting it flow inside
-   topbar__left. Positioned against .topbar (the nearest positioned ancestor, same
-   trick topbar__center itself uses) so the pill's own centering is untouched — `right`
-   is measured from .topbar's right edge, and 50% of that plus half the pill's own
-   width (min(420px, 34%) halved) lands exactly at the pill's left edge, 8px further
-   out. */
-.topbar--mac .topbar__nav {
-  position: absolute;
-  top: 50%;
-  right: calc(50% + min(210px, 17%) + 8px);
-  transform: translateY(-50%);
 }
 /* Aggregate attention chip: the whole rail's "needs you" count, without the sessions panel
    open. Suppressed entirely at zero rather than rendered as "0". Copy is identical in every
