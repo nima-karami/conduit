@@ -2230,6 +2230,7 @@ body.resizing .panel__resize::after {
    aligned under the name however many lines the text column has (10a). Needs-you's buttons
    take a second row under the text. */
 .session {
+  container: session-card / inline-size;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -2328,7 +2329,8 @@ body.resizing .panel__resize::after {
 .dot--idle {
   border: 1.5px solid var(--text-faint);
 }
-.dot--stale {
+.dot--stale,
+.dot--cantStart {
   border: 1px dashed var(--text-faint);
 }
 .session__icon {
@@ -2383,6 +2385,25 @@ body.resizing .panel__resize::after {
 [data-theme="neon"] .session__state {
   background: transparent;
   border-color: currentColor;
+}
+/* The name is what tells cards apart, so on a narrow card the pill yields: it collapses to its
+   dot (fill, outline and dash still tell the states apart; the word stays as the dot's tooltip
+   and as the accessible text). Below this width the pill left the name 1–3 characters. */
+.session__statedot {
+  display: none;
+}
+@container session-card (max-width: 210px) {
+  .session__statedot {
+    display: block;
+  }
+  .session__state {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
 }
 
 /* The subtitle field under the name — the agent label by default (mf-sidebar spec §2.3). */

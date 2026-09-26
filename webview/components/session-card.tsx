@@ -135,7 +135,17 @@ export function SessionCard({
         )}
       </div>
       <div className="session__side">
-        {!editing && <span className="session__state">{SESSION_STATE_WORD[state]}</span>}
+        {!editing && (
+          <>
+            {/* Stands in for the pill on a narrow card (styles.css, session-card container). */}
+            <span
+              className={`dot dot--${state} session__statedot`}
+              title={SESSION_STATE_WORD[state]}
+              aria-hidden
+            />
+            <span className="session__state">{SESSION_STATE_WORD[state]}</span>
+          </>
+        )}
         {!editing && waitingTimers > 0 && (
           <>
             {/* The glyph is decorative; the accessible name is carried in text, because the card
