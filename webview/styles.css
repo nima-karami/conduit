@@ -5231,17 +5231,36 @@ body.gh-resizing {
 .searchgroup__chev--collapsed {
   transform: rotate(-90deg);
 }
+/* The file name keeps its width and ellipsizes only when it alone overflows. The directory takes
+   what is left, and once that is under its 6ch floor it wraps onto a second line that the
+   one-line box clips: gone whole instead of painting a stray "…". The full path is the head's
+   tooltip. */
+.searchgroup__path {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+  height: 1lh;
+  overflow: hidden;
+}
 .searchgroup__file {
-  font-weight: 600;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 600;
 }
 .searchgroup__dir {
+  flex: 1 1 6ch;
+  min-width: 0;
   color: var(--text-faint);
   font-size: calc(11px * var(--font-scale));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
 }
 .searchgroup__count {
   flex: 0 0 auto;

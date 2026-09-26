@@ -128,14 +128,16 @@ function FileGroup({
             nameOnly ? ' searchgroup__chev--hidden' : ''
           }`}
         />
-        <span className="searchgroup__file">
-          <Hilite text={file} query={query} />
-        </span>
-        {dir && (
-          <span className="searchgroup__dir">
-            <Hilite text={dir} query={query} />
+        <span className="searchgroup__path">
+          <span className="searchgroup__file">
+            <Hilite text={file} query={query} />
           </span>
-        )}
+          {dir && (
+            <span className="searchgroup__dir">
+              <Hilite text={dir} query={query} />
+            </span>
+          )}
+        </span>
         {nameOnly ? (
           <span className="searchgroup__namebadge" title="Matched the file/folder name">
             name
