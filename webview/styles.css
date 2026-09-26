@@ -6162,8 +6162,12 @@ body.gh-resizing {
   transform: rotate(180deg);
 }
 
+/* A token with no break opportunity (a long identifier, a URL) breaks rather than cutting at the
+   edge. `break-word`, not `anywhere`: it leaves min-content alone, so tables keep their columns.
+   Code blocks are `white-space: pre` and scroll instead. */
 .markdown {
   overflow: auto;
+  overflow-wrap: break-word;
   padding: 22px 28px;
   line-height: 1.65;
 }
