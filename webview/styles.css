@@ -10565,8 +10565,7 @@ button.toggle--on .toggle__knob {
   min-height: 0;
 }
 /* Full-width header: panel toggle, source + scope, diffstat/meter/count, find + overflow
-   (spec 2026-09-05-review-mode §2.2). Independent of right-pane visibility.
-   container-type: the center cluster (meter/countword) shrinks at narrower widths (below). */
+   (spec 2026-09-05-review-mode §2.2). Independent of right-pane visibility. */
 .review__head {
   display: flex;
   align-items: center;
@@ -10576,14 +10575,27 @@ button.toggle--on .toggle__knob {
   box-sizing: border-box;
   padding: 0 12px;
   border-bottom: 1px solid var(--border);
-  container-type: inline-size;
+  container: review-head / inline-size;
 }
+/* The stats are the header's one read-only part, so they yield before any control does. As a
+   zero-basis item they get only what the controls leave (scoping to one repo adds the chip and
+   the source, which no head-width breakpoint can predict). Inside, parts drop whole from the end
+   onto a second line the one-line box clips, and the diffstat ellipsizes as the last resort. The
+   box's tooltip carries all of it. It takes the diffstat's font so that 1lh is exactly the first
+   line's height and no sliver of the second shows. */
 .review__stats {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 auto;
+  container: review-stats / inline-size;
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--font-scale));
+  flex: 1 1 0;
   min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  column-gap: 10px;
+  height: 1lh;
+  overflow: hidden;
 }
 .review__tools {
   display: flex;
@@ -10640,18 +10652,19 @@ button.toggle--on .toggle__knob {
   color: var(--text-dim);
 }
 .review__sub {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: calc(11.5px * var(--font-scale));
   white-space: nowrap;
 }
 /* Determinate, unlike the session busy meter (D7's indeterminate one): this fraction is a real
-   count of files you ticked, so it can honestly show a position. Same violet progress ramp. */
+   count of files you ticked, so it can honestly show a position. Same violet progress ramp.
+   Line breaking takes its 48px basis, so it narrows before the count beside it has to wrap off. */
 .review__meter {
-  width: 120px;
-  flex: 0 1 120px;
-  min-width: 48px;
+  flex: 1 1 48px;
+  max-width: 120px;
   height: calc(4px * var(--font-scale));
   border-radius: var(--r-badge);
   background: rgba(var(--overlay), 0.12);
@@ -10677,22 +10690,29 @@ button.toggle--on .toggle__knob {
 .review__count {
   flex: 0 0 auto;
   color: var(--text-dim);
-  font-family: var(--font-mono);
   font-size: calc(11px * var(--font-scale));
+  white-space: nowrap;
 }
-@container (max-width: 900px) {
+/* Wrapping alone would drop the count before the meter that only draws it; these go first. */
+@container review-stats (max-width: 300px) {
   .review__countword {
     display: none;
   }
 }
-@container (max-width: 720px) {
+@container review-stats (max-width: 240px) {
   .review__meter {
+    display: none;
+  }
+}
+/* Below a legible floor the diffstat goes whole instead of as a sliver of "…". */
+@container review-stats (max-width: 72px) {
+  .review__stats > * {
     display: none;
   }
 }
 /* Below this the scope segment and stats have nowhere to go — the `…` menu carries scope
    instead (spec 2026-09-07-overlay-layers §2.4, F1). */
-@container (max-width: 480px) {
+@container review-head (max-width: 480px) {
   .review__scope,
   .review__stats {
     display: none;

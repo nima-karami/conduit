@@ -2101,7 +2101,14 @@ export function ReviewView({
           onSetSource={onSetSource}
           onOpenCompare={onOpenCompare}
         />
-        <div className="review__stats">
+        <div
+          className="review__stats"
+          title={
+            files.length === 0
+              ? 'No changes'
+              : `${plural(files.length, 'file')} · +${stat.insertions} −${stat.deletions} · ${progress.reviewed} / ${progress.total} reviewed`
+          }
+        >
           <span className="review__sub">
             {files.length === 0 ? (
               'No changes'
