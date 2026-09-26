@@ -3033,8 +3033,10 @@ body.resizing .panel__resize::after {
 /* ---------- review-tab commit picker (docs/specs/2026-06-29-review-commit-picker.md) ---------- */
 /* Reuses .ctxmenu/.git-branch-menu (shell, filter, rows, active/checked); only the commit-row
    layout (mono sha + ellipsis subject + dim date) and the status/error rows are added here. */
+/* Grows with the window: at a fixed 340px a wide face (Neon's uppercase) left a subject two
+   words. A width rather than max-content, so the menu doesn't jump as the filter narrows it. */
 .commit-picker {
-  width: 340px;
+  width: clamp(340px, 40vw, 560px);
   max-width: 90vw;
 }
 /* The scrollable commit list sits between the pinned filter and the status row; the menu's own
@@ -3065,8 +3067,13 @@ body.resizing .panel__resize::after {
 }
 /* Quick-pick rows (Last commit / Unpushed / Since branch point): a label where a commit row
    carries its sha, so the two read as one column. */
+/* It keeps its width over the hint beside it, and ellipsizes only on a menu too narrow for it. */
 .commit-picker__pinned {
-  flex: none;
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
   color: var(--text);
 }

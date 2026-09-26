@@ -242,7 +242,9 @@ export function CommitPickerMenu({
         checked: isPinnedRowChecked(p, source),
         render: () => (
           <>
-            <span className="commit-picker__pinned">{p.label}</span>
+            <span className="commit-picker__pinned" title={p.label}>
+              {p.label}
+            </span>
             <span className="commit-picker__subject" title={p.hint}>
               {p.hint}
             </span>
