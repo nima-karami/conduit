@@ -2968,6 +2968,7 @@ export function App() {
     const fileEntries: PaletteEntry[] = quickOpenFileRows(corpus, sections).map(({ hit, tag }) => ({
       id: `file:${hit.abs}`,
       title: hit.rel,
+      titleIsPath: true,
       group: 'Files',
       icon: <IconDoc size={14} />,
       ...(tag ? { badge: tag.label, badgeTone: tag.tone, badgeTitle: tag.title } : {}),

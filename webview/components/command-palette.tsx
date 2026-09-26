@@ -8,6 +8,8 @@ import { ModalLayer } from './modal-layer';
 export interface PaletteEntry {
   id: string;
   title: string;
+  /** The title is a relative path (a quick-open file): rendered so its file name is cut last. */
+  titleIsPath?: boolean;
   subtitle?: string;
   group: string;
   icon?: ReactNode;
@@ -52,24 +54,53 @@ export function rankEntries(source: PaletteEntry[], term: string): PaletteEntry[
     .map((r) => r.i);
 }
 
-/** Render a title with the fuzzy-matched characters emphasised. */
-function Highlighted({ text, query }: { text: string; query: string }) {
+/** Render `text[from, to)` (code points) with the fuzzy-matched characters emphasised. The
+ *  match is always taken over the WHOLE text, so a slice highlights what the full title matched. */
+function Highlighted({
+  text,
+  query,
+  from = 0,
+  to,
+}: {
+  text: string;
+  query: string;
+  from?: number;
+  to?: number;
+}) {
+  const chars = [...text].slice(from, to);
   const m = query ? fuzzyScore(query, text) : null;
-  if (!m?.positions.length) return <>{text}</>;
+  if (!m?.positions.length) return <>{chars.join('')}</>;
   const set = new Set(m.positions);
   return (
     <>
-      {[...text].map((ch, i) =>
-        set.has(i) ? (
-          // biome-ignore lint/suspicious/noArrayIndexKey: key is the character's position in a static, never-reordered string
+      {chars.map((ch, k) => {
+        const i = from + k;
+        // Keyed by the character's position in a static, never-reordered string.
+        return set.has(i) ? (
           <b key={i} className="pal__hl">
             {ch}
           </b>
         ) : (
-          // biome-ignore lint/suspicious/noArrayIndexKey: key is the character's position in a static, never-reordered string
           <span key={i}>{ch}</span>
-        ),
-      )}
+        );
+      })}
+    </>
+  );
+}
+
+/** A relative path as a title: the directory and the `/name` in separate boxes, so the
+ *  directory is what ellipsizes and the file name — the part rows differ by — is cut last. */
+function PathTitle({ text, query }: { text: string; query: string }) {
+  const cut = [...text].lastIndexOf('/');
+  if (cut <= 0) return <Highlighted text={text} query={query} />;
+  return (
+    <>
+      <span className="palette__dir">
+        <Highlighted text={text} query={query} to={cut} />
+      </span>
+      <span className="palette__name">
+        <Highlighted text={text} query={query} from={cut} />
+      </span>
     </>
   );
 }
@@ -179,9 +210,15 @@ export function CommandPalette({
                     {...middleClickProps(entry.runBackground ?? null)}
                   >
                     {entry.icon && <span className="palette__icon">{entry.icon}</span>}
-                    <span className="palette__title">
-                      <Highlighted text={entry.title} query={term} />
-                    </span>
+                    {entry.titleIsPath ? (
+                      <span className="palette__title palette__title--path" title={entry.title}>
+                        <PathTitle text={entry.title} query={term} />
+                      </span>
+                    ) : (
+                      <span className="palette__title">
+                        <Highlighted text={entry.title} query={term} />
+                      </span>
+                    )}
                     {entry.subtitle && <span className="palette__sub">{entry.subtitle}</span>}
                     {entry.current && <span className="palette__current">Current</span>}
                     {entry.badge && (

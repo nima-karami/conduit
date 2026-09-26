@@ -7387,6 +7387,25 @@ body.gh-resizing {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The directory gives its width up long before the file name does, and is dimmed so the name
+   reads first. */
+.palette__title--path {
+  display: flex;
+}
+.palette__dir,
+.palette__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette__dir {
+  flex: 0 1000 auto;
+  color: var(--text-dim);
+}
+.palette__name {
+  flex: 0 1 auto;
+}
 .palette__hl {
   color: var(--accent-2);
   font-weight: 700;
@@ -7432,6 +7451,11 @@ body.gh-resizing {
 /* The state word, so a row never reads its state from colour alone — the same words the
    rail uses (SESSION_STATE_WORD), mapped to a tone by src/palette-state.ts. */
 .palette__badge {
+  /* A quick-open folder tag can be any folder name; it must not out-width the file name. Its
+     full path is the badge's tooltip. */
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   background: rgba(var(--overlay), 0.07);
   color: var(--text-faint);
 }
