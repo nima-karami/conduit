@@ -107,6 +107,14 @@ discoverable by reading the tree.
   and on a tie DOM order decides — the editor is the later sibling, so Markdown's "View rendered"
   button was unclickable in shipped builds wherever the minimap overlapped it. Lint, types and
   ~4000 tests all passed over a dead button; only a real click found it.
+- **Monaco's DOM lives in our stylesheet's cascade — no bare generic class names, no global
+  resets inside it.** Conduit's `.right`, `.slider`, `.peek`, `.center` and `.stale` all matched
+  Monaco elements (the suggest list's label column was forced to 100% width; every editor
+  scrollbar thumb got `min-width:220px`), and `* {box-sizing:border-box}` collapsed the peek
+  tree's twistie onto the file name — Monaco's CSS assumes content-box. The reset is now an
+  `@scope` that stops at `.monaco-editor`; `test/unit/monaco-class-collision.test.ts` fails on a
+  rule whose subject is only Monaco class names. For any text-fit regression, run
+  `npm run text-fit` (the stress sweep + detector in `test/e2e/visual/`).
 - **A web tab's popups are ON, and only the host's gesture record keeps them safe.** The host
   sets `webPreferences.disablePopups=false` for http(s) guests in `will-attach-webview`, so
   `target=_blank`, `window.open()` and real modified clicks all reach `setWindowOpenHandler` —
