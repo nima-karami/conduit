@@ -10,6 +10,7 @@ import {
   restoreBoard,
   seedBoard,
   serializeBoard,
+  ticketDisplay,
   updateCard,
   wipFor,
 } from '../../src/board';
@@ -278,10 +279,20 @@ describe('restoreBoard ticket (mf-board §3.5)', () => {
     expect(t?.status).toBe('x'.repeat(32));
   });
 
-  it('a cap that lands on a space leaves no trailing whitespace', () => {
+  it('a cap that lands on a space still keeps the value at its cap', () => {
     const t = only({ key: `${'k'.repeat(39)} b`, status: `${'s'.repeat(31)}  tail` }).ticket;
-    expect(t?.key).toBe('k'.repeat(39));
-    expect(t?.status).toBe('s'.repeat(31));
+    expect(t?.key).toBe(`${'k'.repeat(39)} `);
+    expect(t?.status).toBe(`${'s'.repeat(31)} `);
+  });
+
+  it('a cut value reads as cut, and only at display', () => {
+    const t = only({ status: 'Needs review from the platform team before merge' }).ticket;
+    expect(t?.status).toBe('Needs review from the platform t');
+    expect(ticketDisplay('status', t?.status ?? '')).toBe('Needs review from the platform t…');
+    expect(ticketDisplay('key', `${'k'.repeat(39)} `)).toBe(`${'k'.repeat(39)}…`);
+    expect(ticketDisplay('key', '😀'.repeat(40))).toBe(`${'😀'.repeat(40)}…`);
+    expect(ticketDisplay('source', 'Jira')).toBe('Jira');
+    expect(ticketDisplay('status', 's'.repeat(31))).toBe('s'.repeat(31));
   });
 
   it('non-string and blank sub-fields dropped', () => {

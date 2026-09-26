@@ -1,4 +1,4 @@
-import type { BoardTicket } from '../../src/board';
+import { type BoardTicket, ticketDisplay } from '../../src/board';
 import { linkedRowLabel, linkedRowName, linkedRowState } from '../../src/board-linkage';
 import type { Session } from '../../src/types';
 
@@ -8,21 +8,24 @@ import type { Session } from '../../src/types';
 /** A card's read-only tracker row (spec 2026-09-23-mf-board §3.1); null without a ticket. */
 export function TicketHeader({ ticket }: { ticket: BoardTicket | undefined }) {
   if (!ticket) return null;
+  const key = ticket.key && ticketDisplay('key', ticket.key);
+  const source = ticket.source && ticketDisplay('source', ticket.source);
+  const status = ticket.status && ticketDisplay('status', ticket.status);
   return (
     <div className="bcard__ticket">
-      {ticket.key && (
-        <span className="bcard__tkey" dir="auto" title={ticket.key}>
-          {ticket.key}
+      {key && (
+        <span className="bcard__tkey" dir="auto" title={key}>
+          {key}
         </span>
       )}
-      {ticket.source && (
-        <span className="bcard__tsource" dir="auto" title={ticket.source}>
-          {ticket.source}
+      {source && (
+        <span className="bcard__tsource" dir="auto" title={source}>
+          {source}
         </span>
       )}
-      {ticket.status && (
-        <span className="bcard__tstatus" dir="auto" title={ticket.status}>
-          {ticket.status}
+      {status && (
+        <span className="bcard__tstatus" dir="auto" title={status}>
+          {status}
         </span>
       )}
     </div>

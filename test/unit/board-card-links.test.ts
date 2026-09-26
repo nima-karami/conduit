@@ -74,6 +74,18 @@ describe('TicketHeader', () => {
       expect(p.getAttribute('title')).toBe(p.textContent);
     }
   });
+
+  it('a part cut at its cap on load ends in an ellipsis', async () => {
+    const h = await render(
+      createElement(TicketHeader, {
+        ticket: { key: 'RMB-412', status: 'Needs review from the platform t' },
+      }),
+    );
+    const status = h.querySelector('.bcard__tstatus');
+    expect(status?.textContent).toBe('Needs review from the platform t…');
+    expect(status?.getAttribute('title')).toBe(status?.textContent);
+    expect(h.querySelector('.bcard__tkey')?.textContent).toBe('RMB-412');
+  });
 });
 
 describe('LinkedSessions', () => {
