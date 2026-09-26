@@ -1314,11 +1314,14 @@ body.resizing .panel__resize::after {
   color: var(--text);
   white-space: nowrap;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   user-select: none;
 }
-/* Running-session count beside the panel title. */
+/* Running-session count beside the panel title. The title yields to it: the label is the
+   same word every time, the count is the one thing here that changes. */
 .sidebar__live {
-  min-width: 0;
+  flex: 0 0 auto;
   font-family: var(--font-mono);
   font-size: calc(10.5px * var(--font-scale));
   color: var(--text-faint);
