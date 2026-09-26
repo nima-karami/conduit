@@ -14,6 +14,8 @@ const MENU_MIN_W = 184;
 
 export interface MenuItem {
   label: string;
+  /** Row identity when labels can repeat (two folders of the same name). Defaults to the label. */
+  key?: string;
   icon?: ReactNode;
   /** The activation is optional because programmatic callers invoke items bare. */
   onClick: (activation?: MenuActivation) => void;
@@ -142,7 +144,7 @@ export function ContextMenu({
     // element that is the bottom of the CONTENT, not of the visible edge (blockers Q4).
     <div className="ctxmenu__scroll">
       {menu.items.map((it, i) => (
-        <div key={it.label} title={it.title}>
+        <div key={it.key ?? it.label} title={it.title}>
           {it.separatorBefore && <div className="ctxmenu__sep" />}
           <button
             id={`${baseId}-item-${i}`}

@@ -307,6 +307,7 @@ export function BreadcrumbBar({
     const foldedMenu: MenuState = { x: rect.left, y: rect.bottom + 2, keyboard, items: [] };
     foldedMenu.items = folded.map((seg) => ({
       label: seg.name,
+      key: seg.dirPath,
       title: `Show siblings in ${seg.dirPath}`,
       onClick: () => openSiblings(seg.dirPath, rect, keyboard, foldedMenu),
     }));
