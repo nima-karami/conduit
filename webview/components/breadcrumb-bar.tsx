@@ -5,7 +5,15 @@
  */
 import * as monaco from 'monaco-editor';
 import { typescript as monacoTs } from 'monaco-editor';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Fragment,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { activeCwd } from '../../src/active-cwd';
 import type { NavTreeNode, SymbolChainItem } from '../../src/breadcrumbs';
 import { breadcrumbPathSegments, enclosingSymbolChain } from '../../src/breadcrumbs';
@@ -264,43 +272,47 @@ export function BreadcrumbBar({
     [filePath],
   );
 
+  const barRef = useRef<HTMLDivElement>(null);
+  const collapsed = useCollapsedAncestors(barRef, filePath, pathSegments.length - 1);
+
   if (pathSegments.length === 0) return null;
 
   return (
-    <div className="breadcrumb-bar" aria-label="Breadcrumb navigation">
+    <div ref={barRef} className="breadcrumb-bar" aria-label="Breadcrumb navigation">
+      {collapsed > 0 && (
+        <span
+          className="breadcrumb-bar__seg breadcrumb-bar__seg--more"
+          title={pathSegments
+            .slice(0, collapsed)
+            .map((s) => s.name)
+            .join('/')}
+        >
+          …
+        </span>
+      )}
       {pathSegments.map((seg, i) => {
-        // The last path segment is the file name — it gets priority for available
-        // width (shown in full when it fits, ellipsised only when the bar is too
-        // narrow); ancestor dir segments shrink first. See styles.css.
+        if (i < collapsed) return null;
+        // Ancestor dirs yield width first; the file name keeps it longest (styles.css).
         const isFile = i === pathSegments.length - 1;
         return (
-          <span
-            // biome-ignore lint/suspicious/noArrayIndexKey: segments are ordered path parts; stable by position
-            key={`path-${i}`}
-            className={`breadcrumb-bar__item breadcrumb-bar__item--path${isFile ? ' breadcrumb-bar__item--file' : ''}`}
-          >
-            {i > 0 && (
-              <span className="breadcrumb-bar__sep" aria-hidden>
-                <IconChevron size={11} />
-              </span>
-            )}
+          // biome-ignore lint/suspicious/noArrayIndexKey: segments are ordered path parts; stable by position
+          <Fragment key={`path-${i}`}>
+            {i > 0 && <Sep />}
             <button
               type="button"
-              className="breadcrumb-bar__seg"
+              className={`breadcrumb-bar__seg ${isFile ? 'breadcrumb-bar__seg--file' : 'breadcrumb-bar__seg--dir'}`}
               title={isFile ? seg.name : `Show siblings in ${seg.dirPath}`}
               onClick={(e) => handlePathSegmentClick(seg.dirPath, e)}
             >
               {seg.name}
             </button>
-          </span>
+          </Fragment>
         );
       })}
 
       {restricted && serverInfo && (
-        <span className="breadcrumb-bar__item">
-          <span className="breadcrumb-bar__sep" aria-hidden>
-            <IconChevron size={11} />
-          </span>
+        <>
+          <Sep />
           <button
             type="button"
             className="breadcrumb-bar__seg breadcrumb-bar__seg--restricted"
@@ -309,16 +321,14 @@ export function BreadcrumbBar({
           >
             Restricted Mode
           </button>
-        </span>
+        </>
       )}
 
       {(isTs || isServer) &&
         symbolChain.map((sym, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: symbol chain is ordered outermost→innermost; stable by position
-          <span key={`sym-${i}`} className="breadcrumb-bar__item">
-            <span className="breadcrumb-bar__sep" aria-hidden>
-              <IconChevron size={11} />
-            </span>
+          <Fragment key={`sym-${i}`}>
+            <Sep />
             <button
               type="button"
               className="breadcrumb-bar__seg breadcrumb-bar__seg--symbol"
@@ -333,7 +343,7 @@ export function BreadcrumbBar({
               </span>
               {sym.text}
             </button>
-          </span>
+          </Fragment>
         ))}
 
       {menu && (
@@ -346,6 +356,57 @@ export function BreadcrumbBar({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * How many leading ancestor dirs to fold into one "…" segment: one more each time the file
+ * name is losing text, or the bar has spilled off its start (every segment at its CSS floor,
+ * justify-content: flex-end), which would slice the outermost segment mid-glyph. Folding whole
+ * segments keeps what is shown legible and gives the width to the file name. The start spill
+ * is not scrollable, so scrollWidth cannot see it — the first child's position is measured.
+ * Re-derived from zero whenever the path or the bar width changes.
+ */
+function useCollapsedAncestors(
+  barRef: RefObject<HTMLDivElement | null>,
+  filePath: string,
+  dirCount: number,
+): number {
+  const [collapsed, setCollapsed] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: filePath is the trigger — a new path starts from zero
+  useLayoutEffect(() => setCollapsed(0), [filePath]);
+  const mounted = dirCount >= 0;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `mounted` is the trigger — the bar renders nothing for an empty path, so the ref only fills once there is one
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    let width = bar.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (bar.clientWidth === width) return;
+      width = bar.clientWidth;
+      setCollapsed(0);
+    });
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, [barRef, mounted]);
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    const first = bar?.firstElementChild;
+    if (!bar || !first || collapsed >= dirCount) return;
+    const file = bar.querySelector('.breadcrumb-bar__seg--file');
+    const fileCut = !!file && file.scrollWidth > file.clientWidth;
+    const inner =
+      bar.getBoundingClientRect().left + Number.parseFloat(getComputedStyle(bar).paddingLeft);
+    if (fileCut || first.getBoundingClientRect().left < inner - 0.5) setCollapsed(collapsed + 1);
+  });
+  return collapsed;
+}
+
+function Sep() {
+  return (
+    <span className="breadcrumb-bar__sep" aria-hidden>
+      <IconChevron size={11} />
+    </span>
   );
 }
 
