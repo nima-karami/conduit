@@ -8454,6 +8454,7 @@ button.toggle--on .toggle__knob {
   line-height: 1.5;
   margin-top: 5px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .bcard__notes--empty {
   color: var(--text-faint);
