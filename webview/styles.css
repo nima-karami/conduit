@@ -1753,8 +1753,13 @@ body.resizing .panel__resize::after {
   flex: 0 1 auto;
   text-align: left;
 }
+/* Path and branch share the line and both give way, each in proportion to its length; an
+   unshrinkable branch left the path 0px and ran on under the badge and the × button. */
 .ns-folder__branch {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: pre;
 }
 .ns-folder__home,
