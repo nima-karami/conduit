@@ -295,8 +295,9 @@ describe('fileService writeFile (auto-save precondition)', () => {
   });
 
   it('compares a BOM file as decoded utf8', async () => {
-    const { root, f } = setup('﻿x');
-    const res = await writeFile(f, '﻿y', [root], undefined, { expected: '﻿x' });
+    const BOM = '\uFEFF';
+    const { root, f } = setup(`${BOM}x`);
+    const res = await writeFile(f, `${BOM}y`, [root], undefined, { expected: `${BOM}x` });
     expect(res.ok).toBe(true);
   });
 

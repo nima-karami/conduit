@@ -7145,8 +7145,8 @@ body.gh-resizing {
   font-variant-numeric: tabular-nums;
 }
 .set__number:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 .set__number[aria-invalid="true"] {
   border-color: var(--danger);

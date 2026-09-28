@@ -13,7 +13,7 @@ import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
 import type { OpenDoc } from '../docs';
 import { isPanelDragTarget } from '../drag-guard';
 import { stampFileDrag } from '../file-drag-data';
-import { useFileSaveStatuses } from '../file-saves';
+import type { FileSaveStatus } from '../file-save-controller';
 import {
   IconBranch,
   IconCheck,
@@ -33,6 +33,8 @@ function useDirtySet(): ReadonlySet<string> {
   return useSyncExternalStore(subscribeDirty, getDirtySnapshot, getDirtySnapshot);
 }
 
+const NO_SAVE_STATUSES: ReadonlyMap<string, FileSaveStatus> = new Map();
+
 export function DocTabs({
   docs,
   activeId,
@@ -46,6 +48,7 @@ export function DocTabs({
   onPinDoc,
   moveGrip,
   flashTabId = null,
+  saveStatuses = NO_SAVE_STATUSES,
 }: {
   docs: OpenDoc[];
   activeId: string | null;
@@ -68,6 +71,9 @@ export function DocTabs({
   moveGrip?: { onDragStart: () => void; onDragEnd: () => void };
   /** The tab a background open just touched; cued briefly (spec 2026-09-22-middle-click-new-tab §3). */
   flashTabId?: string | null;
+  /** Per-path auto-save status, for the conflict marker. Passed in rather than read from the
+   *  save store here, which would pull Monaco into the tab strip. */
+  saveStatuses?: ReadonlyMap<string, FileSaveStatus>;
 }) {
   const dragIdRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -75,7 +81,7 @@ export function DocTabs({
   // (targetId=null). Without it the rightmost slot was unreachable (R5.6).
   const [overEnd, setOverEnd] = useState(false);
   const dirty = useDirtySet();
-  const saves = useFileSaveStatuses();
+  const saves = saveStatuses;
 
   // The scrollable strip (not the outer wrapper) — for horizontal-on-vertical-wheel and
   // scroll-active-tab-into-view.
