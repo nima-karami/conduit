@@ -335,13 +335,24 @@ async function runTheme(theme) {
     for (const tab of ['Files', 'Changes']) {
       await showTab(page, tab);
       await page.emulateMedia({ forcedColors: 'active' });
-      const colors = await page.$$eval('.treechev', (cs) =>
-        cs.map((c) => getComputedStyle(c).color),
+      // Computed `color` is always a system colour under forced colours, so it can't fail; the
+      // glyph's own stroke is what goes invisible if it stops following currentColor.
+      const paints = await page.$$eval('.treechev', (cs) =>
+        cs.map((c) => {
+          const path = c.querySelector('path');
+          return {
+            stroke: path ? getComputedStyle(path).stroke : 'none',
+            color: getComputedStyle(c).color,
+          };
+        }),
       );
       await page.emulateMedia({ forcedColors: 'none' });
       assert(
-        colors.length > 0 && colors.every((c) => c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent'),
-        t(`AC13 ${tab} chevrons visible in forced colours: ${colors.join(' ')}`),
+        paints.length > 0 &&
+          paints.every(
+            (p) => p.stroke !== 'none' && p.stroke !== 'rgba(0, 0, 0, 0)' && p.stroke === p.color,
+          ),
+        t(`AC13 ${tab} chevron strokes follow the forced colour: ${JSON.stringify(paints)}`),
       );
     }
 
