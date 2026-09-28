@@ -48,6 +48,7 @@ async function render() {
     root?.render(
       createElement(ChangesView, {
         model,
+        collapsedRepos: new Set<string>(),
         reviewTitle: 'Review',
         onReview: noop,
         onRefresh: noop,

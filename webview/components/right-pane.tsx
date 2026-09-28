@@ -62,7 +62,7 @@ export function RightPane({
   recordFsOp,
   onContextPath,
   ...changesProps
-}: Omit<ChangesViewProps, 'model'> & {
+}: Omit<ChangesViewProps, 'model' | 'collapsedRepos'> & {
   sessionId: string | undefined;
   sections: FolderSectionModel[];
   rowChanges: ReadonlyMap<string, ChangeKind>;
@@ -134,9 +134,11 @@ export function RightPane({
   const searchPaneRef = useRef<SearchPaneHandle | null>(null);
   // Bridge to FilesView's reveal-in-tree (also only mounted on the Files tab).
   const filesPaneRef = useRef<FilesViewHandle | null>(null);
-  // Per-folder tree + collapse cache, owned here so it outlives FilesView (which unmounts when
-  // the Changes tab is active) and a session switch.
+  // Per-folder tree + collapse cache and the Changes repo collapse set, owned here so they
+  // outlive FilesView / ChangesView (each unmounts while the other tab is active) and a session
+  // switch.
   const folderUiRef = useRef<FolderUiCache>({ treeCache: new Map(), collapsed: new Set() });
+  const changesCollapsedRef = useRef<Set<string>>(new Set());
 
   useImperativeHandle(
     paneRef,
@@ -208,7 +210,11 @@ export function RightPane({
             onReviewScope={onReviewScope}
           />
         ) : (
-          <ChangesView model={changesModel} {...changesProps} />
+          <ChangesView
+            model={changesModel}
+            collapsedRepos={changesCollapsedRef.current}
+            {...changesProps}
+          />
         )
       ) : sessionId === undefined ? (
         <EmptyState

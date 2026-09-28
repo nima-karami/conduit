@@ -42,6 +42,9 @@ const STR = {
 
 export interface ChangesViewProps {
   model: Exclude<ChangesModel, { kind: 'no-session' }>;
+  /** Collapsed repos, keyed by folderKey(root). Owned and mutated in place so it outlives this
+   *  view (RightPane holds it, like FolderUiCache). */
+  collapsedRepos: Set<string>;
   /** `Review changes (<combo>)`. */
   reviewTitle: string;
   onReview: () => void;
@@ -168,6 +171,7 @@ function HeaderSummary({ model }: { model: ChangesViewProps['model'] }) {
 
 export function ChangesView({
   model,
+  collapsedRepos,
   reviewTitle,
   onReview,
   onRefresh,
@@ -182,7 +186,7 @@ export function ChangesView({
 }: ChangesViewProps) {
   const baseId = useId();
   const [bulkMenu, setBulkMenu] = useState<MenuState | null>(null);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const [, setCollapseTick] = useState(0);
   const kebabRef = useRef<HTMLButtonElement | null>(null);
   const wasOpenRef = useRef(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -259,14 +263,12 @@ export function ChangesView({
     setBulkMenu({ ...placement, items });
   };
 
-  const toggle = (root: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      const k = folderKey(root);
-      if (next.has(k)) next.delete(k);
-      else next.add(k);
-      return next;
-    });
+  const toggle = (root: string) => {
+    const k = folderKey(root);
+    if (collapsedRepos.has(k)) collapsedRepos.delete(k);
+    else collapsedRepos.add(k);
+    setCollapseTick((t) => t + 1);
+  };
 
   const pickerRows = model.repos.map((r) => {
     const sub = repoSub(r);
@@ -368,7 +370,7 @@ export function ChangesView({
         {model.heads.flatMap((head, i) => {
           const root = head.repo.root;
           const listId = `${baseId}-repo-${i}`;
-          const isCollapsed = model.view === 'all' && collapsed.has(folderKey(root));
+          const isCollapsed = model.view === 'all' && collapsedRepos.has(folderKey(root));
           const rows = rowsOf(head);
           const listShown = !isCollapsed && rows.length > 0;
           return [
