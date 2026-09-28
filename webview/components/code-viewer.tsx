@@ -23,6 +23,7 @@ import {
 import { sendMention } from '../mention-bus';
 import { monacoKeybindingFor } from '../monaco-keybinding';
 import { ensureTokenizer } from '../monaco-languages';
+import { MONACO_KEY_TABLES, registerCodeViewerEditor } from '../monaco-nav-keybindings';
 import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
@@ -32,6 +33,7 @@ import {
   registerNavEditor,
   revealInEditor,
 } from '../nav-editors';
+import { isNavOverridden } from '../nav-keybindings';
 import { fileUri, publishCursor, subscribeReveal, takeReveal } from '../project-index';
 import { relativeTime } from '../relative-time';
 import { setNoteTarget } from '../review-note-target';
@@ -62,6 +64,12 @@ const MENU_ICONS: Record<EditorMenuIconKey, ReactJSX.Element> = {
   compare: <IconCompare size={14} />,
 };
 
+/** The combo currently bound to an app shortcut action, '' when the action is unknown. */
+const comboFor = (actionId: string, overrides: Record<string, string>): string => {
+  const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
+  return action ? effectiveCombo(action, overrides) : '';
+};
+
 /**
  * VS Code accelerators for the navigation commands, keyed by the built-in command id.
  *
@@ -70,18 +78,6 @@ const MENU_ICONS: Record<EditorMenuIconKey, ReactJSX.Element> = {
  * them to our own actions (which delegate to the same command) keeps the keyboard path and
  * the menu path identical, and puts the commands in the command palette.
  */
-/** monaco.KeyCode is a reverse-mapped numeric enum, so Object.entries yields both name->number
- *  and number->name; only the first direction is a key table. */
-const MONACO_KEY_CODES: Record<string, number> = Object.fromEntries(
-  Object.entries(monaco.KeyCode).filter((e): e is [string, number] => typeof e[1] === 'number'),
-);
-
-/** The combo currently bound to an app shortcut action, '' when the action is unknown. */
-const comboFor = (actionId: string, overrides: Record<string, string>): string => {
-  const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
-  return action ? effectiveCombo(action, overrides) : '';
-};
-
 const NAV_KEYBINDINGS: Record<string, number[]> = {
   'editor.action.revealDefinition': [monaco.KeyCode.F12],
   'editor.action.goToImplementation': [monaco.KeyMod.CtrlCmd | monaco.KeyCode.F12],
@@ -314,14 +310,6 @@ export function CodeViewer({
     const navigate = (actionId: string) => {
       void runNavCommand(editor, actionId);
     };
-    for (const n of NAVIGATION) {
-      editor.addAction({
-        id: `conduit.${n.id}`,
-        label: n.label,
-        keybindings: NAV_KEYBINDINGS[n.actionId] ?? [],
-        run: () => navigate(n.actionId),
-      });
-    }
     // Toggles the persisted setting; the live-apply effect below propagates the new
     // value to every open editor via updateOptions.
     editor.addAction({
@@ -496,6 +484,7 @@ export function CodeViewer({
     });
 
     const unregisterNav = registerNavEditor(doc.path, editor);
+    const unregisterCodeViewer = registerCodeViewerEditor(editor);
     // R3 (docs/specs/2026-09-22-editor-nav-history.md §2.2): judged per cursor event against the
     // previous one. Seeded after the reveal/restore above so that landing is never a jump.
     const seedPos = editor.getPosition();
@@ -533,6 +522,7 @@ export function CodeViewer({
       unregisterSave();
       unregisterSelection();
       unregisterNav();
+      unregisterCodeViewer();
       jumpSub.dispose();
       contentSub.dispose();
       changeSub.dispose();
@@ -566,18 +556,26 @@ export function CodeViewer({
   // dispatcher still routes the action through the change-nav registry.
   useEffect(() => {
     if (!editor) return;
-    const tables = {
-      CtrlCmd: monaco.KeyMod.CtrlCmd,
-      Shift: monaco.KeyMod.Shift,
-      Alt: monaco.KeyMod.Alt,
-      WinCtrl: monaco.KeyMod.WinCtrl,
-      keyCodes: MONACO_KEY_CODES,
-    };
     const keysFor = (actionId: string): number[] => {
-      const binding = monacoKeybindingFor(comboFor(actionId, settings.shortcuts), tables);
+      const binding = monacoKeybindingFor(
+        comboFor(actionId, settings.shortcuts),
+        MONACO_KEY_TABLES,
+      );
       return binding === null ? [] : [binding];
     };
     const actions = [
+      // An overridden row's chord belongs to the global dispatch rule (monaco-nav-keybindings.ts),
+      // so its action keeps no keybinding: one live rule per chord.
+      ...NAVIGATION.map((n) =>
+        editor.addAction({
+          id: `conduit.${n.id}`,
+          label: n.label,
+          keybindings: isNavOverridden(n.actionId, settings.shortcuts)
+            ? []
+            : (NAV_KEYBINDINGS[n.actionId] ?? []),
+          run: () => void runNavCommand(editor, n.actionId),
+        }),
+      ),
       editor.addAction({
         id: 'agentdeck.nextChange',
         label: 'Go to Next Change',

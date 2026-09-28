@@ -181,6 +181,7 @@ import { restartableLanguages, useLspLanguages, useLspStatuses, useLspTrust } fr
 import { initLspClient, type LspDocInput, reconcileLspDocs, requestTrust } from './lsp-sync';
 import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
+import { useMonacoNavKeybindings } from './monaco-nav-keybindings';
 import { registerConduitEditorOpener } from './monaco-opener';
 import {
   lastCursor,
@@ -391,6 +392,7 @@ export function App() {
   // onClose wrapper so Cancel and Esc both settle the promise the caller is awaiting.
   const hunkConfirmRef = useRef<((ok: boolean) => void) | null>(null);
   const { hydrate, settings, update } = useSettings();
+  useMonacoNavKeybindings(settings.shortcuts);
 
   // ---- App-level undo/redo for file-explorer operations ----
   const [fsUndoState, setFsUndoState] = useState<FsUndoState>({ undo: [], redo: [] });
