@@ -4800,6 +4800,12 @@ body.gh-resizing {
    Not `.right`: this sheet shares a document with Monaco, whose suggest rows have a `.right`
    column of their own, and the bare name stretched it to full width over the labels. */
 .rightpane {
+  --tree-row-h: calc(22px * var(--font-scale));
+  --tree-pad-y: 2px;
+  --tree-pad: 10px;
+  --tree-indent: 14px;
+  --tree-gap: 6px;
+  --tree-chev: 12px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -5341,16 +5347,17 @@ body.gh-resizing {
 .rightpane__scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 2px 8px 12px;
+  padding: 2px 6px 12px;
   min-height: 0;
 }
 .change {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 5px 8px;
-  border-radius: var(--r-sm);
+  gap: var(--tree-gap);
+  min-height: var(--tree-row-h);
+  padding: var(--tree-pad-y) 8px var(--tree-pad-y) var(--tree-pad);
+  border-radius: var(--r-card);
   cursor: pointer;
 }
 /* 8c: an OUTLINED letter box, not a tinted fill — the four status colours have to read
@@ -5402,7 +5409,7 @@ body.gh-resizing {
   align-items: baseline;
   height: 1lh;
   font-family: var(--font-mono);
-  font-size: calc(11.5px * var(--font-scale));
+  font-size: calc(12px * var(--font-scale));
   white-space: nowrap;
   overflow: hidden;
 }
@@ -5448,7 +5455,7 @@ body.gh-resizing {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 8px 8px 4px;
+  padding: 8px 8px 4px calc(var(--tree-pad) + var(--tree-chev) + var(--tree-gap));
   font-size: calc(10px * var(--font-scale));
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -5465,42 +5472,38 @@ body.gh-resizing {
   opacity: 1;
 }
 
-/* ---------- repo head (Changes tab, one per repo) ---------- */
-/* Same rhythm as the .files__bar family so Files and Changes heads match; the sub-path wraps
-   onto its own line under the name. */
-.repo-head {
-  container: repo-head / inline-size;
+/* ---------- tree head (Files folder bar + Changes repo head) ----------
+   The chevron button leads so its glyph shares a column with depth-0 row chevrons; see
+   docs/specs/2026-09-28-tree-chevrons.md §2 row 6. */
+.treehead {
+  --treehead-lead: 24px;
+  --treehead-gap: 4px;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 2px 6px;
+  gap: 2px var(--treehead-gap);
   min-height: 32px;
-  margin: 10px 0 2px;
-  padding: 3px 6px 3px 4px;
+  padding: 3px 4px;
   border-radius: var(--r-sm);
   background: rgba(var(--overlay), 0.035);
   font-family: var(--font-ui);
   font-size: calc(12px * var(--font-scale));
 }
+.treehead > .iconbtn {
+  flex: none;
+}
+
+/* ---------- repo head (Changes tab, one per repo) ---------- */
+/* The sub-path wraps onto its own line under the name. */
+.repo-head {
+  container: repo-head / inline-size;
+  flex-wrap: wrap;
+  margin: 10px 0 2px;
+}
 .repo-head:first-child {
   margin-top: 2px;
 }
-.repo-head--home {
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
-}
-.repo-head__chev {
-  flex: 0 0 auto;
-  color: var(--text-dim);
-}
-.repo-head__chev--collapsed svg {
-  transform: rotate(-90deg);
-}
 .repo-head__glyph {
   flex: 0 0 auto;
-  margin-inline-start: 4px;
-  color: var(--text-dim);
-}
-.repo-head--home .repo-head__glyph {
   color: var(--accent);
 }
 /* A zero basis keeps a long name from wrapping the chip onto the sub-path line: the name shrinks
@@ -5561,7 +5564,7 @@ body.gh-resizing {
   background: rgba(var(--overlay), 0.06);
 }
 /* On a narrow head the repo name wins over its tag, as on the Files bars. The group's aria-label
-   already names the tag, and the home head keeps its accent tint. */
+   already names the tag. */
 @container repo-head (max-width: 200px) {
   .repo-head > .repo-head__tag {
     display: none;
@@ -5579,7 +5582,8 @@ body.gh-resizing {
 .repo-head__sub {
   flex: 1 0 100%;
   min-width: 0;
-  padding-inline-start: 50px;
+  /* Under the name: past the chevron column and the 13px folder glyph. */
+  padding-inline-start: calc(var(--treehead-lead) + 2 * var(--treehead-gap) + 13px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5587,11 +5591,8 @@ body.gh-resizing {
   font-size: calc(10px * var(--font-scale));
   color: var(--text-faint);
 }
-.repo-head--active .repo-head__sub {
-  padding-inline-start: 27px;
-}
 .repo-head__empty {
-  padding: 5px 8px 3px 32px;
+  padding: 5px 8px 3px calc(var(--tree-pad) + var(--tree-chev) + var(--tree-gap));
   font-size: calc(11.5px * var(--font-scale));
   color: var(--text-faint);
 }
@@ -5645,7 +5646,7 @@ body.gh-resizing {
 }
 
 .rightpane__scroll--files {
-  padding: 6px 6px 12px;
+  padding-top: 6px;
 }
 /* ---------- editor-area viewers ----------
    .docpanel is the doc surface's own column: the breadcrumb band on top, the viewer below.
@@ -6591,27 +6592,38 @@ body.gh-resizing {
   }
 }
 .filerow {
+  --tree-chev-color: var(--text-faint);
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
+  gap: var(--tree-gap);
+  min-height: var(--tree-row-h);
+  padding: var(--tree-pad-y) 8px var(--tree-pad-y)
+    calc(var(--tree-pad) + var(--depth, 0) * var(--tree-indent));
   cursor: pointer;
   /* Contract: --r-card is "session + file rows", so the tree row takes the card step
      rather than the control step the legacy --r-sm alias resolves to. */
   border-radius: var(--r-card);
   font-size: calc(12.5px * var(--font-scale));
 }
-.filerow__chev {
-  color: var(--text-faint);
+.treechev {
+  flex: none;
+  color: var(--tree-chev-color, currentColor);
   transition: transform 0.1s;
-  flex: 0 0 auto;
 }
-.filerow__chev--open {
+.treechev--open {
   transform: rotate(90deg);
 }
-.filerow__chev-spacer {
-  width: 12px;
-  flex: 0 0 auto;
+.treechev-spacer {
+  flex: none;
+  width: var(--tree-chev);
+}
+.treechev-spacer--head {
+  width: var(--treehead-lead);
+}
+@media (prefers-reduced-motion: reduce) {
+  .treechev {
+    transition: none;
+  }
 }
 .filerow__icon {
   color: var(--text-dim);
@@ -6703,34 +6715,9 @@ body.gh-resizing {
   outline-offset: -1px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-/* The section chevron (D3): pointing right while the folder is collapsed. */
-.files__bar-chev {
-  transform: rotate(-90deg);
-  transition: transform 0.12s;
-}
-.files__bar-chev--open {
-  transform: rotate(0deg);
-}
-@media (prefers-reduced-motion: reduce) {
-  .files__bar-chev {
-    transition: none;
-  }
-}
-/* One bar per session folder (mf-files spec §2.3), on the .repo-head fill so Files and
-   Changes heads match; bare iconbtn--sm controls flush right. */
+/* One bar per session folder (mf-files spec §2.3); its chrome is .treehead's. */
 .files__bar {
   container: files-bar / inline-size;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 2px;
-  min-height: 32px;
-  padding: 3px 4px 3px 8px;
-  border-radius: var(--r-sm);
-  background: rgba(var(--overlay), 0.035);
-}
-.files__bar > .iconbtn {
-  flex: none;
 }
 .files-section + .files-section {
   margin-top: 8px;
@@ -6747,23 +6734,6 @@ body.gh-resizing {
   color: var(--text-faint);
   font-weight: 400;
 }
-.files__tag {
-  flex: none;
-  font-family: var(--font-ui);
-  font-size: calc(10.5px * var(--font-scale));
-  font-weight: 500;
-  border-radius: 8px;
-  padding: 1px 6px;
-  white-space: nowrap;
-}
-.files__tag--home {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-.files__tag--attached {
-  color: var(--text-dim);
-  background: var(--raise);
-}
 /* The folder name is what tells two bars apart, so on a narrow bar it wins over the controls:
    as in VS Code's section headers, Refresh / New file / New folder only show while the bar is
    hovered or holds focus (the collapse chevron, always shown and first in tab order, is how the
@@ -6775,7 +6745,7 @@ body.gh-resizing {
   }
 }
 @container files-bar (max-width: 200px) {
-  .files__tag {
+  .files__root > .repo-head__tag {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -6785,7 +6755,6 @@ body.gh-resizing {
   }
 }
 @media (forced-colors: active) {
-  .files__tag,
   .files-missing__tag {
     border: 1px solid CanvasText;
   }
@@ -6862,7 +6831,7 @@ body.gh-resizing {
   color: var(--on-accent);
 }
 /* Distinct root-directory indicator in the Files toolbar (E1).
-   Sits on the far left of .files__bar; icon buttons remain flush-right.
+   Sits after the collapse chevron and flexes, so the icon buttons stay flush-right.
    8b puts the accent on the folder glyph only and leaves the name at full --text: an
    accent-coloured word here competed with the open-file row for the same signal. */
 .files__root {
@@ -13647,7 +13616,6 @@ button.toggle--on .toggle__knob {
     .viewer__notice-action,
     .cmp-combo__input,
     .git-branch-menu__filter,
-    .repo-head__chev,
     .repo-head__picker,
     .branch-chip,
     .ifaces__filter,
@@ -13695,7 +13663,6 @@ button.toggle--on .toggle__knob {
   .viewer__notice-action,
   .cmp-combo__input,
   .git-branch-menu__filter,
-  .repo-head__chev,
   .repo-head__picker,
   .branch-chip,
   .ifaces__filter,

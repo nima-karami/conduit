@@ -64,7 +64,7 @@ runScenario('tabbar-overflow', async ({ page, log }) => {
   const mountedFileNames = () =>
     page.evaluate(() =>
       Array.from(document.querySelectorAll('.filerow'))
-        .filter((r) => !r.querySelector('.filerow__chev'))
+        .filter((r) => !r.querySelector('.treechev'))
         .map((r) => r.querySelector('.filerow__name')?.textContent ?? '')
         .filter((n) => /\.(tsx?|css|mjs|json|md)$/.test(n)),
     );

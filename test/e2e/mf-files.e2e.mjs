@@ -84,7 +84,7 @@ const bars = (page) =>
   page.$$eval('.files-section > .files__bar', (els) =>
     els.map((b) => [
       b.querySelector('.files__root-name')?.textContent ?? '',
-      b.querySelector('.files__tag')?.textContent ?? '',
+      b.querySelector('.repo-head__tag')?.textContent ?? '',
     ]),
   );
 
@@ -94,7 +94,7 @@ async function waitBars(page, want, what) {
       (w) => {
         const got = [...document.querySelectorAll('.files-section > .files__bar')].map((b) => [
           b.querySelector('.files__root-name')?.textContent ?? '',
-          b.querySelector('.files__tag')?.textContent ?? '',
+          b.querySelector('.repo-head__tag')?.textContent ?? '',
         ]);
         return JSON.stringify(got) === JSON.stringify(w);
       },

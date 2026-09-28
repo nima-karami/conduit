@@ -4,6 +4,7 @@ import type { RepoTag } from '../../src/repo-scan';
 import type { ChangesViewMode } from '../../src/settings';
 import { IconChevronDown, IconFolder, IconPin } from '../icons';
 import { type RepoMenuRow, RepoPickerMenu, RepoTagPill, repoTagLabel } from './repo-picker-menu';
+import { TreeChevron, TreeChevronSpacer } from './tree-chevron';
 
 const STR = {
   collapse: (label: string) => `Collapse ${label}`,
@@ -64,7 +65,7 @@ export function RepoHead({
 
   return (
     <div
-      className={`repo-head repo-head--${tag} repo-head--${view}`}
+      className={`treehead repo-head repo-head--${tag} repo-head--${view}`}
       role="group"
       aria-label={`${head.label}, ${repoTagLabel(tag)}`}
       title={head.repo.root}
@@ -76,18 +77,20 @@ export function RepoHead({
         onContextMenu(e);
       }}
     >
-      {view === 'all' && (
+      {view === 'all' ? (
         <button
           type="button"
-          className={`iconbtn iconbtn--sm repo-head__chev${collapsed ? ' repo-head__chev--collapsed' : ''}`}
+          className="iconbtn iconbtn--sm repo-head__chev"
           aria-expanded={!collapsed}
           aria-controls={listId}
           aria-label={collapsed ? STR.expand(head.label) : STR.collapse(head.label)}
           onClick={onToggle}
           onKeyDown={onControlKey}
         >
-          <IconChevronDown size={12} />
+          <TreeChevron open={!collapsed} />
         </button>
+      ) : (
+        <TreeChevronSpacer size="head" />
       )}
       <IconFolder size={13} className="repo-head__glyph" />
       {view === 'active' && picker ? (

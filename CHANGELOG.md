@@ -6,6 +6,12 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **Folder expand/collapse arrows sit on the left in both Files and Changes.** The arrow on each
+  Files folder bar moved from the right-hand buttons to the left, where the Changes tab's already
+  was. Both tabs now use the same arrow, row height and spacing, and a repo you collapse on
+  Changes stays collapsed when you switch tabs and come back.
+
 ## [0.43.0] — 2026-09-26
 
 ### Fixed

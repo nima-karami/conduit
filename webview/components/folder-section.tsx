@@ -52,7 +52,7 @@ import {
   toggle as toggleSelection,
 } from '../file-tree-selection';
 import type { FsOp } from '../fs-undo';
-import { IconChevron, IconFolder, IconPlus } from '../icons';
+import { IconFolder, IconPlus } from '../icons';
 import { middleClickProps } from '../middle-click';
 import { useSettings } from '../settings';
 import { TERMINAL_PATH_MIME } from '../terminal-drop';
@@ -61,6 +61,7 @@ import { computeSectionWindow } from '../tree-window';
 import type { MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
 import { FolderBar } from './folder-bar';
+import { TreeChevron, TreeChevronSpacer } from './tree-chevron';
 
 // Rows mounted above/below the viewport to absorb fling without mounting the whole tree.
 const OVERSCAN_ROWS = 8;
@@ -1009,7 +1010,7 @@ export function FolderSection({
                     aria-level={depth + 1}
                     aria-expanded={node.kind === 'dir' ? node.expanded : undefined}
                     tabIndex={node.path === rovingPath ? 0 : -1}
-                    style={{ paddingLeft: 10 + depth * 14 }}
+                    style={{ ['--depth' as string]: depth }}
                     draggable={!pane.committing}
                     onDragStart={(e) => onDragStart(e, node)}
                     onDragEnd={pane.endDrag}
@@ -1032,12 +1033,9 @@ export function FolderSection({
                     onContextMenu={(e) => openMenu(e, { path: node.path, kind: node.kind })}
                   >
                     {node.kind === 'dir' ? (
-                      <IconChevron
-                        size={12}
-                        className={`filerow__chev ${node.expanded ? 'filerow__chev--open' : ''}`}
-                      />
+                      <TreeChevron open={node.expanded} />
                     ) : (
-                      <span className="filerow__chev-spacer" />
+                      <TreeChevronSpacer />
                     )}
                     {node.kind === 'dir' ? (
                       <IconFolder size={13} className="filerow__icon" />
@@ -1108,10 +1106,10 @@ function DraftRow({
   return (
     <div
       className={`filerow filerow--draft ${error ? 'filerow--error' : ''}`}
-      style={{ paddingLeft: 10 + depth * 14 }}
+      style={{ ['--depth' as string]: depth }}
       title={error ?? undefined}
     >
-      <span className="filerow__chev-spacer" />
+      <TreeChevronSpacer />
       {kind === 'dir' && <IconFolder size={13} className="filerow__icon" />}
       <input
         ref={ref}

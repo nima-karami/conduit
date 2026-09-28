@@ -352,7 +352,7 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
     );
     return (
       Array.from(document.querySelectorAll('.filerow'))
-        .filter((r) => !r.querySelector('.filerow__chev'))
+        .filter((r) => !r.querySelector('.treechev'))
         .map((r) => r.querySelector('.filerow__name')?.textContent ?? '')
         .find((n) => n && !open.has(n)) ?? null
     );
