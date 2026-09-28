@@ -6,6 +6,22 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Auto save.** Settings → Appearance → Editor & code → Auto save: Off (the default), After delay
+  (with a delay from 100 to 60000 ms, 1000 by default), On focus change, or On window change, as in
+  VS Code. With auto save on, closing an edited tab saves it instead of asking. Files over 2 MB
+  that open partially are never saved automatically.
+- **Auto save never overwrites a file that changed on disk.** If an agent or another tool changes
+  the file under your unsaved edits, the editor pauses auto save for that file and shows a banner:
+  Overwrite keeps your version, Reload from disk takes theirs (for a deleted file: Overwrite or
+  Close). The tab shows a warning mark while it waits, even in the background.
+
+### Fixed
+- **Save All and closing with Save now work for tabs in the background.** An edited tab you had
+  switched away from was skipped by Save All, and Save in its close prompt discarded the edits.
+- **Saving a file while a save is still running no longer does nothing.** Choosing Save in the
+  close prompt during a save left the tab open without a word; it now waits and closes.
+
 ## [0.43.0] — 2026-09-26
 
 ### Fixed
