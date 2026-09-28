@@ -43,9 +43,11 @@ export function ShortcutsTab({
   // monaco itself); in the app bundle it resolves at once.
   useEffect(() => {
     let live = true;
-    void import('../monaco-nav-keybindings').then((m) => {
-      if (live) setMonacoDefaults(m.readMonacoDefaultBindings());
-    });
+    import('../monaco-nav-keybindings')
+      .then((m) => {
+        if (live) setMonacoDefaults(m.readMonacoDefaultBindings());
+      })
+      .catch((err) => console.error('Shortcuts: reading Monaco default keybindings failed', err));
     return () => {
       live = false;
     };

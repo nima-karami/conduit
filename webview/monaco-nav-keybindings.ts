@@ -6,11 +6,13 @@
 
 import * as monaco from 'monaco-editor';
 import { EditorExtensionsRegistry } from 'monaco-editor/esm/vs/editor/browser/editorExtensions.js';
+import { MenuRegistry } from 'monaco-editor/esm/vs/platform/actions/common/actions.js';
 import { KeybindingsRegistry } from 'monaco-editor/esm/vs/platform/keybinding/common/keybindingsRegistry.js';
 import { useEffect } from 'react';
 import { comboFromChord, type MonacoKeyTables, monacoKeybindingFor } from './monaco-keybinding';
 import {
   buildNavRules,
+  humanizeCommandId,
   type MonacoDefaultBinding,
   navDispatchCommandId,
   navShortcutActions,
@@ -71,6 +73,13 @@ export function useMonacoNavKeybindings(shortcuts: Readonly<Record<string, strin
   }, [shortcuts]);
 }
 
+/** A registered Action2/palette title, else the id made readable — never the raw id. */
+function commandTitle(id: string): string {
+  const title = MenuRegistry.getCommand(id)?.title;
+  const text = typeof title === 'string' ? title : title?.value;
+  return text || humanizeCommandId(id);
+}
+
 /** Monaco's single-chord editor-focus default bindings as combos, for the conflict notes. */
 export function readMonacoDefaultBindings(): MonacoDefaultBinding[] {
   const keyCodeNames: Record<number, string> = Object.fromEntries(
@@ -83,7 +92,8 @@ export function readMonacoDefaultBindings(): MonacoDefaultBinding[] {
     const scope = when?.serialize() ?? '';
     if (!scope.includes('editorTextFocus') && !scope.includes('editorFocus')) continue;
     const combo = comboFromChord(keybinding.chords[0], keyCodeNames, isMac);
-    if (combo) bindings.push({ command, label: labels.get(command) ?? command, combo });
+    if (combo)
+      bindings.push({ command, label: labels.get(command) ?? commandTitle(command), combo });
   }
   return bindings;
 }

@@ -118,3 +118,10 @@ declare module 'monaco-editor/esm/vs/platform/keybinding/common/keybindingsRegis
 declare module 'monaco-editor/esm/vs/editor/browser/editorExtensions.js' {
   export const EditorExtensionsRegistry: { getEditorActions(): { id: string; label: string }[] };
 }
+
+/** Command titles registered through Action2 / MenuRegistry.addCommand, for conflict labels. */
+declare module 'monaco-editor/esm/vs/platform/actions/common/actions.js' {
+  export const MenuRegistry: {
+    getCommand(id: string): { title: string | { value: string } } | undefined;
+  };
+}
