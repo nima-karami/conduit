@@ -32,3 +32,18 @@ export const fileSaves: FileSaves = createFileSaves({
 export function useFileSaveStatus(path: string): FileSaveStatus | undefined {
   return useSyncExternalStore(fileSaves.subscribe, () => fileSaves.getStatus(path));
 }
+
+export function useFileSaveStatuses(): ReadonlyMap<string, FileSaveStatus> {
+  return useSyncExternalStore(fileSaves.subscribe, fileSaves.getStatusSnapshot);
+}
+
+let docCloser: ((path: string) => void) | null = null;
+
+/** App registers how a path's file tab is closed (the deleted-on-disk banner's Close). */
+export function setDocCloser(fn: ((path: string) => void) | null): void {
+  docCloser = fn;
+}
+
+export function closeDocForPath(path: string): void {
+  docCloser?.(path);
+}

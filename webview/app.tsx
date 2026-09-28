@@ -74,6 +74,7 @@ import { canRelaunch, relaunchableSessionIds, staleSessionIds } from '../src/sta
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
 import { formatDuration } from '../src/timed-messages';
 import type { AgentDefinition, Session } from '../src/types';
+import { AUTO_SAVE_COPY } from './auto-save-copy';
 import {
   fsDndCopy,
   fsDndMove,
@@ -136,7 +137,7 @@ import {
   navEntryFor,
 } from './editor-nav';
 import { shouldReplaceContent } from './file-freshness';
-import { fileSaves } from './file-saves';
+import { fileSaves, setDocCloser } from './file-saves';
 import { buildRowChangeMap } from './file-tree';
 import {
   affectedDirs,
@@ -563,6 +564,14 @@ export function App() {
     () => fileSaves.configure({ mode: settings.autoSave, delayMs: settings.autoSaveDelay }),
     [settings.autoSave, settings.autoSaveDelay],
   );
+
+  useEffect(() => {
+    const onBlur = () => {
+      void fileSaves.flushAll('windowBlur');
+    };
+    window.addEventListener('blur', onBlur);
+    return () => window.removeEventListener('blur', onBlur);
+  }, []);
 
   // Best-effort save-all on browser navigation/refresh (beforeunload). This fires
   // reliably in the browser preview; in the Electron host it rarely fires on OS-level
@@ -1675,29 +1684,51 @@ export function App() {
         return;
       }
       const fileName = baseName(doc.path);
-      setConfirm({
-        title: `Unsaved changes in ${fileName}`,
-        message: `"${fileName}" has unsaved changes. Save before closing, or discard them?`,
-        confirmLabel: 'Save',
-        secondaryLabel: 'Discard',
-        onSecondary: () => forceCloseDoc(id),
-        onConfirm: () => {
-          const entry = getSaveEntry(doc.path);
-          if (!entry) {
-            // No registry entry (shouldn't happen for a dirty doc, but be safe).
-            forceCloseDoc(id);
-            return;
-          }
-          void entry.save().then((ok) => {
-            if (ok) forceCloseDoc(id);
-            // On failure: toast already shown by CodeViewer — do not close.
-          });
-        },
+      const prompt = (reason: string | null) => {
+        const message = `"${fileName}" has unsaved changes. Save before closing, or discard them?`;
+        setConfirm({
+          title: `Unsaved changes in ${fileName}`,
+          message: reason === null ? message : `${AUTO_SAVE_COPY.closeFallback(reason)} ${message}`,
+          confirmLabel: 'Save',
+          secondaryLabel: 'Discard',
+          onSecondary: () => forceCloseDoc(id),
+          onConfirm: () => {
+            const entry = getSaveEntry(doc.path);
+            if (!entry) {
+              // No registry entry (shouldn't happen for a dirty doc, but be safe).
+              forceCloseDoc(id);
+              return;
+            }
+            void entry.save().then((ok) => {
+              if (ok) forceCloseDoc(id);
+              // On failure: the save store already surfaced it — do not close.
+            });
+          },
+        });
+      };
+      // D2: with auto-save on, a dirty close saves (with the on-disk precondition) and only
+      // falls back to the prompt when that save fails or conflicts.
+      const entry = getSaveEntry(doc.path);
+      if (settings.autoSave === 'off' || !entry) {
+        prompt(null);
+        return;
+      }
+      void entry.save({ kind: 'auto' }).then((ok) => {
+        if (ok) forceCloseDoc(id);
+        else prompt(fileSaves.getStatus(doc.path)?.error ?? '');
       });
     },
-    [docState.docs, dirtySet, forceCloseDoc],
+    [docState.docs, dirtySet, forceCloseDoc, settings.autoSave],
   );
   closeDocRef.current = closeDoc;
+
+  useEffect(() => {
+    setDocCloser((p) => {
+      const d = docStateRef.current.docs.find((x) => x.kind === 'file' && x.path === p);
+      if (d) forceCloseDoc(d.id);
+    });
+    return () => setDocCloser(null);
+  }, [forceCloseDoc]);
 
   const indexedRoots = useRef<Set<string>>(new Set());
   /** Index a project's sources once per window. Fires when a session becomes active rather

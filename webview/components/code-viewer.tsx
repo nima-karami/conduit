@@ -3,12 +3,13 @@ import type { JSX as ReactJSX } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { canonicalPath } from '../../src/canonical-path';
 import type { BlameLine, FileContentDTO, HostToWebview, ReviewNote } from '../../src/protocol';
+import { AUTO_SAVE_COPY } from '../auto-save-copy';
 import { post, subscribe } from '../bridge';
 import { markerIndexAtLine, OVERVIEW_RULER_WIDTH } from '../change-decorations';
 import { registerChangeNav } from '../change-nav-registry';
 import { buildEditorMenuItems, type EditorMenuIconKey, NAVIGATION } from '../editor-menu';
 import { isSignificantJump } from '../editor-nav';
-import { fileSaves, useFileSaveStatus } from '../file-saves';
+import { closeDocForPath, fileSaves, useFileSaveStatus } from '../file-saves';
 import { fontZoomTarget } from '../font-zoom';
 import {
   IconCommand,
@@ -19,6 +20,7 @@ import {
   IconHistory,
   IconSearch,
   IconSparkle,
+  IconWarning,
 } from '../icons';
 import { sendMention } from '../mention-bus';
 import { monacoKeybindingFor } from '../monaco-keybinding';
@@ -90,6 +92,8 @@ const NAV_KEYBINDINGS: Record<string, number[]> = {
   ],
 };
 
+const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
+
 // An edit-driven cursor move is never an R3 jump; these reasons back up the content-change flag
 // (docs/plans/2026-09-22-editor-nav-history.plan.md, Settled decisions).
 const EDIT_REASONS: ReadonlySet<monaco.editor.CursorChangeReason> = new Set([
@@ -147,6 +151,11 @@ export function CodeViewer({
   // every zoom step). Live changes flow through updateOptions below.
   const editorFontRef = useRef(settings.editorFontSize);
   editorFontRef.current = settings.editorFontSize;
+  // Read at mount only: a save rewrites doc.content, and recreating the editor on it dropped
+  // keyboard focus after every save (plan run notes C8). Later changes go through the attach
+  // effect below, which updates the model in place.
+  const docRef = useRef(doc);
+  docRef.current = doc;
 
   useEffect(() => {
     if (!ref.current) return;
@@ -158,17 +167,19 @@ export function CodeViewer({
     // (enables go-to-definition, hover, peek). Reuse an existing model if present.
     const uri = fileUri(doc.path);
     const existing = monaco.editor.getModel(uri);
+    const { content, truncated } = docRef.current;
     const model =
-      existing ?? monaco.editor.createModel(doc.binary ? '' : doc.content, doc.language, uri);
+      existing ?? monaco.editor.createModel(doc.binary ? '' : content, doc.language, uri);
     // Monaco creates a navigation target's model itself, hardcoding `typescript` as the
     // language (LibFiles.getOrCreateModel). Landing on a .js/.json/.md file that way and
     // then opening it as a tab would leave it tokenized as TypeScript forever.
     if (existing && !doc.binary && existing.getLanguageId() !== doc.language)
       monaco.editor.setModelLanguage(existing, doc.language);
     // The store owns the baseline, the dirty flag, the save entry and the reseed of a reused
-    // clean model (K3), so all of it outlives this editor.
+    // clean model (K3), so all of it outlives this editor. Attached before `create` so the
+    // first paint already shows the disk content.
     if (!doc.binary) {
-      fileSaves.attach(doc.path, { diskContent: doc.content, autoEligible: !doc.truncated });
+      fileSaves.attach(doc.path, { diskContent: content, autoEligible: !truncated });
     }
     const editor = monaco.editor.create(ref.current, {
       model,
@@ -458,6 +469,9 @@ export function CodeViewer({
       contentChanged = false;
       versionAtCursor = model.getVersionId();
     });
+    // Widget, not text, blur: focus moving into Monaco's own find/rename widgets isn't leaving
+    // the editor (plan run notes C6).
+    const blurSub = editor.onDidBlurEditorWidget(() => fileSaves.trigger(doc.path, 'editorBlur'));
     setEditor(editor);
 
     // Don't dispose models we keep for cross-file resolution; only dispose the editor.
@@ -472,13 +486,24 @@ export function CodeViewer({
       mouseSub.dispose();
       ctxSub.dispose();
       cursorSub.dispose();
+      blurSub.dispose();
       blameCursorSub.dispose();
       blameUnsub();
       editor.dispose();
       editorRef.current = null;
       setEditor(null);
     };
-  }, [doc.path, doc.content, doc.language, doc.binary, doc.truncated, update, vsId]);
+  }, [doc.path, doc.language, doc.binary, update, vsId]);
+
+  // A save or an external change arrives as new doc.content; the store reseeds a clean model in
+  // place, and the view state is carried across so an agent's rewrite doesn't jump the cursor.
+  useEffect(() => {
+    if (doc.binary) return;
+    const ed = editorRef.current;
+    const view = ed?.saveViewState();
+    fileSaves.attach(doc.path, { diskContent: doc.content, autoEligible: !doc.truncated });
+    if (ed && view) ed.restoreViewState(view);
+  }, [doc.path, doc.content, doc.truncated, doc.binary]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });
@@ -548,6 +573,13 @@ export function CodeViewer({
       for (const a of actions) a.dispose();
     };
   }, [editor, settings.shortcuts]);
+
+  // Keyed on the path alone: the editor effect above re-runs on every save (C8), so a flush there
+  // would fire on a save rather than on leaving the view (spec §2.2).
+  useEffect(() => {
+    const path = doc.path;
+    return () => fileSaves.trigger(path, 'viewLeave');
+  }, [doc.path]);
 
   // Live reveal for an ALREADY-open doc: the onMount reveal won't re-run, so consume
   // the staged target here and center it. New-tab opens go through the onMount path.
@@ -681,6 +713,34 @@ export function CodeViewer({
     >
       {doc.truncated && <div className="viewer__banner">Large file — showing the first 2 MB.</div>}
       {changes.state === 'degraded' && <div className="viewer__banner">{DEGRADED_HINT}</div>}
+      {saveStatus?.phase === 'conflict' && (
+        <div className="viewer__banner viewer__banner--warn" role="alert">
+          <IconWarning size={14} />
+          <span>
+            {saveStatus.conflict === 'deleted'
+              ? AUTO_SAVE_COPY.deletedOnDisk(baseName(doc.path))
+              : AUTO_SAVE_COPY.changedOnDisk(baseName(doc.path))}
+          </span>
+          <div className="viewer__banner-actions">
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void fileSaves.save(doc.path, 'force')}
+            >
+              {AUTO_SAVE_COPY.overwrite}
+            </button>
+            {saveStatus.conflict === 'deleted' ? (
+              <button type="button" className="btn" onClick={() => closeDocForPath(doc.path)}>
+                {AUTO_SAVE_COPY.close}
+              </button>
+            ) : (
+              <button type="button" className="btn" onClick={() => fileSaves.reload(doc.path)}>
+                {AUTO_SAVE_COPY.reload}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {saveStatus?.phase === 'failed' && (
         <div className="viewer__banner viewer__banner--error" role="alert">
           Could not save: {saveStatus.error}

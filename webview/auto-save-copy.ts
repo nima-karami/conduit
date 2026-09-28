@@ -12,5 +12,12 @@ export const AUTO_SAVE_COPY = {
   delayHint: '100–60000 ms',
   delayError: 'Enter 100–60000 ms',
   saveFailed: (name: string, reason: string) => `Could not save ${name}: ${reason}`,
+  changedOnDisk: (name: string) => `${name} changed on disk. Auto-save is paused for this file.`,
+  deletedOnDisk: (name: string) => `${name} was deleted on disk.`,
+  overwrite: 'Overwrite',
+  reload: 'Reload from disk',
+  close: 'Close',
+  tabConflict: 'Changed on disk — auto-save paused',
+  closeFallback: (reason: string) => `Couldn't save automatically: ${reason}`,
   saveFailedMany: (n: number) => `Could not save ${n} file${n === 1 ? '' : 's'}`,
 } as const;

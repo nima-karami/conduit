@@ -399,6 +399,14 @@ export const IconRefreshCw = glyph(
   </>,
 );
 
+export const IconWarning = glyph(
+  'warning',
+  <>
+    <path d="M8 2.5l6 10.5H2z" />
+    <path d="M8 6.5v3M8 11.5h.01" />
+  </>,
+);
+
 const IconAgent = glyph(
   'agent',
   <>
