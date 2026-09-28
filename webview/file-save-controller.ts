@@ -201,6 +201,9 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
   const save = async (path: string, kind: SaveKind): Promise<boolean> => {
     const e = entries.get(path);
     if (!e) return true;
+    // A truncated buffer holds only the first 2 MB; comparing it to the whole file would report
+    // a conflict that isn't there (D7).
+    if (kind === 'auto' && !e.autoEligible) return false;
     if (!deps.canWrite) {
       if (e.model.getValue() === e.baseline) return true;
       if (kind === 'auto') return false;
@@ -276,7 +279,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
       entry.baseline = opts.diskContent;
       entry.autoEligible = opts.autoEligible;
       deps.setDirty(path, entry.baseline, model.getValue());
-      publish(entry);
+      step(entry, { type: 'seed', dirty: model.getValue() !== entry.baseline });
     },
 
     dispose(path) {

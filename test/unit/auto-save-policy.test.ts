@@ -189,6 +189,35 @@ describe('auto-save policy transition table', () => {
     expect(r).toEqual({ state: INITIAL_AUTO_SAVE_STATE, effects: [CLEAR] });
   });
 
+  it('clean + seed dirty → dirty but not edited, so triggers still skip it', () => {
+    const r = step(at({ phase: 'clean' }), { type: 'seed', dirty: true });
+    expect(r.state).toMatchObject({ phase: 'dirty', edited: false });
+    expect(r.effects).toEqual([]);
+    expect(step(r.state, { type: 'trigger', trigger: 'timer' }).effects).toEqual([]);
+    expect(step(r.state, { type: 'request', kind: 'manual' }).effects).toEqual([
+      CLEAR,
+      { type: 'save', kind: 'manual' },
+    ]);
+  });
+
+  it('dirty + seed dirty keeps an existing edit', () => {
+    const r = step(at({ phase: 'dirty', edited: true }), { type: 'seed', dirty: true });
+    expect(r.state).toMatchObject({ phase: 'dirty', edited: true });
+  });
+
+  it('seed clean → clean, not edited, clears the timer', () => {
+    const r = step(at({ phase: 'dirty', edited: true }), { type: 'seed', dirty: false });
+    expect(r.state).toMatchObject({ phase: 'clean', edited: false });
+    expect(r.effects).toEqual([CLEAR]);
+  });
+
+  for (const phase of ['saving', 'conflict'] as const) {
+    it(`${phase} + seed is unchanged`, () => {
+      const s = at({ phase, edited: true });
+      expect(step(s, { type: 'seed', dirty: false })).toEqual({ state: s, effects: [] });
+    });
+  }
+
   it('modeChanged keeps state and clears the timer', () => {
     const s = at({ phase: 'dirty', edited: true });
     expect(step(s, { type: 'modeChanged' })).toEqual({ state: s, effects: [CLEAR] });

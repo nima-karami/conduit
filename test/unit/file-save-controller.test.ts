@@ -27,6 +27,13 @@ class FakeModel implements SaveModel {
   }
 }
 
+/** Monaco picks one EOL for a mixed file, so a seed can differ from the disk bytes (C10). */
+class NormalizingModel extends FakeModel {
+  setValue(v: string) {
+    super.setValue(v.replace(/\r\n/g, '\n'));
+  }
+}
+
 interface PendingWrite {
   path: string;
   content: string;
@@ -129,11 +136,6 @@ describe('createFileSaves', () => {
   });
 
   it('a seed that normalises content is dirty but never auto-saved (C10)', async () => {
-    class NormalizingModel extends FakeModel {
-      setValue(v: string) {
-        super.setValue(v.replace(/\r\n/g, '\n'));
-      }
-    }
     const h = harness({ mode: 'onFocusChange' });
     h.models.set('/a.ts', new NormalizingModel('stale'));
     h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', autoEligible: true });
@@ -142,6 +144,25 @@ describe('createFileSaves', () => {
     h.saves.trigger('/a.ts', 'viewLeave');
     await vi.runAllTimersAsync();
     expect(h.writes).toHaveLength(0);
+  });
+
+  it('a seed-dirty buffer saves manually: one write, true only after it (B2)', async () => {
+    const h = harness();
+    h.models.set('/a.ts', new NormalizingModel('stale'));
+    h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', autoEligible: true });
+    expect(h.saves.getStatus('/a.ts')?.phase).toBe('dirty');
+    let settled = false;
+    const p = h.saves.save('/a.ts', 'manual').then((ok) => {
+      settled = true;
+      return ok;
+    });
+    await h.flush();
+    expect(h.writes).toHaveLength(1);
+    expect(h.writes[0].content).toBe('a\nb\n');
+    expect(settled).toBe(false);
+    h.writes[0].resolve(OK('/a.ts'));
+    expect(await p).toBe(true);
+    expect(h.dirty.has('/a.ts')).toBe(false);
   });
 
   it('attach never reseeds a marked-dirty model', () => {
@@ -266,6 +287,16 @@ describe('createFileSaves', () => {
     expect(h.writes).toHaveLength(1);
     h.writes[0].resolve(OK('/big.txt'));
     expect(await p).toBe(true);
+  });
+
+  it('an auto save of a truncated entry writes nothing and leaves the phase (B3)', async () => {
+    const h = harness({ mode: 'onFocusChange' });
+    const m = h.open('/big.txt', 'one', false);
+    m.setValue('two');
+    const before = h.saves.getStatus('/big.txt');
+    expect(await h.saves.save('/big.txt', 'auto')).toBe(false);
+    expect(h.writes).toHaveLength(0);
+    expect(h.saves.getStatus('/big.txt')).toBe(before);
   });
 
   it('canWrite false: auto trigger is silent, manual save toasts once', async () => {

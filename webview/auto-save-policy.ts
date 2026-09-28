@@ -32,6 +32,8 @@ export const INITIAL_AUTO_SAVE_STATE: AutoSaveState = {
 
 export type AutoSaveEvent =
   | { type: 'edit'; dirty: boolean }
+  /** attach's dirty computation: a seed that differs from disk (C10) is dirty but never an edit. */
+  | { type: 'seed'; dirty: boolean }
   | { type: 'trigger'; trigger: AutoSaveTrigger }
   | { type: 'request'; kind: SaveKind }
   | { type: 'writeDone'; outcome: 'ok'; dirty: boolean }
@@ -68,6 +70,13 @@ const none = (state: AutoSaveState): Step => ({ state, effects: [] });
 export function autoSaveStep(state: AutoSaveState, event: AutoSaveEvent, mode: AutoSaveMode): Step {
   const arm: AutoSaveEffect[] = mode === 'afterDelay' ? [{ type: 'arm' }] : [];
   switch (event.type) {
+    case 'seed': {
+      if (state.phase === 'saving' || state.phase === 'conflict') return none(state);
+      if (!event.dirty) {
+        return { state: { ...state, phase: 'clean', edited: false }, effects: [{ type: 'clear' }] };
+      }
+      return none(state.phase === 'clean' ? { ...state, phase: 'dirty', edited: false } : state);
+    }
     case 'edit': {
       if (state.phase === 'conflict') return none(state);
       if (state.phase === 'saving') {
