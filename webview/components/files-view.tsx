@@ -25,6 +25,7 @@ import {
   folderForPath,
   missingTransitions,
 } from '../../src/session-sections';
+import type { ActiveTarget } from '../active-target';
 import { fsDndCopy, fsDndImport, fsDndMove, isHosted, pathForDroppedFile, post } from '../bridge';
 import { getDirtySnapshot } from '../dirty-store';
 import type { OpenMode } from '../docs';
@@ -93,6 +94,7 @@ export interface FilesViewProps {
   /** `in <project name>` */
   openAsSessionHint?: string;
   folderUi: FolderUiCache;
+  activeTarget: ActiveTarget | null;
   // `mode` lets the explorer double-click open a permanent tab while single-click previews.
   onOpenFile: (absPath: string, mode?: OpenMode) => void;
   /** Multi-repo auto-follow: report a clicked file/folder path so the active repo follows it. */
@@ -130,6 +132,7 @@ export function FilesView({
   osDropSeam,
   openAsSessionHint,
   folderUi,
+  activeTarget,
   onOpenFile,
   onContextPath,
   onOpenMatch,
@@ -741,6 +744,7 @@ export function FilesView({
               view={{ scrollTop, viewportHeight, rowHeight }}
               collapsed={folderUi.collapsed.has(section.key)}
               onToggleCollapsed={() => toggleCollapsed(section.key)}
+              activeTarget={activeTarget}
               treeCache={folderUi.treeCache}
               rowChanges={rowChanges}
               openAsSessionHint={openAsSessionHint}

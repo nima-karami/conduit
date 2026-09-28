@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { folderKey } from '../../src/folder-key';
 import type { ChangeDTO, DirEntryDTO, RepoChanges } from '../../src/protocol';
 import {
   ancestorDirChain,
@@ -7,6 +8,7 @@ import {
   buildRowChangeMap,
   collapseAll,
   expandLoaded,
+  findFileByKey,
   findNode,
   isSearchActive,
   joinPath,
@@ -15,7 +17,6 @@ import {
   pathsToRefresh,
   resolveCreateTarget,
   type TreeNode,
-  treeNodePath,
 } from '../../webview/file-tree';
 
 const ents = (...names: [string, 'dir' | 'file'][]): DirEntryDTO[] =>
@@ -58,35 +59,6 @@ describe('ancestorDirChain', () => {
   });
 });
 
-describe('treeNodePath', () => {
-  // The reveal highlight compares against TreeNode.path, so a natively-separated host path
-  // has to come back in the tree's own form or the open file's row never lights up.
-  it('rewrites a native Windows path into the tree form applyEntries builds', () => {
-    const root = 'C:\\proj';
-    const nested = applyEntries(
-      applyEntries([], root, root, ents(['webview', 'dir'])),
-      root,
-      joinPath(root, 'webview'),
-      ents(['app.tsx', 'file']),
-    );
-    const revealed = treeNodePath('C:\\proj\\webview\\app.tsx', root);
-    expect(revealed).toBe('C:\\proj/webview/app.tsx');
-    expect(findNode(nested, revealed as string)?.name).toBe('app.tsx');
-  });
-
-  it('handles a file directly under the root, trailing separator and all', () => {
-    expect(treeNodePath('C:\\proj\\README.md', 'C:\\proj\\')).toBe('C:\\proj/README.md');
-  });
-
-  it('is a no-op for a path already in tree form', () => {
-    expect(treeNodePath('/root/src/x.ts', '/root')).toBe('/root/src/x.ts');
-  });
-
-  it('returns null when the file is not under the root', () => {
-    expect(treeNodePath('/other/a.ts', '/root')).toBeNull();
-  });
-});
-
 describe('findNode', () => {
   const tree: TreeNode[] = [
     {
@@ -109,6 +81,35 @@ describe('findNode', () => {
 
   it('returns undefined when absent', () => {
     expect(findNode(tree, '/root/nope.ts')).toBeUndefined();
+  });
+});
+
+describe('findFileByKey', () => {
+  const winTree = (): TreeNode[] => {
+    const root = 'G:\\r';
+    const withSrc = applyEntries([], root, root, ents(['src', 'dir'], ['a.ts', 'file']));
+    return applyEntries(withSrc, root, joinPath(root, 'src'), ents(['a.ts', 'file']));
+  };
+
+  it('finds a nested file by key across drive-case and separator spellings', () => {
+    const hit = findFileByKey(winTree(), folderKey('g:/r/src/a.ts'));
+    expect(hit?.path).toBe('G:\\r/src/a.ts');
+    expect(findFileByKey(winTree(), folderKey('G:\\r\\a.ts'))?.path).toBe('G:\\r/a.ts');
+  });
+
+  it('returns undefined for a dir key', () => {
+    expect(findFileByKey(winTree(), folderKey('G:\\r\\src'))).toBeUndefined();
+  });
+
+  it('does not descend into unloaded children', () => {
+    const tree: TreeNode[] = [{ name: 'src', path: '/r/src', kind: 'dir', expanded: false }];
+    expect(findFileByKey(tree, '/r/src/a.ts')).toBeUndefined();
+  });
+
+  it('POSIX is case-sensitive', () => {
+    const tree = applyEntries([], '/r', '/r', ents(['a.ts', 'file']));
+    expect(findFileByKey(tree, '/r/a.ts')?.path).toBe('/r/a.ts');
+    expect(findFileByKey(tree, '/R/a.ts')).toBeUndefined();
   });
 });
 

@@ -213,6 +213,19 @@ export function findNode(roots: TreeNode[], path: string): TreeNode | undefined 
   return undefined;
 }
 
+/** The FILE node whose folderKey equals `key`, descending only into loaded dirs on its prefix path. */
+export function findFileByKey(nodes: TreeNode[], key: string): TreeNode | undefined {
+  for (const n of nodes) {
+    const k = folderKey(n.path);
+    if (n.kind === 'file') {
+      if (k === key) return n;
+    } else if (n.children && key.startsWith(`${k}/`)) {
+      return findFileByKey(n.children, key);
+    }
+  }
+  return undefined;
+}
+
 /**
  * The chain of directory paths to expand to reveal `filePath`: root, then each intermediate
  * dir down to the file's parent. Built with `joinPath` so paths compare equal to
@@ -236,23 +249,6 @@ export function ancestorDirChain(filePath: string, rootPath: string): string[] {
     chain.push(cur);
   }
   return chain;
-}
-
-/**
- * `filePath` rewritten into the tree's own path form. Node paths are built with `joinPath`
- * off `rootPath`, so on Windows they carry the root's native separators followed by forward
- * slashes; a path handed to us by the host is natively separated all the way down. The two
- * therefore do NOT compare equal, which is why a revealed file has to be re-derived rather
- * than matched as given. Returns null when `filePath` is not under `rootPath`.
- */
-export function treeNodePath(filePath: string, rootPath: string): string | null {
-  const chain = ancestorDirChain(filePath, rootPath);
-  if (chain.length === 0) return null;
-  const name = filePath
-    .replace(/[\\/]+$/, '')
-    .split(/[\\/]/)
-    .pop();
-  return name ? joinPath(chain[chain.length - 1], name) : null;
 }
 
 /** True when the query has non-whitespace content (drives the results view, not the tree). */

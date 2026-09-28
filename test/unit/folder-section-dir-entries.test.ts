@@ -78,6 +78,7 @@ async function render(path: string) {
             view: { scrollTop: 0, viewportHeight: 600, rowHeight: 22 },
             collapsed: false,
             onToggleCollapsed: noop,
+            activeTarget: null,
             treeCache: new Map(),
             rowChanges: new Map(),
             onPerf: noop,

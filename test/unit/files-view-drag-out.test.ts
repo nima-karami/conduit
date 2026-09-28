@@ -59,6 +59,7 @@ async function render() {
           rowChanges: new Map(),
           osDropSeam: false,
           folderUi: { treeCache: new Map(), collapsed: new Set<string>() },
+          activeTarget: null,
           onOpenFile: noop,
           onOpenMatch: noop,
           setMenu: noop,

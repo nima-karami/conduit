@@ -48,6 +48,7 @@ async function render(setMenu: (m: MenuState | null) => void) {
           rowChanges: new Map(),
           osDropSeam: true,
           folderUi: { treeCache: new Map(), collapsed: new Set<string>() },
+          activeTarget: null,
           onOpenFile: noop,
           onOpenMatch: noop,
           setMenu,
