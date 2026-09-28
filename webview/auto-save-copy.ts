@@ -11,4 +11,6 @@ export const AUTO_SAVE_COPY = {
   delayLabel: 'Delay (ms)',
   delayHint: '100–60000 ms',
   delayError: 'Enter 100–60000 ms',
+  saveFailed: (name: string, reason: string) => `Could not save ${name}: ${reason}`,
+  saveFailedMany: (n: number) => `Could not save ${n} file${n === 1 ? '' : 's'}`,
 } as const;
