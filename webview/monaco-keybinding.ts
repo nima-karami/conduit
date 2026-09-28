@@ -18,12 +18,44 @@ export interface MonacoKeyTables {
   keyCodes: Record<string, number>;
 }
 
+/** Named and punctuation tokens → monaco.KeyCode names. Punctuation is the UNSHIFTED US-layout
+ *  character only: a shifted one ('>') is what `e.key` reports for Shift+., and Monaco has no
+ *  code for it. */
+const NAMED_KEY_CODES: Readonly<Record<string, string>> = {
+  ArrowLeft: 'LeftArrow',
+  ArrowRight: 'RightArrow',
+  ArrowUp: 'UpArrow',
+  ArrowDown: 'DownArrow',
+  Home: 'Home',
+  End: 'End',
+  PageUp: 'PageUp',
+  PageDown: 'PageDown',
+  Insert: 'Insert',
+  Delete: 'Delete',
+  Enter: 'Enter',
+  Tab: 'Tab',
+  Escape: 'Escape',
+  Backspace: 'Backspace',
+  Space: 'Space',
+  '`': 'Backquote',
+  '-': 'Minus',
+  '=': 'Equal',
+  '[': 'BracketLeft',
+  ']': 'BracketRight',
+  '\\': 'Backslash',
+  ';': 'Semicolon',
+  "'": 'Quote',
+  ',': 'Comma',
+  '.': 'Period',
+  '/': 'Slash',
+};
+
 /** The combo's final token → the monaco.KeyCode NAME to look up. */
-function keyCodeName(token: string): string | null {
+export function monacoKeyCodeName(token: string): string | null {
   if (/^F\d{1,2}$/i.test(token)) return token.toUpperCase();
   if (/^[a-z]$/i.test(token)) return `Key${token.toUpperCase()}`;
   if (/^\d$/.test(token)) return `Digit${token}`;
-  return null;
+  return Object.hasOwn(NAMED_KEY_CODES, token) ? NAMED_KEY_CODES[token] : null;
 }
 
 export function monacoKeybindingFor(combo: string, tables: MonacoKeyTables): number | null {
@@ -32,7 +64,7 @@ export function monacoKeybindingFor(combo: string, tables: MonacoKeyTables): num
   const key = parts[parts.length - 1];
   const mods = new Set(parts.slice(0, -1));
 
-  const name = keyCodeName(key);
+  const name = monacoKeyCodeName(key);
   if (name === null) return null;
   const code = tables.keyCodes[name];
   if (code === undefined) return null;

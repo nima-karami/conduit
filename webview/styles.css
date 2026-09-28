@@ -8989,6 +8989,13 @@ button.toggle--on .toggle__knob {
   color: var(--red);
   font-size: calc(11px * var(--font-scale));
 }
+.shortcuts__note {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+  overflow-wrap: anywhere;
+}
 
 /* ---------- split terminal panes ---------- */
 .termstack {

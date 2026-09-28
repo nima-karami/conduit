@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { type MonacoKeyTables, monacoKeybindingFor } from '../../webview/monaco-keybinding';
+import {
+  type MonacoKeyTables,
+  monacoKeybindingFor,
+  monacoKeyCodeName,
+} from '../../webview/monaco-keybinding';
 
 /** Stand-ins for monaco.KeyMod / monaco.KeyCode; the real values are injected at runtime. */
 const TABLES: MonacoKeyTables = {
@@ -43,5 +47,63 @@ describe('monacoKeybindingFor', () => {
 
   it('returns null for an empty combo', () => {
     expect(monacoKeybindingFor('', TABLES)).toBeNull();
+  });
+});
+
+describe('monacoKeybindingFor — widened translation', () => {
+  const NEW_TOKENS: Record<string, string> = {
+    ArrowLeft: 'LeftArrow',
+    ArrowRight: 'RightArrow',
+    ArrowUp: 'UpArrow',
+    ArrowDown: 'DownArrow',
+    Home: 'Home',
+    End: 'End',
+    PageUp: 'PageUp',
+    PageDown: 'PageDown',
+    Insert: 'Insert',
+    Delete: 'Delete',
+    Enter: 'Enter',
+    Tab: 'Tab',
+    Escape: 'Escape',
+    Backspace: 'Backspace',
+    Space: 'Space',
+    '`': 'Backquote',
+    '-': 'Minus',
+    '=': 'Equal',
+    '[': 'BracketLeft',
+    ']': 'BracketRight',
+    '\\': 'Backslash',
+    ';': 'Semicolon',
+    "'": 'Quote',
+    ',': 'Comma',
+    '.': 'Period',
+    '/': 'Slash',
+  };
+  const WIDE: MonacoKeyTables = {
+    ...TABLES,
+    keyCodes: Object.fromEntries(Object.values(NEW_TOKENS).map((name, i) => [name, 100 + i])),
+  };
+  const MODS: [string, number][] = [
+    ['', 0],
+    ['Mod+', WIDE.CtrlCmd],
+    ['Ctrl+', WIDE.WinCtrl],
+    ['Alt+', WIDE.Alt],
+    ['Shift+', WIDE.Shift],
+    ['Mod+Alt+Shift+', WIDE.CtrlCmd | WIDE.Alt | WIDE.Shift],
+  ];
+
+  it('translates arrows, nav keys and unshifted punctuation with every modifier', () => {
+    for (const [token, name] of Object.entries(NEW_TOKENS)) {
+      expect(monacoKeyCodeName(token)).toBe(name);
+      for (const [prefix, mods] of MODS) {
+        expect(monacoKeybindingFor(`${prefix}${token}`, WIDE)).toBe(WIDE.keyCodes[name] | mods);
+      }
+    }
+  });
+
+  it('refuses shifted punctuation and the digit family', () => {
+    expect(monacoKeybindingFor('Shift+>', WIDE)).toBeNull();
+    expect(monacoKeybindingFor('Ctrl+1…9', WIDE)).toBeNull();
+    expect(monacoKeyCodeName('>')).toBeNull();
   });
 });
