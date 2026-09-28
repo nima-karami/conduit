@@ -156,6 +156,8 @@ export function CodeViewer({
   // effect below, which updates the model in place.
   const docRef = useRef(doc);
   docRef.current = doc;
+  // Set by the editor effect: drops what the blame lens knew about the old content.
+  const onReseedRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -411,6 +413,10 @@ export function CodeViewer({
       editor.layoutContentWidget(lensWidget);
     };
 
+    const requestBlame = () => {
+      const sid = sessionIdRef.current;
+      if (sid) post({ type: 'git:blame', sessionId: sid, path: doc.path });
+    };
     const blameCursorSub = editor.onDidChangeCursorPosition(() => renderLens());
     const blameUnsub = subscribe((msg: HostToWebview) => {
       if (
@@ -429,16 +435,20 @@ export function CodeViewer({
       label: 'Toggle Git Blame',
       run: () => {
         blameOn = !blameOn;
-        if (blameOn) {
-          const sid = sessionIdRef.current;
-          if (sid) post({ type: 'git:blame', sessionId: sid, path: doc.path });
-        } else {
+        if (blameOn) requestBlame();
+        else {
           blameByLine = new Map();
           blameRoot = undefined;
         }
         renderLens();
       },
     });
+    onReseedRef.current = () => {
+      if (!blameOn) return;
+      blameByLine = new Map();
+      renderLens();
+      requestBlame();
+    };
 
     const unregisterNav = registerNavEditor(doc.path, editor);
     // R3 (docs/specs/2026-09-22-editor-nav-history.md §2.2): judged per cursor event against the
@@ -489,6 +499,7 @@ export function CodeViewer({
       blurSub.dispose();
       blameCursorSub.dispose();
       blameUnsub();
+      onReseedRef.current = null;
       editor.dispose();
       editorRef.current = null;
       setEditor(null);
@@ -496,13 +507,18 @@ export function CodeViewer({
   }, [doc.path, doc.language, doc.binary, update, vsId]);
 
   // A save or an external change arrives as new doc.content; the store reseeds a clean model in
-  // place, and the view state is carried across so an agent's rewrite doesn't jump the cursor.
+  // place. Only a real reseed carries the view state across (so an agent's rewrite doesn't jump
+  // the cursor): a save's own echo changes nothing, and restoring then would fight typing or IME.
   useEffect(() => {
     if (doc.binary) return;
     const ed = editorRef.current;
+    const model = ed?.getModel();
+    const version = model?.getVersionId();
     const view = ed?.saveViewState();
     fileSaves.attach(doc.path, { diskContent: doc.content, autoEligible: !doc.truncated });
-    if (ed && view) ed.restoreViewState(view);
+    if (!ed || !model || model.getVersionId() === version) return;
+    if (view) ed.restoreViewState(view);
+    onReseedRef.current?.();
   }, [doc.path, doc.content, doc.truncated, doc.binary]);
 
   useEffect(() => {

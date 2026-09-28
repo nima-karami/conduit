@@ -14,7 +14,7 @@ import type { SaveEntry } from './save-registry';
 
 /**
  * The per-path save store: one entry per open file tab, backed by its Monaco model, so it
- * outlives the editor (recreated on every save, C8) and the tab's unmount (C9). Every dependency
+ * outlives the editor and the tab's unmount (C9): a background tab still saves. Every dependency
  * is injected. Contract: docs/plans/2026-09-28-auto-save.plan.md (Contracts → Store).
  */
 
