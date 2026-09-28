@@ -188,7 +188,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
 
   function trigger(path: string, t: AutoSaveTrigger) {
     const e = entries.get(path);
-    if (!e || !e.autoEligible || !deps.canWrite) return;
+    if (!e?.autoEligible || !deps.canWrite) return;
     step(e, { type: 'trigger', trigger: t });
   }
 
