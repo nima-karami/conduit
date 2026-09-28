@@ -5347,16 +5347,17 @@ body.gh-resizing {
 .rightpane__scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 2px 8px 12px;
+  padding: 2px 6px 12px;
   min-height: 0;
 }
 .change {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 5px 8px;
-  border-radius: var(--r-sm);
+  gap: var(--tree-gap);
+  min-height: var(--tree-row-h);
+  padding: var(--tree-pad-y) 8px var(--tree-pad-y) var(--tree-pad);
+  border-radius: var(--r-card);
   cursor: pointer;
 }
 /* 8c: an OUTLINED letter box, not a tinted fill — the four status colours have to read
@@ -5408,7 +5409,7 @@ body.gh-resizing {
   align-items: baseline;
   height: 1lh;
   font-family: var(--font-mono);
-  font-size: calc(11.5px * var(--font-scale));
+  font-size: calc(12px * var(--font-scale));
   white-space: nowrap;
   overflow: hidden;
 }
@@ -5454,7 +5455,7 @@ body.gh-resizing {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 8px 8px 4px;
+  padding: 8px 8px 4px calc(var(--tree-pad) + var(--tree-chev) + var(--tree-gap));
   font-size: calc(10px * var(--font-scale));
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -5591,7 +5592,7 @@ body.gh-resizing {
   color: var(--text-faint);
 }
 .repo-head__empty {
-  padding: 5px 8px 3px 32px;
+  padding: 5px 8px 3px calc(var(--tree-pad) + var(--tree-chev) + var(--tree-gap));
   font-size: calc(11.5px * var(--font-scale));
   color: var(--text-faint);
 }
@@ -5645,7 +5646,7 @@ body.gh-resizing {
 }
 
 .rightpane__scroll--files {
-  padding: 6px 6px 12px;
+  padding-top: 6px;
 }
 /* ---------- editor-area viewers ----------
    .docpanel is the doc surface's own column: the breadcrumb band on top, the viewer below.

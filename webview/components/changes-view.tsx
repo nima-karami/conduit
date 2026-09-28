@@ -19,6 +19,7 @@ import { middleClickProps } from '../middle-click';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
 import { RepoHead } from './repo-head';
+import { TreeChevronSpacer } from './tree-chevron';
 
 const STR = {
   loading: 'Loading…',
@@ -100,6 +101,7 @@ function ChangeRow({
         e.dataTransfer.effectAllowed = 'copy';
       }}
     >
+      <TreeChevronSpacer />
       <span className={`change__kind change__kind--${change.kind}`}>{change.kind}</span>
       <span className="change__path">
         {dir && <span className="change__dir">{dir}/</span>}
