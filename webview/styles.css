@@ -8992,9 +8992,14 @@ button.toggle--on .toggle__knob {
 .shortcuts__note {
   display: block;
   margin-top: 2px;
-  color: var(--text-dim);
   font-size: calc(11px * var(--font-scale));
   overflow-wrap: anywhere;
+}
+.shortcuts__note--refusal {
+  color: var(--text-dim);
+}
+.shortcuts__note--conflict {
+  color: var(--red);
 }
 
 /* ---------- split terminal panes ---------- */

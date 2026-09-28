@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildNavRules,
   canonicalCombo,
+  findConflicts,
   isNavOverridden,
   navDispatchCommandId,
   navShortcutActions,
@@ -105,6 +106,77 @@ describe('buildNavRules', () => {
     expect(buildNavRules({ goToDefinition: 'Alt+∂' }, tb)).toEqual([
       { command: '-editor.action.revealDefinition', keybinding: tb('F12') },
       { command: '-editor.action.revealDefinition', keybinding: tb('Mod+F12') },
+    ]);
+  });
+});
+
+describe('findConflicts', () => {
+  const COMMENT = {
+    command: 'editor.action.commentLine',
+    label: 'Toggle Line Comment',
+    combo: 'Mod+/',
+  };
+  const OWN = {
+    command: 'editor.action.revealDefinition',
+    label: 'Go to Definition',
+    combo: 'F12',
+  };
+
+  it('app conflict', () => {
+    expect(findConflicts('goToDefinition', { goToDefinition: 'Mod+P' }, [])).toEqual([
+      {
+        kind: 'app',
+        actionId: 'openSearch',
+        label: 'Search files & sessions',
+        editorScoped: false,
+      },
+    ]);
+  });
+
+  it('marks a conflicting editor row as editorScoped', () => {
+    expect(
+      findConflicts('goToDefinition', { goToDefinition: 'Alt+R', goToReferences: 'Alt+R' }, []),
+    ).toEqual([
+      { kind: 'app', actionId: 'goToReferences', label: 'Go to References', editorScoped: true },
+    ]);
+  });
+
+  it('monaco default conflict', () => {
+    expect(findConflicts('goToDefinition', { goToDefinition: 'Mod+/' }, [COMMENT])).toEqual([
+      { kind: 'monaco', command: 'editor.action.commentLine', label: 'Toggle Line Comment' },
+    ]);
+  });
+
+  it('never against its own default', () => {
+    expect(findConflicts('goToDefinition', {}, [OWN])).toEqual([]);
+  });
+
+  it('removed chord no longer reported', () => {
+    expect(
+      findConflicts('goToReferences', { goToDefinition: 'Alt+D', goToReferences: 'F12' }, [OWN]),
+    ).toEqual([]);
+  });
+
+  it('compares canonical combos', () => {
+    expect(
+      findConflicts('goToDefinition', { goToDefinition: 'Shift+Alt+K' }, [
+        { command: 'x.cmd', label: 'X', combo: 'Alt+Shift+K' },
+      ]),
+    ).toEqual([{ kind: 'monaco', command: 'x.cmd', label: 'X' }]);
+  });
+
+  it('code-viewer chords', () => {
+    expect(findConflicts('goToDefinition', { goToDefinition: 'Alt+Z' }, [])).toEqual([
+      { kind: 'codeViewer', label: 'Toggle Word Wrap' },
+    ]);
+  });
+
+  it('app rows get only app conflicts', () => {
+    expect(
+      findConflicts('openSearch', {}, [{ command: 'x.cmd', label: 'X', combo: 'Mod+P' }]),
+    ).toEqual([]);
+    expect(findConflicts('openSearch', { goToDefinition: 'Mod+P' }, [])).toEqual([
+      { kind: 'app', actionId: 'goToDefinition', label: 'Go to Definition', editorScoped: true },
     ]);
   });
 });

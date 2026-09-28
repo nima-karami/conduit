@@ -76,3 +76,47 @@ export function monacoKeybindingFor(combo: string, tables: MonacoKeyTables): num
   if (mods.has('Shift')) binding |= tables.Shift;
   return binding;
 }
+
+export interface MonacoChord {
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+  keyCode: number;
+}
+
+const TOKEN_BY_KEY_CODE_NAME: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(NAMED_KEY_CODES).map(([token, name]) => [name, token]),
+);
+
+/** The inverse of `monacoKeyCodeName`. */
+function comboToken(keyCodeName: string): string | null {
+  if (/^F\d{1,2}$/.test(keyCodeName)) return keyCodeName;
+  const letter = /^Key([A-Z])$/.exec(keyCodeName);
+  if (letter) return letter[1];
+  const digit = /^Digit(\d)$/.exec(keyCodeName);
+  if (digit) return digit[1];
+  return Object.hasOwn(TOKEN_BY_KEY_CODE_NAME, keyCodeName)
+    ? TOKEN_BY_KEY_CODE_NAME[keyCodeName]
+    : null;
+}
+
+/** A resolved Monaco chord (OS-specific ctrl/meta) → combo string in canonical modifier order,
+ *  or null when the key has no combo token or the chord uses the Windows key (no grammar token). */
+export function comboFromChord(
+  chord: MonacoChord,
+  keyCodeNames: Readonly<Record<number, string>>,
+  mac: boolean,
+): string | null {
+  const name = keyCodeNames[chord.keyCode];
+  const token = name === undefined ? null : comboToken(name);
+  if (token === null) return null;
+  if (!mac && chord.metaKey) return null;
+  const parts: string[] = [];
+  if (mac ? chord.metaKey : chord.ctrlKey) parts.push('Mod');
+  if (mac && chord.ctrlKey) parts.push('Ctrl');
+  if (chord.altKey) parts.push('Alt');
+  if (chord.shiftKey) parts.push('Shift');
+  parts.push(token);
+  return parts.join('+');
+}

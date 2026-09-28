@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { AppSettings } from '../../src/settings';
 import { editorComboFromEvent, validateEditorCombo } from '../editor-combo';
-import { canonicalCombo, navOverride } from '../nav-keybindings';
+import {
+  type Conflict,
+  canonicalCombo,
+  findConflicts,
+  type MonacoDefaultBinding,
+  navOverride,
+} from '../nav-keybindings';
 import {
   comboFromEvent,
   effectiveCombo,
@@ -32,6 +38,18 @@ export function ShortcutsTab({
   const [refusal, setRefusal] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const overrides = settings.shortcuts;
+  const [monacoDefaults, setMonacoDefaults] = useState<readonly MonacoDefaultBinding[]>([]);
+  // Loaded on demand so the Settings modal's module graph stays free of the Monaco adapter (and
+  // monaco itself); in the app bundle it resolves at once.
+  useEffect(() => {
+    let live = true;
+    void import('../monaco-nav-keybindings').then((m) => {
+      if (live) setMonacoDefaults(m.readMonacoDefaultBindings());
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const startRecording = (a: ShortcutAction) => {
     setRecording(a.id);
@@ -89,9 +107,11 @@ export function ShortcutsTab({
     if (!action) throw new Error(`Unknown shortcut action: ${id}`);
     return effectiveCombo(action, overrides);
   };
-  const conflict = (id: string) => {
-    const c = comboFor(id);
-    return SHORTCUT_ACTIONS.some((a) => a.id !== id && comboFor(a.id) === c);
+  const conflictNote = (c: Conflict): string => {
+    if (c.kind !== 'app') return `· shadows ${c.label} in the editor`;
+    return c.editorScoped
+      ? `· conflict: ${c.label}`
+      : `· conflict: overrides ${c.label} while editing`;
   };
   const overridden = (a: ShortcutAction) =>
     a.scope === 'editor' ? navOverride(a, overrides) !== undefined : !!overrides[a.id];
@@ -112,45 +132,61 @@ export function ShortcutsTab({
       {groups.map((g) => (
         <div className="shortcuts__group" key={g}>
           <div className="shortcuts__gtitle">{g}</div>
-          {SHORTCUT_ACTIONS.filter((s) => s.group === g).map((s) => (
-            <div className="shortcuts__row" key={s.id}>
-              <span className="shortcuts__desc">
-                {s.description}
-                {conflict(s.id) && <span className="shortcuts__conflict"> · conflict</span>}
-                {s.scope === 'editor' &&
-                  recording !== s.id &&
-                  validateEditorCombo(comboFor(s.id)) !== null && (
-                    <span className="shortcuts__conflict"> · can't be bound in the editor</span>
+          {SHORTCUT_ACTIONS.filter((s) => s.group === g).map((s) => {
+            const conflicts = findConflicts(s.id, overrides, monacoDefaults);
+            return (
+              <div className="shortcuts__row" key={s.id}>
+                <span className="shortcuts__desc">
+                  {s.description}
+                  {s.scope !== 'editor' && conflicts.length > 0 && (
+                    <span className="shortcuts__conflict"> · conflict</span>
                   )}
-                {recording === s.id && refusal && (
-                  <span className="shortcuts__note">{refusal}</span>
-                )}
-              </span>
-              <span className="shortcuts__keys">
-                {recording === s.id ? (
-                  <kbd className="shortcuts__recording">Press keys…</kbd>
-                ) : (
-                  <kbd>{formatCombo(comboFor(s.id))}</kbd>
-                )}
-                <button
-                  className="shortcuts__btn"
-                  aria-label={`Record shortcut for ${s.description}`}
-                  onClick={() => startRecording(s)}
-                >
-                  Record
-                </button>
-                {overridden(s) && (
+                  {s.scope === 'editor' &&
+                    recording !== s.id &&
+                    validateEditorCombo(comboFor(s.id)) !== null && (
+                      <span className="shortcuts__conflict"> · can't be bound in the editor</span>
+                    )}
+                  {s.scope === 'editor' &&
+                    conflicts.map((c) => (
+                      <span
+                        className="shortcuts__note shortcuts__note--conflict"
+                        key={
+                          c.kind === 'monaco' ? c.command : c.kind === 'app' ? c.actionId : c.label
+                        }
+                      >
+                        {conflictNote(c)}
+                      </span>
+                    ))}
+                  {recording === s.id && refusal && (
+                    <span className="shortcuts__note shortcuts__note--refusal">{refusal}</span>
+                  )}
+                </span>
+                <span className="shortcuts__keys">
+                  {recording === s.id ? (
+                    <kbd className="shortcuts__recording">Press keys…</kbd>
+                  ) : (
+                    <kbd>{formatCombo(comboFor(s.id))}</kbd>
+                  )}
                   <button
                     className="shortcuts__btn"
-                    aria-label={`Reset ${s.description} to ${formatCombo(s.defaultCombo)}`}
-                    onClick={() => reset(s)}
+                    aria-label={`Record shortcut for ${s.description}`}
+                    onClick={() => startRecording(s)}
                   >
-                    Reset
+                    Record
                   </button>
-                )}
-              </span>
-            </div>
-          ))}
+                  {overridden(s) && (
+                    <button
+                      className="shortcuts__btn"
+                      aria-label={`Reset ${s.description} to ${formatCombo(s.defaultCombo)}`}
+                      onClick={() => reset(s)}
+                    >
+                      Reset
+                    </button>
+                  )}
+                </span>
+              </div>
+            );
+          })}
         </div>
       ))}
     </div>

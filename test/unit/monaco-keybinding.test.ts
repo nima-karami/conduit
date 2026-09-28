@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  comboFromChord,
   type MonacoKeyTables,
   monacoKeybindingFor,
   monacoKeyCodeName,
@@ -105,5 +106,43 @@ describe('monacoKeybindingFor — widened translation', () => {
     expect(monacoKeybindingFor('Shift+>', WIDE)).toBeNull();
     expect(monacoKeybindingFor('Ctrl+1…9', WIDE)).toBeNull();
     expect(monacoKeyCodeName('>')).toBeNull();
+  });
+});
+
+describe('comboFromChord', () => {
+  const NAMES: Record<number, string> = {
+    90: 'Slash',
+    41: 'KeyK',
+    70: 'F12',
+    15: 'LeftArrow',
+    3: 'Backslash',
+  };
+  const chord = (
+    over: Partial<{ ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }>,
+    keyCode: number,
+  ) => ({
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    metaKey: false,
+    ...over,
+    keyCode,
+  });
+
+  it('round-trips monacoKeybindingFor', () => {
+    expect(comboFromChord(chord({ ctrlKey: true }, 90), NAMES, false)).toBe('Mod+/');
+    expect(comboFromChord(chord({ metaKey: true, ctrlKey: true }, 41), NAMES, true)).toBe(
+      'Mod+Ctrl+K',
+    );
+    expect(comboFromChord(chord({ shiftKey: true, altKey: true }, 70), NAMES, false)).toBe(
+      'Alt+Shift+F12',
+    );
+    expect(comboFromChord(chord({ altKey: true }, 15), NAMES, false)).toBe('Alt+ArrowLeft');
+    expect(comboFromChord(chord({ ctrlKey: true }, 3), NAMES, false)).toBe('Mod+\\');
+  });
+
+  it('is null off-mac for the Windows key, and for a key with no combo token', () => {
+    expect(comboFromChord(chord({ metaKey: true }, 41), NAMES, false)).toBeNull();
+    expect(comboFromChord(chord({ ctrlKey: true }, 999), NAMES, false)).toBeNull();
   });
 });

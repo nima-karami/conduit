@@ -4,7 +4,7 @@
  * import — the Monaco side lives in `monaco-nav-keybindings.ts`.
  */
 
-import { SHORTCUT_ACTIONS, type ShortcutAction } from './shortcuts';
+import { effectiveCombo, SHORTCUT_ACTIONS, type ShortcutAction } from './shortcuts';
 
 /** Every default chord per nav built-in (monaco-editor goToCommands.js l.237/241/479/549).
  *  revealDefinition's second chord is its `isWeb` default, live in our renderer. */
@@ -78,4 +78,53 @@ export function buildNavRules(
     }
   }
   return rules;
+}
+
+export interface MonacoDefaultBinding {
+  command: string;
+  label: string;
+  combo: string;
+}
+
+export type Conflict =
+  | { kind: 'app'; actionId: string; label: string; editorScoped: boolean }
+  | { kind: 'monaco'; command: string; label: string }
+  | { kind: 'codeViewer'; label: string };
+
+/** Code-viewer addAction/addCommand chords that are not SHORTCUT_ACTIONS rows — a mirror of
+ *  code-viewer.tsx's Save and Toggle Word Wrap registrations, which the registry never sees. */
+export const CODE_VIEWER_CHORDS: readonly { combo: string; label: string }[] = [
+  { combo: 'Mod+S', label: 'Save File' },
+  { combo: 'Alt+Z', label: 'Toggle Word Wrap' },
+];
+
+export function findConflicts(
+  actionId: string,
+  overrides: Readonly<Record<string, string>>,
+  monacoDefaults: readonly MonacoDefaultBinding[],
+): Conflict[] {
+  const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
+  if (!action) return [];
+  const combo = canonicalCombo(effectiveCombo(action, overrides));
+  const conflicts: Conflict[] = SHORTCUT_ACTIONS.filter(
+    (a) => a.id !== actionId && canonicalCombo(effectiveCombo(a, overrides)) === combo,
+  ).map((a) => ({
+    kind: 'app',
+    actionId: a.id,
+    label: a.description,
+    editorScoped: a.scope === 'editor',
+  }));
+  if (action.scope !== 'editor') return conflicts;
+  // A nav built-in's defaults are either this row's own or removed by the rule set once a row
+  // takes their chord — never a live competitor.
+  const navCommands = new Set(navShortcutActions().map((a) => a.monacoCommand));
+  for (const d of monacoDefaults) {
+    if (!navCommands.has(d.command) && canonicalCombo(d.combo) === combo) {
+      conflicts.push({ kind: 'monaco', command: d.command, label: d.label });
+    }
+  }
+  for (const c of CODE_VIEWER_CHORDS) {
+    if (canonicalCombo(c.combo) === combo) conflicts.push({ kind: 'codeViewer', label: c.label });
+  }
+  return conflicts;
 }

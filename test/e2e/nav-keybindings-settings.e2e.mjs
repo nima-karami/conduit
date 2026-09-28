@@ -178,6 +178,58 @@ try {
   await assertInert(page, 'Alt+D', 'AC-6');
   log('AC-6 Reset restores F12; Alt+D inert ✓');
 
+  // Conflict notes
+  const conflictNotes = () =>
+    row(page, DEF).locator('.shortcuts__note--conflict').allTextContents();
+  await openShortcuts(page);
+  await record(page, DEF, 'Control+P');
+  await waitRowCombo(page, DEF, 'Ctrl + P');
+  assert(
+    (await conflictNotes()).includes('· conflict: overrides Search files & sessions while editing'),
+    `Definition = Ctrl+P should name the app shortcut, notes ${JSON.stringify(await conflictNotes())}`,
+  );
+  assert(
+    (await row(page, 'Search files & sessions').locator('.shortcuts__conflict').textContent()) ===
+      ' · conflict',
+    'the Search row should show "· conflict"',
+  );
+  await record(page, DEF, 'Control+Slash');
+  await waitRowCombo(page, DEF, 'Ctrl + /');
+  assert(
+    (await conflictNotes()).includes('· shadows Toggle Line Comment in the editor'),
+    `Definition = Ctrl+/ should name Monaco's default, notes ${JSON.stringify(await conflictNotes())}`,
+  );
+  await record(page, DEF, 'Alt+Z');
+  await waitRowCombo(page, DEF, 'Alt + Z');
+  assert(
+    (await conflictNotes()).includes('· shadows Toggle Word Wrap in the editor'),
+    `Definition = Alt+Z should name the code-viewer chord, notes ${JSON.stringify(await conflictNotes())}`,
+  );
+  log('conflict notes name the app shortcut, the Monaco default and the code-viewer chord ✓');
+
+  // Spec §4 asks which of two rules on one chord wins in an already-open code viewer; measured.
+  await closeSettings(page);
+  await focusEditor(page);
+  const wrapOf = () =>
+    page.evaluate(() => {
+      const ed = (window.monaco?.editor.getEditors() ?? []).find((e) => e.hasTextFocus());
+      return ed?.getRawOptions().wordWrap ?? null;
+    });
+  const wrapBefore = await wrapOf();
+  await page.keyboard.press('Alt+Z');
+  await page.waitForTimeout(1500);
+  const navWon = (await activeTab(page)) === 'b.ts';
+  const wrapAfter = navWon ? null : await wrapOf();
+  log(
+    `Alt+Z with Definition = Alt+Z in an open code viewer: ${navWon ? 'Go to Definition wins' : `Toggle Word Wrap wins (wordWrap ${wrapBefore} → ${wrapAfter})`}`,
+  );
+  if (navWon) await backToCall(page);
+  else if (wrapAfter !== wrapBefore) await page.keyboard.press('Alt+Z');
+  await openShortcuts(page);
+  await page.getByRole('button', { name: `Reset ${DEF} to F12`, exact: true }).click();
+  await waitRowCombo(page, DEF, 'F12');
+  await closeSettings(page);
+
   // AC-9
   await openShortcuts(page);
   await record(page, DEF, 'Alt+D');

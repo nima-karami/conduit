@@ -5,9 +5,17 @@
  */
 
 import * as monaco from 'monaco-editor';
+import { EditorExtensionsRegistry } from 'monaco-editor/esm/vs/editor/browser/editorExtensions.js';
+import { KeybindingsRegistry } from 'monaco-editor/esm/vs/platform/keybinding/common/keybindingsRegistry.js';
 import { useEffect } from 'react';
-import { type MonacoKeyTables, monacoKeybindingFor } from './monaco-keybinding';
-import { buildNavRules, navDispatchCommandId, navShortcutActions } from './nav-keybindings';
+import { comboFromChord, type MonacoKeyTables, monacoKeybindingFor } from './monaco-keybinding';
+import {
+  buildNavRules,
+  type MonacoDefaultBinding,
+  navDispatchCommandId,
+  navShortcutActions,
+} from './nav-keybindings';
+import { isMac } from './shortcuts';
 import { runNavCommand } from './ts-nav';
 
 export const MONACO_KEY_TABLES: MonacoKeyTables = {
@@ -61,4 +69,21 @@ export function useMonacoNavKeybindings(shortcuts: Readonly<Record<string, strin
     );
     return () => rules.dispose();
   }, [shortcuts]);
+}
+
+/** Monaco's single-chord editor-focus default bindings as combos, for the conflict notes. */
+export function readMonacoDefaultBindings(): MonacoDefaultBinding[] {
+  const keyCodeNames: Record<number, string> = Object.fromEntries(
+    Object.entries(MONACO_KEY_TABLES.keyCodes).map(([name, code]) => [code, name]),
+  );
+  const labels = new Map(EditorExtensionsRegistry.getEditorActions().map((a) => [a.id, a.label]));
+  const bindings: MonacoDefaultBinding[] = [];
+  for (const { command, keybinding, when } of KeybindingsRegistry.getDefaultKeybindings()) {
+    if (!command || command.startsWith('-') || keybinding?.chords.length !== 1) continue;
+    const scope = when?.serialize() ?? '';
+    if (!scope.includes('editorTextFocus') && !scope.includes('editorFocus')) continue;
+    const combo = comboFromChord(keybinding.chords[0], keyCodeNames, isMac);
+    if (combo) bindings.push({ command, label: labels.get(command) ?? command, combo });
+  }
+  return bindings;
 }
