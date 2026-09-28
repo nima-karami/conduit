@@ -216,15 +216,16 @@ export function findNode(roots: TreeNode[], path: string): TreeNode | undefined 
 /**
  * The chain of directory paths to expand to reveal `filePath`: root, then each intermediate
  * dir down to the file's parent. Built with `joinPath` so paths compare equal to
- * `TreeNode.path`. Returns `[]` when `filePath` is not under `rootPath`.
+ * `TreeNode.path`. Returns `[]` when `filePath` is not under `rootPath`. Containment is by
+ * `folderKey`: an opened doc's drive letter is canonicalised upper-case, a session root's is not.
  */
 export function ancestorDirChain(filePath: string, rootPath: string): string[] {
-  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
-  const root = norm(rootPath);
-  const file = norm(filePath);
-  if (file === root || !file.startsWith(`${root}/`)) return [];
-  const segments = file
-    .slice(root.length + 1)
+  const rootKey = folderKey(rootPath);
+  const fileKey = folderKey(filePath);
+  if (fileKey === rootKey || !fileKey.startsWith(`${rootKey}/`)) return [];
+  const segments = filePath
+    .replace(/\\/g, '/')
+    .slice(rootKey.length + 1)
     .split('/')
     .filter(Boolean);
   const dirSegments = segments.slice(0, -1);

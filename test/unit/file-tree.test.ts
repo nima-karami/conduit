@@ -45,6 +45,17 @@ describe('ancestorDirChain', () => {
     expect(ancestorDirChain('/other/a.ts', '/root')).toEqual([]);
     expect(ancestorDirChain('/root', '/root')).toEqual([]);
   });
+
+  // canonicalPath upper-cases the drive letter of every opened doc, while a session root keeps
+  // the spelling it was opened with — so a tree open under `g:/r` never revealed (T2.1).
+  it('matches a drive letter spelled in a different case, in the root spelling', () => {
+    expect(ancestorDirChain('G:\\r\\src\\a.ts', 'g:/r')).toEqual(['g:/r', 'g:/r/src']);
+    expect(ancestorDirChain('g:/r/src/a.ts', 'G:\\r')).toEqual(['G:\\r', 'G:\\r/src']);
+  });
+
+  it('keeps POSIX paths case-sensitive', () => {
+    expect(ancestorDirChain('/Root/a.ts', '/root')).toEqual([]);
+  });
 });
 
 describe('treeNodePath', () => {
