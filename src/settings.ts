@@ -50,7 +50,7 @@ export const AUTO_SAVE_MODES: AutoSaveMode[] = [
 ];
 export const AUTO_SAVE_DELAY_MIN = 100;
 export const AUTO_SAVE_DELAY_MAX = 60000;
-export const AUTO_SAVE_DELAY_DEFAULT = 1000;
+const AUTO_SAVE_DELAY_DEFAULT = 1000;
 
 /** Settings-field input: an integer string within the delay bounds, else null. */
 export function parseAutoSaveDelayInput(raw: string): number | null {
