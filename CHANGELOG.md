@@ -6,6 +6,15 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **The Changes and Files lists follow the tab you're on.** The file in the focused tab is
+  highlighted in Changes (the staged or unstaged row that tab shows) and in Files, where its
+  folders open and it scrolls into view. Neither list takes focus or switches tabs to do it.
+
+### Fixed
+- **Opening a file from the Files tree highlights it there again.** In a folder opened with a
+  lower-case drive letter, no opened file was ever highlighted in the tree.
+
 ### Changed
 - **Folder expand/collapse arrows sit on the left in both Files and Changes.** The arrow on each
   Files folder bar moved from the right-hand buttons to the left, where the Changes tab's already
