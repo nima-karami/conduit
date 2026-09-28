@@ -294,8 +294,9 @@ describe('createFileSaves', () => {
     const m = h.open('/big.txt', 'one', false);
     m.setValue('two');
     const before = h.saves.getStatus('/big.txt');
-    expect(await h.saves.save('/big.txt', 'auto')).toBe(false);
+    const p = h.saves.save('/big.txt', 'auto');
     expect(h.writes).toHaveLength(0);
+    expect(await p).toBe(false);
     expect(h.saves.getStatus('/big.txt')).toBe(before);
   });
 
