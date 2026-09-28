@@ -136,6 +136,7 @@ import {
   navEntryFor,
 } from './editor-nav';
 import { shouldReplaceContent } from './file-freshness';
+import { fileSaves } from './file-saves';
 import { buildRowChangeMap } from './file-tree';
 import {
   affectedDirs,
@@ -557,6 +558,11 @@ export function App() {
       });
     });
   }, []);
+
+  useEffect(
+    () => fileSaves.configure({ mode: settings.autoSave, delayMs: settings.autoSaveDelay }),
+    [settings.autoSave, settings.autoSaveDelay],
+  );
 
   // Best-effort save-all on browser navigation/refresh (beforeunload). This fires
   // reliably in the browser preview; in the Electron host it rarely fires on OS-level
@@ -1644,6 +1650,7 @@ export function App() {
         // A diff tab shares its path with the file tab; only the file owns the dirty flag.
         if (doc.kind === 'file') {
           clearDirty(doc.path);
+          fileSaves.dispose(doc.path);
           clearReveal(doc.path);
         }
         const closed = toClosedTab(doc);

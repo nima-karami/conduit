@@ -3,12 +3,12 @@ import type { JSX as ReactJSX } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { canonicalPath } from '../../src/canonical-path';
 import type { BlameLine, FileContentDTO, HostToWebview, ReviewNote } from '../../src/protocol';
-import { canSave, post, subscribe, writeFile } from '../bridge';
+import { post, subscribe } from '../bridge';
 import { markerIndexAtLine, OVERVIEW_RULER_WIDTH } from '../change-decorations';
 import { registerChangeNav } from '../change-nav-registry';
-import { getDirtySnapshot, updateDirty } from '../dirty-store';
 import { buildEditorMenuItems, type EditorMenuIconKey, NAVIGATION } from '../editor-menu';
 import { isSignificantJump } from '../editor-nav';
+import { fileSaves, useFileSaveStatus } from '../file-saves';
 import { fontZoomTarget } from '../font-zoom';
 import {
   IconCommand,
@@ -35,13 +35,11 @@ import {
 import { fileUri, publishCursor, subscribeReveal, takeReveal } from '../project-index';
 import { relativeTime } from '../relative-time';
 import { setNoteTarget } from '../review-note-target';
-import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
 import { registerSelection } from '../selection-registry';
 import { useSettings } from '../settings';
 import { effectiveCombo, SHORTCUT_ACTIONS } from '../shortcuts';
 import { pushToast } from '../toast-store';
 import { hasCodeNavigation, runNavCommand } from '../ts-nav';
-import { refreshIndexedFile } from '../ts-project';
 import { type ChangeMarkersApi, DEGRADED_HINT, useChangeMarkers } from '../use-change-markers';
 import { makeDebouncedFlush } from '../use-debounced-flush';
 import { useNoteMarkers } from '../use-note-markers';
@@ -92,9 +90,6 @@ const NAV_KEYBINDINGS: Record<string, number[]> = {
   ],
 };
 
-/** Last path segment (for human-readable save messages). */
-const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
-
 // An edit-driven cursor move is never an R3 jump; these reasons back up the content-change flag
 // (docs/plans/2026-09-22-editor-nav-history.plan.md, Settled decisions).
 const EDIT_REASONS: ReadonlySet<monaco.editor.CursorChangeReason> = new Set([
@@ -131,11 +126,7 @@ export function CodeViewer({
   onReviewCommitRef.current = onReviewCommit;
   const ref = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
-  // On-disk baseline (dirty = buffer !== baseline). In a ref so the mount-bound save
-  // command and the change handler always see the latest value; advanced on save.
-  const baselineRef = useRef(doc.content);
-  baselineRef.current = doc.content;
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const saveStatus = useFileSaveStatus(doc.path);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [resolving, setResolving] = useState(false);
   const { settings, update } = useSettings();
@@ -169,16 +160,15 @@ export function CodeViewer({
     const existing = monaco.editor.getModel(uri);
     const model =
       existing ?? monaco.editor.createModel(doc.binary ? '' : doc.content, doc.language, uri);
-    // Re-seed a REUSED model so a clean re-open picks up fresh on-disk content (models
-    // persist for cross-file go-to-definition, so a stale buffer would otherwise
-    // survive — K3). NEVER re-seed a DIRTY model: it would destroy unsaved edits.
-    if (existing && !doc.binary && !getDirtySnapshot().has(doc.path)) {
-      if (existing.getValue() !== doc.content) existing.setValue(doc.content);
-      // Monaco creates a navigation target's model itself, hardcoding `typescript` as the
-      // language (LibFiles.getOrCreateModel). Landing on a .js/.json/.md file that way and
-      // then opening it as a tab would leave it tokenized as TypeScript forever.
-      if (existing.getLanguageId() !== doc.language)
-        monaco.editor.setModelLanguage(existing, doc.language);
+    // Monaco creates a navigation target's model itself, hardcoding `typescript` as the
+    // language (LibFiles.getOrCreateModel). Landing on a .js/.json/.md file that way and
+    // then opening it as a tab would leave it tokenized as TypeScript forever.
+    if (existing && !doc.binary && existing.getLanguageId() !== doc.language)
+      monaco.editor.setModelLanguage(existing, doc.language);
+    // The store owns the baseline, the dirty flag, the save entry and the reseed of a reused
+    // clean model (K3), so all of it outlives this editor.
+    if (!doc.binary) {
+      fileSaves.attach(doc.path, { diskContent: doc.content, autoEligible: !doc.truncated });
     }
     const editor = monaco.editor.create(ref.current, {
       model,
@@ -214,78 +204,22 @@ export function CodeViewer({
     });
     editorRef.current = editor;
 
-    // Seed the dirty flag once now (the model may be reused with a buffer that already
-    // differs from a freshly-loaded baseline), then recompute on every edit.
-    const syncDirty = () => updateDirty(doc.path, baselineRef.current, model.getValue());
-    syncDirty();
-    const changeSub = model.onDidChangeContent(syncDirty);
-
-    let saving = false;
-    // Surface a save failure unmissably (banner + toast). A successful save toasts
-    // NOTHING — the dot clearing is the only signal. K2: "it silently doesn't save".
-    const fail = (reason: string) => {
-      setSaveError(reason);
-      pushToast({ message: `Could not save ${baseName(doc.path)}: ${reason}`, variant: 'error' });
-    };
-    // Returns true on success (or already clean), false on failure.
-    const save = async (): Promise<boolean> => {
-      if (saving) return false;
-      const buffer = model.getValue();
-      if (buffer === baselineRef.current) return true; // already clean — success
-      if (!canSave) {
-        fail('Saving is unavailable in the browser preview.');
-        return false;
-      }
-      saving = true;
-      setSaveError(null);
-      try {
-        const res = await writeFile(doc.path, buffer);
-        if (res.ok) {
-          baselineRef.current = buffer;
-          updateDirty(doc.path, buffer, model.getValue());
-          // Push saved content to app.tsx's files map so markdown viewers re-render
-          // without a host round-trip (K3).
-          notifySaved(doc.path, buffer);
-          // …and to the language worker, so files that resolve INTO this one (which have no
-          // model, only indexed content) navigate against what was just written.
-          refreshIndexedFile(doc.path, buffer);
-          return true;
-        } else {
-          fail(res.error);
-          return false;
-        }
-      } catch (e) {
-        fail(e instanceof Error ? e.message : String(e));
-        return false;
-      } finally {
-        saving = false;
-      }
-    };
-    const revert = () => {
-      model.setValue(baselineRef.current); // syncDirty fires via onDidChangeContent
-    };
-    // Register so the GLOBAL Mod+S handler (app.tsx) and the dirty-tab affordance can
-    // save even when focus is outside the editor (K2). Monaco's own binding below also
-    // calls this same self-guarded `save`, so a double-fire is a harmless no-op.
-    const entry: SaveEntry = { save, revert };
-    const unregisterSave = registerSave(doc.path, entry);
     const unregisterSelection = registerSelection(doc.path, {
       getSelectedText: () => {
         const range = editor.getSelection();
         return range ? (editor.getModel()?.getValueInRange(range) ?? '') : '';
       },
     });
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-      void save();
-    });
+    const save = () => {
+      void fileSaves.save(doc.path, 'manual');
+    };
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, save);
     // Also an action so Save shows in the command palette.
     editor.addAction({
       id: 'agentdeck.saveFile',
       label: 'Save File',
       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
-      run: () => {
-        void save();
-      },
+      run: save,
     });
 
     // If we arrived via cross-file go-to-definition, reveal the target. An explicit reveal WINS
@@ -530,12 +464,10 @@ export function CodeViewer({
     return () => {
       debouncedCapture.cancel();
       captureViewState(); // sync final capture BEFORE dispose, else saveViewState has no editor
-      unregisterSave();
       unregisterSelection();
       unregisterNav();
       jumpSub.dispose();
       contentSub.dispose();
-      changeSub.dispose();
       scrollSub.dispose();
       mouseSub.dispose();
       ctxSub.dispose();
@@ -546,7 +478,7 @@ export function CodeViewer({
       editorRef.current = null;
       setEditor(null);
     };
-  }, [doc.path, doc.content, doc.language, doc.binary, update, vsId]);
+  }, [doc.path, doc.content, doc.language, doc.binary, doc.truncated, update, vsId]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });
@@ -749,9 +681,9 @@ export function CodeViewer({
     >
       {doc.truncated && <div className="viewer__banner">Large file — showing the first 2 MB.</div>}
       {changes.state === 'degraded' && <div className="viewer__banner">{DEGRADED_HINT}</div>}
-      {saveError && (
+      {saveStatus?.phase === 'failed' && (
         <div className="viewer__banner viewer__banner--error" role="alert">
-          Could not save: {saveError}
+          Could not save: {saveStatus.error}
         </div>
       )}
       <div className="viewer__monaco" ref={ref} />
