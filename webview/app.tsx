@@ -121,6 +121,7 @@ import {
   backgroundOpenOutcome,
   commitDiffPath,
   docsReducer,
+  filePathsClosedWithSession,
   GIT_HISTORY_DOC_PATH,
   initialDocs,
   REVIEW_DOC_ID,
@@ -308,6 +309,14 @@ function sessionOwningRoot(
   if (owners.length === 0) return null;
   if (activeId !== null && owners.includes(activeId)) return activeId;
   return owners[0] ?? null;
+}
+
+/** A file tab's per-path state goes with its tab, however the tab closes: one lifecycle (see
+ *  docs/plans/2026-09-28-auto-save.plan.md P4). */
+function releaseFileTab(path: string): void {
+  clearDirty(path);
+  fileSaves.dispose(path);
+  clearReveal(path);
 }
 
 export function App() {
@@ -1162,6 +1171,7 @@ export function App() {
         for (const d of docsRef.current) {
           if (d.sessionId === id) markClosing(d.id);
         }
+        for (const path of filePathsClosedWithSession(docsRef.current, id)) releaseFileTab(path);
         dispatchDocs({ type: 'closeSession', sessionId: id });
       }
     }
@@ -1657,11 +1667,7 @@ export function App() {
       const doc = docState.docs.find((d) => d.id === id);
       if (doc) {
         // A diff tab shares its path with the file tab; only the file owns the dirty flag.
-        if (doc.kind === 'file') {
-          clearDirty(doc.path);
-          fileSaves.dispose(doc.path);
-          clearReveal(doc.path);
-        }
+        if (doc.kind === 'file') releaseFileTab(doc.path);
         const closed = toClosedTab(doc);
         if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
       }
@@ -1714,8 +1720,9 @@ export function App() {
         return;
       }
       void entry.save({ kind: 'auto' }).then((ok) => {
-        if (ok) forceCloseDoc(id);
-        else prompt(fileSaves.getStatus(doc.path)?.error ?? '');
+        // Typing during that write leaves the buffer dirty again; closing now would drop it.
+        if (ok && !getDirtySnapshot().has(doc.path)) forceCloseDoc(id);
+        else prompt(ok ? null : (fileSaves.getStatus(doc.path)?.error ?? ''));
       });
     },
     [docState.docs, dirtySet, forceCloseDoc, settings.autoSave],
