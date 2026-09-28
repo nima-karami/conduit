@@ -23,6 +23,7 @@ import {
 import { sendMention } from '../mention-bus';
 import { monacoKeybindingFor } from '../monaco-keybinding';
 import { ensureTokenizer } from '../monaco-languages';
+import { MONACO_KEY_TABLES, registerCodeViewerEditor } from '../monaco-nav-keybindings';
 import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
@@ -32,13 +33,14 @@ import {
   registerNavEditor,
   revealInEditor,
 } from '../nav-editors';
+import { dropNavChords, formatMonacoHint, isNavOverridden, navMenuHints } from '../nav-keybindings';
 import { fileUri, publishCursor, subscribeReveal, takeReveal } from '../project-index';
 import { relativeTime } from '../relative-time';
 import { setNoteTarget } from '../review-note-target';
 import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
 import { registerSelection } from '../selection-registry';
 import { useSettings } from '../settings';
-import { effectiveCombo, SHORTCUT_ACTIONS } from '../shortcuts';
+import { effectiveCombo, isMac, SHORTCUT_ACTIONS } from '../shortcuts';
 import { pushToast } from '../toast-store';
 import { hasCodeNavigation, runNavCommand } from '../ts-nav';
 import { refreshIndexedFile } from '../ts-project';
@@ -62,6 +64,12 @@ const MENU_ICONS: Record<EditorMenuIconKey, ReactJSX.Element> = {
   compare: <IconCompare size={14} />,
 };
 
+/** The combo currently bound to an app shortcut action, '' when the action is unknown. */
+const comboFor = (actionId: string, overrides: Record<string, string>): string => {
+  const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
+  return action ? effectiveCombo(action, overrides) : '';
+};
+
 /**
  * VS Code accelerators for the navigation commands, keyed by the built-in command id.
  *
@@ -70,18 +78,6 @@ const MENU_ICONS: Record<EditorMenuIconKey, ReactJSX.Element> = {
  * them to our own actions (which delegate to the same command) keeps the keyboard path and
  * the menu path identical, and puts the commands in the command palette.
  */
-/** monaco.KeyCode is a reverse-mapped numeric enum, so Object.entries yields both name->number
- *  and number->name; only the first direction is a key table. */
-const MONACO_KEY_CODES: Record<string, number> = Object.fromEntries(
-  Object.entries(monaco.KeyCode).filter((e): e is [string, number] => typeof e[1] === 'number'),
-);
-
-/** The combo currently bound to an app shortcut action, '' when the action is unknown. */
-const comboFor = (actionId: string, overrides: Record<string, string>): string => {
-  const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
-  return action ? effectiveCombo(action, overrides) : '';
-};
-
 const NAV_KEYBINDINGS: Record<string, number[]> = {
   'editor.action.revealDefinition': [monaco.KeyCode.F12],
   'editor.action.goToImplementation': [monaco.KeyMod.CtrlCmd | monaco.KeyCode.F12],
@@ -152,6 +148,8 @@ export function CodeViewer({
   // Read at right-click time so a rebind shows on the menu row without re-creating the editor.
   const shortcutsRef = useRef(settings.shortcuts);
   shortcutsRef.current = settings.shortcuts;
+  // The mount-bound save, for the Save action the settings-keyed effect re-registers.
+  const saveRef = useRef<(() => Promise<boolean>) | null>(null);
   // Read at mount without becoming an effect dep (a dep would recreate the editor on
   // every zoom step). Live changes flow through updateOptions below.
   const editorFontRef = useRef(settings.editorFontSize);
@@ -275,18 +273,7 @@ export function CodeViewer({
         return range ? (editor.getModel()?.getValueInRange(range) ?? '') : '';
       },
     });
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-      void save();
-    });
-    // Also an action so Save shows in the command palette.
-    editor.addAction({
-      id: 'agentdeck.saveFile',
-      label: 'Save File',
-      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
-      run: () => {
-        void save();
-      },
-    });
+    saveRef.current = save;
 
     // If we arrived via cross-file go-to-definition, reveal the target. An explicit reveal WINS
     // over saved-scroll restore (spec 2026-06-30 §3); only restore the saved view state otherwise.
@@ -314,22 +301,6 @@ export function CodeViewer({
     const navigate = (actionId: string) => {
       void runNavCommand(editor, actionId);
     };
-    for (const n of NAVIGATION) {
-      editor.addAction({
-        id: `conduit.${n.id}`,
-        label: n.label,
-        keybindings: NAV_KEYBINDINGS[n.actionId] ?? [],
-        run: () => navigate(n.actionId),
-      });
-    }
-    // Toggles the persisted setting; the live-apply effect below propagates the new
-    // value to every open editor via updateOptions.
-    editor.addAction({
-      id: 'agentdeck.toggleWordWrap',
-      label: 'Toggle Word Wrap',
-      keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.KeyZ],
-      run: () => update({ wordWrap: !wordWrapRef.current }),
-    });
     // Right-click opens the app's shared context menu (Monaco's native one is
     // suppressed via `contextmenu: false`). The menu's "Go to Definition" routes to
     // our custom `agentdeck.goToDefinition` — the built-in TS one can't navigate
@@ -349,6 +320,7 @@ export function CodeViewer({
           next: comboFor('nextChange', shortcutsRef.current),
           prev: comboFor('prevChange', shortcutsRef.current),
         },
+        navHints: navMenuHints(shortcutsRef.current, (c) => formatMonacoHint(c, isMac)),
       });
       // Viewport coords for the fixed-position menu; posx/posy are page-based and would drift.
       setMenu({
@@ -496,6 +468,7 @@ export function CodeViewer({
     });
 
     const unregisterNav = registerNavEditor(doc.path, editor);
+    const unregisterCodeViewer = registerCodeViewerEditor(editor);
     // R3 (docs/specs/2026-09-22-editor-nav-history.md §2.2): judged per cursor event against the
     // previous one. Seeded after the reveal/restore above so that landing is never a jump.
     const seedPos = editor.getPosition();
@@ -533,6 +506,7 @@ export function CodeViewer({
       unregisterSave();
       unregisterSelection();
       unregisterNav();
+      unregisterCodeViewer();
       jumpSub.dispose();
       contentSub.dispose();
       changeSub.dispose();
@@ -546,7 +520,7 @@ export function CodeViewer({
       editorRef.current = null;
       setEditor(null);
     };
-  }, [doc.path, doc.content, doc.language, doc.binary, update, vsId]);
+  }, [doc.path, doc.content, doc.language, doc.binary, vsId]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });
@@ -566,18 +540,39 @@ export function CodeViewer({
   // dispatcher still routes the action through the change-nav registry.
   useEffect(() => {
     if (!editor) return;
-    const tables = {
-      CtrlCmd: monaco.KeyMod.CtrlCmd,
-      Shift: monaco.KeyMod.Shift,
-      Alt: monaco.KeyMod.Alt,
-      WinCtrl: monaco.KeyMod.WinCtrl,
-      keyCodes: MONACO_KEY_CODES,
-    };
+    const toBinding = (combo: string) => monacoKeybindingFor(combo, MONACO_KEY_TABLES);
+    // Every keybinding here drops the chords an overridden nav row owns, so the global dispatch
+    // rule wins them in every editor however registration interleaves (nav-keybindings spec §4).
+    const keys = (bindings: number[]) => dropNavChords(bindings, settings.shortcuts, toBinding);
     const keysFor = (actionId: string): number[] => {
-      const binding = monacoKeybindingFor(comboFor(actionId, settings.shortcuts), tables);
-      return binding === null ? [] : [binding];
+      const binding = toBinding(comboFor(actionId, settings.shortcuts));
+      return keys(binding === null ? [] : [binding]);
     };
     const actions = [
+      ...NAVIGATION.map((n) =>
+        editor.addAction({
+          id: `conduit.${n.id}`,
+          label: n.label,
+          keybindings: isNavOverridden(n.actionId, settings.shortcuts)
+            ? []
+            : keys(NAV_KEYBINDINGS[n.actionId] ?? []),
+          run: () => void runNavCommand(editor, n.actionId),
+        }),
+      ),
+      editor.addAction({
+        id: 'agentdeck.saveFile',
+        label: 'Save File',
+        keybindings: keys([monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS]),
+        run: () => void saveRef.current?.(),
+      }),
+      // Toggles the persisted setting; the wordWrap effect above propagates the new value to
+      // every open editor via updateOptions.
+      editor.addAction({
+        id: 'agentdeck.toggleWordWrap',
+        label: 'Toggle Word Wrap',
+        keybindings: keys([monaco.KeyMod.Alt | monaco.KeyCode.KeyZ]),
+        run: () => update({ wordWrap: !wordWrapRef.current }),
+      }),
       editor.addAction({
         id: 'agentdeck.nextChange',
         label: 'Go to Next Change',
@@ -615,7 +610,7 @@ export function CodeViewer({
     return () => {
       for (const a of actions) a.dispose();
     };
-  }, [editor, settings.shortcuts]);
+  }, [editor, settings.shortcuts, update]);
 
   // Live reveal for an ALREADY-open doc: the onMount reveal won't re-run, so consume
   // the staged target here and center it. New-tab opens go through the onMount path.

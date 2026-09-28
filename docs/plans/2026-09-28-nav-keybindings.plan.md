@@ -66,7 +66,8 @@ All state is renderer-side and per window. Nothing new crosses IPC; persistence 
 - N4: only Definition, Implementations, References.
 - N5: no unbind.
 - N6: the global rule set is **empty at default**; dispatch only for overridden rows.
-- N7: physical-key (`e.code`) capture for editor rows only; app rows keep `e.key`.
+- N7 (re-locked after review): `e.keyCode` capture for editor rows only — the code Monaco resolves
+  on (`keyboardEvent.js` `extractKeyCode`); app rows keep `e.key`. `KeyEvt` gains `keyCode?`.
 - H1: Slice 1 is the spike. If AC-5 / AC-5b(revised) / AC-5c fail in the built app, the executor
   **stops and reports** — no no-op override rules, no context-key hacks.
 - Conflicts warn, never block. Nav chords have no `app.tsx` `actionMap` entry (A6).
@@ -175,7 +176,26 @@ export function buildNavRules(
 `navShortcutActions()` order: one `{ command: '-' + monacoCommand, keybinding: toBinding(chord) }`
 per `NAV_BUILTIN_DEFAULT_CHORDS` entry (no `when`), then `{ command: navDispatchCommandId(id),
 keybinding, when: 'editorTextFocus' }` only if `toBinding(override)` is non-null (an unbindable
-stored value keeps the removals). Pure and deterministic (same input ⇒ deep-equal output).
+stored value keeps the removals). A NON-overridden row also gets a removal for each of its default
+chords that is another, overridden row's own `defaultCombo` (revision: Implementations-only ⇒
+`-editor.action.revealDefinition` on Mod+F12). Pure and deterministic (same input ⇒ deep-equal
+output).
+
+Added in the review revision (all pure, in `nav-keybindings.ts`):
+```ts
+/** bindings minus every chord an overridden nav row owns; applied to EVERY code-viewer
+ *  keybinding (nav, Save, Word Wrap, change nav) so the nav chord always wins. */
+export function dropNavChords(bindings: readonly number[], overrides, toBinding): number[];
+/** 'toggleFindRegex' → 'Toggle Find Regex'; conflict-label fallback after the action label
+ *  and MenuRegistry title. */
+export function humanizeCommandId(id: string): string;
+/** Monaco's compact accelerator style for the context-menu nav hints ('Alt+D', '⌥D'). */
+export function formatMonacoHint(combo: string, mac: boolean): string;
+```
+Code viewer: `agentdeck.saveFile` and `agentdeck.toggleWordWrap` move from the mount effect into the
+`[editor, settings.shortcuts, update]` effect (Save via a `saveRef`); the redundant
+`editor.addCommand(Mod+S)` is dropped (its chord is the action's, and an `addCommand` binding can't
+be disposed to re-register).
 
 Added in Slice 3:
 ```ts
@@ -186,7 +206,7 @@ export type Conflict =
   | { kind: 'codeViewer'; label: string };
 /** Code-viewer addAction/addCommand chords that are not SHORTCUT_ACTIONS rows (code-viewer.tsx
  *  Save Mod+S, Toggle Word Wrap Alt+Z). */
-export const CODE_VIEWER_CHORDS: readonly { combo: string; label: string }[] = [
+const CODE_VIEWER_CHORDS: readonly { combo: string; label: string }[] = [  // module-private (fallow)
   { combo: 'Mod+S', label: 'Save File' },
   { combo: 'Alt+Z', label: 'Toggle Word Wrap' },
 ];
@@ -226,7 +246,8 @@ export function navMenuHints(
 ### `webview/editor-combo.ts` (create, pure)
 
 ```ts
-/** Editor-row capture: key token from e.code (KeyD→D, Digit5→5, Period→., Space→Space, Backquote→`),
+/** Editor-row capture: key token from e.keyCode (65–90→A–Z, 48–57→0–9, 32→Space, OEM 186–192 and
+ *  219–222 → ; = , - . / ` [ \ ] '),
  *  otherwise e.key for named keys (F12, ArrowLeft, Home…). Modifier-only ⇒ null. A modified 1–9
  *  yields the '1…9' family token (mirrors comboFromEvent). Mod = metaKey on mac, ctrlKey elsewhere;
  *  literal Ctrl only on mac. */
@@ -469,9 +490,9 @@ Test `test/unit/monaco-keybinding.test.ts`.
 - [ ] Failing tests: `'refuses typing chords'` — `D`, `Shift+D`, `Enter`, `Tab`, `Space`,
   `Backspace`, `Delete`, `.` → `'This key types text in the editor'`; `'refuses unbindable'` — `Mod+>`,
   `Ctrl+1…9` → `"This key can't be bound in the editor"`; `'accepts'` `F12`, `Alt+D`, `Mod+Shift+ArrowDown`, `Ctrl+F12`, `ArrowUp`
-  → `null`; `'mac ⌥D records the physical letter'` —
-  `editorComboFromEvent({altKey:true,key:'∂',code:'KeyD'}, true) == 'Alt+D'`;
-  `'AZERTY records US position'` — `({ctrlKey:true,key:'a',code:'KeyQ'}, false) == 'Mod+Q'`;
+  → `null`; `'mac ⌥D records the letter from keyCode'` —
+  `editorComboFromEvent({altKey:true,key:'∂',code:'KeyD',keyCode:68}, true) == 'Alt+D'`;
+  `'AZERTY records the key Monaco resolves'` — `({ctrlKey:true,key:'a',code:'KeyQ',keyCode:65}, false) == 'Mod+A'`;
   modifier-only → `null`; `({ctrlKey:true,key:'5',code:'Digit5'}, false) == 'Mod+1…9'`.
 - [ ] Run — FAIL. Implement.
 
@@ -635,11 +656,15 @@ particular: a removal rule Monaco ignores, or a peek chord that routes wrongly, 
 ## Decisions Needed
 
 - [normal] AC-5b re-targeted from References to Definition (References is disabled in peek editors
-  by Monaco's own precondition) — default taken: Definition.
-- [normal] Nav menu hints use `formatCombo` (`Alt + D`, per AC-10) while the untouched Peek /
-  Find All / change rows keep raw `Alt+F12` / `Mod+F7` style — default taken: follow the spec;
-  unifying all hints is a separate item.
-- [normal] `Space` added to the translatable/capturable keys (spec §3 list omits it, but `e.code`
+  by Monaco's own precondition) — default taken: Definition. Build finding: in a peek, F12 is also
+  Monaco's `goToNextReference`, live once Definition's F12 is removed, so AC-5b asserts "F12 does
+  not run Definition" rather than "F12 is inert".
+- [resolved in review] Nav menu hints use Monaco's compact style (`Alt+D`, `formatMonacoHint`) to
+  match the Monaco-derived hints beside them; Settings keeps `formatCombo`'s `Alt + D`.
+- [resolved in review] Monaco default bindings reach the Shortcuts tab through a lazy `import()`
+  (with a logged catch): a static import put `monaco-editor` into `settings-modal.tsx`'s module
+  graph and broke the jsdom test that imports it.
+- [normal] `Space` added to the translatable/capturable keys (spec §3 list omits it, but `keyCode`
   capture needs a token for it; bare Space is refused as typing) — default taken: include.
 - [normal] `CODE_VIEWER_CHORDS` is a static mirror of code-viewer's Save/Word-Wrap numeric
   bindings rather than their source — default taken: mirror (making it the source means rewriting

@@ -96,3 +96,32 @@ declare module 'monaco-editor/esm/vs/language/typescript/tsWorker.js' {
     getSemanticDiagnostics(fileName: string): Promise<TsDiagnostic[]>;
   }
 }
+
+/** Monaco's default keybinding registry and editor-action list, read (never written) to warn when
+ *  a Code navigation chord shadows one of Monaco's own (nav-keybindings spec §3). */
+declare module 'monaco-editor/esm/vs/platform/keybinding/common/keybindingsRegistry.js' {
+  export interface KeybindingChordLike {
+    ctrlKey: boolean;
+    shiftKey: boolean;
+    altKey: boolean;
+    metaKey: boolean;
+    keyCode: number;
+  }
+  export interface KeybindingItemLike {
+    command: string | null;
+    keybinding: { chords: KeybindingChordLike[] } | null;
+    when: { serialize(): string } | null | undefined;
+  }
+  export const KeybindingsRegistry: { getDefaultKeybindings(): KeybindingItemLike[] };
+}
+
+declare module 'monaco-editor/esm/vs/editor/browser/editorExtensions.js' {
+  export const EditorExtensionsRegistry: { getEditorActions(): { id: string; label: string }[] };
+}
+
+/** Command titles registered through Action2 / MenuRegistry.addCommand, for conflict labels. */
+declare module 'monaco-editor/esm/vs/platform/actions/common/actions.js' {
+  export const MenuRegistry: {
+    getCommand(id: string): { title: string | { value: string } } | undefined;
+  };
+}

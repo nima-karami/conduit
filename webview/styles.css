@@ -8958,6 +8958,18 @@ button.toggle--on .toggle__knob {
   color: var(--red);
   font-size: calc(11px * var(--font-scale));
 }
+.shortcuts__note {
+  display: block;
+  margin-top: 2px;
+  font-size: calc(11px * var(--font-scale));
+  overflow-wrap: anywhere;
+}
+.shortcuts__note--refusal {
+  color: var(--text-dim);
+}
+.shortcuts__note--conflict {
+  color: var(--red);
+}
 
 /* ---------- split terminal panes ---------- */
 .termstack {

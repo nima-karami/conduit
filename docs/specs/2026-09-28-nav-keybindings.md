@@ -184,12 +184,17 @@ scope.
   Bare F-keys and navigation keys (arrows, Home/End, PageUp/PageDown) with no modifier are allowed.
   App-scope rows keep today's permissive recorder unchanged. The shared recorder takes a per-row
   validator. Only editor rows pass one.
-- **Physical-key capture for editor rows:** the key token is derived from `e.code` rather than
-  `e.key` (`KeyD` → `D`, `Digit5` → `5`, `Period` → `.`), with modifiers read as today. There are
-  two reasons:
-  - on macOS, ⌥D produces `e.key = '∂'`, which would record `Alt+∂` and be refused;
-  - Monaco resolves chords by physical US-layout position (`USLayoutResolvedKeybinding`), so a
-    token taken from `e.code` names the key that will actually fire, on any layout.
+- **Key-code capture for editor rows (N7, re-locked after review):** the key token is derived from
+  `e.keyCode` rather than `e.key` (65–90 → `A`–`Z`, 48–57 → `0`–`9`, the OEM codes 186 `;` 187 `=`
+  188 `,` 189 `-` 190 `.` 191 `/` 192 `` ` `` 219 `[` 220 `\` 221 `]` 222 `'`, 32 → `Space`); named
+  keys (F12, arrows, Home…) come from `e.key`, and modifiers are read as today. There are two
+  reasons:
+  - on macOS, ⌥D produces `e.key = '∂'`, which would record `Alt+∂` and be refused; its `keyCode`
+    is still 68, so it records `Alt+D`;
+  - Monaco resolves a keydown from `e.keyCode` (`keyboardEvent.js` `extractKeyCode` →
+    `standaloneServices` `resolveKeyboardEvent` → `USLayoutResolvedKeybinding`), so a token taken
+    from `keyCode` names the chord that will actually fire. An earlier draft used `e.code` (the
+    physical US position); on AZERTY that records `Mod+Q` for the key Monaco resolves as `Mod+A`.
 
   App rows keep `e.key`.
 - **Translation coverage:** extend `monacoKeybindingFor` from F/letters/digits to the keys
@@ -208,21 +213,34 @@ scope.
     *different* command with the same chord. The default keybinding list is read once from Monaco's
     keybinding registry at runtime and injected, so the function stays node-testable. It is limited
     to rules whose `when` references editor focus (`editorTextFocus`/`editorFocus`). The three nav
-    commands' own defaults are excluded, and so are chords the global rule set has removed.
+    commands' own defaults are excluded, and so are chords the global rule set has removed. The
+    other command is named by its editor-action label, else its registered command title
+    (`MenuRegistry`), else its id made readable (`toggleFindRegex` → "Toggle Find Regex"); a raw
+    id is never shown. The list is loaded lazily by the Shortcuts tab so the Settings modal's
+    module graph stays free of Monaco.
   - **Conduit editor conflict**, for `scope: 'editor'` rows only: the code viewer's own
     `addAction`/`addCommand` chords that are not app rows. Today these are `Mod+S` Save and `Alt+Z`
-    Toggle Word Wrap. They come from a static list exported next to `NAV_KEYBINDINGS`, and the
-    registry never sees them.
+    Toggle Word Wrap. They come from a static list (`CODE_VIEWER_CHORDS`, private to
+    `nav-keybindings.ts`), and the registry never sees them.
 - **Normalisation (editor rows only):** recording a combo equal to the row's default deletes the
   override instead of storing it.
 - **Outputs:** the row's displayed combo, the context-menu `hint` for the three `NAVIGATION` rows
-  (derived from the effective combos, not the static strings), and Monaco's own palette/label
-  rendering, which follows the resolver automatically.
+  (derived from the effective combos, not the static strings, and printed in Monaco's compact
+  accelerator style — `Alt+D`, `Ctrl+F12`, `Shift+Alt+F12` off-mac, `⌥D` on mac — to match the
+  Monaco-derived hints beside them; Settings keeps its spaced `Alt + D` style), and Monaco's own
+  palette/label rendering, which follows the resolver automatically.
 - **Invariants:**
   - With no overrides, the Monaco rule set is empty and the `conduit.*` bindings equal today's
     `NAV_KEYBINDINGS`.
   - An overridden command has none of its default chords live on any surface. That includes
     Definition's `isWeb` Ctrl+F12.
+  - A default chord that is another nav row's own default moves with that row: when only
+    Implementations is overridden, Definition's `isWeb` Ctrl+F12 is removed too, so Ctrl+F12 does
+    not fall through to Definition (Definition keeps F12).
+  - An overridden nav chord always wins in the code viewer: every code-viewer action and command
+    (Save, Toggle Word Wrap, Next/Previous Change, Peek Definition, Find All References and the
+    other `conduit.*` actions) drops a keybinding equal to an overridden nav row's chord, so the
+    outcome never depends on registration order.
   - At most one chord per command is live at a time.
   - The same `settings.shortcuts` value always yields the same rule set (idempotent rebuild, all
     old disposables disposed).
@@ -240,9 +258,9 @@ scope.
 
 | Condition | Expected behavior |
 |---|---|
-| Two nav rows set to the same chord | Both show "· conflict". The code viewer runs whichever action Monaco resolves last. Allowed (warn, not block), matching the existing app-row policy |
+| Two nav rows set to the same chord | Both show "· conflict". Monaco runs whichever dispatch rule resolves last. Allowed (warn, not block), matching the existing app-row policy |
 | Nav chord equals an app shortcut (e.g. `Mod+P`) | Both rows show "· conflict". While an editor has text focus, the nav command wins on every surface: the dispatch rule has no provider precondition, so Monaco always consumes the key. Elsewhere, the app shortcut fires. The note says "overrides <app action> while editing" |
-| Nav chord equals a Monaco editor default (e.g. `Mod+/` toggle comment) or a code-viewer chord (`Mod+S`, `Alt+Z`) | The row shows "· shadows <label> in the editor". The dispatch rule is an override, so it wins over Monaco defaults. Against code-viewer `addAction` chords the winner is ASSUMED to be the later-registered rule, and the build states which one wins |
+| Nav chord equals a Monaco editor default (e.g. `Mod+/` toggle comment) or a code-viewer chord (`Mod+S`, `Alt+Z`) | The row shows "· shadows <label> in the editor". The dispatch rule is an override, so it wins over Monaco defaults. **The nav command also wins over the code-viewer chord, in every editor** — including one opened after the rebind — because code-viewer registrations drop any keybinding an overridden nav row owns (§3 invariants; measured by nav-keybindings-settings) |
 | Nav chord on a surface with no provider (plain-text diff) | The chord is consumed, the built-in runs, and nothing happens. The app shortcut sharing that chord does not fire |
 | Recording a combo that the rule set previously removed for another nav command's default (swap F12 ↔ Shift+F12) | The rebuild is computed from the full effective set, so a chord both removed (as the old default) and added (as the new chord) resolves to the new command. AC-7 covers this |
 | Chord is untranslatable, a digit family or a typing chord | Refused inline (§3). The row stays in recording. Escape exits |
@@ -253,8 +271,8 @@ scope.
 | Second window open | It receives the settings broadcast and applies the same rebuild |
 | Stored override is malformed or untranslatable (hand-edited settings) | Treated as no binding for the editor: no `conduit.*` chord and no global addition. The default removal is **still** applied so the default doesn't silently come back. The row shows the stored combo with "· can't be bound". Reset recovers |
 | Stored override equals the default | Normalise at write time: recording the default chord deletes the override, so Reset stays hidden |
-| macOS | `Mod` records ⌘, and the default `Mod+F12` means ⌘F12, matching Monaco's CtrlCmd. `Ctrl` on mac maps to `WinCtrl` (existing). ⌥+letter records the physical letter (`Alt+D`), not `∂` |
-| Non-US layout (AZERTY, Dvorak) | Editor rows record and display the physical US-position key, which Monaco fires on. The label can differ from the printed keycap. That matches Monaco's own labels |
+| macOS | `Mod` records ⌘, and the default `Mod+F12` means ⌘F12, matching Monaco's CtrlCmd. `Ctrl` on mac maps to `WinCtrl` (existing). ⌥+letter records the letter from `keyCode` (`Alt+D`), not `∂` |
+| Non-US layout (AZERTY, Dvorak) | Editor rows record the key from `e.keyCode`, which is what Monaco resolves the chord on, so the recorded chord is the one that fires (AZERTY Ctrl+A records `Mod+A`) |
 | Monaco refuses a `-command` removal rule (AC-5 fails) | Stop and escalate. The fallback (overriding the default chord with a no-op rule on the built-in's chord) is a design change for the plan, not a silent substitute |
 
 ## 5. Defaults vs. settings
@@ -274,7 +292,7 @@ scope.
 - **MVP:**
   - the three rows;
   - the extended data shape;
-  - validation, physical-key capture for editor rows and the extended translation;
+  - validation, key-code capture for editor rows and the extended translation;
   - code-viewer live rebinding;
   - the global rule set covering the diff, plan and peek surfaces;
   - default removal;
@@ -302,17 +320,20 @@ Unit (vitest, `test/unit/`, platform-independent: pass `isMac` or inject it, nev
   digit family.
 - U2. `validateEditorCombo` refuses the three classes in §3 and accepts `F12`, `Alt+D`,
   `Mod+Shift+ArrowDown` and `Ctrl+F12`. The editor-row capture function, given a mac event
-  `{altKey, key:'∂', code:'KeyD'}`, yields `Alt+D`, and given an AZERTY `{ctrlKey, key:'a',
-  code:'KeyQ'}` yields `Mod+Q`.
+  `{altKey, key:'∂', code:'KeyD', keyCode:68}`, yields `Alt+D`, and given an AZERTY `{ctrlKey,
+  key:'a', code:'KeyQ', keyCode:65}` yields `Mod+A`.
 - U3. `findConflicts` reports an app conflict, a Monaco-default conflict (on an injected list), and
   none against the command's own default. With a removal in effect it no longer reports that
   removed chord.
 - U4. The pure rule-set builder (effective combos → rules) returns `[]` for no overrides. For
   one override it returns a removal for **each** default chord of that command (two for Definition,
   F12 and Ctrl+F12; one for the others) plus one dispatch-command addition. For a swap it returns
-  the rules for both commands with no leftovers, and it is idempotent.
+  the rules for both commands with no leftovers, and it is idempotent. Overriding only
+  Implementations also removes Definition's Ctrl+F12. A code-viewer keybinding equal to an
+  overridden nav chord is filtered out (`dropNavChords`).
 - U6. `findConflicts` reports the code-viewer chords (`Mod+S`, `Alt+Z`) for editor rows.
-- U5. The `NAVIGATION` hint derivation returns the effective, platform-formatted combo.
+- U5. The `NAVIGATION` hint derivation returns the effective combo in Monaco's compact,
+  platform-specific style.
 
 EARS:
 
@@ -363,18 +384,27 @@ Feature: Configurable navigation shortcuts
     When Alt+D is pressed
     Then the same outcome as today's F12 on that block occurs
 
+  # Revised in the build: References never runs in a peek's embedded editor (Monaco precondition),
+  # and in a peek F12 is ALSO Monaco's goToNextReference, which becomes live once Definition's F12
+  # is removed — so F12 there steps to the next reference rather than doing nothing.
   Scenario: AC-5b peek inside a code viewer follows the rebind
-    Given Go to References is Alt+R and a references peek is open in a.ts
+    Given Go to Definition is Alt+D and a references peek is open in a.ts
     When focus is in the peek's embedded editor on a symbol
-    And Alt+R is pressed
-    Then Monaco's references command runs there (the peek updates)
-    When Shift+F12 is pressed there
-    Then nothing happens
+    And F12 is pressed there
+    Then Definition does not run (Monaco may step to the next reference)
+    When Alt+D is pressed there
+    Then Definition runs
 
   Scenario: AC-5c Ctrl+F12 no longer reaches Definition once Definition is rebound
     Given Go to Definition is Alt+D and Implementations is at its default
     When Ctrl+F12 is pressed on an interface method in the code viewer and in a TS plan block
     Then Implementations runs on both surfaces, never Definition
+
+  Scenario: AC-5c mirror — only Implementations is rebound
+    Given Go to Implementations is Alt+I and Definition is at its default
+    When Ctrl+F12 is pressed on a call in the code viewer and in a TS plan block
+    Then nothing runs (Definition's Ctrl+F12 left with Implementations)
+    And Alt+I runs Implementations
 
   Scenario: AC-6 reset
     When Reset is clicked on Go to Definition
@@ -397,7 +427,12 @@ Feature: Configurable navigation shortcuts
   Scenario: AC-10 context-menu hint
     Given Go to Definition is Alt+D
     When the code editor is right-clicked on a symbol
-    Then the "Go to Definition" row shows "Alt + D"
+    Then the "Go to Definition" row shows "Alt+D" (Monaco's compact style, like its neighbours)
+
+  Scenario: AC-11b the nav chord beats a code-viewer chord in every editor
+    Given Go to Definition is Alt+Z (the code viewer's Toggle Word Wrap chord)
+    When Alt+Z is pressed in an editor open before the rebind, and in one opened after it
+    Then both navigate to the definition
 ```
 
 - AC-11: the existing `editor-nav-history` and `go-lsp` (where gopls is available) scenarios stay
@@ -450,7 +485,7 @@ after recording ends.
   inline convention in `shortcuts.ts` and `settings-modal.tsx`, so no new i18n debt is added
   (see A3). Combo tokens are rendered via `formatCombo`, which is platform-aware but not
   locale-aware. Key names (F12, Alt) are not translated, as in VS Code. **Keyboard layouts:**
-  editor rows use physical-key capture (§3), and the label names the US-position key (§4). The layout must tolerate a
+  editor rows use key-code capture (§3), so the label names the key Monaco fires on (§4). The layout must tolerate a
   longer conflict note: the note wraps under the label and is never truncated.
 - **RTL:** not supported by the app; no change.
 
@@ -499,8 +534,9 @@ dir.
 - **[normal] N6 — Route through the dispatch command only when overridden, or always?** Default
   taken: only when overridden, so default behavior stays byte-identical. "Always" would be one path
   instead of two, but it changes the default path for every user.
-- **[normal] N7 — Physical-key (`e.code`) capture for editor rows only.** Default taken: yes. App
-  rows keep `e.key`, so their behavior does not change. Unifying the two is a separate item.
+- **[normal] N7 — Key-code (`e.keyCode`) capture for editor rows only.** Re-locked after code
+  review: the first build captured `e.code`, which is not what Monaco resolves on (§3). App rows keep
+  `e.key`, so their behavior does not change. Unifying the two is a separate item.
 - **[high] H1 — Mechanism risk: removal and peek routing are source-read, not measured.** The spec
   relies on two things:
   1. `-editor.action.X` removal through `monaco.editor.addKeybindingRules` in 0.55.1. The resolver

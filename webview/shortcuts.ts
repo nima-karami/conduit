@@ -11,6 +11,10 @@ export interface ShortcutAction {
   description: string;
   group: string;
   defaultCombo: string;
+  /** Absent ⇒ 'app'. 'editor' rows are dispatched by Monaco only, never by app.tsx. */
+  scope?: 'app' | 'editor';
+  /** Monaco built-in id; also the key into NAVIGATION / runNavCommand. */
+  monacoCommand?: string;
 }
 
 export const SHORTCUT_ACTIONS: ShortcutAction[] = [
@@ -113,6 +117,31 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     group: 'Editor',
     defaultCombo: 'Mod+Shift+H',
   },
+  // No actionMap entry in app.tsx on purpose: Monaco owns these chords (nav-keybindings spec §2.2).
+  {
+    id: 'goToDefinition',
+    description: 'Go to Definition',
+    group: 'Code navigation',
+    defaultCombo: 'F12',
+    scope: 'editor',
+    monacoCommand: 'editor.action.revealDefinition',
+  },
+  {
+    id: 'goToImplementation',
+    description: 'Go to Implementations',
+    group: 'Code navigation',
+    defaultCombo: 'Mod+F12',
+    scope: 'editor',
+    monacoCommand: 'editor.action.goToImplementation',
+  },
+  {
+    id: 'goToReferences',
+    description: 'Go to References',
+    group: 'Code navigation',
+    defaultCombo: 'Shift+F12',
+    scope: 'editor',
+    monacoCommand: 'editor.action.goToReferences',
+  },
   { id: 'openSettings', description: 'Open settings', group: 'General', defaultCombo: 'Mod+,' },
   // Global Save (K2) reachable outside the editor (terminal, sidebar, filter). Both this
   // and Monaco's own Ctrl+S route to the active doc's save, which self-guards (clean/
@@ -175,6 +204,8 @@ export interface KeyEvt {
   key: string;
   // Physical key code; used to normalize the backquote independent of layout/shift.
   code?: string;
+  // Legacy virtual-key code: what Monaco resolves chords on, so editor rows record from it.
+  keyCode?: number;
   ctrlKey?: boolean;
   metaKey?: boolean;
   altKey?: boolean;
