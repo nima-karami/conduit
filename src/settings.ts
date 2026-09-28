@@ -40,6 +40,25 @@ export type SessionSort = 'manual' | 'name' | 'recent' | 'active' | 'status' | '
 export type RightPaneTab = 'changes' | 'files';
 /** Which side of an `.html`/`.htm` document a tab opens on. */
 export type HtmlDefaultView = 'preview' | 'source';
+/** VS Code `files.autoSave` modes (docs/specs/2026-09-28-auto-save.md §2.2). */
+export type AutoSaveMode = 'off' | 'afterDelay' | 'onFocusChange' | 'onWindowChange';
+export const AUTO_SAVE_MODES: AutoSaveMode[] = [
+  'off',
+  'afterDelay',
+  'onFocusChange',
+  'onWindowChange',
+];
+export const AUTO_SAVE_DELAY_MIN = 100;
+export const AUTO_SAVE_DELAY_MAX = 60000;
+export const AUTO_SAVE_DELAY_DEFAULT = 1000;
+
+/** Settings-field input: an integer string within the delay bounds, else null. */
+export function parseAutoSaveDelayInput(raw: string): number | null {
+  const t = raw.trim();
+  if (!/^\d+$/.test(t)) return null;
+  const n = Number(t);
+  return n >= AUTO_SAVE_DELAY_MIN && n <= AUTO_SAVE_DELAY_MAX ? n : null;
+}
 
 /** User-facing application settings, persisted to settings.json in userData. */
 /** Explorer file-icon style: no icons, monochrome line icons, or per-type coloured icons. */
@@ -110,6 +129,8 @@ export interface AppSettings {
   // edited as a page being read, and which one a person means is a durable property of their
   // work, not of the file — so it is a setting rather than a per-open guess.
   htmlDefaultView: HtmlDefaultView;
+  autoSave: AutoSaveMode;
+  autoSaveDelay: number; // ms, used only by 'afterDelay'
   iconPack: IconPack; // explorer file-type icon style (none | minimal | colored)
   diffSideBySide: boolean; // render diff viewer side-by-side vs inline
   // Last-active right-pane tab, remembered globally so a relaunch reopens it. Default 'files'.
@@ -197,6 +218,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   editorMinimap: true,
   editorChangeMarkers: true,
   htmlDefaultView: 'preview',
+  autoSave: 'off',
+  autoSaveDelay: AUTO_SAVE_DELAY_DEFAULT,
   iconPack: 'colored',
   diffSideBySide: true,
   rightPaneTab: 'files',
@@ -439,6 +462,15 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
       payload.htmlDefaultView,
       HTML_DEFAULT_VIEWS,
       DEFAULT_SETTINGS.htmlDefaultView,
+    ),
+    autoSave: oneOf(payload.autoSave, AUTO_SAVE_MODES, DEFAULT_SETTINGS.autoSave),
+    autoSaveDelay: Math.round(
+      clampNum(
+        payload.autoSaveDelay,
+        AUTO_SAVE_DELAY_MIN,
+        AUTO_SAVE_DELAY_MAX,
+        DEFAULT_SETTINGS.autoSaveDelay,
+      ),
     ),
     // Seeded from the theme when ABSENT, respected when present. The pin flag can only be set
     // by the Appearance controls, so keying the derivation on it made every other writer — a
