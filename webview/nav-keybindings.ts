@@ -93,7 +93,7 @@ export type Conflict =
 
 /** Code-viewer addAction/addCommand chords that are not SHORTCUT_ACTIONS rows — a mirror of
  *  code-viewer.tsx's Save and Toggle Word Wrap registrations, which the registry never sees. */
-export const CODE_VIEWER_CHORDS: readonly { combo: string; label: string }[] = [
+const CODE_VIEWER_CHORDS: readonly { combo: string; label: string }[] = [
   { combo: 'Mod+S', label: 'Save File' },
   { combo: 'Alt+Z', label: 'Toggle Word Wrap' },
 ];
