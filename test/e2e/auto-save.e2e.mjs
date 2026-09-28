@@ -224,7 +224,6 @@ async function phaseFailedSave({ app, page, root, log }) {
   const file = join(root, 'ro.ts');
   await setMode(page, 'afterDelay', 300);
   await openFile(page, 'ro.ts');
-  const toasts0 = await page.locator('.toast--error').count();
   chmodSync(file, 0o444);
   try {
     await typeAtStart(page, 'z');
@@ -234,7 +233,8 @@ async function phaseFailedSave({ app, page, root, log }) {
     await waitFor(async () => (await writesTo(app, 'ro.ts')).length === 2, 'the second attempt');
     await page.locator('.viewer__banner--error').waitFor({ timeout: 5000 });
     await sleep(300);
-    const toasts = (await page.locator('.toast--error').count()) - toasts0;
+    // Counted by text: other phases' toasts (a blame error, say) come and go on their own clock.
+    const toasts = await page.locator('.toast--error', { hasText: 'Could not save ro.ts' }).count();
     assert(toasts === 1, `exactly one error toast for the failure streak, got ${toasts}`);
     assert((await modelValue(page, 'ro.ts')) === 'zzone\n', 'the buffer is kept');
     assert(disk(root, 'ro.ts') === 'one\n', 'nothing reached disk');
