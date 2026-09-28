@@ -5,6 +5,14 @@ import {
   parseAutoSaveDelayInput,
 } from '../../src/settings';
 import { AUTO_SAVE_COPY } from '../auto-save-copy';
+import { useOverlayEntry } from '../use-overlay-entry';
+
+/** Joins the overlay stack while a draft is pending, so the first Escape reverts the draft and
+ *  only the next one reaches the Settings modal (the same seam as its shortcut recorder). */
+function DraftEscape({ onRevert }: { onRevert: () => void }) {
+  useOverlayEntry('popover', onRevert);
+  return null;
+}
 
 /** The auto-save delay input: commits only a valid value; an invalid draft never persists. */
 export function AutoSaveDelayField({
@@ -40,13 +48,13 @@ export function AutoSaveDelayField({
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') commit();
-          else if (e.key === 'Escape') setDraft(String(value));
         }}
         onBlur={() => {
           if (invalid) setDraft(String(value));
           else commit();
         }}
       />
+      {draft !== String(value) && <DraftEscape onRevert={() => setDraft(String(value))} />}
       <span id={`${id}-msg`} className={invalid ? 'set__field-error' : 'set__desc'}>
         {invalid ? AUTO_SAVE_COPY.delayError : AUTO_SAVE_COPY.delayHint}
       </span>
