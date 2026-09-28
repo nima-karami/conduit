@@ -5,6 +5,7 @@ import {
   findConflicts,
   isNavOverridden,
   navDispatchCommandId,
+  navMenuHints,
   navShortcutActions,
 } from '../../webview/nav-keybindings';
 
@@ -178,5 +179,15 @@ describe('findConflicts', () => {
     expect(findConflicts('openSearch', { goToDefinition: 'Mod+P' }, [])).toEqual([
       { kind: 'app', actionId: 'goToDefinition', label: 'Go to Definition', editorScoped: true },
     ]);
+  });
+});
+
+describe('navMenuHints', () => {
+  it('hints follow the effective combo', () => {
+    expect(navMenuHints({ goToDefinition: 'Alt+D' }, (c) => c.replace(/\+/g, ' + '))).toEqual({
+      'editor.action.revealDefinition': 'Alt + D',
+      'editor.action.goToImplementation': 'Mod + F12',
+      'editor.action.goToReferences': 'Shift + F12',
+    });
   });
 });

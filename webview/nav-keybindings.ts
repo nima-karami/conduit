@@ -128,3 +128,15 @@ export function findConflicts(
   }
   return conflicts;
 }
+
+/** monacoCommand → format(effective combo) for the three nav rows. */
+export function navMenuHints(
+  overrides: Readonly<Record<string, string>>,
+  format: (combo: string) => string,
+): Record<string, string> {
+  const hints: Record<string, string> = {};
+  for (const a of navShortcutActions()) {
+    if (a.monacoCommand) hints[a.monacoCommand] = format(effectiveCombo(a, overrides));
+  }
+  return hints;
+}

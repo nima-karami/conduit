@@ -108,6 +108,19 @@ describe('buildEditorMenuItems', () => {
     expect(hint('findAllReferences')).toBe('Shift+Alt+F12');
   });
 
+  it('navHints override the static hint', () => {
+    const list = buildEditorMenuItems({
+      readOnly: true,
+      hasSelection: true,
+      canGoToDefinition: true,
+      navHints: { 'editor.action.revealDefinition': 'Alt + D' },
+    });
+    const hint = (id: string) => list.find((i) => i.id === id)?.hint;
+    expect(hint('goToDefinition')).toBe('Alt + D');
+    expect(hint('goToReferences')).toBe('Shift+F12');
+    expect(hint('peekDefinition')).toBe('Alt+F12');
+  });
+
   it('wires search/palette/select-all/word-wrap to their Monaco action ids', () => {
     const list = buildEditorMenuItems({
       readOnly: true,

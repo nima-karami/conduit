@@ -6,6 +6,13 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Go to Definition, Go to Implementations and Go to References can be rebound.** They're in
+  Settings → Shortcuts under a new "Code navigation" group. A new chord works at once in every
+  editor (files, diffs, plan code blocks, peek views), and the old one stops. Chords that would
+  type text, or that the editor can't bind, are refused with the reason. The row names anything
+  the chord collides with, and the editor's right-click menu shows the chord you picked.
+
 ## [0.43.0] — 2026-09-26
 
 ### Fixed

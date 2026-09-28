@@ -33,14 +33,14 @@ import {
   registerNavEditor,
   revealInEditor,
 } from '../nav-editors';
-import { isNavOverridden } from '../nav-keybindings';
+import { isNavOverridden, navMenuHints } from '../nav-keybindings';
 import { fileUri, publishCursor, subscribeReveal, takeReveal } from '../project-index';
 import { relativeTime } from '../relative-time';
 import { setNoteTarget } from '../review-note-target';
 import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
 import { registerSelection } from '../selection-registry';
 import { useSettings } from '../settings';
-import { effectiveCombo, SHORTCUT_ACTIONS } from '../shortcuts';
+import { effectiveCombo, formatCombo, SHORTCUT_ACTIONS } from '../shortcuts';
 import { pushToast } from '../toast-store';
 import { hasCodeNavigation, runNavCommand } from '../ts-nav';
 import { refreshIndexedFile } from '../ts-project';
@@ -337,6 +337,7 @@ export function CodeViewer({
           next: comboFor('nextChange', shortcutsRef.current),
           prev: comboFor('prevChange', shortcutsRef.current),
         },
+        navHints: navMenuHints(shortcutsRef.current, formatCombo),
       });
       // Viewport coords for the fixed-position menu; posx/posy are page-based and would drift.
       setMenu({

@@ -34,6 +34,9 @@ export interface EditorMenuContext {
   /** Live combos for the change rows; omitted falls back to the registry's defaults, so a
    *  rebound key is never printed as the shipped one. */
   changeCombos?: { next: string; prev: string };
+  /** Live hints for the rebindable nav rows, keyed by NAVIGATION actionId; a missing key keeps
+   *  the static hint. */
+  navHints?: Readonly<Record<string, string>>;
 }
 
 /** How a menu item is dispatched against the editor. */
@@ -157,7 +160,7 @@ export function buildEditorMenuItems(ctx: EditorMenuContext): EditorMenuItemSpec
       iconKey: i === 0 ? ('graph' as const) : undefined,
       disabled: !ctx.canGoToDefinition,
       separatorBefore: i === 0,
-      hint: n.hint,
+      hint: ctx.navHints?.[n.actionId] ?? n.hint,
     })),
   );
 

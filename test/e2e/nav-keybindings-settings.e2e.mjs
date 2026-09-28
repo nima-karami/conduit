@@ -140,6 +140,28 @@ try {
   log('AC-2 recorded Alt+D navigates at once, no reload ✓');
   await backToCall(page);
 
+  // AC-10
+  const at = await page.evaluate(() => {
+    const ed = (window.monaco?.editor.getEditors() ?? []).find((e) => e.hasTextFocus());
+    const pos = ed?.getPosition();
+    const vp = pos ? ed.getScrolledVisiblePosition(pos) : null;
+    if (!ed || !vp) return null;
+    const r = ed.getDomNode().getBoundingClientRect();
+    return { x: r.left + vp.left + 2, y: r.top + vp.top + vp.height / 2 };
+  });
+  assert(at, 'AC-10: the caret must be on screen to right-click it');
+  await page.mouse.click(at.x, at.y, { button: 'right' });
+  await page.waitForSelector('.ctxmenu', { timeout: 5000 });
+  const defHint = await page
+    .locator('.ctxmenu__item', { hasText: /^Go to Definition/ })
+    .locator('.ctxmenu__hint')
+    .textContent();
+  assert(defHint === 'Alt + D', `AC-10: the menu's Go to Definition hint, got "${defHint}"`);
+  await page.keyboard.press('Escape');
+  await page.locator('.ctxmenu').waitFor({ state: 'detached', timeout: 5000 });
+  await focusEditor(page);
+  log('AC-10 the context menu hints the rebound chord ✓');
+
   // AC-8
   await openShortcuts(page);
   await record(page, DEF, 'd');
