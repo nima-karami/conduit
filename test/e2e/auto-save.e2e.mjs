@@ -102,6 +102,83 @@ async function phaseCloseNoPrompt({ page, root, log }) {
   log("closing a dirty tab with auto-save on doesn't prompt ✓");
 }
 
+async function phaseEolCloseUntouched({ app, page, root, log }) {
+  await setMode(page, 'onFocusChange');
+  await openFile(page, 'eol.ts');
+  await waitFor(
+    () => isDirty(page, 'eol.ts'),
+    'the mixed-EOL tab to read dirty with no edit (C10)',
+  );
+  await page.locator('.viewer__monaco .monaco-editor').first().click();
+  await page.keyboard.press('Control+W');
+  await waitFor(
+    async () => (await tab(page, 'eol.ts').count()) === 0,
+    'the untouched tab to close',
+  );
+  assert(
+    (await page.locator('.confirm[role="alertdialog"]').count()) === 0,
+    'no prompt for a buffer the user never edited',
+  );
+  assert(disk(root, 'eol.ts') === 'a\r\nb\n', 'closing must not rewrite its line endings');
+  assert((await writesTo(app, 'eol.ts')).length === 0, 'no write was even attempted');
+  log('closing an untouched mixed-EOL file writes nothing and asks nothing ✓');
+}
+
+/** Counts the renderer's `git:blame` requests as the host receives them. */
+async function spyBlame(app) {
+  await app.evaluate(({ ipcMain }) => {
+    if (global.__blameSpy) return;
+    global.__blameSpy = [];
+    ipcMain.prependListener('to-host', (_e, m) => {
+      if (m?.type === 'git:blame') global.__blameSpy.push(m.path);
+    });
+  });
+}
+const blameRequests = async (app) => (await app.evaluate(() => global.__blameSpy)).length;
+const cursorIn = (page, name) =>
+  page.evaluate((n) => {
+    const ed = window.monaco.editor
+      .getEditors()
+      .find((e) => e.getModel()?.uri.toString().endsWith(`/${n}`));
+    const s = ed?.getSelection();
+    return s ? [s.startLineNumber, s.startColumn, s.endLineNumber, s.endColumn].join(',') : null;
+  }, name);
+
+async function phaseReseedKeepsView({ app, page, root, log }) {
+  await spyBlame(app);
+  await setMode(page, 'afterDelay', 300);
+  await openFile(page, 'rv.ts');
+  await page.locator('.viewer__monaco .monaco-editor').first().click();
+  await page.keyboard.press('Control+Home');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('End');
+  await page.evaluate(() =>
+    window.monaco.editor
+      .getEditors()
+      .find((e) => e.getModel()?.uri.toString().endsWith('/rv.ts'))
+      ?.getAction('agentdeck.toggleGitBlame')
+      ?.run(),
+  );
+  await waitFor(async () => (await blameRequests(app)) === 1, 'blame to be requested');
+
+  await page.keyboard.type('x');
+  await waitFor(() => disk(root, 'rv.ts') === 'l1\nl2x\nl3\n', 'the auto-save');
+  await waitFor(async () => !(await isDirty(page, 'rv.ts')), 'the dot to clear');
+  await sleep(300);
+  assert((await cursorIn(page, 'rv.ts')) === '2,4,2,4', 'a save leaves the cursor where it was');
+  assert((await blameRequests(app)) === 1, "a save's own echo does not re-request blame");
+
+  writeFileSync(join(root, 'rv.ts'), 'l1\nl2x\nl3\nl4\n');
+  await waitForModel(page, 'rv.ts', 'l1\nl2x\nl3\nl4\n');
+  await waitFor(async () => (await blameRequests(app)) === 2, 'blame re-requested for new content');
+  assert(
+    (await cursorIn(page, 'rv.ts')) === '2,4,2,4',
+    "an agent's rewrite keeps the cursor where it was",
+  );
+  await closeTab(page, 'rv.ts');
+  log('a save keeps the view and blame; an external change keeps the view, refreshes blame ✓');
+}
+
 async function phaseWindowChange({ log }) {
   log(
     'onWindowChange saves on window blur — needs-human-smoke (M12: no renderer blur when hidden)',
@@ -200,17 +277,23 @@ async function phaseConflictedBackground({ app, page, root, log }) {
 }
 
 runAutoSave('auto-save', {
-  files: Object.fromEntries(
-    ['ad', 'fc1', 'fc2', 'cl1', 'cl2', 'q', 'ex', 'ro', 'cb1', 'cb2'].map((n) => [
-      `${n}.ts`,
-      'one\n',
-    ]),
-  ),
+  files: {
+    ...Object.fromEntries(
+      ['ad', 'fc1', 'fc2', 'cl1', 'cl2', 'q', 'ex', 'ro', 'cb1', 'cb2'].map((n) => [
+        `${n}.ts`,
+        'one\n',
+      ]),
+    ),
+    'eol.ts': 'a\r\nb\n',
+    'rv.ts': 'l1\nl2\nl3\n',
+  },
   phases: {
     afterDelay: phaseAfterDelay,
     focusTabSwitch: phaseFocusTabSwitch,
     cleanNeverReverts: phaseCleanNeverReverts,
     closeNoPrompt: phaseCloseNoPrompt,
+    eolCloseUntouched: phaseEolCloseUntouched,
+    reseedKeepsView: phaseReseedKeepsView,
     windowChange: phaseWindowChange,
     externalChange: phaseExternalChange,
     failedSave: phaseFailedSave,

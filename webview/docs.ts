@@ -584,13 +584,9 @@ export function toPersistedDocs(state: DocsState): PersistedDoc[] {
     }));
 }
 
-/** File paths whose only tab closes with `sessionId`. Each must be released exactly as a closed
- *  tab is (dirty flag, save entry), or an orphaned buffer can still be written by Save All. */
+/** File paths of the file tabs that close with `sessionId` (a path has one file tab, keyed
+ *  `file:${path}`). Each must be released exactly as a closed tab is (dirty flag, save entry), or
+ *  an orphaned buffer can still be written by Save All. */
 export function filePathsClosedWithSession(docs: readonly OpenDoc[], sessionId: string): string[] {
-  const kept = new Set(
-    docs.filter((d) => d.kind === 'file' && d.sessionId !== sessionId).map((d) => d.path),
-  );
-  return docs
-    .filter((d) => d.kind === 'file' && d.sessionId === sessionId && !kept.has(d.path))
-    .map((d) => d.path);
+  return docs.filter((d) => d.kind === 'file' && d.sessionId === sessionId).map((d) => d.path);
 }

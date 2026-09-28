@@ -590,8 +590,8 @@ export function CodeViewer({
     };
   }, [editor, settings.shortcuts]);
 
-  // Keyed on the path alone: the editor effect above re-runs on every save (C8), so a flush there
-  // would fire on a save rather than on leaving the view (spec §2.2).
+  // Keyed on the path alone: the editor effect above also re-runs when the language, binary flag,
+  // view-state id or `update` change; a flush must fire only when this path leaves the view (§2.2).
   useEffect(() => {
     const path = doc.path;
     return () => fileSaves.trigger(path, 'viewLeave');
