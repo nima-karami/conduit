@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { isBinary } from './content-search';
 import { langFromPath } from './lang';
 import { imageMime, mediaKindForPath, pdfKindForPath } from './media-kind';
-import { realPathLeaf, validateWrite, type WriteResult } from './path-guard';
+import { realPathLeaf, validateWrite, type WriteOptions, type WriteResult } from './path-guard';
 import type { DiffBase, DiffScope, DirEntryDTO, FileContentDTO, FileDiffDTO } from './protocol';
 import type { GrantStore } from './read-grants';
 
@@ -119,6 +119,33 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
   }
 }
 
+/** Refusal when the target's current content isn't `expected`; null when it matches. Uncapped
+ *  and decoded exactly as `readFile` decodes, so a >2 MB or BOM-led file compares whole. */
+async function compareOnDisk(target: string, expected: string): Promise<WriteResult | null> {
+  let onDisk: string;
+  try {
+    onDisk = (await fs.promises.readFile(target)).toString('utf8');
+  } catch (e: unknown) {
+    if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      return { ok: false, conflict: 'deleted', error: 'The file was deleted on disk.' };
+    }
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+  return onDisk === expected
+    ? null
+    : { ok: false, conflict: 'changed', error: 'The file changed on disk.' };
+}
+
+/** IPC trust boundary for `writeFile`'s options: `undefined` → `{}`; a plain object whose
+ *  `expected` is absent or a string → `{expected?}` (other keys ignored); anything else → null. */
+export function parseWriteOptions(raw: unknown): WriteOptions | null {
+  if (raw === undefined) return {};
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const { expected } = raw as { expected?: unknown };
+  if (expected === undefined) return {};
+  return typeof expected === 'string' ? { expected } : null;
+}
+
 /**
  * Write `content` to `absPath`, but ONLY after the path-guard confirms it stays
  * inside one of the open workspace `roots` (see path-guard.ts for the rules). The
@@ -138,12 +165,17 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
  * directory and still re-canonicalizes the CURRENT real path at write time (so a
  * post-read symlink swap can't redirect the write — it just fails closed back to the
  * root check). `validateWrite` itself is never weakened. See src/read-grants.ts.
+ *
+ * `opts.expected` (auto-save) adds a compare-before-write that runs only AFTER the target is
+ * confined, so a rejected path answers exactly as it would without it. See
+ * docs/specs/2026-09-28-auto-save.md §3.
  */
 export async function writeFile(
   absPath: string,
   content: string,
   roots: readonly string[],
   grants?: GrantStore,
+  opts?: WriteOptions,
 ): Promise<WriteResult> {
   const verdict = validateWrite(absPath, roots);
   let target: string;
@@ -163,6 +195,10 @@ export async function writeFile(
       /* missing target — a granted file that's since been deleted; the write recreates it */
     }
     target = real;
+  }
+  if (opts?.expected !== undefined) {
+    const refused = await compareOnDisk(target, opts.expected);
+    if (refused) return refused;
   }
   const dir = path.dirname(target);
   // Same-directory temp so the final rename is atomic (same filesystem/volume).

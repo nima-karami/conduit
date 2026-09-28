@@ -6,6 +6,7 @@ import {
   buildImageDiff,
   isBinary,
   langFromPath,
+  parseWriteOptions,
   readDiff,
   readDir,
   readFile,
@@ -260,5 +261,98 @@ describe('fileService writeFile (K2 read-grant allowance)', () => {
     const res = await writeFile(dir, 'x', [root], grants);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/directory/i);
+  });
+});
+
+describe('fileService writeFile (auto-save precondition)', () => {
+  const setup = (content: string) => {
+    const root = fs.realpathSync.native(tmp());
+    const f = path.join(root, 'a.ts');
+    fs.writeFileSync(f, content);
+    return { root, f };
+  };
+
+  it('writes when expected equals disk', async () => {
+    const { root, f } = setup('one');
+    const res = await writeFile(f, 'two', [root], undefined, { expected: 'one' });
+    expect(res.ok).toBe(true);
+    expect(fs.readFileSync(f, 'utf8')).toBe('two');
+  });
+
+  it('refuses with conflict changed when disk differs', async () => {
+    const { root, f } = setup('theirs');
+    const res = await writeFile(f, 'mine', [root], undefined, { expected: 'one' });
+    expect(res).toEqual({ ok: false, conflict: 'changed', error: 'The file changed on disk.' });
+    expect(fs.readFileSync(f, 'utf8')).toBe('theirs');
+  });
+
+  it('refuses with conflict deleted when the target is missing', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const f = path.join(root, 'gone.ts');
+    const res = await writeFile(f, 'mine', [root], undefined, { expected: 'one' });
+    expect(res).toEqual({ ok: false, conflict: 'deleted', error: 'The file was deleted on disk.' });
+    expect(fs.existsSync(f)).toBe(false);
+  });
+
+  it('compares a BOM file as decoded utf8', async () => {
+    const { root, f } = setup('﻿x');
+    const res = await writeFile(f, '﻿y', [root], undefined, { expected: '﻿x' });
+    expect(res.ok).toBe(true);
+  });
+
+  it('compares beyond the 2 MB read cap', async () => {
+    const full = 'x'.repeat(2.5 * 1024 * 1024);
+    const { root, f } = setup(full);
+    const cut = full.slice(0, 2 * 1024 * 1024);
+    const refused = await writeFile(f, 'mine', [root], undefined, { expected: cut });
+    expect(refused.ok === false && refused.conflict).toBe('changed');
+    const res = await writeFile(f, 'mine', [root], undefined, { expected: full });
+    expect(res.ok).toBe(true);
+  });
+
+  it('path escape is still rejected before any compare', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const sibling = fs.realpathSync.native(tmp());
+    fs.writeFileSync(path.join(sibling, 'victim.ts'), 'untouched');
+    const escapePath = path.join(root, '..', path.basename(sibling), 'victim.ts');
+    const without = await writeFile(escapePath, 'HACKED', [root]);
+    const withExpected = await writeFile(escapePath, 'HACKED', [root], undefined, {
+      expected: 'untouched',
+    });
+    expect(withExpected).toEqual(without);
+    expect('conflict' in withExpected).toBe(false);
+    expect(fs.readFileSync(path.join(sibling, 'victim.ts'), 'utf8')).toBe('untouched');
+  });
+
+  it('absent expected keeps unconditional overwrite', async () => {
+    const { root, f } = setup('theirs');
+    const res = await writeFile(f, 'mine', [root]);
+    expect(res.ok).toBe(true);
+    expect(fs.readFileSync(f, 'utf8')).toBe('mine');
+  });
+
+  it('granted missing file with expected is deleted, not recreated', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const outside = fs.realpathSync.native(tmp());
+    const f = path.join(outside, 'granted.ts');
+    fs.writeFileSync(f, 'one');
+    const grants = createGrantStore({ canonical: hostCanonical });
+    grants.add(f);
+    fs.rmSync(f);
+    const res = await writeFile(f, 'mine', [root], grants, { expected: 'one' });
+    expect(res.ok === false && res.conflict).toBe('deleted');
+    expect(fs.existsSync(f)).toBe(false);
+  });
+});
+
+describe('parseWriteOptions (IPC trust boundary)', () => {
+  it('accepts absent or string expected and rejects everything else', () => {
+    expect(parseWriteOptions(undefined)).toEqual({});
+    expect(parseWriteOptions({})).toEqual({});
+    expect(parseWriteOptions({ expected: 'a' })).toEqual({ expected: 'a' });
+    expect(parseWriteOptions({ expected: 1 })).toBeNull();
+    expect(parseWriteOptions(null)).toBeNull();
+    expect(parseWriteOptions([])).toBeNull();
+    expect(parseWriteOptions('x')).toBeNull();
   });
 });

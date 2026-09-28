@@ -35,6 +35,7 @@ import { decideCrashRecovery } from '../src/crash-recovery';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
 import { indexToSearchHits, walkFiles } from '../src/file-search';
 import {
+  parseWriteOptions,
   readDiffReply,
   readDir,
   readFile,
@@ -4313,9 +4314,11 @@ app.whenReady().then(() => {
   // outside every write root. Grants hold exact files only (see src/read-grants.ts);
   // validateWrite is never weakened. Returns a typed result; on rejection or failure the
   // renderer keeps the buffer dirty and surfaces the reason (banner + toast).
-  ipcMain.handle('writeFile', async (_e, p: string, content: string) => {
+  ipcMain.handle('writeFile', async (_e, p: string, content: string, rawOpts?: unknown) => {
+    const opts = parseWriteOptions(rawOpts);
+    if (opts === null) return { ok: false as const, error: 'Invalid write options.' };
     try {
-      return await writeFile(p, content, writeRoots(), readGrants);
+      return await writeFile(p, content, writeRoots(), readGrants, opts);
     } catch (e: unknown) {
       return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
     }

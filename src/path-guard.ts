@@ -12,7 +12,14 @@ import * as path from 'node:path';
  * handler. The handler just supplies the roots and the bytes.
  */
 
-export type WriteResult = { ok: true; path: string } | { ok: false; error: string };
+export type WriteConflict = 'changed' | 'deleted';
+export type WriteResult =
+  | { ok: true; path: string }
+  | { ok: false; error: string; conflict?: WriteConflict };
+export interface WriteOptions {
+  /** Content the renderer last knew to be on disk; present ⇒ compare-before-write. */
+  expected?: string;
+}
 
 /** Normalize a directory root for prefix comparison: resolve + trailing separator. */
 function normRoot(root: string): string {
