@@ -23,6 +23,7 @@ export type AppearanceControlId =
   | 'wordWrap'
   | 'editorMinimap'
   | 'editorChangeMarkers'
+  | 'autoSave'
   | 'htmlDefaultView'
   | 'surfaceColor'
   | 'codeOpacity'
@@ -65,6 +66,7 @@ export const APPEARANCE_SECTIONS: readonly AppearanceSection[] = [
       'wordWrap',
       'editorMinimap',
       'editorChangeMarkers',
+      'autoSave',
       'htmlDefaultView',
       'surfaceColor',
       'codeOpacity',

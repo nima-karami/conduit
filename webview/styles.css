@@ -7102,6 +7102,27 @@ body.gh-resizing {
   align-items: center;
   gap: 10px;
 }
+.set__number {
+  width: 96px;
+  padding: 5px 8px;
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.set__number:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+.set__number[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+.set__field-error {
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--danger);
+}
 /* Which of the four theme-seeded axes (both fonts, code surface, icon pack) is still
    following the theme, and the one click back. */
 .setpin {

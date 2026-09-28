@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import type { LogLevel } from '../../src/logging';
 import type { AboutInfo } from '../../src/protocol';
 import type {
   AppSettings,
+  AutoSaveMode,
   Background,
   BgIntensity,
   CardField,
@@ -13,10 +14,11 @@ import type {
   IconPack,
   LimitResumeMode,
 } from '../../src/settings';
-import { DEFAULT_SETTINGS, THEME_DEFAULTS } from '../../src/settings';
+import { AUTO_SAVE_MODES, DEFAULT_SETTINGS, THEME_DEFAULTS } from '../../src/settings';
 import type { SkillDestination, SkillInfo, SkillStatus } from '../../src/skills';
 import type { AgentDefinition } from '../../src/types';
 import { APPEARANCE_SECTIONS, type AppearanceControlId } from '../appearance-sections';
+import { AUTO_SAVE_COPY } from '../auto-save-copy';
 import {
   copyDiagnostics,
   installSkill,
@@ -32,6 +34,7 @@ import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
 import { comboFromEvent, effectiveCombo, formatCombo, SHORTCUT_ACTIONS } from '../shortcuts';
 import { MONO_FONTS, THEMES, type ThemeDef, UI_FONTS } from '../themes';
 import { useOverlayEntry } from '../use-overlay-entry';
+import { AutoSaveDelayField } from './auto-save-delay-field';
 import { ModalLayer } from './modal-layer';
 import { SelectField } from './select-field';
 import { SessionCardPreview } from './session-card';
@@ -505,6 +508,30 @@ function Appearance({
               onChange={(v) => update({ editorChangeMarkers: v })}
             />
           </Section>
+        );
+      case 'autoSave':
+        return (
+          <Fragment key={id}>
+            <Section title={AUTO_SAVE_COPY.settingLabel} desc={AUTO_SAVE_COPY.settingDesc}>
+              <SelectField
+                ariaLabel={AUTO_SAVE_COPY.settingLabel}
+                value={settings.autoSave}
+                options={AUTO_SAVE_MODES.map((m) => ({
+                  value: m,
+                  label: AUTO_SAVE_COPY.modeLabels[m],
+                }))}
+                onChange={(v) => update({ autoSave: v as AutoSaveMode })}
+              />
+            </Section>
+            {settings.autoSave === 'afterDelay' && (
+              <Section key="autoSaveDelay" title={AUTO_SAVE_COPY.delayLabel}>
+                <AutoSaveDelayField
+                  value={settings.autoSaveDelay}
+                  onCommit={(ms) => update({ autoSaveDelay: ms })}
+                />
+              </Section>
+            )}
+          </Fragment>
         );
       case 'htmlDefaultView':
         return (
