@@ -173,8 +173,8 @@ export type CloseStep =
   | { type: 'close' }
   | { type: 'save' };
 
-/** What closing a dirty file tab does first (D2). A buffer that differs from disk only by the
- *  seed (C10) closes as it did before auto save: without a write and without a prompt. */
+/** What closing a dirty file tab does first (D2). With auto save on, a buffer that differs from
+ *  disk only by the seed (C10) closes without a write or a prompt; with it off, it still prompts. */
 export function dirtyCloseStep(
   mode: AutoSaveMode,
   status: CloseStatus | undefined,
