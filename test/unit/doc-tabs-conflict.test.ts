@@ -11,8 +11,13 @@ const docs: OpenDoc[] = [
   { id: 'file:/b.ts', kind: 'file', path: '/b.ts', title: 'b.ts', sessionId: 'S' },
 ];
 const LABEL = 'Changed on disk — auto-save paused';
-const conflict: FileSaveStatus = { phase: 'conflict', conflict: 'changed', error: 'x' };
-const dirty: FileSaveStatus = { phase: 'dirty', conflict: null, error: null };
+const conflict: FileSaveStatus = {
+  phase: 'conflict',
+  edited: true,
+  conflict: 'changed',
+  error: 'x',
+};
+const dirty: FileSaveStatus = { phase: 'dirty', edited: true, conflict: null, error: null };
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

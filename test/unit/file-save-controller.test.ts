@@ -165,6 +165,16 @@ describe('createFileSaves', () => {
     expect(h.dirty.has('/a.ts')).toBe(false);
   });
 
+  it('an auto save of an unedited seed-dirty buffer writes nothing', async () => {
+    const h = harness({ mode: 'onFocusChange' });
+    h.models.set('/a.ts', new NormalizingModel('stale'));
+    h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', autoEligible: true });
+    const p = h.saves.save('/a.ts', 'auto');
+    expect(h.writes).toHaveLength(0);
+    expect(await p).toBe(false);
+    expect(h.saves.getStatus('/a.ts')).toMatchObject({ phase: 'dirty', edited: false });
+  });
+
   it('attach never reseeds a marked-dirty model', () => {
     const h = harness();
     const m = h.open('/a.ts', 'one');
@@ -245,6 +255,7 @@ describe('createFileSaves', () => {
     await h.flush();
     expect(h.saves.getStatus('/a.ts')).toEqual({
       phase: 'conflict',
+      edited: true,
       conflict: 'changed',
       error: 'The file changed on disk.',
     });
@@ -270,7 +281,12 @@ describe('createFileSaves', () => {
     await h.flush();
     h.saves.reload('/a.ts');
     expect(h.calls).toEqual(['clearDirty', 'requestRead']);
-    expect(h.saves.getStatus('/a.ts')).toEqual({ phase: 'clean', conflict: null, error: null });
+    expect(h.saves.getStatus('/a.ts')).toEqual({
+      phase: 'clean',
+      edited: false,
+      conflict: null,
+      error: null,
+    });
     h.saves.attach('/a.ts', { diskContent: 'theirs', autoEligible: true });
     expect(m.getValue()).toBe('theirs');
     expect(h.dirty.has('/a.ts')).toBe(false);
@@ -326,6 +342,7 @@ describe('createFileSaves', () => {
     expect(h.toasts).toEqual(['Could not save a.ts: EACCES']);
     expect(h.saves.getStatus('/a.ts')).toEqual({
       phase: 'failed',
+      edited: true,
       conflict: null,
       error: 'EACCES',
     });

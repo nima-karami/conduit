@@ -5,7 +5,9 @@ import {
   type AutoSaveEvent,
   type AutoSaveState,
   type AutoSaveTrigger,
+  afterCloseSave,
   autoSaveStep,
+  dirtyCloseStep,
   INITIAL_AUTO_SAVE_STATE,
   triggerSaves,
 } from '../../webview/auto-save-policy';
@@ -107,6 +109,19 @@ describe('auto-save policy transition table', () => {
       expect(r.effects).toEqual([CLEAR, { type: 'save', kind: 'manual' }]);
     });
   }
+
+  it('dirty + not edited + request auto → no write (a seed difference is never auto-saved)', () => {
+    const s = at({ phase: 'dirty', edited: false });
+    expect(step(s, { type: 'request', kind: 'auto' })).toEqual({ state: s, effects: [] });
+    expect(step(s, { type: 'request', kind: 'manual' }).effects).toEqual([
+      CLEAR,
+      { type: 'save', kind: 'manual' },
+    ]);
+    expect(step(s, { type: 'request', kind: 'force' }).effects).toEqual([
+      CLEAR,
+      { type: 'save', kind: 'force' },
+    ]);
+  });
 
   it('saving + request raises pending to the strongest kind', () => {
     let s = at({ phase: 'saving' });
@@ -284,5 +299,57 @@ describe('auto-save policy behaviour', () => {
     ] as AutoSaveEvent[]) {
       expect(step(s, e).effects).toEqual([]);
     }
+  });
+});
+
+describe('closing a dirty tab (D2)', () => {
+  const st = (phase: AutoSaveState['phase'], edited: boolean, error: string | null = null) => ({
+    phase,
+    edited,
+    error,
+  });
+
+  it('off, or no save entry, prompts plainly', () => {
+    expect(dirtyCloseStep('off', st('dirty', true), true)).toEqual({
+      type: 'prompt',
+      reason: null,
+    });
+    expect(dirtyCloseStep('afterDelay', st('dirty', true), false)).toEqual({
+      type: 'prompt',
+      reason: null,
+    });
+  });
+
+  it('an unedited seed-dirty buffer closes without writing or prompting', () => {
+    expect(dirtyCloseStep('onFocusChange', st('dirty', false), true)).toEqual({ type: 'close' });
+  });
+
+  it('an edited buffer saves first', () => {
+    expect(dirtyCloseStep('onFocusChange', st('dirty', true), true)).toEqual({ type: 'save' });
+    expect(dirtyCloseStep('afterDelay', st('conflict', true), true)).toEqual({ type: 'save' });
+  });
+
+  it('closes after a save only if nothing was typed during it (F3)', () => {
+    expect(afterCloseSave(true, false, st('clean', false))).toEqual({ type: 'close' });
+    expect(afterCloseSave(true, true, st('dirty', true))).toEqual({ type: 'prompt', reason: null });
+  });
+
+  it('a failed or conflicted save prompts with its reason', () => {
+    expect(afterCloseSave(false, true, st('failed', true, 'EACCES'))).toEqual({
+      type: 'prompt',
+      reason: 'EACCES',
+    });
+    expect(afterCloseSave(false, true, st('conflict', true, 'changed'))).toEqual({
+      type: 'prompt',
+      reason: 'changed',
+    });
+  });
+
+  it('a refused save that wrote nothing (truncated, no host) prompts plainly', () => {
+    expect(afterCloseSave(false, true, st('dirty', true))).toEqual({
+      type: 'prompt',
+      reason: null,
+    });
+    expect(afterCloseSave(false, true, undefined)).toEqual({ type: 'prompt', reason: null });
   });
 });

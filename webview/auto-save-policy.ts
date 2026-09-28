@@ -114,6 +114,9 @@ export function autoSaveStep(state: AutoSaveState, event: AutoSaveEvent, mode: A
             effects: [{ type: 'save', kind: 'force' }],
           };
         default:
+          // An auto save needs a user edit, like a trigger: a buffer that differs from disk only
+          // by the seed (C10) would otherwise be rewritten by a close.
+          if (event.kind === 'auto' && !state.edited) return none(state);
           return {
             state: { ...state, phase: 'saving' },
             effects: [{ type: 'clear' }, { type: 'save', kind: event.kind }],
@@ -156,4 +159,40 @@ export function autoSaveStep(state: AutoSaveState, event: AutoSaveEvent, mode: A
     case 'modeChanged':
       return { state, effects: [{ type: 'clear' }] };
   }
+}
+
+/** The save-status fields the close decisions read. */
+interface CloseStatus {
+  phase: AutoSavePhase;
+  edited: boolean;
+  error: string | null;
+}
+
+export type CloseStep =
+  | { type: 'prompt'; reason: string | null }
+  | { type: 'close' }
+  | { type: 'save' };
+
+/** What closing a dirty file tab does first (D2). A buffer that differs from disk only by the
+ *  seed (C10) closes as it did before auto save: without a write and without a prompt. */
+export function dirtyCloseStep(
+  mode: AutoSaveMode,
+  status: CloseStatus | undefined,
+  hasEntry: boolean,
+): CloseStep {
+  if (mode === 'off' || !hasEntry) return { type: 'prompt', reason: null };
+  if (status?.phase === 'dirty' && !status.edited) return { type: 'close' };
+  return { type: 'save' };
+}
+
+/** After the close's own save: close only if nothing was typed during it; otherwise prompt,
+ *  naming the reason only when the save actually failed or conflicted. */
+export function afterCloseSave(
+  ok: boolean,
+  stillDirty: boolean,
+  status: CloseStatus | undefined,
+): CloseStep {
+  if (ok && !stillDirty) return { type: 'close' };
+  const failed = !ok && (status?.phase === 'failed' || status?.phase === 'conflict');
+  return { type: 'prompt', reason: failed ? (status?.error ?? null) : null };
 }

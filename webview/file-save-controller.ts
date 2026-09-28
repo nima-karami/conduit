@@ -47,6 +47,8 @@ export interface AttachOpts {
 
 export interface FileSaveStatus {
   phase: AutoSavePhase;
+  /** A user edit since attach / the last save; false for a seed-only difference (C10). */
+  edited: boolean;
   conflict: WriteConflict | null;
   /** Last write failure reason; cleared when a write starts. */
   error: string | null;
@@ -101,11 +103,17 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
 
   const publish = (e: Entry) => {
     const prev = snapshot.get(e.path);
-    const { phase, conflict } = e.state;
-    if (prev && prev.phase === phase && prev.conflict === conflict && prev.error === e.error) {
+    const { phase, edited, conflict } = e.state;
+    if (
+      prev &&
+      prev.phase === phase &&
+      prev.edited === edited &&
+      prev.conflict === conflict &&
+      prev.error === e.error
+    ) {
       return;
     }
-    snapshot = new Map(snapshot).set(e.path, { phase, conflict, error: e.error });
+    snapshot = new Map(snapshot).set(e.path, { phase, edited, conflict, error: e.error });
     notify();
   };
 

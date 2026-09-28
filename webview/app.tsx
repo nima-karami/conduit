@@ -75,6 +75,7 @@ import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
 import { formatDuration } from '../src/timed-messages';
 import type { AgentDefinition, Session } from '../src/types';
 import { AUTO_SAVE_COPY } from './auto-save-copy';
+import { afterCloseSave, type CloseStep, dirtyCloseStep } from './auto-save-policy';
 import {
   fsDndCopy,
   fsDndMove,
@@ -1712,18 +1713,22 @@ export function App() {
           },
         });
       };
-      // D2: with auto-save on, a dirty close saves (with the on-disk precondition) and only
-      // falls back to the prompt when that save fails or conflicts.
+      // D2: with auto save on, a dirty close saves first (with the on-disk precondition).
       const entry = getSaveEntry(doc.path);
-      if (settings.autoSave === 'off' || !entry) {
-        prompt(null);
-        return;
-      }
-      void entry.save({ kind: 'auto' }).then((ok) => {
-        // Typing during that write leaves the buffer dirty again; closing now would drop it.
-        if (ok && !getDirtySnapshot().has(doc.path)) forceCloseDoc(id);
-        else prompt(ok ? null : (fileSaves.getStatus(doc.path)?.error ?? ''));
-      });
+      const run = (step: CloseStep) => {
+        if (step.type === 'close') forceCloseDoc(id);
+        else if (step.type === 'prompt') prompt(step.reason);
+        else {
+          void entry
+            ?.save({ kind: 'auto' })
+            .then((ok) =>
+              run(
+                afterCloseSave(ok, getDirtySnapshot().has(doc.path), fileSaves.getStatus(doc.path)),
+              ),
+            );
+        }
+      };
+      run(dirtyCloseStep(settings.autoSave, fileSaves.getStatus(doc.path), entry !== undefined));
     },
     [docState.docs, dirtySet, forceCloseDoc, settings.autoSave],
   );
