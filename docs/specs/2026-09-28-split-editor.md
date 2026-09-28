@@ -96,7 +96,9 @@ disabled.
      "Only two editor groups are supported." The menu item is disabled.
    - **Active tab is the Terminal:** disabled and a no-op, with no announcement from the key.
 2. **Focus a group:** a pointer-down or focus-in anywhere inside a group's strip or body makes it
-   the active group. Keyboard: see §9.
+   the active group. Keyboard: see §9. A pointer-down inside a web tab's `<webview>` guest never
+   reaches the host document, so a web tab focuses its group through the focus-in path instead
+   (the guest taking focus).
 3. **Move a tab:** drag it to the other group's strip (insert at the drop position) or body
    (append). Keyboard/menu: "Move to Other Group". The moved tab becomes active in the target
    group, and the target group becomes active.
@@ -177,12 +179,14 @@ disabled.
 
 - `docs[]` stays the unique doc registry: identity, ownership, title, and kind-specific fields.
   Its array order **stops** being tab order.
-- Per session: `groups: [G1] | [G1, G2]`, each `G = { tabs: TabRef[], activeTab: TabRef }`, where
-  `TabRef` = a doc id or the Terminal sentinel (G1 only), plus a per-tab `preview` flag. Also
-  `activeGroup: 1 | 2`.
-- `activeId` (global) and `activeBySession` are **derived** from the active session's active
-  group. Existing callers can migrate one at a time through a selector
-  (`activeDocOf(state, sessionId)`) that returns what `docState.activeId` returns today.
+- Per session, `layouts[sessionId]: SessionLayout = { groups: [G1] | [G1, G2], activeGroup: 1 | 2 }`.
+  Each group is an `EditorGroup = { tabs: Tab[], active: string | null }`, where
+  `Tab = { id, preview? }` and `active === null` is the Terminal (G1 only). `layouts` replaces
+  `activeBySession`, and `OpenDoc.preview` moves onto `Tab`.
+- `activeId` stays a field, but only as a **cache** of the shown session's active group's active
+  tab. It is written only by the reducer's `finalize()` step, which also collapses an empty G2 (I4)
+  and drops zero-tab docs (I6). Existing `docState.activeId` readers therefore keep working
+  unchanged. (Planner: `docs/plans/2026-09-28-split-editor.plan.md` P1.)
 
 **Invariants (unit-testable in the reducer):**
 
@@ -304,6 +308,7 @@ No row has a producer out of scope.
 | Session with zero docs + split | Impossible: G2 is never empty. |
 | Restore finds G2 docs whose session didn't restore | Dropped (existing orphan rule). |
 | Multiple Conduit windows | Unchanged known limitation: the last `persistDocs` wins. |
+| Group 2 switches away from (or moves, or closes) a file that group 1 also shows | Auto-save's `viewLeave` fires for that path when that group's editor unmounts. Under afterDelay / onFocusChange the file saves, even though group 1 still shows it. This is defined behaviour: `viewLeave` is per editor view, not per path. |
 | Two PDFs (or the same PDF) visible at once | Each viewer passes the shared `PDFWorker` explicitly (CLAUDE.md gotcha). Destroying one loading task must not break the other. This needs a check (D8). |
 
 ## 5. Defaults vs. settings
