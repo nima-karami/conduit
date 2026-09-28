@@ -66,7 +66,8 @@ All state is renderer-side and per window. Nothing new crosses IPC; persistence 
 - N4: only Definition, Implementations, References.
 - N5: no unbind.
 - N6: the global rule set is **empty at default**; dispatch only for overridden rows.
-- N7: physical-key (`e.code`) capture for editor rows only; app rows keep `e.key`.
+- N7 (re-locked after review): `e.keyCode` capture for editor rows only — the code Monaco resolves
+  on (`keyboardEvent.js` `extractKeyCode`); app rows keep `e.key`. `KeyEvt` gains `keyCode?`.
 - H1: Slice 1 is the spike. If AC-5 / AC-5b(revised) / AC-5c fail in the built app, the executor
   **stops and reports** — no no-op override rules, no context-key hacks.
 - Conflicts warn, never block. Nav chords have no `app.tsx` `actionMap` entry (A6).
@@ -226,7 +227,8 @@ export function navMenuHints(
 ### `webview/editor-combo.ts` (create, pure)
 
 ```ts
-/** Editor-row capture: key token from e.code (KeyD→D, Digit5→5, Period→., Space→Space, Backquote→`),
+/** Editor-row capture: key token from e.keyCode (65–90→A–Z, 48–57→0–9, 32→Space, OEM 186–192 and
+ *  219–222 → ; = , - . / ` [ \ ] '),
  *  otherwise e.key for named keys (F12, ArrowLeft, Home…). Modifier-only ⇒ null. A modified 1–9
  *  yields the '1…9' family token (mirrors comboFromEvent). Mod = metaKey on mac, ctrlKey elsewhere;
  *  literal Ctrl only on mac. */
@@ -469,9 +471,9 @@ Test `test/unit/monaco-keybinding.test.ts`.
 - [ ] Failing tests: `'refuses typing chords'` — `D`, `Shift+D`, `Enter`, `Tab`, `Space`,
   `Backspace`, `Delete`, `.` → `'This key types text in the editor'`; `'refuses unbindable'` — `Mod+>`,
   `Ctrl+1…9` → `"This key can't be bound in the editor"`; `'accepts'` `F12`, `Alt+D`, `Mod+Shift+ArrowDown`, `Ctrl+F12`, `ArrowUp`
-  → `null`; `'mac ⌥D records the physical letter'` —
-  `editorComboFromEvent({altKey:true,key:'∂',code:'KeyD'}, true) == 'Alt+D'`;
-  `'AZERTY records US position'` — `({ctrlKey:true,key:'a',code:'KeyQ'}, false) == 'Mod+Q'`;
+  → `null`; `'mac ⌥D records the letter from keyCode'` —
+  `editorComboFromEvent({altKey:true,key:'∂',code:'KeyD',keyCode:68}, true) == 'Alt+D'`;
+  `'AZERTY records the key Monaco resolves'` — `({ctrlKey:true,key:'a',code:'KeyQ',keyCode:65}, false) == 'Mod+A'`;
   modifier-only → `null`; `({ctrlKey:true,key:'5',code:'Digit5'}, false) == 'Mod+1…9'`.
 - [ ] Run — FAIL. Implement.
 
@@ -639,7 +641,7 @@ particular: a removal rule Monaco ignores, or a peek chord that routes wrongly, 
 - [normal] Nav menu hints use `formatCombo` (`Alt + D`, per AC-10) while the untouched Peek /
   Find All / change rows keep raw `Alt+F12` / `Mod+F7` style — default taken: follow the spec;
   unifying all hints is a separate item.
-- [normal] `Space` added to the translatable/capturable keys (spec §3 list omits it, but `e.code`
+- [normal] `Space` added to the translatable/capturable keys (spec §3 list omits it, but `keyCode`
   capture needs a token for it; bare Space is refused as typing) — default taken: include.
 - [normal] `CODE_VIEWER_CHORDS` is a static mirror of code-viewer's Save/Word-Wrap numeric
   bindings rather than their source — default taken: mirror (making it the source means rewriting

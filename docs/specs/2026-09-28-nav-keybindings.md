@@ -184,12 +184,17 @@ scope.
   Bare F-keys and navigation keys (arrows, Home/End, PageUp/PageDown) with no modifier are allowed.
   App-scope rows keep today's permissive recorder unchanged. The shared recorder takes a per-row
   validator. Only editor rows pass one.
-- **Physical-key capture for editor rows:** the key token is derived from `e.code` rather than
-  `e.key` (`KeyD` → `D`, `Digit5` → `5`, `Period` → `.`), with modifiers read as today. There are
-  two reasons:
-  - on macOS, ⌥D produces `e.key = '∂'`, which would record `Alt+∂` and be refused;
-  - Monaco resolves chords by physical US-layout position (`USLayoutResolvedKeybinding`), so a
-    token taken from `e.code` names the key that will actually fire, on any layout.
+- **Key-code capture for editor rows (N7, re-locked after review):** the key token is derived from
+  `e.keyCode` rather than `e.key` (65–90 → `A`–`Z`, 48–57 → `0`–`9`, the OEM codes 186 `;` 187 `=`
+  188 `,` 189 `-` 190 `.` 191 `/` 192 `` ` `` 219 `[` 220 `\` 221 `]` 222 `'`, 32 → `Space`); named
+  keys (F12, arrows, Home…) come from `e.key`, and modifiers are read as today. There are two
+  reasons:
+  - on macOS, ⌥D produces `e.key = '∂'`, which would record `Alt+∂` and be refused; its `keyCode`
+    is still 68, so it records `Alt+D`;
+  - Monaco resolves a keydown from `e.keyCode` (`keyboardEvent.js` `extractKeyCode` →
+    `standaloneServices` `resolveKeyboardEvent` → `USLayoutResolvedKeybinding`), so a token taken
+    from `keyCode` names the chord that will actually fire. An earlier draft used `e.code` (the
+    physical US position); on AZERTY that records `Mod+Q` for the key Monaco resolves as `Mod+A`.
 
   App rows keep `e.key`.
 - **Translation coverage:** extend `monacoKeybindingFor` from F/letters/digits to the keys
@@ -253,8 +258,8 @@ scope.
 | Second window open | It receives the settings broadcast and applies the same rebuild |
 | Stored override is malformed or untranslatable (hand-edited settings) | Treated as no binding for the editor: no `conduit.*` chord and no global addition. The default removal is **still** applied so the default doesn't silently come back. The row shows the stored combo with "· can't be bound". Reset recovers |
 | Stored override equals the default | Normalise at write time: recording the default chord deletes the override, so Reset stays hidden |
-| macOS | `Mod` records ⌘, and the default `Mod+F12` means ⌘F12, matching Monaco's CtrlCmd. `Ctrl` on mac maps to `WinCtrl` (existing). ⌥+letter records the physical letter (`Alt+D`), not `∂` |
-| Non-US layout (AZERTY, Dvorak) | Editor rows record and display the physical US-position key, which Monaco fires on. The label can differ from the printed keycap. That matches Monaco's own labels |
+| macOS | `Mod` records ⌘, and the default `Mod+F12` means ⌘F12, matching Monaco's CtrlCmd. `Ctrl` on mac maps to `WinCtrl` (existing). ⌥+letter records the letter from `keyCode` (`Alt+D`), not `∂` |
+| Non-US layout (AZERTY, Dvorak) | Editor rows record the key from `e.keyCode`, which is what Monaco resolves the chord on, so the recorded chord is the one that fires (AZERTY Ctrl+A records `Mod+A`) |
 | Monaco refuses a `-command` removal rule (AC-5 fails) | Stop and escalate. The fallback (overriding the default chord with a no-op rule on the built-in's chord) is a design change for the plan, not a silent substitute |
 
 ## 5. Defaults vs. settings
@@ -274,7 +279,7 @@ scope.
 - **MVP:**
   - the three rows;
   - the extended data shape;
-  - validation, physical-key capture for editor rows and the extended translation;
+  - validation, key-code capture for editor rows and the extended translation;
   - code-viewer live rebinding;
   - the global rule set covering the diff, plan and peek surfaces;
   - default removal;
@@ -302,8 +307,8 @@ Unit (vitest, `test/unit/`, platform-independent: pass `isMac` or inject it, nev
   digit family.
 - U2. `validateEditorCombo` refuses the three classes in §3 and accepts `F12`, `Alt+D`,
   `Mod+Shift+ArrowDown` and `Ctrl+F12`. The editor-row capture function, given a mac event
-  `{altKey, key:'∂', code:'KeyD'}`, yields `Alt+D`, and given an AZERTY `{ctrlKey, key:'a',
-  code:'KeyQ'}` yields `Mod+Q`.
+  `{altKey, key:'∂', code:'KeyD', keyCode:68}`, yields `Alt+D`, and given an AZERTY `{ctrlKey,
+  key:'a', code:'KeyQ', keyCode:65}` yields `Mod+A`.
 - U3. `findConflicts` reports an app conflict, a Monaco-default conflict (on an injected list), and
   none against the command's own default. With a removal in effect it no longer reports that
   removed chord.
@@ -450,7 +455,7 @@ after recording ends.
   inline convention in `shortcuts.ts` and `settings-modal.tsx`, so no new i18n debt is added
   (see A3). Combo tokens are rendered via `formatCombo`, which is platform-aware but not
   locale-aware. Key names (F12, Alt) are not translated, as in VS Code. **Keyboard layouts:**
-  editor rows use physical-key capture (§3), and the label names the US-position key (§4). The layout must tolerate a
+  editor rows use key-code capture (§3), so the label names the key Monaco fires on (§4). The layout must tolerate a
   longer conflict note: the note wraps under the label and is never truncated.
 - **RTL:** not supported by the app; no change.
 
@@ -499,8 +504,9 @@ dir.
 - **[normal] N6 — Route through the dispatch command only when overridden, or always?** Default
   taken: only when overridden, so default behavior stays byte-identical. "Always" would be one path
   instead of two, but it changes the default path for every user.
-- **[normal] N7 — Physical-key (`e.code`) capture for editor rows only.** Default taken: yes. App
-  rows keep `e.key`, so their behavior does not change. Unifying the two is a separate item.
+- **[normal] N7 — Key-code (`e.keyCode`) capture for editor rows only.** Re-locked after code
+  review: the first build captured `e.code`, which is not what Monaco resolves on (§3). App rows keep
+  `e.key`, so their behavior does not change. Unifying the two is a separate item.
 - **[high] H1 — Mechanism risk: removal and peek routing are source-read, not measured.** The spec
   relies on two things:
   1. `-editor.action.X` removal through `monaco.editor.addKeybindingRules` in 0.55.1. The resolver

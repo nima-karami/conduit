@@ -1,7 +1,8 @@
 /**
  * Chord capture and validation for editor-scoped Shortcuts rows (nav-keybindings spec §3).
- * App rows keep `comboFromEvent`; these rows record the PHYSICAL key, because Monaco resolves
- * chords by US-layout position, and refuse chords Monaco can't bind or that would type text.
+ * App rows keep `comboFromEvent`; these rows record the key Monaco will resolve the chord on —
+ * `e.keyCode` (keyboardEvent.js extractKeyCode) — and refuse chords Monaco can't bind or that
+ * would type text.
  */
 
 import { monacoKeyCodeName } from './monaco-keybinding';
@@ -14,33 +15,33 @@ const DIGIT_FAMILY = '1…9';
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta']);
 const TYPING_NAMED_KEYS = new Set(['Enter', 'Tab', 'Backspace', 'Space', 'Delete']);
 
-/** `e.code` → combo token for the keys whose `e.key` depends on layout or modifiers. */
-const CODE_TOKENS: Readonly<Record<string, string>> = {
-  Backquote: '`',
-  Minus: '-',
-  Equal: '=',
-  BracketLeft: '[',
-  BracketRight: ']',
-  Backslash: '\\',
-  Semicolon: ';',
-  Quote: "'",
-  Comma: ',',
-  Period: '.',
-  Slash: '/',
-  Space: 'Space',
+/** Windows virtual-key codes for Space and the US-layout OEM keys → combo token. */
+const KEY_CODE_TOKENS: Readonly<Record<number, string>> = {
+  32: 'Space',
+  186: ';',
+  187: '=',
+  188: ',',
+  189: '-',
+  190: '.',
+  191: '/',
+  192: '`',
+  219: '[',
+  220: '\\',
+  221: ']',
+  222: "'",
 };
 
-function physicalToken(e: KeyEvt): string {
-  const code = e.code ?? '';
-  const letter = /^Key([A-Z])$/.exec(code);
-  if (letter) return letter[1];
-  const digit = /^Digit(\d)$/.exec(code);
-  if (digit) return digit[1];
-  if (Object.hasOwn(CODE_TOKENS, code)) return CODE_TOKENS[code];
+function keyToken(e: KeyEvt): string {
+  const kc = e.keyCode;
+  if (kc !== undefined) {
+    if (kc >= 65 && kc <= 90) return String.fromCharCode(kc);
+    if (kc >= 48 && kc <= 57) return String.fromCharCode(kc);
+    if (Object.hasOwn(KEY_CODE_TOKENS, kc)) return KEY_CODE_TOKENS[kc];
+  }
   return e.key.length === 1 ? e.key.toUpperCase() : e.key;
 }
 
-/** Editor-row capture: the key token comes from `e.code`, named keys (F12, ArrowLeft) from
+/** Editor-row capture: the key token comes from `e.keyCode`, named keys (F12, ArrowLeft) from
  *  `e.key`. Modifier-only ⇒ null. A modified 1–9 yields the '1…9' family token, as
  *  `comboFromEvent` does. */
 export function editorComboFromEvent(e: KeyEvt, mac: boolean): string | null {
@@ -50,7 +51,7 @@ export function editorComboFromEvent(e: KeyEvt, mac: boolean): string | null {
   if (mac && e.ctrlKey) parts.push('Ctrl');
   if (e.altKey) parts.push('Alt');
   if (e.shiftKey) parts.push('Shift');
-  const token = physicalToken(e);
+  const token = keyToken(e);
   parts.push(parts.length > 0 && /^[1-9]$/.test(token) ? DIGIT_FAMILY : token);
   return parts.join('+');
 }

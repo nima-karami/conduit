@@ -204,6 +204,8 @@ export interface KeyEvt {
   key: string;
   // Physical key code; used to normalize the backquote independent of layout/shift.
   code?: string;
+  // Legacy virtual-key code: what Monaco resolves chords on, so editor rows record from it.
+  keyCode?: number;
   ctrlKey?: boolean;
   metaKey?: boolean;
   altKey?: boolean;

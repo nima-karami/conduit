@@ -24,12 +24,40 @@ describe('validateEditorCombo', () => {
 });
 
 describe('editorComboFromEvent', () => {
-  it('mac ⌥D records the physical letter', () => {
-    expect(editorComboFromEvent({ altKey: true, key: '∂', code: 'KeyD' }, true)).toBe('Alt+D');
+  it('mac ⌥D records the letter from keyCode, not the ∂ it types', () => {
+    expect(editorComboFromEvent({ altKey: true, key: '∂', code: 'KeyD', keyCode: 68 }, true)).toBe(
+      'Alt+D',
+    );
   });
 
-  it('AZERTY records US position', () => {
-    expect(editorComboFromEvent({ ctrlKey: true, key: 'a', code: 'KeyQ' }, false)).toBe('Mod+Q');
+  // Monaco resolves on e.keyCode (keyboardEvent.js extractKeyCode), which on AZERTY is the
+  // printed letter's code, not the US-position e.code.
+  it('AZERTY records the key Monaco will resolve (keyCode), not e.code', () => {
+    expect(
+      editorComboFromEvent({ ctrlKey: true, key: 'a', code: 'KeyQ', keyCode: 65 }, false),
+    ).toBe('Mod+A');
+  });
+
+  it('maps the OEM keyCodes to their unshifted punctuation token', () => {
+    const oem: [number, string][] = [
+      [186, ';'],
+      [187, '='],
+      [188, ','],
+      [189, '-'],
+      [190, '.'],
+      [191, '/'],
+      [192, '`'],
+      [219, '['],
+      [220, '\\'],
+      [221, ']'],
+      [222, "'"],
+    ];
+    for (const [keyCode, token] of oem) {
+      expect(
+        editorComboFromEvent({ altKey: true, key: '?', keyCode }, false),
+        String(keyCode),
+      ).toBe(`Alt+${token}`);
+    }
   });
 
   it('ignores a modifier-only keydown', () => {
@@ -40,19 +68,19 @@ describe('editorComboFromEvent', () => {
   });
 
   it('records a modified digit as the 1…9 family and a bare one literally', () => {
-    expect(editorComboFromEvent({ ctrlKey: true, key: '5', code: 'Digit5' }, false)).toBe(
-      'Mod+1…9',
-    );
-    expect(editorComboFromEvent({ key: '5', code: 'Digit5' }, false)).toBe('5');
+    expect(
+      editorComboFromEvent({ ctrlKey: true, key: '5', code: 'Digit5', keyCode: 53 }, false),
+    ).toBe('Mod+1…9');
+    expect(editorComboFromEvent({ key: '5', code: 'Digit5', keyCode: 53 }, false)).toBe('5');
   });
 
-  it('takes punctuation and Space from the physical key, named keys from e.key', () => {
-    expect(editorComboFromEvent({ shiftKey: true, key: '>', code: 'Period' }, false)).toBe(
-      'Shift+.',
-    );
-    expect(editorComboFromEvent({ ctrlKey: true, key: ' ', code: 'Space' }, false)).toBe(
-      'Mod+Space',
-    );
+  it('takes punctuation and Space from keyCode, named keys from e.key', () => {
+    expect(
+      editorComboFromEvent({ shiftKey: true, key: '>', code: 'Period', keyCode: 190 }, false),
+    ).toBe('Shift+.');
+    expect(
+      editorComboFromEvent({ ctrlKey: true, key: ' ', code: 'Space', keyCode: 32 }, false),
+    ).toBe('Mod+Space');
     expect(editorComboFromEvent({ key: 'F12', code: 'F12' }, false)).toBe('F12');
     expect(editorComboFromEvent({ altKey: true, key: 'ArrowLeft', code: 'ArrowLeft' }, false)).toBe(
       'Alt+ArrowLeft',
