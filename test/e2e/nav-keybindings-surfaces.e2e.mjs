@@ -168,36 +168,51 @@ runScenario('nav-keybindings-surfaces', async ({ page, log }) => {
 
   await caretInPlan(page, 'localTarget', 1);
   await page.keyboard.press('F12');
-  const planCarries = await waitPlanLine(page, 1, 15000);
-  log(
-    planCarries
-      ? 'baseline: F12 at default navigates in the plan block ✓'
-      : 'baseline: F12 does NOT navigate in the plan block at default — AC-5 carried by the peek only',
+  assert(
+    await waitPlanLine(page, 1, 15000),
+    `baseline: F12 at default must navigate in the plan block (line 1), at ${await planLine(page)}`,
   );
+  log('baseline: F12 at default navigates in the plan block ✓');
+
+  // AC-5c mirror: only Implementations moves. Ctrl+F12 must now reach nothing — in particular not
+  // Definition's isWeb Ctrl+F12, which on `localTarget` would jump to line 1.
+  await setShortcuts(page, { goToImplementation: 'Alt+I' });
+  await caretInPlan(page, 'area', 0);
+  await page.keyboard.press('Alt+I');
+  assert(
+    await waitPlanLine(page, 3),
+    `AC-5c mirror: Alt+I in the plan block must run Implementations (line 3), at ${await planLine(page)}`,
+  );
+  await caretInPlan(page, 'localTarget', 1);
+  await page.keyboard.press('Control+F12');
+  await page.waitForTimeout(1000);
+  assert(
+    (await planLine(page)) === 4,
+    `AC-5c mirror: Ctrl+F12 in the plan block must be inert, at ${await planLine(page)}`,
+  );
+  log('AC-5c mirror plan block: Implementations on Alt+I, Ctrl+F12 inert ✓');
 
   await setShortcuts(page, { goToDefinition: 'Alt+D', goToReferences: 'Alt+R' });
 
-  if (planCarries) {
-    await caretInPlan(page, 'localTarget', 1);
-    await page.keyboard.press('Alt+D');
-    assert(
-      await waitPlanLine(page, 1),
-      `AC-5: Alt+D in the plan block, line ${await planLine(page)}`,
-    );
-    await caretInPlan(page, 'localTarget', 1);
-    await page.keyboard.press('F12');
-    await page.waitForTimeout(1000);
-    assert((await planLine(page)) === 4, `AC-5: F12 in the plan block must be inert`);
-    log('AC-5 plan block follows the rebind; F12 inert ✓');
+  await caretInPlan(page, 'localTarget', 1);
+  await page.keyboard.press('Alt+D');
+  assert(
+    await waitPlanLine(page, 1),
+    `AC-5: Alt+D in the plan block, line ${await planLine(page)}`,
+  );
+  await caretInPlan(page, 'localTarget', 1);
+  await page.keyboard.press('F12');
+  await page.waitForTimeout(1000);
+  assert((await planLine(page)) === 4, 'AC-5: F12 in the plan block must be inert');
+  log('AC-5 plan block follows the rebind; F12 inert ✓');
 
-    await caretInPlan(page, 'area', 0);
-    await page.keyboard.press('Control+F12');
-    assert(
-      await waitPlanLine(page, 3),
-      `AC-5c: Ctrl+F12 in the plan block must run Implementations (line 3), at ${await planLine(page)}`,
-    );
-    log('AC-5c plan block: Ctrl+F12 runs Implementations, never Definition ✓');
-  }
+  await caretInPlan(page, 'area', 0);
+  await page.keyboard.press('Control+F12');
+  assert(
+    await waitPlanLine(page, 3),
+    `AC-5c: Ctrl+F12 in the plan block must run Implementations (line 3), at ${await planLine(page)}`,
+  );
+  log('AC-5c plan block: Ctrl+F12 runs Implementations, never Definition ✓');
 
   // ── code viewer ─────────────────────────────────────────────────────────────────────────
   await openAtLineViaSearch(page, 'navTarget();', 'a.ts', 12);
@@ -326,4 +341,19 @@ runScenario('nav-keybindings-surfaces', async ({ page, log }) => {
   assert(swapPeek, 'AC-7: F12 should open the references peek');
   assert((await activeTab(page)) === 'a.ts', 'AC-7: F12 must not navigate to the definition');
   log('AC-7 swap: Shift+F12 → definition, F12 → references ✓');
+
+  // AC-5c mirror in the code viewer.
+  await setShortcuts(page, { goToImplementation: 'Alt+I' });
+  await page.keyboard.press('Escape');
+  await openViaTree(page, root, ['impl.ts']);
+  assert(await waitActive(page, 'impl.ts'), 'AC-5c mirror: impl.ts active');
+  await placeCursor(page, `${root}/impl.ts`, 'area', 0);
+  await page.keyboard.press('Alt+I');
+  assert(
+    await waitCursor(page, 3, 15000),
+    `AC-5c mirror code viewer: Alt+I must run Implementations (line 3), at ${await cursorLine(page)}`,
+  );
+  await placeCursor(page, `${root}/impl.ts`, 'localTarget', 1);
+  await assertInert(page, 'Control+F12', 'AC-5c mirror code viewer');
+  log('AC-5c mirror code viewer: Implementations on Alt+I, Ctrl+F12 inert ✓');
 });

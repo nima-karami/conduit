@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   buildNavRules,
   canonicalCombo,
+  dropNavChords,
   findConflicts,
+  formatMonacoHint,
+  humanizeCommandId,
   isNavOverridden,
   navDispatchCommandId,
   navMenuHints,
@@ -16,6 +19,9 @@ const CODES: Record<string, number> = {
   'Shift+F12': 3,
   'Alt+D': 4,
   'Alt+R': 5,
+  'Alt+I': 6,
+  'Alt+Z': 7,
+  'Mod+S': 8,
 };
 const tb = (combo: string): number | null => CODES[combo] ?? null;
 
@@ -103,6 +109,18 @@ describe('buildNavRules', () => {
     expect(buildNavRules(o, tb)).toEqual(buildNavRules(o, tb));
   });
 
+  it("overriding only Implementations also removes Definition's Mod+F12, so Ctrl+F12 can't fall through to it", () => {
+    expect(buildNavRules({ goToImplementation: 'Alt+I' }, tb)).toEqual([
+      { command: '-editor.action.revealDefinition', keybinding: tb('Mod+F12') },
+      { command: '-editor.action.goToImplementation', keybinding: tb('Mod+F12') },
+      {
+        command: 'conduit.dispatch.goToImplementation',
+        keybinding: tb('Alt+I'),
+        when: 'editorTextFocus',
+      },
+    ]);
+  });
+
   it('unbindable override keeps removals, adds nothing', () => {
     expect(buildNavRules({ goToDefinition: 'Alt+∂' }, tb)).toEqual([
       { command: '-editor.action.revealDefinition', keybinding: tb('F12') },
@@ -152,10 +170,14 @@ describe('findConflicts', () => {
     expect(findConflicts('goToDefinition', {}, [OWN])).toEqual([]);
   });
 
-  it('removed chord no longer reported', () => {
+  it("skips another nav built-in's default the rule set removes, but not other commands on the chord", () => {
+    const other = { command: 'x.other', label: 'Other', combo: 'F12' };
     expect(
-      findConflicts('goToReferences', { goToDefinition: 'Alt+D', goToReferences: 'F12' }, [OWN]),
-    ).toEqual([]);
+      findConflicts('goToReferences', { goToDefinition: 'Alt+D', goToReferences: 'F12' }, [
+        OWN,
+        other,
+      ]),
+    ).toEqual([{ kind: 'monaco', command: 'x.other', label: 'Other' }]);
   });
 
   it('compares canonical combos', () => {
@@ -179,6 +201,51 @@ describe('findConflicts', () => {
     expect(findConflicts('openSearch', { goToDefinition: 'Mod+P' }, [])).toEqual([
       { kind: 'app', actionId: 'goToDefinition', label: 'Go to Definition', editorScoped: true },
     ]);
+  });
+});
+
+describe('dropNavChords', () => {
+  it("drops a code-viewer binding equal to an overridden nav row's chord", () => {
+    expect(dropNavChords([tb('Alt+Z') as number], { goToDefinition: 'Alt+Z' }, tb)).toEqual([]);
+    expect(
+      dropNavChords(
+        [tb('Mod+S') as number, tb('Alt+Z') as number],
+        { goToReferences: 'Mod+S' },
+        tb,
+      ),
+    ).toEqual([tb('Alt+Z')]);
+  });
+
+  it('keeps everything when no nav row is overridden, or the override is the default', () => {
+    expect(dropNavChords([tb('F12') as number, tb('Alt+Z') as number], {}, tb)).toEqual([1, 7]);
+    expect(dropNavChords([tb('F12') as number], { goToDefinition: 'F12' }, tb)).toEqual([1]);
+  });
+
+  it("drops a non-overridden nav row's default chord another row took", () => {
+    expect(dropNavChords([tb('F12') as number], { goToReferences: 'F12' }, tb)).toEqual([]);
+  });
+});
+
+describe('humanizeCommandId', () => {
+  it('turns the last id segment into words', () => {
+    expect(humanizeCommandId('toggleFindRegex')).toBe('Toggle Find Regex');
+    expect(humanizeCommandId('editor.action.insertCursorAbove')).toBe('Insert Cursor Above');
+    expect(humanizeCommandId('cursorWordLeft')).toBe('Cursor Word Left');
+    expect(humanizeCommandId('editor.action.goToLocations')).toBe('Go To Locations');
+  });
+});
+
+describe('formatMonacoHint', () => {
+  it("prints Monaco's compact style off-mac: Ctrl, Shift, Alt order joined by +", () => {
+    expect(formatMonacoHint('Alt+D', false)).toBe('Alt+D');
+    expect(formatMonacoHint('Mod+F12', false)).toBe('Ctrl+F12');
+    expect(formatMonacoHint('Alt+Shift+F12', false)).toBe('Shift+Alt+F12');
+    expect(formatMonacoHint('Mod+Alt+Shift+K', false)).toBe('Ctrl+Shift+Alt+K');
+  });
+
+  it('prints glyphs on mac, ⌃⇧⌥⌘ order, no separator', () => {
+    expect(formatMonacoHint('Mod+F12', true)).toBe('⌘F12');
+    expect(formatMonacoHint('Mod+Ctrl+Alt+Shift+K', true)).toBe('⌃⇧⌥⌘K');
   });
 });
 

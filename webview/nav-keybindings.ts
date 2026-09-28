@@ -63,10 +63,30 @@ export function buildNavRules(
   toBinding: (combo: string) => number | null,
 ): NavKeybindingRule[] {
   const rules: NavKeybindingRule[] = [];
-  for (const action of navShortcutActions()) {
+  const actions = navShortcutActions();
+  // A default chord that is ANOTHER row's own default (revealDefinition's isWeb Mod+F12 is
+  // Implementations' chord) goes with that row: once Implementations moves, Ctrl+F12 must not
+  // fall through to Definition.
+  const movedDefaults = new Set(
+    actions
+      .filter((a) => navOverride(a, overrides) !== undefined)
+      .map((a) => canonicalCombo(a.defaultCombo)),
+  );
+  for (const action of actions) {
     const override = navOverride(action, overrides);
     const builtin = action.monacoCommand;
-    if (override === undefined || !builtin) continue;
+    if (!builtin) continue;
+    if (override === undefined) {
+      for (const chord of NAV_BUILTIN_DEFAULT_CHORDS[builtin] ?? []) {
+        const canonical = canonicalCombo(chord);
+        if (canonical === canonicalCombo(action.defaultCombo) || !movedDefaults.has(canonical)) {
+          continue;
+        }
+        const keybinding = toBinding(chord);
+        if (keybinding !== null) rules.push({ command: `-${builtin}`, keybinding });
+      }
+      continue;
+    }
     // No `when` on a removal: it then strips every `when` variant of the chord.
     for (const chord of NAV_BUILTIN_DEFAULT_CHORDS[builtin] ?? []) {
       const keybinding = toBinding(chord);
@@ -139,4 +159,56 @@ export function navMenuHints(
     if (a.monacoCommand) hints[a.monacoCommand] = format(effectiveCombo(a, overrides));
   }
   return hints;
+}
+
+/** `bindings` minus every chord an overridden nav row now owns. Applied to every code-viewer
+ *  action and command so the nav dispatch rule always wins its chord, whatever registered first
+ *  (nav-keybindings spec §4). */
+export function dropNavChords(
+  bindings: readonly number[],
+  overrides: Readonly<Record<string, string>>,
+  toBinding: (combo: string) => number | null,
+): number[] {
+  const taken = new Set<number>();
+  for (const a of navShortcutActions()) {
+    const override = navOverride(a, overrides);
+    const binding = override === undefined ? null : toBinding(override);
+    if (binding !== null) taken.add(binding);
+  }
+  return bindings.filter((b) => !taken.has(b));
+}
+
+/** Readable label for a command with no registered title: its last id segment, camelCase split
+ *  and title-cased ('toggleFindRegex' → 'Toggle Find Regex'). */
+export function humanizeCommandId(id: string): string {
+  const last = id.split('.').pop() ?? id;
+  return last
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+/** A combo in Monaco's own accelerator style, to sit beside Monaco-derived hints in the editor
+ *  context menu: Ctrl, Shift, Alt joined by '+' off-mac; ⌃⇧⌥⌘ glyphs, unseparated, on mac. */
+export function formatMonacoHint(combo: string, mac: boolean): string {
+  const parts = combo.split('+');
+  const key = parts[parts.length - 1];
+  const mods = new Set(parts.slice(0, -1));
+  if (mac) {
+    const glyphs = [
+      mods.has('Ctrl') ? '⌃' : '',
+      mods.has('Shift') ? '⇧' : '',
+      mods.has('Alt') ? '⌥' : '',
+      mods.has('Mod') ? '⌘' : '',
+    ];
+    return `${glyphs.join('')}${key}`;
+  }
+  const words = [
+    mods.has('Mod') || mods.has('Ctrl') ? 'Ctrl' : '',
+    mods.has('Shift') ? 'Shift' : '',
+    mods.has('Alt') ? 'Alt' : '',
+  ].filter(Boolean);
+  return [...words, key].join('+');
 }

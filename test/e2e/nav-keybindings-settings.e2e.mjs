@@ -156,7 +156,7 @@ try {
     .locator('.ctxmenu__item', { hasText: /^Go to Definition/ })
     .locator('.ctxmenu__hint')
     .textContent();
-  assert(defHint === 'Alt + D', `AC-10: the menu's Go to Definition hint, got "${defHint}"`);
+  assert(defHint === 'Alt+D', `AC-10: the menu's Go to Definition hint, got "${defHint}"`);
   await page.keyboard.press('Escape');
   await page.locator('.ctxmenu').waitFor({ state: 'detached', timeout: 5000 });
   await focusEditor(page);
@@ -229,24 +229,52 @@ try {
   );
   log('conflict notes name the app shortcut, the Monaco default and the code-viewer chord ✓');
 
-  // Spec §4 asks which of two rules on one chord wins in an already-open code viewer; measured.
+  // A Monaco command with no action label (toggleFindRegex on Alt+R) is named in words, never by id.
+  const REFS = 'Go to References';
+  await record(page, REFS, 'Alt+R');
+  await waitRowCombo(page, REFS, 'Alt + R');
+  const refNotes = await row(page, REFS).locator('.shortcuts__note--conflict').allTextContents();
+  assert(
+    refNotes.length > 0 && refNotes.every((t) => /^· shadows [A-Z][^.]* in the editor$/.test(t)),
+    `Alt+R conflict notes must use readable labels, got ${JSON.stringify(refNotes)}`,
+  );
+  log(`Alt+R notes: ${JSON.stringify(refNotes)} ✓`);
+  await page.getByRole('button', { name: `Reset ${REFS} to Shift + F12`, exact: true }).click();
+  await waitRowCombo(page, REFS, 'Shift + F12');
+
+  // Spec §4: the nav chord wins over the code viewer's own Alt+Z in every editor — one already
+  // open when the rebind landed, and one opened after it (whose actions register later).
   await closeSettings(page);
   await focusEditor(page);
-  const wrapOf = () =>
-    page.evaluate(() => {
-      const ed = (window.monaco?.editor.getEditors() ?? []).find((e) => e.hasTextFocus());
-      return ed?.getRawOptions().wordWrap ?? null;
-    });
-  const wrapBefore = await wrapOf();
-  await page.keyboard.press('Alt+Z');
-  await page.waitForTimeout(1500);
-  const navWon = (await activeTab(page)) === 'b.ts';
-  const wrapAfter = navWon ? null : await wrapOf();
-  log(
-    `Alt+Z with Definition = Alt+Z in an open code viewer: ${navWon ? 'Go to Definition wins' : `Toggle Word Wrap wins (wordWrap ${wrapBefore} → ${wrapAfter})`}`,
+  const focusedEditorId = () =>
+    page.evaluate(
+      () =>
+        (window.monaco?.editor.getEditors() ?? []).find((e) => e.hasTextFocus())?.getId() ?? null,
+    );
+  const openEditorId = await focusedEditorId();
+  await assertNavigates(page, 'Alt+Z', 'Alt+Z in the editor open before the rebind');
+  await backToCall(page);
+  await page
+    .locator('.tabbar [role="tab"]', { has: page.locator('span', { hasText: /^a.ts$/ }) })
+    .locator('.tab__close')
+    .click();
+  await page.waitForFunction(
+    () =>
+      !Array.from(document.querySelectorAll('.tabbar [role="tab"] span')).some(
+        (el) => el.textContent === 'a.ts',
+      ),
+    null,
+    { timeout: 5000 },
   );
-  if (navWon) await backToCall(page);
-  else if (wrapAfter !== wrapBefore) await page.keyboard.press('Alt+Z');
+  await openAtLineViaSearch(page, 'navTarget();', 'a.ts', 12);
+  const newEditorId = await focusedEditorId();
+  assert(
+    newEditorId !== null && newEditorId !== openEditorId,
+    `a.ts must be a NEW editor after reopening (${openEditorId} → ${newEditorId})`,
+  );
+  await assertNavigates(page, 'Alt+Z', 'Alt+Z in an editor opened after the rebind');
+  await backToCall(page);
+  log('Alt+Z = Go to Definition wins over Toggle Word Wrap in open and newly opened editors ✓');
   await openShortcuts(page);
   await page.getByRole('button', { name: `Reset ${DEF} to F12`, exact: true }).click();
   await waitRowCombo(page, DEF, 'F12');
