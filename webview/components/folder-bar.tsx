@@ -1,11 +1,8 @@
 import type { FolderSectionModel } from '../../src/session-sections';
 import { nameOf } from '../file-tree';
-import { IconChevronDown, IconFolder, IconMore, IconPlus, IconRefresh } from '../icons';
-
-const STR = {
-  home: 'Home',
-  attached: 'Attached',
-};
+import { IconFolder, IconMore, IconPlus, IconRefresh } from '../icons';
+import { RepoTagPill } from './repo-picker-menu';
+import { TreeChevron } from './tree-chevron';
 
 export interface FolderBarProps {
   section: FolderSectionModel;
@@ -51,7 +48,7 @@ export function FolderBar({
   };
   return (
     <div
-      className="files__bar"
+      className="treehead files__bar"
       onKeyDown={onKeyDown}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -59,18 +56,6 @@ export function FolderBar({
         onMenu({ x: e.clientX, y: e.clientY, keyboard: false });
       }}
     >
-      <span className="files__root" title={section.path}>
-        <IconFolder size={13} className="files__root-icon" />
-        <bdi className="files__root-name" dir="auto">
-          {section.name}
-          {section.parentHint !== undefined && (
-            <span className="files__root-hint"> — {section.parentHint}</span>
-          )}
-        </bdi>
-        <span className={`files__tag files__tag--${section.kind}`}>
-          {section.kind === 'home' ? STR.home : STR.attached}
-        </span>
-      </span>
       <button
         ref={collapseRef}
         type="button"
@@ -81,11 +66,18 @@ export function FolderBar({
         aria-controls={collapsed ? undefined : treeId}
         onClick={onToggle}
       >
-        <IconChevronDown
-          size={14}
-          className={`files__bar-chev${collapsed ? '' : ' files__bar-chev--open'}`}
-        />
+        <TreeChevron open={!collapsed} />
       </button>
+      <span className="files__root" title={section.path}>
+        <IconFolder size={13} className="files__root-icon" />
+        <bdi className="files__root-name" dir="auto">
+          {section.name}
+          {section.parentHint !== undefined && (
+            <span className="files__root-hint"> — {section.parentHint}</span>
+          )}
+        </bdi>
+        <RepoTagPill tag={section.kind} />
+      </span>
       <button
         type="button"
         className="iconbtn iconbtn--sm files__bar-extra"

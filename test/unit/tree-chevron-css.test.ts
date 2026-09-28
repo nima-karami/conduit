@@ -32,3 +32,23 @@ describe('tree chevron stylesheet', () => {
     expect(reduced.join('')).toMatch(/transition:\s*none/);
   });
 });
+
+describe('tree header stylesheet', () => {
+  it('old header chevron, tag and home-fill rules are deleted', () => {
+    for (const gone of [
+      'files__bar-chev',
+      'repo-head__chev',
+      'files__tag',
+      '.repo-head--home',
+      '.repo-head--active .repo-head__sub',
+    ]) {
+      expect(CSS, gone).not.toContain(gone);
+    }
+  });
+
+  it('.files__bar no longer justifies its content', () => {
+    const bodies = bodiesOf(CSS, '.files__bar');
+    expect(bodies.length).toBeGreaterThan(0);
+    expect(bodies.join('')).not.toContain('justify-content');
+  });
+});

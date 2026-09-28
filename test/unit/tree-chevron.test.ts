@@ -2,6 +2,10 @@
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { RepoHeadModel } from '../../src/changes-view-model';
+import type { FolderSectionModel } from '../../src/session-sections';
+import { FolderBar } from '../../webview/components/folder-bar';
+import { RepoHead } from '../../webview/components/repo-head';
 import { TreeChevron, TreeChevronSpacer } from '../../webview/components/tree-chevron';
 
 let host: HTMLDivElement;
@@ -46,5 +50,77 @@ describe('TreeChevron', () => {
     const head = host.firstElementChild;
     expect(head?.getAttribute('class')).toBe('treechev-spacer treechev-spacer--head');
     expect(head?.getAttribute('aria-hidden')).toBe('true');
+  });
+});
+
+const noop = () => {};
+const section: FolderSectionModel = {
+  path: '/w/home',
+  key: '/w/home',
+  kind: 'home',
+  missing: false,
+  name: 'home',
+  label: 'home',
+};
+const head: RepoHeadModel = {
+  repo: { root: '/w/home', name: 'home', folder: '/w/home', tag: 'home' },
+  label: 'home',
+  changes: [],
+  staged: [],
+  unstaged: [],
+};
+const repoHead = (view: 'all' | 'active', collapsed: boolean) =>
+  createElement(RepoHead, {
+    head,
+    view,
+    tag: 'home',
+    collapsed,
+    onToggle: noop,
+    chip: null,
+    onActivate: noop,
+    onContextMenu: noop,
+  });
+
+describe('tree headers', () => {
+  it('FolderBar leads with the collapse button', async () => {
+    await render(
+      createElement(FolderBar, {
+        section,
+        collapsed: false,
+        treeId: 't',
+        createTarget: section.path,
+        collapseRef: null,
+        onToggle: noop,
+        onRefresh: noop,
+        onNewFile: noop,
+        onNewFolder: noop,
+        onMenu: noop,
+      }),
+    );
+    const bar = host.querySelector('.files__bar');
+    expect(bar?.classList.contains('treehead')).toBe(true);
+    const first = bar?.firstElementChild;
+    expect(first?.matches('button.files__collapse')).toBe(true);
+    expect(first?.getAttribute('aria-expanded')).toBe('true');
+    const chev = first?.querySelector('svg.treechev');
+    expect(chev?.classList.contains('treechev--open')).toBe(true);
+    const tag = bar?.querySelector('.repo-head__tag.repo-head__tag--home');
+    expect(tag?.textContent).toBe('Home');
+  });
+
+  it('RepoHead leads with the chevron in All and a head spacer in Active', async () => {
+    await render(repoHead('all', true));
+    let el = host.querySelector('.repo-head');
+    expect(el?.classList.contains('treehead')).toBe(true);
+    const first = el?.firstElementChild;
+    expect(first?.matches('button.repo-head__chev')).toBe(true);
+    const chev = first?.querySelector('svg.treechev');
+    expect(chev).not.toBeNull();
+    expect(chev?.classList.contains('treechev--open')).toBe(false);
+    await act(async () => root?.render(repoHead('active', false)));
+    el = host.querySelector('.repo-head');
+    expect(el?.classList.contains('treehead')).toBe(true);
+    expect(el?.firstElementChild?.matches('span.treechev-spacer--head')).toBe(true);
+    expect(el?.querySelector('.repo-head__chev')).toBeNull();
   });
 });
