@@ -74,6 +74,8 @@ import { canRelaunch, relaunchableSessionIds, staleSessionIds } from '../src/sta
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
 import { formatDuration } from '../src/timed-messages';
 import type { AgentDefinition, Session } from '../src/types';
+import { AUTO_SAVE_COPY } from './auto-save-copy';
+import { afterCloseSave, type CloseStep, dirtyCloseStep } from './auto-save-policy';
 import {
   fsDndCopy,
   fsDndMove,
@@ -120,6 +122,7 @@ import {
   backgroundOpenOutcome,
   commitDiffPath,
   docsReducer,
+  filePathsClosedWithSession,
   GIT_HISTORY_DOC_PATH,
   initialDocs,
   REVIEW_DOC_ID,
@@ -136,6 +139,7 @@ import {
   navEntryFor,
 } from './editor-nav';
 import { shouldReplaceContent } from './file-freshness';
+import { fileSaves, setDocCloser } from './file-saves';
 import { buildRowChangeMap } from './file-tree';
 import {
   affectedDirs,
@@ -307,6 +311,14 @@ function sessionOwningRoot(
   if (owners.length === 0) return null;
   if (activeId !== null && owners.includes(activeId)) return activeId;
   return owners[0] ?? null;
+}
+
+/** A file tab's per-path state goes with its tab, however the tab closes: one lifecycle (see
+ *  docs/plans/2026-09-28-auto-save.plan.md P4). */
+function releaseFileTab(path: string): void {
+  clearDirty(path);
+  fileSaves.dispose(path);
+  clearReveal(path);
 }
 
 export function App() {
@@ -558,6 +570,19 @@ export function App() {
         return new Map(m).set(path, { ...existing, content });
       });
     });
+  }, []);
+
+  useEffect(
+    () => fileSaves.configure({ mode: settings.autoSave, delayMs: settings.autoSaveDelay }),
+    [settings.autoSave, settings.autoSaveDelay],
+  );
+
+  useEffect(() => {
+    const onBlur = () => {
+      void fileSaves.flushAll('windowBlur');
+    };
+    window.addEventListener('blur', onBlur);
+    return () => window.removeEventListener('blur', onBlur);
   }, []);
 
   // Best-effort save-all on browser navigation/refresh (beforeunload). This fires
@@ -1149,6 +1174,7 @@ export function App() {
         for (const d of docsRef.current) {
           if (d.sessionId === id) markClosing(d.id);
         }
+        for (const path of filePathsClosedWithSession(docsRef.current, id)) releaseFileTab(path);
         dispatchDocs({ type: 'closeSession', sessionId: id });
       }
     }
@@ -1644,10 +1670,7 @@ export function App() {
       const doc = docState.docs.find((d) => d.id === id);
       if (doc) {
         // A diff tab shares its path with the file tab; only the file owns the dirty flag.
-        if (doc.kind === 'file') {
-          clearDirty(doc.path);
-          clearReveal(doc.path);
-        }
+        if (doc.kind === 'file') releaseFileTab(doc.path);
         const closed = toClosedTab(doc);
         if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
       }
@@ -1670,29 +1693,56 @@ export function App() {
         return;
       }
       const fileName = baseName(doc.path);
-      setConfirm({
-        title: `Unsaved changes in ${fileName}`,
-        message: `"${fileName}" has unsaved changes. Save before closing, or discard them?`,
-        confirmLabel: 'Save',
-        secondaryLabel: 'Discard',
-        onSecondary: () => forceCloseDoc(id),
-        onConfirm: () => {
-          const entry = getSaveEntry(doc.path);
-          if (!entry) {
-            // No registry entry (shouldn't happen for a dirty doc, but be safe).
-            forceCloseDoc(id);
-            return;
-          }
-          void entry.save().then((ok) => {
-            if (ok) forceCloseDoc(id);
-            // On failure: toast already shown by CodeViewer — do not close.
-          });
-        },
-      });
+      const prompt = (reason: string | null) => {
+        const message = `"${fileName}" has unsaved changes. Save before closing, or discard them?`;
+        setConfirm({
+          title: `Unsaved changes in ${fileName}`,
+          message: reason === null ? message : `${AUTO_SAVE_COPY.closeFallback(reason)} ${message}`,
+          confirmLabel: 'Save',
+          secondaryLabel: 'Discard',
+          onSecondary: () => forceCloseDoc(id),
+          onConfirm: () => {
+            const entry = getSaveEntry(doc.path);
+            if (!entry) {
+              // No registry entry (shouldn't happen for a dirty doc, but be safe).
+              forceCloseDoc(id);
+              return;
+            }
+            void entry.save().then((ok) => {
+              if (ok) forceCloseDoc(id);
+              // On failure: the save store already surfaced it — do not close.
+            });
+          },
+        });
+      };
+      // D2: with auto save on, a dirty close saves first (with the on-disk precondition).
+      const entry = getSaveEntry(doc.path);
+      const run = (step: CloseStep) => {
+        if (step.type === 'close') forceCloseDoc(id);
+        else if (step.type === 'prompt') prompt(step.reason);
+        else {
+          void entry
+            ?.save({ kind: 'auto' })
+            .then((ok) =>
+              run(
+                afterCloseSave(ok, getDirtySnapshot().has(doc.path), fileSaves.getStatus(doc.path)),
+              ),
+            );
+        }
+      };
+      run(dirtyCloseStep(settings.autoSave, fileSaves.getStatus(doc.path), entry !== undefined));
     },
-    [docState.docs, dirtySet, forceCloseDoc],
+    [docState.docs, dirtySet, forceCloseDoc, settings.autoSave],
   );
   closeDocRef.current = closeDoc;
+
+  useEffect(() => {
+    setDocCloser((p) => {
+      const d = docStateRef.current.docs.find((x) => x.kind === 'file' && x.path === p);
+      if (d) forceCloseDoc(d.id);
+    });
+    return () => setDocCloser(null);
+  }, [forceCloseDoc]);
 
   const indexedRoots = useRef<Set<string>>(new Set());
   /** Index a project's sources once per window. Fires when a session becomes active rather

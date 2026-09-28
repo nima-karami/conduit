@@ -8,16 +8,19 @@ import {
 } from 'react';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import type { ResolvedSessionIcon } from '../../src/session-icon';
+import { AUTO_SAVE_COPY } from '../auto-save-copy';
 import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
 import type { OpenDoc } from '../docs';
 import { isPanelDragTarget } from '../drag-guard';
 import { stampFileDrag } from '../file-drag-data';
+import type { FileSaveStatus } from '../file-save-controller';
 import {
   IconBranch,
   IconCheck,
   IconChevronDown,
   IconClose,
   IconReview,
+  IconWarning,
   SessionGlyph,
 } from '../icons';
 import { middleClickProps } from '../middle-click';
@@ -29,6 +32,8 @@ import { ContextMenu, type MenuState } from './context-menu';
 function useDirtySet(): ReadonlySet<string> {
   return useSyncExternalStore(subscribeDirty, getDirtySnapshot, getDirtySnapshot);
 }
+
+const NO_SAVE_STATUSES: ReadonlyMap<string, FileSaveStatus> = new Map();
 
 export function DocTabs({
   docs,
@@ -43,6 +48,7 @@ export function DocTabs({
   onPinDoc,
   moveGrip,
   flashTabId = null,
+  saveStatuses = NO_SAVE_STATUSES,
 }: {
   docs: OpenDoc[];
   activeId: string | null;
@@ -65,6 +71,9 @@ export function DocTabs({
   moveGrip?: { onDragStart: () => void; onDragEnd: () => void };
   /** The tab a background open just touched; cued briefly (spec 2026-09-22-middle-click-new-tab §3). */
   flashTabId?: string | null;
+  /** Per-path auto-save status, for the conflict marker. Passed in rather than read from the
+   *  save store here, which would pull Monaco into the tab strip. */
+  saveStatuses?: ReadonlyMap<string, FileSaveStatus>;
 }) {
   const dragIdRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -72,6 +81,7 @@ export function DocTabs({
   // (targetId=null). Without it the rightmost slot was unreachable (R5.6).
   const [overEnd, setOverEnd] = useState(false);
   const dirty = useDirtySet();
+  const saves = saveStatuses;
 
   // The scrollable strip (not the outer wrapper) — for horizontal-on-vertical-wheel and
   // scroll-active-tab-into-view.
@@ -177,6 +187,14 @@ export function DocTabs({
       icon:
         activeId === d.id ? (
           <IconCheck size={14} />
+        ) : saves.get(d.path)?.phase === 'conflict' ? (
+          <span
+            className="tab__conflict tab__conflict--inline"
+            role="img"
+            aria-label={AUTO_SAVE_COPY.tabConflict}
+          >
+            <IconWarning size={12} />
+          </span>
         ) : dirty.has(d.path) ? (
           <span className="tab__dirty tab__dirty--inline" aria-label="Unsaved" />
         ) : undefined,
@@ -187,7 +205,7 @@ export function DocTabs({
       y: rect.bottom + 2,
       items: [terminalItem, ...docItems],
     });
-  }, [docs, activeId, dirty, terminalLabel, terminalIcon, onSelect, scrollTabIntoView]);
+  }, [docs, activeId, dirty, saves, terminalLabel, terminalIcon, onSelect, scrollTabIntoView]);
 
   return (
     <div className="tabbar-wrap">
@@ -278,25 +296,36 @@ export function DocTabs({
             {d.kind === 'commit-diff' && <IconBranch size={12} className="tab__spark" />}
             {d.kind === 'review' && <IconReview size={12} className="tab__spark" />}
             <span>{d.title}</span>
-            {dirty.has(d.path) && (
+            {saves.get(d.path)?.phase === 'conflict' ? (
               <span
-                className="tab__dirty"
-                role="button"
-                tabIndex={0}
-                aria-label="Unsaved changes — save"
-                title="Unsaved changes — Ctrl+S to save"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  saveDocByPath(d.path);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
+                className="tab__conflict"
+                role="img"
+                aria-label={AUTO_SAVE_COPY.tabConflict}
+                title={AUTO_SAVE_COPY.tabConflict}
+              >
+                <IconWarning size={12} />
+              </span>
+            ) : (
+              dirty.has(d.path) && (
+                <span
+                  className="tab__dirty"
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Unsaved changes — save"
+                  title="Unsaved changes — Ctrl+S to save"
+                  onClick={(e) => {
                     e.stopPropagation();
                     saveDocByPath(d.path);
-                  }
-                }}
-              />
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      saveDocByPath(d.path);
+                    }
+                  }}
+                />
+              )
             )}
             <button
               className="tab__close"

@@ -7,6 +7,7 @@ import type { RightPaneTab } from '../../src/settings';
 import type { AgentDefinition, GitInfo, Session } from '../../src/types';
 import { diffTabKey } from '../diff-tab-scope';
 import type { OpenDoc, OpenMode, ReviewSource } from '../docs';
+import { useFileSaveStatuses } from '../file-saves';
 import type { GitActionIntent } from '../git-intent';
 import { IconClock } from '../icons';
 import { reviewRequestRoot } from '../review-repos';
@@ -179,6 +180,7 @@ export function CenterPane({
   onOpenFullDiff: (doc: OpenDoc) => void;
 }) {
   const [compareOpen, setCompareOpen] = useState(false);
+  const saveStatuses = useFileSaveStatuses();
   // Locate / Use-as-home fixed the home: focus the block's Relaunch once it renders (spec §9).
   const [focusRelaunchFor, setFocusRelaunchFor] = useState<string | null>(null);
   const active = sessions.find((s) => s.id === activeId);
@@ -240,6 +242,7 @@ export function CenterPane({
             onReorder={onReorderDoc}
             onPinDoc={onPinDoc}
             flashTabId={flashTabId}
+            saveStatuses={saveStatuses}
             moveGrip={
               dock ? { onDragStart: dock.onDragStart, onDragEnd: dock.onDragEnd } : undefined
             }

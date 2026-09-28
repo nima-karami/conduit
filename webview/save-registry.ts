@@ -1,8 +1,11 @@
+import type { SaveKind } from './auto-save-policy';
+
 /**
  * Save registry (K2 — save reliability). A tiny external store keyed by doc PATH so the
  * global Mod+S handler (app.tsx) can route a keypress from ANYWHERE — terminal, sidebar —
  * to the ACTIVE doc's registered save, fixing "Ctrl+S does nothing outside the editor".
- * The CodeViewer owns the model/baseline so it registers on mount, unregisters on unmount.
+ * The per-path save store (file-save-controller.ts) registers each open file tab for as long as
+ * the tab is open, mounted or not, so a background tab saves too.
  *
  * K3 — fresh-file-content: a saved-content notification channel (notifySaved) propagates
  * written content to listeners so app.tsx can update its `files` map and re-render the
@@ -11,8 +14,9 @@
 
 export interface SaveEntry {
   /** Persist the current buffer to disk. Idempotent + self-guarded (clean → no-op).
-   * Resolves true on success (or when already clean), false on failure. */
-  save(): Promise<boolean>;
+   * Resolves true on success (or when already clean), false on failure. Omitting `kind` means
+   * 'manual'; 'auto' carries the on-disk precondition (docs/specs/2026-09-28-auto-save.md §3). */
+  save(opts?: { kind?: SaveKind }): Promise<boolean>;
   /** Restore the on-disk baseline into the model, clearing dirty state.
    * Optional — not all doc types support revert (e.g. diff tabs). */
   revert?(): void;
@@ -29,7 +33,7 @@ export function onFileSaved(cb: SavedListener): () => void {
   return () => savedListeners.delete(cb);
 }
 
-/** Called by CodeViewer after a successful writeFile to push content to listeners. */
+/** Called by the save store after a successful writeFile to push content to listeners. */
 export function notifySaved(path: string, content: string): void {
   savedListeners.forEach((cb) => {
     cb(path, content);
@@ -71,7 +75,7 @@ export function activeDocPath(docs: readonly DocLike[], activeId: string | null)
 /**
  * Invoke the active doc's registered save. No-op when the Terminal tab is active, the
  * active doc has no entry, or no doc is active. The save itself is self-guarded
- * (clean buffer / in-flight → no-op), so this is safe to call on every Mod+S.
+ * (clean buffer → no-op), so this is safe to call on every Mod+S.
  */
 export function saveActiveDoc(docs: readonly DocLike[], activeId: string | null): void {
   const path = activeDocPath(docs, activeId);

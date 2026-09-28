@@ -6,6 +6,8 @@ import {
   onFileSaved,
   registerSave,
   saveActiveDoc,
+  saveAllDirtyDocs,
+  saveDocByPath,
 } from '../../webview/save-registry';
 
 describe('activeDocPath — routes the active tab to its file path', () => {
@@ -124,6 +126,19 @@ describe('K3 — notifySaved / onFileSaved — saved-content notification channe
       { path: '/a.md', content: 'first' },
       { path: '/b.md', content: 'second' },
     ]);
+    off();
+  });
+});
+
+describe('save-registry — routing helpers save as manual', () => {
+  it('routing helpers call save with no argument', async () => {
+    const save = vi.fn(async () => true);
+    const off = registerSave('/r.ts', { save });
+    saveActiveDoc([{ id: 'file:/r.ts', path: '/r.ts' }], 'file:/r.ts');
+    saveDocByPath('/r.ts');
+    await saveAllDirtyDocs(new Set(['/r.ts']));
+    expect(save).toHaveBeenCalledTimes(3);
+    for (const call of save.mock.calls) expect(call).toEqual([]);
     off();
   });
 });

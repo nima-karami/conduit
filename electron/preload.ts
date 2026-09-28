@@ -4,7 +4,7 @@ import type { ImportConflictPolicy, ImportResult } from '../src/fs-import';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { LspCallType, LspMessage, LspResult } from '../src/lsp-protocol';
-import type { WriteResult } from '../src/path-guard';
+import type { WriteOptions, WriteResult } from '../src/path-guard';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import type { AppSettings } from '../src/settings';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
@@ -68,8 +68,8 @@ const api = {
    * result reports success or a rejection/error so the dirty state is only cleared
    * on a real write.
    */
-  writeFile(path: string, content: string): Promise<WriteResult> {
-    return ipcRenderer.invoke('writeFile', path, content);
+  writeFile(path: string, content: string, opts?: WriteOptions): Promise<WriteResult> {
+    return ipcRenderer.invoke('writeFile', path, content, opts);
   },
   /**
    * Run a git action (stage / unstage / discard / stash) in `req.root`. The HOST

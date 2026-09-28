@@ -4,6 +4,7 @@ import {
   backgroundOpenOutcome,
   type DocsState,
   docsReducer,
+  filePathsClosedWithSession,
   initialDocs,
   type OpenMode,
   REVIEW_DOC_ID,
@@ -932,5 +933,16 @@ describe('docsReducer — git-history repoRoot', () => {
       });
       expect(s.docs[0].repoRoot).toBe('/w/b');
     }
+  });
+});
+
+describe('filePathsClosedWithSession', () => {
+  it("lists the closing session's file tabs, not its other docs or another session's files", () => {
+    let s = open(initialDocs, 'file', '/a.ts', 'S1');
+    s = open(s, 'diff', '/b.ts', 'S1');
+    s = open(s, 'file', '/c.ts', 'S2');
+    expect(filePathsClosedWithSession(s.docs, 'S1')).toEqual(['/a.ts']);
+    expect(filePathsClosedWithSession(s.docs, 'S2')).toEqual(['/c.ts']);
+    expect(filePathsClosedWithSession(s.docs, 'S3')).toEqual([]);
   });
 });

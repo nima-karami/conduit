@@ -2,8 +2,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  coerceSettings,
   DEFAULT_SETTINGS,
   FONT_SIZE_SCALE,
+  parseAutoSaveDelayInput,
   restoreSettings,
   serializeSettings,
 } from '../../src/settings';
@@ -365,5 +367,28 @@ describe('settings persistence', () => {
     expect(out.background).toBe(DEFAULT_SETTINGS.background);
     expect(out.leftWidth).toBe(640); // clamped to max
     expect(out.rightWidth).toBe(180); // clamped to min
+  });
+});
+
+describe('auto-save settings', () => {
+  it('autoSave defaults to off and rejects unknown modes', () => {
+    expect(DEFAULT_SETTINGS.autoSave).toBe('off');
+    expect(coerceSettings({ autoSave: 'sometimes' }).autoSave).toBe('off');
+    expect(coerceSettings({ autoSave: 'onFocusChange' }).autoSave).toBe('onFocusChange');
+  });
+
+  it('autoSaveDelay clamps and rounds', () => {
+    expect(DEFAULT_SETTINGS.autoSaveDelay).toBe(1000);
+    expect(coerceSettings({ autoSaveDelay: 50 }).autoSaveDelay).toBe(100);
+    expect(coerceSettings({ autoSaveDelay: 99999 }).autoSaveDelay).toBe(60000);
+    expect(coerceSettings({ autoSaveDelay: 1234.6 }).autoSaveDelay).toBe(1235);
+    expect(coerceSettings({ autoSaveDelay: 'x' }).autoSaveDelay).toBe(1000);
+  });
+
+  it('parseAutoSaveDelayInput validates field input', () => {
+    expect(parseAutoSaveDelayInput('2000')).toBe(2000);
+    expect(parseAutoSaveDelayInput(' 300 ')).toBe(300);
+    for (const bad of ['', 'abc', '1.5', '50', '60001'])
+      expect(parseAutoSaveDelayInput(bad)).toBeNull();
   });
 });

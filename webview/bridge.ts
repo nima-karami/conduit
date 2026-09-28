@@ -9,7 +9,7 @@ import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import { launchArgsFor } from '../src/launch-args';
 import type { LogLevel } from '../src/logging';
 import type { LspCallType, LspMessage, LspResult } from '../src/lsp-protocol';
-import type { WriteResult } from '../src/path-guard';
+import type { WriteOptions, WriteResult } from '../src/path-guard';
 import {
   appendQueueEntry,
   buildQueueEntry,
@@ -60,7 +60,7 @@ interface HostBridge {
   subscribe(cb: (msg: HostToWebview) => void): () => void;
   win: WinControls;
   openExternal(url: string): void;
-  writeFile(path: string, content: string): Promise<WriteResult>;
+  writeFile(path: string, content: string, opts?: WriteOptions): Promise<WriteResult>;
   gitAction(req: GitActionRequest): Promise<GitActionResult>;
   lsp(msg: LspMessage): Promise<LspResult<LspCallType>>;
   fsMutate(req: FsMutationRequest): Promise<MutationResult>;
@@ -173,8 +173,12 @@ export function readLogTail(n: number): Promise<{ off: boolean; tail: string }> 
  * this resolves a non-ok result so callers keep the buffer dirty rather than pretend
  * to persist.
  */
-export function writeFile(path: string, content: string): Promise<WriteResult> {
-  if (host) return host.writeFile(path, content);
+export function writeFile(
+  path: string,
+  content: string,
+  opts?: WriteOptions,
+): Promise<WriteResult> {
+  if (host) return host.writeFile(path, content, opts);
   return Promise.resolve({ ok: false, error: 'No host: cannot save in the browser preview.' });
 }
 
