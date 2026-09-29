@@ -202,6 +202,11 @@ describe('findConflicts', () => {
       { kind: 'app', actionId: 'goToDefinition', label: 'Go to Definition', editorScoped: true },
     ]);
   });
+
+  it('an unbound combo conflicts with nothing, including another unbound row', () => {
+    expect(findConflicts('focusLeftGroup', {}, [])).toEqual([]);
+    expect(findConflicts('focusRightGroup', {}, [])).toEqual([]);
+  });
 });
 
 describe('dropNavChords', () => {

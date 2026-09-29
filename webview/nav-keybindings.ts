@@ -125,7 +125,9 @@ export function findConflicts(
 ): Conflict[] {
   const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
   if (!action) return [];
-  const combo = canonicalCombo(effectiveCombo(action, overrides));
+  const bound = effectiveCombo(action, overrides);
+  if (!bound) return [];
+  const combo = canonicalCombo(bound);
   const conflicts: Conflict[] = SHORTCUT_ACTIONS.filter(
     (a) => a.id !== actionId && canonicalCombo(effectiveCombo(a, overrides)) === combo,
   ).map((a) => ({
