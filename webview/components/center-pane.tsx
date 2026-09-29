@@ -472,14 +472,11 @@ export function CenterPane({
           renderGroup={renderGroup}
           webDocs={layout.webDocs}
           webPlacement={webPlacement}
-          renderWeb={(d) => (
+          renderWeb={(d, onGuestFocus) => (
             <WebView
               url={d.path}
               onTitle={(title) => onDocTitle?.(d.id, title)}
-              onGuestFocus={() => {
-                const placement = webPlacement(d.id);
-                if (placement) onFocusGroup(placement.group);
-              }}
+              onGuestFocus={onGuestFocus}
               onOpenLink={(url, background) =>
                 onOpenWeb?.(url, d.sessionId, background ? 'background' : 'permanent')
               }

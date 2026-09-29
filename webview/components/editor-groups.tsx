@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { CenterLayout, GroupIndex, GroupView } from '../doc-groups';
 import type { OpenDoc } from '../docs';
 import { clampSplitRatio, stepSplitRatio } from '../editor-split';
@@ -51,7 +51,7 @@ export function EditorGroups({
   renderGroup: (view: GroupView) => React.ReactNode;
   webDocs: readonly OpenDoc[];
   webPlacement: (id: string) => { group: GroupIndex; visible: boolean } | null;
-  renderWeb: (doc: OpenDoc) => React.ReactNode;
+  renderWeb: (doc: OpenDoc, onGuestFocus: () => void) => React.ReactNode;
   onFocusGroup: (g: GroupIndex) => void;
   onMoveTab: (id: string, toGroup: GroupIndex, beforeId: string | null, duplicate: boolean) => void;
 }) {
@@ -59,6 +59,11 @@ export function EditorGroups({
   const [liveRatio, setLiveRatio] = useState(ratio);
   const [dragging, setDragging] = useState(false);
   useEffect(() => setLiveRatio(ratio), [ratio]);
+  // Stable per group, so a web view's listeners don't rebind on every render.
+  const focusGroupOf = useMemo<Record<GroupIndex, () => void>>(
+    () => ({ 1: () => onFocusGroup(1), 2: () => onFocusGroup(2) }),
+    [onFocusGroup],
+  );
   const tabDrag = useSyncExternalStore(subscribeTabDrag, currentTabDrag, currentTabDrag);
   const [over, setOver] = useState<{ group: GroupIndex; kind: DropKind } | null>(null);
   useEffect(() => {
@@ -157,6 +162,7 @@ export function EditorGroups({
       {webDocs.map((doc) => {
         const placement = webPlacement(doc.id);
         if (!placement) return null;
+        const focusGroup = focusGroupOf[placement.group];
         return (
           // see split-editor plan P7: a direct child of the grid for its whole life, never reparented.
           <div
@@ -164,9 +170,10 @@ export function EditorGroups({
             className="webhost"
             data-group={placement.group}
             hidden={!placement.visible}
-            onFocusCapture={() => onFocusGroup(placement.group)}
+            onFocusCapture={focusGroup}
+            onPointerDownCapture={focusGroup}
           >
-            {renderWeb(doc)}
+            {renderWeb(doc, focusGroup)}
           </div>
         );
       })}
