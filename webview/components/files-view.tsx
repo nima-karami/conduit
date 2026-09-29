@@ -117,7 +117,7 @@ export interface FilesViewProps {
     nodes: { path: string; kind: 'dir' | 'file' }[],
     afterDeleted: (outcome: DeleteOutcome) => void,
   ) => void;
-  // A file was renamed on disk; app updates/closes any open doc tab for the old path.
+  // A file or folder was renamed or moved on disk; open tabs at or under it follow it.
   onRenamed: (fromPath: string, toPath: string) => void;
   // Forwarded so the parent's openSearch() can focus the search input.
   searchPaneRef: React.MutableRefObject<SearchPaneHandle | null>;
@@ -377,6 +377,7 @@ export function FilesView({
           break;
         }
         recordFsOp?.({ kind: it.op, from: it.source, to: res.path });
+        if (it.op === 'move') onRenamed(it.source, res.path);
         landed.push(res.path);
         if (it.op === 'move') refreshDirs.add(parentDir(it.source));
         refreshDirs.add(parentDir(res.path));

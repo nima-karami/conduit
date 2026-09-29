@@ -93,14 +93,53 @@ const store = new Map<string, ViewState>();
 // tombstone the id on close to block that late write; the next mount-read (reopen) clears it.
 const closing = new Set<string>();
 
+// Old id → new id for a doc whose file was renamed. Its viewer unmounts only AFTER the rename,
+// and that final capture is the freshest state it has, so it must land on the new id. Like a
+// tombstone, it lasts until something mounts at the old id again.
+const renamed = new Map<string, string>();
+
+function liveId(id: string): string {
+  let at = id;
+  for (let hops = 0; hops <= renamed.size; hops++) {
+    const next = renamed.get(at);
+    if (next === undefined) return at;
+    at = next;
+  }
+  return at;
+}
+
 export function getViewState(id: string): ViewState | undefined {
   closing.delete(id); // a fresh mount-read means the doc is live again — re-enable capture
+  renamed.delete(id);
   return store.get(id);
 }
 
 export function setViewState(id: string, state: ViewState): void {
-  if (closing.has(id)) return; // ignore a dying viewer's post-eviction capture
-  store.set(id, state);
+  const at = liveId(id);
+  if (closing.has(at)) return; // ignore a dying viewer's post-eviction capture
+  store.set(at, state);
+}
+
+/** The id a markdown/HTML tab's "View source" editor keeps its own view state under. */
+export const sourceViewStateId = (kind: 'markdown' | 'html', path: string) =>
+  `${kind}-source:${path}`;
+
+/** Every id a file tab's viewers key view state by. */
+export const fileViewStateIds = (path: string) => [
+  `file:${path}`,
+  sourceViewStateId('markdown', path),
+  sourceViewStateId('html', path),
+];
+
+/** Move a doc's entry to its new id when its file is renamed (see `renamed` above). */
+export function renameViewState(from: string, to: string): void {
+  if (from === to) return;
+  renamed.delete(to);
+  closing.delete(to);
+  const entry = store.get(from);
+  store.delete(from);
+  if (entry) store.set(to, entry);
+  renamed.set(from, to);
 }
 
 /**

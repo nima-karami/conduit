@@ -213,6 +213,39 @@ describe('fileService writeFile (host write path + confinement)', () => {
     const leftovers = fs.readdirSync(root).filter((n) => n.includes('.tmp'));
     expect(leftovers).toEqual([]);
   });
+
+  it('recreates the folders of a file whose folder was deleted under it', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const f = path.join(root, 'gone', 'deep', 'c.ts');
+    const res = await writeFile(f, 'kept', [root]);
+    expect(res.ok).toBe(true);
+    expect(fs.readFileSync(f, 'utf8')).toBe('kept');
+  });
+
+  it('never creates a folder outside the root', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const outside = path.join(fs.realpathSync.native(tmp()), 'made');
+    const res = await writeFile(path.join(outside, 'x.ts'), 'x', [root]);
+    expect(res.ok).toBe(false);
+    expect(fs.existsSync(outside)).toBe(false);
+  });
+
+  it('never recreates a deleted workspace root (or anything above it)', async () => {
+    const parent = fs.realpathSync.native(tmp());
+    const root = path.join(parent, 'gone-root');
+    const res = await writeFile(path.join(root, 'sub', 'x.ts'), 'x', [root]);
+    expect(res.ok).toBe(false);
+    expect(fs.existsSync(root)).toBe(false);
+  });
+
+  it('never follows a symlinked folder out of the root to create folders there', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const outside = fs.realpathSync.native(tmp());
+    fs.symlinkSync(outside, path.join(root, 'link'), 'junction');
+    const res = await writeFile(path.join(root, 'link', 'new', 'deep', 'x.ts'), 'x', [root]);
+    expect(res.ok).toBe(false);
+    expect(fs.existsSync(path.join(outside, 'new'))).toBe(false);
+  });
 });
 
 describe('fileService writeFile (K2 read-grant allowance)', () => {
@@ -228,6 +261,21 @@ describe('fileService writeFile (K2 read-grant allowance)', () => {
     const res = await writeFile(f, 'const a = 2;', [root], grants);
     expect(res.ok).toBe(true);
     expect(fs.readFileSync(f, 'utf8')).toBe('const a = 2;');
+  });
+
+  it('a granted file whose folder was deleted is not written, and no folder is created', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const outside = fs.realpathSync.native(tmp());
+    const dir = path.join(outside, 'pkg');
+    fs.mkdirSync(dir);
+    const f = path.join(dir, 'granted.ts');
+    fs.writeFileSync(f, 'x');
+    const grants = createGrantStore({ canonical: hostCanonical });
+    grants.add(f);
+    fs.rmSync(dir, { recursive: true });
+    const res = await writeFile(f, 'again', [root], grants);
+    expect(res.ok).toBe(false);
+    expect(fs.existsSync(dir)).toBe(false);
   });
 
   it('STILL REJECTS an out-of-root file that was never granted', async () => {

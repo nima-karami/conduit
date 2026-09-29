@@ -12,6 +12,8 @@ export const AUTO_SAVE_COPY = {
   delayHint: '100–60000 ms',
   delayError: 'Enter 100–60000 ms',
   saveFailed: (name: string, reason: string) => `Could not save ${name}: ${reason}`,
+  partialFile: 'only its first 2 MB is loaded, and saving would cut the file short.',
+  partialBanner: 'Large file — showing the first 2 MB, read-only.',
   changedOnDisk: (name: string) => `${name} changed on disk. Auto-save is paused for this file.`,
   deletedOnDisk: (name: string) => `${name} was deleted on disk.`,
   overwrite: 'Overwrite',

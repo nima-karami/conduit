@@ -39,6 +39,23 @@ All notable user-facing changes to Conduit. Format follows
   switched away from was skipped by Save All, and Save in its close prompt discarded the edits.
 - **Saving a file while a save is still running no longer does nothing.** Choosing Save in the
   close prompt during a save left the tab open without a word; it now waits and closes.
+- **Renaming an open file in Files no longer orphans its tab.** The tab stayed on the old name,
+  and saving it brought the old file back. The tab now follows the rename, keeping your unsaved
+  edits, cursor and scroll, and so do tabs inside a renamed or moved folder. The same holds for a
+  drag-and-drop move and for undoing or redoing a rename or move. A move that replaces a file you
+  have unsaved edits in keeps those edits, paused as "changed on disk" until you choose Overwrite
+  or Reload.
+- **Saving a file over 2 MB can no longer cut it short.** Only the first 2 MB of such a file is
+  loaded, and saving it wrote just that part back over the whole file. The partial view now opens
+  read-only, and Ctrl+S, Save All, Save in the close prompt and auto save all refuse to write it.
+- **Deleting a file or folder from Files handles its open tabs.** Tabs stayed open on deleted
+  files, and a folder delete never touched the tabs inside it. Tabs with no unsaved edits now
+  close. A tab with unsaved edits stays open, marked "deleted on disk": nothing (auto save
+  included) writes the file back until you choose Overwrite, which recreates it and its folder,
+  or Close.
+- **A renamed, moved or deleted file stops resolving in code navigation.** Imports of the old
+  path kept resolving to the removed file, and Go to Definition opened a tab on it.
+- **The large-file notice is no longer covered by the editor's read-only popup.**
 
 ## [0.43.0] — 2026-09-26
 

@@ -53,6 +53,16 @@ import { ChangePeek } from './change-peek';
 import { ContextMenu, type MenuState } from './context-menu';
 import { ImageViewer } from './image-viewer';
 
+/**
+ * Monaco answers an edit attempt on a read-only editor with a popup above the cursor line, and
+ * that popup is placed against the PAGE (it may overflow the editor), so on line 1 it lands on the
+ * banner above the editor. The only read-only doc here is a truncated one, whose banner already
+ * says so: one notice, not two stacked. Reached by id — the class isn't exported.
+ */
+function silenceReadOnlyPopup(editor: monaco.editor.IStandaloneCodeEditor): void {
+  editor.getContribution('editor.contrib.readOnlyMessageController')?.dispose();
+}
+
 const MENU_ICONS: Record<EditorMenuIconKey, ReactJSX.Element> = {
   copy: <IconCopy size={14} />,
   search: <IconSearch size={14} />,
@@ -179,14 +189,15 @@ export function CodeViewer({
     // clean model (K3), so all of it outlives this editor. Attached before `create` so the
     // first paint already shows the disk content.
     if (!doc.binary) {
-      fileSaves.attach(doc.path, { diskContent: content, autoEligible: !truncated });
+      fileSaves.attach(doc.path, { diskContent: content, writable: !truncated });
     }
     const editor = monaco.editor.create(ref.current, {
       model,
       theme,
       // Binary files render a notice instead, so this never exposes a writable
-      // buffer for a non-text file.
-      readOnly: false,
+      // buffer for a non-text file. A truncated buffer is only the file's head, so it is never
+      // editable either (the save store refuses it as well).
+      readOnly: truncated,
       automaticLayout: true,
       overflowWidgetsDomNode: monacoOverflowHost(),
       fixedOverflowWidgets: true,
@@ -214,6 +225,7 @@ export function CodeViewer({
       renderLineHighlight: 'all',
     });
     editorRef.current = editor;
+    if (truncated) silenceReadOnlyPopup(editor);
 
     const unregisterSelection = registerSelection(doc.path, {
       getSelectedText: () => {
@@ -490,7 +502,7 @@ export function CodeViewer({
     const model = ed?.getModel();
     const version = model?.getVersionId();
     const view = ed?.saveViewState();
-    fileSaves.attach(doc.path, { diskContent: doc.content, autoEligible: !doc.truncated });
+    fileSaves.attach(doc.path, { diskContent: doc.content, writable: !doc.truncated });
     if (!ed || !model || model.getVersionId() === version) return;
     if (view) ed.restoreViewState(view);
     onReseedRef.current?.();
@@ -499,6 +511,12 @@ export function CodeViewer({
   useEffect(() => {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });
   }, [settings.wordWrap]);
+
+  useEffect(() => {
+    const ed = editorRef.current;
+    ed?.updateOptions({ readOnly: doc.truncated });
+    if (ed && doc.truncated) silenceReadOnlyPopup(ed);
+  }, [doc.truncated]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({ fontSize: settings.editorFontSize });
@@ -656,8 +674,18 @@ export function CodeViewer({
   changesRef.current = changes;
 
   // Announcements the peek makes ("Staged hunk"), kept apart from the marker hook's own live
-  // region so a navigation announcement and an op announcement cannot overwrite each other.
+  // region so a navigation announcement and an op announcement cannot overwrite each other. A
+  // truncated doc (no markers, no peek) also says here, once, why typing does nothing — Monaco's
+  // own read-only popup is gone for it (see silenceReadOnlyPopup).
   const [hunkAnnounce, setHunkAnnounce] = useState('');
+  useEffect(() => {
+    if (!editor || !doc.truncated) return;
+    const sub = editor.onDidAttemptReadOnlyEdit(() => {
+      sub.dispose();
+      setHunkAnnounce(AUTO_SAVE_COPY.partialBanner);
+    });
+    return () => sub.dispose();
+  }, [editor, doc.truncated]);
 
   const peek = usePeekZone({
     editor,
@@ -723,7 +751,11 @@ export function CodeViewer({
         }
       }}
     >
-      {doc.truncated && <div className="viewer__banner">Large file — showing the first 2 MB.</div>}
+      {doc.truncated && (
+        <div className="viewer__banner" role="note">
+          {AUTO_SAVE_COPY.partialBanner}
+        </div>
+      )}
       {changes.state === 'degraded' && <div className="viewer__banner">{DEGRADED_HINT}</div>}
       {saveStatus?.phase === 'conflict' && (
         <div className="viewer__banner viewer__banner--warn" role="alert">

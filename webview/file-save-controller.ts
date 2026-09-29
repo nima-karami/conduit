@@ -9,6 +9,7 @@ import {
   autoSaveStep,
   INITIAL_AUTO_SAVE_STATE,
   type SaveKind,
+  stronger,
 } from './auto-save-policy';
 import type { SaveEntry } from './save-registry';
 
@@ -41,8 +42,8 @@ export interface FileSaveDeps {
 
 export interface AttachOpts {
   diskContent: string;
-  /** false for a truncated doc (D7); binary docs never attach. */
-  autoEligible: boolean;
+  /** false for a truncated doc, which is never written; binary docs never attach. */
+  writable: boolean;
 }
 
 export interface FileSaveStatus {
@@ -58,6 +59,12 @@ export interface FileSaves {
   configure(cfg: { mode: AutoSaveMode; delayMs: number }): void;
   attach(path: string, opts: AttachOpts): void;
   dispose(path: string): void;
+  /** Whether `rename(from, to)` would move anything aside: `to` must not have an entry. */
+  canRename(from: string, to: string): boolean;
+  /** The file moved on disk: the entry follows it to `to`, whose model must already exist. */
+  rename(from: string, to: string): void;
+  /** The file was deleted or replaced on disk under this buffer (the policy's `diskConflict`). */
+  markConflict(path: string, conflict: WriteConflict): void;
   save(path: string, kind: SaveKind): Promise<boolean>;
   trigger(path: string, trigger: AutoSaveTrigger): void;
   flushAll(trigger: 'windowBlur'): Promise<void>;
@@ -74,7 +81,7 @@ interface Entry {
   sub: { dispose(): void } | null;
   unregister: () => void;
   baseline: string;
-  autoEligible: boolean;
+  writable: boolean;
   state: AutoSaveState;
   timer: unknown;
   /** The single write chain in flight (E1); a trailing save joins it via `next`. */
@@ -131,19 +138,22 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
 
   const write = async (e: Entry, kind: SaveKind) => {
     const content = e.model.getValue();
+    const path = e.path;
     e.error = null;
     publish(e);
     let res: WriteResult;
     try {
-      res = await deps.write(
-        e.path,
-        content,
-        kind === 'auto' ? { expected: e.baseline } : undefined,
-      );
+      res = await deps.write(path, content, kind === 'auto' ? { expected: e.baseline } : undefined);
     } catch (err) {
       res = { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
     if (e.disposed) return;
+    // Renamed while the write was out: it landed (or failed) at the old path, which says nothing
+    // about the new one — so the chain writes again, there.
+    if (e.path !== path) {
+      e.next = stronger(e.next, kind);
+      return;
+    }
     e.lastOk = res.ok;
     if (res.ok) {
       e.baseline = content;
@@ -196,7 +206,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
 
   function trigger(path: string, t: AutoSaveTrigger) {
     const e = entries.get(path);
-    if (!e?.autoEligible || !deps.canWrite) return;
+    if (!e?.writable || !deps.canWrite) return;
     step(e, { type: 'trigger', trigger: t });
   }
 
@@ -209,13 +219,17 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
   const save = async (path: string, kind: SaveKind): Promise<boolean> => {
     const e = entries.get(path);
     if (!e) return true;
-    // A truncated buffer holds only the first 2 MB; comparing it to the whole file would report
-    // a conflict that isn't there (D7).
-    if (kind === 'auto' && !e.autoEligible) return false;
-    if (!deps.canWrite) {
+    // A truncated buffer holds only the head of the file: writing it back would cut the file
+    // short on disk, whichever path asked for the save.
+    const refusal = !e.writable
+      ? AUTO_SAVE_COPY.partialFile
+      : !deps.canWrite
+        ? 'Saving is unavailable in the browser preview.'
+        : null;
+    if (refusal !== null) {
       if (e.model.getValue() === e.baseline) return true;
       if (kind === 'auto') return false;
-      e.error = 'Saving is unavailable in the browser preview.';
+      e.error = refusal;
       publish(e);
       deps.toast(AUTO_SAVE_COPY.saveFailed(baseName(path), e.error));
       return false;
@@ -231,6 +245,18 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
   const revert = (path: string) => {
     const e = entries.get(path);
     if (e) e.model.setValue(e.baseline);
+  };
+
+  const registerEntry = (e: Entry) =>
+    deps.register(e.path, {
+      save: (o) => save(e.path, o?.kind ?? 'manual'),
+      revert: () => revert(e.path),
+    });
+
+  const bindModel = (e: Entry, model: SaveModel) => {
+    e.sub?.dispose();
+    e.model = model;
+    e.sub = model.onDidChangeContent(() => onContent(e));
   };
 
   return {
@@ -252,7 +278,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
           sub: null,
           unregister: () => {},
           baseline: opts.diskContent,
-          autoEligible: opts.autoEligible,
+          writable: opts.writable,
           state: INITIAL_AUTO_SAVE_STATE,
           timer: null,
           chain: null,
@@ -262,19 +288,12 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
           error: null,
           disposed: false,
         };
-        created.unregister = deps.register(path, {
-          save: (o) => save(path, o?.kind ?? 'manual'),
-          revert: () => revert(path),
-        });
+        created.unregister = registerEntry(created);
         entries.set(path, created);
         e = created;
       }
       const entry = e;
-      if (entry.sub === null || entry.model !== model) {
-        entry.sub?.dispose();
-        entry.model = model;
-        entry.sub = model.onDidChangeContent(() => onContent(entry));
-      }
+      if (entry.sub === null || entry.model !== model) bindModel(entry, model);
       // see docs/plans/2026-09-28-auto-save.plan.md P5: a reseed is a seed, never an edit.
       if (!deps.isMarkedDirty(path) && model.getValue() !== opts.diskContent) {
         entry.seeding = true;
@@ -285,7 +304,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
         }
       }
       entry.baseline = opts.diskContent;
-      entry.autoEligible = opts.autoEligible;
+      entry.writable = opts.writable;
       deps.setDirty(path, entry.baseline, model.getValue());
       step(entry, { type: 'seed', dirty: model.getValue() !== entry.baseline });
     },
@@ -302,6 +321,33 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
       next.delete(path);
       snapshot = next;
       notify();
+    },
+
+    canRename: (from, to) => from !== to && !entries.has(to),
+
+    markConflict(path, conflict) {
+      const e = entries.get(path);
+      if (!e) return;
+      e.error = null;
+      step(e, { type: 'diskConflict', conflict });
+    },
+
+    rename(from, to) {
+      const e = entries.get(from);
+      const model = deps.getModel(to);
+      if (!e || !model || from === to || entries.has(to)) return;
+      entries.delete(from);
+      e.unregister();
+      e.path = to;
+      bindModel(e, model);
+      e.unregister = registerEntry(e);
+      entries.set(to, e);
+      deps.clearDirty(from);
+      deps.setDirty(to, e.baseline, model.getValue());
+      const next = new Map(snapshot);
+      next.delete(from);
+      snapshot = next;
+      publish(e);
     },
 
     save,

@@ -159,7 +159,10 @@ export type DocsAction =
   | { type: 'reorder'; dragId: string; targetId: string | null }
   // One-shot startup seed from persisted docs.json (editor-tabs-persist). Rebuilds docs[] +
   // activeBySession from `docs`, dropping any whose sessionId isn't in `knownSessionIds` (orphan).
-  | { type: 'restore'; docs: PersistedDoc[]; knownSessionIds: string[] };
+  | { type: 'restore'; docs: PersistedDoc[]; knownSessionIds: string[] }
+  // Files were renamed/moved on disk: each listed file tab (by its exact path) follows its file
+  // in place — same slot, owner and preview flag. The caller decides which tabs move.
+  | { type: 'moveFiles'; moves: readonly { from: string; to: string }[] };
 
 export const initialDocs: DocsState = { docs: [], activeId: null, activeBySession: {} };
 
@@ -438,6 +441,26 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         activeId = next ? next.id : null;
       }
       return { docs, activeId, activeBySession };
+    }
+    case 'moveFiles': {
+      const target = new Map(action.moves.map((m) => [m.from, m.to]));
+      const ids = new Map<string, string>();
+      const taken = new Set(state.docs.map((d) => d.id));
+      const docs = state.docs.map((d) => {
+        const path = d.kind === 'file' ? target.get(d.path) : undefined;
+        if (path === undefined || path === d.path) return d;
+        const id = idOf('file', path);
+        if (taken.has(id)) return d;
+        taken.add(id);
+        ids.set(d.id, id);
+        return { ...d, id, path, title: initialTitle('file', path) };
+      });
+      if (ids.size === 0) return state;
+      const follow = (id: string | null) => (id !== null ? (ids.get(id) ?? id) : null);
+      const activeBySession = Object.fromEntries(
+        Object.entries(state.activeBySession).map(([sid, id]) => [sid, follow(id)]),
+      );
+      return { docs, activeId: follow(state.activeId), activeBySession };
     }
     case 'activate': {
       const activeBySession = { ...state.activeBySession };
