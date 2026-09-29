@@ -1,5 +1,5 @@
 import type { GroupIndex } from './doc-groups';
-import type { OpenDoc } from './docs';
+import { type OpenDoc, pinnedIdForMove } from './docs';
 import { tabStateKey } from './editor-group-context';
 import { clearHtmlView, copyHtmlView, moveHtmlView } from './html-view-store';
 import { clearReveal } from './project-index';
@@ -27,6 +27,21 @@ export function carryTabState(
     tabStateKey(doc.id, from),
     tabStateKey(doc.id, to),
   );
+}
+
+/** The reducer re-keys a `commit-diff` slot before a split or move lands it (split-editor plan
+ *  P4), so its view state in both groups is re-keyed first. Returns the doc as it will land. */
+export function pinTabStateForMove<T extends TabDoc>(doc: T): T {
+  const id = pinnedIdForMove(doc);
+  if (id === doc.id) return doc;
+  const pinned = { ...doc, id };
+  const to = tabViewStateIds(pinned);
+  for (const g of [1, 2] as const) {
+    tabViewStateIds(doc).forEach((from, i) => {
+      moveViewState(tabStateKey(from, g), tabStateKey(to[i], g));
+    });
+  }
+  return pinned;
 }
 
 /** The tab of `doc` in `group` is closing: evict its view state and tombstone it against the

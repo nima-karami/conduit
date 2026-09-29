@@ -238,7 +238,7 @@ import { comboLabel, effectiveCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } f
 import { SPLIT_COPY } from './split-editor-copy';
 import { closeTabSelection } from './tab-close-selection';
 import { endTabDrag } from './tab-drag';
-import { carryTabState, dropTabState } from './tab-view-state';
+import { carryTabState, dropTabState, pinTabStateForMove } from './tab-view-state';
 import {
   requestTerminalFocus,
   selectionInTerminal,
@@ -952,12 +952,13 @@ export function App() {
     if (doc.id !== layout.groups[0].active) {
       dispatchDocs({ type: 'activate', id: doc.id, sessionId, group: 1 });
     }
-    if (!layout.groups[1]?.tabs.some((t) => t.id === doc.id)) {
-      carryTabState(doc, 1, 2, splitBehavior(doc.kind) === 'duplicate' ? 'copy' : 'move');
+    const landed = pinTabStateForMove(doc);
+    if (!layout.groups[1]?.tabs.some((t) => t.id === landed.id)) {
+      carryTabState(landed, 1, 2, splitBehavior(doc.kind) === 'duplicate' ? 'copy' : 'move');
     }
     dispatchDocs({ type: 'splitRight', sessionId });
     announce(SPLIT_COPY.splitOpened(doc.title));
-    focusView(sessionId, 2, doc.id);
+    focusView(sessionId, 2, landed.id);
   }, []);
 
   const moveTabToGroup = useCallback(
@@ -971,10 +972,11 @@ export function App() {
       const doc = docStateRef.current.docs.find((d) => d.id === id);
       if (!doc || !src?.tabs.some((t) => t.id === id)) return;
       const copy = duplicate && splitBehavior(doc.kind) === 'duplicate';
-      if (!dst?.tabs.some((t) => t.id === id)) {
-        carryTabState(doc, from, toGroup, copy ? 'copy' : 'move');
+      const landed = pinTabStateForMove(doc);
+      if (!dst?.tabs.some((t) => t.id === landed.id)) {
+        carryTabState(landed, from, toGroup, copy ? 'copy' : 'move');
       } else if (!copy) {
-        dropTabState(doc, from);
+        dropTabState(landed, from);
       }
       dispatchDocs({ type: 'moveTab', sessionId, id, toGroup, beforeId, duplicate: copy });
       const said = !copy
@@ -983,7 +985,7 @@ export function App() {
           ? SPLIT_COPY.splitOpened(doc.title)
           : null;
       if (said !== null && navLiveRef.current) navLiveRef.current.textContent = said;
-      focusView(sessionId, toGroup, id);
+      focusView(sessionId, toGroup, landed.id);
     },
     [],
   );

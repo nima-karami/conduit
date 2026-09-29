@@ -8,7 +8,12 @@ vi.mock('monaco-editor', async () => {
 import type { OpenDoc } from '../../webview/docs';
 import { clearHtmlView, getHtmlScroll, setHtmlScroll } from '../../webview/html-view-store';
 import { clearReveal, hasReveal, setReveal } from '../../webview/project-index';
-import { carryTabState, dropTabState, tabViewStateIds } from '../../webview/tab-view-state';
+import {
+  carryTabState,
+  dropTabState,
+  pinTabStateForMove,
+  tabViewStateIds,
+} from '../../webview/tab-view-state';
 import {
   getViewState,
   markClosing,
@@ -74,6 +79,23 @@ describe('tab view state (split-editor plan P5)', () => {
     setReveal(doc.path, { line: 3, column: 1 }, 2);
     dropTabState(doc, 2);
     expect(hasReveal(doc.path)).toBe(false);
+  });
+
+  it("a commit-diff preview slot's state moves to the pinned id a split or move lands it under", () => {
+    const slot = { id: 'commit-diff:@preview', kind: 'commit-diff' as const, path: 'abc:src/a.ts' };
+    const pinned = 'commit-diff:abc:src/a.ts';
+    for (const id of [slot.id, `g2:${slot.id}`, pinned, `g2:${pinned}`]) {
+      markClosing(id);
+      getViewState(id);
+    }
+    setViewState(slot.id, scroll(77));
+    const landed = pinTabStateForMove(slot);
+    expect(landed).toEqual({ ...slot, id: pinned });
+    carryTabState(landed, 1, 2, 'copy');
+    expect(getViewState(`g2:${pinned}`)).toEqual(scroll(77));
+    expect(getViewState(pinned)).toEqual(scroll(77));
+    expect(getViewState(slot.id)).toBeUndefined();
+    expect(pinTabStateForMove(doc)).toBe(doc);
   });
 
   it('a tab moving out of a group takes nothing staged there with it', () => {

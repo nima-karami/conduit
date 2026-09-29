@@ -442,11 +442,18 @@ function rekeySlot(
   };
 }
 
+/** The id a split or move lands `doc` under (P4): a `commit-diff` slot's pinned id. */
+export function pinnedIdForMove(doc: Pick<OpenDoc, 'id' | 'kind' | 'path'>): string {
+  return doc.kind === 'commit-diff' && doc.id === previewId('commit-diff')
+    ? idOf(doc.kind, doc.path)
+    : doc.id;
+}
+
 /** Split and move land a pinned tab (P4): a `commit-diff` slot is re-keyed to its pinned id first. */
 function pinSlotForMove(state: DocsState, id: string): { state: DocsState; id: string } {
   const doc = state.docs.find((d) => d.id === id);
-  if (doc?.kind !== 'commit-diff' || id !== previewId('commit-diff')) return { state, id };
-  const pinned = idOf(doc.kind, doc.path);
+  const pinned = doc ? pinnedIdForMove(doc) : id;
+  if (pinned === id) return { state, id };
   return { state: rekeySlot(state, id, pinned, {}), id: pinned };
 }
 
