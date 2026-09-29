@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.44.0] — 2026-09-29
+
 ### Added
 - **Go to Definition, Go to Implementations and Go to References can be rebound.** They're in
   Settings → Shortcuts under a new "Code navigation" group. A new chord works at once in every
