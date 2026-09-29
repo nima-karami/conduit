@@ -19,7 +19,7 @@ const docs: OpenDoc[] = [
 let host: HTMLDivElement;
 let root: Root | null = null;
 
-async function render() {
+async function render(activeId: string | null = null) {
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -31,7 +31,7 @@ async function render() {
         showTerminal: true,
         split: { disabledReason: null, onSplit: () => {} },
         docs,
-        activeId: null,
+        activeId,
         previewIds: new Set<string>(),
         terminalLabel: 'Terminal',
         terminalIcon: { type: 'lucide', name: 'terminal' },
@@ -77,5 +77,17 @@ describe('DocTabs tablist', () => {
     expect(
       [...(tablist?.querySelectorAll('[data-tabid]') ?? [])].map((e) => e.getAttribute('role')),
     ).toEqual(['tab', 'tab']);
+  });
+
+  it('marks the Terminal button pressed only while it is the shown tab', async () => {
+    await render(null);
+    const terminal = () => host.querySelector('[data-tabid="__terminal__"]');
+    expect(terminal()?.getAttribute('type')).toBe('button');
+    expect(terminal()?.getAttribute('aria-pressed')).toBe('true');
+    await act(async () => root?.unmount());
+    host.remove();
+    await render('file:/w/a.ts');
+    expect(terminal()?.getAttribute('type')).toBe('button');
+    expect(terminal()?.getAttribute('aria-pressed')).toBe('false');
   });
 });

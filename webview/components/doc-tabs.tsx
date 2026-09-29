@@ -288,6 +288,8 @@ export function DocTabs({
         {showTerminal && (
           <button
             ref={terminalRef}
+            type="button"
+            aria-pressed={activeId === null}
             data-tabid={TERMINAL_TABID}
             className={`tab ${activeId === null ? activeClass : ''}`}
             onClick={() => onSelect(null)}
