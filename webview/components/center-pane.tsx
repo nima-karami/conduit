@@ -15,6 +15,7 @@ import type { GitActionIntent } from '../git-intent';
 import { IconClock } from '../icons';
 import { reviewRequestRoot } from '../review-repos';
 import type { ReviewScope } from '../review-scope';
+import { SPLIT_COPY } from '../split-editor-copy';
 import { requestTerminalFocus } from '../terminal-bus';
 import { getTimerSnapshot, subscribeTimers, waitingCountFor } from '../timer-store';
 import { AgentScopeBanner } from './agent-scope-banner';
@@ -65,7 +66,6 @@ export function CenterPane({
   diffs,
   onFocusGroup,
   onSplitRight,
-  splitDisabledReason,
   onGroupStripContextMenu,
   editorSplitRatio,
   onSplitRatioCommit,
@@ -121,7 +121,6 @@ export function CenterPane({
   diffs: Map<string, FileDiffDTO>;
   onFocusGroup: (group: GroupIndex) => void;
   onSplitRight: () => void;
-  splitDisabledReason: string | null;
   onGroupStripContextMenu?: (e: React.MouseEvent, group: GroupIndex) => void;
   editorSplitRatio: number;
   onSplitRatioCommit: (ratio: number) => void;
@@ -411,7 +410,17 @@ export function CenterPane({
             group={g}
             groupActive={layout.activeGroup === g}
             showTerminal={g === 1}
-            split={{ disabledReason: splitDisabledReason, onSplit: onSplitRight }}
+            split={{
+              // Clicking a strip's button first focuses its group (spec §2.4 flow 2), so group 1's
+              // button splits from group 1 even while group 2 is active.
+              disabledReason:
+                g === 2
+                  ? SPLIT_COPY.capReached
+                  : view.activeDocId === null
+                    ? SPLIT_COPY.terminalCantSplit
+                    : null,
+              onSplit: onSplitRight,
+            }}
             onStripContextMenu={
               onGroupStripContextMenu ? (e) => onGroupStripContextMenu(e, g) : undefined
             }

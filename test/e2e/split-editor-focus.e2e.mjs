@@ -10,6 +10,9 @@
  *   CW  the Ctrl+W successor
  *   SR  Split Right on rendered markdown, and on a PDF
  *   MV  Move to Other Group with a `.ts` left behind in the left group
+ *   SB  each strip's split button: the left one is enabled on a doc even with the right group
+ *       active (clicking it splits from the left), the right one is at the cap, and a strip on
+ *       the Terminal is disabled
  *   E6  Close Editor Group while the left group shows the Terminal
  * Failures are collected, so one run reports every step that misses.
  */
@@ -19,7 +22,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { changeRow, commitBase, installTabHelpers } from './changes-fixture.mjs';
 import { assert, openChangesTab, openSession, REPO, runScenario } from './harness.mjs';
-import { explorer, G, openFromExplorer, sleep, tabOf, waitShown } from './split-editor-helpers.mjs';
+import {
+  explorer,
+  G,
+  openFromExplorer,
+  same,
+  sleep,
+  tabOf,
+  waitShown,
+} from './split-editor-helpers.mjs';
 
 const root = mkdtempSync(join(tmpdir(), 'conduit-split-focus-'));
 writeFileSync(join(root, 'a.ts'), 'export const a = 1;\n');
@@ -52,6 +63,15 @@ const focusNow = (page) =>
 
 runScenario('split-editor-focus', async ({ page, log }) => {
   const misses = [];
+  const splitButtons = () =>
+    page.evaluate(
+      (sels) =>
+        sels.map(
+          (s) =>
+            document.querySelector(`${s} .tabbar__split`)?.getAttribute('aria-disabled') ?? null,
+        ),
+      [G(1), G(2)],
+    );
   /** Waits for focus to settle on `view` in group `g`, and records a miss if it never does. */
   const expectFocus = async (label, g, view) => {
     const ok = await page
@@ -200,12 +220,33 @@ runScenario('split-editor-focus', async ({ page, log }) => {
   await waitShown(page, 2, 'c.ts', 'MV');
   await expectFocus('MV move with a .ts fallback', 2, 'editor:c.ts');
 
+  // SB: each strip's split button says what clicking IT would do.
+  await tabOf(page, 1, 'a.ts').click();
+  await waitShown(page, 1, 'a.ts', 'SB');
+  assert(
+    same(await splitButtons(), [null, 'true']),
+    `SB left active: ${JSON.stringify(await splitButtons())}`,
+  );
+  await tabOf(page, 2, 'c.ts').click();
+  await waitShown(page, 2, 'c.ts', 'SB');
+  assert(
+    same(await splitButtons(), [null, 'true']),
+    `SB right active: ${JSON.stringify(await splitButtons())}`,
+  );
+  await page.locator(`${G(1)} .tabbar__split`).click();
+  await waitShown(page, 2, 'a.ts', 'SB');
+  await expectFocus('SB left strip button with the right group active', 2, 'editor:a.ts');
+
   // E6: the right group closes while the left one shows the Terminal.
   await page.locator(`${G(1)} [data-tabid="__terminal__"]`).click();
   await page.waitForFunction(
     (sel) => !document.querySelector(`${sel} [role="tab"][aria-selected="true"]`),
     G(1),
     { timeout: 5000 },
+  );
+  assert(
+    same(await splitButtons(), ['true', 'true']),
+    `SB left on the Terminal: ${JSON.stringify(await splitButtons())}`,
   );
   await tabOf(page, 2, 'c.ts').click();
   await waitShown(page, 2, 'c.ts', 'E6');

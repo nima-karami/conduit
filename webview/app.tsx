@@ -1418,12 +1418,6 @@ export function App() {
     [docState.docs, activeId],
   );
   const layout = useMemo(() => centerLayout(docState, activeId), [docState, activeId]);
-  const splitDisabledReason =
-    layout.activeGroup === 2
-      ? SPLIT_COPY.capReached
-      : layout.groups[0].activeDocId === null
-        ? SPLIT_COPY.terminalCantSplit
-        : null;
   // Spec §10: a collapse that stranded focus in the closed group hands it to group 1. Keyed by
   // session, so switching to a session with one group is not a collapse.
   const groupCountRef = useRef({ sessionId: activeId, count: layout.groups.length });
@@ -4079,7 +4073,6 @@ export function App() {
             diffs={diffs}
             onFocusGroup={focusGroup}
             onSplitRight={() => splitRight()}
-            splitDisabledReason={splitDisabledReason}
             editorSplitRatio={settings.editorSplitRatio}
             onSplitRatioCommit={(editorSplitRatio) => update({ editorSplitRatio })}
             // A pointer click on the Terminal button leaves focus where it was (main's behaviour,
