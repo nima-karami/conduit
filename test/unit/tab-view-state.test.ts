@@ -1,6 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('monaco-editor', async () => {
+  const { URI } = await import('monaco-editor/esm/vs/base/common/uri.js');
+  return { Uri: URI, editor: { getModel: () => null } };
+});
+
 import type { OpenDoc } from '../../webview/docs';
 import { clearHtmlView, getHtmlScroll, setHtmlScroll } from '../../webview/html-view-store';
+import { clearReveal, hasReveal, setReveal } from '../../webview/project-index';
 import { carryTabState, dropTabState, tabViewStateIds } from '../../webview/tab-view-state';
 import {
   getViewState,
@@ -25,6 +32,7 @@ beforeEach(() => {
   }
   clearHtmlView(doc.id);
   clearHtmlView(`g2:${doc.id}`);
+  clearReveal(doc.path);
 });
 
 describe('tab view state (split-editor plan P5)', () => {
@@ -57,5 +65,23 @@ describe('tab view state (split-editor plan P5)', () => {
     for (const id of keys(2)) expect(getViewState(id)).toBeUndefined();
     for (const id of keys(1)) expect(getViewState(id)).toEqual(scroll(9));
     expect(getHtmlScroll(`g2:${doc.id}`)).toBe(0);
+  });
+
+  it('a file tab closing in a group drops a reveal staged for that group only', () => {
+    setReveal(doc.path, { line: 3, column: 1 }, 1);
+    dropTabState(doc, 2);
+    expect(hasReveal(doc.path, 1)).toBe(true);
+    setReveal(doc.path, { line: 3, column: 1 }, 2);
+    dropTabState(doc, 2);
+    expect(hasReveal(doc.path)).toBe(false);
+  });
+
+  it('a tab moving out of a group takes nothing staged there with it', () => {
+    setReveal(doc.path, { line: 3, column: 1 }, 2);
+    carryTabState(doc, 2, 1, 'move');
+    expect(hasReveal(doc.path)).toBe(false);
+    setReveal(doc.path, { line: 3, column: 1 }, 1);
+    carryTabState(doc, 1, 2, 'copy');
+    expect(hasReveal(doc.path, 1)).toBe(true);
   });
 });

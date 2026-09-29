@@ -65,9 +65,11 @@ export function takeReveal(path: string, group: GroupIndex): CursorPos | undefin
   return staged.pos;
 }
 
-/** Drop a staged reveal nobody consumed (a background tab closed before it was ever viewed). */
-export function clearReveal(path: string): void {
-  reveals.delete(key(path));
+/** Drop a staged reveal nobody consumed (a background tab closed before it was ever viewed). With
+ *  a group, only a reveal staged for that group: its tab is leaving it. */
+export function clearReveal(path: string, group?: GroupIndex): void {
+  const k = key(path);
+  if (group === undefined || reveals.get(k)?.group === group) reveals.delete(k);
 }
 
 // Peek without consuming, so a viewer can let an explicit reveal WIN over a saved-scroll
@@ -77,8 +79,8 @@ export function hasReveal(path: string, group?: GroupIndex): boolean {
 }
 
 /** The staged, not yet consumed target: where a still-mounting editor for `path` will land. */
-export function peekReveal(path: string): CursorPos | undefined {
-  return reveals.get(key(path))?.pos;
+export function peekReveal(path: string, group?: GroupIndex): CursorPos | undefined {
+  return revealFor(path, group)?.pos;
 }
 
 // App registers how to open a file (as a doc tab) at a position; every code-jump producer calls

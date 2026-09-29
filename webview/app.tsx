@@ -3280,8 +3280,11 @@ export function App() {
     // While a landing's tab is still mounting there is no live editor. Its cursor is then the staged
     // reveal it will consume, else the position its view state restores; an unknown cursor would
     // coalesce with (and so hide) every stop in the file — a burst of Backs skipped them.
-    const live = liveCursor(doc.path, activeGroupOf(state, doc.sessionId));
-    return navEntryFor(doc, live ?? peekReveal(doc.path) ?? lastCursor(doc.path));
+    const g = activeGroupOf(state, doc.sessionId);
+    return navEntryFor(
+      doc,
+      liveCursor(doc.path, g) ?? peekReveal(doc.path, g) ?? lastCursor(doc.path),
+    );
   }, []);
 
   const isNavLive = useCallback(
