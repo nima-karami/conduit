@@ -416,7 +416,7 @@ that group, else the right neighbour, else `null` for group 1 (the Terminal) or 
   - The first sighting of an id creates its doc (`initialTitle`, `diffScope`).
   - Each entry appends a tab to group `entry.group ?? 1` of its session, with `preview` from the
     entry, and `active` sets that group's active.
-  - `activeGroup = 1`. `activeId = null`, as today (the app's following `switchSession` resolves it).
+  - `activeGroup = 1`, or 2 when a group-2 entry carries `focus: true` (amended in the review round). `activeId = null`, as today (the app's following `switchSession` resolves it).
 - **`toPersistedDocs`:** sessions in order of first appearance in `docs[]`. For each: group 1's
   tabs in order, then group 2's tabs with `group: 2`.
   - Each entry is `{ kind, path, sessionId, preview? (from the tab), diffScope?, active? (=== that group's active), group? }`.
@@ -1763,3 +1763,29 @@ Build run 2026-09-28 (unattended), branch `feat/split-editor`, base `de36575`. E
   `files-drop-claim.test.ts`: `editor-groups.tsx` gained a dragover handler that needs a listed audit entry.
   The entry was added (`9e5cf8d`), and `npm run verify` then exited 0
   (`evidence\split-editor\final-verify.log`). No existing test was deleted, and no gate config changed.
+- **Review round — done.** The fixes came from an independent review (6 blockers, 14 should-fix) and QA (1
+  visual defect, plus restoring the active group). There was one commit per item.
+  - **Reducer:** B3 `5437bfa`, B4 `9c24473` (a transferred tab lands pinned), B5 `44078a5`, stale close
+    `f1b3938`, `docs.test` restorations `8c75dd2` (expected values unchanged from base).
+  - **QA 2 (`3d711c4`):** `PersistedDoc.focus?: true` restores an active group 2. Spec §3.3 is amended.
+  - **Focus:** `325bf64` adds the per-(doc, group) focus-target registry (`webview/focus-targets.ts`) and one
+    `focusView` path. It fixes the Ctrl+Tab focus loss.
+    - Session ruling in `4bc5ce8`: a pointer click on the Terminal button does not focus xterm, which E14
+      nav-history-lifecycle pins. Keyboard landings do focus it.
+    - `0159fb8` extends that ruling to a strip × close that lands on the Terminal. It was the root cause of
+      the review-mode-pane regression.
+  - **View state:** L3.1–L3.9 (`78ede54`…`6c145ba`). `webview/tab-view-state.ts` is the one id list for carry
+    and teardown.
+  - **Web, drag, divider:** L4.1–L4.6 (`747dd0d`…`0aaeae6`).
+    - Web hosts render in registry order, so no sibling reload.
+    - Tab drags carry a private MIME type.
+    - The divider's hit area is off the strip row.
+    - The ratio is bounded even on a narrow pane.
+  - **Strip:** L5.1–L5.5 (`5891dde`…`485077e`).
+    - The Terminal is a sibling of the tablist; spec §9 is amended.
+    - Move to Other Group creates group 2.
+    - The split button's state is per strip.
+    - The palette entry is "Split Editor Right".
+    - The `.tabbar` scrollbar no longer takes layout space. The global `scrollbar-color` made `::-webkit-scrollbar`
+      inert, so the rule is now `scrollbar-width: none`, guarded by `tab-strip-overflow.e2e.mjs` in 3 themes.
+  - **Tab menu:** `128dadf` makes Split Right follow the strip button's rule.
