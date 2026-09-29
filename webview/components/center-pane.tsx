@@ -120,7 +120,7 @@ export function CenterPane({
   files: Map<string, FileContentDTO>;
   diffs: Map<string, FileDiffDTO>;
   onFocusGroup: (group: GroupIndex) => void;
-  onSplitRight: () => void;
+  onSplitRight: (target: OpenDoc | undefined) => void;
   onGroupStripContextMenu?: (e: React.MouseEvent, group: GroupIndex) => void;
   editorSplitRatio: number;
   onSplitRatioCommit: (ratio: number) => void;
@@ -417,15 +417,15 @@ export function CenterPane({
             showTerminal={g === 1}
             terminalFocusKey={g === 1 && activeId ? terminalTabFocusKey(activeId) : undefined}
             split={{
-              // Clicking a strip's button first focuses its group (spec §2.4 flow 2), so group 1's
-              // button splits from group 1 even while group 2 is active.
+              // Group 1's button splits group 1's shown doc even while group 2 is active (spec §2.4
+              // flow 2), with or without a pointer-down focusing group 1 first.
               disabledReason:
                 g === 2
                   ? SPLIT_COPY.capReached
                   : view.activeDocId === null
                     ? SPLIT_COPY.terminalCantSplit
                     : null,
-              onSplit: onSplitRight,
+              onSplit: () => onSplitRight(view.docs.find((d) => d.id === view.activeDocId)),
             }}
             onStripContextMenu={
               onGroupStripContextMenu ? (e) => onGroupStripContextMenu(e, g) : undefined

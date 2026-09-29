@@ -4,6 +4,8 @@
  *   VF  Ctrl+Tab onto Review, History and a commit-diff lands in that view: Review's scroller
  *       (its keymap is scoped to it), History's root, the commit-diff's modified editor
  *   FG  Focus Left Editor Group onto a Review that is already mounted lands in its scroller
+ *   SB  group 1's split button, activated with no focus or pointer-down before it (as assistive
+ *       tech can), splits group 1's shown doc while group 2 is active
  *   CO  the tab menu's Close Others lands focus in the surviving tab's view
  * A web tab takes no focus target: a focused guest page keeps Ctrl+Tab from the app, so focus
  * moved into it would trap tab cycling.
@@ -109,7 +111,7 @@ runScenario('split-editor-focus-views', async ({ page, log }) => {
     await expectFocusIn(`VF Ctrl+Tab onto ${kind}`, 1, view.focused, kind !== 'commit-diff');
   }
 
-  // A right group, active, with group 1 on a.ts.
+  // SB: group 2 active, group 1 on a.ts; group 1's button is activated with no focus move.
   await tabOf(page, 1, 'b.ts').click();
   await waitShown(page, 1, 'b.ts', 'SB');
   await page.keyboard.press('Control+Backslash');
@@ -121,6 +123,13 @@ runScenario('split-editor-focus-views', async ({ page, log }) => {
     .first()
     .click();
   await page.waitForSelector(`${G(2)}[data-active="true"]`, { timeout: 5000 });
+  await page.evaluate((sel) => document.querySelector(`${sel} .tabbar__split`).click(), G(1));
+  const sb = await waitShown(page, 2, 'a.ts', 'SB bare left split button').then(
+    () => null,
+    (e) => e.message,
+  );
+  log(`SB bare left split button with the right group active: ${sb ?? 'split a.ts'}`);
+  if (sb) misses.push(sb);
 
   // FG: the Review in group 1 is already mounted when the command lands on it.
   await docTabs.nth(at.review).click();

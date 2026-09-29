@@ -957,8 +957,8 @@ export function App() {
     if (sessionId) dispatchDocs({ type: 'focusGroup', sessionId, group });
   }, []);
 
-  /** Split Right on group 1's active tab, or on `target` (a group-1 tab's menu), which activates
-   *  group 1 first as the strip's button does. */
+  /** Split Right on group 1's active tab, or on `target` (from group 1's strip or a tab menu),
+   *  activating group 1 first. */
   const splitRight = useCallback((target?: OpenDoc) => {
     const sessionId = activeIdRef.current;
     if (!sessionId) return;
@@ -4096,7 +4096,7 @@ export function App() {
             files={files}
             diffs={diffs}
             onFocusGroup={focusGroup}
-            onSplitRight={() => splitRight()}
+            onSplitRight={splitRight}
             editorSplitRatio={settings.editorSplitRatio}
             onSplitRatioCommit={(editorSplitRatio) => update({ editorSplitRatio })}
             // A pointer click on the Terminal button leaves focus on the button (main's behaviour,
