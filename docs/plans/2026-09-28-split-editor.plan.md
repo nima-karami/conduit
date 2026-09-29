@@ -1723,3 +1723,15 @@ Build run 2026-09-28 (unattended), branch `feat/split-editor`, base `de36575`. E
   - `comboLabel` returns undefined for unbound.
   - The markdown source key is `tabStateKey('markdown-source:'+path, g)`. **T5.1 must move this key too.**
   - The focus-group commands are listed only while split.
+- **Slice 4b/4c — done.**
+  - `c44b73d`: the Terminal stays a plain button.
+  - `436812d`: `findConflicts` ignores `''`.
+  - `2a76469`: the trust prompt gets its own grid row. `.editorgroups` rows are `auto auto 1fr`. Group 2's body
+    and web host span rows 2–3.
+  - `6a965d1`: merge of main `8466702` (file-integrity). `moveFiles` is ported onto `layouts[s].groups[g]`, and
+    main's `docs.test.ts` cases are accessor-only.
+  - `11c3238`: the theme-tokens lookup string gains `.webhost`.
+  - `3adf2fb`: **root cause of the nav-history AC3 regression.** The `switchSession` resync of the cached
+    `activeId` ran in a passive effect. The per-group strip reads the layout directly, so for one frame Back
+    was judged against a stale `null`. It is now a `useLayoutEffect`.
+  - The regress set is 5/5 green again.
