@@ -2,7 +2,7 @@ import type { GroupIndex } from './doc-groups';
 import { type OpenDoc, pinnedIdForMove } from './docs';
 import { tabStateKey } from './editor-group-context';
 import { clearHtmlView, copyHtmlView, moveHtmlView } from './html-view-store';
-import { clearReveal } from './project-index';
+import { clearReveal, moveReveal } from './project-index';
 import { copyViewState, fileViewStateIds, markClosing, moveViewState } from './view-state-store';
 
 type TabDoc = Pick<OpenDoc, 'id' | 'kind' | 'path'>;
@@ -22,7 +22,7 @@ export function carryTabState(
 ): void {
   const carry = how === 'move' ? moveViewState : copyViewState;
   for (const id of tabViewStateIds(doc)) carry(tabStateKey(id, from), tabStateKey(id, to));
-  if (how === 'move') dropStagedReveal(doc, from);
+  if (how === 'move' && doc.kind === 'file') moveReveal(doc.path, from, to);
   (how === 'move' ? moveHtmlView : copyHtmlView)(
     tabStateKey(doc.id, from),
     tabStateKey(doc.id, to),

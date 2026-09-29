@@ -72,6 +72,15 @@ export function clearReveal(path: string, group?: GroupIndex): void {
   if (group === undefined || reveals.get(k)?.group === group) reveals.delete(k);
 }
 
+/** A reveal staged for `from` follows its tab to `to`. */
+export function moveReveal(path: string, from: GroupIndex, to: GroupIndex): void {
+  const k = key(path);
+  const staged = reveals.get(k);
+  if (staged?.group !== from) return;
+  reveals.set(k, { pos: staged.pos, group: to });
+  for (const cb of revealSubs) cb(k);
+}
+
 // Peek without consuming, so a viewer can let an explicit reveal WIN over a saved-scroll
 // restore (spec 2026-06-30 §3 reveal-vs-restore): the reveal effect still consumes it.
 export function hasReveal(path: string, group?: GroupIndex): boolean {

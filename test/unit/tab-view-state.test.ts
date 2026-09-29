@@ -7,7 +7,7 @@ vi.mock('monaco-editor', async () => {
 
 import type { OpenDoc } from '../../webview/docs';
 import { clearHtmlView, getHtmlScroll, setHtmlScroll } from '../../webview/html-view-store';
-import { clearReveal, hasReveal, setReveal } from '../../webview/project-index';
+import { clearReveal, hasReveal, peekReveal, setReveal } from '../../webview/project-index';
 import {
   carryTabState,
   dropTabState,
@@ -98,10 +98,11 @@ describe('tab view state (split-editor plan P5)', () => {
     expect(pinTabStateForMove(doc)).toBe(doc);
   });
 
-  it('a tab moving out of a group takes nothing staged there with it', () => {
+  it('a tab moving to the other group takes a reveal staged for it along; a copy leaves it', () => {
     setReveal(doc.path, { line: 3, column: 1 }, 2);
     carryTabState(doc, 2, 1, 'move');
-    expect(hasReveal(doc.path)).toBe(false);
+    expect(hasReveal(doc.path, 2)).toBe(false);
+    expect(peekReveal(doc.path, 1)).toEqual({ line: 3, column: 1 });
     setReveal(doc.path, { line: 3, column: 1 }, 1);
     carryTabState(doc, 1, 2, 'copy');
     expect(hasReveal(doc.path, 1)).toBe(true);
