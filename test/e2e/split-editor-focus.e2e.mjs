@@ -15,6 +15,7 @@
  *       active (clicking it splits from the left), the right one is at the cap, and a strip on
  *       the Terminal is disabled
  *   E6  Close Editor Group while the left group shows the Terminal
+ *   XT  a × close landing on the Terminal leaves focus out of xterm (as TT)
  * Failures are collected, so one run reports every step that misses.
  */
 
@@ -282,6 +283,35 @@ runScenario('split-editor-focus', async ({ page, log }) => {
     })
     .catch(() => assert(false, 'E6: the right group did not close'));
   await expectFocus('E6 collapse onto the Terminal', 1, 'terminal');
+
+  // XT: closing the last doc tab with its × lands on the Terminal but leaves focus out of xterm.
+  const docTabs = page.locator(`${G(1)} [role="tab"]`);
+  await docTabs.first().click();
+  for (let n = await docTabs.count(); n > 0; n = await docTabs.count()) {
+    await docTabs.first().locator('.tab__close').click();
+    const discardClose = page.locator('.confirm__actions button', { hasText: 'Discard' }).first();
+    if (
+      await discardClose.waitFor({ timeout: 500 }).then(
+        () => true,
+        () => false,
+      )
+    ) {
+      await discardClose.click();
+    }
+    await page
+      .waitForFunction(
+        ({ sel, was }) => document.querySelectorAll(`${sel} [role="tab"]`).length < was,
+        { sel: G(1), was: n },
+        { timeout: 5000 },
+      )
+      .catch(() => assert(false, `XT: a × close left ${n} tabs`));
+  }
+  await sleep(500);
+  const afterClose = await focusNow(page);
+  log(`XT last × close: focus is in group ${afterClose.group} ${afterClose.view}`);
+  if (afterClose.view === 'terminal') {
+    misses.push('XT: a × close landing on the Terminal moved focus into xterm');
+  }
 
   assert(misses.length === 0, `focus missed ${misses.length} step(s):\n  ${misses.join('\n  ')}`);
 });

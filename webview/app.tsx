@@ -1046,19 +1046,24 @@ export function App() {
   );
   // A pending unsaved-changes close prompt; Cancel and Esc settle it through the dialog's onClose.
   const closePromptRef = useRef<((closed: boolean) => void) | null>(null);
-  /** Ctrl+W and a tab's own close: focus lands on what the group shows next (spec §10). */
-  const closeTabByUser = useCallback(async (id: string, group: GroupIndex) => {
-    const sessionId = docStateRef.current.docs.find((d) => d.id === id)?.sessionId;
-    if (sessionId === undefined || !(await closeTabRef.current(id, group))) return;
-    // Whether or not the close has rendered yet, this is the state after it: the reducer ignores
-    // a close whose tab is already gone.
-    const after = layoutOf(
-      docsReducer(docStateRef.current, { type: 'close', id, group }),
-      sessionId,
-    );
-    const g = after.groups[group - 1] ? group : 1;
-    focusView(sessionId, g, after.groups[g - 1]?.active ?? null);
-  }, []);
+  /** Ctrl+W and a tab's own close: focus lands on what the group shows next (spec §10), except
+   *  that a pointer close landing on the Terminal leaves focus out of xterm, as a Terminal click does. */
+  const closeTabByUser = useCallback(
+    async (id: string, group: GroupIndex, focusTerminal = true) => {
+      const sessionId = docStateRef.current.docs.find((d) => d.id === id)?.sessionId;
+      if (sessionId === undefined || !(await closeTabRef.current(id, group))) return;
+      // Whether or not the close has rendered yet, this is the state after it: the reducer ignores
+      // a close whose tab is already gone.
+      const after = layoutOf(
+        docsReducer(docStateRef.current, { type: 'close', id, group }),
+        sessionId,
+      );
+      const g = after.groups[group - 1] ? group : 1;
+      const next = after.groups[g - 1]?.active ?? null;
+      if (next !== null || focusTerminal) focusView(sessionId, g, next);
+    },
+    [],
+  );
   // Nav back/forward (modal-guarded) are declared after useNavHistory below; actionMap
   // reaches them through refs to avoid the same ordering problem as undo/redo.
   const navBackRef = useRef<() => void>(() => {});
@@ -4080,7 +4085,7 @@ export function App() {
             onSelectDoc={(id, group) =>
               activateDocByUser(id, activeIdRef.current ?? '', group, id !== null)
             }
-            onCloseDoc={(id, group) => void closeTabByUser(id, group)}
+            onCloseDoc={(id, group) => void closeTabByUser(id, group, false)}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenTimedMessages={openTimedMessages}
             onTabContextMenu={onTabContextMenu}
