@@ -42,8 +42,10 @@ describe('docsReducer', () => {
   it('opens a document and makes it active', () => {
     const s = open(initialDocs, 'file', '/a.ts');
     expect(tabs(s).map((d) => d.path)).toEqual(['/a.ts']);
+    expect(s.docs.map((d) => d.path)).toEqual(['/a.ts']);
     expect(s.activeId).toBe('file:/a.ts');
     expect(tabs(s)[0].title).toBe('a.ts');
+    expect(s.docs[0].title).toBe('a.ts');
     expect(s.docs[0].sessionId).toBe('S1');
   });
 
@@ -159,6 +161,7 @@ describe('docsReducer — file preview + pin (VS Code preview tabs)', () => {
     const s = openMode(initialDocs, 'file', '/a.ts', 'preview');
     expect(s.docs).toHaveLength(1);
     expect(tabs(s)[0].id).toBe('file:/a.ts');
+    expect(s.docs[0].id).toBe('file:/a.ts');
     expect(isPreview(s, tabs(s)[0].id)).toBe(true);
     expect(s.activeId).toBe('file:/a.ts');
     expect(previewCount(s)).toBe(1);
@@ -169,6 +172,7 @@ describe('docsReducer — file preview + pin (VS Code preview tabs)', () => {
     s = openMode(s, 'file', '/b.ts', 'preview');
     expect(s.docs).toHaveLength(1);
     expect(tabs(s)[0].id).toBe('file:/b.ts');
+    expect(s.docs[0].id).toBe('file:/b.ts');
     expect(isPreview(s, tabs(s)[0].id)).toBe(true);
     expect(s.activeId).toBe('file:/b.ts');
     expect(previewCount(s)).toBe(1);
@@ -179,8 +183,10 @@ describe('docsReducer — file preview + pin (VS Code preview tabs)', () => {
     let s = openMode(initialDocs, 'file', '/a.ts', 'permanent');
     s = openMode(s, 'file', '/b.ts', 'preview');
     expect(tabs(s).map((d) => d.id)).toEqual(['file:/a.ts', 'file:/b.ts']);
+    expect(s.docs.map((d) => d.id)).toEqual(['file:/a.ts', 'file:/b.ts']);
     s = openMode(s, 'file', '/c.ts', 'preview');
     expect(tabs(s).map((d) => d.id)).toEqual(['file:/a.ts', 'file:/c.ts']);
+    expect(s.docs.map((d) => d.id)).toEqual(['file:/a.ts', 'file:/c.ts']);
     expect(isPreview(s, tabs(s)[1].id)).toBe(true);
     expect(previewCount(s)).toBe(1);
   });
@@ -211,6 +217,7 @@ describe('docsReducer — file preview + pin (VS Code preview tabs)', () => {
     s = openMode(s, 'file', '/a.ts', 'permanent'); // the dblclick promotes
     expect(s.docs).toHaveLength(1);
     expect(tabs(s)[0].id).toBe('file:/a.ts');
+    expect(s.docs[0].id).toBe('file:/a.ts');
     expect(isPreview(s, tabs(s)[0].id)).toBeFalsy();
     expect(previewCount(s)).toBe(0);
   });
@@ -220,6 +227,7 @@ describe('docsReducer — file preview + pin (VS Code preview tabs)', () => {
     s = docsReducer(s, { type: 'pinDoc', id: 'file:/a.ts' });
     expect(s.docs).toHaveLength(1);
     expect(tabs(s)[0].id).toBe('file:/a.ts');
+    expect(s.docs[0].id).toBe('file:/a.ts');
     expect(isPreview(s, tabs(s)[0].id)).toBeFalsy();
     expect(s.activeId).toBe('file:/a.ts');
   });
@@ -229,6 +237,7 @@ describe('docsReducer — file preview + pin (VS Code preview tabs)', () => {
     s = docsReducer(s, { type: 'pinDoc', id: 'file:/b.ts' }); // promote b
     s = openMode(s, 'file', '/c.ts', 'preview'); // new preview opens beside it
     expect(tabs(s).map((d) => d.id)).toEqual(['file:/b.ts', 'file:/c.ts']);
+    expect(s.docs.map((d) => d.id)).toEqual(['file:/b.ts', 'file:/c.ts']);
     expect(isPreview(s, tabs(s)[0].id)).toBeFalsy();
     expect(isPreview(s, tabs(s)[1].id)).toBe(true);
     expect(previewCount(s)).toBe(1);
@@ -291,24 +300,33 @@ describe('docsReducer — commit-diff preview + pin', () => {
     let s = openFile(initialDocs, SHA, 'src/a.ts', false);
     expect(s.docs).toHaveLength(1);
     expect(tabs(s)[0].id).toBe('commit-diff:@preview');
+    expect(s.docs[0].id).toBe('commit-diff:@preview');
     expect(isPreview(s, tabs(s)[0].id)).toBe(true);
     expect(tabs(s)[0].path).toBe(`${SHA} src/a.ts`);
+    expect(s.docs[0].path).toBe(`${SHA} src/a.ts`);
     expect(s.activeId).toBe('commit-diff:@preview');
     // Opening another file reuses the same tab (no second tab), retargeted.
     s = openFile(s, SHA, 'src/b.ts', false);
     expect(s.docs).toHaveLength(1);
     expect(tabs(s)[0].path).toBe(`${SHA} src/b.ts`);
+    expect(s.docs[0].path).toBe(`${SHA} src/b.ts`);
     expect(tabs(s)[0].title).toBe(`b.ts @ ${SHA.slice(0, 7)}`);
+    expect(s.docs[0].title).toBe(`b.ts @ ${SHA.slice(0, 7)}`);
   });
 
   it('double-click pins a per-identity commit-diff tab that single-clicks do not replace', () => {
     let s = openFile(initialDocs, SHA, 'src/a.ts', true); // pinned
     expect(s.docs).toHaveLength(1);
     expect(tabs(s)[0].id).toBe(`commit-diff:${SHA} src/a.ts`);
+    expect(s.docs[0].id).toBe(`commit-diff:${SHA} src/a.ts`);
     expect(isPreview(s, tabs(s)[0].id)).toBeFalsy();
     // A later single-click on a different file opens a separate preview tab.
     s = openFile(s, SHA, 'src/b.ts', false);
     expect(tabs(s).map((d) => d.id)).toEqual([
+      `commit-diff:${SHA} src/a.ts`,
+      'commit-diff:@preview',
+    ]);
+    expect(s.docs.map((d) => d.id)).toEqual([
       `commit-diff:${SHA} src/a.ts`,
       'commit-diff:@preview',
     ]);
@@ -319,6 +337,7 @@ describe('docsReducer — commit-diff preview + pin', () => {
     s = openFile(s, SHA, 'src/a.ts', true); // pin same file
     expect(s.docs).toHaveLength(1);
     expect(tabs(s)[0].id).toBe(`commit-diff:${SHA} src/a.ts`);
+    expect(s.docs[0].id).toBe(`commit-diff:${SHA} src/a.ts`);
     expect(isPreview(s, tabs(s)[0].id)).toBeFalsy();
   });
 
@@ -337,6 +356,7 @@ describe('docsReducer — commit-diff preview + pin', () => {
     s = docsReducer(s, { type: 'pinDoc', id: 'commit-diff:@preview' });
     expect(s.docs).toHaveLength(1);
     expect(tabs(s)[0].id).toBe(`commit-diff:${SHA} src/a.ts`);
+    expect(s.docs[0].id).toBe(`commit-diff:${SHA} src/a.ts`);
     expect(isPreview(s, tabs(s)[0].id)).toBeFalsy();
     expect(s.activeId).toBe(`commit-diff:${SHA} src/a.ts`);
   });
@@ -398,6 +418,7 @@ describe('toPersistedDocs — docState → persisted slice', () => {
       mode: 'preview',
     });
     expect(tabs(s)[0].id).toBe('commit-diff:@preview');
+    expect(s.docs[0].id).toBe('commit-diff:@preview');
     expect(toPersistedDocs(s)).toEqual([]);
   });
 
@@ -471,9 +492,11 @@ describe('docsReducer — restore (one-shot startup seed)', () => {
   it('rebuilds docs[] and the active session pointer, preserving preview flags', () => {
     const s = docsReducer(initialDocs, { type: 'restore', docs, knownSessionIds: ['S1'] });
     expect(tabs(s).map((d) => d.id)).toEqual(['file:/a.ts', 'file:/b.ts']);
+    expect(s.docs.map((d) => d.id)).toEqual(['file:/a.ts', 'file:/b.ts']);
     expect(isPreview(s, tabs(s)[0].id)).toBeFalsy();
     expect(isPreview(s, tabs(s)[1].id)).toBe(true);
     expect(tabs(s)[1].title).toBe('b.ts');
+    expect(s.docs[1].title).toBe('b.ts');
     expect(remembered(s, 'S1')).toBe('file:/b.ts');
     // The switchSession effect resolves activeId once a session is selected.
     const after = docsReducer(s, { type: 'switchSession', sessionId: 'S1' });
@@ -491,6 +514,7 @@ describe('docsReducer — restore (one-shot startup seed)', () => {
       knownSessionIds: ['S1'],
     });
     expect(tabs(s).map((d) => d.path)).toEqual(['/a.ts', '/b.ts']);
+    expect(s.docs.map((d) => d.path)).toEqual(['/a.ts', '/b.ts']);
     expect(layoutMap(s).GONE).toBeUndefined();
   });
 
@@ -506,6 +530,7 @@ describe('docsReducer — restore (one-shot startup seed)', () => {
       { id: 'file:/a.ts', preview: false },
       { id: 'file:/b.ts', preview: true },
     ]);
+    expect(restored.docs.map((d) => d.id)).toEqual(['file:/a.ts', 'file:/b.ts']);
     expect(remembered(restored, 'S1')).toBe('file:/b.ts');
   });
 
@@ -532,6 +557,18 @@ describe('docsReducer — restore (one-shot startup seed)', () => {
       { id: 'git-history:@git-history', kind: 'git-history', title: 'History' },
       { id: 'web:https://example.com/foo', kind: 'web', title: 'example.com/foo' },
     ]);
+    expect(s.docs.map((d) => ({ id: d.id, kind: d.kind, title: d.title }))).toEqual([
+      { id: 'file:/a.ts', kind: 'file', title: 'a.ts' },
+      { id: 'diff:/a.ts', kind: 'diff', title: 'a.ts' },
+      {
+        id: `commit-diff:${SHA} src/x.ts`,
+        kind: 'commit-diff',
+        title: `x.ts @ ${SHA.slice(0, 7)}`,
+      },
+      { id: 'review:@review', kind: 'review', title: 'Review Changes' },
+      { id: 'git-history:@git-history', kind: 'git-history', title: 'History' },
+      { id: 'web:https://example.com/foo', kind: 'web', title: 'example.com/foo' },
+    ]);
     expect(remembered(s, 'S1')).toBe('web:https://example.com/foo');
   });
 
@@ -542,6 +579,7 @@ describe('docsReducer — restore (one-shot startup seed)', () => {
       knownSessionIds: ['S1'],
     });
     expect(tabs(restored)[0].reviewSource).toBeUndefined();
+    expect(restored.docs[0].reviewSource).toBeUndefined();
   });
 
   it('dedupes the singleton review/git-history kinds (never two of the same tab)', () => {
@@ -592,6 +630,7 @@ describe('docsReducer — restore (one-shot startup seed)', () => {
       knownSessionIds: ['S1'],
     });
     expect(tabs(restored).map((d) => d.id)).toEqual(tabs(src).map((d) => d.id));
+    expect(restored.docs.map((d) => d.id)).toEqual(src.docs.map((d) => d.id));
   });
 });
 
@@ -608,7 +647,13 @@ describe('docsReducer — scoped diff tabs', () => {
       ['diff@unstaged:/r/both.ts', 'both.ts (Working Tree)', 'unstaged'],
       ['diff:/r/both.ts', 'both.ts', undefined],
     ]);
+    expect(s.docs.map((d) => [d.id, d.title, d.diffScope])).toEqual([
+      ['diff@staged:/r/both.ts', 'both.ts (Index)', 'staged'],
+      ['diff@unstaged:/r/both.ts', 'both.ts (Working Tree)', 'unstaged'],
+      ['diff:/r/both.ts', 'both.ts', undefined],
+    ]);
     expect('diffScope' in tabs(s)[2]).toBe(false);
+    expect('diffScope' in s.docs[2]).toBe(false);
   });
 
   it('reopening a scoped diff activates it', () => {
@@ -626,6 +671,11 @@ describe('docsReducer — scoped diff tabs', () => {
       knownSessionIds: ['S1'],
     });
     expect(tabs(s)[0]).toMatchObject({
+      id: 'diff@staged:/r/a.ts',
+      title: 'a.ts (Index)',
+      diffScope: 'staged',
+    });
+    expect(s.docs[0]).toMatchObject({
       id: 'diff@staged:/r/a.ts',
       title: 'a.ts (Index)',
       diffScope: 'staged',
@@ -651,6 +701,9 @@ describe('docsReducer — scoped diff tabs', () => {
     const shape = (s: DocsState) =>
       tabs(s).map((d) => ({ id: d.id, title: d.title, diffScope: d.diffScope }));
     expect(shape(restored)).toEqual(shape(src));
+    const registryShape = (s: DocsState) =>
+      s.docs.map((d) => ({ id: d.id, title: d.title, diffScope: d.diffScope }));
+    expect(registryShape(restored)).toEqual(registryShape(src));
   });
 });
 
@@ -663,8 +716,11 @@ describe('docsReducer — openReview (review source)', () => {
     });
     expect(s.docs).toHaveLength(1);
     expect(tabs(s)[0].id).toBe(REVIEW_DOC_ID);
+    expect(s.docs[0].id).toBe(REVIEW_DOC_ID);
     expect(tabs(s)[0].kind).toBe('review');
+    expect(s.docs[0].kind).toBe('review');
     expect(tabs(s)[0].reviewSource).toBeUndefined();
+    expect(s.docs[0].reviewSource).toBeUndefined();
     expect(s.activeId).toBe(REVIEW_DOC_ID);
     expect(remembered(s, 'S1')).toBe(REVIEW_DOC_ID);
   });
@@ -676,6 +732,7 @@ describe('docsReducer — openReview (review source)', () => {
       source: { kind: 'working', repoRoot: '/r/proto' },
     });
     expect(tabs(s)[0].reviewSource).toEqual({ kind: 'working', repoRoot: '/r/proto' });
+    expect(s.docs[0].reviewSource).toEqual({ kind: 'working', repoRoot: '/r/proto' });
   });
 
   it('openReview {kind:"working"} still stores undefined', () => {
@@ -685,6 +742,7 @@ describe('docsReducer — openReview (review source)', () => {
       source: { kind: 'working', scope: 'all' },
     });
     expect(tabs(s)[0].reviewSource).toBeUndefined();
+    expect(s.docs[0].reviewSource).toBeUndefined();
   });
 
   it('range repoRoot kept', () => {
@@ -696,6 +754,7 @@ describe('docsReducer — openReview (review source)', () => {
     };
     const s = docsReducer(initialDocs, { type: 'openReview', sessionId: 'S1', source });
     expect(tabs(s)[0].reviewSource).toEqual(source);
+    expect(s.docs[0].reviewSource).toEqual(source);
   });
 
   it('opens the singleton review doc with a commit source', () => {
@@ -706,6 +765,7 @@ describe('docsReducer — openReview (review source)', () => {
     });
     expect(s.docs).toHaveLength(1);
     expect(tabs(s)[0].reviewSource).toEqual({ kind: 'commit', sha: 'deadbeef', subject: 'fix' });
+    expect(s.docs[0].reviewSource).toEqual({ kind: 'commit', sha: 'deadbeef', subject: 'fix' });
   });
 
   it('retargets the SAME singleton in place when reviewing a different commit', () => {
@@ -721,7 +781,9 @@ describe('docsReducer — openReview (review source)', () => {
     });
     expect(s.docs).toHaveLength(1);
     expect(tabs(s)[0].id).toBe(REVIEW_DOC_ID);
+    expect(s.docs[0].id).toBe(REVIEW_DOC_ID);
     expect(tabs(s)[0].reviewSource).toEqual({ kind: 'commit', sha: 'bbb', subject: 'B' });
+    expect(s.docs[0].reviewSource).toEqual({ kind: 'commit', sha: 'bbb', subject: 'B' });
   });
 
   it('switching a commit source back to working clears it (absent) in place', () => {
@@ -737,6 +799,7 @@ describe('docsReducer — openReview (review source)', () => {
     });
     expect(s.docs).toHaveLength(1);
     expect(tabs(s)[0].reviewSource).toBeUndefined();
+    expect(s.docs[0].reviewSource).toBeUndefined();
   });
 
   it('transfers ownership + reactivates when reopened under another session', () => {
@@ -786,6 +849,7 @@ describe('docsReducer — background open (middle-click)', () => {
     const prev = open(initialDocs, 'file', '/a.ts');
     const next = bg(prev, 'file', '/b.ts');
     expect(tabs(next).map((d) => d.id)).toEqual(['file:/a.ts', 'file:/b.ts']);
+    expect(next.docs.map((d) => d.id)).toEqual(['file:/a.ts', 'file:/b.ts']);
     expect(isPreview(next, tabs(next)[1].id)).not.toBe(true);
     expect(next.docs[1].sessionId).toBe('S1');
     expect(next.activeId).toBe(prev.activeId);
@@ -798,6 +862,7 @@ describe('docsReducer — background open (middle-click)', () => {
     prev = docsReducer(prev, { type: 'activate', id: 'file:/a.ts', sessionId: 'S1' });
     const next = bg(prev, 'file', '/p.ts');
     expect(tabs(next).map((d) => d.id)).toEqual(tabs(prev).map((d) => d.id));
+    expect(next.docs.map((d) => d.id)).toEqual(prev.docs.map((d) => d.id));
     expect(isPreview(next, tabs(next)[1].id)).toBeFalsy();
     expect(next.activeId).toBe(prev.activeId);
     expect(activeProjection(next)).toEqual(activeProjection(prev));
@@ -824,7 +889,9 @@ describe('docsReducer — background open (middle-click)', () => {
       diffScope: 'staged',
     });
     expect(tabs(next)[1].id).toBe('diff@staged:/a.ts');
+    expect(next.docs[1].id).toBe('diff@staged:/a.ts');
     expect(tabs(next)[1].diffScope).toBe('staged');
+    expect(next.docs[1].diffScope).toBe('staged');
     expect(activeProjection(next)).toEqual(activeProjection(prev));
   });
 
@@ -832,6 +899,7 @@ describe('docsReducer — background open (middle-click)', () => {
     const prev = open(initialDocs, 'file', '/a.ts');
     const next = bg(prev, 'web', 'https://example.com/two');
     expect(tabs(next)[1]).toMatchObject({ kind: 'web', path: 'https://example.com/two' });
+    expect(next.docs[1]).toMatchObject({ kind: 'web', path: 'https://example.com/two' });
     expect(isPreview(next, tabs(next)[1].id)).not.toBe(true);
     expect(next.activeId).toBe('file:/a.ts');
   });
@@ -844,6 +912,7 @@ describe('docsReducer — background open (middle-click)', () => {
     const next = commit(prev, 'src/a.ts', 'background');
     const pinned = `commit-diff:${SHA} src/a.ts`;
     expect(tabs(next).map((d) => d.id)).toEqual([pinned]);
+    expect(next.docs.map((d) => d.id)).toEqual([pinned]);
     expect(isPreview(next, tabs(next)[0].id)).toBeFalsy();
     expect(remembered(next, 'S1')).toBe(pinned);
     expect(next.activeId).toBe(pinned);
@@ -853,6 +922,10 @@ describe('docsReducer — background open (middle-click)', () => {
     const prev = commit(initialDocs, 'src/a.ts', 'preview');
     const next = commit(prev, 'src/b.ts', 'background');
     expect(tabs(next).map((d) => d.id)).toEqual([
+      'commit-diff:@preview',
+      `commit-diff:${SHA} src/b.ts`,
+    ]);
+    expect(next.docs.map((d) => d.id)).toEqual([
       'commit-diff:@preview',
       `commit-diff:${SHA} src/b.ts`,
     ]);
@@ -946,6 +1019,7 @@ describe('docsReducer — git-history repoRoot', () => {
         repoRoot: '/w/b',
       });
       expect(tabs(s)[0].repoRoot).toBe('/w/b');
+      expect(s.docs[0].repoRoot).toBe('/w/b');
     }
   });
 });
