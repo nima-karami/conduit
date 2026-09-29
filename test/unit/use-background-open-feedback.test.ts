@@ -56,21 +56,30 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-const report = (id = 'file:/a.ts', outcome: 'opened' | 'pinned' | 'already-open' = 'opened') =>
-  act(async () => latest.report({ id, title: 'a.ts', outcome, sessionName: null }));
+const report = (
+  id = 'file:/a.ts',
+  outcome: 'opened' | 'pinned' | 'already-open' = 'opened',
+  group: 1 | 2 = 1,
+) => act(async () => latest.report({ id, title: 'a.ts', outcome, sessionName: null, group }));
 
 const frame = () => act(async () => flushFrames());
 
 describe('useBackgroundOpenFeedback', () => {
-  it('sets flashTabId on the next frame and clears it 600 ms later', async () => {
+  it('sets flashTab on the next frame and clears it 600 ms later', async () => {
     await report();
-    expect(latest.flashTabId).toBeNull();
+    expect(latest.flashTab).toBeNull();
     await frame();
-    expect(latest.flashTabId).toBe('file:/a.ts');
+    expect(latest.flashTab).toEqual({ id: 'file:/a.ts', group: 1 });
     await act(async () => vi.advanceTimersByTime(599));
-    expect(latest.flashTabId).toBe('file:/a.ts');
+    expect(latest.flashTab).toEqual({ id: 'file:/a.ts', group: 1 });
     await act(async () => vi.advanceTimersByTime(1));
-    expect(latest.flashTabId).toBeNull();
+    expect(latest.flashTab).toBeNull();
+  });
+
+  it('report carries the group into flashTab', async () => {
+    await report('file:/a.ts', 'opened', 2);
+    await frame();
+    expect(latest.flashTab).toEqual({ id: 'file:/a.ts', group: 2 });
   });
 
   it('a second report restarts the timer and replaces the id', async () => {
@@ -79,11 +88,11 @@ describe('useBackgroundOpenFeedback', () => {
     await act(async () => vi.advanceTimersByTime(400));
     await report('file:/b.ts');
     await frame();
-    expect(latest.flashTabId).toBe('file:/b.ts');
+    expect(latest.flashTab).toEqual({ id: 'file:/b.ts', group: 1 });
     await act(async () => vi.advanceTimersByTime(400));
-    expect(latest.flashTabId).toBe('file:/b.ts');
+    expect(latest.flashTab).toEqual({ id: 'file:/b.ts', group: 1 });
     await act(async () => vi.advanceTimersByTime(200));
-    expect(latest.flashTabId).toBeNull();
+    expect(latest.flashTab).toBeNull();
   });
 
   it('a repeat on the SAME tab mid-cue drops the cue for a frame, so the animation replays', async () => {
@@ -91,11 +100,11 @@ describe('useBackgroundOpenFeedback', () => {
     await frame();
     await act(async () => vi.advanceTimersByTime(300));
     await report('file:/a.ts');
-    expect(latest.flashTabId).toBeNull();
+    expect(latest.flashTab).toBeNull();
     await frame();
-    expect(latest.flashTabId).toBe('file:/a.ts');
+    expect(latest.flashTab).toEqual({ id: 'file:/a.ts', group: 1 });
     await act(async () => vi.advanceTimersByTime(599));
-    expect(latest.flashTabId).toBe('file:/a.ts');
+    expect(latest.flashTab).toEqual({ id: 'file:/a.ts', group: 1 });
   });
 
   it('clears the status text synchronously and sets it on the next frame', async () => {

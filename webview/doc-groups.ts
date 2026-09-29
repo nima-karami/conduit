@@ -102,3 +102,17 @@ export function dirtyPreviewTabs(
   }
   return out;
 }
+
+export function tabGroupsOf(state: DocsState, id: string): GroupIndex[] {
+  const owner = state.docs.find((d) => d.id === id)?.sessionId;
+  if (owner === undefined) return [];
+  const groups: GroupIndex[] = [];
+  layoutOf(state, owner).groups.forEach((g, i) => {
+    if (g.tabs.some((t) => t.id === id)) groups.push(i === 0 ? 1 : 2);
+  });
+  return groups;
+}
+
+export function activeGroupOf(state: DocsState, sessionId: string): GroupIndex {
+  return layoutOf(state, sessionId).activeGroup;
+}

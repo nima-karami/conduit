@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PersistedDoc } from '../../src/protocol';
 import {
+  activeGroupOf,
   dirtyPreviewTabs,
   type GroupIndex,
   groupActive,
@@ -9,6 +10,7 @@ import {
   previewIdsOf,
   resolveActivateGroup,
   splitBehavior,
+  tabGroupsOf,
   tabPreview,
 } from '../../webview/doc-groups';
 import {
@@ -551,5 +553,35 @@ describe('group background outcome', () => {
     expect(backgroundOpenOutcome(s, 'file', '/a.ts', 'S1').outcome).toBe('already-open');
     const next = open(s, '/c.ts', { mode: 'background' });
     expect(ids(next, 1)).toEqual(['file:/a.ts', 'file:/c.ts']);
+  });
+});
+
+describe('group selectors for app consumers', () => {
+  it('tabGroupsOf lists both groups for a duplicated doc', () => {
+    let s = split(open(initialDocs, '/a.ts'));
+    s = open(s, '/b.ts', { group: 1 });
+    expect(tabGroupsOf(s, 'file:/a.ts')).toEqual([1, 2]);
+    expect(tabGroupsOf(s, 'file:/b.ts')).toEqual([1]);
+    expect(tabGroupsOf(s, 'file:/nowhere')).toEqual([]);
+  });
+
+  it('activeGroupOf defaults to 1', () => {
+    expect(activeGroupOf(initialDocs, 'S1')).toBe(1);
+    const s = split(open(initialDocs, '/a.ts'));
+    expect(activeGroupOf(s, 'S1')).toBe(2);
+    expect(activeGroupOf(s, 'S2')).toBe(1);
+  });
+
+  it('edit-promotes per tab (P8)', () => {
+    let s = open(initialDocs, '/x.ts', { mode: 'permanent', group: 1 });
+    s = split(open(s, '/o.ts', { mode: 'permanent', group: 1 }));
+    s = open(s, '/x.ts', { mode: 'preview', group: 2 });
+    expect(tabPreview(s, 'S1', 2, 'file:/x.ts')).toBe(true);
+    const g1Before = s.layouts.S1.groups[0];
+    for (const t of dirtyPreviewTabs(s, new Set(['/x.ts']))) {
+      s = docsReducer(s, { type: 'pinDoc', id: t.id, group: t.group });
+    }
+    expect(tabPreview(s, 'S1', 2, 'file:/x.ts')).toBe(false);
+    expect(s.layouts.S1.groups[0]).toEqual(g1Before);
   });
 });

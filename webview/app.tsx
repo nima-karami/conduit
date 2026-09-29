@@ -117,9 +117,19 @@ import { decideShortcut } from './decide-shortcut';
 import { createDiffReadQueue, type DiffReadQueue, diffReadTargets } from './diff-read-queue';
 import { diffTabKey } from './diff-tab-scope';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
-import { dirtyPreviewTabs, groupDocs, previewIdsOf, tabPreview } from './doc-groups';
+import {
+  activeGroupOf,
+  dirtyPreviewTabs,
+  type GroupIndex,
+  groupActive,
+  groupDocs,
+  openTargetGroup,
+  previewIdsOf,
+  resolveActivateGroup,
+  tabPreview,
+} from './doc-groups';
 import { reorderDock } from './dock-reorder';
-import type { DocKind, OpenDoc, OpenMode } from './docs';
+import type { DocKind, DocsState, OpenDoc, OpenMode } from './docs';
 import {
   backgroundOpenOutcome,
   commitDiffPath,
@@ -251,6 +261,7 @@ const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 interface FileOpenNav {
   reveal?: CursorPos;
   record?: boolean;
+  group?: GroupIndex;
 }
 
 const joinPath = (base: string, rel: string) =>
@@ -272,6 +283,7 @@ function searchSeedFromSelection(
   docs: readonly OpenDoc[],
   activeId: string | null,
   sessionId: string,
+  group: GroupIndex,
 ): string | undefined {
   const sel = window.getSelection();
   const anchor = sel?.anchorNode ?? null;
@@ -287,7 +299,7 @@ function searchSeedFromSelection(
     source === 'terminal'
       ? selectionInTerminal(sessionId)
       : source === 'editor'
-        ? selectionInActiveDoc(docs, activeId)
+        ? selectionInActiveDoc(docs, activeId, group)
         : source === 'dom'
           ? (sel?.toString() ?? '')
           : '';
@@ -313,6 +325,14 @@ function sessionOwningRoot(
   if (owners.length === 0) return null;
   if (activeId !== null && owners.includes(activeId)) return activeId;
   return owners[0] ?? null;
+}
+
+function goToChangeInActiveGroup(
+  state: DocsState,
+  sessionId: string,
+  direction: 'next' | 'prev',
+): void {
+  goToChangeInActiveDoc(state.docs, state.activeId, direction, activeGroupOf(state, sessionId));
 }
 
 /** A file tab's per-path state goes with its tab, however the tab closes: one lifecycle (see
@@ -704,11 +724,16 @@ export function App() {
   // `openReviewTab` stays argument-less: it is wired straight to onClick in several places,
   // where an extra parameter would be handed a MouseEvent.
   const openReviewScoped = useCallback(
-    (scope: ReviewScope, repoRoot?: string) => {
+    (scope: ReviewScope, repoRoot?: string, group?: GroupIndex) => {
       const sessionId = activeIdRef.current ?? '';
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
       setCenterView('editor');
-      dispatchDocs({ type: 'openReview', sessionId, source: workingSource(scope, repoRoot) });
+      dispatchDocs({
+        type: 'openReview',
+        sessionId,
+        source: workingSource(scope, repoRoot),
+        group: group ?? openTargetGroup(docStateRef.current, sessionId),
+      });
     },
     [recordNav],
   );
@@ -721,8 +746,15 @@ export function App() {
   // `repoRoot` scopes the review to a SPECIFIC repo — passed for a terminal commit click so the
   // review reads the commit from that terminal's cwd repo, not the pinned active repo (feat-link-cwd).
   const openReviewForCommit = useCallback(
-    (sha: string, targetSessionId?: string, subject?: string, repoRoot?: string) => {
+    (
+      sha: string,
+      targetSessionId?: string,
+      subject?: string,
+      repoRoot?: string,
+      group?: GroupIndex,
+    ) => {
       const sessionId = targetSessionId ?? activeIdRef.current ?? '';
+      const g = group ?? openTargetGroup(docStateRef.current, sessionId);
       // Every commit source names its repo (docs/specs/archive/2026-09-23-mf-review.md §2.1 S1) — but only
       // a detected one: with none, the unstamped source already reads the session's git root.
       const owner = sessionsRef.current.find((s) => s.id === sessionId);
@@ -742,6 +774,7 @@ export function App() {
           ...(subject ? { subject } : {}),
           ...(root ? { repoRoot: root } : {}),
         },
+        group: g,
       });
     },
     [recordNav],
@@ -756,7 +789,12 @@ export function App() {
       const sessionId = activeIdRef.current ?? '';
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
       setCenterView('editor');
-      dispatchDocs({ type: 'openReview', sessionId, source: s });
+      dispatchDocs({
+        type: 'openReview',
+        sessionId,
+        source: s,
+        group: openTargetGroup(docStateRef.current, sessionId),
+      });
     },
     [openReviewScoped, openReviewForCommit, recordNav],
   );
@@ -809,13 +847,19 @@ export function App() {
   // Read BEFORE the dispatch: the outcome is what the open is about to do (spec
   // 2026-09-22-middle-click-new-tab §3). The session is named only when it isn't the active one.
   const reportBackgroundOpen = useCallback(
-    (kind: DocKind, path: string, targetSessionId: string, diffScope?: DiffTabScope) => {
+    (
+      kind: DocKind,
+      path: string,
+      targetSessionId: string,
+      group: GroupIndex,
+      diffScope?: DiffTabScope,
+    ) => {
       const r = backgroundOpenOutcome(docStateRef.current, kind, path, targetSessionId, diffScope);
       const sessionName =
         r.ownerSessionId === activeIdRef.current
           ? null
           : (sessionsRef.current.find((s) => s.id === r.ownerSessionId)?.name ?? null);
-      reportBackground({ id: r.id, title: r.title, outcome: r.outcome, sessionName });
+      reportBackground({ id: r.id, title: r.title, outcome: r.outcome, sessionName, group });
     },
     [reportBackground],
   );
@@ -823,15 +867,16 @@ export function App() {
   // Open one of a commit's files as a `commit-diff` tab — from the commit detail rendered
   // inline in the history view (single-click = preview, double-click = pin, middle = background).
   const openCommitFile = useCallback(
-    (sha: string, file: string, mode: OpenMode, repoRoot?: string) => {
+    (sha: string, file: string, mode: OpenMode, repoRoot?: string, group?: GroupIndex) => {
       const sessionId = activeIdRef.current ?? '';
+      const g = group ?? openTargetGroup(docStateRef.current, sessionId);
       if (mode === 'background') {
-        reportBackgroundOpen('commit-diff', commitDiffPath(sha, file), sessionId);
+        reportBackgroundOpen('commit-diff', commitDiffPath(sha, file), sessionId, g);
       } else {
         recordNav({ sessionId, doc: { kind: 'commit-diff', path: commitDiffPath(sha, file) } });
         setCenterView('editor');
       }
-      dispatchDocs({ type: 'openCommitFile', sha, file, sessionId, mode, repoRoot });
+      dispatchDocs({ type: 'openCommitFile', sha, file, sessionId, mode, repoRoot, group: g });
     },
     [recordNav, reportBackgroundOpen],
   );
@@ -848,11 +893,13 @@ export function App() {
   );
 
   const openGlobalSearchSeeded = useCallback(() => {
+    const sessionId = activeIdRef.current ?? '';
     openGlobalSearch(
       searchSeedFromSelection(
         docStateRef.current.docs,
         docStateRef.current.activeId,
-        activeIdRef.current ?? '',
+        sessionId,
+        activeGroupOf(docStateRef.current, sessionId),
       ),
     );
   }, [openGlobalSearch]);
@@ -1019,9 +1066,9 @@ export function App() {
       // defaultPrevented, so this fires only for a combo monaco cannot express — which is
       // what keeps a rebind to such a combo from silently doing nothing.
       nextChange: () =>
-        goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'next'),
+        goToChangeInActiveGroup(docStateRef.current, activeIdRef.current ?? '', 'next'),
       prevChange: () =>
-        goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'prev'),
+        goToChangeInActiveGroup(docStateRef.current, activeIdRef.current ?? '', 'prev'),
       toggleHtmlView: () => {
         const d = docStateRef.current.docs.find((x) => x.id === docStateRef.current.activeId);
         if (d?.kind === 'file' && isHtmlDocPath(d.path))
@@ -1834,6 +1881,7 @@ export function App() {
       const background = mode === 'background';
       // If a target session is provided and differs from the active one, switch first.
       const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
+      const g = nav?.group ?? openTargetGroup(docStateRef.current, effectiveSessionId);
       // Record BEFORE staging the reveal: setReveal moves a mounted editor's cursor
       // synchronously, which would corrupt the "from" side (nav-history plan, Settled decisions).
       // A background open is not a navigation.
@@ -1846,11 +1894,14 @@ export function App() {
       }
       // Only the active doc is mounted, and a mounted viewer jumps on setReveal, so a background
       // open leaves the active doc's position alone (spec 2026-09-22-middle-click-new-tab §3).
-      if (nav?.reveal && !(background && `file:${path}` === docStateRef.current.activeId)) {
-        setReveal(path, nav.reveal);
+      if (
+        nav?.reveal &&
+        !(background && `file:${path}` === groupActive(docStateRef.current, effectiveSessionId, g))
+      ) {
+        setReveal(path, nav.reveal, g);
       }
       if (background) {
-        reportBackgroundOpen('file', path, effectiveSessionId);
+        reportBackgroundOpen('file', path, effectiveSessionId, g);
       } else if (targetSessionId && targetSessionId !== activeIdRef.current) {
         setActiveId(targetSessionId);
         dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
@@ -1860,7 +1911,14 @@ export function App() {
       // replies (no flicker). If the buffer is dirty the read still keeps the map fresh
       // for the markdown view, but CodeViewer won't re-seed Monaco (keyed on path).
       post({ type: 'readFile', path });
-      dispatchDocs({ type: 'open', kind: 'file', path, sessionId: effectiveSessionId, mode });
+      dispatchDocs({
+        type: 'open',
+        kind: 'file',
+        path,
+        sessionId: effectiveSessionId,
+        mode,
+        group: g,
+      });
       pushRecent('file', path, effectiveSessionId);
       // Surface the file in the explorer wherever it was opened from (tree click, search,
       // palette, go-to-definition, terminal link): switch to the Files tab and reveal it.
@@ -1881,15 +1939,21 @@ export function App() {
     (
       rawPath: string,
       targetSessionId?: string,
-      opts?: { sideBySide?: boolean; diffScope?: DiffTabScope; mode?: OpenMode },
+      opts?: {
+        sideBySide?: boolean;
+        diffScope?: DiffTabScope;
+        mode?: OpenMode;
+        group?: GroupIndex;
+      },
     ) => {
       // Review writes the same scoped cache key, so the path has to be spelled the same.
       const path = canonicalPath(rawPath);
       const diffScope = opts?.diffScope;
       const background = opts?.mode === 'background';
       const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
+      const g = opts?.group ?? openTargetGroup(docStateRef.current, effectiveSessionId);
       if (background) {
-        reportBackgroundOpen('diff', path, effectiveSessionId, diffScope);
+        reportBackgroundOpen('diff', path, effectiveSessionId, g, diffScope);
       } else {
         recordNav({
           sessionId: effectiveSessionId,
@@ -1909,6 +1973,7 @@ export function App() {
         sideBySide: opts?.sideBySide,
         diffScope,
         ...(background ? { mode: 'background' as const } : {}),
+        group: g,
       });
       pushRecent('diff', path, effectiveSessionId, diffScope);
     },
@@ -1927,15 +1992,16 @@ export function App() {
   // by the session owning that web tab. No host read — the <webview> guest fetches the page
   // itself (path = URL); ownership mirrors files.
   const openWeb = useCallback(
-    (url: string, targetSessionId?: string, mode?: OpenMode) => {
+    (url: string, targetSessionId?: string, mode?: OpenMode, group?: GroupIndex) => {
       const sessionId = targetSessionId ?? activeIdRef.current ?? '';
+      const g = group ?? openTargetGroup(docStateRef.current, sessionId);
       if (mode === 'background') {
-        reportBackgroundOpen('web', url, sessionId);
-        dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId, mode });
+        reportBackgroundOpen('web', url, sessionId, g);
+        dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId, mode, group: g });
         return;
       }
       recordNav({ sessionId, doc: { kind: 'web', path: url } });
-      dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId });
+      dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId, group: g });
     },
     [recordNav, reportBackgroundOpen],
   );
@@ -2067,9 +2133,12 @@ export function App() {
   );
 
   useEffect(() => {
-    setDefinitionOpener((abs, pos) =>
-      openFileRef.current(abs, undefined, 'preview', { reveal: pos }),
-    );
+    setDefinitionOpener((abs, pos, group) => {
+      if (group !== undefined) {
+        dispatchDocs({ type: 'focusGroup', sessionId: activeIdRef.current ?? '', group });
+      }
+      openFileRef.current(abs, undefined, 'preview', { reveal: pos, group });
+    });
     // A CodeViewer outside a doc tab has no history identity, so its jumps are not entries.
     setCursorJumpSink((path, from, to) => {
       const key = canonicalPath(path);
@@ -2874,14 +2943,16 @@ export function App() {
   // Navigation history (docs/specs/2026-09-22-editor-nav-history.md §2.3–§2.4). Reads refs, not
   // state: an apply awaits the existence probe, and whatever it reads after that must be current.
   const currentNavEntry = useCallback((): NavEntry | null => {
-    const { docs, activeId: docId } = docStateRef.current;
-    const doc = docId === null ? undefined : docs.find((d) => d.id === docId);
+    const state = docStateRef.current;
+    const docId = state.activeId;
+    const doc = docId === null ? undefined : state.docs.find((d) => d.id === docId);
     if (!doc) return null;
     if (doc.kind !== 'file') return navEntryFor(doc);
     // While a landing's tab is still mounting there is no live editor. Its cursor is then the staged
     // reveal it will consume, else the position its view state restores; an unknown cursor would
     // coalesce with (and so hide) every stop in the file — a burst of Backs skipped them.
-    return navEntryFor(doc, liveCursor(doc.path) ?? peekReveal(doc.path) ?? lastCursor(doc.path));
+    const live = liveCursor(doc.path, activeGroupOf(state, doc.sessionId));
+    return navEntryFor(doc, live ?? peekReveal(doc.path) ?? lastCursor(doc.path));
   }, []);
 
   const isNavLive = useCallback(
@@ -2907,19 +2978,21 @@ export function App() {
     const announce = (title: string, pos = e.pos) => {
       if (navLiveRef.current) navLiveRef.current.textContent = navAnnouncement(title, pos);
     };
-    const doc = findOpenDoc(docStateRef.current.docs, e.doc);
+    const state = docStateRef.current;
+    const doc = findOpenDoc(state.docs, e.doc);
     if (doc) {
+      const g = resolveActivateGroup(state, doc.sessionId, doc.id);
       const wasActive =
-        doc.id === docStateRef.current.activeId && doc.sessionId === activeIdRef.current;
-      dispatchDocs({ type: 'activate', id: doc.id, sessionId: doc.sessionId });
+        doc.id === groupActive(state, doc.sessionId, g) && doc.sessionId === activeIdRef.current;
+      dispatchDocs({ type: 'activate', id: doc.id, sessionId: doc.sessionId, group: g });
       if (doc.sessionId !== activeIdRef.current) setActiveId(doc.sessionId);
       setCenterView('editor');
       // An active doc whose editor is still mounting (the previous landing of a burst) has nothing
       // to reveal into yet, so it takes the staged path too; that replaces the earlier landing's
       // pending reveal instead of letting the mount consume the stale one.
-      if (doc.kind === 'file' && !(e.pos && wasActive && revealInNavEditor(doc.path, e.pos))) {
-        if (e.pos) setReveal(doc.path, e.pos);
-        requestNavFocus(doc.path);
+      if (doc.kind === 'file' && !(e.pos && wasActive && revealInNavEditor(doc.path, e.pos, g))) {
+        if (e.pos) setReveal(doc.path, e.pos, g);
+        requestNavFocus(doc.path, g);
       }
       // An entry left without a record (a session switch) has no pos; its view state restores the
       // cursor it was left at, which is what the editor will show.
@@ -3345,7 +3418,7 @@ export function App() {
             icon: <IconCompare size={14} />,
             combo: comboFor('nextChange'),
             run: () =>
-              goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'next'),
+              goToChangeInActiveGroup(docStateRef.current, activeIdRef.current ?? '', 'next'),
           },
           {
             id: 'cmd:prevChange',
@@ -3355,7 +3428,7 @@ export function App() {
             icon: <IconCompare size={14} />,
             combo: comboFor('prevChange'),
             run: () =>
-              goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'prev'),
+              goToChangeInActiveGroup(docStateRef.current, activeIdRef.current ?? '', 'prev'),
           },
         );
       }
@@ -3614,7 +3687,9 @@ export function App() {
             onOpenFile={(p, mode) => openFile(p, undefined, mode)}
             onOpenFileAt={openTerminalFileLink}
             onOpenWeb={openWeb}
-            flashTabId={backgroundFeedback.flashTabId}
+            flashTabId={
+              backgroundFeedback.flashTab?.group === 1 ? backgroundFeedback.flashTab.id : null
+            }
             onRevealFolder={(path) => post({ type: 'revealInExplorer', path })}
             onOpenCommitReview={(sha, sid, repoRoot) =>
               openReviewForCommit(sha, sid, undefined, repoRoot)
