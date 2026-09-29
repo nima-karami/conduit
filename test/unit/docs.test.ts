@@ -27,6 +27,14 @@ const tabs = (s: DocsState, sid = 'S1') => groupDocs(s, sid, 1);
 const isPreview = (s: DocsState, id: string, sid = 'S1') => tabPreview(s, sid, 1, id);
 const remembered = (s: DocsState, sid: string) => groupActive(s, sid, 1);
 const layoutMap = (s: DocsState) => s.layouts;
+// Every session's per-group actives and active group: what activeBySession held before the split.
+const activeProjection = (s: DocsState) =>
+  Object.fromEntries(
+    Object.entries(s.layouts).map(([sid, l]) => [
+      sid,
+      { actives: l.groups.map((g) => g.active), activeGroup: l.activeGroup },
+    ]),
+  );
 
 const previewCount = (s: DocsState, sessionId = 'S1') => previewIdsOf(s, sessionId, 1).size;
 
@@ -44,6 +52,7 @@ describe('docsReducer', () => {
     s = open(s, 'file', '/b.ts', 'B');
     s = open(s, 'file', '/c.ts', 'A');
     s = docsReducer(s, { type: 'closeSession', sessionId: 'A' });
+    expect(s.docs.map((d) => d.path)).toEqual(['/b.ts']);
     expect(tabs(s, 'B').map((d) => d.path)).toEqual(['/b.ts']);
   });
 
@@ -336,6 +345,7 @@ describe('docsReducer — commit-diff preview + pin', () => {
     let s = openFile(initialDocs, SHA, 'src/a.ts', false, 'A');
     s = open(s, 'file', '/keep.ts', 'B');
     s = docsReducer(s, { type: 'closeSession', sessionId: 'A' });
+    expect(s.docs.map((d) => d.id)).toEqual(['file:/keep.ts']);
     expect(tabs(s, 'B').map((d) => d.id)).toEqual(['file:/keep.ts']);
   });
 });
@@ -546,6 +556,7 @@ describe('docsReducer — restore (one-shot startup seed)', () => {
       docs: dupes,
       knownSessionIds: ['S1', 'S2'],
     });
+    expect(s.docs.map((d) => d.id)).toEqual(['review:@review', 'git-history:@git-history']);
     expect(tabs(s).map((d) => d.id)).toEqual(['review:@review', 'git-history:@git-history']);
     // First occurrence wins ownership; the later duplicate's active flag is ignored.
     expect(s.docs[0].sessionId).toBe('S1');
@@ -778,7 +789,7 @@ describe('docsReducer — background open (middle-click)', () => {
     expect(isPreview(next, tabs(next)[1].id)).not.toBe(true);
     expect(next.docs[1].sessionId).toBe('S1');
     expect(next.activeId).toBe(prev.activeId);
-    expect(remembered(next, 'S1')).toBe(remembered(prev, 'S1'));
+    expect(activeProjection(next)).toEqual(activeProjection(prev));
   });
 
   it('clears preview in place on the preview file, references unchanged', () => {
@@ -789,7 +800,7 @@ describe('docsReducer — background open (middle-click)', () => {
     expect(tabs(next).map((d) => d.id)).toEqual(tabs(prev).map((d) => d.id));
     expect(isPreview(next, tabs(next)[1].id)).toBeFalsy();
     expect(next.activeId).toBe(prev.activeId);
-    expect(remembered(next, 'S1')).toBe(remembered(prev, 'S1'));
+    expect(activeProjection(next)).toEqual(activeProjection(prev));
   });
 
   it('never transfers ownership of a pinned doc in another session', () => {
@@ -814,7 +825,7 @@ describe('docsReducer — background open (middle-click)', () => {
     });
     expect(tabs(next)[1].id).toBe('diff@staged:/a.ts');
     expect(tabs(next)[1].diffScope).toBe('staged');
-    expect(remembered(next, 'S1')).toBe(remembered(prev, 'S1'));
+    expect(activeProjection(next)).toEqual(activeProjection(prev));
   });
 
   it('appends a web tab', () => {
@@ -847,7 +858,7 @@ describe('docsReducer — background open (middle-click)', () => {
     ]);
     expect(isPreview(next, tabs(next)[1].id)).toBeFalsy();
     expect(next.activeId).toBe(prev.activeId);
-    expect(remembered(next, 'S1')).toBe(remembered(prev, 'S1'));
+    expect(activeProjection(next)).toEqual(activeProjection(prev));
   });
 
   it('commit-diff: an already pinned id is a no-op', () => {
