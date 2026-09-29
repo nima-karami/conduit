@@ -1706,3 +1706,20 @@ Build run 2026-09-28 (unattended), branch `feat/split-editor`, base `de36575`. E
     groups' keys.
   - (d) `closeDoc` on an unknown id resolves `true`.
   - (e) `CenterPane` still receives group-1 wiring (`closeTab(id,1)`, menu group 1) until Slice 4.
+- **Slice 4 — built** (`da0a8e7`, `6513df8`, `b7de49e`, `351fdc1`, `2fefc7e`, `05fb063`, `3c8cb6a`). `split-editor`
+  (E1/E2/E3/E6/E8/E12/E13), `web-view`, `middle-click-web`, `web-blank-link`, `scrollback` and `attention` pass.
+  **The regress set was RED (4/5)** because spec §9 makes the Terminal button `role="tab"`, and 25 e2e files
+  read `.tabbar [role="tab"]` as "doc tabs". Session ruling (queued as a decision): the Terminal stays a plain
+  button, as today, which keeps E14 "unchanged e2e". Adopting §9 later means updating those selectors. Fix-ups
+  in Slice 4b:
+  - `findConflicts` ignores an unbound (`''`) combo.
+  - The TrustPrompt gets its own grid row, so a group-1 web host can't cover it.
+  Other deviations:
+  - The clamp also caps to [0.15, 0.85].
+  - The icon reuses `IconSplit`.
+  - The accent rule shows only while split.
+  - `.webhost` joined the Aero ink-token scope.
+  - `context-menu-order` expectations gained "Split Right".
+  - `comboLabel` returns undefined for unbound.
+  - The markdown source key is `tabStateKey('markdown-source:'+path, g)`. **T5.1 must move this key too.**
+  - The focus-group commands are listed only while split.
