@@ -1735,3 +1735,16 @@ Build run 2026-09-28 (unattended), branch `feat/split-editor`, base `de36575`. E
     `activeId` ran in a passive effect. The per-group strip reads the layout directly, so for one frame Back
     was judged against a stale `null`. It is now a `useLayoutEffect`.
   - The regress set is 5/5 green again.
+- **Slice 5 — done** (`c498daa`, `f4b892b`, `ad1a1cf`). The Check is green: `split-editor` plus
+  `split-editor-surfaces`, the regress set, `pdf-viewer`, `web-view`, `file-integrity`, 21 review scenarios and
+  `context-menu-order`. Measurements and deviations:
+  - **E10:** no reload (D9 holds).
+  - **#4:** the web guest focus reaches the host as neither a `focusin` nor a `<webview>` `focus`, only a window
+    `blur` with `activeElement === <webview>`. `WebView.onGuestFocus` fires on that event, and `center-pane`
+    routes it by `webPlacement`.
+  - **D8:** it holds.
+  - `html-viewer`'s source key is per tab, as markdown's is.
+  - The e2e was split into `split-editor-surfaces.e2e.mjs` plus `split-editor-helpers.mjs` because of the 210s
+    runner cap.
+  - The RV assertion compares the card and offset across groups of different widths.
+  - The palette entry title uses `SPLIT_COPY.moveToOther`.
