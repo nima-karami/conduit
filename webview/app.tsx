@@ -164,7 +164,7 @@ import {
 import { shouldReplaceContent } from './file-freshness';
 import { fileSaves, moveFileBuffer, setDocCloser } from './file-saves';
 import { buildRowChangeMap } from './file-tree';
-import { requestDocFocus, terminalFocusKey } from './focus-targets';
+import { dropDocFocusUnless, requestDocFocus, terminalFocusKey } from './focus-targets';
 import {
   affectedDirs,
   applyRedo,
@@ -361,6 +361,18 @@ function releaseFileTab(path: string): void {
 /** Spec §10: a user activation lands keyboard focus in the view of tab `id` (null: the Terminal). */
 function focusView(sessionId: string, group: GroupIndex, id: string | null): void {
   requestDocFocus(id === null ? terminalFocusKey(sessionId) : tabStateKey(id, group));
+}
+
+/** The focus keys `focusView` would name for what each session's groups show. */
+function shownFocusKeys(state: DocsState, sessionIds: readonly string[]): Set<string> {
+  const keys = new Set<string>();
+  for (const s of sessionIds) {
+    layoutOf(state, s).groups.forEach((g, i) => {
+      if (g.active !== null) keys.add(tabStateKey(g.active, i === 0 ? 1 : 2));
+      else if (i === 0) keys.add(terminalFocusKey(s));
+    });
+  }
+  return keys;
 }
 
 /** A file tab's per-path state follows its file to a new path, without a React render between.
@@ -1417,6 +1429,13 @@ export function App() {
     if (!activeId || groupOne?.contains(document.activeElement)) return;
     focusView(activeId, 1, layout.groups[0].activeDocId);
   }, [activeId, layout]);
+  useEffect(() => {
+    const shown = shownFocusKeys(
+      docState,
+      sessions.map((s) => s.id),
+    );
+    dropDocFocusUnless((key) => shown.has(key));
+  }, [docState, sessions]);
   const activeDoc = visibleDocs.find((d) => d.id === docState.activeId) ?? null;
   const activeDocKind = activeDoc?.kind;
   const activeDocPath = activeDoc?.path;

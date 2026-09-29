@@ -1,7 +1,9 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
 import { tabStateKey } from '../../webview/editor-group-context';
 import {
   cancelDocFocus,
+  dropDocFocusUnless,
   type FocusTarget,
   registerFocusTarget,
   requestDocFocus,
@@ -115,5 +117,67 @@ describe('focus-targets — per-(doc, group) focus requests', () => {
     reg(terminalFocusKey('S1'), own);
     expect(other.focused).toBe(0);
     expect(own.focused).toBe(1);
+  });
+});
+
+describe('focus-targets — a pending request expires', () => {
+  const button = () => {
+    const el = document.createElement('button');
+    document.body.append(el);
+    teardowns.push(() => el.remove());
+    return el;
+  };
+
+  it('is dropped when focus has moved since the request', () => {
+    const before = button();
+    before.focus();
+    requestDocFocus(doc2);
+    button().focus();
+    const t = target();
+    reg(doc2, t);
+    expect(t.focused).toBe(0);
+  });
+
+  it('is taken when focus is where it was at the request', () => {
+    const before = button();
+    before.focus();
+    requestDocFocus(doc2);
+    const t = target();
+    reg(doc2, t);
+    expect(t.focused).toBe(1);
+  });
+
+  it('is taken when focus fell to <body> or its element left the document', () => {
+    const before = button();
+    before.focus();
+    requestDocFocus(doc2);
+    before.blur();
+    const onBody = target();
+    reg(doc2, onBody);
+    expect(onBody.focused).toBe(1);
+
+    const gone = button();
+    gone.focus();
+    requestDocFocus(doc1);
+    gone.remove();
+    const afterRemoval = target();
+    reg(doc1, afterRemoval);
+    expect(afterRemoval.focused).toBe(1);
+  });
+
+  it('is dropped when its tab stops being the one its group shows', () => {
+    requestDocFocus(doc2);
+    dropDocFocusUnless((key) => key === doc1);
+    const t = target();
+    reg(doc2, t);
+    expect(t.focused).toBe(0);
+  });
+
+  it('survives while its tab is still shown', () => {
+    requestDocFocus(doc2);
+    dropDocFocusUnless((key) => key === doc2);
+    const t = target();
+    reg(doc2, t);
+    expect(t.focused).toBe(1);
   });
 });
