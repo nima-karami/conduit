@@ -1672,3 +1672,21 @@ Report leads with the fix that keeps the locked decision.
 - **[normal] #13 `subgrid`.** The web-host placement relies on `grid-template-rows: subgrid`
   (Chromium ≥117; Electron 43.3.0 is well past it). If the strip rows misalign, the fix is a fixed
   strip-row height token, never measured rects.
+
+## Run notes
+
+Build run 2026-09-28 (unattended), branch `feat/split-editor`, base `de36575`. Evidence and logs:
+`G:\awby\projects\conduit\.autoloop\evidence\split-editor\`. Baseline `npm run verify` at the base: exit 0.
+
+- **Slice 1 — done** (`621eb56`, `976f38a`, `d4e2165`). The Check is green, including the five regress terms.
+  `docs.test.ts` was rewritten accessor-only. The whole-map identity checks
+  `next.activeBySession toBe prev.activeBySession` became `remembered(next,'S1') toBe remembered(prev,'S1')`
+  (4 places), because a background pin now changes `layouts`. Deviations:
+  - (a) `cycleTab`, `navGoToTab` and the tab-menu close lists already read group 1's tab order. T3.2 swaps `1` for
+    `activeGroupOf`.
+  - (b) `doc-tabs-conflict.test.ts` got the `previewIds` fixture.
+  - (c) The `splitRight` contract line "pin x's group-1 tab" was built as spec §4: the group-2 tab is pinned and
+    group 1 stays preview. Only the commit-diff `@preview` slot is re-keyed first.
+  - (d) `finalize` with focus `null` takes the shown session's active group's active tab, rather than keeping a
+    stale `activeId`.
+  - (e) `restore` skips ids owned by another session, and gives group 2 an active tab when the file names none.
