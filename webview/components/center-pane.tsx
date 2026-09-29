@@ -10,7 +10,7 @@ import type { CenterLayout, GroupIndex, GroupView } from '../doc-groups';
 import type { OpenDoc, OpenMode, ReviewSource } from '../docs';
 import { tabStateKey } from '../editor-group-context';
 import { useFileSaveStatuses } from '../file-saves';
-import { registerFocusTarget, terminalFocusKey } from '../focus-targets';
+import { registerFocusTarget, terminalFocusKey, terminalTabFocusKey } from '../focus-targets';
 import type { GitActionIntent } from '../git-intent';
 import { IconClock } from '../icons';
 import { reviewRequestRoot } from '../review-repos';
@@ -410,6 +410,7 @@ export function CenterPane({
             group={g}
             groupActive={layout.activeGroup === g}
             showTerminal={g === 1}
+            terminalFocusKey={g === 1 && activeId ? terminalTabFocusKey(activeId) : undefined}
             split={{
               // Clicking a strip's button first focuses its group (spec §2.4 flow 2), so group 1's
               // button splits from group 1 even while group 2 is active.

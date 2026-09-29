@@ -12,6 +12,7 @@ const targets = new Map<string, FocusTarget[]>();
 let pending: { key: string; armed: Element | null } | null = null;
 
 export const terminalFocusKey = (sessionId: string) => `terminal:${sessionId}`;
+export const terminalTabFocusKey = (sessionId: string) => `terminal-tab:${sessionId}`;
 
 function focusUnmovedSince(armed: Element | null): boolean {
   const now = document.activeElement;

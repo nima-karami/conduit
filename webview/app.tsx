@@ -164,7 +164,12 @@ import {
 import { shouldReplaceContent } from './file-freshness';
 import { fileSaves, moveFileBuffer, setDocCloser } from './file-saves';
 import { buildRowChangeMap } from './file-tree';
-import { dropDocFocusUnless, requestDocFocus, terminalFocusKey } from './focus-targets';
+import {
+  dropDocFocusUnless,
+  requestDocFocus,
+  terminalFocusKey,
+  terminalTabFocusKey,
+} from './focus-targets';
 import {
   affectedDirs,
   applyRedo,
@@ -1060,10 +1065,11 @@ export function App() {
   );
   // A pending unsaved-changes close prompt; Cancel and Esc settle it through the dialog's onClose.
   const closePromptRef = useRef<((closed: boolean) => void) | null>(null);
-  /** Ctrl+W and a tab's own close: focus lands on what the group shows next (spec §10), except
-   *  that a pointer close landing on the Terminal leaves focus out of xterm, as a Terminal click does. */
+  /** Ctrl+W and a tab's own close: focus lands on what the group shows next (spec §10). A close
+   *  from the strip that lands on the Terminal focuses its button rather than xterm, as a click on
+   *  that button does. */
   const closeTabByUser = useCallback(
-    async (id: string, group: GroupIndex, focusTerminal = true) => {
+    async (id: string, group: GroupIndex, terminalLanding: 'xterm' | 'button' = 'xterm') => {
       const sessionId = docStateRef.current.docs.find((d) => d.id === id)?.sessionId;
       if (sessionId === undefined || !(await closeTabRef.current(id, group))) return;
       // Whether or not the close has rendered yet, this is the state after it: the reducer ignores
@@ -1074,7 +1080,11 @@ export function App() {
       );
       const g = after.groups[group - 1] ? group : 1;
       const next = after.groups[g - 1]?.active ?? null;
-      if (next !== null || focusTerminal) focusView(sessionId, g, next);
+      if (next === null && terminalLanding === 'button') {
+        requestDocFocus(terminalTabFocusKey(sessionId));
+      } else {
+        focusView(sessionId, g, next);
+      }
     },
     [],
   );
@@ -4084,12 +4094,12 @@ export function App() {
             onSplitRight={() => splitRight()}
             editorSplitRatio={settings.editorSplitRatio}
             onSplitRatioCommit={(editorSplitRatio) => update({ editorSplitRatio })}
-            // A pointer click on the Terminal button leaves focus where it was (main's behaviour,
+            // A pointer click on the Terminal button leaves focus on the button (main's behaviour,
             // pinned by editor-nav-history-lifecycle); a keyboard landing on it focuses xterm.
             onSelectDoc={(id, group) =>
               activateDocByUser(id, activeIdRef.current ?? '', group, id !== null)
             }
-            onCloseDoc={(id, group) => void closeTabByUser(id, group, false)}
+            onCloseDoc={(id, group) => void closeTabByUser(id, group, 'button')}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenTimedMessages={openTimedMessages}
             onTabContextMenu={onTabContextMenu}

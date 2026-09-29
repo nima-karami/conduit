@@ -26,6 +26,7 @@ import {
   SessionGlyph,
 } from '../icons';
 import { middleClickProps } from '../middle-click';
+import { useFocusTargetRef } from '../focus-targets';
 import { saveDocByPath } from '../save-registry';
 import { SPLIT_COPY } from '../split-editor-copy';
 import { acceptTabDrop, beginTabDrag, endTabDrag, tabDragOf } from '../tab-drag';
@@ -50,6 +51,7 @@ export function DocTabs({
   previewIds,
   terminalLabel,
   terminalIcon,
+  terminalFocusKey,
   onSelect,
   onClose,
   onTabContextMenu,
@@ -75,6 +77,7 @@ export function DocTabs({
   // Resolved icon for the terminal tab — the active session's icon (iconOverride,
   // appIcon, or agent-derived kind), falling back to the plain terminal glyph.
   terminalIcon: ResolvedSessionIcon;
+  terminalFocusKey?: string;
   onSelect: (id: string | null) => void;
   onClose: (id: string) => void;
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
@@ -106,6 +109,7 @@ export function DocTabs({
   // (targetId=null). Without it the rightmost slot was unreachable (R5.6).
   const [overEnd, setOverEnd] = useState(false);
   const dirty = useDirtySet();
+  const terminalRef = useFocusTargetRef<HTMLButtonElement>(terminalFocusKey);
   const saves = saveStatuses;
 
   // The scrollable strip (not the outer wrapper) — for horizontal-on-vertical-wheel and
@@ -283,6 +287,7 @@ export function DocTabs({
       >
         {showTerminal && (
           <button
+            ref={terminalRef}
             data-tabid={TERMINAL_TABID}
             className={`tab ${activeId === null ? activeClass : ''}`}
             onClick={() => onSelect(null)}

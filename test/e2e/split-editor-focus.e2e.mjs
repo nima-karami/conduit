@@ -6,7 +6,7 @@
  *   CT  Ctrl+Tab file → file (and the typed character lands), file → diff (the modified editor),
  *       and Ctrl+PageUp → the Terminal
  *   TC  a tab click
- *   TT  a pointer click on the Terminal button leaves focus out of xterm (main's behaviour)
+ *   TT  a pointer click on the Terminal button focuses that button, not xterm (main's behaviour)
  *   CW  the Ctrl+W successor
  *   PT  the palette entry is titled "Split Editor Right"
  *   SR  Split Right on rendered markdown, and on a PDF
@@ -17,7 +17,7 @@
  *   SM  the tab menu's Split Right: enabled on a left doc tab with the right group active (it
  *       splits from the left), capped on a right tab, and disabled on the Terminal
  *   E6  Close Editor Group while the left group shows the Terminal
- *   XT  a × close landing on the Terminal leaves focus out of xterm (as TT)
+ *   XT  a × close landing on the Terminal focuses the Terminal button (spec §10 "or its tab")
  * Failures are collected, so one run reports every step that misses.
  */
 
@@ -54,6 +54,7 @@ const focusNow = (page) =>
     const editors = (window.monaco?.editor.getEditors() ?? []).filter((e) => e.hasTextFocus());
     let view = a ? a.tagName.toLowerCase() : 'none';
     if (a?.closest('.xterm')) view = 'terminal';
+    else if (a?.matches('[data-tabid="__terminal__"]')) view = 'terminal-button';
     else if (a?.closest('.monaco-diff-editor'))
       view = a.closest('.editor.modified') ? 'diff-modified' : 'diff-original';
     else if (a?.closest('.monaco-editor'))
@@ -84,6 +85,7 @@ runScenario('split-editor-focus', async ({ page, log }) => {
           const a = document.activeElement;
           if (!a?.closest(sel)) return false;
           if (v === 'terminal') return !!a.closest('.xterm');
+          if (v === 'terminal-button') return a.matches('[data-tabid="__terminal__"]');
           if (v === 'diff-modified') return !!a.closest('.monaco-diff-editor .editor.modified');
           if (v === 'markdown') return !!a.closest('.markdown');
           if (v === 'pdf') return !!a.closest('.pdfview');
@@ -167,7 +169,7 @@ runScenario('split-editor-focus', async ({ page, log }) => {
   await page.waitForSelector(`${G(1)} .monaco-diff-editor`, { timeout: 15000 });
   await expectFocus('CT file→diff', 1, 'diff-modified');
 
-  // TT: a pointer click on the Terminal button activates it but leaves focus out of xterm.
+  // TT: a pointer click on the Terminal button activates it and focuses the button, not xterm.
   await tabOf(page, 1, 'a.ts').click();
   await clickEditor(1);
   await page.locator(`${G(1)} [data-tabid="__terminal__"]`).click();
@@ -177,9 +179,7 @@ runScenario('split-editor-focus', async ({ page, log }) => {
     { timeout: 5000 },
   );
   await sleep(500);
-  const afterClick = await focusNow(page);
-  log(`TT Terminal click: focus is in group ${afterClick.group} ${afterClick.view}`);
-  if (afterClick.view === 'terminal') misses.push('TT: a Terminal click moved focus into xterm');
+  await expectFocus('TT Terminal click', 1, 'terminal-button');
 
   // CT: Ctrl+PageUp from the first doc lands in the Terminal.
   await tabOf(page, 1, 'a.ts').click();
@@ -328,7 +328,7 @@ runScenario('split-editor-focus', async ({ page, log }) => {
     .catch(() => assert(false, 'E6: the right group did not close'));
   await expectFocus('E6 collapse onto the Terminal', 1, 'terminal');
 
-  // XT: closing the last doc tab with its × lands on the Terminal but leaves focus out of xterm.
+  // XT: closing the last doc tab with its × lands on the Terminal and focuses its button.
   const docTabs = page.locator(`${G(1)} [role="tab"]`);
   await docTabs.first().click();
   for (let n = await docTabs.count(); n > 0; n = await docTabs.count()) {
@@ -351,11 +351,7 @@ runScenario('split-editor-focus', async ({ page, log }) => {
       .catch(() => assert(false, `XT: a × close left ${n} tabs`));
   }
   await sleep(500);
-  const afterClose = await focusNow(page);
-  log(`XT last × close: focus is in group ${afterClose.group} ${afterClose.view}`);
-  if (afterClose.view === 'terminal') {
-    misses.push('XT: a × close landing on the Terminal moved focus into xterm');
-  }
+  await expectFocus('XT last × close', 1, 'terminal-button');
 
   assert(misses.length === 0, `focus missed ${misses.length} step(s):\n  ${misses.join('\n  ')}`);
 });
