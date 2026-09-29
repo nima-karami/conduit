@@ -4,6 +4,7 @@
 // already-loaded children (see `mergeEntries`).
 
 import { folderKey } from '../src/folder-key';
+import { normalizePath } from '../src/owning-session';
 import type { ChangeDTO, ChangeKind, DirEntryDTO, RepoChanges } from '../src/protocol';
 
 export interface TreeNode {
@@ -238,7 +239,7 @@ export function ancestorDirChain(filePath: string, rootPath: string): string[] {
   if (fileKey === rootKey || !fileKey.startsWith(`${rootKey}/`)) return [];
   const segments = filePath
     .replace(/\\/g, '/')
-    .slice(rootKey.length + 1)
+    .slice(normalizePath(rootPath).length + 1)
     .split('/')
     .filter(Boolean);
   const dirSegments = segments.slice(0, -1);

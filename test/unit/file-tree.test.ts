@@ -54,6 +54,11 @@ describe('ancestorDirChain', () => {
     expect(ancestorDirChain('g:/r/src/a.ts', 'G:\\r')).toEqual(['G:\\r', 'G:\\r/src']);
   });
 
+  it('does not treat a sibling sharing the root as a prefix as under it', () => {
+    expect(ancestorDirChain('/r2/a.ts', '/r')).toEqual([]);
+    expect(ancestorDirChain('G:\\r2\\a.ts', 'g:/r')).toEqual([]);
+  });
+
   it('keeps POSIX paths case-sensitive', () => {
     expect(ancestorDirChain('/Root/a.ts', '/root')).toEqual([]);
   });
