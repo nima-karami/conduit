@@ -15,12 +15,26 @@
  *   MV  Mod+Alt+ArrowRight moves the active tab from the left group to the right, which becomes
  *       active.
  *   RV  Review scrolled in one group, moved to the other, keeps its scroll anchor (±2px).
+ *   E4  F12 in the left group navigates the left group; the right one is untouched.
+ *   E5  explorer opens land in the active group, and in the right one while the left shows the
+ *       Terminal.
+ *   E7  closing one of two dirty tabs of a file doesn't prompt; the survivor stays dirty.
+ *   E15 the survivor then saves (Ctrl+S) and navigates changes (Alt+F5).
+ *   E16 single clicks with the left group active reuse its preview, never the right's pinned tab.
+ *   P8  typing in a preview pins that tab, so the next single click opens beside it.
+ *   E11 Ctrl+2, Ctrl+Tab and Ctrl+W act on the active group's strip only.
+ *   E9  a restart (launch 3) restores each group's tabs, order and shown tab.
+ *   CG  Close Editor Group from the right strip prompts for a dirty tab: Cancel keeps the group,
+ *       Discard closes it.
  *   TP  the Workspace Trust prompt stays visible and clickable above a web tab active in the left
  *       group (web hosts sit in the grid's body row, the prompt in its own row). Needs go + gopls.
+ *
+ * P9 and the web/PDF scenarios are in split-editor-surfaces.e2e.mjs: this file's restarts already
+ * use most of the smoke runner's per-scenario time budget.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,6 +47,20 @@ import {
   shutdownApp,
   tapBridge,
 } from './harness.mjs';
+import {
+  explorer,
+  G,
+  groupCount,
+  groupState,
+  groupTabs,
+  openFromExplorer,
+  politeText,
+  same,
+  sleep,
+  tabOf,
+  waitPolite,
+  waitShown,
+} from './split-editor-helpers.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[split-editor] SKIP — suite is Windows-only');
@@ -40,7 +68,6 @@ if (process.platform !== 'win32') {
 }
 
 const log = makeLog('split-editor');
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const repo = mkdtempSync(join(tmpdir(), 'conduit-split-repo-'));
 writeFileSync(join(repo, 'a.ts'), 'export const answer = 42;\n');
@@ -49,6 +76,12 @@ writeFileSync(
   join(repo, 'b.ts'),
   `import { answer } from './a';\nexport const doubled = answer * 2;\n${filler}\n`,
 );
+writeFileSync(
+  join(repo, 'c.ts'),
+  "import { answer } from './a';\nexport const tripled = answer * 3;\n",
+);
+for (const n of ['x', 'y', 'z', 'p', 'q'])
+  writeFileSync(join(repo, `${n}.ts`), `export const ${n} = 1;\n`);
 writeFileSync(join(repo, 'note.md'), '# Note\n\nSome text.\n');
 writeFileSync(join(repo, 'go.mod'), 'module example.com/split\n\ngo 1.21\n');
 writeFileSync(join(repo, 'main.go'), 'package main\n\nfunc main() {}\n');
@@ -62,7 +95,7 @@ try {
   for (let n = 1; n <= REVIEW_FILES; n++) {
     writeFileSync(join(repo, 'rv', `f${n}.txt`), `${reviewLines(n).join('\n')}\n`);
   }
-  execFileSync('git', ['-c', 'core.autocrlf=false', 'add', 'rv'], { cwd: repo });
+  execFileSync('git', ['-c', 'core.autocrlf=false', 'add', 'rv', 'b.ts'], { cwd: repo });
   execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], {
     cwd: repo,
   });
@@ -79,25 +112,6 @@ try {
 const repoArg = repo.replace(/\\/g, '/');
 const repoName = repoArg.split('/').filter(Boolean).pop();
 const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-split-ud-'));
-
-const G = (g) => `.editor-group[data-group="${g}"]`;
-const groupCount = (page) => page.locator('.editor-group').count();
-const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-async function openFromExplorer(page, name) {
-  await page.click('.rtab:has-text("Files")');
-  const row = page.locator('.filerow', {
-    has: page.locator('.filerow__name', { hasText: new RegExp(`^${esc(name)}$`) }),
-  });
-  await row.first().waitFor({ state: 'attached', timeout: 20000 });
-  await row.first().dblclick();
-  await page.waitForFunction(
-    (n) => document.querySelector('.tabbar [role="tab"].tab--active span')?.textContent === n,
-    name,
-    { timeout: 15000 },
-  );
-  await page.waitForSelector('.viewer__monaco .monaco-editor', { timeout: 15000 });
-}
 
 const firstLine = (page, g) =>
   page.evaluate((sel) => {
@@ -117,36 +131,9 @@ const groupWidths = (page) =>
     [...document.querySelectorAll('.editor-group')].map((el) => el.getBoundingClientRect().width),
   );
 
-const politeText = (page) =>
-  page.evaluate(
-    () =>
-      document.querySelector('.shell > [role="status"][aria-live="polite"]:not(.bg-open-status)')
-        ?.textContent ?? '',
-  );
-
 const hasBinary = (name) => spawnSync('where', [name], { stdio: 'ignore' }).status === 0;
 const goplsInstalled = () =>
   hasBinary('gopls') || existsSync(join(homedir(), 'go', 'bin', 'gopls.exe'));
-
-const groupTabs = (page, g) =>
-  page.evaluate(
-    (sel) => [...document.querySelectorAll(`${sel} [role="tab"] span`)].map((e) => e.textContent),
-    G(g),
-  );
-
-async function waitPolite(page, text, label) {
-  await page
-    .waitForFunction(
-      (t) =>
-        document.querySelector('.shell > [role="status"][aria-live="polite"]:not(.bg-open-status)')
-          ?.textContent === t,
-      text,
-      { timeout: 5000 },
-    )
-    .catch(async () =>
-      assert(false, `${label}: the polite region says ${JSON.stringify(await politeText(page))}`),
-    );
-}
 
 /** One group holding b.ts → split a.ts, then move b.ts from the left group with the keyboard. */
 async function phaseMove(page) {
@@ -247,6 +234,269 @@ async function phaseReviewMove(page) {
     `RV: Review's scroll moved from ${before.scrollTop} to ${back?.scrollTop}`,
   );
   log('RV ✓ Review moved with its scroll anchor');
+}
+
+const editorPosition = (page, g) =>
+  page.evaluate((sel) => {
+    const ed = window.monaco.editor.getEditors().find((e) => e.getContainerDomNode().closest(sel));
+    return ed?.getPosition() ?? null;
+  }, G(g));
+
+/** Where `token` is painted in group g's editor, read from the rendered line with a DOM Range. */
+const tokenPoint = (page, g, token) =>
+  page.evaluate(
+    ({ sel, tok }) => {
+      const ed = window.monaco.editor
+        .getEditors()
+        .find((e) => e.getContainerDomNode().closest(sel));
+      const model = ed?.getModel();
+      if (!model) return null;
+      const off = model.getValue().indexOf(tok);
+      if (off < 0) return null;
+      const pos = model.getPositionAt(off);
+      const top =
+        ed.getDomNode().getBoundingClientRect().top + ed.getScrolledVisiblePosition(pos).top;
+      const line = [...ed.getDomNode().querySelectorAll('.view-lines .view-line')].find(
+        (el) => Math.abs(el.getBoundingClientRect().top - top) < 2,
+      );
+      if (!line) return null;
+      let at = pos.column - 1 + Math.floor(tok.length / 2);
+      const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (at < n.length) {
+          const range = document.createRange();
+          range.setStart(n, at);
+          range.setEnd(n, at + 1);
+          const r = range.getBoundingClientRect();
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        }
+        at -= n.length;
+      }
+      return null;
+    },
+    { sel: G(g), tok: token },
+  );
+
+const confirmOpen = (page) => page.locator('.confirm[role="alertdialog"]').count();
+
+/** E4: F12 in the left group's c.ts navigates the left group; the right group is untouched. */
+async function phaseE4(page) {
+  await page.focus(`${G(1)} .review__scroll`);
+  await page.keyboard.press('Control+W');
+  await page.waitForFunction(() => !document.querySelector('.review'), null, { timeout: 8000 });
+  await explorer(page, 'c.ts', 'dblclick');
+  await waitShown(page, 1, 'c.ts', 'E4');
+  await page.waitForSelector(`${G(1)} .monaco-editor .view-lines`, { timeout: 15000 });
+  const right = await groupState(page, 2);
+  const at = await tokenPoint(page, 1, 'answer');
+  assert(at, 'E4: `answer` is not painted in the left editor');
+  await page.mouse.click(at.x, at.y);
+  await page.keyboard.press('F12');
+  await waitShown(page, 1, 'a.ts', 'E4');
+  const pos = await editorPosition(page, 1);
+  assert(pos?.lineNumber === 1, `E4: the left editor is at ${JSON.stringify(pos)}, not line 1`);
+  const after = await groupState(page, 2);
+  assert(
+    same(after, right),
+    `E4: the right group changed ${JSON.stringify(right)} → ${JSON.stringify(after)}`,
+  );
+  log('E4 ✓ F12 stays in its group');
+}
+
+/** E5: an explorer open lands in the active group, and in group 2 while group 1 shows the Terminal. */
+async function phaseE5(page) {
+  await page.locator(`${G(2)} .monaco-editor`).click();
+  await explorer(page, 'x.ts', 'dblclick');
+  await waitShown(page, 2, 'x.ts', 'E5');
+  assert(!(await groupTabs(page, 1)).includes('x.ts'), 'E5: x.ts also opened in the left group');
+  await page.locator(`${G(1)} button.tab[data-tabid="__terminal__"]`).click();
+  await page.waitForSelector(
+    `${G(1)}[data-active="true"] button.tab--active[data-tabid="__terminal__"]`,
+    {
+      timeout: 5000,
+    },
+  );
+  await explorer(page, 'y.ts', 'dblclick');
+  await waitShown(page, 2, 'y.ts', 'E5 (Terminal in the left group)');
+  assert(!(await groupTabs(page, 1)).includes('y.ts'), 'E5: y.ts opened in the left group');
+  log('E5 ✓ opens follow the active group, and skip a Terminal-showing left group');
+}
+
+/** E7 + E15: one of two dirty b.ts tabs closes without a prompt; the survivor saves and navigates. */
+async function phaseE7E15(page) {
+  await tabOf(page, 1, 'c.ts').click();
+  await explorer(page, 'b.ts', 'dblclick');
+  await waitShown(page, 1, 'b.ts', 'E7');
+  await tabOf(page, 2, 'b.ts').click();
+  await waitShown(page, 2, 'b.ts', 'E7');
+  await page.locator(`${G(2)} .monaco-editor`).click();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type(' // e7');
+  await page
+    .waitForFunction(() => document.querySelectorAll('.tab--dirty').length === 2, null, {
+      timeout: 5000,
+    })
+    .catch(() => assert(false, 'E7: both b.ts tabs should be dirty'));
+  await tabOf(page, 1, 'b.ts').click({ button: 'middle' });
+  await sleep(600);
+  assert((await confirmOpen(page)) === 0, 'E7: closing one of two b.ts tabs prompted');
+  assert(!(await groupTabs(page, 1)).includes('b.ts'), 'E7: the left b.ts tab did not close');
+  assert(
+    (await tabOf(page, 2, 'b.ts').getAttribute('class'))?.includes('tab--dirty'),
+    'E7: the surviving b.ts tab is not dirty',
+  );
+  log('E7 ✓ one of two dirty tabs closes silently, the survivor stays dirty');
+
+  await page.locator(`${G(2)} .monaco-editor`).click();
+  await page.keyboard.press('Control+S');
+  await page
+    .waitForFunction(() => document.querySelectorAll('.tab--dirty').length === 0, null, {
+      timeout: 5000,
+    })
+    .catch(() => assert(false, 'E15: Ctrl+S in the survivor did not clear the dirty dot'));
+  assert(
+    readFileSync(join(repo, 'b.ts'), 'utf8').includes('// e7'),
+    'E15: b.ts on disk lacks the edit',
+  );
+  await page.keyboard.press('Control+Home');
+  await page.keyboard.press('Alt+F5');
+  await page
+    .waitForFunction(
+      (sel) => {
+        const ed = window.monaco.editor
+          .getEditors()
+          .find((e) => e.getContainerDomNode().closest(sel));
+        return (ed?.getPosition()?.lineNumber ?? 0) >= 200;
+      },
+      G(2),
+      { timeout: 8000 },
+    )
+    .catch(async () =>
+      assert(
+        false,
+        `E15: Alt+F5 left the cursor at ${JSON.stringify(await editorPosition(page, 2))}`,
+      ),
+    );
+  log('E15 ✓ the survivor saves and navigates changes');
+}
+
+/** E16: a single click with the left group active never takes a right-group pinned tab. */
+async function phaseE16(page) {
+  await tabOf(page, 1, 'a.ts').click();
+  await waitShown(page, 1, 'a.ts', 'E16');
+  await explorer(page, 'z.ts', 'click');
+  await waitShown(page, 1, 'z.ts', 'E16 (preview)');
+  await explorer(page, 'x.ts', 'click');
+  await explorer(page, 'y.ts', 'click');
+  await waitShown(page, 1, 'y.ts', 'E16');
+  const left = await groupTabs(page, 1);
+  assert(
+    !left.includes('z.ts') && !left.includes('x.ts'),
+    `E16: the left preview was not reused (${left})`,
+  );
+  assert(
+    (await tabOf(page, 1, 'y.ts').getAttribute('class'))?.includes('tab--preview'),
+    'E16: y.ts is not the left group’s preview',
+  );
+  assert((await groupTabs(page, 2)).includes('x.ts'), 'E16: the right group lost x.ts');
+  log('E16 ✓ the right group keeps x.ts, the left preview is y.ts');
+}
+
+/** P8: an edited preview is pinned, so the next single click opens beside it. */
+async function phaseP8(page) {
+  await page.locator(`${G(2)} .monaco-editor`).click();
+  await explorer(page, 'p.ts', 'click');
+  await waitShown(page, 2, 'p.ts', 'P8');
+  await page.locator(`${G(2)} .monaco-editor`).click();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type('// p8');
+  await page
+    .waitForFunction(() => document.querySelectorAll('.tab--dirty').length === 1, null, {
+      timeout: 5000,
+    })
+    .catch(() => assert(false, 'P8: p.ts did not turn dirty'));
+  await explorer(page, 'q.ts', 'click');
+  await waitShown(page, 2, 'q.ts', 'P8');
+  const pCls = (await tabOf(page, 2, 'p.ts').getAttribute('class')) ?? '';
+  assert(pCls.includes('tab--dirty') && !pCls.includes('tab--preview'), `P8: p.ts is "${pCls}"`);
+  assert(
+    (await tabOf(page, 2, 'q.ts').getAttribute('class'))?.includes('tab--preview'),
+    'P8: q.ts did not open as a preview',
+  );
+  await tabOf(page, 2, 'p.ts').click();
+  await page.locator(`${G(2)} .monaco-editor`).click();
+  await page.keyboard.press('Control+S');
+  await page.waitForFunction(() => document.querySelectorAll('.tab--dirty').length === 0, null, {
+    timeout: 5000,
+  });
+  log('P8 ✓ editing a preview pins that tab only');
+}
+
+/** E11: Ctrl+2, Ctrl+Tab and Ctrl+W act on the active group's strip only. */
+async function phaseE11(page) {
+  const left = await groupState(page, 1);
+  const tabs = await groupTabs(page, 2);
+  assert(tabs.length >= 3, `E11: the right group needs three tabs (${tabs})`);
+  await page.keyboard.press('Control+2');
+  await waitShown(page, 2, tabs[1], 'E11 Ctrl+2');
+  await page.keyboard.press('Control+Tab');
+  await waitShown(page, 2, tabs[2], 'E11 Ctrl+Tab');
+  await page.keyboard.press('Control+W');
+  await page
+    .waitForFunction(
+      ({ sel, n }) =>
+        ![...document.querySelectorAll(`${sel} [role="tab"] span`)].some(
+          (e) => e.textContent === n,
+        ),
+      { sel: G(2), n: tabs[2] },
+      { timeout: 5000 },
+    )
+    .catch(() => assert(false, `E11: Ctrl+W did not close ${tabs[2]} in the right group`));
+  const leftAfter = await groupState(page, 1);
+  assert(
+    same(leftAfter, left),
+    `E11: the left group changed ${JSON.stringify(left)} → ${JSON.stringify(leftAfter)}`,
+  );
+  log('E11 ✓ tab keys act on the active group only');
+}
+
+/** Close Editor Group from the right strip's background: a dirty tab prompts; Cancel keeps it. */
+async function phaseCloseGroup(page) {
+  await tabOf(page, 2, 'q.ts').click();
+  await page.locator(`${G(2)} .monaco-editor`).click();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type('// q');
+  await page.waitForFunction(() => document.querySelectorAll('.tab--dirty').length === 1, null, {
+    timeout: 5000,
+  });
+  const openMenu = async () => {
+    const strip = await page.locator(`${G(2)} .tabbar`).boundingBox();
+    await page.mouse.click(strip.x + strip.width - 6, strip.y + strip.height / 2, {
+      button: 'right',
+    });
+    const item = page.locator('.ctxmenu__item', { hasText: /^Close Editor Group$/ });
+    await item
+      .waitFor({ timeout: 5000 })
+      .catch(() => assert(false, 'CG: the right strip has no Close Editor Group item'));
+    await item.click();
+    await page
+      .waitForSelector('.confirm[role="alertdialog"]', { timeout: 8000 })
+      .catch(() => assert(false, 'CG: no unsaved-changes prompt for the dirty q.ts'));
+  };
+  await openMenu();
+  await page.locator('.confirm__actions button', { hasText: 'Cancel' }).first().click();
+  await sleep(500);
+  assert((await groupCount(page)) === 2, 'CG: Cancel still closed the right group');
+  assert((await groupTabs(page, 2)).includes('q.ts'), 'CG: Cancel lost q.ts');
+  await openMenu();
+  await page.locator('.confirm__actions button', { hasText: 'Discard' }).first().click();
+  await page
+    .waitForFunction(() => document.querySelectorAll('.editor-group').length === 1, null, {
+      timeout: 8000,
+    })
+    .catch(() => assert(false, 'CG: Discard did not close the right group'));
+  await waitPolite(page, 'Editor group closed', 'CG');
+  log('CG ✓ Close Editor Group prompts for a dirty tab; Cancel keeps it, Discard closes');
 }
 
 async function phaseTrustOverWeb(page) {
@@ -529,6 +779,44 @@ try {
 
   await phaseMove(page);
   await phaseReviewMove(page);
+  if (hasGit) {
+    await phaseE4(page);
+  } else {
+    log('E4 not run (no git: it closes the Review tab RV opens)');
+  }
+  await phaseE5(page);
+  await phaseE7E15(page);
+  await phaseE16(page);
+  await phaseP8(page);
+  await phaseE11(page);
+
+  // E9
+  const saved = [await groupState(page, 1), await groupState(page, 2)];
+  await sleep(1500);
+  await shutdownApp(launched.app, page);
+  launched = null;
+  launched = await launchApp({ userDataDir });
+  page = launched.page;
+  await tapBridge(page);
+  await page.waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), sid, {
+    timeout: 45000,
+  });
+  await page.waitForSelector(`.session:has-text("${repoName}")`, { timeout: 20000 });
+  await page.locator('.session', { hasText: repoName }).first().click();
+  await page
+    .waitForFunction(() => document.querySelectorAll('.editor-group').length === 2, null, {
+      timeout: 20000,
+    })
+    .catch(() => assert(false, 'E9: the split did not restore'));
+  await sleep(500);
+  const restored = [await groupState(page, 1), await groupState(page, 2)];
+  assert(
+    same(restored, saved),
+    `E9: restored ${JSON.stringify(restored)}, saved ${JSON.stringify(saved)}`,
+  );
+  log('E9 ✓ tabs, order and shown tab per group survive a restart');
+
+  await phaseCloseGroup(page);
 
   await phaseTrustOverWeb(page);
 

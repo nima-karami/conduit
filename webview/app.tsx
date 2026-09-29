@@ -2035,6 +2035,17 @@ export function App() {
   );
   closeTabRef.current = closeTab;
 
+  // see split-editor plan P3: a loop over group 2's tabs, and the first Cancel stops it.
+  const closeEditorGroup = useCallback(async () => {
+    const sessionId = activeIdRef.current;
+    const group = sessionId ? layoutOf(docStateRef.current, sessionId).groups[1] : undefined;
+    if (!group) return;
+    for (const { id } of group.tabs) {
+      if (!(await closeTabRef.current(id, 2))) return;
+    }
+    if (navLiveRef.current) navLiveRef.current.textContent = SPLIT_COPY.groupClosed;
+  }, []);
+
   useEffect(() => {
     setDocCloser((p) => {
       const d = docStateRef.current.docs.find((x) => x.kind === 'file' && x.path === p);
@@ -2673,6 +2684,22 @@ export function App() {
               'Close all sessions',
               `Close all ${all.length} session${all.length === 1 ? '' : 's'}? Running terminals will be terminated.`,
             ),
+        },
+      ],
+    });
+  };
+
+  const onGroupStripContextMenu = (e: React.MouseEvent, group: GroupIndex) => {
+    if (group !== 2) return;
+    e.preventDefault();
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: SPLIT_COPY.closeGroup,
+          icon: <IconClose size={14} />,
+          onClick: () => void closeEditorGroup(),
         },
       ],
     });
@@ -3911,6 +3938,14 @@ export function App() {
       }
       groupCmds.push(
         {
+          id: 'cmd:closeEditorGroup',
+          title: SPLIT_COPY.closeGroup,
+          keywords: ['editor group', 'close group'],
+          group: 'Commands',
+          icon: <IconClose size={14} />,
+          run: () => void closeEditorGroup(),
+        },
+        {
           id: 'cmd:focusLeftGroup',
           title: SPLIT_COPY.focusLeft,
           keywords: ['editor group'],
@@ -3935,6 +3970,7 @@ export function App() {
     layout,
     splitRight,
     moveTabToGroup,
+    closeEditorGroup,
     focusGroupByCommand,
     active,
     sessions,
@@ -4026,6 +4062,7 @@ export function App() {
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenTimedMessages={openTimedMessages}
             onTabContextMenu={onTabContextMenu}
+            onGroupStripContextMenu={onGroupStripContextMenu}
             onTerminalTabContextMenu={onTerminalTabContextMenu}
             onReorderDoc={(dragId, targetId, group) =>
               dispatchDocs({ type: 'reorder', dragId, targetId, group })
