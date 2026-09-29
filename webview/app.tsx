@@ -249,6 +249,7 @@ import { useSettings } from './settings';
 import { comboLabel, effectiveCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { SPLIT_COPY } from './split-editor-copy';
 import { closeTabSelection } from './tab-close-selection';
+import { endTabDrag } from './tab-drag';
 import {
   requestTerminalFocus,
   selectionInTerminal,
@@ -479,6 +480,9 @@ export function App() {
   const [centerView, setCenterView] = useState<CenterView>('editor');
   const centerViewRef = useRef(centerView);
   centerViewRef.current = centerView;
+  // see split-editor spec §4: a switch mid-drag abandons it (its source tab may never see dragend).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the deps are the triggers, not inputs.
+  useEffect(() => endTabDrag(), [activeId, centerView]);
   const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
@@ -990,25 +994,34 @@ export function App() {
     focusGroupViewer(2, doc, '> .editor-group__body');
   }, []);
 
-  const moveTabToGroup = useCallback((id: string, toGroup: GroupIndex, beforeId: string | null) => {
-    const sessionId = activeIdRef.current;
-    if (!sessionId) return;
-    const layout = layoutOf(docStateRef.current, sessionId);
-    const from: GroupIndex = toGroup === 1 ? 2 : 1;
-    const src = layout.groups[from - 1];
-    const dst = layout.groups[toGroup - 1];
-    const doc = docStateRef.current.docs.find((d) => d.id === id);
-    if (!doc || !src || !dst || !src.tabs.some((t) => t.id === id)) return;
-    if (dst.tabs.some((t) => t.id === id)) {
-      markClosing(tabStateKey(id, from));
-      clearHtmlView(tabStateKey(id, from));
-    } else {
-      carryTabState(doc, from, toGroup, 'move');
-    }
-    dispatchDocs({ type: 'moveTab', sessionId, id, toGroup, beforeId });
-    if (navLiveRef.current) navLiveRef.current.textContent = SPLIT_COPY.moved(doc.title, toGroup);
-    focusGroupViewer(toGroup, doc, '> .editor-group__body');
-  }, []);
+  const moveTabToGroup = useCallback(
+    (id: string, toGroup: GroupIndex, beforeId: string | null, duplicate: boolean) => {
+      const sessionId = activeIdRef.current;
+      if (!sessionId) return;
+      const layout = layoutOf(docStateRef.current, sessionId);
+      const from: GroupIndex = toGroup === 1 ? 2 : 1;
+      const src = layout.groups[from - 1];
+      const dst = layout.groups[toGroup - 1];
+      const doc = docStateRef.current.docs.find((d) => d.id === id);
+      if (!doc || !src?.tabs.some((t) => t.id === id)) return;
+      const copy = duplicate && splitBehavior(doc.kind) === 'duplicate';
+      if (!dst?.tabs.some((t) => t.id === id)) {
+        carryTabState(doc, from, toGroup, copy ? 'copy' : 'move');
+      } else if (!copy) {
+        markClosing(tabStateKey(id, from));
+        clearHtmlView(tabStateKey(id, from));
+      }
+      dispatchDocs({ type: 'moveTab', sessionId, id, toGroup, beforeId, duplicate: copy });
+      if (navLiveRef.current) {
+        navLiveRef.current.textContent =
+          copy && toGroup === 2
+            ? SPLIT_COPY.splitOpened(doc.title)
+            : SPLIT_COPY.moved(doc.title, toGroup);
+      }
+      focusGroupViewer(toGroup, doc, '> .editor-group__body');
+    },
+    [],
+  );
 
   const focusGroupByCommand = useCallback((group: GroupIndex) => {
     const sessionId = activeIdRef.current;
@@ -1230,11 +1243,11 @@ export function App() {
       splitEditorRight: () => splitRight(),
       moveTabNextGroup: () => {
         const id = docStateRef.current.activeId;
-        if (id && currentGroup() === 1) moveTabToGroup(id, 2, null);
+        if (id && currentGroup() === 1) moveTabToGroup(id, 2, null, false);
       },
       moveTabPrevGroup: () => {
         const id = docStateRef.current.activeId;
-        if (id && currentGroup() === 2) moveTabToGroup(id, 1, null);
+        if (id && currentGroup() === 2) moveTabToGroup(id, 1, null, false);
       },
       focusLeftGroup: () => focusGroupByCommand(1),
       focusRightGroup: () => focusGroupByCommand(2),
@@ -2799,7 +2812,7 @@ export function App() {
         {
           label: SPLIT_COPY.moveToOther,
           disabled: layoutOf(docState, doc.sessionId).groups.length < 2,
-          onClick: () => moveTabToGroup(doc.id, group === 1 ? 2 : 1, null),
+          onClick: () => moveTabToGroup(doc.id, group === 1 ? 2 : 1, null, false),
         },
       ],
     });
@@ -3933,7 +3946,7 @@ export function App() {
           group: 'Commands',
           icon: <IconSplit size={14} />,
           combo: comboFor(from === 1 ? 'moveTabNextGroup' : 'moveTabPrevGroup'),
-          run: () => moveTabToGroup(id, from === 1 ? 2 : 1, null),
+          run: () => moveTabToGroup(id, from === 1 ? 2 : 1, null, false),
         });
       }
       groupCmds.push(
@@ -4068,6 +4081,7 @@ export function App() {
               dispatchDocs({ type: 'reorder', dragId, targetId, group })
             }
             onPinDoc={(id, group) => dispatchDocs({ type: 'pinDoc', id, group })}
+            onMoveTab={moveTabToGroup}
             dock={dockHandlers('center')}
             splitId={splitId}
             onCloseSplit={() => setSplitId(null)}

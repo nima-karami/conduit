@@ -2596,10 +2596,10 @@ body.resizing .panel__resize::after {
   flex-direction: column;
 }
 /* Above Monaco's own .minimap{z-index:5}; `isolation` on the grid keeps it there. */
-.editorgroups > .webhost[data-group="1"] {
+.editorgroups > :is(.webhost, .editorgroups__drop)[data-group="1"] {
   grid-row: 3;
 }
-.editorgroups > .webhost[data-group="2"] {
+.editorgroups > :is(.webhost, .editorgroups__drop)[data-group="2"] {
   grid-row: 2 / span 2;
 }
 .editorgroups > .webhost {
@@ -2612,6 +2612,33 @@ body.resizing .panel__resize::after {
 }
 /* A <webview> guest swallows pointer events, which would strand a divider drag over it. */
 .editorgroups[data-resizing] > .webhost {
+  pointer-events: none;
+}
+/* A tab drag's drop targets over each group body, above the web hosts (split-editor spec §8).
+   Static tints, no transition (spec §10 reduced motion). */
+.editorgroups__drop {
+  position: relative;
+  z-index: 7;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--r-panel);
+}
+.editorgroups__drop[data-over="group"] {
+  background: var(--accent-soft);
+  outline: 2px dashed var(--accent);
+  outline-offset: -3px;
+}
+.editorgroups__drop--edge::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 50%;
+  border-radius: inherit;
+  background: var(--accent-soft);
+  outline: 2px dashed var(--accent);
+  outline-offset: -3px;
   pointer-events: none;
 }
 .editorgroups__divider {

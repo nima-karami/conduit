@@ -75,6 +75,7 @@ export function CenterPane({
   onTerminalTabContextMenu,
   onReorderDoc,
   onPinDoc,
+  onMoveTab,
   dock,
   splitId,
   onCloseSplit,
@@ -132,6 +133,8 @@ export function CenterPane({
   onReorderDoc?: (dragId: string, targetId: string | null, group: GroupIndex) => void;
   /** Double-click a preview commit-diff tab to pin it. */
   onPinDoc?: (id: string, group: GroupIndex) => void;
+  /** A tab dropped on the other group's strip or body, or on the right edge (spec §2.4). */
+  onMoveTab: (id: string, toGroup: GroupIndex, beforeId: string | null, duplicate: boolean) => void;
   dock?: DockHandlers;
   splitId?: string | null;
   onCloseSplit?: () => void;
@@ -420,6 +423,7 @@ export function CenterPane({
               onReorderDoc ? (dragId, targetId) => onReorderDoc(dragId, targetId, g) : undefined
             }
             onPinDoc={onPinDoc ? (id) => onPinDoc(id, g) : undefined}
+            onMoveTab={onMoveTab}
             flashTabId={flashTab?.group === g ? flashTab.id : null}
             saveStatuses={saveStatuses}
             moveGrip={
@@ -473,6 +477,7 @@ export function CenterPane({
             />
           )}
           onFocusGroup={onFocusGroup}
+          onMoveTab={onMoveTab}
         />
       )}
 

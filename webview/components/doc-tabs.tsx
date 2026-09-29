@@ -28,6 +28,7 @@ import {
 import { middleClickProps } from '../middle-click';
 import { saveDocByPath } from '../save-registry';
 import { SPLIT_COPY } from '../split-editor-copy';
+import { acceptTabDrop, beginTabDrag, currentTabDrag, endTabDrag } from '../tab-drag';
 import { isStripOverflowing, scrollTargetTabId, TERMINAL_TABID } from '../tab-overflow';
 import { ContextMenu, type MenuState } from './context-menu';
 
@@ -55,6 +56,7 @@ export function DocTabs({
   onTerminalTabContextMenu,
   onReorder,
   onPinDoc,
+  onMoveTab,
   moveGrip,
   flashTabId = null,
   saveStatuses = NO_SAVE_STATUSES,
@@ -80,6 +82,13 @@ export function DocTabs({
   onReorder?: (dragId: string, targetId: string | null) => void;
   /** Promote a preview tab (file/diff/commit-diff) to a permanent one — double-clicking it. */
   onPinDoc?: (id: string) => void;
+  /** A tab dropped here from the other group's strip; `duplicate` is a Ctrl-drop. */
+  onMoveTab?: (
+    id: string,
+    toGroup: GroupIndex,
+    beforeId: string | null,
+    duplicate: boolean,
+  ) => void;
   /**
    * Re-dock the center (terminal/editor) panel between slots. When present, the tab-bar
    * background itself is the drag surface — dragging an empty area of the bar moves the
@@ -92,7 +101,6 @@ export function DocTabs({
    *  save store here, which would pull Monaco into the tab strip. */
   saveStatuses?: ReadonlyMap<string, FileSaveStatus>;
 }) {
-  const dragIdRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   // Hovering the trailing strip past the last tab — drops there move the tab to the end
   // (targetId=null). Without it the rightmost slot was unreachable (R5.6).
@@ -237,6 +245,16 @@ export function DocTabs({
 
   const activeClass = groupActive ? 'tab--active' : 'tab--current';
 
+  const dropTab = (e: React.DragEvent, beforeId: string | null) => {
+    e.preventDefault();
+    const dr = currentTabDrag();
+    if (dr?.group === group) onReorder?.(dr.id, beforeId);
+    else if (dr) onMoveTab?.(dr.id, group, beforeId, e.ctrlKey);
+    endTabDrag();
+    setOverId(null);
+    setOverEnd(false);
+  };
+
   return (
     <div className="tabbar-wrap">
       <div
@@ -304,7 +322,7 @@ export function DocTabs({
             onContextMenu={onTabContextMenu ? (e) => onTabContextMenu(e, d) : undefined}
             draggable={!!onReorder}
             onDragStart={(e) => {
-              dragIdRef.current = d.id;
+              beginTabDrag({ id: d.id, group, sessionId: d.sessionId });
               if (d.kind === 'file') {
                 stampFileDrag(e.dataTransfer, d.path, { download: true, terminal: false });
                 // A drop target outside the app can only copy; 'move' alone would refuse it.
@@ -314,22 +332,16 @@ export function DocTabs({
               }
             }}
             onDragOver={(e) => {
-              const dr = dragIdRef.current;
-              if (dr && dr !== d.id) {
-                e.preventDefault();
+              const dr = currentTabDrag();
+              if (dr && !(dr.group === group && dr.id === d.id)) {
+                acceptTabDrop(e);
                 setOverId(d.id);
               }
             }}
             onDragLeave={() => setOverId((o) => (o === d.id ? null : o))}
-            onDrop={(e) => {
-              e.preventDefault();
-              const dr = dragIdRef.current;
-              if (dr) onReorder?.(dr, d.id);
-              dragIdRef.current = null;
-              setOverId(null);
-            }}
+            onDrop={(e) => dropTab(e, d.id)}
             onDragEnd={() => {
-              dragIdRef.current = null;
+              endTabDrag();
               setOverId(null);
               setOverEnd(false);
             }}
@@ -387,19 +399,12 @@ export function DocTabs({
           <div
             className={`tabbar__tail ${overEnd ? 'tabbar__tail--over' : ''}`}
             onDragOver={(e) => {
-              if (!dragIdRef.current) return;
-              e.preventDefault();
+              if (!currentTabDrag()) return;
+              acceptTabDrop(e);
               setOverEnd(true);
             }}
             onDragLeave={() => setOverEnd(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              const dr = dragIdRef.current;
-              if (dr) onReorder(dr, null);
-              dragIdRef.current = null;
-              setOverId(null);
-              setOverEnd(false);
-            }}
+            onDrop={(e) => dropTab(e, null)}
           />
         )}
       </div>
