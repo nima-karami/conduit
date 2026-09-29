@@ -367,9 +367,59 @@ describe('createFileSaves', () => {
     const h = harness();
     h.open('/a.ts', 'one').setValue('two');
     h.open('/b.ts', 'other');
+    expect(h.saves.canRename('/a.ts', '/b.ts')).toBe(false);
     h.saves.rename('/a.ts', '/b.ts');
     expect(h.registered.has('/a.ts')).toBe(true);
     expect(h.dirty.has('/a.ts')).toBe(true);
+  });
+
+  it('canRename allows a free destination, and a path without an entry', () => {
+    const h = harness();
+    h.open('/a.ts', 'one');
+    expect(h.saves.canRename('/a.ts', '/b.ts')).toBe(true);
+    expect(h.saves.canRename('/none.ts', '/b.ts')).toBe(true);
+    expect(h.saves.canRename('/a.ts', '/a.ts')).toBe(false);
+  });
+
+  it('a write in flight when the file is renamed does not count as saving the new path', async () => {
+    const h = harness();
+    h.open('/a.ts', 'one').setValue('two');
+    const p = h.saves.save('/a.ts', 'manual');
+    expect(h.writes.map((w) => w.path)).toEqual(['/a.ts']);
+    h.models.set('/b.ts', new FakeModel('two'));
+    h.saves.rename('/a.ts', '/b.ts');
+    h.writes[0].resolve(OK('/a.ts'));
+    await h.flush();
+    expect(h.dirty.has('/b.ts')).toBe(true);
+    expect(h.saved).toEqual([]);
+    expect(h.writes.map((w) => [w.path, w.content])).toEqual([
+      ['/a.ts', 'two'],
+      ['/b.ts', 'two'],
+    ]);
+    h.writes[1].resolve(OK('/b.ts'));
+    expect(await p).toBe(true);
+    expect(h.dirty.has('/b.ts')).toBe(false);
+    expect(h.saved).toEqual([['/b.ts', 'two']]);
+  });
+
+  it('marking a dirty entry deleted pauses it: no auto or manual write, force recreates', async () => {
+    const h = harness({ mode: 'afterDelay', delayMs: 100 });
+    const m = h.open('/a.ts', 'one');
+    m.setValue('two');
+    h.saves.markDeleted('/a.ts');
+    expect(h.saves.getStatus('/a.ts')).toMatchObject({ phase: 'conflict', conflict: 'deleted' });
+    m.setValue('three');
+    await vi.advanceTimersByTimeAsync(500);
+    await h.saves.flushAll('windowBlur');
+    expect(await h.saves.save('/a.ts', 'manual')).toBe(false);
+    expect(h.writes).toHaveLength(0);
+    expect(h.dirty.has('/a.ts')).toBe(true);
+    const p = h.saves.save('/a.ts', 'force');
+    expect(h.writes.map((w) => [w.path, w.content, w.opts?.expected])).toEqual([
+      ['/a.ts', 'three', undefined],
+    ]);
+    h.writes[0].resolve(OK('/a.ts'));
+    expect(await p).toBe(true);
   });
 
   it('canWrite false: auto trigger is silent, manual save toasts once', async () => {

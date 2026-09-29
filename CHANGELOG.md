@@ -46,7 +46,14 @@ All notable user-facing changes to Conduit. Format follows
 - **Saving a file over 2 MB can no longer cut it short.** Only the first 2 MB of such a file is
   loaded, and saving it wrote just that part back over the whole file. The partial view now opens
   read-only, and Ctrl+S, Save All, Save in the close prompt and auto save all refuse to write it.
-- **Deleting an open file from Files closes its tab.** The tab stayed open on the deleted file.
+- **Deleting a file or folder from Files handles its open tabs.** Tabs stayed open on deleted
+  files, and a folder delete never touched the tabs inside it. Tabs with no unsaved edits now
+  close. A tab with unsaved edits stays open, marked "deleted on disk": nothing (auto save
+  included) writes the file back until you choose Overwrite, which recreates it and its folder,
+  or Close.
+- **A renamed, moved or deleted file stops resolving in code navigation.** Imports of the old
+  path kept resolving to the removed file, and Go to Definition opened a tab on it.
+- **The large-file notice is no longer covered by the editor's read-only popup.**
 
 ## [0.43.0] — 2026-09-26
 

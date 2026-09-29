@@ -3,7 +3,9 @@
  * the folder holding one retargets the tab — buffer, dirty state, cursor and the auto-save writer
  * all follow the new path, and nothing is ever written back to the old one. And a > 2 MB file,
  * which the host only loads the head of, can never be written over the full file by Ctrl+S,
- * Save All, close→Save or auto save. Deleting an open file from Files closes its tab.
+ * Save All, close→Save or auto save. Undo of a rename and a drag-move retarget the same way, and
+ * a renamed path leaves the TS project. Deleting a file or folder closes its clean tabs; a dirty
+ * one stays open, marked deleted, and nothing recreates it until the user picks Overwrite.
  *
  * Run after a fresh build: `npm run build` then `node test/e2e/run-smoke.mjs file-integrity`.
  */
@@ -11,6 +13,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  activate,
   closeTab,
   disk,
   isDirty,
@@ -172,6 +175,229 @@ async function phaseDeleteOpen({ page, root, log }) {
   log('delete: deleting an open file from Files closes its tab ✓');
 }
 
+async function deleteRow(page, name) {
+  await row(page, name).click();
+  await page.keyboard.press('Delete');
+  await page.waitForSelector('.confirm', { state: 'visible', timeout: 8000 });
+  await page.locator('.confirm .btn--danger').click();
+}
+
+const deletedBanner = (page) =>
+  page.locator('.viewer__banner--warn', { hasText: 'was deleted on disk' });
+
+async function overwrite(page) {
+  await deletedBanner(page).locator('button', { hasText: 'Overwrite' }).click();
+}
+
+async function phaseFolderDelete({ page, root, log, shot }) {
+  await setMode(page, 'off');
+  await row(page, 'fdel').click();
+  await openFile(page, 'x.ts');
+  await openFile(page, 'y.ts');
+  await editAt(page, 1, 1, 'Y');
+  await waitFor(() => isDirty(page, 'y.ts'), 'y.ts dirty');
+
+  await deleteRow(page, 'fdel');
+  await waitFor(() => !existsSync(join(root, 'fdel')), 'the folder delete on disk', 10000);
+  await waitFor(async () => (await tab(page, 'x.ts').count()) === 0, 'the clean tab to close');
+  assert((await tab(page, 'y.ts').count()) === 1, 'the dirty tab inside the folder stays open');
+  await activate(page, 'y.ts');
+  await deletedBanner(page).waitFor({ timeout: 5000 });
+  assert((await modelValueAt(page, '/fdel/y.ts')) === 'Yone\n', 'its buffer is kept');
+  await shot('folder-delete-dirty-kept');
+  log('folder delete: the clean tab closes, the dirty one stays marked deleted ✓');
+
+  await overwrite(page);
+  await waitFor(
+    () => existsSync(join(root, 'fdel', 'y.ts')) && disk(root, 'fdel/y.ts') === 'Yone\n',
+    'Overwrite to recreate fdel/y.ts',
+  );
+  await waitFor(async () => !(await isDirty(page, 'y.ts')), 'the dot to clear');
+  log('folder delete: Overwrite recreates the file and its folder ✓');
+  await closeTab(page, 'y.ts');
+}
+
+async function phaseDirtyDelete({ app, page, root, log }) {
+  await setMode(page, 'off');
+  await openFile(page, 'dd.ts');
+  await editAt(page, 1, 1, 'D');
+  await waitFor(() => isDirty(page, 'dd.ts'), 'dd.ts dirty');
+  await deleteRow(page, 'dd.ts');
+  await waitFor(() => !existsSync(join(root, 'dd.ts')), 'the delete on disk', 10000);
+  await deletedBanner(page).waitFor({ timeout: 5000 });
+  assert((await tab(page, 'dd.ts').count()) === 1, 'the dirty tab stays open');
+  assert(await isDirty(page, 'dd.ts'), 'and keeps its unsaved state');
+
+  await setMode(page, 'afterDelay', 200);
+  await editAt(page, 1, 1, 'E');
+  await sleep(1000);
+  await page.keyboard.press('Control+S');
+  await sleep(800);
+  assert(!existsSync(join(root, 'dd.ts')), 'neither auto save nor Ctrl+S recreates it silently');
+  assert((await writesTo(app, 'dd.ts')).length === 0, 'no write targeted dd.ts');
+  log('dirty delete: the tab stays, marked deleted; nothing recreates the file ✓');
+
+  await overwrite(page);
+  await waitFor(
+    () => existsSync(join(root, 'dd.ts')) && disk(root, 'dd.ts') === 'EDone\n',
+    'Overwrite to recreate dd.ts',
+  );
+  log('dirty delete: Overwrite recreates it with the buffer ✓');
+  await setMode(page, 'off');
+  await closeTab(page, 'dd.ts');
+}
+
+async function phaseUndoRename({ app, page, root, log }) {
+  await setMode(page, 'off');
+  await openFile(page, 'u.ts');
+  await editAt(page, 1, 1, 'U');
+  await waitFor(() => isDirty(page, 'u.ts'), 'u.ts dirty');
+  await renameRow(page, 'u.ts', 'u2.ts');
+  await waitFor(
+    async () => (await tab(page, 'u2.ts').count()) === 1,
+    'the tab to follow the rename',
+  );
+
+  // Explorer undo (Mod+Z) needs focus outside the editor.
+  await row(page, 'u2.ts').click();
+  await page.keyboard.press('Control+Z');
+  await waitFor(() => existsSync(join(root, 'u.ts')), 'the undo on disk', 10000);
+  await waitFor(async () => (await tab(page, 'u.ts').count()) === 1, 'the tab to follow the undo');
+  assert((await tab(page, 'u2.ts').count()) === 0, 'no tab is left on u2.ts');
+  assert(await isDirty(page, 'u.ts'), 'the tab is still dirty');
+  assert((await modelValueAt(page, '/u.ts')) === 'Uone\n', 'with its buffer');
+  await activate(page, 'u.ts');
+  await page.locator('.viewer__monaco .monaco-editor').first().click();
+  await page.keyboard.press('Control+S');
+  await waitFor(() => disk(root, 'u.ts') === 'Uone\n', 'Ctrl+S to write u.ts');
+  assert(!existsSync(join(root, 'u2.ts')), 'u2.ts is never recreated');
+  assert((await writesTo(app, 'u2.ts')).length === 0, 'no write targeted u2.ts');
+  log('undo rename: the tab follows the file back with its buffer ✓');
+  await closeTab(page, 'u.ts');
+}
+
+async function phaseDragMove({ app, page, root, log }) {
+  await setMode(page, 'off');
+  await openFile(page, 'm.ts');
+  await editAt(page, 1, 1, 'M');
+  await waitFor(() => isDirty(page, 'm.ts'), 'm.ts dirty');
+  await row(page, 'm.ts').dragTo(row(page, 'mdir'));
+  await waitFor(() => existsSync(join(root, 'mdir', 'm.ts')), 'the move on disk', 10000);
+  await waitFor(
+    async () => (await modelUris(page)).some((u) => u.endsWith('/mdir/m.ts')),
+    'the tab to follow the move',
+  );
+  assert(await isDirty(page, 'm.ts'), 'the moved tab is still dirty');
+  assert((await modelValueAt(page, '/mdir/m.ts')) === 'Mone\n', 'with its buffer');
+  await activate(page, 'm.ts');
+  await page.locator('.viewer__monaco .monaco-editor').first().click();
+  await page.keyboard.press('Control+S');
+  await waitFor(() => disk(root, 'mdir/m.ts') === 'Mone\n', 'Ctrl+S to write mdir/m.ts');
+  assert(!existsSync(join(root, 'm.ts')), 'the old m.ts is never recreated');
+  const old = (await app.evaluate(() => global.__writeSpy)).filter(
+    (w) =>
+      w.path.replace(/\\/g, '/').toLowerCase() ===
+      join(root, 'm.ts').replace(/\\/g, '/').toLowerCase(),
+  );
+  assert(old.length === 0, `no write targeted the old m.ts (${old.length})`);
+  log('drag move: the tab follows the file with its buffer ✓');
+  await closeTab(page, 'm.ts');
+}
+
+/** A move that REPLACES a file open in another tab: that tab goes, the moved one takes its path. */
+async function phaseDragReplace({ page, root, log }) {
+  await setMode(page, 'off');
+  await row(page, 'rdir').click();
+  const rRows = page.locator('.filerow', {
+    has: page.locator('.filerow__name', { hasText: /^r\.ts$/ }),
+  });
+  await rRows.nth(1).waitFor({ state: 'attached', timeout: 10000 });
+  await rRows.nth(0).dblclick(); // rdir/r.ts — the tree lists the folder's child first
+  await page.waitForSelector('.viewer__monaco .monaco-editor', { timeout: 15000 });
+  await rRows.nth(1).dblclick(); // r.ts at the root
+  await waitFor(async () => (await tab(page, 'r.ts').count()) === 1, 'the r.ts tabs');
+  await waitFor(
+    async () => (await page.locator('.tabbar [role="tab"]', { hasText: 'r.ts' }).count()) === 2,
+    'two r.ts tabs',
+  );
+  await waitFor(
+    async () => (await modelUris(page)).filter((u) => u.endsWith('/r.ts')).length === 2,
+    'both r.ts models',
+  );
+  const rootModel = (await modelUris(page)).find(
+    (u) => u.endsWith('/r.ts') && !u.includes('/rdir/'),
+  );
+  await page.evaluate((u) => {
+    const m = window.monaco.editor
+      .getModels()
+      .find((x) => decodeURIComponent(x.uri.toString()).toLowerCase() === u);
+    m.applyEdits([{ range: new window.monaco.Range(1, 1, 1, 1), text: 'R' }]);
+  }, rootModel);
+
+  await rRows.nth(1).dragTo(row(page, 'rdir'));
+  await page.waitForSelector('.confirm .btn--danger', { state: 'visible', timeout: 8000 });
+  await page.locator('.confirm .btn--danger', { hasText: 'Replace' }).click();
+  await waitFor(() => !existsSync(join(root, 'r.ts')), 'the move on disk', 10000);
+  await waitFor(
+    async () => (await page.locator('.tabbar [role="tab"]', { hasText: 'r.ts' }).count()) === 1,
+    'one r.ts tab left',
+  );
+  const uris = (await modelUris(page)).filter((u) => u.endsWith('/r.ts'));
+  assert(
+    uris.length === 1 && uris[0].includes('/rdir/'),
+    `only the moved buffer is left, at rdir/r.ts (${uris})`,
+  );
+  assert((await modelValueAt(page, '/rdir/r.ts')) === 'Rsrc\n', 'it holds the moved buffer');
+  assert(await isDirty(page, 'r.ts'), 'and is still dirty');
+  await activate(page, 'r.ts');
+  await page.locator('.viewer__monaco .monaco-editor').first().click();
+  await page.keyboard.press('Control+S');
+  await waitFor(() => disk(root, 'rdir/r.ts') === 'Rsrc\n', 'Ctrl+S to write rdir/r.ts');
+  assert(!existsSync(join(root, 'r.ts')), 'the old r.ts is never recreated');
+  log('drag replace: the replaced tab goes, the moved one takes its path with its buffer ✓');
+  await closeTab(page, 'r.ts');
+}
+
+/** The TS worker's semantic diagnostic codes for the model at `tail` (2307 = cannot find module).
+ *  Asked of the worker directly: the app turns Monaco's own semantic markers off. */
+const semanticCodes = (page, tail) =>
+  page.evaluate(async (t) => {
+    const m = window.monaco.editor
+      .getModels()
+      .find((x) => decodeURIComponent(x.uri.toString()).toLowerCase().endsWith(t));
+    const worker = await (await window.monaco.typescript.getTypeScriptWorker())(m.uri);
+    const diags = await worker.getSemanticDiagnostics(m.uri.toString());
+    return diags.map((d) => String(d.code));
+  }, tail);
+
+async function phaseTsIndex({ page, log }) {
+  await openFile(page, 'use.ts');
+  // lib.ts is never opened: it reaches the worker only as an extraLib.
+  await waitFor(
+    async () => !(await semanticCodes(page, '/use.ts')).includes('2307'),
+    'the import to resolve while lib.ts is where it says',
+    20000,
+  );
+  await renameRow(page, 'lib.ts', 'lib2.ts');
+  await waitFor(
+    async () => (await semanticCodes(page, '/use.ts')).includes('2307'),
+    'the import of the renamed file to report "Cannot find module"',
+    20000,
+  );
+  log('ts index: an import of the renamed path no longer resolves ✓');
+
+  await page.locator('.viewer__monaco .monaco-editor').first().click();
+  await page.evaluate(() => {
+    const ed = window.monaco.editor.getEditors().find((e) => e.hasTextFocus());
+    ed.setPosition({ lineNumber: 2, column: 19 });
+  });
+  await page.keyboard.press('F12');
+  await sleep(2500);
+  assert((await tab(page, 'lib.ts').count()) === 0, 'F12 opens no tab on the removed lib.ts');
+  log('ts index: F12 on it opens no dead tab ✓');
+  await closeTab(page, 'use.ts');
+}
+
 const BIG_LINE = `${'x'.repeat(99)}\n`;
 const BIG = BIG_LINE.repeat(25_000); // 2.5 MB — over the host's 2 MB read cap
 
@@ -198,6 +424,18 @@ async function phaseTruncated({ app, page, root, log, shot }) {
   await page.keyboard.press('Control+Home');
   await page.keyboard.type('typed');
   await sleep(200);
+  await shot('truncated-typed');
+  const bannerHit = await page.evaluate(() => {
+    const b = document.querySelector('.viewer__banner');
+    const r = b.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + 40, r.top + r.height / 2);
+    return !!hit && b.contains(hit);
+  });
+  assert(bannerHit, 'nothing covers the large-file banner after an edit attempt');
+  assert(
+    (await page.locator('.monaco-editor-overlaymessage').count()) === 0,
+    'no read-only popup stacked on the banner',
+  );
   await page.keyboard.press('Control+S');
   await sleep(800);
   assert(size() === full, `Ctrl+S after typing kept the file whole (${size()} of ${full})`);
@@ -238,12 +476,28 @@ runAutoSave('file-integrity', {
     'a.ts': 'one\ntwo\nthree\n',
     'dir/c.ts': 'one\n',
     'gone.ts': 'one\n',
+    'fdel/x.ts': 'one\n',
+    'fdel/y.ts': 'one\n',
+    'dd.ts': 'one\n',
+    'u.ts': 'one\n',
+    'm.ts': 'one\n',
+    'mdir/keep.txt': 'k\n',
+    'r.ts': 'src\n',
+    'rdir/r.ts': 'dest\n',
+    'lib.ts': 'export const lib = 1;\n',
+    'use.ts': "import { lib } from './lib';\nexport const x = lib;\n",
     'big.txt': BIG,
   },
   phases: {
     fileRename: phaseFileRename,
+    tsIndex: phaseTsIndex,
     folderRename: phaseFolderRename,
+    undoRename: phaseUndoRename,
+    dragMove: phaseDragMove,
+    dragReplace: phaseDragReplace,
     deleteOpen: phaseDeleteOpen,
+    folderDelete: phaseFolderDelete,
+    dirtyDelete: phaseDirtyDelete,
     truncated: phaseTruncated,
   },
 });

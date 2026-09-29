@@ -213,6 +213,22 @@ describe('fileService writeFile (host write path + confinement)', () => {
     const leftovers = fs.readdirSync(root).filter((n) => n.includes('.tmp'));
     expect(leftovers).toEqual([]);
   });
+
+  it('recreates the folders of a file whose folder was deleted under it', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const f = path.join(root, 'gone', 'deep', 'c.ts');
+    const res = await writeFile(f, 'kept', [root]);
+    expect(res.ok).toBe(true);
+    expect(fs.readFileSync(f, 'utf8')).toBe('kept');
+  });
+
+  it('never creates a folder outside the root', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const outside = path.join(fs.realpathSync.native(tmp()), 'made');
+    const res = await writeFile(path.join(outside, 'x.ts'), 'x', [root]);
+    expect(res.ok).toBe(false);
+    expect(fs.existsSync(outside)).toBe(false);
+  });
 });
 
 describe('fileService writeFile (K2 read-grant allowance)', () => {

@@ -9,6 +9,7 @@ import {
   autoSaveStep,
   INITIAL_AUTO_SAVE_STATE,
   type SaveKind,
+  stronger,
 } from './auto-save-policy';
 import type { SaveEntry } from './save-registry';
 
@@ -58,8 +59,12 @@ export interface FileSaves {
   configure(cfg: { mode: AutoSaveMode; delayMs: number }): void;
   attach(path: string, opts: AttachOpts): void;
   dispose(path: string): void;
+  /** Whether `rename(from, to)` would move anything aside: `to` must not have an entry. */
+  canRename(from: string, to: string): boolean;
   /** The file moved on disk: the entry follows it to `to`, whose model must already exist. */
   rename(from: string, to: string): void;
+  /** The file was deleted on disk under this buffer (see the policy's `deletedOnDisk`). */
+  markDeleted(path: string): void;
   save(path: string, kind: SaveKind): Promise<boolean>;
   trigger(path: string, trigger: AutoSaveTrigger): void;
   flushAll(trigger: 'windowBlur'): Promise<void>;
@@ -133,19 +138,22 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
 
   const write = async (e: Entry, kind: SaveKind) => {
     const content = e.model.getValue();
+    const path = e.path;
     e.error = null;
     publish(e);
     let res: WriteResult;
     try {
-      res = await deps.write(
-        e.path,
-        content,
-        kind === 'auto' ? { expected: e.baseline } : undefined,
-      );
+      res = await deps.write(path, content, kind === 'auto' ? { expected: e.baseline } : undefined);
     } catch (err) {
       res = { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
     if (e.disposed) return;
+    // Renamed while the write was out: it landed (or failed) at the old path, which says nothing
+    // about the new one — so the chain writes again, there.
+    if (e.path !== path) {
+      e.next = stronger(e.next, kind);
+      return;
+    }
     e.lastOk = res.ok;
     if (res.ok) {
       e.baseline = content;
@@ -313,6 +321,15 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
       next.delete(path);
       snapshot = next;
       notify();
+    },
+
+    canRename: (from, to) => from !== to && !entries.has(to),
+
+    markDeleted(path) {
+      const e = entries.get(path);
+      if (!e) return;
+      e.error = null;
+      step(e, { type: 'deletedOnDisk' });
     },
 
     rename(from, to) {

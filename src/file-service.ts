@@ -204,6 +204,9 @@ export async function writeFile(
   // Same-directory temp so the final rename is atomic (same filesystem/volume).
   const tmp = path.join(dir, `.${path.basename(target)}.${process.pid}.${Date.now()}.tmp`);
   try {
+    // Overwrite of a buffer whose folder was deleted under it. Rooted writes only: validateWrite
+    // proved the whole path inside a root; a read grant is one exact file, never its folders.
+    if (verdict.ok) await fs.promises.mkdir(dir, { recursive: true });
     await fs.promises.writeFile(tmp, content, 'utf8');
     await fs.promises.rename(tmp, target);
     return { ok: true, path: target };

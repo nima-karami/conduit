@@ -40,7 +40,10 @@ export type AutoSaveEvent =
   | { type: 'writeDone'; outcome: 'failed'; kind: SaveKind }
   | { type: 'writeDone'; outcome: 'conflict'; conflict: WriteConflict }
   | { type: 'reset' }
-  | { type: 'modeChanged' };
+  | { type: 'modeChanged' }
+  /** The file was deleted from under the buffer (an explorer delete): the same pause as a write
+   *  that found it gone, so nothing recreates it until the user picks Overwrite. */
+  | { type: 'deletedOnDisk' };
 
 export type AutoSaveEffect =
   | { type: 'save'; kind: SaveKind }
@@ -61,7 +64,7 @@ export function triggerSaves(mode: AutoSaveMode, trigger: AutoSaveTrigger): bool
 }
 
 const RANK: Record<SaveKind, number> = { auto: 0, manual: 1, force: 2 };
-const stronger = (a: SaveKind | null, b: SaveKind): SaveKind =>
+export const stronger = (a: SaveKind | null, b: SaveKind): SaveKind =>
   a !== null && RANK[a] >= RANK[b] ? a : b;
 
 type Step = { state: AutoSaveState; effects: AutoSaveEffect[] };
@@ -154,6 +157,11 @@ export function autoSaveStep(state: AutoSaveState, event: AutoSaveEvent, mode: A
         effects: [{ type: 'clear' }],
       };
     }
+    case 'deletedOnDisk':
+      return {
+        state: { ...state, phase: 'conflict', conflict: 'deleted', pending: null },
+        effects: [{ type: 'clear' }],
+      };
     case 'reset':
       return { state: INITIAL_AUTO_SAVE_STATE, effects: [{ type: 'clear' }] };
     case 'modeChanged':

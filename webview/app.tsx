@@ -233,7 +233,12 @@ import { THEMES } from './themes';
 import { cancelTimedMessage, renewTimedMessage, subscribeTimerEvents } from './timer-store';
 import { pushToast } from './toast-store';
 import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';
-import { applyProjectFiles, setCompilerOptionsRoot } from './ts-project';
+import {
+  applyProjectFiles,
+  forgetIndexedPath,
+  moveIndexedPath,
+  setCompilerOptionsRoot,
+} from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
 import { useBackgroundOpenFeedback } from './use-background-open-feedback';
 import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-history';
@@ -2564,15 +2569,22 @@ export function App() {
     return () => setMentionSink(null);
   }, [active]);
 
-  // Force-close any open doc tab(s) for `path` WITHOUT a dirty re-prompt. Used after a
-  // delete/rename the user already confirmed: re-prompting "save unsaved changes?" for a
-  // file the user just chose to delete would be contradictory (documented rule). Both
-  // the file doc and any open diff for the same path are dropped.
-  const dropDocsFor = useCallback(
+  // `path` (a file or a folder) was deleted by the user. A clean tab at or under it closes without
+  // a prompt — they just chose to delete it. A tab with unsaved edits stays open on its buffer,
+  // paused as "deleted on disk" until the user picks Overwrite or Close (VS Code parity); nothing
+  // recreates it behind their back. Diff tabs of it close. The TS project drops the path either way.
+  const closeDocsForDeleted = useCallback(
     (path: string) => {
+      const dirty = getDirtySnapshot();
+      const kept = new Set<string>();
       for (const d of docStateRef.current.docs) {
-        if (pathBelow(d.path, path) === '') forceCloseDoc(d.id);
+        if (pathBelow(d.path, path) === null) continue;
+        if (d.kind === 'file' && dirty.has(d.path)) {
+          fileSaves.markDeleted(d.path);
+          kept.add(d.path);
+        } else forceCloseDoc(d.id);
       }
+      forgetIndexedPath(path, (p) => kept.has(p));
     },
     [forceCloseDoc],
   );
@@ -2593,7 +2605,7 @@ export function App() {
         for (const node of batch) {
           const res = await fsMutate({ op, path: node.path });
           if (res.ok) {
-            if (node.kind === 'file') dropDocsFor(node.path);
+            closeDocsForDeleted(node.path);
             deleted.push(node.path);
           } else {
             failed.push({ path: node.path, error: res.error });
@@ -2631,27 +2643,34 @@ export function App() {
         },
       });
     },
-    [dropDocsFor],
+    [closeDocsForDeleted],
   );
 
   // A file or folder was renamed or moved on disk: every file tab at or under it follows it in
-  // place — buffer, dirty state, view state and save entry (VS Code parity). A diff tab of the
-  // old path describes a file that is no longer there, so it closes. A tab whose new path is
-  // already open stays where it is rather than lose its buffer. Not a navigation (spec A6:
-  // renames aren't tracked), so nothing is recorded.
+  // place — buffer, dirty state, view state and save entry (VS Code parity) — and the TS project
+  // drops the old path. A diff tab of the old path describes a file that is no longer there, so it
+  // closes, and so does a tab already open on the new path (a move that replaced that file). Not
+  // a navigation (spec A6: renames aren't tracked), so nothing is recorded.
   const onFileRenamed = useCallback(
     (fromPath: string, toPath: string) => {
       const docs = docStateRef.current.docs;
-      const openIds = new Set(docs.map((d) => d.id));
       const moves: { from: string; to: string }[] = [];
       for (const d of docs) {
         const to = renamedPath(d.path, fromPath, toPath);
         if (to === null || to === d.path) continue;
-        if (d.kind !== 'file') forceCloseDoc(d.id);
-        else if (!openIds.has(`file:${to}`)) moves.push({ from: d.path, to });
+        if (d.kind !== 'file') {
+          forceCloseDoc(d.id);
+          continue;
+        }
+        const replaced = docs.find((x) => x.id === `file:${to}`);
+        if (replaced) forceCloseDoc(replaced.id);
+        moves.push({ from: d.path, to });
       }
-      if (moves.length === 0) return;
+      const movedFrom = new Set(moves.map((m) => m.from));
+      const openFiles = new Set(docs.filter((d) => d.kind === 'file').map((d) => d.path));
       for (const m of moves) moveFileTab(m.from, m.to);
+      moveIndexedPath(fromPath, toPath, (p) => openFiles.has(p) && !movedFrom.has(p));
+      if (moves.length === 0) return;
       dispatchDocs({ type: 'renamePath', from: fromPath, to: toPath });
       setFiles((prev) => {
         const next = new Map(prev);

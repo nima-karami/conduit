@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'react';
 import { canSave, post, writeFile } from './bridge';
 import { clearDirty, getDirtySnapshot, updateDirty } from './dirty-store';
 import { createFileSaves, type FileSaveStatus, type FileSaves } from './file-save-controller';
+import { disposeWhenDetached } from './model-lifetime';
 import { fileUri } from './project-index';
 import { notifySaved, registerSave } from './save-registry';
 import { pushToast } from './toast-store';
@@ -31,30 +32,20 @@ export const fileSaves: FileSaves = createFileSaves({
 
 /**
  * A renamed file keeps its buffer: Monaco can't re-key a model, so the text moves into a model at
- * the new URI and the save entry follows it. The old model outlives any editor still showing it —
- * that editor's unmount capture of the view state needs a model to read.
+ * the new URI and the save entry follows it. False, with nothing touched, when the new path
+ * already has a save entry of its own.
  */
-export function moveFileBuffer(from: string, to: string): void {
+export function moveFileBuffer(from: string, to: string): boolean {
+  if (!fileSaves.canRename(from, to)) return false;
   const old = monaco.editor.getModel(fileUri(from));
   const toUri = fileUri(to);
-  if (!old || old.uri.toString() === toUri.toString()) return;
+  if (!old || old.uri.toString() === toUri.toString()) return true;
   const moved = monaco.editor.getModel(toUri);
   if (moved) moved.setValue(old.getValue());
   else monaco.editor.createModel(old.getValue(), old.getLanguageId(), toUri);
   fileSaves.rename(from, to);
-  const showing = monaco.editor.getEditors().filter((e) => e.getModel() === old);
-  if (showing.length === 0) {
-    old.dispose();
-    return;
-  }
-  let left = showing.length;
-  for (const e of showing) {
-    const sub = e.onDidDispose(() => {
-      sub.dispose();
-      left -= 1;
-      if (left === 0 && !old.isDisposed()) old.dispose();
-    });
-  }
+  disposeWhenDetached(old);
+  return true;
 }
 
 export function useFileSaveStatus(path: string): FileSaveStatus | undefined {

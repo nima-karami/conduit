@@ -13,11 +13,13 @@
  * See docs/specs/archive/2026-08-07-editor-navigation-parity.md §3b.
  */
 
-import { typescript as monacoTs } from 'monaco-editor';
+import { editor as monacoEditor, typescript as monacoTs } from 'monaco-editor';
+import { pathBelow, renamedPath } from '../src/canonical-path';
 import type { TsconfigDTO } from '../src/tsconfig-map';
 import { toCompilerOptions } from '../src/tsconfig-map';
+import { disposeWhenDetached } from './model-lifetime';
 import { warmLanguageWorker } from './monaco-warmup';
-import { fileUri } from './project-index';
+import { fileUri, pathForUri } from './project-index';
 import { createIndexTracker, flushImmediately, type IndexProgress } from './ts-index-state';
 import { CompilerOptionsRoot } from './ts-options-root';
 
@@ -41,7 +43,15 @@ export interface ProjectFilesChunk {
  */
 const FLUSH_IDLE_MS = 250;
 
-const pending = new Map<string, string>();
+interface IndexedFile {
+  path: string;
+  content: string;
+}
+
+const pending = new Map<string, IndexedFile>();
+// What the worker holds, with the handles that take it out again: a rename or delete must remove
+// the old path, and only the handle of the latest add can (monaco versions each extraLib).
+const indexed = new Map<string, IndexedFile & { handles: { dispose(): void }[] }>();
 const tracker = createIndexTracker();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -61,17 +71,71 @@ export function isIndexReady(): boolean {
  * and "N of M" would start lying the moment a package landed. The extraLib push itself is the
  * same one `flush` performs, so there is one place where content reaches the worker.
  */
-export function addIndexedFiles(files: readonly { path: string; content: string }[]): void {
-  pushExtraLibs(files.map((f) => [fileUri(f.path).toString(), f.content]));
+export function addIndexedFiles(files: readonly IndexedFile[]): void {
+  pushExtraLibs(files);
 }
 
-function pushExtraLibs(entries: Iterable<readonly [string, string]>): void {
-  for (const [uri, content] of entries) {
-    // Idempotent for unchanged content, and version-stable — unlike setExtraLibs, which
-    // re-versions every file on every call and would invalidate the whole program per chunk.
-    monacoTs.typescriptDefaults.addExtraLib(content, uri);
-    monacoTs.javascriptDefaults.addExtraLib(content, uri);
+function pushExtraLibs(files: Iterable<IndexedFile>): void {
+  for (const { path, content } of files) {
+    const uri = fileUri(path).toString();
+    // An unchanged re-add is a no-op in monaco whose handle removes nothing — keep the old one.
+    if (indexed.get(uri)?.content === content) continue;
+    // Version-stable per file — unlike setExtraLibs, which re-versions every file on every call
+    // and would invalidate the whole program per chunk.
+    const handles = [
+      monacoTs.typescriptDefaults.addExtraLib(content, uri),
+      monacoTs.javascriptDefaults.addExtraLib(content, uri),
+    ];
+    indexed.set(uri, { path, content, handles });
   }
+}
+
+/** Take everything at or under `path` out of the worker and the pending batch; returns both. */
+function takeIndexed(
+  path: string,
+  keepOpen: (path: string) => boolean,
+): { pushed: IndexedFile[]; queued: IndexedFile[] } {
+  const pushed: IndexedFile[] = [];
+  const queued: IndexedFile[] = [];
+  for (const [uri, f] of indexed) {
+    if (pathBelow(f.path, path) === null) continue;
+    for (const h of f.handles) h.dispose();
+    indexed.delete(uri);
+    pushed.push({ path: f.path, content: f.content });
+  }
+  for (const [uri, f] of pending) {
+    if (pathBelow(f.path, path) === null) continue;
+    pending.delete(uri);
+    queued.push(f);
+  }
+  // The worker reads a live model before an extraLib, so a model left on the path (a peeked or
+  // closed file) would keep it resolving. An open tab's model is its buffer and stays.
+  for (const m of monacoEditor.getModels()) {
+    const p = pathForUri(m.uri);
+    if (pathBelow(p, path) !== null && !keepOpen(p)) disposeWhenDetached(m);
+  }
+  return { pushed, queued };
+}
+
+/** `path` (a file or a folder) was deleted: it leaves the TS project. */
+export function forgetIndexedPath(path: string, keepOpen: (path: string) => boolean): void {
+  takeIndexed(path, keepOpen);
+}
+
+/** `from` was renamed to `to`: its files leave the project at the old path and join at the new. */
+export function moveIndexedPath(
+  from: string,
+  to: string,
+  keepOpen: (path: string) => boolean,
+): void {
+  const moved = (f: IndexedFile) => ({
+    path: renamedPath(f.path, from, to) ?? f.path,
+    content: f.content,
+  });
+  const { pushed, queued } = takeIndexed(from, keepOpen);
+  pushExtraLibs(pushed.map(moved));
+  // Still waiting for the flush, which is what counts them as loaded.
+  for (const f of queued.map(moved)) pending.set(fileUri(f.path).toString(), f);
 }
 
 function flush(): void {
@@ -80,7 +144,7 @@ function flush(): void {
     flushTimer = null;
   }
   if (!pending.size) return;
-  pushExtraLibs(pending);
+  pushExtraLibs(pending.values());
   tracker.markLoaded(pending.size);
   pending.clear();
   // Once-guarded: content alone doesn't start the worker, so the priority wave's flush is
@@ -127,7 +191,9 @@ export function applyProjectFiles(chunk: ProjectFilesChunk): void {
     capped: chunk.capped,
     supplemental: chunk.supplemental,
   });
-  for (const f of chunk.files) pending.set(fileUri(f.path).toString(), f.content);
+  for (const f of chunk.files) {
+    pending.set(fileUri(f.path).toString(), { path: f.path, content: f.content });
+  }
 
   if (flushImmediately(chunk.seq, chunk.done)) {
     flush();
