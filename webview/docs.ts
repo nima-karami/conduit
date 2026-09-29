@@ -370,8 +370,7 @@ function openForeground(
     layout = setGroup(layout, other, removeTab(groupAt(layout, other), o.id));
     next = placeTab(target, o.id, false, docs);
   } else {
-    // A transferred file/diff tab lands pinned: it never downgrades, nor evicts this group's
-    // preview (review B4). The commit-diff slot is a preview wherever it goes.
+    // Appended pinned (see split-editor plan P1b): as a preview it would evict this group's own.
     next = placeTab(target, o.id, o.preview && !(transferred && isPreviewable(o.kind)), docs);
   }
   layouts[s] = { ...setGroup(layout, g, { ...next, active: o.id }), activeGroup: g };

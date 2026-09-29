@@ -563,6 +563,14 @@ describe('group actions', () => {
     expect(ids(commitFirst, 1)).toEqual(['commit-diff:@preview', 'file:/p.ts']);
   });
 
+  it('a preview in the losing session lands pinned in the new owner', () => {
+    let s = open(initialDocs, '/a.ts', { mode: 'preview', sessionId: 'A' });
+    expect(tabPreview(s, 'A', 1, 'file:/a.ts')).toBe(true);
+    s = open(s, '/a.ts', { mode: 'preview', sessionId: 'B' });
+    expect(ids(s, 1, 'B')).toEqual(['file:/a.ts']);
+    expect(tabPreview(s, 'B', 1, 'file:/a.ts')).toBe(false);
+  });
+
   it("an ownership transfer appends a pinned tab and keeps the new owner's preview", () => {
     let s = open(initialDocs, '/a.ts', { sessionId: 'A' });
     s = open(s, '/q.ts', { mode: 'preview', sessionId: 'B' });
