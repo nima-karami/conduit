@@ -589,7 +589,7 @@ export function FolderSection({
       }
       recordFsOp?.({ kind: 'rename', from: d.path, to: targetPath });
       refreshDir(d.dir);
-      if (d.kind === 'file') onRenamed(d.path, targetPath);
+      onRenamed(d.path, targetPath);
     }
   };
 

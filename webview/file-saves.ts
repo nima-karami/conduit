@@ -29,6 +29,34 @@ export const fileSaves: FileSaves = createFileSaves({
   clearTimer: (h) => window.clearTimeout(h as number),
 });
 
+/**
+ * A renamed file keeps its buffer: Monaco can't re-key a model, so the text moves into a model at
+ * the new URI and the save entry follows it. The old model outlives any editor still showing it —
+ * that editor's unmount capture of the view state needs a model to read.
+ */
+export function moveFileBuffer(from: string, to: string): void {
+  const old = monaco.editor.getModel(fileUri(from));
+  const toUri = fileUri(to);
+  if (!old || old.uri.toString() === toUri.toString()) return;
+  const moved = monaco.editor.getModel(toUri);
+  if (moved) moved.setValue(old.getValue());
+  else monaco.editor.createModel(old.getValue(), old.getLanguageId(), toUri);
+  fileSaves.rename(from, to);
+  const showing = monaco.editor.getEditors().filter((e) => e.getModel() === old);
+  if (showing.length === 0) {
+    old.dispose();
+    return;
+  }
+  let left = showing.length;
+  for (const e of showing) {
+    const sub = e.onDidDispose(() => {
+      sub.dispose();
+      left -= 1;
+      if (left === 0 && !old.isDisposed()) old.dispose();
+    });
+  }
+}
+
 export function useFileSaveStatus(path: string): FileSaveStatus | undefined {
   return useSyncExternalStore(fileSaves.subscribe, () => fileSaves.getStatus(path));
 }

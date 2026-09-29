@@ -13,7 +13,7 @@ import { repoForPath } from '../src/active-repo';
 import { visibleSessionIds } from '../src/attention';
 import type { BoardCard } from '../src/board';
 import { cardSessionPrefill } from '../src/board-linkage';
-import { canonicalPath } from '../src/canonical-path';
+import { canonicalPath, pathBelow, renamedPath } from '../src/canonical-path';
 import {
   acceptRepoChanges,
   changesModel,
@@ -140,7 +140,7 @@ import {
   navEntryFor,
 } from './editor-nav';
 import { shouldReplaceContent } from './file-freshness';
-import { fileSaves, setDocCloser } from './file-saves';
+import { fileSaves, moveFileBuffer, setDocCloser } from './file-saves';
 import { buildRowChangeMap } from './file-tree';
 import {
   affectedDirs,
@@ -239,7 +239,7 @@ import { useBackgroundOpenFeedback } from './use-background-open-feedback';
 import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-history';
 import { useReviewModeLayout } from './use-review-mode-layout';
 import { useSnooze } from './use-snooze';
-import { markClosing } from './view-state-store';
+import { fileViewStateIds, markClosing, renameViewState } from './view-state-store';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
@@ -320,6 +320,16 @@ function releaseFileTab(path: string): void {
   clearDirty(path);
   fileSaves.dispose(path);
   clearReveal(path);
+}
+
+/** A file tab's per-path state follows its file to a new path, without a React render between. */
+function moveFileTab(from: string, to: string): void {
+  moveFileBuffer(from, to);
+  const toIds = fileViewStateIds(to);
+  fileViewStateIds(from).forEach((id, i) => {
+    renameViewState(id, toIds[i]);
+  });
+  clearReveal(from);
 }
 
 export function App() {
@@ -875,6 +885,8 @@ export function App() {
   // would otherwise create a circular ordering problem: actionMap is declared
   // before `active` is derived, but doUndo/doRedo depend on active-derived hooks).
   const doUndoRef = useRef<() => void>(() => {});
+  // Declared after the fs-undo handlers that call it.
+  const retargetDocsRef = useRef<(from: string, to: string) => void>(() => {});
   const doRedoRef = useRef<() => void>(() => {});
   // closeDoc is declared later (it depends on hooks below); the shortcut handler reaches
   // it through this ref to avoid the same ordering problem as undo/redo.
@@ -1406,10 +1418,13 @@ export function App() {
         const res = await fsMutate(action.req);
         ok = res.ok;
         if (!res.ok) errorMsg = res.error;
+        else if (action.req.op === 'rename')
+          retargetDocsRef.current(action.req.from, action.req.to);
       } else if (action.call === 'move') {
         const res = await fsDndMove(action.from, action.to);
         ok = res.ok;
         if (!res.ok) errorMsg = res.error;
+        else retargetDocsRef.current(action.from, res.path);
       } else {
         // action.call === 'copy'
         const res = await fsDndCopy(action.from, action.to);
@@ -2555,9 +2570,8 @@ export function App() {
   // the file doc and any open diff for the same path are dropped.
   const dropDocsFor = useCallback(
     (path: string) => {
-      const norm = path.replace(/[\\/]+$/, '');
       for (const d of docStateRef.current.docs) {
-        if (d.path.replace(/[\\/]+$/, '') === norm) forceCloseDoc(d.id);
+        if (pathBelow(d.path, path) === '') forceCloseDoc(d.id);
       }
     },
     [forceCloseDoc],
@@ -2620,21 +2634,39 @@ export function App() {
     [dropDocsFor],
   );
 
-  // A file was renamed on disk. The doc id is keyed on path and re-keying the Monaco
-  // model + dirty-state across a path change is cross-cutting, so the cheap, correct
-  // behavior is to close the old tab and reopen at the new path (documented rule).
+  // A file or folder was renamed or moved on disk: every file tab at or under it follows it in
+  // place — buffer, dirty state, view state and save entry (VS Code parity). A diff tab of the
+  // old path describes a file that is no longer there, so it closes. A tab whose new path is
+  // already open stays where it is rather than lose its buffer. Not a navigation (spec A6:
+  // renames aren't tracked), so nothing is recorded.
   const onFileRenamed = useCallback(
     (fromPath: string, toPath: string) => {
-      const norm = fromPath.replace(/[\\/]+$/, '');
-      const wasOpen = docStateRef.current.docs.some((d) => d.path.replace(/[\\/]+$/, '') === norm);
-      if (!wasOpen) return;
-      dropDocsFor(fromPath);
-      // A rename re-targets a tab the user already had open for real → keep it permanent. Not a
-      // navigation (spec A6: renames aren't tracked), so it records nothing.
-      openFile(toPath, undefined, 'permanent', { record: false });
+      const docs = docStateRef.current.docs;
+      const openIds = new Set(docs.map((d) => d.id));
+      const moves: { from: string; to: string }[] = [];
+      for (const d of docs) {
+        const to = renamedPath(d.path, fromPath, toPath);
+        if (to === null || to === d.path) continue;
+        if (d.kind !== 'file') forceCloseDoc(d.id);
+        else if (!openIds.has(`file:${to}`)) moves.push({ from: d.path, to });
+      }
+      if (moves.length === 0) return;
+      for (const m of moves) moveFileTab(m.from, m.to);
+      dispatchDocs({ type: 'renamePath', from: fromPath, to: toPath });
+      setFiles((prev) => {
+        const next = new Map(prev);
+        for (const m of moves) {
+          const doc = next.get(m.from);
+          next.delete(m.from);
+          if (doc) next.set(m.to, { ...doc, path: m.to, language: langFromPath(m.to) });
+        }
+        return next;
+      });
+      for (const m of moves) post({ type: 'readFile', path: m.to });
     },
-    [dropDocsFor, openFile],
+    [forceCloseDoc],
   );
+  retargetDocsRef.current = onFileRenamed;
 
   // The row / repo-head menus reuse the kebab's bulk items; the icons are this menu's own.
   const withBulkIcons = (items: MenuItem[]): MenuItem[] =>

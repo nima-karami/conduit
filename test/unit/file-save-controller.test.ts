@@ -327,6 +327,51 @@ describe('createFileSaves', () => {
     expect(h.saves.getStatus('/big.txt')).toBe(before);
   });
 
+  it('rename moves the entry — buffer, dirty flag, save entry and writer — to the new path', async () => {
+    const h = harness({ mode: 'afterDelay', delayMs: 100 });
+    const old = h.open('/a.ts', 'one');
+    old.setValue('two');
+    h.models.set('/b.ts', new FakeModel('two'));
+    h.saves.rename('/a.ts', '/b.ts');
+    expect(h.dirty.has('/a.ts')).toBe(false);
+    expect(h.dirty.has('/b.ts')).toBe(true);
+    expect(h.registered.has('/a.ts')).toBe(false);
+    expect(h.saves.getStatus('/a.ts')).toBeUndefined();
+    expect(h.saves.getStatus('/b.ts')?.edited).toBe(true);
+    expect(old.listenerCount).toBe(0);
+
+    const p = h.registered.get('/b.ts')?.save();
+    expect(h.writes.map((w) => [w.path, w.content])).toEqual([['/b.ts', 'two']]);
+    h.writes[0].resolve(OK('/b.ts'));
+    expect(await p).toBe(true);
+    expect(h.dirty.has('/b.ts')).toBe(false);
+
+    h.models.get('/b.ts')?.setValue('three');
+    await vi.advanceTimersByTimeAsync(150);
+    expect(h.writes.map((w) => [w.path, w.content, w.opts?.expected])).toEqual([
+      ['/b.ts', 'two', undefined],
+      ['/b.ts', 'three', 'two'],
+    ]);
+  });
+
+  it('a timer armed before the rename fires against the new path', async () => {
+    const h = harness({ mode: 'afterDelay', delayMs: 100 });
+    h.open('/a.ts', 'one').setValue('two');
+    h.models.set('/b.ts', new FakeModel('two'));
+    h.saves.rename('/a.ts', '/b.ts');
+    await vi.advanceTimersByTimeAsync(150);
+    expect(h.writes.map((w) => w.path)).toEqual(['/b.ts']);
+  });
+
+  it('rename onto a path that already has an entry changes nothing', () => {
+    const h = harness();
+    h.open('/a.ts', 'one').setValue('two');
+    h.open('/b.ts', 'other');
+    h.saves.rename('/a.ts', '/b.ts');
+    expect(h.registered.has('/a.ts')).toBe(true);
+    expect(h.dirty.has('/a.ts')).toBe(true);
+  });
+
   it('canWrite false: auto trigger is silent, manual save toasts once', async () => {
     const h = harness({ canWrite: false, mode: 'afterDelay' });
     const m = h.open('/a.ts', 'one');

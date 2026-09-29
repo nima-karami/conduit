@@ -58,6 +58,8 @@ export interface FileSaves {
   configure(cfg: { mode: AutoSaveMode; delayMs: number }): void;
   attach(path: string, opts: AttachOpts): void;
   dispose(path: string): void;
+  /** The file moved on disk: the entry follows it to `to`, whose model must already exist. */
+  rename(from: string, to: string): void;
   save(path: string, kind: SaveKind): Promise<boolean>;
   trigger(path: string, trigger: AutoSaveTrigger): void;
   flushAll(trigger: 'windowBlur'): Promise<void>;
@@ -237,6 +239,18 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
     if (e) e.model.setValue(e.baseline);
   };
 
+  const registerEntry = (e: Entry) =>
+    deps.register(e.path, {
+      save: (o) => save(e.path, o?.kind ?? 'manual'),
+      revert: () => revert(e.path),
+    });
+
+  const bindModel = (e: Entry, model: SaveModel) => {
+    e.sub?.dispose();
+    e.model = model;
+    e.sub = model.onDidChangeContent(() => onContent(e));
+  };
+
   return {
     configure(cfg) {
       delayMs = cfg.delayMs;
@@ -266,19 +280,12 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
           error: null,
           disposed: false,
         };
-        created.unregister = deps.register(path, {
-          save: (o) => save(path, o?.kind ?? 'manual'),
-          revert: () => revert(path),
-        });
+        created.unregister = registerEntry(created);
         entries.set(path, created);
         e = created;
       }
       const entry = e;
-      if (entry.sub === null || entry.model !== model) {
-        entry.sub?.dispose();
-        entry.model = model;
-        entry.sub = model.onDidChangeContent(() => onContent(entry));
-      }
+      if (entry.sub === null || entry.model !== model) bindModel(entry, model);
       // see docs/plans/2026-09-28-auto-save.plan.md P5: a reseed is a seed, never an edit.
       if (!deps.isMarkedDirty(path) && model.getValue() !== opts.diskContent) {
         entry.seeding = true;
@@ -306,6 +313,24 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
       next.delete(path);
       snapshot = next;
       notify();
+    },
+
+    rename(from, to) {
+      const e = entries.get(from);
+      const model = deps.getModel(to);
+      if (!e || !model || from === to || entries.has(to)) return;
+      entries.delete(from);
+      e.unregister();
+      e.path = to;
+      bindModel(e, model);
+      e.unregister = registerEntry(e);
+      entries.set(to, e);
+      deps.clearDirty(from);
+      deps.setDirty(to, e.baseline, model.getValue());
+      const next = new Map(snapshot);
+      next.delete(from);
+      snapshot = next;
+      publish(e);
     },
 
     save,
