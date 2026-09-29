@@ -14,7 +14,7 @@ export const terminalTabFocusKey = (sessionId: string) => `terminal-tab:${sessio
 
 function focusUnmovedSince(armed: Element | null): boolean {
   const now = document.activeElement;
-  return now === armed || now === null || now === document.body || !armed?.isConnected;
+  return now === armed || now === null || now === document.body;
 }
 
 export function registerFocusTarget(key: string, target: FocusTarget): () => void {

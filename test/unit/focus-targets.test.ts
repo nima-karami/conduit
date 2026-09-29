@@ -165,6 +165,17 @@ describe('focus-targets — a pending request expires', () => {
     expect(afterRemoval.focused).toBe(1);
   });
 
+  it('is dropped when its element left the document and focus now sits on another live element', () => {
+    const gone = button();
+    gone.focus();
+    requestDocFocus(doc1);
+    gone.remove();
+    button().focus();
+    const t = target();
+    reg(doc1, t);
+    expect(t.focused).toBe(0);
+  });
+
   it('is dropped when its tab stops being the one its group shows', () => {
     requestDocFocus(doc2);
     dropDocFocusUnless((key) => key === doc1);
