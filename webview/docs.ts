@@ -598,8 +598,9 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       if (!doc) return state;
       const s = doc.sessionId;
       const layout = layoutOf(state, s);
-      const holding = layout.groups.filter((g) => holds(g, action.id)).length;
       const g = action.group;
+      if (g !== undefined && !holds(layout.groups[g - 1], action.id)) return state;
+      const holding = layout.groups.filter((group) => holds(group, action.id)).length;
       const next =
         g !== undefined && holding > 1
           ? setGroup(layout, g, removeTab(groupAt(layout, g), action.id))

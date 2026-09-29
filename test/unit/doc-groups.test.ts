@@ -620,6 +620,14 @@ describe('group actions', () => {
     expect(movedOnto.activeId).toBe('file:/p.ts');
   });
 
+  it('a stale close {group} for a group without the tab is a no-op', () => {
+    let s = split(open(initialDocs, '/a.ts'));
+    s = open(s, '/b.ts', { group: 2 });
+    expect(docsReducer(s, { type: 'close', id: 'file:/b.ts', group: 1 })).toBe(s);
+    const single = open(initialDocs, '/a.ts');
+    expect(docsReducer(single, { type: 'close', id: 'file:/a.ts', group: 2 })).toBe(single);
+  });
+
   it('switchSession restores group 2 as active', () => {
     let s = split(open(initialDocs, '/a.ts'));
     s = open(s, '/c.ts', { group: 2 });
