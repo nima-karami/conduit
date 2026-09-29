@@ -1,3 +1,5 @@
+import type { GroupIndex } from './doc-groups';
+import { createPathRegistry } from './path-registry';
 import { activeDocPath } from './save-registry';
 
 /**
@@ -11,23 +13,23 @@ export interface ChangeNavEntry {
   hasChanges(): boolean;
 }
 
-const registry = new Map<string, ChangeNavEntry>();
+const registry = createPathRegistry<ChangeNavEntry>();
 
-/** Register `entry` for `path`; the returned teardown is identity-checked so a remount that
- *  already replaced the entry can't have it deleted out from under it. */
-export function registerChangeNav(path: string, entry: ChangeNavEntry): () => void {
-  registry.set(path, entry);
-  return () => {
-    if (registry.get(path) === entry) registry.delete(path);
-  };
+export function registerChangeNav(
+  path: string,
+  entry: ChangeNavEntry,
+  group: GroupIndex = 1,
+): () => void {
+  return registry.register(path, entry, group);
 }
 
 function changeNavForActiveDoc(
   docs: readonly { id: string; path: string }[],
   activeId: string | null,
+  group: GroupIndex,
 ): ChangeNavEntry | undefined {
   const path = activeDocPath(docs, activeId);
-  return path === null ? undefined : registry.get(path);
+  return path === null ? undefined : registry.get(path, group);
 }
 
 /**
@@ -40,8 +42,9 @@ export function goToChangeInActiveDoc(
   docs: readonly { id: string; path: string }[],
   activeId: string | null,
   direction: 'next' | 'prev',
+  group: GroupIndex = 1,
 ): void {
-  const entry = changeNavForActiveDoc(docs, activeId);
+  const entry = changeNavForActiveDoc(docs, activeId, group);
   if (!entry) return;
   if (direction === 'next') entry.next();
   else entry.prev();

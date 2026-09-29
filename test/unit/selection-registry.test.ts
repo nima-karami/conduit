@@ -60,3 +60,13 @@ describe('selection-registry — register / unregister', () => {
     offLive();
   });
 });
+
+describe('selection-registry — two viewers on one path (split-editor D1)', () => {
+  it('second viewer on the same path: unmounting the newer one leaves the survivor registered', () => {
+    const offA = registerSelection('/a.ts', { getSelectedText: () => 'A' });
+    const offB = registerSelection('/a.ts', { getSelectedText: () => 'B' });
+    offB();
+    expect(selectionInActiveDoc(docs, 'file:/a.ts')).toBe('A');
+    offA();
+  });
+});

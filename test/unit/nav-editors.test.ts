@@ -10,6 +10,7 @@ vi.mock('monaco-editor', () => ({
 import {
   cancelNavFocus,
   emitCursorJump,
+  groupOfEditor,
   LAST_CURSOR_CAP,
   lastCursor,
   liveCursor,
@@ -52,8 +53,8 @@ beforeEach(() => {
   for (const t of teardowns) t();
   teardowns = [];
 });
-const reg = (path: string, ed: NavEditor) => {
-  const t = registerNavEditor(path, ed);
+const reg = (path: string, ed: NavEditor, group: 1 | 2 = 1) => {
+  const t = registerNavEditor(path, ed, group);
   teardowns.push(t);
   return t;
 };
@@ -162,5 +163,53 @@ describe('nav-editors registry', () => {
     reg('/w/some.ts', f.editor);
     expect(revealInNavEditor('/w/some.ts', { line: 3, column: 1 })).toBe(true);
     expect(f.calls).toEqual(['setPosition', 'reveal:3', 'focus']);
+  });
+});
+
+describe('nav-editors — two viewers on one path (split-editor D1)', () => {
+  it('second viewer on the same path: unmounting the newer one leaves the survivor registered', () => {
+    reg('/w/d1.ts', fakeEditor(50, { lineNumber: 4, column: 1 }).editor);
+    const offB = reg('/w/d1.ts', fakeEditor(50, { lineNumber: 8, column: 1 }).editor);
+    offB();
+    expect(liveCursor('/w/d1.ts')).toEqual({ line: 4, column: 1 });
+  });
+
+  it('groupOfEditor returns the registering group', () => {
+    const left = fakeEditor().editor;
+    const right = fakeEditor().editor;
+    reg('/w/g.ts', left, 1);
+    const offRight = reg('/w/g.ts', right, 2);
+    expect(groupOfEditor(left)).toBe(1);
+    expect(groupOfEditor(right)).toBe(2);
+    expect(groupOfEditor(fakeEditor().editor)).toBeUndefined();
+    offRight();
+    expect(groupOfEditor(right)).toBeUndefined();
+  });
+
+  it("requestNavFocus with a group focuses only that group's editor", () => {
+    const left = fakeEditor();
+    const right = fakeEditor();
+    reg('/w/pair.ts', left.editor, 1);
+    reg('/w/pair.ts', right.editor, 2);
+    requestNavFocus('/w/pair.ts', 1);
+    expect(left.calls).toEqual(['focus']);
+    expect(right.calls).toEqual([]);
+
+    requestNavFocus('/w/pending.ts', 2);
+    const wrong = fakeEditor();
+    reg('/w/pending.ts', wrong.editor, 1);
+    expect(wrong.calls).toEqual([]);
+  });
+
+  it('liveCursor and revealInNavEditor prefer the requested group', () => {
+    const left = fakeEditor(50, { lineNumber: 3, column: 1 });
+    const right = fakeEditor(50, { lineNumber: 30, column: 1 });
+    reg('/w/two.ts', left.editor, 1);
+    reg('/w/two.ts', right.editor, 2);
+    expect(liveCursor('/w/two.ts', 1)).toEqual({ line: 3, column: 1 });
+    expect(liveCursor('/w/two.ts', 2)).toEqual({ line: 30, column: 1 });
+    expect(revealInNavEditor('/w/two.ts', { line: 5, column: 1 }, 1)).toBe(true);
+    expect(left.calls).toEqual(['setPosition', 'reveal:5', 'focus']);
+    expect(right.calls).toEqual([]);
   });
 });
