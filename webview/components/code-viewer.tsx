@@ -179,14 +179,16 @@ export function CodeViewer({
     // clean model (K3), so all of it outlives this editor. Attached before `create` so the
     // first paint already shows the disk content.
     if (!doc.binary) {
-      fileSaves.attach(doc.path, { diskContent: content, autoEligible: !truncated });
+      fileSaves.attach(doc.path, { diskContent: content, writable: !truncated });
     }
     const editor = monaco.editor.create(ref.current, {
       model,
       theme,
       // Binary files render a notice instead, so this never exposes a writable
-      // buffer for a non-text file.
-      readOnly: false,
+      // buffer for a non-text file. A truncated buffer is only the file's head, so it is never
+      // editable either (the save store refuses it as well).
+      readOnly: truncated,
+      readOnlyMessage: { value: AUTO_SAVE_COPY.partialBanner },
       automaticLayout: true,
       overflowWidgetsDomNode: monacoOverflowHost(),
       fixedOverflowWidgets: true,
@@ -490,7 +492,7 @@ export function CodeViewer({
     const model = ed?.getModel();
     const version = model?.getVersionId();
     const view = ed?.saveViewState();
-    fileSaves.attach(doc.path, { diskContent: doc.content, autoEligible: !doc.truncated });
+    fileSaves.attach(doc.path, { diskContent: doc.content, writable: !doc.truncated });
     if (!ed || !model || model.getVersionId() === version) return;
     if (view) ed.restoreViewState(view);
     onReseedRef.current?.();
@@ -499,6 +501,10 @@ export function CodeViewer({
   useEffect(() => {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });
   }, [settings.wordWrap]);
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({ readOnly: doc.truncated });
+  }, [doc.truncated]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({ fontSize: settings.editorFontSize });
@@ -723,7 +729,7 @@ export function CodeViewer({
         }
       }}
     >
-      {doc.truncated && <div className="viewer__banner">Large file — showing the first 2 MB.</div>}
+      {doc.truncated && <div className="viewer__banner">{AUTO_SAVE_COPY.partialBanner}</div>}
       {changes.state === 'degraded' && <div className="viewer__banner">{DEGRADED_HINT}</div>}
       {saveStatus?.phase === 'conflict' && (
         <div className="viewer__banner viewer__banner--warn" role="alert">

@@ -41,8 +41,8 @@ export interface FileSaveDeps {
 
 export interface AttachOpts {
   diskContent: string;
-  /** false for a truncated doc (D7); binary docs never attach. */
-  autoEligible: boolean;
+  /** false for a truncated doc, which is never written; binary docs never attach. */
+  writable: boolean;
 }
 
 export interface FileSaveStatus {
@@ -74,7 +74,7 @@ interface Entry {
   sub: { dispose(): void } | null;
   unregister: () => void;
   baseline: string;
-  autoEligible: boolean;
+  writable: boolean;
   state: AutoSaveState;
   timer: unknown;
   /** The single write chain in flight (E1); a trailing save joins it via `next`. */
@@ -196,7 +196,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
 
   function trigger(path: string, t: AutoSaveTrigger) {
     const e = entries.get(path);
-    if (!e?.autoEligible || !deps.canWrite) return;
+    if (!e?.writable || !deps.canWrite) return;
     step(e, { type: 'trigger', trigger: t });
   }
 
@@ -209,13 +209,17 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
   const save = async (path: string, kind: SaveKind): Promise<boolean> => {
     const e = entries.get(path);
     if (!e) return true;
-    // A truncated buffer holds only the first 2 MB; comparing it to the whole file would report
-    // a conflict that isn't there (D7).
-    if (kind === 'auto' && !e.autoEligible) return false;
-    if (!deps.canWrite) {
+    // A truncated buffer holds only the head of the file: writing it back would cut the file
+    // short on disk, whichever path asked for the save.
+    const refusal = !e.writable
+      ? AUTO_SAVE_COPY.partialFile
+      : !deps.canWrite
+        ? 'Saving is unavailable in the browser preview.'
+        : null;
+    if (refusal !== null) {
       if (e.model.getValue() === e.baseline) return true;
       if (kind === 'auto') return false;
-      e.error = 'Saving is unavailable in the browser preview.';
+      e.error = refusal;
       publish(e);
       deps.toast(AUTO_SAVE_COPY.saveFailed(baseName(path), e.error));
       return false;
@@ -252,7 +256,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
           sub: null,
           unregister: () => {},
           baseline: opts.diskContent,
-          autoEligible: opts.autoEligible,
+          writable: opts.writable,
           state: INITIAL_AUTO_SAVE_STATE,
           timer: null,
           chain: null,
@@ -285,7 +289,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
         }
       }
       entry.baseline = opts.diskContent;
-      entry.autoEligible = opts.autoEligible;
+      entry.writable = opts.writable;
       deps.setDirty(path, entry.baseline, model.getValue());
       step(entry, { type: 'seed', dirty: model.getValue() !== entry.baseline });
     },

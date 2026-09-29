@@ -91,9 +91,9 @@ function harness(opts: { canWrite?: boolean; mode?: AutoSaveMode; delayMs?: numb
   };
   const saves = createFileSaves(deps);
   saves.configure({ mode: opts.mode ?? 'off', delayMs: opts.delayMs ?? 1000 });
-  const open = (path: string, disk: string, autoEligible = true) => {
+  const open = (path: string, disk: string, writable = true) => {
     if (!models.has(path)) models.set(path, new FakeModel(disk));
-    saves.attach(path, { diskContent: disk, autoEligible });
+    saves.attach(path, { diskContent: disk, writable });
     // biome-ignore lint/style/noNonNullAssertion: set on the line above
     return models.get(path)!;
   };
@@ -128,7 +128,7 @@ describe('createFileSaves', () => {
   it('attach reseeds a clean model without counting an edit', async () => {
     const h = harness({ mode: 'onFocusChange' });
     h.models.set('/a.ts', new FakeModel('x'));
-    h.saves.attach('/a.ts', { diskContent: 'y', autoEligible: true });
+    h.saves.attach('/a.ts', { diskContent: 'y', writable: true });
     expect(h.models.get('/a.ts')?.getValue()).toBe('y');
     h.saves.trigger('/a.ts', 'viewLeave');
     await vi.runAllTimersAsync();
@@ -138,7 +138,7 @@ describe('createFileSaves', () => {
   it('a seed that normalises content is dirty but never auto-saved (C10)', async () => {
     const h = harness({ mode: 'onFocusChange' });
     h.models.set('/a.ts', new NormalizingModel('stale'));
-    h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', autoEligible: true });
+    h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', writable: true });
     expect(h.models.get('/a.ts')?.getValue()).toBe('a\nb\n');
     expect(h.dirty.has('/a.ts')).toBe(true);
     h.saves.trigger('/a.ts', 'viewLeave');
@@ -149,7 +149,7 @@ describe('createFileSaves', () => {
   it('a seed-dirty buffer saves manually: one write, true only after it (B2)', async () => {
     const h = harness();
     h.models.set('/a.ts', new NormalizingModel('stale'));
-    h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', autoEligible: true });
+    h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', writable: true });
     expect(h.saves.getStatus('/a.ts')?.phase).toBe('dirty');
     let settled = false;
     const p = h.saves.save('/a.ts', 'manual').then((ok) => {
@@ -168,7 +168,7 @@ describe('createFileSaves', () => {
   it('an auto save of an unedited seed-dirty buffer writes nothing', async () => {
     const h = harness({ mode: 'onFocusChange' });
     h.models.set('/a.ts', new NormalizingModel('stale'));
-    h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', autoEligible: true });
+    h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', writable: true });
     const p = h.saves.save('/a.ts', 'auto');
     expect(h.writes).toHaveLength(0);
     expect(await p).toBe(false);
@@ -179,7 +179,7 @@ describe('createFileSaves', () => {
     const h = harness();
     const m = h.open('/a.ts', 'one');
     m.setValue('mine');
-    h.saves.attach('/a.ts', { diskContent: 'theirs', autoEligible: true });
+    h.saves.attach('/a.ts', { diskContent: 'theirs', writable: true });
     expect(m.getValue()).toBe('mine');
   });
 
@@ -287,22 +287,33 @@ describe('createFileSaves', () => {
       conflict: null,
       error: null,
     });
-    h.saves.attach('/a.ts', { diskContent: 'theirs', autoEligible: true });
+    h.saves.attach('/a.ts', { diskContent: 'theirs', writable: true });
     expect(m.getValue()).toBe('theirs');
     expect(h.dirty.has('/a.ts')).toBe(false);
   });
 
-  it('truncated entry ignores auto triggers but saves manually (E9)', async () => {
+  it('a truncated entry is never written, however it is saved (E9)', async () => {
     const h = harness({ mode: 'afterDelay' });
     const m = h.open('/big.txt', 'one', false);
     m.setValue('two');
     await vi.advanceTimersByTimeAsync(5000);
     h.saves.trigger('/big.txt', 'viewLeave');
+    await h.saves.flushAll('windowBlur');
+    const manual = h.saves.save('/big.txt', 'manual');
+    const viaRegistry = h.registered.get('/big.txt')?.save();
     expect(h.writes).toHaveLength(0);
-    const p = h.saves.save('/big.txt', 'manual');
-    expect(h.writes).toHaveLength(1);
-    h.writes[0].resolve(OK('/big.txt'));
-    expect(await p).toBe(true);
+    expect(await manual).toBe(false);
+    expect(await viaRegistry).toBe(false);
+    expect(h.toasts).toHaveLength(2);
+    expect(h.saves.getStatus('/big.txt')?.error).toMatch(/2 MB/);
+  });
+
+  it('a clean truncated entry saves as a no-op, without a toast', async () => {
+    const h = harness();
+    h.open('/big.txt', 'one', false);
+    expect(await h.saves.save('/big.txt', 'manual')).toBe(true);
+    expect(h.writes).toHaveLength(0);
+    expect(h.toasts).toEqual([]);
   });
 
   it('an auto save of a truncated entry writes nothing and leaves the phase (B3)', async () => {
