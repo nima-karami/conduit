@@ -48,6 +48,8 @@ export interface PersistedDoc {
   active?: boolean;
   /** diff docs only; absent = unscoped (HEAD→worktree). */
   diffScope?: DiffTabScope;
+  /** The editor group the tab sits in; absent = group 1. */
+  group?: 2;
 }
 
 /** Which side of a file a diff TAB shows. See spec 2026-09-22-scoped-diff-tabs §2. */

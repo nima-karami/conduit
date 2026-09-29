@@ -123,9 +123,10 @@ export function serializeDocs(docs: PersistedDoc[]): string {
 // would show different content under the same title (spec 2026-09-22-scoped-diff-tabs §3).
 function isRestorableDoc(d: unknown): d is PersistedDoc {
   if (!d || typeof d !== 'object') return false;
-  const { kind, path, sessionId, diffScope } = d as PersistedDoc;
+  const { kind, path, sessionId, diffScope, group } = d as PersistedDoc;
   if (kind !== 'file' && kind !== 'diff') return false;
   if (typeof path !== 'string' || typeof sessionId !== 'string') return false;
+  if (group !== undefined && group !== 2) return false;
   return (
     diffScope === undefined ||
     (kind === 'diff' && (diffScope === 'staged' || diffScope === 'unstaged'))

@@ -272,4 +272,32 @@ describe('persistence — editor tabs (docs.json)', () => {
     ];
     expect(parseDocs(serializeDocs(docs))).toEqual(docs);
   });
+
+  it('a group:2 entry survives parseDocs', () => {
+    const docs: PersistedDoc[] = [
+      { kind: 'file', path: '/a.ts', sessionId: 'S1', active: true },
+      { kind: 'file', path: '/a.ts', sessionId: 'S1', active: true, group: 2 },
+    ];
+    expect(parseDocs(serializeDocs(docs))).toEqual(docs);
+  });
+
+  it('an entry with group 3 or "2" is dropped', () => {
+    const blob = JSON.stringify({
+      version: 1,
+      docs: [
+        { kind: 'file', path: '/ok.ts', sessionId: 'S1' },
+        { kind: 'file', path: '/three.ts', sessionId: 'S1', group: 3 },
+        { kind: 'file', path: '/str.ts', sessionId: 'S1', group: '2' },
+        { kind: 'file', path: '/one.ts', sessionId: 'S1', group: 1 },
+      ],
+    });
+    expect(parseDocs(blob)).toEqual([{ kind: 'file', path: '/ok.ts', sessionId: 'S1' }]);
+  });
+
+  it('an old-format file (no group) parses unchanged', () => {
+    const blob = JSON.stringify({ version: 1, docs });
+    const parsed = parseDocs(blob);
+    expect(parsed).toEqual(docs);
+    expect(parsed.some((d) => 'group' in d)).toBe(false);
+  });
 });
