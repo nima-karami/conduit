@@ -20,6 +20,7 @@ export function highlightedChange(
   const sides: ('staged' | 'unstaged')[] =
     target.side === 'either' ? ['unstaged', 'staged'] : [target.side];
   for (const head of heads) {
+    if (head.changes === undefined) continue;
     const root = head.repo.root;
     const hit = (c: ChangeDTO) => folderKey(joinPath(root, c.path)) === target.key;
     for (const side of sides) {

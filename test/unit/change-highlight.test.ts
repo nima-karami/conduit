@@ -90,8 +90,9 @@ describe('highlightedChange', () => {
     expect(highlightedChange(heads, fileTarget('/r/a.txt'))?.path).toBe('a.txt');
   });
 
+  // A head whose first result is not in yet shows "Loading…", not rows — whatever its sides hold.
   it('loading head matches nothing', () => {
-    const loading: RepoHeadModel = { ...head('/r', [], []), changes: undefined };
+    const loading: RepoHeadModel = { ...head('/r', ['a.txt'], ['a.txt']), changes: undefined };
     expect(highlightedChange([loading], fileTarget('/r/a.txt'))).toBeNull();
   });
 
