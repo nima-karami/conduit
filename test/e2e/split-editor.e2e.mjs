@@ -99,7 +99,7 @@ try {
   const termTab = page.locator(`${G(1)} button.tab[data-tabid="__terminal__"]`);
   await termTab.click();
   await page.waitForFunction(
-    (sel) => document.querySelector(sel)?.getAttribute('aria-selected') === 'true',
+    (sel) => document.querySelector(sel)?.classList.contains('tab--active'),
     `${G(1)} button.tab[data-tabid="__terminal__"]`,
     { timeout: 5000 },
   );
@@ -124,7 +124,6 @@ try {
   await sleep(500);
   assert((await groupCount(page)) === 1, 'E12: Ctrl+\\ inside xterm split something');
   log('E12 ✓ the Terminal cannot be split');
-
 
   await openFromExplorer(page, 'b.ts');
 

@@ -267,9 +267,6 @@ export function DocTabs({
         {showTerminal && (
           <button
             data-tabid={TERMINAL_TABID}
-            role="tab"
-            tabIndex={0}
-            aria-selected={activeId === null}
             className={`tab ${activeId === null ? activeClass : ''}`}
             onClick={() => onSelect(null)}
             onContextMenu={onTerminalTabContextMenu}
