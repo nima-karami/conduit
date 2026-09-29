@@ -53,6 +53,16 @@ import { ChangePeek } from './change-peek';
 import { ContextMenu, type MenuState } from './context-menu';
 import { ImageViewer } from './image-viewer';
 
+/**
+ * Monaco answers an edit attempt on a read-only editor with a popup above the cursor line, and
+ * that popup is placed against the PAGE (it may overflow the editor), so on line 1 it lands on the
+ * banner above the editor. The only read-only doc here is a truncated one, whose banner already
+ * says so: one notice, not two stacked. Reached by id — the class isn't exported.
+ */
+function silenceReadOnlyPopup(editor: monaco.editor.IStandaloneCodeEditor): void {
+  editor.getContribution('editor.contrib.readOnlyMessageController')?.dispose();
+}
+
 const MENU_ICONS: Record<EditorMenuIconKey, ReactJSX.Element> = {
   copy: <IconCopy size={14} />,
   search: <IconSearch size={14} />,
@@ -188,7 +198,6 @@ export function CodeViewer({
       // buffer for a non-text file. A truncated buffer is only the file's head, so it is never
       // editable either (the save store refuses it as well).
       readOnly: truncated,
-      readOnlyMessage: { value: AUTO_SAVE_COPY.partialBanner },
       automaticLayout: true,
       overflowWidgetsDomNode: monacoOverflowHost(),
       fixedOverflowWidgets: true,
@@ -216,6 +225,7 @@ export function CodeViewer({
       renderLineHighlight: 'all',
     });
     editorRef.current = editor;
+    if (truncated) silenceReadOnlyPopup(editor);
 
     const unregisterSelection = registerSelection(doc.path, {
       getSelectedText: () => {
@@ -503,7 +513,9 @@ export function CodeViewer({
   }, [settings.wordWrap]);
 
   useEffect(() => {
-    editorRef.current?.updateOptions({ readOnly: doc.truncated });
+    const ed = editorRef.current;
+    ed?.updateOptions({ readOnly: doc.truncated });
+    if (ed && doc.truncated) silenceReadOnlyPopup(ed);
   }, [doc.truncated]);
 
   useEffect(() => {
