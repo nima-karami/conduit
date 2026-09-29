@@ -540,4 +540,118 @@ describe('createFileSaves', () => {
     expect(h.saves.getStatusSnapshot()).toBe(s1);
     expect(notified).toHaveBeenCalledTimes(1);
   });
+
+  it('whenIdle waits for the chain and a queued trailing save', async () => {
+    const h = harness();
+    const m = h.open('/a.ts', 'one');
+    m.setValue('two');
+    void h.saves.save('/a.ts', 'manual');
+    m.setValue('three');
+    void h.saves.save('/a.ts', 'manual');
+    let idle = false;
+    const done = h.saves.whenIdle().then(() => {
+      idle = true;
+    });
+    expect(h.writes).toHaveLength(1);
+    h.writes[0].resolve(OK('/a.ts'));
+    await h.flush();
+    expect(h.writes).toHaveLength(2);
+    expect(idle).toBe(false);
+    h.writes[1].resolve(OK('/a.ts'));
+    await done;
+    expect(idle).toBe(true);
+  });
+
+  it('whenIdle re-checks for a chain started while it waited', async () => {
+    const h = harness();
+    h.open('/a.ts', 'one').setValue('two');
+    const b = h.open('/b.ts', 'one');
+    void h.saves.save('/a.ts', 'manual');
+    let idle = false;
+    const done = h.saves.whenIdle().then(() => {
+      idle = true;
+    });
+    b.setValue('two');
+    h.writes[0].resolve(OK('/a.ts'));
+    void h.saves.save('/b.ts', 'manual');
+    await h.flush();
+    expect(h.writes).toHaveLength(2);
+    expect(idle).toBe(false);
+    h.writes[1].resolve(OK('/b.ts'));
+    await done;
+    expect(idle).toBe(true);
+  });
+
+  it('whenIdle resolves immediately with no chains', async () => {
+    const h = harness();
+    h.open('/a.ts', 'one').setValue('two');
+    let idle = false;
+    void h.saves.whenIdle().then(() => {
+      idle = true;
+    });
+    await h.flush();
+    expect(idle).toBe(true);
+  });
+
+  it('toasts suppressed while on', async () => {
+    const h = harness({ mode: 'onFocusChange' });
+    const m = h.open('/a.ts', 'one');
+    h.saves.setToastsSuppressed(true);
+    m.setValue('two');
+    h.saves.trigger('/a.ts', 'editorBlur');
+    h.writes[0].resolve({ ok: false, error: 'EACCES' });
+    await h.flush();
+    expect(h.saves.getStatus('/a.ts')?.phase).toBe('failed');
+    expect(h.toasts).toEqual([]);
+    h.saves.setToastsSuppressed(false);
+    h.saves.reload('/a.ts');
+    m.setValue('three');
+    h.saves.trigger('/a.ts', 'editorBlur');
+    h.writes[1].resolve({ ok: false, error: 'EACCES' });
+    await h.flush();
+    expect(h.toasts).toEqual(['Could not save a.ts: EACCES']);
+  });
+
+  it('toasts suppressed while on covers the flushAll batch and the preview refusal', async () => {
+    const h = harness({ mode: 'onWindowChange' });
+    for (const p of ['/a.ts', '/b.ts']) h.open(p, 'one').setValue('two');
+    h.saves.setToastsSuppressed(true);
+    const done = h.saves.flushAll('windowBlur');
+    for (const w of h.writes) w.resolve({ ok: false, error: 'EACCES' });
+    await done;
+    const preview = harness({ canWrite: false });
+    preview.saves.setToastsSuppressed(true);
+    preview.open('/a.ts', 'one').setValue('two');
+    expect(await preview.saves.save('/a.ts', 'manual')).toBe(false);
+    expect(preview.saves.getStatus('/a.ts')?.error).toBe(
+      'Saving is unavailable in the browser preview.',
+    );
+    expect([...h.toasts, ...preview.toasts]).toEqual([]);
+  });
+
+  it('isPartial reflects autoEligible:false attach', () => {
+    const h = harness();
+    h.open('/part.ts', 'head', false);
+    h.open('/full.ts', 'all');
+    expect(h.saves.isPartial('/part.ts')).toBe(true);
+    expect(h.saves.isPartial('/full.ts')).toBe(false);
+    expect(h.saves.isPartial('/none.ts')).toBe(false);
+  });
+
+  it('off mode still tracks edited/conflict/failed (A3)', async () => {
+    const h = harness({ mode: 'off' });
+    const m = h.open('/a.ts', 'one');
+    m.setValue('two');
+    expect(h.saves.getStatus('/a.ts')).toMatchObject({ phase: 'dirty', edited: true });
+    const conflicted = h.saves.save('/a.ts', 'manual');
+    h.writes[0].resolve({ ok: false, conflict: 'deleted', error: 'The file was deleted.' });
+    expect(await conflicted).toBe(false);
+    expect(h.saves.getStatus('/a.ts')).toMatchObject({ phase: 'conflict', conflict: 'deleted' });
+    const b = h.open('/b.ts', 'one');
+    b.setValue('two');
+    const failed = h.saves.save('/b.ts', 'manual');
+    h.writes[1].resolve({ ok: false, error: 'EACCES' });
+    expect(await failed).toBe(false);
+    expect(h.saves.getStatus('/b.ts')).toMatchObject({ phase: 'failed', error: 'EACCES' });
+  });
 });
