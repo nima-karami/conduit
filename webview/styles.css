@@ -2698,6 +2698,10 @@ body.resizing .panel__resize::after {
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  /* No scrollbar: the global `scrollbar-color` makes Chromium ignore ::-webkit-scrollbar, so any
+     bar here is a classic one that takes layout height and lifts the centred tabs. The wheel,
+     the overflow chevron and scroll-into-view scroll the strip. */
+  scrollbar-width: none;
   border-bottom: none;
   padding: 0;
   background: transparent;
@@ -2707,33 +2711,6 @@ body.resizing .panel__resize::after {
   align-items: center;
   align-self: stretch;
   flex: 0 0 auto;
-}
-/* Slim, elegant horizontal scrollbar for the tab strip: no track rail, and a thin
-   rounded thumb that only appears while the pointer is over the tab strip. The tabs
-   are height-pinned to the row (see `.tab`), so this bar floats over their bottom edge
-   without resizing them — kept ultra-thin so it reads as an overlay, not a gutter. */
-.tabbar::-webkit-scrollbar {
-  height: 1px;
-}
-.tabbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-/* No inset border: at 1px the thumb is the whole bar, so a transparent border would
-   eat it entirely and show nothing. */
-.tabbar::-webkit-scrollbar-thumb {
-  background: transparent;
-  border: 0;
-  background-clip: padding-box;
-  border-radius: 99px;
-  transition: background 0.15s ease;
-}
-.tabbar:hover::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  background-clip: padding-box;
-}
-.tabbar::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
-  background-clip: padding-box;
 }
 /* Open-editors dropdown trigger: fixed at the right edge, never scrolls away,
    and rendered only when the strip overflows. Transparent so it reads as part
@@ -2765,12 +2742,7 @@ body.resizing .panel__resize::after {
   /* Keep each tab's width so the strip overflows (and scrolls) rather than
      compressing tabs to illegible slivers. */
   flex: 0 0 auto;
-  /* Pin the tab box to the full row height so its dimensions are INVARIANT to the
-     scrollbar. Chromium's classic ::-webkit-scrollbar is non-overlay: when the strip
-     overflows it shaves its 6px off the flex content height, so an align-items:stretch
-     tab would squish by 6px (and grow back when overflow clears). An explicit height
-     decouples the tab from that content box — the overlay scrollbar (below) then floats
-     over the bottom edge without resizing the tabs. */
+  /* An explicit height, not stretch, so the tab's box never follows the strip's content box. */
   height: calc(var(--density-tabbar-h) - 2 * var(--tab-inset));
   box-sizing: border-box;
   max-width: 220px;
