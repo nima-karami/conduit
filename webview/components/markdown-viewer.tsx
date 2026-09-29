@@ -15,7 +15,7 @@ import { canonicalPath } from '../../src/canonical-path';
 import type { FileContentDTO } from '../../src/protocol';
 import { openExternal, post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
-import { useEditorGroup } from '../editor-group-context';
+import { tabStateKey, useEditorGroup } from '../editor-group-context';
 import { IconCopy, IconDoc } from '../icons';
 import { buildMarkdownMenuItems } from '../markdown-menu';
 import { remarkAlerts } from '../md-alerts';
@@ -990,7 +990,7 @@ export function MarkdownViewer({
         <button className="viewer__toggle" onClick={() => setSource(false)}>
           View rendered
         </button>
-        <CodeViewer doc={doc} viewStateId={`markdown-source:${doc.path}`} />
+        <CodeViewer doc={doc} viewStateId={tabStateKey(`markdown-source:${doc.path}`, group)} />
       </div>
     );
   }
