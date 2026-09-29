@@ -14,6 +14,8 @@
  *   SB  each strip's split button: the left one is enabled on a doc even with the right group
  *       active (clicking it splits from the left), the right one is at the cap, and a strip on
  *       the Terminal is disabled
+ *   SM  the tab menu's Split Right: enabled on a left doc tab with the right group active (it
+ *       splits from the left), capped on a right tab, and disabled on the Terminal
  *   E6  Close Editor Group while the left group shows the Terminal
  *   XT  a × close landing on the Terminal leaves focus out of xterm (as TT)
  * Failures are collected, so one run reports every step that misses.
@@ -247,6 +249,48 @@ runScenario('split-editor-focus', async ({ page, log }) => {
   await page.locator(`${G(1)} .tabbar__split`).click();
   await waitShown(page, 2, 'a.ts', 'SB');
   await expectFocus('SB left strip button with the right group active', 2, 'editor:a.ts');
+
+  // SM: the tab menu's Split Right follows the same rule for the right-clicked tab's group.
+  const splitItem = page.locator('.ctxmenu__item', { hasText: /^Split Right$/ });
+  const menuSplit = async (label, target, { bare = false } = {}) => {
+    // `bare`: a menu with no pointerdown before it, so the item's own rule is what's measured
+    // (a real right-click has already focused the tab's group).
+    if (bare) await target.dispatchEvent('contextmenu');
+    else await target.click({ button: 'right' });
+    await splitItem
+      .waitFor({ timeout: 5000 })
+      .catch(() => assert(false, `${label}: no Split Right`));
+    return {
+      disabled: await splitItem.isDisabled(),
+      title: await splitItem.locator('xpath=..').getAttribute('title'),
+    };
+  };
+  const onRight = await menuSplit('SM right tab', tabOf(page, 2, 'c.ts'));
+  assert(
+    onRight.disabled && onRight.title === 'Only two editor groups are supported.',
+    `SM right tab: ${JSON.stringify(onRight)}`,
+  );
+  await page.keyboard.press('Escape');
+  const onTerminal = await menuSplit(
+    'SM Terminal',
+    page.locator(`${G(1)} [data-tabid="__terminal__"]`),
+  );
+  assert(onTerminal.disabled, `SM Terminal: ${JSON.stringify(onTerminal)}`);
+  await page.keyboard.press('Escape');
+  await tabOf(page, 2, 'a.ts').click();
+  await waitShown(page, 2, 'a.ts', 'SM');
+  const onLeftBare = await menuSplit('SM bare left tab', tabOf(page, 1, 'one.pdf'), {
+    bare: true,
+  });
+  assert(!onLeftBare.disabled, `SM bare left tab: ${JSON.stringify(onLeftBare)}`);
+  await splitItem.click();
+  await waitShown(page, 2, 'one.pdf', 'SM');
+  await expectFocus('SM bare left tab menu with the right group active', 2, 'pdf');
+  const onLeft = await menuSplit('SM left tab', tabOf(page, 1, 'note.md'));
+  assert(!onLeft.disabled, `SM left tab with the right group active: ${JSON.stringify(onLeft)}`);
+  await splitItem.click();
+  await waitShown(page, 2, 'note.md', 'SM');
+  await expectFocus('SM left tab menu with the right group active', 2, 'markdown');
 
   // E6: the right group closes while the left one shows the Terminal.
   await page.locator(`${G(1)} [data-tabid="__terminal__"]`).click();

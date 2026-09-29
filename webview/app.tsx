@@ -940,7 +940,8 @@ export function App() {
     if (sessionId) dispatchDocs({ type: 'focusGroup', sessionId, group });
   }, []);
 
-  /** Split Right on group 1's active tab, or on `target` (a group-1 tab's menu). */
+  /** Split Right on group 1's active tab, or on `target` (a group-1 tab's menu), which activates
+   *  group 1 first as the strip's button does. */
   const splitRight = useCallback((target?: OpenDoc) => {
     const sessionId = activeIdRef.current;
     if (!sessionId) return;
@@ -948,13 +949,14 @@ export function App() {
     const announce = (text: string) => {
       if (navLiveRef.current) navLiveRef.current.textContent = text;
     };
-    if (layout.activeGroup === 2) {
+    if (layout.activeGroup === 2 && !target) {
       announce(SPLIT_COPY.capReached);
       return;
     }
     const id = target?.id ?? layout.groups[0].active;
     const doc = docStateRef.current.docs.find((d) => d.id === id);
     if (!doc) return;
+    if (layout.activeGroup === 2) dispatchDocs({ type: 'focusGroup', sessionId, group: 1 });
     if (doc.id !== layout.groups[0].active) {
       dispatchDocs({ type: 'activate', id: doc.id, sessionId, group: 1 });
     }
@@ -2806,7 +2808,7 @@ export function App() {
           label: SPLIT_COPY.splitRight,
           icon: <IconSplit size={14} />,
           separatorBefore: true,
-          disabled: group === 2 || activeGroupOf(docState, doc.sessionId) === 2,
+          disabled: group === 2,
           title: group === 2 ? SPLIT_COPY.capReached : undefined,
           onClick: () => splitRight(doc),
         },
