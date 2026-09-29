@@ -1,9 +1,10 @@
 /**
  * split-editor-focus-views — the focus landing (docs/specs/2026-09-28-split-editor.md §10) for the
- * views split-editor-focus does not open, and a landing on a view that is already mounted:
+ * views split-editor-focus does not open, and the close paths outside the strip's ×:
  *   VF  Ctrl+Tab onto Review, History and a commit-diff lands in that view: Review's scroller
  *       (its keymap is scoped to it), History's root, the commit-diff's modified editor
  *   FG  Focus Left Editor Group onto a Review that is already mounted lands in its scroller
+ *   CO  the tab menu's Close Others lands focus in the surviving tab's view
  * A web tab takes no focus target: a focused guest page keeps Ctrl+Tab from the app, so focus
  * moved into it would trap tab cycling.
  */
@@ -137,6 +138,35 @@ runScenario('split-editor-focus-views', async ({ page, log }) => {
     .waitFor({ timeout: 5000 });
   await page.keyboard.press('Enter');
   await expectFocusIn('FG Focus Left Editor Group onto Review', 1, '.review__scroll', true);
+
+  // CO: Close Others on b.ts (not the shown tab) lands focus in b.ts's editor.
+  await tabOf(page, 1, 'b.ts').click({ button: 'right' });
+  const closeOthers = page.locator('.ctxmenu__item', { hasText: /^Close others$/ });
+  await closeOthers.waitFor({ timeout: 5000 }).catch(() => assert(false, 'CO: no Close others'));
+  await closeOthers.click();
+  await page
+    .waitForFunction((sel) => document.querySelectorAll(`${sel} [role="tab"]`).length === 1, G(1), {
+      timeout: 10000,
+    })
+    .catch(() => assert(false, 'CO: Close others left more than one tab'));
+  await waitShown(page, 1, 'b.ts', 'CO');
+  const coOk = await page
+    .waitForFunction(
+      (sel) =>
+        (window.monaco?.editor.getEditors() ?? []).some(
+          (e) =>
+            e.hasTextFocus() &&
+            e.getDomNode()?.closest(sel) &&
+            e.getModel()?.uri.path.endsWith('/b.ts'),
+        ),
+      G(1),
+      { timeout: 3000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  const coAt = await describeFocus();
+  log(`CO Close others: expected b.ts's editor · focus is on ${coAt}`);
+  if (!coOk) misses.push(`CO: focus is on ${coAt}, not b.ts's editor`);
 
   assert(misses.length === 0, `focus missed ${misses.length} step(s):\n  ${misses.join('\n  ')}`);
 });

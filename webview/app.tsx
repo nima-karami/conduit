@@ -1065,17 +1065,24 @@ export function App() {
   );
   // A pending unsaved-changes close prompt; Cancel and Esc settle it through the dialog's onClose.
   const closePromptRef = useRef<((closed: boolean) => void) | null>(null);
-  /** Ctrl+W and a tab's own close: focus lands on what the group shows next (spec §10). A close
-   *  from the strip that lands on the Terminal focuses its button rather than xterm, as a click on
-   *  that button does. */
-  const closeTabByUser = useCallback(
-    async (id: string, group: GroupIndex, terminalLanding: 'xterm' | 'button' = 'xterm') => {
-      const sessionId = docStateRef.current.docs.find((d) => d.id === id)?.sessionId;
-      if (sessionId === undefined || !(await closeTabRef.current(id, group))) return;
-      // Whether or not the close has rendered yet, this is the state after it: the reducer ignores
-      // a close whose tab is already gone.
+  /** Ctrl+W, a tab's own close and the tab menu's closes: focus lands on what the group shows next
+   *  (spec §10). A close from the strip or the menu that lands on the Terminal focuses its button
+   *  rather than xterm, as a click on that button does. */
+  const closeTabsByUser = useCallback(
+    async (
+      ids: readonly string[],
+      group: GroupIndex,
+      terminalLanding: 'xterm' | 'button' = 'xterm',
+    ) => {
+      const sessionId = docStateRef.current.docs.find((d) => d.id === ids[0])?.sessionId;
+      if (sessionId === undefined) return;
+      const closed = await Promise.all(ids.map((id) => closeTabRef.current(id, group)));
+      const gone = ids.filter((_, i) => closed[i]);
+      if (gone.length === 0) return;
+      // Whether or not the closes have rendered yet, this is the state after them: the reducer
+      // ignores a close whose tab is already gone.
       const after = layoutOf(
-        docsReducer(docStateRef.current, { type: 'close', id, group }),
+        gone.reduce((s, id) => docsReducer(s, { type: 'close', id, group }), docStateRef.current),
         sessionId,
       );
       const g = after.groups[group - 1] ? group : 1;
@@ -1249,7 +1256,7 @@ export function App() {
       // Close the active editor tab (VS Code Mod+W). No-op when the Terminal is active.
       closeTab: () => {
         const id = docStateRef.current.activeId;
-        if (id) void closeTabByUser(id, currentGroup());
+        if (id) void closeTabsByUser([id], currentGroup());
       },
       // Reopen the most recently closed tab (VS Code Mod+Shift+T). Invoked via a stable ref
       // for the same ordering reason as undo/redo (openFile/openDiff are declared later).
@@ -1301,7 +1308,7 @@ export function App() {
     splitRight,
     moveTabToGroup,
     focusGroupByCommand,
-    closeTabByUser,
+    closeTabsByUser,
   ]);
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
@@ -2741,9 +2748,7 @@ export function App() {
     const toLeft = closeTabSelection(groupIds, doc.id, 'left');
     const others = closeTabSelection(groupIds, doc.id, 'others');
     const all = closeTabSelection(groupIds, doc.id, 'all');
-    const closeAll = (ids: readonly string[]) => {
-      for (const id of ids) void closeTab(id, group);
-    };
+    const closeAll = (ids: readonly string[]) => void closeTabsByUser(ids, group, 'button');
     setMenu({
       x: e.clientX,
       y: e.clientY,
@@ -2761,7 +2766,7 @@ export function App() {
         {
           label: 'Close',
           icon: <IconClose size={14} />,
-          onClick: () => void closeTab(doc.id, group),
+          onClick: () => closeAll([doc.id]),
         },
         {
           label: 'Close others',
@@ -4099,7 +4104,7 @@ export function App() {
             onSelectDoc={(id, group) =>
               activateDocByUser(id, activeIdRef.current ?? '', group, id !== null)
             }
-            onCloseDoc={(id, group) => void closeTabByUser(id, group, 'button')}
+            onCloseDoc={(id, group) => void closeTabsByUser([id], group, 'button')}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenTimedMessages={openTimedMessages}
             onTabContextMenu={onTabContextMenu}
