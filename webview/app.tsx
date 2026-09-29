@@ -171,14 +171,7 @@ import {
   redoActions,
 } from './fs-undo';
 import type { BulkTarget, GitActionIntent } from './git-intent';
-import {
-  bumpHtmlReload,
-  clearHtmlView,
-  copyHtmlView,
-  getHtmlView,
-  moveHtmlView,
-  toggleHtmlView,
-} from './html-view-store';
+import { bumpHtmlReload, getHtmlView, toggleHtmlView } from './html-view-store';
 import { type HunkActionHost, setHunkActionHost } from './hunk-actions';
 import {
   IconBoard,
@@ -245,6 +238,7 @@ import { comboLabel, effectiveCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } f
 import { SPLIT_COPY } from './split-editor-copy';
 import { closeTabSelection } from './tab-close-selection';
 import { endTabDrag } from './tab-drag';
+import { carryTabState, dropTabState } from './tab-view-state';
 import {
   requestTerminalFocus,
   selectionInTerminal,
@@ -265,13 +259,7 @@ import { useBackgroundOpenFeedback } from './use-background-open-feedback';
 import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-history';
 import { useReviewModeLayout } from './use-review-mode-layout';
 import { useSnooze } from './use-snooze';
-import {
-  copyViewState,
-  fileViewStateIds,
-  markClosing,
-  moveViewState,
-  renameViewState,
-} from './view-state-store';
+import { fileViewStateIds, renameViewState } from './view-state-store';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
@@ -367,19 +355,6 @@ function releaseFileTab(path: string): void {
 /** Spec §10: a user activation lands keyboard focus in the view of tab `id` (null: the Terminal). */
 function focusView(sessionId: string, group: GroupIndex, id: string | null): void {
   requestDocFocus(id === null ? terminalFocusKey(sessionId) : tabStateKey(id, group));
-}
-
-/** A tab's per-group view state goes with it to the other group, or starts there as a copy
- *  (split-editor plan P5, I10). */
-function carryTabState(doc: OpenDoc, from: GroupIndex, to: GroupIndex, how: 'move' | 'copy'): void {
-  const carry = how === 'move' ? moveViewState : copyViewState;
-  for (const id of doc.kind === 'file' ? fileViewStateIds(doc.path) : [doc.id]) {
-    carry(tabStateKey(id, from), tabStateKey(id, to));
-  }
-  (how === 'move' ? moveHtmlView : copyHtmlView)(
-    tabStateKey(doc.id, from),
-    tabStateKey(doc.id, to),
-  );
 }
 
 /** A file tab's per-path state follows its file to a new path, without a React render between.
@@ -999,8 +974,7 @@ export function App() {
       if (!dst?.tabs.some((t) => t.id === id)) {
         carryTabState(doc, from, toGroup, copy ? 'copy' : 'move');
       } else if (!copy) {
-        markClosing(tabStateKey(id, from));
-        clearHtmlView(tabStateKey(id, from));
+        dropTabState(doc, from);
       }
       dispatchDocs({ type: 'moveTab', sessionId, id, toGroup, beforeId, duplicate: copy });
       const said = !copy
@@ -1391,8 +1365,8 @@ export function App() {
       if (!current.has(id)) {
         for (const d of docsRef.current) {
           if (d.sessionId !== id) continue;
-          markClosing(tabStateKey(d.id, 1));
-          markClosing(tabStateKey(d.id, 2));
+          dropTabState(d, 1);
+          dropTabState(d, 2);
         }
         for (const path of filePathsClosedWithSession(docsRef.current, id)) releaseFileTab(path);
         dispatchDocs({ type: 'closeSession', sessionId: id });
@@ -1946,10 +1920,8 @@ export function App() {
         if (doc.kind === 'file') releaseFileTab(doc.path);
         const closed = toClosedTab(doc, tabGroupsOf(docState, id)[0]);
         if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
-      }
-      for (const g of [1, 2] as const) {
-        markClosing(tabStateKey(id, g));
-        clearHtmlView(tabStateKey(id, g));
+        dropTabState(doc, 1);
+        dropTabState(doc, 2);
       }
       dispatchDocs({ type: 'close', id });
     },
@@ -2034,10 +2006,11 @@ export function App() {
     (id: string, group: GroupIndex): Promise<boolean> => {
       if (tabGroupsOf(docState, id).length < 2) return closeDoc(id);
       const doc = docState.docs.find((d) => d.id === id);
-      markClosing(tabStateKey(id, group));
-      clearHtmlView(tabStateKey(id, group));
-      const closed = doc ? toClosedTab(doc, group) : null;
-      if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
+      if (doc) {
+        dropTabState(doc, group);
+        const closed = toClosedTab(doc, group);
+        if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
+      }
       dispatchDocs({ type: 'close', id, group });
       return Promise.resolve(true);
     },
@@ -2067,8 +2040,7 @@ export function App() {
       const doc = docStateRef.current.docs.find((d) => d.id === id);
       if (!doc) continue;
       if (g1.tabs.some((t) => t.id === id)) {
-        markClosing(tabStateKey(id, 2));
-        clearHtmlView(tabStateKey(id, 2));
+        dropTabState(doc, 2);
       } else {
         carryTabState(doc, 2, 1, 'move');
       }
