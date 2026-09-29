@@ -261,8 +261,6 @@ export function DocTabs({
       <div
         ref={stripRef}
         className="tabbar"
-        role="tablist"
-        aria-label={SPLIT_COPY.tablistLabel(group)}
         onContextMenu={
           onStripContextMenu
             ? (e) => {
@@ -294,106 +292,109 @@ export function DocTabs({
             <span>{terminalLabel}</span>
           </button>
         )}
-        {docs.map((d) => (
-          <div
-            key={d.id}
-            data-tabid={d.id}
-            role="tab"
-            tabIndex={0}
-            aria-selected={activeId === d.id}
-            // Preview is signalled visually by italic only; carry it in the accessible
-            // name too so it isn't conveyed by styling alone (WCAG 1.4.1, spec §10).
-            aria-label={previewIds.has(d.id) ? `${d.title} (preview)` : undefined}
-            className={`tab ${activeId === d.id ? activeClass : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''} ${previewIds.has(d.id) ? 'tab--preview' : ''} ${flashTab === d.id ? 'tab--flash' : ''}`}
-            onClick={() => onSelect(d.id)}
-            // Middle-click closes the tab (VS Code parity), routing through the same
-            // unsaved-changes path as the × button. `auxclick` (down+up on the element)
-            // gives WCAG-2.5.2 up-event semantics; the Terminal tab gets none (D7). The
-            // helper's mousedown suppression is what keeps it working on an overflowing strip.
-            {...middleClickProps(() => onClose(d.id))}
-            onDoubleClick={() => {
-              if (previewIds.has(d.id)) onPinDoc?.(d.id);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onSelect(d.id);
-              }
-            }}
-            onContextMenu={onTabContextMenu ? (e) => onTabContextMenu(e, d) : undefined}
-            draggable={!!onReorder}
-            onDragStart={(e) => {
-              beginTabDrag({ id: d.id, group }, e.dataTransfer);
-              if (d.kind === 'file') {
-                stampFileDrag(e.dataTransfer, d.path, { download: true, terminal: false });
-              }
-              // Copy is the in-app Ctrl duplicate, and the only effect an OS drop target accepts
-              // for a file's drag-out; 'move' alone would refuse both.
-              e.dataTransfer.effectAllowed =
-                splitBehavior(d.kind) === 'duplicate' ? 'copyMove' : 'move';
-            }}
-            onDragOver={(e) => {
-              const dr = tabDragOf(e);
-              if (dr && !(dr.group === group && dr.id === d.id)) {
-                acceptTabDrop(e);
-                setOverId(d.id);
-              }
-            }}
-            onDragLeave={() => setOverId((o) => (o === d.id ? null : o))}
-            onDrop={(e) => dropTab(e, d.id)}
-            onDragEnd={() => {
-              endTabDrag();
-              setOverId(null);
-              setOverEnd(false);
-            }}
-          >
-            {d.kind === 'diff' && <IconBranch size={12} className="tab__spark" />}
-            {d.kind === 'commit-diff' && <IconBranch size={12} className="tab__spark" />}
-            {d.kind === 'review' && <IconReview size={12} className="tab__spark" />}
-            <span>{d.title}</span>
-            {saves.get(d.path)?.phase === 'conflict' ? (
-              <span
-                className="tab__conflict"
-                role="img"
-                aria-label={AUTO_SAVE_COPY.tabConflict}
-                title={AUTO_SAVE_COPY.tabConflict}
-              >
-                <IconWarning size={12} />
-              </span>
-            ) : (
-              dirty.has(d.path) && (
-                <span
-                  className="tab__dirty"
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Unsaved changes — save"
-                  title="Unsaved changes — Ctrl+S to save"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    saveDocByPath(d.path);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      saveDocByPath(d.path);
-                    }
-                  }}
-                />
-              )
-            )}
-            <button
-              className="tab__close"
-              aria-label="Close tab"
-              onClick={(e) => {
-                e.stopPropagation();
-                onClose(d.id);
+        {/* see split-editor spec §9 (amended): the Terminal is a button beside the tablist */}
+        <div className="tabbar__tabs" role="tablist" aria-label={SPLIT_COPY.tablistLabel(group)}>
+          {docs.map((d) => (
+            <div
+              key={d.id}
+              data-tabid={d.id}
+              role="tab"
+              tabIndex={0}
+              aria-selected={activeId === d.id}
+              // Preview is signalled visually by italic only; carry it in the accessible
+              // name too so it isn't conveyed by styling alone (WCAG 1.4.1, spec §10).
+              aria-label={previewIds.has(d.id) ? `${d.title} (preview)` : undefined}
+              className={`tab ${activeId === d.id ? activeClass : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''} ${previewIds.has(d.id) ? 'tab--preview' : ''} ${flashTab === d.id ? 'tab--flash' : ''}`}
+              onClick={() => onSelect(d.id)}
+              // Middle-click closes the tab (VS Code parity), routing through the same
+              // unsaved-changes path as the × button. `auxclick` (down+up on the element)
+              // gives WCAG-2.5.2 up-event semantics; the Terminal tab gets none (D7). The
+              // helper's mousedown suppression is what keeps it working on an overflowing strip.
+              {...middleClickProps(() => onClose(d.id))}
+              onDoubleClick={() => {
+                if (previewIds.has(d.id)) onPinDoc?.(d.id);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onSelect(d.id);
+                }
+              }}
+              onContextMenu={onTabContextMenu ? (e) => onTabContextMenu(e, d) : undefined}
+              draggable={!!onReorder}
+              onDragStart={(e) => {
+                beginTabDrag({ id: d.id, group }, e.dataTransfer);
+                if (d.kind === 'file') {
+                  stampFileDrag(e.dataTransfer, d.path, { download: true, terminal: false });
+                }
+                // Copy is the in-app Ctrl duplicate, and the only effect an OS drop target accepts
+                // for a file's drag-out; 'move' alone would refuse both.
+                e.dataTransfer.effectAllowed =
+                  splitBehavior(d.kind) === 'duplicate' ? 'copyMove' : 'move';
+              }}
+              onDragOver={(e) => {
+                const dr = tabDragOf(e);
+                if (dr && !(dr.group === group && dr.id === d.id)) {
+                  acceptTabDrop(e);
+                  setOverId(d.id);
+                }
+              }}
+              onDragLeave={() => setOverId((o) => (o === d.id ? null : o))}
+              onDrop={(e) => dropTab(e, d.id)}
+              onDragEnd={() => {
+                endTabDrag();
+                setOverId(null);
+                setOverEnd(false);
               }}
             >
-              <IconClose size={12} />
-            </button>
-          </div>
-        ))}
+              {d.kind === 'diff' && <IconBranch size={12} className="tab__spark" />}
+              {d.kind === 'commit-diff' && <IconBranch size={12} className="tab__spark" />}
+              {d.kind === 'review' && <IconReview size={12} className="tab__spark" />}
+              <span>{d.title}</span>
+              {saves.get(d.path)?.phase === 'conflict' ? (
+                <span
+                  className="tab__conflict"
+                  role="img"
+                  aria-label={AUTO_SAVE_COPY.tabConflict}
+                  title={AUTO_SAVE_COPY.tabConflict}
+                >
+                  <IconWarning size={12} />
+                </span>
+              ) : (
+                dirty.has(d.path) && (
+                  <span
+                    className="tab__dirty"
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Unsaved changes — save"
+                    title="Unsaved changes — Ctrl+S to save"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      saveDocByPath(d.path);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        saveDocByPath(d.path);
+                      }
+                    }}
+                  />
+                )
+              )}
+              <button
+                className="tab__close"
+                aria-label="Close tab"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClose(d.id);
+                }}
+              >
+                <IconClose size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
         {/* Trailing drop zone: fills the remaining strip width so a drop past the last
             tab (→ end) reaches the rightmost slot (R5.6). Inert unless a tab drag is live. */}
         {onReorder && (

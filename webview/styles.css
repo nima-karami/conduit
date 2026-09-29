@@ -2702,6 +2702,12 @@ body.resizing .panel__resize::after {
   padding: 0;
   background: transparent;
 }
+.tabbar__tabs {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  flex: 0 0 auto;
+}
 /* Slim, elegant horizontal scrollbar for the tab strip: no track rail, and a thin
    rounded thumb that only appears while the pointer is over the tab strip. The tabs
    are height-pinned to the row (see `.tab`), so this bar floats over their bottom edge

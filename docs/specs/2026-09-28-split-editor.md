@@ -442,7 +442,7 @@ Feature: Split editor
 | Component | Actions | Pointer | Keyboard | Touch | Context menu | ARIA |
 |---|---|---|---|---|---|---|
 | Group | focus | pointer-down anywhere in the group | `Mod+Alt+ArrowLeft/Right` moves the tab; focus group via palette "Focus Left/Right Editor Group" (D3) | tap = focus | — | `role="group"`, `aria-label="Left editor group"` / `"Right editor group"`, active marked with `data-active` + the label suffix ", active" |
-| Tab | split, move, close, pin, reorder | drag within/between strips; drag to the right edge (v1) | existing tab keys; `Mod+\`; `Mod+Alt+Arrow` | — | + "Split Right", "Move to Other Group" (enabled per §2.3) | existing `role="tab"` plus a **new** `role="tablist"` per strip, labelled by group. The Terminal tab becomes `role="tab"` in G1's tablist. |
+| Tab | split, move, close, pin, reorder | drag within/between strips; drag to the right edge (v1) | existing tab keys; `Mod+\`; `Mod+Alt+Arrow` | — | + "Split Right", "Move to Other Group" (enabled per §2.3) | existing `role="tab"` plus a **new** `role="tablist"` per strip, labelled by group, holding only the doc tabs. The Terminal is a plain button beside G1's tablist, not a tab (amended in the review round). |
 | Split button | Split Right | click | Tab-reachable, Enter/Space | tap | — | `aria-label="Split editor right"`, `aria-disabled` + title reason |
 | Divider | resize | drag | focusable; ArrowLeft/Right ±16px, Shift ±64px, Home/End to min/max | drag | — | `role="separator"`, `aria-orientation="vertical"`, `aria-valuenow` (percent), label "Resize editor groups" (mirrors `git-history-view` `gh__resizer`) |
 | Right strip background | Close/Join group | right-click | via palette | long-press n/a | "Close Editor Group", "Join Editor Groups" (v1) | — |
