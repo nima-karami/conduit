@@ -1012,12 +1012,12 @@ export function App() {
         clearHtmlView(tabStateKey(id, from));
       }
       dispatchDocs({ type: 'moveTab', sessionId, id, toGroup, beforeId, duplicate: copy });
-      if (navLiveRef.current) {
-        navLiveRef.current.textContent =
-          copy && toGroup === 2
-            ? SPLIT_COPY.splitOpened(doc.title)
-            : SPLIT_COPY.moved(doc.title, toGroup);
-      }
+      const said = !copy
+        ? SPLIT_COPY.moved(doc.title, toGroup)
+        : toGroup === 2
+          ? SPLIT_COPY.splitOpened(doc.title)
+          : null;
+      if (said !== null && navLiveRef.current) navLiveRef.current.textContent = said;
       focusGroupViewer(toGroup, doc, '> .editor-group__body');
     },
     [],
