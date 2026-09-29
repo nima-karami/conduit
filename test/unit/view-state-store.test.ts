@@ -343,8 +343,9 @@ describe('moveViewState / copyViewState', () => {
     markClosing('g2:file:/m.ts');
     moveViewState('file:/m.ts', 'g2:file:/m.ts');
     expect(getViewState('file:/m.ts')).toBeUndefined();
-    setViewState('g2:file:/m.ts', scroll(130));
-    expect(getViewState('g2:file:/m.ts')).toEqual(scroll(130));
+    // A merge keeps the carried top, so one read proves both the value and the cleared tombstone.
+    mergeScrollViewState('g2:file:/m.ts', { selectedSha: 'abc' });
+    expect(getViewState('g2:file:/m.ts')).toEqual({ kind: 'scroll', top: 120, selectedSha: 'abc' });
   });
 
   it("move lands the source viewer's late unmount capture on the target, for every writer", () => {
