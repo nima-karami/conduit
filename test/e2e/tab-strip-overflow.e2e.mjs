@@ -21,7 +21,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, launchApp, makeLog, openSession } from './harness.mjs';
+import { assert, launchApp, makeLog, openSession, removeDir } from './harness.mjs';
 import { G, groupCount, openFromExplorer, sleep, waitShown } from './split-editor-helpers.mjs';
 
 if (process.platform !== 'win32') {
@@ -142,6 +142,14 @@ async function runTheme(theme) {
     join(userDataDir, 'settings.json'),
     JSON.stringify({ version: 1, settings: { theme, restoreSessions: false } }),
   );
+  try {
+    await runOn(theme, userDataDir);
+  } finally {
+    await removeDir(userDataDir, { budgetMs: 10000 });
+  }
+}
+
+async function runOn(theme, userDataDir) {
   const launched = await launchApp({ userDataDir });
   try {
     const { page } = launched;
@@ -235,5 +243,11 @@ try {
     if (e?.stack) console.error(e.stack);
     code = 2;
   }
+}
+try {
+  await removeDir(repo, { budgetMs: 10000 });
+} catch (e) {
+  console.error('[tab-strip-overflow] ERROR: the fixture repo was not removed:', e?.message || e);
+  code ||= 2;
 }
 process.exit(code);
