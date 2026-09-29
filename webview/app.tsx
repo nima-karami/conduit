@@ -2,6 +2,7 @@ import * as monaco from 'monaco-editor';
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -1422,7 +1423,10 @@ export function App() {
     showChanges: showChangesInPane,
   });
   userToggledExplorerRef.current = userToggledExplorer;
-  useEffect(() => {
+  // A layout effect, so no commit the user (or the Back button) can observe has the new session's
+  // tabs from `centerLayout` beside the old session's cached `activeId` (split-editor plan
+  // "Architecture": activeId is a cache).
+  useLayoutEffect(() => {
     dispatchDocs({ type: 'switchSession', sessionId: activeId ?? '' });
   }, [activeId]);
   // Switching sessions must land keyboard focus in the newly-active session's terminal so the
