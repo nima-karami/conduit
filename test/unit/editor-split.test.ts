@@ -14,6 +14,11 @@ describe('clampSplitRatio', () => {
     expect(clampSplitRatio(0.8, 300)).toBe(0.8);
   });
 
+  it('narrower than 480px still bounds the ratio to [0.15, 0.85] (review L4.6)', () => {
+    expect(clampSplitRatio(0.05, 300)).toBe(0.15);
+    expect(clampSplitRatio(0.95, 300)).toBe(0.85);
+  });
+
   it('never leaves the persisted range [0.15, 0.85] on a wide pane', () => {
     expect(clampSplitRatio(0.01, 4000)).toBe(0.15);
     expect(clampSplitRatio(0.99, 4000)).toBe(0.85);

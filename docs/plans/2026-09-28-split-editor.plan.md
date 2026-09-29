@@ -492,7 +492,7 @@ export function tabStateKey(docId: string, group: GroupIndex): string; // group 
 
 ```ts
 export const EDITOR_GROUP_MIN_PX = 240;
-/** Clamp so neither side < min when width ≥ 2·min; below that return ratio unchanged (spec §2.6 narrow). */
+/** Clamp so neither side < min when width ≥ 2·min; below that clamp only to [0.15, 0.85] (spec §2.6 narrow; bounded in the review round). */
 export function clampSplitRatio(ratio: number, widthPx: number): number;
 export function stepSplitRatio(ratio: number, widthPx: number, key: 'ArrowLeft' | 'ArrowRight' | 'Home' | 'End', shift: boolean): number;
 // ±16px, Shift ±64px; Home/End → min/max allowed ratio

@@ -16,10 +16,10 @@ function bounds(widthPx: number): [number, number] | null {
   ];
 }
 
-/** Clamp so neither side < min when width ≥ 2·min; below that return ratio unchanged (spec §2.6 narrow). */
+/** Clamp so neither side < min when width ≥ 2·min; below that only to [0.15, 0.85] (spec §2.6 narrow). */
 export function clampSplitRatio(ratio: number, widthPx: number): number {
-  const b = bounds(widthPx);
-  return b ? Math.min(b[1], Math.max(b[0], ratio)) : ratio;
+  const [lo, hi] = bounds(widthPx) ?? [RATIO_MIN, RATIO_MAX];
+  return Math.min(hi, Math.max(lo, ratio));
 }
 
 export function stepSplitRatio(
