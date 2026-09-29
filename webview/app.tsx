@@ -3926,7 +3926,7 @@ export function App() {
     if (docState.activeId !== null) {
       groupCmds.push({
         id: 'cmd:splitEditorRight',
-        title: SPLIT_COPY.splitButton,
+        title: SPLIT_COPY.splitEditorRight,
         keywords: ['split right', 'editor group', 'side by side'],
         group: 'Commands',
         icon: <IconSplit size={14} />,

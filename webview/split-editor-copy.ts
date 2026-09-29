@@ -3,6 +3,7 @@ import type { GroupIndex } from './doc-groups';
 export const SPLIT_COPY = {
   splitRight: 'Split Right',
   splitButton: 'Split editor right',
+  splitEditorRight: 'Split Editor Right',
   moveToOther: 'Move to Other Group',
   closeGroup: 'Close Editor Group',
   joinGroups: 'Join Editor Groups',

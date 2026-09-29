@@ -8,6 +8,7 @@
  *   TC  a tab click
  *   TT  a pointer click on the Terminal button leaves focus out of xterm (main's behaviour)
  *   CW  the Ctrl+W successor
+ *   PT  the palette entry is titled "Split Editor Right"
  *   SR  Split Right on rendered markdown, and on a PDF
  *   MV  Move to Other Group with a `.ts` left behind in the left group
  *   SB  each strip's split button: the left one is enabled on a doc even with the right group
@@ -195,6 +196,15 @@ runScenario('split-editor-focus', async ({ page, log }) => {
   await page.keyboard.press('Control+w');
   await waitShown(page, 1, 'a.ts', 'CW');
   await expectFocus('CW Ctrl+W successor', 1, 'editor:a.ts');
+
+  // PT: the palette names the command "Split Editor Right" (spec §9).
+  await page.keyboard.press('Control+Shift+P');
+  await page.locator('.palette__input').waitFor({ state: 'visible', timeout: 5000 });
+  await page.locator('.palette__input').fill('>split editor');
+  await page.locator('.palette__title', { hasText: /split/i }).first().waitFor({ timeout: 5000 });
+  const titles = await page.locator('.palette__title').allTextContents();
+  assert(titles.includes('Split Editor Right'), `PT: palette titles ${JSON.stringify(titles)}`);
+  await page.keyboard.press('Escape');
 
   // SR: Split Right on rendered markdown.
   await tabOf(page, 1, 'note.md').click();
