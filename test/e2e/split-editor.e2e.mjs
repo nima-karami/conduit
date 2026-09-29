@@ -6,6 +6,7 @@
  *   E2  typing in one group shows in the other; both tabs dirty; Ctrl+S clears both.
  *   E3  scrolling one group's editor leaves the other's scroll position alone.
  *   E13 with the right group active the split button is aria-disabled and Ctrl+\ announces the cap.
+ *   DV  the divider's hit area stays off the strip row, so tabs and buttons at the seam click.
  *   E8  dragging the divider / ArrowLeft on it resizes, neither side < 240px, ratio survives restart.
  *   E6  closing the right group's only tab collapses to one group, the left one active.
  *   E12 the Terminal tab can't be split: Ctrl+\ off-terminal changes nothing, the menu item is
@@ -708,6 +709,23 @@ try {
     );
   assert((await groupCount(page)) === 2, 'E13: Ctrl+\\ at the cap changed the group count');
   log('E13 ✓ cap reached is disabled and announced');
+
+  // DV (review L4.5)
+  const seam = await page.evaluate((g1) => {
+    const div = document.querySelector('.editorgroups__divider')?.getBoundingClientRect();
+    const strip = document.querySelector(`${g1} > .tabbar-wrap`)?.getBoundingClientRect();
+    if (!div || !strip) return null;
+    const y = strip.top + strip.height / 2;
+    const cx = div.left + div.width / 2;
+    return [cx - 4, cx, cx + 4].map((x) => {
+      const el = document.elementFromPoint(x, y);
+      return el?.closest('.editorgroups__divider') ? 'divider' : (el?.className ?? null);
+    });
+  }, G(1));
+  log('DV: hits across the seam in the strip row', JSON.stringify(seam));
+  assert(seam, 'DV: no divider or strip');
+  assert(!seam.includes('divider'), `DV: the divider takes the strip row (${seam})`);
+  log('DV ✓ the divider leaves the strip row clickable');
 
   // E8
   // Keys first: at the hidden window's width a 200px drag reaches the 240px clamp.

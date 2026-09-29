@@ -2641,8 +2641,9 @@ body.resizing .panel__resize::after {
   outline-offset: -3px;
   pointer-events: none;
 }
+/* Body rows only: over the strip row it would take clicks meant for the tabs at the seam. */
 .editorgroups__divider {
-  grid-row: 1 / span 3;
+  grid-row: 2 / span 2;
   grid-column: 2;
   position: relative;
   z-index: 7;
