@@ -1519,3 +1519,14 @@ the locked decision.
     renderer auto-answering `quitDecision{proceed:true}`, both control and probe exit.
   - Also observed: `window-all-closed` → `app.quit()` fires `before-quit` a further time
     (#3) inside the same quit, so the Slice 3 `tornDown` guard is load-bearing.
+- **Slice 2 (2026-09-29): done** — T2.1 `b9f35cf`, T2.2 `8ec5b83`, T2.3 `086b188`, T2.4 `4cdcf84`,
+  T2.5 `26bd765`. Slice check: 5 files / 138 tests green, typecheck green.
+  - T2.2: A3 held on current code (no controller fix). The contract's `autoEligible:false` is the
+    code's `AttachOpts.writable === false` (renamed since the auto-save plan); `isPartial` reads it.
+    Preview-toast suppression also silences the partial-file refusal toast (same branch).
+  - T2.1 interpretations (no API change): the unresponsive box opens only in `shown`; only windows
+    that *answered* proceed are aborted on cancel/expiry (timed-out ones already got S2's abort);
+    a re-probe re-sends the original ask even after a reason upgrade; `confirmUnresponsive` must
+    not reject (Slice 3's main implementation).
+  - Not built here: `pointWellInside` / `DRAG_STAY_INSET_PX` belong to Slice 5 (T5.x), not Slice 2.
+  - Slices 3+ held until split-editor merges (they touch app.tsx / docs.ts / center-pane).
