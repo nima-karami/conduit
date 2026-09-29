@@ -62,8 +62,18 @@ function toCursorPos(editor: NavEditor): CursorPos | undefined {
   return p ? { line: p.lineNumber, column: p.column } : undefined;
 }
 
+// Given a group, only that group's editor: a stop in one group is never read from, or revealed
+// in, the other group's view of the same file.
+function editorFor(path: string, group?: GroupIndex): NavEditor | undefined {
+  if (group === undefined) return editors.get(path);
+  return editors
+    .entries(path)
+    .filter((e) => e.group === group)
+    .at(-1)?.value;
+}
+
 export function liveCursor(path: string, group?: GroupIndex): CursorPos | undefined {
-  const editor = editors.get(path, group);
+  const editor = editorFor(path, group);
   return editor ? toCursorPos(editor) : undefined;
 }
 
@@ -82,7 +92,7 @@ export function revealInEditor(editor: NavEditor, pos: CursorPos): void {
 }
 
 export function revealInNavEditor(path: string, pos: CursorPos, group?: GroupIndex): boolean {
-  const editor = editors.get(path, group);
+  const editor = editorFor(path, group);
   if (!editor) return false;
   revealInEditor(editor, pos);
   editor.focus();

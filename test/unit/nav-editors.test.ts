@@ -154,4 +154,13 @@ describe('nav-editors — two viewers on one path (split-editor D1)', () => {
     expect(left.calls).toEqual(['setPosition', 'reveal:5', 'focus']);
     expect(right.calls).toEqual([]);
   });
+
+  it("a given group never falls back to the other group's editor", () => {
+    const left = fakeEditor(50, { lineNumber: 3, column: 1 });
+    reg('/w/one.ts', left.editor, 1);
+    expect(liveCursor('/w/one.ts', 2)).toBeUndefined();
+    expect(revealInNavEditor('/w/one.ts', { line: 5, column: 1 }, 2)).toBe(false);
+    expect(left.calls).toEqual([]);
+    expect(liveCursor('/w/one.ts')).toEqual({ line: 3, column: 1 });
+  });
 });
