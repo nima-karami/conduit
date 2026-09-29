@@ -262,11 +262,12 @@ function retargetTabs(group: EditorGroup, follow: (id: string) => string): Edito
   };
 }
 
-/** ≤1 preview per group: a preview replaces the group's file/diff preview tab at its index. */
+/** ≤1 file/diff preview per group: a file/diff preview replaces it at its index. The commit-diff
+ *  slot is a preview of its own and never replaces, nor is replaced by, a file/diff one. */
 function placeTab(group: EditorGroup, id: string, preview: boolean, docs: OpenDoc[]): EditorGroup {
   const tab: Tab = preview ? { id, preview: true } : { id };
-  if (preview) {
-    const kindOf = (tabId: string) => docs.find((d) => d.id === tabId)?.kind;
+  const kindOf = (tabId: string) => docs.find((d) => d.id === tabId)?.kind;
+  if (preview && isPreviewable(kindOf(id))) {
     const i = group.tabs.findIndex((t) => t.preview && isPreviewable(kindOf(t.id)));
     if (i !== -1) return { ...group, tabs: group.tabs.map((t, j) => (j === i ? tab : t)) };
   }

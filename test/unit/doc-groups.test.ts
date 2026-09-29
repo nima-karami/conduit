@@ -546,6 +546,23 @@ describe('group actions', () => {
     expect(s.docs.some((d) => d.id === 'file:/a.ts')).toBe(true);
   });
 
+  it('a commit-diff preview and a file preview never replace each other', () => {
+    const commitPreview: DocsAction = {
+      type: 'openCommitFile',
+      sha: SHA,
+      file: 'x.ts',
+      sessionId: 'S1',
+      mode: 'preview',
+    };
+    const fileFirst = run(open(initialDocs, '/p.ts', { mode: 'preview' }), commitPreview);
+    expect(ids(fileFirst, 1)).toEqual(['file:/p.ts', 'commit-diff:@preview']);
+    expect(tabPreview(fileFirst, 'S1', 1, 'file:/p.ts')).toBe(true);
+    expect(tabPreview(fileFirst, 'S1', 1, 'commit-diff:@preview')).toBe(true);
+
+    const commitFirst = open(run(initialDocs, commitPreview), '/p.ts', { mode: 'preview' });
+    expect(ids(commitFirst, 1)).toEqual(['commit-diff:@preview', 'file:/p.ts']);
+  });
+
   it('switchSession restores group 2 as active', () => {
     let s = split(open(initialDocs, '/a.ts'));
     s = open(s, '/c.ts', { group: 2 });
