@@ -242,7 +242,6 @@ export function CenterPane({
     .find((d) => d.kind === 'review')?.reviewSource;
   // Web tabs stay mounted across tab switches so a page never reloads when you switch away and
   // back; only each group's active one is visible.
-  const webDocs = layout.groups.flatMap((v) => v.docs.filter((d) => d.kind === 'web'));
   const webPlacement = (id: string) => {
     const v = layout.groups.find((g) => g.docs.some((d) => d.id === id));
     return v ? { group: v.group, visible: v.activeDocId === id } : null;
@@ -471,7 +470,7 @@ export function CenterPane({
           ratio={editorSplitRatio}
           onRatioCommit={onSplitRatioCommit}
           renderGroup={renderGroup}
-          webDocs={webDocs}
+          webDocs={layout.webDocs}
           webPlacement={webPlacement}
           renderWeb={(d) => (
             <WebView

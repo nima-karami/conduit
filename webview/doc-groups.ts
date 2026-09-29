@@ -126,6 +126,8 @@ export interface GroupView {
 export interface CenterLayout {
   groups: readonly GroupView[];
   activeGroup: GroupIndex;
+  /** The session's web docs in registry order, which no tab move changes (see split-editor plan P7). */
+  webDocs: readonly OpenDoc[];
 }
 
 const groupView = (state: DocsState, sessionId: string, group: GroupIndex): GroupView => ({
@@ -140,11 +142,13 @@ export function centerLayout(state: DocsState, sessionId: string | undefined): C
     return {
       groups: [{ group: 1, docs: [], activeDocId: null, previewIds: new Set() }],
       activeGroup: 1,
+      webDocs: [],
     };
   }
   const layout = layoutOf(state, sessionId);
   return {
     groups: layout.groups.map((_, i) => groupView(state, sessionId, i === 0 ? 1 : 2)),
     activeGroup: layout.activeGroup,
+    webDocs: state.docs.filter((d) => d.sessionId === sessionId && d.kind === 'web'),
   };
 }

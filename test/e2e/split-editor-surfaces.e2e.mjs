@@ -3,8 +3,8 @@
  * (docs/specs/2026-09-28-split-editor.md §7). One launch, with `autoSave: 'onFocusChange'` seeded:
  *   P9  leaving b.ts in the right group saves it (viewLeave), while the left group still shows it
  *       clean.
- *   E10 a web tab moved to the other group keeps its page: a marker set in the guest survives and
- *       the page is not fetched again (D9).
+ *   E10 with two web tabs open, moving either one to the other group and back keeps BOTH pages: a
+ *       marker set in each guest survives and neither page is fetched again (D9, review B6).
  *   WF  a click inside the right group's guest activates the right group (Decisions Needed #4).
  *   D8  one PDF in both groups: closing the right tab leaves the left rendering, and a second PDF
  *       still loads (the shared pdf.js worker survives).
@@ -19,6 +19,7 @@ import {
   explorer,
   G,
   openFromExplorer,
+  same,
   shownTab,
   sleep,
   tabOf,
@@ -40,7 +41,7 @@ copyFileSync(samplePdf, join(repo, 'one.pdf'));
 copyFileSync(samplePdf, join(repo, 'two.pdf'));
 const repoArg = repo.replace(/\\/g, '/');
 
-const WEB_TITLE = 'Split Web Fixture';
+const WEB_PAGES = { '/a': 'Split Web A', '/b': 'Split Web B' };
 
 const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-split-surf-ud-'));
 writeFileSync(
@@ -57,38 +58,73 @@ const inGuest = (page, g, js) =>
     src: js,
   });
 
-/** E10: a web tab moved to the other group keeps its page (no reload). */
-async function phaseWebMove(page, server) {
-  await page.locator(`${G(1)} .monaco-editor`).click();
-  await page.waitForSelector(`${G(1)}[data-active="true"]`, { timeout: 5000 });
+/** Runs `js` in the guest showing `url`, shown or hidden. */
+const inGuestAt = (page, url, js) =>
+  page.evaluate(
+    ({ u, src }) =>
+      [...document.querySelectorAll('.editorgroups > .webhost .webview__frame')]
+        .find((el) => el.getURL() === u)
+        ?.executeJavaScript(src) ?? null,
+    { u: url, src: js },
+  );
+
+async function openWeb(page, url, title) {
   await page.click('.omnibar');
   await page.waitForSelector('.palette__input', { state: 'visible', timeout: 10000 });
   await page.fill('.palette__input', '>open web page');
   await page.waitForSelector('.palette__title', { timeout: 8000 });
   await page.keyboard.press('Enter');
   await page.waitForSelector('.modal__input', { state: 'visible', timeout: 8000 });
-  await page.fill('.modal__input', server.url);
+  await page.fill('.modal__input', url);
   await page.keyboard.press('Enter');
-  await waitShown(page, 1, WEB_TITLE, 'E10');
-  const set = await inGuest(page, 1, 'window.__marker = 1');
-  assert(set === 1, `E10: could not set the guest marker (${set})`);
-  const loads = server.hits();
-  await tabOf(page, 1, WEB_TITLE).click({ button: 'right' });
+  await waitShown(page, 1, title, 'E10');
+}
+
+async function moveToOther(page, from, title) {
+  await tabOf(page, from, title).click({ button: 'right' });
   const item = page.locator('.ctxmenu__item', { hasText: /^Move to Other Group$/ });
   await item
     .waitFor({ timeout: 5000 })
     .catch(() => assert(false, 'E10: no Move to Other Group item'));
   await item.click();
-  await waitShown(page, 2, WEB_TITLE, 'E10');
+  await waitShown(page, from === 1 ? 2 : 1, title, 'E10');
+  await sleep(1000);
+}
+
+/** E10: moving either of two web tabs to the other group and back reloads neither (D9, B6). */
+async function phaseWebMove(page, server) {
+  await page.locator(`${G(1)} .monaco-editor`).click();
+  await page.waitForSelector(`${G(1)}[data-active="true"]`, { timeout: 5000 });
+  const pages = Object.entries(WEB_PAGES).map(([p, title]) => ({
+    url: new URL(p, server.url).href,
+    title,
+  }));
+  for (const [i, { url, title }] of pages.entries()) {
+    await openWeb(page, url, title);
+    const set = await inGuestAt(page, url, `window.__marker = ${i + 1}`);
+    assert(set === i + 1, `E10: could not set the guest marker on ${url} (${set})`);
+  }
+  const loads = server.hits();
+  const check = async (step) => {
+    const markers = [];
+    for (const { url } of pages) markers.push(await inGuestAt(page, url, 'window.__marker'));
+    log(`E10 ${step}: markers`, JSON.stringify(markers), '· loads', loads, '→', server.hits());
+    assert(same(markers, [1, 2]), `E10 ${step}: a guest reloaded (markers ${markers})`);
+    assert(server.hits() === loads, `E10 ${step}: a page was fetched again`);
+  };
+  const [a, b] = pages;
+  await moveToOther(page, 1, a.title);
   await page
     .waitForSelector(webFrame(2), { state: 'attached', timeout: 5000 })
     .catch(() => assert(false, 'E10: no visible web host in the right group'));
-  await sleep(1000);
-  const marker = await inGuest(page, 2, 'window.__marker');
-  log('E10: marker after the move', marker, '· page loads', loads, '→', server.hits());
-  assert(marker === 1, `E10: the guest reloaded on the move (marker ${marker})`);
-  assert(server.hits() === loads, `E10: the page was fetched again (${loads} → ${server.hits()})`);
-  log('E10 ✓ the web tab moved without a reload');
+  await check('A → right');
+  await moveToOther(page, 2, a.title);
+  await check('A → left');
+  await moveToOther(page, 1, b.title);
+  await check('B → right');
+  await tabOf(page, 1, 'b.ts').click();
+  await waitShown(page, 1, 'b.ts', 'E10');
+  log('E10 ✓ moving either web tab between groups reloads neither page');
 }
 
 /** Web focus (Decisions Needed #4): a click inside the right group's guest activates that group. */
@@ -211,10 +247,16 @@ async function phaseViewLeave(page) {
 }
 
 let hits = 0;
-const httpServer = createServer((_req, res) => {
+const httpServer = createServer((req, res) => {
+  const title = WEB_PAGES[req.url];
+  if (!title) {
+    res.writeHead(404);
+    res.end();
+    return;
+  }
   hits += 1;
   res.writeHead(200, { 'content-type': 'text/html' });
-  res.end(`<!doctype html><title>${WEB_TITLE}</title><body><h1>web</h1></body>`);
+  res.end(`<!doctype html><title>${title}</title><body><h1>web</h1></body>`);
 });
 await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
 const server = { url: `http://127.0.0.1:${httpServer.address().port}/`, hits: () => hits };

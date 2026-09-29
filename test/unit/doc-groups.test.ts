@@ -835,6 +835,28 @@ describe('centerLayout', () => {
     expect([...l.groups[1].previewIds]).toEqual(['file:/b.ts']);
     expect(l.groups[0].previewIds.size).toBe(0);
   });
+
+  it("lists the session's web docs in registry order, whichever group holds each (review B6)", () => {
+    const wa = doc('web', 'https://a.test/');
+    const wb = doc('web', 'https://b.test/');
+    const other = doc('web', 'https://c.test/', 'S2');
+    const s: DocsState = {
+      docs: [wa, other, wb],
+      layouts: {
+        S1: {
+          groups: [
+            { tabs: [{ id: wb.id }], active: wb.id },
+            { tabs: [{ id: wa.id }], active: wa.id },
+          ],
+          activeGroup: 1,
+        },
+        S2: { groups: [{ tabs: [{ id: other.id }], active: other.id }], activeGroup: 1 },
+      },
+      activeId: wb.id,
+    };
+    expect(centerLayout(s, 'S1').webDocs.map((d) => d.id)).toEqual([wa.id, wb.id]);
+    expect(centerLayout(s, undefined).webDocs).toEqual([]);
+  });
 });
 
 describe('group moveFiles', () => {

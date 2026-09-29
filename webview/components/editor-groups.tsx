@@ -48,7 +48,7 @@ export function EditorGroups({
   ratio: number;
   onRatioCommit: (r: number) => void;
   renderGroup: (view: GroupView) => React.ReactNode;
-  webDocs: OpenDoc[];
+  webDocs: readonly OpenDoc[];
   webPlacement: (id: string) => { group: GroupIndex; visible: boolean } | null;
   renderWeb: (doc: OpenDoc) => React.ReactNode;
   onFocusGroup: (g: GroupIndex) => void;
