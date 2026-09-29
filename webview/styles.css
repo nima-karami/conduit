@@ -769,6 +769,20 @@ body {
   border-radius: 4px;
 }
 
+/* Pane-filling keyboard landings (tabindex=-1, so the rule above skips them): an ancestor's
+   overflow would clip an outset ring away, so they wear the same ring on the inside. */
+.gh:focus-visible,
+.review__scroll:focus-visible,
+.markdown:focus-visible,
+.htmlview__body:focus-visible,
+.plan__body:focus-visible,
+.imgstage__stage:focus-visible,
+.mermaid-zoom__stage:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: -3px;
+  box-shadow: var(--focus-ring-inset);
+}
+
 /* ---------- shell grid ----------
    --win-pad and --gutter are the whole geometry: at Aero the panels detach from the window
    edge and from each other, so the terminal reads as an object rather than the room; at Neon
@@ -11995,15 +12009,6 @@ button.toggle--on .toggle__knob {
   overflow: hidden;
   outline: none;
   touch-action: none;
-}
-
-/* The stage fills its parent, whose overflow:hidden would clip the app's outset ring
-   away entirely — so this one keyboard target wears the same ring on the inside. */
-.imgstage__stage:focus-visible,
-.mermaid-zoom__stage:focus-visible {
-  box-shadow:
-    inset 0 0 0 1px var(--panel),
-    inset 0 0 0 3px var(--focus-ring-color);
 }
 
 .imgstage__stage--pannable {
