@@ -3,7 +3,13 @@ import * as path from 'node:path';
 import { isBinary } from './content-search';
 import { langFromPath } from './lang';
 import { imageMime, mediaKindForPath, pdfKindForPath } from './media-kind';
-import { realPathLeaf, validateWrite, type WriteOptions, type WriteResult } from './path-guard';
+import {
+  isInsideRoot,
+  realPathLeaf,
+  validateWrite,
+  type WriteOptions,
+  type WriteResult,
+} from './path-guard';
 import type { DiffBase, DiffScope, DirEntryDTO, FileContentDTO, FileDiffDTO } from './protocol';
 import type { GrantStore } from './read-grants';
 
@@ -206,7 +212,15 @@ export async function writeFile(
   try {
     // Overwrite of a buffer whose folder was deleted under it. Rooted writes only: validateWrite
     // proved the whole path inside a root; a read grant is one exact file, never its folders.
-    if (verdict.ok) await fs.promises.mkdir(dir, { recursive: true });
+    // And only below a root that still exists — a recursive mkdir would otherwise recreate a
+    // deleted root and every missing ancestor above it, outside every root.
+    if (verdict.ok && !fs.statSync(dir, { throwIfNoEntry: false })) {
+      const root = roots.find((r) => isInsideRoot(target, r));
+      if (!root || !fs.statSync(root, { throwIfNoEntry: false })?.isDirectory()) {
+        return { ok: false, error: `The workspace folder no longer exists: ${root ?? absPath}` };
+      }
+      await fs.promises.mkdir(dir, { recursive: true });
+    }
     await fs.promises.writeFile(tmp, content, 'utf8');
     await fs.promises.rename(tmp, target);
     return { ok: true, path: target };
