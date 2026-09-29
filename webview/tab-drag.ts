@@ -1,10 +1,13 @@
 import type { GroupIndex } from './doc-groups';
 
+/** Stamped at a tab's dragstart; only a drag carrying it is a tab move (an OS file or explorer
+ *  row drag never is, whatever the module state says). */
+export const TAB_DRAG_MIME = 'application/x-conduit-tab';
+
 /** A doc tab being dragged; module-level so every strip and group body can see it. */
 export interface TabDrag {
   id: string;
   group: GroupIndex;
-  sessionId: string;
 }
 
 let current: TabDrag | null = null;
@@ -15,15 +18,26 @@ function set(next: TabDrag | null): void {
   for (const fn of listeners) fn();
 }
 
-export function beginTabDrag(d: TabDrag): void {
-  set({ id: d.id, group: d.group, sessionId: d.sessionId });
+export function beginTabDrag(d: TabDrag, dt: DataTransfer): void {
+  dt.setData(TAB_DRAG_MIME, d.id);
+  set({ id: d.id, group: d.group });
+  // No target handler sees a drop into a <webview> or outside the window; the window still does.
+  window.addEventListener('dragend', endTabDrag);
+  window.addEventListener('drop', endTabDrag);
 }
 
 export function currentTabDrag(): TabDrag | null {
   return current;
 }
 
+/** The live tab drag `e` carries, or null for any other drag. */
+export function tabDragOf(e: { dataTransfer: DataTransfer | null }): TabDrag | null {
+  return current !== null && e.dataTransfer?.types.includes(TAB_DRAG_MIME) ? current : null;
+}
+
 export function endTabDrag(): void {
+  window.removeEventListener('dragend', endTabDrag);
+  window.removeEventListener('drop', endTabDrag);
   if (current !== null) set(null);
 }
 

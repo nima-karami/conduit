@@ -28,7 +28,7 @@ import {
 import { middleClickProps } from '../middle-click';
 import { saveDocByPath } from '../save-registry';
 import { SPLIT_COPY } from '../split-editor-copy';
-import { acceptTabDrop, beginTabDrag, currentTabDrag, endTabDrag } from '../tab-drag';
+import { acceptTabDrop, beginTabDrag, endTabDrag, tabDragOf } from '../tab-drag';
 import { isStripOverflowing, scrollTargetTabId, TERMINAL_TABID } from '../tab-overflow';
 import { ContextMenu, type MenuState } from './context-menu';
 
@@ -246,10 +246,11 @@ export function DocTabs({
   const activeClass = groupActive ? 'tab--active' : 'tab--current';
 
   const dropTab = (e: React.DragEvent, beforeId: string | null) => {
+    const dr = tabDragOf(e);
+    if (!dr) return;
     e.preventDefault();
-    const dr = currentTabDrag();
-    if (dr?.group === group) onReorder?.(dr.id, beforeId);
-    else if (dr) onMoveTab?.(dr.id, group, beforeId, e.ctrlKey);
+    if (dr.group === group) onReorder?.(dr.id, beforeId);
+    else onMoveTab?.(dr.id, group, beforeId, e.ctrlKey);
     endTabDrag();
     setOverId(null);
     setOverEnd(false);
@@ -322,7 +323,7 @@ export function DocTabs({
             onContextMenu={onTabContextMenu ? (e) => onTabContextMenu(e, d) : undefined}
             draggable={!!onReorder}
             onDragStart={(e) => {
-              beginTabDrag({ id: d.id, group, sessionId: d.sessionId });
+              beginTabDrag({ id: d.id, group }, e.dataTransfer);
               if (d.kind === 'file') {
                 stampFileDrag(e.dataTransfer, d.path, { download: true, terminal: false });
                 // A drop target outside the app can only copy; 'move' alone would refuse it.
@@ -332,7 +333,7 @@ export function DocTabs({
               }
             }}
             onDragOver={(e) => {
-              const dr = currentTabDrag();
+              const dr = tabDragOf(e);
               if (dr && !(dr.group === group && dr.id === d.id)) {
                 acceptTabDrop(e);
                 setOverId(d.id);
@@ -399,7 +400,7 @@ export function DocTabs({
           <div
             className={`tabbar__tail ${overEnd ? 'tabbar__tail--over' : ''}`}
             onDragOver={(e) => {
-              if (!currentTabDrag()) return;
+              if (!tabDragOf(e)) return;
               acceptTabDrop(e);
               setOverEnd(true);
             }}

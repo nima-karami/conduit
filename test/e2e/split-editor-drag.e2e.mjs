@@ -9,6 +9,7 @@
  *   CD  Ctrl-drag onto the other strip duplicates; the source tab stays.
  *   OB  a tab dropped on its own group's body changes nothing.
  *   ES  Esc mid-drag changes nothing, and the overlays clear.
+ *   XD  mid tab drag, an OS-file drag is not a tab move, and a window dragend clears the overlays.
  *   JG  Join Editor Groups (right strip menu) moves group 2's tabs to the end of group 1, drops
  *       the ones group 1 already holds, and leaves one group.
  *   PD  a panel re-dock drag is untouched: the strip background still drags the center panel, and
@@ -190,6 +191,45 @@ async function phaseNoOps(page) {
   log('ES ✓ Esc mid-drag changes nothing and clears the overlays');
 }
 
+/** XD: mid tab drag, an OS-file drag over a group does not arm its drop, and a window dragend
+ *  (a drag that ended where no target saw it) clears the overlays. */
+async function phaseForeignDrag(page) {
+  const seen = await page.evaluate(async (g1) => {
+    const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+    const drag = (type, target, dataTransfer) => {
+      const ev = new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer });
+      target.dispatchEvent(ev);
+      return ev;
+    };
+    drag('dragstart', document.querySelector(`${g1} [role="tab"]`), new DataTransfer());
+    await frame();
+    await frame();
+    const zone = document.querySelector('.editorgroups__drop[data-group="2"]');
+    const files = new DataTransfer();
+    files.items.add(new File(['x'], 'x.txt'));
+    if (zone) drag('dragover', zone, files);
+    await frame();
+    const armed = document.querySelectorAll('.editorgroups__drop').length;
+    const tint = zone?.getAttribute('data-over') ?? null;
+    window.dispatchEvent(new Event('dragend'));
+    await frame();
+    await frame();
+    return {
+      armed,
+      tint,
+      after: document.querySelectorAll('.editorgroups__drop').length,
+    };
+  }, G(1));
+  log('XD: foreign drag mid tab drag, then a window dragend', JSON.stringify(seen));
+  assert(seen.armed > 0, 'XD: the synthetic tab drag never armed the overlays');
+  assert(
+    seen.tint === null,
+    `XD: an OS-file drag was taken as a tab move (${JSON.stringify(seen)})`,
+  );
+  assert(seen.after === 0, `XD: overlays stay after a window dragend (${JSON.stringify(seen)})`);
+  log('XD ✓ only a tab drag is a tab move, and the window ends a tab drag');
+}
+
 async function phaseJoin(page) {
   const before = await both(page);
   await tail(page, 2).click({ button: 'right' });
@@ -272,6 +312,7 @@ try {
   await phaseBodyAndStrip(page);
   await phaseCtrlDuplicate(page);
   await phaseNoOps(page);
+  await phaseForeignDrag(page);
   await phaseJoin(page);
   await phasePanelDock(page);
   log('PASS ✓ split-editor-drag: all assertions passed');

@@ -9,6 +9,7 @@ import {
   endTabDrag,
   subscribeTabDrag,
   type TabDrag,
+  tabDragOf,
 } from '../tab-drag';
 
 const STEP_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End']);
@@ -136,18 +137,19 @@ export function EditorGroups({
               data-group={g}
               data-over={kind ?? undefined}
               onDragOver={(e) => {
-                const drag = currentTabDrag();
+                const drag = tabDragOf(e);
                 const next = drag && dropKindAt(drag, g, split, e.currentTarget, e.clientX);
                 if (next) acceptTabDrop(e);
                 setOver(next ? { group: g, kind: next } : null);
               }}
               onDragLeave={() => setOver((o) => (o?.group === g ? null : o))}
               onDrop={(e) => {
+                const drag = tabDragOf(e);
+                if (!drag) return;
                 e.preventDefault();
-                const drag = currentTabDrag();
-                const kind = drag && dropKindAt(drag, g, split, e.currentTarget, e.clientX);
+                const kind = dropKindAt(drag, g, split, e.currentTarget, e.clientX);
                 endTabDrag();
-                if (drag && kind) onMoveTab(drag.id, kind === 'edge' ? 2 : g, null, e.ctrlKey);
+                if (kind) onMoveTab(drag.id, kind === 'edge' ? 2 : g, null, e.ctrlKey);
               }}
             />
           );

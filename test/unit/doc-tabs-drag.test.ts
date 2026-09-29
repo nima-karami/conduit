@@ -5,6 +5,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { WebviewToHost } from '../../src/protocol';
 import { DocTabs } from '../../webview/components/doc-tabs';
 import type { OpenDoc } from '../../webview/docs';
+import { currentTabDrag, endTabDrag, TAB_DRAG_MIME } from '../../webview/tab-drag';
 
 const posted = vi.hoisted((): WebviewToHost[] => []);
 vi.mock('../../webview/bridge', async (orig) => ({
@@ -52,7 +53,7 @@ const tab = (id: string) => {
   return el;
 };
 
-function dragEvent(type: string, el: HTMLElement, dt: object) {
+function dragEvent(type: string, el: EventTarget, dt: object | null) {
   const ev = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(ev, 'dataTransfer', { value: dt });
   el.dispatchEvent(ev);
@@ -66,6 +67,9 @@ function stubDt() {
       effectAllowed: 'uninitialized',
       dropEffect: 'none',
       setData: (t: string, v: string) => data.set(t, v),
+      get types() {
+        return [...data.keys()];
+      },
     },
   };
 }
@@ -90,6 +94,7 @@ afterEach(async () => {
   host.remove();
   posted.length = 0;
   onReorder.mockReset();
+  endTabDrag();
 });
 
 describe('DocTabs drag-out', () => {
@@ -100,6 +105,7 @@ describe('DocTabs drag-out', () => {
       dragEvent('dragstart', tab('file:/w/a.ts'), dt);
     });
     expect(data.get('DownloadURL')).toBe('application/octet-stream:a.ts:file:///w/a.ts');
+    expect(data.get(TAB_DRAG_MIME)).toBe('file:/w/a.ts');
     expect(dt.effectAllowed).toBe('copyMove');
     expect(posted).toEqual([{ type: 'fs:armDragDownload', path: '/w/a.ts' }]);
     await act(async () => {
@@ -108,14 +114,42 @@ describe('DocTabs drag-out', () => {
     expect(onReorder).toHaveBeenCalledWith('file:/w/a.ts', 'file:/w/c.ts');
   });
 
-  it('a diff tab stamps nothing and stays move-only', async () => {
+  it('a diff tab stamps only the private tab type and stays move-only', async () => {
     await render();
     const { data, dt } = stubDt();
     await act(async () => {
       dragEvent('dragstart', tab('diff:/w/b.ts'), dt);
     });
-    expect(data.size).toBe(0);
+    expect([...data.keys()]).toEqual([TAB_DRAG_MIME]);
     expect(dt.effectAllowed).toBe('move');
     expect(posted).toEqual([]);
+  });
+});
+
+describe('DocTabs drop gating (review L4.2)', () => {
+  it('a drag without the private tab type is never a tab move, even mid tab drag', async () => {
+    await render();
+    const { dt } = stubDt();
+    await act(async () => {
+      dragEvent('dragstart', tab('file:/w/a.ts'), dt);
+    });
+    const osFile = { effectAllowed: 'copy', dropEffect: 'none', types: ['Files'] };
+    await act(async () => {
+      dragEvent('drop', tab('file:/w/c.ts'), osFile);
+    });
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  it.each(['dragend', 'drop'])('a window %s ends the tab drag', async (type) => {
+    await render();
+    const { dt } = stubDt();
+    await act(async () => {
+      dragEvent('dragstart', tab('file:/w/a.ts'), dt);
+    });
+    expect(currentTabDrag()).not.toBeNull();
+    await act(async () => {
+      dragEvent(type, window, null);
+    });
+    expect(currentTabDrag()).toBeNull();
   });
 });
