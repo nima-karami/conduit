@@ -58,7 +58,6 @@ export function ImageStage({
   shared?: SharedPanZoomState;
   /** When set, this stage's rotation is linked to siblings sharing the same state. */
   sharedRotation?: SharedRotationState;
-  /** Registers the stage as its tab's focus target (focus-targets.ts). */
   focusKey?: string;
 }) {
   const [natural, setNatural] = useState<Natural | null>(null);

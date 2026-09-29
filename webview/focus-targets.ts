@@ -1,6 +1,4 @@
-// Where a user activation lands keyboard focus (split-editor spec §10): each mounted doc view
-// registers its primary focus target under its tab's `tabStateKey(docId, group)`, and a request
-// for a key that is not mounted yet waits for exactly that key.
+// see split-editor spec §10 (focus management)
 import { type RefObject, useCallback } from 'react';
 
 export interface FocusTarget {
@@ -37,7 +35,6 @@ export function registerFocusTarget(key: string, target: FocusTarget): () => voi
   };
 }
 
-/** Focus `key`'s view now when it is mounted, else when it registers; the next request replaces it. */
 export function requestDocFocus(key: string): void {
   const list = targets.get(key);
   const target = list?.[list.length - 1];
@@ -55,7 +52,6 @@ export function dropDocFocusUnless(shown: (key: string) => boolean): void {
   if (pending && !shown(pending.key)) pending = null;
 }
 
-/** A ref callback registering the element it attaches to under `key` (none when `key` is absent). */
 export function useFocusTargetRef<T extends HTMLElement>(
   key: string | undefined,
   inner?: RefObject<T | null>,
