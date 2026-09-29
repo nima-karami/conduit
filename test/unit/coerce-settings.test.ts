@@ -450,3 +450,15 @@ describe('session rail settings (mf-sidebar)', () => {
     expect(JSON.parse(serializeSettings(DEFAULT_SETTINGS)).version).toBe(1);
   });
 });
+
+describe('coerceSettings — editorSplitRatio', () => {
+  it('coerce clamps 0.95 to 0.85 and defaults garbage to 0.5', () => {
+    expect(DEFAULT_SETTINGS.editorSplitRatio).toBe(0.5);
+    expect(coerce({}).editorSplitRatio).toBe(0.5);
+    expect(coerce({ editorSplitRatio: 0.95 }).editorSplitRatio).toBe(0.85);
+    expect(coerce({ editorSplitRatio: 0.05 }).editorSplitRatio).toBe(0.15);
+    expect(coerce({ editorSplitRatio: 0.37 }).editorSplitRatio).toBe(0.37);
+    expect(coerce({ editorSplitRatio: 'wide' }).editorSplitRatio).toBe(0.5);
+    expect(coerce({ editorSplitRatio: Number.NaN }).editorSplitRatio).toBe(0.5);
+  });
+});

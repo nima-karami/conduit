@@ -98,6 +98,7 @@ export interface AppSettings {
   // tab closing/reopening and restart; the runtime clamp (clampDetailH) enforces the true
   // per-render upper bound. See docs/specs/2026-06-29-commit-detail-resize-persistence.md.
   historyDetailHeight: number;
+  editorSplitRatio: number; // left editor group's share of the center width, 0.15..0.85
   layout: string; // comma-joined region order (see src/layout.ts)
   sidebarCollapsed: boolean; // Sessions panel hidden (center reflows wider)
   explorerCollapsed: boolean; // Explorer panel hidden (center reflows wider)
@@ -198,6 +199,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   leftWidth: 264,
   rightWidth: 340,
   historyDetailHeight: 300,
+  editorSplitRatio: 0.5,
   layout: DEFAULT_LAYOUT,
   sidebarCollapsed: false,
   explorerCollapsed: false,
@@ -434,6 +436,12 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
       140,
       2000,
       DEFAULT_SETTINGS.historyDetailHeight,
+    ),
+    editorSplitRatio: clampNum(
+      payload.editorSplitRatio,
+      0.15,
+      0.85,
+      DEFAULT_SETTINGS.editorSplitRatio,
     ),
     layout: serializeLayout(parseLayout(strOr(payload.layout, DEFAULT_SETTINGS.layout))),
     sidebarCollapsed: bool(payload.sidebarCollapsed, DEFAULT_SETTINGS.sidebarCollapsed),
