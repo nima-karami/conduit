@@ -1,6 +1,8 @@
 /**
  * split-editor-surfaces — split-editor scenarios that need their own profile or a special surface
  * (docs/specs/2026-09-28-split-editor.md §7). One launch, with `autoSave: 'onFocusChange'` seeded:
+ *   CM  a click on line 20 that never scrolled, then Move to Other Group: the moved editor's
+ *       cursor is on line 20 (the source viewer's unmount capture follows the tab, I10).
  *   P9  leaving b.ts in the right group saves it (viewLeave), while the left group still shows it
  *       clean.
  *   E10 with two web tabs open, moving either one to the other group and back keeps BOTH pages: a
@@ -36,6 +38,10 @@ const log = makeLog('split-editor-surfaces');
 const repo = mkdtempSync(join(tmpdir(), 'conduit-split-surf-'));
 writeFileSync(join(repo, 'a.ts'), 'export const answer = 42;\n');
 writeFileSync(join(repo, 'b.ts'), "import { answer } from './a';\nexport const b = answer;\n");
+writeFileSync(
+  join(repo, 'long.ts'),
+  Array.from({ length: 40 }, (_, i) => `export const v${i + 1} = ${i + 1};\n`).join(''),
+);
 const samplePdf = join(REPO, 'test', 'e2e', 'fixtures', 'sample.pdf');
 copyFileSync(samplePdf, join(repo, 'one.pdf'));
 copyFileSync(samplePdf, join(repo, 'two.pdf'));
@@ -214,6 +220,52 @@ async function phasePdf(page) {
   log('D8 ✓ a PDF in both groups survives one tab closing, and a fresh PDF still loads');
 }
 
+const installLongEditorLookup = (page) =>
+  page.evaluate(() => {
+    window.__longEditorIn = (sel) =>
+      window.monaco.editor
+        .getEditors()
+        .find(
+          (e) =>
+            e.getDomNode()?.isConnected &&
+            e.getDomNode().closest(sel) &&
+            e.getModel()?.uri.path.endsWith('/long.ts'),
+        );
+  });
+
+const cursorLine = (page, g) =>
+  page.evaluate((sel) => window.__longEditorIn(sel)?.getPosition()?.lineNumber ?? null, G(g));
+
+/** CM: a cursor placed without scrolling moves with its tab to the other group. */
+async function phaseCursorMove(page) {
+  await openFromExplorer(page, 'a.ts');
+  await openFromExplorer(page, 'long.ts');
+  await installLongEditorLookup(page);
+  const at = await page.evaluate((sel) => {
+    const ed = window.__longEditorIn(sel);
+    const vp = ed?.getScrolledVisiblePosition({ lineNumber: 20, column: 5 });
+    const r = ed?.getDomNode().getBoundingClientRect();
+    return vp ? { x: r.left + vp.left, y: r.top + vp.top + vp.height / 2 } : null;
+  }, G(1));
+  assert(at, 'CM: line 20 of long.ts is not on screen in the left group');
+  await page.mouse.click(at.x, at.y);
+  const before = await cursorLine(page, 1);
+  assert(before === 20, `CM: the click put the cursor on line ${before}, not 20`);
+  await page.keyboard.press('Control+Alt+ArrowRight');
+  await waitShown(page, 2, 'long.ts', 'CM');
+  await page.waitForSelector(`${G(2)} .viewer__monaco .monaco-editor`, { timeout: 10000 });
+  await sleep(500);
+  const after = await cursorLine(page, 2);
+  assert(after === 20, `CM: the moved editor's cursor is on line ${after}, not 20`);
+  await page.keyboard.press('Control+Alt+ArrowLeft');
+  await page
+    .waitForFunction(() => document.querySelectorAll('.editor-group').length === 1, null, {
+      timeout: 5000,
+    })
+    .catch(() => assert(false, 'CM: moving long.ts back did not collapse to one group'));
+  log('CM ✓ a cursor placed without scrolling moves with its tab');
+}
+
 async function phaseViewLeave(page) {
   await openFromExplorer(page, 'b.ts');
   await page.locator(`${G(1)} .monaco-editor`).click();
@@ -267,6 +319,7 @@ try {
   launched = await launchApp({ userDataDir });
   const { page } = launched;
   await openSession(page, { path: repoArg });
+  await phaseCursorMove(page);
   await phaseViewLeave(page);
   await phaseWebMove(page, server);
   await phaseWebFocus(page);
