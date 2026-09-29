@@ -9,6 +9,8 @@
  *   CD  Ctrl-drag onto the other strip duplicates; the source tab stays.
  *   OB  a tab dropped on its own group's body changes nothing.
  *   ES  Esc mid-drag changes nothing, and the overlays clear.
+ *   JG  Join Editor Groups (right strip menu) moves group 2's tabs to the end of group 1, drops
+ *       the ones group 1 already holds, and leaves one group.
  *   PD  a panel re-dock drag is untouched: the strip background still drags the center panel, and
  *       a side panel dragged over the center arms `.centerpane--droptarget`, never a group overlay.
  */
@@ -188,8 +190,33 @@ async function phaseNoOps(page) {
   log('ES ✓ Esc mid-drag changes nothing and clears the overlays');
 }
 
+async function phaseJoin(page) {
+  const before = await both(page);
+  await tail(page, 2).click({ button: 'right' });
+  const item = page.locator('.ctxmenu__item', { hasText: /^Join Editor Groups$/ });
+  await item
+    .waitFor({ timeout: 5000 })
+    .catch(() => assert(false, 'JG: no Join Editor Groups item on the right strip'));
+  await item.click();
+  await page
+    .waitForFunction(() => document.querySelectorAll('.editor-group').length === 1, null, {
+      timeout: 5000,
+    })
+    .catch(() => assert(false, 'JG: group 2 is still there after Join'));
+  const expected = [
+    ...before.g1.tabs,
+    ...before.g2.tabs.filter((t) => !before.g1.tabs.includes(t)),
+  ];
+  const s = await groupState(page, 1);
+  assert(
+    same(s.tabs, expected),
+    `JG: group 1 is ${JSON.stringify(s.tabs)}, expected ${JSON.stringify(expected)}`,
+  );
+  log('JG ✓ Join appends group 2 to group 1 and drops duplicates', JSON.stringify(s.tabs));
+}
+
 async function phasePanelDock(page) {
-  const stripFrom = await center(tail(page, 2), 'PD strip');
+  const stripFrom = await center(tail(page, 1), 'PD strip');
   const explorer = page.locator('.panel--explorer');
   const seenStrip = await drag(page, stripFrom, await center(explorer, 'PD explorer'), {
     during: async () => ({
@@ -245,6 +272,7 @@ try {
   await phaseBodyAndStrip(page);
   await phaseCtrlDuplicate(page);
   await phaseNoOps(page);
+  await phaseJoin(page);
   await phasePanelDock(page);
   log('PASS ✓ split-editor-drag: all assertions passed');
 } catch (e) {

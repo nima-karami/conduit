@@ -2059,6 +2059,29 @@ export function App() {
     if (navLiveRef.current) navLiveRef.current.textContent = SPLIT_COPY.groupClosed;
   }, []);
 
+  const joinEditorGroups = useCallback(() => {
+    const sessionId = activeIdRef.current;
+    if (!sessionId) return;
+    const layout = layoutOf(docStateRef.current, sessionId);
+    const [g1, g2] = layout.groups;
+    if (!g2) return;
+    const shown = layout.activeGroup === 2 ? g2.active : g1.active;
+    for (const { id } of g2.tabs) {
+      const doc = docStateRef.current.docs.find((d) => d.id === id);
+      if (!doc) continue;
+      if (g1.tabs.some((t) => t.id === id)) {
+        markClosing(tabStateKey(id, 2));
+        clearHtmlView(tabStateKey(id, 2));
+      } else {
+        carryTabState(doc, 2, 1, 'move');
+      }
+    }
+    dispatchDocs({ type: 'joinGroups', sessionId });
+    if (navLiveRef.current) navLiveRef.current.textContent = SPLIT_COPY.groupClosed;
+    const doc = docStateRef.current.docs.find((d) => d.id === shown);
+    focusGroupViewer(1, doc, '> .editor-group__body');
+  }, []);
+
   useEffect(() => {
     setDocCloser((p) => {
       const d = docStateRef.current.docs.find((x) => x.kind === 'file' && x.path === p);
@@ -2713,6 +2736,11 @@ export function App() {
           label: SPLIT_COPY.closeGroup,
           icon: <IconClose size={14} />,
           onClick: () => void closeEditorGroup(),
+        },
+        {
+          label: SPLIT_COPY.joinGroups,
+          icon: <IconSplit size={14} />,
+          onClick: joinEditorGroups,
         },
       ],
     });
@@ -3959,6 +3987,14 @@ export function App() {
           run: () => void closeEditorGroup(),
         },
         {
+          id: 'cmd:joinEditorGroups',
+          title: SPLIT_COPY.joinGroups,
+          keywords: ['editor group', 'merge groups'],
+          group: 'Commands',
+          icon: <IconSplit size={14} />,
+          run: joinEditorGroups,
+        },
+        {
           id: 'cmd:focusLeftGroup',
           title: SPLIT_COPY.focusLeft,
           keywords: ['editor group'],
@@ -3984,6 +4020,7 @@ export function App() {
     splitRight,
     moveTabToGroup,
     closeEditorGroup,
+    joinEditorGroups,
     focusGroupByCommand,
     active,
     sessions,
