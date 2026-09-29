@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
+import { useFocusTrap } from '../use-focus-trap';
 import { ModalLayer } from './modal-layer';
 
 export interface ConfirmState {
@@ -18,37 +19,53 @@ export interface ConfirmState {
    * (e.g. the quit-guard dialog, W2).
    */
   focusCancel?: boolean;
+  /** Runs on Cancel, Esc and backdrop, never on the primary or secondary action. An opener that
+   * awaits an answer must set it (see dirty-quit-guard plan, ConfirmDialog invariant B1a). */
+  onCancel?: () => void;
+  onShown?: () => void;
 }
 
 export function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose: () => void }) {
-  const cancelRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const { restoreFocus } = useFocusTrap(dialogRef);
+  const titleId = useId();
+  const messageId = useId();
+  const onShownRef = useRef(state.onShown);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') {
-        // If the Cancel button is focused, native button semantics will handle
-        // the click (calling onClose). Don't also fire onConfirm here.
-        if (cancelRef.current && document.activeElement === cancelRef.current) return;
-        state.onConfirm();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [state, onClose]);
+    onShownRef.current?.();
+  }, []);
+
+  const cancel = () => {
+    state.onCancel?.();
+    restoreFocus();
+    onClose();
+  };
 
   return (
-    <ModalLayer onDismiss={onClose}>
+    <ModalLayer onDismiss={cancel}>
       <div
+        ref={dialogRef}
         className="confirm chamfer"
         onClick={(e) => e.stopPropagation()}
         role="alertdialog"
         aria-modal
+        aria-labelledby={titleId}
+        aria-describedby={messageId}
       >
-        <span className="confirm__title">{state.title}</span>
-        <p className="confirm__msg">{state.message}</p>
+        <span id={titleId} className="confirm__title">
+          {state.title}
+        </span>
+        <p id={messageId} className="confirm__msg">
+          {state.message}
+        </p>
         <div className="confirm__actions">
-          <button ref={cancelRef} className="btn" autoFocus={state.focusCancel} onClick={onClose}>
+          <button
+            className="btn"
+            autoFocus={state.focusCancel}
+            data-modal-default={state.focusCancel || undefined}
+            onClick={cancel}
+          >
             Cancel
           </button>
           {state.secondaryLabel && state.onSecondary && (
@@ -65,6 +82,7 @@ export function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose
           <button
             className={`btn ${state.danger ? 'btn--danger' : 'btn--primary'}`}
             autoFocus={!state.focusCancel}
+            data-modal-default={!state.focusCancel || undefined}
             onClick={() => {
               state.onConfirm();
               onClose();
