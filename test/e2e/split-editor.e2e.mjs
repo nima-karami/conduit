@@ -10,11 +10,14 @@
  *   E6  closing the right group's only tab collapses to one group, the left one active.
  *   E12 the Terminal tab can't be split: Ctrl+\ off-terminal changes nothing, the menu item is
  *       disabled, and Ctrl+\ inside xterm stays the terminal's key.
+ *   TP  the Workspace Trust prompt stays visible and clickable above a web tab active in the left
+ *       group (web hosts sit in the grid's body row, the prompt in its own row). Needs go + gopls.
  */
 
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, launchApp, makeLog, openSession, shutdownApp, tapBridge } from './harness.mjs';
 
@@ -34,6 +37,8 @@ writeFileSync(
   `import { answer } from './a';\nexport const doubled = answer * 2;\n${filler}\n`,
 );
 writeFileSync(join(repo, 'note.md'), '# Note\n\nSome text.\n');
+writeFileSync(join(repo, 'go.mod'), 'module example.com/split\n\ngo 1.21\n');
+writeFileSync(join(repo, 'main.go'), 'package main\n\nfunc main() {}\n');
 try {
   execFileSync('git', ['init', '-q'], { cwd: repo });
 } catch {
@@ -86,6 +91,74 @@ const politeText = (page) =>
       document.querySelector('.shell > [role="status"][aria-live="polite"]:not(.bg-open-status)')
         ?.textContent ?? '',
   );
+
+const hasBinary = (name) => spawnSync('where', [name], { stdio: 'ignore' }).status === 0;
+const goplsInstalled = () =>
+  hasBinary('gopls') || existsSync(join(homedir(), 'go', 'bin', 'gopls.exe'));
+
+async function phaseTrustOverWeb(page) {
+  if (!hasBinary('go') || !goplsInstalled()) {
+    // Not the word the runner reads as a whole-scenario skip.
+    log('TP not run (no go toolchain)');
+    return;
+  }
+  await openFromExplorer(page, 'main.go');
+  const prompt = page.locator('.trust-prompt');
+  await prompt
+    .waitFor({ state: 'visible', timeout: 20000 })
+    .catch(() => assert(false, 'TP: the trust prompt did not appear for main.go'));
+
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><title>split web</title><body>web</body>');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    await page.click('.omnibar');
+    await page.waitForSelector('.palette__input', { state: 'visible', timeout: 10000 });
+    await page.fill('.palette__input', '>open web page');
+    await page.waitForSelector('.palette__title', { timeout: 8000 });
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.modal__input', { state: 'visible', timeout: 8000 });
+    await page.fill('.modal__input', `http://127.0.0.1:${server.address().port}/`);
+    await page.keyboard.press('Enter');
+    const hostSel = '.editorgroups > .webhost[data-group="1"]:not([hidden])';
+    await page
+      .locator(hostSel)
+      .waitFor({ state: 'visible', timeout: 10000 })
+      .catch(() => assert(false, 'TP: no visible web host in the left group'));
+    await prompt
+      .waitFor({ state: 'visible', timeout: 5000 })
+      .catch(() => assert(false, 'TP: the trust prompt left when the web tab opened'));
+    const probe = await page.evaluate((sel) => {
+      const p = document.querySelector('.trust-prompt');
+      const h = document.querySelector(sel);
+      const btn = p?.querySelector('.btn--primary');
+      if (!p || !h || !btn) return null;
+      const pr = p.getBoundingClientRect();
+      const hr = h.getBoundingClientRect();
+      const br = btn.getBoundingClientRect();
+      const hit = document.elementFromPoint(br.x + br.width / 2, br.y + br.height / 2);
+      return {
+        promptBottom: pr.bottom,
+        hostTop: hr.top,
+        hostHeight: hr.height,
+        hitsPrompt: !!hit?.closest('.trust-prompt'),
+      };
+    }, hostSel);
+    assert(probe, 'TP: prompt, web host or Trust button missing');
+    log('TP: rects', JSON.stringify(probe));
+    assert(probe.hostHeight > 0, 'TP: the web host has no height');
+    assert(
+      probe.hostTop >= probe.promptBottom - 0.5,
+      `TP: the web host (top ${probe.hostTop}) overlaps the trust prompt (bottom ${probe.promptBottom})`,
+    );
+    assert(probe.hitsPrompt, 'TP: the Trust button is covered by the web host');
+    log('TP ✓ the trust prompt stays above a left-group web tab');
+  } finally {
+    server.close();
+  }
+}
 
 let launched = null;
 let code = 0;
@@ -300,6 +373,8 @@ try {
     'E6: the left group is not active after the collapse',
   );
   log('E6 ✓ collapse to one active group');
+
+  await phaseTrustOverWeb(page);
 
   log('PASS ✓ split-editor: all assertions passed');
 } catch (e) {

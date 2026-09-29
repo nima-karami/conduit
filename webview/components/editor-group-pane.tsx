@@ -28,8 +28,12 @@ export function EditorGroupPane({
       onFocusCapture={() => onFocusGroup(group)}
     >
       {tabs}
-      <div className="editor-group__body" tabIndex={-1}>
-        {top}
+      {top !== undefined && <div className="editor-group__top">{top}</div>}
+      <div
+        className="editor-group__body"
+        data-under-top={top !== undefined || undefined}
+        tabIndex={-1}
+      >
         <EditorGroupContext.Provider value={group}>{children}</EditorGroupContext.Provider>
       </div>
     </section>

@@ -2543,13 +2543,15 @@ body.resizing .panel__resize::after {
   min-height: 0;
   background: transparent;
 }
-/* Editor groups (split-editor plan P7): one grid, the strips in row 1 and the bodies in row 2
-   through subgrid, so a web host placed in row 2 of a column covers exactly its group's body. */
+/* Editor groups (split-editor plan P7): one grid, the strips in row 1, a group's top slot (the
+   TrustPrompt) in row 2 and its body in row 3 through subgrid, so a web host placed in its group's
+   body rows covers exactly that body and never the prompt. A group with no top slot has its body
+   span rows 2–3. */
 .editorgroups {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   isolation: isolate;
 }
 .editorgroups[data-resizing] {
@@ -2557,7 +2559,7 @@ body.resizing .panel__resize::after {
   user-select: none;
 }
 .editor-group {
-  grid-row: 1 / span 2;
+  grid-row: 1 / span 3;
   display: grid;
   grid-template-rows: subgrid;
   min-width: 0;
@@ -2576,6 +2578,16 @@ body.resizing .panel__resize::after {
 .editorgroups[data-split] > .editor-group[data-active] > .tabbar-wrap {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
+.editor-group__top {
+  grid-row: 2;
+  min-width: 0;
+}
+.editor-group__body[data-under-top] {
+  grid-row: 3;
+}
+.editor-group__body:not([data-under-top]) {
+  grid-row: 2 / span 2;
+}
 .editor-group__body {
   position: relative;
   min-height: 0;
@@ -2584,8 +2596,13 @@ body.resizing .panel__resize::after {
   flex-direction: column;
 }
 /* Above Monaco's own .minimap{z-index:5}; `isolation` on the grid keeps it there. */
+.editorgroups > .webhost[data-group="1"] {
+  grid-row: 3;
+}
+.editorgroups > .webhost[data-group="2"] {
+  grid-row: 2 / span 2;
+}
 .editorgroups > .webhost {
-  grid-row: 2;
   position: relative;
   z-index: 6;
   min-width: 0;
@@ -2598,7 +2615,7 @@ body.resizing .panel__resize::after {
   pointer-events: none;
 }
 .editorgroups__divider {
-  grid-row: 1 / span 2;
+  grid-row: 1 / span 3;
   grid-column: 2;
   position: relative;
   z-index: 7;
