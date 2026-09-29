@@ -554,6 +554,10 @@
 [data-theme="neon"] .tab {
   border-right: 1px solid var(--border);
 }
+/* The two strips abut, and the divider's rule stops below the strip row (it must not take clicks there). */
+[data-theme="neon"] .editor-group[data-group="2"] > .tabbar-wrap {
+  border-left: 1px solid var(--border);
+}
 [data-theme="neon"] .tab--active::before {
   content: "";
   position: absolute;

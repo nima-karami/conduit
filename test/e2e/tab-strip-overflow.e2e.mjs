@@ -15,6 +15,8 @@
  *       step in a hidden window costs seconds against the runner's cap)
  *   OV3 two groups, the left overflowing and the right not → every tab on both strips at the
  *       baseline top, both strips at the baseline height
+ *   SE  the two strips never abut without a rule: either ground shows between them (a gutter) or
+ *       group 2's strip draws a left border
  * With CONDUIT_SHOTS_DIR set, one screenshot per theme of the split strips is written there.
  */
 
@@ -215,6 +217,18 @@ async function runOn(theme, userDataDir) {
         `${theme} OV3: group ${i + 1}'s tab tops ${s.tops}, not ${top}`,
       );
     }
+    const seam = await page.evaluate(() => {
+      const [a, b] = [...document.querySelectorAll('.editor-group > .tabbar-wrap')];
+      return {
+        gap: b.getBoundingClientRect().left - a.getBoundingClientRect().right,
+        rule: Number.parseFloat(getComputedStyle(b).borderLeftWidth),
+      };
+    });
+    log(theme, 'SE', JSON.stringify(seam));
+    assert(
+      seam.gap >= 1 || seam.rule >= 1,
+      `${theme} SE: the two strips abut with no rule between them (${JSON.stringify(seam)})`,
+    );
 
     if (SHOTS) {
       const box = await page.locator('.editorgroups').boundingBox();
