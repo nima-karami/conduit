@@ -1504,3 +1504,18 @@ the locked decision.
   is not changed (C12 is out of scope beyond the guard).
 - [normal] **Last-window close on darwin.** On darwin, closing the last window uses the window
   guard, so the app stays open. *Default taken:* keeps darwin's "app outlives windows" behaviour.
+
+## Run notes
+
+- **Slice 1 (2026-09-29): A1 = true.** Probe on a hidden build of `feat/dirty-quit-guard@8466702`
+  (evidence `.autoloop/evidence/dirty-quit-guard/a1-probe-final.log`, control in
+  `a1-control4.log`). A prepended `before-quit` listener that `preventDefault`s the first pass
+  left the window alive (`bq=1, windows=1` after 1 s); a second `app.quit()` fired `before-quit`
+  again (#2) and the process exited with code 0 after ~260 ms.
+  - Measurement gotcha: a fresh profile starts with a running session, so today's
+    `onWindowClose` guard sends `confirmQuit` and blocks the close until a `quitDecision` arrives.
+    The first probe run left that unanswered and read as `A1=false` (no exit in 15 s); the
+    control (a single `app.quit()` with no `preventDefault`) timed out the same way. With the
+    renderer auto-answering `quitDecision{proceed:true}`, both control and probe exit.
+  - Also observed: `window-all-closed` → `app.quit()` fires `before-quit` a further time
+    (#3) inside the same quit, so the Slice 3 `tornDown` guard is load-bearing.
