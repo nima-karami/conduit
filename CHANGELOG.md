@@ -42,7 +42,9 @@ All notable user-facing changes to Conduit. Format follows
 - **Renaming an open file in Files no longer orphans its tab.** The tab stayed on the old name,
   and saving it brought the old file back. The tab now follows the rename, keeping your unsaved
   edits, cursor and scroll, and so do tabs inside a renamed or moved folder. The same holds for a
-  drag-and-drop move and for undoing or redoing a rename or move.
+  drag-and-drop move and for undoing or redoing a rename or move. A move that replaces a file you
+  have unsaved edits in keeps those edits, paused as "changed on disk" until you choose Overwrite
+  or Reload.
 - **Saving a file over 2 MB can no longer cut it short.** Only the first 2 MB of such a file is
   loaded, and saving it wrote just that part back over the whole file. The partial view now opens
   read-only, and Ctrl+S, Save All, Save in the close prompt and auto save all refuse to write it.
