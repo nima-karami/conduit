@@ -10,7 +10,7 @@ import { menuToggleIntent } from '../../src/menu-toggle';
 import type { ResolvedSessionIcon } from '../../src/session-icon';
 import { AUTO_SAVE_COPY } from '../auto-save-copy';
 import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
-import type { GroupIndex } from '../doc-groups';
+import { type GroupIndex, splitBehavior } from '../doc-groups';
 import type { OpenDoc } from '../docs';
 import { isPanelDragTarget } from '../drag-guard';
 import { stampFileDrag } from '../file-drag-data';
@@ -326,11 +326,11 @@ export function DocTabs({
               beginTabDrag({ id: d.id, group }, e.dataTransfer);
               if (d.kind === 'file') {
                 stampFileDrag(e.dataTransfer, d.path, { download: true, terminal: false });
-                // A drop target outside the app can only copy; 'move' alone would refuse it.
-                e.dataTransfer.effectAllowed = 'copyMove';
-              } else {
-                e.dataTransfer.effectAllowed = 'move';
               }
+              // Copy is the in-app Ctrl duplicate, and the only effect an OS drop target accepts
+              // for a file's drag-out; 'move' alone would refuse both.
+              e.dataTransfer.effectAllowed =
+                splitBehavior(d.kind) === 'duplicate' ? 'copyMove' : 'move';
             }}
             onDragOver={(e) => {
               const dr = tabDragOf(e);

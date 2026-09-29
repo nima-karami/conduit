@@ -18,6 +18,7 @@ const docs: OpenDoc[] = [
   { id: 'file:/w/a.ts', kind: 'file', path: '/w/a.ts', title: 'a.ts', sessionId: 'S' },
   { id: 'diff:/w/b.ts', kind: 'diff', path: '/w/b.ts', title: 'b.ts', sessionId: 'S' },
   { id: 'file:/w/c.ts', kind: 'file', path: '/w/c.ts', title: 'c.ts', sessionId: 'S' },
+  { id: 'web:https://x.test/', kind: 'web', path: 'https://x.test/', title: 'x', sessionId: 'S' },
 ];
 const onReorder = vi.fn();
 let host: HTMLDivElement;
@@ -114,15 +115,24 @@ describe('DocTabs drag-out', () => {
     expect(onReorder).toHaveBeenCalledWith('file:/w/a.ts', 'file:/w/c.ts');
   });
 
-  it('a diff tab stamps only the private tab type and stays move-only', async () => {
+  it('a diff tab stamps only the private tab type and allows the Ctrl duplicate (review L4.3)', async () => {
     await render();
     const { data, dt } = stubDt();
     await act(async () => {
       dragEvent('dragstart', tab('diff:/w/b.ts'), dt);
     });
     expect([...data.keys()]).toEqual([TAB_DRAG_MIME]);
-    expect(dt.effectAllowed).toBe('move');
+    expect(dt.effectAllowed).toBe('copyMove');
     expect(posted).toEqual([]);
+  });
+
+  it('a web tab is move-only (review L4.3)', async () => {
+    await render();
+    const { dt } = stubDt();
+    await act(async () => {
+      dragEvent('dragstart', tab('web:https://x.test/'), dt);
+    });
+    expect(dt.effectAllowed).toBe('move');
   });
 });
 
