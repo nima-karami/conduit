@@ -7,6 +7,12 @@
  * doesn't repaint on a live theme swap):
  *   OV1 one group, no overflow → baseline tab top and strip height
  *   OV2 one group, overflowing → the same tab top and strip height
+ *   WH  a real wheel over the strip scrolls it back to its start and on until the last tab is
+ *       fully in view — the strip draws no scrollbar, so the wheel and the chevron are the only
+ *       ways along it
+ *   PK  picking a scrolled-out tab from the overflow chevron's list brings it fully into view
+ *       (WH and PK in the first theme only: nothing themed scrolls the strip, and every real-input
+ *       step in a hidden window costs seconds against the runner's cap)
  *   OV3 two groups, the left overflowing and the right not → every tab on both strips at the
  *       baseline top, both strips at the baseline height
  * With CONDUIT_SHOTS_DIR set, one screenshot per theme of the split strips is written there.
@@ -16,7 +22,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, launchApp, makeLog, openSession } from './harness.mjs';
-import { G, groupCount, openFromExplorer, waitShown } from './split-editor-helpers.mjs';
+import { G, groupCount, openFromExplorer, sleep, waitShown } from './split-editor-helpers.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[tab-strip-overflow] SKIP — suite is Windows-only');
@@ -31,6 +37,42 @@ const repo = mkdtempSync(join(tmpdir(), 'conduit-strip-overflow-'));
 const NAMES = Array.from({ length: 9 }, (_, i) => `a-long-module-name-for-overflow-${i + 1}.ts`);
 for (const n of NAMES) writeFileSync(join(repo, n), `export const v = ${n.length};\n`);
 const repoArg = repo.replace(/\\/g, '/');
+
+/** Group 1's strip: its scroll offset and whether the tab titled `name` is wholly inside it. */
+const stripView = (page, name) =>
+  page.evaluate((n) => {
+    const strip = document.querySelector('.editor-group[data-group="1"] .tabbar');
+    const s = strip.getBoundingClientRect();
+    const tab = [...strip.querySelectorAll('[role="tab"]')].find(
+      (t) => t.querySelector('span')?.textContent === n,
+    );
+    const t = tab?.getBoundingClientRect();
+    return {
+      scrollLeft: strip.scrollLeft,
+      inView: !!t && t.left >= s.left - 0.5 && t.right <= s.right + 0.5,
+    };
+  }, name);
+
+async function pollView(page, name, until, tries = 30) {
+  let v = await stripView(page, name);
+  for (let i = 0; i < tries && !until(v); i++) {
+    await sleep(100);
+    v = await stripView(page, name);
+  }
+  return v;
+}
+
+/** Wheels wherever the mouse is until `until` holds or three wheels in a row don't move the strip. */
+async function wheelUntil(page, name, dy, until) {
+  let v = await stripView(page, name);
+  for (let i = 0, stalls = 0; i < 40 && stalls < 3 && !until(v); i++) {
+    const prev = v.scrollLeft;
+    await page.mouse.wheel(0, dy);
+    v = await pollView(page, name, (w) => w.scrollLeft !== prev, 5);
+    stalls = v.scrollLeft === prev ? stalls + 1 : 0;
+  }
+  return v;
+}
 
 /** Per strip: overflow, the strip row's height, and the top of every tab it paints. */
 const strips = (page) =>
@@ -51,6 +93,48 @@ const strips = (page) =>
       };
     }),
   );
+
+/** WH and PK: the strip has scrolled to `last`, the tab just opened. */
+async function scrollAlong(page, theme, last) {
+  const box = await page.locator(`${G(1)} .tabbar`).boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const start = await stripView(page, last);
+  const home = await wheelUntil(page, last, -300, (v) => v.scrollLeft === 0);
+  log(theme, 'WH home', JSON.stringify(start), JSON.stringify(home));
+  assert(
+    home.scrollLeft === 0,
+    `${theme} WH: wheeling up stopped at scrollLeft ${home.scrollLeft}`,
+  );
+  assert(!home.inView, `${theme} WH: ${last} is still in view at the strip's start`);
+  const end = await wheelUntil(page, last, 300, (v) => v.inView);
+  log(theme, 'WH end', JSON.stringify(end));
+  assert(end.scrollLeft > 0, `${theme} WH: wheeling down left scrollLeft at 0`);
+  assert(end.inView, `${theme} WH: the wheel never brought ${last} fully into view`);
+
+  assert(
+    !(await stripView(page, NAMES[0])).inView,
+    `${theme} PK: ${NAMES[0]} is still in view with the strip wheeled to its end`,
+  );
+  await page.locator(`${G(1)} .tabbar__overflow-btn`).click();
+  await page
+    .locator('.ctxmenu__item', { hasText: NAMES[0] })
+    .click({ timeout: 5000 })
+    .catch(() => assert(false, `${theme} PK: the chevron list has no ${NAMES[0]}`));
+  const picked = await pollView(page, NAMES[0], (v) => v.inView);
+  log(theme, 'PK', JSON.stringify(picked));
+  assert(picked.inView, `${theme} PK: picking ${NAMES[0]} did not scroll it into view`);
+
+  await page.locator(`${G(1)} [role="tab"]`, { hasText: last }).click();
+  await page
+    .waitForFunction(
+      (n) =>
+        document.querySelector('.editor-group[data-group="1"] .tab--active span')?.textContent ===
+        n,
+      last,
+      { timeout: 5000 },
+    )
+    .catch(() => assert(false, `${theme} PK: clicking ${last} did not activate it`));
+}
 
 async function runTheme(theme) {
   const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-strip-ud-'));
@@ -83,7 +167,7 @@ async function runTheme(theme) {
       await openFromExplorer(page, n);
       last = n;
       [one] = await strips(page);
-      if (one.overflowing) break;
+      if (one.overflowing && !(await stripView(page, NAMES[0])).inView) break;
     }
     log(theme, 'OV2', JSON.stringify(one));
     assert(one.overflowing, `${theme} OV2: ${NAMES.length} tabs did not overflow the strip`);
@@ -95,6 +179,8 @@ async function runTheme(theme) {
       one.tops.every((t) => t === top),
       `${theme} OV2: overflowing tab tops ${one.tops}, not ${top}`,
     );
+
+    if (theme === THEMES[0]) await scrollAlong(page, theme, last);
 
     await page.locator(`${G(1)} .monaco-editor`).click();
     await page.keyboard.press('Control+Backslash');
