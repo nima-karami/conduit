@@ -844,7 +844,7 @@ describe('centerLayout', () => {
     expect(l.groups[0].previewIds.size).toBe(0);
   });
 
-  it("lists the session's web docs in registry order, whichever group holds each (review B6)", () => {
+  it("lists the session's web docs in registry order, whichever group holds each", () => {
     const wa = doc('web', 'https://a.test/');
     const wb = doc('web', 'https://b.test/');
     const other = doc('web', 'https://c.test/', 'S2');

@@ -6,7 +6,7 @@
  *   P9  leaving b.ts in the right group saves it (viewLeave), while the left group still shows it
  *       clean.
  *   E10 with two web tabs open, moving either one to the other group and back keeps BOTH pages: a
- *       marker set in each guest survives and neither page is fetched again (D9, review B6).
+ *       marker set in each guest survives and neither page is fetched again (D9).
  *   WF  a click inside the right group's guest activates the right group (Decisions Needed #4).
  *   D8  one PDF in both groups: closing the right tab leaves the left rendering, and a second PDF
  *       still loads (the shared pdf.js worker survives).
@@ -97,7 +97,7 @@ async function moveToOther(page, from, title) {
   await sleep(1000);
 }
 
-/** E10: moving either of two web tabs to the other group and back reloads neither (D9, B6). */
+/** E10: moving either of two web tabs to the other group and back reloads neither (D9). */
 async function phaseWebMove(page, server) {
   await page.locator(`${G(1)} .monaco-editor`).click();
   await page.waitForSelector(`${G(1)}[data-active="true"]`, { timeout: 5000 });
