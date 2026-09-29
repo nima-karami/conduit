@@ -942,14 +942,14 @@ export function App() {
   // A tab click / Ctrl+Tab / Mod+digit is an R1 producer; the Terminal stop never records
   // (docs/specs/2026-09-22-editor-nav-history.md §2.2).
   const activateDocByUser = useCallback(
-    (id: string | null, sessionId: string, group?: GroupIndex) => {
+    (id: string | null, sessionId: string, group?: GroupIndex, focus = true) => {
       const doc = id === null ? undefined : docStateRef.current.docs.find((d) => d.id === id);
       if (doc && id !== docStateRef.current.activeId) recordNav(navEntryFor(doc));
       const owner = doc?.sessionId ?? sessionId;
       const g = group ?? resolveActivateGroup(docStateRef.current, owner, id);
       dispatchDocs({ type: 'activate', id, sessionId, group });
       // After recordNav, which cancels any focus request still waiting to mount.
-      focusView(owner, g, id);
+      if (focus) focusView(owner, g, id);
     },
     [recordNav],
   );
@@ -4104,7 +4104,11 @@ export function App() {
             splitDisabledReason={splitDisabledReason}
             editorSplitRatio={settings.editorSplitRatio}
             onSplitRatioCommit={(editorSplitRatio) => update({ editorSplitRatio })}
-            onSelectDoc={(id, group) => activateDocByUser(id, activeIdRef.current ?? '', group)}
+            // A pointer click on the Terminal button leaves focus where it was (main's behaviour,
+            // pinned by editor-nav-history-lifecycle); a keyboard landing on it focuses xterm.
+            onSelectDoc={(id, group) =>
+              activateDocByUser(id, activeIdRef.current ?? '', group, id !== null)
+            }
             onCloseDoc={(id, group) => void closeTabByUser(id, group)}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenTimedMessages={openTimedMessages}

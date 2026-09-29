@@ -6,6 +6,7 @@
  *   CT  Ctrl+Tab file → file (and the typed character lands), file → diff (the modified editor),
  *       and Ctrl+PageUp → the Terminal
  *   TC  a tab click
+ *   TT  a pointer click on the Terminal button leaves focus out of xterm (main's behaviour)
  *   CW  the Ctrl+W successor
  *   SR  Split Right on rendered markdown, and on a PDF
  *   MV  Move to Other Group with a `.ts` left behind in the left group
@@ -141,6 +142,20 @@ runScenario('split-editor-focus', async ({ page, log }) => {
   await page.keyboard.press('Control+Tab');
   await page.waitForSelector(`${G(1)} .monaco-diff-editor`, { timeout: 15000 });
   await expectFocus('CT file→diff', 1, 'diff-modified');
+
+  // TT: a pointer click on the Terminal button activates it but leaves focus out of xterm.
+  await tabOf(page, 1, 'a.ts').click();
+  await clickEditor(1);
+  await page.locator(`${G(1)} [data-tabid="__terminal__"]`).click();
+  await page.waitForFunction(
+    (sel) => !document.querySelector(`${sel} [role="tab"][aria-selected="true"]`),
+    G(1),
+    { timeout: 5000 },
+  );
+  await sleep(500);
+  const afterClick = await focusNow(page);
+  log(`TT Terminal click: focus is in group ${afterClick.group} ${afterClick.view}`);
+  if (afterClick.view === 'terminal') misses.push('TT: a Terminal click moved focus into xterm');
 
   // CT: Ctrl+PageUp from the first doc lands in the Terminal.
   await tabOf(page, 1, 'a.ts').click();
