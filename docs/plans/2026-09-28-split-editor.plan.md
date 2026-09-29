@@ -1690,3 +1690,11 @@ Build run 2026-09-28 (unattended), branch `feat/split-editor`, base `de36575`. E
   - (d) `finalize` with focus `null` takes the shown session's active group's active tab, rather than keeping a
     stale `activeId`.
   - (e) `restore` skips ids owned by another session, and gives group 2 an active tab when the file names none.
+- **Slice 2 — done** (`ce242dc`, `1dc9fc1`, `ff59038`, `ddac9aa`). The Check is green; `breadcrumbs` matches no
+  e2e scenario, so it was dropped. **D1 measured TRUE**: all three single-slot registries lost the survivor
+  (`evidence\split-editor\slice2-d1-repro.log`). Deviations:
+  - (a) `groupOfEditor` uses a module-local editor→group map in `nav-editors.ts`, because `PathRegistry` has
+    no whole scan.
+  - (b) `requestNavFocus(path, g)` has no fallback to the other group.
+  - (c) Open: MarkdownViewer's "View source" CodeViewer key `markdown-source:${path}` is still shared across
+    groups. It is picked up in Slice 4 as a per-tab key.
