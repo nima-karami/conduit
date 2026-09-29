@@ -731,7 +731,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       const g2 = groupAt(l, 2);
       // see split-editor spec §2.3: the group-2 tab is pinned, a group-1 preview stays one.
       const groups: [EditorGroup, EditorGroup] = holds(g2, id)
-        ? [l.groups[0], { ...g2, active: id }]
+        ? [l.groups[0], { ...unpreview(g2, id), active: id }]
         : [
             splitBehavior(doc.kind) === 'duplicate' ? l.groups[0] : removeTab(l.groups[0], id),
             { tabs: [...g2.tabs, { id }], active: id },
@@ -753,7 +753,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       const src = keepSource ? groupAt(l, from) : removeTab(groupAt(l, from), id);
       const dst = groupAt(l, action.toGroup);
       const moved: EditorGroup = holds(dst, id)
-        ? { ...dst, active: id }
+        ? { ...unpreview(dst, id), active: id }
         : { tabs: insertBefore(dst.tabs, { id }, action.beforeId ?? null), active: id };
       const groups: [EditorGroup, EditorGroup] = from === 1 ? [src, moved] : [moved, src];
       const next: SessionLayout = { groups, activeGroup: action.toGroup };

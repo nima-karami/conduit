@@ -595,6 +595,31 @@ describe('group actions', () => {
     expect(tabPreview(c, 'B', 1, 'commit-diff:@preview')).toBe(true);
   });
 
+  it('splitRight and moveTab onto a preview of the same doc pin and activate it', () => {
+    let s = split(open(initialDocs, '/a.ts'));
+    s = open(s, '/p.ts', { mode: 'preview', group: 2 });
+    s = open(s, '/p.ts', { group: 1 });
+    s = open(s, '/b.ts', { group: 2 });
+    s = docsReducer(s, { type: 'focusGroup', sessionId: 'S1', group: 1 });
+    expect(tabPreview(s, 'S1', 2, 'file:/p.ts')).toBe(true);
+
+    const splitOnto = split(s);
+    expect(ids(splitOnto, 2)).toEqual(['file:/a.ts', 'file:/p.ts', 'file:/b.ts']);
+    expect(tabPreview(splitOnto, 'S1', 2, 'file:/p.ts')).toBe(false);
+    expect(groupActive(splitOnto, 'S1', 2)).toBe('file:/p.ts');
+
+    const movedOnto = docsReducer(s, {
+      type: 'moveTab',
+      sessionId: 'S1',
+      id: 'file:/p.ts',
+      toGroup: 2,
+    });
+    expect(ids(movedOnto, 2)).toEqual(['file:/a.ts', 'file:/p.ts', 'file:/b.ts']);
+    expect(tabPreview(movedOnto, 'S1', 2, 'file:/p.ts')).toBe(false);
+    expect(groupActive(movedOnto, 'S1', 2)).toBe('file:/p.ts');
+    expect(movedOnto.activeId).toBe('file:/p.ts');
+  });
+
   it('switchSession restores group 2 as active', () => {
     let s = split(open(initialDocs, '/a.ts'));
     s = open(s, '/c.ts', { group: 2 });
