@@ -532,7 +532,11 @@ export function App() {
         const changed = docStateRef.current.docs.find(
           (d) => d.kind === 'file' && d.path === msg.path && isHtmlDocPath(d.path),
         );
-        if (changed) bumpHtmlReload(changed.id);
+        if (changed) {
+          for (const g of tabGroupsOf(docStateRef.current, changed.id)) {
+            bumpHtmlReload(tabStateKey(changed.id, g));
+          }
+        }
       } else if (msg.type === 'updateStatus') {
         setUpdateStatus(msg);
         // A freshly-staged update un-dismisses the sidebar card (the user may have
@@ -1084,7 +1088,7 @@ export function App() {
       toggleHtmlView: () => {
         const d = docStateRef.current.docs.find((x) => x.id === docStateRef.current.activeId);
         if (d?.kind === 'file' && isHtmlDocPath(d.path))
-          toggleHtmlView(d.id, settings.htmlDefaultView);
+          toggleHtmlView(tabStateKey(d.id, currentGroup()), settings.htmlDefaultView);
       },
       // File-explorer undo/redo. When Monaco is focused it consumes Ctrl+Z/Ctrl+Shift+Z
       // first (marking the event defaultPrevented), so decideShortcut skips these — they
@@ -1299,7 +1303,11 @@ export function App() {
       ),
     [activeDocKind, activeDocPath, activeDocScope, centerView],
   );
-  const reviewMode = activeDoc?.kind === 'review' && centerView === 'editor';
+  // see split-editor spec D6
+  const reviewMode =
+    centerView === 'editor' &&
+    (groupActive(docState, activeId ?? '', 1) === REVIEW_DOC_ID ||
+      groupActive(docState, activeId ?? '', 2) === REVIEW_DOC_ID);
   const reviewDocOpen = docState.docs.some((d) => d.kind === 'review');
   const [paneTab, setPaneTab] = useState<RightPaneTab>(settings.rightPaneTab);
   // A frame late on purpose: the pane may be mounting in this very render (auto-open, or the
@@ -1381,21 +1389,31 @@ export function App() {
   }, [docState.docs, files, lspLanguages, dirtySet]);
 
   // The path of the active editor/markdown tab (undefined when the active doc is the
-  // Terminal, a diff, or the review view). Drives the on-focus re-read below.
+  // Terminal, a diff, or the review view).
   const activeFilePath = useMemo(() => {
     const d = docState.docs.find((x) => x.id === docState.activeId);
     return d?.kind === 'file' ? d.path : undefined;
   }, [docState.docs, docState.activeId]);
-  // When a tab becomes active, re-read it so we show the latest on-disk content (an agent
-  // or external editor may have changed it while another tab was focused). The fileContent
-  // handler's dirty-buffer protection still withholds clobbering an unsaved buffer.
+  // The file each editor group shows. Drives the on-focus re-read below.
+  const visibleFilePaths = useMemo(() => {
+    const paths = new Set<string>();
+    for (const g of [1, 2] as const) {
+      const id = groupActive(docState, activeId ?? '', g);
+      const d = id === null ? undefined : docState.docs.find((x) => x.id === id);
+      if (d?.kind === 'file') paths.add(d.path);
+    }
+    return [...paths];
+  }, [docState, activeId]);
+  // When a tab becomes visible in either group, re-read it so we show the latest on-disk content
+  // (an agent or external editor may have changed it while another tab was shown). The
+  // fileContent handler's dirty-buffer protection still withholds clobbering an unsaved buffer.
+  const visibleFilePathsRef = useRef<readonly string[]>([]);
   useEffect(() => {
-    if (activeFilePath) post({ type: 'readFile', path: activeFilePath });
-  }, [activeFilePath]);
-  // Latest active file path in a ref so the window-focus handler can re-read it without
-  // re-binding its listeners on every tab switch.
-  const activeFilePathRef = useRef(activeFilePath);
-  activeFilePathRef.current = activeFilePath;
+    for (const path of visibleFilePaths) {
+      if (!visibleFilePathsRef.current.includes(path)) post({ type: 'readFile', path });
+    }
+    visibleFilePathsRef.current = visibleFilePaths;
+  }, [visibleFilePaths]);
 
   // Ask the host for git changes + file tree whenever the active cwd changes.
   // activeCwd(active) prefers the live cd-tracked dir (cwd) over home.
@@ -1555,21 +1573,21 @@ export function App() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + home gate, not full active obj)
   useEffect(() => {
     if (!active) return;
-    // On regaining focus, also re-read the active file tab so it reflects any on-disk
+    // On regaining focus, also re-read every visible file tab so it reflects any on-disk
     // change made while the app was backgrounded (dirty-buffer protection still applies).
-    const rereadActiveFile = () => {
-      if (activeFilePathRef.current) post({ type: 'readFile', path: activeFilePathRef.current });
+    const rereadVisibleFiles = () => {
+      for (const path of visibleFilePathsRef.current) post({ type: 'readFile', path });
     };
     const onFocus = () => {
       if (document.visibilityState !== 'hidden') {
         refreshChanges();
-        rereadActiveFile();
+        rereadVisibleFiles();
       }
     };
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
         refreshChanges();
-        rereadActiveFile();
+        rereadVisibleFiles();
       }
     };
     window.addEventListener('focus', onFocus);
@@ -2569,11 +2587,11 @@ export function App() {
           ? [
               {
                 label:
-                  getHtmlView(doc.id, settings.htmlDefaultView) === 'preview'
+                  getHtmlView(tabStateKey(doc.id, group), settings.htmlDefaultView) === 'preview'
                     ? 'View source'
                     : 'View rendered',
                 icon: <IconDoc size={14} />,
-                onClick: () => toggleHtmlView(doc.id, settings.htmlDefaultView),
+                onClick: () => toggleHtmlView(tabStateKey(doc.id, group), settings.htmlDefaultView),
               },
               {
                 label: 'Open externally',
@@ -3387,6 +3405,7 @@ export function App() {
     const activeDoc = docState.docs.find((d) => d.id === docState.activeId);
     if (activeDoc) {
       if (activeDoc.kind === 'file' && isHtmlDocPath(activeDoc.path)) {
+        const htmlKey = tabStateKey(activeDoc.id, activeGroupOf(docState, activeDoc.sessionId));
         cmds.push(
           {
             id: 'cmd:toggleHtmlView',
@@ -3395,7 +3414,7 @@ export function App() {
             group: 'Commands',
             icon: <IconDoc size={14} />,
             combo: comboFor('toggleHtmlView'),
-            run: () => toggleHtmlView(activeDoc.id, settings.htmlDefaultView),
+            run: () => toggleHtmlView(htmlKey, settings.htmlDefaultView),
           },
           {
             id: 'cmd:reloadHtmlPreview',
@@ -3403,7 +3422,7 @@ export function App() {
             keywords: ['html', 'refresh', 'reload'],
             group: 'Commands',
             icon: <IconRefresh size={14} />,
-            run: () => bumpHtmlReload(activeDoc.id),
+            run: () => bumpHtmlReload(htmlKey),
           },
           {
             id: 'cmd:openInBrowser',
