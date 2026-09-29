@@ -59,6 +59,7 @@ import { PlanEditor, type PlanEditorHandle } from './plan-editor';
 
 export interface PlanViewProps {
   doc: OpenDoc;
+  viewStateId: string;
   root: string;
   sessionId?: string;
   /** The doc store's own read of the same path. Used ONLY by the load-failed state's "Open as
@@ -180,7 +181,7 @@ function PlanSourceView({
   return <div className="plan__source-view" ref={hostRef} />;
 }
 
-export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps) {
+export function PlanView({ doc, viewStateId, root, sessionId, file, onClose }: PlanViewProps) {
   const slug = planSlugFromPath(doc.path);
 
   useEffect(() => {
@@ -228,11 +229,11 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
         : 'saved';
 
   useLayoutEffect(() => {
-    const stored = getViewState(`plan-source:${doc.id}`);
+    const stored = getViewState(`plan-source:${viewStateId}`);
     const on = stored?.kind === 'planSource' ? stored.source : false;
     sourceRef.current = on;
     setSource(on);
-  }, [doc.id]);
+  }, [viewStateId]);
 
   const cancelWrite = useCallback((): void => {
     if (timerRef.current !== null) clearTimeout(timerRef.current);
@@ -355,8 +356,8 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
     setSource(next);
     setGutter(null);
     setComposerAt(null);
-    setViewState(`plan-source:${doc.id}`, { kind: 'planSource', source: next });
-  }, [doc.id]);
+    setViewState(`plan-source:${viewStateId}`, { kind: 'planSource', source: next });
+  }, [viewStateId]);
 
   const live = sessionId !== undefined && hasLiveTerminal(sessionId);
   const openUnsent = useMemo(
