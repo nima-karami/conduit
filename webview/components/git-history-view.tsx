@@ -32,6 +32,7 @@ import { repoGitFingerprint } from '../../src/repo-git';
 import type { RepoInfo } from '../../src/repo-scan';
 import { post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
+import { useFocusTargetRef } from '../focus-targets';
 import { acceptHistoryResult, historyReducer, initialHistoryState } from '../git-history-state';
 import {
   IconBranch,
@@ -144,7 +145,7 @@ export function GitHistoryView({
   /** The session's repos in display order. */
   repos: RepoInfo[];
   onRetarget: (root: string) => void;
-  /** The owning doc id — keys this view's commit-list scroll memory (spec 2026-06-30). */
+  /** The owning tab's key: this view's commit-list scroll memory (spec 2026-06-30) and focus target. */
   viewStateId?: string;
   /** Open one of the selected commit's files as a `commit-diff` editor tab — `mode` is
    *  single-click (preview), double-click (permanent) or middle-click (background). */
@@ -154,6 +155,7 @@ export function GitHistoryView({
 }) {
   const [state, dispatch] = useReducer(historyReducer, initialHistoryState);
   const listRef = useRef<HTMLDivElement>(null);
+  const rootFocusRef = useFocusTargetRef<HTMLDivElement>(viewStateId);
   const searchRef = useRef<HTMLInputElement>(null);
   const splitRef = useRef<HTMLDivElement>(null);
   // Seed from the persisted height so a remount (tab close/reopen, restart) keeps the user's
@@ -546,7 +548,7 @@ export function GitHistoryView({
 
   if (state.phase === 'loading') {
     return (
-      <div className="gh">
+      <div className="gh" ref={rootFocusRef} tabIndex={-1}>
         <GhHeader
           sessionId={sessionId}
           repo={headRepo}
@@ -567,7 +569,7 @@ export function GitHistoryView({
 
   if (state.phase === 'empty') {
     return (
-      <div className="gh">
+      <div className="gh" ref={rootFocusRef} tabIndex={-1}>
         <GhHeader
           sessionId={sessionId}
           repo={headRepo}
@@ -588,7 +590,7 @@ export function GitHistoryView({
 
   if (state.phase === 'error') {
     return (
-      <div className="gh">
+      <div className="gh" ref={rootFocusRef} tabIndex={-1}>
         <GhHeader
           sessionId={sessionId}
           repo={headRepo}
@@ -642,7 +644,7 @@ export function GitHistoryView({
   ) : null;
 
   return (
-    <div className="gh">
+    <div className="gh" ref={rootFocusRef} tabIndex={-1}>
       <GhHeader
         sessionId={sessionId}
         repo={headRepo}

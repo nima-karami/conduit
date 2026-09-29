@@ -282,7 +282,12 @@ export function CenterPane({
         onReviewCommit={onReviewCommit}
       />
     ) : doc.kind === 'commit-diff' ? (
-      <CommitDiffView sessionId={doc.sessionId} path={doc.path} root={doc.repoRoot} />
+      <CommitDiffView
+        sessionId={doc.sessionId}
+        path={doc.path}
+        root={doc.repoRoot}
+        viewStateId={tabStateKey(doc.id, group)}
+      />
     ) : (
       // Diff/file viewer state (Monaco model, side-by-side toggle) is per tab; without this key
       // React reuses one instance across docs and the first diff ever opened leaks its
