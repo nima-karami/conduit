@@ -419,6 +419,112 @@ describe('group actions', () => {
     expect(s.activeId).toBe('file:/c.ts');
   });
 
+  it('moveTab duplicate leaves the source tab', () => {
+    let s = open(initialDocs, '/a.ts');
+    s = open(s, '/b.ts');
+    s = split(s);
+    s = docsReducer(s, { type: 'activate', id: 'file:/a.ts', sessionId: 'S1', group: 1 });
+    s = docsReducer(s, {
+      type: 'moveTab',
+      sessionId: 'S1',
+      id: 'file:/a.ts',
+      toGroup: 2,
+      beforeId: 'file:/b.ts',
+      duplicate: true,
+    });
+    expect(ids(s, 1)).toEqual(['file:/a.ts', 'file:/b.ts']);
+    expect(groupActive(s, 'S1', 1)).toBe('file:/a.ts');
+    expect(ids(s, 2)).toEqual(['file:/a.ts', 'file:/b.ts']);
+    expect(s.layouts.S1.activeGroup).toBe(2);
+    expect(s.activeId).toBe('file:/a.ts');
+
+    s = docsReducer(s, {
+      type: 'moveTab',
+      sessionId: 'S1',
+      id: 'file:/b.ts',
+      toGroup: 1,
+      duplicate: true,
+    });
+    expect(ids(s, 1)).toEqual(['file:/a.ts', 'file:/b.ts']);
+    expect(ids(s, 2)).toEqual(['file:/a.ts', 'file:/b.ts']);
+    expect(s.layouts.S1.activeGroup).toBe(1);
+    expect(s.activeId).toBe('file:/b.ts');
+  });
+
+  it('moveTab duplicate of a move-only kind still moves it', () => {
+    let s = open(initialDocs, '/a.ts');
+    s = open(s, 'https://example.com/', { kind: 'web' });
+    s = docsReducer(s, {
+      type: 'moveTab',
+      sessionId: 'S1',
+      id: 'web:https://example.com/',
+      toGroup: 2,
+      duplicate: true,
+    });
+    expect(ids(s, 1)).toEqual(['file:/a.ts']);
+    expect(ids(s, 2)).toEqual(['web:https://example.com/']);
+  });
+
+  it('moveTab to group 2 with one group creates it', () => {
+    let s = open(initialDocs, '/a.ts');
+    s = open(s, '/b.ts', { mode: 'preview' });
+    expect(docsReducer(s, { type: 'moveTab', sessionId: 'S1', id: 'file:/b.ts', toGroup: 1 })).toBe(
+      s,
+    );
+    const moved = docsReducer(s, {
+      type: 'moveTab',
+      sessionId: 'S1',
+      id: 'file:/b.ts',
+      toGroup: 2,
+    });
+    expect(ids(moved, 1)).toEqual(['file:/a.ts']);
+    expect(groupActive(moved, 'S1', 1)).toBe('file:/a.ts');
+    expect(ids(moved, 2)).toEqual(['file:/b.ts']);
+    expect(tabPreview(moved, 'S1', 2, 'file:/b.ts')).toBe(false);
+    expect(moved.layouts.S1.activeGroup).toBe(2);
+    expect(moved.activeId).toBe('file:/b.ts');
+
+    const duplicated = docsReducer(s, {
+      type: 'moveTab',
+      sessionId: 'S1',
+      id: 'file:/b.ts',
+      toGroup: 2,
+      duplicate: true,
+    });
+    expect(ids(duplicated, 1)).toEqual(['file:/a.ts', 'file:/b.ts']);
+    expect(tabPreview(duplicated, 'S1', 1, 'file:/b.ts')).toBe(true);
+    expect(ids(duplicated, 2)).toEqual(['file:/b.ts']);
+    expect(duplicated.activeId).toBe('file:/b.ts');
+  });
+
+  it('joinGroups appends group-2-only tabs to group 1, drops duplicates, removes group 2', () => {
+    let s = open(initialDocs, '/a.ts');
+    s = open(s, '/b.ts');
+    s = split(s);
+    s = open(s, '/c.ts', { group: 2 });
+    s = open(s, '/d.ts', { mode: 'preview', group: 2 });
+    expect(ids(s, 2)).toEqual(['file:/b.ts', 'file:/c.ts', 'file:/d.ts']);
+    const single = open(initialDocs, '/a.ts');
+    expect(docsReducer(single, { type: 'joinGroups', sessionId: 'S1' })).toBe(single);
+
+    const joined = docsReducer(s, { type: 'joinGroups', sessionId: 'S1' });
+    expect(joined.layouts.S1.groups).toHaveLength(1);
+    expect(joined.layouts.S1.activeGroup).toBe(1);
+    expect(ids(joined, 1)).toEqual(['file:/a.ts', 'file:/b.ts', 'file:/c.ts', 'file:/d.ts']);
+    expect(tabPreview(joined, 'S1', 1, 'file:/d.ts')).toBe(false);
+    expect(groupActive(joined, 'S1', 1)).toBe('file:/d.ts');
+    expect(joined.activeId).toBe('file:/d.ts');
+
+    const fromG1 = run(
+      s,
+      { type: 'focusGroup', sessionId: 'S1', group: 1 },
+      { type: 'joinGroups', sessionId: 'S1' },
+    );
+    expect(ids(fromG1, 1)).toEqual(['file:/a.ts', 'file:/b.ts', 'file:/c.ts', 'file:/d.ts']);
+    expect(groupActive(fromG1, 'S1', 1)).toBe('file:/b.ts');
+    expect(fromG1.activeId).toBe('file:/b.ts');
+  });
+
   it('focusGroup swaps activeId', () => {
     let s = open(initialDocs, '/a.ts');
     s = open(s, '/b.ts');

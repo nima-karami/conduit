@@ -172,8 +172,10 @@ export type DocsAction =
       id: string;
       toGroup: GroupIndex;
       beforeId?: string | null;
+      duplicate?: boolean;
     }
   | { type: 'focusGroup'; sessionId: string; group: GroupIndex }
+  | { type: 'joinGroups'; sessionId: string }
   // One-shot startup seed from persisted docs.json (editor-tabs-persist). Rebuilds docs[] +
   // layouts from `docs`, dropping any whose sessionId isn't in `knownSessionIds` (orphan).
   | { type: 'restore'; docs: PersistedDoc[]; knownSessionIds: string[] }
@@ -736,12 +738,15 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       const s = action.sessionId;
       const layout = state.layouts[s];
       const from = otherGroup(action.toGroup);
-      if (layout?.groups.length !== 2 || !holds(layout.groups[from - 1], action.id)) return state;
+      if (!layout || !holds(layout.groups[from - 1], action.id)) return state;
       const pinned = pinSlotForMove(state, action.id);
       const l = layoutOf(pinned.state, s);
       const id = pinned.id;
       if (!holds(groupAt(l, from), id)) return finalize(pinned.state, [s], s);
-      const src = removeTab(groupAt(l, from), id);
+      const kind = pinned.state.docs.find((d) => d.id === id)?.kind;
+      const keepSource =
+        action.duplicate === true && kind !== undefined && splitBehavior(kind) === 'duplicate';
+      const src = keepSource ? groupAt(l, from) : removeTab(groupAt(l, from), id);
       const dst = groupAt(l, action.toGroup);
       const moved: EditorGroup = holds(dst, id)
         ? { ...dst, active: id }
@@ -749,6 +754,19 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       const groups: [EditorGroup, EditorGroup] = from === 1 ? [src, moved] : [moved, src];
       const next: SessionLayout = { groups, activeGroup: action.toGroup };
       return finalize(withLayout(pinned.state, s, next), [s], s);
+    }
+    case 'joinGroups': {
+      const s = action.sessionId;
+      const layout = state.layouts[s];
+      if (layout?.groups.length !== 2) return state;
+      const [g1, g2] = layout.groups;
+      const joined = g2.tabs.filter((t) => !holds(g1, t.id)).map((t) => ({ id: t.id }));
+      const active = layout.activeGroup === 2 ? g2.active : g1.active;
+      const next: SessionLayout = {
+        groups: [{ tabs: [...g1.tabs, ...joined], active }],
+        activeGroup: 1,
+      };
+      return finalize(withLayout(state, s, next), [s], s);
     }
     case 'focusGroup': {
       const s = action.sessionId;
