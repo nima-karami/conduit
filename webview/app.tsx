@@ -2680,7 +2680,6 @@ export function App() {
           label: SPLIT_COPY.splitRight,
           icon: <IconSplit size={14} />,
           separatorBefore: true,
-          hint: comboLabel('splitEditorRight', settings.shortcuts),
           disabled: group === 2 || activeGroupOf(docState, doc.sessionId) === 2,
           title: group === 2 ? SPLIT_COPY.capReached : undefined,
           onClick: () => splitRight(doc),
