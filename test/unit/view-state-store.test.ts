@@ -3,10 +3,12 @@ import {
   acquireReviewListState,
   adoptReviewSource,
   clampScrollTop,
+  copyViewState,
   getViewState,
   markClosing,
   mergeReviewViewState,
   mergeScrollViewState,
+  moveViewState,
   renameViewState,
   setViewState,
   type ViewState,
@@ -324,5 +326,47 @@ describe('renameViewState', () => {
     setViewState('file:/r1.ts', scroll(3));
     expect(getViewState('file:/r1.ts')).toEqual(scroll(3));
     expect(getViewState('file:/r2.ts')).toEqual(scroll(120));
+  });
+});
+
+describe('moveViewState / copyViewState', () => {
+  const ids = ['file:/m.ts', 'g2:file:/m.ts', 'review:@review', 'g2:review:@review'];
+  beforeEach(() => {
+    for (const id of ids) {
+      markClosing(id);
+      getViewState(id);
+    }
+  });
+
+  it('move carries state and clears the target tombstone', () => {
+    setViewState('file:/m.ts', scroll(120));
+    markClosing('g2:file:/m.ts');
+    moveViewState('file:/m.ts', 'g2:file:/m.ts');
+    expect(getViewState('file:/m.ts')).toBeUndefined();
+    setViewState('g2:file:/m.ts', scroll(130));
+    expect(getViewState('g2:file:/m.ts')).toEqual(scroll(130));
+  });
+
+  it("move lands the source viewer's late unmount capture on the target, for every writer", () => {
+    setViewState('file:/m.ts', scroll(120));
+    moveViewState('file:/m.ts', 'g2:file:/m.ts');
+    setViewState('file:/m.ts', scroll(500));
+    expect(getViewState('g2:file:/m.ts')).toEqual(scroll(500));
+
+    mergeReviewViewState('review:@review', { anchor: { topPath: 'a.ts', offset: 10 } });
+    moveViewState('review:@review', 'g2:review:@review');
+    mergeReviewViewState('review:@review', { anchor: { topPath: 'b.ts', offset: 40 } });
+    expect(getViewState('g2:review:@review')).toMatchObject({ topPath: 'b.ts', offset: 40 });
+    expect(getViewState('review:@review')).toBeUndefined();
+  });
+
+  it('copy leaves both ids holding the state, and each captures for itself', () => {
+    setViewState('file:/m.ts', scroll(120));
+    markClosing('g2:file:/m.ts');
+    copyViewState('file:/m.ts', 'g2:file:/m.ts');
+    expect(getViewState('g2:file:/m.ts')).toEqual(scroll(120));
+    setViewState('g2:file:/m.ts', scroll(7));
+    expect(getViewState('file:/m.ts')).toEqual(scroll(120));
+    expect(getViewState('g2:file:/m.ts')).toEqual(scroll(7));
   });
 });

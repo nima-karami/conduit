@@ -10,16 +10,29 @@
  *   E6  closing the right group's only tab collapses to one group, the left one active.
  *   E12 the Terminal tab can't be split: Ctrl+\ off-terminal changes nothing, the menu item is
  *       disabled, and Ctrl+\ inside xterm stays the terminal's key.
+ *
+ * Slice 5 scenarios, continuing in launch 2:
+ *   MV  Mod+Alt+ArrowRight moves the active tab from the left group to the right, which becomes
+ *       active.
+ *   RV  Review scrolled in one group, moved to the other, keeps its scroll anchor (±2px).
  *   TP  the Workspace Trust prompt stays visible and clickable above a web tab active in the left
  *       group (web hosts sit in the grid's body row, the prompt in its own row). Needs go + gopls.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, launchApp, makeLog, openSession, shutdownApp, tapBridge } from './harness.mjs';
+import {
+  assert,
+  launchApp,
+  makeLog,
+  openReview,
+  openSession,
+  shutdownApp,
+  tapBridge,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[split-editor] SKIP — suite is Windows-only');
@@ -39,10 +52,29 @@ writeFileSync(
 writeFileSync(join(repo, 'note.md'), '# Note\n\nSome text.\n');
 writeFileSync(join(repo, 'go.mod'), 'module example.com/split\n\ngo 1.21\n');
 writeFileSync(join(repo, 'main.go'), 'package main\n\nfunc main() {}\n');
+// Committed, then edited: enough Review cards for the list to scroll (RV).
+const REVIEW_FILES = 12;
+const reviewLines = (n) => Array.from({ length: 120 }, (_, i) => `${n} line ${i + 1}`);
+let hasGit = false;
 try {
   execFileSync('git', ['init', '-q'], { cwd: repo });
+  mkdirSync(join(repo, 'rv'));
+  for (let n = 1; n <= REVIEW_FILES; n++) {
+    writeFileSync(join(repo, 'rv', `f${n}.txt`), `${reviewLines(n).join('\n')}\n`);
+  }
+  execFileSync('git', ['-c', 'core.autocrlf=false', 'add', 'rv'], { cwd: repo });
+  execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], {
+    cwd: repo,
+  });
+  for (let n = 1; n <= REVIEW_FILES; n++) {
+    const lines = reviewLines(n);
+    lines[3] = `${n} line 4 edited`;
+    lines[115] = `${n} line 116 edited`;
+    writeFileSync(join(repo, 'rv', `f${n}.txt`), `${lines.join('\n')}\n`);
+  }
+  hasGit = true;
 } catch {
-  /* git absent — the scenario works without a repo */
+  /* git absent — RV is skipped, everything else works without a repo */
 }
 const repoArg = repo.replace(/\\/g, '/');
 const repoName = repoArg.split('/').filter(Boolean).pop();
@@ -95,6 +127,127 @@ const politeText = (page) =>
 const hasBinary = (name) => spawnSync('where', [name], { stdio: 'ignore' }).status === 0;
 const goplsInstalled = () =>
   hasBinary('gopls') || existsSync(join(homedir(), 'go', 'bin', 'gopls.exe'));
+
+const groupTabs = (page, g) =>
+  page.evaluate(
+    (sel) => [...document.querySelectorAll(`${sel} [role="tab"] span`)].map((e) => e.textContent),
+    G(g),
+  );
+
+async function waitPolite(page, text, label) {
+  await page
+    .waitForFunction(
+      (t) =>
+        document.querySelector('.shell > [role="status"][aria-live="polite"]:not(.bg-open-status)')
+          ?.textContent === t,
+      text,
+      { timeout: 5000 },
+    )
+    .catch(async () =>
+      assert(false, `${label}: the polite region says ${JSON.stringify(await politeText(page))}`),
+    );
+}
+
+/** One group holding b.ts → split a.ts, then move b.ts from the left group with the keyboard. */
+async function phaseMove(page) {
+  await openFromExplorer(page, 'a.ts');
+  await page.locator(`${G(1)} .monaco-editor`).click();
+  await page.keyboard.press('Control+Backslash');
+  await page.waitForFunction(() => document.querySelectorAll('.editor-group').length === 2, null, {
+    timeout: 10000,
+  });
+  await page.locator(`${G(1)} [role="tab"]`, { hasText: 'b.ts' }).click();
+  await page.waitForSelector(`${G(1)}[data-active="true"] .tab--active`, { timeout: 5000 });
+  await page.locator(`${G(1)} .monaco-editor`).click();
+  await page.keyboard.press('Control+Alt+ArrowRight');
+  await page
+    .waitForFunction(
+      (sel) =>
+        document.querySelector(`${sel}[data-active="true"] .tab--active span`)?.textContent ===
+        'b.ts',
+      G(2),
+      { timeout: 5000 },
+    )
+    .catch(() => assert(false, 'MV: b.ts is not the active tab of an active right group'));
+  const left = await groupTabs(page, 1);
+  assert(!left.includes('b.ts'), `MV: b.ts is still in the left group (${left})`);
+  assert(
+    (await page.locator(G(1)).getAttribute('data-active')) === null,
+    'MV: the left group is still active',
+  );
+  await waitPolite(page, 'Moved b.ts to right group', 'MV');
+  log('MV ✓ Mod+Alt+ArrowRight moved b.ts to the right group');
+}
+
+/** The scroller's offset and the card at its top edge, with the edge's offset into that card. */
+const reviewAnchor = (page, g) =>
+  page.evaluate((sel) => {
+    const el = document.querySelector(`${sel} .review__scroll`);
+    if (!el) return null;
+    const y = el.getBoundingClientRect().top;
+    const card = [...el.querySelectorAll('.rcard')]
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+      .find((c) => c.getBoundingClientRect().bottom > y);
+    return {
+      scrollTop: Math.round(el.scrollTop),
+      path: card?.getAttribute('data-path') ?? null,
+      offset: card ? Math.round(y - card.getBoundingClientRect().top) : null,
+    };
+  }, G(g));
+
+async function pressMove(page, g, key) {
+  await page.focus(`${G(g)} .review__scroll`);
+  await page.keyboard.press(key);
+  const to = g === 1 ? 2 : 1;
+  await page
+    .waitForSelector(`${G(to)}[data-active="true"] .review__scroll`, { timeout: 10000 })
+    .catch(() => assert(false, `RV: Review did not move to an active group ${to}`));
+  await sleep(900);
+  return reviewAnchor(page, to);
+}
+
+/**
+ * Review opened in the left group, scrolled, moved right and back. The groups differ in width
+ * (E8 left the ratio at ~0.3), so across them the top card and its offset are what must hold;
+ * back in the same group the pixel offset must too (±2px).
+ */
+async function phaseReviewMove(page) {
+  if (!hasGit) {
+    log('RV not run (no git)');
+    return;
+  }
+  await page.locator(`${G(1)} .monaco-editor`).click();
+  await openReview(page);
+  await page.waitForSelector(`${G(1)} .review .rcard[data-path="rv/f1.txt"] .rline`, {
+    state: 'attached',
+    timeout: 25000,
+  });
+  // Mid-list: a fraction of the estimate-sized scrollHeight lands on the end clamp once the
+  // narrow group's real heights resolve, and an end-clamped offset can't survive a wider group.
+  await page.$eval(`${G(1)} .review__scroll`, (el) => {
+    el.scrollTop = 1500;
+  });
+  // Past the 120ms anchor-capture debounce and the re-measure it triggers.
+  await sleep(900);
+  const before = await reviewAnchor(page, 1);
+  assert(
+    before?.path && before.scrollTop > 200,
+    `RV: expected a scrolled Review, got ${JSON.stringify(before)}`,
+  );
+  const right = await pressMove(page, 1, 'Control+Alt+ArrowRight');
+  log('RV: anchor', JSON.stringify(before), '→', JSON.stringify(right));
+  assert(
+    right?.path === before.path && Math.abs(right.offset - before.offset) <= 2,
+    `RV: the right group's top card is ${JSON.stringify(right)}, was ${JSON.stringify(before)}`,
+  );
+  const back = await pressMove(page, 2, 'Control+Alt+ArrowLeft');
+  log('RV: back in the left group', JSON.stringify(back));
+  assert(
+    back && Math.abs(back.scrollTop - before.scrollTop) <= 2,
+    `RV: Review's scroll moved from ${before.scrollTop} to ${back?.scrollTop}`,
+  );
+  log('RV ✓ Review moved with its scroll anchor');
+}
 
 async function phaseTrustOverWeb(page) {
   if (!hasBinary('go') || !goplsInstalled()) {
@@ -373,6 +526,9 @@ try {
     'E6: the left group is not active after the collapse',
   );
   log('E6 ✓ collapse to one active group');
+
+  await phaseMove(page);
+  await phaseReviewMove(page);
 
   await phaseTrustOverWeb(page);
 

@@ -3,6 +3,7 @@ import type { GroupIndex } from './doc-groups';
 export const SPLIT_COPY = {
   splitRight: 'Split Right',
   splitButton: 'Split editor right',
+  moveToOther: 'Move to Other Group',
   focusLeft: 'Focus Left Editor Group',
   focusRight: 'Focus Right Editor Group',
   groupLabel: (g: GroupIndex, active: boolean) =>
@@ -12,4 +13,5 @@ export const SPLIT_COPY = {
   capReached: 'Only two editor groups are supported.',
   terminalCantSplit: "The terminal can't be split into an editor group",
   splitOpened: (title: string) => `Split editor: ${title} opened in right group`,
+  moved: (title: string, g: GroupIndex) => `Moved ${title} to ${g === 1 ? 'left' : 'right'} group`,
 } as const;

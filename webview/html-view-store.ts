@@ -73,6 +73,23 @@ export function clearHtmlView(docId: string): void {
   notify();
 }
 
+/** A tab moved to the other editor group keeps its mode, scroll and reload nonce. */
+export function moveHtmlView(from: string, to: string): void {
+  const s = states.get(from);
+  if (from === to || !s) return;
+  states.delete(from);
+  states.set(to, s);
+  notify();
+}
+
+/** A tab duplicated into the other editor group starts from its source's state. */
+export function copyHtmlView(from: string, to: string): void {
+  const s = states.get(from);
+  if (from === to || !s) return;
+  states.set(to, { ...s });
+  notify();
+}
+
 export function subscribeHtmlView(cb: Listener): () => void {
   listeners.add(cb);
   return () => {

@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   bumpHtmlReload,
   clearHtmlView,
+  copyHtmlView,
   getHtmlReload,
   getHtmlScroll,
   getHtmlView,
+  moveHtmlView,
   setHtmlScroll,
   setHtmlView,
   subscribeHtmlView,
@@ -103,5 +105,31 @@ describe('html view store', () => {
     off();
     setHtmlView(id, 'preview');
     expect(calls).toBe(1);
+  });
+
+  it('move and copy notify subscribers', () => {
+    const from = doc('move-from');
+    const moved = doc('move-to');
+    const copied = doc('copy-to');
+    setHtmlView(from, 'source');
+    setHtmlScroll(from, 300);
+    bumpHtmlReload(from);
+    let calls = 0;
+    const off = subscribeHtmlView(() => {
+      calls += 1;
+    });
+    copyHtmlView(from, copied);
+    expect(calls).toBe(1);
+    expect(getHtmlView(copied, 'preview')).toBe('source');
+    expect(getHtmlScroll(copied)).toBe(300);
+    setHtmlScroll(copied, 10);
+    expect(getHtmlScroll(from)).toBe(300);
+    moveHtmlView(from, moved);
+    expect(calls).toBe(3);
+    expect(getHtmlView(moved, 'preview')).toBe('source');
+    expect(getHtmlScroll(moved)).toBe(300);
+    expect(getHtmlReload(moved)).toBe(1);
+    expect(getHtmlView(from, 'preview')).toBe('preview');
+    off();
   });
 });

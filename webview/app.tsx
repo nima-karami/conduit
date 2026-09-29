@@ -128,6 +128,7 @@ import {
   layoutOf,
   openTargetGroup,
   resolveActivateGroup,
+  splitBehavior,
   tabGroupsOf,
   tabPreview,
 } from './doc-groups';
@@ -169,7 +170,14 @@ import {
   redoActions,
 } from './fs-undo';
 import type { BulkTarget, GitActionIntent } from './git-intent';
-import { bumpHtmlReload, clearHtmlView, getHtmlView, toggleHtmlView } from './html-view-store';
+import {
+  bumpHtmlReload,
+  clearHtmlView,
+  copyHtmlView,
+  getHtmlView,
+  moveHtmlView,
+  toggleHtmlView,
+} from './html-view-store';
 import { type HunkActionHost, setHunkActionHost } from './hunk-actions';
 import {
   IconBoard,
@@ -261,7 +269,13 @@ import { useBackgroundOpenFeedback } from './use-background-open-feedback';
 import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-history';
 import { useReviewModeLayout } from './use-review-mode-layout';
 import { useSnooze } from './use-snooze';
-import { fileViewStateIds, markClosing, renameViewState } from './view-state-store';
+import {
+  copyViewState,
+  fileViewStateIds,
+  markClosing,
+  moveViewState,
+  renameViewState,
+} from './view-state-store';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
@@ -364,6 +378,19 @@ function focusGroupViewer(group: GroupIndex, doc: OpenDoc | undefined, fallback:
     document
       .querySelector<HTMLElement>(`.editor-group[data-group="${group}"] ${fallback}`)
       ?.focus(),
+  );
+}
+
+/** A tab's per-group view state goes with it to the other group, or starts there as a copy
+ *  (split-editor plan P5, I10). */
+function carryTabState(doc: OpenDoc, from: GroupIndex, to: GroupIndex, how: 'move' | 'copy'): void {
+  const carry = how === 'move' ? moveViewState : copyViewState;
+  for (const id of doc.kind === 'file' ? fileViewStateIds(doc.path) : [doc.id]) {
+    carry(tabStateKey(id, from), tabStateKey(id, to));
+  }
+  (how === 'move' ? moveHtmlView : copyHtmlView)(
+    tabStateKey(doc.id, from),
+    tabStateKey(doc.id, to),
   );
 }
 
@@ -955,9 +982,32 @@ export function App() {
     if (doc.id !== layout.groups[0].active) {
       dispatchDocs({ type: 'activate', id: doc.id, sessionId, group: 1 });
     }
+    if (!layout.groups[1]?.tabs.some((t) => t.id === doc.id)) {
+      carryTabState(doc, 1, 2, splitBehavior(doc.kind) === 'duplicate' ? 'copy' : 'move');
+    }
     dispatchDocs({ type: 'splitRight', sessionId });
     announce(SPLIT_COPY.splitOpened(doc.title));
     focusGroupViewer(2, doc, '> .editor-group__body');
+  }, []);
+
+  const moveTabToGroup = useCallback((id: string, toGroup: GroupIndex, beforeId: string | null) => {
+    const sessionId = activeIdRef.current;
+    if (!sessionId) return;
+    const layout = layoutOf(docStateRef.current, sessionId);
+    const from: GroupIndex = toGroup === 1 ? 2 : 1;
+    const src = layout.groups[from - 1];
+    const dst = layout.groups[toGroup - 1];
+    const doc = docStateRef.current.docs.find((d) => d.id === id);
+    if (!doc || !src || !dst || !src.tabs.some((t) => t.id === id)) return;
+    if (dst.tabs.some((t) => t.id === id)) {
+      markClosing(tabStateKey(id, from));
+      clearHtmlView(tabStateKey(id, from));
+    } else {
+      carryTabState(doc, from, toGroup, 'move');
+    }
+    dispatchDocs({ type: 'moveTab', sessionId, id, toGroup, beforeId });
+    if (navLiveRef.current) navLiveRef.current.textContent = SPLIT_COPY.moved(doc.title, toGroup);
+    focusGroupViewer(toGroup, doc, '> .editor-group__body');
   }, []);
 
   const focusGroupByCommand = useCallback((group: GroupIndex) => {
@@ -1178,6 +1228,14 @@ export function App() {
       // for the same ordering reason as undo/redo (openFile/openDiff are declared later).
       reopenClosedTab: () => reopenClosedTabRef.current(),
       splitEditorRight: () => splitRight(),
+      moveTabNextGroup: () => {
+        const id = docStateRef.current.activeId;
+        if (id && currentGroup() === 1) moveTabToGroup(id, 2, null);
+      },
+      moveTabPrevGroup: () => {
+        const id = docStateRef.current.activeId;
+        if (id && currentGroup() === 2) moveTabToGroup(id, 1, null);
+      },
       focusLeftGroup: () => focusGroupByCommand(1),
       focusRightGroup: () => focusGroupByCommand(2),
       // Built-in navigation (VS Code parity). Ctrl+Tab / Ctrl+PageUp cycle back, the
@@ -1216,6 +1274,7 @@ export function App() {
     settings.htmlDefaultView,
     activateDocByUser,
     splitRight,
+    moveTabToGroup,
     focusGroupByCommand,
   ]);
   const bindingsRef = useRef(settings.shortcuts);
@@ -2710,6 +2769,11 @@ export function App() {
           title: group === 2 ? SPLIT_COPY.capReached : undefined,
           onClick: () => splitRight(doc),
         },
+        {
+          label: SPLIT_COPY.moveToOther,
+          disabled: layoutOf(docState, doc.sessionId).groups.length < 2,
+          onClick: () => moveTabToGroup(doc.id, group === 1 ? 2 : 1, null),
+        },
       ],
     });
   };
@@ -2760,6 +2824,11 @@ export function App() {
           separatorBefore: true,
           disabled: true,
           title: SPLIT_COPY.terminalCantSplit,
+          onClick: () => {},
+        },
+        {
+          label: SPLIT_COPY.moveToOther,
+          disabled: true,
           onClick: () => {},
         },
         {
@@ -3827,6 +3896,19 @@ export function App() {
       });
     }
     if (layout.groups.length === 2) {
+      if (docState.activeId !== null) {
+        const from = layout.activeGroup;
+        const id = docState.activeId;
+        groupCmds.push({
+          id: 'cmd:moveTabToOtherGroup',
+          title: SPLIT_COPY.moveToOther,
+          keywords: ['move editor', 'editor group'],
+          group: 'Commands',
+          icon: <IconSplit size={14} />,
+          combo: comboFor(from === 1 ? 'moveTabNextGroup' : 'moveTabPrevGroup'),
+          run: () => moveTabToGroup(id, from === 1 ? 2 : 1, null),
+        });
+      }
       groupCmds.push(
         {
           id: 'cmd:focusLeftGroup',
@@ -3852,6 +3934,7 @@ export function App() {
   }, [
     layout,
     splitRight,
+    moveTabToGroup,
     focusGroupByCommand,
     active,
     sessions,

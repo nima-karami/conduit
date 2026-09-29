@@ -87,10 +87,16 @@ const TAB_BASE = [
   'Copy name',
   'Reveal in Explorer',
 ];
-const TAB_ORDER = [...TAB_BASE, 'Split Right'];
+const TAB_ORDER = [...TAB_BASE, 'Split Right', 'Move to Other Group'];
 // An HTML tab extends the reference group at its tail — where 'Open in browser' used to sit.
 // 'View source' is the label while the tab shows the rendered page, which is the default.
-const HTML_TAB_ORDER = [...TAB_BASE, 'View source', 'Open externally', 'Split Right'];
+const HTML_TAB_ORDER = [
+  ...TAB_BASE,
+  'View source',
+  'Open externally',
+  'Split Right',
+  'Move to Other Group',
+];
 
 /** Tag the tab whose title ends in `ext` so it can be addressed by selector, then pin it —
  *  a single click on a tree row opens a PREVIEW tab, whose menu carries an extra
