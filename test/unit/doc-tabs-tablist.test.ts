@@ -19,7 +19,7 @@ const docs: OpenDoc[] = [
 let host: HTMLDivElement;
 let root: Root | null = null;
 
-async function render(activeId: string | null = null) {
+async function render(activeId: string | null = null, shown: OpenDoc[] = docs) {
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -30,7 +30,7 @@ async function render(activeId: string | null = null) {
         groupActive: true,
         showTerminal: true,
         split: { disabledReason: null, onSplit: () => {} },
-        docs,
+        docs: shown,
         activeId,
         previewIds: new Set<string>(),
         terminalLabel: 'Terminal',
@@ -77,6 +77,14 @@ describe('DocTabs tablist', () => {
     expect(
       [...(tablist?.querySelectorAll('[data-tabid]') ?? [])].map((e) => e.getAttribute('role')),
     ).toEqual(['tab', 'tab']);
+  });
+
+  it('is a tablist only while it holds a doc tab, and keeps its element either way', async () => {
+    await render(null, []);
+    expect(host.querySelector('[role="tablist"]')).toBeNull();
+    const empty = host.querySelector('.tabbar__tabs');
+    expect(empty).not.toBeNull();
+    expect(empty?.getAttribute('aria-label')).toBeNull();
   });
 
   it('marks the Terminal button pressed only while it is the shown tab', async () => {

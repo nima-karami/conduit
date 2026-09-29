@@ -15,6 +15,7 @@ import type { OpenDoc } from '../docs';
 import { isPanelDragTarget } from '../drag-guard';
 import { stampFileDrag } from '../file-drag-data';
 import type { FileSaveStatus } from '../file-save-controller';
+import { useFocusTargetRef } from '../focus-targets';
 import {
   IconBranch,
   IconCheck,
@@ -26,7 +27,6 @@ import {
   SessionGlyph,
 } from '../icons';
 import { middleClickProps } from '../middle-click';
-import { useFocusTargetRef } from '../focus-targets';
 import { saveDocByPath } from '../save-registry';
 import { SPLIT_COPY } from '../split-editor-copy';
 import { acceptTabDrop, beginTabDrag, endTabDrag, tabDragOf } from '../tab-drag';
@@ -300,7 +300,11 @@ export function DocTabs({
           </button>
         )}
         {/* see split-editor spec §9 (amended): the Terminal is a button beside the tablist */}
-        <div className="tabbar__tabs" role="tablist" aria-label={SPLIT_COPY.tablistLabel(group)}>
+        <div
+          className="tabbar__tabs"
+          role={docs.length > 0 ? 'tablist' : undefined}
+          aria-label={docs.length > 0 ? SPLIT_COPY.tablistLabel(group) : undefined}
+        >
           {docs.map((d) => (
             <div
               key={d.id}
