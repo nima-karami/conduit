@@ -2,8 +2,8 @@
  * split-editor-focus-keep — keyboard focus the user put somewhere stays there
  * (docs/specs/2026-09-28-split-editor.md §10):
  *   TK  the tab-navigation chords leave the Terminal (VS Code's commandsToSkipShell): Ctrl+Tab
- *       cycles on out of xterm and Ctrl+2 jumps from it, sending nothing to the shell; Ctrl+W
- *       still reaches the shell and closes no tab
+ *       cycles on out of xterm, and Ctrl+2 and Ctrl+PageDown leave it, sending nothing to the
+ *       shell; Ctrl+9 with fewer than 9 docs and Ctrl+W still reach xterm and change no tab
  *   LM  a view that mounts late (its diff reply held back by the host) does not take focus back
  *       from xterm, where the user clicked and typed after asking for it
  *   CG  closing the right group from its strip menu by keyboard leaves focus in the explorer
@@ -155,6 +155,46 @@ runScenario('split-editor-focus-keep', async ({ app, page, log }) => {
   if (sentOnDigit.length > 0)
     misses.push(`TK: Ctrl+2 sent ${JSON.stringify(sentOnDigit)} to the shell`);
   if ((await bufferText()) !== beforeDigit) misses.push('TK: the prompt changed after Ctrl+2');
+
+  // TK: Ctrl+PageDown from the Terminal leaves it for a doc.
+  await cycleToTerminal();
+  await page.locator(`${G(1)} .xterm:visible`).click();
+  await ptyIn();
+  const beforePage = await bufferText();
+  await page.keyboard.press('Control+PageDown');
+  await sleep(400);
+  const paged = await shownName();
+  const sentOnPage = await ptyIn();
+  log(`TK Ctrl+PageDown from the Terminal: shows ${paged} · sent ${JSON.stringify(sentOnPage)}`);
+  if (paged === null) misses.push('TK: Ctrl+PageDown from the Terminal stayed on the Terminal');
+  if (sentOnPage.length > 0)
+    misses.push(`TK: Ctrl+PageDown sent ${JSON.stringify(sentOnPage)} to the shell`);
+  if ((await bufferText()) !== beforePage)
+    misses.push('TK: the prompt changed after Ctrl+PageDown');
+
+  // TK: Ctrl+9 past the open-doc count is not the app's, so xterm gets the key. xterm.js maps
+  // Ctrl+9 to no bytes, so arrival at its textarea is the observable, not PTY input.
+  await cycleToTerminal();
+  await page.locator(`${G(1)} .xterm:visible`).click();
+  await ptyIn();
+  await page.evaluate(() => {
+    window.__xtermKeys = [];
+    const a = document.activeElement;
+    if (a?.closest('.xterm'))
+      a.addEventListener('keydown', (e) =>
+        window.__xtermKeys.push(`${e.ctrlKey ? 'C-' : ''}${e.key}`),
+      );
+  });
+  await page.keyboard.press('Control+9');
+  await sleep(400);
+  const reached = await page.evaluate(() => window.__xtermKeys);
+  const sentOnNine = await ptyIn();
+  const stayed9 = (await onTerminal()) && (await xtermFocused());
+  log(
+    `TK Ctrl+9 with 2 docs: xterm saw ${JSON.stringify(reached)} · sent ${JSON.stringify(sentOnNine)} · still on the Terminal in xterm ${stayed9}`,
+  );
+  if (!reached.includes('C-9')) misses.push('TK: Ctrl+9 with 2 docs never reached xterm');
+  if (!stayed9) misses.push('TK: Ctrl+9 with 2 docs left the Terminal');
 
   // TK: Ctrl+W in xterm is the shell's.
   await cycleToTerminal();
