@@ -132,4 +132,36 @@ describe('html view store', () => {
     expect(getHtmlView(from, 'preview')).toBe('preview');
     off();
   });
+
+  it("move lands the source viewer's late scroll capture on the target", () => {
+    const from = doc('late-from');
+    const to = doc('late-to');
+    setHtmlScroll(from, 40);
+    moveHtmlView(from, to);
+    setHtmlScroll(from, 500);
+    expect(getHtmlScroll(to)).toBe(500);
+    expect(getHtmlScroll(from)).toBe(0);
+  });
+
+  it('the late capture follows a move even when the source had stored nothing', () => {
+    const from = doc('late-empty-from');
+    const to = doc('late-empty-to');
+    moveHtmlView(from, to);
+    setHtmlScroll(from, 70);
+    expect(getHtmlScroll(to)).toBe(70);
+  });
+
+  it('a viewer mounting at the old key again captures for itself, and a move back never loops', () => {
+    const a = doc('back-a');
+    const b = doc('back-b');
+    setHtmlScroll(a, 10);
+    moveHtmlView(a, b);
+    moveHtmlView(b, a);
+    setHtmlScroll(b, 20);
+    expect(getHtmlScroll(a)).toBe(20);
+    expect(getHtmlScroll(b)).toBe(0);
+    setHtmlScroll(b, 30);
+    expect(getHtmlScroll(b)).toBe(30);
+    expect(getHtmlScroll(a)).toBe(20);
+  });
 });

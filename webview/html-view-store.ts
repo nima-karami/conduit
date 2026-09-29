@@ -9,6 +9,21 @@ interface HtmlDocState {
 }
 
 const states = new Map<string, HtmlDocState>();
+
+// Old key → new key for a tab moved to the other editor group: the source viewer's scroll capture
+// is an async guest read that can resolve after the move (split-editor plan P5, I10).
+const moved = new Map<string, string>();
+
+function liveKey(docId: string): string {
+  let at = docId;
+  for (let hops = 0; hops <= moved.size; hops++) {
+    const next = moved.get(at);
+    if (next === undefined) return at;
+    at = next;
+  }
+  return at;
+}
+
 const listeners = new Set<Listener>();
 
 function notify(): void {
@@ -57,11 +72,12 @@ export function getHtmlReload(docId: string): number {
  *  destroys the guest process outright — center-pane.tsx keys DocView on activeDoc.id and renders
  *  only the active doc — so without this the reader loses their place on every switch. */
 export function getHtmlScroll(docId: string): number {
+  moved.delete(docId);
   return states.get(docId)?.scroll ?? 0;
 }
 
 export function setHtmlScroll(docId: string, y: number): void {
-  const s = stateFor(docId);
+  const s = stateFor(liveKey(docId));
   if (s.scroll === y) return;
   s.scroll = y;
   notify();
@@ -69,14 +85,18 @@ export function setHtmlScroll(docId: string, y: number): void {
 
 /** Drop a closed doc's entry — called from app.tsx's doc-close path. */
 export function clearHtmlView(docId: string): void {
+  moved.delete(docId);
   if (!states.delete(docId)) return;
   notify();
 }
 
 /** A tab moved to the other editor group keeps its mode, scroll and reload nonce. */
 export function moveHtmlView(from: string, to: string): void {
+  if (from === to) return;
+  moved.delete(to);
+  moved.set(from, to);
   const s = states.get(from);
-  if (from === to || !s) return;
+  if (!s) return;
   states.delete(from);
   states.set(to, s);
   notify();
@@ -84,8 +104,10 @@ export function moveHtmlView(from: string, to: string): void {
 
 /** A tab duplicated into the other editor group starts from its source's state. */
 export function copyHtmlView(from: string, to: string): void {
+  if (from === to) return;
+  moved.delete(to);
   const s = states.get(from);
-  if (from === to || !s) return;
+  if (!s) return;
   states.set(to, { ...s });
   notify();
 }
