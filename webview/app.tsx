@@ -1418,15 +1418,17 @@ export function App() {
     [docState.docs, activeId],
   );
   const layout = useMemo(() => centerLayout(docState, activeId), [docState, activeId]);
-  // Spec §10: a collapse that stranded focus in the closed group hands it to group 1. Keyed by
-  // session, so switching to a session with one group is not a collapse.
+  // Spec §10: a collapse that stranded focus in the closed group hands it to group 1; focus the
+  // user put anywhere else stays. Keyed by session, so switching to a session with one group is
+  // not a collapse.
   const groupCountRef = useRef({ sessionId: activeId, count: layout.groups.length });
   useEffect(() => {
     const prev = groupCountRef.current;
     groupCountRef.current = { sessionId: activeId, count: layout.groups.length };
     if (prev.sessionId !== activeId || prev.count !== 2 || layout.groups.length !== 1) return;
-    const groupOne = document.querySelector('.editor-group[data-group="1"]');
-    if (!activeId || groupOne?.contains(document.activeElement)) return;
+    const at = document.activeElement;
+    const stranded = at === null || at === document.body || !at.isConnected;
+    if (!activeId || !stranded) return;
     focusView(activeId, 1, layout.groups[0].activeDocId);
   }, [activeId, layout]);
   useEffect(() => {
