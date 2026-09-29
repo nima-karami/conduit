@@ -1822,3 +1822,16 @@ Build run 2026-09-28 (unattended), branch `feat/split-editor`, base `de36575`. E
     - `c87ee30`: tab-strip-overflow cleans up its temp repo.
     - `fd74ded` and `bac3968`: review-ID tags swept from comments and test titles.
   - **New e2e files, split out for the 210s cap:** `split-editor-focus-keep`, `split-editor-focus-views`.
+- **Finish round — done** (merge with 0.44.0, 2 should-fix, 2 nits).
+  - **Merge `e9652b4`:** main at `4ff2703`. The split-editor changelog entry auto-merged into the released
+    0.44.0 section with no conflict; it was moved under `[Unreleased]`. The INDEX row lost its PARKED prefix.
+  - **`f2965fa`:** `focusUnmovedSince` dropped `!armed?.isConnected`. Removing the focused element already
+    drops focus to `<body>`, so that clause only ever overrode focus on a different live element.
+  - **`8a349b3`:** the tabindex=-1 focus targets now share one inset ring rule (`--focus-ring-inset` plus
+    `--focus-outline`), folding in the image and mermaid stages' hand-rolled copy. History's landing goes to
+    the selected row (its keymap lives there). Rows are windowed and render after the list is measured, so a
+    landing that finds none holds the root and hands off once the row renders.
+  - **`e2745d4`:** TK covers Ctrl+PageDown from xterm and Ctrl+9 past the doc count. xterm.js maps Ctrl+9 to
+    no bytes, so that step asserts arrival at xterm's textarea, not PTY input.
+  - **Gate:** everything passes except `npm audit --audit-level=high` (undici advisories), which fails
+    identically on main `4ff2703` with the same lockfile. It is pre-existing and needs its own dependency bump.
