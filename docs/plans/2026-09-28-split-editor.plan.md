@@ -1698,3 +1698,11 @@ Build run 2026-09-28 (unattended), branch `feat/split-editor`, base `de36575`. E
   - (b) `requestNavFocus(path, g)` has no fallback to the other group.
   - (c) Open: MarkdownViewer's "View source" CodeViewer key `markdown-source:${path}` is still shared across
     groups. It is picked up in Slice 4 as a per-tab key.
+- **Slice 3 — done** (`284379c`, `f13eb4a`, `c83a638`). The Check is green: the regress terms, `auto-save`,
+  `changes-active-highlight` and `html-viewer`. Deviations:
+  - (a) `save` takes no group. `saveActiveDoc` is per path and acts on `activeId` (S2).
+  - (b) The Terminal-tab "Close editor tabs" uses `closeTab(id, 1)`.
+  - (c) `fileChanged` bumps the HTML reload for each group holding the tab, and session close tombstones both
+    groups' keys.
+  - (d) `closeDoc` on an unknown id resolves `true`.
+  - (e) `CenterPane` still receives group-1 wiring (`closeTab(id,1)`, menu group 1) until Slice 4.
