@@ -200,16 +200,16 @@ describe('auto-save policy transition table', () => {
   });
 
   for (const phase of ['clean', 'dirty', 'failed', 'saving'] as const) {
-    it(`${phase} + deletedOnDisk → conflict 'deleted', keeps the edit, clears the timer`, () => {
-      const r = step(at({ phase, edited: true, pending: 'auto' }), { type: 'deletedOnDisk' });
-      expect(r.state).toMatchObject({
-        phase: 'conflict',
-        conflict: 'deleted',
-        edited: true,
-        pending: null,
+    for (const conflict of ['deleted', 'changed'] as const) {
+      it(`${phase} + diskConflict ${conflict} → that conflict, keeps the edit, clears the timer`, () => {
+        const r = step(at({ phase, edited: true, pending: 'auto' }), {
+          type: 'diskConflict',
+          conflict,
+        });
+        expect(r.state).toMatchObject({ phase: 'conflict', conflict, edited: true, pending: null });
+        expect(r.effects).toEqual([CLEAR]);
       });
-      expect(r.effects).toEqual([CLEAR]);
-    });
+    }
   }
 
   it('reset → initial state, clears the timer', () => {

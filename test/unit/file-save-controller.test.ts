@@ -406,7 +406,7 @@ describe('createFileSaves', () => {
     const h = harness({ mode: 'afterDelay', delayMs: 100 });
     const m = h.open('/a.ts', 'one');
     m.setValue('two');
-    h.saves.markDeleted('/a.ts');
+    h.saves.markConflict('/a.ts', 'deleted');
     expect(h.saves.getStatus('/a.ts')).toMatchObject({ phase: 'conflict', conflict: 'deleted' });
     m.setValue('three');
     await vi.advanceTimersByTimeAsync(500);
@@ -420,6 +420,20 @@ describe('createFileSaves', () => {
     ]);
     h.writes[0].resolve(OK('/a.ts'));
     expect(await p).toBe(true);
+  });
+
+  it('marking a dirty entry changed on disk pauses it; Reload takes the disk version', async () => {
+    const h = harness({ mode: 'afterDelay', delayMs: 100 });
+    const m = h.open('/a.ts', 'one');
+    m.setValue('mine');
+    h.saves.markConflict('/a.ts', 'changed');
+    expect(h.saves.getStatus('/a.ts')).toMatchObject({ phase: 'conflict', conflict: 'changed' });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(h.writes).toHaveLength(0);
+    h.saves.reload('/a.ts');
+    h.saves.attach('/a.ts', { diskContent: 'moved in', writable: true });
+    expect(m.getValue()).toBe('moved in');
+    expect(h.dirty.has('/a.ts')).toBe(false);
   });
 
   it('canWrite false: auto trigger is silent, manual save toasts once', async () => {

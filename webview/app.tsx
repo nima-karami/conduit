@@ -328,13 +328,14 @@ function releaseFileTab(path: string): void {
 }
 
 /** A file tab's per-path state follows its file to a new path, without a React render between. */
-function moveFileTab(from: string, to: string): void {
-  moveFileBuffer(from, to);
+function moveFileTab(from: string, to: string): boolean {
+  if (!moveFileBuffer(from, to)) return false;
   const toIds = fileViewStateIds(to);
   fileViewStateIds(from).forEach((id, i) => {
     renameViewState(id, toIds[i]);
   });
   clearReveal(from);
+  return true;
 }
 
 export function App() {
@@ -2580,7 +2581,7 @@ export function App() {
       for (const d of docStateRef.current.docs) {
         if (pathBelow(d.path, path) === null) continue;
         if (d.kind === 'file' && dirty.has(d.path)) {
-          fileSaves.markDeleted(d.path);
+          fileSaves.markConflict(d.path, 'deleted');
           kept.add(d.path);
         } else forceCloseDoc(d.id);
       }
@@ -2654,7 +2655,14 @@ export function App() {
   const onFileRenamed = useCallback(
     (fromPath: string, toPath: string) => {
       const docs = docStateRef.current.docs;
+      const dirty = getDirtySnapshot();
       const moves: { from: string; to: string }[] = [];
+      // A tab that cannot follow its file: the old path is gone, so it closes — or, with unsaved
+      // edits, stays paused as deleted on disk, exactly as a delete leaves it.
+      const leftBehind = (d: OpenDoc) => {
+        if (dirty.has(d.path)) fileSaves.markConflict(d.path, 'deleted');
+        else forceCloseDoc(d.id);
+      };
       for (const d of docs) {
         const to = renamedPath(d.path, fromPath, toPath);
         if (to === null || to === d.path) continue;
@@ -2663,15 +2671,21 @@ export function App() {
           continue;
         }
         const replaced = docs.find((x) => x.id === `file:${to}`);
+        if (replaced && dirty.has(replaced.path)) {
+          // The move replaced the file under unsaved edits: they stay, paused as changed on disk.
+          fileSaves.markConflict(replaced.path, 'changed');
+          leftBehind(d);
+          continue;
+        }
         if (replaced) forceCloseDoc(replaced.id);
-        moves.push({ from: d.path, to });
+        if (moveFileTab(d.path, to)) moves.push({ from: d.path, to });
+        else leftBehind(d);
       }
       const movedFrom = new Set(moves.map((m) => m.from));
       const openFiles = new Set(docs.filter((d) => d.kind === 'file').map((d) => d.path));
-      for (const m of moves) moveFileTab(m.from, m.to);
       moveIndexedPath(fromPath, toPath, (p) => openFiles.has(p) && !movedFrom.has(p));
       if (moves.length === 0) return;
-      dispatchDocs({ type: 'renamePath', from: fromPath, to: toPath });
+      dispatchDocs({ type: 'moveFiles', moves });
       setFiles((prev) => {
         const next = new Map(prev);
         for (const m of moves) {

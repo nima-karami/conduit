@@ -41,9 +41,9 @@ export type AutoSaveEvent =
   | { type: 'writeDone'; outcome: 'conflict'; conflict: WriteConflict }
   | { type: 'reset' }
   | { type: 'modeChanged' }
-  /** The file was deleted from under the buffer (an explorer delete): the same pause as a write
-   *  that found it gone, so nothing recreates it until the user picks Overwrite. */
-  | { type: 'deletedOnDisk' };
+  /** The file was deleted or replaced under the buffer by an explorer action: the same pause as
+   *  a write that found it so, and nothing is written until the user picks. */
+  | { type: 'diskConflict'; conflict: WriteConflict };
 
 export type AutoSaveEffect =
   | { type: 'save'; kind: SaveKind }
@@ -157,9 +157,9 @@ export function autoSaveStep(state: AutoSaveState, event: AutoSaveEvent, mode: A
         effects: [{ type: 'clear' }],
       };
     }
-    case 'deletedOnDisk':
+    case 'diskConflict':
       return {
-        state: { ...state, phase: 'conflict', conflict: 'deleted', pending: null },
+        state: { ...state, phase: 'conflict', conflict: event.conflict, pending: null },
         effects: [{ type: 'clear' }],
       };
     case 'reset':

@@ -358,6 +358,81 @@ async function phaseDragReplace({ page, root, log }) {
   await closeTab(page, 'r.ts');
 }
 
+const editModel = (page, uri, text) =>
+  page.evaluate(
+    ({ u, t }) => {
+      const m = window.monaco.editor
+        .getModels()
+        .find((x) => decodeURIComponent(x.uri.toString()).toLowerCase() === u);
+      m.applyEdits([{ range: new window.monaco.Range(1, 1, 1, 1), text: t }]);
+    },
+    { u: uri, t: text },
+  );
+
+/** Same move, but the DESTINATION tab has unsaved edits: nothing may be lost silently. */
+async function phaseDragReplaceDirty({ app, page, root, log, shot }) {
+  await setMode(page, 'off');
+  await row(page, 'qdir').click();
+  const qRows = page.locator('.filerow', {
+    has: page.locator('.filerow__name', { hasText: /^q\.ts$/ }),
+  });
+  await qRows.nth(1).waitFor({ state: 'attached', timeout: 10000 });
+  await qRows.nth(0).dblclick(); // qdir/q.ts
+  await page.waitForSelector('.viewer__monaco .monaco-editor', { timeout: 15000 });
+  await qRows.nth(1).dblclick(); // q.ts at the root
+  await waitFor(
+    async () => (await modelUris(page)).filter((u) => u.endsWith('/q.ts')).length === 2,
+    'both q.ts models',
+  );
+  const uris = await modelUris(page);
+  const destUri = uris.find((u) => u.endsWith('/qdir/q.ts'));
+  const srcUri = uris.find((u) => u.endsWith('/q.ts') && !u.includes('/qdir/'));
+  await editModel(page, destUri, 'D');
+  await editModel(page, srcUri, 'S');
+
+  await qRows.nth(1).dragTo(row(page, 'qdir'));
+  await page.waitForSelector('.confirm .btn--danger', { state: 'visible', timeout: 8000 });
+  await page.locator('.confirm .btn--danger', { hasText: 'Replace' }).click();
+  await waitFor(() => !existsSync(join(root, 'q.ts')), 'the move on disk', 10000);
+  await sleep(500);
+  assert(disk(root, 'qdir/q.ts') === 'src\n', 'the moved file is on disk, unwritten');
+  assert(
+    (await modelValueAt(page, '/qdir/q.ts')) === 'Ddest\n',
+    'the destination tab keeps its unsaved edits',
+  );
+  const srcValue = await page.evaluate(
+    (u) =>
+      window.monaco.editor
+        .getModels()
+        .find((x) => decodeURIComponent(x.uri.toString()).toLowerCase() === u)
+        ?.getValue() ?? null,
+    srcUri,
+  );
+  assert(srcValue === 'Ssrc\n', `the moved tab keeps its edits too (${JSON.stringify(srcValue)})`);
+  assert(
+    (await page.locator('.tabbar [role="tab"]', { hasText: 'q.ts' }).count()) === 2,
+    'both tabs stay open',
+  );
+  const dest = page.locator('.tabbar [role="tab"]', { hasText: 'q.ts' });
+  await dest.nth(0).click();
+  await page
+    .locator('.viewer__banner--warn', { hasText: 'changed on disk' })
+    .waitFor({ timeout: 5000 });
+  await shot('drag-replace-dirty-destination');
+  assert(
+    (await writesTo(app, 'q.ts')).length === 0,
+    'nothing was written while resolving the move',
+  );
+  log('drag replace, dirty destination: its edits stay, paused as changed on disk ✓');
+
+  await page.locator('.viewer__banner--warn button', { hasText: 'Reload from disk' }).click();
+  await waitFor(
+    async () => (await modelValueAt(page, '/qdir/q.ts')) === 'src\n',
+    'Reload to take the moved file',
+  );
+  log('drag replace, dirty destination: Reload takes the moved file ✓');
+}
+
 /** The TS worker's semantic diagnostic codes for the model at `tail` (2307 = cannot find module).
  *  Asked of the worker directly: the app turns Monaco's own semantic markers off. */
 const semanticCodes = (page, tail) =>
@@ -436,6 +511,15 @@ async function phaseTruncated({ app, page, root, log, shot }) {
     (await page.locator('.monaco-editor-overlaymessage').count()) === 0,
     'no read-only popup stacked on the banner',
   );
+  assert(
+    (await page.locator('.viewer__banner[role="note"]').count()) === 1,
+    'the banner is a note',
+  );
+  const said = await page.locator('.viewer__announce').allTextContents();
+  assert(
+    said.some((t) => t.includes('read-only')),
+    `the edit attempt is announced once (${JSON.stringify(said)})`,
+  );
   await page.keyboard.press('Control+S');
   await sleep(800);
   assert(size() === full, `Ctrl+S after typing kept the file whole (${size()} of ${full})`);
@@ -483,6 +567,8 @@ runAutoSave('file-integrity', {
     'm.ts': 'one\n',
     'mdir/keep.txt': 'k\n',
     'r.ts': 'src\n',
+    'q.ts': 'src\n',
+    'qdir/q.ts': 'dest\n',
     'rdir/r.ts': 'dest\n',
     'lib.ts': 'export const lib = 1;\n',
     'use.ts': "import { lib } from './lib';\nexport const x = lib;\n",
@@ -495,6 +581,7 @@ runAutoSave('file-integrity', {
     undoRename: phaseUndoRename,
     dragMove: phaseDragMove,
     dragReplace: phaseDragReplace,
+    dragReplaceDirty: phaseDragReplaceDirty,
     deleteOpen: phaseDeleteOpen,
     folderDelete: phaseFolderDelete,
     dirtyDelete: phaseDirtyDelete,

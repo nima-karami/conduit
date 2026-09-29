@@ -674,8 +674,18 @@ export function CodeViewer({
   changesRef.current = changes;
 
   // Announcements the peek makes ("Staged hunk"), kept apart from the marker hook's own live
-  // region so a navigation announcement and an op announcement cannot overwrite each other.
+  // region so a navigation announcement and an op announcement cannot overwrite each other. A
+  // truncated doc (no markers, no peek) also says here, once, why typing does nothing — Monaco's
+  // own read-only popup is gone for it (see silenceReadOnlyPopup).
   const [hunkAnnounce, setHunkAnnounce] = useState('');
+  useEffect(() => {
+    if (!editor || !doc.truncated) return;
+    const sub = editor.onDidAttemptReadOnlyEdit(() => {
+      sub.dispose();
+      setHunkAnnounce(AUTO_SAVE_COPY.partialBanner);
+    });
+    return () => sub.dispose();
+  }, [editor, doc.truncated]);
 
   const peek = usePeekZone({
     editor,
@@ -741,7 +751,11 @@ export function CodeViewer({
         }
       }}
     >
-      {doc.truncated && <div className="viewer__banner">{AUTO_SAVE_COPY.partialBanner}</div>}
+      {doc.truncated && (
+        <div className="viewer__banner" role="note">
+          {AUTO_SAVE_COPY.partialBanner}
+        </div>
+      )}
       {changes.state === 'degraded' && <div className="viewer__banner">{DEGRADED_HINT}</div>}
       {saveStatus?.phase === 'conflict' && (
         <div className="viewer__banner viewer__banner--warn" role="alert">

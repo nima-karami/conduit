@@ -1,4 +1,3 @@
-import { renamedPath } from '../src/canonical-path';
 import type { RefEndpoint } from '../src/git-range';
 import type { DiffTabScope, PersistedDoc } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
@@ -161,9 +160,9 @@ export type DocsAction =
   // One-shot startup seed from persisted docs.json (editor-tabs-persist). Rebuilds docs[] +
   // activeBySession from `docs`, dropping any whose sessionId isn't in `knownSessionIds` (orphan).
   | { type: 'restore'; docs: PersistedDoc[]; knownSessionIds: string[] }
-  // A file or folder was renamed/moved on disk: every file tab at or under `from` follows it to
-  // `to` in place (same slot, owner and preview flag). Diff tabs are the caller's to close.
-  | { type: 'renamePath'; from: string; to: string };
+  // Files were renamed/moved on disk: each listed file tab (by its exact path) follows its file
+  // in place — same slot, owner and preview flag. The caller decides which tabs move.
+  | { type: 'moveFiles'; moves: readonly { from: string; to: string }[] };
 
 export const initialDocs: DocsState = { docs: [], activeId: null, activeBySession: {} };
 
@@ -443,12 +442,13 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       }
       return { docs, activeId, activeBySession };
     }
-    case 'renamePath': {
+    case 'moveFiles': {
+      const target = new Map(action.moves.map((m) => [m.from, m.to]));
       const ids = new Map<string, string>();
       const taken = new Set(state.docs.map((d) => d.id));
       const docs = state.docs.map((d) => {
-        const path = d.kind === 'file' ? renamedPath(d.path, action.from, action.to) : null;
-        if (path === null || path === d.path) return d;
+        const path = d.kind === 'file' ? target.get(d.path) : undefined;
+        if (path === undefined || path === d.path) return d;
         const id = idOf('file', path);
         if (taken.has(id)) return d;
         taken.add(id);

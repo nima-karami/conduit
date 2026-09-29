@@ -63,8 +63,8 @@ export interface FileSaves {
   canRename(from: string, to: string): boolean;
   /** The file moved on disk: the entry follows it to `to`, whose model must already exist. */
   rename(from: string, to: string): void;
-  /** The file was deleted on disk under this buffer (see the policy's `deletedOnDisk`). */
-  markDeleted(path: string): void;
+  /** The file was deleted or replaced on disk under this buffer (the policy's `diskConflict`). */
+  markConflict(path: string, conflict: WriteConflict): void;
   save(path: string, kind: SaveKind): Promise<boolean>;
   trigger(path: string, trigger: AutoSaveTrigger): void;
   flushAll(trigger: 'windowBlur'): Promise<void>;
@@ -325,11 +325,11 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
 
     canRename: (from, to) => from !== to && !entries.has(to),
 
-    markDeleted(path) {
+    markConflict(path, conflict) {
       const e = entries.get(path);
       if (!e) return;
       e.error = null;
-      step(e, { type: 'deletedOnDisk' });
+      step(e, { type: 'diskConflict', conflict });
     },
 
     rename(from, to) {
