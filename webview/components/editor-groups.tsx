@@ -6,6 +6,10 @@ import { SPLIT_COPY } from '../split-editor-copy';
 
 const STEP_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End']);
 
+/** The width the two fr columns share: the grid's, less the divider's own column. */
+const groupsWidth = (grid: HTMLElement, divider: HTMLElement) =>
+  grid.clientWidth - divider.offsetWidth;
+
 export function EditorGroups({
   layout,
   ratio,
@@ -34,14 +38,16 @@ export function EditorGroups({
   const r = split ? liveRatio : 1;
   const columns = split ? `minmax(0, ${r}fr) auto minmax(0, ${1 - r}fr)` : 'minmax(0, 1fr)';
 
-  const onDividerPointerDown = (e: React.PointerEvent) => {
+  const onDividerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     const grid = gridRef.current;
+    const divider = e.currentTarget;
     if (!grid || e.button !== 0) return;
     e.preventDefault();
     let next = liveRatio;
     const onMove = (ev: PointerEvent) => {
-      const rect = grid.getBoundingClientRect();
-      next = clampSplitRatio((ev.clientX - rect.left) / rect.width, grid.clientWidth);
+      const width = groupsWidth(grid, divider);
+      const left = ev.clientX - grid.getBoundingClientRect().left - divider.offsetWidth / 2;
+      next = clampSplitRatio(left / width, width);
       setLiveRatio(next);
     };
     const onUp = () => {
@@ -55,13 +61,13 @@ export function EditorGroups({
     window.addEventListener('pointerup', onUp);
   };
 
-  const onDividerKeyDown = (e: React.KeyboardEvent) => {
+  const onDividerKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const grid = gridRef.current;
     if (!grid || !STEP_KEYS.has(e.key)) return;
     e.preventDefault();
     const next = stepSplitRatio(
       liveRatio,
-      grid.clientWidth,
+      groupsWidth(grid, e.currentTarget),
       e.key as 'ArrowLeft' | 'ArrowRight' | 'Home' | 'End',
       e.shiftKey,
     );

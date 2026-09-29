@@ -322,11 +322,12 @@ export function effectiveCombo(action: ShortcutAction, overrides: Record<string,
   return overrides[action.id] || action.defaultCombo;
 }
 
-/** Display form of an action's bound combo; undefined for an unknown action. */
+/** Display form of an action's bound combo; undefined for an unknown or unbound action. */
 export function comboLabel(
   actionId: string,
   shortcuts: AppSettings['shortcuts'],
 ): string | undefined {
   const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
-  return action ? formatCombo(effectiveCombo(action, shortcuts)) : undefined;
+  const combo = action ? effectiveCombo(action, shortcuts) : '';
+  return combo === '' ? undefined : formatCombo(combo);
 }

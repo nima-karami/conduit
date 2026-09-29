@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   comboFromEvent,
+  comboLabel,
   effectiveCombo,
   formatCombo,
   type KeyEvt,
@@ -164,5 +165,13 @@ describe('editor group shortcuts', () => {
     expect(matchCombo(ev({ key: 'ArrowLeft', ctrlKey: true, altKey: true }), prev ?? '')).toBe(
       true,
     );
+  });
+});
+
+describe('comboLabel', () => {
+  it('is undefined for an unbound action, so no key hint renders', () => {
+    expect(comboLabel('focusLeftGroup', {})).toBeUndefined();
+    expect(comboLabel('focusLeftGroup', { focusLeftGroup: 'Mod+K' })).toBe('Ctrl + K');
+    expect(comboLabel('save', {})).toBe('Ctrl + S');
   });
 });

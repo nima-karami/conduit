@@ -75,8 +75,9 @@ function assertCanonical(name, rows) {
 
 const labels = (rows) => rows.map((r) => r.label);
 
-/** The frozen editor-tab order (§4E): the close family first, then the reference group. */
-const TAB_ORDER = [
+/** The frozen editor-tab order (§4E): the close family first, then the reference group, then
+ *  the editor-group group (split-editor spec §9). */
+const TAB_BASE = [
   'Close',
   'Close others',
   'Close to the right',
@@ -86,9 +87,10 @@ const TAB_ORDER = [
   'Copy name',
   'Reveal in Explorer',
 ];
-// An HTML tab extends the SAME groups at the tail — where 'Open in browser' used to sit.
+const TAB_ORDER = [...TAB_BASE, 'Split Right'];
+// An HTML tab extends the reference group at its tail — where 'Open in browser' used to sit.
 // 'View source' is the label while the tab shows the rendered page, which is the default.
-const HTML_TAB_ORDER = [...TAB_ORDER, 'View source', 'Open externally'];
+const HTML_TAB_ORDER = [...TAB_BASE, 'View source', 'Open externally', 'Split Right'];
 
 /** Tag the tab whose title ends in `ext` so it can be addressed by selector, then pin it —
  *  a single click on a tree row opens a PREVIEW tab, whose menu carries an extra

@@ -192,6 +192,7 @@ import {
   IconSettings,
   IconSidebar,
   IconSparkle,
+  IconSplit,
   IconTrash,
   SessionGlyph,
 } from './icons';
@@ -345,6 +346,19 @@ function releaseFileTab(path: string): void {
   clearDirty(path);
   fileSaves.dispose(path);
   clearReveal(path);
+}
+
+/** Spec §10: focus lands in the group's viewer; `fallback` (under the group) when it has no editor. */
+function focusGroupViewer(group: GroupIndex, doc: OpenDoc | undefined, fallback: string): void {
+  if (doc?.kind === 'file') {
+    requestNavFocus(doc.path, group);
+    return;
+  }
+  requestAnimationFrame(() =>
+    document
+      .querySelector<HTMLElement>(`.editor-group[data-group="${group}"] ${fallback}`)
+      ?.focus(),
+  );
 }
 
 export function App() {
@@ -905,7 +919,8 @@ export function App() {
     if (sessionId) dispatchDocs({ type: 'focusGroup', sessionId, group });
   }, []);
 
-  const splitRight = useCallback(() => {
+  /** Split Right on group 1's active tab, or on `target` (a group-1 tab's menu). */
+  const splitRight = useCallback((target?: OpenDoc) => {
     const sessionId = activeIdRef.current;
     if (!sessionId) return;
     const layout = layoutOf(docStateRef.current, sessionId);
@@ -916,18 +931,25 @@ export function App() {
       announce(SPLIT_COPY.capReached);
       return;
     }
-    const doc = docStateRef.current.docs.find((d) => d.id === layout.groups[0].active);
+    const id = target?.id ?? layout.groups[0].active;
+    const doc = docStateRef.current.docs.find((d) => d.id === id);
     if (!doc) return;
+    if (doc.id !== layout.groups[0].active) {
+      dispatchDocs({ type: 'activate', id: doc.id, sessionId, group: 1 });
+    }
     dispatchDocs({ type: 'splitRight', sessionId });
     announce(SPLIT_COPY.splitOpened(doc.title));
-    if (doc.kind === 'file') requestNavFocus(doc.path, 2);
-    else {
-      requestAnimationFrame(() =>
-        document
-          .querySelector<HTMLElement>('.editor-group[data-group="2"] > .editor-group__body')
-          ?.focus(),
-      );
-    }
+    focusGroupViewer(2, doc, '> .editor-group__body');
+  }, []);
+
+  const focusGroupByCommand = useCallback((group: GroupIndex) => {
+    const sessionId = activeIdRef.current;
+    if (!sessionId) return;
+    const target = layoutOf(docStateRef.current, sessionId).groups[group - 1];
+    if (!target) return;
+    dispatchDocs({ type: 'focusGroup', sessionId, group });
+    const doc = docStateRef.current.docs.find((d) => d.id === target.active);
+    focusGroupViewer(group, doc, '> .editor-group__body');
   }, []);
 
   const openGlobalSearchSeeded = useCallback(() => {
@@ -1135,6 +1157,9 @@ export function App() {
       // Reopen the most recently closed tab (VS Code Mod+Shift+T). Invoked via a stable ref
       // for the same ordering reason as undo/redo (openFile/openDiff are declared later).
       reopenClosedTab: () => reopenClosedTabRef.current(),
+      splitEditorRight: () => splitRight(),
+      focusLeftGroup: () => focusGroupByCommand(1),
+      focusRightGroup: () => focusGroupByCommand(2),
       // Built-in navigation (VS Code parity). Ctrl+Tab / Ctrl+PageUp cycle back, the
       // PageDown pair forward; navGoToTab is dispatched specially (it needs the pressed
       // digit). Cmd+Tab/Cmd+` are OS-reserved on macOS, hence the literal Ctrl combos.
@@ -1170,6 +1195,8 @@ export function App() {
     openGitHistoryTab,
     settings.htmlDefaultView,
     activateDocByUser,
+    splitRight,
+    focusGroupByCommand,
   ]);
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
@@ -1321,6 +1348,22 @@ export function App() {
       : layout.groups[0].activeDocId === null
         ? SPLIT_COPY.terminalCantSplit
         : null;
+  // Spec §10: a collapse that stranded focus in the closed group hands it to group 1. Keyed by
+  // session, so switching to a session with one group is not a collapse.
+  const groupCountRef = useRef({ sessionId: activeId, count: layout.groups.length });
+  useEffect(() => {
+    const prev = groupCountRef.current;
+    groupCountRef.current = { sessionId: activeId, count: layout.groups.length };
+    if (prev.sessionId !== activeId || prev.count !== 2 || layout.groups.length !== 1) return;
+    const groupOne = document.querySelector('.editor-group[data-group="1"]');
+    if (groupOne?.contains(document.activeElement)) return;
+    const view = layout.groups[0];
+    focusGroupViewer(
+      1,
+      view.docs.find((d) => d.id === view.activeDocId),
+      '[role="tab"][aria-selected="true"]',
+    );
+  }, [activeId, layout]);
   const activeDoc = visibleDocs.find((d) => d.id === docState.activeId) ?? null;
   const activeDocKind = activeDoc?.kind;
   const activeDocPath = activeDoc?.path;
@@ -2633,6 +2676,15 @@ export function App() {
               },
             ]
           : []),
+        {
+          label: SPLIT_COPY.splitRight,
+          icon: <IconSplit size={14} />,
+          separatorBefore: true,
+          hint: comboLabel('splitEditorRight', settings.shortcuts),
+          disabled: group === 2 || activeGroupOf(docState, doc.sessionId) === 2,
+          title: group === 2 ? SPLIT_COPY.capReached : undefined,
+          onClick: () => splitRight(doc),
+        },
       ],
     });
   };
@@ -2676,6 +2728,14 @@ export function App() {
           icon: <IconExternal size={14} />,
           separatorBefore: true,
           onClick: () => post({ type: 'revealInExplorer', path: s.home }),
+        },
+        {
+          label: SPLIT_COPY.splitRight,
+          icon: <IconSplit size={14} />,
+          separatorBefore: true,
+          disabled: true,
+          title: SPLIT_COPY.terminalCantSplit,
+          onClick: () => {},
         },
         {
           label: 'Close editor tabs',
@@ -3685,8 +3745,45 @@ export function App() {
         icon: <IconClose size={14} />,
         run: () => setSplitId(null),
       });
-    return [...cmds, ...settingsCmds, ...themeCmds, ...sessionSwitch, ...splitCmds];
+    const groupCmds: PaletteEntry[] = [];
+    if (docState.activeId !== null) {
+      groupCmds.push({
+        id: 'cmd:splitEditorRight',
+        title: SPLIT_COPY.splitButton,
+        keywords: ['split right', 'editor group', 'side by side'],
+        group: 'Commands',
+        icon: <IconSplit size={14} />,
+        combo: comboFor('splitEditorRight'),
+        run: () => splitRight(),
+      });
+    }
+    if (layout.groups.length === 2) {
+      groupCmds.push(
+        {
+          id: 'cmd:focusLeftGroup',
+          title: SPLIT_COPY.focusLeft,
+          keywords: ['editor group'],
+          group: 'Commands',
+          icon: <IconCommand size={14} />,
+          combo: comboFor('focusLeftGroup'),
+          run: () => focusGroupByCommand(1),
+        },
+        {
+          id: 'cmd:focusRightGroup',
+          title: SPLIT_COPY.focusRight,
+          keywords: ['editor group'],
+          group: 'Commands',
+          icon: <IconCommand size={14} />,
+          combo: comboFor('focusRightGroup'),
+          run: () => focusGroupByCommand(2),
+        },
+      );
+    }
+    return [...cmds, ...groupCmds, ...settingsCmds, ...themeCmds, ...sessionSwitch, ...splitCmds];
   }, [
+    layout,
+    splitRight,
+    focusGroupByCommand,
     active,
     sessions,
     agents,
@@ -3768,7 +3865,7 @@ export function App() {
             files={files}
             diffs={diffs}
             onFocusGroup={focusGroup}
-            onSplitRight={splitRight}
+            onSplitRight={() => splitRight()}
             splitDisabledReason={splitDisabledReason}
             editorSplitRatio={settings.editorSplitRatio}
             onSplitRatioCommit={(editorSplitRatio) => update({ editorSplitRatio })}
