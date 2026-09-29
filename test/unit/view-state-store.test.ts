@@ -360,6 +360,15 @@ describe('moveViewState / copyViewState', () => {
     expect(getViewState('review:@review')).toBeUndefined();
   });
 
+  it('moving an id with no state leaves no redirect and keeps the target tombstone', () => {
+    markClosing('g2:file:/m.ts');
+    moveViewState('file:/m.ts', 'g2:file:/m.ts');
+    setViewState('file:/m.ts', scroll(5));
+    setViewState('g2:file:/m.ts', scroll(6));
+    expect(getViewState('file:/m.ts')).toEqual(scroll(5));
+    expect(getViewState('g2:file:/m.ts')).toBeUndefined();
+  });
+
   it('copy leaves both ids holding the state, and each captures for itself', () => {
     setViewState('file:/m.ts', scroll(120));
     markClosing('g2:file:/m.ts');

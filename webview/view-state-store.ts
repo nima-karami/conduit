@@ -144,7 +144,9 @@ export function renameViewState(from: string, to: string): void {
 
 /** A tab moved to the other editor group: its view state, and its viewer's late unmount capture,
  *  land on the target group's key exactly as a rename's do (split-editor plan P5, I10). */
-export const moveViewState = renameViewState;
+export function moveViewState(from: string, to: string): void {
+  if (store.has(from)) renameViewState(from, to);
+}
 
 /** A tab duplicated into the other editor group starts where its source is; each then captures
  *  for itself. */
