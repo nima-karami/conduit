@@ -73,6 +73,7 @@ async function render(flashTabId: string | null) {
       createElement(DocTabs, {
         docs,
         activeId: 'file:/a.ts',
+        previewIds: new Set<string>(),
         terminalLabel: 'Terminal',
         terminalIcon: { kind: 'terminal' } as never,
         onSelect: () => {},

@@ -55,6 +55,7 @@ export function CenterPane({
   repos,
   activeId,
   docs,
+  previewIds,
   activeDocId,
   files,
   diffs,
@@ -105,6 +106,7 @@ export function CenterPane({
   repos: RepoDTO[];
   activeId: string | undefined;
   docs: OpenDoc[];
+  previewIds: ReadonlySet<string>;
   activeDocId: string | null;
   files: Map<string, FileContentDTO>;
   diffs: Map<string, FileDiffDTO>;
@@ -231,6 +233,7 @@ export function CenterPane({
           <DocTabs
             docs={docs}
             activeId={activeDocId}
+            previewIds={previewIds}
             terminalLabel={active?.name ?? 'Terminal'}
             terminalIcon={
               active ? resolveSessionIcon(active, agents) : { type: 'kind', kind: 'terminal' }

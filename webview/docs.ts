@@ -2,7 +2,18 @@ import type { RefEndpoint } from '../src/git-range';
 import type { DiffTabScope, PersistedDoc } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
 import { diffTabTitle } from './diff-tab-scope';
-import type { SessionLayout } from './doc-groups';
+import {
+  type EditorGroup,
+  EMPTY_LAYOUT,
+  type GroupIndex,
+  layoutOf,
+  openTargetGroup,
+  resolveActivateGroup,
+  type SessionLayout,
+  splitBehavior,
+  type Tab,
+  tabPreview,
+} from './doc-groups';
 import type { ReviewScope } from './review-scope';
 import { displayTitleForUrl } from './web-url';
 
@@ -120,17 +131,19 @@ export type DocsAction =
       sideBySide?: boolean;
       diffScope?: DiffTabScope;
       repoRoot?: string;
+      group?: GroupIndex;
     }
   // Update a doc's tab label. Used by the web view to adopt the live page <title>.
   | { type: 'setTitle'; id: string; title: string }
   // Consume the one-time `sideBySide` override once the diff tab's own toggle has fired
   // (spec 2026-09-05-review-mode §2.5) — otherwise it re-forces the override on every remount.
   | { type: 'clearSideBySide'; id: string }
-  | { type: 'close'; id: string }
+  // With `group`, closes that group's tab only; without it, the doc (every tab).
+  | { type: 'close'; id: string; group?: GroupIndex }
   | { type: 'closeSession'; sessionId: string }
-  // `sessionId` records the choice as the session's remembered view; omit it only where
-  // the owning session is unknown.
-  | { type: 'activate'; id: string | null; sessionId?: string }
+  // `sessionId` names the session whose Terminal an `id: null` selects; omit it only where
+  // the owning session is unknown (the shown session is used).
+  | { type: 'activate'; id: string | null; sessionId?: string; group?: GroupIndex }
   // Restore the now-active session's remembered doc (a closed or transferred-away doc
   // falls back to the Terminal).
   | { type: 'switchSession'; sessionId: string }
@@ -144,15 +157,25 @@ export type DocsAction =
       sessionId: string;
       mode: OpenMode;
       repoRoot?: string;
+      group?: GroupIndex;
     }
   // Open/retarget the singleton Review tab to a source (working tree or a commit). Keeps the
   // stable REVIEW_DOC_ID so it stays a singleton; transfers ownership to `sessionId`.
-  | { type: 'openReview'; sessionId: string; source: ReviewSource }
-  // Promote a preview commit-diff tab to a pinned one (double-click the tab).
-  | { type: 'pinDoc'; id: string }
-  | { type: 'reorder'; dragId: string; targetId: string | null }
+  | { type: 'openReview'; sessionId: string; source: ReviewSource; group?: GroupIndex }
+  // Promote a preview tab to a pinned one (double-click the tab).
+  | { type: 'pinDoc'; id: string; group?: GroupIndex }
+  | { type: 'reorder'; dragId: string; targetId: string | null; group?: GroupIndex }
+  | { type: 'splitRight'; sessionId: string }
+  | {
+      type: 'moveTab';
+      sessionId: string;
+      id: string;
+      toGroup: GroupIndex;
+      beforeId?: string | null;
+    }
+  | { type: 'focusGroup'; sessionId: string; group: GroupIndex }
   // One-shot startup seed from persisted docs.json (editor-tabs-persist). Rebuilds docs[] +
-  // activeBySession from `docs`, dropping any whose sessionId isn't in `knownSessionIds` (orphan).
+  // layouts from `docs`, dropping any whose sessionId isn't in `knownSessionIds` (orphan).
   | { type: 'restore'; docs: PersistedDoc[]; knownSessionIds: string[] };
 
 export const initialDocs: DocsState = { docs: [], layouts: {}, activeId: null };
@@ -181,113 +204,282 @@ function initialTitle(kind: DocKind, path: string, diffScope?: DiffTabScope): st
   return titleOf(path);
 }
 
-/**
- * Open-or-retarget a history-originated `commit-diff` tab. Already-pinned identity →
- * activate it. `pin` → promote the matching preview in place, else add a persistent tab.
- * Otherwise upsert the single preview slot (the tab stays put; only its target/title
- * change). `activeBySession` follows so a session-switch restores it.
- */
-function openHistoryDoc(
-  state: DocsState,
-  kind: 'commit-diff',
-  path: string,
-  title: string,
-  sessionId: string,
-  mode: OpenMode,
-  repoRoot: string | undefined,
-): DocsState {
-  const pinnedId = idOf(kind, path);
-  const prevId = previewId(kind);
-  if (mode === 'background')
-    return openHistoryDocBackground(state, pinnedId, prevId, {
-      id: pinnedId,
-      kind,
-      path,
-      title,
-      sessionId,
-      repoRoot,
-    });
-  const activeBySession = { ...state.activeBySession };
+const EMPTY_GROUP: EditorGroup = { tabs: [], active: null };
+const otherGroup = (g: GroupIndex): GroupIndex => (g === 1 ? 2 : 1);
+const isPreviewable = (kind: DocKind | undefined) => kind === 'file' || kind === 'diff';
+const holds = (group: EditorGroup | undefined, id: string) =>
+  group?.tabs.some((t) => t.id === id) ?? false;
+const groupAt = (layout: SessionLayout, g: GroupIndex) => layout.groups[g - 1] ?? EMPTY_GROUP;
 
-  if (state.docs.some((d) => d.id === pinnedId)) {
-    activeBySession[sessionId] = pinnedId;
-    return { ...state, activeId: pinnedId, activeBySession };
-  }
-
-  if (mode === 'permanent') {
-    const prev = state.docs.find((d) => d.id === prevId);
-    const docs: OpenDoc[] =
-      prev && prev.path === path
-        ? state.docs.map((d) =>
-            d.id === prevId
-              ? { ...d, id: pinnedId, kind, path, title, sessionId, repoRoot, preview: false }
-              : d,
-          )
-        : [...state.docs, { id: pinnedId, kind, path, title, sessionId, repoRoot }];
-    activeBySession[sessionId] = pinnedId;
-    return { ...state, docs, activeId: pinnedId, activeBySession };
-  }
-
-  const exists = state.docs.some((d) => d.id === prevId);
-  const docs: OpenDoc[] = exists
-    ? state.docs.map((d) =>
-        d.id === prevId ? { ...d, kind, path, title, sessionId, repoRoot, preview: true } : d,
-      )
-    : [...state.docs, { id: prevId, kind, path, title, sessionId, repoRoot, preview: true }];
-  activeBySession[sessionId] = prevId;
-  return { ...state, docs, activeId: prevId, activeBySession };
+function setGroup(layout: SessionLayout, g: GroupIndex, group: EditorGroup): SessionLayout {
+  if (g === 2) return { ...layout, groups: [layout.groups[0], group] };
+  return { ...layout, groups: layout.groups.length === 2 ? [group, layout.groups[1]] : [group] };
 }
 
-/** Pin without activating: the one place a background open touches `activeBySession` is the
- *  re-key of a preview slot, which every entry naming the old id must follow (as `pinDoc`). */
-function openHistoryDocBackground(
-  state: DocsState,
-  pinnedId: string,
-  prevId: string,
-  pinned: OpenDoc,
-): DocsState {
-  if (state.docs.some((d) => d.id === pinnedId)) return state;
-  const slot = state.docs.find((d) => d.id === prevId);
-  if (!slot || slot.path !== pinned.path) return { ...state, docs: [...state.docs, pinned] };
-  const docs = state.docs.map((d) =>
-    d.id === prevId ? { ...d, id: pinnedId, title: pinned.title, preview: false } : d,
-  );
-  const activeBySession = { ...state.activeBySession };
-  for (const key of Object.keys(activeBySession)) {
-    if (activeBySession[key] === prevId) activeBySession[key] = pinnedId;
+function mapGroups(layout: SessionLayout, fn: (group: EditorGroup) => EditorGroup): SessionLayout {
+  const [g1, g2] = layout.groups;
+  return { ...layout, groups: g2 ? [fn(g1), fn(g2)] : [fn(g1)] };
+}
+
+const sameGroups = (a: SessionLayout, b: SessionLayout) =>
+  a.groups.length === b.groups.length && a.groups.every((g, i) => g === b.groups[i]);
+
+/** Removes `id`'s tab; an active one falls back to its left neighbour, else its right, else null. */
+function removeTab(group: EditorGroup, id: string): EditorGroup {
+  const i = group.tabs.findIndex((t) => t.id === id);
+  if (i === -1) return group;
+  const tabs = group.tabs.filter((t) => t.id !== id);
+  if (group.active !== id) return { tabs, active: group.active };
+  return { tabs, active: (group.tabs[i - 1] ?? group.tabs[i + 1])?.id ?? null };
+}
+
+const removeEverywhere = (layout: SessionLayout, id: string) =>
+  mapGroups(layout, (group) => removeTab(group, id));
+
+function unpreview(group: EditorGroup, id: string): EditorGroup {
+  if (!group.tabs.some((t) => t.id === id && t.preview)) return group;
+  return { ...group, tabs: group.tabs.map((t) => (t.id === id ? { id } : t)) };
+}
+
+function renameTab(group: EditorGroup, from: string, to: string): EditorGroup {
+  if (!holds(group, from)) return group;
+  const active = group.active === from ? to : group.active;
+  if (holds(group, to)) return { tabs: group.tabs.filter((t) => t.id !== from), active };
+  return { tabs: group.tabs.map((t) => (t.id === from ? { id: to } : t)), active };
+}
+
+/** ≤1 preview per group: a preview replaces the group's file/diff preview tab at its index. */
+function placeTab(group: EditorGroup, id: string, preview: boolean, docs: OpenDoc[]): EditorGroup {
+  const tab: Tab = preview ? { id, preview: true } : { id };
+  if (preview) {
+    const kindOf = (tabId: string) => docs.find((d) => d.id === tabId)?.kind;
+    const i = group.tabs.findIndex((t) => t.preview && isPreviewable(kindOf(t.id)));
+    if (i !== -1) return { ...group, tabs: group.tabs.map((t, j) => (j === i ? tab : t)) };
   }
-  const activeId = state.activeId === prevId ? pinnedId : state.activeId;
-  return { docs, activeId, activeBySession };
+  return { ...group, tabs: [...group.tabs, tab] };
+}
+
+function insertBefore(tabs: readonly Tab[], tab: Tab, beforeId: string | null): Tab[] {
+  const at = beforeId === null ? -1 : tabs.findIndex((t) => t.id === beforeId);
+  return at === -1 ? [...tabs, tab] : [...tabs.slice(0, at), tab, ...tabs.slice(at)];
+}
+
+const withLayout = (state: DocsState, sessionId: string, layout: SessionLayout): DocsState => ({
+  ...state,
+  layouts: { ...state.layouts, [sessionId]: layout },
+});
+
+/**
+ * The only writer of `activeId`, and the enforcer of I4 (an empty group 2 collapses) and I6 (a
+ * doc no tab references is dropped). `focus` is the session now shown; `null` keeps the shown
+ * session. See docs/plans/2026-09-28-split-editor.plan.md "finalize".
+ */
+function finalize(
+  state: DocsState,
+  touched: readonly string[],
+  focus: string | null,
+  onVanish: 'owner' | 'lastDoc' = 'owner',
+): DocsState {
+  let layouts = state.layouts;
+  for (const s of touched) {
+    const l = layouts[s];
+    if (l?.groups.length === 2 && l.groups[1].tabs.length === 0) {
+      layouts = { ...layouts, [s]: { groups: [l.groups[0]], activeGroup: 1 } };
+    }
+  }
+  const referenced = new Set<string>();
+  for (const l of Object.values(layouts)) {
+    for (const g of l.groups) for (const t of g.tabs) referenced.add(t.id);
+  }
+  const docs = state.docs.every((d) => referenced.has(d.id))
+    ? state.docs
+    : state.docs.filter((d) => referenced.has(d.id));
+  const activeOf = (sessionId: string) => {
+    const l = layouts[sessionId];
+    return l ? (l.groups[l.activeGroup - 1]?.active ?? null) : null;
+  };
+  let activeId: string | null;
+  if (focus !== null) activeId = activeOf(focus);
+  else if (state.activeId === null) activeId = null;
+  else if (onVanish === 'lastDoc') {
+    const last = docs[docs.length - 1];
+    activeId = referenced.has(state.activeId)
+      ? state.activeId
+      : last
+        ? activeOf(last.sessionId)
+        : null;
+  } else {
+    const shown = state.docs.find((d) => d.id === state.activeId)?.sessionId ?? touched[0];
+    activeId = shown === undefined ? null : activeOf(shown);
+  }
+  return { docs, layouts, activeId };
+}
+
+interface OpenSpec {
+  sessionId: string;
+  group: GroupIndex | undefined;
+  id: string;
+  kind: DocKind;
+  create: () => OpenDoc;
+}
+
+/** Foreground open: see docs/plans/2026-09-28-split-editor.plan.md "open, foreground" (P1b). */
+function openForeground(
+  state: DocsState,
+  o: OpenSpec & { preview: boolean; patch: (doc: OpenDoc) => OpenDoc },
+): DocsState {
+  const s = o.sessionId;
+  const g = o.group ?? openTargetGroup(state, s);
+  const layouts: Record<string, SessionLayout> = { ...state.layouts };
+  const touched = [s];
+  const existing = state.docs.find((d) => d.id === o.id);
+  let docs: OpenDoc[];
+  if (existing) {
+    if (existing.sessionId !== s) {
+      layouts[existing.sessionId] = removeEverywhere(layoutOf(state, existing.sessionId), o.id);
+      touched.push(existing.sessionId);
+    }
+    const doc = o.patch({ ...existing, sessionId: s });
+    docs = state.docs.map((d) => (d === existing ? doc : d));
+  } else {
+    docs = [...state.docs, o.create()];
+  }
+  let layout = layouts[s] ?? EMPTY_LAYOUT;
+  const target = groupAt(layout, g);
+  const other = otherGroup(g);
+  let next: EditorGroup;
+  if (holds(target, o.id)) {
+    next = o.preview ? target : unpreview(target, o.id);
+  } else if (holds(layout.groups[other - 1], o.id) && splitBehavior(o.kind) === 'move') {
+    layout = setGroup(layout, other, removeTab(groupAt(layout, other), o.id));
+    next = placeTab(target, o.id, false, docs);
+  } else {
+    next = placeTab(target, o.id, o.preview, docs);
+  }
+  layouts[s] = { ...setGroup(layout, g, { ...next, active: o.id }), activeGroup: g };
+  return finalize({ docs, layouts, activeId: state.activeId }, touched, s);
 }
 
 /** Pinned and never activated; an existing tab keeps its place and its owner (unlike a
  *  foreground open, which transfers ownership). */
-function openBackground(
+function openInBackground(
   state: DocsState,
-  action: Extract<DocsAction, { type: 'open' }>,
-  id: string,
+  o: OpenSpec & { patch?: (doc: OpenDoc) => OpenDoc },
 ): DocsState {
-  const sideBySide = action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {};
-  const repo = historyRepoField(action);
-  const existing = state.docs.find((d) => d.id === id);
-  if (existing) {
-    if (!existing.preview && action.sideBySide === undefined && !('repoRoot' in repo)) return state;
-    const docs = state.docs.map((d) =>
-      d.id === id ? { ...d, preview: false, ...sideBySide, ...repo } : d,
-    );
-    return { ...state, docs };
+  const existing = state.docs.find((d) => d.id === o.id);
+  const owner = existing?.sessionId ?? o.sessionId;
+  const layout = layoutOf(state, owner);
+  let next: SessionLayout;
+  if (existing && owner !== o.sessionId) {
+    next = mapGroups(layout, (group) => unpreview(group, o.id));
+  } else {
+    const g = o.group ?? openTargetGroup(state, owner);
+    const target = groupAt(layout, g);
+    if (holds(target, o.id)) next = setGroup(layout, g, unpreview(target, o.id));
+    else if (existing && splitBehavior(o.kind) === 'move') {
+      next = mapGroups(layout, (group) => unpreview(group, o.id));
+    } else {
+      next = setGroup(layout, g, {
+        tabs: [...target.tabs, { id: o.id }],
+        active: g === 2 ? (target.active ?? o.id) : target.active,
+      });
+    }
   }
-  const newDoc: OpenDoc = {
-    id,
-    kind: action.kind,
-    path: action.path,
-    title: initialTitle(action.kind, action.path, action.diffScope),
-    sessionId: action.sessionId,
-    ...sideBySide,
-    ...scopeField(action.kind, action.diffScope),
-    ...repo,
+  const patch = o.patch;
+  const docs = !existing
+    ? [...state.docs, o.create()]
+    : patch
+      ? state.docs.map((d) => (d === existing ? patch(d) : d))
+      : state.docs;
+  if (docs === state.docs && sameGroups(next, layout)) return state;
+  return finalize({ ...withLayout(state, owner, next), docs }, [owner], null);
+}
+
+/** Re-keys the `commit-diff` preview slot `from` to its pinned id `to` in the registry and in
+ *  every tab ref and active naming it (pinned there). An existing `to` owned by another
+ *  session keeps its owner, so the slot's tabs close instead. */
+function rekeySlot(
+  state: DocsState,
+  from: string,
+  to: string,
+  fields: Partial<OpenDoc>,
+): DocsState {
+  const slot = state.docs.find((d) => d.id === from);
+  if (!slot) return state;
+  const target = state.docs.find((d) => d.id === to);
+  const layout = layoutOf(state, slot.sessionId);
+  if (target && target.sessionId !== slot.sessionId) {
+    return withLayout(state, slot.sessionId, removeEverywhere(layout, from));
+  }
+  const docs = target
+    ? state.docs.filter((d) => d !== slot)
+    : state.docs.map((d) => (d === slot ? { ...d, ...fields, id: to } : d));
+  return {
+    ...withLayout(
+      state,
+      slot.sessionId,
+      mapGroups(layout, (g) => renameTab(g, from, to)),
+    ),
+    docs,
   };
-  return { ...state, docs: [...state.docs, newDoc] };
+}
+
+/** Split and move land a pinned tab (P4): a `commit-diff` slot is re-keyed to its pinned id first. */
+function pinSlotForMove(state: DocsState, id: string): { state: DocsState; id: string } {
+  const doc = state.docs.find((d) => d.id === id);
+  if (doc?.kind !== 'commit-diff' || id !== previewId('commit-diff')) return { state, id };
+  const pinned = idOf(doc.kind, doc.path);
+  return { state: rekeySlot(state, id, pinned, {}), id: pinned };
+}
+
+function openCommitDiff(
+  state: DocsState,
+  action: Extract<DocsAction, { type: 'openCommitFile' }>,
+): DocsState {
+  const kind = 'commit-diff';
+  const path = commitDiffPath(action.sha, action.file);
+  const title = `${titleOf(action.file)} @ ${shortSha(action.sha)}`;
+  const { sessionId, repoRoot } = action;
+  const pinnedId = idOf(kind, path);
+  const slotId = previewId(kind);
+  const slot = state.docs.find((d) => d.id === slotId);
+  const pinnedExists = state.docs.some((d) => d.id === pinnedId);
+  const spec: OpenSpec = {
+    sessionId,
+    group: action.group,
+    id: pinnedId,
+    kind,
+    create: () => ({ id: pinnedId, kind, path, title, sessionId, repoRoot }),
+  };
+  const keep = (d: OpenDoc) => d;
+
+  if (action.mode === 'background') {
+    if (!pinnedExists && slot && slot.path === path) {
+      return finalize(rekeySlot(state, slotId, pinnedId, { title }), [slot.sessionId], null);
+    }
+    return openInBackground(state, spec);
+  }
+  if (pinnedExists) return openForeground(state, { ...spec, preview: false, patch: keep });
+  if (action.mode === 'permanent') {
+    const base =
+      slot && slot.path === path ? rekeySlot(state, slotId, pinnedId, { title, repoRoot }) : state;
+    return openForeground(base, { ...spec, preview: false, patch: keep });
+  }
+  const g = action.group ?? openTargetGroup(state, sessionId);
+  const inPlace =
+    slot?.sessionId === sessionId && holds(groupAt(layoutOf(state, sessionId), g), slotId);
+  const base =
+    slot && !inPlace
+      ? withLayout(state, slot.sessionId, removeEverywhere(layoutOf(state, slot.sessionId), slotId))
+      : state;
+  return openForeground(base, {
+    ...spec,
+    group: g,
+    id: slotId,
+    preview: true,
+    create: () => ({ id: slotId, kind, path, title, sessionId, repoRoot }),
+    patch: (d) => ({ ...d, kind, path, title, sessionId, repoRoot }),
+  });
 }
 
 /** What a background open of this target will do, read from the state BEFORE the dispatch. */
@@ -301,12 +493,19 @@ export function backgroundOpenOutcome(
   const id = idOf(kind, path, diffScope);
   const existing = state.docs.find((d) => d.id === id);
   if (existing) {
-    return {
-      outcome: existing.preview ? 'pinned' : 'already-open',
-      ownerSessionId: existing.sessionId,
-      id,
-      title: existing.title,
-    };
+    const owner = existing.sessionId;
+    const previewIn = (g: GroupIndex) => tabPreview(state, owner, g, id);
+    let outcome: BackgroundOutcome;
+    if (owner !== targetSessionId) {
+      outcome = previewIn(1) || previewIn(2) ? 'pinned' : 'already-open';
+    } else {
+      const g = openTargetGroup(state, owner);
+      if (holds(layoutOf(state, owner).groups[g - 1], id)) {
+        outcome = previewIn(g) ? 'pinned' : 'already-open';
+      } else if (splitBehavior(kind) === 'duplicate') outcome = 'opened';
+      else outcome = previewIn(otherGroup(g)) ? 'pinned' : 'already-open';
+    }
+    return { outcome, ownerSessionId: owner, id, title: existing.title };
   }
   const slot =
     kind === 'commit-diff' ? state.docs.find((d) => d.id === previewId(kind)) : undefined;
@@ -321,66 +520,37 @@ export function backgroundOpenOutcome(
   };
 }
 
-/** The remembered doc for a session, but only if it still exists AND is still owned by
- * that session (ownership can transfer on re-open); otherwise the Terminal (null). */
-function rememberedDoc(docs: OpenDoc[], sessionId: string, id: string | null): string | null {
-  if (id === null) return null;
-  return docs.some((d) => d.id === id && d.sessionId === sessionId) ? id : null;
-}
-
+// Every case works on `groups[g]` with no split-mode fork; see
+// docs/plans/2026-09-28-split-editor.plan.md "webview/docs.ts changes".
 export function docsReducer(state: DocsState, action: DocsAction): DocsState {
   switch (action.type) {
     case 'open': {
       const id = idOf(action.kind, action.path, action.diffScope);
-      if (action.mode === 'background') return openBackground(state, action, id);
-      const previewable = action.kind === 'file' || action.kind === 'diff';
-      const wantPreview = previewable && action.mode === 'preview';
-      const activeBySession = { ...state.activeBySession, [action.sessionId]: id };
-      if (state.docs.some((d) => d.id === id)) {
-        // Transfer ownership to the current session so a later close of the original
-        // opener won't yank a doc now in use here. A permanent open promotes the tab if it
-        // was the preview (e.g. explorer double-click); a preview open never downgrades an
-        // already-permanent tab.
-        const docs = state.docs.map((d) =>
-          d.id === id
-            ? {
-                ...d,
-                sessionId: action.sessionId,
-                ...(wantPreview ? {} : { preview: false }),
-                ...(action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {}),
-                ...historyRepoField(action),
-              }
-            : d,
-        );
-        return { docs, activeId: id, activeBySession };
-      }
-      const newDoc: OpenDoc = {
+      const sideBySide = action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {};
+      const repo = historyRepoField(action);
+      const spec: OpenSpec = {
+        sessionId: action.sessionId,
+        group: action.group,
         id,
         kind: action.kind,
-        path: action.path,
-        title: initialTitle(action.kind, action.path, action.diffScope),
-        sessionId: action.sessionId,
-        ...(action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {}),
-        ...scopeField(action.kind, action.diffScope),
-        ...historyRepoField(action),
+        create: () => ({
+          id,
+          kind: action.kind,
+          path: action.path,
+          title: initialTitle(action.kind, action.path, action.diffScope),
+          sessionId: action.sessionId,
+          ...sideBySide,
+          ...scopeField(action.kind, action.diffScope),
+          ...repo,
+        }),
       };
-      if (wantPreview) {
-        // ≤1 preview per session: retarget the session's existing preview slot in place
-        // (preserve its array index so the tab doesn't jump), else append a new one.
-        const prevIdx = state.docs.findIndex(
-          (d) =>
-            d.sessionId === action.sessionId &&
-            d.preview &&
-            (d.kind === 'file' || d.kind === 'diff'),
-        );
-        const previewDoc: OpenDoc = { ...newDoc, preview: true };
-        const docs =
-          prevIdx === -1
-            ? [...state.docs, previewDoc]
-            : state.docs.map((d, i) => (i === prevIdx ? previewDoc : d));
-        return { docs, activeId: id, activeBySession };
+      const patch = (d: OpenDoc): OpenDoc => ({ ...d, ...sideBySide, ...repo });
+      if (action.mode === 'background') {
+        const changesDoc = action.sideBySide !== undefined || 'repoRoot' in repo;
+        return openInBackground(state, { ...spec, patch: changesDoc ? patch : undefined });
       }
-      return { docs: [...state.docs, newDoc], activeId: id, activeBySession };
+      const preview = isPreviewable(action.kind) && action.mode === 'preview';
+      return openForeground(state, { ...spec, preview, patch });
     }
     case 'setTitle': {
       const idx = state.docs.findIndex((d) => d.id === action.id);
@@ -399,58 +569,46 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       return { ...state, docs };
     }
     case 'closeSession': {
-      const docs = state.docs.filter((d) => d.sessionId !== action.sessionId);
-      const { [action.sessionId]: _gone, ...activeBySession } = state.activeBySession;
-      if (docs.length === state.docs.length && !(action.sessionId in state.activeBySession)) {
-        return state;
-      }
-      let activeId = state.activeId;
-      if (activeId && !docs.some((d) => d.id === activeId)) {
-        activeId = docs.length ? docs[docs.length - 1].id : null;
-      }
-      return { docs, activeId, activeBySession };
+      const s = action.sessionId;
+      const docs = state.docs.filter((d) => d.sessionId !== s);
+      if (docs.length === state.docs.length && !(s in state.layouts)) return state;
+      const { [s]: _gone, ...layouts } = state.layouts;
+      return finalize({ docs, layouts, activeId: state.activeId }, [], null, 'lastDoc');
     }
     case 'close': {
-      const idx = state.docs.findIndex((d) => d.id === action.id);
-      if (idx === -1) return state;
-      const closed = state.docs[idx];
-      const docs = state.docs.filter((d) => d.id !== action.id);
-      // Repoint the owning session's remembered doc to a sibling (or Terminal).
-      const activeBySession = { ...state.activeBySession };
-      if (activeBySession[closed.sessionId] === action.id) {
-        const siblings = docs.filter((d) => d.sessionId === closed.sessionId);
-        const prevInState = state.docs[idx - 1];
-        const fallback =
-          prevInState && prevInState.sessionId === closed.sessionId
-            ? prevInState.id
-            : (siblings[siblings.length - 1]?.id ?? null);
-        activeBySession[closed.sessionId] = fallback;
-      }
-      let activeId = state.activeId;
-      if (state.activeId === action.id) {
-        const next = docs[idx - 1] ?? docs[idx] ?? null;
-        activeId = next ? next.id : null;
-      }
-      return { docs, activeId, activeBySession };
+      const doc = state.docs.find((d) => d.id === action.id);
+      if (!doc) return state;
+      const s = doc.sessionId;
+      const layout = layoutOf(state, s);
+      const holding = layout.groups.filter((g) => holds(g, action.id)).length;
+      const g = action.group;
+      const next =
+        g !== undefined && holding > 1
+          ? setGroup(layout, g, removeTab(groupAt(layout, g), action.id))
+          : removeEverywhere(layout, action.id);
+      return finalize(withLayout(state, s, next), [s], null);
     }
     case 'activate': {
-      const activeBySession = { ...state.activeBySession };
-      // Owner is the doc's session, or the caller-supplied session for the Terminal (id=null).
-      const owner =
-        action.id !== null
-          ? state.docs.find((d) => d.id === action.id)?.sessionId
-          : action.sessionId;
-      if (owner !== undefined) activeBySession[owner] = action.id;
-      return { ...state, activeId: action.id, activeBySession };
+      if (action.id === null) {
+        const s = action.sessionId ?? state.docs.find((d) => d.id === state.activeId)?.sessionId;
+        if (s === undefined) return state;
+        const layout = layoutOf(state, s);
+        const next = setGroup(layout, 1, { ...layout.groups[0], active: null });
+        return finalize(withLayout(state, s, { ...next, activeGroup: 1 }), [s], s);
+      }
+      const id = action.id;
+      const doc = state.docs.find((d) => d.id === id);
+      if (!doc) return state;
+      const owner = doc.sessionId;
+      const g = action.group ?? resolveActivateGroup(state, owner, id);
+      const layout = layoutOf(state, owner);
+      const group = layout.groups[g - 1];
+      if (!group || !holds(group, id)) return state;
+      const next = setGroup(layout, g, { ...group, active: id });
+      return finalize(withLayout(state, owner, { ...next, activeGroup: g }), [owner], owner);
     }
-    case 'switchSession': {
-      const activeId = rememberedDoc(
-        state.docs,
-        action.sessionId,
-        state.activeBySession[action.sessionId] ?? null,
-      );
-      return { ...state, activeId };
-    }
+    case 'switchSession':
+      return finalize(state, [], action.sessionId);
     case 'openReview': {
       // The unscoped working source is canonically stored as ABSENT (label treats absent ===
       // working, All). A scoped or repo-narrowed one has to survive — it is what the Review reads.
@@ -460,100 +618,143 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         action.source.repoRoot === undefined
           ? undefined
           : action.source;
-      const activeBySession = { ...state.activeBySession, [action.sessionId]: REVIEW_DOC_ID };
-      if (state.docs.some((d) => d.id === REVIEW_DOC_ID)) {
-        const docs = state.docs.map((d) =>
-          d.id === REVIEW_DOC_ID ? { ...d, sessionId: action.sessionId, reviewSource } : d,
-        );
-        return { docs, activeId: REVIEW_DOC_ID, activeBySession };
-      }
-      const newDoc: OpenDoc = {
+      return openForeground(state, {
+        sessionId: action.sessionId,
+        group: action.group,
         id: REVIEW_DOC_ID,
         kind: 'review',
-        path: REVIEW_DOC_PATH,
-        title: REVIEW_DOC_TITLE,
-        sessionId: action.sessionId,
-        reviewSource,
-      };
-      return { docs: [...state.docs, newDoc], activeId: REVIEW_DOC_ID, activeBySession };
+        preview: false,
+        create: () => ({
+          id: REVIEW_DOC_ID,
+          kind: 'review',
+          path: REVIEW_DOC_PATH,
+          title: REVIEW_DOC_TITLE,
+          sessionId: action.sessionId,
+          reviewSource,
+        }),
+        patch: (d) => ({ ...d, reviewSource }),
+      });
     }
     case 'openCommitFile':
-      return openHistoryDoc(
-        state,
-        'commit-diff',
-        commitDiffPath(action.sha, action.file),
-        `${titleOf(action.file)} @ ${shortSha(action.sha)}`,
-        action.sessionId,
-        action.mode,
-        action.repoRoot,
-      );
+      return openCommitDiff(state, action);
     case 'pinDoc': {
       const doc = state.docs.find((d) => d.id === action.id);
-      if (!doc?.preview) return state;
+      if (!doc) return state;
+      const owner = doc.sessionId;
+      const isPreviewTab = (g: GroupIndex) => tabPreview(state, owner, g, action.id);
+      const g = action.group ?? ([1, 2] as const).find(isPreviewTab);
+      if (g === undefined || !isPreviewTab(g)) return state;
       // file/diff previews already carry their stable identity in the id, so promotion is
-      // just clearing the flag in place — no re-key, no activeId/ownership churn.
+      // just clearing the tab's flag — no re-key, no activeId/ownership churn.
       if (doc.kind !== 'commit-diff') {
-        const docs = state.docs.map((d) => (d.id === action.id ? { ...d, preview: false } : d));
-        return { ...state, docs };
+        const layout = layoutOf(state, owner);
+        const next = setGroup(layout, g, unpreview(groupAt(layout, g), action.id));
+        return finalize(withLayout(state, owner, next), [owner], null);
       }
-      const pinnedId = idOf(doc.kind, doc.path);
-      // If a pinned tab for this identity already exists, drop the preview onto it; else
-      // re-key the preview in place.
-      const already = state.docs.some((d) => d.id === pinnedId);
-      const docs = already
-        ? state.docs.filter((d) => d.id !== action.id)
-        : state.docs.map((d) => (d.id === action.id ? { ...d, id: pinnedId, preview: false } : d));
-      const activeBySession = { ...state.activeBySession };
-      for (const key of Object.keys(activeBySession)) {
-        if (activeBySession[key] === action.id) activeBySession[key] = pinnedId;
-      }
-      const activeId = state.activeId === action.id ? pinnedId : state.activeId;
-      return { ...state, docs, activeId, activeBySession };
+      return finalize(rekeySlot(state, action.id, idOf(doc.kind, doc.path), {}), [owner], null);
     }
     case 'reorder': {
+      const doc = state.docs.find((d) => d.id === action.dragId);
+      if (!doc) return state;
+      const owner = doc.sessionId;
+      const g = action.group ?? resolveActivateGroup(state, owner, action.dragId);
+      const layout = layoutOf(state, owner);
+      const group = groupAt(layout, g);
+      if (!holds(group, action.dragId)) return state;
+      const byId = new Map(group.tabs.map((t) => [t.id, t]));
       const order = moveBefore(
-        state.docs.map((d) => d.id),
+        group.tabs.map((t) => t.id),
         action.dragId,
         action.targetId,
       );
-      const byId = new Map(state.docs.map((d) => [d.id, d]));
-      return {
-        ...state,
-        docs: order.flatMap((id) => {
-          const doc = byId.get(id);
-          if (!doc) return [];
-          // Dragging a preview tab promotes it (VS Code parity, spec §3.1).
-          return [id === action.dragId && doc.preview ? { ...doc, preview: false } : doc];
-        }),
-      };
+      const tabs = order.flatMap((id) => {
+        const tab = byId.get(id);
+        if (!tab) return [];
+        // Dragging a preview tab promotes it (VS Code parity, spec §3.1).
+        return [id === action.dragId ? { id } : tab];
+      });
+      const next = setGroup(layout, g, { ...group, tabs });
+      return finalize(withLayout(state, owner, next), [owner], null);
+    }
+    case 'splitRight': {
+      const s = action.sessionId;
+      const layout = state.layouts[s];
+      const x = layout?.activeGroup === 1 ? layout.groups[0].active : null;
+      if (x === null) return state;
+      const pinned = pinSlotForMove(state, x);
+      const l = layoutOf(pinned.state, s);
+      const id = pinned.id;
+      const doc = pinned.state.docs.find((d) => d.id === id);
+      if (!doc || !holds(l.groups[0], id)) return finalize(pinned.state, [s], s);
+      const g2 = groupAt(l, 2);
+      // see split-editor spec §2.3: the group-2 tab is pinned, a group-1 preview stays one.
+      const groups: [EditorGroup, EditorGroup] = holds(g2, id)
+        ? [l.groups[0], { ...g2, active: id }]
+        : [
+            splitBehavior(doc.kind) === 'duplicate' ? l.groups[0] : removeTab(l.groups[0], id),
+            { tabs: [...g2.tabs, { id }], active: id },
+          ];
+      return finalize(withLayout(pinned.state, s, { groups, activeGroup: 2 }), [s], s);
+    }
+    case 'moveTab': {
+      const s = action.sessionId;
+      const layout = state.layouts[s];
+      const from = otherGroup(action.toGroup);
+      if (layout?.groups.length !== 2 || !holds(layout.groups[from - 1], action.id)) return state;
+      const pinned = pinSlotForMove(state, action.id);
+      const l = layoutOf(pinned.state, s);
+      const id = pinned.id;
+      if (!holds(groupAt(l, from), id)) return finalize(pinned.state, [s], s);
+      const src = removeTab(groupAt(l, from), id);
+      const dst = groupAt(l, action.toGroup);
+      const moved: EditorGroup = holds(dst, id)
+        ? { ...dst, active: id }
+        : { tabs: insertBefore(dst.tabs, { id }, action.beforeId ?? null), active: id };
+      const groups: [EditorGroup, EditorGroup] = from === 1 ? [src, moved] : [moved, src];
+      const next: SessionLayout = { groups, activeGroup: action.toGroup };
+      return finalize(withLayout(pinned.state, s, next), [s], s);
+    }
+    case 'focusGroup': {
+      const s = action.sessionId;
+      const layout = state.layouts[s];
+      if (!layout?.groups[action.group - 1] || layout.activeGroup === action.group) return state;
+      return finalize(withLayout(state, s, { ...layout, activeGroup: action.group }), [s], s);
     }
     case 'restore': {
       const known = new Set(action.knownSessionIds);
       const docs: OpenDoc[] = [];
+      const layouts: Record<string, SessionLayout> = {};
       const seen = new Set<string>();
-      const activeBySession: Record<string, string | null> = {};
       for (const pd of action.docs) {
         // Drop orphans whose owning session didn't restore (spec §3.2).
         if (!known.has(pd.sessionId)) continue;
         const id = idOf(pd.kind, pd.path, pd.diffScope);
+        const g: GroupIndex = pd.group ?? 1;
         // The singleton kinds (review/git-history) share a sentinel id; a stray duplicate in
         // docs.json must not spawn a second tab — first occurrence wins ownership.
-        if (seen.has(id)) continue;
-        seen.add(id);
-        docs.push({
-          id,
-          kind: pd.kind,
-          path: pd.path,
-          title: initialTitle(pd.kind, pd.path, pd.diffScope),
-          sessionId: pd.sessionId,
-          ...(pd.preview ? { preview: true } : {}),
-          ...scopeField(pd.kind, pd.diffScope),
-        });
-        if (pd.active) activeBySession[pd.sessionId] = id;
+        const owner = docs.find((d) => d.id === id)?.sessionId;
+        if (seen.has(`${g}:${id}`) || (owner !== undefined && owner !== pd.sessionId)) continue;
+        seen.add(`${g}:${id}`);
+        if (owner === undefined) {
+          docs.push({
+            id,
+            kind: pd.kind,
+            path: pd.path,
+            title: initialTitle(pd.kind, pd.path, pd.diffScope),
+            sessionId: pd.sessionId,
+            ...scopeField(pd.kind, pd.diffScope),
+          });
+        }
+        const layout = layouts[pd.sessionId] ?? EMPTY_LAYOUT;
+        const group = groupAt(layout, g);
+        const tab: Tab = pd.preview ? { id, preview: true } : { id };
+        // Group 2 never shows the Terminal (I5), so an entry with no `active` still gets one.
+        const active = pd.active || (g === 2 && group.active === null) ? id : group.active;
+        layouts[pd.sessionId] = setGroup(layout, g, { tabs: [...group.tabs, tab], active });
       }
       // activeId stays null (Terminal) here; the renderer's switchSession effect resolves the
-      // active session's remembered doc from activeBySession once a session is selected.
-      return { docs, activeId: null, activeBySession };
+      // active session's layout once a session is selected.
+      return { docs, layouts, activeId: null };
     }
   }
 }
@@ -562,20 +763,32 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
  * Derive the persisted-relevant slice of docState for docs.json (editor-tabs-persist). Every
  * deterministically-reopenable kind persists; a transient `@preview` commit-diff with no real
  * `<sha> <file>` target is dropped (there's nothing to reopen). `reviewSource` is intentionally
- * not carried — a restored Review reopens in working-tree mode (PersistedDoc doc). Each doc keeps
- * its preview flag and whether it is its session's remembered active doc.
+ * not carried — a restored Review reopens in working-tree mode (PersistedDoc doc). Entries go
+ * per session (split-editor plan, Decisions Needed #11): group 1's tabs in order, then group
+ * 2's with `group: 2`, each with its tab's preview flag and whether it is its group's active.
  */
 export function toPersistedDocs(state: DocsState): PersistedDoc[] {
-  return state.docs
-    .filter((d) => (d.kind === 'commit-diff' ? parseCommitDiffPath(d.path).file !== '' : true))
-    .map((d) => ({
-      kind: d.kind,
-      path: d.path,
-      sessionId: d.sessionId,
-      ...(d.preview ? { preview: true } : {}),
-      ...scopeField(d.kind, d.diffScope),
-      ...(state.activeBySession[d.sessionId] === d.id ? { active: true } : {}),
-    }));
+  const byId = new Map(state.docs.map((d) => [d.id, d]));
+  const sessions = [...new Set(state.docs.map((d) => d.sessionId))];
+  return sessions.flatMap((sessionId) =>
+    layoutOf(state, sessionId).groups.flatMap((group, i) =>
+      group.tabs.flatMap((tab): PersistedDoc[] => {
+        const d = byId.get(tab.id);
+        if (!d || (d.kind === 'commit-diff' && parseCommitDiffPath(d.path).file === '')) return [];
+        return [
+          {
+            kind: d.kind,
+            path: d.path,
+            sessionId: d.sessionId,
+            ...(tab.preview ? { preview: true } : {}),
+            ...scopeField(d.kind, d.diffScope),
+            ...(group.active === d.id ? { active: true } : {}),
+            ...(i === 1 ? { group: 2 as const } : {}),
+          },
+        ];
+      }),
+    ),
+  );
 }
 
 /** File paths of the file tabs that close with `sessionId` (a path has one file tab, keyed

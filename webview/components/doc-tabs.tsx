@@ -38,6 +38,7 @@ const NO_SAVE_STATUSES: ReadonlyMap<string, FileSaveStatus> = new Map();
 export function DocTabs({
   docs,
   activeId,
+  previewIds,
   terminalLabel,
   terminalIcon,
   onSelect,
@@ -52,6 +53,7 @@ export function DocTabs({
 }: {
   docs: OpenDoc[];
   activeId: string | null;
+  previewIds: ReadonlySet<string>;
   terminalLabel: string;
   // Resolved icon for the terminal tab — the active session's icon (iconOverride,
   // appIcon, or agent-derived kind), falling back to the plain terminal glyph.
@@ -182,7 +184,7 @@ export function DocTabs({
       onClick: () => selectAndScroll(null),
     };
     const docItems = docs.map((d) => ({
-      label: d.preview ? `${d.title} (preview)` : d.title,
+      label: previewIds.has(d.id) ? `${d.title} (preview)` : d.title,
       title: d.path,
       icon:
         activeId === d.id ? (
@@ -205,7 +207,17 @@ export function DocTabs({
       y: rect.bottom + 2,
       items: [terminalItem, ...docItems],
     });
-  }, [docs, activeId, dirty, saves, terminalLabel, terminalIcon, onSelect, scrollTabIntoView]);
+  }, [
+    docs,
+    activeId,
+    previewIds,
+    dirty,
+    saves,
+    terminalLabel,
+    terminalIcon,
+    onSelect,
+    scrollTabIntoView,
+  ]);
 
   return (
     <div className="tabbar-wrap">
@@ -242,8 +254,8 @@ export function DocTabs({
             aria-selected={activeId === d.id}
             // Preview is signalled visually by italic only; carry it in the accessible
             // name too so it isn't conveyed by styling alone (WCAG 1.4.1, spec §10).
-            aria-label={d.preview ? `${d.title} (preview)` : undefined}
-            className={`tab ${activeId === d.id ? 'tab--active' : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''} ${d.preview ? 'tab--preview' : ''} ${flashTab === d.id ? 'tab--flash' : ''}`}
+            aria-label={previewIds.has(d.id) ? `${d.title} (preview)` : undefined}
+            className={`tab ${activeId === d.id ? 'tab--active' : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''} ${previewIds.has(d.id) ? 'tab--preview' : ''} ${flashTab === d.id ? 'tab--flash' : ''}`}
             onClick={() => onSelect(d.id)}
             // Middle-click closes the tab (VS Code parity), routing through the same
             // unsaved-changes path as the × button. `auxclick` (down+up on the element)
@@ -251,7 +263,7 @@ export function DocTabs({
             // helper's mousedown suppression is what keeps it working on an overflowing strip.
             {...middleClickProps(() => onClose(d.id))}
             onDoubleClick={() => {
-              if (d.preview) onPinDoc?.(d.id);
+              if (previewIds.has(d.id)) onPinDoc?.(d.id);
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {

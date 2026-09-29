@@ -1,13 +1,26 @@
 import { describe, expect, it } from 'vitest';
+import type { PersistedDoc } from '../../src/protocol';
 import {
   dirtyPreviewTabs,
+  type GroupIndex,
+  groupActive,
   groupDocs,
   openTargetGroup,
+  previewIdsOf,
   resolveActivateGroup,
   splitBehavior,
   tabPreview,
 } from '../../webview/doc-groups';
-import type { DocsState, OpenDoc } from '../../webview/docs';
+import {
+  backgroundOpenOutcome,
+  type DocsAction,
+  type DocsState,
+  docsReducer,
+  initialDocs,
+  type OpenDoc,
+  type OpenMode,
+  toPersistedDocs,
+} from '../../webview/docs';
 
 const doc = (kind: OpenDoc['kind'], path: string, sessionId = 'S1'): OpenDoc => ({
   id: `${kind}:${path}`,
@@ -148,5 +161,395 @@ describe('doc-groups selectors', () => {
       { id: xd.id, group: 2 },
       { id: y.id, group: 1 },
     ]);
+  });
+});
+
+const SHA = 'c'.repeat(40);
+const ids = (s: DocsState, g: GroupIndex, sid = 'S1') => groupDocs(s, sid, g).map((d) => d.id);
+const open = (
+  s: DocsState,
+  path: string,
+  o: {
+    mode?: OpenMode;
+    group?: GroupIndex;
+    sessionId?: string;
+    kind?: 'file' | 'diff' | 'web';
+  } = {},
+) =>
+  docsReducer(s, {
+    type: 'open',
+    kind: o.kind ?? 'file',
+    path,
+    sessionId: o.sessionId ?? 'S1',
+    mode: o.mode,
+    group: o.group,
+  });
+const split = (s: DocsState, sessionId = 'S1') => docsReducer(s, { type: 'splitRight', sessionId });
+const run = (s: DocsState, ...actions: DocsAction[]) => actions.reduce(docsReducer, s);
+
+describe.each([1, 2] as const)('split-mode core behaviours in group %i', (g) => {
+  const other: GroupIndex = g === 1 ? 2 : 1;
+  const base = () => split(open(initialDocs, '/base.ts'));
+
+  it("preview open retargets this group's preview in place (same index)", () => {
+    let s = open(base(), '/p1.ts', { mode: 'preview', group: g });
+    s = open(s, '/mid.ts', { mode: 'permanent', group: g });
+    s = open(s, '/p2.ts', { mode: 'preview', group: g });
+    expect(ids(s, g)).toEqual(['file:/base.ts', 'file:/p2.ts', 'file:/mid.ts']);
+    expect(tabPreview(s, 'S1', g, 'file:/p2.ts')).toBe(true);
+    expect(s.docs.some((d) => d.id === 'file:/p1.ts')).toBe(false);
+  });
+
+  it('≤1 preview per group', () => {
+    let s = base();
+    for (const p of ['/a.ts', '/b.ts', '/c.ts']) {
+      s = open(s, p, { mode: 'preview', group: g });
+      expect(previewIdsOf(s, 'S1', g).size).toBe(1);
+    }
+    expect(ids(s, g)).toEqual(['file:/base.ts', 'file:/c.ts']);
+  });
+
+  it('re-open activates the existing tab', () => {
+    let s = open(base(), '/a.ts', { group: g });
+    s = open(s, '/b.ts', { group: g });
+    s = open(s, '/a.ts', { group: g });
+    expect(ids(s, g)).toEqual(['file:/base.ts', 'file:/a.ts', 'file:/b.ts']);
+    expect(groupActive(s, 'S1', g)).toBe('file:/a.ts');
+    expect(s.activeId).toBe('file:/a.ts');
+    expect(s.layouts.S1.activeGroup).toBe(g);
+  });
+
+  it('permanent open promotes the preview', () => {
+    let s = open(base(), '/a.ts', { mode: 'preview', group: g });
+    s = open(s, '/a.ts', { mode: 'permanent', group: g });
+    expect(ids(s, g)).toEqual(['file:/base.ts', 'file:/a.ts']);
+    expect(tabPreview(s, 'S1', g, 'file:/a.ts')).toBe(false);
+  });
+
+  it('close falls back left, then right', () => {
+    let s = open(base(), '/a.ts', { group: g });
+    s = open(s, '/b.ts', { group: g });
+    s = run(
+      s,
+      { type: 'activate', id: 'file:/a.ts', group: g },
+      { type: 'close', id: 'file:/a.ts', group: g },
+    );
+    expect(groupActive(s, 'S1', g)).toBe('file:/base.ts');
+    s = docsReducer(s, { type: 'close', id: 'file:/base.ts', group: g });
+    expect(groupActive(s, 'S1', g)).toBe('file:/b.ts');
+    expect(ids(s, other)).toContain('file:/base.ts');
+  });
+
+  it('reorder promotes a dragged preview', () => {
+    let s = open(base(), '/a.ts', { group: g });
+    s = open(s, '/p.ts', { mode: 'preview', group: g });
+    s = docsReducer(s, { type: 'reorder', dragId: 'file:/p.ts', targetId: 'file:/a.ts', group: g });
+    expect(ids(s, g)).toEqual(['file:/base.ts', 'file:/p.ts', 'file:/a.ts']);
+    expect(tabPreview(s, 'S1', g, 'file:/p.ts')).toBe(false);
+  });
+
+  it("pinDoc clears only this group's preview", () => {
+    let s = open(base(), '/p.ts', { mode: 'preview', group: 1 });
+    s = open(s, '/p.ts', { mode: 'preview', group: 2 });
+    s = docsReducer(s, { type: 'pinDoc', id: 'file:/p.ts', group: g });
+    expect(tabPreview(s, 'S1', g, 'file:/p.ts')).toBe(false);
+    expect(tabPreview(s, 'S1', other, 'file:/p.ts')).toBe(true);
+  });
+
+  it('background open never changes activeId or activeGroup', () => {
+    const prev = open(base(), '/a.ts', { group: other });
+    const next = open(prev, '/n.ts', { mode: 'background', group: g });
+    expect(ids(next, g)).toContain('file:/n.ts');
+    expect(next.activeId).toBe(prev.activeId);
+    expect(next.layouts.S1.activeGroup).toBe(prev.layouts.S1.activeGroup);
+  });
+});
+
+describe('group invariants', () => {
+  it('I1: every tab id names a doc owned by the layout session', () => {
+    const steps: DocsAction[] = [
+      { type: 'open', kind: 'file', path: '/a.ts', sessionId: 'A' },
+      { type: 'splitRight', sessionId: 'A' },
+      { type: 'open', kind: 'file', path: '/b.ts', sessionId: 'A', mode: 'preview' },
+      { type: 'open', kind: 'web', path: 'https://x.test/', sessionId: 'A' },
+      { type: 'open', kind: 'file', path: '/a.ts', sessionId: 'B' },
+      { type: 'openCommitFile', sha: SHA, file: 'x.ts', sessionId: 'B', mode: 'preview' },
+      { type: 'splitRight', sessionId: 'B' },
+      { type: 'openReview', sessionId: 'A', source: { kind: 'working' } },
+      { type: 'moveTab', sessionId: 'A', id: 'review:@review', toGroup: 1 },
+      { type: 'open', kind: 'web', path: 'https://x.test/', sessionId: 'B', mode: 'background' },
+      { type: 'openReview', sessionId: 'B', source: { kind: 'working' } },
+      { type: 'close', id: 'file:/b.ts' },
+      { type: 'closeSession', sessionId: 'A' },
+    ];
+    let s = initialDocs;
+    for (const step of steps) {
+      s = docsReducer(s, step);
+      for (const [sid, layout] of Object.entries(s.layouts)) {
+        for (const group of layout.groups) {
+          for (const t of group.tabs) {
+            expect(s.docs.find((d) => d.id === t.id)?.sessionId, `${step.type}: ${t.id}`).toBe(sid);
+          }
+        }
+      }
+    }
+  });
+
+  it('I2: splitRight on a web tab moves it; groupDocs(1) no longer holds it', () => {
+    let s = open(initialDocs, '/a.ts');
+    s = open(s, 'https://x.test/', { kind: 'web' });
+    s = split(s);
+    expect(ids(s, 1)).toEqual(['file:/a.ts']);
+    expect(ids(s, 2)).toEqual(['web:https://x.test/']);
+  });
+
+  it("I3: a preview open in group 2 leaves group 1's preview alone", () => {
+    let s = split(open(initialDocs, '/base.ts'));
+    s = open(s, '/a.ts', { mode: 'preview', group: 1 });
+    s = open(s, '/b.ts', { mode: 'preview', group: 2 });
+    expect([...previewIdsOf(s, 'S1', 1)]).toEqual(['file:/a.ts']);
+    expect([...previewIdsOf(s, 'S1', 2)]).toEqual(['file:/b.ts']);
+  });
+
+  it("I4: closing the last group-2 tab removes group 2, and activeId is group 1's active", () => {
+    let s = open(initialDocs, '/a.ts');
+    s = open(s, '/b.ts');
+    s = split(s);
+    s = docsReducer(s, { type: 'close', id: 'file:/b.ts', group: 2 });
+    expect(s.layouts.S1.groups).toHaveLength(1);
+    expect(s.layouts.S1.activeGroup).toBe(1);
+    expect(s.activeId).toBe('file:/b.ts');
+  });
+
+  it('I5: splitRight with the Terminal active returns the same state object', () => {
+    const s = docsReducer(open(initialDocs, '/a.ts'), {
+      type: 'activate',
+      id: null,
+      sessionId: 'S1',
+    });
+    expect(split(s)).toBe(s);
+  });
+
+  it('I6: closing the only tab of a group-2-only doc removes the doc from docs', () => {
+    let s = split(open(initialDocs, '/a.ts'));
+    s = open(s, '/c.ts', { group: 2 });
+    s = docsReducer(s, { type: 'close', id: 'file:/c.ts', group: 2 });
+    expect(s.docs.map((d) => d.id)).toEqual(['file:/a.ts']);
+  });
+
+  it("I8: retargeting group 1's preview keeps the doc group 2 still shows", () => {
+    let s = open(initialDocs, '/p.ts', { mode: 'preview' });
+    s = split(s);
+    s = docsReducer(s, { type: 'focusGroup', sessionId: 'S1', group: 1 });
+    s = open(s, '/q.ts', { mode: 'preview', group: 1 });
+    expect(ids(s, 1)).toEqual(['file:/q.ts']);
+    expect(ids(s, 2)).toEqual(['file:/p.ts']);
+    expect(s.docs.some((d) => d.id === 'file:/p.ts')).toBe(true);
+  });
+
+  it("I9: a foreground open from B of A's only group-2 doc collapses A's group 2", () => {
+    let s = open(initialDocs, '/a.ts', { sessionId: 'A' });
+    s = open(s, 'https://x.test/', { kind: 'web', sessionId: 'A' });
+    s = split(s, 'A');
+    expect(ids(s, 2, 'A')).toEqual(['web:https://x.test/']);
+    s = open(s, 'https://x.test/', { kind: 'web', sessionId: 'B' });
+    expect(s.layouts.A.groups).toHaveLength(1);
+    expect(s.layouts.A.activeGroup).toBe(1);
+    expect(ids(s, 1, 'B')).toEqual(['web:https://x.test/']);
+  });
+});
+
+describe('group actions', () => {
+  it('splitRight duplicates a file into group 2 and focuses it', () => {
+    let s = open(initialDocs, '/a.ts');
+    s = open(s, '/b.ts');
+    s = split(s);
+    expect(s.activeId).toBe('file:/b.ts');
+    expect(s.layouts.S1.activeGroup).toBe(2);
+    expect(ids(s, 1)).toEqual(['file:/a.ts', 'file:/b.ts']);
+    expect(ids(s, 2)).toEqual(['file:/b.ts']);
+  });
+
+  it('splitRight on a preview pins the group-2 tab; group 1 stays preview', () => {
+    const s = split(open(initialDocs, '/p.ts', { mode: 'preview' }));
+    expect(tabPreview(s, 'S1', 2, 'file:/p.ts')).toBe(false);
+    expect(tabPreview(s, 'S1', 1, 'file:/p.ts')).toBe(true);
+  });
+
+  it('splitRight on the commit-diff @preview re-keys to the pinned id first', () => {
+    let s = docsReducer(initialDocs, {
+      type: 'openCommitFile',
+      sha: SHA,
+      file: 'x.ts',
+      sessionId: 'S1',
+      mode: 'preview',
+    });
+    s = split(s);
+    const pinned = `commit-diff:${SHA} x.ts`;
+    expect(ids(s, 1)).toEqual([pinned]);
+    expect(ids(s, 2)).toEqual([pinned]);
+    expect(s.docs.map((d) => d.id)).toEqual([pinned]);
+    expect(s.activeId).toBe(pinned);
+  });
+
+  it('splitRight with group 2 active returns the same state', () => {
+    const s = split(open(initialDocs, '/a.ts'));
+    expect(split(s)).toBe(s);
+  });
+
+  it('moveTab into group 1 inserts before beforeId, pinned', () => {
+    let s = open(initialDocs, '/a.ts');
+    s = open(s, '/b.ts');
+    s = split(s);
+    s = open(s, '/c.ts', { mode: 'preview', group: 2 });
+    s = docsReducer(s, {
+      type: 'moveTab',
+      sessionId: 'S1',
+      id: 'file:/c.ts',
+      toGroup: 1,
+      beforeId: 'file:/b.ts',
+    });
+    expect(ids(s, 1)).toEqual(['file:/a.ts', 'file:/c.ts', 'file:/b.ts']);
+    expect(tabPreview(s, 'S1', 1, 'file:/c.ts')).toBe(false);
+    expect(ids(s, 2)).toEqual(['file:/b.ts']);
+    expect(s.layouts.S1.activeGroup).toBe(1);
+    expect(s.activeId).toBe('file:/c.ts');
+  });
+
+  it('focusGroup swaps activeId', () => {
+    let s = open(initialDocs, '/a.ts');
+    s = open(s, '/b.ts');
+    s = split(s);
+    s = open(s, '/c.ts', { group: 2 });
+    s = docsReducer(s, { type: 'focusGroup', sessionId: 'S1', group: 1 });
+    expect(s.activeId).toBe('file:/b.ts');
+    s = docsReducer(s, { type: 'focusGroup', sessionId: 'S1', group: 2 });
+    expect(s.activeId).toBe('file:/c.ts');
+    expect(docsReducer(s, { type: 'focusGroup', sessionId: 'S1', group: 2 })).toBe(s);
+  });
+
+  it('close {group} closes one tab of two and keeps the doc', () => {
+    let s = split(open(initialDocs, '/a.ts'));
+    s = open(s, '/b.ts', { group: 1 });
+    s = docsReducer(s, { type: 'close', id: 'file:/a.ts', group: 1 });
+    expect(ids(s, 1)).toEqual(['file:/b.ts']);
+    expect(ids(s, 2)).toEqual(['file:/a.ts']);
+    expect(s.docs.some((d) => d.id === 'file:/a.ts')).toBe(true);
+  });
+
+  it('switchSession restores group 2 as active', () => {
+    let s = split(open(initialDocs, '/a.ts'));
+    s = open(s, '/c.ts', { group: 2 });
+    s = docsReducer(s, { type: 'switchSession', sessionId: 'S2' });
+    expect(s.activeId).toBeNull();
+    s = docsReducer(s, { type: 'switchSession', sessionId: 'S1' });
+    expect(s.activeId).toBe('file:/c.ts');
+    expect(s.layouts.S1.activeGroup).toBe(2);
+  });
+
+  it("closeSession falls back to the last remaining doc's session active", () => {
+    let s = open(initialDocs, '/a.ts', { sessionId: 'A' });
+    s = open(s, '/a2.ts', { sessionId: 'A' });
+    s = docsReducer(s, { type: 'activate', id: 'file:/a.ts', sessionId: 'A' });
+    s = open(s, '/b.ts', { sessionId: 'B' });
+    s = docsReducer(s, { type: 'closeSession', sessionId: 'B' });
+    expect(s.activeId).toBe('file:/a.ts');
+  });
+});
+
+describe('group persistence', () => {
+  it('toPersistedDocs: group 1 then group:2 entries, per-tab preview and active', () => {
+    let s = open(initialDocs, '/a.ts');
+    s = open(s, '/p.ts', { mode: 'preview' });
+    s = split(s);
+    s = open(s, '/q.ts', { mode: 'preview', group: 2 });
+    expect(toPersistedDocs(s)).toEqual([
+      { kind: 'file', path: '/a.ts', sessionId: 'S1' },
+      { kind: 'file', path: '/p.ts', sessionId: 'S1', preview: true, active: true },
+      { kind: 'file', path: '/p.ts', sessionId: 'S1', group: 2 },
+      { kind: 'file', path: '/q.ts', sessionId: 'S1', preview: true, active: true, group: 2 },
+    ]);
+  });
+
+  it('restore rebuilds both groups; dedupe per (id, group); activeGroup 1; activeId null', () => {
+    const docs: PersistedDoc[] = [
+      { kind: 'file', path: '/a.ts', sessionId: 'S1' },
+      { kind: 'file', path: '/p.ts', sessionId: 'S1', preview: true, active: true },
+      { kind: 'file', path: '/p.ts', sessionId: 'S1', group: 2 },
+      { kind: 'file', path: '/p.ts', sessionId: 'S1', preview: true, group: 2 },
+      { kind: 'file', path: '/q.ts', sessionId: 'S1', preview: true, active: true, group: 2 },
+    ];
+    const s = docsReducer(initialDocs, { type: 'restore', docs, knownSessionIds: ['S1'] });
+    expect(ids(s, 1)).toEqual(['file:/a.ts', 'file:/p.ts']);
+    expect(ids(s, 2)).toEqual(['file:/p.ts', 'file:/q.ts']);
+    expect(tabPreview(s, 'S1', 1, 'file:/p.ts')).toBe(true);
+    expect(tabPreview(s, 'S1', 2, 'file:/p.ts')).toBe(false);
+    expect(groupActive(s, 'S1', 1)).toBe('file:/p.ts');
+    expect(groupActive(s, 'S1', 2)).toBe('file:/q.ts');
+    expect(s.layouts.S1.activeGroup).toBe(1);
+    expect(s.activeId).toBeNull();
+    expect(s.docs).toHaveLength(3);
+    expect(toPersistedDocs(s)).toEqual(docs.filter((_, i) => i !== 3));
+  });
+
+  // The literals are the pre-change reducer's output for docs.test.ts's fixtures.
+  it('single-session toPersistedDocs is byte-identical', () => {
+    const A40 = 'a'.repeat(40);
+    const permanentThenPreview = run(
+      initialDocs,
+      { type: 'open', kind: 'file', path: '/a.ts', sessionId: 'S1', mode: 'permanent' },
+      { type: 'open', kind: 'file', path: '/b.ts', sessionId: 'S1', mode: 'preview' },
+    );
+    const scoped = run(
+      initialDocs,
+      { type: 'open', kind: 'diff', path: '/r/a.ts', sessionId: 'S1', diffScope: 'unstaged' },
+      { type: 'open', kind: 'diff', path: '/r/a.ts', sessionId: 'S1' },
+      { type: 'open', kind: 'diff', path: '/r/a.ts', sessionId: 'S1', diffScope: 'staged' },
+    );
+    const everyKind = run(
+      initialDocs,
+      { type: 'open', kind: 'file', path: '/a.ts', sessionId: 'S1' },
+      { type: 'open', kind: 'diff', path: '/a.ts', sessionId: 'S1' },
+      { type: 'open', kind: 'web', path: 'https://example.com/foo', sessionId: 'S1' },
+      { type: 'openReview', sessionId: 'S1', source: { kind: 'working' } },
+      { type: 'open', kind: 'git-history', path: '@git-history', sessionId: 'S1' },
+      { type: 'openCommitFile', sha: A40, file: 'src/a.ts', sessionId: 'S1', mode: 'permanent' },
+    );
+    const slot = run(initialDocs, {
+      type: 'openCommitFile',
+      sha: A40,
+      file: 'src/a.ts',
+      sessionId: 'S1',
+      mode: 'preview',
+    });
+    expect(JSON.stringify(toPersistedDocs(permanentThenPreview))).toBe(
+      '[{"kind":"file","path":"/a.ts","sessionId":"S1"},{"kind":"file","path":"/b.ts","sessionId":"S1","preview":true,"active":true}]',
+    );
+    expect(JSON.stringify(toPersistedDocs(scoped))).toBe(
+      '[{"kind":"diff","path":"/r/a.ts","sessionId":"S1","diffScope":"unstaged"},{"kind":"diff","path":"/r/a.ts","sessionId":"S1"},{"kind":"diff","path":"/r/a.ts","sessionId":"S1","diffScope":"staged","active":true}]',
+    );
+    expect(JSON.stringify(toPersistedDocs(everyKind))).toBe(
+      '[{"kind":"file","path":"/a.ts","sessionId":"S1"},{"kind":"diff","path":"/a.ts","sessionId":"S1"},{"kind":"web","path":"https://example.com/foo","sessionId":"S1"},{"kind":"review","path":"@review","sessionId":"S1"},{"kind":"git-history","path":"@git-history","sessionId":"S1"},{"kind":"commit-diff","path":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa src/a.ts","sessionId":"S1","active":true}]',
+    );
+    expect(JSON.stringify(toPersistedDocs(slot))).toBe(
+      '[{"kind":"commit-diff","path":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa src/a.ts","sessionId":"S1","preview":true,"active":true}]',
+    );
+  });
+});
+
+describe('group background outcome', () => {
+  it('backgroundOpenOutcome is opened for a file only in the other group', () => {
+    let s = split(open(initialDocs, '/a.ts'));
+    s = open(s, '/c.ts', { group: 2 });
+    s = docsReducer(s, { type: 'focusGroup', sessionId: 'S1', group: 1 });
+    expect(backgroundOpenOutcome(s, 'file', '/c.ts', 'S1')).toEqual({
+      outcome: 'opened',
+      ownerSessionId: 'S1',
+      id: 'file:/c.ts',
+      title: 'c.ts',
+    });
+    expect(backgroundOpenOutcome(s, 'file', '/a.ts', 'S1').outcome).toBe('already-open');
+    const next = open(s, '/c.ts', { mode: 'background' });
+    expect(ids(next, 1)).toEqual(['file:/a.ts', 'file:/c.ts']);
   });
 });

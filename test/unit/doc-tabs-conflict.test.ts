@@ -58,6 +58,7 @@ async function render(saveStatuses: ReadonlyMap<string, FileSaveStatus>) {
       createElement(DocTabs, {
         docs,
         activeId: null,
+        previewIds: new Set<string>(),
         terminalLabel: 'Terminal',
         terminalIcon: { kind: 'terminal' } as never,
         onSelect: () => {},

@@ -31,6 +31,7 @@ async function render() {
       createElement(DocTabs, {
         docs,
         activeId: null,
+        previewIds: new Set<string>(),
         terminalLabel: 'Terminal',
         terminalIcon: { type: 'lucide', name: 'terminal' },
         onSelect: () => {},

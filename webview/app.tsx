@@ -117,6 +117,7 @@ import { decideShortcut } from './decide-shortcut';
 import { createDiffReadQueue, type DiffReadQueue, diffReadTargets } from './diff-read-queue';
 import { diffTabKey } from './diff-tab-scope';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
+import { dirtyPreviewTabs, groupDocs, previewIdsOf, tabPreview } from './doc-groups';
 import { reorderDock } from './dock-reorder';
 import type { DocKind, OpenDoc, OpenMode } from './docs';
 import {
@@ -973,8 +974,7 @@ export function App() {
   // Global shortcuts — data-driven from the (rebindable, persisted) bindings.
   const actionMap = useMemo<Record<string, () => void>>(() => {
     const currentSessionId = () => activeIdRef.current ?? '';
-    const currentSessionDocs = () =>
-      docStateRef.current.docs.filter((d) => d.sessionId === currentSessionId());
+    const currentSessionDocs = () => groupDocs(docStateRef.current, currentSessionId(), 1);
     const activate = (id: string | null) => activateDocByUser(id, currentSessionId());
     // Tab cycle stops: the Terminal (null) first, then each open doc; +1 next, -1 prev.
     const cycleTab = (dir: number) => {
@@ -1127,9 +1127,7 @@ export function App() {
         // digit past the open-doc count is a no-op that lets the key through.
         if (action.id === 'navGoToTab') {
           const sessionId = activeIdRef.current ?? '';
-          const doc = docStateRef.current.docs.filter((d) => d.sessionId === sessionId)[
-            Number(e.key) - 1
-          ];
+          const doc = groupDocs(docStateRef.current, sessionId, 1)[Number(e.key) - 1];
           if (!doc) continue;
           e.preventDefault();
           e.stopPropagation();
@@ -1215,6 +1213,11 @@ export function App() {
   const visibleDocs = useMemo(
     () => docState.docs.filter((d) => d.sessionId === activeId),
     [docState.docs, activeId],
+  );
+  const groupOneDocs = useMemo(() => groupDocs(docState, activeId ?? '', 1), [docState, activeId]);
+  const groupOnePreviewIds = useMemo(
+    () => previewIdsOf(docState, activeId ?? '', 1),
+    [docState, activeId],
   );
   const activeDoc = visibleDocs.find((d) => d.id === docState.activeId) ?? null;
   const activeDocKind = activeDoc?.kind;
@@ -2095,11 +2098,8 @@ export function App() {
   useEffect(
     () =>
       subscribeDirty(() => {
-        const dirty = getDirtySnapshot();
-        for (const d of docStateRef.current.docs) {
-          if (d.preview && (d.kind === 'file' || d.kind === 'diff') && dirty.has(d.path)) {
-            dispatchDocs({ type: 'pinDoc', id: d.id });
-          }
+        for (const { id, group } of dirtyPreviewTabs(docStateRef.current, getDirtySnapshot())) {
+          dispatchDocs({ type: 'pinDoc', id, group });
         }
       }),
     [],
@@ -2374,7 +2374,7 @@ export function App() {
     e.preventDefault();
     // Scope close-others/left/right/all to the active session's tabs only — the bar
     // never shows another session's editors, so those actions must not touch them.
-    const allPaths = visibleDocs.map((d) => d.path);
+    const allPaths = groupOneDocs.map((d) => d.path);
     const toRight = closeTabSelection(allPaths, doc.path, 'right');
     const toLeft = closeTabSelection(allPaths, doc.path, 'left');
     const others = closeTabSelection(allPaths, doc.path, 'others');
@@ -2385,7 +2385,7 @@ export function App() {
       items: [
         // Keyboard-reachable pin pathway (a11y) — the only non-pointer way to promote a
         // preview, since double-click and drag are pointer-only (spec §10).
-        ...(doc.preview
+        ...(tabPreview(docState, doc.sessionId, 1, doc.id)
           ? [
               {
                 label: 'Keep Open',
@@ -3595,7 +3595,8 @@ export function App() {
             agents={agents}
             repos={state?.repos ?? []}
             activeId={activeId}
-            docs={visibleDocs}
+            docs={groupOneDocs}
+            previewIds={groupOnePreviewIds}
             activeDocId={docState.activeId}
             files={files}
             diffs={diffs}
