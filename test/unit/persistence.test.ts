@@ -8,6 +8,7 @@ import {
 } from '../../src/persistence';
 import type { PersistedDoc } from '../../src/protocol';
 import type { Session } from '../../src/types';
+import { docsReducer, initialDocs } from '../../webview/docs';
 
 const s: Session = {
   id: '1',
@@ -294,7 +295,7 @@ describe('persistence — editor tabs (docs.json)', () => {
     expect(parseDocs(blob)).toEqual([{ kind: 'file', path: '/ok.ts', sessionId: 'S1' }]);
   });
 
-  it('focus:true survives parseDocs; any other focus value drops the entry', () => {
+  it('a bad focus value, or focus on a non-active or group-1 entry, restores the tab unfocused', () => {
     const focused: PersistedDoc = {
       kind: 'file',
       path: '/f.ts',
@@ -303,16 +304,34 @@ describe('persistence — editor tabs (docs.json)', () => {
       group: 2,
       focus: true,
     };
-    const blob = JSON.stringify({
-      version: 1,
-      docs: [
-        focused,
-        { kind: 'file', path: '/false.ts', sessionId: 'S1', group: 2, focus: false },
-        { kind: 'file', path: '/str.ts', sessionId: 'S1', group: 2, focus: 'true' },
-        { kind: 'file', path: '/null.ts', sessionId: 'S1', group: 2, focus: null },
-      ],
-    });
-    expect(parseDocs(blob)).toEqual([focused]);
+    const bad = ['2', 1, false, {}, null].map((focus, i) => ({
+      kind: 'file',
+      path: `/bad${i}.ts`,
+      sessionId: 'S2',
+      active: i === 0,
+      group: 2,
+      focus,
+    }));
+    const blob = JSON.stringify({ version: 1, docs: [focused, ...bad] });
+    const parsed = parseDocs(blob);
+    expect(parsed).toEqual([focused, ...bad.map(({ focus: _, ...d }) => d)]);
+    const restore = (docs: PersistedDoc[]) =>
+      docsReducer(initialDocs, {
+        type: 'restore',
+        docs,
+        knownSessionIds: ['S1', 'S2', 'S3', 'S4'],
+      }).layouts;
+    expect(restore(parsed).S1.activeGroup).toBe(2);
+    expect(restore(parsed).S2.activeGroup).toBe(1);
+    const nonActive: PersistedDoc[] = [
+      { kind: 'file', path: '/a.ts', sessionId: 'S3', active: true, group: 2 },
+      { kind: 'file', path: '/b.ts', sessionId: 'S3', group: 2, focus: true },
+    ];
+    expect(restore(nonActive).S3.activeGroup).toBe(1);
+    const groupOne: PersistedDoc[] = [
+      { kind: 'file', path: '/a.ts', sessionId: 'S4', active: true, focus: true },
+    ];
+    expect(restore(groupOne).S4.activeGroup).toBe(1);
   });
 
   it('an old-format file (no group) parses unchanged', () => {

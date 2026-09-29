@@ -817,7 +817,8 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         // Group 2 never shows the Terminal (I5), so an entry with no `active` still gets one.
         const active = pd.active || (g === 2 && group.active === null) ? id : group.active;
         const next = setGroup(layout, g, { tabs: [...group.tabs, tab], active });
-        layouts[pd.sessionId] = pd.focus && g === 2 ? { ...next, activeGroup: 2 } : next;
+        layouts[pd.sessionId] =
+          pd.focus && pd.active && g === 2 ? { ...next, activeGroup: 2 } : next;
       }
       // activeId stays null (Terminal) here; the renderer's switchSession effect resolves the
       // active session's layout once a session is selected.
