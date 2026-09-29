@@ -50,6 +50,9 @@ export interface PersistedDoc {
   diffScope?: DiffTabScope;
   /** The editor group the tab sits in; absent = group 1. */
   group?: 2;
+  /** Group 2 was its session's active group; set on that group's active tab only
+   *  (split-editor spec §3.3). */
+  focus?: true;
 }
 
 /** Which side of a file a diff TAB shows. See spec 2026-09-22-scoped-diff-tabs §2. */

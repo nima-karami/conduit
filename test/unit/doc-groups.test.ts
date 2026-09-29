@@ -658,7 +658,15 @@ describe('group persistence', () => {
       { kind: 'file', path: '/a.ts', sessionId: 'S1' },
       { kind: 'file', path: '/p.ts', sessionId: 'S1', preview: true, active: true },
       { kind: 'file', path: '/p.ts', sessionId: 'S1', group: 2 },
-      { kind: 'file', path: '/q.ts', sessionId: 'S1', preview: true, active: true, group: 2 },
+      {
+        kind: 'file',
+        path: '/q.ts',
+        sessionId: 'S1',
+        preview: true,
+        active: true,
+        group: 2,
+        focus: true,
+      },
     ]);
   });
 
@@ -681,6 +689,35 @@ describe('group persistence', () => {
     expect(s.activeId).toBeNull();
     expect(s.docs).toHaveLength(3);
     expect(toPersistedDocs(s)).toEqual(docs.filter((_, i) => i !== 3));
+  });
+
+  it('an active group 2 survives a round trip; an active group 1 carries no focus', () => {
+    let s = open(initialDocs, '/a.ts');
+    s = split(s);
+    s = open(s, '/q.ts', { group: 2 });
+    s = open(s, '/b.ts', { sessionId: 'S2' });
+    const persisted = toPersistedDocs(s);
+    expect(persisted.filter((d) => d.focus)).toEqual([
+      { kind: 'file', path: '/q.ts', sessionId: 'S1', active: true, group: 2, focus: true },
+    ]);
+    const restored = run(
+      initialDocs,
+      { type: 'restore', docs: persisted, knownSessionIds: ['S1', 'S2'] },
+      { type: 'switchSession', sessionId: 'S1' },
+    );
+    expect(restored.layouts.S1.activeGroup).toBe(2);
+    expect(restored.layouts.S2.activeGroup).toBe(1);
+    expect(restored.activeId).toBe('file:/q.ts');
+    expect(toPersistedDocs(restored)).toEqual(persisted);
+
+    const g1 = docsReducer(s, { type: 'focusGroup', sessionId: 'S1', group: 1 });
+    expect(toPersistedDocs(g1).some((d) => 'focus' in d)).toBe(false);
+    const relaunched = docsReducer(initialDocs, {
+      type: 'restore',
+      docs: toPersistedDocs(g1),
+      knownSessionIds: ['S1', 'S2'],
+    });
+    expect(relaunched.layouts.S1.activeGroup).toBe(1);
   });
 
   // The literals are the pre-change reducer's output for docs.test.ts's fixtures.

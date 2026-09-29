@@ -809,7 +809,8 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         const tab: Tab = pd.preview ? { id, preview: true } : { id };
         // Group 2 never shows the Terminal (I5), so an entry with no `active` still gets one.
         const active = pd.active || (g === 2 && group.active === null) ? id : group.active;
-        layouts[pd.sessionId] = setGroup(layout, g, { tabs: [...group.tabs, tab], active });
+        const next = setGroup(layout, g, { tabs: [...group.tabs, tab], active });
+        layouts[pd.sessionId] = pd.focus && g === 2 ? { ...next, activeGroup: 2 } : next;
       }
       // activeId stays null (Terminal) here; the renderer's switchSession effect resolves the
       // active session's layout once a session is selected.
@@ -829,8 +830,9 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
 export function toPersistedDocs(state: DocsState): PersistedDoc[] {
   const byId = new Map(state.docs.map((d) => [d.id, d]));
   const sessions = [...new Set(state.docs.map((d) => d.sessionId))];
-  return sessions.flatMap((sessionId) =>
-    layoutOf(state, sessionId).groups.flatMap((group, i) =>
+  return sessions.flatMap((sessionId) => {
+    const layout = layoutOf(state, sessionId);
+    return layout.groups.flatMap((group, i) =>
       group.tabs.flatMap((tab): PersistedDoc[] => {
         const d = byId.get(tab.id);
         if (!d || (d.kind === 'commit-diff' && parseCommitDiffPath(d.path).file === '')) return [];
@@ -843,11 +845,14 @@ export function toPersistedDocs(state: DocsState): PersistedDoc[] {
             ...scopeField(d.kind, d.diffScope),
             ...(group.active === d.id ? { active: true } : {}),
             ...(i === 1 ? { group: 2 as const } : {}),
+            ...(i === 1 && layout.activeGroup === 2 && group.active === d.id
+              ? { focus: true as const }
+              : {}),
           },
         ];
       }),
-    ),
-  );
+    );
+  });
 }
 
 /** File paths of the file tabs that close with `sessionId` (a path has one file tab, keyed

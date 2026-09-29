@@ -294,6 +294,27 @@ describe('persistence — editor tabs (docs.json)', () => {
     expect(parseDocs(blob)).toEqual([{ kind: 'file', path: '/ok.ts', sessionId: 'S1' }]);
   });
 
+  it('focus:true survives parseDocs; any other focus value drops the entry', () => {
+    const focused: PersistedDoc = {
+      kind: 'file',
+      path: '/f.ts',
+      sessionId: 'S1',
+      active: true,
+      group: 2,
+      focus: true,
+    };
+    const blob = JSON.stringify({
+      version: 1,
+      docs: [
+        focused,
+        { kind: 'file', path: '/false.ts', sessionId: 'S1', group: 2, focus: false },
+        { kind: 'file', path: '/str.ts', sessionId: 'S1', group: 2, focus: 'true' },
+        { kind: 'file', path: '/null.ts', sessionId: 'S1', group: 2, focus: null },
+      ],
+    });
+    expect(parseDocs(blob)).toEqual([focused]);
+  });
+
   it('an old-format file (no group) parses unchanged', () => {
     const blob = JSON.stringify({ version: 1, docs });
     const parsed = parseDocs(blob);

@@ -252,7 +252,10 @@ the same path at once. Contract:
 
 - `PersistedDoc` gains optional `group?: 2` (absent = group 1). A doc with tabs in both groups
   persists as **two entries** that differ only in `group`. `active` means "active tab of its group
-  in its session". There is no persisted `activeGroup`: restore focuses group 1.
+  in its session". The active group persists as `focus: true` on the group-2 active entry of a
+  session whose active group is 2; restore then focuses group 2, and otherwise group 1. Nothing
+  else carries it, so single-group output is unchanged and an older build ignores the field
+  (amended in the review round).
 - **Order:** entries are serialized in per-group tab order, G1 first and then G2, per session.
   Restore rebuilds each group's order from entry order. Preview is per entry.
 - `DOCS_VERSION` stays **1**. An older build reading a newer file dedupes by id (first entry wins)

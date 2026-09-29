@@ -791,6 +791,10 @@ try {
   await phaseE11(page);
 
   // E9
+  await page.locator(`${G(2)} .tab--active`).click();
+  await page
+    .waitForSelector(`${G(2)}[data-active="true"]`, { timeout: 5000 })
+    .catch(() => assert(false, 'E9: clicking the right group’s tab did not activate it'));
   const saved = [await groupState(page, 1), await groupState(page, 2)];
   await sleep(1500);
   await shutdownApp(launched.app, page);
@@ -814,7 +818,12 @@ try {
     same(restored, saved),
     `E9: restored ${JSON.stringify(restored)}, saved ${JSON.stringify(saved)}`,
   );
-  log('E9 ✓ tabs, order and shown tab per group survive a restart');
+  assert(
+    (await page.locator(G(2)).getAttribute('data-active')) === 'true' &&
+      (await page.locator(G(1)).getAttribute('data-active')) === null,
+    'E9: the right group was active before quit but not after relaunch',
+  );
+  log('E9 ✓ tabs, order, shown tab per group and the active group survive a restart');
 
   await phaseCloseGroup(page);
 
