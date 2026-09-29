@@ -1771,7 +1771,10 @@ Build run 2026-09-28 (unattended), branch `feat/split-editor`, base `de36575`. E
   - **Focus:** `325bf64` adds the per-(doc, group) focus-target registry (`webview/focus-targets.ts`) and one
     `focusView` path. It fixes the Ctrl+Tab focus loss.
     - Session ruling in `4bc5ce8`: a pointer click on the Terminal button does not focus xterm, which E14
-      nav-history-lifecycle pins. Keyboard landings do focus it.
+      nav-history-lifecycle pins. A keyboard landing on the Terminal (Ctrl+Tab, Ctrl+PgUp/PgDn, Ctrl+1…9,
+      `navFocusTerminal`, a group collapse, Ctrl+W onto it) focuses xterm. Wording corrected in the re-review
+      round: a pointer landing (Terminal click, strip or tab-menu close) focuses the Terminal *button*, per
+      `995d7c2` and `68f16cb`.
     - `0159fb8` extends that ruling to a strip × close that lands on the Terminal. It was the root cause of
       the review-mode-pane regression.
   - **View state:** L3.1–L3.9 (`78ede54`…`6c145ba`). `webview/tab-view-state.ts` is the one id list for carry
@@ -1789,3 +1792,33 @@ Build run 2026-09-28 (unattended), branch `feat/split-editor`, base `de36575`. E
     - The `.tabbar` scrollbar no longer takes layout space. The global `scrollbar-color` made `::-webkit-scrollbar`
       inert, so the rule is now `scrollbar-width: none`, guarded by `tab-strip-overflow.e2e.mjs` in 3 themes.
   - **Tab menu:** `128dadf` makes Split Right follow the strip button's rule.
+- **Re-review round — done** (2 blockers, 10 should-fix, the nits, and a QA major).
+  - **QA major, the Terminal trap (`5481f0c`):** the tab-navigation chords (Ctrl+Tab and Ctrl+Shift+Tab,
+    Ctrl+PgUp/PgDn, Ctrl+1…9) are in `RESERVED_IN_TERMINAL`, so the app handles them while xterm is focused.
+    It is one shared dispatch in the existing window-capture handler. Measured: capture plus `stopPropagation`
+    keeps the key from the PTY, so no `attachCustomKeyEventHandler` was needed. Ctrl+W still reaches the shell.
+  - **B1 (`d78ff96`):** a focus request is armed with `document.activeElement`. It expires when focus moves
+    or its tab stops being shown; the shown set is derived once in `app.tsx`.
+  - **B2 (`ca07228`):** `moveViewState` always sets the redirect, so the cursor carries on a move (I10).
+  - **Should-fix:**
+    - `01afe9e`: registry assertions in `docs.test`, expected values unchanged.
+    - `995d7c2`: a pointer close onto the Terminal focuses the Terminal button.
+    - `e618b92`: the collapse never pulls focus from where the user put it.
+    - `310d88b`: Review (its scroller, where its keymap is scoped), History and commit-diff get focus
+      targets, and commit-diff view state is per tab. A web guest swallows Ctrl+Tab (measured with real
+      guest input), and there is no forward path for it, so web registers no target.
+    - `68f16cb`: the tab menu's closes go through `closeTabsByUser`.
+    - `c1c8b97`: each strip's split button passes its own doc.
+    - `9e8195e`: the Terminal button is `type=button` with `aria-pressed`.
+    - `e4780a8`: overflow e2e for the wheel and the chevron pick.
+    - `d2ccdb8`: spec §2.2 and I3 amended.
+  - **Nits:**
+    - `416cd38`: a bad `focus` value is ignored.
+    - `d76988c`: a preview transferred from another session lands pinned, with a test.
+    - `4167786`: a staged reveal moves with its tab.
+    - `a8c80f4`: restating comments dropped.
+    - `0aafa93`: an empty strip has no tablist role.
+    - `02d470e`: a Neon strip seam rule.
+    - `c87ee30`: tab-strip-overflow cleans up its temp repo.
+    - `fd74ded` and `bac3968`: review-ID tags swept from comments and test titles.
+  - **New e2e files, split out for the 210s cap:** `split-editor-focus-keep`, `split-editor-focus-views`.
