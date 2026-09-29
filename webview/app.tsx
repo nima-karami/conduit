@@ -2813,7 +2813,6 @@ export function App() {
         },
         {
           label: SPLIT_COPY.moveToOther,
-          disabled: layoutOf(docState, doc.sessionId).groups.length < 2,
           onClick: () => moveTabToGroup(doc.id, group === 1 ? 2 : 1, null, false),
         },
       ],
@@ -3940,21 +3939,19 @@ export function App() {
         combo: comboFor('splitEditorRight'),
         run: () => splitRight(),
       });
+      const from = layout.activeGroup;
+      const id = docState.activeId;
+      groupCmds.push({
+        id: 'cmd:moveTabToOtherGroup',
+        title: SPLIT_COPY.moveToOther,
+        keywords: ['move editor', 'editor group'],
+        group: 'Commands',
+        icon: <IconSplit size={14} />,
+        combo: comboFor(from === 1 ? 'moveTabNextGroup' : 'moveTabPrevGroup'),
+        run: () => moveTabToGroup(id, from === 1 ? 2 : 1, null, false),
+      });
     }
     if (layout.groups.length === 2) {
-      if (docState.activeId !== null) {
-        const from = layout.activeGroup;
-        const id = docState.activeId;
-        groupCmds.push({
-          id: 'cmd:moveTabToOtherGroup',
-          title: SPLIT_COPY.moveToOther,
-          keywords: ['move editor', 'editor group'],
-          group: 'Commands',
-          icon: <IconSplit size={14} />,
-          combo: comboFor(from === 1 ? 'moveTabNextGroup' : 'moveTabPrevGroup'),
-          run: () => moveTabToGroup(id, from === 1 ? 2 : 1, null, false),
-        });
-      }
       groupCmds.push(
         {
           id: 'cmd:closeEditorGroup',

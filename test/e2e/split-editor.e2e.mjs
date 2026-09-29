@@ -13,6 +13,8 @@
  *       disabled, and Ctrl+\ inside xterm stays the terminal's key.
  *
  * Slice 5 scenarios, continuing in launch 2:
+ *   M1  with one group, Move to Other Group is enabled and Mod+Alt+ArrowRight creates the right
+ *       group holding the tab, active and focused; the reverse move collapses it again.
  *   MV  Mod+Alt+ArrowRight moves the active tab from the left group to the right, which becomes
  *       active.
  *   RV  Review scrolled in one group, moved to the other, keeps its scroll anchor (±2px).
@@ -165,6 +167,37 @@ async function phaseMove(page) {
   );
   await waitPolite(page, 'Moved b.ts to right group', 'MV');
   log('MV ✓ Mod+Alt+ArrowRight moved b.ts to the right group');
+}
+
+/** One group holding b.ts: Move to Other Group creates group 2 (VS Code "Move Editor into Right
+ *  Group"), then the reverse move collapses back to one group. */
+async function phaseMoveOneGroup(page) {
+  assert((await groupCount(page)) === 1, 'M1: expected one group');
+  await tabOf(page, 1, 'b.ts').click({ button: 'right' });
+  const item = page.locator('.ctxmenu__item', { hasText: /^Move to Other Group$/ });
+  await item.waitFor({ timeout: 5000 }).catch(() => assert(false, 'M1: no Move to Other Group'));
+  assert(!(await item.isDisabled()), 'M1: Move to Other Group is disabled with one group');
+  await page.keyboard.press('Escape');
+  await page.locator(`${G(1)} .monaco-editor`).click();
+  await page.keyboard.press('Control+Alt+ArrowRight');
+  await page
+    .waitForFunction(() => document.querySelectorAll('.editor-group').length === 2, null, {
+      timeout: 5000,
+    })
+    .catch(() => assert(false, 'M1: Mod+Alt+ArrowRight with one group did not create group 2'));
+  await waitShown(page, 2, 'b.ts', 'M1');
+  assert(!(await groupTabs(page, 1)).includes('b.ts'), 'M1: b.ts is still in the left group');
+  await page
+    .waitForFunction((sel) => !!document.activeElement?.closest(sel), G(2), { timeout: 5000 })
+    .catch(() => assert(false, 'M1: focus is not in the right group'));
+  await page.keyboard.press('Control+Alt+ArrowLeft');
+  await page
+    .waitForFunction(() => document.querySelectorAll('.editor-group').length === 1, null, {
+      timeout: 5000,
+    })
+    .catch(() => assert(false, 'M1: moving b.ts back did not collapse to one group'));
+  await waitShown(page, 1, 'b.ts', 'M1');
+  log('M1 ✓ Move to Other Group with one group creates the right group');
 }
 
 /** The scroller's offset and the card at its top edge, with the edge's offset into that card. */
@@ -794,6 +827,8 @@ try {
     'E6: the left group is not active after the collapse',
   );
   log('E6 ✓ collapse to one active group');
+
+  await phaseMoveOneGroup(page);
 
   await phaseMove(page);
   await phaseReviewMove(page);
