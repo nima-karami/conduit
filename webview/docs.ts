@@ -2,6 +2,7 @@ import type { RefEndpoint } from '../src/git-range';
 import type { DiffTabScope, PersistedDoc } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
 import { diffTabTitle } from './diff-tab-scope';
+import type { SessionLayout } from './doc-groups';
 import type { ReviewScope } from './review-scope';
 import { displayTitleForUrl } from './web-url';
 
@@ -43,13 +44,6 @@ export interface OpenDoc {
   // so it only shows while that session is active, and closing that session closes the
   // doc. Re-opening under a different session transfers ownership.
   sessionId: string;
-  // A transient "preview" tab (italic, reused on single-click) — VS Code preview-tab
-  // model, generalised across previewable kinds. For `commit-diff` the preview is the
-  // `@preview` sentinel id and pinning re-keys it to its per-identity form; for `file`/
-  // `diff` the id is already the stable identity (`${kind}:${path}`), so pinning just
-  // clears this flag in place. `web`/`review`/`git-history` are never previewable. See
-  // docs/specs/2026-06-27-editor-tab-behavior.md §3.1.
-  preview?: boolean;
   // Review-only: which changeset the singleton Review tab is showing. Absent ⇒ working tree.
   // Never persisted (Review isn't a persisted doc); see review-commit-source spec §3.4.
   reviewSource?: ReviewSource;
@@ -105,13 +99,13 @@ export function parseCommitDiffPath(path: string): { sha: string; file: string }
   return i === -1 ? { sha: path, file: '' } : { sha: path.slice(0, i), file: path.slice(i + 1) };
 }
 
+// see docs/plans/2026-09-28-split-editor.plan.md P1
 export interface DocsState {
+  /** The doc registry; its order carries no meaning (tab order lives in `layouts`). */
   docs: OpenDoc[];
-  // The active doc for the CURRENTLY active session (null = that session's Terminal).
+  layouts: Readonly<Record<string, SessionLayout>>;
+  /** A cache of the shown session's active group's active tab, written only by `finalize`. */
   activeId: string | null;
-  // Per-session memory of the last active doc (id, or null for Terminal), so switching
-  // away and back restores that session's view rather than leaking the other session's.
-  activeBySession: Record<string, string | null>;
 }
 
 export type DocsAction =
@@ -161,7 +155,7 @@ export type DocsAction =
   // activeBySession from `docs`, dropping any whose sessionId isn't in `knownSessionIds` (orphan).
   | { type: 'restore'; docs: PersistedDoc[]; knownSessionIds: string[] };
 
-export const initialDocs: DocsState = { docs: [], activeId: null, activeBySession: {} };
+export const initialDocs: DocsState = { docs: [], layouts: {}, activeId: null };
 
 const idOf = (kind: DocKind, path: string, diffScope?: DiffTabScope) =>
   kind === 'diff' && diffScope ? `diff@${diffScope}:${path}` : `${kind}:${path}`;
