@@ -176,7 +176,10 @@ export type DocsAction =
   | { type: 'focusGroup'; sessionId: string; group: GroupIndex }
   // One-shot startup seed from persisted docs.json (editor-tabs-persist). Rebuilds docs[] +
   // layouts from `docs`, dropping any whose sessionId isn't in `knownSessionIds` (orphan).
-  | { type: 'restore'; docs: PersistedDoc[]; knownSessionIds: string[] };
+  | { type: 'restore'; docs: PersistedDoc[]; knownSessionIds: string[] }
+  // Files were renamed/moved on disk: each listed file tab (by its exact path) follows its file
+  // in place — same slot in every group, owner and preview flag. The caller decides which tabs move.
+  | { type: 'moveFiles'; moves: readonly { from: string; to: string }[] };
 
 export const initialDocs: DocsState = { docs: [], layouts: {}, activeId: null };
 
@@ -246,6 +249,15 @@ function renameTab(group: EditorGroup, from: string, to: string): EditorGroup {
   const active = group.active === from ? to : group.active;
   if (holds(group, to)) return { tabs: group.tabs.filter((t) => t.id !== from), active };
   return { tabs: group.tabs.map((t) => (t.id === from ? { id: to } : t)), active };
+}
+
+/** Re-keys tab refs and the active tab in place, keeping each tab's slot and preview flag. */
+function retargetTabs(group: EditorGroup, follow: (id: string) => string): EditorGroup {
+  if (!group.tabs.some((t) => follow(t.id) !== t.id)) return group;
+  return {
+    tabs: group.tabs.map((t) => ({ ...t, id: follow(t.id) })),
+    active: group.active === null ? null : follow(group.active),
+  };
 }
 
 /** ≤1 preview per group: a preview replaces the group's file/diff preview tab at its index. */
@@ -587,6 +599,30 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
           ? setGroup(layout, g, removeTab(groupAt(layout, g), action.id))
           : removeEverywhere(layout, action.id);
       return finalize(withLayout(state, s, next), [s], null);
+    }
+    case 'moveFiles': {
+      const target = new Map(action.moves.map((m) => [m.from, m.to]));
+      const ids = new Map<string, string>();
+      const taken = new Set(state.docs.map((d) => d.id));
+      const docs = state.docs.map((d) => {
+        const path = d.kind === 'file' ? target.get(d.path) : undefined;
+        if (path === undefined || path === d.path) return d;
+        const id = idOf('file', path);
+        if (taken.has(id)) return d;
+        taken.add(id);
+        ids.set(d.id, id);
+        return { ...d, id, path, title: initialTitle('file', path) };
+      });
+      if (ids.size === 0) return state;
+      const follow = (id: string) => ids.get(id) ?? id;
+      const layouts = Object.fromEntries(
+        Object.entries(state.layouts).map(([sid, l]) => [
+          sid,
+          mapGroups(l, (g) => retargetTabs(g, follow)),
+        ]),
+      );
+      const activeId = state.activeId === null ? null : follow(state.activeId);
+      return finalize({ docs, layouts, activeId }, [], null);
     }
     case 'activate': {
       if (action.id === null) {

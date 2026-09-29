@@ -18,6 +18,26 @@ export function canonicalPath(path: string): string {
   return `${m[1].toUpperCase()}:${path.slice(m[0].length).replace(/\//g, '\\')}`;
 }
 
+/**
+ * What is left of `path` below `root` — `''` for the same path, `\x` / `/x` inside it — or null
+ * when `path` is neither. Compared in the {@link canonicalPath} spelling: the explorer spells a
+ * path with `/` where a tab spells it with `\`, and a raw compare between them never matches.
+ */
+export function pathBelow(path: string, root: string): string | null {
+  const p = canonicalPath(path);
+  const r = canonicalPath(root).replace(/[\\/]+$/, '');
+  if (!p.startsWith(r)) return null;
+  const rest = p.slice(r.length);
+  return rest === '' || rest[0] === '\\' || rest[0] === '/' ? rest : null;
+}
+
+/** Where `path` lives after `from` (the file itself, or a folder holding it) is renamed to `to`;
+ *  null when the rename doesn't touch it. */
+export function renamedPath(path: string, from: string, to: string): string | null {
+  const rest = pathBelow(path, from);
+  return rest === null ? null : canonicalPath(to.replace(/[\\/]+$/, '') + rest);
+}
+
 const DOT_SEGMENT = /(^|[\\/])\.{1,2}([\\/]|$)/;
 
 /** A `.`/`..` segment lets a string-prefix containment check pass for a path outside the

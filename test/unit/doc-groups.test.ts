@@ -611,3 +611,51 @@ describe('centerLayout', () => {
     expect(l.groups[0].previewIds.size).toBe(0);
   });
 });
+
+describe('group moveFiles', () => {
+  const k = doc('file', '/w/k.ts');
+  const a = doc('file', '/w/a.ts');
+  const z = doc('file', '/w/z.ts');
+  const split: DocsState = {
+    docs: [k, a, z],
+    layouts: {
+      S1: {
+        groups: [
+          { tabs: [{ id: k.id }, { id: a.id, preview: true }], active: a.id },
+          { tabs: [{ id: a.id }, { id: z.id }], active: a.id },
+        ],
+        activeGroup: 2,
+      },
+    },
+    activeId: a.id,
+  };
+  const move = (s: DocsState, from: string, to: string) =>
+    docsReducer(s, { type: 'moveFiles', moves: [{ from, to }] });
+
+  it('moveFiles retargets the tab in both groups', () => {
+    const r = move(split, '/w/a.ts', '/w/b.ts');
+    expect(r.layouts.S1.groups).toEqual([
+      {
+        tabs: [{ id: 'file:/w/k.ts' }, { id: 'file:/w/b.ts', preview: true }],
+        active: 'file:/w/b.ts',
+      },
+      { tabs: [{ id: 'file:/w/b.ts' }, { id: 'file:/w/z.ts' }], active: 'file:/w/b.ts' },
+    ]);
+    expect(r.layouts.S1.activeGroup).toBe(2);
+    expect(r.activeId).toBe('file:/w/b.ts');
+    expect(r.docs.find((d) => d.id === 'file:/w/b.ts')).toMatchObject({
+      path: '/w/b.ts',
+      title: 'b.ts',
+      sessionId: 'S1',
+    });
+    expect(r.docs.some((d) => d.id === 'file:/w/a.ts')).toBe(false);
+  });
+
+  it('a group that is not showing the moved tab keeps its own active tab', () => {
+    const s = docsReducer(split, { type: 'activate', id: z.id, sessionId: 'S1', group: 2 });
+    const r = move(s, '/w/a.ts', '/w/b.ts');
+    expect(groupActive(r, 'S1', 1)).toBe('file:/w/b.ts');
+    expect(groupActive(r, 'S1', 2)).toBe('file:/w/z.ts');
+    expect(r.activeId).toBe('file:/w/z.ts');
+  });
+});

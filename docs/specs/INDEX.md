@@ -18,6 +18,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | 2026-09-28 | [nav-keybindings](2026-09-28-nav-keybindings.md) — User-rebindable Go to Definition / Implementation / References in Settings → Shortcuts (Code navigation group); one Monaco rule set removes the built-in chords and routes by editor identity. |
 | 2026-09-28 | [auto-save](2026-09-28-auto-save.md) — VS Code `files.autoSave` parity: off / afterDelay / onFocusChange / onWindowChange + delay; per-file save store (background tabs saveable), host compare-before-write for auto-saves, conflict banner never clobbers. |
 | 2026-09-28 | [split-editor](2026-09-28-split-editor.md) — VS Code-style split: up to two editor groups left/right, per-group tab strips, one active group feeding every 'active tab' consumer, drag between groups, persisted ratio. |
+| 2026-09-28 | [dirty-quit-guard](2026-09-28-dirty-quit-guard.md) — Quit / window close / session close with unsaved editors asks Save All / Don't Save / Cancel (VS Code parity). One host close guard gates `before-quit` behind a grant (state flushed first), one renderer modal slot, ACK + bounded timeouts, beforeunload save-all kept as backstop except after Don't Save. |
 
 **Epic: architecture-node-graph** — evolve the architecture canvas into a Grasshopper-style typed
 node graph (components with named typed ports, port-to-port wiring, recursive nesting) so an agent

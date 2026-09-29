@@ -21,6 +21,7 @@ import {
   subscribeHtmlView,
 } from '../html-view-store';
 import { IconDoc } from '../icons';
+import { sourceViewStateId } from '../view-state-store';
 import { CodeViewer } from './code-viewer';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
@@ -420,7 +421,7 @@ export function HtmlViewer({
             why ?? undefined,
           )}
         </div>
-        <CodeViewer doc={doc} viewStateId={`html-source:${doc.path}`} />
+        <CodeViewer doc={doc} viewStateId={sourceViewStateId('html', doc.path)} />
         {why && (
           <div className="htmlview__bar">
             <span className="htmlview__bar-text">{why}</span>

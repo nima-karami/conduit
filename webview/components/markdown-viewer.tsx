@@ -34,6 +34,7 @@ import {
   clampScrollTop,
   getViewState,
   setViewState,
+  sourceViewStateId,
   VIEW_STATE_DEBOUNCE_MS,
 } from '../view-state-store';
 import { CodeViewer } from './code-viewer';
@@ -990,7 +991,10 @@ export function MarkdownViewer({
         <button className="viewer__toggle" onClick={() => setSource(false)}>
           View rendered
         </button>
-        <CodeViewer doc={doc} viewStateId={tabStateKey(`markdown-source:${doc.path}`, group)} />
+        <CodeViewer
+          doc={doc}
+          viewStateId={tabStateKey(sourceViewStateId('markdown', doc.path), group)}
+        />
       </div>
     );
   }

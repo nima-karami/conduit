@@ -7,6 +7,7 @@ import {
   markClosing,
   mergeReviewViewState,
   mergeScrollViewState,
+  renameViewState,
   setViewState,
   type ViewState,
 } from '../../webview/view-state-store';
@@ -280,5 +281,48 @@ describe('review list state', () => {
     markClosing(ID);
     mergeReviewViewState(ID, { anchor: { topPath: 'a.ts', offset: 90 } });
     expect(getViewState(ID)).toBeUndefined();
+  });
+});
+
+describe('renameViewState', () => {
+  const ids = ['file:/r1.ts', 'file:/r2.ts', 'file:/r3.ts'];
+  beforeEach(() => {
+    for (const id of ids) {
+      markClosing(id);
+      getViewState(id);
+    }
+  });
+
+  it('moves the stored entry to the new id', () => {
+    setViewState('file:/r1.ts', scroll(120));
+    renameViewState('file:/r1.ts', 'file:/r2.ts');
+    expect(getViewState('file:/r2.ts')).toEqual(scroll(120));
+    expect(getViewState('file:/r1.ts')).toBeUndefined();
+  });
+
+  it("lands the old viewer's late unmount capture on the new id", () => {
+    setViewState('file:/r1.ts', scroll(120));
+    renameViewState('file:/r1.ts', 'file:/r2.ts');
+    setViewState('file:/r1.ts', scroll(500));
+    expect(getViewState('file:/r2.ts')).toEqual(scroll(500));
+  });
+
+  it('follows a chain of renames, and a rename back never loops', () => {
+    renameViewState('file:/r1.ts', 'file:/r2.ts');
+    renameViewState('file:/r2.ts', 'file:/r3.ts');
+    setViewState('file:/r1.ts', scroll(7));
+    expect(getViewState('file:/r3.ts')).toEqual(scroll(7));
+    renameViewState('file:/r3.ts', 'file:/r1.ts');
+    setViewState('file:/r3.ts', scroll(8));
+    expect(getViewState('file:/r1.ts')).toEqual(scroll(8));
+  });
+
+  it('a new doc opened at the old path starts fresh and captures for itself', () => {
+    setViewState('file:/r1.ts', scroll(120));
+    renameViewState('file:/r1.ts', 'file:/r2.ts');
+    expect(getViewState('file:/r1.ts')).toBeUndefined();
+    setViewState('file:/r1.ts', scroll(3));
+    expect(getViewState('file:/r1.ts')).toEqual(scroll(3));
+    expect(getViewState('file:/r2.ts')).toEqual(scroll(120));
   });
 });

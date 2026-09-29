@@ -949,3 +949,67 @@ describe('filePathsClosedWithSession', () => {
     expect(filePathsClosedWithSession(s.docs, 'S3')).toEqual([]);
   });
 });
+
+describe('docsReducer moveFiles', () => {
+  const move = (s: DocsState, ...pairs: [string, string][]) =>
+    docsReducer(s, { type: 'moveFiles', moves: pairs.map(([from, to]) => ({ from, to })) });
+
+  it('retargets the renamed file tab in place, keeping its slot, owner and active state', () => {
+    let s = open(initialDocs, 'file', 'C:\\p\\k.ts');
+    s = open(s, 'file', 'C:\\p\\a.ts');
+    s = open(s, 'file', 'C:\\p\\z.ts', 'S2');
+    s = docsReducer(s, { type: 'switchSession', sessionId: 'S1' });
+    s = docsReducer(s, { type: 'activate', id: 'file:C:\\p\\a.ts', sessionId: 'S1' });
+    const r = move(s, ['C:\\p\\a.ts', 'C:\\p\\b.ts']);
+    expect([...tabs(r), ...tabs(r, 'S2')].map((d) => d.id)).toEqual([
+      'file:C:\\p\\k.ts',
+      'file:C:\\p\\b.ts',
+      'file:C:\\p\\z.ts',
+    ]);
+    expect(tabs(r)[1]).toMatchObject({ path: 'C:\\p\\b.ts', title: 'b.ts', sessionId: 'S1' });
+    expect(r.activeId).toBe('file:C:\\p\\b.ts');
+    expect(remembered(r, 'S1')).toBe('file:C:\\p\\b.ts');
+  });
+
+  it('retargets every listed tab, and nothing else', () => {
+    let s = open(initialDocs, 'file', 'C:\\p\\dir\\c.ts');
+    s = open(s, 'file', 'C:\\p\\dir\\sub\\d.ts');
+    s = open(s, 'file', 'C:\\p\\dir2\\e.ts');
+    const r = move(
+      s,
+      ['C:\\p\\dir\\c.ts', 'C:\\p\\renamed\\c.ts'],
+      ['C:\\p\\dir\\sub\\d.ts', 'C:\\p\\renamed\\sub\\d.ts'],
+    );
+    expect(tabs(r).map((d) => d.path)).toEqual([
+      'C:\\p\\renamed\\c.ts',
+      'C:\\p\\renamed\\sub\\d.ts',
+      'C:\\p\\dir2\\e.ts',
+    ]);
+  });
+
+  it('keeps a preview tab a preview', () => {
+    const s = openMode(initialDocs, 'file', '/w/a.ts', 'preview');
+    const r = move(s, ['/w/a.ts', '/w/b.ts']);
+    expect(tabs(r)[0].id).toBe('file:/w/b.ts');
+    expect(isPreview(r, tabs(r)[0].id)).toBe(true);
+  });
+
+  it('leaves a tab under a moved folder alone when it is not listed', () => {
+    let s = open(initialDocs, 'file', '/w/dir/c.ts');
+    s = open(s, 'file', '/w/dir/kept.ts');
+    const r = move(s, ['/w/dir/c.ts', '/w/new/c.ts']);
+    expect(tabs(r).map((d) => d.path)).toEqual(['/w/new/c.ts', '/w/dir/kept.ts']);
+  });
+
+  it('is a no-op when no listed path is open', () => {
+    const s = open(initialDocs, 'file', '/w/a.ts');
+    expect(move(s, ['/w/other.ts', '/w/b.ts'])).toBe(s);
+  });
+
+  it('never produces two tabs for one path', () => {
+    let s = open(initialDocs, 'file', '/w/a.ts');
+    s = open(s, 'file', '/w/b.ts');
+    const r = move(s, ['/w/a.ts', '/w/b.ts']);
+    expect(r.docs.filter((d) => d.id === 'file:/w/b.ts')).toHaveLength(1);
+  });
+});
