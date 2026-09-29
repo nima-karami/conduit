@@ -116,3 +116,35 @@ export function tabGroupsOf(state: DocsState, id: string): GroupIndex[] {
 export function activeGroupOf(state: DocsState, sessionId: string): GroupIndex {
   return layoutOf(state, sessionId).activeGroup;
 }
+
+export interface GroupView {
+  group: GroupIndex;
+  docs: OpenDoc[];
+  activeDocId: string | null;
+  previewIds: ReadonlySet<string>;
+}
+export interface CenterLayout {
+  groups: readonly GroupView[];
+  activeGroup: GroupIndex;
+}
+
+const groupView = (state: DocsState, sessionId: string, group: GroupIndex): GroupView => ({
+  group,
+  docs: groupDocs(state, sessionId, group),
+  activeDocId: groupActive(state, sessionId, group),
+  previewIds: previewIdsOf(state, sessionId, group),
+});
+
+export function centerLayout(state: DocsState, sessionId: string | undefined): CenterLayout {
+  if (sessionId === undefined) {
+    return {
+      groups: [{ group: 1, docs: [], activeDocId: null, previewIds: new Set() }],
+      activeGroup: 1,
+    };
+  }
+  const layout = layoutOf(state, sessionId);
+  return {
+    groups: layout.groups.map((_, i) => groupView(state, sessionId, i === 0 ? 1 : 2)),
+    activeGroup: layout.activeGroup,
+  };
+}

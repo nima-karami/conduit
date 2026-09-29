@@ -119,13 +119,13 @@ import { diffTabKey } from './diff-tab-scope';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
 import {
   activeGroupOf,
+  centerLayout,
   dirtyPreviewTabs,
   type GroupIndex,
   groupActive,
   groupDocs,
   layoutOf,
   openTargetGroup,
-  previewIdsOf,
   resolveActivateGroup,
   tabGroupsOf,
   tabPreview,
@@ -237,6 +237,7 @@ import { selectionInActiveDoc } from './selection-registry';
 import { selectionSourceFor } from './selection-source';
 import { useSettings } from './settings';
 import { comboLabel, effectiveCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
+import { SPLIT_COPY } from './split-editor-copy';
 import { closeTabSelection } from './tab-close-selection';
 import {
   requestTerminalFocus,
@@ -891,13 +892,43 @@ export function App() {
   // A tab click / Ctrl+Tab / Mod+digit is an R1 producer; the Terminal stop never records
   // (docs/specs/2026-09-22-editor-nav-history.md §2.2).
   const activateDocByUser = useCallback(
-    (id: string | null, sessionId: string) => {
+    (id: string | null, sessionId: string, group?: GroupIndex) => {
       const doc = id === null ? undefined : docStateRef.current.docs.find((d) => d.id === id);
       if (doc && id !== docStateRef.current.activeId) recordNav(navEntryFor(doc));
-      dispatchDocs({ type: 'activate', id, sessionId });
+      dispatchDocs({ type: 'activate', id, sessionId, group });
     },
     [recordNav],
   );
+
+  const focusGroup = useCallback((group: GroupIndex) => {
+    const sessionId = activeIdRef.current;
+    if (sessionId) dispatchDocs({ type: 'focusGroup', sessionId, group });
+  }, []);
+
+  const splitRight = useCallback(() => {
+    const sessionId = activeIdRef.current;
+    if (!sessionId) return;
+    const layout = layoutOf(docStateRef.current, sessionId);
+    const announce = (text: string) => {
+      if (navLiveRef.current) navLiveRef.current.textContent = text;
+    };
+    if (layout.activeGroup === 2) {
+      announce(SPLIT_COPY.capReached);
+      return;
+    }
+    const doc = docStateRef.current.docs.find((d) => d.id === layout.groups[0].active);
+    if (!doc) return;
+    dispatchDocs({ type: 'splitRight', sessionId });
+    announce(SPLIT_COPY.splitOpened(doc.title));
+    if (doc.kind === 'file') requestNavFocus(doc.path, 2);
+    else {
+      requestAnimationFrame(() =>
+        document
+          .querySelector<HTMLElement>('.editor-group[data-group="2"] > .editor-group__body')
+          ?.focus(),
+      );
+    }
+  }, []);
 
   const openGlobalSearchSeeded = useCallback(() => {
     const sessionId = activeIdRef.current ?? '';
@@ -1283,11 +1314,13 @@ export function App() {
     () => docState.docs.filter((d) => d.sessionId === activeId),
     [docState.docs, activeId],
   );
-  const groupOneDocs = useMemo(() => groupDocs(docState, activeId ?? '', 1), [docState, activeId]);
-  const groupOnePreviewIds = useMemo(
-    () => previewIdsOf(docState, activeId ?? '', 1),
-    [docState, activeId],
-  );
+  const layout = useMemo(() => centerLayout(docState, activeId), [docState, activeId]);
+  const splitDisabledReason =
+    layout.activeGroup === 2
+      ? SPLIT_COPY.capReached
+      : layout.groups[0].activeDocId === null
+        ? SPLIT_COPY.terminalCantSplit
+        : null;
   const activeDoc = visibleDocs.find((d) => d.id === docState.activeId) ?? null;
   const activeDocKind = activeDoc?.kind;
   const activeDocPath = activeDoc?.path;
@@ -3731,28 +3764,31 @@ export function App() {
             agents={agents}
             repos={state?.repos ?? []}
             activeId={activeId}
-            docs={groupOneDocs}
-            previewIds={groupOnePreviewIds}
-            activeDocId={docState.activeId}
+            layout={layout}
             files={files}
             diffs={diffs}
-            onSelectDoc={(id) => activateDocByUser(id, activeIdRef.current ?? '')}
-            onCloseDoc={(id) => void closeTab(id, 1)}
+            onFocusGroup={focusGroup}
+            onSplitRight={splitRight}
+            splitDisabledReason={splitDisabledReason}
+            editorSplitRatio={settings.editorSplitRatio}
+            onSplitRatioCommit={(editorSplitRatio) => update({ editorSplitRatio })}
+            onSelectDoc={(id, group) => activateDocByUser(id, activeIdRef.current ?? '', group)}
+            onCloseDoc={(id, group) => void closeTab(id, group)}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenTimedMessages={openTimedMessages}
-            onTabContextMenu={(e, doc) => onTabContextMenu(e, doc, 1)}
+            onTabContextMenu={onTabContextMenu}
             onTerminalTabContextMenu={onTerminalTabContextMenu}
-            onReorderDoc={(dragId, targetId) => dispatchDocs({ type: 'reorder', dragId, targetId })}
-            onPinDoc={(id) => dispatchDocs({ type: 'pinDoc', id })}
+            onReorderDoc={(dragId, targetId, group) =>
+              dispatchDocs({ type: 'reorder', dragId, targetId, group })
+            }
+            onPinDoc={(id, group) => dispatchDocs({ type: 'pinDoc', id, group })}
             dock={dockHandlers('center')}
             splitId={splitId}
             onCloseSplit={() => setSplitId(null)}
             onOpenFile={(p, mode) => openFile(p, undefined, mode)}
             onOpenFileAt={openTerminalFileLink}
             onOpenWeb={openWeb}
-            flashTabId={
-              backgroundFeedback.flashTab?.group === 1 ? backgroundFeedback.flashTab.id : null
-            }
+            flashTab={backgroundFeedback.flashTab}
             onRevealFolder={(path) => post({ type: 'revealInExplorer', path })}
             onOpenCommitReview={(sha, sid, repoRoot) =>
               openReviewForCommit(sha, sid, undefined, repoRoot)

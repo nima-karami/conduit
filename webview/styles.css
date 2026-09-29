@@ -2543,8 +2543,92 @@ body.resizing .panel__resize::after {
   min-height: 0;
   background: transparent;
 }
-.centerpane > .tabbar-wrap {
+/* Editor groups (split-editor plan P7): one grid, the strips in row 1 and the bodies in row 2
+   through subgrid, so a web host placed in row 2 of a column covers exactly its group's body. */
+.editorgroups {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  isolation: isolate;
+}
+.editorgroups[data-resizing] {
+  cursor: col-resize;
+  user-select: none;
+}
+.editor-group {
+  grid-row: 1 / span 2;
+  display: grid;
+  grid-template-rows: subgrid;
+  min-width: 0;
+  min-height: 0;
+}
+.editorgroups > [data-group="1"] {
+  grid-column: 1;
+}
+.editorgroups > [data-group="2"] {
+  grid-column: 3;
+}
+.editor-group > .tabbar-wrap {
   margin-bottom: var(--gutter);
+}
+/* The rule is a shape (thickness), not a hue alone, and only means something with two groups. */
+.editorgroups[data-split] > .editor-group[data-active] > .tabbar-wrap {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.editor-group__body {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+/* Above Monaco's own .minimap{z-index:5}; `isolation` on the grid keeps it there. */
+.editorgroups > .webhost {
+  grid-row: 2;
+  position: relative;
+  z-index: 6;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--r-panel);
+  overflow: hidden;
+}
+/* A <webview> guest swallows pointer events, which would strand a divider drag over it. */
+.editorgroups[data-resizing] > .webhost {
+  pointer-events: none;
+}
+.editorgroups__divider {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  position: relative;
+  z-index: 7;
+  width: var(--gutter);
+  cursor: col-resize;
+  touch-action: none;
+}
+/* The hit area outgrows the gutter, which is 0 at Neon. */
+.editorgroups__divider::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
+}
+.editorgroups__divider::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 0;
+  translate: -50% 0;
+  border-left: 1px solid var(--border);
+}
+.editorgroups__divider:hover::after,
+.editorgroups__divider:focus-visible::after,
+.editorgroups[data-resizing] > .editorgroups__divider::after {
+  border-left: 2px solid var(--accent);
 }
 /* Outer wrapper: full-width flex row containing the scrollable strip + the
    fixed overflow button. The border-bottom lives here so it spans the full
@@ -2603,8 +2687,9 @@ body.resizing .panel__resize::after {
 /* Open-editors dropdown trigger: fixed at the right edge, never scrolls away,
    and rendered only when the strip overflows. Transparent so it reads as part
    of the tab-bar chrome (inherits the wrap's themed/translucent background)
-   rather than painting an opaque black box over it. */
-.tabbar__overflow-btn {
+   rather than painting an opaque black box over it. The split button shares the look. */
+.tabbar__overflow-btn,
+.tabbar__split {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -2664,6 +2749,11 @@ body.resizing .panel__resize::after {
   color: var(--text);
   background: var(--raise);
   box-shadow: var(--elev-1);
+}
+/* The active tab of the group that is not active (spec §8: the inactive-selected treatment). */
+.tab--current {
+  color: var(--state-sel-fg);
+  background: var(--state-sel-bg);
 }
 .tab__spark {
   color: var(--accent);
@@ -3891,7 +3981,7 @@ body.gh-resizing {
    .inkbox is the same scope applied to an ink surface nested BACK inside a .docpage - the
    Review diff body being the one that exists, alongside markdown's own code surfaces. Same
    declarations, so one rule serves them all. */
-:root[data-theme="aero"] :is(.termwrap, .inkbox, .markdown pre, .markdown code) {
+:root[data-theme="aero"] :is(.termwrap, .webhost, .inkbox, .markdown pre, .markdown code) {
   --panel: #1b1d24;
   --raise: #23252e;
   --border: rgba(255, 255, 255, 0.085);
@@ -12649,11 +12739,6 @@ button.toggle--on .toggle__knob {
   color: var(--danger, #e5484d);
 }
 
-.webhost {
-  position: absolute;
-  inset: 0;
-  flex-direction: column;
-}
 .webview {
   display: flex;
   flex-direction: column;
@@ -13492,6 +13577,8 @@ button.toggle--on .toggle__knob {
     .iconbtn,
     .winctl__btn,
     .tabbar__overflow-btn,
+    .tabbar__split,
+    .editorgroups__divider,
     .tab,
     .tab__close,
     .rtab,
@@ -13580,6 +13667,7 @@ button.toggle--on .toggle__knob {
     /* a fill that carries meaning, and so must survive the pointer */
     .filerow--droptarget,
     .tab--active,
+    .tab--current,
     .ns-pill--on,
     .session--active,
     .session--attention,
@@ -13617,6 +13705,8 @@ button.toggle--on .toggle__knob {
     .iconbtn,
     .winctl__btn,
     .tabbar__overflow-btn,
+    .tabbar__split,
+    .editorgroups__divider,
     .tab,
     .tab__close,
     .rtab,
@@ -13787,7 +13877,8 @@ button.toggle--on .toggle__knob {
 ):disabled,
 /* Locked rather than disabled: it stays focusable so its reason is reachable (mf-review D4). */
 .gh__reffilter[aria-disabled="true"],
-.review__stageall[aria-disabled="true"] {
+.review__stageall[aria-disabled="true"],
+.tabbar__split[aria-disabled="true"] {
   opacity: var(--state-disabled-o);
   cursor: default;
 }

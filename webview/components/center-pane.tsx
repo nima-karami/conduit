@@ -6,7 +6,9 @@ import { resolveSessionIcon } from '../../src/session-icon';
 import type { RightPaneTab } from '../../src/settings';
 import type { AgentDefinition, GitInfo, Session } from '../../src/types';
 import { diffTabKey } from '../diff-tab-scope';
+import type { CenterLayout, GroupIndex, GroupView } from '../doc-groups';
 import type { OpenDoc, OpenMode, ReviewSource } from '../docs';
+import { tabStateKey } from '../editor-group-context';
 import { useFileSaveStatuses } from '../file-saves';
 import type { GitActionIntent } from '../git-intent';
 import { IconClock } from '../icons';
@@ -18,6 +20,8 @@ import { CommitDiffView } from './commit-view';
 import { CompareDialog } from './compare-dialog';
 import { DocTabs } from './doc-tabs';
 import { DocView } from './doc-view';
+import { EditorGroupPane } from './editor-group-pane';
+import { EditorGroups } from './editor-groups';
 import { CenterEmptyState } from './empty-state';
 import { GitHistoryView } from './git-history-view';
 import { MissingHomeState, StartRefusedState } from './missing-home-state';
@@ -54,11 +58,15 @@ export function CenterPane({
   agents,
   repos,
   activeId,
-  docs,
-  previewIds,
-  activeDocId,
+  layout,
   files,
   diffs,
+  onFocusGroup,
+  onSplitRight,
+  splitDisabledReason,
+  onGroupStripContextMenu,
+  editorSplitRatio,
+  onSplitRatioCommit,
   onSelectDoc,
   onCloseDoc,
   onRelaunch,
@@ -91,7 +99,7 @@ export function CenterPane({
   onReviewCommit,
   onDocTitle,
   onOpenWeb,
-  flashTabId,
+  flashTab,
   paneTab,
   explorerCollapsed,
   onTogglePanel,
@@ -105,21 +113,25 @@ export function CenterPane({
   /** Folder history — the empty state's "Reopen last" route reads it (D8). */
   repos: RepoDTO[];
   activeId: string | undefined;
-  docs: OpenDoc[];
-  previewIds: ReadonlySet<string>;
-  activeDocId: string | null;
+  layout: CenterLayout;
   files: Map<string, FileContentDTO>;
   diffs: Map<string, FileDiffDTO>;
-  onSelectDoc: (id: string | null) => void;
-  onCloseDoc: (id: string) => void;
+  onFocusGroup: (group: GroupIndex) => void;
+  onSplitRight: () => void;
+  splitDisabledReason: string | null;
+  onGroupStripContextMenu?: (e: React.MouseEvent, group: GroupIndex) => void;
+  editorSplitRatio: number;
+  onSplitRatioCommit: (ratio: number) => void;
+  onSelectDoc: (id: string | null, group: GroupIndex) => void;
+  onCloseDoc: (id: string, group: GroupIndex) => void;
   onRelaunch: (id: string) => void;
   /** Open the timed-message dialog for a session — from the stale card's Waiting line. */
   onOpenTimedMessages?: (sessionId: string) => void;
-  onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
+  onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc, group: GroupIndex) => void;
   onTerminalTabContextMenu?: (e: React.MouseEvent) => void;
-  onReorderDoc?: (dragId: string, targetId: string | null) => void;
+  onReorderDoc?: (dragId: string, targetId: string | null, group: GroupIndex) => void;
   /** Double-click a preview commit-diff tab to pin it. */
-  onPinDoc?: (id: string) => void;
+  onPinDoc?: (id: string, group: GroupIndex) => void;
   dock?: DockHandlers;
   splitId?: string | null;
   onCloseSplit?: () => void;
@@ -169,8 +181,8 @@ export function CenterPane({
   onDocTitle?: (id: string, title: string) => void;
   /** A middle-click on a link inside a web tab's page (host-routed, spec 2026-09-22 S14). */
   onOpenWeb?: (url: string, targetSessionId: string, mode: OpenMode) => void;
-  /** The tab a background open just touched, for the tab strip's cue. */
-  flashTabId?: string | null;
+  /** The tab a background open just touched, for its group's tab strip cue. */
+  flashTab: { id: string; group: GroupIndex } | null;
   /** Which right-pane tab is shown — forwarded to the Review header's panel toggle. */
   paneTab: RightPaneTab;
   explorerCollapsed: boolean;
@@ -194,24 +206,235 @@ export function CenterPane({
     }
   };
   const running = sessions.filter((s) => s.status === 'running');
-  const activeDoc = docs.find((d) => d.id === activeDocId) ?? null;
+  const groupOne = layout.groups[0];
+  const shownDocs = layout.groups.flatMap((v) => v.docs.filter((d) => d.id === v.activeDocId));
   // A diff tab keeps showing what it last rendered while its key is re-read or evicted, so a
   // refresh never flashes "Loading diff…" (spec 2026-09-22-scoped-diff-tabs §2 "Refreshing").
   const heldDiffsRef = useRef(new Map<string, FileDiffDTO>());
-  const liveDiff = activeDoc?.kind === 'diff' ? diffs.get(diffTabKey(activeDoc)) : undefined;
-  const activeDocKey = activeDoc?.id;
   useEffect(() => {
     const held = heldDiffsRef.current;
-    if (activeDocKey && liveDiff) held.set(activeDocKey, liveDiff);
-    for (const id of held.keys()) if (!docs.some((d) => d.id === id)) held.delete(id);
-  }, [liveDiff, activeDocKey, docs]);
+    for (const v of layout.groups) {
+      const d = v.docs.find((x) => x.id === v.activeDocId);
+      const live = d?.kind === 'diff' ? diffs.get(diffTabKey(d)) : undefined;
+      if (d && live) held.set(d.id, live);
+    }
+    for (const id of held.keys()) {
+      if (!layout.groups.some((v) => v.docs.some((d) => d.id === id))) held.delete(id);
+    }
+  }, [layout, diffs]);
   // Prefill the Compare dialog from the singleton Review doc's source so re-opening tweaks the
   // live comparison rather than starting blank (spec 2026-06-30 §2).
-  const reviewSourcePrefill = docs.find((d) => d.kind === 'review')?.reviewSource;
-  const showDoc = activeDoc !== null;
-  // Web tabs stay mounted across tab/session switches (like terminals) so a page never
-  // reloads when you switch away and back; only the active one is visible.
-  const webDocs = docs.filter((d) => d.kind === 'web');
+  const reviewSourcePrefill = layout.groups
+    .flatMap((v) => v.docs)
+    .find((d) => d.kind === 'review')?.reviewSource;
+  // Web tabs stay mounted across tab switches so a page never reloads when you switch away and
+  // back; only each group's active one is visible.
+  const webDocs = layout.groups.flatMap((v) => v.docs.filter((d) => d.kind === 'web'));
+  const webPlacement = (id: string) => {
+    const v = layout.groups.find((g) => g.docs.some((d) => d.id === id));
+    return v ? { group: v.group, visible: v.activeDocId === id } : null;
+  };
+
+  const renderDocBody = (doc: OpenDoc, group: GroupIndex) =>
+    doc.kind === 'review' ? (
+      <ReviewView
+        reviewRepos={reviewRepos}
+        repoChanges={reviewRepoChanges}
+        repoGit={reviewRepoGit}
+        fallbackRoot={reviewFallbackRoot}
+        home={home}
+        diffs={diffs}
+        onRequestDiff={onReviewRequestDiff}
+        onJumpToHunk={onJumpToHunk}
+        onOpenDiff={onOpenReviewDiff}
+        onGitAction={onReviewGitAction}
+        onClose={onCloseReview}
+        source={doc.reviewSource}
+        sessionId={doc.sessionId}
+        sessionLabel={active?.name}
+        viewStateId={tabStateKey(doc.id, group)}
+        onSetSource={onSetReviewSource}
+        onOpenCompare={() => setCompareOpen(true)}
+        paneTab={paneTab}
+        explorerCollapsed={explorerCollapsed}
+        onTogglePanel={onTogglePanel}
+        onShowChanges={onShowChanges}
+      />
+    ) : doc.kind === 'git-history' ? (
+      <GitHistoryView
+        sessionId={doc.sessionId}
+        repoRoot={historyRepoFor(doc.repoRoot, active)}
+        repos={orderRepos(active?.repos ?? [], active?.roots ?? [])}
+        onRetarget={(root) => onRetargetHistory?.(root)}
+        viewStateId={tabStateKey(doc.id, group)}
+        onOpenCommitFile={onOpenCommitFile}
+        onReviewCommit={onReviewCommit}
+      />
+    ) : doc.kind === 'commit-diff' ? (
+      <CommitDiffView sessionId={doc.sessionId} path={doc.path} root={doc.repoRoot} />
+    ) : (
+      // Diff/file viewer state (Monaco model, side-by-side toggle) is per tab; without this key
+      // React reuses one instance across docs and the first diff ever opened leaks its
+      // side-by-side state into every later one.
+      <DocView
+        key={tabStateKey(doc.id, group)}
+        doc={doc}
+        file={files.get(doc.path)}
+        diff={
+          (doc.kind === 'diff' ? diffs.get(diffTabKey(doc)) : undefined) ??
+          heldDiffsRef.current.get(doc.id)
+        }
+        activeSession={active}
+        onOpenFile={onOpenFile}
+        onReviewCommit={onReviewCommit}
+        onClearSideBySide={onClearSideBySide}
+        onCloseDoc={(id) => onCloseDoc(id, group)}
+        onRetryDiff={onRetryDiff}
+        onOpenFullDiff={onOpenFullDiff}
+      />
+    );
+
+  const renderShownDoc = (view: GroupView) => {
+    const doc = shownDocs.find((d) => d.id === view.activeDocId);
+    return doc && doc.kind !== 'web' ? renderDocBody(doc, view.group) : null;
+  };
+
+  const terminalStack = (
+    // Terminals stay mounted (hidden while a doc tab is active) so the PTY survives. Split mode
+    // shows the active + split sessions side by side.
+    <div className="termstack" style={{ display: groupOne.activeDocId !== null ? 'none' : 'flex' }}>
+      {running.map((s) => {
+        const isSplit = s.id === splitId && s.id !== activeId;
+        const visible = s.id === activeId || isSplit;
+        return (
+          <div
+            key={s.id}
+            className="termhost"
+            style={{ display: visible ? 'flex' : 'none', flex: visible ? 1 : undefined }}
+          >
+            {isSplit && (
+              <div className="termhost__bar">
+                <span className="termhost__name">{s.name}</span>
+                <button className="termhost__close" title="Close split" onClick={onCloseSplit}>
+                  ✕
+                </button>
+              </div>
+            )}
+            <div className="termhost__body">
+              <AgentScopeBanner session={s} />
+              <TerminalPane
+                key={`${s.id}:${s.restartSeq ?? 0}`}
+                sessionId={s.id}
+                agentId={s.agentId}
+                cwd={s.cwd ?? s.home}
+                onOpenFile={onOpenFileAt}
+                onRevealFolder={onRevealFolder}
+                onOpenCommitReview={onOpenCommitReview}
+                onOpenTimedMessages={onOpenTimedMessages}
+              />
+            </div>
+          </div>
+        );
+      })}
+      {active && active.status !== 'running' && active.homeMissing && (
+        <div className="session-stale">
+          <MissingHomeState session={active} onFixed={() => setFocusRelaunchFor(active.id)} />
+          {onOpenTimedMessages && (
+            <WaitingLine sessionId={active.id} onOpen={() => onOpenTimedMessages(active.id)} />
+          )}
+        </div>
+      )}
+      {active && active.status !== 'running' && !active.homeMissing && active.startRefusal && (
+        <div className="session-stale">
+          <StartRefusedState session={active} onRelaunch={onRelaunch} relaunchRef={relaunchRef} />
+          {onOpenTimedMessages && (
+            <WaitingLine sessionId={active.id} onOpen={() => onOpenTimedMessages(active.id)} />
+          )}
+        </div>
+      )}
+      {active && active.status === 'stale' && !active.homeMissing && !active.startRefusal && (
+        <div className="session-stale">
+          <p className="session-stale__title">Session not running</p>
+          <button
+            ref={relaunchRef}
+            className="btn btn--primary"
+            onClick={() => onRelaunch(active.id)}
+          >
+            ↻ Relaunch
+          </button>
+          {onOpenTimedMessages && (
+            <WaitingLine sessionId={active.id} onOpen={() => onOpenTimedMessages(active.id)} />
+          )}
+        </div>
+      )}
+      {active && active.status === 'exited' && !active.homeMissing && !active.startRefusal && (
+        <div className="session-stale">
+          <p className="session-stale__title">Process exited</p>
+          <button
+            ref={relaunchRef}
+            className="btn btn--primary"
+            onClick={() => onRelaunch(active.id)}
+          >
+            ↻ Restart
+          </button>
+          {onOpenTimedMessages && (
+            <WaitingLine sessionId={active.id} onOpen={() => onOpenTimedMessages(active.id)} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderGroup = (view: GroupView) => {
+    const g = view.group;
+    return (
+      <EditorGroupPane
+        key={g}
+        group={g}
+        active={layout.activeGroup === g}
+        onFocusGroup={onFocusGroup}
+        top={g === 1 ? <TrustPrompt /> : undefined}
+        tabs={
+          <DocTabs
+            group={g}
+            groupActive={layout.activeGroup === g}
+            showTerminal={g === 1}
+            split={{ disabledReason: splitDisabledReason, onSplit: onSplitRight }}
+            onStripContextMenu={
+              onGroupStripContextMenu ? (e) => onGroupStripContextMenu(e, g) : undefined
+            }
+            docs={view.docs}
+            activeId={view.activeDocId}
+            previewIds={view.previewIds}
+            terminalLabel={active?.name ?? 'Terminal'}
+            terminalIcon={
+              active ? resolveSessionIcon(active, agents) : { type: 'kind', kind: 'terminal' }
+            }
+            onSelect={(id) => onSelectDoc(id, g)}
+            onClose={(id) => onCloseDoc(id, g)}
+            onTabContextMenu={
+              onTabContextMenu ? (e, doc) => onTabContextMenu(e, doc, g) : undefined
+            }
+            onTerminalTabContextMenu={g === 1 ? onTerminalTabContextMenu : undefined}
+            onReorder={
+              onReorderDoc ? (dragId, targetId) => onReorderDoc(dragId, targetId, g) : undefined
+            }
+            onPinDoc={onPinDoc ? (id) => onPinDoc(id, g) : undefined}
+            flashTabId={flashTab?.group === g ? flashTab.id : null}
+            saveStatuses={saveStatuses}
+            moveGrip={
+              dock ? { onDragStart: dock.onDragStart, onDragEnd: dock.onDragEnd } : undefined
+            }
+          />
+        }
+      >
+        <div className="termwrap">
+          {g === 1 && terminalStack}
+          {renderShownDoc(view)}
+        </div>
+      </EditorGroupPane>
+    );
+  };
 
   return (
     <main
@@ -229,230 +452,24 @@ export function CenterPane({
       {sessions.length === 0 ? (
         <CenterEmptyState repos={repos} agents={agents} onNewSession={onNewSession} />
       ) : (
-        <>
-          <DocTabs
-            group={1}
-            groupActive
-            showTerminal
-            split={{ disabledReason: null, onSplit: () => {} }}
-            docs={docs}
-            activeId={activeDocId}
-            previewIds={previewIds}
-            terminalLabel={active?.name ?? 'Terminal'}
-            terminalIcon={
-              active ? resolveSessionIcon(active, agents) : { type: 'kind', kind: 'terminal' }
-            }
-            onSelect={onSelectDoc}
-            onClose={onCloseDoc}
-            onTabContextMenu={onTabContextMenu}
-            onTerminalTabContextMenu={onTerminalTabContextMenu}
-            onReorder={onReorderDoc}
-            onPinDoc={onPinDoc}
-            flashTabId={flashTabId}
-            saveStatuses={saveStatuses}
-            moveGrip={
-              dock ? { onDragStart: dock.onDragStart, onDragEnd: dock.onDragEnd } : undefined
-            }
-          />
-          <TrustPrompt />
-
-          <div className="termwrap">
-            {/* Terminals stay mounted (hidden while a doc tab is active) so the PTY survives.
-            Split mode shows the active + split sessions side by side. */}
-            <div className="termstack" style={{ display: showDoc ? 'none' : 'flex' }}>
-              {running.map((s) => {
-                const isSplit = s.id === splitId && s.id !== activeId;
-                const visible = s.id === activeId || isSplit;
-                return (
-                  <div
-                    key={s.id}
-                    className="termhost"
-                    style={{ display: visible ? 'flex' : 'none', flex: visible ? 1 : undefined }}
-                  >
-                    {isSplit && (
-                      <div className="termhost__bar">
-                        <span className="termhost__name">{s.name}</span>
-                        <button
-                          className="termhost__close"
-                          title="Close split"
-                          onClick={onCloseSplit}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    )}
-                    <div className="termhost__body">
-                      <AgentScopeBanner session={s} />
-                      <TerminalPane
-                        key={`${s.id}:${s.restartSeq ?? 0}`}
-                        sessionId={s.id}
-                        agentId={s.agentId}
-                        cwd={s.cwd ?? s.home}
-                        onOpenFile={onOpenFileAt}
-                        onRevealFolder={onRevealFolder}
-                        onOpenCommitReview={onOpenCommitReview}
-                        onOpenTimedMessages={onOpenTimedMessages}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-              {active && active.status !== 'running' && active.homeMissing && (
-                <div className="session-stale">
-                  <MissingHomeState
-                    session={active}
-                    onFixed={() => setFocusRelaunchFor(active.id)}
-                  />
-                  {onOpenTimedMessages && (
-                    <WaitingLine
-                      sessionId={active.id}
-                      onOpen={() => onOpenTimedMessages(active.id)}
-                    />
-                  )}
-                </div>
-              )}
-              {active &&
-                active.status !== 'running' &&
-                !active.homeMissing &&
-                active.startRefusal && (
-                  <div className="session-stale">
-                    <StartRefusedState
-                      session={active}
-                      onRelaunch={onRelaunch}
-                      relaunchRef={relaunchRef}
-                    />
-                    {onOpenTimedMessages && (
-                      <WaitingLine
-                        sessionId={active.id}
-                        onOpen={() => onOpenTimedMessages(active.id)}
-                      />
-                    )}
-                  </div>
-                )}
-              {active &&
-                active.status === 'stale' &&
-                !active.homeMissing &&
-                !active.startRefusal && (
-                  <div className="session-stale">
-                    <p className="session-stale__title">Session not running</p>
-                    <button
-                      ref={relaunchRef}
-                      className="btn btn--primary"
-                      onClick={() => onRelaunch(active.id)}
-                    >
-                      ↻ Relaunch
-                    </button>
-                    {onOpenTimedMessages && (
-                      <WaitingLine
-                        sessionId={active.id}
-                        onOpen={() => onOpenTimedMessages(active.id)}
-                      />
-                    )}
-                  </div>
-                )}
-              {active &&
-                active.status === 'exited' &&
-                !active.homeMissing &&
-                !active.startRefusal && (
-                  <div className="session-stale">
-                    <p className="session-stale__title">Process exited</p>
-                    <button
-                      ref={relaunchRef}
-                      className="btn btn--primary"
-                      onClick={() => onRelaunch(active.id)}
-                    >
-                      ↻ Restart
-                    </button>
-                    {onOpenTimedMessages && (
-                      <WaitingLine
-                        sessionId={active.id}
-                        onOpen={() => onOpenTimedMessages(active.id)}
-                      />
-                    )}
-                  </div>
-                )}
-            </div>
-
-            {/* Web tabs: always mounted, only the active one visible (keeps pages warm). */}
-            {webDocs.map((d) => (
-              <div
-                key={d.id}
-                className="webhost"
-                style={{ display: d.id === activeDocId ? 'flex' : 'none' }}
-              >
-                <WebView
-                  url={d.path}
-                  onTitle={(title) => onDocTitle?.(d.id, title)}
-                  onOpenLink={(url, background) =>
-                    onOpenWeb?.(url, d.sessionId, background ? 'background' : 'permanent')
-                  }
-                />
-              </div>
-            ))}
-
-            {showDoc &&
-              activeDoc &&
-              activeDoc.kind !== 'web' &&
-              (activeDoc.kind === 'review' ? (
-                <ReviewView
-                  reviewRepos={reviewRepos}
-                  repoChanges={reviewRepoChanges}
-                  repoGit={reviewRepoGit}
-                  fallbackRoot={reviewFallbackRoot}
-                  home={home}
-                  diffs={diffs}
-                  onRequestDiff={onReviewRequestDiff}
-                  onJumpToHunk={onJumpToHunk}
-                  onOpenDiff={onOpenReviewDiff}
-                  onGitAction={onReviewGitAction}
-                  onClose={onCloseReview}
-                  source={activeDoc.reviewSource}
-                  sessionId={activeDoc.sessionId}
-                  sessionLabel={active?.name}
-                  viewStateId={activeDoc.id}
-                  onSetSource={onSetReviewSource}
-                  onOpenCompare={() => setCompareOpen(true)}
-                  paneTab={paneTab}
-                  explorerCollapsed={explorerCollapsed}
-                  onTogglePanel={onTogglePanel}
-                  onShowChanges={onShowChanges}
-                />
-              ) : activeDoc.kind === 'git-history' ? (
-                <GitHistoryView
-                  sessionId={activeDoc.sessionId}
-                  repoRoot={historyRepoFor(activeDoc.repoRoot, active)}
-                  repos={orderRepos(active?.repos ?? [], active?.roots ?? [])}
-                  onRetarget={(root) => onRetargetHistory?.(root)}
-                  viewStateId={activeDoc.id}
-                  onOpenCommitFile={onOpenCommitFile}
-                  onReviewCommit={onReviewCommit}
-                />
-              ) : activeDoc.kind === 'commit-diff' ? (
-                <CommitDiffView
-                  sessionId={activeDoc.sessionId}
-                  path={activeDoc.path}
-                  root={activeDoc.repoRoot}
-                />
-              ) : (
-                // Diff/file viewer state (Monaco model, side-by-side toggle) is per doc; without
-                // this key React reuses one instance across docs and the first diff ever opened
-                // leaks its side-by-side state into every later one.
-                <DocView
-                  key={activeDoc.id}
-                  doc={activeDoc}
-                  file={files.get(activeDoc.path)}
-                  diff={liveDiff ?? heldDiffsRef.current.get(activeDoc.id)}
-                  activeSession={active}
-                  onOpenFile={onOpenFile}
-                  onReviewCommit={onReviewCommit}
-                  onClearSideBySide={onClearSideBySide}
-                  onCloseDoc={onCloseDoc}
-                  onRetryDiff={onRetryDiff}
-                  onOpenFullDiff={onOpenFullDiff}
-                />
-              ))}
-          </div>
-        </>
+        <EditorGroups
+          layout={layout}
+          ratio={editorSplitRatio}
+          onRatioCommit={onSplitRatioCommit}
+          renderGroup={renderGroup}
+          webDocs={webDocs}
+          webPlacement={webPlacement}
+          renderWeb={(d) => (
+            <WebView
+              url={d.path}
+              onTitle={(title) => onDocTitle?.(d.id, title)}
+              onOpenLink={(url, background) =>
+                onOpenWeb?.(url, d.sessionId, background ? 'background' : 'permanent')
+              }
+            />
+          )}
+          onFocusGroup={onFocusGroup}
+        />
       )}
 
       {compareOpen && active && (

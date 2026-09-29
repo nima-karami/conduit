@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { PersistedDoc } from '../../src/protocol';
 import {
   activeGroupOf,
+  centerLayout,
   dirtyPreviewTabs,
   type GroupIndex,
   groupActive,
@@ -583,5 +584,30 @@ describe('group selectors for app consumers', () => {
     }
     expect(tabPreview(s, 'S1', 2, 'file:/x.ts')).toBe(false);
     expect(s.layouts.S1.groups[0]).toEqual(g1Before);
+  });
+});
+
+describe('centerLayout', () => {
+  it('is one empty group for no session', () => {
+    const l = centerLayout(initialDocs, undefined);
+    expect(l.activeGroup).toBe(1);
+    expect(l.groups).toHaveLength(1);
+    expect(l.groups[0]).toMatchObject({ group: 1, docs: [], activeDocId: null });
+    expect(l.groups[0].previewIds.size).toBe(0);
+  });
+
+  it('gives each group its docs, active tab and preview ids', () => {
+    let s = open(initialDocs, '/a.ts', { mode: 'permanent' });
+    s = split(s);
+    s = open(s, '/b.ts', { mode: 'preview', group: 2 });
+    const l = centerLayout(s, 'S1');
+    expect(l.activeGroup).toBe(2);
+    expect(l.groups.map((v) => v.group)).toEqual([1, 2]);
+    expect(l.groups[0].docs.map((d) => d.id)).toEqual(['file:/a.ts']);
+    expect(l.groups[0].activeDocId).toBe('file:/a.ts');
+    expect(l.groups[1].docs.map((d) => d.id)).toEqual(['file:/a.ts', 'file:/b.ts']);
+    expect(l.groups[1].activeDocId).toBe('file:/b.ts');
+    expect([...l.groups[1].previewIds]).toEqual(['file:/b.ts']);
+    expect(l.groups[0].previewIds.size).toBe(0);
   });
 });
