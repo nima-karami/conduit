@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { FileContentDTO, FileDiffDTO, RepoChanges, RepoDTO } from '../../src/protocol';
 import { historyRepoFor, orderRepos } from '../../src/repo-display';
 import type { RepoInfo } from '../../src/repo-scan';
@@ -10,10 +10,12 @@ import type { CenterLayout, GroupIndex, GroupView } from '../doc-groups';
 import type { OpenDoc, OpenMode, ReviewSource } from '../docs';
 import { tabStateKey } from '../editor-group-context';
 import { useFileSaveStatuses } from '../file-saves';
+import { registerFocusTarget, terminalFocusKey } from '../focus-targets';
 import type { GitActionIntent } from '../git-intent';
 import { IconClock } from '../icons';
 import { reviewRequestRoot } from '../review-repos';
 import type { ReviewScope } from '../review-scope';
+import { requestTerminalFocus } from '../terminal-bus';
 import { getTimerSnapshot, subscribeTimers, waitingCountFor } from '../timer-store';
 import { AgentScopeBanner } from './agent-scope-banner';
 import { CommitDiffView } from './commit-view';
@@ -210,6 +212,14 @@ export function CenterPane({
   };
   const running = sessions.filter((s) => s.status === 'running');
   const groupOne = layout.groups[0];
+  // A layout effect: the terminal stack is shown in this same commit, and xterm cannot take focus
+  // while it is display:none.
+  useLayoutEffect(() => {
+    if (!activeId || groupOne.activeDocId !== null) return;
+    return registerFocusTarget(terminalFocusKey(activeId), {
+      focus: () => requestTerminalFocus(activeId),
+    });
+  }, [activeId, groupOne.activeDocId]);
   const shownDocs = layout.groups.flatMap((v) => v.docs.filter((d) => d.id === v.activeDocId));
   // A diff tab keeps showing what it last rendered while its key is re-read or evicted, so a
   // refresh never flashes "Loading diff…" (spec 2026-09-22-scoped-diff-tabs §2 "Refreshing").

@@ -8,7 +8,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function ImageViewer({ doc }: { doc: FileContentDTO }) {
+export function ImageViewer({ doc, focusKey }: { doc: FileContentDTO; focusKey?: string }) {
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
 
   if (!doc.image) {
@@ -26,6 +26,7 @@ export function ImageViewer({ doc }: { doc: FileContentDTO }) {
       caption={caption}
       className="image-viewer"
       onNatural={setDims}
+      focusKey={focusKey}
     />
   );
 }

@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { useFocusTargetRef } from '../focus-targets';
 import { IconRotate, IconZoomIn, IconZoomOut, IconZoomReset } from '../icons';
 import { zoomPercent } from '../image-zoom';
 import { type SharedPanZoomState, usePanZoomStage } from '../use-pan-zoom-stage';
@@ -42,6 +43,7 @@ export function ImageStage({
   onNatural,
   shared,
   sharedRotation,
+  focusKey,
 }: {
   src: string;
   /** Accessible name for the image region (filename / "Original" / "Changed"). */
@@ -56,6 +58,8 @@ export function ImageStage({
   shared?: SharedPanZoomState;
   /** When set, this stage's rotation is linked to siblings sharing the same state. */
   sharedRotation?: SharedRotationState;
+  /** Registers the stage as its tab's focus target (focus-targets.ts). */
+  focusKey?: string;
 }) {
   const [natural, setNatural] = useState<Natural | null>(null);
   const ownRotation = useState(0);
@@ -80,6 +84,7 @@ export function ImageStage({
     setAnnounce,
     setPan,
   } = usePanZoomStage(rotNatural, { resetKey: src, onReset: () => setRotation(0), shared });
+  const stageFocusRef = useFocusTargetRef(focusKey, stageRef);
 
   // Held in a ref so the decode below depends on `src` alone, as it claims to: an inline
   // lambda for onNatural would otherwise re-run it on every parent render, blanking
@@ -138,7 +143,7 @@ export function ImageStage({
   return (
     <div className={`imgstage${className ? ` ${className}` : ''}`}>
       <div
-        ref={stageRef}
+        ref={stageFocusRef}
         className={`imgstage__stage${pannable ? ' imgstage__stage--pannable' : ''}`}
         role="img"
         aria-label={label}

@@ -21,6 +21,7 @@ import { buildPlanHandoff } from '../../src/plan-handoff';
 import { PLANS_DIR, planSlugFromPath } from '../../src/plan-path';
 import type { FileContentDTO } from '../../src/protocol';
 import type { OpenDoc } from '../docs';
+import { useFocusTargetRef } from '../focus-targets';
 import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
 import {
@@ -198,6 +199,7 @@ export function PlanView({ doc, viewStateId, root, sessionId, file, onClose }: P
 
   const editorRef = useRef<PlanEditorHandle>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const bodyFocusRef = useFocusTargetRef(viewStateId, bodyRef);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [armed, setArmed] = useState(false);
   const [everWrote, setEverWrote] = useState(false);
@@ -641,7 +643,8 @@ export function PlanView({ doc, viewStateId, root, sessionId, file, onClose }: P
 
       <div
         className="plan__body"
-        ref={bodyRef}
+        ref={bodyFocusRef}
+        tabIndex={-1}
         onMouseLeave={() => setGutter(null)}
         onKeyDown={(e) => {
           if (e.key !== 'c' || e.ctrlKey || e.metaKey || e.altKey || focusIndex === null) return;

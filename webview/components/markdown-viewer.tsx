@@ -16,6 +16,7 @@ import type { FileContentDTO } from '../../src/protocol';
 import { openExternal, post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
 import { tabStateKey, useEditorGroup } from '../editor-group-context';
+import { useFocusTargetRef } from '../focus-targets';
 import { IconCopy, IconDoc } from '../icons';
 import { buildMarkdownMenuItems } from '../markdown-menu';
 import { remarkAlerts } from '../md-alerts';
@@ -579,6 +580,7 @@ export function MarkdownViewer({
     [doc.path, openFileStable],
   );
   const mdRef = useRef<HTMLDivElement>(null);
+  const mdFocusRef = useFocusTargetRef(vsId, mdRef);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [tocEntries, setTocEntries] = useState<ReturnType<typeof buildTocEntries>>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -994,6 +996,7 @@ export function MarkdownViewer({
         <CodeViewer
           doc={doc}
           viewStateId={tabStateKey(sourceViewStateId('markdown', doc.path), group)}
+          focusKey={vsId}
         />
       </div>
     );
@@ -1037,7 +1040,7 @@ export function MarkdownViewer({
           onClose={closeFind}
         />
       )}
-      <div className="markdown" ref={mdRef} tabIndex={-1} onContextMenu={openMarkdownMenu}>
+      <div className="markdown" ref={mdFocusRef} tabIndex={-1} onContextMenu={openMarkdownMenu}>
         {doc.content.trim().length === 0 ? (
           <EmptyState
             variant="inline"

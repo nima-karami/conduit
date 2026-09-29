@@ -249,7 +249,7 @@ function DocBody({
   if (!file) return <div className="viewer__notice">Loading…</div>;
   if (file.error) return <div className="viewer__notice">{file.error}</div>;
   // Order: diff → image (handled inside CodeViewer) → pdf → html → markdown → code.
-  if (file.pdf) return <PdfViewer doc={file} />;
+  if (file.pdf) return <PdfViewer doc={file} focusKey={stateKey} />;
   // The EXTENSION, never `file.language`: src/lang.ts assigns 'html' to .vue and .svelte too.
   if (isHtmlDocPath(doc.path))
     return (

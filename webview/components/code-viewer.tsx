@@ -11,6 +11,7 @@ import { useEditorGroup } from '../editor-group-context';
 import { buildEditorMenuItems, type EditorMenuIconKey, NAVIGATION } from '../editor-menu';
 import { isSignificantJump } from '../editor-nav';
 import { closeDocForPath, fileSaves, useFileSaveStatus } from '../file-saves';
+import { registerFocusTarget } from '../focus-targets';
 import { fontZoomTarget } from '../font-zoom';
 import {
   IconCommand,
@@ -114,6 +115,7 @@ const EDIT_REASONS: ReadonlySet<monaco.editor.CursorChangeReason> = new Set([
 export function CodeViewer({
   doc,
   viewStateId,
+  focusKey,
   sessionId,
   onReviewCommit,
 }: {
@@ -121,6 +123,8 @@ export function CodeViewer({
   // Defaults to the `file:` doc id; the markdown "View source" toggle passes a distinct id so
   // its transient Monaco view state can't clobber the rendered-mode scroll under the same path.
   viewStateId?: string;
+  /** The focus-target key (focus-targets.ts); a source view passes its outer viewer's. */
+  focusKey?: string;
   /** Owning session — scopes the `git:blame` request to that session's repo. */
   sessionId?: string;
   /** git-blame: open the clicked line's commit in Review (the sha is the full oid). `repoRoot`
@@ -130,6 +134,7 @@ export function CodeViewer({
 }) {
   const group = useEditorGroup();
   const vsId = viewStateId ?? `file:${doc.path}`;
+  const focusAs = focusKey ?? vsId;
   // Read via refs inside the mount-bound editor effect so a new prop identity (onReviewCommit
   // is a fresh arrow each render) never re-creates the editor.
   const sessionIdRef = useRef(sessionId);
@@ -444,6 +449,7 @@ export function CodeViewer({
 
     const unregisterNav = registerNavEditor(doc.path, editor, group);
     const unregisterCodeViewer = registerCodeViewerEditor(editor);
+    const unregisterFocus = registerFocusTarget(focusAs, editor);
     // R3 (docs/specs/2026-09-22-editor-nav-history.md §2.2): judged per cursor event against the
     // previous one. Seeded after the reveal/restore above so that landing is never a jump.
     const seedPos = editor.getPosition();
@@ -484,6 +490,7 @@ export function CodeViewer({
       unregisterSelection();
       unregisterNav();
       unregisterCodeViewer();
+      unregisterFocus();
       jumpSub.dispose();
       contentSub.dispose();
       scrollSub.dispose();
@@ -498,7 +505,7 @@ export function CodeViewer({
       editorRef.current = null;
       setEditor(null);
     };
-  }, [doc.path, doc.language, doc.binary, vsId, group]);
+  }, [doc.path, doc.language, doc.binary, vsId, focusAs, group]);
 
   // A save or an external change arrives as new doc.content; the store reseeds a clean model in
   // place. Only a real reseed carries the view state across (so an agent's rewrite doesn't jump
@@ -746,7 +753,7 @@ export function CodeViewer({
 
   // Image files (including SVG) bypass Monaco — ImageViewer handles them.
   if (doc.image || (doc.binary && doc.error?.includes('too large')))
-    return <ImageViewer doc={doc} />;
+    return <ImageViewer doc={doc} focusKey={focusAs} />;
   if (doc.binary) return <div className="viewer__notice">Binary file — no preview.</div>;
   return (
     <div

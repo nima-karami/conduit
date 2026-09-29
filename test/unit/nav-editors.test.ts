@@ -8,7 +8,6 @@ vi.mock('monaco-editor', () => ({
 }));
 
 import {
-  cancelNavFocus,
   emitCursorJump,
   groupOfEditor,
   LAST_CURSOR_CAP,
@@ -17,7 +16,6 @@ import {
   NAV_REVEAL_SOURCE,
   type NavEditor,
   registerNavEditor,
-  requestNavFocus,
   revealInEditor,
   revealInNavEditor,
   setCursorJumpSink,
@@ -106,47 +104,6 @@ describe('nav-editors registry', () => {
     expect(liveCursor('/w/a.ts')).toEqual({ line: 9, column: 1 });
   });
 
-  it('requestNavFocus before register focuses on register', () => {
-    requestNavFocus('/w/later.ts');
-    const f = fakeEditor();
-    reg('/w/later.ts', f.editor);
-    expect(f.calls).toEqual(['focus']);
-    const again = fakeEditor();
-    reg('/w/later.ts', again.editor);
-    expect(again.calls).toEqual([]);
-  });
-
-  it('a focus request for a path that never mounts an editor is dropped by the next register', () => {
-    requestNavFocus('/w/image.png');
-    reg('/w/other.ts', fakeEditor().editor);
-    const later = fakeEditor();
-    reg('/w/image.png', later.editor);
-    expect(later.calls).toEqual([]);
-  });
-
-  it('a newer focus request replaces a pending one', () => {
-    requestNavFocus('/w/first.ts');
-    requestNavFocus('/w/second.ts');
-    const first = fakeEditor();
-    reg('/w/first.ts', first.editor);
-    expect(first.calls).toEqual([]);
-  });
-
-  it('cancelNavFocus drops a pending request', () => {
-    requestNavFocus('/w/cancelled.ts');
-    cancelNavFocus();
-    const f = fakeEditor();
-    reg('/w/cancelled.ts', f.editor);
-    expect(f.calls).toEqual([]);
-  });
-
-  it('requestNavFocus focuses a registered editor now', () => {
-    const f = fakeEditor();
-    reg('/w/now.ts', f.editor);
-    requestNavFocus('/w/now.ts');
-    expect(f.calls).toEqual(['focus']);
-  });
-
   it('emitCursorJump reaches the registered sink and is a no-op with none', () => {
     const seen: unknown[] = [];
     emitCursorJump('/w/a.ts', { line: 1, column: 1 }, { line: 40, column: 2 });
@@ -184,21 +141,6 @@ describe('nav-editors — two viewers on one path (split-editor D1)', () => {
     expect(groupOfEditor(fakeEditor().editor)).toBeUndefined();
     offRight();
     expect(groupOfEditor(right)).toBeUndefined();
-  });
-
-  it("requestNavFocus with a group focuses only that group's editor", () => {
-    const left = fakeEditor();
-    const right = fakeEditor();
-    reg('/w/pair.ts', left.editor, 1);
-    reg('/w/pair.ts', right.editor, 2);
-    requestNavFocus('/w/pair.ts', 1);
-    expect(left.calls).toEqual(['focus']);
-    expect(right.calls).toEqual([]);
-
-    requestNavFocus('/w/pending.ts', 2);
-    const wrong = fakeEditor();
-    reg('/w/pending.ts', wrong.editor, 1);
-    expect(wrong.calls).toEqual([]);
   });
 
   it('liveCursor and revealInNavEditor prefer the requested group', () => {

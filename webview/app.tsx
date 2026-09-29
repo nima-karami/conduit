@@ -158,6 +158,7 @@ import {
 import { shouldReplaceContent } from './file-freshness';
 import { fileSaves, moveFileBuffer, setDocCloser } from './file-saves';
 import { buildRowChangeMap } from './file-tree';
+import { requestDocFocus, terminalFocusKey } from './focus-targets';
 import {
   affectedDirs,
   applyRedo,
@@ -212,13 +213,7 @@ import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
 import { useMonacoNavKeybindings } from './monaco-nav-keybindings';
 import { registerConduitEditorOpener } from './monaco-opener';
-import {
-  lastCursor,
-  liveCursor,
-  requestNavFocus,
-  revealInNavEditor,
-  setCursorJumpSink,
-} from './nav-editors';
+import { lastCursor, liveCursor, revealInNavEditor, setCursorJumpSink } from './nav-editors';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { probePathExists } from './path-probe';
 import { planExternalChanges } from './plan-store';
@@ -369,17 +364,9 @@ function releaseFileTab(path: string): void {
   clearReveal(path);
 }
 
-/** Spec §10: focus lands in the group's viewer; `fallback` (under the group) when it has no editor. */
-function focusGroupViewer(group: GroupIndex, doc: OpenDoc | undefined, fallback: string): void {
-  if (doc?.kind === 'file') {
-    requestNavFocus(doc.path, group);
-    return;
-  }
-  requestAnimationFrame(() =>
-    document
-      .querySelector<HTMLElement>(`.editor-group[data-group="${group}"] ${fallback}`)
-      ?.focus(),
-  );
+/** Spec §10: a user activation lands keyboard focus in the view of tab `id` (null: the Terminal). */
+function focusView(sessionId: string, group: GroupIndex, id: string | null): void {
+  requestDocFocus(id === null ? terminalFocusKey(sessionId) : tabStateKey(id, group));
 }
 
 /** A tab's per-group view state goes with it to the other group, or starts there as a copy
@@ -958,7 +945,11 @@ export function App() {
     (id: string | null, sessionId: string, group?: GroupIndex) => {
       const doc = id === null ? undefined : docStateRef.current.docs.find((d) => d.id === id);
       if (doc && id !== docStateRef.current.activeId) recordNav(navEntryFor(doc));
+      const owner = doc?.sessionId ?? sessionId;
+      const g = group ?? resolveActivateGroup(docStateRef.current, owner, id);
       dispatchDocs({ type: 'activate', id, sessionId, group });
+      // After recordNav, which cancels any focus request still waiting to mount.
+      focusView(owner, g, id);
     },
     [recordNav],
   );
@@ -991,7 +982,7 @@ export function App() {
     }
     dispatchDocs({ type: 'splitRight', sessionId });
     announce(SPLIT_COPY.splitOpened(doc.title));
-    focusGroupViewer(2, doc, '> .editor-group__body');
+    focusView(sessionId, 2, doc.id);
   }, []);
 
   const moveTabToGroup = useCallback(
@@ -1018,7 +1009,7 @@ export function App() {
           ? SPLIT_COPY.splitOpened(doc.title)
           : null;
       if (said !== null && navLiveRef.current) navLiveRef.current.textContent = said;
-      focusGroupViewer(toGroup, doc, '> .editor-group__body');
+      focusView(sessionId, toGroup, id);
     },
     [],
   );
@@ -1029,8 +1020,7 @@ export function App() {
     const target = layoutOf(docStateRef.current, sessionId).groups[group - 1];
     if (!target) return;
     dispatchDocs({ type: 'focusGroup', sessionId, group });
-    const doc = docStateRef.current.docs.find((d) => d.id === target.active);
-    focusGroupViewer(group, doc, '> .editor-group__body');
+    focusView(sessionId, group, target.active);
   }, []);
 
   const openGlobalSearchSeeded = useCallback(() => {
@@ -1074,6 +1064,19 @@ export function App() {
   );
   // A pending unsaved-changes close prompt; Cancel and Esc settle it through the dialog's onClose.
   const closePromptRef = useRef<((closed: boolean) => void) | null>(null);
+  /** Ctrl+W and a tab's own close: focus lands on what the group shows next (spec §10). */
+  const closeTabByUser = useCallback(async (id: string, group: GroupIndex) => {
+    const sessionId = docStateRef.current.docs.find((d) => d.id === id)?.sessionId;
+    if (sessionId === undefined || !(await closeTabRef.current(id, group))) return;
+    // Whether or not the close has rendered yet, this is the state after it: the reducer ignores
+    // a close whose tab is already gone.
+    const after = layoutOf(
+      docsReducer(docStateRef.current, { type: 'close', id, group }),
+      sessionId,
+    );
+    const g = after.groups[group - 1] ? group : 1;
+    focusView(sessionId, g, after.groups[g - 1]?.active ?? null);
+  }, []);
   // Nav back/forward (modal-guarded) are declared after useNavHistory below; actionMap
   // reaches them through refs to avoid the same ordering problem as undo/redo.
   const navBackRef = useRef<() => void>(() => {});
@@ -1235,7 +1238,7 @@ export function App() {
       // Close the active editor tab (VS Code Mod+W). No-op when the Terminal is active.
       closeTab: () => {
         const id = docStateRef.current.activeId;
-        if (id) void closeTabRef.current(id, currentGroup());
+        if (id) void closeTabByUser(id, currentGroup());
       },
       // Reopen the most recently closed tab (VS Code Mod+Shift+T). Invoked via a stable ref
       // for the same ordering reason as undo/redo (openFile/openDiff are declared later).
@@ -1270,9 +1273,7 @@ export function App() {
           if (editorEl) editorEl.focus();
           else active?.blur();
         } else {
-          const sessionId = currentSessionId();
           activate(null);
-          requestAnimationFrame(() => requestTerminalFocus(sessionId));
         }
       },
     };
@@ -1289,6 +1290,7 @@ export function App() {
     splitRight,
     moveTabToGroup,
     focusGroupByCommand,
+    closeTabByUser,
   ]);
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
@@ -1448,13 +1450,8 @@ export function App() {
     groupCountRef.current = { sessionId: activeId, count: layout.groups.length };
     if (prev.sessionId !== activeId || prev.count !== 2 || layout.groups.length !== 1) return;
     const groupOne = document.querySelector('.editor-group[data-group="1"]');
-    if (groupOne?.contains(document.activeElement)) return;
-    const view = layout.groups[0];
-    focusGroupViewer(
-      1,
-      view.docs.find((d) => d.id === view.activeDocId),
-      '[role="tab"][aria-selected="true"]',
-    );
+    if (!activeId || groupOne?.contains(document.activeElement)) return;
+    focusView(activeId, 1, layout.groups[0].activeDocId);
   }, [activeId, layout]);
   const activeDoc = visibleDocs.find((d) => d.id === docState.activeId) ?? null;
   const activeDocKind = activeDoc?.kind;
@@ -2078,8 +2075,7 @@ export function App() {
     }
     dispatchDocs({ type: 'joinGroups', sessionId });
     if (navLiveRef.current) navLiveRef.current.textContent = SPLIT_COPY.groupClosed;
-    const doc = docStateRef.current.docs.find((d) => d.id === shown);
-    focusGroupViewer(1, doc, '> .editor-group__body');
+    focusView(sessionId, 1, shown);
   }, []);
 
   useEffect(() => {
@@ -3353,7 +3349,7 @@ export function App() {
       // pending reveal instead of letting the mount consume the stale one.
       if (doc.kind === 'file' && !(e.pos && wasActive && revealInNavEditor(doc.path, e.pos, g))) {
         if (e.pos) setReveal(doc.path, e.pos, g);
-        requestNavFocus(doc.path, g);
+        focusView(doc.sessionId, g, doc.id);
       }
       // An entry left without a record (a session switch) has no pos; its view state restores the
       // cursor it was left at, which is what the editor will show.
@@ -3364,8 +3360,9 @@ export function App() {
     if (!(await probePathExists(e.doc.path))) return 'dead';
     if (!sessionsRef.current.some((s) => s.id === e.sessionId)) return 'dead';
     setCenterView('editor');
+    const g = openTargetGroup(docStateRef.current, e.sessionId);
     openFileRef.current(e.doc.path, e.sessionId, 'preview', { reveal: e.pos, record: false });
-    requestNavFocus(e.doc.path);
+    focusView(e.sessionId, g, `file:${canonicalPath(e.doc.path)}`);
     announce(baseName(e.doc.path));
     return 'applied';
   }, []);
@@ -4108,7 +4105,7 @@ export function App() {
             editorSplitRatio={settings.editorSplitRatio}
             onSplitRatioCommit={(editorSplitRatio) => update({ editorSplitRatio })}
             onSelectDoc={(id, group) => activateDocByUser(id, activeIdRef.current ?? '', group)}
-            onCloseDoc={(id, group) => void closeTab(id, group)}
+            onCloseDoc={(id, group) => void closeTabByUser(id, group)}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenTimedMessages={openTimedMessages}
             onTabContextMenu={onTabContextMenu}

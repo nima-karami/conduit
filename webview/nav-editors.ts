@@ -17,10 +17,6 @@ export type NavEditor = Pick<
 
 const editors = createPathRegistry<NavEditor>(canonicalPath);
 const editorGroups = new Map<unknown, GroupIndex>();
-// One slot, consumed by the very next register whatever its path: a doc that renders without
-// Monaco (image, PDF, rendered markdown) never registers, and a request left pending for it would
-// steal focus from some unrelated editor much later.
-let pendingFocus: { path: string; group?: GroupIndex } | null = null;
 
 export function registerNavEditor(
   path: string,
@@ -30,13 +26,6 @@ export function registerNavEditor(
   const key = canonicalPath(path);
   const unregister = editors.register(key, editor, group);
   editorGroups.set(editor, group);
-  if (
-    pendingFocus?.path === key &&
-    (pendingFocus.group === undefined || pendingFocus.group === group)
-  ) {
-    editor.focus();
-  }
-  pendingFocus = null;
   let registered = true;
   return () => {
     if (!registered) return;
@@ -110,23 +99,4 @@ export function setCursorJumpSink(sink: CursorJumpSink | null): void {
 
 export function emitCursorJump(path: string, from: CursorPos, to: CursorPos): void {
   jumpSink?.(path, from, to);
-}
-
-/** Focus now when mounted; otherwise on the next register for `path` (a tab still mounting). */
-export function requestNavFocus(path: string, group?: GroupIndex): void {
-  const key = canonicalPath(path);
-  const editor =
-    group === undefined
-      ? editors.get(key)
-      : editors
-          .entries(key)
-          .filter((e) => e.group === group)
-          .pop()?.value;
-  pendingFocus = editor ? null : { path: key, group };
-  editor?.focus();
-}
-
-/** A user navigation elsewhere supersedes a Back/Forward landing that has not mounted yet. */
-export function cancelNavFocus(): void {
-  pendingFocus = null;
 }
