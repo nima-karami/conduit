@@ -28,11 +28,12 @@ beforeEach(() => {
 });
 
 describe('tab view state (split-editor plan P5)', () => {
-  it("a file tab's ids are the doc id plus its markdown and HTML source ids", () => {
+  it("a file tab's ids are the doc id plus its markdown, HTML and plan source ids", () => {
     expect(tabViewStateIds(doc)).toEqual([
       'file:/w/a.md',
       'markdown-source:/w/a.md',
       'html-source:/w/a.md',
+      'plan-source:file:/w/a.md',
     ]);
     expect(tabViewStateIds({ id: 'review:@review', kind: 'review', path: '@review' })).toEqual([
       'review:@review',

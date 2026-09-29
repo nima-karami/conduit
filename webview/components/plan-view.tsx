@@ -21,6 +21,7 @@ import { buildPlanHandoff } from '../../src/plan-handoff';
 import { PLANS_DIR, planSlugFromPath } from '../../src/plan-path';
 import type { FileContentDTO } from '../../src/protocol';
 import type { OpenDoc } from '../docs';
+import { tabStateKey, useEditorGroup } from '../editor-group-context';
 import { useFocusTargetRef } from '../focus-targets';
 import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
@@ -43,7 +44,7 @@ import {
   subscribeTerminalBus,
 } from '../terminal-bus';
 import { pushToast } from '../toast-store';
-import { getViewState, setViewState } from '../view-state-store';
+import { getViewState, planSourceViewStateId, setViewState } from '../view-state-store';
 import { PlanActionBar } from './plan-action-bar';
 import { PlanDocContext } from './plan-code-block';
 import { CommentComposer, PlanCommentsPanel } from './plan-comments-panel';
@@ -208,6 +209,7 @@ export function PlanView({ doc, viewStateId, root, sessionId, file, onClose }: P
   const [gutter, setGutter] = useState<{ index: number; top: number } | null>(null);
   const [composerAt, setComposerAt] = useState<{ index: number; top: number } | null>(null);
   const [announce, setAnnounce] = useState('');
+  const sourceKey = tabStateKey(planSourceViewStateId(doc.id), useEditorGroup());
   const sourceRef = useRef(false);
   const [source, setSource] = useState(false);
   /** The comment patch in flight, so a `plan:error op:'comments'` can mark it and offer Retry. */
@@ -231,11 +233,11 @@ export function PlanView({ doc, viewStateId, root, sessionId, file, onClose }: P
         : 'saved';
 
   useLayoutEffect(() => {
-    const stored = getViewState(`plan-source:${viewStateId}`);
+    const stored = getViewState(sourceKey);
     const on = stored?.kind === 'planSource' ? stored.source : false;
     sourceRef.current = on;
     setSource(on);
-  }, [viewStateId]);
+  }, [sourceKey]);
 
   const cancelWrite = useCallback((): void => {
     if (timerRef.current !== null) clearTimeout(timerRef.current);
@@ -358,8 +360,8 @@ export function PlanView({ doc, viewStateId, root, sessionId, file, onClose }: P
     setSource(next);
     setGutter(null);
     setComposerAt(null);
-    setViewState(`plan-source:${viewStateId}`, { kind: 'planSource', source: next });
-  }, [viewStateId]);
+    setViewState(sourceKey, { kind: 'planSource', source: next });
+  }, [sourceKey]);
 
   const live = sessionId !== undefined && hasLiveTerminal(sessionId);
   const openUnsent = useMemo(

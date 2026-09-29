@@ -124,11 +124,15 @@ export function setViewState(id: string, state: ViewState): void {
 export const sourceViewStateId = (kind: 'markdown' | 'html', path: string) =>
   `${kind}-source:${path}`;
 
+/** The id a plan tab keeps its rendered/source toggle under. */
+export const planSourceViewStateId = (docId: string) => `plan-source:${docId}`;
+
 /** Every id a file tab's viewers key view state by. */
 export const fileViewStateIds = (path: string) => [
   `file:${path}`,
   sourceViewStateId('markdown', path),
   sourceViewStateId('html', path),
+  planSourceViewStateId(`file:${path}`),
 ];
 
 /** Move a doc's entry to its new id when its file is renamed (see `renamed` above). */
