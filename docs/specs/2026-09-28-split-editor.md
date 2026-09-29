@@ -65,7 +65,9 @@ CodeViewers on the same path break dirty/save/nav**. That is inferred from the s
   **always** holds the session's Terminal pseudo-tab first. Group 2 never has one.
 - **Doc vs. tab.** A doc (identity, ownership, title, `reviewSource`, …) exists **once**. A tab is
   a doc's membership in a group. A splittable doc can be a member of both groups (two tabs, one
-  doc). **Preview is per tab:** at most one preview tab per group per session.
+  doc). **Preview is per tab:** at most one preview tab per group per session. A file or diff
+  preview and the commit-diff `@preview` slot may coexist in one group: the slot is its own
+  preview kind (amended in the review round).
 - **Active group.** Exactly one per session. Every consumer listed in §3 reads the active group's
   active tab.
 
@@ -192,7 +194,9 @@ disabled.
 
 - **I1.** Every tab references an existing doc owned by the session whose groups hold it.
 - **I2.** A doc appears at most once per group, and a move-only kind appears in at most one group.
-- **I3.** At most one preview tab per group per session.
+- **I3.** At most one preview tab per group per session, counting file and diff previews. The
+  commit-diff `@preview` slot is its own preview kind and may sit beside one (amended in the
+  review round).
 - **I4.** G2 is never empty. Emptying it removes it and sets `activeGroup = 1`.
 - **I5.** The Terminal sentinel is in G1 only, is always first, and can't be moved or closed.
 - **I6.** A doc with zero tabs is removed from `docs[]` (the dirty prompt already ran).
