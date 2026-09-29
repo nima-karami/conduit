@@ -31,6 +31,8 @@ function makeRepo() {
 }
 
 const SCROLLER = '.rightpane__scroll--files';
+// src, deep, x.ts, a.txt, b.txt, zz.txt and the filler, with src/deep expanded.
+const TREE_ROWS = 6 + FILLER.length;
 
 const fileRow = (page, name) =>
   page
@@ -211,9 +213,23 @@ runScenario('files-follow-tab', async ({ page, log }) => {
     `F4: selection changed ${JSON.stringify(before.selected)} → ${JSON.stringify(after.selected)}`,
   );
   assert(after.roving === before.roving, `F4: roving row ${before.roving} → ${after.roving}`);
+  // A far activation scrolls the selected row out of the window; back at the top it must still be
+  // the selection.
+  await activateTab(page, 'zz.txt');
+  await expectRevealed(page, ['zz.txt'], 'F4 far zz.txt tab');
+  await waitRevealedInView(page, 'F4 far zz.txt tab');
+  await setScrollTop(page, 0);
+  await fileRow(page, 'src').waitFor({ state: 'visible', timeout: 5000 });
+  const back = await treeState(page);
+  assert(
+    JSON.stringify(back.selected) === JSON.stringify(before.selected),
+    `F4: selection after a far activation ${JSON.stringify(before.selected)} → ${JSON.stringify(back.selected)}`,
+  );
   log('F4: focus, selection and roving row untouched ✓');
 
   // ── F7: a refresh with the same target does not scroll ────────────────────────
+  // zz.txt is already the active tab (F4); re-target so its reveal scroll genuinely runs.
+  await activateTab(page, 'a.txt');
   await activateTab(page, 'zz.txt');
   await expectRevealed(page, ['zz.txt'], 'F7 zz.txt tab');
   await waitRevealedInView(page, 'F7 precondition');
@@ -221,8 +237,21 @@ runScenario('files-follow-tab', async ({ page, log }) => {
   await page.locator(`.files__bar button[aria-label="Refresh ${sectionLabel}"]`).click();
   await page.waitForTimeout(1500);
   assert((await scrollTopOf(page)) === 0, 'F7: a refresh with the same target scrolled the tree');
+  // Once its reveal has scrolled, the focused row is no longer pinned: a pin widens the window
+  // contiguously, so a permanent one would mount every row between the top and zz.txt.
+  const mounted = await page.evaluate(() => ({
+    rows: document.querySelectorAll('.files-section__tree .filerow').length,
+    zz: Array.from(document.querySelectorAll('.filerow__name')).some(
+      (n) => n.textContent === 'zz.txt',
+    ),
+  }));
+  assert(
+    !mounted.zz && mounted.rows < TREE_ROWS,
+    `F7: at the top with zz.txt focused, ${mounted.rows}/${TREE_ROWS} rows mounted (zz.txt mounted: ${mounted.zz})`,
+  );
+  await scrollToRow(page, 'zz.txt');
   await expectRevealed(page, ['zz.txt'], 'F7 after refresh');
-  log('F7: refresh keeps scrollTop ✓');
+  log(`F7: refresh keeps scrollTop; ${mounted.rows}/${TREE_ROWS} rows mounted at the top ✓`);
 
   // ── F5: a tab that maps to no file clears the highlight ───────────────────────
   await clickTerminalTab(page);

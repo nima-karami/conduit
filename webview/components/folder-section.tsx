@@ -223,6 +223,10 @@ export function FolderSection({
   // The file the tree is currently expanding toward. A ref so the dirEntries-driven
   // advance reads it without re-subscribing.
   const revealTargetRef = useRef<string | null>(null);
+  // The revealed path whose scroll-into-view has already run. The revealed row is pinned into the
+  // window only until then: pins widen the window contiguously, so a permanent pin on a deep file
+  // would mount every row between it and wherever the user scrolls.
+  const scrolledRevealRef = useRef<string | null>(null);
   const collapseRef = useRef<HTMLButtonElement>(null);
   const treeRef = useRef<HTMLDivElement>(null);
   // The tree's first-row offset inside the shared scroller's content (spec §2.2 layout).
@@ -866,8 +870,8 @@ export function FolderSection({
   if (!collapsed) walk(roots, 0);
 
   // Rows that must stay mounted regardless of scroll. An active inline draft must never unmount
-  // mid-edit (its input would blur→cancel), so pin its anchor row; the revealed row is pinned so
-  // the reveal-scroll effect always finds a mounted target. A root-level create draft renders
+  // mid-edit (its input would blur→cancel), so pin its anchor row; the revealed row is pinned until
+  // the reveal-scroll effect has found it (`scrolledRevealRef`). A root-level create draft renders
   // outside the list (below) and needs no pin.
   const pins: number[] = [];
   if (draft) {
@@ -879,19 +883,23 @@ export function FolderSection({
   }
   const revealedIndex =
     revealedPath === null ? -1 : rows.findIndex((r) => r.node.path === revealedPath);
-  if (revealedIndex >= 0) pins.push(revealedIndex);
   const revealedShown = revealedIndex >= 0;
+  if (revealedShown && scrolledRevealRef.current !== revealedPath) pins.push(revealedIndex);
 
-  // Scroll the revealed row into view AFTER it commits: it is pinned into the window (see
-  // `pins`), so this always finds a mounted row. Nudge the shared scroller first, then let the
-  // browser refine to the exact position. Keyed on the path and its visibility, not the tree: a
+  // Scroll the revealed row into view AFTER it commits: it is pinned into the window for this
+  // render (see `pins`), so this always finds a mounted row. Nudge the shared scroller first,
+  // then let the browser refine to the exact position. Keyed on the path and its visibility, not the tree: a
   // refresh re-renders the same target and must not pull the list back to it, while expanding
   // its last ancestor (shown false→true) must.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only re-run when the target changes
   useLayoutEffect(() => {
-    if (!revealedShown || revealedPath === null) return;
+    if (!revealedShown || revealedPath === null) {
+      scrolledRevealRef.current = null;
+      return;
+    }
     const el = treeRef.current;
     if (!el) return;
+    scrolledRevealRef.current = revealedPath;
     scrollPathIntoView(revealedPath);
     for (const rowEl of el.querySelectorAll<HTMLElement>('.filerow')) {
       // Match by dataset rather than a CSS attribute selector — Windows paths carry
