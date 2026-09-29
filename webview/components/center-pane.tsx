@@ -231,6 +231,10 @@ export function CenterPane({
       ) : (
         <>
           <DocTabs
+            group={1}
+            groupActive
+            showTerminal
+            split={{ disabledReason: null, onSplit: () => {} }}
             docs={docs}
             activeId={activeDocId}
             previewIds={previewIds}

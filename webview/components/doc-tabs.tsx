@@ -10,6 +10,7 @@ import { menuToggleIntent } from '../../src/menu-toggle';
 import type { ResolvedSessionIcon } from '../../src/session-icon';
 import { AUTO_SAVE_COPY } from '../auto-save-copy';
 import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
+import type { GroupIndex } from '../doc-groups';
 import type { OpenDoc } from '../docs';
 import { isPanelDragTarget } from '../drag-guard';
 import { stampFileDrag } from '../file-drag-data';
@@ -20,11 +21,13 @@ import {
   IconChevronDown,
   IconClose,
   IconReview,
+  IconSplit,
   IconWarning,
   SessionGlyph,
 } from '../icons';
 import { middleClickProps } from '../middle-click';
 import { saveDocByPath } from '../save-registry';
+import { SPLIT_COPY } from '../split-editor-copy';
 import { isStripOverflowing, scrollTargetTabId, TERMINAL_TABID } from '../tab-overflow';
 import { ContextMenu, type MenuState } from './context-menu';
 
@@ -36,6 +39,11 @@ function useDirtySet(): ReadonlySet<string> {
 const NO_SAVE_STATUSES: ReadonlyMap<string, FileSaveStatus> = new Map();
 
 export function DocTabs({
+  group,
+  groupActive,
+  showTerminal,
+  split,
+  onStripContextMenu,
   docs,
   activeId,
   previewIds,
@@ -51,6 +59,13 @@ export function DocTabs({
   flashTabId = null,
   saveStatuses = NO_SAVE_STATUSES,
 }: {
+  group: GroupIndex;
+  /** The strip's group is the active one: its active tab takes the full active treatment. */
+  groupActive: boolean;
+  /** Group 1 only (spec I5). */
+  showTerminal: boolean;
+  split: { disabledReason: string | null; onSplit: () => void };
+  onStripContextMenu?: (e: React.MouseEvent) => void;
   docs: OpenDoc[];
   activeId: string | null;
   previewIds: ReadonlySet<string>;
@@ -205,9 +220,10 @@ export function DocTabs({
     setDropdownMenu({
       x: rect.right,
       y: rect.bottom + 2,
-      items: [terminalItem, ...docItems],
+      items: showTerminal ? [terminalItem, ...docItems] : docItems,
     });
   }, [
+    showTerminal,
     docs,
     activeId,
     previewIds,
@@ -219,11 +235,23 @@ export function DocTabs({
     scrollTabIntoView,
   ]);
 
+  const activeClass = groupActive ? 'tab--active' : 'tab--current';
+
   return (
     <div className="tabbar-wrap">
       <div
         ref={stripRef}
         className="tabbar"
+        role="tablist"
+        aria-label={SPLIT_COPY.tablistLabel(group)}
+        onContextMenu={
+          onStripContextMenu
+            ? (e) => {
+                if ((e.target as Element).closest('[data-tabid]')) return;
+                onStripContextMenu(e);
+              }
+            : undefined
+        }
         draggable={!!moveGrip}
         onDragStart={
           moveGrip
@@ -236,15 +264,20 @@ export function DocTabs({
         }
         onDragEnd={moveGrip?.onDragEnd}
       >
-        <button
-          data-tabid={TERMINAL_TABID}
-          className={`tab ${activeId === null ? 'tab--active' : ''}`}
-          onClick={() => onSelect(null)}
-          onContextMenu={onTerminalTabContextMenu}
-        >
-          <SessionGlyph icon={terminalIcon} size={13} className="tab__spark" />
-          <span>{terminalLabel}</span>
-        </button>
+        {showTerminal && (
+          <button
+            data-tabid={TERMINAL_TABID}
+            role="tab"
+            tabIndex={0}
+            aria-selected={activeId === null}
+            className={`tab ${activeId === null ? activeClass : ''}`}
+            onClick={() => onSelect(null)}
+            onContextMenu={onTerminalTabContextMenu}
+          >
+            <SessionGlyph icon={terminalIcon} size={13} className="tab__spark" />
+            <span>{terminalLabel}</span>
+          </button>
+        )}
         {docs.map((d) => (
           <div
             key={d.id}
@@ -255,7 +288,7 @@ export function DocTabs({
             // Preview is signalled visually by italic only; carry it in the accessible
             // name too so it isn't conveyed by styling alone (WCAG 1.4.1, spec §10).
             aria-label={previewIds.has(d.id) ? `${d.title} (preview)` : undefined}
-            className={`tab ${activeId === d.id ? 'tab--active' : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''} ${previewIds.has(d.id) ? 'tab--preview' : ''} ${flashTab === d.id ? 'tab--flash' : ''}`}
+            className={`tab ${activeId === d.id ? activeClass : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''} ${previewIds.has(d.id) ? 'tab--preview' : ''} ${flashTab === d.id ? 'tab--flash' : ''}`}
             onClick={() => onSelect(d.id)}
             // Middle-click closes the tab (VS Code parity), routing through the same
             // unsaved-changes path as the × button. `auxclick` (down+up on the element)
@@ -394,6 +427,19 @@ export function DocTabs({
           <IconChevronDown size={13} />
         </button>
       )}
+
+      <button
+        type="button"
+        className="tabbar__split"
+        aria-label={SPLIT_COPY.splitButton}
+        aria-disabled={split.disabledReason !== null || undefined}
+        title={split.disabledReason ?? SPLIT_COPY.splitRight}
+        onClick={() => {
+          if (split.disabledReason === null) split.onSplit();
+        }}
+      >
+        <IconSplit size={13} />
+      </button>
 
       {dropdownMenu && (
         <ContextMenu

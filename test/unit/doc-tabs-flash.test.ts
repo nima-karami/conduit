@@ -71,6 +71,10 @@ async function render(flashTabId: string | null) {
   await act(async () =>
     root?.render(
       createElement(DocTabs, {
+        group: 1,
+        groupActive: true,
+        showTerminal: true,
+        split: { disabledReason: null, onSplit: () => {} },
         docs,
         activeId: 'file:/a.ts',
         previewIds: new Set<string>(),

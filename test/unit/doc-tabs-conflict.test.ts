@@ -56,6 +56,10 @@ async function render(saveStatuses: ReadonlyMap<string, FileSaveStatus>) {
   await act(async () =>
     root?.render(
       createElement(DocTabs, {
+        group: 1,
+        groupActive: true,
+        showTerminal: true,
+        split: { disabledReason: null, onSplit: () => {} },
         docs,
         activeId: null,
         previewIds: new Set<string>(),
