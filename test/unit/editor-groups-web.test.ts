@@ -59,7 +59,7 @@ afterEach(async () => {
   guestFocus.length = 0;
 });
 
-describe('EditorGroups web hosts (review L4.4)', () => {
+describe('EditorGroups web hosts', () => {
   it('a pointerdown on a web host focuses its group', async () => {
     host = document.createElement('div');
     document.body.append(host);

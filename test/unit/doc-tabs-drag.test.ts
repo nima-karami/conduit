@@ -115,7 +115,7 @@ describe('DocTabs drag-out', () => {
     expect(onReorder).toHaveBeenCalledWith('file:/w/a.ts', 'file:/w/c.ts');
   });
 
-  it('a diff tab stamps only the private tab type and allows the Ctrl duplicate (review L4.3)', async () => {
+  it('a diff tab stamps only the private tab type and allows the Ctrl duplicate', async () => {
     await render();
     const { data, dt } = stubDt();
     await act(async () => {
@@ -126,7 +126,7 @@ describe('DocTabs drag-out', () => {
     expect(posted).toEqual([]);
   });
 
-  it('a web tab is move-only (review L4.3)', async () => {
+  it('a web tab is move-only', async () => {
     await render();
     const { dt } = stubDt();
     await act(async () => {
@@ -136,7 +136,7 @@ describe('DocTabs drag-out', () => {
   });
 });
 
-describe('DocTabs drop gating (review L4.2)', () => {
+describe('DocTabs drop gating', () => {
   it('a drag without the private tab type is never a tab move, even mid tab drag', async () => {
     await render();
     const { dt } = stubDt();

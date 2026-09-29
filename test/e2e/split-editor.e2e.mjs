@@ -743,7 +743,7 @@ try {
   assert((await groupCount(page)) === 2, 'E13: Ctrl+\\ at the cap changed the group count');
   log('E13 ✓ cap reached is disabled and announced');
 
-  // DV (review L4.5)
+  // DV
   const seam = await page.evaluate((g1) => {
     const div = document.querySelector('.editorgroups__divider')?.getBoundingClientRect();
     const strip = document.querySelector(`${g1} > .tabbar-wrap`)?.getBoundingClientRect();

@@ -1,5 +1,5 @@
 /**
- * tab-strip-overflow — an overflowing tab strip keeps its layout (split-editor review L5.5).
+ * tab-strip-overflow — an overflowing tab strip keeps its layout.
  *
  * `* { scrollbar-color }` makes Chromium ignore `.tabbar::-webkit-scrollbar`, so an overflowing
  * strip drew a classic 15px scrollbar that took layout height, and centring lifted its tabs by
