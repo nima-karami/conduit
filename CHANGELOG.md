@@ -7,6 +7,23 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **Split editor.** Ctrl+\ (or "Split Right" on a tab, or the button at the end of the tab strip)
+  opens the current tab in a second editor group on the right. Each group has its own tabs and
+  active tab. The group you last clicked or typed in is the active one, and opens, Ctrl+W,
+  Ctrl+Tab and Ctrl+1…9 act on it. Go to Definition stays in the editor's own group.
+  - The same file can be open in both groups. The groups share unsaved edits and the save, and
+    each keeps its own scroll and cursor.
+  - Move a tab with Ctrl+Alt+Left/Right, "Move to Other Group", or by dragging it to the other
+    strip. Drag a tab onto the right edge to split, and Ctrl-drag it to keep a copy in both.
+    Web pages move without reloading.
+  - Drag the divider, or focus it and use the arrow keys, to resize. The width is remembered.
+  - Close the right group from its strip's right-click menu or the palette ("Close Editor Group"
+    or "Join Editor Groups"). It also closes when its last tab does.
+  - The split and each group's tabs come back after a restart.
+
+## [0.44.0] — 2026-09-29
+
+### Added
 - **Go to Definition, Go to Implementations and Go to References can be rebound.** They're in
   Settings → Shortcuts under a new "Code navigation" group. A new chord works at once in every
   editor (files, diffs, plan code blocks, peek views), and the old one stops. Chords that would
@@ -23,19 +40,6 @@ All notable user-facing changes to Conduit. Format follows
 - **The Changes and Files lists follow the tab you're on.** The file in the focused tab is
   highlighted in Changes (the staged or unstaged row that tab shows) and in Files, where its
   folders open and it scrolls into view. Neither list takes focus or switches tabs to do it.
-- **Split editor.** Ctrl+\ (or "Split Right" on a tab, or the button at the end of the tab strip)
-  opens the current tab in a second editor group on the right. Each group has its own tabs and
-  active tab. The group you last clicked or typed in is the active one, and opens, Ctrl+W,
-  Ctrl+Tab and Ctrl+1…9 act on it. Go to Definition stays in the editor's own group.
-  - The same file can be open in both groups. The groups share unsaved edits and the save, and
-    each keeps its own scroll and cursor.
-  - Move a tab with Ctrl+Alt+Left/Right, "Move to Other Group", or by dragging it to the other
-    strip. Drag a tab onto the right edge to split, and Ctrl-drag it to keep a copy in both.
-    Web pages move without reloading.
-  - Drag the divider, or focus it and use the arrow keys, to resize. The width is remembered.
-  - Close the right group from its strip's right-click menu or the palette ("Close Editor Group"
-    or "Join Editor Groups"). It also closes when its last tab does.
-  - The split and each group's tabs come back after a restart.
 
 ### Changed
 - **Folder expand/collapse arrows sit on the left in both Files and Changes.** The arrow on each
