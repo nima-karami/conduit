@@ -780,7 +780,7 @@ export function MarkdownViewer({
     const id = setTimeout(() => {
       const container = mdRef.current;
       if (!container) return;
-      const pos = takeReveal(doc.path);
+      const pos = takeReveal(doc.path, 1);
       if (!pos) return;
       revealLineInMarkdown(container, pos.line);
     }, 50);
@@ -796,7 +796,7 @@ export function MarkdownViewer({
       if (!container) return;
       if (path !== canonicalPath(doc.path)) return;
       // take() so CodeViewer doesn't also consume the same reveal.
-      const pos = takeReveal(doc.path);
+      const pos = takeReveal(doc.path, 1);
       if (!pos) return;
       revealLineInMarkdown(container, pos.line);
     });

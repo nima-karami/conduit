@@ -225,7 +225,7 @@ export function CodeViewer({
 
     // If we arrived via cross-file go-to-definition, reveal the target. An explicit reveal WINS
     // over saved-scroll restore (spec 2026-06-30 §3); only restore the saved view state otherwise.
-    const pos = takeReveal(doc.path);
+    const pos = takeReveal(doc.path, 1);
     if (pos) {
       revealInEditor(editor, pos);
     } else {
@@ -323,11 +323,12 @@ export function CodeViewer({
     const cursorSub = editor.onDidChangeCursorPosition((e) => {
       const mdl = editor.getModel();
       if (!mdl) return;
-      publishCursor({ path: doc.path, offset: mdl.getOffsetAt(e.position) });
+      publishCursor({ path: doc.path, offset: mdl.getOffsetAt(e.position), group: 1 });
     });
     // Seed it once so the breadcrumb populates immediately.
     const initPos = editor.getPosition();
-    if (initPos && model) publishCursor({ path: doc.path, offset: model.getOffsetAt(initPos) });
+    if (initPos && model)
+      publishCursor({ path: doc.path, offset: model.getOffsetAt(initPos), group: 1 });
 
     // --- Git blame lens (git-blame) --------------------------------------------------------
     // Low-noise v1: a single trailing lens on the ACTIVE line only (GitLens-style), rendered as
@@ -600,7 +601,7 @@ export function CodeViewer({
       const ed = editorRef.current;
       if (!ed) return;
       if (path !== canonicalPath(doc.path)) return;
-      const pos = takeReveal(doc.path);
+      const pos = takeReveal(doc.path, 1);
       if (!pos) return;
       revealInEditor(ed, pos);
       ed.focus();

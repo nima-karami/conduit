@@ -1,5 +1,6 @@
 import * as monaco from 'monaco-editor';
 import { canonicalPath } from '../src/canonical-path';
+import type { GroupIndex } from './doc-groups';
 import type { CursorPos } from './editor-nav';
 
 /**
@@ -33,7 +34,8 @@ export function pathForUri(uri: monaco.Uri): string {
 // navigation lands in.
 
 // Pending reveal targets keyed by the abs path that App opens, consumed by CodeViewer.
-const reveals = new Map<string, { line: number; column: number }>();
+// see split-editor plan Contracts → Reveal: a staged group is consumed by that group's viewer only.
+const reveals = new Map<string, { pos: CursorPos; group?: GroupIndex }>();
 const key = canonicalPath;
 
 // An ALREADY-mounted CodeViewer (target file is an open tab) won't re-run its onMount
@@ -44,16 +46,23 @@ export function subscribeReveal(cb: (path: string) => void): () => void {
   return () => revealSubs.delete(cb);
 }
 
-export function setReveal(path: string, pos: { line: number; column: number }): void {
-  reveals.set(key(path), pos);
+function revealFor(path: string, group?: GroupIndex) {
+  const staged = reveals.get(key(path));
+  if (!staged) return undefined;
+  if (group !== undefined && staged.group !== undefined && staged.group !== group) return undefined;
+  return staged;
+}
+
+export function setReveal(path: string, pos: CursorPos, group?: GroupIndex): void {
   const k = key(path);
+  reveals.set(k, { pos, group });
   for (const cb of revealSubs) cb(k);
 }
-export function takeReveal(path: string): { line: number; column: number } | undefined {
-  const k = key(path);
-  const v = reveals.get(k);
-  reveals.delete(k);
-  return v;
+export function takeReveal(path: string, group: GroupIndex): CursorPos | undefined {
+  const staged = revealFor(path, group);
+  if (!staged) return undefined;
+  reveals.delete(key(path));
+  return staged.pos;
 }
 
 /** Drop a staged reveal nobody consumed (a background tab closed before it was ever viewed). */
@@ -63,23 +72,25 @@ export function clearReveal(path: string): void {
 
 // Peek without consuming, so a viewer can let an explicit reveal WIN over a saved-scroll
 // restore (spec 2026-06-30 §3 reveal-vs-restore): the reveal effect still consumes it.
-export function hasReveal(path: string): boolean {
-  return reveals.has(key(path));
+export function hasReveal(path: string, group?: GroupIndex): boolean {
+  return revealFor(path, group) !== undefined;
 }
 
 /** The staged, not yet consumed target: where a still-mounting editor for `path` will land. */
 export function peekReveal(path: string): CursorPos | undefined {
-  return reveals.get(key(path));
+  return reveals.get(key(path))?.pos;
 }
 
 // App registers how to open a file (as a doc tab) at a position; every code-jump producer calls
 // it. The opener stages the reveal itself, after recording the jump in navigation history.
-let opener: ((absPath: string, pos: CursorPos) => void) | null = null;
-export function setDefinitionOpener(fn: (absPath: string, pos: CursorPos) => void): void {
+let opener: ((absPath: string, pos: CursorPos, group?: GroupIndex) => void) | null = null;
+export function setDefinitionOpener(
+  fn: (absPath: string, pos: CursorPos, group?: GroupIndex) => void,
+): void {
   opener = fn;
 }
-export function openDefinitionFile(absPath: string, pos: CursorPos): void {
-  opener?.(absPath, pos);
+export function openDefinitionFile(absPath: string, pos: CursorPos, group?: GroupIndex): void {
+  opener?.(absPath, pos, group);
 }
 
 // Cursor-position bus (E3 breadcrumbs): CodeViewer publishes; BreadcrumbBar subscribes.
@@ -89,6 +100,7 @@ export function openDefinitionFile(absPath: string, pos: CursorPos): void {
 export interface CursorEvent {
   path: string;
   offset: number;
+  group: GroupIndex;
 }
 
 type CursorListener = (e: CursorEvent) => void;
