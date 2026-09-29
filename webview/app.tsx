@@ -92,7 +92,13 @@ import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { goToChangeInActiveDoc } from './change-nav-registry';
 import { buildBulkMenuItems, discardAllPlan, runDiscardAll } from './changes-actions';
-import { type ClosedTab, popClosedTab, pushClosedTab, toClosedTab } from './closed-tabs';
+import {
+  type ClosedTab,
+  popClosedTab,
+  pushClosedTab,
+  reopenGroup,
+  toClosedTab,
+} from './closed-tabs';
 import { AnimatedBg } from './components/animated-bg';
 import { ArchitectureView } from './components/architecture-view';
 import { BoardView } from './components/board-view';
@@ -2265,9 +2271,7 @@ export function App() {
     closedTabsRef.current = rest;
     if (!tab) return;
     const sessionId = tab.kind === 'web' ? (activeIdRef.current ?? '') : tab.sessionId;
-    const groupExists =
-      tab.group === 1 || layoutOf(docStateRef.current, sessionId).groups.length === 2;
-    const group = groupExists ? tab.group : undefined;
+    const group = reopenGroup(tab, layoutOf(docStateRef.current, sessionId));
     if (tab.kind === 'file') openFile(tab.path, tab.sessionId, 'permanent', { group });
     else if (tab.kind === 'diff') {
       openDiff(tab.path, tab.sessionId, { diffScope: tab.diffScope, group });

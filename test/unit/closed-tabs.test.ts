@@ -5,6 +5,7 @@ import {
   isReopenable,
   popClosedTab,
   pushClosedTab,
+  reopenGroup,
   toClosedTab,
 } from '../../webview/closed-tabs';
 
@@ -47,6 +48,16 @@ describe('closed-tabs stack', () => {
     });
     const noGroup = toClosedTab({ kind: 'file', path: '/a.ts', sessionId: 's1' });
     expect(noGroup && 'group' in noGroup).toBe(false);
+  });
+
+  it('a reopen lands in its recorded group only while that group exists', () => {
+    const one = { groups: [{ tabs: [], active: null }] } as const;
+    const two = { groups: [one.groups[0], { tabs: [], active: null }] } as const;
+    expect(reopenGroup({ group: 2 }, two)).toBe(2);
+    expect(reopenGroup({ group: 2 }, one)).toBeUndefined();
+    expect(reopenGroup({ group: 1 }, one)).toBe(1);
+    expect(reopenGroup({ group: 1 }, two)).toBe(1);
+    expect(reopenGroup({}, two)).toBeUndefined();
   });
 
   it('pops in LIFO order and shrinks the stack', () => {
