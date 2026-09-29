@@ -38,6 +38,17 @@ describe('closed-tabs stack', () => {
     expect(unscoped && 'diffScope' in unscoped).toBe(false);
   });
 
+  it('toClosedTab carries the group', () => {
+    expect(toClosedTab({ kind: 'file', path: '/a.ts', sessionId: 's1' }, 2)).toEqual({
+      kind: 'file',
+      path: '/a.ts',
+      sessionId: 's1',
+      group: 2,
+    });
+    const noGroup = toClosedTab({ kind: 'file', path: '/a.ts', sessionId: 's1' });
+    expect(noGroup && 'group' in noGroup).toBe(false);
+  });
+
   it('pops in LIFO order and shrinks the stack', () => {
     let stack: ClosedTab[] = [];
     stack = pushClosedTab(stack, tab('/a.ts'));

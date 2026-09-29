@@ -123,9 +123,11 @@ import {
   type GroupIndex,
   groupActive,
   groupDocs,
+  layoutOf,
   openTargetGroup,
   previewIdsOf,
   resolveActivateGroup,
+  tabGroupsOf,
   tabPreview,
 } from './doc-groups';
 import { reorderDock } from './dock-reorder';
@@ -142,6 +144,7 @@ import {
   type ReviewSource,
   toPersistedDocs,
 } from './docs';
+import { tabStateKey } from './editor-group-context';
 import {
   type CursorPos,
   coalescesEntries,
@@ -924,9 +927,13 @@ export function App() {
   // before `active` is derived, but doUndo/doRedo depend on active-derived hooks).
   const doUndoRef = useRef<() => void>(() => {});
   const doRedoRef = useRef<() => void>(() => {});
-  // closeDoc is declared later (it depends on hooks below); the shortcut handler reaches
+  // closeTab is declared later (it depends on hooks below); the shortcut handler reaches
   // it through this ref to avoid the same ordering problem as undo/redo.
-  const closeDocRef = useRef<(id: string) => void>(() => {});
+  const closeTabRef = useRef<(id: string, group: GroupIndex) => Promise<boolean>>(() =>
+    Promise.resolve(false),
+  );
+  // A pending unsaved-changes close prompt; Cancel and Esc settle it through the dialog's onClose.
+  const closePromptRef = useRef<((closed: boolean) => void) | null>(null);
   // Nav back/forward (modal-guarded) are declared after useNavHistory below; actionMap
   // reaches them through refs to avoid the same ordering problem as undo/redo.
   const navBackRef = useRef<() => void>(() => {});
@@ -942,7 +949,7 @@ export function App() {
     if (target) post({ type: 'openRepo', path: target.path, agentId: target.agentId });
   };
   // Reopen-closed-tab (Mod+Shift+T): a bounded LIFO of recently-closed reopenable docs and
-  // the reopen action. Both are refs so closeDoc/actionMap don't re-bind on every close;
+  // the reopen action. Both are refs so closeTab/actionMap don't re-bind on every close;
   // reopenClosedTab depends on openFile/openDiff/openWeb declared further below.
   const closedTabsRef = useRef<ClosedTab[]>([]);
   const reopenClosedTabRef = useRef<() => void>(() => {});
@@ -1021,11 +1028,16 @@ export function App() {
   // Global shortcuts — data-driven from the (rebindable, persisted) bindings.
   const actionMap = useMemo<Record<string, () => void>>(() => {
     const currentSessionId = () => activeIdRef.current ?? '';
-    const currentSessionDocs = () => groupDocs(docStateRef.current, currentSessionId(), 1);
+    const currentGroup = () => activeGroupOf(docStateRef.current, currentSessionId());
     const activate = (id: string | null) => activateDocByUser(id, currentSessionId());
-    // Tab cycle stops: the Terminal (null) first, then each open doc; +1 next, -1 prev.
+    // Tab cycle stops, in the active group: group 1's Terminal (null) first, then each open doc;
+    // +1 next, -1 prev.
     const cycleTab = (dir: number) => {
-      const stops: (string | null)[] = [null, ...currentSessionDocs().map((d) => d.id)];
+      const g = currentGroup();
+      const stops: (string | null)[] = [
+        ...(g === 1 ? [null] : []),
+        ...groupDocs(docStateRef.current, currentSessionId(), g).map((d) => d.id),
+      ];
       const cur = stops.indexOf(docStateRef.current.activeId);
       activate(stops[(cur + dir + stops.length) % stops.length]);
     };
@@ -1083,7 +1095,7 @@ export function App() {
       // Close the active editor tab (VS Code Mod+W). No-op when the Terminal is active.
       closeTab: () => {
         const id = docStateRef.current.activeId;
-        if (id) closeDocRef.current(id);
+        if (id) void closeTabRef.current(id, currentGroup());
       },
       // Reopen the most recently closed tab (VS Code Mod+Shift+T). Invoked via a stable ref
       // for the same ordering reason as undo/redo (openFile/openDiff are declared later).
@@ -1174,7 +1186,11 @@ export function App() {
         // digit past the open-doc count is a no-op that lets the key through.
         if (action.id === 'navGoToTab') {
           const sessionId = activeIdRef.current ?? '';
-          const doc = groupDocs(docStateRef.current, sessionId, 1)[Number(e.key) - 1];
+          const doc = groupDocs(
+            docStateRef.current,
+            sessionId,
+            activeGroupOf(docStateRef.current, sessionId),
+          )[Number(e.key) - 1];
           if (!doc) continue;
           e.preventDefault();
           e.stopPropagation();
@@ -1218,7 +1234,9 @@ export function App() {
     for (const id of prevSessionIdsRef.current) {
       if (!current.has(id)) {
         for (const d of docsRef.current) {
-          if (d.sessionId === id) markClosing(d.id);
+          if (d.sessionId !== id) continue;
+          markClosing(tabStateKey(d.id, 1));
+          markClosing(tabStateKey(d.id, 2));
         }
         for (const path of filePathsClosedWithSession(docsRef.current, id)) releaseFileTab(path);
         dispatchDocs({ type: 'closeSession', sessionId: id });
@@ -1729,77 +1747,114 @@ export function App() {
     [],
   );
 
-  // Immediately close a doc tab (no dirty check). Also drops any dirty- and view-state entry.
+  // Immediately close a doc — every tab of it — with no dirty check. Also drops any dirty- and
+  // view-state entry.
   const forceCloseDoc = useCallback(
     (id: string) => {
       const doc = docState.docs.find((d) => d.id === id);
       if (doc) {
         // A diff tab shares its path with the file tab; only the file owns the dirty flag.
         if (doc.kind === 'file') releaseFileTab(doc.path);
-        const closed = toClosedTab(doc);
+        const closed = toClosedTab(doc, tabGroupsOf(docState, id)[0]);
         if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
       }
-      markClosing(id);
-      clearHtmlView(id);
+      for (const g of [1, 2] as const) {
+        markClosing(tabStateKey(id, g));
+        clearHtmlView(tabStateKey(id, g));
+      }
       dispatchDocs({ type: 'close', id });
     },
-    [docState.docs],
+    [docState],
   );
 
   // Close a doc tab. If the doc has unsaved changes, show a 3-way Save/Discard/Cancel
   // dialog. Save path invokes the registered save; tab closes only on success.
   // Discard path clears dirty state and closes immediately. Cancel is a no-op.
   const closeDoc = useCallback(
-    (id: string) => {
+    (id: string): Promise<boolean> => {
       const doc = docState.docs.find((d) => d.id === id);
-      if (!doc) return;
+      if (!doc) return Promise.resolve(true);
       if (!dirtySet.has(doc.path)) {
         forceCloseDoc(id);
-        return;
+        return Promise.resolve(true);
       }
-      const fileName = baseName(doc.path);
-      const prompt = (reason: string | null) => {
-        const message = `"${fileName}" has unsaved changes. Save before closing, or discard them?`;
-        setConfirm({
-          title: `Unsaved changes in ${fileName}`,
-          message: reason === null ? message : `${AUTO_SAVE_COPY.closeFallback(reason)} ${message}`,
-          confirmLabel: 'Save',
-          secondaryLabel: 'Discard',
-          onSecondary: () => forceCloseDoc(id),
-          onConfirm: () => {
-            const entry = getSaveEntry(doc.path);
-            if (!entry) {
-              // No registry entry (shouldn't happen for a dirty doc, but be safe).
-              forceCloseDoc(id);
-              return;
-            }
-            void entry.save().then((ok) => {
-              if (ok) forceCloseDoc(id);
-              // On failure: the save store already surfaced it — do not close.
-            });
-          },
-        });
-      };
-      // D2: with auto save on, a dirty close saves first (with the on-disk precondition).
-      const entry = getSaveEntry(doc.path);
-      const run = (step: CloseStep) => {
-        if (step.type === 'close') forceCloseDoc(id);
-        else if (step.type === 'prompt') prompt(step.reason);
-        else {
-          void entry
-            ?.save({ kind: 'auto' })
-            .then((ok) =>
-              run(
-                afterCloseSave(ok, getDirtySnapshot().has(doc.path), fileSaves.getStatus(doc.path)),
-              ),
-            );
-        }
-      };
-      run(dirtyCloseStep(settings.autoSave, fileSaves.getStatus(doc.path), entry !== undefined));
+      return new Promise<boolean>((resolve) => {
+        const close = () => {
+          forceCloseDoc(id);
+          resolve(true);
+        };
+        const fileName = baseName(doc.path);
+        const prompt = (reason: string | null) => {
+          const message = `"${fileName}" has unsaved changes. Save before closing, or discard them?`;
+          closePromptRef.current?.(false);
+          closePromptRef.current = resolve;
+          setConfirm({
+            title: `Unsaved changes in ${fileName}`,
+            message:
+              reason === null ? message : `${AUTO_SAVE_COPY.closeFallback(reason)} ${message}`,
+            confirmLabel: 'Save',
+            secondaryLabel: 'Discard',
+            onSecondary: () => {
+              closePromptRef.current = null;
+              close();
+            },
+            onConfirm: () => {
+              closePromptRef.current = null;
+              const entry = getSaveEntry(doc.path);
+              if (!entry) {
+                // No registry entry (shouldn't happen for a dirty doc, but be safe).
+                close();
+                return;
+              }
+              void entry.save().then((ok) => {
+                // On failure: the save store already surfaced it — do not close.
+                if (ok) close();
+                else resolve(false);
+              });
+            },
+          });
+        };
+        // D2: with auto save on, a dirty close saves first (with the on-disk precondition).
+        const entry = getSaveEntry(doc.path);
+        const run = (step: CloseStep) => {
+          if (step.type === 'close') close();
+          else if (step.type === 'prompt') prompt(step.reason);
+          else {
+            void entry
+              ?.save({ kind: 'auto' })
+              .then((ok) =>
+                run(
+                  afterCloseSave(
+                    ok,
+                    getDirtySnapshot().has(doc.path),
+                    fileSaves.getStatus(doc.path),
+                  ),
+                ),
+              );
+          }
+        };
+        run(dirtyCloseStep(settings.autoSave, fileSaves.getStatus(doc.path), entry !== undefined));
+      });
     },
     [docState.docs, dirtySet, forceCloseDoc, settings.autoSave],
   );
-  closeDocRef.current = closeDoc;
+
+  // One tab of a doc still shown in the other group closes alone: no prompt, and the buffer, its
+  // save entry and dirty state stay with the surviving tab (split-editor spec §2.5).
+  const closeTab = useCallback(
+    (id: string, group: GroupIndex): Promise<boolean> => {
+      if (tabGroupsOf(docState, id).length < 2) return closeDoc(id);
+      const doc = docState.docs.find((d) => d.id === id);
+      markClosing(tabStateKey(id, group));
+      clearHtmlView(tabStateKey(id, group));
+      const closed = doc ? toClosedTab(doc, group) : null;
+      if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
+      dispatchDocs({ type: 'close', id, group });
+      return Promise.resolve(true);
+    },
+    [docState, closeDoc],
+  );
+  closeTabRef.current = closeTab;
 
   useEffect(() => {
     setDocCloser((p) => {
@@ -2013,9 +2068,14 @@ export function App() {
     const { tab, rest } = popClosedTab(closedTabsRef.current);
     closedTabsRef.current = rest;
     if (!tab) return;
-    if (tab.kind === 'file') openFile(tab.path, tab.sessionId, 'permanent');
-    else if (tab.kind === 'diff') openDiff(tab.path, tab.sessionId, { diffScope: tab.diffScope });
-    else openWeb(tab.path);
+    const sessionId = tab.kind === 'web' ? (activeIdRef.current ?? '') : tab.sessionId;
+    const groupExists =
+      tab.group === 1 || layoutOf(docStateRef.current, sessionId).groups.length === 2;
+    const group = groupExists ? tab.group : undefined;
+    if (tab.kind === 'file') openFile(tab.path, tab.sessionId, 'permanent', { group });
+    else if (tab.kind === 'diff') {
+      openDiff(tab.path, tab.sessionId, { diffScope: tab.diffScope, group });
+    } else openWeb(tab.path, undefined, undefined, group);
   }, [openFile, openDiff, openWeb]);
   reopenClosedTabRef.current = reopenClosedTab;
 
@@ -2439,70 +2499,54 @@ export function App() {
     });
   };
 
-  const onTabContextMenu = (e: React.MouseEvent, doc: OpenDoc) => {
+  const onTabContextMenu = (e: React.MouseEvent, doc: OpenDoc, group: GroupIndex) => {
     e.preventDefault();
-    // Scope close-others/left/right/all to the active session's tabs only — the bar
-    // never shows another session's editors, so those actions must not touch them.
-    const allPaths = groupOneDocs.map((d) => d.path);
-    const toRight = closeTabSelection(allPaths, doc.path, 'right');
-    const toLeft = closeTabSelection(allPaths, doc.path, 'left');
-    const others = closeTabSelection(allPaths, doc.path, 'others');
-    const all = closeTabSelection(allPaths, doc.path, 'all');
+    // By tab ref within the right-clicked tab's group (split-editor plan S6).
+    const groupIds = groupDocs(docState, doc.sessionId, group).map((d) => d.id);
+    const toRight = closeTabSelection(groupIds, doc.id, 'right');
+    const toLeft = closeTabSelection(groupIds, doc.id, 'left');
+    const others = closeTabSelection(groupIds, doc.id, 'others');
+    const all = closeTabSelection(groupIds, doc.id, 'all');
+    const closeAll = (ids: readonly string[]) => {
+      for (const id of ids) void closeTab(id, group);
+    };
     setMenu({
       x: e.clientX,
       y: e.clientY,
       items: [
         // Keyboard-reachable pin pathway (a11y) — the only non-pointer way to promote a
         // preview, since double-click and drag are pointer-only (spec §10).
-        ...(tabPreview(docState, doc.sessionId, 1, doc.id)
+        ...(tabPreview(docState, doc.sessionId, group, doc.id)
           ? [
               {
                 label: 'Keep Open',
-                onClick: () => dispatchDocs({ type: 'pinDoc', id: doc.id }),
+                onClick: () => dispatchDocs({ type: 'pinDoc', id: doc.id, group }),
               },
             ]
           : []),
         {
           label: 'Close',
           icon: <IconClose size={14} />,
-          onClick: () => closeDoc(doc.id),
+          onClick: () => void closeTab(doc.id, group),
         },
         {
           label: 'Close others',
-          onClick: () => {
-            const idsToClose = docState.docs
-              .filter((d) => others.includes(d.path))
-              .map((d) => d.id);
-            for (const id of idsToClose) closeDoc(id);
-          },
+          onClick: () => closeAll(others),
           disabled: others.length === 0,
         },
         {
           label: 'Close to the right',
-          onClick: () => {
-            const idsToClose = docState.docs
-              .filter((d) => toRight.includes(d.path))
-              .map((d) => d.id);
-            for (const id of idsToClose) closeDoc(id);
-          },
+          onClick: () => closeAll(toRight),
           disabled: toRight.length === 0,
         },
         {
           label: 'Close to the left',
-          onClick: () => {
-            const idsToClose = docState.docs
-              .filter((d) => toLeft.includes(d.path))
-              .map((d) => d.id);
-            for (const id of idsToClose) closeDoc(id);
-          },
+          onClick: () => closeAll(toLeft),
           disabled: toLeft.length === 0,
         },
         {
           label: 'Close all',
-          onClick: () => {
-            const idsToClose = docState.docs.filter((d) => all.includes(d.path)).map((d) => d.id);
-            for (const id of idsToClose) closeDoc(id);
-          },
+          onClick: () => closeAll(all),
           disabled: all.length === 0,
         },
         {
@@ -2549,8 +2593,8 @@ export function App() {
     e.preventDefault();
     if (!active) return;
     const s = active;
-    // Only this session's editor tabs (the bar is session-scoped).
-    const docIds = visibleDocs.map((d) => d.id);
+    // Only the tabs of the strip the Terminal tab sits in: this session's group 1.
+    const docIds = groupDocs(docState, s.id, 1).map((d) => d.id);
     setMenu({
       x: e.clientX,
       y: e.clientY,
@@ -2588,7 +2632,7 @@ export function App() {
           separatorBefore: true,
           disabled: docIds.length === 0,
           onClick: () => {
-            for (const id of docIds) closeDoc(id);
+            for (const id of docIds) void closeTab(id, 1);
           },
         },
         {
@@ -3396,12 +3440,12 @@ export function App() {
           keywords: ['close others'],
           group: 'Commands',
           icon: <IconClose size={14} />,
-          run: () =>
-            docState.docs
-              .filter((d) => d.sessionId === activeId && d.id !== activeDoc.id)
-              .forEach((d) => {
-                closeDoc(d.id);
-              }),
+          run: () => {
+            const g = activeGroupOf(docState, activeDoc.sessionId);
+            for (const d of groupDocs(docState, activeDoc.sessionId, g)) {
+              if (d.id !== activeDoc.id) void closeTab(d.id, g);
+            }
+          },
         },
       );
       if (activeDoc.kind === 'file') {
@@ -3612,7 +3656,7 @@ export function App() {
     explorerCollapsed,
     toggleSidebar,
     toggleExplorer,
-    closeDoc,
+    closeTab,
     dirtySet,
     openNewSession,
     relaunchAllStale,
@@ -3674,10 +3718,10 @@ export function App() {
             files={files}
             diffs={diffs}
             onSelectDoc={(id) => activateDocByUser(id, activeIdRef.current ?? '')}
-            onCloseDoc={closeDoc}
+            onCloseDoc={(id) => void closeTab(id, 1)}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenTimedMessages={openTimedMessages}
-            onTabContextMenu={onTabContextMenu}
+            onTabContextMenu={(e, doc) => onTabContextMenu(e, doc, 1)}
             onTerminalTabContextMenu={onTerminalTabContextMenu}
             onReorderDoc={(dragId, targetId) => dispatchDocs({ type: 'reorder', dragId, targetId })}
             onPinDoc={(id) => dispatchDocs({ type: 'pinDoc', id })}
@@ -3971,6 +4015,9 @@ export function App() {
             const hunkReply = hunkConfirmRef.current;
             hunkConfirmRef.current = null;
             hunkReply?.(false);
+            const closeReply = closePromptRef.current;
+            closePromptRef.current = null;
+            closeReply?.(false);
             setConfirm(null);
           }}
         />
