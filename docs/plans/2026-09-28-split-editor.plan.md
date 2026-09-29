@@ -1748,3 +1748,16 @@ Build run 2026-09-28 (unattended), branch `feat/split-editor`, base `de36575`. E
     runner cap.
   - The RV assertion compares the card and offset across groups of different widths.
   - The palette entry title uses `SPLIT_COPY.moveToOther`.
+- **Slice 6 — done** (`c156ebc`, `5a3e87e`, `83e1fa4`, `db42638`). The Check is green: `split-editor-drag`
+  (ED/BD/SI/CD/OB/ES/JG/PD), all three `split-editor` files, `dnd` and `sidebar-dnd`, and the regress set.
+  Deviations:
+  - `tab-drag.ts` also exports `subscribeTabDrag` and `acceptTabDrop`.
+  - `endTabDrag` on a session or center-view switch lives in `app.tsx`.
+  - `EditorGroups` and `CenterPane` take `onMoveTab`.
+  - A duplicate into the left group is not announced.
+  - Join also clears the view state of the duplicates it drops.
+  - The drop zones use `--accent-soft` plus a dashed `--accent` outline.
+- **Slice 7 — done.** CHANGELOG (`988a538`). The first `npm run verify` was red on
+  `files-drop-claim.test.ts`: `editor-groups.tsx` gained a dragover handler that needs a listed audit entry.
+  The entry was added (`9e5cf8d`), and `npm run verify` then exited 0
+  (`evidence\split-editor\final-verify.log`). No existing test was deleted, and no gate config changed.
