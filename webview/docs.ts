@@ -348,9 +348,10 @@ function openForeground(
   const layouts: Record<string, SessionLayout> = { ...state.layouts };
   const touched = [s];
   const existing = state.docs.find((d) => d.id === o.id);
+  const transferred = existing !== undefined && existing.sessionId !== s;
   let docs: OpenDoc[];
   if (existing) {
-    if (existing.sessionId !== s) {
+    if (transferred) {
       layouts[existing.sessionId] = removeEverywhere(layoutOf(state, existing.sessionId), o.id);
       touched.push(existing.sessionId);
     }
@@ -369,7 +370,9 @@ function openForeground(
     layout = setGroup(layout, other, removeTab(groupAt(layout, other), o.id));
     next = placeTab(target, o.id, false, docs);
   } else {
-    next = placeTab(target, o.id, o.preview, docs);
+    // A transferred file/diff tab lands pinned: it never downgrades, nor evicts this group's
+    // preview (review B4). The commit-diff slot is a preview wherever it goes.
+    next = placeTab(target, o.id, o.preview && !(transferred && isPreviewable(o.kind)), docs);
   }
   layouts[s] = { ...setGroup(layout, g, { ...next, active: o.id }), activeGroup: g };
   return finalize({ docs, layouts, activeId: state.activeId }, touched, s);

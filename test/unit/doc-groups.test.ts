@@ -563,6 +563,38 @@ describe('group actions', () => {
     expect(ids(commitFirst, 1)).toEqual(['commit-diff:@preview', 'file:/p.ts']);
   });
 
+  it("an ownership transfer appends a pinned tab and keeps the new owner's preview", () => {
+    let s = open(initialDocs, '/a.ts', { sessionId: 'A' });
+    s = open(s, '/q.ts', { mode: 'preview', sessionId: 'B' });
+    s = open(s, '/a.ts', { mode: 'preview', sessionId: 'B' });
+    expect(ids(s, 1, 'B')).toEqual(['file:/q.ts', 'file:/a.ts']);
+    expect(tabPreview(s, 'B', 1, 'file:/a.ts')).toBe(false);
+    expect(tabPreview(s, 'B', 1, 'file:/q.ts')).toBe(true);
+    expect(s.docs.find((d) => d.id === 'file:/a.ts')?.sessionId).toBe('B');
+
+    let r = docsReducer(initialDocs, {
+      type: 'openReview',
+      sessionId: 'A',
+      source: { kind: 'working' },
+    });
+    r = open(r, '/q.ts', { mode: 'preview', sessionId: 'B' });
+    r = docsReducer(r, { type: 'openReview', sessionId: 'B', source: { kind: 'working' } });
+    expect(ids(r, 1, 'B')).toEqual(['file:/q.ts', 'review:@review']);
+    expect(tabPreview(r, 'B', 1, 'review:@review')).toBe(false);
+    expect(tabPreview(r, 'B', 1, 'file:/q.ts')).toBe(true);
+
+    const slotFrom = (sessionId: string): DocsAction => ({
+      type: 'openCommitFile',
+      sha: SHA,
+      file: `${sessionId}.ts`,
+      sessionId,
+      mode: 'preview',
+    });
+    const c = run(initialDocs, slotFrom('A'), slotFrom('B'));
+    expect(ids(c, 1, 'B')).toEqual(['commit-diff:@preview']);
+    expect(tabPreview(c, 'B', 1, 'commit-diff:@preview')).toBe(true);
+  });
+
   it('switchSession restores group 2 as active', () => {
     let s = split(open(initialDocs, '/a.ts'));
     s = open(s, '/c.ts', { group: 2 });
