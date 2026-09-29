@@ -74,6 +74,7 @@ import { canRelaunch, relaunchableSessionIds, staleSessionIds } from '../src/sta
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
 import { formatDuration } from '../src/timed-messages';
 import type { AgentDefinition, Session } from '../src/types';
+import { activeTarget } from './active-target';
 import { AUTO_SAVE_COPY } from './auto-save-copy';
 import { afterCloseSave, type CloseStep, dirtyCloseStep } from './auto-save-policy';
 import {
@@ -1216,6 +1217,20 @@ export function App() {
     [docState.docs, activeId],
   );
   const activeDoc = visibleDocs.find((d) => d.id === docState.activeId) ?? null;
+  const activeDocKind = activeDoc?.kind;
+  const activeDocPath = activeDoc?.path;
+  const activeDocScope = activeDoc?.diffScope;
+  // Keyed on primitives: the doc object is replaced on every dirty/title change.
+  const activeTargetValue = useMemo(
+    () =>
+      activeTarget(
+        activeDocKind !== undefined && activeDocPath !== undefined
+          ? { kind: activeDocKind, path: activeDocPath, diffScope: activeDocScope }
+          : null,
+        centerView,
+      ),
+    [activeDocKind, activeDocPath, activeDocScope, centerView],
+  );
   const reviewMode = activeDoc?.kind === 'review' && centerView === 'editor';
   const reviewDocOpen = docState.docs.some((d) => d.kind === 'review');
   const [paneTab, setPaneTab] = useState<RightPaneTab>(settings.rightPaneTab);
@@ -3711,6 +3726,7 @@ export function App() {
       >
         <RightPane
           sessionId={active?.id}
+          activeTarget={activeTargetValue}
           sections={sections}
           rowChanges={rowChanges}
           osDropSeam={state?.about?.e2e === true}

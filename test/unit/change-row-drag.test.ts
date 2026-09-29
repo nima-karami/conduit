@@ -49,6 +49,7 @@ async function render() {
       createElement(ChangesView, {
         model,
         collapsedRepos: new Set<string>(),
+        activeTarget: null,
         reviewTitle: 'Review',
         onReview: noop,
         onRefresh: noop,

@@ -4,6 +4,7 @@
 // already-loaded children (see `mergeEntries`).
 
 import { folderKey } from '../src/folder-key';
+import { normalizePath } from '../src/owning-session';
 import type { ChangeDTO, ChangeKind, DirEntryDTO, RepoChanges } from '../src/protocol';
 
 export interface TreeNode {
@@ -213,18 +214,32 @@ export function findNode(roots: TreeNode[], path: string): TreeNode | undefined 
   return undefined;
 }
 
+/** The FILE node whose folderKey equals `key`, descending only into loaded dirs on its prefix path. */
+export function findFileByKey(nodes: TreeNode[], key: string): TreeNode | undefined {
+  for (const n of nodes) {
+    const k = folderKey(n.path);
+    if (n.kind === 'file') {
+      if (k === key) return n;
+    } else if (n.children && key.startsWith(`${k}/`)) {
+      return findFileByKey(n.children, key);
+    }
+  }
+  return undefined;
+}
+
 /**
  * The chain of directory paths to expand to reveal `filePath`: root, then each intermediate
  * dir down to the file's parent. Built with `joinPath` so paths compare equal to
- * `TreeNode.path`. Returns `[]` when `filePath` is not under `rootPath`.
+ * `TreeNode.path`. Returns `[]` when `filePath` is not under `rootPath`. Containment is by
+ * `folderKey`: an opened doc's drive letter is canonicalised upper-case, a session root's is not.
  */
 export function ancestorDirChain(filePath: string, rootPath: string): string[] {
-  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
-  const root = norm(rootPath);
-  const file = norm(filePath);
-  if (file === root || !file.startsWith(`${root}/`)) return [];
-  const segments = file
-    .slice(root.length + 1)
+  const rootKey = folderKey(rootPath);
+  const fileKey = folderKey(filePath);
+  if (fileKey === rootKey || !fileKey.startsWith(`${rootKey}/`)) return [];
+  const segments = filePath
+    .replace(/\\/g, '/')
+    .slice(normalizePath(rootPath).length + 1)
     .split('/')
     .filter(Boolean);
   const dirSegments = segments.slice(0, -1);
@@ -235,23 +250,6 @@ export function ancestorDirChain(filePath: string, rootPath: string): string[] {
     chain.push(cur);
   }
   return chain;
-}
-
-/**
- * `filePath` rewritten into the tree's own path form. Node paths are built with `joinPath`
- * off `rootPath`, so on Windows they carry the root's native separators followed by forward
- * slashes; a path handed to us by the host is natively separated all the way down. The two
- * therefore do NOT compare equal, which is why a revealed file has to be re-derived rather
- * than matched as given. Returns null when `filePath` is not under `rootPath`.
- */
-export function treeNodePath(filePath: string, rootPath: string): string | null {
-  const chain = ancestorDirChain(filePath, rootPath);
-  if (chain.length === 0) return null;
-  const name = filePath
-    .replace(/[\\/]+$/, '')
-    .split(/[\\/]/)
-    .pop();
-  return name ? joinPath(chain[chain.length - 1], name) : null;
 }
 
 /** True when the query has non-whitespace content (drives the results view, not the tree). */

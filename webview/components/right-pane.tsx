@@ -61,6 +61,7 @@ export function RightPane({
   paneRef,
   recordFsOp,
   onContextPath,
+  activeTarget,
   ...changesProps
 }: Omit<ChangesViewProps, 'model' | 'collapsedRepos'> & {
   sessionId: string | undefined;
@@ -213,6 +214,7 @@ export function RightPane({
           <ChangesView
             model={changesModel}
             collapsedRepos={changesCollapsedRef.current}
+            activeTarget={activeTarget}
             {...changesProps}
           />
         )
@@ -225,6 +227,7 @@ export function RightPane({
       ) : (
         <FilesView
           sessionId={sessionId}
+          activeTarget={activeTarget}
           sections={sections}
           rowChanges={rowChanges}
           osDropSeam={osDropSeam}

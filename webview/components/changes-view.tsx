@@ -8,6 +8,8 @@ import type { ChangeDTO, DiffTabScope } from '../../src/protocol';
 import { repoLabel, repoSub } from '../../src/repo-display';
 import type { RepoInfo } from '../../src/repo-scan';
 import type { ChangesViewMode } from '../../src/settings';
+import type { ActiveTarget } from '../active-target';
+import { highlightedChange, highlightId } from '../change-highlight';
 import { type BulkScope, buildBulkMenuItems, rowActionsFor } from '../changes-actions';
 import { changeRowTooltip, diffScopeForChange } from '../diff-tab-scope';
 import type { OpenMode } from '../docs';
@@ -45,6 +47,7 @@ export interface ChangesViewProps {
   /** Collapsed repos, keyed by folderKey(root). Owned and mutated in place so it outlives this
    *  view (RightPane holds it, like FolderUiCache). */
   collapsedRepos: Set<string>;
+  activeTarget: ActiveTarget | null;
   /** `Review changes (<combo>)`. */
   reviewTitle: string;
   onReview: () => void;
@@ -67,6 +70,7 @@ export interface ChangesViewProps {
 function ChangeRow({
   change,
   repoRoot,
+  active,
   onOpenDiff,
   onAction,
   onChangeContextMenu,
@@ -74,6 +78,7 @@ function ChangeRow({
 }: {
   change: ChangeDTO;
   repoRoot: string;
+  active: boolean;
   onOpenDiff: ChangesViewProps['onOpenDiff'];
   onAction: ChangesViewProps['onAction'];
   onChangeContextMenu: ChangesViewProps['onChangeContextMenu'];
@@ -89,7 +94,8 @@ function ChangeRow({
   };
   return (
     <div
-      className="change"
+      className={active ? 'change change--active' : 'change'}
+      aria-current={active ? 'true' : undefined}
       onClick={() => open()}
       {...middleClickProps(() => open('background'))}
       onContextMenu={(e) => onChangeContextMenu(e, change.path, repoRoot)}
@@ -172,6 +178,7 @@ function HeaderSummary({ model }: { model: ChangesViewProps['model'] }) {
 export function ChangesView({
   model,
   collapsedRepos,
+  activeTarget,
   reviewTitle,
   onReview,
   onRefresh,
@@ -194,6 +201,13 @@ export function ChangesView({
   // unmounted with the old view (spec §10 "Focus after view changes").
   const focusAfterViewRef = useRef<'kebab' | 'first-chevron' | null>(null);
   const view = model.kind === 'ready' ? model.view : undefined;
+  const isRepoCollapsed = (head: RepoHeadModel) =>
+    model.kind === 'ready' && model.view === 'all' && collapsedRepos.has(folderKey(head.repo.root));
+  const hl = highlightedChange(
+    model.kind === 'ready' ? model.heads.filter((h) => !isRepoCollapsed(h)) : [],
+    activeTarget,
+  );
+  const hlId = highlightId(hl);
 
   useLayoutEffect(() => {
     const target = focusAfterViewRef.current;
@@ -202,6 +216,15 @@ export function ChangesView({
     if (target === 'kebab') kebabRef.current?.focus();
     else bodyRef.current?.querySelector<HTMLElement>('.repo-head__chev')?.focus();
   }, [view]);
+
+  // Keyed on identity, not the row: a git refresh re-renders the same highlight and must not
+  // pull the list back to it (changes-active-highlight spec §2 "Scroll-into-view").
+  useLayoutEffect(() => {
+    if (hlId === null) return;
+    bodyRef.current
+      ?.querySelector<HTMLElement>('.change[aria-current="true"]')
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [hlId]);
 
   if (model.kind === 'no-repos') return <EmptyState title={STR.noRepos} hint={STR.noReposHint} />;
 
@@ -302,6 +325,12 @@ export function ChangesView({
         key={`${side}:${c.path}`}
         change={c}
         repoRoot={root}
+        active={
+          hl !== null &&
+          hl.root === root &&
+          hl.side === (side === 's' ? 'staged' : 'unstaged') &&
+          hl.path === c.path
+        }
         onOpenDiff={onOpenDiff}
         onAction={onAction}
         onChangeContextMenu={onChangeContextMenu}
@@ -370,7 +399,7 @@ export function ChangesView({
         {model.heads.flatMap((head, i) => {
           const root = head.repo.root;
           const listId = `${baseId}-repo-${i}`;
-          const isCollapsed = model.view === 'all' && collapsedRepos.has(folderKey(root));
+          const isCollapsed = isRepoCollapsed(head);
           const rows = rowsOf(head);
           const listShown = !isCollapsed && rows.length > 0;
           return [

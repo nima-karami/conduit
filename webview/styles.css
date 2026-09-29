@@ -5360,6 +5360,13 @@ body.gh-resizing {
   border-radius: var(--r-card);
   cursor: pointer;
 }
+/* The focused tab's row: the same "open in the editor" tint as .filerow--revealed. */
+.change--active {
+  background: var(--state-sel-bg);
+}
+.change--active:hover {
+  background: var(--state-sel-hover-bg);
+}
 /* 8c: an OUTLINED letter box, not a tinted fill — the four status colours have to read
    at 17px against both a white card and near-black, and a hairline in the colour itself
    survives both where a 14%-alpha wash does not. The radius caps below --r-badge because
@@ -13579,6 +13586,7 @@ button.toggle--on .toggle__knob {
     .session--review,
     .filerow--selected,
     .filerow--revealed,
+    .change--active,
     .palette__row--active,
     .ctxmenu__item--active,
     .settings__navitem--active,

@@ -3,6 +3,7 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -14,6 +15,7 @@ import { countNoun } from '../../src/menu-selection';
 import { isAncestorOf } from '../../src/owning-session';
 import type { ChangeKind } from '../../src/protocol';
 import type { FolderSectionModel } from '../../src/session-sections';
+import type { ActiveTarget } from '../active-target';
 import { fsMutate, post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
 import { buildExplorerMenuItems, resolveExplorerTargets } from '../explorer-menu';
@@ -25,6 +27,7 @@ import {
   collapseAll,
   collapseNode,
   expandNode,
+  findFileByKey,
   findNode,
   joinPath,
   nameOf,
@@ -35,7 +38,6 @@ import {
   renameSelectionRange,
   resolveCreateTarget,
   type TreeNode,
-  treeNodePath,
   validateName,
   visibleOrder,
 } from '../file-tree';
@@ -140,6 +142,7 @@ export interface FolderSectionProps {
   view: { scrollTop: number; viewportHeight: number; rowHeight: number };
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  activeTarget: ActiveTarget | null;
   treeCache: Map<string, TreeNode[]>;
   rowChanges: ReadonlyMap<string, ChangeKind>;
   openAsSessionHint?: string;
@@ -174,6 +177,7 @@ export function FolderSection({
   view,
   collapsed,
   onToggleCollapsed,
+  activeTarget,
   treeCache,
   rowChanges,
   openAsSessionHint,
@@ -216,11 +220,13 @@ export function FolderSection({
   const springTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const springTargetRef = useRef<string | null>(null);
   const springOpened = useRef<Set<string>>(new Set());
-  // The file most recently revealed (opened from anywhere) — highlighted in the tree.
-  const [revealedPath, setRevealedPath] = useState<string | null>(null);
   // The file the tree is currently expanding toward. A ref so the dirEntries-driven
   // advance reads it without re-subscribing.
   const revealTargetRef = useRef<string | null>(null);
+  // The revealed path whose scroll-into-view has already run. The revealed row is pinned into the
+  // window only until then: pins widen the window contiguously, so a permanent pin on a deep file
+  // would mount every row between it and wherever the user scrolls.
+  const scrolledRevealRef = useRef<string | null>(null);
   const collapseRef = useRef<HTMLButtonElement>(null);
   const treeRef = useRef<HTMLDivElement>(null);
   // The tree's first-row offset inside the shared scroller's content (spec §2.2 layout).
@@ -294,9 +300,9 @@ export function FolderSection({
     }
   }, [roots]);
 
-  // Reveal a file in the explorer. Walks the ancestor chain top-down — one unit of
-  // progress per call (load OR expand one ancestor); the dirEntries reply re-drives this
-  // via the roots effect below until the whole chain is present, then highlights + scrolls.
+  // Expand the tree down to a file. Walks the ancestor chain top-down — one unit of progress per
+  // call (load OR expand one ancestor); the dirEntries reply re-drives this via the roots effect
+  // below until the whole chain is present. The highlight is not set here: it is derived.
   const advanceReveal = useCallback(() => {
     const target = revealTargetRef.current;
     if (!target) return;
@@ -315,9 +321,6 @@ export function FolderSection({
       if (!node.expanded) setRoots((prev) => expandNode(prev, dir));
     }
     revealTargetRef.current = null;
-    // Re-derived, not matched as given: a host path and a tree node path differ in separator
-    // form (see treeNodePath). Reveal is not selection (spec §3, D4), so only the highlight moves.
-    setRevealedPath(treeNodePath(target, root) ?? target);
   }, [root]);
   // `roots` is a re-trigger (not read here) — each tree growth re-drives the in-progress reveal.
   // biome-ignore lint/correctness/useExhaustiveDependencies: roots drives the re-run, not the body
@@ -325,24 +328,23 @@ export function FolderSection({
     if (revealTargetRef.current) advanceReveal();
   }, [roots, advanceReveal]);
 
-  // Scroll the revealed row into view AFTER it commits: it is pinned into the window (see
-  // `pins`), so this always finds a mounted row. Nudge the shared scroller first, then let the
-  // browser refine to the exact position.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only re-run when the target changes
-  useLayoutEffect(() => {
-    if (!revealedPath) return;
-    const el = treeRef.current;
-    if (!el) return;
-    scrollPathIntoView(revealedPath);
-    for (const rowEl of el.querySelectorAll<HTMLElement>('.filerow')) {
-      // Match by dataset rather than a CSS attribute selector — Windows paths carry
-      // backslashes that would need escaping inside the selector string.
-      if (rowEl.dataset.path === revealedPath) {
-        rowEl.scrollIntoView({ block: 'nearest' });
-        break;
-      }
-    }
-  }, [revealedPath]);
+  // The focused tab's file, highlighted wherever the tree already shows it; the follow effect
+  // below expands toward it (changes-active-highlight spec §14). Matched by key, so a host path's
+  // separators and drive case never have to agree with the tree's.
+  const targetKey = activeTarget?.key ?? null;
+  const targetPath = activeTarget?.path ?? null;
+  const revealedPath = useMemo(
+    () =>
+      targetKey !== null && !collapsed ? (findFileByKey(roots, targetKey)?.path ?? null) : null,
+    [roots, targetKey, collapsed],
+  );
+
+  // Never touches the section's collapse, the selection, the roving row or focus (spec §14).
+  useEffect(() => {
+    if (targetPath === null || collapsed) return;
+    revealTargetRef.current = targetPath;
+    advanceReveal();
+  }, [targetPath, collapsed, advanceReveal]);
 
   // Re-read root + every expanded dir on focus/visibility so files an external
   // tool/agent created or deleted while backgrounded appear on their own (J5).
@@ -868,8 +870,8 @@ export function FolderSection({
   if (!collapsed) walk(roots, 0);
 
   // Rows that must stay mounted regardless of scroll. An active inline draft must never unmount
-  // mid-edit (its input would blur→cancel), so pin its anchor row; the revealed row is pinned so
-  // the reveal-scroll effect always finds a mounted target. A root-level create draft renders
+  // mid-edit (its input would blur→cancel), so pin its anchor row; the revealed row is pinned until
+  // the reveal-scroll effect has found it (`scrolledRevealRef`). A root-level create draft renders
   // outside the list (below) and needs no pin.
   const pins: number[] = [];
   if (draft) {
@@ -879,10 +881,35 @@ export function FolderSection({
       if (i >= 0) pins.push(i);
     }
   }
-  if (revealedPath) {
-    const i = rows.findIndex((r) => r.node.path === revealedPath);
-    if (i >= 0) pins.push(i);
-  }
+  const revealedIndex =
+    revealedPath === null ? -1 : rows.findIndex((r) => r.node.path === revealedPath);
+  const revealedShown = revealedIndex >= 0;
+  if (revealedShown && scrolledRevealRef.current !== revealedPath) pins.push(revealedIndex);
+
+  // Scroll the revealed row into view AFTER it commits: it is pinned into the window for this
+  // render (see `pins`), so this always finds a mounted row. Nudge the shared scroller first,
+  // then let the browser refine to the exact position. Keyed on the path and its visibility, not the tree: a
+  // refresh re-renders the same target and must not pull the list back to it, while expanding
+  // its last ancestor (shown false→true) must.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only re-run when the target changes
+  useLayoutEffect(() => {
+    if (!revealedShown || revealedPath === null) {
+      scrolledRevealRef.current = null;
+      return;
+    }
+    const el = treeRef.current;
+    if (!el) return;
+    scrolledRevealRef.current = revealedPath;
+    scrollPathIntoView(revealedPath);
+    for (const rowEl of el.querySelectorAll<HTMLElement>('.filerow')) {
+      // Match by dataset rather than a CSS attribute selector — Windows paths carry
+      // backslashes that would need escaping inside the selector string.
+      if (rowEl.dataset.path === revealedPath) {
+        rowEl.scrollIntoView({ block: 'nearest' });
+        break;
+      }
+    }
+  }, [revealedPath, revealedShown]);
   const win = computeSectionWindow({
     count: rows.length,
     scrollTop: view.scrollTop,

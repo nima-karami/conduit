@@ -12,7 +12,6 @@ All notable user-facing changes to Conduit. Format follows
   editor (files, diffs, plan code blocks, peek views), and the old one stops. Chords that would
   type text, or that the editor can't bind, are refused with the reason. The row names anything
   the chord collides with, and the editor's right-click menu shows the chord you picked.
-
 - **Auto save.** Settings → Appearance → Editor & code → Auto save: Off (the default), After delay
   (with a delay from 100 to 60000 ms, 1000 by default), On focus change, or On window change, as in
   VS Code. With auto save on, closing an edited tab saves it instead of asking. Files over 2 MB
@@ -21,6 +20,9 @@ All notable user-facing changes to Conduit. Format follows
   the file under your unsaved edits, the editor pauses auto save for that file and shows a banner:
   Overwrite keeps your version, Reload from disk takes theirs (for a deleted file: Overwrite or
   Close). The tab shows a warning mark while it waits, even in the background.
+- **The Changes and Files lists follow the tab you're on.** The file in the focused tab is
+  highlighted in Changes (the staged or unstaged row that tab shows) and in Files, where its
+  folders open and it scrolls into view. Neither list takes focus or switches tabs to do it.
 
 ### Changed
 - **Folder expand/collapse arrows sit on the left in both Files and Changes.** The arrow on each
@@ -29,6 +31,8 @@ All notable user-facing changes to Conduit. Format follows
   Changes stays collapsed when you switch tabs and come back.
 
 ### Fixed
+- **Opening a file from the Files tree highlights it there again.** In a folder opened with a
+  lower-case drive letter, no opened file was ever highlighted in the tree.
 - **The editor keeps keyboard focus after a save.** Every save used to rebuild the editor, so the
   keys you typed right after Ctrl+S went nowhere.
 - **Save All and closing with Save now work for tabs in the background.** An edited tab you had

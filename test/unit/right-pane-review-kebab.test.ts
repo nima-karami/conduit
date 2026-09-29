@@ -56,6 +56,7 @@ async function render(
         null,
         createElement(RightPane, {
           sessionId: 's1',
+          activeTarget: null,
           sections: [],
           rowChanges: new Map(),
           osDropSeam: false,
