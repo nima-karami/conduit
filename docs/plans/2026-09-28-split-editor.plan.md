@@ -1414,6 +1414,8 @@ The tab strip's close, middle-click, Mod+W and the tab context menu switch to `c
     works on the Terminal.
   - **The tab context menu** adds "Move to Other Group" (disabled on Terminal).
   - **Palette:** "Move Editor to Other Group".
+  - With one group, Move to Other Group (keyboard, menu, palette) creates group 2, as VS Code's
+    "Move Editor into Right Group" does (amended in the review round).
 - Modify: `webview/split-editor-copy.ts` (add `moveToOther`, `moved`)
 - Test: `test/unit/view-state-store.test.ts` ('move carries state and clears the target tombstone'),
   `test/unit/html-view-store.test.ts` ('move and copy notify subscribers')
