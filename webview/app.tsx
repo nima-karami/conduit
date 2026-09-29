@@ -120,7 +120,7 @@ import { Toasts } from './components/toasts';
 import { TopBar } from './components/top-bar';
 import type { UpdateStatus } from './components/update-card';
 import { WebPromptModal } from './components/web-prompt-modal';
-import { decideShortcut } from './decide-shortcut';
+import { decideShortcut, type ShortcutContext } from './decide-shortcut';
 import { createDiffReadQueue, type DiffReadQueue, diffReadTargets } from './diff-read-queue';
 import { diffTabKey } from './diff-tab-scope';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
@@ -1290,64 +1290,45 @@ export function App() {
   // everything else: it runs after Monaco has handled (and marked defaultPrevented) any key
   // it binds, so the editor wins its own keys and app shortcuts fire for the rest.
   useEffect(() => {
-    const onKeyCapture = (e: KeyboardEvent) => {
-      if (!isTerminalEntry(e.target as Element | null)) return;
+    // navGoToTab is one action but needs the pressed digit; read it at dispatch. A digit past
+    // the open-doc count is a no-op that lets the key through.
+    const runnerFor = (id: string, e: KeyboardEvent): (() => void) | undefined => {
+      if (id !== 'navGoToTab') return actionMap[id];
+      const sessionId = activeIdRef.current ?? '';
+      const doc = groupDocs(
+        docStateRef.current,
+        sessionId,
+        activeGroupOf(docStateRef.current, sessionId),
+      )[Number(e.key) - 1];
+      return doc ? () => activateDocByUser(doc.id, sessionId) : undefined;
+    };
+    const dispatch = (
+      e: KeyboardEvent,
+      where: Pick<ShortcutContext, 'inTerminal' | 'inEditor' | 'inFormField'>,
+    ) => {
       for (const action of SHORTCUT_ACTIONS) {
         const combo = effectiveCombo(action, bindingsRef.current);
         if (!matchCombo(e, combo)) continue;
-        const ctx = {
-          inTerminal: true,
-          inEditor: false,
-          inFormField: false,
-          defaultPrevented: e.defaultPrevented,
-          combo,
-        };
+        const ctx = { ...where, defaultPrevented: e.defaultPrevented, combo };
         if (!decideShortcut(ctx, action.id)) continue;
-        if (!actionMap[action.id]) continue;
+        const run = runnerFor(action.id, e);
+        if (!run) continue;
         e.preventDefault();
         e.stopPropagation();
-        actionMap[action.id]();
+        run();
         return;
       }
+    };
+    const onKeyCapture = (e: KeyboardEvent) => {
+      if (!isTerminalEntry(e.target as Element | null)) return;
+      dispatch(e, { inTerminal: true, inEditor: false, inFormField: false });
     };
     const onKeyBubble = (e: KeyboardEvent) => {
       const target = e.target as Element | null;
       if (isTerminalEntry(target)) return;
       if (e.defaultPrevented) return;
       const inEditor = isEditorEntry(target);
-      const inFormField = !inEditor && isTypingEntry(target);
-      for (const action of SHORTCUT_ACTIONS) {
-        const combo = effectiveCombo(action, bindingsRef.current);
-        if (!matchCombo(e, combo)) continue;
-        const ctx = {
-          inTerminal: false,
-          inEditor,
-          inFormField,
-          defaultPrevented: e.defaultPrevented,
-          combo,
-        };
-        if (!decideShortcut(ctx, action.id)) continue;
-        // navGoToTab is one action but needs the pressed digit; read it at dispatch. A
-        // digit past the open-doc count is a no-op that lets the key through.
-        if (action.id === 'navGoToTab') {
-          const sessionId = activeIdRef.current ?? '';
-          const doc = groupDocs(
-            docStateRef.current,
-            sessionId,
-            activeGroupOf(docStateRef.current, sessionId),
-          )[Number(e.key) - 1];
-          if (!doc) continue;
-          e.preventDefault();
-          e.stopPropagation();
-          activateDocByUser(doc.id, sessionId);
-          return;
-        }
-        if (!actionMap[action.id]) continue;
-        e.preventDefault();
-        e.stopPropagation();
-        actionMap[action.id]();
-        return;
-      }
+      dispatch(e, { inTerminal: false, inEditor, inFormField: !inEditor && isTypingEntry(target) });
     };
     window.addEventListener('keydown', onKeyCapture, true);
     window.addEventListener('keydown', onKeyBubble, false);

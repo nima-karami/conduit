@@ -22,11 +22,22 @@ describe('decideShortcut', () => {
     ).toBe(true);
   });
 
+  it('fires the tab-navigation chords while the terminal is focused (VS Code commandsToSkipShell)', () => {
+    const chords: [string, string][] = [
+      ['navNextTab', 'Ctrl+Tab'],
+      ['navPrevTab', 'Ctrl+Shift+Tab'],
+      ['navPrevTabPage', 'Ctrl+PageUp'],
+      ['navNextTabPage', 'Ctrl+PageDown'],
+      ['navGoToTab', 'Mod+2'],
+    ];
+    for (const [id, combo] of chords) {
+      expect(decideShortcut({ ...base, inTerminal: true, combo }, id)).toBe(true);
+    }
+  });
+
   it('still blocks other actions while the terminal is focused', () => {
     expect(decideShortcut({ ...base, inTerminal: true }, 'openSearch')).toBe(false);
-    expect(decideShortcut({ ...base, inTerminal: true, combo: 'Ctrl+Tab' }, 'navNextTab')).toBe(
-      false,
-    );
+    expect(decideShortcut({ ...base, inTerminal: true, combo: 'Mod+W' }, 'closeTab')).toBe(false);
     // Mod+S is global everywhere else (typing-guard) — the terminal reserve is not that list.
     expect(decideShortcut({ ...base, inTerminal: true, combo: 'Mod+S' }, 'save')).toBe(false);
     expect(decideShortcut({ ...base, inTerminal: true, combo: 'Mod+Shift+F' }, 'openSearch')).toBe(
