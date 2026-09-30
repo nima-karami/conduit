@@ -97,12 +97,13 @@ jobs:
       # loadPlaywright (harness.mjs) looks in node_modules first. Playwright is deliberately not a
       # dependency, and the hosted npm cache is not where it looks for npx installs.
       - run: npm install --no-save --ignore-scripts playwright@${{ env.PLAYWRIGHT_VERSION }}
-      - if: contains(format(' {0} ', matrix.names), ' go-lsp ')
+      # go-lsp needs gopls; mf-files silently SKIPs its trust phase without a Go toolchain.
+      - if: contains(format(' {0} ', matrix.names), ' go-lsp ') || contains(format(' {0} ', matrix.names), ' mf-files ')
         uses: actions/setup-go@v5
         with:
           go-version: stable
           cache: false
-      - if: contains(format(' {0} ', matrix.names), ' go-lsp ')
+      - if: contains(format(' {0} ', matrix.names), ' go-lsp ') || contains(format(' {0} ', matrix.names), ' mf-files ')
         shell: pwsh
         run: |
           go install golang.org/x/tools/gopls@latest
@@ -162,6 +163,8 @@ jobs:
         env:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
+          # Run 36663111099 traced with screenshots+snapshots: the long scenarios hit TIMEOUT.
+          E2E_PROBE_TRACE_OPTS: '{"screenshots":false,"snapshots":true}'
         run: |
           $env:E2E_PROBE_DIR = Join-Path $env:RUNNER_TEMP 'probe'
           New-Item -ItemType Directory -Force $env:E2E_PROBE_DIR | Out-Null

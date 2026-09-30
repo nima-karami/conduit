@@ -136,11 +136,19 @@ async function probeStart(app) {
   const t = Date.now();
   let error;
   try {
-    await app.context().tracing.start({ screenshots: true, snapshots: true });
+    await app
+      .context()
+      .tracing.start(
+        JSON.parse(process.env.E2E_PROBE_TRACE_OPTS || '{"screenshots":true,"snapshots":true}'),
+      );
   } catch (e) {
     error = String(e?.message || e);
   }
-  probeStarted.set(app, { startMs: Date.now() - t, startError: error });
+  probeStarted.set(app, {
+    startMs: Date.now() - t,
+    startError: error,
+    opts: process.env.E2E_PROBE_TRACE_OPTS,
+  });
 }
 
 async function probeCapture(app) {
