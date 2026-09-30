@@ -47,9 +47,12 @@ export function importersFromMetafile(meta) {
   return out;
 }
 
-function scenariosByFile(map) {
+/** Only scenarios that still exist: the map is a nightly old and may name a split or deleted one. */
+function scenariosByFile(map, all) {
+  const known = new Set(all);
   const byFile = new Map();
   for (const [name, files] of Object.entries(map.scenarios ?? {})) {
+    if (!known.has(name)) continue;
     for (const f of files) byFile.set(f, [...(byFile.get(f) ?? []), name]);
   }
   return byFile;
@@ -93,7 +96,7 @@ export function selectAffected(changed, ctx) {
   const triggers = relevant.filter((c) => FULL.some((re) => re.test(c.path)));
   if (triggers.length) return full(triggers.map((c) => `${c.path}: always runs the full suite`));
 
-  const byFile = scenariosByFile(ctx.map);
+  const byFile = scenariosByFile(ctx.map, ctx.all);
   const names = new Set();
   const reasons = [];
   for (const { path, status } of relevant) {

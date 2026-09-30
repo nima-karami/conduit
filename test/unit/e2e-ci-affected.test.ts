@@ -88,6 +88,13 @@ describe('selectAffected', () => {
     });
   });
 
+  it('drops map entries for scenarios that no longer exist (split or deleted)', () => {
+    const stale = { ...map, scenarios: { ...map.scenarios, 'split-editor-old': ['src/pty.ts'] } };
+    const r = selectAffected([m('src/pty.ts')], { ...ctx, map: stale });
+    expect(r.names).not.toContain('split-editor-old');
+    expect(r.names).toContain('cwd');
+  });
+
   it('a scenario the map has never seen always runs, unless it is excluded remotely', () => {
     expect(selectAffected([m('src/pty.ts')], ctx).names).toContain('fresh');
     const r = selectAffected([m('src/pty.ts')], { ...ctx, excluded: ['fresh'] });
