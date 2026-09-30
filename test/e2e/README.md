@@ -26,9 +26,11 @@ are **deliberately excluded from `npm run verify`** — vitest only globs
   run. The report lists quarantine candidates (FLAKY 3+ times in 14 nightly days).
 - **Locally, one scenario at a time:** `npm run e2e -- <exact-name>`. More than one refuses
   (`CONDUIT_E2E_LOCAL_FULL=1` is a human-only escape hatch). A second local run waits on the
-  machine-wide lock and names the owner; the app runs at BelowNormal priority.
+  machine-wide lock and names the owner; the app runs at BelowNormal priority. The wait doesn't
+  count against the scenario's 210 s; after 20 min it gives up as LOCK-TIMEOUT.
 - **Scenarios launch only through `launchElectron` and exit only through `finishScenario`**
-  (harness.mjs); `test/unit/e2e-harness-guards.test.ts` enforces both.
+  (harness.mjs); `test/unit/e2e-harness-guards.test.ts` enforces both. A profile dir a scenario
+  keeps across relaunches comes from `profileDir()`: `launchElectron` refuses any other.
 - **`remote-exclusions.json`** lists scenarios the hosted runner can't run (no OS focus, small
   display). They are skipped remotely, reported EXCLUDED with the reason, and run locally.
 

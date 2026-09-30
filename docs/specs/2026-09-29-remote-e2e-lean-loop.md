@@ -205,7 +205,13 @@ an overlap only queues jobs, it never cancels a run.
     holding it; `EADDRINUSE` means it is held; the OS releases it when the owner dies, so there is
     no stale-lock reclaim. The owner serves `{pid, scenario, cwd}`, and a waiter prints
     "waiting for <pid> (<scenario>, <cwd>)".
+  - The wait is off every scenario clock: the harness watchdog is armed after it, and the runner's
+    210 s kill is suspended from the first `waiting` line and re-armed at start + 210 s + the wait
+    on `acquired after Ns`. The wait itself is capped at **20 min**, reported as `LOCK-TIMEOUT`
+    and not retried.
   - sets the launched Electron tree to **BelowNormal** priority.
+  - accepts only a profile dir named `conduit-ud-<runId>-…` (harness `profileDir()`), so the
+    runner's orphan sweep finds this run's Chromium children even after their root has died.
 
   So `node test/e2e/x.e2e.mjs` is covered as well.
 - `run-smoke.mjs` run locally with no filter, or with a filter matching more than one scenario,
@@ -251,7 +257,23 @@ an overlap only queues jobs, it never cancels a run.
        scenario that ran any of its functions (its importers' own edits are judged by rule 3); any
        other deleted file (CSS, JSON, a resource) selects the full suite. A modified file absent
        from the map selects the full suite.
-    6. The core smoke set is always added, and so is every scenario the map has never seen.
+    6. The core smoke set is always added, and so is every scenario the map has never seen, and
+       every scenario whose entry is flagged `alwaysRun` (rule 7).
+    7. **Coverage the map can't trust is never merged** (map schema 3; a schema-2 map selects the
+       full suite). Coverage starts once an app is up, so the startup of a *relaunched* app or of
+       a *second window* is never credited to the scenario that depends on it. Each attempt's
+       harness writes a sentinel (`meta-<pid>.json`: apps launched, most windows one app opened,
+       apps stopped cleanly, what was lost), and per scenario:
+       - an attempt that launched more than one app, or opened a second window, flags the entry
+         `alwaysRun` — derived from what ran, not a hand-kept list;
+       - the entry is merged only if some attempt stopped every app it launched and lost nothing:
+         a capture that hit the 8 s budget, a window closed before its coverage was taken, or an
+         app never stopped (a killed attempt) leaves the previous entry in place, or none.
+  - The line diff's output format is pinned (`--src-prefix=a/ --dst-prefix=b/ --no-color
+    --no-ext-diff --no-textconv`, `core.quotePath=false`, C-quoted paths decoded), hunk bodies are
+    skipped by their `@@` counts (a removed `-- x` prints as `--- x`), and any file
+    `git diff --name-only` lists that the parse has no entry for selects the full suite; an
+    unparsed diff never reads as "identical to the map's build".
   - The diff base is the merge-base with `main`; the workflow checks out with full history to
     compute it.
   - **Known limit:** judged by base-side positions, new code spliced *inside* an existing function's
