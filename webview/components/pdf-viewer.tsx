@@ -2,6 +2,7 @@ import { ChevronDown, ChevronUp, PanelLeft, X } from 'lucide-react';
 import type { PDFPageProxy } from 'pdfjs-dist';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { FileContentDTO } from '../../src/protocol';
+import { useFocusTargetRef } from '../focus-targets';
 import { IconChevron, IconRotate, IconSearch, IconZoomIn, IconZoomOut } from '../icons';
 import { type OutlineNode, PdfDocument, PdfLoadException } from '../pdf-document';
 import { PdfFindController, type PdfMatch } from '../pdf-find';
@@ -18,7 +19,7 @@ const WINDOW_MARGIN = '1200px 0px';
 const prefersReducedMotion = () =>
   typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-export function PdfViewer({ doc }: { doc: FileContentDTO }) {
+export function PdfViewer({ doc, focusKey }: { doc: FileContentDTO; focusKey?: string }) {
   const [pdf, setPdf] = useState<PdfDocument | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [baseDims, setBaseDims] = useState<PageSize[]>([]); // page sizes at scale 1
@@ -91,10 +92,18 @@ export function PdfViewer({ doc }: { doc: FileContentDTO }) {
   if (!dataUrl) return <div className="viewer__notice">PDF could not be loaded.</div>;
   if (!pdf) return <div className="viewer__notice">Loading PDF…</div>;
 
-  return <PdfReady pdf={pdf} baseDims={baseDims} />;
+  return <PdfReady pdf={pdf} baseDims={baseDims} focusKey={focusKey} />;
 }
 
-function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageSize[] }) {
+function PdfReady({
+  pdf,
+  baseDims,
+  focusKey,
+}: {
+  pdf: PdfDocument;
+  baseDims: PageSize[];
+  focusKey?: string;
+}) {
   const total = pdf.numPages;
   const [outline, setOutline] = useState<OutlineNode[]>([]);
 
@@ -110,6 +119,7 @@ function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageSize[] })
   }, [pdf]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const pdfFocusRef = useFocusTargetRef<HTMLDivElement>(focusKey);
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [scale, setScale] = useState(1);
   // Documents open fitted to width; the effect below applies the scale before first paint,
@@ -315,7 +325,7 @@ function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageSize[] })
   const zoomPct = Math.round(scale * 100);
 
   return (
-    <div className="pdfview" tabIndex={0} onKeyDown={onKeyDown}>
+    <div className="pdfview" ref={pdfFocusRef} tabIndex={0} onKeyDown={onKeyDown}>
       <div className="pdfview__toolbar">
         <button
           type="button"

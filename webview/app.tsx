@@ -2,6 +2,7 @@ import * as monaco from 'monaco-editor';
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -91,7 +92,13 @@ import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { goToChangeInActiveDoc } from './change-nav-registry';
 import { buildBulkMenuItems, discardAllPlan, runDiscardAll } from './changes-actions';
-import { type ClosedTab, popClosedTab, pushClosedTab, toClosedTab } from './closed-tabs';
+import {
+  type ClosedTab,
+  popClosedTab,
+  pushClosedTab,
+  reopenGroup,
+  toClosedTab,
+} from './closed-tabs';
 import { AnimatedBg } from './components/animated-bg';
 import { ArchitectureView } from './components/architecture-view';
 import { BoardView } from './components/board-view';
@@ -113,12 +120,26 @@ import { Toasts } from './components/toasts';
 import { TopBar } from './components/top-bar';
 import type { UpdateStatus } from './components/update-card';
 import { WebPromptModal } from './components/web-prompt-modal';
-import { decideShortcut } from './decide-shortcut';
+import { decideShortcut, type ShortcutContext } from './decide-shortcut';
 import { createDiffReadQueue, type DiffReadQueue, diffReadTargets } from './diff-read-queue';
 import { diffTabKey } from './diff-tab-scope';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
+import {
+  activeGroupOf,
+  centerLayout,
+  dirtyPreviewTabs,
+  type GroupIndex,
+  groupActive,
+  groupDocs,
+  layoutOf,
+  openTargetGroup,
+  resolveActivateGroup,
+  splitBehavior,
+  tabGroupsOf,
+  tabPreview,
+} from './doc-groups';
 import { reorderDock } from './dock-reorder';
-import type { DocKind, OpenDoc, OpenMode } from './docs';
+import type { DocKind, DocsState, OpenDoc, OpenMode } from './docs';
 import {
   backgroundOpenOutcome,
   commitDiffPath,
@@ -131,6 +152,7 @@ import {
   type ReviewSource,
   toPersistedDocs,
 } from './docs';
+import { tabStateKey } from './editor-group-context';
 import {
   type CursorPos,
   coalescesEntries,
@@ -143,6 +165,12 @@ import { shouldReplaceContent } from './file-freshness';
 import { fileSaves, moveFileBuffer, setDocCloser } from './file-saves';
 import { buildRowChangeMap } from './file-tree';
 import {
+  dropDocFocusUnless,
+  requestDocFocus,
+  terminalFocusKey,
+  terminalTabFocusKey,
+} from './focus-targets';
+import {
   affectedDirs,
   applyRedo,
   applyUndo,
@@ -154,7 +182,7 @@ import {
   redoActions,
 } from './fs-undo';
 import type { BulkTarget, GitActionIntent } from './git-intent';
-import { bumpHtmlReload, clearHtmlView, getHtmlView, toggleHtmlView } from './html-view-store';
+import { bumpHtmlReload, getHtmlView, toggleHtmlView } from './html-view-store';
 import { type HunkActionHost, setHunkActionHost } from './hunk-actions';
 import {
   IconBoard,
@@ -178,6 +206,7 @@ import {
   IconSettings,
   IconSidebar,
   IconSparkle,
+  IconSplit,
   IconTrash,
   SessionGlyph,
 } from './icons';
@@ -188,13 +217,7 @@ import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
 import { useMonacoNavKeybindings } from './monaco-nav-keybindings';
 import { registerConduitEditorOpener } from './monaco-opener';
-import {
-  lastCursor,
-  liveCursor,
-  requestNavFocus,
-  revealInNavEditor,
-  setCursorJumpSink,
-} from './nav-editors';
+import { lastCursor, liveCursor, revealInNavEditor, setCursorJumpSink } from './nav-editors';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { probePathExists } from './path-probe';
 import { planExternalChanges } from './plan-store';
@@ -223,7 +246,10 @@ import { selectionInActiveDoc } from './selection-registry';
 import { selectionSourceFor } from './selection-source';
 import { useSettings } from './settings';
 import { comboLabel, effectiveCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
+import { SPLIT_COPY } from './split-editor-copy';
 import { closeTabSelection } from './tab-close-selection';
+import { endTabDrag } from './tab-drag';
+import { carryTabState, dropTabState, pinTabStateForMove } from './tab-view-state';
 import {
   requestTerminalFocus,
   selectionInTerminal,
@@ -244,7 +270,7 @@ import { useBackgroundOpenFeedback } from './use-background-open-feedback';
 import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-history';
 import { useReviewModeLayout } from './use-review-mode-layout';
 import { useSnooze } from './use-snooze';
-import { fileViewStateIds, markClosing, renameViewState } from './view-state-store';
+import { fileViewStateIds, renameViewState } from './view-state-store';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
@@ -255,6 +281,7 @@ const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 interface FileOpenNav {
   reveal?: CursorPos;
   record?: boolean;
+  group?: GroupIndex;
 }
 
 const joinPath = (base: string, rel: string) =>
@@ -276,6 +303,7 @@ function searchSeedFromSelection(
   docs: readonly OpenDoc[],
   activeId: string | null,
   sessionId: string,
+  group: GroupIndex,
 ): string | undefined {
   const sel = window.getSelection();
   const anchor = sel?.anchorNode ?? null;
@@ -291,7 +319,7 @@ function searchSeedFromSelection(
     source === 'terminal'
       ? selectionInTerminal(sessionId)
       : source === 'editor'
-        ? selectionInActiveDoc(docs, activeId)
+        ? selectionInActiveDoc(docs, activeId, group)
         : source === 'dom'
           ? (sel?.toString() ?? '')
           : '';
@@ -319,6 +347,14 @@ function sessionOwningRoot(
   return owners[0] ?? null;
 }
 
+function goToChangeInActiveGroup(
+  state: DocsState,
+  sessionId: string,
+  direction: 'next' | 'prev',
+): void {
+  goToChangeInActiveDoc(state.docs, state.activeId, direction, activeGroupOf(state, sessionId));
+}
+
 /** A file tab's per-path state goes with its tab, however the tab closes: one lifecycle (see
  *  docs/plans/2026-09-28-auto-save.plan.md P4). */
 function releaseFileTab(path: string): void {
@@ -327,12 +363,30 @@ function releaseFileTab(path: string): void {
   clearReveal(path);
 }
 
-/** A file tab's per-path state follows its file to a new path, without a React render between. */
+/** Spec §10: a user activation lands keyboard focus in the view of tab `id` (null: the Terminal). */
+function focusView(sessionId: string, group: GroupIndex, id: string | null): void {
+  requestDocFocus(id === null ? terminalFocusKey(sessionId) : tabStateKey(id, group));
+}
+
+/** The focus keys `focusView` would name for what each session's groups show. */
+function shownFocusKeys(state: DocsState, sessionIds: readonly string[]): Set<string> {
+  const keys = new Set<string>();
+  for (const s of sessionIds) {
+    layoutOf(state, s).groups.forEach((g, i) => {
+      if (g.active !== null) keys.add(tabStateKey(g.active, i === 0 ? 1 : 2));
+      else if (i === 0) keys.add(terminalFocusKey(s));
+    });
+  }
+  return keys;
+}
+
+/** A file tab's per-path state follows its file to a new path, without a React render between.
+ *  View state is keyed per group (split-editor plan P5), so both groups' keys move. */
 function moveFileTab(from: string, to: string): boolean {
   if (!moveFileBuffer(from, to)) return false;
   const toIds = fileViewStateIds(to);
   fileViewStateIds(from).forEach((id, i) => {
-    renameViewState(id, toIds[i]);
+    for (const g of [1, 2] as const) renameViewState(tabStateKey(id, g), tabStateKey(toIds[i], g));
   });
   clearReveal(from);
   return true;
@@ -411,6 +465,9 @@ export function App() {
   const [centerView, setCenterView] = useState<CenterView>('editor');
   const centerViewRef = useRef(centerView);
   centerViewRef.current = centerView;
+  // see split-editor spec §4: a switch mid-drag abandons it (its source tab may never see dragend).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the deps are the triggers, not inputs.
+  useEffect(() => endTabDrag(), [activeId, centerView]);
   const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
@@ -524,7 +581,11 @@ export function App() {
         const changed = docStateRef.current.docs.find(
           (d) => d.kind === 'file' && d.path === msg.path && isHtmlDocPath(d.path),
         );
-        if (changed) bumpHtmlReload(changed.id);
+        if (changed) {
+          for (const g of tabGroupsOf(docStateRef.current, changed.id)) {
+            bumpHtmlReload(tabStateKey(changed.id, g));
+          }
+        }
       } else if (msg.type === 'updateStatus') {
         setUpdateStatus(msg);
         // A freshly-staged update un-dismisses the sidebar card (the user may have
@@ -719,11 +780,16 @@ export function App() {
   // `openReviewTab` stays argument-less: it is wired straight to onClick in several places,
   // where an extra parameter would be handed a MouseEvent.
   const openReviewScoped = useCallback(
-    (scope: ReviewScope, repoRoot?: string) => {
+    (scope: ReviewScope, repoRoot?: string, group?: GroupIndex) => {
       const sessionId = activeIdRef.current ?? '';
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
       setCenterView('editor');
-      dispatchDocs({ type: 'openReview', sessionId, source: workingSource(scope, repoRoot) });
+      dispatchDocs({
+        type: 'openReview',
+        sessionId,
+        source: workingSource(scope, repoRoot),
+        group: group ?? openTargetGroup(docStateRef.current, sessionId),
+      });
     },
     [recordNav],
   );
@@ -736,8 +802,15 @@ export function App() {
   // `repoRoot` scopes the review to a SPECIFIC repo — passed for a terminal commit click so the
   // review reads the commit from that terminal's cwd repo, not the pinned active repo (feat-link-cwd).
   const openReviewForCommit = useCallback(
-    (sha: string, targetSessionId?: string, subject?: string, repoRoot?: string) => {
+    (
+      sha: string,
+      targetSessionId?: string,
+      subject?: string,
+      repoRoot?: string,
+      group?: GroupIndex,
+    ) => {
       const sessionId = targetSessionId ?? activeIdRef.current ?? '';
+      const g = group ?? openTargetGroup(docStateRef.current, sessionId);
       // Every commit source names its repo (docs/specs/archive/2026-09-23-mf-review.md §2.1 S1) — but only
       // a detected one: with none, the unstamped source already reads the session's git root.
       const owner = sessionsRef.current.find((s) => s.id === sessionId);
@@ -757,6 +830,7 @@ export function App() {
           ...(subject ? { subject } : {}),
           ...(root ? { repoRoot: root } : {}),
         },
+        group: g,
       });
     },
     [recordNav],
@@ -771,7 +845,12 @@ export function App() {
       const sessionId = activeIdRef.current ?? '';
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
       setCenterView('editor');
-      dispatchDocs({ type: 'openReview', sessionId, source: s });
+      dispatchDocs({
+        type: 'openReview',
+        sessionId,
+        source: s,
+        group: openTargetGroup(docStateRef.current, sessionId),
+      });
     },
     [openReviewScoped, openReviewForCommit, recordNav],
   );
@@ -824,13 +903,19 @@ export function App() {
   // Read BEFORE the dispatch: the outcome is what the open is about to do (spec
   // 2026-09-22-middle-click-new-tab §3). The session is named only when it isn't the active one.
   const reportBackgroundOpen = useCallback(
-    (kind: DocKind, path: string, targetSessionId: string, diffScope?: DiffTabScope) => {
+    (
+      kind: DocKind,
+      path: string,
+      targetSessionId: string,
+      group: GroupIndex,
+      diffScope?: DiffTabScope,
+    ) => {
       const r = backgroundOpenOutcome(docStateRef.current, kind, path, targetSessionId, diffScope);
       const sessionName =
         r.ownerSessionId === activeIdRef.current
           ? null
           : (sessionsRef.current.find((s) => s.id === r.ownerSessionId)?.name ?? null);
-      reportBackground({ id: r.id, title: r.title, outcome: r.outcome, sessionName });
+      reportBackground({ id: r.id, title: r.title, outcome: r.outcome, sessionName, group });
     },
     [reportBackground],
   );
@@ -838,15 +923,16 @@ export function App() {
   // Open one of a commit's files as a `commit-diff` tab — from the commit detail rendered
   // inline in the history view (single-click = preview, double-click = pin, middle = background).
   const openCommitFile = useCallback(
-    (sha: string, file: string, mode: OpenMode, repoRoot?: string) => {
+    (sha: string, file: string, mode: OpenMode, repoRoot?: string, group?: GroupIndex) => {
       const sessionId = activeIdRef.current ?? '';
+      const g = group ?? openTargetGroup(docStateRef.current, sessionId);
       if (mode === 'background') {
-        reportBackgroundOpen('commit-diff', commitDiffPath(sha, file), sessionId);
+        reportBackgroundOpen('commit-diff', commitDiffPath(sha, file), sessionId, g);
       } else {
         recordNav({ sessionId, doc: { kind: 'commit-diff', path: commitDiffPath(sha, file) } });
         setCenterView('editor');
       }
-      dispatchDocs({ type: 'openCommitFile', sha, file, sessionId, mode, repoRoot });
+      dispatchDocs({ type: 'openCommitFile', sha, file, sessionId, mode, repoRoot, group: g });
     },
     [recordNav, reportBackgroundOpen],
   );
@@ -854,20 +940,98 @@ export function App() {
   // A tab click / Ctrl+Tab / Mod+digit is an R1 producer; the Terminal stop never records
   // (docs/specs/2026-09-22-editor-nav-history.md §2.2).
   const activateDocByUser = useCallback(
-    (id: string | null, sessionId: string) => {
+    (id: string | null, sessionId: string, group?: GroupIndex, focus = true) => {
       const doc = id === null ? undefined : docStateRef.current.docs.find((d) => d.id === id);
       if (doc && id !== docStateRef.current.activeId) recordNav(navEntryFor(doc));
-      dispatchDocs({ type: 'activate', id, sessionId });
+      const owner = doc?.sessionId ?? sessionId;
+      const g = group ?? resolveActivateGroup(docStateRef.current, owner, id);
+      dispatchDocs({ type: 'activate', id, sessionId, group });
+      // After recordNav, which cancels any focus request still waiting to mount.
+      if (focus) focusView(owner, g, id);
     },
     [recordNav],
   );
 
+  const focusGroup = useCallback((group: GroupIndex) => {
+    const sessionId = activeIdRef.current;
+    if (sessionId) dispatchDocs({ type: 'focusGroup', sessionId, group });
+  }, []);
+
+  /** Split Right on group 1's active tab, or on `target` (from group 1's strip or a tab menu),
+   *  activating group 1 first. */
+  const splitRight = useCallback((target?: OpenDoc) => {
+    const sessionId = activeIdRef.current;
+    if (!sessionId) return;
+    const layout = layoutOf(docStateRef.current, sessionId);
+    const announce = (text: string) => {
+      if (navLiveRef.current) navLiveRef.current.textContent = text;
+    };
+    if (layout.activeGroup === 2 && !target) {
+      announce(SPLIT_COPY.capReached);
+      return;
+    }
+    const id = target?.id ?? layout.groups[0].active;
+    const doc = docStateRef.current.docs.find((d) => d.id === id);
+    if (!doc) return;
+    if (layout.activeGroup === 2) dispatchDocs({ type: 'focusGroup', sessionId, group: 1 });
+    if (doc.id !== layout.groups[0].active) {
+      dispatchDocs({ type: 'activate', id: doc.id, sessionId, group: 1 });
+    }
+    const landed = pinTabStateForMove(doc);
+    if (!layout.groups[1]?.tabs.some((t) => t.id === landed.id)) {
+      carryTabState(landed, 1, 2, splitBehavior(doc.kind) === 'duplicate' ? 'copy' : 'move');
+    }
+    dispatchDocs({ type: 'splitRight', sessionId });
+    announce(SPLIT_COPY.splitOpened(doc.title));
+    focusView(sessionId, 2, landed.id);
+  }, []);
+
+  const moveTabToGroup = useCallback(
+    (id: string, toGroup: GroupIndex, beforeId: string | null, duplicate: boolean) => {
+      const sessionId = activeIdRef.current;
+      if (!sessionId) return;
+      const layout = layoutOf(docStateRef.current, sessionId);
+      const from: GroupIndex = toGroup === 1 ? 2 : 1;
+      const src = layout.groups[from - 1];
+      const dst = layout.groups[toGroup - 1];
+      const doc = docStateRef.current.docs.find((d) => d.id === id);
+      if (!doc || !src?.tabs.some((t) => t.id === id)) return;
+      const copy = duplicate && splitBehavior(doc.kind) === 'duplicate';
+      const landed = pinTabStateForMove(doc);
+      if (!dst?.tabs.some((t) => t.id === landed.id)) {
+        carryTabState(landed, from, toGroup, copy ? 'copy' : 'move');
+      } else if (!copy) {
+        dropTabState(landed, from);
+      }
+      dispatchDocs({ type: 'moveTab', sessionId, id, toGroup, beforeId, duplicate: copy });
+      const said = !copy
+        ? SPLIT_COPY.moved(doc.title, toGroup)
+        : toGroup === 2
+          ? SPLIT_COPY.splitOpened(doc.title)
+          : null;
+      if (said !== null && navLiveRef.current) navLiveRef.current.textContent = said;
+      focusView(sessionId, toGroup, landed.id);
+    },
+    [],
+  );
+
+  const focusGroupByCommand = useCallback((group: GroupIndex) => {
+    const sessionId = activeIdRef.current;
+    if (!sessionId) return;
+    const target = layoutOf(docStateRef.current, sessionId).groups[group - 1];
+    if (!target) return;
+    dispatchDocs({ type: 'focusGroup', sessionId, group });
+    focusView(sessionId, group, target.active);
+  }, []);
+
   const openGlobalSearchSeeded = useCallback(() => {
+    const sessionId = activeIdRef.current ?? '';
     openGlobalSearch(
       searchSeedFromSelection(
         docStateRef.current.docs,
         docStateRef.current.activeId,
-        activeIdRef.current ?? '',
+        sessionId,
+        activeGroupOf(docStateRef.current, sessionId),
       ),
     );
   }, [openGlobalSearch]);
@@ -894,9 +1058,43 @@ export function App() {
   // Declared after the fs-undo handlers that call it.
   const retargetDocsRef = useRef<(from: string, to: string) => void>(() => {});
   const doRedoRef = useRef<() => void>(() => {});
-  // closeDoc is declared later (it depends on hooks below); the shortcut handler reaches
+  // closeTab is declared later (it depends on hooks below); the shortcut handler reaches
   // it through this ref to avoid the same ordering problem as undo/redo.
-  const closeDocRef = useRef<(id: string) => void>(() => {});
+  const closeTabRef = useRef<(id: string, group: GroupIndex) => Promise<boolean>>(() =>
+    Promise.resolve(false),
+  );
+  // A pending unsaved-changes close prompt; Cancel and Esc settle it through the dialog's onClose.
+  const closePromptRef = useRef<((closed: boolean) => void) | null>(null);
+  /** Ctrl+W, a tab's own close and the tab menu's closes: focus lands on what the group shows next
+   *  (spec §10). A close from the strip or the menu that lands on the Terminal focuses its button
+   *  rather than xterm, as a click on that button does. */
+  const closeTabsByUser = useCallback(
+    async (
+      ids: readonly string[],
+      group: GroupIndex,
+      terminalLanding: 'xterm' | 'button' = 'xterm',
+    ) => {
+      const sessionId = docStateRef.current.docs.find((d) => d.id === ids[0])?.sessionId;
+      if (sessionId === undefined) return;
+      const closed = await Promise.all(ids.map((id) => closeTabRef.current(id, group)));
+      const gone = ids.filter((_, i) => closed[i]);
+      if (gone.length === 0) return;
+      // Whether or not the closes have rendered yet, this is the state after them: the reducer
+      // ignores a close whose tab is already gone.
+      const after = layoutOf(
+        gone.reduce((s, id) => docsReducer(s, { type: 'close', id, group }), docStateRef.current),
+        sessionId,
+      );
+      const g = after.groups[group - 1] ? group : 1;
+      const next = after.groups[g - 1]?.active ?? null;
+      if (next === null && terminalLanding === 'button') {
+        requestDocFocus(terminalTabFocusKey(sessionId));
+      } else {
+        focusView(sessionId, g, next);
+      }
+    },
+    [],
+  );
   // Nav back/forward (modal-guarded) are declared after useNavHistory below; actionMap
   // reaches them through refs to avoid the same ordering problem as undo/redo.
   const navBackRef = useRef<() => void>(() => {});
@@ -912,7 +1110,7 @@ export function App() {
     if (target) post({ type: 'openRepo', path: target.path, agentId: target.agentId });
   };
   // Reopen-closed-tab (Mod+Shift+T): a bounded LIFO of recently-closed reopenable docs and
-  // the reopen action. Both are refs so closeDoc/actionMap don't re-bind on every close;
+  // the reopen action. Both are refs so closeTab/actionMap don't re-bind on every close;
   // reopenClosedTab depends on openFile/openDiff/openWeb declared further below.
   const closedTabsRef = useRef<ClosedTab[]>([]);
   const reopenClosedTabRef = useRef<() => void>(() => {});
@@ -991,12 +1189,16 @@ export function App() {
   // Global shortcuts — data-driven from the (rebindable, persisted) bindings.
   const actionMap = useMemo<Record<string, () => void>>(() => {
     const currentSessionId = () => activeIdRef.current ?? '';
-    const currentSessionDocs = () =>
-      docStateRef.current.docs.filter((d) => d.sessionId === currentSessionId());
+    const currentGroup = () => activeGroupOf(docStateRef.current, currentSessionId());
     const activate = (id: string | null) => activateDocByUser(id, currentSessionId());
-    // Tab cycle stops: the Terminal (null) first, then each open doc; +1 next, -1 prev.
+    // Tab cycle stops, in the active group: group 1's Terminal (null) first, then each open doc;
+    // +1 next, -1 prev.
     const cycleTab = (dir: number) => {
-      const stops: (string | null)[] = [null, ...currentSessionDocs().map((d) => d.id)];
+      const g = currentGroup();
+      const stops: (string | null)[] = [
+        ...(g === 1 ? [null] : []),
+        ...groupDocs(docStateRef.current, currentSessionId(), g).map((d) => d.id),
+      ];
       const cur = stops.indexOf(docStateRef.current.activeId);
       activate(stops[(cur + dir + stops.length) % stops.length]);
     };
@@ -1037,13 +1239,13 @@ export function App() {
       // defaultPrevented, so this fires only for a combo monaco cannot express — which is
       // what keeps a rebind to such a combo from silently doing nothing.
       nextChange: () =>
-        goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'next'),
+        goToChangeInActiveGroup(docStateRef.current, activeIdRef.current ?? '', 'next'),
       prevChange: () =>
-        goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'prev'),
+        goToChangeInActiveGroup(docStateRef.current, activeIdRef.current ?? '', 'prev'),
       toggleHtmlView: () => {
         const d = docStateRef.current.docs.find((x) => x.id === docStateRef.current.activeId);
         if (d?.kind === 'file' && isHtmlDocPath(d.path))
-          toggleHtmlView(d.id, settings.htmlDefaultView);
+          toggleHtmlView(tabStateKey(d.id, currentGroup()), settings.htmlDefaultView);
       },
       // File-explorer undo/redo. When Monaco is focused it consumes Ctrl+Z/Ctrl+Shift+Z
       // first (marking the event defaultPrevented), so decideShortcut skips these — they
@@ -1054,11 +1256,22 @@ export function App() {
       // Close the active editor tab (VS Code Mod+W). No-op when the Terminal is active.
       closeTab: () => {
         const id = docStateRef.current.activeId;
-        if (id) closeDocRef.current(id);
+        if (id) void closeTabsByUser([id], currentGroup());
       },
       // Reopen the most recently closed tab (VS Code Mod+Shift+T). Invoked via a stable ref
       // for the same ordering reason as undo/redo (openFile/openDiff are declared later).
       reopenClosedTab: () => reopenClosedTabRef.current(),
+      splitEditorRight: () => splitRight(),
+      moveTabNextGroup: () => {
+        const id = docStateRef.current.activeId;
+        if (id && currentGroup() === 1) moveTabToGroup(id, 2, null, false);
+      },
+      moveTabPrevGroup: () => {
+        const id = docStateRef.current.activeId;
+        if (id && currentGroup() === 2) moveTabToGroup(id, 1, null, false);
+      },
+      focusLeftGroup: () => focusGroupByCommand(1),
+      focusRightGroup: () => focusGroupByCommand(2),
       // Built-in navigation (VS Code parity). Ctrl+Tab / Ctrl+PageUp cycle back, the
       // PageDown pair forward; navGoToTab is dispatched specially (it needs the pressed
       // digit). Cmd+Tab/Cmd+` are OS-reserved on macOS, hence the literal Ctrl combos.
@@ -1078,9 +1291,7 @@ export function App() {
           if (editorEl) editorEl.focus();
           else active?.blur();
         } else {
-          const sessionId = currentSessionId();
           activate(null);
-          requestAnimationFrame(() => requestTerminalFocus(sessionId));
         }
       },
     };
@@ -1094,6 +1305,10 @@ export function App() {
     openGitHistoryTab,
     settings.htmlDefaultView,
     activateDocByUser,
+    splitRight,
+    moveTabToGroup,
+    focusGroupByCommand,
+    closeTabsByUser,
   ]);
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
@@ -1104,62 +1319,45 @@ export function App() {
   // everything else: it runs after Monaco has handled (and marked defaultPrevented) any key
   // it binds, so the editor wins its own keys and app shortcuts fire for the rest.
   useEffect(() => {
-    const onKeyCapture = (e: KeyboardEvent) => {
-      if (!isTerminalEntry(e.target as Element | null)) return;
+    // navGoToTab is one action but needs the pressed digit; read it at dispatch. A digit past
+    // the open-doc count is a no-op that lets the key through.
+    const runnerFor = (id: string, e: KeyboardEvent): (() => void) | undefined => {
+      if (id !== 'navGoToTab') return actionMap[id];
+      const sessionId = activeIdRef.current ?? '';
+      const doc = groupDocs(
+        docStateRef.current,
+        sessionId,
+        activeGroupOf(docStateRef.current, sessionId),
+      )[Number(e.key) - 1];
+      return doc ? () => activateDocByUser(doc.id, sessionId) : undefined;
+    };
+    const dispatch = (
+      e: KeyboardEvent,
+      where: Pick<ShortcutContext, 'inTerminal' | 'inEditor' | 'inFormField'>,
+    ) => {
       for (const action of SHORTCUT_ACTIONS) {
         const combo = effectiveCombo(action, bindingsRef.current);
         if (!matchCombo(e, combo)) continue;
-        const ctx = {
-          inTerminal: true,
-          inEditor: false,
-          inFormField: false,
-          defaultPrevented: e.defaultPrevented,
-          combo,
-        };
+        const ctx = { ...where, defaultPrevented: e.defaultPrevented, combo };
         if (!decideShortcut(ctx, action.id)) continue;
-        if (!actionMap[action.id]) continue;
+        const run = runnerFor(action.id, e);
+        if (!run) continue;
         e.preventDefault();
         e.stopPropagation();
-        actionMap[action.id]();
+        run();
         return;
       }
+    };
+    const onKeyCapture = (e: KeyboardEvent) => {
+      if (!isTerminalEntry(e.target as Element | null)) return;
+      dispatch(e, { inTerminal: true, inEditor: false, inFormField: false });
     };
     const onKeyBubble = (e: KeyboardEvent) => {
       const target = e.target as Element | null;
       if (isTerminalEntry(target)) return;
       if (e.defaultPrevented) return;
       const inEditor = isEditorEntry(target);
-      const inFormField = !inEditor && isTypingEntry(target);
-      for (const action of SHORTCUT_ACTIONS) {
-        const combo = effectiveCombo(action, bindingsRef.current);
-        if (!matchCombo(e, combo)) continue;
-        const ctx = {
-          inTerminal: false,
-          inEditor,
-          inFormField,
-          defaultPrevented: e.defaultPrevented,
-          combo,
-        };
-        if (!decideShortcut(ctx, action.id)) continue;
-        // navGoToTab is one action but needs the pressed digit; read it at dispatch. A
-        // digit past the open-doc count is a no-op that lets the key through.
-        if (action.id === 'navGoToTab') {
-          const sessionId = activeIdRef.current ?? '';
-          const doc = docStateRef.current.docs.filter((d) => d.sessionId === sessionId)[
-            Number(e.key) - 1
-          ];
-          if (!doc) continue;
-          e.preventDefault();
-          e.stopPropagation();
-          activateDocByUser(doc.id, sessionId);
-          return;
-        }
-        if (!actionMap[action.id]) continue;
-        e.preventDefault();
-        e.stopPropagation();
-        actionMap[action.id]();
-        return;
-      }
+      dispatch(e, { inTerminal: false, inEditor, inFormField: !inEditor && isTypingEntry(target) });
     };
     window.addEventListener('keydown', onKeyCapture, true);
     window.addEventListener('keydown', onKeyBubble, false);
@@ -1191,7 +1389,9 @@ export function App() {
     for (const id of prevSessionIdsRef.current) {
       if (!current.has(id)) {
         for (const d of docsRef.current) {
-          if (d.sessionId === id) markClosing(d.id);
+          if (d.sessionId !== id) continue;
+          dropTabState(d, 1);
+          dropTabState(d, 2);
         }
         for (const path of filePathsClosedWithSession(docsRef.current, id)) releaseFileTab(path);
         dispatchDocs({ type: 'closeSession', sessionId: id });
@@ -1234,6 +1434,27 @@ export function App() {
     () => docState.docs.filter((d) => d.sessionId === activeId),
     [docState.docs, activeId],
   );
+  const layout = useMemo(() => centerLayout(docState, activeId), [docState, activeId]);
+  // Spec §10: a collapse that stranded focus in the closed group hands it to group 1; focus the
+  // user put anywhere else stays. Keyed by session, so switching to a session with one group is
+  // not a collapse.
+  const groupCountRef = useRef({ sessionId: activeId, count: layout.groups.length });
+  useEffect(() => {
+    const prev = groupCountRef.current;
+    groupCountRef.current = { sessionId: activeId, count: layout.groups.length };
+    if (prev.sessionId !== activeId || prev.count !== 2 || layout.groups.length !== 1) return;
+    const at = document.activeElement;
+    const stranded = at === null || at === document.body || !at.isConnected;
+    if (!activeId || !stranded) return;
+    focusView(activeId, 1, layout.groups[0].activeDocId);
+  }, [activeId, layout]);
+  useEffect(() => {
+    const shown = shownFocusKeys(
+      docState,
+      sessions.map((s) => s.id),
+    );
+    dropDocFocusUnless((key) => shown.has(key));
+  }, [docState, sessions]);
   const activeDoc = visibleDocs.find((d) => d.id === docState.activeId) ?? null;
   const activeDocKind = activeDoc?.kind;
   const activeDocPath = activeDoc?.path;
@@ -1249,7 +1470,11 @@ export function App() {
       ),
     [activeDocKind, activeDocPath, activeDocScope, centerView],
   );
-  const reviewMode = activeDoc?.kind === 'review' && centerView === 'editor';
+  // see split-editor spec D6
+  const reviewMode =
+    centerView === 'editor' &&
+    (groupActive(docState, activeId ?? '', 1) === REVIEW_DOC_ID ||
+      groupActive(docState, activeId ?? '', 2) === REVIEW_DOC_ID);
   const reviewDocOpen = docState.docs.some((d) => d.kind === 'review');
   const [paneTab, setPaneTab] = useState<RightPaneTab>(settings.rightPaneTab);
   // A frame late on purpose: the pane may be mounting in this very render (auto-open, or the
@@ -1269,7 +1494,10 @@ export function App() {
     showChanges: showChangesInPane,
   });
   userToggledExplorerRef.current = userToggledExplorer;
-  useEffect(() => {
+  // A layout effect, so no commit the user (or the Back button) can observe has the new session's
+  // tabs from `centerLayout` beside the old session's cached `activeId` (split-editor plan
+  // "Architecture": activeId is a cache).
+  useLayoutEffect(() => {
     dispatchDocs({ type: 'switchSession', sessionId: activeId ?? '' });
   }, [activeId]);
   // Switching sessions must land keyboard focus in the newly-active session's terminal so the
@@ -1331,21 +1559,31 @@ export function App() {
   }, [docState.docs, files, lspLanguages, dirtySet]);
 
   // The path of the active editor/markdown tab (undefined when the active doc is the
-  // Terminal, a diff, or the review view). Drives the on-focus re-read below.
+  // Terminal, a diff, or the review view).
   const activeFilePath = useMemo(() => {
     const d = docState.docs.find((x) => x.id === docState.activeId);
     return d?.kind === 'file' ? d.path : undefined;
   }, [docState.docs, docState.activeId]);
-  // When a tab becomes active, re-read it so we show the latest on-disk content (an agent
-  // or external editor may have changed it while another tab was focused). The fileContent
-  // handler's dirty-buffer protection still withholds clobbering an unsaved buffer.
+  // The file each editor group shows. Drives the on-focus re-read below.
+  const visibleFilePaths = useMemo(() => {
+    const paths = new Set<string>();
+    for (const g of [1, 2] as const) {
+      const id = groupActive(docState, activeId ?? '', g);
+      const d = id === null ? undefined : docState.docs.find((x) => x.id === id);
+      if (d?.kind === 'file') paths.add(d.path);
+    }
+    return [...paths];
+  }, [docState, activeId]);
+  // When a tab becomes visible in either group, re-read it so we show the latest on-disk content
+  // (an agent or external editor may have changed it while another tab was shown). The
+  // fileContent handler's dirty-buffer protection still withholds clobbering an unsaved buffer.
+  const visibleFilePathsRef = useRef<readonly string[]>([]);
   useEffect(() => {
-    if (activeFilePath) post({ type: 'readFile', path: activeFilePath });
-  }, [activeFilePath]);
-  // Latest active file path in a ref so the window-focus handler can re-read it without
-  // re-binding its listeners on every tab switch.
-  const activeFilePathRef = useRef(activeFilePath);
-  activeFilePathRef.current = activeFilePath;
+    for (const path of visibleFilePaths) {
+      if (!visibleFilePathsRef.current.includes(path)) post({ type: 'readFile', path });
+    }
+    visibleFilePathsRef.current = visibleFilePaths;
+  }, [visibleFilePaths]);
 
   // Ask the host for git changes + file tree whenever the active cwd changes.
   // activeCwd(active) prefers the live cd-tracked dir (cwd) over home.
@@ -1508,21 +1746,21 @@ export function App() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + home gate, not full active obj)
   useEffect(() => {
     if (!active) return;
-    // On regaining focus, also re-read the active file tab so it reflects any on-disk
+    // On regaining focus, also re-read every visible file tab so it reflects any on-disk
     // change made while the app was backgrounded (dirty-buffer protection still applies).
-    const rereadActiveFile = () => {
-      if (activeFilePathRef.current) post({ type: 'readFile', path: activeFilePathRef.current });
+    const rereadVisibleFiles = () => {
+      for (const path of visibleFilePathsRef.current) post({ type: 'readFile', path });
     };
     const onFocus = () => {
       if (document.visibilityState !== 'hidden') {
         refreshChanges();
-        rereadActiveFile();
+        rereadVisibleFiles();
       }
     };
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
         refreshChanges();
-        rereadActiveFile();
+        rereadVisibleFiles();
       }
     };
     window.addEventListener('focus', onFocus);
@@ -1700,77 +1938,145 @@ export function App() {
     [],
   );
 
-  // Immediately close a doc tab (no dirty check). Also drops any dirty- and view-state entry.
+  // Immediately close a doc — every tab of it — with no dirty check. Also drops any dirty- and
+  // view-state entry.
   const forceCloseDoc = useCallback(
     (id: string) => {
       const doc = docState.docs.find((d) => d.id === id);
       if (doc) {
         // A diff tab shares its path with the file tab; only the file owns the dirty flag.
         if (doc.kind === 'file') releaseFileTab(doc.path);
-        const closed = toClosedTab(doc);
+        const closed = toClosedTab(doc, tabGroupsOf(docState, id)[0]);
         if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
+        dropTabState(doc, 1);
+        dropTabState(doc, 2);
       }
-      markClosing(id);
-      clearHtmlView(id);
       dispatchDocs({ type: 'close', id });
     },
-    [docState.docs],
+    [docState],
   );
 
   // Close a doc tab. If the doc has unsaved changes, show a 3-way Save/Discard/Cancel
   // dialog. Save path invokes the registered save; tab closes only on success.
   // Discard path clears dirty state and closes immediately. Cancel is a no-op.
   const closeDoc = useCallback(
-    (id: string) => {
+    (id: string): Promise<boolean> => {
       const doc = docState.docs.find((d) => d.id === id);
-      if (!doc) return;
+      if (!doc) return Promise.resolve(true);
       if (!dirtySet.has(doc.path)) {
         forceCloseDoc(id);
-        return;
+        return Promise.resolve(true);
       }
-      const fileName = baseName(doc.path);
-      const prompt = (reason: string | null) => {
-        const message = `"${fileName}" has unsaved changes. Save before closing, or discard them?`;
-        setConfirm({
-          title: `Unsaved changes in ${fileName}`,
-          message: reason === null ? message : `${AUTO_SAVE_COPY.closeFallback(reason)} ${message}`,
-          confirmLabel: 'Save',
-          secondaryLabel: 'Discard',
-          onSecondary: () => forceCloseDoc(id),
-          onConfirm: () => {
-            const entry = getSaveEntry(doc.path);
-            if (!entry) {
-              // No registry entry (shouldn't happen for a dirty doc, but be safe).
-              forceCloseDoc(id);
-              return;
-            }
-            void entry.save().then((ok) => {
-              if (ok) forceCloseDoc(id);
-              // On failure: the save store already surfaced it — do not close.
-            });
-          },
-        });
-      };
-      // D2: with auto save on, a dirty close saves first (with the on-disk precondition).
-      const entry = getSaveEntry(doc.path);
-      const run = (step: CloseStep) => {
-        if (step.type === 'close') forceCloseDoc(id);
-        else if (step.type === 'prompt') prompt(step.reason);
-        else {
-          void entry
-            ?.save({ kind: 'auto' })
-            .then((ok) =>
-              run(
-                afterCloseSave(ok, getDirtySnapshot().has(doc.path), fileSaves.getStatus(doc.path)),
-              ),
-            );
-        }
-      };
-      run(dirtyCloseStep(settings.autoSave, fileSaves.getStatus(doc.path), entry !== undefined));
+      return new Promise<boolean>((resolve) => {
+        const close = () => {
+          forceCloseDoc(id);
+          resolve(true);
+        };
+        const fileName = baseName(doc.path);
+        const prompt = (reason: string | null) => {
+          const message = `"${fileName}" has unsaved changes. Save before closing, or discard them?`;
+          closePromptRef.current?.(false);
+          closePromptRef.current = resolve;
+          setConfirm({
+            title: `Unsaved changes in ${fileName}`,
+            message:
+              reason === null ? message : `${AUTO_SAVE_COPY.closeFallback(reason)} ${message}`,
+            confirmLabel: 'Save',
+            secondaryLabel: 'Discard',
+            onSecondary: () => {
+              closePromptRef.current = null;
+              close();
+            },
+            onConfirm: () => {
+              closePromptRef.current = null;
+              const entry = getSaveEntry(doc.path);
+              if (!entry) {
+                // No registry entry (shouldn't happen for a dirty doc, but be safe).
+                close();
+                return;
+              }
+              void entry.save().then((ok) => {
+                // On failure: the save store already surfaced it — do not close.
+                if (ok) close();
+                else resolve(false);
+              });
+            },
+          });
+        };
+        // D2: with auto save on, a dirty close saves first (with the on-disk precondition).
+        const entry = getSaveEntry(doc.path);
+        const run = (step: CloseStep) => {
+          if (step.type === 'close') close();
+          else if (step.type === 'prompt') prompt(step.reason);
+          else {
+            void entry
+              ?.save({ kind: 'auto' })
+              .then((ok) =>
+                run(
+                  afterCloseSave(
+                    ok,
+                    getDirtySnapshot().has(doc.path),
+                    fileSaves.getStatus(doc.path),
+                  ),
+                ),
+              );
+          }
+        };
+        run(dirtyCloseStep(settings.autoSave, fileSaves.getStatus(doc.path), entry !== undefined));
+      });
     },
     [docState.docs, dirtySet, forceCloseDoc, settings.autoSave],
   );
-  closeDocRef.current = closeDoc;
+
+  // One tab of a doc still shown in the other group closes alone: no prompt, and the buffer, its
+  // save entry and dirty state stay with the surviving tab (split-editor spec §2.5).
+  const closeTab = useCallback(
+    (id: string, group: GroupIndex): Promise<boolean> => {
+      if (tabGroupsOf(docState, id).length < 2) return closeDoc(id);
+      const doc = docState.docs.find((d) => d.id === id);
+      if (doc) {
+        dropTabState(doc, group);
+        const closed = toClosedTab(doc, group);
+        if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
+      }
+      dispatchDocs({ type: 'close', id, group });
+      return Promise.resolve(true);
+    },
+    [docState, closeDoc],
+  );
+  closeTabRef.current = closeTab;
+
+  // see split-editor plan P3: a loop over group 2's tabs, and the first Cancel stops it.
+  const closeEditorGroup = useCallback(async () => {
+    const sessionId = activeIdRef.current;
+    const group = sessionId ? layoutOf(docStateRef.current, sessionId).groups[1] : undefined;
+    if (!group) return;
+    for (const { id } of group.tabs) {
+      if (!(await closeTabRef.current(id, 2))) return;
+    }
+    if (navLiveRef.current) navLiveRef.current.textContent = SPLIT_COPY.groupClosed;
+  }, []);
+
+  const joinEditorGroups = useCallback(() => {
+    const sessionId = activeIdRef.current;
+    if (!sessionId) return;
+    const layout = layoutOf(docStateRef.current, sessionId);
+    const [g1, g2] = layout.groups;
+    if (!g2) return;
+    const shown = layout.activeGroup === 2 ? g2.active : g1.active;
+    for (const { id } of g2.tabs) {
+      const doc = docStateRef.current.docs.find((d) => d.id === id);
+      if (!doc) continue;
+      if (g1.tabs.some((t) => t.id === id)) {
+        dropTabState(doc, 2);
+      } else {
+        carryTabState(doc, 2, 1, 'move');
+      }
+    }
+    dispatchDocs({ type: 'joinGroups', sessionId });
+    if (navLiveRef.current) navLiveRef.current.textContent = SPLIT_COPY.groupClosed;
+    focusView(sessionId, 1, shown);
+  }, []);
 
   useEffect(() => {
     setDocCloser((p) => {
@@ -1852,6 +2158,7 @@ export function App() {
       const background = mode === 'background';
       // If a target session is provided and differs from the active one, switch first.
       const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
+      const g = nav?.group ?? openTargetGroup(docStateRef.current, effectiveSessionId);
       // Record BEFORE staging the reveal: setReveal moves a mounted editor's cursor
       // synchronously, which would corrupt the "from" side (nav-history plan, Settled decisions).
       // A background open is not a navigation.
@@ -1864,11 +2171,14 @@ export function App() {
       }
       // Only the active doc is mounted, and a mounted viewer jumps on setReveal, so a background
       // open leaves the active doc's position alone (spec 2026-09-22-middle-click-new-tab §3).
-      if (nav?.reveal && !(background && `file:${path}` === docStateRef.current.activeId)) {
-        setReveal(path, nav.reveal);
+      if (
+        nav?.reveal &&
+        !(background && `file:${path}` === groupActive(docStateRef.current, effectiveSessionId, g))
+      ) {
+        setReveal(path, nav.reveal, g);
       }
       if (background) {
-        reportBackgroundOpen('file', path, effectiveSessionId);
+        reportBackgroundOpen('file', path, effectiveSessionId, g);
       } else if (targetSessionId && targetSessionId !== activeIdRef.current) {
         setActiveId(targetSessionId);
         dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
@@ -1878,7 +2188,14 @@ export function App() {
       // replies (no flicker). If the buffer is dirty the read still keeps the map fresh
       // for the markdown view, but CodeViewer won't re-seed Monaco (keyed on path).
       post({ type: 'readFile', path });
-      dispatchDocs({ type: 'open', kind: 'file', path, sessionId: effectiveSessionId, mode });
+      dispatchDocs({
+        type: 'open',
+        kind: 'file',
+        path,
+        sessionId: effectiveSessionId,
+        mode,
+        group: g,
+      });
       pushRecent('file', path, effectiveSessionId);
       // Surface the file in the explorer wherever it was opened from (tree click, search,
       // palette, go-to-definition, terminal link): switch to the Files tab and reveal it.
@@ -1899,15 +2216,21 @@ export function App() {
     (
       rawPath: string,
       targetSessionId?: string,
-      opts?: { sideBySide?: boolean; diffScope?: DiffTabScope; mode?: OpenMode },
+      opts?: {
+        sideBySide?: boolean;
+        diffScope?: DiffTabScope;
+        mode?: OpenMode;
+        group?: GroupIndex;
+      },
     ) => {
       // Review writes the same scoped cache key, so the path has to be spelled the same.
       const path = canonicalPath(rawPath);
       const diffScope = opts?.diffScope;
       const background = opts?.mode === 'background';
       const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
+      const g = opts?.group ?? openTargetGroup(docStateRef.current, effectiveSessionId);
       if (background) {
-        reportBackgroundOpen('diff', path, effectiveSessionId, diffScope);
+        reportBackgroundOpen('diff', path, effectiveSessionId, g, diffScope);
       } else {
         recordNav({
           sessionId: effectiveSessionId,
@@ -1927,6 +2250,7 @@ export function App() {
         sideBySide: opts?.sideBySide,
         diffScope,
         ...(background ? { mode: 'background' as const } : {}),
+        group: g,
       });
       pushRecent('diff', path, effectiveSessionId, diffScope);
     },
@@ -1945,15 +2269,16 @@ export function App() {
   // by the session owning that web tab. No host read — the <webview> guest fetches the page
   // itself (path = URL); ownership mirrors files.
   const openWeb = useCallback(
-    (url: string, targetSessionId?: string, mode?: OpenMode) => {
+    (url: string, targetSessionId?: string, mode?: OpenMode, group?: GroupIndex) => {
       const sessionId = targetSessionId ?? activeIdRef.current ?? '';
+      const g = group ?? openTargetGroup(docStateRef.current, sessionId);
       if (mode === 'background') {
-        reportBackgroundOpen('web', url, sessionId);
-        dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId, mode });
+        reportBackgroundOpen('web', url, sessionId, g);
+        dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId, mode, group: g });
         return;
       }
       recordNav({ sessionId, doc: { kind: 'web', path: url } });
-      dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId });
+      dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId, group: g });
     },
     [recordNav, reportBackgroundOpen],
   );
@@ -1965,9 +2290,12 @@ export function App() {
     const { tab, rest } = popClosedTab(closedTabsRef.current);
     closedTabsRef.current = rest;
     if (!tab) return;
-    if (tab.kind === 'file') openFile(tab.path, tab.sessionId, 'permanent');
-    else if (tab.kind === 'diff') openDiff(tab.path, tab.sessionId, { diffScope: tab.diffScope });
-    else openWeb(tab.path);
+    const sessionId = tab.kind === 'web' ? (activeIdRef.current ?? '') : tab.sessionId;
+    const group = reopenGroup(tab, layoutOf(docStateRef.current, sessionId));
+    if (tab.kind === 'file') openFile(tab.path, tab.sessionId, 'permanent', { group });
+    else if (tab.kind === 'diff') {
+      openDiff(tab.path, tab.sessionId, { diffScope: tab.diffScope, group });
+    } else openWeb(tab.path, undefined, undefined, group);
   }, [openFile, openDiff, openWeb]);
   reopenClosedTabRef.current = reopenClosedTab;
 
@@ -2085,9 +2413,12 @@ export function App() {
   );
 
   useEffect(() => {
-    setDefinitionOpener((abs, pos) =>
-      openFileRef.current(abs, undefined, 'preview', { reveal: pos }),
-    );
+    setDefinitionOpener((abs, pos, group) => {
+      if (group !== undefined) {
+        dispatchDocs({ type: 'focusGroup', sessionId: activeIdRef.current ?? '', group });
+      }
+      openFileRef.current(abs, undefined, 'preview', { reveal: pos, group });
+    });
     // A CodeViewer outside a doc tab has no history identity, so its jumps are not entries.
     setCursorJumpSink((path, from, to) => {
       const key = canonicalPath(path);
@@ -2116,11 +2447,8 @@ export function App() {
   useEffect(
     () =>
       subscribeDirty(() => {
-        const dirty = getDirtySnapshot();
-        for (const d of docStateRef.current.docs) {
-          if (d.preview && (d.kind === 'file' || d.kind === 'diff') && dirty.has(d.path)) {
-            dispatchDocs({ type: 'pinDoc', id: d.id });
-          }
+        for (const { id, group } of dirtyPreviewTabs(docStateRef.current, getDirtySnapshot())) {
+          dispatchDocs({ type: 'pinDoc', id, group });
         }
       }),
     [],
@@ -2391,70 +2719,73 @@ export function App() {
     });
   };
 
-  const onTabContextMenu = (e: React.MouseEvent, doc: OpenDoc) => {
+  const onGroupStripContextMenu = (e: React.MouseEvent, group: GroupIndex) => {
+    if (group !== 2) return;
     e.preventDefault();
-    // Scope close-others/left/right/all to the active session's tabs only — the bar
-    // never shows another session's editors, so those actions must not touch them.
-    const allPaths = visibleDocs.map((d) => d.path);
-    const toRight = closeTabSelection(allPaths, doc.path, 'right');
-    const toLeft = closeTabSelection(allPaths, doc.path, 'left');
-    const others = closeTabSelection(allPaths, doc.path, 'others');
-    const all = closeTabSelection(allPaths, doc.path, 'all');
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: SPLIT_COPY.closeGroup,
+          icon: <IconClose size={14} />,
+          onClick: () => void closeEditorGroup(),
+        },
+        {
+          label: SPLIT_COPY.joinGroups,
+          icon: <IconSplit size={14} />,
+          onClick: joinEditorGroups,
+        },
+      ],
+    });
+  };
+
+  const onTabContextMenu = (e: React.MouseEvent, doc: OpenDoc, group: GroupIndex) => {
+    e.preventDefault();
+    // By tab ref within the right-clicked tab's group (split-editor plan S6).
+    const groupIds = groupDocs(docState, doc.sessionId, group).map((d) => d.id);
+    const toRight = closeTabSelection(groupIds, doc.id, 'right');
+    const toLeft = closeTabSelection(groupIds, doc.id, 'left');
+    const others = closeTabSelection(groupIds, doc.id, 'others');
+    const all = closeTabSelection(groupIds, doc.id, 'all');
+    const closeAll = (ids: readonly string[]) => void closeTabsByUser(ids, group, 'button');
     setMenu({
       x: e.clientX,
       y: e.clientY,
       items: [
         // Keyboard-reachable pin pathway (a11y) — the only non-pointer way to promote a
         // preview, since double-click and drag are pointer-only (spec §10).
-        ...(doc.preview
+        ...(tabPreview(docState, doc.sessionId, group, doc.id)
           ? [
               {
                 label: 'Keep Open',
-                onClick: () => dispatchDocs({ type: 'pinDoc', id: doc.id }),
+                onClick: () => dispatchDocs({ type: 'pinDoc', id: doc.id, group }),
               },
             ]
           : []),
         {
           label: 'Close',
           icon: <IconClose size={14} />,
-          onClick: () => closeDoc(doc.id),
+          onClick: () => closeAll([doc.id]),
         },
         {
           label: 'Close others',
-          onClick: () => {
-            const idsToClose = docState.docs
-              .filter((d) => others.includes(d.path))
-              .map((d) => d.id);
-            for (const id of idsToClose) closeDoc(id);
-          },
+          onClick: () => closeAll(others),
           disabled: others.length === 0,
         },
         {
           label: 'Close to the right',
-          onClick: () => {
-            const idsToClose = docState.docs
-              .filter((d) => toRight.includes(d.path))
-              .map((d) => d.id);
-            for (const id of idsToClose) closeDoc(id);
-          },
+          onClick: () => closeAll(toRight),
           disabled: toRight.length === 0,
         },
         {
           label: 'Close to the left',
-          onClick: () => {
-            const idsToClose = docState.docs
-              .filter((d) => toLeft.includes(d.path))
-              .map((d) => d.id);
-            for (const id of idsToClose) closeDoc(id);
-          },
+          onClick: () => closeAll(toLeft),
           disabled: toLeft.length === 0,
         },
         {
           label: 'Close all',
-          onClick: () => {
-            const idsToClose = docState.docs.filter((d) => all.includes(d.path)).map((d) => d.id);
-            for (const id of idsToClose) closeDoc(id);
-          },
+          onClick: () => closeAll(all),
           disabled: all.length === 0,
         },
         {
@@ -2477,11 +2808,11 @@ export function App() {
           ? [
               {
                 label:
-                  getHtmlView(doc.id, settings.htmlDefaultView) === 'preview'
+                  getHtmlView(tabStateKey(doc.id, group), settings.htmlDefaultView) === 'preview'
                     ? 'View source'
                     : 'View rendered',
                 icon: <IconDoc size={14} />,
-                onClick: () => toggleHtmlView(doc.id, settings.htmlDefaultView),
+                onClick: () => toggleHtmlView(tabStateKey(doc.id, group), settings.htmlDefaultView),
               },
               {
                 label: 'Open externally',
@@ -2490,6 +2821,18 @@ export function App() {
               },
             ]
           : []),
+        {
+          label: SPLIT_COPY.splitRight,
+          icon: <IconSplit size={14} />,
+          separatorBefore: true,
+          disabled: group === 2,
+          title: group === 2 ? SPLIT_COPY.capReached : undefined,
+          onClick: () => splitRight(doc),
+        },
+        {
+          label: SPLIT_COPY.moveToOther,
+          onClick: () => moveTabToGroup(doc.id, group === 1 ? 2 : 1, null, false),
+        },
       ],
     });
   };
@@ -2501,8 +2844,8 @@ export function App() {
     e.preventDefault();
     if (!active) return;
     const s = active;
-    // Only this session's editor tabs (the bar is session-scoped).
-    const docIds = visibleDocs.map((d) => d.id);
+    // Only the tabs of the strip the Terminal tab sits in: this session's group 1.
+    const docIds = groupDocs(docState, s.id, 1).map((d) => d.id);
     setMenu({
       x: e.clientX,
       y: e.clientY,
@@ -2535,12 +2878,25 @@ export function App() {
           onClick: () => post({ type: 'revealInExplorer', path: s.home }),
         },
         {
+          label: SPLIT_COPY.splitRight,
+          icon: <IconSplit size={14} />,
+          separatorBefore: true,
+          disabled: true,
+          title: SPLIT_COPY.terminalCantSplit,
+          onClick: () => {},
+        },
+        {
+          label: SPLIT_COPY.moveToOther,
+          disabled: true,
+          onClick: () => {},
+        },
+        {
           label: 'Close editor tabs',
           icon: <IconClose size={14} />,
           separatorBefore: true,
           disabled: docIds.length === 0,
           onClick: () => {
-            for (const id of docIds) closeDoc(id);
+            for (const id of docIds) void closeTab(id, 1);
           },
         },
         {
@@ -2939,14 +3295,19 @@ export function App() {
   // Navigation history (docs/specs/2026-09-22-editor-nav-history.md §2.3–§2.4). Reads refs, not
   // state: an apply awaits the existence probe, and whatever it reads after that must be current.
   const currentNavEntry = useCallback((): NavEntry | null => {
-    const { docs, activeId: docId } = docStateRef.current;
-    const doc = docId === null ? undefined : docs.find((d) => d.id === docId);
+    const state = docStateRef.current;
+    const docId = state.activeId;
+    const doc = docId === null ? undefined : state.docs.find((d) => d.id === docId);
     if (!doc) return null;
     if (doc.kind !== 'file') return navEntryFor(doc);
     // While a landing's tab is still mounting there is no live editor. Its cursor is then the staged
     // reveal it will consume, else the position its view state restores; an unknown cursor would
     // coalesce with (and so hide) every stop in the file — a burst of Backs skipped them.
-    return navEntryFor(doc, liveCursor(doc.path) ?? peekReveal(doc.path) ?? lastCursor(doc.path));
+    const g = activeGroupOf(state, doc.sessionId);
+    return navEntryFor(
+      doc,
+      liveCursor(doc.path, g) ?? peekReveal(doc.path, g) ?? lastCursor(doc.path),
+    );
   }, []);
 
   const isNavLive = useCallback(
@@ -2972,19 +3333,21 @@ export function App() {
     const announce = (title: string, pos = e.pos) => {
       if (navLiveRef.current) navLiveRef.current.textContent = navAnnouncement(title, pos);
     };
-    const doc = findOpenDoc(docStateRef.current.docs, e.doc);
+    const state = docStateRef.current;
+    const doc = findOpenDoc(state.docs, e.doc);
     if (doc) {
+      const g = resolveActivateGroup(state, doc.sessionId, doc.id);
       const wasActive =
-        doc.id === docStateRef.current.activeId && doc.sessionId === activeIdRef.current;
-      dispatchDocs({ type: 'activate', id: doc.id, sessionId: doc.sessionId });
+        doc.id === groupActive(state, doc.sessionId, g) && doc.sessionId === activeIdRef.current;
+      dispatchDocs({ type: 'activate', id: doc.id, sessionId: doc.sessionId, group: g });
       if (doc.sessionId !== activeIdRef.current) setActiveId(doc.sessionId);
       setCenterView('editor');
       // An active doc whose editor is still mounting (the previous landing of a burst) has nothing
       // to reveal into yet, so it takes the staged path too; that replaces the earlier landing's
       // pending reveal instead of letting the mount consume the stale one.
-      if (doc.kind === 'file' && !(e.pos && wasActive && revealInNavEditor(doc.path, e.pos))) {
-        if (e.pos) setReveal(doc.path, e.pos);
-        requestNavFocus(doc.path);
+      if (doc.kind === 'file' && !(e.pos && wasActive && revealInNavEditor(doc.path, e.pos, g))) {
+        if (e.pos) setReveal(doc.path, e.pos, g);
+        focusView(doc.sessionId, g, doc.id);
       }
       // An entry left without a record (a session switch) has no pos; its view state restores the
       // cursor it was left at, which is what the editor will show.
@@ -2995,8 +3358,9 @@ export function App() {
     if (!(await probePathExists(e.doc.path))) return 'dead';
     if (!sessionsRef.current.some((s) => s.id === e.sessionId)) return 'dead';
     setCenterView('editor');
+    const g = openTargetGroup(docStateRef.current, e.sessionId);
     openFileRef.current(e.doc.path, e.sessionId, 'preview', { reveal: e.pos, record: false });
-    requestNavFocus(e.doc.path);
+    focusView(e.sessionId, g, `file:${canonicalPath(e.doc.path)}`);
     announce(baseName(e.doc.path));
     return 'applied';
   }, []);
@@ -3335,6 +3699,7 @@ export function App() {
     const activeDoc = docState.docs.find((d) => d.id === docState.activeId);
     if (activeDoc) {
       if (activeDoc.kind === 'file' && isHtmlDocPath(activeDoc.path)) {
+        const htmlKey = tabStateKey(activeDoc.id, activeGroupOf(docState, activeDoc.sessionId));
         cmds.push(
           {
             id: 'cmd:toggleHtmlView',
@@ -3343,7 +3708,7 @@ export function App() {
             group: 'Commands',
             icon: <IconDoc size={14} />,
             combo: comboFor('toggleHtmlView'),
-            run: () => toggleHtmlView(activeDoc.id, settings.htmlDefaultView),
+            run: () => toggleHtmlView(htmlKey, settings.htmlDefaultView),
           },
           {
             id: 'cmd:reloadHtmlPreview',
@@ -3351,7 +3716,7 @@ export function App() {
             keywords: ['html', 'refresh', 'reload'],
             group: 'Commands',
             icon: <IconRefresh size={14} />,
-            run: () => bumpHtmlReload(activeDoc.id),
+            run: () => bumpHtmlReload(htmlKey),
           },
           {
             id: 'cmd:openInBrowser',
@@ -3388,12 +3753,12 @@ export function App() {
           keywords: ['close others'],
           group: 'Commands',
           icon: <IconClose size={14} />,
-          run: () =>
-            docState.docs
-              .filter((d) => d.sessionId === activeId && d.id !== activeDoc.id)
-              .forEach((d) => {
-                closeDoc(d.id);
-              }),
+          run: () => {
+            const g = activeGroupOf(docState, activeDoc.sessionId);
+            for (const d of groupDocs(docState, activeDoc.sessionId, g)) {
+              if (d.id !== activeDoc.id) void closeTab(d.id, g);
+            }
+          },
         },
       );
       if (activeDoc.kind === 'file') {
@@ -3410,7 +3775,7 @@ export function App() {
             icon: <IconCompare size={14} />,
             combo: comboFor('nextChange'),
             run: () =>
-              goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'next'),
+              goToChangeInActiveGroup(docStateRef.current, activeIdRef.current ?? '', 'next'),
           },
           {
             id: 'cmd:prevChange',
@@ -3420,7 +3785,7 @@ export function App() {
             icon: <IconCompare size={14} />,
             combo: comboFor('prevChange'),
             run: () =>
-              goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'prev'),
+              goToChangeInActiveGroup(docStateRef.current, activeIdRef.current ?? '', 'prev'),
           },
         );
       }
@@ -3581,8 +3946,75 @@ export function App() {
         icon: <IconClose size={14} />,
         run: () => setSplitId(null),
       });
-    return [...cmds, ...settingsCmds, ...themeCmds, ...sessionSwitch, ...splitCmds];
+    const groupCmds: PaletteEntry[] = [];
+    if (docState.activeId !== null) {
+      groupCmds.push({
+        id: 'cmd:splitEditorRight',
+        title: SPLIT_COPY.splitEditorRight,
+        keywords: ['split right', 'editor group', 'side by side'],
+        group: 'Commands',
+        icon: <IconSplit size={14} />,
+        combo: comboFor('splitEditorRight'),
+        run: () => splitRight(),
+      });
+      const from = layout.activeGroup;
+      const id = docState.activeId;
+      groupCmds.push({
+        id: 'cmd:moveTabToOtherGroup',
+        title: SPLIT_COPY.moveToOther,
+        keywords: ['move editor', 'editor group'],
+        group: 'Commands',
+        icon: <IconSplit size={14} />,
+        combo: comboFor(from === 1 ? 'moveTabNextGroup' : 'moveTabPrevGroup'),
+        run: () => moveTabToGroup(id, from === 1 ? 2 : 1, null, false),
+      });
+    }
+    if (layout.groups.length === 2) {
+      groupCmds.push(
+        {
+          id: 'cmd:closeEditorGroup',
+          title: SPLIT_COPY.closeGroup,
+          keywords: ['editor group', 'close group'],
+          group: 'Commands',
+          icon: <IconClose size={14} />,
+          run: () => void closeEditorGroup(),
+        },
+        {
+          id: 'cmd:joinEditorGroups',
+          title: SPLIT_COPY.joinGroups,
+          keywords: ['editor group', 'merge groups'],
+          group: 'Commands',
+          icon: <IconSplit size={14} />,
+          run: joinEditorGroups,
+        },
+        {
+          id: 'cmd:focusLeftGroup',
+          title: SPLIT_COPY.focusLeft,
+          keywords: ['editor group'],
+          group: 'Commands',
+          icon: <IconCommand size={14} />,
+          combo: comboFor('focusLeftGroup'),
+          run: () => focusGroupByCommand(1),
+        },
+        {
+          id: 'cmd:focusRightGroup',
+          title: SPLIT_COPY.focusRight,
+          keywords: ['editor group'],
+          group: 'Commands',
+          icon: <IconCommand size={14} />,
+          combo: comboFor('focusRightGroup'),
+          run: () => focusGroupByCommand(2),
+        },
+      );
+    }
+    return [...cmds, ...groupCmds, ...settingsCmds, ...themeCmds, ...sessionSwitch, ...splitCmds];
   }, [
+    layout,
+    splitRight,
+    moveTabToGroup,
+    closeEditorGroup,
+    joinEditorGroups,
+    focusGroupByCommand,
     active,
     sessions,
     agents,
@@ -3604,7 +4036,7 @@ export function App() {
     explorerCollapsed,
     toggleSidebar,
     toggleExplorer,
-    closeDoc,
+    closeTab,
     dirtySet,
     openNewSession,
     relaunchAllStale,
@@ -3660,25 +4092,36 @@ export function App() {
             agents={agents}
             repos={state?.repos ?? []}
             activeId={activeId}
-            docs={visibleDocs}
-            activeDocId={docState.activeId}
+            layout={layout}
             files={files}
             diffs={diffs}
-            onSelectDoc={(id) => activateDocByUser(id, activeIdRef.current ?? '')}
-            onCloseDoc={closeDoc}
+            onFocusGroup={focusGroup}
+            onSplitRight={splitRight}
+            editorSplitRatio={settings.editorSplitRatio}
+            onSplitRatioCommit={(editorSplitRatio) => update({ editorSplitRatio })}
+            // A pointer click on the Terminal button leaves focus on the button (main's behaviour,
+            // pinned by editor-nav-history-lifecycle); a keyboard landing on it focuses xterm.
+            onSelectDoc={(id, group) =>
+              activateDocByUser(id, activeIdRef.current ?? '', group, id !== null)
+            }
+            onCloseDoc={(id, group) => void closeTabsByUser([id], group, 'button')}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenTimedMessages={openTimedMessages}
             onTabContextMenu={onTabContextMenu}
+            onGroupStripContextMenu={onGroupStripContextMenu}
             onTerminalTabContextMenu={onTerminalTabContextMenu}
-            onReorderDoc={(dragId, targetId) => dispatchDocs({ type: 'reorder', dragId, targetId })}
-            onPinDoc={(id) => dispatchDocs({ type: 'pinDoc', id })}
+            onReorderDoc={(dragId, targetId, group) =>
+              dispatchDocs({ type: 'reorder', dragId, targetId, group })
+            }
+            onPinDoc={(id, group) => dispatchDocs({ type: 'pinDoc', id, group })}
+            onMoveTab={moveTabToGroup}
             dock={dockHandlers('center')}
             splitId={splitId}
             onCloseSplit={() => setSplitId(null)}
             onOpenFile={(p, mode) => openFile(p, undefined, mode)}
             onOpenFileAt={openTerminalFileLink}
             onOpenWeb={openWeb}
-            flashTabId={backgroundFeedback.flashTabId}
+            flashTab={backgroundFeedback.flashTab}
             onRevealFolder={(path) => post({ type: 'revealInExplorer', path })}
             onOpenCommitReview={(sha, sid, repoRoot) =>
               openReviewForCommit(sha, sid, undefined, repoRoot)
@@ -3960,6 +4403,9 @@ export function App() {
             const hunkReply = hunkConfirmRef.current;
             hunkConfirmRef.current = null;
             hunkReply?.(false);
+            const closeReply = closePromptRef.current;
+            closePromptRef.current = null;
+            closeReply?.(false);
             setConfirm(null);
           }}
         />

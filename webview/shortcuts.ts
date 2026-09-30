@@ -10,6 +10,7 @@ export interface ShortcutAction {
   id: string;
   description: string;
   group: string;
+  /** '' ⇒ unbound: never matches, shown as "Unassigned". */
   defaultCombo: string;
   /** Absent ⇒ 'app'. 'editor' rows are dispatched by Monaco only, never by app.tsx. */
   scope?: 'app' | 'editor';
@@ -116,6 +117,37 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     description: 'Toggle HTML rendered/source view',
     group: 'Editor',
     defaultCombo: 'Mod+Shift+H',
+  },
+  {
+    id: 'splitEditorRight',
+    description: 'Split editor right',
+    group: 'Editor groups',
+    defaultCombo: 'Mod+\\',
+  },
+  {
+    id: 'moveTabNextGroup',
+    description: 'Move tab to next editor group',
+    group: 'Editor groups',
+    defaultCombo: 'Mod+Alt+ArrowRight',
+  },
+  {
+    id: 'moveTabPrevGroup',
+    description: 'Move tab to previous editor group',
+    group: 'Editor groups',
+    defaultCombo: 'Mod+Alt+ArrowLeft',
+  },
+  // Unbound by default: see split-editor spec D3.
+  {
+    id: 'focusLeftGroup',
+    description: 'Focus left editor group',
+    group: 'Editor groups',
+    defaultCombo: '',
+  },
+  {
+    id: 'focusRightGroup',
+    description: 'Focus right editor group',
+    group: 'Editor groups',
+    defaultCombo: '',
   },
   // No actionMap entry in app.tsx on purpose: Monaco owns these chords (nav-keybindings spec §2.2).
   {
@@ -245,6 +277,7 @@ export function comboFromEvent(e: KeyEvt): string | null {
 
 /** Does a keydown match a combo string? */
 export function matchCombo(e: KeyEvt, combo: string): boolean {
+  if (combo === '') return false;
   const parts = combo.split('+');
   const key = parts[parts.length - 1];
   const mods = new Set(parts.slice(0, -1));
@@ -262,6 +295,7 @@ export function matchCombo(e: KeyEvt, combo: string): boolean {
 
 /** Human-readable combo for display. */
 export function formatCombo(combo: string): string {
+  if (combo === '') return 'Unassigned';
   return combo
     .split('+')
     .map((p) => (p === 'Mod' ? (isMac ? '⌘' : 'Ctrl') : p))
@@ -288,11 +322,12 @@ export function effectiveCombo(action: ShortcutAction, overrides: Record<string,
   return overrides[action.id] || action.defaultCombo;
 }
 
-/** Display form of an action's bound combo; undefined for an unknown action. */
+/** Display form of an action's bound combo; undefined for an unknown or unbound action. */
 export function comboLabel(
   actionId: string,
   shortcuts: AppSettings['shortcuts'],
 ): string | undefined {
   const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
-  return action ? formatCombo(effectiveCombo(action, shortcuts)) : undefined;
+  const combo = action ? effectiveCombo(action, shortcuts) : '';
+  return combo === '' ? undefined : formatCombo(combo);
 }

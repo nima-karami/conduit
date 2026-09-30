@@ -3,7 +3,9 @@
 // See docs/specs/2026-09-22-editor-nav-history.md §2.2 ("one record per move") and §2.3.
 import type * as monaco from 'monaco-editor';
 import { canonicalPath } from '../src/canonical-path';
+import type { GroupIndex } from './doc-groups';
 import { type CursorPos, clampPos } from './editor-nav';
+import { createPathRegistry } from './path-registry';
 
 /** Monaco `source` on every reveal-driven setPosition; the jump listener ignores it. */
 export const NAV_REVEAL_SOURCE = 'conduit.navReveal';
@@ -13,23 +15,30 @@ export type NavEditor = Pick<
   'getPosition' | 'setPosition' | 'revealLineInCenter' | 'focus' | 'getModel'
 >;
 
-const editors = new Map<string, NavEditor>();
-// One slot, consumed by the very next register whatever its path: a doc that renders without
-// Monaco (image, PDF, rendered markdown) never registers, and a request left pending for it would
-// steal focus from some unrelated editor much later.
-let pendingFocus: string | null = null;
+const editors = createPathRegistry<NavEditor>(canonicalPath);
+const editorGroups = new Map<unknown, GroupIndex>();
 
-export function registerNavEditor(path: string, editor: NavEditor): () => void {
+export function registerNavEditor(
+  path: string,
+  editor: NavEditor,
+  group: GroupIndex = 1,
+): () => void {
   const key = canonicalPath(path);
-  editors.set(key, editor);
-  if (pendingFocus === key) editor.focus();
-  pendingFocus = null;
+  const unregister = editors.register(key, editor, group);
+  editorGroups.set(editor, group);
+  let registered = true;
   return () => {
-    if (editors.get(key) !== editor) return;
+    if (!registered) return;
+    registered = false;
     const left = toCursorPos(editor);
     if (left) rememberCursor(key, left);
-    editors.delete(key);
+    unregister();
+    editorGroups.delete(editor);
   };
+}
+
+export function groupOfEditor(editor: unknown): GroupIndex | undefined {
+  return editorGroups.get(editor);
 }
 
 // Where each unmounted editor left its cursor — the position its view state restores to — so a
@@ -53,8 +62,18 @@ function toCursorPos(editor: NavEditor): CursorPos | undefined {
   return p ? { line: p.lineNumber, column: p.column } : undefined;
 }
 
-export function liveCursor(path: string): CursorPos | undefined {
-  const editor = editors.get(canonicalPath(path));
+// Given a group, only that group's editor: a stop in one group is never read from, or revealed
+// in, the other group's view of the same file.
+function editorFor(path: string, group?: GroupIndex): NavEditor | undefined {
+  if (group === undefined) return editors.get(path);
+  return editors
+    .entries(path)
+    .filter((e) => e.group === group)
+    .at(-1)?.value;
+}
+
+export function liveCursor(path: string, group?: GroupIndex): CursorPos | undefined {
+  const editor = editorFor(path, group);
   return editor ? toCursorPos(editor) : undefined;
 }
 
@@ -72,8 +91,8 @@ export function revealInEditor(editor: NavEditor, pos: CursorPos): void {
   editor.revealLineInCenter(at.line);
 }
 
-export function revealInNavEditor(path: string, pos: CursorPos): boolean {
-  const editor = editors.get(canonicalPath(path));
+export function revealInNavEditor(path: string, pos: CursorPos, group?: GroupIndex): boolean {
+  const editor = editorFor(path, group);
   if (!editor) return false;
   revealInEditor(editor, pos);
   editor.focus();
@@ -90,17 +109,4 @@ export function setCursorJumpSink(sink: CursorJumpSink | null): void {
 
 export function emitCursorJump(path: string, from: CursorPos, to: CursorPos): void {
   jumpSink?.(path, from, to);
-}
-
-/** Focus now when mounted; otherwise on the next register for `path` (a tab still mounting). */
-export function requestNavFocus(path: string): void {
-  const key = canonicalPath(path);
-  const editor = editors.get(key);
-  pendingFocus = editor ? null : key;
-  editor?.focus();
-}
-
-/** A user navigation elsewhere supersedes a Back/Forward landing that has not mounted yet. */
-export function cancelNavFocus(): void {
-  pendingFocus = null;
 }

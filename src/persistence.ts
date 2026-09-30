@@ -123,13 +123,21 @@ export function serializeDocs(docs: PersistedDoc[]): string {
 // would show different content under the same title (spec 2026-09-22-scoped-diff-tabs §3).
 function isRestorableDoc(d: unknown): d is PersistedDoc {
   if (!d || typeof d !== 'object') return false;
-  const { kind, path, sessionId, diffScope } = d as PersistedDoc;
+  const { kind, path, sessionId, diffScope, group } = d as PersistedDoc;
   if (kind !== 'file' && kind !== 'diff') return false;
   if (typeof path !== 'string' || typeof sessionId !== 'string') return false;
+  if (group !== undefined && group !== 2) return false;
   return (
     diffScope === undefined ||
     (kind === 'diff' && (diffScope === 'staged' || diffScope === 'unstaged'))
   );
+}
+
+// A bad `focus` costs the tab its active group, never the tab itself.
+function withoutBadFocus(d: unknown): unknown {
+  if (!d || typeof d !== 'object' || !('focus' in d) || d.focus === true) return d;
+  const { focus: _, ...rest } = d;
+  return rest;
 }
 
 export function parseDocs(blob: string | undefined): PersistedDoc[] {
@@ -137,7 +145,7 @@ export function parseDocs(blob: string | undefined): PersistedDoc[] {
   try {
     const parsed = JSON.parse(blob);
     if (!parsed || parsed.version !== DOCS_VERSION || !Array.isArray(parsed.docs)) return [];
-    return parsed.docs.filter(isRestorableDoc);
+    return parsed.docs.map(withoutBadFocus).filter(isRestorableDoc);
   } catch {
     return [];
   }

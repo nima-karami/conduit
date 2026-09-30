@@ -9,6 +9,8 @@ import {
 import type { PreviewReason } from '../../src/preview-url';
 import type { FileContentDTO, HostToWebview } from '../../src/protocol';
 import { openExternal, post, subscribe } from '../bridge';
+import { tabStateKey, useEditorGroup } from '../editor-group-context';
+import { useFocusTargetRef } from '../focus-targets';
 import { buildHtmlMenuItems } from '../html-menu';
 import {
   bumpHtmlReload,
@@ -115,8 +117,10 @@ export function HtmlViewer({
   onOpenExternally: (path: string) => void;
   onSave: () => void;
 }) {
+  const group = useEditorGroup();
   const ref = useRef<PreviewGuest | null>(null);
   const chromeRef = useRef<HTMLButtonElement | null>(null);
+  const bodyFocusRef = useFocusTargetRef<HTMLDivElement>(docId);
   const guestIdRef = useRef<number | null>(null);
   const pendingNoticesRef = useRef<GuestNotice[]>([]);
 
@@ -421,7 +425,11 @@ export function HtmlViewer({
             why ?? undefined,
           )}
         </div>
-        <CodeViewer doc={doc} viewStateId={sourceViewStateId('html', doc.path)} />
+        <CodeViewer
+          doc={doc}
+          viewStateId={tabStateKey(sourceViewStateId('html', doc.path), group)}
+          focusKey={docId}
+        />
         {why && (
           <div className="htmlview__bar">
             <span className="htmlview__bar-text">{why}</span>
@@ -490,7 +498,7 @@ export function HtmlViewer({
         />
       )}
 
-      <div className="htmlview__body">
+      <div className="htmlview__body" ref={bodyFocusRef} tabIndex={-1}>
         <PreviewBody
           docPath={doc.path}
           empty={doc.content.trim() === ''}

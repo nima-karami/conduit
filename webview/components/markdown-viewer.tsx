@@ -15,6 +15,8 @@ import { canonicalPath } from '../../src/canonical-path';
 import type { FileContentDTO } from '../../src/protocol';
 import { openExternal, post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
+import { tabStateKey, useEditorGroup } from '../editor-group-context';
+import { useFocusTargetRef } from '../focus-targets';
 import { IconCopy, IconDoc } from '../icons';
 import { buildMarkdownMenuItems } from '../markdown-menu';
 import { remarkAlerts } from '../md-alerts';
@@ -553,11 +555,15 @@ function rangeForMatch(segments: FlatSegment[], match: MdMatch): Range {
 
 export function MarkdownViewer({
   doc,
+  viewStateId,
   onOpenFile,
 }: {
   doc: FileContentDTO;
+  viewStateId?: string;
   onOpenFile?: ((path: string, mode?: OpenMode) => void) | undefined;
 }) {
+  const group = useEditorGroup();
+  const vsId = viewStateId ?? `file:${doc.path}`;
   const [source, setSource] = useState(false);
   // Route the file-opener through a ref so a new `onOpenFile` identity (it changes on
   // every session add/switch in the parent) doesn't rebuild markdownComponents and
@@ -574,6 +580,7 @@ export function MarkdownViewer({
     [doc.path, openFileStable],
   );
   const mdRef = useRef<HTMLDivElement>(null);
+  const mdFocusRef = useFocusTargetRef(vsId, mdRef);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [tocEntries, setTocEntries] = useState<ReturnType<typeof buildTocEntries>>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -781,13 +788,13 @@ export function MarkdownViewer({
     const id = setTimeout(() => {
       const container = mdRef.current;
       if (!container) return;
-      const pos = takeReveal(doc.path);
+      const pos = takeReveal(doc.path, group);
       if (!pos) return;
       revealLineInMarkdown(container, pos.line);
     }, 50);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc.path]);
+  }, [doc.path, group]);
 
   // D7 — live reveal for an already-mounted viewer (file is already the open tab).
   // Same seam CodeViewer uses for its already-mounted case.
@@ -797,11 +804,11 @@ export function MarkdownViewer({
       if (!container) return;
       if (path !== canonicalPath(doc.path)) return;
       // take() so CodeViewer doesn't also consume the same reveal.
-      const pos = takeReveal(doc.path);
+      const pos = takeReveal(doc.path, group);
       if (!pos) return;
       revealLineInMarkdown(container, pos.line);
     });
-  }, [doc.path]);
+  }, [doc.path, group]);
 
   // Per-tab scroll memory (spec 2026-06-30). Restore the rendered scroller pre-paint unless an
   // explicit reveal is staged (reveal wins, §3). Reset the guard when toggling to source so a
@@ -815,12 +822,12 @@ export function MarkdownViewer({
     }
     if (restoredPathRef.current === doc.path) return;
     restoredPathRef.current = doc.path;
-    if (hasReveal(doc.path)) return;
-    const saved = getViewState(`file:${doc.path}`);
+    if (hasReveal(doc.path, group)) return;
+    const saved = getViewState(vsId);
     if (saved?.kind === 'scroll') {
       el.scrollTop = clampScrollTop(saved.top, el.scrollHeight, el.clientHeight);
     }
-  }, [doc.path, source]);
+  }, [doc.path, source, group, vsId]);
 
   // Capture scroll (debounced) + a synchronous final capture when the rendered scroller unmounts
   // (tab switch / source toggle), so a fast switch never loses the last position (D5). The final
@@ -830,7 +837,7 @@ export function MarkdownViewer({
   useEffect(() => {
     const el = mdRef.current;
     if (source || !el) return;
-    const id = `file:${doc.path}`;
+    const id = vsId;
     const last = { top: el.scrollTop };
     const capture = () => setViewState(id, { kind: 'scroll', top: last.top });
     const debounced = makeDebouncedFlush(capture, VIEW_STATE_DEBOUNCE_MS);
@@ -844,7 +851,7 @@ export function MarkdownViewer({
       debounced.cancel();
       capture();
     };
-  }, [doc.path, source]);
+  }, [source, vsId]);
 
   // Seed global search (Mod+Shift+F) from a selection here. Scoped to this viewer's root: a
   // text selection leaves document.activeElement on <body>, so the anchor is the only thing
@@ -852,16 +859,20 @@ export function MarkdownViewer({
   // same doc path.
   useEffect(() => {
     if (source) return;
-    return registerSelection(doc.path, {
-      getSelectedText: () => {
-        const el = mdRef.current;
-        const sel = window.getSelection();
-        const anchor = sel?.anchorNode ?? null;
-        if (!el || !sel || !anchor || !el.contains(anchor)) return '';
-        return sel.toString();
+    return registerSelection(
+      doc.path,
+      {
+        getSelectedText: () => {
+          const el = mdRef.current;
+          const sel = window.getSelection();
+          const anchor = sel?.anchorNode ?? null;
+          if (!el || !sel || !anchor || !el.contains(anchor)) return '';
+          return sel.toString();
+        },
       },
-    });
-  }, [doc.path, source]);
+      group,
+    );
+  }, [doc.path, source, group]);
 
   // Select only the rendered markdown's contents, not the whole document.
   const selectAllContents = useCallback(() => {
@@ -982,7 +993,11 @@ export function MarkdownViewer({
         <button className="viewer__toggle" onClick={() => setSource(false)}>
           View rendered
         </button>
-        <CodeViewer doc={doc} viewStateId={sourceViewStateId('markdown', doc.path)} />
+        <CodeViewer
+          doc={doc}
+          viewStateId={tabStateKey(sourceViewStateId('markdown', doc.path), group)}
+          focusKey={vsId}
+        />
       </div>
     );
   }
@@ -1025,7 +1040,7 @@ export function MarkdownViewer({
           onClose={closeFind}
         />
       )}
-      <div className="markdown" ref={mdRef} tabIndex={-1} onContextMenu={openMarkdownMenu}>
+      <div className="markdown" ref={mdFocusRef} tabIndex={-1} onContextMenu={openMarkdownMenu}>
         {doc.content.trim().length === 0 ? (
           <EmptyState
             variant="inline"

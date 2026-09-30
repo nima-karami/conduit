@@ -554,6 +554,10 @@
 [data-theme="neon"] .tab {
   border-right: 1px solid var(--border);
 }
+/* The two strips abut, and the divider's rule stops below the strip row (it must not take clicks there). */
+[data-theme="neon"] .editor-group[data-group="2"] > .tabbar-wrap {
+  border-left: 1px solid var(--border);
+}
 [data-theme="neon"] .tab--active::before {
   content: "";
   position: absolute;
@@ -763,6 +767,20 @@ body {
 .iconbtn:focus-visible,
 .tab__dirty:focus-visible {
   border-radius: 4px;
+}
+
+/* Pane-filling keyboard landings (tabindex=-1, so the rule above skips them): an ancestor's
+   overflow would clip an outset ring away, so they wear the same ring on the inside. */
+.gh:focus-visible,
+.review__scroll:focus-visible,
+.markdown:focus-visible,
+.htmlview__body:focus-visible,
+.plan__body:focus-visible,
+.imgstage__stage:focus-visible,
+.mermaid-zoom__stage:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: -3px;
+  box-shadow: var(--focus-ring-inset);
 }
 
 /* ---------- shell grid ----------
@@ -2543,8 +2561,137 @@ body.resizing .panel__resize::after {
   min-height: 0;
   background: transparent;
 }
-.centerpane > .tabbar-wrap {
+/* Editor groups (split-editor plan P7): one grid, the strips in row 1, a group's top slot (the
+   TrustPrompt) in row 2 and its body in row 3 through subgrid, so a web host placed in its group's
+   body rows covers exactly that body and never the prompt. A group with no top slot has its body
+   span rows 2–3. */
+.editorgroups {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  isolation: isolate;
+}
+.editorgroups[data-resizing] {
+  cursor: col-resize;
+  user-select: none;
+}
+.editor-group {
+  grid-row: 1 / span 3;
+  display: grid;
+  grid-template-rows: subgrid;
+  min-width: 0;
+  min-height: 0;
+}
+.editorgroups > [data-group="1"] {
+  grid-column: 1;
+}
+.editorgroups > [data-group="2"] {
+  grid-column: 3;
+}
+.editor-group > .tabbar-wrap {
   margin-bottom: var(--gutter);
+}
+/* The rule is a shape (thickness), not a hue alone, and only means something with two groups. */
+.editorgroups[data-split] > .editor-group[data-active] > .tabbar-wrap {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.editor-group__top {
+  grid-row: 2;
+  min-width: 0;
+}
+.editor-group__body[data-under-top] {
+  grid-row: 3;
+}
+.editor-group__body:not([data-under-top]) {
+  grid-row: 2 / span 2;
+}
+.editor-group__body {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+/* Above Monaco's own .minimap{z-index:5}; `isolation` on the grid keeps it there. */
+.editorgroups > :is(.webhost, .editorgroups__drop)[data-group="1"] {
+  grid-row: 3;
+}
+.editorgroups > :is(.webhost, .editorgroups__drop)[data-group="2"] {
+  grid-row: 2 / span 2;
+}
+.editorgroups > .webhost {
+  position: relative;
+  z-index: 6;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--r-panel);
+  overflow: hidden;
+}
+/* A <webview> guest swallows pointer events, which would strand a divider drag over it. */
+.editorgroups[data-resizing] > .webhost {
+  pointer-events: none;
+}
+/* A tab drag's drop targets over each group body, above the web hosts (split-editor spec §8).
+   Static tints, no transition (spec §10 reduced motion). */
+.editorgroups__drop {
+  position: relative;
+  z-index: 7;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--r-panel);
+}
+.editorgroups__drop[data-over="group"] {
+  background: var(--accent-soft);
+  outline: 2px dashed var(--accent);
+  outline-offset: -3px;
+}
+.editorgroups__drop--edge::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 50%;
+  border-radius: inherit;
+  background: var(--accent-soft);
+  outline: 2px dashed var(--accent);
+  outline-offset: -3px;
+  pointer-events: none;
+}
+/* Body rows only: over the strip row it would take clicks meant for the tabs at the seam. */
+.editorgroups__divider {
+  grid-row: 2 / span 2;
+  grid-column: 2;
+  position: relative;
+  z-index: 7;
+  width: var(--gutter);
+  cursor: col-resize;
+  touch-action: none;
+}
+/* The hit area outgrows the gutter, which is 0 at Neon. */
+.editorgroups__divider::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
+}
+.editorgroups__divider::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 0;
+  translate: -50% 0;
+  border-left: 1px solid var(--border);
+}
+.editorgroups__divider:hover::after,
+.editorgroups__divider:focus-visible::after,
+.editorgroups[data-resizing] > .editorgroups__divider::after {
+  border-left: 2px solid var(--accent);
 }
 /* Outer wrapper: full-width flex row containing the scrollable strip + the
    fixed overflow button. The border-bottom lives here so it spans the full
@@ -2569,42 +2716,26 @@ body.resizing .panel__resize::after {
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  /* No scrollbar: the global `scrollbar-color` makes Chromium ignore ::-webkit-scrollbar, so any
+     bar here is a classic one that takes layout height and lifts the centred tabs. The wheel,
+     the overflow chevron and scroll-into-view scroll the strip. */
+  scrollbar-width: none;
   border-bottom: none;
   padding: 0;
   background: transparent;
 }
-/* Slim, elegant horizontal scrollbar for the tab strip: no track rail, and a thin
-   rounded thumb that only appears while the pointer is over the tab strip. The tabs
-   are height-pinned to the row (see `.tab`), so this bar floats over their bottom edge
-   without resizing them — kept ultra-thin so it reads as an overlay, not a gutter. */
-.tabbar::-webkit-scrollbar {
-  height: 1px;
-}
-.tabbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-/* No inset border: at 1px the thumb is the whole bar, so a transparent border would
-   eat it entirely and show nothing. */
-.tabbar::-webkit-scrollbar-thumb {
-  background: transparent;
-  border: 0;
-  background-clip: padding-box;
-  border-radius: 99px;
-  transition: background 0.15s ease;
-}
-.tabbar:hover::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  background-clip: padding-box;
-}
-.tabbar::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
-  background-clip: padding-box;
+.tabbar__tabs {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  flex: 0 0 auto;
 }
 /* Open-editors dropdown trigger: fixed at the right edge, never scrolls away,
    and rendered only when the strip overflows. Transparent so it reads as part
    of the tab-bar chrome (inherits the wrap's themed/translucent background)
-   rather than painting an opaque black box over it. */
-.tabbar__overflow-btn {
+   rather than painting an opaque black box over it. The split button shares the look. */
+.tabbar__overflow-btn,
+.tabbar__split {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -2629,12 +2760,7 @@ body.resizing .panel__resize::after {
   /* Keep each tab's width so the strip overflows (and scrolls) rather than
      compressing tabs to illegible slivers. */
   flex: 0 0 auto;
-  /* Pin the tab box to the full row height so its dimensions are INVARIANT to the
-     scrollbar. Chromium's classic ::-webkit-scrollbar is non-overlay: when the strip
-     overflows it shaves its 6px off the flex content height, so an align-items:stretch
-     tab would squish by 6px (and grow back when overflow clears). An explicit height
-     decouples the tab from that content box — the overlay scrollbar (below) then floats
-     over the bottom edge without resizing the tabs. */
+  /* An explicit height, not stretch, so the tab's box never follows the strip's content box. */
   height: calc(var(--density-tabbar-h) - 2 * var(--tab-inset));
   box-sizing: border-box;
   max-width: 220px;
@@ -2664,6 +2790,11 @@ body.resizing .panel__resize::after {
   color: var(--text);
   background: var(--raise);
   box-shadow: var(--elev-1);
+}
+/* The active tab of the group that is not active (spec §8: the inactive-selected treatment). */
+.tab--current {
+  color: var(--state-sel-fg);
+  background: var(--state-sel-bg);
 }
 .tab__spark {
   color: var(--accent);
@@ -3891,7 +4022,7 @@ body.gh-resizing {
    .inkbox is the same scope applied to an ink surface nested BACK inside a .docpage - the
    Review diff body being the one that exists, alongside markdown's own code surfaces. Same
    declarations, so one rule serves them all. */
-:root[data-theme="aero"] :is(.termwrap, .inkbox, .markdown pre, .markdown code) {
+:root[data-theme="aero"] :is(.termwrap, .webhost, .inkbox, .markdown pre, .markdown code) {
   --panel: #1b1d24;
   --raise: #23252e;
   --border: rgba(255, 255, 255, 0.085);
@@ -11880,15 +12011,6 @@ button.toggle--on .toggle__knob {
   touch-action: none;
 }
 
-/* The stage fills its parent, whose overflow:hidden would clip the app's outset ring
-   away entirely — so this one keyboard target wears the same ring on the inside. */
-.imgstage__stage:focus-visible,
-.mermaid-zoom__stage:focus-visible {
-  box-shadow:
-    inset 0 0 0 1px var(--panel),
-    inset 0 0 0 3px var(--focus-ring-color);
-}
-
 .imgstage__stage--pannable {
   cursor: grab;
 }
@@ -12649,11 +12771,6 @@ button.toggle--on .toggle__knob {
   color: var(--danger, #e5484d);
 }
 
-.webhost {
-  position: absolute;
-  inset: 0;
-  flex-direction: column;
-}
 .webview {
   display: flex;
   flex-direction: column;
@@ -13492,6 +13609,8 @@ button.toggle--on .toggle__knob {
     .iconbtn,
     .winctl__btn,
     .tabbar__overflow-btn,
+    .tabbar__split,
+    .editorgroups__divider,
     .tab,
     .tab__close,
     .rtab,
@@ -13580,6 +13699,7 @@ button.toggle--on .toggle__knob {
     /* a fill that carries meaning, and so must survive the pointer */
     .filerow--droptarget,
     .tab--active,
+    .tab--current,
     .ns-pill--on,
     .session--active,
     .session--attention,
@@ -13617,6 +13737,8 @@ button.toggle--on .toggle__knob {
     .iconbtn,
     .winctl__btn,
     .tabbar__overflow-btn,
+    .tabbar__split,
+    .editorgroups__divider,
     .tab,
     .tab__close,
     .rtab,
@@ -13787,7 +13909,8 @@ button.toggle--on .toggle__knob {
 ):disabled,
 /* Locked rather than disabled: it stays focusable so its reason is reachable (mf-review D4). */
 .gh__reffilter[aria-disabled="true"],
-.review__stageall[aria-disabled="true"] {
+.review__stageall[aria-disabled="true"],
+.tabbar__split[aria-disabled="true"] {
   opacity: var(--state-disabled-o);
   cursor: default;
 }

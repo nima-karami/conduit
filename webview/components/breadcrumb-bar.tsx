@@ -21,6 +21,7 @@ import type { DirEntryDTO } from '../../src/protocol';
 import type { Session } from '../../src/types';
 import { post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
+import { useEditorGroup } from '../editor-group-context';
 import { IconChevron } from '../icons';
 import { lspStateForKey, subscribeLspStatus, useLspLanguages, useLspStatuses } from '../lsp-status';
 import {
@@ -69,6 +70,7 @@ export function BreadcrumbBar({
   activeSession,
   onOpenFile,
 }: BreadcrumbBarProps) {
+  const group = useEditorGroup();
   const rootCwd = activeSession ? activeCwd(activeSession) : '';
   const pathSegments = breadcrumbPathSegments(filePath, rootCwd);
   const isTs = TS_LANGS.has(language);
@@ -136,7 +138,7 @@ export function BreadcrumbBar({
 
   useEffect(() => {
     return subscribeCursor((e) => {
-      if (e.path !== filePathRef.current) return;
+      if (e.group !== group || e.path !== filePathRef.current) return;
       lastOffsetRef.current = { path: e.path, offset: e.offset };
       // Nav tree not ready for this file yet — re-fetch, then a later cursor event recomputes.
       // A server language never refetches here: its tree arrives on its own triggers below.
@@ -146,7 +148,7 @@ export function BreadcrumbBar({
       }
       setSymbolChain(enclosingSymbolChain(navTreeRef.current, e.offset));
     });
-  }, [fetchNavTree, isServer]);
+  }, [fetchNavTree, isServer, group]);
 
   // Server-language symbols: on open/path change, when this doc's server turns ready, and once
   // edits have settled. A reply for a version the tab has since moved past is dropped.
@@ -276,7 +278,7 @@ export function BreadcrumbBar({
           if (model) {
             const pos = model.getPositionAt(sib.start);
             // The app's opener stages the reveal → CodeViewer's subscribeReveal centers it.
-            openDefinitionFile(filePath, { line: pos.lineNumber, column: pos.column });
+            openDefinitionFile(filePath, { line: pos.lineNumber, column: pos.column }, group);
           }
         },
       }));
@@ -286,7 +288,7 @@ export function BreadcrumbBar({
         items,
       });
     },
-    [filePath],
+    [filePath, group],
   );
 
   const showSymbols = isTs || isServer;

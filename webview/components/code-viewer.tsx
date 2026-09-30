@@ -7,9 +7,11 @@ import { AUTO_SAVE_COPY } from '../auto-save-copy';
 import { post, subscribe } from '../bridge';
 import { markerIndexAtLine, OVERVIEW_RULER_WIDTH } from '../change-decorations';
 import { registerChangeNav } from '../change-nav-registry';
+import { useEditorGroup } from '../editor-group-context';
 import { buildEditorMenuItems, type EditorMenuIconKey, NAVIGATION } from '../editor-menu';
 import { isSignificantJump } from '../editor-nav';
 import { closeDocForPath, fileSaves, useFileSaveStatus } from '../file-saves';
+import { registerFocusTarget } from '../focus-targets';
 import { fontZoomTarget } from '../font-zoom';
 import {
   IconCommand,
@@ -113,6 +115,7 @@ const EDIT_REASONS: ReadonlySet<monaco.editor.CursorChangeReason> = new Set([
 export function CodeViewer({
   doc,
   viewStateId,
+  focusKey,
   sessionId,
   onReviewCommit,
 }: {
@@ -120,6 +123,8 @@ export function CodeViewer({
   // Defaults to the `file:` doc id; the markdown "View source" toggle passes a distinct id so
   // its transient Monaco view state can't clobber the rendered-mode scroll under the same path.
   viewStateId?: string;
+  /** The focus-target key (focus-targets.ts); a source view passes its outer viewer's. */
+  focusKey?: string;
   /** Owning session — scopes the `git:blame` request to that session's repo. */
   sessionId?: string;
   /** git-blame: open the clicked line's commit in Review (the sha is the full oid). `repoRoot`
@@ -127,7 +132,9 @@ export function CodeViewer({
    * that repo — otherwise a split/multi-repo click looks the commit up in the pinned repo. */
   onReviewCommit?: (sha: string, subject: string, repoRoot?: string, sessionId?: string) => void;
 }) {
+  const group = useEditorGroup();
   const vsId = viewStateId ?? `file:${doc.path}`;
+  const focusAs = focusKey ?? vsId;
   // Read via refs inside the mount-bound editor effect so a new prop identity (onReviewCommit
   // is a fresh arrow each render) never re-creates the editor.
   const sessionIdRef = useRef(sessionId);
@@ -227,17 +234,21 @@ export function CodeViewer({
     editorRef.current = editor;
     if (truncated) silenceReadOnlyPopup(editor);
 
-    const unregisterSelection = registerSelection(doc.path, {
-      getSelectedText: () => {
-        const range = editor.getSelection();
-        return range ? (editor.getModel()?.getValueInRange(range) ?? '') : '';
+    const unregisterSelection = registerSelection(
+      doc.path,
+      {
+        getSelectedText: () => {
+          const range = editor.getSelection();
+          return range ? (editor.getModel()?.getValueInRange(range) ?? '') : '';
+        },
       },
-    });
+      group,
+    );
     saveRef.current = () => fileSaves.save(doc.path, 'manual');
 
     // If we arrived via cross-file go-to-definition, reveal the target. An explicit reveal WINS
     // over saved-scroll restore (spec 2026-06-30 §3); only restore the saved view state otherwise.
-    const pos = takeReveal(doc.path);
+    const pos = takeReveal(doc.path, group);
     if (pos) {
       revealInEditor(editor, pos);
     } else {
@@ -335,11 +346,12 @@ export function CodeViewer({
     const cursorSub = editor.onDidChangeCursorPosition((e) => {
       const mdl = editor.getModel();
       if (!mdl) return;
-      publishCursor({ path: doc.path, offset: mdl.getOffsetAt(e.position) });
+      publishCursor({ path: doc.path, offset: mdl.getOffsetAt(e.position), group });
     });
     // Seed it once so the breadcrumb populates immediately.
     const initPos = editor.getPosition();
-    if (initPos && model) publishCursor({ path: doc.path, offset: model.getOffsetAt(initPos) });
+    if (initPos && model)
+      publishCursor({ path: doc.path, offset: model.getOffsetAt(initPos), group });
 
     // --- Git blame lens (git-blame) --------------------------------------------------------
     // Low-noise v1: a single trailing lens on the ACTIVE line only (GitLens-style), rendered as
@@ -435,8 +447,9 @@ export function CodeViewer({
       requestBlame();
     };
 
-    const unregisterNav = registerNavEditor(doc.path, editor);
+    const unregisterNav = registerNavEditor(doc.path, editor, group);
     const unregisterCodeViewer = registerCodeViewerEditor(editor);
+    const unregisterFocus = registerFocusTarget(focusAs, editor);
     // R3 (docs/specs/2026-09-22-editor-nav-history.md §2.2): judged per cursor event against the
     // previous one. Seeded after the reveal/restore above so that landing is never a jump.
     const seedPos = editor.getPosition();
@@ -477,6 +490,7 @@ export function CodeViewer({
       unregisterSelection();
       unregisterNav();
       unregisterCodeViewer();
+      unregisterFocus();
       jumpSub.dispose();
       contentSub.dispose();
       scrollSub.dispose();
@@ -491,7 +505,7 @@ export function CodeViewer({
       editorRef.current = null;
       setEditor(null);
     };
-  }, [doc.path, doc.language, doc.binary, vsId]);
+  }, [doc.path, doc.language, doc.binary, vsId, focusAs, group]);
 
   // A save or an external change arrives as new doc.content; the store reseeds a clean model in
   // place. Only a real reseed carries the view state across (so an agent's rewrite doesn't jump
@@ -618,12 +632,12 @@ export function CodeViewer({
       const ed = editorRef.current;
       if (!ed) return;
       if (path !== canonicalPath(doc.path)) return;
-      const pos = takeReveal(doc.path);
+      const pos = takeReveal(doc.path, group);
       if (!pos) return;
       revealInEditor(ed, pos);
       ed.focus();
     });
-  }, [doc.path]);
+  }, [doc.path, group]);
 
   // Drive the loading indicator so a slow (cold-worker) go-to-definition shows
   // progress instead of a frozen editor (E1).
@@ -726,16 +740,20 @@ export function CodeViewer({
   }, [editor]);
 
   useEffect(() => {
-    return registerChangeNav(doc.path, {
-      next: () => changes.goToChange('next'),
-      prev: () => changes.goToChange('prev'),
-      hasChanges: () => changes.markers.length > 0,
-    });
-  }, [doc.path, changes]);
+    return registerChangeNav(
+      doc.path,
+      {
+        next: () => changes.goToChange('next'),
+        prev: () => changes.goToChange('prev'),
+        hasChanges: () => changes.markers.length > 0,
+      },
+      group,
+    );
+  }, [doc.path, changes, group]);
 
   // Image files (including SVG) bypass Monaco — ImageViewer handles them.
   if (doc.image || (doc.binary && doc.error?.includes('too large')))
-    return <ImageViewer doc={doc} />;
+    return <ImageViewer doc={doc} focusKey={focusAs} />;
   if (doc.binary) return <div className="viewer__notice">Binary file — no preview.</div>;
   return (
     <div

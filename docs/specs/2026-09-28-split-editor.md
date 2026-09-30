@@ -65,7 +65,9 @@ CodeViewers on the same path break dirty/save/nav**. That is inferred from the s
   **always** holds the session's Terminal pseudo-tab first. Group 2 never has one.
 - **Doc vs. tab.** A doc (identity, ownership, title, `reviewSource`, …) exists **once**. A tab is
   a doc's membership in a group. A splittable doc can be a member of both groups (two tabs, one
-  doc). **Preview is per tab:** at most one preview tab per group per session.
+  doc). **Preview is per tab:** at most one preview tab per group per session. A file or diff
+  preview and the commit-diff `@preview` slot may coexist in one group: the slot is its own
+  preview kind (amended in the review round).
 - **Active group.** Exactly one per session. Every consumer listed in §3 reads the active group's
   active tab.
 
@@ -192,7 +194,9 @@ disabled.
 
 - **I1.** Every tab references an existing doc owned by the session whose groups hold it.
 - **I2.** A doc appears at most once per group, and a move-only kind appears in at most one group.
-- **I3.** At most one preview tab per group per session.
+- **I3.** At most one preview tab per group per session, counting file and diff previews. The
+  commit-diff `@preview` slot is its own preview kind and may sit beside one (amended in the
+  review round).
 - **I4.** G2 is never empty. Emptying it removes it and sets `activeGroup = 1`.
 - **I5.** The Terminal sentinel is in G1 only, is always first, and can't be moved or closed.
 - **I6.** A doc with zero tabs is removed from `docs[]` (the dirty prompt already ran).
@@ -252,7 +256,10 @@ the same path at once. Contract:
 
 - `PersistedDoc` gains optional `group?: 2` (absent = group 1). A doc with tabs in both groups
   persists as **two entries** that differ only in `group`. `active` means "active tab of its group
-  in its session". There is no persisted `activeGroup`: restore focuses group 1.
+  in its session". The active group persists as `focus: true` on the group-2 active entry of a
+  session whose active group is 2; restore then focuses group 2, and otherwise group 1. Nothing
+  else carries it, so single-group output is unchanged and an older build ignores the field
+  (amended in the review round).
 - **Order:** entries are serialized in per-group tab order, G1 first and then G2, per session.
   Restore rebuilds each group's order from entry order. Preview is per entry.
 - `DOCS_VERSION` stays **1**. An older build reading a newer file dedupes by id (first entry wins)
@@ -439,7 +446,7 @@ Feature: Split editor
 | Component | Actions | Pointer | Keyboard | Touch | Context menu | ARIA |
 |---|---|---|---|---|---|---|
 | Group | focus | pointer-down anywhere in the group | `Mod+Alt+ArrowLeft/Right` moves the tab; focus group via palette "Focus Left/Right Editor Group" (D3) | tap = focus | — | `role="group"`, `aria-label="Left editor group"` / `"Right editor group"`, active marked with `data-active` + the label suffix ", active" |
-| Tab | split, move, close, pin, reorder | drag within/between strips; drag to the right edge (v1) | existing tab keys; `Mod+\`; `Mod+Alt+Arrow` | — | + "Split Right", "Move to Other Group" (enabled per §2.3) | existing `role="tab"` plus a **new** `role="tablist"` per strip, labelled by group. The Terminal tab becomes `role="tab"` in G1's tablist. |
+| Tab | split, move, close, pin, reorder | drag within/between strips; drag to the right edge (v1) | existing tab keys; `Mod+\`; `Mod+Alt+Arrow` | — | + "Split Right", "Move to Other Group" (enabled per §2.3) | existing `role="tab"` plus a **new** `role="tablist"` per strip, labelled by group, holding only the doc tabs. The Terminal is a plain button beside G1's tablist, not a tab (amended in the review round). |
 | Split button | Split Right | click | Tab-reachable, Enter/Space | tap | — | `aria-label="Split editor right"`, `aria-disabled` + title reason |
 | Divider | resize | drag | focusable; ArrowLeft/Right ±16px, Shift ±64px, Home/End to min/max | drag | — | `role="separator"`, `aria-orientation="vertical"`, `aria-valuenow` (percent), label "Resize editor groups" (mirrors `git-history-view` `gh__resizer`) |
 | Right strip background | Close/Join group | right-click | via palette | long-press n/a | "Close Editor Group", "Join Editor Groups" (v1) | — |

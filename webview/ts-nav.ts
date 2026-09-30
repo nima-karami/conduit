@@ -27,6 +27,7 @@ import { executeCommandWithArgs } from './monaco-commands';
 import { ensureTokenizer } from './monaco-languages';
 import { clearNavMessage, showNavMessage } from './monaco-message';
 import { gotoInflight } from './monaco-warmup';
+import { groupOfEditor } from './nav-editors';
 import {
   classifyNavOutcome,
   declarationLineFor,
@@ -155,7 +156,7 @@ async function landOnResolvedEntry(
   const fileName = fileUri(entry).toString();
   const span = await symbolSpanIn(model, fileName, name);
   if (!span) {
-    openDefinitionFile(entry, { line: 1, column: 1 });
+    openDefinitionFile(entry, { line: 1, column: 1 }, groupOfEditor(editor));
     // Landing on line 1 because the symbol could not be found is reported as exactly that,
     // never dressed up as a navigation — see contract 3.
     return { kind: 'opened-entry', specifier, name };
@@ -175,7 +176,7 @@ async function landOnResolvedEntry(
   } catch {
     // No program for the entry yet — the located line below is still a real landing.
   }
-  openDefinitionFile(entry, { line: span.line, column: 1 });
+  openDefinitionFile(entry, { line: span.line, column: 1 }, groupOfEditor(editor));
   return { kind: 'navigated' };
 }
 
@@ -416,7 +417,11 @@ function openLocation(editor: monaco.editor.ICodeEditor, loc: monaco.languages.L
   // Going through it directly makes a single-result navigation immune to the built-in
   // command's silent early returns; see docs/specs/2026-08-21-goto-definition-flows.md §3.
   const abs = pathForUri(loc.uri);
-  openDefinitionFile(abs, { line: target.lineNumber, column: target.column });
+  openDefinitionFile(
+    abs,
+    { line: target.lineNumber, column: target.column },
+    groupOfEditor(editor),
+  );
 }
 
 /**

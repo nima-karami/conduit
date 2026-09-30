@@ -3,6 +3,7 @@
 // isReopenable — so a pop always reopens to the same content without extra state.
 
 import type { DiffTabScope } from '../src/protocol';
+import type { GroupIndex, SessionLayout } from './doc-groups';
 import type { DocKind, OpenDoc } from './docs';
 
 export const CLOSED_TAB_LIMIT = 10;
@@ -16,6 +17,7 @@ export interface ClosedTab {
   path: string;
   sessionId: string;
   diffScope?: DiffTabScope;
+  group?: GroupIndex;
 }
 
 export function isReopenable(doc: Pick<OpenDoc, 'kind'>): boolean {
@@ -24,6 +26,7 @@ export function isReopenable(doc: Pick<OpenDoc, 'kind'>): boolean {
 
 export function toClosedTab(
   doc: Pick<OpenDoc, 'kind' | 'path' | 'sessionId' | 'diffScope'>,
+  group?: GroupIndex,
 ): ClosedTab | null {
   if (!isReopenable(doc)) return null;
   return {
@@ -31,7 +34,17 @@ export function toClosedTab(
     path: doc.path,
     sessionId: doc.sessionId,
     ...(doc.diffScope ? { diffScope: doc.diffScope } : {}),
+    ...(group ? { group } : {}),
   };
+}
+
+/** The group a reopen lands in: the one the tab closed from while it still exists, else none, so
+ *  the open picks its default target (split-editor plan T3.2). */
+export function reopenGroup(
+  tab: Pick<ClosedTab, 'group'>,
+  layout: Pick<SessionLayout, 'groups'>,
+): GroupIndex | undefined {
+  return tab.group === 1 || (tab.group === 2 && layout.groups.length === 2) ? tab.group : undefined;
 }
 
 /** Push a closed tab, evicting the oldest once the cap is exceeded. */

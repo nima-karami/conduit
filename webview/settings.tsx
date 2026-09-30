@@ -138,6 +138,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       leftWidth: DEFAULT_SETTINGS.leftWidth,
       rightWidth: DEFAULT_SETTINGS.rightWidth,
       historyDetailHeight: DEFAULT_SETTINGS.historyDetailHeight,
+      editorSplitRatio: DEFAULT_SETTINGS.editorSplitRatio,
       sidebarCollapsed: DEFAULT_SETTINGS.sidebarCollapsed,
       explorerCollapsed: DEFAULT_SETTINGS.explorerCollapsed,
     }));

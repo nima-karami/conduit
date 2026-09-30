@@ -1,5 +1,6 @@
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
+import type { GroupIndex } from './doc-groups';
 import type { BackgroundOutcome } from './docs';
 import { backgroundOpenAnnouncement } from './middle-click';
 
@@ -10,10 +11,16 @@ interface BackgroundOpenReport {
   title: string;
   outcome: BackgroundOutcome;
   sessionName: string | null;
+  group: GroupIndex;
+}
+
+interface FlashTab {
+  id: string;
+  group: GroupIndex;
 }
 
 interface BackgroundOpenFeedback {
-  flashTabId: string | null;
+  flashTab: FlashTab | null;
   statusRef: RefObject<HTMLDivElement | null>;
   report: (r: BackgroundOpenReport) => void;
 }
@@ -21,7 +28,7 @@ interface BackgroundOpenFeedback {
 /** The tab cue and the polite announcement for a background open (spec
  *  2026-09-22-middle-click-new-tab §3 "Cue + announce"). */
 export function useBackgroundOpenFeedback(): BackgroundOpenFeedback {
-  const [flashTabId, setFlashTabId] = useState<string | null>(null);
+  const [flashTab, setFlashTab] = useState<FlashTab | null>(null);
   const statusRef = useRef<HTMLDivElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const frameRef = useRef<number | null>(null);
@@ -36,16 +43,16 @@ export function useBackgroundOpenFeedback(): BackgroundOpenFeedback {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-    flushSync(() => setFlashTabId(null));
+    flushSync(() => setFlashTab(null));
     const el = statusRef.current;
     if (el) el.textContent = '';
     if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = null;
-      setFlashTabId(r.id);
+      setFlashTab({ id: r.id, group: r.group });
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
-        setFlashTabId(null);
+        setFlashTab(null);
       }, TAB_FLASH_MS);
       if (el) el.textContent = backgroundOpenAnnouncement(r.outcome, r.title, r.sessionName);
     });
@@ -59,5 +66,5 @@ export function useBackgroundOpenFeedback(): BackgroundOpenFeedback {
     [],
   );
 
-  return { flashTabId, statusRef, report };
+  return { flashTab, statusRef, report };
 }
