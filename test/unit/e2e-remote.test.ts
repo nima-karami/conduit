@@ -34,16 +34,29 @@ describe('parseArgs', () => {
     });
   });
 
-  it('--affected is a clear not-until-v1 error', () => {
-    expect(parseArgs(['--affected'])).toEqual({
-      error: expect.stringContaining('not available until v1'),
+  it('--affected is the default selection', () => {
+    expect(parseArgs([])).toMatchObject({ affected: true, full: false, names: [] });
+    expect(parseArgs(['--affected', '--no-verify'])).toMatchObject({
+      affected: true,
+      verify: false,
     });
+    expect(parseArgs(['--full'])).toMatchObject({ affected: false });
+    expect(parseArgs(['cwd'])).toMatchObject({ affected: false });
   });
 
-  it('needs a selection, and not both kinds', () => {
-    expect(parseArgs([])).toHaveProperty('error');
+  it('takes one kind of selection', () => {
     expect(parseArgs(['--full', 'cwd'])).toHaveProperty('error');
+    expect(parseArgs(['--affected', 'cwd'])).toHaveProperty('error');
+    expect(parseArgs(['--affected', '--full'])).toHaveProperty('error');
     expect(parseArgs(['--shards', 'x', 'cwd'])).toHaveProperty('error');
+  });
+});
+
+describe('affected selection key', () => {
+  it('is keyed by the diff base', () => {
+    const o = { full: false, names: [], affected: true, base: 'abcdef1234', verify: true };
+    expect(selectionKey(o)).toBe('a-abcdef1');
+    expect(selectionKey({ ...o, verify: false })).toBe('a-abcdef1-nv');
   });
 });
 

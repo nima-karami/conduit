@@ -16,6 +16,12 @@ import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  compactHostCoverage,
+  startCoverage,
+  stopCoverage,
+  withCoverageEnv,
+} from './coverage-capture.mjs';
 import { attemptDir, screenshotWindows, startCapture, stopTrace } from './failure-artifacts.mjs';
 import { acquireE2eLock, setBelowNormal } from './local-guard.mjs';
 import { EXIT_WATCHDOG } from './smoke-select.mjs';
@@ -101,6 +107,7 @@ function killAppTree(app) {
  */
 export async function shutdownApp(app, page) {
   if (!app) return;
+  await stopCoverage(app);
   await stopTrace(app);
   const graceful = (async () => {
     try {
@@ -160,7 +167,8 @@ function armOnce() {
 /**
  * THE only way anything in the e2e suite launches Electron (a unit guard enforces it). Takes
  * Playwright's `_electron.launch` options. Locally it holds the machine-wide e2e lock and drops to
- * below-normal priority first; on CI it traces the app for failure artifacts.
+ * below-normal priority first; on CI it traces the app for failure artifacts, and on the nightly
+ * records coverage for `--affected`.
  */
 export async function launchElectron(launchOpts) {
   const local = process.env.GITHUB_ACTIONS !== 'true';
@@ -170,7 +178,7 @@ export async function launchElectron(launchOpts) {
   }
   armOnce();
   const { _electron } = loadPlaywright();
-  const app = await _electron.launch(launchOpts);
+  const app = await _electron.launch(withCoverageEnv(launchOpts));
   liveApps.add(app);
   app.once('close', () => liveApps.delete(app));
   if (local) {
@@ -178,6 +186,7 @@ export async function launchElectron(launchOpts) {
     app.on('window', () => lowerAppTree(app));
   }
   startCapture(app);
+  startCoverage(app);
   return app;
 }
 
@@ -234,6 +243,13 @@ export function finishScenario(code) {
         for (const app of liveApps) killAppTree(app);
       } else if (dir) {
         rmSync(dir, { recursive: true, force: true });
+      }
+      if (code === 0) {
+        await Promise.race([
+          Promise.all([...liveApps].map(stopCoverage)),
+          new Promise((r) => setTimeout(r, CAPTURE_BUDGET_MS)),
+        ]);
+        compactHostCoverage();
       }
     } catch (e) {
       console.error('[harness] artifact capture failed:', e?.message || e);

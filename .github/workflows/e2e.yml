@@ -63,7 +63,10 @@ jobs:
       count: ${{ steps.plan.outputs.count }}
       state-id: ${{ steps.state.outputs.id }}
     steps:
+      # Full history: `--affected` diffs against the merge-base with main.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -97,6 +100,51 @@ jobs:
           name: e2e-state-prev
           path: state/
           retention-days: 1
+      # Spec §B2. The import graph is only built when a new file needs it.
+      - name: Affected scenarios
+        if: inputs.selection == 'affected'
+        env:
+          BASE: ${{ inputs.base }}
+        run: |
+          node --input-type=module -e '
+            import { execFileSync, execSync } from "node:child_process";
+            import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+            import { importersFromMetafile, isE2eIrrelevant, parseNameStatus, selectAffected } from "./test/e2e/ci-affected.mjs";
+            const read = (f) => JSON.parse(readFileSync(f, "utf8"));
+            const all = readdirSync("test/e2e").filter((f) => f.endsWith(".e2e.mjs"))
+              .map((f) => f.replace(".e2e.mjs", ""));
+            const base = process.env.BASE;
+            let r;
+            if (!base) r = { kind: "full", names: all, reasons: ["no diff base given"] };
+            else if (!existsSync("state/coverage-map.json")) {
+              r = { kind: "full", names: all, reasons: ["no coverage map in e2e-state yet"] };
+            } else {
+              const changed = parseNameStatus(
+                execFileSync("git", ["diff", "--name-status", `${base}...HEAD`], { encoding: "utf8" }),
+              );
+              const map = read("state/coverage-map.json");
+              const mapped = new Set(Object.values(map.scenarios).flat());
+              let importers = {};
+              if (changed.some((c) => c.status === "A" && !isE2eIrrelevant(c.path) && !mapped.has(c.path))) {
+                execSync("npm ci --ignore-scripts --no-audit --no-fund && node esbuild.mjs --metafile meta.json", {
+                  stdio: "inherit",
+                });
+                importers = importersFromMetafile(read("meta.json"));
+              }
+              r = selectAffected(changed, {
+                map, importers, all,
+                core: read("test/e2e/core-smoke.json"),
+                excluded: Object.keys(read("test/e2e/remote-exclusions.json")),
+              });
+              console.log(`coverage map built from ${map.builtFrom}`);
+            }
+            console.log(`affected: ${r.kind}, ${r.names.length} scenario(s)`);
+            for (const why of r.reasons) console.log(`  ${why}`);
+            appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+              `### Affected: ${r.kind}, ${r.names.length} scenario(s)\n\n` +
+              r.reasons.map((x) => `- ${x}`).join("\n") + "\n\n");
+            writeFileSync("affected.json", JSON.stringify(r));
+          '
       - id: plan
         env:
           SELECTION: ${{ inputs.selection || 'full' }}
@@ -117,11 +165,10 @@ jobs:
             const stems = readdirSync("test/e2e").filter((f) => f.endsWith(".e2e.mjs"))
               .map((f) => f.replace(".e2e.mjs", ""));
             const sel = process.env.SELECTION;
-            if (sel === "affected") {
-              console.log("::error::selection=affected lands in v1; dispatch full or names");
-              process.exit(1);
-            }
-            const names = sel === "names" ? process.env.SCENARIOS.split(/\s+/).filter(Boolean) : stems;
+            const names =
+              sel === "names" ? process.env.SCENARIOS.split(/\s+/).filter(Boolean)
+              : sel === "affected" ? read("affected.json").names
+              : stems;
             const unknown = names.filter((n) => !stems.includes(n));
             if (unknown.length) {
               console.log(`::error::unknown scenario(s): ${unknown.join(" ")}`);
@@ -202,6 +249,7 @@ jobs:
           # workspace confinement checks then read every scratch repo as outside the workspace.
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
+          E2E_COVERAGE_DIR: ${{ (github.event_name == 'schedule' || inputs.mode == 'nightly') && format('{0}/e2e-out/coverage', runner.temp) || '' }}
         # Outside the checkout: scenarios open this repo, and stray dirs in it show up as changes.
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'e2e-out'
@@ -220,6 +268,21 @@ jobs:
           path: ${{ runner.temp }}/e2e-out/artifacts/
           if-no-files-found: ignore
           retention-days: 7
+      # Mapped here, against this shard's own build and sourcemaps.
+      - name: Coverage map
+        if: always() && (github.event_name == 'schedule' || inputs.mode == 'nightly')
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'e2e-out'
+          New-Item -ItemType Directory -Force "$out/coverage-map" | Out-Null
+          node test/e2e/ci-coverage-map.mjs "$out/coverage" "$out/coverage-map/shard-${{ matrix.shard }}.json"
+      - uses: actions/upload-artifact@v4
+        if: always() && (github.event_name == 'schedule' || inputs.mode == 'nightly')
+        with:
+          name: e2e-coverage-${{ matrix.shard }}
+          path: ${{ runner.temp }}/e2e-out/coverage-map/
+          if-no-files-found: warn
+          retention-days: 1
 
   report:
     needs: [verify, prepare, shard]
@@ -324,11 +387,17 @@ jobs:
           pattern: e2e-results-*
           path: results
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: e2e-coverage-*
+          path: coverage
+          merge-multiple: true
       - name: Update state
         run: |
           mkdir -p out
           node --input-type=module -e '
             import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+            import { mergeCoverageMaps } from "./test/e2e/ci-coverage-map.mjs";
             import { lastNightly, updateFlakyHistory, updateTimings } from "./test/e2e/ci-state.mjs";
             const read = (f, d) => (existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : d);
             const write = (f, v) => writeFileSync(`out/${f}`, JSON.stringify(v, null, 2) + "\n");
@@ -341,10 +410,12 @@ jobs:
             write("timings.json", { builtFrom: sha, ...updateTimings(read("prev/timings.json", null), rows) });
             write("flaky-history.json", updateFlakyHistory(read("prev/flaky-history.json", {}), rows, { now }));
             write("last-nightly.json", lastNightly(rows, { sha, runId, at: new Date(now).toISOString() }));
-            for (const f of ["coverage-map.json"]) {
-              if (existsSync(`prev/${f}`)) writeFileSync(`out/${f}`, readFileSync(`prev/${f}`));
-            }
-            console.log(`state from ${rows.length} results`);
+            const shardMaps = existsSync("coverage")
+              ? readdirSync("coverage").map((f) => read(`coverage/${f}`, {}))
+              : [];
+            const coverage = mergeCoverageMaps(read("prev/coverage-map.json", null), shardMaps, sha);
+            write("coverage-map.json", coverage);
+            console.log(`state from ${rows.length} results; coverage for ${Object.keys(coverage.scenarios).length} scenario(s)`);
           '
           ls -l out
       - uses: actions/upload-artifact@v4

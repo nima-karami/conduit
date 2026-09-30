@@ -1,6 +1,7 @@
 export const USAGE: string;
 export interface RemoteArgs {
   full: boolean;
+  affected: boolean;
   names: string[];
   shards: number;
   wait: boolean;
@@ -16,7 +17,13 @@ export interface RunListItem {
   url: string;
 }
 export function parseArgs(argv: string[]): RemoteArgs | { error: string };
-export function selectionKey(o: { full: boolean; names: string[]; verify: boolean }): string;
+export function selectionKey(o: {
+  full: boolean;
+  affected?: boolean;
+  names: string[];
+  verify: boolean;
+  base?: string;
+}): string;
 export function makeNonce(selKey: string, rand: string): string;
 export function parseTitle(
   title: string,

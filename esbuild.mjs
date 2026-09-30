@@ -95,6 +95,18 @@ if (watch) {
   await Promise.all(ctxs.map((c) => c.watch()));
   writeHtml();
 } else {
-  await Promise.all([main, preload, web, monacoWorker, pdfWorker].map((c) => esbuild.build(c)));
+  // `--metafile <path>`: the import graph of every bundle, merged; e2e `--affected` walks it
+  // (test/e2e/ci-affected.mjs).
+  const at = process.argv.indexOf('--metafile');
+  const metafile = at > 0 ? process.argv[at + 1] : null;
+  const results = await Promise.all(
+    [main, preload, web, monacoWorker, pdfWorker].map((c) =>
+      esbuild.build({ ...c, metafile: !!metafile }),
+    ),
+  );
   writeHtml();
+  if (metafile) {
+    const inputs = Object.assign({}, ...results.map((r) => r.metafile.inputs));
+    writeFileSync(metafile, JSON.stringify({ inputs }));
+  }
 }
