@@ -1454,7 +1454,9 @@ export function App() {
     if (!activeId || !stranded) return;
     focusView(activeId, 1, layout.groups[0].activeDocId);
   }, [activeId, layout]);
-  useEffect(() => {
+  // A layout effect: a passive one can be flushed at the start of the NEXT event's render, and
+  // would then judge the focus request that event just made against this older render.
+  useLayoutEffect(() => {
     const shown = shownFocusKeys(
       docState,
       sessions.map((s) => s.id),
