@@ -156,20 +156,22 @@ jobs:
           # workspace confinement checks then read every scratch repo as outside the workspace.
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
+        # Outside the checkout: scenarios open this repo, and stray dirs in it show up as changes.
         run: |
-          New-Item -ItemType Directory -Force results, artifacts | Out-Null
-          node test/e2e/run-smoke.mjs @($env:E2E_NAMES -split ' ') --json "results/shard-$env:SHARD.json" --artifacts artifacts --retry
+          $out = Join-Path $env:RUNNER_TEMP 'e2e-out'
+          New-Item -ItemType Directory -Force "$outesults", "$outartifacts" | Out-Null
+          node test/e2e/run-smoke.mjs @($env:E2E_NAMES -split ' ') --json "$outesultsshard-$env:SHARD.json" --artifacts "$outartifacts" --retry
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: e2e-results-${{ matrix.shard }}
-          path: results/
+          path: ${{ runner.temp }}/e2e-out/results/
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: e2e-fail-${{ matrix.shard }}
-          path: artifacts/
+          path: ${{ runner.temp }}/e2e-out/artifacts/
           if-no-files-found: ignore
           retention-days: 7
 
