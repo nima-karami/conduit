@@ -92,8 +92,11 @@ discoverable by reading the tree.
 - **The `<webview>` is no longer http(s)-only — and its confinement lives in the HOST.**
   `conduit-preview:` is admitted for rendering local HTML (ADR 0005). Every byte is resolved
   through a `token → workspace root` table in `electron/preview-protocol.ts` and checked with
-  **both** `isInsideAnyRoot` **and** `realPathLeaf` — the first is purely lexical and catches
-  `../..`, only the second catches a symlink escape. Nothing in the renderer is load-bearing for
+  **both** `isInsideRoot` **and** `realPathLeaf` against **that token's own root** — the first is
+  purely lexical and catches `../..`, only the second catches a symlink escape. Checking against
+  *any* open root is the hole that shipped until 2026-09-30: a junction or an encoded `..%2F`
+  segment under root A read root B same-origin. The parser also refuses a decoded segment holding
+  `/ \ :` or NUL. Nothing in the renderer is load-bearing for
   any of it: the renderer never builds a preview URL and never resolves a token. **One opaque
   token per root means one web ORIGIN per root**, which is what stops a previewed page reading
   another open project; a draft that used the drive letter as the URL host made all of `G:` one
