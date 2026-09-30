@@ -133,6 +133,21 @@ const CAPTURE_BUDGET_MS = 8000;
 const liveApps = new Set();
 let armed = false;
 let finishing = null;
+let launchStartedAt = 0;
+let currentPhase = null;
+
+/**
+ * Per-phase timing (spec §B3): logs how long the previous phase took and starts `label`;
+ * `finishScenario` closes the last one. What a scenario split is planned from.
+ * @param {string | null} label
+ */
+export function phase(label) {
+  const now = Date.now();
+  if (currentPhase) {
+    console.log(`[phase] ${currentPhase.label}: ${((now - currentPhase.at) / 1000).toFixed(1)}s`);
+  }
+  currentPhase = label ? { label, at: now } : null;
+}
 
 function scenarioName() {
   return (
@@ -176,6 +191,7 @@ export async function launchElectron(launchOpts) {
     await acquireE2eLock({ scenario: scenarioName() });
     setBelowNormal();
   }
+  launchStartedAt = Date.now();
   armOnce();
   const { _electron } = loadPlaywright();
   const app = await _electron.launch(withCoverageEnv(launchOpts));
@@ -236,6 +252,7 @@ export async function captureFailure() {
  */
 export function finishScenario(code) {
   finishing ??= (async () => {
+    phase(null);
     const dir = attemptDir();
     try {
       if (dir && code !== 0) {
@@ -280,6 +297,7 @@ export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
+  console.log(`[phase] launch: ${((Date.now() - launchStartedAt) / 1000).toFixed(1)}s`);
 
   // Temp dir is in os.tmpdir() — cleaned by OS; no manual cleanup needed.
   const cleanup = () => shutdownApp(app, page);
