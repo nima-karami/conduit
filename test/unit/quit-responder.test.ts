@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostToWebview, WebviewToHost } from '../../src/protocol';
-import type { AutoSaveMode } from '../../src/settings';
+import { type AutoSaveMode, DEFAULT_SETTINGS } from '../../src/settings';
 import {
   createQuitResponder,
   FLUSH_BOUND_MS,
@@ -67,6 +67,9 @@ function setup(
     setLocked: vi.fn(),
     wait: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
     log: vi.fn(),
+    flushSettings: vi.fn(() => {
+      posts.push({ type: 'updateSettings', settings: DEFAULT_SETTINGS });
+    }),
   } satisfies QuitResponderDeps;
   const responder = createQuitResponder(deps);
   const decisions = () => posts.filter((p) => p.type === 'quitDecision');
@@ -85,6 +88,14 @@ describe('quit responder', () => {
     const t = setup({ dirty: ['/a.ts'] });
     await t.responder.onConfirmQuit(confirm({ requestId: 7 }));
     expect(t.posts[0]).toEqual({ type: 'quitAck', requestId: 7 });
+  });
+
+  it('flushes pending settings synchronously on the ask, ahead of the decision', async () => {
+    const t = setup();
+    const flow = t.responder.onConfirmQuit(confirm({ requestId: 3 }));
+    expect(t.deps.flushSettings).toHaveBeenCalledTimes(1);
+    await flow;
+    expect(t.posts.map((p) => p.type)).toEqual(['quitAck', 'updateSettings', 'quitDecision']);
   });
 
   it('re-probe while asking focuses, posts nothing', async () => {

@@ -24,6 +24,8 @@ interface SettingsCtx {
   resetAll: () => void;
   /** Reset only the layout (panel order + widths) to defaults (persisted). */
   resetLayout: () => void;
+  /** Post an edit still inside the persist debounce now. */
+  flushPending: () => void;
 }
 
 const Ctx = createContext<SettingsCtx | null>(null);
@@ -145,7 +147,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ settings, update, hydrate, resetAll, resetLayout }}>
+    <Ctx.Provider value={{ settings, update, hydrate, resetAll, resetLayout, flushPending: flush }}>
       {children}
     </Ctx.Provider>
   );
