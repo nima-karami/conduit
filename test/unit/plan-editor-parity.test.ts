@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { createTimer } from '@milkdown/kit/ctx';
 import type { Node as ProseNode } from '@milkdown/kit/prose/model';
 import { act, createElement, createRef, type RefObject } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { splitPlan } from '../../src/plan-blocks';
 import { PlanEditor, type PlanEditorHandle } from '../../webview/components/plan-editor';
 
@@ -56,6 +57,19 @@ afterEach(async () => {
   root = null;
   host?.remove();
   host = null;
+});
+
+/**
+ * Every Milkdown ctx timer an editor waits on arms a `setTimeout` that is never cleared — not when
+ * the timer resolves, not on `editor.destroy()` — and its callback calls the global
+ * `removeEventListener`. Fired after jsdom teardown, that is an unhandled ReferenceError, which
+ * fails the run although every test passed. Unmounting cannot cancel them, so the environment has
+ * to outlive them: every timer started before this hook, so one full timeout from now covers all,
+ * and the `setImmediate` lets any that expire in the same tick as ours run first.
+ */
+afterAll(async () => {
+  await new Promise((resolve) => setTimeout(resolve, createTimer('default').timeout));
+  await new Promise((resolve) => setImmediate(resolve));
 });
 
 /**
