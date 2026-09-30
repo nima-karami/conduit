@@ -150,7 +150,7 @@ export function RepoPickerMenu({
       role="menu"
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
-      tabIndex={0}
+      tabIndex={-1}
     >
       {entries.flatMap((e, i) => {
         if (e.kind === 'footer')

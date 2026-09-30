@@ -29,7 +29,10 @@ All notable user-facing changes to Conduit. Format follows
 ### Fixed
 - **Primary buttons show the keyboard focus ring.** A focused primary button drew only its own
   glow, so Tab and a dialog's initial focus (Save All) left no visible mark. The same held for the
-  active tab, checked menu items, toggles and other controls with a glow of their own.
+  active tab, checked menu items, toggles and other controls with a glow of their own. In Neon,
+  where the ring is drawn inside the control, a filled button or toggle now rings in its text
+  colour instead of vanishing into the fill.
+- **Neon architecture nodes that own a child graph show their stacked-card edge again.**
 - **Enter in a confirm dialog activates only the focused button.** It used to run the primary
   action whichever button had focus.
 - **Switching tabs puts keyboard focus in the tab you land on.** Ctrl+Tab, Ctrl+PageUp/PageDown,

@@ -105,6 +105,21 @@ function tagEnd(src: string, from: number): number {
   return src.length;
 }
 
+/** A JSX tag's own attributes: every `{…}` value but className's is blanked, so an element
+    passed as a prop (`action={<button className=…>}`) isn't read as this tag's. */
+function ownAttributes(tag: string): string {
+  let out = '';
+  let depth = 0;
+  let keep = false;
+  for (let i = 0; i < tag.length; i++) {
+    const c = tag[i];
+    if (c === '{' && depth++ === 0) keep = /className=$/.test(tag.slice(0, i));
+    if (depth === 0 || keep) out += c;
+    if (c === '}' && --depth === 0 && !keep) out += '{}';
+  }
+  return out;
+}
+
 const FOCUSABLE_TAG = /^(button|a|input|select|textarea|summary)$/;
 /** The ring rule's own list — outside it the ring never paints, so there is nothing to erase. */
 const FOCUSABLE_ATTR = /\brole="(button|tab|option|menuitem)"|\btabIndex=(?!\{-1\})/;
@@ -278,6 +293,86 @@ describe('interaction state vocabulary', () => {
     );
     expect(restItems.length).toBeGreaterThan(0);
     expect(uncovered).toEqual([]);
+  });
+
+  // One `none` in a shadow list invalidates the whole declaration, so a token composed into the
+  // ring (`var(--focus-ring), var(--rest-shadow)`) that resolves to `none` in any theme erases
+  // the ring there. A shadow token's "nothing" is a no-op shadow, never `none`.
+  it('never declares a shadow token as none', () => {
+    const reads = (value: string) => [...value.matchAll(/var\((--[\w-]+)/g)].map((m) => m[1]);
+    const all = RULES.flatMap(decls);
+    const pending = all
+      .filter(([prop]) => prop === 'box-shadow' || prop === '--rest-shadow')
+      .flatMap(([, value]) => reads(value));
+    const shadowTokens = new Set<string>();
+    while (pending.length) {
+      const token = pending.pop() as string;
+      if (shadowTokens.has(token)) continue;
+      shadowTokens.add(token);
+      for (const [prop, value] of all) if (prop === token) pending.push(...reads(value));
+    }
+    const offenders = RULES.flatMap((r) =>
+      decls(r)
+        .filter(([prop, value]) => shadowTokens.has(prop) && value === 'none')
+        .map(([prop]) => `styles.css:${r.line}  ${r.selector} { ${prop}: none }`),
+    );
+    expect(shadowTokens.has('--rest-shadow')).toBe(true);
+    expect(offenders).toEqual([]);
+  });
+
+  // The reverse of the rule above: --rest-shadow only paints where the rest rule's list reaches,
+  // so a surface that sets it but renders on a bare <div> silently loses its shadow.
+  it('sets --rest-shadow only on classes whose every element the rest rule reaches', () => {
+    const rest = RULES.find(
+      (r) => r.selector.startsWith(':where(') && r.body.includes('var(--rest-shadow, none)'),
+    );
+    expect(rest?.selector).toMatch(/\[role\], \[tabindex\]\)$/);
+    const offenders: string[] = [];
+    for (const rule of RULES) {
+      if (!decls(rule).some(([prop]) => prop === '--rest-shadow')) continue;
+      for (const item of splitTop(rule.selector, ',')) {
+        const subject = splitTop(item, /[\s>+~]/).at(-1) ?? '';
+        if (FOCUSABLE_TAG.test(/^[a-z]+/i.exec(subject)?.[0] ?? '')) continue;
+        const classes = [...subject.matchAll(/\.([\w-]+)/g)].map((m) => m[1]);
+        const attrs = [...subject.matchAll(/\[([\w-]+)/g)].map((m) => m[1]);
+        if (!classes.length) continue;
+        for (const m of MARKUP.matchAll(/<([a-z][\w.]*)\b/gi)) {
+          const start = (m.index ?? 0) + m[0].length;
+          const tag = ownAttributes(MARKUP.slice(start, tagEnd(MARKUP, start)));
+          const cls = /\bclassName=(?:"([^"]*)"|\{([\s\S]*)\})/.exec(tag);
+          const tokens = new Set(
+            [...(cls?.[1] ?? cls?.[2] ?? '').matchAll(/[a-z][\w-]*/gi)].map((t) => t[0]),
+          );
+          if (!classes.every((c) => tokens.has(c))) continue;
+          if (!attrs.every((a) => tag.includes(a))) continue;
+          if (FOCUSABLE_TAG.test(m[1]) || /\brole=|\btabIndex=/.test(tag)) continue;
+          offenders.push(`styles.css:${rule.line}  ${item} on <${m[1]} className="${cls?.[1]}">`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  // Neon's ring sits inside the control, so on a solid fill an accent ring vanishes into it.
+  it('gives every filled control the on-fill ring', () => {
+    const FILL = /^var\(--(accent|amber)\)$/;
+    const offenders: string[] = [];
+    for (const rule of RULES) {
+      const d = decls(rule);
+      const filled = d.some(
+        ([p, v]) =>
+          ((p === 'background' || p === 'background-color') && FILL.test(v)) ||
+          (p === 'color' && v === 'var(--on-accent)'),
+      );
+      if (!filled) continue;
+      if (d.some(([p, v]) => p === '--focus-ring' && v === 'var(--focus-ring-on-fill)')) continue;
+      for (const item of splitTop(rule.selector, ',')) {
+        if (/:hover|:focus|:active|::/.test(item)) continue;
+        if (!focusableSubject(item)) continue;
+        offenders.push(`styles.css:${rule.line}  ${item}`);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 
   // A zero-specificity role list is worth exactly one class — the same as the
