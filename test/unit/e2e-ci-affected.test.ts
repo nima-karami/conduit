@@ -1,29 +1,51 @@
 import { describe, expect, it } from 'vitest';
 import {
-  importersFromMetafile,
   isE2eIrrelevant,
   parseNameStatus,
+  parseZeroContextDiff,
   selectAffected,
 } from '../e2e/ci-affected.mjs';
 
+/**
+ * Line spans are 1-based and inclusive, in the coordinates of the map's build (`builtFrom`).
+ *   webview/split.tsx: split-editor ran 10–20 (and a nested 14–16), explorer ran 30–40
+ *   src/layout.ts:     split-editor and explorer both ran 5–9
+ *   src/pty.ts:        cwd ran 1–50
+ */
 const map = {
-  builtFrom: 'x',
+  schema: 2,
+  builtFrom: 'nightly',
   scenarios: {
-    'split-editor': ['webview/split.tsx', 'src/layout.ts'],
-    explorer: ['webview/tree.tsx', 'src/layout.ts'],
-    cwd: ['src/pty.ts'],
+    'split-editor': {
+      builtFrom: 'nightly',
+      files: {
+        'webview/split.tsx': [
+          [10, 20],
+          [14, 16],
+        ],
+        'src/layout.ts': [[5, 9]],
+      },
+    },
+    explorer: {
+      builtFrom: 'nightly',
+      files: { 'webview/split.tsx': [[30, 40]], 'src/layout.ts': [[5, 9]] },
+    },
+    cwd: { builtFrom: 'nightly', files: { 'src/pty.ts': [[1, 50]] } },
   },
 };
-const importers = {
-  'webview/split-util.ts': ['webview/split.tsx'],
-  'webview/deep.ts': ['webview/split-util.ts'],
-  'webview/orphan.ts': ['webview/nowhere.ts'],
-};
 const all = ['split-editor', 'explorer', 'cwd', 'session-bootstrap', 'quit-guard', 'fresh'];
-const ctx = { map, importers, all, core: ['session-bootstrap', 'quit-guard'], excluded: [] };
-const m = (path: string, status: 'A' | 'M' | 'D' = 'M') => ({ path, status });
+const ctx = { map, all, core: ['session-bootstrap', 'quit-guard'], excluded: [] };
+const CORE_AND_FRESH = ['fresh', 'quit-guard', 'session-bootstrap'];
+type Hunk = { start: number; count: number };
+const m = (path: string, status: 'A' | 'M' | 'D' = 'M', hunks?: Hunk[]) => ({
+  path,
+  status,
+  ...(hunks ? { hunks } : {}),
+});
+const lines = (start: number, count = 1) => ({ start, count });
+const insertAfter = (line: number) => ({ start: line, count: 0 });
 
-describe('selectAffected', () => {
+describe('selectAffected: rule order', () => {
   it('only e2e-irrelevant changes → none', () => {
     const r = selectAffected(
       [
@@ -42,63 +64,173 @@ describe('selectAffected', () => {
 
   it.each([
     'test/e2e/harness.mjs',
+    'test/e2e/fixtures/notes.md',
     'electron/main.ts',
     'electron/preload.ts',
     'esbuild.mjs',
     'package.json',
     'package-lock.json',
     '.github/workflows/e2e.yml',
-  ])('%s → full', (path) => {
+  ])('%s → full, even beside irrelevant changes', (path) => {
     const r = selectAffected([m('docs/a.md'), m(path)], ctx);
     expect(r.kind).toBe('full');
     expect(r.names).toEqual([...all].sort());
     expect(r.reasons.join('\n')).toContain(path);
   });
 
-  it('a mapped file selects its scenarios plus the core set', () => {
-    const r = selectAffected([m('webview/tree.tsx')], ctx);
+  it('a Markdown file the app ships (resources/skills/*/SKILL.md) is not irrelevant → full', () => {
+    const r = selectAffected([m('resources/skills/conduit-plan/SKILL.md', 'M', [lines(3)])], ctx);
+    expect(r.kind).toBe('full');
+    expect(r.reasons.join('\n')).toContain('resources/skills/conduit-plan/SKILL.md');
+  });
+
+  it('no coverage map, or one in the old file-level format → full', () => {
+    const change = [m('webview/split.tsx', 'M', [lines(12)])];
+    expect(selectAffected(change, { ...ctx, map: null }).kind).toBe('full');
+    const old = { builtFrom: 'x', scenarios: { cwd: ['src/pty.ts'] } };
+    expect(selectAffected(change, { ...ctx, map: old }).kind).toBe('full');
+  });
+});
+
+describe('selectAffected: changed lines against credited function ranges', () => {
+  it('a changed line inside a function selects every scenario that ran a range holding it', () => {
+    const r = selectAffected([m('webview/split.tsx', 'M', [lines(15)])], ctx);
     expect(r.kind).toBe('names');
-    expect(r.names).toEqual(['explorer', 'fresh', 'quit-guard', 'session-bootstrap']);
+    expect(r.names).toEqual(['split-editor', ...CORE_AND_FRESH].sort());
+    const both = selectAffected([m('src/layout.ts', 'M', [lines(6, 2)])], ctx);
+    expect(both.names).toEqual(['explorer', 'split-editor', ...CORE_AND_FRESH].sort());
   });
 
-  it('a new file selects the scenarios of the nearest mapped importers', () => {
-    expect(selectAffected([m('webview/split-util.ts', 'A')], ctx).names).toContain('split-editor');
-    const deep = selectAffected([m('webview/deep.ts', 'A')], ctx);
-    expect(deep.kind).toBe('names');
-    expect(deep.names).toContain('split-editor');
-    expect(deep.names).not.toContain('explorer');
+  it('hunks in two credited functions select both', () => {
+    const r = selectAffected([m('webview/split.tsx', 'M', [lines(18, 3), lines(35)])], ctx);
+    expect(r.names).toEqual(['explorer', 'split-editor', ...CORE_AND_FRESH].sort());
   });
 
-  it('a new file with no mapped importer → full', () => {
-    expect(selectAffected([m('webview/orphan.ts', 'A')], ctx).kind).toBe('full');
-    expect(selectAffected([m('webview/unimported.ts', 'A')], ctx).kind).toBe('full');
+  it.each([
+    ['top-level code before any function', [lines(3)]],
+    ['a line between two credited functions', [lines(25)]],
+    ['a hunk that runs off the end of a credited function', [lines(19, 4)]],
+    ['a deletion/replacement past the last credited line', [lines(41, 2)]],
+  ])('%s → full', (_why, hunks) => {
+    const r = selectAffected([m('webview/split.tsx', 'M', hunks)], ctx);
+    expect(r.kind).toBe('full');
+    expect(r.reasons.join('\n')).toMatch(/webview\/split\.tsx:\d+/);
   });
 
-  it('a modified file absent from the map → full', () => {
-    const r = selectAffected([m('src/unknown.ts')], ctx);
+  it('an insertion counts as inside a function only if both neighbouring base lines are', () => {
+    expect(selectAffected([m('webview/split.tsx', 'M', [insertAfter(12)])], ctx).names).toContain(
+      'split-editor',
+    );
+    // After a function's last line: new code between functions.
+    expect(selectAffected([m('webview/split.tsx', 'M', [insertAfter(20)])], ctx).kind).toBe('full');
+    // Before the first line of the file.
+    expect(selectAffected([m('src/pty.ts', 'M', [insertAfter(0)])], ctx).kind).toBe('full');
+  });
+
+  it('a modified file with no credited range at all → full', () => {
+    const r = selectAffected([m('src/unknown.ts', 'M', [lines(4)])], ctx);
     expect(r.kind).toBe('full');
     expect(r.reasons.join('\n')).toContain('src/unknown.ts');
   });
 
-  it('a deleted file selects its mapped scenarios, or nothing', () => {
-    expect(selectAffected([m('src/pty.ts', 'D')], ctx).names).toContain('cwd');
+  it('a modified mapped file without a line diff against the map build → full', () => {
+    const r = selectAffected([m('webview/split.tsx', 'M')], ctx);
+    expect(r.kind).toBe('full');
+    expect(r.reasons.join('\n')).toContain('webview/split.tsx');
+  });
+
+  it('a modified mapped file identical to the map build adds nothing', () => {
+    const r = selectAffected([m('webview/split.tsx', 'M', [])], ctx);
+    expect(r).toMatchObject({ kind: 'names', names: CORE_AND_FRESH });
+  });
+
+  it('the review case: top-level data (editor-menu.ts NAVIGATION) → full', () => {
+    // NAVIGATION is a module-level array; only the functions that read it were ever credited.
+    const menu = {
+      ...map,
+      scenarios: {
+        ...map.scenarios,
+        'nav-keybindings-settings': {
+          builtFrom: 'nightly',
+          files: { 'webview/editor-menu.ts': [[140, 175]] },
+        },
+      },
+    };
+    const r = selectAffected([m('webview/editor-menu.ts', 'M', [lines(76, 3)])], {
+      ...ctx,
+      all: [...all, 'nav-keybindings-settings'],
+      map: menu,
+    });
+    expect(r.kind).toBe('full');
+    expect(r.reasons.join('\n')).toContain('webview/editor-menu.ts:76');
+  });
+});
+
+describe('selectAffected: added and deleted files', () => {
+  it('a new code file → full (its code has no coverage yet)', () => {
+    const r = selectAffected([m('webview/split-util.ts', 'A')], ctx);
+    expect(r.kind).toBe('full');
+    expect(r.reasons.join('\n')).toContain('webview/split-util.ts');
+  });
+
+  it('a deleted .ts/.tsx file selects every scenario that ran any of its functions', () => {
+    expect(selectAffected([m('src/pty.ts', 'D')], ctx).names).toEqual(
+      ['cwd', ...CORE_AND_FRESH].sort(),
+    );
     expect(selectAffected([m('src/gone.ts', 'D')], ctx)).toMatchObject({
       kind: 'names',
-      names: ['fresh', 'quit-guard', 'session-bootstrap'],
+      names: CORE_AND_FRESH,
     });
   });
 
+  it.each(['webview/styles/app.css', 'resources/skills/x/SKILL.md', 'src/data.json'])(
+    'a deleted unmapped non-.ts/.tsx file (%s) → full',
+    (path) => {
+      expect(selectAffected([m(path, 'D')], ctx).kind).toBe('full');
+    },
+  );
+});
+
+describe('selectAffected: the map itself', () => {
   it('drops map entries for scenarios that no longer exist (split or deleted)', () => {
-    const stale = { ...map, scenarios: { ...map.scenarios, 'split-editor-old': ['src/pty.ts'] } };
-    const r = selectAffected([m('src/pty.ts')], { ...ctx, map: stale });
+    const stale = {
+      ...map,
+      scenarios: {
+        ...map.scenarios,
+        'split-editor-old': { builtFrom: 'nightly', files: { 'src/pty.ts': [[1, 50]] } },
+      },
+    };
+    const r = selectAffected([m('src/pty.ts', 'M', [lines(3)])], { ...ctx, map: stale });
     expect(r.names).not.toContain('split-editor-old');
     expect(r.names).toContain('cwd');
   });
 
   it('a scenario the map has never seen always runs, unless it is excluded remotely', () => {
-    expect(selectAffected([m('src/pty.ts')], ctx).names).toContain('fresh');
-    const r = selectAffected([m('src/pty.ts')], { ...ctx, excluded: ['fresh'] });
+    expect(selectAffected([m('src/pty.ts', 'M', [lines(3)])], ctx).names).toContain('fresh');
+    const r = selectAffected([m('src/pty.ts', 'M', [lines(3)])], { ...ctx, excluded: ['fresh'] });
     expect(r.names).not.toContain('fresh');
+  });
+
+  it('an entry kept from an older nightly always runs and credits nothing', () => {
+    const older = {
+      ...map,
+      scenarios: {
+        ...map.scenarios,
+        explorer: { builtFrom: 'older', files: { 'webview/split.tsx': [[1, 100]] } },
+      },
+    };
+    const inside = selectAffected([m('webview/split.tsx', 'M', [lines(15)])], {
+      ...ctx,
+      map: older,
+    });
+    expect(inside.names).toEqual(['explorer', 'split-editor', ...CORE_AND_FRESH].sort());
+    expect(inside.reasons.join('\n')).toContain('older nightly');
+    // Its span is in another build's line numbers, so it can't vouch for line 25.
+    const outside = selectAffected([m('webview/split.tsx', 'M', [lines(25)])], {
+      ...ctx,
+      map: older,
+    });
+    expect(outside.kind).toBe('full');
   });
 });
 
@@ -113,6 +245,9 @@ describe('isE2eIrrelevant', () => {
     ['.github/workflows/e2e.yml', false],
     ['webview/app.tsx', false],
     ['test/e2e/cwd.e2e.mjs', false],
+    ['test/e2e/fixtures/doc.md', false],
+    ['test/e2e/README.md', false],
+    ['resources/skills/conduit-plan/SKILL.md', false],
   ])('%s → %s', (path, expected) => {
     expect(isE2eIrrelevant(path)).toBe(expected);
   });
@@ -132,20 +267,50 @@ describe('parseNameStatus', () => {
   });
 });
 
-describe('importersFromMetafile', () => {
-  it('inverts project imports and drops node_modules', () => {
-    const meta = {
-      inputs: {
-        'webview/a.tsx': {
-          imports: [{ path: 'webview/b.ts' }, { path: 'node_modules/react/index.js' }],
-        },
-        'webview/c.tsx': { imports: [{ path: 'webview/b.ts' }] },
-        'webview/b.ts': { imports: [] },
-        'node_modules/react/index.js': { imports: [{ path: 'webview/b.ts' }] },
+describe('parseZeroContextDiff', () => {
+  it('reads the base-side hunks of `git diff -U0`, per file', () => {
+    const text = [
+      'diff --git a/src/a.ts b/src/a.ts',
+      'index 1111111..2222222 100644',
+      '--- a/src/a.ts',
+      '+++ b/src/a.ts',
+      '@@ -3 +3 @@ export const x = 1;',
+      '-a',
+      '+b',
+      '@@ -10,0 +11,2 @@',
+      '+c',
+      '+d',
+      '@@ -20,3 +22 @@ function f() {',
+      '-e',
+      '-f',
+      '-g',
+      '+h',
+      'diff --git a/webview/new file.ts b/webview/new file.ts',
+      'new file mode 100644',
+      '--- /dev/null',
+      '+++ b/webview/new file.ts\t',
+      '@@ -0,0 +1 @@',
+      '+x',
+      'diff --git a/src/gone.ts b/src/gone.ts',
+      'deleted file mode 100644',
+      '--- a/src/gone.ts',
+      '+++ /dev/null',
+      '@@ -1,2 +0,0 @@',
+      '-y',
+      '-z',
+      '',
+    ].join('\n');
+    expect(parseZeroContextDiff(text)).toEqual({
+      'src/a.ts': {
+        absent: false,
+        hunks: [
+          { start: 3, count: 1 },
+          { start: 10, count: 0 },
+          { start: 20, count: 3 },
+        ],
       },
-    };
-    expect(importersFromMetafile(meta)).toEqual({
-      'webview/b.ts': ['webview/a.tsx', 'webview/c.tsx'],
+      'webview/new file.ts': { absent: true, hunks: [{ start: 0, count: 0 }] },
+      'src/gone.ts': { absent: false, hunks: [{ start: 1, count: 2 }] },
     });
   });
 });

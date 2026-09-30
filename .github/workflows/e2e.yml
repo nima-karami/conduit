@@ -116,51 +116,12 @@ jobs:
           name: e2e-state-prev
           path: state/
           retention-days: 1
-      # Spec §B2. The import graph is only built when a new file needs it.
+      # Spec §B2: changed lines against the credited function spans of the latest main nightly.
       - name: Affected scenarios
         if: inputs.selection == 'affected'
         env:
           BASE: ${{ inputs.base }}
-        run: |
-          node --input-type=module -e '
-            import { execFileSync, execSync } from "node:child_process";
-            import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-            import { importersFromMetafile, isE2eIrrelevant, parseNameStatus, selectAffected } from "./test/e2e/ci-affected.mjs";
-            const read = (f) => JSON.parse(readFileSync(f, "utf8"));
-            const all = readdirSync("test/e2e").filter((f) => f.endsWith(".e2e.mjs"))
-              .map((f) => f.replace(".e2e.mjs", ""));
-            const base = process.env.BASE;
-            let r;
-            if (!base) r = { kind: "full", names: all, reasons: ["no diff base given"] };
-            else if (!existsSync("state/coverage-map.json")) {
-              r = { kind: "full", names: all, reasons: ["no coverage map in e2e-state yet"] };
-            } else {
-              const changed = parseNameStatus(
-                execFileSync("git", ["diff", "--name-status", `${base}...HEAD`], { encoding: "utf8" }),
-              );
-              const map = read("state/coverage-map.json");
-              const mapped = new Set(Object.values(map.scenarios).flat());
-              let importers = {};
-              if (changed.some((c) => c.status === "A" && !isE2eIrrelevant(c.path) && !mapped.has(c.path))) {
-                execSync("npm ci --ignore-scripts --no-audit --no-fund && node esbuild.mjs --metafile meta.json", {
-                  stdio: "inherit",
-                });
-                importers = importersFromMetafile(read("meta.json"));
-              }
-              r = selectAffected(changed, {
-                map, importers, all,
-                core: read("test/e2e/core-smoke.json"),
-                excluded: Object.keys(read("test/e2e/remote-exclusions.json")),
-              });
-              console.log(`coverage map built from ${map.builtFrom}`);
-            }
-            console.log(`affected: ${r.kind}, ${r.names.length} scenario(s)`);
-            for (const why of r.reasons) console.log(`  ${why}`);
-            appendFileSync(process.env.GITHUB_STEP_SUMMARY,
-              `### Affected: ${r.kind}, ${r.names.length} scenario(s)\n\n` +
-              r.reasons.map((x) => `- ${x}`).join("\n") + "\n\n");
-            writeFileSync("affected.json", JSON.stringify(r));
-          '
+        run: node test/e2e/ci-affected.mjs "$BASE" state/coverage-map.json affected.json
       - id: plan
         env:
           SELECTION: ${{ inputs.selection || 'full' }}
@@ -359,6 +320,7 @@ jobs:
             }
             const result = mergeResults(plan, shardFiles, {
               lastNightly: readState("last-nightly.json"),
+              quarantine: read("test/e2e/quarantine.json"),
               quarantineCandidates: quarantineCandidates(history, { now }),
               sha: process.env.GITHUB_SHA, nonce: process.env.NONCE, selection: process.env.SELECTION,
               runId: run.id, url: run.html_url, queuedAt: run.created_at, startedAt: run.run_started_at,
@@ -429,16 +391,26 @@ jobs:
             const shardMaps = existsSync("coverage")
               ? readdirSync("coverage").map((f) => read(`coverage/${f}`, {}))
               : [];
-            const coverage = mergeCoverageMaps(read("prev/coverage-map.json", null), shardMaps, sha);
+            const statuses = Object.fromEntries(rows.map((r) => [r.name, r.status]));
+            const coverage = mergeCoverageMaps(read("prev/coverage-map.json", null), shardMaps, sha, statuses);
             write("coverage-map.json", coverage);
             console.log(`state from ${rows.length} results; coverage for ${Object.keys(coverage.scenarios).length} scenario(s)`);
           '
           ls -l out
-      - uses: actions/upload-artifact@v4
+      # Only main publishes state (spec §3): a nightly dispatched on a ci/e2e ref runs the same
+      # update, but under a name no `prepare` looks up.
+      - if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
         with:
           name: e2e-state
           path: out/
           retention-days: 30
+      - if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-state-dry-run
+          path: out/
+          retention-days: 1
 
   # Backstop for refs whose run never started; a run's own `cleanup` job deletes the rest.
   sweep:
@@ -474,9 +446,10 @@ jobs:
             const described = refs.map((r) => {
               const ref = r.ref.replace("refs/heads/", "");
               const commitAt = json(`repos/${repo}/commits/${r.object.sha}`).commit.committer.date;
+              const created = json(`repos/${repo}/activity?ref=${encodeURIComponent(r.ref)}&activity_type=branch_creation&per_page=1`);
               const runs = json(`repos/${repo}/actions/runs?branch=${encodeURIComponent(ref)}&per_page=20`)
                 .workflow_runs.map(({ status, created_at }) => ({ status, created_at }));
-              return { ref, commitAt, runs };
+              return { ref, createdAt: created[0]?.timestamp ?? null, commitAt, runs };
             });
             const stale = staleCiRefs(described, { now: Date.now() });
             console.log(`${refs.length} ci/e2e ref(s), ${stale.length} stale`);

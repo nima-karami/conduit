@@ -1,57 +1,143 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { Session } from 'node:inspector/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import vm from 'node:vm';
 import * as esbuild from 'esbuild';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { selectAffected } from '../e2e/ci-affected.mjs';
 import {
   mergeCoverageMaps,
+  mergeSpans,
   projectSource,
   segmentOffsets,
-  sourcesForOffsets,
+  spansForRanges,
 } from '../e2e/ci-coverage-map.mjs';
-import { executedStarts } from '../e2e/coverage-capture.mjs';
+import { executedRanges } from '../e2e/coverage-capture.mjs';
 
 const dir = mkdtempSync(join(tmpdir(), 'cov-map-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-/** A real esbuild bundle of two modules, as the app's bundles are built (iife + sourcemap). */
-async function bundle() {
-  writeFileSync(
-    join(dir, 'alpha.ts'),
-    'export const LIMIT = 3;\nexport function alphaWork(n: number) {\n  return n * LIMIT;\n}\n',
-  );
-  writeFileSync(
-    join(dir, 'beta.ts'),
-    "import { alphaWork } from './alpha';\nexport const betaWork = (s: string) => s.length;\n" +
-      '(globalThis as any).run = () => alphaWork(2) + betaWork("xy");\n',
-  );
+/**
+ * Built like the app's renderer (iife + sourcemap; a dynamic import makes esbuild wrap `lazy.ts` in
+ * an `__esm` init function), run under the same function-granularity coverage the harness takes.
+ */
+const FILES = {
+  'alpha.ts': [
+    'export const LIMIT = 3;',
+    'export function alphaWork(n: number) {',
+    '  return n * LIMIT;',
+    '}',
+    'export function neverCalled() {',
+    "  return 'x';",
+    '}',
+  ],
+  'lazy.ts': [
+    'export const TABLE = [1, 2].map((x) => x * 2);',
+    'export function lazyWork() {',
+    '  return TABLE.length;',
+    '}',
+  ],
+  'menu.ts': [
+    'export const NAV = [',
+    "  { id: 'a', run: () => go('a') },",
+    "  { id: 'b', run: () => go('b') },",
+    '];',
+    'function go(x: string) {',
+    '  return x;',
+    '}',
+    'export const make = (n: number) => {',
+    '  return n + 1;',
+    '};',
+  ],
+  'entry.ts': [
+    "import { alphaWork } from './alpha';",
+    "import { make, NAV } from './menu';",
+    '(globalThis as any).e2eCovFixture = async () => {',
+    '  const a = alphaWork(2);',
+    "  const m = await import('./lazy');",
+    '  NAV[0].run();',
+    '  return a + m.lazyWork() + make(1);',
+    '};',
+  ],
+};
+
+let spans: Record<string, [number, number][]>;
+
+beforeAll(async () => {
+  for (const [f, lines] of Object.entries(FILES)) writeFileSync(join(dir, f), lines.join('\n'));
   const r = await esbuild.build({
-    entryPoints: [join(dir, 'beta.ts')],
+    entryPoints: [join(dir, 'entry.ts')],
     bundle: true,
     format: 'iife',
     sourcemap: 'external',
     write: false,
-    outfile: join(dir, 'out', 'b.js'),
+    outfile: join(dir, 'out', 'webview.js'),
   });
   const js = r.outputFiles.find((f) => f.path.endsWith('.js'))?.text ?? '';
   const map = JSON.parse(r.outputFiles.find((f) => f.path.endsWith('.map'))?.text ?? '{}');
-  return { js, map };
-}
+  const session = new Session();
+  session.connect();
+  await session.post('Profiler.enable');
+  await session.post('Profiler.startPreciseCoverage', { callCount: true, detailed: false });
+  vm.runInThisContext(js, { filename: 'file:///fixture/out/webview.js' });
+  await (globalThis as unknown as { e2eCovFixture: () => Promise<number> }).e2eCovFixture();
+  const { result } = await session.post('Profiler.takePreciseCoverage');
+  await session.post('Profiler.stopPreciseCoverage');
+  session.disconnect();
+  const ranges = executedRanges(result as Parameters<typeof executedRanges>[0])['webview.js'];
+  spans = spansForRanges(ranges, segmentOffsets(map.mappings, js), map.sources);
+});
 
-describe('segmentOffsets + sourcesForOffsets', () => {
-  it('attributes a function to the file that defines it', async () => {
-    const { js, map } = await bundle();
-    const index = segmentOffsets(map.mappings, js);
-    expect(index.offsets.length).toBeGreaterThan(3);
-    expect([...index.offsets]).toEqual([...index.offsets].sort((a, b) => a - b));
-    const mapSources = map.sources.map((s: string) => s.replace(/^.*cov-map-[^/]+\//, '../'));
-    const at = (needle: string) => js.indexOf(needle);
-    expect(at('function alphaWork')).toBeGreaterThan(0);
-    expect(sourcesForOffsets([at('function alphaWork')], index, mapSources)).toEqual(
-      new Set(['alpha.ts']),
-    );
-    expect(sourcesForOffsets([at('(s) =>')], index, mapSources)).toEqual(new Set(['beta.ts']));
-    expect(sourcesForOffsets([], index, mapSources)).toEqual(new Set());
+describe('coverage → credited function spans', () => {
+  it('credits only the lines of functions that ran, never top-level code or wrappers', () => {
+    expect(spans).toEqual({
+      'alpha.ts': [[2, 4]],
+      'lazy.ts': [[2, 4]],
+      'menu.ts': [
+        [5, 7],
+        [9, 10],
+      ],
+      'entry.ts': [[4, 8]],
+    });
+  });
+
+  it('feeds --affected: a change inside a function that ran selects its scenario, anything else is full', () => {
+    const map = mergeCoverageMaps(null, [{ fixture: spans }], 'sha', { fixture: 'PASS' });
+    const ctx = { map, all: ['fixture', 'other'], core: [], excluded: [] };
+    const at = (path: string, line: number) =>
+      selectAffected([{ path, status: 'M', hunks: [{ start: line, count: 1 }] }], ctx);
+    expect(at('alpha.ts', 3)).toMatchObject({ kind: 'names', names: ['fixture', 'other'] });
+    expect(at('lazy.ts', 3).kind).toBe('names');
+    // Top-level data, a function no scenario ran, a data row holding a one-line arrow, and the
+    // first line of `export const make = (…) => {`, which the declaration shares.
+    for (const [path, line] of [
+      ['alpha.ts', 1],
+      ['lazy.ts', 1],
+      ['alpha.ts', 6],
+      ['menu.ts', 2],
+      ['menu.ts', 8],
+    ] as const) {
+      expect(at(path, line).kind, `${path}:${line}`).toBe('full');
+    }
+  });
+});
+
+describe('mergeSpans', () => {
+  it('merges overlapping and nested spans, keeps touching ones apart', () => {
+    expect(
+      mergeSpans([
+        [10, 20],
+        [12, 14],
+        [20, 25],
+        [26, 30],
+        [1, 3],
+      ]),
+    ).toEqual([
+      [1, 3],
+      [10, 25],
+      [26, 30],
+    ]);
   });
 });
 
@@ -68,28 +154,70 @@ describe('projectSource', () => {
 });
 
 describe('mergeCoverageMaps', () => {
-  it('replaces the scenarios this nightly covered and keeps the rest', () => {
-    const prev = { builtFrom: 'old', scenarios: { a: ['x.ts'], b: ['y.ts'] } };
-    expect(mergeCoverageMaps(prev, [{ a: ['z.ts'] }, { c: ['w.ts'] }], 'new')).toEqual({
+  const entry = (builtFrom: string, file: string) => ({
+    builtFrom,
+    files: { [file]: [[1, 2]] as [number, number][] },
+  });
+
+  it('replaces the entries of scenarios that ended PASS or FLAKY and keeps every other', () => {
+    const prev = {
+      schema: 2,
+      builtFrom: 'old',
+      scenarios: { a: entry('old', 'x.ts'), b: entry('old', 'y.ts'), f: entry('old', 'f.ts') },
+    };
+    const shard: Record<string, Record<string, [number, number][]>> = {
+      a: { 'z.ts': [[3, 4]] },
+      c: { 'w.ts': [[5, 6]] },
+      f: { 'g.ts': [[7, 8]] },
+    };
+    expect(mergeCoverageMaps(prev, [shard], 'new', { a: 'PASS', c: 'FLAKY', f: 'FAIL' })).toEqual({
+      schema: 2,
       builtFrom: 'new',
-      scenarios: { a: ['z.ts'], b: ['y.ts'], c: ['w.ts'] },
+      scenarios: {
+        a: { builtFrom: 'new', files: { 'z.ts': [[3, 4]] } },
+        b: entry('old', 'y.ts'),
+        c: { builtFrom: 'new', files: { 'w.ts': [[5, 6]] } },
+        f: entry('old', 'f.ts'),
+      },
     });
-    expect(mergeCoverageMaps(null, [], 's')).toEqual({ builtFrom: 's', scenarios: {} });
+  });
+
+  it.each(['TIMEOUT', 'QUARANTINED-FAIL', 'SKIP', undefined])(
+    'a scenario that ended %s adds nothing',
+    (status) => {
+      const r = mergeCoverageMaps(null, [{ a: { 'x.ts': [[1, 1]] } }], 's', {
+        ...(status ? { a: status } : {}),
+      });
+      expect(r.scenarios).toEqual({});
+    },
+  );
+
+  it('drops an old-schema map (file lists, no line spans)', () => {
+    const old = { builtFrom: 'old', scenarios: { a: ['x.ts'] } };
+    expect(mergeCoverageMaps(old, [], 's', {})).toEqual({
+      schema: 2,
+      builtFrom: 's',
+      scenarios: {},
+    });
   });
 });
 
-describe('executedStarts', () => {
-  it('keeps the start of every function that ran in an app bundle, not the script itself', () => {
-    const fn = (start: number, count: number) => ({
+describe('executedRanges', () => {
+  it('keeps the range of every function that ran in an app bundle, minus scripts and module inits', () => {
+    const fn = (start: number, count: number, functionName = 'f') => ({
+      functionName,
       ranges: [{ startOffset: start, endOffset: start + 5, count }],
     });
     expect(
-      executedStarts([
-        { url: 'file:///D:/a/conduit/out/webview.js', functions: [fn(0, 1), fn(10, 2), fn(20, 0)] },
+      executedRanges([
+        {
+          url: 'file:///D:/a/conduit/out/webview.js',
+          functions: [fn(0, 1), fn(10, 2), fn(20, 0), fn(25, 1, 'webview/lazy.ts')],
+        },
         { url: String.raw`D:\a\conduit\out\main.js`, functions: [fn(30, 1)] },
         { url: String.raw`D:\a\conduit\out\preload.js`, functions: [fn(40, 1)] },
         { url: 'node:events', functions: [fn(50, 1)] },
       ]),
-    ).toEqual({ 'webview.js': [10], 'main.js': [30] });
+    ).toEqual({ 'webview.js': [[10, 15]], 'main.js': [[30, 35]] });
   });
 });

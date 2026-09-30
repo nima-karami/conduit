@@ -2,17 +2,17 @@
  * Nightly coverage for e2e `--affected`: which functions of the app's bundles a scenario ran. Only
  * when the runner sets `E2E_COVERAGE_DIR` (the nightly); hooked from the harness's
  * `launchElectron`, `closeApp`, `shutdownApp` and `finishScenario`. ci-coverage-map.mjs turns the
- * result into source files. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md §B2.
+ * result into credited source lines. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md §B2.
  *
- * Writes `<E2E_COVERAGE_DIR>/<scenario>/<n>.json` = `{ "webview.js" | "main.js": [start offsets
- * of executed functions] }`.
+ * Writes `<E2E_COVERAGE_DIR>/<scenario>/<n>.json` = `{ "webview.js" | "main.js": [[start, end]
+ * generated offsets of each executed function] }`.
  *
  * Function-granularity V8 coverage (`detailed: false`) over CDP, in the renderer and — through an
  * in-process inspector session — the host. Block coverage (Playwright's `page.coverage`,
  * `NODE_V8_COVERAGE`) slowed the app enough to fail two timing-sensitive scenarios in the first
  * nightly (change-map-geometry, nav-keybindings-settings) that pass without it. Coverage starts
- * once the app is up, so the first paint is missed; a file only that path touches stays
- * unmapped, which `--affected` treats as "run everything".
+ * once the app is up, so startup-only functions are never credited, and `--affected` runs the full
+ * suite for a change to one.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -25,8 +25,11 @@ export function coverageDir(env = process.env) {
   return root && scenario ? join(root, scenario) : null;
 }
 
-/** Start offsets of the functions that ran, per bundle, from V8 script coverage entries. */
-export function executedStarts(entries) {
+// esbuild's `__esm({ "webview/x.ts"() {…} })` wrapper: a lazily loaded module's top level.
+const MODULE_INIT = /\.[cm]?[jt]sx?$/;
+
+/** Generated ranges of the functions that ran, per bundle, from V8 script coverage entries. */
+export function executedRanges(entries) {
   const out = {};
   for (const e of entries) {
     const bundle = BUNDLES.find((b) => e.url.replace(/\\/g, '/').endsWith(`/out/${b}`));
@@ -34,7 +37,8 @@ export function executedStarts(entries) {
     out[bundle] ??= [];
     for (const f of e.functions) {
       const r = f.ranges[0];
-      if (r && r.count > 0 && r.startOffset > 0) out[bundle].push(r.startOffset);
+      if (!r || r.count === 0 || r.startOffset === 0 || MODULE_INIT.test(f.functionName)) continue;
+      out[bundle].push([r.startOffset, r.endOffset]);
     }
   }
   return out;
@@ -43,11 +47,11 @@ export function executedStarts(entries) {
 const tracked = new WeakMap();
 let fileSeq = 0;
 
-function write(starts) {
+function write(ranges) {
   const dir = coverageDir();
-  if (!Object.keys(starts).length) return;
+  if (!Object.keys(ranges).length) return;
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${process.pid}-${fileSeq++}.json`), JSON.stringify(starts));
+  writeFileSync(join(dir, `${process.pid}-${fileSeq++}.json`), JSON.stringify(ranges));
 }
 
 /** Begin coverage in the host and every window of `app`; `app.close` is wrapped to collect first. */
@@ -99,7 +103,7 @@ export async function stopCoverage(app) {
     const cdp = await started;
     if (!cdp) continue;
     try {
-      write(executedStarts((await cdp.send('Profiler.takePreciseCoverage')).result));
+      write(executedRanges((await cdp.send('Profiler.takePreciseCoverage')).result));
     } catch {
       /* the window closed under us */
     }
@@ -110,7 +114,7 @@ export async function stopCoverage(app) {
       const { result: scripts } = await globalThis.__e2eCoverage('Profiler.takePreciseCoverage');
       return scripts.filter((s) => /[\\/]out[\\/]main\.js$/.test(s.url));
     });
-    write(executedStarts(result));
+    write(executedRanges(result));
   } catch {
     /* the app is already gone */
   }
