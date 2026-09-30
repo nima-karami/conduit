@@ -22,22 +22,24 @@ export async function previewLaunch(
     platform: HostPlatform;
   },
 ): Promise<LaunchPreviewResult> {
-  const { agentId, home } = input;
-  if (typeof agentId !== 'string' || typeof home !== 'string') {
+  const { agentId } = input;
+  if (typeof agentId !== 'string' || typeof input.home !== 'string') {
     return { error: 'invalid-request', skippedAddDirRoots: [] };
   }
   const def = agentId === 'shell' ? undefined : deps.registry.get(agentId);
   if (!def && agentId !== 'shell') return { error: 'unknown-launcher', skippedAddDirRoots: [] };
-  const probed = await deps.probe(home);
-  const homeMissing = 'reason' in probed || probed.status !== 'present';
-  if (homeMissing) return { error: 'home-missing', skippedAddDirRoots: [] };
+  const probed = await deps.probe(input.home);
+  if ('reason' in probed || probed.status !== 'present') {
+    return { error: 'home-missing', skippedAddDirRoots: [] };
+  }
+  const home = probed.stored;
   const initial = await deps.resolveInitialRoots(home, input.roots);
   const plan = buildLaunchSpec({
     registry: deps.registry,
     agentId,
     cwd: undefined,
     home,
-    homeMissing,
+    homeMissing: false,
     roots: presentRoots({ roots: initial.roots, missingRoots: initial.missing }),
     exists: deps.exists,
     resolveCommand: deps.resolveCommand,

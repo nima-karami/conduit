@@ -21,9 +21,8 @@ export interface ShortNameDeps {
     basename(p: string): string;
     sep: string;
   };
-  lstat: (
-    p: string,
-  ) => Promise<{ ino: bigint | number; dev: bigint | number; isSymbolicLink(): boolean }>;
+  /** Must be the bigint form: a number `ino` loses precision past 2^53, where NTFS file ids live. */
+  lstat: (p: string) => Promise<{ ino: bigint; dev: bigint; isSymbolicLink(): boolean }>;
   /** Must expand 8.3 names (`fs.promises.realpath` does; the JS `fs.realpathSync` does not). */
   realpath: (p: string) => Promise<string>;
 }
@@ -59,9 +58,11 @@ export async function expandShortNames(p: string, deps: ShortNameDeps): Promise<
 async function longSpelling(
   parent: string,
   spelled: string,
-  entry: { ino: bigint | number; dev: bigint | number },
+  entry: { ino: bigint; dev: bigint },
   deps: ShortNameDeps,
 ): Promise<string> {
+  // Filesystems without stable ids (FAT, some network shares) report 0: identity is unverifiable.
+  if (entry.ino === 0n) return spelled;
   try {
     const candidate = deps.path.join(parent, deps.path.basename(await deps.realpath(spelled)));
     const other = await deps.lstat(candidate);

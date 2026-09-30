@@ -5,6 +5,7 @@ import { expandShortNames, type ShortNameDeps } from '../../src/short-names';
 
 interface Entry {
   ino: number;
+  dev?: number;
   link?: boolean;
 }
 
@@ -23,7 +24,7 @@ function volume(
   };
   const lstat = vi.fn(async (x: string) => {
     const e = find(x);
-    return { ino: BigInt(e.ino), dev: 1n, isSymbolicLink: () => e.link === true };
+    return { ino: BigInt(e.ino), dev: BigInt(e.dev ?? 1), isSymbolicLink: () => e.link === true };
   });
   const realpath = vi.fn(async (x: string) => {
     find(x);
@@ -89,7 +90,7 @@ describe('expandShortNames', () => {
     expect(realpath).not.toHaveBeenCalled();
   });
 
-  it('keeps the component when the long name is not the same entry (a hard-linked file)', async () => {
+  it("keeps the spelling when the realpath's basename names a different entry", async () => {
     const { deps } = volume(
       W,
       {
@@ -100,6 +101,32 @@ describe('expandShortNames', () => {
       { 'C:\\w\\REPORT~1.TXT': 'C:\\elsewhere\\other name.txt' },
     );
     expect(await expandShortNames('C:\\w\\REPORT~1.TXT', deps)).toBe('C:\\w\\REPORT~1.TXT');
+  });
+
+  it('keeps the spelling when the long name has the same ino on a different volume (dev)', async () => {
+    const { deps } = volume(
+      W,
+      {
+        'C:\\w': { ino: 1 },
+        'C:\\w\\LONGNA~1': { ino: 7, dev: 1 },
+        'C:\\w\\long name': { ino: 7, dev: 2 },
+      },
+      { 'C:\\w\\LONGNA~1': 'C:\\w\\long name' },
+    );
+    expect(await expandShortNames('C:\\w\\LONGNA~1', deps)).toBe('C:\\w\\LONGNA~1');
+  });
+
+  it('keeps the spelling on a filesystem without stable ids (ino 0), where identity is unverifiable', async () => {
+    const { deps } = volume(
+      W,
+      {
+        'C:\\w': { ino: 0 },
+        'C:\\w\\LONGNA~1': { ino: 0 },
+        'C:\\w\\long name': { ino: 0 },
+      },
+      { 'C:\\w\\LONGNA~1': 'C:\\w\\long name' },
+    );
+    expect(await expandShortNames('C:\\w\\LONGNA~1', deps)).toBe('C:\\w\\LONGNA~1');
   });
 
   it('keeps a missing tail as spelled once a component does not exist', async () => {
