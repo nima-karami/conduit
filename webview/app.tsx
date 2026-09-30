@@ -3485,7 +3485,7 @@ export function App() {
     !!palette ||
     settingsOpen ||
     !!menu ||
-    !!confirm ||
+    slot.current !== null ||
     !!newSession ||
     webPromptOpen ||
     iconPickerSessionId !== null ||

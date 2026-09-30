@@ -32,6 +32,16 @@
       "preset": "recommended",
       "a11y": "off",
       "style": {
+        "noRestrictedGlobals": {
+          "level": "error",
+          "options": {
+            "deniedGlobals": {
+              "confirm": "window.confirm is a native dialog; a bare `confirm` is almost always a missing local.",
+              "alert": "window.alert is a native dialog; use the in-app dialogs.",
+              "prompt": "window.prompt is a native dialog; a bare `prompt` is almost always a missing local."
+            }
+          }
+        },
         "useFilenamingConvention": {
           "level": "error",
           "options": { "filenameCases": ["kebab-case"], "requireAscii": true }
