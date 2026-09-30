@@ -104,6 +104,22 @@ Plus: everything else that slows development. **Interim rule (user, 2026-09-29):
       (`file-integrity` 175 vs 171 s, `new-session-folders` 172 vs 170 s), +12 % on
       `split-editor` (three launches, each with a ~4 s screenshot). `stop` 9–64 ms; trace 8–317 KB.
 
+### MVP full run (measured 2026-09-30, run 36667732842, `--full` at feat/remote-e2e 80be47d)
+
+- **Wall 15 m 12 s** from dispatch to verdict: queue 3 s, prepare 5 s, 9 auto shards (`scale`
+  0.93, `targetSec` 600) finishing 11 m 39 s – 14 m 48 s after start (retries included), report
+  11 s, cleanup 3 s. The `verify` job ran alongside in 2 m 27 s. AC 1 (≤ 25 min) holds.
+- 150 PASS, 1 FLAKY (`review-multi-repo`), 6 EXCLUDED; 2 FAIL in the no-OS-focus class
+  (`review-mode-pane` — CDP focus emulation did not help — and `terminal-exit-focus`, added
+  after Slice 0), since excluded. `nav-keybindings-settings` passes with its corrected order.
+- A bounded attempt (~30 min) to make the excluded scenarios runner-independent: display-relative
+  bounds for `multi-window-restore` (then 1 window restored instead of 2) and CDP focus
+  emulation for the focus class; neither held, so the changes were dropped and the reasons are in
+  `remote-exclusions.json`.
+- Locally, Electron inherits BelowNormal from the scenario process, but Chromium raises the GPU
+  process to AboveNormal and the renderer to Normal after launch; the harness lowers every PID the
+  app reports (`getAppMetrics`) at the first window and again over 3 s (measured all BelowNormal).
+
 ### Part A — Remote e2e
 
 1. `npm run e2e:remote -- <selection>` from a committed HEAD. Selection: `--full`, `--affected`
