@@ -44,7 +44,65 @@ Plus: everything else that slows development. **Interim rule (user, 2026-09-29):
 | e2e never runs in CI; `release.yml` (windows-latest, tag) builds without e2e; `verify.yml` on ubuntu 2 m 24 s | workflow files; run 36657531340 | Measured |
 | Local heavy runs serialised by `.autoloop/heavy-lock.mjs` (untracked, mtime-reclaim at 45 min, wait time not logged) | source read; `git ls-files .autoloop` empty | Measured |
 | Repo is public → hosted runners free | `gh repo view` | Measured |
-| `windows-latest` runs the suite hidden (ConPTY, swiftshader WebGL, clipboard); per-scenario slowdown vs this machine 1.3–2×; ~20 concurrent jobs | not yet run | **ASSUMED** — Slice 0 measures |
+| `windows-latest` runs the suite hidden: 151/158 PASS once the runner env is fixed (below). Per-scenario remote/local **p50 0.93×, p90 1.03×** (not the assumed 1.3–2×). All 16 shards + probe ran **concurrently** (17 jobs, start ≤ 4 s after dispatch) | Slice 0 runs 36660958887, 36661277673, 36662234121, 36663111099, 36664116614 | Measured |
+
+### Slice 0 results (measured 2026-09-30, `--full` at origin/main 05d9bf3 + spike, 16 shards)
+
+- **Wall:** verdict **579–598 s (≈ 10 min)** after dispatch.
+  - Queue: shard start 1–4 s after the run was created (one 35 s outlier).
+  - prepare 6–12 s; report 4–10 s.
+  - Shard setup median ~70 s (checkout full-depth 6–9, setup-node 12–22, `npm ci` 22–45,
+    Electron install 2–3 on a cache hit, build 3–5, Playwright install 2–4); max 151–190 s on the
+    shard that installs Go + gopls.
+  - Run (the scenarios step): median ~377 s, max 417–481 s per shard.
+- **`npm ci` cold vs warm:** 23–41 s on the first run (no npm cache) vs 22–45 s afterwards: the
+  setup-node cache barely matters. **Electron:** v43 has no postinstall and downloads on first
+  launch; on a miss the download landed inside the first scenario of every shard (run
+  36661277673). With an explicit `install.js` step and `actions/cache` on
+  `%LOCALAPPDATA%\electron\Cache`, a hit costs 2–3 s.
+- **Slowdown** (remote PASS s / local PASS median, 149–151 scenarios per run): p10 0.64–0.66,
+  **p50 0.91–0.93, p90 1.03–1.06**, aggregate 0.94–0.98. Outliers > 2.5×: only the scenarios
+  that opt out of hidden mode (`terminal-focus` 7–11×, `shortcut-precedence` up to 11×).
+  `timings.seed.json` `scale` is set to **0.93**.
+- **Workflow behaviour:** `workflow_dispatch` on a `ci/e2e/*` ref ran that ref's workflow file
+  (the `main` stub has one echo job) with the dispatched inputs; `run-name` nonce correlation
+  worked for every run.
+- **Tuning:** at `scale` 0.93 the auto count at `targetSec` 600 is 10 shards, ≈ 11–12 min wall.
+  16 shards gave ≈ 10 min. Both are well inside 25 min; keep `targetSec` 600, cap 16.
+- **Remote-only failures fixed in the workflow** (each broke many scenarios):
+
+  | Cause | Symptom | Fix |
+  |---|---|---|
+  | Hosted npm cache is `C:\npm\cache`, not under `LOCALAPPDATA` | `loadPlaywright` found nothing: 158/158 ERROR | `npm install --no-save playwright@1.63.0` into node_modules |
+  | Electron downloads lazily on first launch | first scenario per shard timed out | `node node_modules/electron/install.js` step + cache |
+  | Hosted `TEMP` is the 8.3 path `C:\Users\RUNNER~1\...`; realpath expands it | ~20 scenarios: "Refusing to … outside the workspace (symlink)", git state keyed by a different path | `TEMP`/`TMP` = `runner.temp` for the scenario step |
+  | Depth-1 checkout | `git-history` saw one commit | `fetch-depth: 0` |
+  | No Go toolchain | `go-lsp` FAIL; `mf-files` exits 0 but SKIPs its trust phase | `setup-go` + `gopls` on shards holding either |
+  | No git identity | (pre-empted) | `git config --global user.name/email` |
+
+- **Still failing remotely after the fixes** (runs 36662234121, 36663111099, 36664116614):
+
+  | Scenario | Result | Cause |
+  |---|---|---|
+  | `nav-keybindings-settings` | FAIL 3/3 | Not remote-only: asserts "Code navigation" directly follows "Editor", but split-editor (0.45.0) added an "Editor groups" group between them |
+  | `multi-window-restore` | FAIL 3/3 | Runner display is smaller: saved bounds x=1100 are restored as 0,0 |
+  | `split-editor-focus-keep` | FAIL 3/3 | Window has no OS focus: xterm's focus-out report `ESC[O` reaches the shell, typed text is lost |
+  | `scrollback-mode-neutralize` | FAIL 3/3 | Same focus class: "Replayed focus reporting leaked onto the fresh shell" |
+  | `review-mode-pane` | FAIL 3/3 | Hovering a navigator row leaves its actions at opacity 0; cause not isolated |
+  | `attention` | FAIL/ERROR 3/3 | Needs a real focusable window (it opts out of hidden mode) |
+  | `shortcut-precedence`, `terminal-focus` | flaky (2/3, 1/3 FAIL), 7–11× slow | Also opt out of hidden mode; foreground/focus on the runner |
+
+- **Probe** (`ci-probe` + the three longest launchApp scenarios):
+  - `page.screenshot` of a hidden window **works** (`isVisible()` false; 82–216 KB PNG), but
+    costs **1.3–7.6 s per window** on the runner (0.19 s locally).
+  - Tracing on `electronApp.context()` **works**, with limits:
+    - `{screenshots, snapshots}` started before `firstWindow`: launches time out waiting for
+      `domcontentloaded` (3/3).
+    - The same started once the window is ready: `split-editor` and `file-integrity` hit the
+      210 s TIMEOUT; traces 2–4 MB.
+    - **Snapshots only** (`screenshots: false`), started once ready: all PASS. Overhead +1–2 %
+      (`file-integrity` 175 vs 171 s, `new-session-folders` 172 vs 170 s), +12 % on
+      `split-editor` (three launches, each with a ~4 s screenshot). `stop` 9–64 ms; trace 8–317 KB.
 
 ### Part A — Remote e2e
 
@@ -202,7 +260,9 @@ an overlap only queues jobs, it never cancels a run.
   and exits TIMEOUT before the runner's 210 s kill. Files go to
   `$E2E_ARTIFACT_DIR/<scenario>/attempt-<n>/`, with the runner's log beside them; a passing attempt's
   dir is removed. Uploaded only for failures, kept 7 days. Screenshot of a hidden (`show:false`)
-  window: **ASSUMED** to work via `page.screenshot` (Slice 0 checks).
+  window works via `page.screenshot` (**Measured**, Slice 0) at 1.3–7.6 s per window, so it is
+  taken only on failure, time-capped. Tracing is **snapshots-only, started once the first window is
+  ready** (Slice 0 results, §2).
 
 | Data / state | Produced by | Consumed by | Both in scope? |
 |---|---|---|---|
@@ -227,7 +287,7 @@ an overlap only queues jobs, it never cancels a run.
 | Run cancelled | `cancelled`, exit 2, even though report wrote INFRA rows; `cleanup` still deletes the ref |
 | Scenario hangs | Harness watchdog at 200 s captures screenshot + trace and exits TIMEOUT; the runner's 210 s kill is the backstop (log only); orphan sweep, one retry |
 | Scenario exits with its app still open (a direct-exit scenario's assertion path) | `finishScenario` captures that app before exiting; bare `process.exit` in a scenario fails a unit guard |
-| Fails only remotely (clipboard, GPU, DPI) | FAIL with artifacts; Slice 0 records known env differences in this spec |
+| Fails only remotely | FAIL with artifacts. Known env differences (Slice 0, §2): runner display smaller than saved window bounds; the window has no OS focus (xterm focus reports, focus-dependent and non-hidden scenarios); hover reveal in `review-mode-pane`. Fixed in the workflow: 8.3 `TEMP`, lazy Electron download, depth-1 clone, no Go, npx cache location |
 | Hosted queue > 10 min | Keep waiting and print state every minute (queue time doesn't count toward `--timeout`); `--no-wait` returns the URL, exit 3 |
 | Client killed (Ctrl-C) mid-wait | Run continues; its `cleanup` job deletes the ref |
 | `gh` unauthenticated / offline | Exit 2 with the fix; no local full-suite fallback |
@@ -324,10 +384,11 @@ Feature: Remote e2e
 
 (Interactive spec: open decisions are in §14; there is no §13.)
 
-- `windows-latest` runs the suite hidden, with the 1.3–2× slowdown and ~20-job concurrency
-  (Slice 0 measures all three).
-- `page.screenshot` works on a `show:false` Electron window, and Playwright tracing works on
-  `electronApp.context()` (Slice 0).
+- **Measured (Slice 0):** `windows-latest` runs the suite hidden at p50 0.93× / p90 1.03× local
+  speed, with 17 jobs running concurrently; 151/158 PASS after the env fixes in §2.
+- **Measured (Slice 0):** `page.screenshot` works on a `show:false` Electron window (1.3–7.6 s
+  each), and Playwright tracing works on `electronApp.context()` when snapshots-only and started
+  after the window is ready.
 - The GitHub dispatch API's run-id response is not relied on; correlation is by `run-name` nonce.
 - BelowNormal priority set on the Electron root process is inherited by its children on Windows.
   MVP measures this; if it isn't, the harness sets it per PID in the tree.

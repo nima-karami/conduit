@@ -11,7 +11,15 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -98,6 +106,7 @@ function killAppTree(app) {
  */
 export async function shutdownApp(app, page) {
   if (!app) return;
+  await probeCapture(app);
   const graceful = (async () => {
     try {
       if (page) await closeApp(app, page);
@@ -114,6 +123,67 @@ export async function shutdownApp(app, page) {
   if ((await Promise.race([graceful.then(() => 'closed'), timer])) === 'timeout') {
     killAppTree(app);
   }
+}
+
+// SPIKE ONLY (remote-e2e plan, Slice 0): measures whether tracing and hidden-window screenshots
+// work on a hosted runner, and what they cost. Inert unless E2E_PROBE_DIR is set; MVP replaces
+// it with failure-artifacts.mjs.
+const probeStarted = new WeakMap();
+const probeScenario = () => (process.argv[1] || '').replace(/.*[/\\]/, '').replace('.e2e.mjs', '');
+
+async function probeStart(app) {
+  if (!process.env.E2E_PROBE_DIR) return;
+  const t = Date.now();
+  let error;
+  try {
+    await app
+      .context()
+      .tracing.start(
+        JSON.parse(process.env.E2E_PROBE_TRACE_OPTS || '{"screenshots":true,"snapshots":true}'),
+      );
+  } catch (e) {
+    error = String(e?.message || e);
+  }
+  probeStarted.set(app, {
+    startMs: Date.now() - t,
+    startError: error,
+    opts: process.env.E2E_PROBE_TRACE_OPTS,
+  });
+}
+
+async function probeCapture(app) {
+  const dir = process.env.E2E_PROBE_DIR;
+  const started = dir && probeStarted.get(app);
+  if (!started || started.done) return;
+  started.done = true;
+  const scenario = probeScenario();
+  const stamp = `${scenario}-${process.pid}-${Date.now()}`;
+  const row = { scenario, ...started };
+  try {
+    row.visible = await app.evaluate((e) =>
+      e.BrowserWindow.getAllWindows().map((w) => w.isVisible()),
+    );
+    const shots = [];
+    for (const [i, w] of app.windows().entries()) {
+      const t = Date.now();
+      const path = join(dir, `${stamp}-win${i}.png`);
+      await w.screenshot({ path, timeout: 15000 });
+      shots.push({ ms: Date.now() - t, bytes: statSync(path).size });
+    }
+    row.shots = shots;
+  } catch (e) {
+    row.shotError = String(e?.message || e);
+  }
+  try {
+    const t = Date.now();
+    const path = join(dir, `${stamp}-trace.zip`);
+    await app.context().tracing.stop({ path });
+    row.stopMs = Date.now() - t;
+    row.traceBytes = statSync(path).size;
+  } catch (e) {
+    row.traceError = String(e?.message || e);
+  }
+  appendFileSync(join(dir, 'probe.jsonl'), `${JSON.stringify(row)}\n`);
 }
 
 /**
@@ -138,6 +208,9 @@ export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
+  // Started once the window is ready: started right after launch, tracing made the first
+  // window's load time out on hosted runners (run 36662234121).
+  await probeStart(app);
 
   // Temp dir is in os.tmpdir() — cleaned by OS; no manual cleanup needed.
   const cleanup = () => shutdownApp(app, page);
@@ -336,6 +409,7 @@ export async function openHistory(page, { repo } = {}) {
  * @param {object} page Its first window's page (already bridge-tapped).
  */
 export async function closeApp(app, page) {
+  await probeCapture(app);
   await page.evaluate(() => {
     window.__quitAsked = false;
     window.agentDeck.subscribe((m) => {

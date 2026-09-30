@@ -1,8 +1,7 @@
 name: e2e
 run-name: e2e ${{ inputs.selection }} ${{ inputs.nonce }}
 
-# Stub: workflow_dispatch needs the file on the default branch; the real workflow runs from the
-# dispatched ref. See docs/plans/2026-09-29-remote-e2e-lean-loop.plan.md, Slice 0.
+# Remote e2e on hosted Windows runners. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md.
 on:
   workflow_dispatch:
     inputs:
@@ -31,8 +30,182 @@ on:
 permissions:
   contents: read
 
+env:
+  PLAYWRIGHT_VERSION: 1.63.0
+
 jobs:
-  stub:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - id: plan
+        env:
+          SELECTION: ${{ inputs.selection }}
+          SCENARIOS: ${{ inputs.scenarios }}
+          SHARDS: ${{ inputs.shards }}
+        run: |
+          node --input-type=module -e '
+            import { readdirSync, readFileSync, appendFileSync } from "node:fs";
+            import { planShards } from "./test/e2e/ci-shard-plan.mjs";
+            const seed = JSON.parse(readFileSync("test/e2e/timings.seed.json", "utf8"));
+            const stems = readdirSync("test/e2e").filter((f) => f.endsWith(".e2e.mjs"))
+              .map((f) => f.replace(".e2e.mjs", "")).filter((n) => n !== "ci-probe");
+            const sel = process.env.SELECTION;
+            // affected is not built yet (v1); it falls back to the full suite, per spec §B2.
+            const names = sel === "names" ? process.env.SCENARIOS.split(/\s+/).filter(Boolean) : stems;
+            const { shards } = planShards(names, seed.medians, {
+              shards: Number(process.env.SHARDS) || 0, scale: seed.scale, cap: 16,
+            });
+            for (const s of shards) console.log(`shard ${s.index + 1}: ~${Math.round(s.estSec)}s, ${s.names.length} scenarios`);
+            const include = shards.map((s) => ({ shard: s.index + 1, names: s.names.join(" ") }));
+            appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`);
+          '
+
+  shard:
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    name: shard ${{ matrix.shard }}
+    steps:
+      # git-history reads this repo's own log; a depth-1 clone has one commit.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\electron\Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+        env:
+          HUSKY: '0'
+      # Electron 43 has no postinstall: it downloads on first launch, which would land inside the
+      # first scenario's timeout.
+      - run: node node_modules/electron/install.js
+      - run: npm run build
+      # loadPlaywright (harness.mjs) looks in node_modules first. Playwright is deliberately not a
+      # dependency, and the hosted npm cache is not where it looks for npx installs.
+      - run: npm install --no-save --ignore-scripts playwright@${{ env.PLAYWRIGHT_VERSION }}
+      # go-lsp needs gopls; mf-files silently SKIPs its trust phase without a Go toolchain.
+      - if: contains(format(' {0} ', matrix.names), ' go-lsp ') || contains(format(' {0} ', matrix.names), ' mf-files ')
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - if: contains(format(' {0} ', matrix.names), ' go-lsp ') || contains(format(' {0} ', matrix.names), ' mf-files ')
+        shell: pwsh
+        run: |
+          go install golang.org/x/tools/gopls@latest
+          Join-Path (go env GOPATH) bin >> $env:GITHUB_PATH
+      # Scenarios build scratch repos and commit; a hosted runner has no git identity.
+      - run: |
+          git config --global user.name "conduit-e2e"
+          git config --global user.email "conduit-e2e@users.noreply.github.com"
+      - name: Run scenarios
+        shell: pwsh
+        env:
+          NAMES: ${{ matrix.names }}
+          # The hosted TEMP is an 8.3 short path (RUNNER~1), which realpath expands; the
+          # workspace confinement checks then read every scratch repo as outside the workspace.
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: |
+          New-Item -ItemType Directory -Force results | Out-Null
+          node test/e2e/run-smoke.mjs --exact @($env:NAMES -split ' ') --json "results/shard-${{ matrix.shard }}.json"
+          # 0/1 = the shard completed (1 = a scenario failed; the report says which). Anything else is infra.
+          if ($LASTEXITCODE -gt 1) { exit $LASTEXITCODE }
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-results-${{ matrix.shard }}
+          path: results/
+          if-no-files-found: warn
+
+  # SPIKE ONLY (Slice 0): hidden-window screenshot + tracing on hosted Windows.
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\electron\Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+        env:
+          HUSKY: '0'
+      - run: node node_modules/electron/install.js
+      - run: npm run build
+      - run: npm install --no-save --ignore-scripts playwright@${{ env.PLAYWRIGHT_VERSION }}
+      - run: |
+          git config --global user.name "conduit-e2e"
+          git config --global user.email "conduit-e2e@users.noreply.github.com"
+      - name: Probe
+        shell: pwsh
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          # Run 36663111099 traced with screenshots+snapshots: the long scenarios hit TIMEOUT.
+          E2E_PROBE_TRACE_OPTS: '{"screenshots":false,"snapshots":true}'
+        run: |
+          $env:E2E_PROBE_DIR = Join-Path $env:RUNNER_TEMP 'probe'
+          New-Item -ItemType Directory -Force $env:E2E_PROBE_DIR | Out-Null
+          node test/e2e/run-smoke.mjs --exact ci-probe split-editor file-integrity new-session-folders --json (Join-Path $env:E2E_PROBE_DIR 'results.json')
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-probe
+          path: ${{ runner.temp }}/probe/
+
+  report:
+    needs: [prepare, shard]
+    if: always()
     runs-on: ubuntu-latest
     steps:
-      - run: echo "e2e stub; dispatch from a ref that carries the real workflow"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: e2e-results-*
+          path: results
+          merge-multiple: true
+      - name: Summarise
+        run: |
+          node --input-type=module -e '
+            import { readdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+            const rows = [];
+            for (const f of readdirSync("results").sort()) {
+              const shard = Number(f.match(/shard-(\d+)/)?.[1]);
+              for (const r of JSON.parse(readFileSync(`results/${f}`, "utf8"))) rows.push({ ...r, shard });
+            }
+            rows.sort((a, b) => a.name.localeCompare(b.name));
+            writeFileSync("results/merged.json", JSON.stringify(rows, null, 2));
+            const count = (s) => rows.filter((r) => r.status === s).length;
+            const bad = rows.filter((r) => !["PASS", "SKIP"].includes(r.status));
+            let md = `## e2e: ${count("PASS")} passed, ${count("SKIP")} skipped, ${bad.length} not passed, ${rows.length} total\n\n`;
+            md += "| scenario | status | s | shard |\n|---|---|---|---|\n";
+            for (const r of [...bad, ...rows.filter((r) => !bad.includes(r))]) md += `| ${r.name} | ${r.status} | ${r.seconds} | ${r.shard} |\n`;
+            appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
+            console.log(md);
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results-merged
+          path: results/merged.json
