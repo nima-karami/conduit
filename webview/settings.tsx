@@ -88,9 +88,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
-  // Persist a change-then-quick-quit: an in-flight debounce timer would otherwise be
-  // dropped on teardown. pagehide covers BFCache/Electron teardown; beforeunload is
-  // the belt-and-suspenders for reloads.
+  // A debounced edit dropped on a reload or a non-quit teardown. A quit does NOT rely on this:
+  // pagehide races the host's synchronous settings write — webview/quit-responder.ts flushes.
   useEffect(() => {
     const onUnload = () => {
       flush();

@@ -22,6 +22,8 @@ runScenario('settings-quit-flush', async ({ app, page, log }) => {
     }
   };
 
+  // 250 is webview/settings.tsx's debounce; if it changes, update it here or the edit saves early
+  // and the pre-quit assert fails.
   await page.evaluate(() => {
     const orig = window.setTimeout;
     window.setTimeout = (fn, ms, ...a) => orig(fn, ms === 250 ? 600_000 : ms, ...a);

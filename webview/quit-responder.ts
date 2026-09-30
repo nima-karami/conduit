@@ -110,6 +110,8 @@ export function createQuitResponder(deps: QuitResponderDeps): {
         deps.setLocked(true);
         lockedFor = requestId;
       }
+      // An edit made while the dialog or the settle bound was up is still debounced.
+      deps.flushSettings();
       deps.post({ type: 'quitDecision', requestId, proceed: true });
     } finally {
       // A superseded flow leaves suppression to the flow that replaced it, whose own finally clears it.

@@ -68,12 +68,15 @@ function setup(
     wait: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
     log: vi.fn(),
     flushSettings: vi.fn(() => {
+      if (!settings.pending) return;
+      settings.pending = false;
       posts.push({ type: 'updateSettings', settings: DEFAULT_SETTINGS });
     }),
   } satisfies QuitResponderDeps;
+  const settings = { pending: true };
   const responder = createQuitResponder(deps);
   const decisions = () => posts.filter((p) => p.type === 'quitDecision');
-  return { responder, deps, posts, dirtyAsks, sessionAsks, decisions };
+  return { responder, deps, posts, dirtyAsks, sessionAsks, decisions, settings };
 }
 
 beforeEach(() => {
@@ -96,6 +99,22 @@ describe('quit responder', () => {
     expect(t.deps.flushSettings).toHaveBeenCalledTimes(1);
     await flow;
     expect(t.posts.map((p) => p.type)).toEqual(['quitAck', 'updateSettings', 'quitDecision']);
+  });
+
+  it('flushes an edit made while the dialog was up before posting proceed', async () => {
+    const answer = deferred<DirtyAnswer>();
+    const t = setup({ dirty: ['/a.ts'], dirtyAnswer: () => answer.promise });
+    const flow = t.responder.onConfirmQuit(confirm({ requestId: 4 }));
+    await vi.advanceTimersByTimeAsync(0);
+    t.settings.pending = true;
+    answer.resolve('saved');
+    await flow;
+    expect(t.posts.map((p) => p.type)).toEqual([
+      'quitAck',
+      'updateSettings',
+      'updateSettings',
+      'quitDecision',
+    ]);
   });
 
   it('re-probe while asking focuses, posts nothing', async () => {
