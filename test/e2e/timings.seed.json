@@ -1,6 +1,6 @@
 {
   "source": "local PASS medians, .autoloop/evidence + docs/runs, 2026-09-29",
-  "scale": 1.5,
+  "scale": 0.93,
   "medians": {
     "arch-multiselect-delete": 19.5,
     "arch-node-graph": 102.3,
