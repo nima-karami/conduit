@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { tabStateKey } from '../../webview/editor-group-context';
 import {
+  asKeyboardLanding,
   cancelDocFocus,
   dropDocFocusUnless,
   type FocusTarget,
@@ -190,5 +191,49 @@ describe('focus-targets — a pending request expires', () => {
     const t = target();
     reg(doc2, t);
     expect(t.focused).toBe(1);
+  });
+});
+
+describe('focus-targets — keyboard landings paint the focus ring', () => {
+  const recorder = () => {
+    const seen: (FocusOptions | undefined)[] = [];
+    return { seen, focus: (options?: FocusOptions) => seen.push(options) };
+  };
+
+  it('a keyboard command focuses a mounted target with focusVisible', () => {
+    const t = recorder();
+    reg(doc1, t);
+    asKeyboardLanding(() => requestDocFocus(doc1));
+    expect(t.seen).toEqual([{ focusVisible: true }]);
+  });
+
+  it('a late mount keeps the keyboard request’s focusVisible', () => {
+    asKeyboardLanding(() => requestDocFocus(doc2));
+    const t = recorder();
+    reg(doc2, t);
+    expect(t.seen).toEqual([{ focusVisible: true }]);
+  });
+
+  it('a request outside a keyboard command passes no options, now or at a late mount', () => {
+    const now = recorder();
+    reg(doc1, now);
+    requestDocFocus(doc1);
+    requestDocFocus(doc2);
+    const late = recorder();
+    reg(doc2, late);
+    expect(now.seen).toEqual([undefined]);
+    expect(late.seen).toEqual([undefined]);
+  });
+
+  it('the keyboard scope ends with the command, even when it throws', () => {
+    expect(() =>
+      asKeyboardLanding(() => {
+        throw new Error('boom');
+      }),
+    ).toThrow('boom');
+    const t = recorder();
+    reg(doc1, t);
+    requestDocFocus(doc1);
+    expect(t.seen).toEqual([undefined]);
   });
 });

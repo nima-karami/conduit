@@ -3,7 +3,9 @@
  * views split-editor-focus does not open, and the close paths outside the strip's ×:
  *   VF  Ctrl+Tab onto Review, History and a commit-diff lands in that view: Review's scroller
  *       (its keymap is scoped to it), History's selected row (where its keymap lives), the
- *       commit-diff's modified editor; the keyboard landing paints the app's ring, not the UA's
+ *       commit-diff's modified editor; the chord landing matches :focus-visible on its own (the tab
+ *       click before it set pointer modality, and Chromium does not count a Ctrl-chord as keyboard)
+ *       and paints the app's ring, not the UA's; a pointer landing on History paints none
  *   FG  Focus Left Editor Group onto a Review that is already mounted lands in its scroller
  *   SB  group 1's split button, activated with no focus or pointer-down before it (as assistive
  *       tech can), splits group 1's shown doc while group 2 is active
@@ -40,9 +42,6 @@ const VIEWS = {
 
 runScenario('split-editor-focus-views', async ({ page, log }) => {
   const misses = [];
-  const cdp = await page.context().newCDPSession(page);
-  await cdp.send('DOM.enable');
-  await cdp.send('CSS.enable');
   const describeFocus = () =>
     page.evaluate(() => {
       const a = document.activeElement;
@@ -66,6 +65,16 @@ runScenario('split-editor-focus-views', async ({ page, log }) => {
     log(`${label}: expected ${sel} · focus is on ${at}`);
     if (!ok) misses.push(`${label}: focus is on ${at}, not ${sel}`);
   };
+  const ringOnFocus = () =>
+    page.evaluate(() => {
+      const a = document.activeElement;
+      const cs = getComputedStyle(a);
+      return {
+        visible: a.matches(':focus-visible'),
+        shadow: cs.boxShadow,
+        outline: cs.outlineStyle,
+      };
+    });
   const tabIndexShowing = (sel) =>
     page.evaluate(
       ({ scope, s }) => {
@@ -117,33 +126,27 @@ runScenario('split-editor-focus-views', async ({ page, log }) => {
       .catch(() => assert(false, `VF ${kind}: Ctrl+Tab did not show it`));
     await expectFocusIn(`VF Ctrl+Tab onto ${kind}`, 1, view.focused, kind !== 'commit-diff');
     if (kind !== 'commit-diff') {
-      // The hidden e2e window never has OS focus, so :focus-visible cannot match on its own;
-      // forcing it on the landed element shows which ring the stylesheet paints there.
-      const { result } = await cdp.send('Runtime.evaluate', {
-        expression: 'document.activeElement',
-      });
-      await cdp.send('DOM.getDocument', { depth: 0 });
-      const { nodeId } = await cdp.send('DOM.requestNode', { objectId: result.objectId });
-      await cdp.send('CSS.forcePseudoState', {
-        nodeId,
-        forcedPseudoClasses: ['focus', 'focus-visible'],
-      });
-      const ring = await page.evaluate(() => {
-        const a = document.activeElement;
-        const cs = a ? getComputedStyle(a) : null;
-        return cs && { shadow: cs.boxShadow, outline: cs.outlineStyle };
-      });
+      const ring = await ringOnFocus();
       log(`VF ${kind} ring: ${JSON.stringify(ring)}`);
-      if (!ring || ring.shadow === 'none' || ring.outline === 'auto')
+      if (!ring.visible) misses.push(`VF ${kind}: the chord landing is not :focus-visible`);
+      if (ring.shadow === 'none' || ring.outline === 'auto')
         misses.push(
-          `VF ${kind}: the keyboard landing has no app focus ring (${JSON.stringify(ring)})`,
+          `VF ${kind}: the chord landing has no app focus ring (${JSON.stringify(ring)})`,
         );
       const shot = join(SHOTS, `split-focus-views-${kind}.png`);
       await page.screenshot({ path: shot });
       log(`screenshot → ${shot}`);
-      await cdp.send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: [] });
     }
   }
+
+  // VF: a pointer landing is not a keyboard one.
+  await docTabs.nth(at.history - 1).click();
+  await sleep(300);
+  await docTabs.nth(at.history).click();
+  await expectFocusIn('VF click onto history', 1, VIEWS.history.focused, true);
+  const clicked = await ringOnFocus();
+  log(`VF history ring after a click: ${JSON.stringify(clicked)}`);
+  if (clicked.visible) misses.push('VF history: a pointer landing is :focus-visible');
 
   // SB: group 2 active, group 1 on a.ts; group 1's button is activated with no focus move.
   await tabOf(page, 1, 'b.ts').click();

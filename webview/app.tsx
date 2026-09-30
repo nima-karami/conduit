@@ -165,6 +165,7 @@ import { shouldReplaceContent } from './file-freshness';
 import { fileSaves, moveFileBuffer, setDocCloser } from './file-saves';
 import { buildRowChangeMap } from './file-tree';
 import {
+  asKeyboardLanding,
   dropDocFocusUnless,
   requestDocFocus,
   terminalFocusKey,
@@ -1350,7 +1351,7 @@ export function App() {
         if (!run) continue;
         e.preventDefault();
         e.stopPropagation();
-        run();
+        asKeyboardLanding(run);
         return;
       }
     };
