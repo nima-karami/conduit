@@ -367,12 +367,12 @@ describe('withMapBuildHunks and the CLI, against a real git repo', () => {
   const CLI = join(__dirname, '..', 'e2e', 'ci-affected.mjs');
   let repo = '';
   let build = '';
+  const identity = ['-c', 'user.name=t', '-c', 'user.email=t@example.com'];
   const git = (...args: string[]) =>
-    execFileSync(
-      'git',
-      ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args],
-      { cwd: repo, encoding: 'utf8' },
-    ).trim();
+    execFileSync('git', [...identity, '-c', 'commit.gpgsign=false', ...args], {
+      cwd: repo,
+      encoding: 'utf8',
+    }).trim();
   const put = (path: string, text: string) => {
     mkdirSync(dirname(join(repo, path)), { recursive: true });
     writeFileSync(join(repo, path), text);
