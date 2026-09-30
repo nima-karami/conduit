@@ -170,3 +170,13 @@ found by the interactive-plan accessibility pass. It stays one treatment carried
 token rather than a bespoke `outline` per control, which is the pattern this spec removed.
 An SVG element takes no `box-shadow` at all; a focusable one (an xyflow edge) restates the
 same ring in its own `stroke`, off `--focus-ring-color`.
+
+## Addendum 2026-09-29 — resting shadows
+
+A control that carries its own shadow at rest (a primary's glow, a selected row's spine, an
+active tab's lift) sets `--rest-shadow`, never `box-shadow`. A class `box-shadow` ties or
+out-ranks the `:focus-visible` ring and erased it: every focused `.btn--primary` showed no
+ring, found when the dirty-quit dialog gave Save All initial focus. A zero-specificity
+`:where(...)` rule paints `--rest-shadow` at rest and the ring rule composes it under the
+ring. The property is registered non-inherited. `state-vocabulary.test.ts` fails on a
+`box-shadow` whose subject is a control the ring covers.

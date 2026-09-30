@@ -40,6 +40,23 @@ await runPhases('dirty-quit', {
     const text = await dialog.textContent();
     assert(/will also stop \d+ running agent/.test(text), `running line present: ${text}`);
     assert((await sessionStatus(d.page, d.sid)) === 'running', 'session still running (A1)');
+    // §10: the initially focused primary shows the ring on top of its own resting shadow.
+    for (const theme of ['aero', 'aero-dark', 'neon']) {
+      const focus = await d.page.evaluate((t) => {
+        document.documentElement.dataset.theme = t;
+        const el = document.activeElement;
+        return {
+          label: el?.textContent,
+          visible: el?.matches(':focus-visible'),
+          layers: getComputedStyle(el).boxShadow.split(/,(?![^(]*\))/),
+        };
+      }, theme);
+      assert(focus.label === 'Save All' && focus.visible, `${theme}: Save All has focus-visible`);
+      assert(
+        focus.layers.some((l) => /\b0px 0px 0px [1-9]/.test(l)) && focus.layers.length >= 3,
+        `${theme}: focused Save All paints ring + resting shadow: ${focus.layers.join(' | ')}`,
+      );
+    }
     await clickDialog(d.page, 'Save All');
     assert(await waitExit(d.app, 10000), 'app exits after Save All');
     const disk = readFileSync(join(d.root, 'a.ts'), 'utf8');

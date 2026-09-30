@@ -75,6 +75,63 @@ function decls(rule: Rule): [string, string][] {
     });
 }
 
+/** Split at `sep` outside (), [] and quotes — `:where(a, b)` is one selector, not two. */
+function splitTop(text: string, sep: RegExp | string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '(' || c === '[') depth++;
+    else if (c === ')' || c === ']') depth--;
+    else if (depth === 0 && (typeof sep === 'string' ? c === sep : sep.test(c))) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
+/** The end of a JSX opening tag: the first `>` outside `{…}`, so `=>` in a handler isn't it. */
+function tagEnd(src: string, from: number): number {
+  let depth = 0;
+  for (let i = from; i < src.length; i++) {
+    const c = src[i];
+    if (c === '{') depth++;
+    else if (c === '}') depth--;
+    else if (c === '>' && depth === 0) return i;
+  }
+  return src.length;
+}
+
+const FOCUSABLE_TAG = /^(button|a|input|select|textarea|summary)$/;
+/** The ring rule's own list — outside it the ring never paints, so there is nothing to erase. */
+const FOCUSABLE_ATTR = /\brole="(button|tab|option|menuitem)"|\btabIndex=(?!\{-1\})/;
+
+/** Every class name the markup writes onto something the ring rule covers. */
+const FOCUSABLE_CLASSES = (() => {
+  const out = new Set<string>();
+  for (const m of MARKUP.matchAll(/<([a-z][\w.]*)\b/gi)) {
+    const start = (m.index ?? 0) + m[0].length;
+    const tag = MARKUP.slice(start, tagEnd(MARKUP, start));
+    if (!FOCUSABLE_TAG.test(m[1]) && !FOCUSABLE_ATTR.test(tag)) continue;
+    const cls = /\bclassName=(?:"([^"]*)"|\{([\s\S]*)\})/.exec(tag);
+    for (const t of (cls?.[1] ?? cls?.[2] ?? '').matchAll(/[a-z][\w-]*/gi)) out.add(t[0]);
+  }
+  return out;
+})();
+
+/** Whether a selector's subject — its last compound — is a focusable control. */
+function focusableSubject(selector: string): boolean {
+  const subject = splitTop(selector, /[\s>+~]/).at(-1) ?? '';
+  if (FOCUSABLE_TAG.test(/^[a-z]+/i.exec(subject)?.[0] ?? '')) return true;
+  if (/\[(role|tabindex)\b/.test(subject)) return true;
+  return [...subject.matchAll(/\.([\w-]+)/g)].some(
+    ([, cls]) => FOCUSABLE_CLASSES.has(cls) || FOCUSABLE_CLASSES.has(cls.split('--')[0]),
+  );
+}
+
 /** Every fill a hover rule is allowed to paint, beyond the state tokens themselves. */
 const HOVER_FILL_ALLOW = new Map<string, string>([
   ['.winctl__btn--close:hover', 'OS convention: the close button goes red, not grey'],
@@ -188,6 +245,39 @@ describe('interaction state vocabulary', () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  it('gives a focusable control its resting shadow only through --rest-shadow', () => {
+    const offenders: string[] = [];
+    for (const rule of RULES) {
+      if (rule.selector.startsWith(':where(')) continue;
+      const shadow = decls(rule).find(([prop]) => prop === 'box-shadow');
+      if (!shadow) continue;
+      for (const item of splitTop(rule.selector, ',')) {
+        if (item.includes(':focus') || item.includes('::')) continue;
+        if (!focusableSubject(item)) continue;
+        offenders.push(`styles.css:${rule.line}  ${item} { box-shadow: ${shadow[1]} }`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('paints --rest-shadow on every control the ring covers, and composes it into the ring', () => {
+    const items = (selector = '') =>
+      splitTop(selector.replace(/^:where\(|\)(:focus-visible)?$/g, ''), ',');
+    const ring = RULES.find(
+      (r) => r.selector.startsWith(':where(') && r.selector.endsWith(':focus-visible'),
+    );
+    const rest = RULES.find(
+      (r) => r.selector.startsWith(':where(') && r.body.includes('var(--rest-shadow, none)'),
+    );
+    expect(ring?.body).toMatch(/box-shadow:\s*var\(--focus-ring\),\s*var\(--rest-shadow,/);
+    const restItems = items(rest?.selector);
+    const uncovered = items(ring?.selector).filter(
+      (e) => !restItems.includes(e) && !restItems.includes(`${/^\[[\w-]+/.exec(e)?.[0]}]`),
+    );
+    expect(restItems.length).toBeGreaterThan(0);
+    expect(uncovered).toEqual([]);
   });
 
   // A zero-specificity role list is worth exactly one class — the same as the

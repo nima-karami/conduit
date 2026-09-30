@@ -570,7 +570,7 @@
 [data-theme="neon"] .viewswitch__btn--on {
   background: var(--accent);
   color: var(--on-accent);
-  box-shadow: var(--glow-accent);
+  --rest-shadow: var(--glow-accent);
 }
 
 /* ---------- chrome glyphs (webview/icons.tsx) ----------
@@ -740,8 +740,19 @@ body {
 ):focus-visible {
   outline: var(--focus-outline);
   outline-offset: 2px;
-  box-shadow: var(--focus-ring);
+  box-shadow: var(--focus-ring), var(--rest-shadow, 0 0 transparent);
   border-radius: var(--r-sm);
+}
+
+/* See the state-vocabulary spec, addendum "resting shadows". Not inherited, or a glowing row
+   would hand its glow to every button inside it; wider than the ring's list so a roving
+   tabindex="-1" row keeps its spine. */
+@property --rest-shadow {
+  syntax: "*";
+  inherits: false;
+}
+:where(button, a, input, select, textarea, summary, [role], [tabindex]) {
+  box-shadow: var(--rest-shadow, none);
 }
 
 /* Controls whose own corners differ from the default ring radius keep their shape. */
@@ -1269,7 +1280,7 @@ body.resizing .panel__resize::after {
   /* Pure --amber misses 4.5:1 on its own wash, so the text tier is mixed toward the theme's
      ink: one declaration that darkens on Aero and lightens on the two dark themes. */
   color: color-mix(in srgb, var(--amber) 70%, var(--text));
-  box-shadow: var(--glow-attention);
+  --rest-shadow: var(--glow-attention);
   font-family: inherit;
   font-size: calc(11.5px * var(--font-scale));
   font-weight: 600;
@@ -1526,7 +1537,7 @@ body.resizing .panel__resize::after {
   border-color: var(--notch-line);
   color: var(--accent);
   font-weight: 600;
-  box-shadow: var(--elev-1);
+  --rest-shadow: var(--elev-1);
 }
 .ns-more {
   display: inline-flex;
@@ -2465,7 +2476,7 @@ body.resizing .panel__resize::after {
   background: var(--amber);
   border-color: var(--amber);
   color: var(--on-accent);
-  box-shadow: var(--glow-attention);
+  --rest-shadow: var(--glow-attention);
 }
 .session__btn--primary:hover {
   background: var(--amber);
@@ -2789,7 +2800,7 @@ body.resizing .panel__resize::after {
 .tab--active {
   color: var(--text);
   background: var(--raise);
-  box-shadow: var(--elev-1);
+  --rest-shadow: var(--elev-1);
 }
 /* The active tab of the group that is not active (spec §8: the inactive-selected treatment). */
 .tab--current {
@@ -4148,7 +4159,7 @@ body.gh-resizing {
   background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r-round);
-  box-shadow: var(--elev-3);
+  --rest-shadow: var(--elev-3);
   animation: modal-fade 0.1s ease;
 }
 /* The chamfer redraws the cut corner from border-top-color, so recolouring the edge on
@@ -4513,7 +4524,7 @@ body.gh-resizing {
 .startroute--lead {
   --notch-line: var(--accent);
   border-color: var(--accent);
-  box-shadow: var(--glow-accent);
+  --rest-shadow: var(--glow-accent);
 }
 .startroute--lead:hover {
   border-color: var(--accent-2);
@@ -5081,7 +5092,7 @@ body.gh-resizing {
   background: var(--accent);
   color: var(--on-accent);
   border-color: var(--accent);
-  box-shadow: var(--accent-shadow);
+  --rest-shadow: var(--accent-shadow);
 }
 .btn--ghost {
   background: transparent;
@@ -6848,17 +6859,10 @@ body.gh-resizing {
 .filerow--selected {
   background: var(--state-sel-bg);
   color: var(--state-sel-fg);
-  box-shadow: inset var(--state-spine) 0 0 var(--accent);
+  --rest-shadow: inset var(--state-spine) 0 0 var(--accent);
 }
 .filerow--selected:hover {
   background: var(--state-sel-hover-bg);
-}
-/* The spine and the focus ring both ride box-shadow, so a focused selected row has to
-   draw the pair or lose one of them. */
-.filerow--selected:focus-visible {
-  box-shadow:
-    var(--focus-ring),
-    inset var(--state-spine) 0 0 var(--accent);
 }
 /* The file currently revealed/open in the editor — a soft accent tint so you can see
    where the open file sits in the tree without it reading as a folder selection. */
@@ -7427,7 +7431,7 @@ body.gh-resizing {
 [data-theme="neon"] .seg__btn--active {
   background: var(--accent);
   color: var(--on-accent);
-  box-shadow: var(--glow-accent);
+  --rest-shadow: var(--glow-accent);
 }
 
 /* Theme swatches — a window miniature per theme (8d), because two of the three themes are
@@ -7458,7 +7462,7 @@ body.gh-resizing {
 }
 .swatch--active {
   border-color: var(--accent);
-  box-shadow: var(--accent-shadow);
+  --rest-shadow: var(--accent-shadow);
 }
 .swatch__mini {
   position: relative;
@@ -7773,7 +7777,7 @@ body.gh-resizing {
   background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r-card);
-  box-shadow: var(--elev-3);
+  --rest-shadow: var(--elev-3);
   padding: 5px;
   animation: modal-fade 0.1s ease;
 }
@@ -7809,7 +7813,7 @@ body.gh-resizing {
 .ctxmenu__item[aria-checked="true"] {
   background: var(--state-sel-bg);
   color: var(--state-sel-fg);
-  box-shadow: inset var(--state-spine) 0 0 var(--accent);
+  --rest-shadow: inset var(--state-spine) 0 0 var(--accent);
 }
 .ctxmenu__item[aria-checked="true"]:hover:not(:disabled, [aria-disabled="true"]) {
   background: var(--state-sel-hover-bg);
@@ -8220,7 +8224,7 @@ button.toggle {
 button.toggle--on {
   background: var(--accent);
   border-color: var(--accent);
-  box-shadow: var(--glow-accent);
+  --rest-shadow: var(--glow-accent);
 }
 .toggle__knob {
   display: block;
@@ -8427,7 +8431,7 @@ button.toggle--on .toggle__knob {
 
 /* ---------- drag & drop reordering ---------- */
 .tab--dropbefore {
-  box-shadow: inset 2px 0 0 var(--accent);
+  --rest-shadow: inset 2px 0 0 var(--accent);
 }
 /* Trailing drop zone past the last tab (R5.6). Fills the remaining strip width so a
    tab can be dropped at the end; keeps a small min-width so it stays reachable even
@@ -9854,7 +9858,7 @@ button.toggle--on .toggle__knob {
   background: var(--raise);
   border: 1px solid var(--border);
   border-radius: var(--r-ctl);
-  box-shadow: var(--elev-1);
+  --rest-shadow: var(--elev-1);
   cursor: pointer;
 }
 .archlod:hover {

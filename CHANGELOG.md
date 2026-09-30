@@ -27,6 +27,9 @@ All notable user-facing changes to Conduit. Format follows
   many running agents the close will stop.
 
 ### Fixed
+- **Primary buttons show the keyboard focus ring.** A focused primary button drew only its own
+  glow, so Tab and a dialog's initial focus (Save All) left no visible mark. The same held for the
+  active tab, checked menu items, toggles and other controls with a glow of their own.
 - **Enter in a confirm dialog activates only the focused button.** It used to run the primary
   action whichever button had focus.
 - **Switching tabs puts keyboard focus in the tab you land on.** Ctrl+Tab, Ctrl+PageUp/PageDown,

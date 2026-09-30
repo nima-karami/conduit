@@ -224,6 +224,7 @@ new ask), so it never overrides the user.
 | Save All while a save is in flight for that path | Joins the chain (auto-save E1); success only when the path is clean. |
 | Save All partially fails (EACCES, path-guard refusal, deleted parent) | Dialog stays and lists only the failed paths with reasons. |
 | Save All hangs (network drive) | "Saving…"; Save All / Don't Save disabled, **Cancel enabled** and aborts. No auto-proceed. |
+| Cancel pressed while Save All is writing | The close is cancelled; writes already in flight complete (a partial abort could corrupt a file); the dialog closes and the saved files show clean. |
 | A listed save finishes while the dialog is open (late auto-save) | The row shows "Saved" and stays; the user still chooses. Save All then saves only the remainder. |
 | Flush exceeds 5 s | Dialog opens with the still-dirty paths. |
 | Conflicted path | Listed "changed on disk"; Save All force-writes (D3). |
