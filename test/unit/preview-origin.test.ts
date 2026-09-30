@@ -10,6 +10,7 @@ import {
   rootTokenFor,
 } from '../../electron/preview-protocol';
 import { realPathLeaf } from '../../src/path-guard';
+import { buildPreviewUrl, parsePreviewUrl } from '../../src/preview-url';
 
 // One origin per root (ADR 0005 §1) only holds if a request under root X's token can never be
 // answered with a file of another open root Y. POSIX-shaped fixtures, as in preview-verdict.test.ts.
@@ -70,12 +71,28 @@ describe('previewTargetForPath — the precheck names a root the handler will se
     expect(previewVerdictForRequest(req(Y, 'page.html'), OPEN, file, identity).ok).toBe(true);
   });
 
-  it('takes the first open root that passes on its own when roots nest', () => {
+  it('names the deepest open root, whatever order the roots are listed in', () => {
+    const inner = `${X}/inner`;
+    for (const open of [
+      [X, inner],
+      [inner, X],
+    ]) {
+      const t = previewTargetForPath(`${inner}/a.html`, open, file, identity);
+      expect(t).toMatchObject({ ok: true, root: inner, path: `${inner}/a.html` });
+    }
+  });
+
+  it('falls back to the enclosing root when the deepest one refuses on its own', () => {
     const inner = `${X}/inner`;
     // Resolves out of `inner` but stays inside X: only X may serve it.
     const realPath = linkTo(`${inner}/up`, `${X}/shared`);
-    const t = previewTargetForPath(`${inner}/up/a.html`, [inner, X], file, realPath);
-    expect(t).toMatchObject({ ok: true, root: X, path: `${X}/shared/a.html` });
+    for (const open of [
+      [X, inner],
+      [inner, X],
+    ]) {
+      const t = previewTargetForPath(`${inner}/up/a.html`, open, file, realPath);
+      expect(t).toMatchObject({ ok: true, root: X, path: `${X}/shared/a.html` });
+    }
   });
 
   it('refuses a path outside every open root', () => {
@@ -99,7 +116,7 @@ describe('previewVerdictForRequest — against the real filesystem', () => {
   let ry: string;
 
   beforeAll(() => {
-    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'preview-origin-')));
+    base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'preview-origin-')));
     rx = path.join(base, 'x');
     ry = path.join(base, 'y');
     fs.mkdirSync(rx);
@@ -123,6 +140,18 @@ describe('previewVerdictForRequest — against the real filesystem', () => {
     expect(
       previewVerdictForRequest(req(ry, 'secret.txt'), open, previewStat, realPathLeaf).ok,
     ).toBe(true);
+  });
+
+  it('serves the file the path names, ignoring any query', () => {
+    const open = [rx, ry];
+    for (const suffix of ['?x=1', '?a/../../b']) {
+      const parsed = parsePreviewUrl(
+        `${buildPreviewUrl(rootTokenFor(rx), ['page.html'])}${suffix}`,
+      );
+      if (!parsed) throw new Error(`did not parse with ${suffix}`);
+      const v = previewVerdictForRequest(parsed, open, previewStat, realPathLeaf);
+      expect(v).toMatchObject({ ok: true, path: path.join(rx, 'page.html') });
+    }
   });
 
   it("refuses Y's file reached through a directory link inside X", () => {

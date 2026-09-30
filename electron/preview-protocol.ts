@@ -138,9 +138,11 @@ export type PreviewTarget =
   | { ok: true; root: string; path: string; contentType: string };
 
 /**
- * `html:canPreview`'s decision: the first open root that passes `previewVerdictForPath` on its
- * own, so the URL built from its token is one the handler will serve. A path inside X that
- * resolves into Y is refused, not re-homed under Y's origin.
+ * `html:canPreview`'s decision: the DEEPEST open root that passes `previewVerdictForPath` on its
+ * own, so the URL built from its token is one the handler will serve. Deepest, not first: a
+ * project nested under an open enclosing folder (a session at the home dir) must not be issued
+ * the enclosing origin, which can read everything under it. A path inside X that resolves into
+ * Y is refused, not re-homed under Y's origin.
  */
 export function previewTargetForPath(
   absPath: string,
@@ -148,9 +150,12 @@ export function previewTargetForPath(
   stat: (p: string) => PreviewStat,
   realPath: (p: string) => string,
 ): PreviewTarget {
+  // Every candidate contains absPath, so they are ancestors of one another: longer is deeper.
+  const candidates = openRoots
+    .filter((root) => isInsideRoot(absPath, root))
+    .sort((a, b) => path.resolve(b).length - path.resolve(a).length);
   let refusal: PreviewRefusal | undefined;
-  for (const root of openRoots) {
-    if (!isInsideRoot(absPath, root)) continue;
+  for (const root of candidates) {
     const verdict = previewVerdictForPath(absPath, root, stat, realPath);
     if (verdict.ok) return { ...verdict, root };
     refusal ??= verdict;

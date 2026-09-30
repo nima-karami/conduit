@@ -72,6 +72,20 @@ describe('preview-url', () => {
     ]);
   });
 
+  it('maps the path only: a query or fragment never becomes part of a filename', () => {
+    expect(parsePreviewUrl(`conduit-preview://${TOKEN}/page.html?x=1`)?.segments).toEqual([
+      'page.html',
+    ]);
+    expect(parsePreviewUrl(`conduit-preview://${TOKEN}/docs/page.html#top`)?.segments).toEqual([
+      'docs',
+      'page.html',
+    ]);
+    expect(parsePreviewUrl(`conduit-preview://${TOKEN}/page.html?a/../../b`)?.segments).toEqual([
+      'page.html',
+    ]);
+    expect(parsePreviewUrl(`conduit-preview://${TOKEN}/?x=1`)).toBeNull();
+  });
+
   it('refuses an invalid or empty root token', () => {
     expect(parsePreviewUrl('conduit-preview:///a')).toBeNull();
     expect(parsePreviewUrl('conduit-preview://AB12CD34/a')).toBeNull();

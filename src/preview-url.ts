@@ -80,7 +80,9 @@ export function buildPreviewUrl(rootToken: string, relSegments: readonly string[
  */
 export function parsePreviewUrl(url: string): { token: string; segments: string[] } | null {
   if (!url.startsWith(PREFIX)) return null;
-  const rest = url.slice(PREFIX.length);
+  // Only the path names a file: a raw `?`/`#` always opens the query/fragment, since a
+  // filename's own `?` or `#` is percent-encoded by `buildPreviewUrl`.
+  const rest = url.slice(PREFIX.length).replace(/[?#].*$/s, '');
   const slash = rest.indexOf('/');
   if (slash < 0) return null;
 
