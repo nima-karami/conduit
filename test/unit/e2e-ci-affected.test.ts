@@ -446,8 +446,9 @@ describe('withMapBuildHunks and the CLI, against a real git repo', () => {
     build = git('rev-parse', 'HEAD');
     // Line 4 `-- a` → `++ b` shows in the diff as `--- a` / `+++ b`; line 8 is top-level.
     put('src/f.ts', fBody('++ b', 2));
-    git('update-index', '--chmod=+x', 'src/h.ts');
     git('add', '-A');
+    // After the add: on Linux (core.fileMode) `add` re-reads the 0644 file and drops the +x.
+    git('update-index', '--chmod=+x', 'src/h.ts');
     git('commit', '-q', '-m', 'change');
   });
   afterAll(() => rmSync(repo, { recursive: true, force: true }));
