@@ -87,6 +87,8 @@ describe('runStatus', () => {
     [s('PASS', 'QUARANTINED-FAIL'), 'passed'],
     [s('QUARANTINED-FAIL', 'FLAKY'), 'flaky-passed'],
     [s('QUARANTINED-FAIL', 'FAIL'), 'failed'],
+    [s('QUARANTINED-FAIL'), 'failed'],
+    [s('QUARANTINED-FAIL', 'SKIP', 'EXCLUDED'), 'failed'],
   ])('%j → %s', (results, expected) => {
     expect(runStatus(results)).toBe(expected);
   });
@@ -138,6 +140,23 @@ describe('quarantine and nightly history in the report', () => {
     expect(r.results.find((x) => x.name === 'b')).not.toHaveProperty('alsoFailingOnNightly');
     expect(r.results.find((x) => x.name === 'c')).not.toHaveProperty('alsoFailingOnNightly');
     expect(summaryMarkdown(r)).toContain('also failing on the last nightly (feedbee)');
+  });
+
+  it('warns about a quarantine entry older than 14 days, and only about that one', () => {
+    const quarantine = {
+      scenarios: {
+        a: { reason: 'flaky focus', since: '2026-09-10' },
+        b: { reason: 'new', since: '2026-09-25' },
+      },
+    };
+    const r = mergeResults(plan, allPass, {
+      ...meta,
+      quarantine,
+      finishedAt: '2026-09-30T08:00:00Z',
+    });
+    expect(r.warnings).toEqual(['a: quarantined > 14 days (since 2026-09-10) — re-check']);
+    expect(summaryMarkdown(r)).toContain('a: quarantined > 14 days (since 2026-09-10) — re-check');
+    expect(mergeResults(plan, allPass, meta).warnings).toEqual([]);
   });
 
   it('carries quarantine candidates into the result and the summary', () => {

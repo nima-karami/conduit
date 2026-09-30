@@ -50,6 +50,7 @@ export function formatResults(result: {
   rerun?: string | null;
   lastNightlySha?: string | null;
   quarantineCandidates?: { name: string; count: number; last: string }[];
+  warnings?: string[];
   results: {
     name: string;
     status: string;

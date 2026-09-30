@@ -7,8 +7,8 @@ const NO_ARTIFACT = new Set(['PASS', 'SKIP', 'EXCLUDED', 'INFRA']);
 const FAILED = new Set(['FAIL', 'TIMEOUT']);
 
 /**
- * First match wins (spec §3). EXCLUDED and QUARANTINED-FAIL rows are neutral, but a selection where nothing ran at all
- * is as vacuous as an all-SKIP one. A requested `verify` job that did not succeed (a failure, or a
+ * First match wins (spec §3). EXCLUDED and QUARANTINED-FAIL rows are neutral, but a selection in
+ * which nothing passed (all SKIP, EXCLUDED or QUARANTINED-FAIL) proved nothing. A requested `verify` job that did not succeed (a failure, or a
  * timeout's `cancelled`) fails the run; `skipped` means it was not requested. A failed `prepare`
  * planned nothing, so it is infra unless verify already failed the run.
  */
@@ -20,12 +20,20 @@ export function runStatus(results, { verify, prepare } = {}) {
   if (results.length === 0) return 'passed';
   if (has('FAIL') || has('TIMEOUT')) return 'failed';
   if (has('INFRA')) return 'infra-error';
-  if (ran.every((r) => r.status === 'SKIP')) return 'failed';
+  if (!ran.some((r) => r.status === 'PASS' || r.status === 'FLAKY')) return 'failed';
   if (has('FLAKY')) return 'flaky-passed';
   return 'passed';
 }
 
 const localCommand = (name) => `npm run e2e -- ${name}`;
+const QUARANTINE_RECHECK_MS = 14 * 86_400_000;
+
+/** A quarantine is meant to be temporary (spec §B4): past 14 days, every run says so. */
+function staleQuarantines(quarantine, now) {
+  return Object.entries(quarantine?.scenarios ?? {})
+    .filter(([, q]) => now - Date.parse(q.since) > QUARANTINE_RECHECK_MS)
+    .map(([name, q]) => `${name}: quarantined > 14 days (since ${q.since}) — re-check`);
+}
 
 export function infraRerunLine(results, sha) {
   const names = results.filter((r) => r.status === 'INFRA').map((r) => r.name);
@@ -41,6 +49,7 @@ export function infraRerunLine(results, sha) {
  *   queuedAt?: string, startedAt?: string, finishedAt?: string, verify?: string, prepare?: string,
  *   artifactUrls?: Record<number, string>, excluded?: Record<string, string>,
  *   lastNightly?: { sha: string, failing: string[] } | null,
+ *   quarantine?: { scenarios?: Record<string, { reason: string, since: string }> } | null,
  *   quarantineCandidates?: { name: string, count: number, last: string }[] }} meta
  */
 export function mergeResults(plan, shardFiles, meta) {
@@ -66,9 +75,18 @@ export function mergeResults(plan, shardFiles, meta) {
     results.push({ name, status: 'EXCLUDED', seconds: 0, attempts: 0, shard: null, reason });
   }
   results.sort((a, b) => a.name.localeCompare(b.name));
-  const { artifactUrls: _a, excluded: _e, lastNightly, quarantineCandidates = [], ...rest } = meta;
+  const {
+    artifactUrls: _a,
+    excluded: _e,
+    quarantine,
+    lastNightly,
+    quarantineCandidates = [],
+    ...rest
+  } = meta;
+  const now = meta.finishedAt ? Date.parse(meta.finishedAt) : Date.now();
   return {
     ...rest,
+    warnings: staleQuarantines(quarantine, now),
     lastNightlySha: lastNightly?.sha ?? null,
     quarantineCandidates,
     shards: plan.shards.length,
@@ -92,6 +110,7 @@ export function summaryMarkdown(result) {
   let md = `## e2e ${result.status}: ${parts.join(', ') || 'no scenarios'}\n\n`;
   if (result.verify) md += `verify job: **${result.verify}**\n\n`;
   if (result.rerun) md += `Re-run the INFRA scenarios: \`${result.rerun}\`\n\n`;
+  for (const w of result.warnings ?? []) md += `> **Warning:** ${w}\n\n`;
   if (result.quarantineCandidates?.length) {
     md += 'Quarantine candidates (FLAKY 3+ times in 14 days of nightlies; a reviewed edit to ';
     md += '`test/e2e/quarantine.json` quarantines one):\n\n';

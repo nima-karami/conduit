@@ -163,6 +163,7 @@ export function formatResults(result) {
       `  quarantine candidate: ${c.name} (FLAKY ${c.count} in 14 days); quarantine via test/e2e/quarantine.json`,
     );
   }
+  for (const w of result.warnings ?? []) lines.push(`  warning: ${w}`);
   if (result.url) lines.push(`  run: ${result.url}`);
   return lines.join('\n');
 }

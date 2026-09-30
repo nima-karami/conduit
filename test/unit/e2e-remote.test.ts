@@ -177,12 +177,14 @@ describe('verdict', () => {
       sha: 'abcdef123',
       lastNightlySha: 'feedbeef99',
       quarantineCandidates: [{ name: 'multi-repo', count: 4, last: '2026-09-30T08:00:00Z' }],
+      warnings: ['q: quarantined > 14 days (since 2026-09-10) — re-check'],
       results: [
         { name: 'q', status: 'QUARANTINED-FAIL', seconds: 5, shard: 2 },
         { name: 'b', status: 'FAIL', seconds: 4, shard: 1, alsoFailingOnNightly: true },
       ],
     });
     expect(out).toContain('  q ... q QUARANTINED-FAIL (5s) [s2]');
+    expect(out).toContain('  warning: q: quarantined > 14 days (since 2026-09-10) — re-check');
     expect(out).toContain('  b ... ✗ FAIL (4s) [s1] (also failing on the last nightly, feedbee)');
     expect(out).toContain(
       'quarantine candidate: multi-repo (FLAKY 4 in 14 days); quarantine via test/e2e/quarantine.json',

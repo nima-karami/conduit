@@ -29,6 +29,7 @@ export interface ResultJson {
   rerun: string | null;
   lastNightlySha: string | null;
   quarantineCandidates: QuarantineCandidate[];
+  warnings: string[];
   results: ResultRow[];
 }
 export function runStatus(
@@ -59,6 +60,7 @@ export function mergeResults(
     artifactUrls?: Record<number, string>;
     excluded?: Record<string, string>;
     lastNightly?: { sha: string; runId?: number; at?: string; failing: string[] } | null;
+    quarantine?: { scenarios?: Record<string, { reason: string; since: string }> } | null;
     quarantineCandidates?: QuarantineCandidate[];
   },
 ): ResultJson;
