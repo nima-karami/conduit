@@ -17,14 +17,17 @@ function deps(
   p: typeof path.win32 | typeof path.posix,
   kinds: Record<string, Kind>,
   real: Record<string, string> = {},
+  long: Record<string, string> = {},
 ) {
   const realpath = vi.fn(async (x: string) => real[x] ?? x);
+  const longName = vi.fn(async (x: string) => long[x] ?? x);
   const d: FolderProbeDeps = {
     path: p,
     kind: async (x) => kinds[x] ?? 'missing',
     realpath,
+    longName,
   };
-  return { d, realpath };
+  return { d, realpath, longName };
 }
 
 const flavours = [
@@ -96,8 +99,30 @@ describe.each(flavours)('probeFolder ($name)', ({ p, abs, root, rel }) => {
       realpath: async () => {
         throw Object.assign(new Error('gone'), { code: 'ENOENT' });
       },
+      longName: async (x) => x,
     };
     expect(await probeFolder(abs, d)).toMatchObject({ status: 'missing', stored: abs });
+  });
+});
+
+describe('probeFolder — 8.3 aliases', () => {
+  const short = 'C:\\Users\\RUNNER~1\\proj';
+  const long = 'C:\\Users\\runneradmin\\proj';
+
+  it('a present folder named through an 8.3 alias is stored and keyed by its long path', async () => {
+    const { d } = deps(path.win32, { [short]: 'dir' }, { [short]: long }, { [short]: long });
+    expect(await probeFolder(short, d)).toEqual({
+      status: 'present',
+      stored: long,
+      key: 'c:/users/runneradmin/proj',
+      realKey: 'c:/users/runneradmin/proj',
+    });
+  });
+
+  it('a missing folder keeps its lexical spelling; nothing is looked up', async () => {
+    const { d, longName } = deps(path.win32, {}, {}, { [short]: long });
+    expect(await probeFolder(short, d)).toMatchObject({ status: 'missing', stored: short });
+    expect(longName).not.toHaveBeenCalled();
   });
 });
 
