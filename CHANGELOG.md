@@ -27,6 +27,12 @@ All notable user-facing changes to Conduit. Format follows
 - **Tab-switching keys work from the Terminal.** Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageUp/PageDown
   and Ctrl+1…9 now switch tabs instead of being typed into the shell (as in VS Code); Ctrl+W still
   goes to the shell.
+- **Leaving the Terminal with Ctrl+Tab or Ctrl+PageUp/PageDown always focuses the tab you land
+  on.** About one switch in four left focus nowhere, and the next keys were lost.
+- **Ctrl+1…9 in the Terminal never reach the shell.** A number past your last tab does nothing;
+  Ctrl+3 used to clear the line you were typing.
+- **Switching to History or Review from the keyboard shows the focus ring** on the row or view
+  that takes your keys.
 
 ### Security
 - **Electron updated from 43.3.0 to 43.7.6**, which fixes the high-severity Electron advisories

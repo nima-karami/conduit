@@ -468,6 +468,9 @@ The existing "Split with: X" / "Close split pane" keep their names (D7).
   rule's thickness (a shape, not only a hue).
 - Focus management: after a split or move, focus goes into the target group's viewer. After a
   group closes, focus goes to group 1's active viewer (or its tab if the viewer isn't focusable).
+  A landing from a keyboard shortcut is focused with `focusVisible: true`: Chromium does not
+  count a Ctrl-chord as keyboard modality, so the ring would otherwise not paint. In xterm,
+  `Ctrl+1…9` are always the app's; a digit past the tab count is a no-op, never shell input.
 - Reduced motion: no animated divider or tab travel. The drop overlays are static tints.
 - **i18n:** Conduit has no i18n framework. User-facing strings are collected in a module-level
   `STR` object per component (the `git-history-view` precedent), not inlined in JSX. Pluralize
