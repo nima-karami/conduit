@@ -18,7 +18,7 @@ import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assert, launchApp, makeLog, REPO } from './harness.mjs';
+import { answerQuitAsks, assert, launchApp, makeLog, REPO } from './harness.mjs';
 
 const log = makeLog('multi-window');
 
@@ -524,7 +524,8 @@ try {
       timeout: 15000,
     })
     .catch(() => {});
-  // The torn-out window now owns nothing; close it (no running-session guard prompt).
+  // The torn-out window now owns nothing; every close is still asked, so answer it.
+  await answerQuitAsks(app, { proceed: true });
   await app.evaluate((e, id) => e.BrowserWindow.fromId(id)?.close(), newWinId);
   await app
     .evaluate((e, n) => {

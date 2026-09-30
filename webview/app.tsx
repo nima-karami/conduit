@@ -267,6 +267,7 @@ import {
 } from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
 import { useBackgroundOpenFeedback } from './use-background-open-feedback';
+import { focusOpenModal, nextModalKey, useModalSlot } from './use-modal-slot';
 import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-history';
 import { useReviewModeLayout } from './use-review-mode-layout';
 import { useSnooze } from './use-snooze';
@@ -437,7 +438,14 @@ export function App() {
   // from the host's `win:list` broadcast; this window's own id comes from `state.windowId`.
   const [winList, setWinList] = useState<{ id: number; title: string; sessionCount: number }[]>([]);
   const [renamingId, setRenamingId] = useState<string | undefined>(undefined);
-  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const slot = useModalSlot();
+  const showConfirm = useCallback(
+    (state: ConfirmState) => slot.open({ kind: 'confirm', key: nextModalKey(), state }),
+    [slot],
+  );
+  // The host's live quit ask and the slot entry answering it; a re-sent ask with its requestId is a
+  // re-probe (dirty-quit-guard plan, B1b).
+  const quitAskRef = useRef<{ requestId: number; key: number } | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateDismissed, setUpdateDismissed] = useState(false);
   // D3: session icon-picker modal state. `null` = closed; non-null = picker open for session.id.
@@ -471,12 +479,6 @@ export function App() {
   const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
-  // W2: holds the cancel-reply callback when a host `confirmQuit` dialog is open.
-  // Called by the ConfirmDialog onClose wrapper so reply(false) fires on Cancel/Esc.
-  const quitCancelRef = useRef<(() => void) | null>(null);
-  // Holds the resolver of an open hunk-discard confirm. Called with `false` by the ConfirmDialog
-  // onClose wrapper so Cancel and Esc both settle the promise the caller is awaiting.
-  const hunkConfirmRef = useRef<((ok: boolean) => void) | null>(null);
   const { hydrate, settings, update } = useSettings();
   useMonacoNavKeybindings(settings.shortcuts);
 
@@ -547,7 +549,7 @@ export function App() {
         // A host-side failure (e.g. a failed `.conduit/` save) must be VISIBLE, not
         // silently dropped (ADR §5), so the user never "thinks it saved and didn't."
         logToHost(`host error: ${msg.message}`);
-        setConfirm({
+        showConfirm({
           title: 'Something went wrong',
           message: msg.message,
           confirmLabel: 'Dismiss',
@@ -593,9 +595,18 @@ export function App() {
         // rest of the lifecycle inline, so no toast is needed.
         if (msg.status === 'ready') setUpdateDismissed(false);
       } else if (msg.type === 'confirmQuit') {
-        // W2: main asks us to confirm quit/close/update-relaunch for running sessions.
-        // focusCancel makes Cancel the keyboard default so an accidental Enter does not
-        // quit. Esc = cancel via onClose wrapper.
+        const { requestId } = msg;
+        const live = quitAskRef.current;
+        if (live?.requestId === requestId) {
+          if (slot.current?.key === live.key) focusOpenModal();
+          else post({ type: 'quitDecision', requestId, proceed: false });
+          return;
+        }
+        post({ type: 'quitAck', requestId });
+        if (msg.running === 0) {
+          post({ type: 'quitDecision', requestId, proceed: true });
+          return;
+        }
         const fakeSessions = Array.from({ length: msg.running }, (_, i) => ({
           id: `run-${i}`,
           name: '',
@@ -607,25 +618,27 @@ export function App() {
           lastActiveAt: 0,
         }));
         const copy = quitConfirmCopy({ running: fakeSessions, busy: msg.busy, reason: msg.reason });
-        const reply = (proceed: boolean) => post({ type: 'quitDecision', proceed });
-        quitCancelRef.current = () => reply(false);
-        // ACK that the dialog is on screen so the host disarms its wedged-renderer
-        // fallback: a dialog the user is reading must never auto-resolve.
-        post({ type: 'quitDialogShown' });
-        setConfirm({
-          title: copy.title,
-          message: copy.body,
-          confirmLabel: copy.confirmLabel,
-          danger: true,
-          focusCancel: true,
-          onConfirm: () => {
-            quitCancelRef.current = null;
-            reply(true);
+        const reply = (proceed: boolean) => post({ type: 'quitDecision', requestId, proceed });
+        const key = nextModalKey();
+        quitAskRef.current = { requestId, key };
+        slot.open({
+          kind: 'confirm',
+          key,
+          state: {
+            title: copy.title,
+            message: copy.body,
+            confirmLabel: copy.confirmLabel,
+            danger: true,
+            // Cancel is the keyboard default so an accidental Enter never quits.
+            focusCancel: true,
+            onShown: () => post({ type: 'quitDialogShown', requestId }),
+            onCancel: () => reply(false),
+            onConfirm: () => reply(true),
           },
         });
       }
     });
-  }, [hydrate]);
+  }, [hydrate, slot, showConfirm]);
 
   // `ready` is the handshake the host answers with the whole startup burst (state, win:list,
   // restoreDocs, review:marks), so it must not be posted before this subscription exists. It used
@@ -723,7 +736,7 @@ export function App() {
         if (action === 'close') {
           post({ type: 'kill', id: s.id });
         } else if (action === 'warn') {
-          setConfirm({
+          showConfirm({
             title: 'Terminal exited',
             message: `"${s.name}" exited and has open editor tabs. Close the session and its tabs?`,
             confirmLabel: 'Close session',
@@ -734,7 +747,7 @@ export function App() {
       }
     }
     prevStatusRef.current = new Map(sessions.map((s) => [s.id, s.status]));
-  }, [sessions, docState.docs]);
+  }, [sessions, docState.docs, showConfirm]);
 
   // Relaunch all sessions that are currently stale (manual trigger — also used by
   // the "Relaunch all stale" command palette entry).
@@ -1063,8 +1076,6 @@ export function App() {
   const closeTabRef = useRef<(id: string, group: GroupIndex) => Promise<boolean>>(() =>
     Promise.resolve(false),
   );
-  // A pending unsaved-changes close prompt; Cancel and Esc settle it through the dialog's onClose.
-  const closePromptRef = useRef<((closed: boolean) => void) | null>(null);
   /** Ctrl+W, a tab's own close and the tab menu's closes: focus lands on what the group shows next
    *  (spec §10). A close from the strip or the menu that lands on the Terminal focuses its button
    *  rather than xterm, as a click on that button does. */
@@ -1886,16 +1897,10 @@ export function App() {
       conflictedPaths: absKeys((c) => c.conflicted === true),
       confirmDiscard: (state) =>
         new Promise<boolean>((resolve) => {
-          // A second discard opened while one was still asking: settle the displaced caller
-          // rather than leaving it awaiting a promise nothing will ever resolve.
-          hunkConfirmRef.current?.(false);
-          hunkConfirmRef.current = resolve;
-          setConfirm({
+          showConfirm({
             ...state,
-            onConfirm: () => {
-              hunkConfirmRef.current = null;
-              resolve(true);
-            },
+            onCancel: () => resolve(false),
+            onConfirm: () => resolve(true),
           });
         }),
       refreshChanges,
@@ -1975,20 +1980,15 @@ export function App() {
         const fileName = baseName(doc.path);
         const prompt = (reason: string | null) => {
           const message = `"${fileName}" has unsaved changes. Save before closing, or discard them?`;
-          closePromptRef.current?.(false);
-          closePromptRef.current = resolve;
-          setConfirm({
+          showConfirm({
             title: `Unsaved changes in ${fileName}`,
             message:
               reason === null ? message : `${AUTO_SAVE_COPY.closeFallback(reason)} ${message}`,
             confirmLabel: 'Save',
             secondaryLabel: 'Discard',
-            onSecondary: () => {
-              closePromptRef.current = null;
-              close();
-            },
+            onCancel: () => resolve(false),
+            onSecondary: close,
             onConfirm: () => {
-              closePromptRef.current = null;
               const entry = getSaveEntry(doc.path);
               if (!entry) {
                 // No registry entry (shouldn't happen for a dirty doc, but be safe).
@@ -2025,7 +2025,7 @@ export function App() {
         run(dirtyCloseStep(settings.autoSave, fileSaves.getStatus(doc.path), entry !== undefined));
       });
     },
-    [docState.docs, dirtySet, forceCloseDoc, settings.autoSave],
+    [docState.docs, dirtySet, forceCloseDoc, settings.autoSave, showConfirm],
   );
 
   // One tab of a doc still shown in the other group closes alone: no prompt, and the buffer, its
@@ -2530,7 +2530,7 @@ export function App() {
           confirmEnabled: settings.confirmCloseRunning,
         })
       ) {
-        setConfirm({
+        showConfirm({
           title: 'Close session?',
           message: hasOpenEditors
             ? `"${s.name}" has open editor tabs. Closing it will terminate the session and close its tabs.`
@@ -2543,7 +2543,7 @@ export function App() {
         post({ type: 'kill', id });
       }
     },
-    [sessions, docState.docs, settings.confirmCloseRunning],
+    [sessions, docState.docs, settings.confirmCloseRunning, showConfirm],
   );
 
   // Close a set of sessions via the single-close path (`kill` per id) so each pty is
@@ -2557,7 +2557,7 @@ export function App() {
       };
       const anyRunning = ids.some((id) => sessions.find((x) => x.id === id)?.status === 'running');
       if (anyRunning && settings.confirmCloseRunning) {
-        setConfirm({
+        showConfirm({
           title: confirmTitle,
           message: confirmMessage,
           confirmLabel: confirmTitle,
@@ -2568,7 +2568,7 @@ export function App() {
         killAll();
       }
     },
-    [sessions, settings.confirmCloseRunning],
+    [sessions, settings.confirmCloseRunning, showConfirm],
   );
 
   // Close every stale session (dead restored records) in one action. Reuses the shared
@@ -2972,7 +2972,7 @@ export function App() {
         return failed;
       };
       const permanently = (stuck: typeof nodes) => {
-        setConfirm({
+        showConfirm({
           title: 'Delete permanently',
           message: permanentConfirmMessage(stuck.map((n) => n.path)),
           confirmLabel: 'Delete permanently',
@@ -2985,7 +2985,7 @@ export function App() {
           },
         });
       };
-      setConfirm({
+      showConfirm({
         title: 'Move to Recycle Bin',
         message: trashConfirmMessage(nodes.map((n) => n.path)),
         confirmLabel: 'Move to Recycle Bin',
@@ -3000,7 +3000,7 @@ export function App() {
         },
       });
     },
-    [closeDocsForDeleted],
+    [closeDocsForDeleted, showConfirm],
   );
 
   // A file or folder was renamed or moved on disk: every file tab at or under it follows it in
@@ -3195,7 +3195,7 @@ export function App() {
       const { op, path, repoRoot, paths, targets } = intent;
       if (targets && (op === 'stageAll' || op === 'unstageAll')) return runGitFanOut(op, targets);
       if (op === 'discardUntracked' && path) {
-        setConfirm({
+        showConfirm({
           title: 'Delete untracked file',
           message: `Delete untracked file ${baseName(path)}? This cannot be undone.`,
           confirmLabel: 'Delete',
@@ -3205,7 +3205,7 @@ export function App() {
         return;
       }
       if (op === 'discardTracked' && path) {
-        setConfirm({
+        showConfirm({
           title: 'Discard changes',
           message: `Discard changes to ${baseName(path)}? This cannot be undone.`,
           confirmLabel: 'Discard',
@@ -3222,7 +3222,7 @@ export function App() {
             ? undefined
             : repos.find((r) => folderKey(r.root) === folderKey(repoRoot));
         const where = repo && repos.length >= 2 ? ` in ${repoLabel(repo, repos)}` : '';
-        setConfirm({
+        showConfirm({
           title: 'Discard all changes',
           message: `Discard all ${n} change${n === 1 ? '' : 's'}${where}? Untracked files are deleted too. This cannot be undone.`,
           confirmLabel: 'Discard all',
@@ -3233,7 +3233,7 @@ export function App() {
       }
       return runGit(op, path, repoRoot, paths);
     },
-    [runGit, runGitFanOut, discardAll, changesOfRepo, active?.repos],
+    [runGit, runGitFanOut, discardAll, changesOfRepo, active?.repos, showConfirm],
   );
 
   const changesViewModel = useMemo(
@@ -4183,7 +4183,7 @@ export function App() {
               setActiveId(id);
               setCenterView('board');
             }}
-            onConfirm={setConfirm}
+            onConfirm={showConfirm}
             agents={agents}
             activeId={activeId}
             moveGrip={{ onDragStart: sdock.onDragStart, onDragEnd: sdock.onDragEnd }}
@@ -4289,6 +4289,7 @@ export function App() {
     );
   };
 
+  const modal = slot.current;
   return (
     <div className="shell">
       <AnimatedBg />
@@ -4391,24 +4392,8 @@ export function App() {
         />
       )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
-      {confirm && (
-        <ConfirmDialog
-          state={confirm}
-          onClose={() => {
-            // W2: if a quit-confirm is open, reply cancel to the host before closing.
-            const cancelFn = quitCancelRef.current;
-            quitCancelRef.current = null;
-            cancelFn?.();
-            // A hunk discard was awaiting an answer; Cancel and Esc both arrive here.
-            const hunkReply = hunkConfirmRef.current;
-            hunkConfirmRef.current = null;
-            hunkReply?.(false);
-            const closeReply = closePromptRef.current;
-            closePromptRef.current = null;
-            closeReply?.(false);
-            setConfirm(null);
-          }}
-        />
+      {modal?.kind === 'confirm' && (
+        <ConfirmDialog key={modal.key} state={modal.state} onClose={() => slot.close(modal.key)} />
       )}
       {movePicker && (
         <ProjectPicker
@@ -4439,7 +4424,7 @@ export function App() {
             <TimedMessageDialog
               session={target}
               onClose={() => setTimedMessageFor(null)}
-              requestConfirm={setConfirm}
+              requestConfirm={showConfirm}
             />
           ) : null;
         })()}

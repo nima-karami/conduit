@@ -325,46 +325,83 @@ export async function openHistory(page, { repo } = {}) {
 }
 
 /**
- * Gracefully close the app, answering the quit-guard confirm dialog if it appears.
+ * Answer every close-guard ask (`confirmQuit`) with `proceed`, in every current and future window.
+ * The renderer's own dialog still opens; this hook's `quitDecision` settles the host's ask first.
+ * `asks()` lists every ask seen since the call, in arrival order — it survives the windows closing.
  *
- * Closing a window that owns RUNNING sessions makes the host send `confirmQuit` and wait for a
- * `quitDecision` (the in-app `[role="alertdialog"]`, NOT a native dialog) — so a bare
- * `app.close()` hangs forever. This triggers the close, replies `proceed: true` when the host
- * asks, and waits for the windows to actually go away. Resolves once the app has exited.
+ * @param {object} app Playwright Electron app handle.
+ * @param {{ proceed: boolean }} opts
+ */
+export async function answerQuitAsks(app, { proceed }) {
+  const asks = [];
+  const install = async (page) => {
+    try {
+      const windowId = await (await app.browserWindow(page)).evaluate((w) => w.id);
+      page.on('console', (msg) => {
+        const text = msg.text();
+        if (text.startsWith('__quitAsk ')) asks.push(JSON.parse(text.slice('__quitAsk '.length)));
+      });
+      await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
+      await page.evaluate(
+        ({ windowId: id, proceed: answer }) => {
+          if (window.__quitAnswerer) {
+            window.__quitAnswerer.proceed = answer;
+            return;
+          }
+          window.__quitAnswerer = { proceed: answer };
+          window.agentDeck.subscribe((m) => {
+            if (m.type !== 'confirmQuit') return;
+            console.log(
+              `__quitAsk ${JSON.stringify({ windowId: id, requestId: m.requestId, reason: m.reason })}`,
+            );
+            window.agentDeck.post({
+              type: 'quitDecision',
+              requestId: m.requestId,
+              proceed: window.__quitAnswerer.proceed,
+            });
+          });
+        },
+        { windowId, proceed },
+      );
+    } catch {
+      /* window gone before the hook landed */
+    }
+  };
+  await Promise.all(app.windows().map(install));
+  app.on('window', (page) => void install(page));
+  return { asks: async () => [...asks] };
+}
+
+/**
+ * Gracefully quit the app, answering every window's close-guard ask with proceed.
+ *
+ * A quit asks each window in turn and waits for its answer (the in-app dialog, NOT a native one),
+ * so a bare `app.close()` hangs whenever a window has a running session or a dirty file. With more
+ * than one window open, it asserts every one of them was asked (dirty-quit-guard plan, S3).
+ * Resolves once the app has exited.
  *
  * @param {object} app  Playwright Electron app handle.
- * @param {object} page Its first window's page (already bridge-tapped).
+ * @param {object} _page Its first window's page (kept for callers; the hook covers every window).
  */
-export async function closeApp(app, page) {
-  await page.evaluate(() => {
-    window.__quitAsked = false;
-    window.agentDeck.subscribe((m) => {
-      if (m.type === 'confirmQuit') window.__quitAsked = true;
-    });
-  });
-  await app.evaluate((electron) => {
-    const w = electron.BrowserWindow.getAllWindows()[0];
-    if (w) w.close();
-  });
-  // If the guard asked, answer proceed. (No ask → no running sessions → it just closes.)
-  const asked = await page
-    .waitForFunction(() => window.__quitAsked === true, null, { timeout: 4000 })
-    .then(() => true)
-    .catch(() => false);
-  if (asked) {
-    await page
-      .evaluate(() => window.agentDeck.post({ type: 'quitDecision', proceed: true }))
-      .catch(() => {});
-  }
-  // Wait for the app to actually exit (windows gone). Poll with plain setTimeout — the page
-  // closes mid-wait, so page.waitForTimeout would throw.
+export async function closeApp(app, _page) {
+  const startIds = await app
+    .evaluate((electron) => electron.BrowserWindow.getAllWindows().map((w) => w.id))
+    .catch(() => []);
+  const answerer = await answerQuitAsks(app, { proceed: true });
+  await app.evaluate((electron) => electron.app.quit()).catch(() => {});
+  // Poll with plain setTimeout — the page closes mid-wait, so page.waitForTimeout would throw.
   const deadline = Date.now() + 10000;
   while (Date.now() < deadline) {
     const n = await app
       .evaluate((electron) => electron.BrowserWindow.getAllWindows().length)
       .catch(() => 0);
-    if (n === 0) return;
+    if (n === 0) break;
     await new Promise((r) => setTimeout(r, 150));
+  }
+  if (startIds.length > 1) {
+    const asked = new Set((await answerer.asks()).map((a) => a.windowId));
+    const missed = startIds.filter((id) => !asked.has(id));
+    if (missed.length > 0) throw new Error(`closeApp: windows never asked on quit: ${missed}`);
   }
 }
 

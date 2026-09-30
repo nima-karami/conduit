@@ -22,7 +22,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assert, loadPlaywright, makeLog, REPO } from './harness.mjs';
+import { answerQuitAsks, assert, loadPlaywright, makeLog, REPO } from './harness.mjs';
 
 const log = makeLog('multi-window-restore');
 const require = createRequire(import.meta.url);
@@ -193,6 +193,7 @@ try {
     // teardown (the documented flake). Proof the quit ran = windows.json on disk; we then
     // bound app.close() and force-kill any orphaned Electron child before relaunch (the two
     // launches MUST NOT overlap — they share one userData dir + the single-instance lock).
+    await answerQuitAsks(app, { proceed: true });
     await app.evaluate((e) => e.app.quit()).catch(() => {});
     const layoutFile = join(userDataDir, 'windows.json');
     const persistDeadline = Date.now() + 15000;

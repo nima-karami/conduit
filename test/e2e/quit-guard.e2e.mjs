@@ -37,6 +37,7 @@ try {
     window.agentDeck.subscribe((m) => {
       if (m.type === 'confirmQuit') {
         window.__confirmQuitMsgs.push(m);
+        window.__lastQuitRequestId = m.requestId;
       }
     });
   });
@@ -134,7 +135,11 @@ try {
 
   // Send cancel decision.
   await page.evaluate(() => {
-    window.agentDeck.post({ type: 'quitDecision', proceed: false });
+    window.agentDeck.post({
+      type: 'quitDecision',
+      requestId: window.__lastQuitRequestId,
+      proceed: false,
+    });
   });
 
   // Give the main process a moment to process the cancel.
@@ -168,7 +173,11 @@ try {
 
   // Send proceed decision — the app should quit.
   await page.evaluate(() => {
-    window.agentDeck.post({ type: 'quitDecision', proceed: true });
+    window.agentDeck.post({
+      type: 'quitDecision',
+      requestId: window.__lastQuitRequestId,
+      proceed: true,
+    });
   });
 
   // Wait for the app to actually close (window gone).
@@ -207,15 +216,18 @@ try {
   await page2.evaluate(() => {
     window.__confirmQuitMsgs = [];
     window.agentDeck.subscribe((m) => {
-      if (m.type === 'confirmQuit') window.__confirmQuitMsgs.push(m);
+      if (m.type === 'confirmQuit') {
+        window.__confirmQuitMsgs.push(m);
+        window.__lastQuitRequestId = m.requestId;
+      }
     });
   });
 
   const sid2 = await openSession(page2, { path: REPO.replace(/\\/g, '/'), agentId: 'shell:cmd' });
   log('second session opened, id =', sid2);
 
-  // Send updateRelaunch — since app.isPackaged=false, quitAndInstall is a no-op,
-  // but needsQuitConfirm fires first and routes to confirmWithRenderer.
+  // Send updateRelaunch — since app.isPackaged=false, quitAndInstall is a no-op, but the close
+  // guard asks first.
   await page2.evaluate(() => {
     window.agentDeck.post({ type: 'updateRelaunch' });
   });
@@ -241,7 +253,11 @@ try {
 
   // Cancel — app stays open, update pending.
   await page2.evaluate(() => {
-    window.agentDeck.post({ type: 'quitDecision', proceed: false });
+    window.agentDeck.post({
+      type: 'quitDecision',
+      requestId: window.__lastQuitRequestId,
+      proceed: false,
+    });
   });
   await page2.waitForTimeout(300);
 
@@ -273,43 +289,46 @@ try {
     window.__confirmQuitMsgs = [];
   });
 
-  // Trigger close — should NOT fire confirmQuit.
+  // Every close is asked now (dirty-quit-guard spec), but with nothing running and nothing dirty
+  // the renderer answers proceed without showing a dialog. Both facts are reported over the console
+  // so they survive the page closing.
+  let askedWithoutDialog = false;
+  let dialogShown = false;
+  page2.on('console', (m) => {
+    if (m.text() === '__qg:ask') askedWithoutDialog = true;
+    if (m.text() === '__qg:dialog') dialogShown = true;
+  });
+  await page2.evaluate(() => {
+    window.agentDeck.subscribe((m) => {
+      if (m.type === 'confirmQuit') console.log('__qg:ask');
+    });
+    new MutationObserver(() => {
+      if (document.querySelector('[role="alertdialog"]')) console.log('__qg:dialog');
+    }).observe(document.body, { childList: true, subtree: true });
+  });
   await app2.evaluate((electron) => {
     const { BrowserWindow } = electron;
     const win = BrowserWindow.getAllWindows()[0];
     if (win) win.close();
   });
 
-  // Wait briefly to ensure no confirmQuit arrives before the app closes.
-  // We poll for up to 2s: either the window closes (no guard) or confirmQuit fires.
-  let appClosedWithNoPrompt = false;
-  let unexpectedConfirmQuit = false;
-  const noPromptDeadline = Date.now() + 3000;
+  let appClosed = false;
+  const noPromptDeadline = Date.now() + 10000;
   while (Date.now() < noPromptDeadline) {
-    const [windowCount, _confirmCount] = await app2
-      .evaluate((electron) => {
-        const { BrowserWindow } = electron;
-        return [BrowserWindow.getAllWindows().length, 0];
-      })
-      .catch(() => [0, 0]);
-    const confirmCount2 = await page2
-      .evaluate(() => (window.__confirmQuitMsgs || []).length)
+    const windowCount = await app2
+      .evaluate((electron) => electron.BrowserWindow.getAllWindows().length)
       .catch(() => 0);
-    if (confirmCount2 > 0) {
-      unexpectedConfirmQuit = true;
-      break;
-    }
     if (windowCount === 0) {
-      appClosedWithNoPrompt = true;
+      appClosed = true;
       break;
     }
-    // Use plain setTimeout (not page2.waitForTimeout) — the page may close
-    // mid-loop if the app quits without a guard prompt.
-    await new Promise((r) => setTimeout(r, 200));
+    // Plain setTimeout — the page closes mid-loop once the app quits.
+    await new Promise((r) => setTimeout(r, 100));
   }
-  assert(!unexpectedConfirmQuit, 'confirmQuit must NOT fire when no running sessions on close');
-  assert(appClosedWithNoPrompt, 'App should close without prompt when no running sessions');
-  log('no prompt with no running sessions, app closed cleanly ✓');
+  assert(!dialogShown, 'No dialog may show when nothing is running or dirty on close');
+  assert(askedWithoutDialog, 'The close guard must still ask the renderer (confirmQuit)');
+  assert(appClosed, 'App should close within 10 s when nothing is running or dirty');
+  log('asked, no dialog, app closed cleanly ✓');
 
   log('PASS ✓ W2 quit-guard: all assertions passed');
   process.exit(0);
