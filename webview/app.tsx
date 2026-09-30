@@ -1320,8 +1320,13 @@ export function App() {
   // it binds, so the editor wins its own keys and app shortcuts fire for the rest.
   useEffect(() => {
     // navGoToTab is one action but needs the pressed digit; read it at dispatch. A digit past
-    // the open-doc count is a no-op that lets the key through.
-    const runnerFor = (id: string, e: KeyboardEvent): (() => void) | undefined => {
+    // the open-doc count lets the key through, except in xterm: the digits are reserved there
+    // (decide-shortcut.ts), so a key the shell would read as ESC is swallowed.
+    const runnerFor = (
+      id: string,
+      e: KeyboardEvent,
+      inTerminal: boolean,
+    ): (() => void) | undefined => {
       if (id !== 'navGoToTab') return actionMap[id];
       const sessionId = activeIdRef.current ?? '';
       const doc = groupDocs(
@@ -1329,7 +1334,8 @@ export function App() {
         sessionId,
         activeGroupOf(docStateRef.current, sessionId),
       )[Number(e.key) - 1];
-      return doc ? () => activateDocByUser(doc.id, sessionId) : undefined;
+      if (doc) return () => activateDocByUser(doc.id, sessionId);
+      return inTerminal ? () => {} : undefined;
     };
     const dispatch = (
       e: KeyboardEvent,
@@ -1340,7 +1346,7 @@ export function App() {
         if (!matchCombo(e, combo)) continue;
         const ctx = { ...where, defaultPrevented: e.defaultPrevented, combo };
         if (!decideShortcut(ctx, action.id)) continue;
-        const run = runnerFor(action.id, e);
+        const run = runnerFor(action.id, e, where.inTerminal);
         if (!run) continue;
         e.preventDefault();
         e.stopPropagation();
