@@ -159,8 +159,8 @@ jobs:
         # Outside the checkout: scenarios open this repo, and stray dirs in it show up as changes.
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'e2e-out'
-          New-Item -ItemType Directory -Force "$outesults", "$outartifacts" | Out-Null
-          node test/e2e/run-smoke.mjs @($env:E2E_NAMES -split ' ') --json "$outesultsshard-$env:SHARD.json" --artifacts "$outartifacts" --retry
+          New-Item -ItemType Directory -Force "$out/results", "$out/artifacts" | Out-Null
+          node test/e2e/run-smoke.mjs @($env:E2E_NAMES -split " ") --json "$out/results/shard-$env:SHARD.json" --artifacts "$out/artifacts" --retry
       - uses: actions/upload-artifact@v4
         if: always()
         with:
