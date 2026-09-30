@@ -6,6 +6,7 @@ import {
   createQuitGrant,
   GRANT_TTL_MS,
   type GuardAsk,
+  openWindowIds,
   SHOWN_TIMEOUT_MS,
 } from '../../src/close-guard';
 
@@ -542,6 +543,25 @@ describe('createCloseGuard — re-entrancy', () => {
       ['focus', 1],
       ['focus', 1],
     ]);
+  });
+});
+
+describe('openWindowIds', () => {
+  const live = () => true;
+  it('leaves out a window whose close already proceeded (S4: it is not asked again)', () => {
+    expect(openWindowIds([1, 2, 3], live, new Set([1]))).toEqual([2, 3]);
+  });
+
+  it('leaves out a destroyed window', () => {
+    expect(openWindowIds([1, 2, 3], (id) => id !== 2, new Set())).toEqual([1, 3]);
+  });
+
+  it('puts the focused window first', () => {
+    expect(openWindowIds([1, 2, 3], live, new Set(), 3)).toEqual([3, 1, 2]);
+  });
+
+  it('a focused window that is closing does not come back', () => {
+    expect(openWindowIds([1, 2], live, new Set([2]), 2)).toEqual([1]);
   });
 });
 

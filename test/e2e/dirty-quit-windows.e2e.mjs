@@ -139,27 +139,44 @@ await runPhases('dirty-quit-windows', {
     await openSession(page, { path: REPO });
     const w2 = await newWindow(app, page);
     await openSession(w2.page, { path: REPO });
-    const answerer = await answerQuitAsks(app, { proceed: true });
-    const ids = await app.evaluate((e) => e.BrowserWindow.getAllWindows().map((w) => w.id));
-    await app.evaluate((e) => {
-      for (const w of e.BrowserWindow.getAllWindows()) w.close();
+    await answerQuitAsks(app, { proceed: true });
+    // Recorded as the host sends them: an ask to a window already unloading never reaches its
+    // renderer, so the renderer-side answerer can't see a second ask to the window that closed.
+    const sent = [];
+    app.on('console', (msg) => {
+      const text = msg.text();
+      if (text.startsWith('__hostAsk ')) sent.push(JSON.parse(text.slice('__hostAsk '.length)));
     });
+    // Closed in creation order: a quit asks unfocused windows in that order too, so the window that
+    // already answered is first in line while it is still unloading (the order that exposes S4).
+    const ids = await app.evaluate((e) =>
+      e.BrowserWindow.getAllWindows()
+        .sort((a, b) => a.id - b.id)
+        .map((w) => {
+          const send = w.webContents.send.bind(w.webContents);
+          w.webContents.send = (channel, msg, ...rest) => {
+            if (msg?.type === 'confirmQuit')
+              console.log(`__hostAsk ${JSON.stringify({ windowId: w.id, reason: msg.reason })}`);
+            return send(channel, msg, ...rest);
+          };
+          return w.id;
+        }),
+    );
+    await app.evaluate((e, order) => {
+      for (const id of order) e.BrowserWindow.fromId(id)?.close();
+    }, ids);
     assert(await waitExit(app, 15000), 'the app exits after both windows close (S4)');
-    const asks = await answerer.asks();
-    const asked = asks.map((a) => a.windowId);
+    // The second close queues behind the first, then finds itself the last window and becomes a
+    // quit — which must not ask the window that already answered its own close again (plan T6.1).
+    const expected = [
+      { windowId: ids[0], reason: 'windowClose' },
+      { windowId: ids[1], reason: 'quit' },
+    ];
     assert(
-      ids.every((id) => asked.includes(id)),
-      `every window was asked: ${JSON.stringify(asks)}`,
+      JSON.stringify(sent) === JSON.stringify(expected),
+      `each window asked exactly once, in close order: ${JSON.stringify(sent)}`,
     );
-    assert(
-      new Set(asks.map((a) => a.requestId)).size === asks.length,
-      `one ask per request: ${JSON.stringify(asks)}`,
-    );
-    assert(
-      asks.at(-1)?.reason === 'quit',
-      `the queued close found itself the last window and became a quit: ${JSON.stringify(asks)}`,
-    );
-    log(`closeAll ✓ asks=${JSON.stringify(asks)}`);
+    log(`closeAll ✓ asks=${JSON.stringify(sent)}`);
   },
 
   async update({ log, track }) {

@@ -66,6 +66,21 @@ type Queued = { kind: 'window'; id: number } | { kind: 'update'; firstId: number
 // `abort` (S2), and a gone one has no renderer.
 type Outcome = 'answered' | 'timedOut' | 'gone';
 
+/**
+ * The windows that will stay open, focused first. A window whose close already proceeded is still
+ * alive until its 'closed' event, but it has answered — a later quit must neither count nor ask it (S4).
+ */
+export function openWindowIds(
+  ids: Iterable<number>,
+  isLive: (id: number) => boolean,
+  closing: ReadonlySet<number>,
+  focused?: number,
+): number[] {
+  const open = [...ids].filter((id) => isLive(id) && !closing.has(id));
+  if (focused === undefined || !open.includes(focused)) return open;
+  return [focused, ...open.filter((id) => id !== focused)];
+}
+
 export function createCloseGuard(deps: CloseGuardDeps): CloseGuard {
   let lastRequestId = 0;
   let guard: AppGuard | WindowGuard | null = null;

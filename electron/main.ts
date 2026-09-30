@@ -28,7 +28,7 @@ import { scopeFromSpawnArgs } from '../src/agent-scope';
 import { isAppIndexUrl } from '../src/app-navigation';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
-import { createCloseGuard, createQuitGrant, GRANT_TTL_MS } from '../src/close-guard';
+import { createCloseGuard, createQuitGrant, GRANT_TTL_MS, openWindowIds } from '../src/close-guard';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
 import { loadAgents, readBlob, readFileState } from '../src/config';
 import { searchContentFs } from '../src/content-search-fs';
@@ -2306,18 +2306,17 @@ app.whenReady().then(() => {
     const w = windows.get(id);
     return w && !w.isDestroyed() ? w : undefined;
   };
-  // A proceeded window stays in the window map until its 'closed' event, which lands after the
-  // guard has already drained its queue: count only the windows that will stay open (S4).
-  const openWindowCount = () =>
-    [...windows.keys()].filter((id) => liveWindow(id) && !windowConfirmed.has(id)).length;
+  const openWindows = () =>
+    openWindowIds(
+      windows.keys(),
+      (id) => !!liveWindow(id),
+      windowConfirmed,
+      BrowserWindow.getFocusedWindow()?.id,
+    );
+  const openWindowCount = () => openWindows().length;
 
   const closeGuard = createCloseGuard({
-    windowIds: () => {
-      const ids = [...windows.keys()].filter((id) => liveWindow(id));
-      const focused = BrowserWindow.getFocusedWindow()?.id;
-      if (focused === undefined || !ids.includes(focused)) return ids;
-      return [focused, ...ids.filter((id) => id !== focused)];
-    },
+    windowIds: openWindows,
     prepare: (id) => {
       const w = liveWindow(id);
       if (!w) return;
