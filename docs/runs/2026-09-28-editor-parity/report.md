@@ -133,3 +133,22 @@ items were gated with it. Unattended from "I won't be here".
   - one edit inside `selectionToHtml` (markdown-viewer.tsx) → 41 of 176 scenarios (markdown-viewer, the
     core smoke set, and the always-run relaunch/multi-window scenarios), all PASS, verify success.
 - Spec archived: `docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md`.
+
+## Closing out remote e2e — 2026-09-30 (unattended)
+
+- **`e2e:remote` survives GitHub API hiccups** (`36a7073`): read-only `gh` calls retry 5xx/429/network with
+  backoff; push and dispatch don't (no double runs). Proof run 36721753030 rode out two real HTTP 502s.
+- **The "in-shard leak" was a product race** (`9d15cf0`): a settings edit made within the 250 ms debounce
+  before quitting was lost (host writes `settings.json` synchronously on quit; the edit only arrived via
+  `pagehide`). Deterministic on one runner region. Fixed: the renderer flushes pending settings when the
+  host asks to quit/close, and again just before answering proceed; new e2e `settings-quit-flush`
+  guards the class. `timed-messages` had its own race (read a dump before the reader wrote it) — fixed.
+- Gates: final `--affected` run 36735585380 flaky-passed (170 PASS, 1 FLAKY paste, 8 EXCLUDED, verify
+  success) + 8 excluded scenarios locally PASS. origin/main = `9d15cf0`.
+
+### Still queued for the user
+- A setting changed within 250 ms of an OS logoff can still be lost (logoff skips the quit prompt by
+  design); root fix is a host-side debounce of the disk write.
+- `settings.json` async and sync writes share one temp path (spurious `[persist] failed` log, no data loss).
+- Under `CONDUIT_E2E` the logger writes to a fixed temp folder outside the test profile.
+- `--affected` selectivity: revisit once a few real main nightlies exist.
