@@ -87,16 +87,23 @@ jobs:
       - run: npm ci
         env:
           HUSKY: '0'
+      # Electron 43 has no postinstall: it downloads on first launch, which would land inside the
+      # first scenario's timeout.
+      - run: node node_modules/electron/install.js
       - run: npm run build
       # loadPlaywright (harness.mjs) looks in node_modules first. Playwright is deliberately not a
       # dependency, and the hosted npm cache is not where it looks for npx installs.
       - run: npm install --no-save --ignore-scripts playwright@${{ env.PLAYWRIGHT_VERSION }}
-      - name: Cache diagnostics (spike)
+      - if: contains(format(' {0} ', matrix.names), ' go-lsp ')
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - if: contains(format(' {0} ', matrix.names), ' go-lsp ')
         shell: pwsh
         run: |
-          "npm cache: $(npm config get cache)"
-          "LOCALAPPDATA: $env:LOCALAPPDATA  electron_config_cache: $env:electron_config_cache"
-          Get-ChildItem $env:LOCALAPPDATA, $env:USERPROFILE -Filter 'electron-v*.zip' -Recurse -Depth 5 -ErrorAction SilentlyContinue | Select-Object FullName, Length
+          go install golang.org/x/tools/gopls@latest
+          Join-Path (go env GOPATH) bin >> $env:GITHUB_PATH
       # Scenarios build scratch repos and commit; a hosted runner has no git identity.
       - run: |
           git config --global user.name "conduit-e2e"
@@ -105,6 +112,10 @@ jobs:
         shell: pwsh
         env:
           NAMES: ${{ matrix.names }}
+          # The hosted TEMP is an 8.3 short path (RUNNER~1), which realpath expands; the
+          # workspace confinement checks then read every scratch repo as outside the workspace.
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
         run: |
           New-Item -ItemType Directory -Force results | Out-Null
           node test/e2e/run-smoke.mjs --exact @($env:NAMES -split ' ') --json "results/shard-${{ matrix.shard }}.json"
@@ -135,6 +146,7 @@ jobs:
       - run: npm ci
         env:
           HUSKY: '0'
+      - run: node node_modules/electron/install.js
       - run: npm run build
       - run: npm install --no-save --ignore-scripts playwright@${{ env.PLAYWRIGHT_VERSION }}
       - run: |
@@ -142,6 +154,9 @@ jobs:
           git config --global user.email "conduit-e2e@users.noreply.github.com"
       - name: Probe
         shell: pwsh
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
         run: |
           $env:E2E_PROBE_DIR = Join-Path $env:RUNNER_TEMP 'probe'
           New-Item -ItemType Directory -Force $env:E2E_PROBE_DIR | Out-Null
