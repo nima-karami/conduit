@@ -91,35 +91,77 @@ describe('lastNightly', () => {
 });
 
 describe('newestArtifact', () => {
+  const art = (
+    id: number,
+    created: string,
+    branch = 'main',
+    expired = false,
+    name = 'e2e-state',
+  ) => ({
+    id,
+    name,
+    expired,
+    created_at: created,
+    workflow_run: { id: id * 10, head_branch: branch },
+  });
+
   it('takes the newest non-expired artifact of that name, never judging the run', () => {
     const list = {
       artifacts: [
-        { id: 1, name: 'e2e-state', expired: false, created_at: daysAgo(2) },
-        { id: 2, name: 'e2e-state', expired: true, created_at: daysAgo(0) },
-        { id: 3, name: 'e2e-state', expired: false, created_at: daysAgo(1) },
-        { id: 4, name: 'other', expired: false, created_at: daysAgo(0) },
+        art(1, daysAgo(2)),
+        art(2, daysAgo(0), 'main', true),
+        art(3, daysAgo(1)),
+        art(4, daysAgo(0), 'main', false, 'other'),
       ],
     };
     expect(newestArtifact(list, 'e2e-state')?.id).toBe(3);
     expect(newestArtifact({ artifacts: [] }, 'e2e-state')).toBeNull();
   });
+
+  it('only from a run on main: a nightly dispatched on a ci/e2e ref never becomes the state', () => {
+    const list = {
+      artifacts: [
+        art(5, daysAgo(0), 'ci/e2e/abc1234-deadbeef'),
+        art(6, daysAgo(0.5), 'feat/x'),
+        art(7, daysAgo(3)),
+        { id: 8, name: 'e2e-state', expired: false, created_at: daysAgo(0) },
+      ],
+    };
+    expect(newestArtifact(list, 'e2e-state')?.id).toBe(7);
+    expect(newestArtifact({ artifacts: [art(5, daysAgo(0), 'ci/e2e/x')] }, 'e2e-state')).toBeNull();
+  });
 });
 
 describe('staleCiRefs', () => {
-  const ref = (name: string, commitAt: string, runs: { status: string; created_at: string }[]) => ({
-    ref: `ci/e2e/${name}`,
-    commitAt,
-    runs,
-  });
+  const ref = (
+    name: string,
+    createdAt: string | null,
+    commitAt: string,
+    runs: { status: string; created_at: string }[],
+  ) => ({ ref: `ci/e2e/${name}`, createdAt, commitAt, runs });
 
-  it('sweeps a ref older than 24 h whose run never started, and one whose last run is old', () => {
+  it('sweeps a ref created over 24 h ago whose run never started, and one whose last run is old', () => {
     const refs = [
-      ref('never-ran', daysAgo(3), []),
-      ref('old-run', daysAgo(5), [{ status: 'completed', created_at: daysAgo(2) }]),
-      ref('fresh-run', daysAgo(5), [{ status: 'completed', created_at: daysAgo(0.5) }]),
-      ref('young-commit', daysAgo(0.2), []),
-      ref('in-flight', daysAgo(9), [{ status: 'in_progress', created_at: daysAgo(3) }]),
+      ref('never-ran', daysAgo(2), daysAgo(3), []),
+      ref('old-run', daysAgo(5), daysAgo(5), [{ status: 'completed', created_at: daysAgo(2) }]),
+      ref('fresh-run', daysAgo(5), daysAgo(5), [{ status: 'completed', created_at: daysAgo(0.5) }]),
+      ref('young-commit', daysAgo(0.2), daysAgo(0.2), []),
+      ref('in-flight', daysAgo(9), daysAgo(9), [{ status: 'in_progress', created_at: daysAgo(3) }]),
     ];
     expect(staleCiRefs(refs, { now: NOW })).toEqual(['ci/e2e/never-ran', 'ci/e2e/old-run']);
+  });
+
+  it('an old commit pushed moments ago, its dispatch not yet visible, is kept', () => {
+    expect(staleCiRefs([ref('just-pushed', daysAgo(0.001), daysAgo(4), [])], { now: NOW })).toEqual(
+      [],
+    );
+  });
+
+  it('with no creation record, falls back to the commit time', () => {
+    const refs = [
+      ref('unknown-old', null, daysAgo(3), []),
+      ref('unknown-young', null, daysAgo(0.5), []),
+    ];
+    expect(staleCiRefs(refs, { now: NOW })).toEqual(['ci/e2e/unknown-old']);
   });
 });

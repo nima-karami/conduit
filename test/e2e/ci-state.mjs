@@ -69,10 +69,13 @@ export function lastNightly(rows, { sha, runId, at }) {
 
 /**
  * The newest non-expired artifact called `name` from a `GET /actions/artifacts?name=` payload. By
- * creation time only: a red nightly's state is as current as a green one's.
+ * creation time only: a red nightly's state is as current as a green one's. Only a run on `main`
+ * counts: a `mode=nightly` dispatch on any other ref must not become every later run's state.
  */
 export function newestArtifact(list, name) {
-  const live = (list?.artifacts ?? []).filter((a) => a.name === name && !a.expired);
+  const live = (list?.artifacts ?? []).filter(
+    (a) => a.name === name && !a.expired && a.workflow_run?.head_branch === 'main',
+  );
   live.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   return live[0] ?? null;
 }
@@ -80,18 +83,23 @@ export function newestArtifact(list, name) {
 const IN_FLIGHT = new Set(['queued', 'in_progress', 'waiting', 'pending', 'requested']);
 
 /**
- * `ci/e2e/*` refs the nightly sweep deletes: nothing in flight on them, and older than `maxAgeMs`.
- * A ref has no creation time, so its age is its newest run's, or its commit's if no run ever
- * started — the case the sweep exists for (a run's own `cleanup` job deletes the rest).
+ * `ci/e2e/*` refs the nightly sweep deletes: nothing in flight on them, and neither created nor run
+ * within `maxAgeMs`. `createdAt` is the ref's `branch_creation` entry in the repository activity
+ * log: the commit can be days older than the push (`e2e:remote` on an old commit), and between the
+ * push and its dispatch showing up the ref has no run yet. Only without a creation entry does the
+ * commit time stand in. A run's own `cleanup` job deletes the rest.
  *
- * @param {{ ref: string, commitAt: string, runs: { status: string, created_at: string }[] }[]} refs
+ * @param {{ ref: string, createdAt: string | null, commitAt: string,
+ *   runs: { status: string, created_at: string }[] }[]} refs
  */
 export function staleCiRefs(refs, { now, maxAgeMs = DAY_MS }) {
   return refs
-    .filter(({ commitAt, runs }) => {
+    .filter(({ createdAt, commitAt, runs }) => {
       if (runs.some((r) => IN_FLIGHT.has(r.status))) return false;
-      const times = runs.map((r) => Date.parse(r.created_at));
-      const born = times.length ? Math.max(...times) : Date.parse(commitAt);
+      const born = Math.max(
+        Date.parse(createdAt ?? commitAt),
+        ...runs.map((r) => Date.parse(r.created_at)),
+      );
       return now - born > maxAgeMs;
     })
     .map((r) => r.ref);

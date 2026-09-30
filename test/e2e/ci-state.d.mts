@@ -40,11 +40,20 @@ export function lastNightly(
   rows: { name: string; status: string }[],
   o: { sha: string; runId: number; at: string },
 ): LastNightly;
-export function newestArtifact<T extends { name: string; expired: boolean; created_at: string }>(
-  list: { artifacts?: T[] } | null,
-  name: string,
-): T | null;
+export function newestArtifact<
+  T extends {
+    name: string;
+    expired: boolean;
+    created_at: string;
+    workflow_run?: { head_branch?: string };
+  },
+>(list: { artifacts?: T[] } | null, name: string): T | null;
 export function staleCiRefs(
-  refs: { ref: string; commitAt: string; runs: { status: string; created_at: string }[] }[],
+  refs: {
+    ref: string;
+    createdAt: string | null;
+    commitAt: string;
+    runs: { status: string; created_at: string }[];
+  }[],
   o: { now: number; maxAgeMs?: number },
 ): string[];
