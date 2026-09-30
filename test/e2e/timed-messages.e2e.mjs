@@ -133,7 +133,14 @@ try {
   assert(onTime.delivered === true, 'the on-time fire must report delivered');
   assert(onTime.late === false, `an on-time fire must not be late (got ${JSON.stringify(onTime)})`);
 
-  const dumped = readFileSync(dump, 'utf8');
+  // `delivered` means the host wrote to the PTY, not that the reader has written its dump yet: a
+  // read straight after it raced PowerShell and found the file still empty.
+  let dumped = '';
+  for (const until = Date.now() + 10_000; Date.now() < until; ) {
+    dumped = readFileSync(dump, 'utf8');
+    if (/enter=/i.test(dumped)) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
   assert(/text=True/i.test(dumped), `the shell did not receive the message: ${dumped}`);
   assert(/enter=True/i.test(dumped), `the shell did not receive the Enter: ${dumped}`);
   log('message AND Enter both reached the real shell ✓');
