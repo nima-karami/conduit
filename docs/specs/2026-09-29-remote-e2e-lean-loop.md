@@ -231,6 +231,13 @@ an overlap only queues jobs, it never cancels a run.
     the final `cleanup` job (`if: always()`, deletes `github.ref` when it starts with
     `refs/heads/ci/e2e/`) and the sweep job get `contents: write`.
   - Must exist on the default branch before it can be dispatched (Slice 0 lands it first).
+  - A `verify` job calls `verify.yml` (`workflow_call`; input `verify`, default true) and is part of
+    the verdict: a failed verify makes the run `failed` (exit 1) and the summary says so. It is the
+    remote integration gate while local `npm run verify` is paused.
+  - `test/e2e/remote-exclusions.json` (`{ "<name>": "<reason>" }`) lists scenarios the hosted
+    runner can't run. `prepare` drops them from the plan and the result lists each as `EXCLUDED`
+    with its reason (never silently); EXCLUDED is neutral to the verdict, but a selection with
+    nothing left to run is `failed`, like all-SKIP.
 - **Scenario status:**
   - `PASS`, `SKIP`, `FAIL` (runner exit 1 = assertion, 2 = uncaught exception — both are test
     failures), `TIMEOUT` (the harness watchdog's exit 124, or the runner's 210 s kill), `FLAKY`,
@@ -262,7 +269,10 @@ an overlap only queues jobs, it never cancels a run.
   dir is removed. Uploaded only for failures, kept 7 days. Screenshot of a hidden (`show:false`)
   window works via `page.screenshot` (**Measured**, Slice 0) at 1.3–7.6 s per window, so it is
   taken only on failure, time-capped. Tracing is **snapshots-only, started once the first window is
-  ready** (Slice 0 results, §2).
+  ready** (Slice 0 results, §2). Every app is traced and its trace saved at teardown; screenshots
+  come from the apps still open on the failure path (`finishScenario`, `runScenario` and the
+  auto-save helpers capture before their own teardown). A scenario that closes its app itself
+  before exiting non-zero leaves its trace and log, not a screenshot.
 
 | Data / state | Produced by | Consumed by | Both in scope? |
 |---|---|---|---|
@@ -287,7 +297,7 @@ an overlap only queues jobs, it never cancels a run.
 | Run cancelled | `cancelled`, exit 2, even though report wrote INFRA rows; `cleanup` still deletes the ref |
 | Scenario hangs | Harness watchdog at 200 s captures screenshot + trace and exits TIMEOUT; the runner's 210 s kill is the backstop (log only); orphan sweep, one retry |
 | Scenario exits with its app still open (a direct-exit scenario's assertion path) | `finishScenario` captures that app before exiting; bare `process.exit` in a scenario fails a unit guard |
-| Fails only remotely | FAIL with artifacts. Known env differences (Slice 0, §2): runner display smaller than saved window bounds; the window has no OS focus (xterm focus reports, focus-dependent and non-hidden scenarios); hover reveal in `review-mode-pane`. Fixed in the workflow: 8.3 `TEMP`, lazy Electron download, depth-1 clone, no Go, npx cache location |
+| Fails only remotely | FAIL with artifacts. Known env differences (Slice 0, §2): runner display smaller than saved window bounds; the window has no OS focus (xterm focus reports, focus-dependent and non-hidden scenarios); hover reveal in `review-mode-pane`. Fixed in the workflow: 8.3 `TEMP`, lazy Electron download, depth-1 clone, no Go, npx cache location. Those that still fail after a bounded attempt to make them runner-independent are in `test/e2e/remote-exclusions.json`: skipped remotely, listed EXCLUDED with the reason, still runnable locally one at a time |
 | Hosted queue > 10 min | Keep waiting and print state every minute (queue time doesn't count toward `--timeout`); `--no-wait` returns the URL, exit 3 |
 | Client killed (Ctrl-C) mid-wait | Run continues; its `cleanup` job deletes the ref |
 | `gh` unauthenticated / offline | Exit 2 with the fix; no local full-suite fallback |
@@ -325,7 +335,8 @@ an overlap only queues jobs, it never cancels a run.
   - local exact-name single instance with lock + priority in `launchElectron`;
   - `run-smoke` local refusal;
   - runner comment corrected;
-  - `timings.seed.json`.
+  - `timings.seed.json`;
+  - the `verify` job in the verdict and `remote-exclusions.json` (Slice 0 conductor decisions).
 - **v1:**
   - nightly + `e2e-state`;
   - `--affected` + coverage map + the core smoke set (`core-smoke.json`);

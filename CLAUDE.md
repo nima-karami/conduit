@@ -152,12 +152,12 @@ discoverable by reading the tree.
 - **`node-pty` is `@lydell/node-pty`** (prebuilt binaries, no C++ toolchain). It
   must match Electron's ABI; rebuild from source only via `npm run rebuild`
   (needs Python + VS Build Tools). **Pinned exactly** because it is a pre-release — bump it
-  only with the smoke suite, never as part of a routine `npm update`.
+  only with a remote full e2e run, never as part of a routine `npm update`.
 - **A loaded machine fails the PTY e2es the way a broken PTY does.** `scrollback`,
   `terminal-drop` and `git-blame` all assert "the shell echoed what we typed", so leftover
   `cmd.exe`/`conhost` from earlier runs starve ConPTY and they fail together — which reads
   exactly like a node-pty/xterm regression and has twice sent someone bisecting the wrong
-  package. Re-run a failure ALONE on a quiet machine before believing it. Never clean up by
+  package. Confirm a local failure with `npm run e2e:remote -- <name>` before believing it. Never clean up by
   killing processes by NAME: the user's own Claude Code sessions run under `cmd.exe`, and a
   blanket `Get-Process cmd | Stop-Process` kills their work. Scenario teardown is already
   PID-scoped (`killAppTree` in `test/e2e/harness.mjs`) — let it do the job.
@@ -167,7 +167,16 @@ discoverable by reading the tree.
   the code under test; never rely on the platform. (v0.34.0's first tag failed CI this way.)
 - **Two tsconfigs** (host + webview): `npm run typecheck` runs both — a change can
   pass one and fail the other.
-- **Host/PTY/IPC-boundary items use `npm run test:smoke`** instead of marking `needs-human-smoke` — write a new `test/e2e/<name>.e2e.mjs` scenario on the shared harness (`test/e2e/harness.mjs`). The runner launches the app **hidden** (`CONDUIT_E2E=1` → `show:false` in `main.ts`) so the suite runs in the background; `attention.e2e.mjs` opts out (it needs a real focusable window). Inner loop: filter to one scenario, e.g. `node test/e2e/run-smoke.mjs quit-guard` (~30s); full suite is the pre-integration regression check.
+- **Host/PTY/IPC-boundary items get an e2e scenario** instead of `needs-human-smoke` — a new
+  `test/e2e/<name>.e2e.mjs` on the shared harness. **The suite runs remotely, never here:**
+  `npm run e2e:remote -- --full | <names…>` (sharded `windows-latest`, ~10 min; result JSON to
+  `$E2E_EVIDENCE_DIR`; `--affected` is v1). **Locally, ONE scenario by exact name:**
+  `npm run e2e -- <name>`; more than one refuses. `launchElectron` holds a machine-wide lock
+  (a second run waits and names the owner) and runs the app BelowNormal — launch only through it,
+  exit only through `finishScenario` (`test/unit/e2e-harness-guards.test.ts`). Scenarios that need
+  real OS focus or a big display are skipped remotely and listed EXCLUDED
+  (`test/e2e/remote-exclusions.json`); run those locally. Spec:
+  `docs/specs/2026-09-29-remote-e2e-lean-loop.md`.
 - **Docs layout is a contract (ADR 0003), not a free-for-all.** `docs/adr/NNNN-slug.md`
   = durable decisions; `docs/specs/YYYY-MM-DD-slug.md` = active feature specs (with
   `status:`/`date:` frontmatter + a row in `docs/specs/INDEX.md`), moved to
