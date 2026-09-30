@@ -544,6 +544,7 @@ export async function answerQuitAsks(app, { proceed }) {
  * @param {object} _page Its first window's page (kept for callers; the hook covers every window).
  */
 export async function closeApp(app, _page) {
+  await stopCoverage(app);
   await stopTrace(app);
   const startIds = await app
     .evaluate((electron) => electron.BrowserWindow.getAllWindows().map((w) => w.id))
