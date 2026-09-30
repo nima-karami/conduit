@@ -9,6 +9,22 @@ run-name: e2e ${{ inputs.selection || 'full' }} ${{ inputs.nonce || github.event
 on:
   schedule:
     - cron: '23 8 * * *'
+  # release.yml gates the build on this (spec §14 Q2); the report job fails the call unless the run
+  # is passed or flaky-passed. A called run's github.ref is the caller's tag, so `cleanup` skips.
+  workflow_call:
+    inputs:
+      selection:
+        type: string
+        default: full
+      scenarios:
+        type: string
+        default: ''
+      shards:
+        type: string
+        default: '0'
+      verify:
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       selection:
