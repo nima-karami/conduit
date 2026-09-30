@@ -2306,6 +2306,10 @@ app.whenReady().then(() => {
     const w = windows.get(id);
     return w && !w.isDestroyed() ? w : undefined;
   };
+  // A proceeded window stays in the window map until its 'closed' event, which lands after the
+  // guard has already drained its queue: count only the windows that will stay open (S4).
+  const openWindowCount = () =>
+    [...windows.keys()].filter((id) => liveWindow(id) && !windowConfirmed.has(id)).length;
 
   const closeGuard = createCloseGuard({
     windowIds: () => {
@@ -2358,7 +2362,7 @@ app.whenReady().then(() => {
       if (!w) return;
       // Its sibling vanished mid-guard, so this close is now a quit and its sessions are kept for
       // restore (dirty-quit-guard plan, critic nit).
-      if (windows.size === 1 && process.platform !== 'darwin') {
+      if (openWindowCount() === 1 && process.platform !== 'darwin') {
         quitGrant.issue();
         setImmediate(() => app.quit());
         return;
@@ -2386,7 +2390,7 @@ app.whenReady().then(() => {
   // Closing the last window is a quit (its sessions are kept for restore); closing any other window
   // ends only that window's sessions. darwin keeps the app alive with no windows.
   const closeDecision = (w: BrowserWindow) => {
-    if (windows.size === 1 && process.platform !== 'darwin') app.quit();
+    if (openWindowCount() === 1 && process.platform !== 'darwin') app.quit();
     else closeGuard.requestWindowClose(w.id);
   };
 
