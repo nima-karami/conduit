@@ -44,6 +44,7 @@ import { basename, join } from 'node:path';
 import {
   assert,
   closeApp,
+  finishScenario,
   launchApp,
   makeLog,
   openSession,
@@ -58,7 +59,7 @@ const log = makeLog(NAME);
 
 if (process.platform !== 'win32') {
   console.log(`[${NAME}] SKIP — suite is Windows-only (non-win32 platform)`);
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-mle-'));
@@ -800,4 +801,4 @@ if (launched) {
   }
 }
 // Temp dirs are left to the OS.
-process.exit(code);
+await finishScenario(code);

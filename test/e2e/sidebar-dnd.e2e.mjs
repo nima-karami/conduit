@@ -19,7 +19,8 @@ import { join } from 'node:path';
 import {
   assert,
   createProject,
-  loadPlaywright,
+  finishScenario,
+  launchElectron,
   makeLog,
   REPO,
   shutdownApp,
@@ -28,17 +29,16 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[sidebar-dnd] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('sidebar-dnd');
 
-const { _electron } = loadPlaywright();
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 
 async function launchOnDir(userDataDir) {
-  const app = await _electron.launch({
+  const app = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
@@ -203,11 +203,11 @@ try {
   log('  Scenarios 1 & 2 NEEDS-HUMAN-SMOKE: real-mouse card / header drag');
   log('  Scenario 3 PASS: project collapse keyed on its id + reload persistence');
   await shutdownAll();
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) console.log('[sidebar-dnd] FAIL ✗', e.message);
   else console.error('[sidebar-dnd] ERROR:', e?.message || e, e?.stack ?? '');
   await shutdownAll().catch(() => {});
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 }

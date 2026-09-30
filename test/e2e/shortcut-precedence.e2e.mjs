@@ -10,11 +10,19 @@
  * for every app shortcut.
  */
 import { openViaTree } from './goto-matrix.mjs';
-import { assert, closeApp, launchApp, makeLog, openSession, REPO } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+  REPO,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[shortcut-precedence] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 delete process.env.CONDUIT_E2E; // real, focusable window
@@ -116,5 +124,5 @@ try {
 } catch (err) {
   console.error('[shortcut-precedence] FAIL', err);
   if (launched) await closeApp(launched.app, launched.page).catch(() => {});
-  process.exit(1);
+  await finishScenario(1);
 }

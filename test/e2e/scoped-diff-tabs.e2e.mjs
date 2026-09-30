@@ -24,6 +24,7 @@ import {
 import {
   assert,
   closeApp,
+  finishScenario,
   launchApp,
   makeLog,
   openReview,
@@ -34,7 +35,7 @@ import {
 const NAME = 'scoped-diff-tabs';
 if (process.platform !== 'win32') {
   console.log(`[${NAME}] SKIP — suite is Windows-only (non-win32 platform)`);
-  process.exit(0);
+  await finishScenario(0);
 }
 const log = makeLog(NAME);
 
@@ -523,4 +524,4 @@ try {
 } catch {
   /* already gone */
 }
-process.exit(code);
+await finishScenario(code);

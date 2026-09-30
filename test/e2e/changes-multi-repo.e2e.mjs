@@ -13,6 +13,7 @@ import { changeRow, installTabHelpers } from './changes-fixture.mjs';
 import {
   assert,
   closeApp,
+  finishScenario,
   launchApp,
   makeLog,
   openChangesTab,
@@ -27,7 +28,7 @@ const log = makeLog(NAME);
 
 if (process.platform !== 'win32') {
   console.log(`[${NAME}] SKIP — suite is Windows-only (non-win32 platform)`);
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const PER_REPO_TITLE = 'Works on one repo. Right-click a repo header, or switch to Active repo.';
@@ -690,4 +691,4 @@ try {
 } catch {
   /* already gone */
 }
-process.exit(code);
+await finishScenario(code);

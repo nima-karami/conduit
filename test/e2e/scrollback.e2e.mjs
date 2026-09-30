@@ -22,7 +22,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
-  loadPlaywright,
+  finishScenario,
+  launchElectron,
   makeLog,
   openSession,
   REPO,
@@ -32,7 +33,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[scrollback] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('scrollback');
@@ -66,7 +67,6 @@ async function checkFeaturePresent(page) {
   return hasFeature;
 }
 
-const { _electron } = loadPlaywright();
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 
@@ -87,7 +87,7 @@ const shutdownAll = async () => {
 };
 try {
   // ── Launch 1: feature-presence check ────────────────────────────────────────
-  firstApp = await _electron.launch({
+  firstApp = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
@@ -100,7 +100,7 @@ try {
   if (!featurePresent) {
     log('SKIP — scrollback persistence feature not yet present (key absent from settings)');
     await shutdownAll();
-    process.exit(0);
+    await finishScenario(0);
   }
 
   // ── Feature is present: run the real assertion ───────────────────────────────
@@ -131,7 +131,7 @@ try {
   firstApp = null;
 
   // ── Launch 2: assert scrollback survives restart ─────────────────────────────
-  secondApp = await _electron.launch({
+  secondApp = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
@@ -172,11 +172,11 @@ try {
 
   log('PASS ✓ scrollback persistence: all assertions passed');
   await shutdownAll();
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) console.log('[scrollback] FAIL ✗', e.message);
   else console.error('[scrollback] ERROR:', e?.message || e, e?.stack ?? '');
   await shutdownAll().catch(() => {});
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 }

@@ -35,11 +35,11 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assert, launchApp, makeLog, openSession, tapBridge } from './harness.mjs';
+import { assert, finishScenario, launchApp, makeLog, openSession, tapBridge } from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[plan-editor] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -458,4 +458,4 @@ for (const dir of [root, otherRoot]) {
     // A handle the OS has not released yet; tmpdir is reaped anyway.
   }
 }
-process.exit(code);
+await finishScenario(code);

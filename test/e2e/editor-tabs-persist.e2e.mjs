@@ -19,7 +19,8 @@ import { join } from 'node:path';
 import {
   assert,
   closeApp,
-  loadPlaywright,
+  finishScenario,
+  launchElectron,
   makeLog,
   openSession,
   REPO,
@@ -28,7 +29,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[editor-tabs-persist] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('editor-tabs-persist');
@@ -45,14 +46,13 @@ const repoArg = repo.replace(/\\/g, '/');
 
 // SHARED user-data dir across both launches so docs.json + sessions.json persist.
 const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-tabs-ud-'));
-const { _electron } = loadPlaywright();
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 
 async function launch() {
   // Launch against the conduit REPO (like durability/launchApp); the temp git repo is opened as
   // a session via openSession. Passing a foreign dir as the launch arg/cwd stalls window load.
-  const app = await _electron.launch({
+  const app = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
@@ -184,12 +184,12 @@ try {
   secondApp = null;
 
   log('PASS ✓ editor-tabs-persist: all assertions passed');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) {
     console.log('[editor-tabs-persist] FAIL ✗', e.message);
-    process.exit(1);
+    await finishScenario(1);
   }
   console.error('[editor-tabs-persist] ERROR:', e?.message || e);
   try {
@@ -202,5 +202,5 @@ try {
   } catch {
     /* ignore */
   }
-  process.exit(2);
+  await finishScenario(2);
 }

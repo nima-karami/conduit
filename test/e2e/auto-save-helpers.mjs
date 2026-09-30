@@ -8,7 +8,15 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { assert, launchApp, makeLog, openSession, shutdownApp } from './harness.mjs';
+import {
+  assert,
+  captureFailure,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+  shutdownApp,
+} from './harness.mjs';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const ONLY = process.env.AUTO_SAVE_PHASE;
@@ -165,7 +173,7 @@ export async function runAutoSave(name, { before = {}, files, phases }) {
   const log = makeLog(name);
   if (process.platform !== 'win32') {
     log('SKIP — suite is Windows-only (non-win32 platform)');
-    process.exit(0);
+    await finishScenario(0);
   }
   let code = 0;
   try {
@@ -192,6 +200,9 @@ export async function runAutoSave(name, { before = {}, files, phases }) {
           log(`— phase ${phase}`);
           await run({ app, page, root, log, shot: shotter(page) });
         }
+      } catch (e) {
+        await captureFailure();
+        throw e;
       } finally {
         await shutdownApp(launched.app, launched.page).catch(() => {});
       }
@@ -202,5 +213,5 @@ export async function runAutoSave(name, { before = {}, files, phases }) {
     console.error(`[${name}] ${code === 1 ? 'FAIL ✗' : 'ERROR:'}`, e?.message || e);
     if (code === 2 && e?.stack) console.error(e.stack);
   }
-  process.exit(code);
+  await finishScenario(code);
 }

@@ -8,7 +8,7 @@
 import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, launchApp, makeLog } from './harness.mjs';
+import { assert, closeApp, finishScenario, launchApp, makeLog } from './harness.mjs';
 
 const log = makeLog('skill-install');
 
@@ -73,5 +73,5 @@ try {
 } catch (err) {
   console.error('[skill-install] FAIL', err);
   if (launched) await closeApp(launched.app, launched.page).catch(() => {});
-  process.exit(1);
+  await finishScenario(1);
 }

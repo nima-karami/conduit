@@ -38,6 +38,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
+  finishScenario,
   launchApp,
   makeLog,
   openSession,
@@ -51,7 +52,7 @@ const log = makeLog(NAME);
 
 if (process.platform !== 'win32') {
   console.log(`[${NAME}] SKIP — suite is Windows-only (non-win32 platform)`);
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-mfm-'));
@@ -1046,4 +1047,4 @@ for (const phase of PHASES) {
   }
 }
 if (code === 0) log('PASS ✓');
-process.exit(code);
+await finishScenario(code);

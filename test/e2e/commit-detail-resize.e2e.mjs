@@ -24,7 +24,8 @@ import { join } from 'node:path';
 import {
   assert,
   closeApp,
-  loadPlaywright,
+  finishScenario,
+  launchElectron,
   makeLog,
   openHistory,
   openSession,
@@ -34,7 +35,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[commit-detail-resize] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('commit-detail-resize');
@@ -55,17 +56,16 @@ try {
   }
 } catch (e) {
   console.error('[commit-detail-resize] ERROR: git fixture setup failed:', e?.message || e);
-  process.exit(2);
+  await finishScenario(2);
 }
 const repoArg = repo.replace(/\\/g, '/');
 
 const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-cdr-ud-'));
-const { _electron } = loadPlaywright();
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 
 async function launch() {
-  const app = await _electron.launch({
+  const app = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
@@ -160,12 +160,12 @@ try {
   secondApp = null;
 
   log('PASS ✓ commit-detail-resize: all assertions passed');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) {
     console.log('[commit-detail-resize] FAIL ✗', e.message);
-    process.exit(1);
+    await finishScenario(1);
   }
   console.error('[commit-detail-resize] ERROR:', e?.message || e);
   try {
@@ -178,5 +178,5 @@ try {
   } catch {
     /* ignore */
   }
-  process.exit(2);
+  await finishScenario(2);
 }

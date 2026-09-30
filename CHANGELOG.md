@@ -7,19 +7,6 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
-- **Split editor.** Ctrl+\ (or "Split Right" on a tab, or the button at the end of the tab strip)
-  opens the current tab in a second editor group on the right. Each group has its own tabs and
-  active tab. The group you last clicked or typed in is the active one, and opens, Ctrl+W,
-  Ctrl+Tab and Ctrl+1…9 act on it. Go to Definition stays in the editor's own group.
-  - The same file can be open in both groups. The groups share unsaved edits and the save, and
-    each keeps its own scroll and cursor.
-  - Move a tab with Ctrl+Alt+Left/Right, "Move to Other Group", or by dragging it to the other
-    strip. Drag a tab onto the right edge to split, and Ctrl-drag it to keep a copy in both.
-    Web pages move without reloading.
-  - Drag the divider, or focus it and use the arrow keys, to resize. The width is remembered.
-  - Close the right group from its strip's right-click menu or the palette ("Close Editor Group"
-    or "Join Editor Groups"). It also closes when its last tab does.
-  - The split and each group's tabs come back after a restart.
 - **Unsaved files are never dropped on the way out.** Quitting, closing a window, relaunching for
   an update, and closing or moving a session now ask to save unsaved files: **Save All**,
   **Don't Save** or **Cancel**. A file that changed on disk, failed to save or only partly loaded
@@ -35,6 +22,31 @@ All notable user-facing changes to Conduit. Format follows
 - **Neon architecture nodes show their stacked-card edge and selection ring again.**
 - **Enter in a confirm dialog activates only the focused button.** It used to run the primary
   action whichever button had focus.
+- **Leaving the Terminal with Ctrl+Tab or Ctrl+PageUp/PageDown always focuses the tab you land
+  on.** About one switch in four left focus nowhere, and the next keys were lost.
+- **Ctrl+1…9 in the Terminal never reach the shell.** A number past your last tab does nothing;
+  Ctrl+3 used to clear the line you were typing.
+- **Switching to History or Review from the keyboard shows the focus ring** on the row or view
+  that takes your keys.
+
+## [0.45.0] — 2026-09-29
+
+### Added
+- **Split editor.** Ctrl+\ (or "Split Right" on a tab, or the button at the end of the tab strip)
+  opens the current tab in a second editor group on the right. Each group has its own tabs and
+  active tab. The group you last clicked or typed in is the active one, and opens, Ctrl+W,
+  Ctrl+Tab and Ctrl+1…9 act on it. Go to Definition stays in the editor's own group.
+  - The same file can be open in both groups. The groups share unsaved edits and the save, and
+    each keeps its own scroll and cursor.
+  - Move a tab with Ctrl+Alt+Left/Right, "Move to Other Group", or by dragging it to the other
+    strip. Drag a tab onto the right edge to split, and Ctrl-drag it to keep a copy in both.
+    Web pages move without reloading.
+  - Drag the divider, or focus it and use the arrow keys, to resize. The width is remembered.
+  - Close the right group from its strip's right-click menu or the palette ("Close Editor Group"
+    or "Join Editor Groups"). It also closes when its last tab does.
+  - The split and each group's tabs come back after a restart.
+
+### Fixed
 - **Switching tabs puts keyboard focus in the tab you land on.** Ctrl+Tab, Ctrl+PageUp/PageDown,
   Ctrl+1…9, a tab click and closing a tab used to leave focus nowhere, so the next keys were lost.
 - **Tab-switching keys work from the Terminal.** Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageUp/PageDown

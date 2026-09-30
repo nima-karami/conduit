@@ -23,6 +23,7 @@ import {
   assert,
   assertCall,
   clearSpyCalls,
+  finishScenario,
   getSpyCalls,
   launchApp,
   makeLog,
@@ -33,7 +34,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[logging] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('logging');
@@ -154,12 +155,12 @@ try {
 
   await launched.cleanup();
   log('PASS ✓ logging Slice A + B: all assertions passed');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) {
     console.log('[logging] FAIL ✗', e.message);
-    process.exit(1);
+    await finishScenario(1);
   }
   console.error('[logging] ERROR:', e?.message || e);
   try {
@@ -167,5 +168,5 @@ try {
   } catch {
     /* ignore */
   }
-  process.exit(2);
+  await finishScenario(2);
 }

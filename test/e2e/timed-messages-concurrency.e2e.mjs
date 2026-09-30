@@ -27,7 +27,8 @@ import { join } from 'node:path';
 import {
   assert,
   closeApp,
-  loadPlaywright,
+  finishScenario,
+  launchElectron,
   makeLog,
   openSession,
   REPO,
@@ -36,7 +37,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[timed-messages-concurrency] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('timed-messages-concurrency');
@@ -75,12 +76,11 @@ const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-parallel-'));
 const workA = mkdtempSync(join(tmpdir(), 'conduit-par-a-'));
 const workB = mkdtempSync(join(tmpdir(), 'conduit-par-b-'));
 
-const { _electron } = loadPlaywright();
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 
 async function launch() {
-  const app = await _electron.launch({
+  const app = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
@@ -363,7 +363,7 @@ try {
   launched = null;
 
   log('PASS ✓ all assertions passed');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   if (e?.name === 'AssertionError') {
     console.log('[timed-messages-concurrency] FAIL ✗', e.message);
@@ -378,5 +378,5 @@ try {
   } catch {
     /* already gone */
   }
-  process.exit(e?.name === 'AssertionError' ? 1 : 2);
+  await finishScenario(e?.name === 'AssertionError' ? 1 : 2);
 }

@@ -2,12 +2,14 @@
 import { type RefObject, useCallback } from 'react';
 
 export interface FocusTarget {
-  focus(): void;
+  focus(options?: FocusOptions): void;
 }
 
 const targets = new Map<string, FocusTarget[]>();
 /** `armed` is what held focus at the request: a late mount must not take focus the user moved. */
-let pending: { key: string; armed: Element | null } | null = null;
+let pending: { key: string; armed: Element | null; options: FocusOptions | undefined } | null =
+  null;
+let keyboardLanding = false;
 
 export const terminalFocusKey = (sessionId: string) => `terminal:${sessionId}`;
 export const terminalTabFocusKey = (sessionId: string) => `terminal-tab:${sessionId}`;
@@ -22,9 +24,9 @@ export function registerFocusTarget(key: string, target: FocusTarget): () => voi
   list.push(target);
   targets.set(key, list);
   if (pending?.key === key) {
-    const { armed } = pending;
+    const { armed, options } = pending;
     pending = null;
-    if (focusUnmovedSince(armed)) target.focus();
+    if (focusUnmovedSince(armed)) target.focus(options);
   }
   return () => {
     const current = targets.get(key);
@@ -38,8 +40,19 @@ export function registerFocusTarget(key: string, target: FocusTarget): () => voi
 export function requestDocFocus(key: string): void {
   const list = targets.get(key);
   const target = list?.[list.length - 1];
-  pending = target ? null : { key, armed: document.activeElement };
-  target?.focus();
+  const options = keyboardLanding ? { focusVisible: true } : undefined;
+  pending = target ? null : { key, armed: document.activeElement, options };
+  target?.focus(options);
+}
+
+/** Runs `command` as keyboard-initiated: a focus it requests, now or at a late mount, is visible. */
+export function asKeyboardLanding(command: () => void): void {
+  keyboardLanding = true;
+  try {
+    command();
+  } finally {
+    keyboardLanding = false;
+  }
 }
 
 /** A navigation that is not a user activation supersedes a request still waiting to mount. */

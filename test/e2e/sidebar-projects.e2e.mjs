@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import {
   assert,
   createProject,
+  finishScenario,
   launchApp,
   makeLog,
   openSession,
@@ -32,7 +33,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[sidebar-projects] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('sidebar-projects');
@@ -569,4 +570,4 @@ try {
 for (const dir of [work, userDataDir]) {
   await removeDir(dir, { budgetMs: 5000 }).catch((e) => log('cleanup:', dir, e?.code ?? e));
 }
-process.exit(code);
+await finishScenario(code);

@@ -8,7 +8,15 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { openFile, setMode, sleep, typeAtStart } from './auto-save-helpers.mjs';
-import { assert, launchApp, makeLog, openSession, shutdownApp } from './harness.mjs';
+import {
+  assert,
+  captureFailure,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+  shutdownApp,
+} from './harness.mjs';
 
 export const ONLY = process.env.DIRTY_QUIT_PHASE;
 export const ORIGINAL = 'export const a = 1;\n';
@@ -81,7 +89,7 @@ export async function runPhases(name, phases) {
   const log = makeLog(name);
   if (process.platform !== 'win32') {
     log('SKIP — suite is Windows-only (non-win32 platform)');
-    process.exit(0);
+    await finishScenario(0);
   }
   let code = 0;
   const open = [];
@@ -94,13 +102,14 @@ export async function runPhases(name, phases) {
     }
     log('PASS ✓');
   } catch (e) {
+    await captureFailure();
     code = e?.name === 'AssertionError' ? 1 : 2;
     console.error(`[${name}] ${code === 1 ? 'FAIL ✗' : 'ERROR:'}`, e?.message || e);
     if (code === 2 && e?.stack) console.error(e.stack);
   } finally {
     for (const l of open) await shutdownApp(l.app, l.page).catch(() => {});
   }
-  process.exit(code);
+  await finishScenario(code);
 }
 
 export { assert, sleep };

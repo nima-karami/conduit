@@ -25,11 +25,11 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assert, launchApp, makeLog, openSession, tapBridge } from './harness.mjs';
+import { assert, finishScenario, launchApp, makeLog, openSession, tapBridge } from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[plan-handoff] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -306,4 +306,4 @@ try {
 } catch {
   // A handle the OS has not released yet; tmpdir is reaped anyway.
 }
-process.exit(code);
+await finishScenario(code);
