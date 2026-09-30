@@ -164,7 +164,8 @@ function armOnce() {
  * below-normal priority first; on CI it traces the app for failure artifacts.
  */
 export async function launchElectron(launchOpts) {
-  if (process.env.GITHUB_ACTIONS !== 'true') {
+  const local = process.env.GITHUB_ACTIONS !== 'true';
+  if (local) {
     await acquireE2eLock({ scenario: scenarioName() });
     setBelowNormal();
   }
@@ -173,8 +174,23 @@ export async function launchElectron(launchOpts) {
   const app = await _electron.launch(launchOpts);
   liveApps.add(app);
   app.once('close', () => liveApps.delete(app));
+  if (local) {
+    lowerAppTree(app);
+    app.on('window', () => lowerAppTree(app));
+  }
   startCapture(app);
   return app;
+}
+
+/** Chromium raises its GPU and renderer processes above what they inherit; lower them again. */
+function lowerAppTree(app) {
+  app
+    .firstWindow()
+    .then(() => app.evaluate(({ app: a }) => a.getAppMetrics().map((m) => m.pid)))
+    .then((pids) => setBelowNormal(pids))
+    .catch(() => {
+      /* the app closed first */
+    });
 }
 
 /**

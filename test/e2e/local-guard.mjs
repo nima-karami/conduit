@@ -61,11 +61,13 @@ export async function acquireE2eLock({
 } = {}) {
   if (held) return;
   const owner = { pid: process.pid, scenario, cwd: process.cwd() };
+  const since = Date.now();
   let lastReport = 0;
   for (;;) {
     const server = await tryListen(pipePath, owner);
     if (server) {
       held = server;
+      if (lastReport) log(`[e2e-lock] acquired after ${Math.round((Date.now() - since) / 1000)}s`);
       return;
     }
     const current = await readOwner(pipePath);
@@ -88,8 +90,18 @@ export function releaseE2eLock() {
   held = null;
 }
 
-/** Children inherit this process's priority class on Windows, so Electron and its tree get it. */
-export function setBelowNormal() {
+/**
+ * Children inherit this process's priority class on Windows, but Chromium then raises its own:
+ * measured, the GPU process came up AboveNormal and the renderer Normal. So the harness also
+ * lowers every PID the app reports. A PID that is already gone is skipped.
+ */
+export function setBelowNormal(pids = [0]) {
   if (process.env.CONDUIT_E2E_PRIORITY === 'normal') return;
-  setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
+  for (const pid of pids) {
+    try {
+      setPriority(pid, constants.priority.PRIORITY_BELOW_NORMAL);
+    } catch {
+      /* exited */
+    }
+  }
 }

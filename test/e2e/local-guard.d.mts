@@ -6,4 +6,4 @@ export function acquireE2eLock(opts?: {
   log?: (line: string) => void;
 }): Promise<void>;
 export function releaseE2eLock(): void;
-export function setBelowNormal(): void;
+export function setBelowNormal(pids?: number[]): void;

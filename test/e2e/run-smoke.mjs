@@ -22,7 +22,7 @@
  * On non-win32 platforms prints a suite-level SKIP and exits 0.
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -101,16 +101,18 @@ const artifactsRoot = args.artifacts ? resolve(args.artifacts) : null;
 
 console.log(`[smoke] Running ${names.length} scenario(s) sequentially...\n`);
 
+/**
+ * One scenario attempt as a child process. Output is buffered (it is only shown for a failure),
+ * except the e2e lock's lines: a scenario waiting on another checkout's run must say so live.
+ */
 function runAttempt(name, attempt) {
   const start = Date.now();
-  const r = spawnSync(
+  const child = spawn(
     process.execPath,
     ['--experimental-vm-modules', join(here, `${name}.e2e.mjs`)],
     {
       cwd: join(here, '..', '..'),
-      stdio: 'pipe',
-      encoding: 'utf8',
-      timeout: KILL_MS,
+      stdio: ['ignore', 'pipe', 'pipe'],
       // CONDUIT_E2E launches the app hidden (main.ts reads it). A scenario run directly, not
       // through this runner, still shows its window for debugging.
       env: {
@@ -123,10 +125,32 @@ function runAttempt(name, attempt) {
       },
     },
   );
-  const output = (r.stdout || '') + (r.stderr || '');
-  const status = classify({ status: r.status, signal: r.signal, errorCode: r.error?.code, output });
-  const seconds = Number(((Date.now() - start) / 1000).toFixed(1));
-  return { name, attempt, status, seconds, exit: r.status ?? r.signal ?? r.error?.code, r, output };
+  const r = { stdout: '', stderr: '', status: null, signal: null };
+  child.stdout.setEncoding('utf8').on('data', (d) => {
+    r.stdout += d;
+    for (const line of d.split('\n')) if (line.startsWith('[e2e-lock]')) console.log(`\n  ${line}`);
+  });
+  child.stderr.setEncoding('utf8').on('data', (d) => {
+    r.stderr += d;
+  });
+  const kill = setTimeout(() => child.kill(), KILL_MS);
+  return new Promise((resolveAttempt) => {
+    let done = false;
+    const finish = (status, signal) => {
+      if (done) return;
+      done = true;
+      clearTimeout(kill);
+      r.status = status;
+      r.signal = signal;
+      const output = r.stdout + r.stderr;
+      const result = classify({ status, signal, output });
+      const seconds = Number(((Date.now() - start) / 1000).toFixed(1));
+      resolveAttempt({ name, attempt, status: result, seconds, exit: status ?? signal, r, output });
+    };
+    child.on('close', finish);
+    // An orphaned Electron can keep the pipes open after the scenario died, so 'close' may never come.
+    child.on('exit', (status, signal) => setTimeout(() => finish(status, signal), 2000));
+  });
 }
 
 /** A non-clean attempt: dump its output, keep its log beside the harness's artifacts, sweep. */
@@ -150,14 +174,14 @@ const results = [];
 
 for (const name of names) {
   process.stdout.write(`  ${name} ... `);
-  const first = runAttempt(name, 1);
+  const first = await runAttempt(name, 1);
   let last = first;
   if (args.retry && !isGreen(first.status)) {
     console.log(`${first.status} (${first.seconds}s, exit ${first.exit}), retrying`);
     afterFailure(first);
     await settle();
     process.stdout.write(`  ${name} (attempt 2) ... `);
-    last = runAttempt(name, 2);
+    last = await runAttempt(name, 2);
   }
   const status = finalStatus(first.status, last === first ? undefined : last.status);
   const exitNote = status === 'FAIL' ? `, exit ${last.exit}` : '';
