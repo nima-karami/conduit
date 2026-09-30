@@ -9,13 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  assert,
-  emulateWindowFocus,
-  openSession,
-  runScenario,
-  waitForRepoGit,
-} from './harness.mjs';
+import { assert, openSession, runScenario, waitForRepoGit } from './harness.mjs';
 
 const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
 
@@ -59,7 +53,6 @@ const readRightPaneTab = async (app, { allowMissing = false } = {}) => {
 };
 
 runScenario('review-mode-pane', async ({ app, page, log }) => {
-  await emulateWindowFocus(app, page);
   const root = mkdtempSync(join(tmpdir(), 'conduit-review-mode-pane-'));
   makeRepo(root);
 
