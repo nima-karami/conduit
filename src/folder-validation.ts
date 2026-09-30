@@ -30,6 +30,8 @@ export interface FolderProbeDeps {
   };
   kind: (p: string) => Promise<'dir' | 'not-dir' | 'missing'>;
   realpath: (p: string) => Promise<string>;
+  /** `expandShortNames` (src/short-names.ts): a present folder is stored by its long name. */
+  longName: (p: string) => Promise<string>;
 }
 
 export type ProbedFolder =
@@ -50,22 +52,23 @@ export async function probeFolder(
   ) {
     return { reason: 'invalid-path' };
   }
-  const stored = deps.path.resolve(raw);
+  const lexical = deps.path.resolve(raw);
   const isFsRoot = (p: string) => deps.path.parse(p).root === p;
-  if (isFsRoot(stored)) return { reason: 'filesystem-root' };
-  const key = folderKey(stored);
-  const kind = await deps.kind(stored);
+  if (isFsRoot(lexical)) return { reason: 'filesystem-root' };
+  const kind = await deps.kind(lexical);
   if (kind === 'not-dir') return { reason: 'not-a-directory' };
-  if (kind === 'missing') return { status: 'missing', stored, key };
+  if (kind === 'missing') return { status: 'missing', stored: lexical, key: folderKey(lexical) };
+  let stored: string;
   let real: string;
   try {
+    stored = await deps.longName(lexical);
     real = await deps.realpath(stored);
   } catch {
     // Deleted between the stat and the realpath: it is missing now.
-    return { status: 'missing', stored, key };
+    return { status: 'missing', stored: lexical, key: folderKey(lexical) };
   }
   if (isFsRoot(real)) return { reason: 'filesystem-root' };
-  return { status: 'present', stored, key, realKey: folderKey(real) };
+  return { status: 'present', stored, key: folderKey(stored), realKey: folderKey(real) };
 }
 
 export type FolderConflict = { kind: 'duplicate' | 'inside' | 'contains'; index: number };

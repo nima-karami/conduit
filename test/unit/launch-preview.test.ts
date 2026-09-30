@@ -149,4 +149,25 @@ describe('previewLaunch', () => {
     if (!plan.ok) throw new Error('plan refused');
     expect(r.display).toBe(formatCommandLine(plan.spec, 'win32'));
   });
+
+  it('a short-name home previews under the long name openRepo stores, so the is-home root drops', async () => {
+    const SHORT = 'C:\\src\\RMBLON~1';
+    const LONG = 'C:\\src\\rmb long name';
+    const seen: string[] = [];
+    const r = await previewLaunch(
+      { agentId: 'cli:claude', home: SHORT, roots: [LONG, B] },
+      deps({
+        probe: async () => ({ status: 'present', stored: LONG, key: LONG, realKey: LONG }),
+        resolveInitialRoots: async (home, roots) => {
+          seen.push(home);
+          const list = (roots as string[]).filter((x) => x !== home);
+          return { roots: list, missing: [], dropped: [] };
+        },
+        exists: (p) => p === LONG,
+      }),
+    );
+    expect(seen).toEqual([LONG]);
+    expect(r.cwd).toBe(LONG);
+    expect(r.args).toEqual(['--add-dir', B]);
+  });
 });

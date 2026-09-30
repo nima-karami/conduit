@@ -188,6 +188,7 @@ import {
   serializeSettings,
 } from '../src/settings';
 import { detectAgentClis, detectShells, hostCliScanEnv, resolveCommand } from '../src/shells';
+import { expandShortNames, hasShortComponent, hostShortNameDeps } from '../src/short-names';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 import {
   INDEX_FILE_CAP,
@@ -2123,6 +2124,7 @@ app.whenReady().then(() => {
       }
     },
     realpath: (p) => fs.promises.realpath(p),
+    longName: (p) => expandShortNames(p, hostShortNameDeps),
   };
   const folders = new SessionFolderRuntime({
     mgr,
@@ -2243,15 +2245,16 @@ app.whenReady().then(() => {
       answer({ droppedRoots: [], error: kind === 'missing' ? 'home-missing' : 'invalid-path' });
       return;
     }
+    const home = await probeDeps.longName(m.path);
     try {
-      realKeys.set(folderKey(m.path), folderKey(await probeDeps.realpath(m.path)));
+      realKeys.set(folderKey(home), folderKey(await probeDeps.realpath(home)));
     } catch {
       // Gone again after the stat: its key stays lexical-only, like a folder first seen missing.
     }
-    const initial = await sessionOps.resolveInitialRoots(m.path, m.roots);
+    const initial = await sessionOps.resolveInitialRoots(home, m.roots);
     const projectId =
       typeof m.projectId === 'string' && projectStore.has(m.projectId) ? m.projectId : undefined;
-    const sessionId = openRepo(m.path, m.agentId, ownerWindowId, m.cardId, {
+    const sessionId = openRepo(home, m.agentId, ownerWindowId, m.cardId, {
       roots: initial.roots,
       missingRoots: initial.missing,
       projectId,
@@ -4725,8 +4728,17 @@ app.whenReady().then(() => {
     const target = extractOpenTarget(argv, classifyPath, [process.execPath, argv[0] ?? '']);
     if (!target) return;
     log.info('app', 'os-open', { kind: target.kind, path: target.path });
-    if (target.kind === 'dir') openRepo(target.path, registry.list()[0]?.id ?? '', ownerWindowId);
-    else openFileFromOS(target.path, ownerWindowId);
+    const open = (p: string) => {
+      if (target.kind === 'dir') openRepo(p, registry.list()[0]?.id ?? '', ownerWindowId);
+      else openFileFromOS(p, ownerWindowId);
+    };
+    // Synchronous unless there is an alias to expand: a smoke seam asserts the cold-launch
+    // buffering right after firing `second-instance`.
+    if (hasShortComponent(target.path)) {
+      void expandShortNames(target.path, hostShortNameDeps).then(open);
+    } else {
+      open(target.path);
+    }
   };
 
   app.on('second-instance', (_event, argv) => {

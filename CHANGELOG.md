@@ -14,6 +14,11 @@ All notable user-facing changes to Conduit. Format follows
   many running agents the close will stop.
 
 ### Fixed
+- **Folders opened through a Windows short path (`C:\Users\LONGNA~1\…`) work like any other.**
+  Saves, new files, renames and HTML preview were all refused as "outside the workspace",
+  and Review showed every changed file in such a folder as entirely new. Conduit now records a
+  folder under its full name when you open it. A session restored from before keeps the short
+  spelling until you open that folder again.
 - **Primary buttons show the keyboard focus ring.** A focused primary button drew only its own
   glow, so Tab and a dialog's initial focus (Save All) left no visible mark. The same held for the
   active tab, checked menu items, toggles and other controls with a glow of their own. In Neon,
