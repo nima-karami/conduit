@@ -88,8 +88,15 @@ jobs:
         env:
           HUSKY: '0'
       - run: npm run build
-      # loadPlaywright (harness.mjs) resolves Playwright from the npx cache.
-      - run: npx -y playwright@${{ env.PLAYWRIGHT_VERSION }} --version
+      # loadPlaywright (harness.mjs) looks in node_modules first. Playwright is deliberately not a
+      # dependency, and the hosted npm cache is not where it looks for npx installs.
+      - run: npm install --no-save --ignore-scripts playwright@${{ env.PLAYWRIGHT_VERSION }}
+      - name: Cache diagnostics (spike)
+        shell: pwsh
+        run: |
+          "npm cache: $(npm config get cache)"
+          "LOCALAPPDATA: $env:LOCALAPPDATA  electron_config_cache: $env:electron_config_cache"
+          Get-ChildItem $env:LOCALAPPDATA, $env:USERPROFILE -Filter 'electron-v*.zip' -Recurse -Depth 5 -ErrorAction SilentlyContinue | Select-Object FullName, Length
       # Scenarios build scratch repos and commit; a hosted runner has no git identity.
       - run: |
           git config --global user.name "conduit-e2e"
@@ -129,7 +136,7 @@ jobs:
         env:
           HUSKY: '0'
       - run: npm run build
-      - run: npx -y playwright@${{ env.PLAYWRIGHT_VERSION }} --version
+      - run: npm install --no-save --ignore-scripts playwright@${{ env.PLAYWRIGHT_VERSION }}
       - run: |
           git config --global user.name "conduit-e2e"
           git config --global user.email "conduit-e2e@users.noreply.github.com"
