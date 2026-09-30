@@ -1,12 +1,14 @@
 name: e2e
 run-name: e2e ${{ inputs.selection }} ${{ inputs.nonce }}
 
-# Remote e2e on hosted Windows runners. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md.
+# Remote e2e on hosted Windows runners, dispatched by `npm run e2e:remote`.
+# Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md. No workflow-level `concurrency`: GitHub keeps
+# one pending run per group and cancels the older one; the CLI coordinates full runs instead.
 on:
   workflow_dispatch:
     inputs:
       selection:
-        description: full | names | affected
+        description: full | names | affected (affected lands in v1)
         type: choice
         options: [full, names, affected]
         default: affected
@@ -26,18 +28,30 @@ on:
         description: Correlation id, embedded in the run name
         type: string
         default: ''
+      verify:
+        description: Also run the verify gate (verify.yml) and include it in the verdict
+        type: boolean
+        default: true
 
 permissions:
   contents: read
+  actions: read
 
 env:
   PLAYWRIGHT_VERSION: 1.63.0
 
 jobs:
+  verify:
+    if: inputs.verify
+    uses: ./.github/workflows/verify.yml
+
   prepare:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      plan: ${{ steps.plan.outputs.plan }}
+      excluded: ${{ steps.plan.outputs.excluded }}
+      count: ${{ steps.plan.outputs.count }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -52,22 +66,42 @@ jobs:
           node --input-type=module -e '
             import { readdirSync, readFileSync, appendFileSync } from "node:fs";
             import { planShards } from "./test/e2e/ci-shard-plan.mjs";
-            const seed = JSON.parse(readFileSync("test/e2e/timings.seed.json", "utf8"));
+            import { applyExclusions } from "./test/e2e/smoke-select.mjs";
+            const read = (f) => JSON.parse(readFileSync(f, "utf8"));
+            const seed = read("test/e2e/timings.seed.json");
             const stems = readdirSync("test/e2e").filter((f) => f.endsWith(".e2e.mjs"))
-              .map((f) => f.replace(".e2e.mjs", "")).filter((n) => n !== "ci-probe");
+              .map((f) => f.replace(".e2e.mjs", ""));
             const sel = process.env.SELECTION;
-            // affected is not built yet (v1); it falls back to the full suite, per spec §B2.
+            if (sel === "affected") {
+              console.log("::error::selection=affected lands in v1; dispatch full or names");
+              process.exit(1);
+            }
             const names = sel === "names" ? process.env.SCENARIOS.split(/\s+/).filter(Boolean) : stems;
-            const { shards } = planShards(names, seed.medians, {
+            const unknown = names.filter((n) => !stems.includes(n));
+            if (unknown.length) {
+              console.log(`::error::unknown scenario(s): ${unknown.join(" ")}`);
+              process.exit(1);
+            }
+            const { run, excluded } = applyExclusions(names, read("test/e2e/remote-exclusions.json"));
+            for (const [n, why] of Object.entries(excluded)) console.log(`EXCLUDED ${n}: ${why}`);
+            const { shards } = planShards(run, seed.medians, {
               shards: Number(process.env.SHARDS) || 0, scale: seed.scale, cap: 16,
             });
             for (const s of shards) console.log(`shard ${s.index + 1}: ~${Math.round(s.estSec)}s, ${s.names.length} scenarios`);
             const include = shards.map((s) => ({ shard: s.index + 1, names: s.names.join(" ") }));
-            appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`);
+            const plan = { shards: shards.map((s) => ({ index: s.index, names: s.names })) };
+            appendFileSync(process.env.GITHUB_OUTPUT, [
+              `matrix=${JSON.stringify({ include })}`,
+              `plan=${JSON.stringify(plan)}`,
+              `excluded=${JSON.stringify(excluded)}`,
+              `count=${shards.length}`,
+            ].join("\n") + "\n");
           '
 
   shard:
     needs: prepare
+    # An empty matrix `include` fails the run, so a selection that is all exclusions skips this.
+    if: needs.prepare.outputs.count != '0'
     runs-on: windows-latest
     timeout-minutes: 45
     strategy:
@@ -112,100 +146,116 @@ jobs:
       - run: |
           git config --global user.name "conduit-e2e"
           git config --global user.email "conduit-e2e@users.noreply.github.com"
+      # Fails the job when a scenario failed; the report classifies from the JSON, not from this.
       - name: Run scenarios
         shell: pwsh
         env:
-          NAMES: ${{ matrix.names }}
+          E2E_NAMES: ${{ matrix.names }}
+          SHARD: ${{ matrix.shard }}
           # The hosted TEMP is an 8.3 short path (RUNNER~1), which realpath expands; the
           # workspace confinement checks then read every scratch repo as outside the workspace.
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
         run: |
-          New-Item -ItemType Directory -Force results | Out-Null
-          node test/e2e/run-smoke.mjs --exact @($env:NAMES -split ' ') --json "results/shard-${{ matrix.shard }}.json"
-          # 0/1 = the shard completed (1 = a scenario failed; the report says which). Anything else is infra.
-          if ($LASTEXITCODE -gt 1) { exit $LASTEXITCODE }
-          exit 0
+          New-Item -ItemType Directory -Force results, artifacts | Out-Null
+          node test/e2e/run-smoke.mjs @($env:E2E_NAMES -split ' ') --json "results/shard-$env:SHARD.json" --artifacts artifacts --retry
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: e2e-results-${{ matrix.shard }}
           path: results/
           if-no-files-found: warn
-
-  # SPIKE ONLY (Slice 0): hidden-window screenshot + tracing on hosted Windows.
-  probe:
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: npm
-      - uses: actions/cache@v4
-        with:
-          path: ~\AppData\Local\electron\Cache
-          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-      - run: npm ci
-        env:
-          HUSKY: '0'
-      - run: node node_modules/electron/install.js
-      - run: npm run build
-      - run: npm install --no-save --ignore-scripts playwright@${{ env.PLAYWRIGHT_VERSION }}
-      - run: |
-          git config --global user.name "conduit-e2e"
-          git config --global user.email "conduit-e2e@users.noreply.github.com"
-      - name: Probe
-        shell: pwsh
-        env:
-          TEMP: ${{ runner.temp }}
-          TMP: ${{ runner.temp }}
-          # Run 36663111099 traced with screenshots+snapshots: the long scenarios hit TIMEOUT.
-          E2E_PROBE_TRACE_OPTS: '{"screenshots":false,"snapshots":true}'
-        run: |
-          $env:E2E_PROBE_DIR = Join-Path $env:RUNNER_TEMP 'probe'
-          New-Item -ItemType Directory -Force $env:E2E_PROBE_DIR | Out-Null
-          node test/e2e/run-smoke.mjs --exact ci-probe split-editor file-integrity new-session-folders --json (Join-Path $env:E2E_PROBE_DIR 'results.json')
-          exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: e2e-probe
-          path: ${{ runner.temp }}/probe/
+          name: e2e-fail-${{ matrix.shard }}
+          path: artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
 
   report:
-    needs: [prepare, shard]
+    needs: [verify, prepare, shard]
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: test/e2e
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
       - uses: actions/download-artifact@v4
         with:
           pattern: e2e-results-*
           path: results
           merge-multiple: true
-      - name: Summarise
+      - name: Merge results
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN: ${{ needs.prepare.outputs.plan }}
+          EXCLUDED: ${{ needs.prepare.outputs.excluded }}
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          SELECTION: ${{ inputs.selection }}
+          NONCE: ${{ inputs.nonce }}
         run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > run.json
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" > artifacts.json
+          mkdir -p out
           node --input-type=module -e '
-            import { readdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
-            const rows = [];
-            for (const f of readdirSync("results").sort()) {
-              const shard = Number(f.match(/shard-(\d+)/)?.[1]);
-              for (const r of JSON.parse(readFileSync(`results/${f}`, "utf8"))) rows.push({ ...r, shard });
+            import { existsSync, readdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+            import { mergeResults, summaryMarkdown } from "./test/e2e/ci-merge-results.mjs";
+            const read = (f) => JSON.parse(readFileSync(f, "utf8"));
+            const run = read("run.json");
+            const artifactUrls = {};
+            for (const a of read("artifacts.json").artifacts ?? []) {
+              const m = /^e2e-fail-(\d+)$/.exec(a.name);
+              if (m) artifactUrls[m[1]] = `${run.html_url}/artifacts/${a.id}`;
             }
-            rows.sort((a, b) => a.name.localeCompare(b.name));
-            writeFileSync("results/merged.json", JSON.stringify(rows, null, 2));
-            const count = (s) => rows.filter((r) => r.status === s).length;
-            const bad = rows.filter((r) => !["PASS", "SKIP"].includes(r.status));
-            let md = `## e2e: ${count("PASS")} passed, ${count("SKIP")} skipped, ${bad.length} not passed, ${rows.length} total\n\n`;
-            md += "| scenario | status | s | shard |\n|---|---|---|---|\n";
-            for (const r of [...bad, ...rows.filter((r) => !bad.includes(r))]) md += `| ${r.name} | ${r.status} | ${r.seconds} | ${r.shard} |\n`;
-            appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
-            console.log(md);
+            const shardFiles = existsSync("results") ? readdirSync("results").map((f) => ({
+              shard: Number(/shard-(\d+)/.exec(f)[1]), results: read(`results/${f}`),
+            })) : [];
+            const plan = process.env.PLAN ? JSON.parse(process.env.PLAN) : { shards: [] };
+            const result = mergeResults(plan, shardFiles, {
+              sha: process.env.GITHUB_SHA, nonce: process.env.NONCE, selection: process.env.SELECTION,
+              runId: run.id, url: run.html_url, queuedAt: run.created_at, startedAt: run.run_started_at,
+              finishedAt: new Date().toISOString(), verify: process.env.VERIFY_RESULT,
+              artifactUrls, excluded: process.env.EXCLUDED ? JSON.parse(process.env.EXCLUDED) : {},
+            });
+            // A failed prepare means nothing was planned or run: infra, never a vacuous pass.
+            if (process.env.PREPARE_RESULT !== "success") result.status = "infra-error";
+            writeFileSync("out/result.json", JSON.stringify(result, null, 2) + "\n");
+            appendFileSync(process.env.GITHUB_STEP_SUMMARY, summaryMarkdown(result));
+            console.log(`status: ${result.status}`);
           '
       - uses: actions/upload-artifact@v4
         with:
-          name: e2e-results-merged
-          path: results/merged.json
+          name: e2e-result
+          path: out/result.json
+          retention-days: 14
+      - name: Verdict
+        run: |
+          status=$(node -p 'require("./out/result.json").status')
+          echo "run status: $status"
+          [ "$status" = passed ] || [ "$status" = flaky-passed ]
+
+  # The run owns its ref, so a cancelled run or a killed client still cleans up.
+  cleanup:
+    needs: [verify, prepare, shard, report]
+    if: always() && startsWith(github.ref, 'refs/heads/ci/e2e/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ref="${GITHUB_REF#refs/heads/}"
+          if out=$(gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$ref" 2>&1); then
+            echo "deleted $ref"
+          elif echo "$out" | grep -q "Reference does not exist"; then
+            echo "$ref already gone"
+          else
+            echo "$out"
+            exit 1
+          fi

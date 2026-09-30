@@ -1,0 +1,9 @@
+{
+  "multi-window-restore": "runner display is smaller than the saved window bounds: x=1100 is restored at 0,0",
+  "split-editor-focus-keep": "the runner window has no OS focus: xterm's focus-out report reaches the shell and typed text is lost",
+  "scrollback-mode-neutralize": "the runner window has no OS focus: xterm focus reporting reaches the fresh shell",
+  "review-mode-pane": "hovering a navigator row leaves its actions at opacity 0 on the runner; cause not isolated",
+  "attention": "needs a real focusable window (opts out of hidden mode); the runner has no OS foreground",
+  "terminal-focus": "opts out of hidden mode and needs OS focus; 7-11x slower and flaky on the runner",
+  "shortcut-precedence": "opts out of hidden mode and needs OS focus; up to 11x slower and flaky on the runner"
+}
