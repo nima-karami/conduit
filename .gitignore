@@ -21,8 +21,12 @@ designs/
 # Per-project Conduit runtime state (board/architecture/specs) — never commit
 .conduit/
 
-# Claude Code local state (incl. parallel-agent worktrees)
-.claude/
+# Claude Code local state (incl. parallel-agent worktrees). Skills Conduit installs into a project
+# stay ignored (their source is resources/skills); the repo's own skills are versioned.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/autonomous-build-loop/
 
 # Windows bash crash dumps (never track)
 *.stackdump
