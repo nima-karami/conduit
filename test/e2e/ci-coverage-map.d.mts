@@ -8,9 +8,23 @@ export interface SegmentIndex {
 }
 export type Span = [number, number];
 export interface CoverageMap {
-  schema: 2;
+  schema: 3;
   builtFrom: string;
-  scenarios: Record<string, { builtFrom: string; files: Record<string, Span[]> }>;
+  scenarios: Record<
+    string,
+    { builtFrom: string; files: Record<string, Span[]>; alwaysRun?: string }
+  >;
+}
+export interface CoverageMeta {
+  launches: number;
+  windows: number;
+  stopped: number;
+  incomplete: string[];
+}
+export interface ShardEntry {
+  files: Record<string, Span[]>;
+  complete: boolean;
+  alwaysRun?: string | null;
 }
 export function segmentOffsets(mappings: string, generated: string): SegmentIndex;
 export function projectSource(source: string): string | null;
@@ -21,9 +35,13 @@ export function spansForRanges(
   mapSources: string[],
   cache?: Map<string, unknown>,
 ): Record<string, Span[]>;
+export function scenarioCompleteness(metas: CoverageMeta[]): {
+  complete: boolean;
+  alwaysRun: string | null;
+};
 export function mergeCoverageMaps(
   prev: { schema?: number; scenarios?: Record<string, unknown> } | null,
-  shardMaps: Record<string, Record<string, Span[]>>[],
+  shardMaps: Record<string, ShardEntry>[],
   sha: string,
   statuses: Record<string, string>,
 ): CoverageMap;

@@ -12,7 +12,7 @@ export interface Affected {
   names: string[];
   reasons: string[];
 }
-export const MAP_SCHEMA: 2;
+export const MAP_SCHEMA: 3;
 export function isE2eIrrelevant(path: string): boolean;
 export function parseNameStatus(text: string): Change[];
 export function parseZeroContextDiff(

@@ -10,6 +10,7 @@ import {
   mergeCoverageMaps,
   mergeSpans,
   projectSource,
+  scenarioCompleteness,
   segmentOffsets,
   spansForRanges,
 } from '../e2e/ci-coverage-map.mjs';
@@ -103,7 +104,9 @@ describe('coverage → credited function spans', () => {
   });
 
   it('feeds --affected: a change inside a function that ran selects its scenario, anything else is full', () => {
-    const map = mergeCoverageMaps(null, [{ fixture: spans }], 'sha', { fixture: 'PASS' });
+    const map = mergeCoverageMaps(null, [{ fixture: { files: spans, complete: true } }], 'sha', {
+      fixture: 'PASS',
+    });
     const ctx = { map, all: ['fixture', 'other'], core: [], excluded: [] };
     const at = (path: string, line: number) =>
       selectAffected([{ path, status: 'M', hunks: [{ start: line, count: 1 }] }], ctx);
@@ -159,46 +162,93 @@ describe('mergeCoverageMaps', () => {
     files: { [file]: [[1, 2]] as [number, number][] },
   });
 
+  const shardEntry = (files: Record<string, [number, number][]>, more = {}) => ({
+    files,
+    complete: true,
+    ...more,
+  });
+
   it('replaces the entries of scenarios that ended PASS or FLAKY and keeps every other', () => {
     const prev = {
-      schema: 2,
+      schema: 3,
       builtFrom: 'old',
       scenarios: { a: entry('old', 'x.ts'), b: entry('old', 'y.ts'), f: entry('old', 'f.ts') },
     };
-    const shard: Record<string, Record<string, [number, number][]>> = {
-      a: { 'z.ts': [[3, 4]] },
-      c: { 'w.ts': [[5, 6]] },
-      f: { 'g.ts': [[7, 8]] },
+    const shard = {
+      a: shardEntry({ 'z.ts': [[3, 4]] }),
+      c: shardEntry({ 'w.ts': [[5, 6]] }, { alwaysRun: 'relaunches the app' }),
+      f: shardEntry({ 'g.ts': [[7, 8]] }),
     };
     expect(mergeCoverageMaps(prev, [shard], 'new', { a: 'PASS', c: 'FLAKY', f: 'FAIL' })).toEqual({
-      schema: 2,
+      schema: 3,
       builtFrom: 'new',
       scenarios: {
         a: { builtFrom: 'new', files: { 'z.ts': [[3, 4]] } },
         b: entry('old', 'y.ts'),
-        c: { builtFrom: 'new', files: { 'w.ts': [[5, 6]] } },
+        c: { builtFrom: 'new', files: { 'w.ts': [[5, 6]] }, alwaysRun: 'relaunches the app' },
         f: entry('old', 'f.ts'),
       },
+    });
+  });
+
+  it('an incomplete capture never replaces an entry: the previous one stays', () => {
+    const prev = { schema: 3, builtFrom: 'old', scenarios: { a: entry('old', 'x.ts') } };
+    const shard = { a: { files: { 'z.ts': [[3, 4]] as [number, number][] }, complete: false } };
+    expect(mergeCoverageMaps(prev, [shard], 'new', { a: 'PASS' }).scenarios).toEqual({
+      a: entry('old', 'x.ts'),
     });
   });
 
   it.each(['TIMEOUT', 'QUARANTINED-FAIL', 'SKIP', undefined])(
     'a scenario that ended %s adds nothing',
     (status) => {
-      const r = mergeCoverageMaps(null, [{ a: { 'x.ts': [[1, 1]] } }], 's', {
+      const r = mergeCoverageMaps(null, [{ a: shardEntry({ 'x.ts': [[1, 1]] }) }], 's', {
         ...(status ? { a: status } : {}),
       });
       expect(r.scenarios).toEqual({});
     },
   );
 
-  it('drops an old-schema map (file lists, no line spans)', () => {
+  it('drops an old-schema map (file lists; or spans without the always-run flag)', () => {
     const old = { builtFrom: 'old', scenarios: { a: ['x.ts'] } };
-    expect(mergeCoverageMaps(old, [], 's', {})).toEqual({
-      schema: 2,
-      builtFrom: 's',
-      scenarios: {},
-    });
+    const empty = { schema: 3, builtFrom: 's', scenarios: {} };
+    expect(mergeCoverageMaps(old, [], 's', {})).toEqual(empty);
+    const v2 = { schema: 2, builtFrom: 'old', scenarios: { a: entry('old', 'x.ts') } };
+    expect(mergeCoverageMaps(v2, [], 's', {})).toEqual(empty);
+  });
+});
+
+describe('scenarioCompleteness: one sentinel per stopCoverage', () => {
+  const meta = (o: Partial<{ launches: number; windows: number; stopped: number }>, bad = []) => ({
+    launches: 1,
+    windows: 1,
+    stopped: 1,
+    incomplete: bad as string[],
+    ...o,
+  });
+
+  it('complete when some attempt stopped every app it launched with nothing lost', () => {
+    expect(scenarioCompleteness([meta({})])).toEqual({ complete: true, alwaysRun: null });
+    // A killed first attempt next to a clean retry: the retry vouches for the coverage.
+    expect(scenarioCompleteness([meta({ stopped: 0 }), meta({})]).complete).toBe(true);
+  });
+
+  it('incomplete when no attempt did: an app never stopped, a timeout or a lost window', () => {
+    expect(scenarioCompleteness([]).complete).toBe(false);
+    expect(scenarioCompleteness([meta({ stopped: 0 })]).complete).toBe(false);
+    expect(scenarioCompleteness([meta({}, ['coverage capture timed out'] as never)]).complete).toBe(
+      false,
+    );
+  });
+
+  it('flags a relaunch or a second window as always-run', () => {
+    expect(scenarioCompleteness([meta({ launches: 2, stopped: 2 })]).alwaysRun).toBe(
+      'relaunches the app',
+    );
+    expect(scenarioCompleteness([meta({ windows: 2 })]).alwaysRun).toBe('opens a second window');
+    expect(scenarioCompleteness([meta({ launches: 2, windows: 3, stopped: 1 })]).alwaysRun).toBe(
+      'relaunches the app and opens a second window',
+    );
   });
 });
 

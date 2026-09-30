@@ -18,7 +18,7 @@ import {
  *   src/pty.ts:        cwd ran 1–50
  */
 const map = {
-  schema: 2,
+  schema: 3,
   builtFrom: 'nightly',
   scenarios: {
     'split-editor': {
@@ -94,6 +94,8 @@ describe('selectAffected: rule order', () => {
     expect(selectAffected(change, { ...ctx, map: null }).kind).toBe('full');
     const old = { builtFrom: 'x', scenarios: { cwd: ['src/pty.ts'] } };
     expect(selectAffected(change, { ...ctx, map: old }).kind).toBe('full');
+    // Schema 2 predates the relaunch / second-window flag, so it may under-credit.
+    expect(selectAffected(change, { ...ctx, map: { ...map, schema: 2 } }).kind).toBe('full');
   });
 });
 
@@ -237,6 +239,31 @@ describe('selectAffected: the map itself', () => {
       map: older,
     });
     expect(outside.kind).toBe('full');
+  });
+
+  it('a scenario that relaunches the app or opens a second window always runs', () => {
+    const flagged = {
+      ...map,
+      scenarios: {
+        ...map.scenarios,
+        durability: { builtFrom: 'nightly', files: {}, alwaysRun: 'relaunches the app' },
+        'multi-window': {
+          builtFrom: 'older',
+          files: { 'src/pty.ts': [[1, 50]] },
+          alwaysRun: 'opens a second window',
+        },
+      },
+    };
+    const r = selectAffected([m('src/pty.ts', 'M', [lines(3)])], {
+      ...ctx,
+      all: [...all, 'durability', 'multi-window'],
+      map: flagged,
+    });
+    expect(r.kind).toBe('names');
+    expect(r.names).toEqual(expect.arrayContaining(['durability', 'multi-window', 'cwd']));
+    expect(r.reasons.join('\n')).toContain(
+      'relaunches the app or opens a second window (always run): durability, multi-window',
+    );
   });
 });
 
@@ -391,7 +418,7 @@ describe('withMapBuildHunks and the CLI, against a real git repo', () => {
     ].join('\n');
   // Scenario `a` ran f (lines 2–7); line 8 is top-level code no scenario is credited with.
   const map = () => ({
-    schema: 2,
+    schema: 3,
     builtFrom: build,
     scenarios: {
       a: {

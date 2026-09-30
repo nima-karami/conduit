@@ -5,8 +5,9 @@
  * source LINES of the function that defines it, so `--affected` can tell a change inside a function
  * a scenario ran from one anywhere else in the file.
  *
- * Map (`schema` 2): `{ schema, builtFrom, scenarios: { <name>: { builtFrom, files: { <path>:
- * [[from, to], …] } } } }`, 1-based inclusive lines of `builtFrom`'s copy of the file.
+ * Map (`schema` 3): `{ schema, builtFrom, scenarios: { <name>: { builtFrom, files: { <path>:
+ * [[from, to], …] }, alwaysRun? } } }`, 1-based inclusive lines of `builtFrom`'s copy of the file;
+ * `alwaysRun` (why) marks a scenario `--affected` always selects (`scenarioCompleteness`).
  *
  * What is never credited, so a change there runs the full suite:
  * - top-level code: esbuild hoists every module's top level into one bundle-wide scope that runs
@@ -172,17 +173,43 @@ export function spansForRanges(ranges, index, mapSources, cache = new Map()) {
 const MERGEABLE = new Set(['PASS', 'FLAKY']);
 
 /**
- * This nightly's scenarios replace their entries, but only those that ended PASS or FLAKY: a
- * failed run stops early and would under-credit. Every other entry, and every entry of an old-schema
- * map, is kept or dropped as it stands (a kept one keeps its own `builtFrom`).
+ * A scenario's coverage from its attempts' sentinels (coverage-capture.mjs `meta-<pid>.json`).
+ * Complete when one attempt stopped every app it launched and lost nothing. `alwaysRun` when an
+ * attempt relaunched the app or opened a second window: coverage starts once an app is up, so a
+ * relaunch's or a new window's startup is never credited to the scenario that depends on it.
  *
+ * @param {{ launches: number, windows: number, stopped: number, incomplete: string[] }[]} metas
+ */
+export function scenarioCompleteness(metas) {
+  const complete = metas.some(
+    (m) => m.launches > 0 && m.stopped >= m.launches && m.incomplete.length === 0,
+  );
+  const why = [];
+  if (metas.some((m) => m.launches > 1)) why.push('relaunches the app');
+  if (metas.some((m) => m.windows > 1)) why.push('opens a second window');
+  return { complete, alwaysRun: why.length ? why.join(' and ') : null };
+}
+
+/**
+ * This nightly's scenarios replace their entries, but only those that ended PASS or FLAKY with a
+ * complete capture: a failed run stops early, and a lost window or a timed-out capture misses
+ * functions, so either would under-credit. Every other entry, and every entry of an old-schema map,
+ * is kept or dropped as it stands (a kept one keeps its own `builtFrom`).
+ *
+ * @param {Record<string, { files: Record<string, [number, number][]>, complete: boolean,
+ *   alwaysRun?: string | null }>[]} shardMaps
  * @param {Record<string, string>} statuses scenario → final status in this nightly
  */
 export function mergeCoverageMaps(prev, shardMaps, sha, statuses) {
   const scenarios = prev?.schema === MAP_SCHEMA ? { ...prev.scenarios } : {};
   for (const m of shardMaps) {
-    for (const [name, files] of Object.entries(m)) {
-      if (MERGEABLE.has(statuses[name])) scenarios[name] = { builtFrom: sha, files };
+    for (const [name, e] of Object.entries(m)) {
+      if (!MERGEABLE.has(statuses[name]) || !e.complete) continue;
+      scenarios[name] = {
+        builtFrom: sha,
+        files: e.files,
+        ...(e.alwaysRun ? { alwaysRun: e.alwaysRun } : {}),
+      };
     }
   }
   return { schema: MAP_SCHEMA, builtFrom: sha, scenarios };
@@ -199,13 +226,20 @@ function loadBundle(outDir, bundle) {
   };
 }
 
-/** `<coverage dir>/<scenario>/*.json` (`{ [bundle]: [start, end][] }`) → `{ scenario: { file: spans } }`. */
+/**
+ * `<coverage dir>/<scenario>/*.json` (`{ [bundle]: [start, end][] }`, and each attempt's
+ * `meta-<pid>.json`) → `{ scenario: { files: { file: spans }, complete, alwaysRun } }`.
+ */
 function mapShard(covDir, outDir) {
   const bundles = {};
   const result = {};
   for (const scenario of readdirSync(covDir)) {
     const files = {};
-    for (const f of readdirSync(join(covDir, scenario)).filter((n) => n.endsWith('.json'))) {
+    const names = readdirSync(join(covDir, scenario)).filter((n) => n.endsWith('.json'));
+    const metas = names
+      .filter((n) => n.startsWith('meta-'))
+      .map((n) => JSON.parse(readFileSync(join(covDir, scenario, n), 'utf8')));
+    for (const f of names.filter((n) => !n.startsWith('meta-'))) {
       const ranges = JSON.parse(readFileSync(join(covDir, scenario, f), 'utf8'));
       for (const [bundle, list] of Object.entries(ranges)) {
         if (!(bundle in bundles)) bundles[bundle] = loadBundle(outDir, bundle);
@@ -220,7 +254,9 @@ function mapShard(covDir, outDir) {
       }
     }
     for (const file of Object.keys(files)) files[file] = mergeSpans(files[file]);
-    if (Object.keys(files).length) result[scenario] = files;
+    if (Object.keys(files).length) {
+      result[scenario] = { files, ...scenarioCompleteness(metas) };
+    }
   }
   return result;
 }
@@ -229,7 +265,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const [covDir, outFile] = process.argv.slice(2);
   const result = existsSync(covDir) ? mapShard(covDir, 'out') : {};
   writeFileSync(outFile, `${JSON.stringify(result)}\n`);
-  const counts = Object.entries(result).map(([s, f]) => `${s} ${Object.keys(f).length}`);
+  const counts = Object.entries(result).map(
+    ([s, e]) =>
+      `${s} ${Object.keys(e.files).length}${e.complete ? '' : ' (incomplete)'}` +
+      `${e.alwaysRun ? ` (always run: ${e.alwaysRun})` : ''}`,
+  );
   console.log(
     `coverage: ${counts.length} scenario(s)${counts.length ? `: ${counts.join(', ')}` : ''}`,
   );

@@ -21,7 +21,8 @@ const FULL = [
 const NEVER_IRRELEVANT = [/^test\/e2e\//, /^resources\//];
 const IRRELEVANT = [/^test\/unit\//, /^docs\//, /\.md$/i, /^designs\//, /^\.conduit\//];
 const CODE = /\.tsx?$/;
-export const MAP_SCHEMA = 2;
+/** 3: entries carry `alwaysRun`; a schema-2 map can't say which scenarios need it. */
+export const MAP_SCHEMA = 3;
 
 function isFullTrigger(path) {
   return FULL.some((re) => re.test(path));
@@ -135,8 +136,10 @@ export function parseZeroContextDiff(text) {
 function spansByFile(map, known) {
   const byFile = new Map();
   const older = [];
+  const always = [];
   for (const [scenario, entry] of Object.entries(map.scenarios)) {
     if (!known.has(scenario)) continue;
+    if (entry.alwaysRun) always.push(scenario);
     if (entry.builtFrom !== map.builtFrom) {
       older.push(scenario);
       continue;
@@ -147,7 +150,7 @@ function spansByFile(map, known) {
       byFile.set(file, list);
     }
   }
-  return { byFile, older };
+  return { byFile, older, always };
 }
 
 /**
@@ -200,7 +203,7 @@ export function selectAffected(changed, ctx) {
     return full(['no coverage map with function ranges yet']);
   }
 
-  const { byFile, older } = spansByFile(ctx.map, new Set(ctx.all));
+  const { byFile, older, always } = spansByFile(ctx.map, new Set(ctx.all));
   const names = new Set();
   const reasons = [];
   for (const { path, status, hunks } of relevant) {
@@ -236,6 +239,12 @@ export function selectAffected(changed, ctx) {
   for (const n of older) names.add(n);
   if (older.length)
     reasons.push(`coverage from an older nightly (always run): ${older.join(', ')}`);
+  for (const n of always) names.add(n);
+  if (always.length) {
+    reasons.push(
+      `relaunches the app or opens a second window (always run): ${always.sort().join(', ')}`,
+    );
+  }
   for (const n of ctx.core) names.add(n);
   reasons.push(`core smoke set: ${ctx.core.join(', ')}`);
   return { kind: 'names', names: [...names].sort(), reasons };

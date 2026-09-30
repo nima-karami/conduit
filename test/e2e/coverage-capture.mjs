@@ -47,6 +47,30 @@ export function executedRanges(entries) {
 const tracked = new WeakMap();
 let fileSeq = 0;
 
+/**
+ * This attempt's completeness sentinel, rewritten on every change to `meta-<pid>.json`: an attempt
+ * killed before it stopped its apps leaves `stopped < launches` behind. ci-coverage-map.mjs
+ * `scenarioCompleteness` reads it.
+ */
+const meta = { launches: 0, windows: 0, stopped: 0, incomplete: [] };
+
+function writeMeta() {
+  const dir = coverageDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `meta-${process.pid}.json`), JSON.stringify(meta));
+}
+
+function lost(why) {
+  if (!meta.incomplete.includes(why)) meta.incomplete.push(why);
+}
+
+/** This attempt's coverage is missing something (`why`); the nightly won't merge it. */
+export function markCoverageIncomplete(why) {
+  if (!coverageDir()) return;
+  lost(why);
+  writeMeta();
+}
+
 function write(ranges) {
   const dir = coverageDir();
   if (!Object.keys(ranges).length) return;
@@ -60,6 +84,8 @@ export function startCoverage(app, log = console.log) {
   const warn = (e) => log(`[coverage] not started: ${e?.message || e}`);
   const entry = { windows: [], stopped: false };
   tracked.set(app, entry);
+  meta.launches++;
+  writeMeta();
   entry.host = app
     .evaluate(async (_electron, start) => {
       const inspector = process.mainModule.require('node:inspector');
@@ -76,6 +102,10 @@ export function startCoverage(app, log = console.log) {
     }, START)
     .catch(warn);
   const begin = (page) => {
+    if (entry.windows.length + 1 > meta.windows) {
+      meta.windows = entry.windows.length + 1;
+      writeMeta();
+    }
     entry.windows.push(
       (async () => {
         const cdp = await app.context().newCDPSession(page);
@@ -101,21 +131,28 @@ export async function stopCoverage(app) {
   entry.stopped = true;
   for (const started of entry.windows) {
     const cdp = await started;
-    if (!cdp) continue;
+    if (!cdp) {
+      lost('window coverage never started');
+      continue;
+    }
     try {
       write(executedRanges((await cdp.send('Profiler.takePreciseCoverage')).result));
     } catch {
-      /* the window closed under us */
+      lost('a window closed before its coverage was taken');
     }
   }
-  if (!(await entry.host)) return;
-  try {
-    const result = await app.evaluate(async () => {
-      const { result: scripts } = await globalThis.__e2eCoverage('Profiler.takePreciseCoverage');
-      return scripts.filter((s) => /[\\/]out[\\/]main\.js$/.test(s.url));
-    });
-    write(executedRanges(result));
-  } catch {
-    /* the app is already gone */
+  if (!(await entry.host)) lost('host coverage never started');
+  else {
+    try {
+      const result = await app.evaluate(async () => {
+        const { result: scripts } = await globalThis.__e2eCoverage('Profiler.takePreciseCoverage');
+        return scripts.filter((s) => /[\\/]out[\\/]main\.js$/.test(s.url));
+      });
+      write(executedRanges(result));
+    } catch {
+      lost('the app was gone before its host coverage was taken');
+    }
   }
+  meta.stopped++;
+  writeMeta();
 }

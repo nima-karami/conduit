@@ -10,3 +10,4 @@ export function executedRanges(
 ): Record<string, [number, number][]>;
 export function startCoverage(app: unknown, log?: (...a: unknown[]) => void): void;
 export function stopCoverage(app: unknown): Promise<void>;
+export function markCoverageIncomplete(why: string): void;
