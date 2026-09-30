@@ -15,8 +15,19 @@ export interface ShortcutContext {
 
 // openGlobalSearch is reserved alongside the escape hatch because it SEEDS FROM the terminal's
 // own selection — letting xterm see the chord first would mean the surface being read is also
-// the one consuming the key, and the search never opens.
-const RESERVED_IN_TERMINAL: ReadonlySet<string> = new Set(['navFocusTerminal', 'openGlobalSearch']);
+// the one consuming the key, and the search never opens. The tab-navigation chords are reserved
+// as VS Code's terminal.integrated.commandsToSkipShell reserves them, so cycling through the
+// Terminal does not stop there; Ctrl+W is not, because the shell needs it. The cost, accepted
+// as VS Code accepts it: a TUI in the shell (vim, less) never receives these chords.
+const RESERVED_IN_TERMINAL: ReadonlySet<string> = new Set([
+  'navFocusTerminal',
+  'openGlobalSearch',
+  'navNextTab',
+  'navPrevTab',
+  'navPrevTabPage',
+  'navNextTabPage',
+  'navGoToTab',
+]);
 
 /** Whether an app shortcut action should fire given the current focus context. */
 export function decideShortcut(ctx: ShortcutContext, actionId: string): boolean {

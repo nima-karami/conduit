@@ -12,6 +12,7 @@ import {
 } from '../diff-tab-scope';
 import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
 import type { OpenDoc, OpenMode } from '../docs';
+import { tabStateKey, useEditorGroup } from '../editor-group-context';
 import { getHtmlView, type HtmlView, subscribeHtmlView } from '../html-view-store';
 import { saveDocByPath } from '../save-registry';
 import { useSettings } from '../settings';
@@ -54,11 +55,12 @@ export function DocView({
   onClearSideBySide?: (id: string) => void;
 }) {
   const { settings } = useSettings();
+  const stateKey = tabStateKey(doc.id, useEditorGroup());
   const htmlView = useSyncExternalStore(
     subscribeHtmlView,
     useCallback(
-      () => getHtmlView(doc.id, settings.htmlDefaultView),
-      [doc.id, settings.htmlDefaultView],
+      () => getHtmlView(stateKey, settings.htmlDefaultView),
+      [stateKey, settings.htmlDefaultView],
     ),
   );
   const dirtySet = useSyncExternalStore(subscribeDirty, getDirtySnapshot, getDirtySnapshot);
@@ -86,6 +88,7 @@ export function DocView({
       <div className="docpanel__body">
         <DocBody
           doc={doc}
+          stateKey={stateKey}
           file={file}
           diff={diff}
           htmlDefaultView={settings.htmlDefaultView}
@@ -105,6 +108,7 @@ export function DocView({
 /** A diff tab's body: one of spec 2026-09-22-scoped-diff-tabs §2's states. */
 function DiffTabBody({
   doc,
+  stateKey,
   diff,
   onOpenFile,
   onClearSideBySide,
@@ -112,6 +116,7 @@ function DiffTabBody({
   onOpenFullDiff,
 }: {
   doc: OpenDoc;
+  stateKey: string;
   diff?: FileDiffDTO;
   onOpenFile?: ((path: string, mode?: OpenMode) => void) | undefined;
   onClearSideBySide?: (id: string) => void;
@@ -165,7 +170,7 @@ function DiffTabBody({
     body = (
       <DiffViewer
         doc={diff}
-        viewStateId={doc.id}
+        viewStateId={stateKey}
         onOpenFile={onOpenFile}
         initialSideBySide={doc.sideBySide}
         onSideBySideToggled={() => onClearSideBySide?.(doc.id)}
@@ -186,6 +191,7 @@ function DiffTabBody({
 
 function DocBody({
   doc,
+  stateKey,
   file,
   diff,
   htmlDefaultView,
@@ -198,6 +204,7 @@ function DocBody({
   onOpenFullDiff,
 }: {
   doc: OpenDoc;
+  stateKey: string;
   file?: FileContentDTO;
   diff?: FileDiffDTO;
   htmlDefaultView: HtmlView;
@@ -213,6 +220,7 @@ function DocBody({
     return (
       <DiffTabBody
         doc={doc}
+        stateKey={stateKey}
         diff={diff}
         onOpenFile={onOpenFile}
         onClearSideBySide={onClearSideBySide}
@@ -231,6 +239,7 @@ function DocBody({
     return (
       <PlanView
         doc={doc}
+        viewStateId={stateKey}
         root={planRoot}
         sessionId={doc.sessionId}
         file={file}
@@ -240,19 +249,27 @@ function DocBody({
   if (!file) return <div className="viewer__notice">Loading…</div>;
   if (file.error) return <div className="viewer__notice">{file.error}</div>;
   // Order: diff → image (handled inside CodeViewer) → pdf → html → markdown → code.
-  if (file.pdf) return <PdfViewer doc={file} />;
+  if (file.pdf) return <PdfViewer doc={file} focusKey={stateKey} />;
   // The EXTENSION, never `file.language`: src/lang.ts assigns 'html' to .vue and .svelte too.
   if (isHtmlDocPath(doc.path))
     return (
       <HtmlViewer
         doc={file}
-        docId={doc.id}
+        docId={stateKey}
         fallbackView={htmlDefaultView}
         dirty={dirty}
         onOpenExternally={(path) => post({ type: 'openExternalPath', path })}
         onSave={() => saveDocByPath(doc.path)}
       />
     );
-  if (file.language === 'markdown') return <MarkdownViewer doc={file} onOpenFile={onOpenFile} />;
-  return <CodeViewer doc={file} sessionId={doc.sessionId} onReviewCommit={onReviewCommit} />;
+  if (file.language === 'markdown')
+    return <MarkdownViewer doc={file} viewStateId={stateKey} onOpenFile={onOpenFile} />;
+  return (
+    <CodeViewer
+      doc={file}
+      viewStateId={stateKey}
+      sessionId={doc.sessionId}
+      onReviewCommit={onReviewCommit}
+    />
+  );
 }

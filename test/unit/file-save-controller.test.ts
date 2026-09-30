@@ -46,6 +46,7 @@ function harness(opts: { canWrite?: boolean; mode?: AutoSaveMode; delayMs?: numb
   const writes: PendingWrite[] = [];
   const dirty = new Set<string>();
   const registered = new Map<string, SaveEntry>();
+  let registerCalls = 0;
   const calls: string[] = [];
   const toasts: string[] = [];
   const saved: [string, string][] = [];
@@ -78,6 +79,7 @@ function harness(opts: { canWrite?: boolean; mode?: AutoSaveMode; delayMs?: numb
       dirty.delete(p);
     },
     register: (p, entry) => {
+      registerCalls++;
       registered.set(p, entry);
       return () => {
         if (registered.get(p) === entry) registered.delete(p);
@@ -109,6 +111,9 @@ function harness(opts: { canWrite?: boolean; mode?: AutoSaveMode; delayMs?: numb
     saved,
     open,
     flush,
+    get registerCalls() {
+      return registerCalls;
+    },
     get maxInFlight() {
       return maxInFlight;
     },
@@ -653,5 +658,17 @@ describe('createFileSaves', () => {
     h.writes[1].resolve({ ok: false, error: 'EACCES' });
     expect(await failed).toBe(false);
     expect(h.saves.getStatus('/b.ts')).toMatchObject({ phase: 'failed', error: 'EACCES' });
+  });
+
+  it('a second attach on the same path keeps one save registration and one content subscription', () => {
+    const h = harness({ mode: 'afterDelay' });
+    const m = new FakeModel('one');
+    h.models.set('/a.ts', m);
+    const subscribe = vi.spyOn(m, 'onDidChangeContent');
+    h.saves.attach('/a.ts', { diskContent: 'one', writable: true });
+    h.saves.attach('/a.ts', { diskContent: 'one', writable: true });
+    expect(h.registerCalls).toBe(1);
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(m.listenerCount).toBe(1);
   });
 });

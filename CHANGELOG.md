@@ -7,6 +7,35 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **Split editor.** Ctrl+\ (or "Split Right" on a tab, or the button at the end of the tab strip)
+  opens the current tab in a second editor group on the right. Each group has its own tabs and
+  active tab. The group you last clicked or typed in is the active one, and opens, Ctrl+W,
+  Ctrl+Tab and Ctrl+1…9 act on it. Go to Definition stays in the editor's own group.
+  - The same file can be open in both groups. The groups share unsaved edits and the save, and
+    each keeps its own scroll and cursor.
+  - Move a tab with Ctrl+Alt+Left/Right, "Move to Other Group", or by dragging it to the other
+    strip. Drag a tab onto the right edge to split, and Ctrl-drag it to keep a copy in both.
+    Web pages move without reloading.
+  - Drag the divider, or focus it and use the arrow keys, to resize. The width is remembered.
+  - Close the right group from its strip's right-click menu or the palette ("Close Editor Group"
+    or "Join Editor Groups"). It also closes when its last tab does.
+  - The split and each group's tabs come back after a restart.
+
+### Fixed
+- **Switching tabs puts keyboard focus in the tab you land on.** Ctrl+Tab, Ctrl+PageUp/PageDown,
+  Ctrl+1…9, a tab click and closing a tab used to leave focus nowhere, so the next keys were lost.
+- **Tab-switching keys work from the Terminal.** Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageUp/PageDown
+  and Ctrl+1…9 now switch tabs instead of being typed into the shell (as in VS Code); Ctrl+W still
+  goes to the shell.
+
+### Security
+- **Electron updated from 43.3.0 to 43.7.6**, which fixes the high-severity Electron advisories
+  published against 43.0.0–43.4.1 (sandbox inheritance for opened windows, cross-origin reads via
+  protocol handlers, preload code-cache poisoning, and others).
+
+## [0.44.0] — 2026-09-29
+
+### Added
 - **Go to Definition, Go to Implementations and Go to References can be rebound.** They're in
   Settings → Shortcuts under a new "Code navigation" group. A new chord works at once in every
   editor (files, diffs, plan code blocks, peek views), and the old one stops. Chords that would

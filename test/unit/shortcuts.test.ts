@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   comboFromEvent,
+  comboLabel,
   effectiveCombo,
   formatCombo,
   type KeyEvt,
@@ -124,5 +125,53 @@ describe('shortcuts', () => {
     expect(mac.comboFromEvent({ key: 'Tab', ctrlKey: true })).toBe('Ctrl+Tab');
     vi.unstubAllGlobals();
     vi.resetModules();
+  });
+});
+
+describe('editor group shortcuts', () => {
+  const combo = (id: string) => SHORTCUT_ACTIONS.find((s) => s.id === id)?.defaultCombo;
+
+  it('Ctrl+\\ matches splitEditorRight on non-mac', () => {
+    const c = combo('splitEditorRight');
+    expect(c).toBe('Mod+\\');
+    expect(matchCombo(ev({ key: '\\', ctrlKey: true }), c ?? '')).toBe(true);
+  });
+
+  it('an empty combo never matches', () => {
+    expect(combo('focusLeftGroup')).toBe('');
+    expect(combo('focusRightGroup')).toBe('');
+    for (const e of [
+      ev({ key: '' }),
+      ev({ key: 'a' }),
+      ev({ key: '\\', ctrlKey: true }),
+      ev({ key: 'Unidentified' }),
+    ]) {
+      expect(matchCombo(e, '')).toBe(false);
+    }
+  });
+
+  it('formatCombo of empty is Unassigned', () => {
+    expect(formatCombo('')).toBe('Unassigned');
+  });
+
+  it('Mod+Alt+ArrowRight matches moveTabNextGroup', () => {
+    const next = combo('moveTabNextGroup');
+    const prev = combo('moveTabPrevGroup');
+    expect(next).toBe('Mod+Alt+ArrowRight');
+    expect(prev).toBe('Mod+Alt+ArrowLeft');
+    expect(matchCombo(ev({ key: 'ArrowRight', ctrlKey: true, altKey: true }), next ?? '')).toBe(
+      true,
+    );
+    expect(matchCombo(ev({ key: 'ArrowLeft', ctrlKey: true, altKey: true }), prev ?? '')).toBe(
+      true,
+    );
+  });
+});
+
+describe('comboLabel', () => {
+  it('is undefined for an unbound action, so no key hint renders', () => {
+    expect(comboLabel('focusLeftGroup', {})).toBeUndefined();
+    expect(comboLabel('focusLeftGroup', { focusLeftGroup: 'Mod+K' })).toBe('Ctrl + K');
+    expect(comboLabel('save', {})).toBe('Ctrl + S');
   });
 });

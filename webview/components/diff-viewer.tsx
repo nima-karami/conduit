@@ -5,6 +5,7 @@ import type { FileDiffDTO } from '../../src/protocol';
 import { OVERVIEW_RULER_WIDTH } from '../change-decorations';
 import { nextChange, prevChange } from '../diff-nav';
 import type { OpenMode } from '../docs';
+import { registerFocusTarget } from '../focus-targets';
 import { middleClickProps } from '../middle-click';
 import { ensureTokenizer } from '../monaco-languages';
 import { monacoOverflowHost } from '../monaco-overflow-host';
@@ -155,11 +156,13 @@ function TextDiffViewer({
     };
     const debounced = makeDebouncedFlush(captureScroll, VIEW_STATE_DEBOUNCE_MS);
     const scrollSub = viewStateId ? modified.onDidScrollChange(() => debounced.schedule()) : null;
+    const unregisterFocus = viewStateId ? registerFocusTarget(viewStateId, modified) : undefined;
 
     return () => {
       debounced.cancel();
       captureScroll();
       scrollSub?.dispose();
+      unregisterFocus?.();
       diffSub.dispose();
       const m = editor.getModel();
       m?.original.dispose();

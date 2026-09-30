@@ -21,6 +21,8 @@ import { buildPlanHandoff } from '../../src/plan-handoff';
 import { PLANS_DIR, planSlugFromPath } from '../../src/plan-path';
 import type { FileContentDTO } from '../../src/protocol';
 import type { OpenDoc } from '../docs';
+import { tabStateKey, useEditorGroup } from '../editor-group-context';
+import { useFocusTargetRef } from '../focus-targets';
 import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
 import {
@@ -42,7 +44,7 @@ import {
   subscribeTerminalBus,
 } from '../terminal-bus';
 import { pushToast } from '../toast-store';
-import { getViewState, setViewState } from '../view-state-store';
+import { getViewState, planSourceViewStateId, setViewState } from '../view-state-store';
 import { PlanActionBar } from './plan-action-bar';
 import { PlanDocContext } from './plan-code-block';
 import { CommentComposer, PlanCommentsPanel } from './plan-comments-panel';
@@ -59,6 +61,7 @@ import { PlanEditor, type PlanEditorHandle } from './plan-editor';
 
 export interface PlanViewProps {
   doc: OpenDoc;
+  viewStateId: string;
   root: string;
   sessionId?: string;
   /** The doc store's own read of the same path. Used ONLY by the load-failed state's "Open as
@@ -180,7 +183,7 @@ function PlanSourceView({
   return <div className="plan__source-view" ref={hostRef} />;
 }
 
-export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps) {
+export function PlanView({ doc, viewStateId, root, sessionId, file, onClose }: PlanViewProps) {
   const slug = planSlugFromPath(doc.path);
 
   useEffect(() => {
@@ -197,6 +200,7 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
 
   const editorRef = useRef<PlanEditorHandle>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const bodyFocusRef = useFocusTargetRef(viewStateId, bodyRef);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [armed, setArmed] = useState(false);
   const [everWrote, setEverWrote] = useState(false);
@@ -205,6 +209,7 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
   const [gutter, setGutter] = useState<{ index: number; top: number } | null>(null);
   const [composerAt, setComposerAt] = useState<{ index: number; top: number } | null>(null);
   const [announce, setAnnounce] = useState('');
+  const sourceKey = tabStateKey(planSourceViewStateId(doc.id), useEditorGroup());
   const sourceRef = useRef(false);
   const [source, setSource] = useState(false);
   /** The comment patch in flight, so a `plan:error op:'comments'` can mark it and offer Retry. */
@@ -228,11 +233,11 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
         : 'saved';
 
   useLayoutEffect(() => {
-    const stored = getViewState(`plan-source:${doc.id}`);
+    const stored = getViewState(sourceKey);
     const on = stored?.kind === 'planSource' ? stored.source : false;
     sourceRef.current = on;
     setSource(on);
-  }, [doc.id]);
+  }, [sourceKey]);
 
   const cancelWrite = useCallback((): void => {
     if (timerRef.current !== null) clearTimeout(timerRef.current);
@@ -355,8 +360,8 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
     setSource(next);
     setGutter(null);
     setComposerAt(null);
-    setViewState(`plan-source:${doc.id}`, { kind: 'planSource', source: next });
-  }, [doc.id]);
+    setViewState(sourceKey, { kind: 'planSource', source: next });
+  }, [sourceKey]);
 
   const live = sessionId !== undefined && hasLiveTerminal(sessionId);
   const openUnsent = useMemo(
@@ -640,7 +645,8 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
 
       <div
         className="plan__body"
-        ref={bodyRef}
+        ref={bodyFocusRef}
+        tabIndex={-1}
         onMouseLeave={() => setGutter(null)}
         onKeyDown={(e) => {
           if (e.key !== 'c' || e.ctrlKey || e.metaKey || e.altKey || focusIndex === null) return;

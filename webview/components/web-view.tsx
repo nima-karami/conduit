@@ -34,9 +34,14 @@ export function WebView({
   url,
   onTitle,
   onOpenLink,
+  onGuestFocus,
 }: {
   url: string;
   onTitle?: (title: string) => void;
+  /** The guest took focus. A click into the page fires no focus event in the host document, not
+   *  even on the <webview> itself; the host window blurs with the <webview> as its active element
+   *  (measured, split-editor plan Decisions Needed #4). */
+  onGuestFocus?: () => void;
   /** A link open in the page that the host already vetted against a real gesture (specs
    *  2026-09-22-middle-click-new-tab S14, 2026-09-23-web-blank-link). */
   onOpenLink?: (url: string, background: boolean) => void;
@@ -105,7 +110,12 @@ export function WebView({
     el.addEventListener('did-navigate', onNavigate);
     el.addEventListener('did-navigate-in-page', onNavigate);
     el.addEventListener('did-fail-load', onFail);
+    const onHostBlur = () => {
+      if (document.activeElement === el) onGuestFocus?.();
+    };
+    window.addEventListener('blur', onHostBlur);
     return () => {
+      window.removeEventListener('blur', onHostBlur);
       el.removeEventListener('did-start-loading', onStart);
       el.removeEventListener('did-stop-loading', onStop);
       el.removeEventListener('page-title-updated', onTitleUpdated);
@@ -113,7 +123,7 @@ export function WebView({
       el.removeEventListener('did-navigate-in-page', onNavigate);
       el.removeEventListener('did-fail-load', onFail);
     };
-  }, [frame, onTitle, syncNav, src]);
+  }, [frame, onTitle, onGuestFocus, syncNav, src]);
 
   useEffect(() => {
     const el = frame;

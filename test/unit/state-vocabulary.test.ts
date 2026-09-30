@@ -92,8 +92,6 @@ const HOVER_FILL_ALLOW = new Map<string, string>([
   ['.gh__resizer:hover::after, .gh__resizer:focus-visible::after', 'drag affordance'],
   ['*:hover::-webkit-scrollbar-thumb', 'scrollbar thumb, not an app surface'],
   ['::-webkit-scrollbar-thumb:hover', 'scrollbar thumb, not an app surface'],
-  ['.tabbar:hover::-webkit-scrollbar-thumb', 'scrollbar thumb, not an app surface'],
-  ['.tabbar::-webkit-scrollbar-thumb:hover', 'scrollbar thumb, not an app surface'],
   ['.archedge__label:hover', 'canvas edge label — reads against the canvas, not a panel'],
   ['.ifaces__createq, .ifaces__createq:hover', 'a link, not a surface: it has no fill to change'],
 ]);

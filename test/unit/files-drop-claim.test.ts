@@ -16,6 +16,7 @@ const AUDITED: Record<string, string> = {
   'webview/components/board-view.tsx': 'acts only on its own card drag',
   'webview/components/center-pane.tsx': 'dock handlers from app.tsx',
   'webview/components/doc-tabs.tsx': 'acts only on its own tab drag',
+  'webview/components/editor-groups.tsx': 'drop zones mount only during a tab drag, act only on it',
   'webview/components/files-view.tsx': 'scroller sets dropEffect; + Add folder only stops it',
   'webview/components/folder-section.tsx': 'rows and sections set dropEffect',
   'webview/components/panel-frame.tsx': 'dock handlers from app.tsx',

@@ -30,7 +30,7 @@ import {
  * and under 3:1 on screen.
  */
 const AERO_TERM = tokensFor(
-  ':root[data-theme="aero"] :is(.termwrap, .inkbox, .markdown pre, .markdown code)',
+  ':root[data-theme="aero"] :is(.termwrap, .webhost, .inkbox, .markdown pre, .markdown code)',
 );
 
 /** The tiers in scope for something rendered inside `.termwrap` on `id`. */

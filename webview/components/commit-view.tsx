@@ -176,10 +176,12 @@ export function CommitDiffView({
   sessionId,
   path,
   root,
+  viewStateId,
 }: {
   sessionId: string | undefined;
   path: string;
   root?: string;
+  viewStateId?: string;
 }) {
   const { sha, file } = parseCommitDiffPath(path);
   const { status, files } = useCommitFiles(sessionId, sha, root);
@@ -188,7 +190,7 @@ export function CommitDiffView({
   if (doc) {
     return (
       <div className="commit-diffhost">
-        <DiffViewer doc={doc} />
+        <DiffViewer doc={doc} viewStateId={viewStateId} />
       </div>
     );
   }

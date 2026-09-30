@@ -124,11 +124,15 @@ export function setViewState(id: string, state: ViewState): void {
 export const sourceViewStateId = (kind: 'markdown' | 'html', path: string) =>
   `${kind}-source:${path}`;
 
+/** The id a plan tab keeps its rendered/source toggle under. */
+export const planSourceViewStateId = (docId: string) => `plan-source:${docId}`;
+
 /** Every id a file tab's viewers key view state by. */
 export const fileViewStateIds = (path: string) => [
   `file:${path}`,
   sourceViewStateId('markdown', path),
   sourceViewStateId('html', path),
+  planSourceViewStateId(`file:${path}`),
 ];
 
 /** Move a doc's entry to its new id when its file is renamed (see `renamed` above). */
@@ -142,6 +146,22 @@ export function renameViewState(from: string, to: string): void {
   renamed.set(from, to);
 }
 
+/** A tab moved to the other editor group: its view state, and its viewer's late unmount capture,
+ *  land on the target group's key exactly as a rename's do (split-editor plan P5, I10). */
+export function moveViewState(from: string, to: string): void {
+  renameViewState(from, to);
+}
+
+/** A tab duplicated into the other editor group starts where its source is; each then captures
+ *  for itself. */
+export function copyViewState(from: string, to: string): void {
+  if (from === to) return;
+  renamed.delete(to);
+  closing.delete(to);
+  const entry = store.get(liveId(from));
+  if (entry) store.set(to, entry);
+}
+
 /**
  * Merge a partial update into a doc's 'scroll' view-state, preserving the field NOT being
  * written. The git-history view captures its scroll offset (on scroll / unmount) and its
@@ -153,8 +173,9 @@ export function mergeScrollViewState(
   id: string,
   patch: { top?: number; selectedSha?: string | null },
 ): void {
-  if (closing.has(id)) return; // same guard as setViewState — no post-eviction resurrection
-  const prev = store.get(id);
+  const at = liveId(id);
+  if (closing.has(at)) return; // same guard as setViewState — no post-eviction resurrection
+  const prev = store.get(at);
   const next: Extract<ViewState, { kind: 'scroll' }> =
     prev?.kind === 'scroll' ? { ...prev } : { kind: 'scroll', top: 0 };
   if (patch.top !== undefined) next.top = patch.top;
@@ -162,7 +183,7 @@ export function mergeScrollViewState(
     if (patch.selectedSha) next.selectedSha = patch.selectedSha;
     else delete next.selectedSha;
   }
-  store.set(id, next);
+  store.set(at, next);
 }
 
 /**
@@ -177,13 +198,14 @@ export function mergeReviewViewState(
   id: string,
   patch: { anchor?: { topPath: string; offset: number } },
 ): void {
-  if (closing.has(id)) return;
-  const next = reviewEntry(store.get(id));
+  const at = liveId(id);
+  if (closing.has(at)) return;
+  const next = reviewEntry(store.get(at));
   if (patch.anchor) {
     next.topPath = patch.anchor.topPath;
     next.offset = patch.anchor.offset;
   }
-  store.set(id, next);
+  store.set(at, next);
 }
 
 function reviewEntry(prev: ViewState | undefined): Extract<ViewState, { kind: 'reviewAnchor' }> {

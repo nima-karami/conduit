@@ -416,7 +416,7 @@ that group, else the right neighbour, else `null` for group 1 (the Terminal) or 
   - The first sighting of an id creates its doc (`initialTitle`, `diffScope`).
   - Each entry appends a tab to group `entry.group ?? 1` of its session, with `preview` from the
     entry, and `active` sets that group's active.
-  - `activeGroup = 1`. `activeId = null`, as today (the app's following `switchSession` resolves it).
+  - `activeGroup = 1`, or 2 when a group-2 entry carries `focus: true` (amended in the review round). `activeId = null`, as today (the app's following `switchSession` resolves it).
 - **`toPersistedDocs`:** sessions in order of first appearance in `docs[]`. For each: group 1's
   tabs in order, then group 2's tabs with `group: 2`.
   - Each entry is `{ kind, path, sessionId, preview? (from the tab), diffScope?, active? (=== that group's active), group? }`.
@@ -492,7 +492,7 @@ export function tabStateKey(docId: string, group: GroupIndex): string; // group 
 
 ```ts
 export const EDITOR_GROUP_MIN_PX = 240;
-/** Clamp so neither side < min when width ≥ 2·min; below that return ratio unchanged (spec §2.6 narrow). */
+/** Clamp so neither side < min when width ≥ 2·min; below that clamp only to [0.15, 0.85] (spec §2.6 narrow; bounded in the review round). */
 export function clampSplitRatio(ratio: number, widthPx: number): number;
 export function stepSplitRatio(ratio: number, widthPx: number, key: 'ArrowLeft' | 'ArrowRight' | 'Home' | 'End', shift: boolean): number;
 // ±16px, Shift ±64px; Home/End → min/max allowed ratio
@@ -1414,6 +1414,8 @@ The tab strip's close, middle-click, Mod+W and the tab context menu switch to `c
     works on the Terminal.
   - **The tab context menu** adds "Move to Other Group" (disabled on Terminal).
   - **Palette:** "Move Editor to Other Group".
+  - With one group, Move to Other Group (keyboard, menu, palette) creates group 2, as VS Code's
+    "Move Editor into Right Group" does (amended in the review round).
 - Modify: `webview/split-editor-copy.ts` (add `moveToOther`, `moved`)
 - Test: `test/unit/view-state-store.test.ts` ('move carries state and clears the target tombstone'),
   `test/unit/html-view-store.test.ts` ('move and copy notify subscribers')
@@ -1672,3 +1674,164 @@ Report leads with the fix that keeps the locked decision.
 - **[normal] #13 `subgrid`.** The web-host placement relies on `grid-template-rows: subgrid`
   (Chromium ≥117; Electron 43.3.0 is well past it). If the strip rows misalign, the fix is a fixed
   strip-row height token, never measured rects.
+
+## Run notes
+
+Build run 2026-09-28 (unattended), branch `feat/split-editor`, base `de36575`. Evidence and logs:
+`G:\awby\projects\conduit\.autoloop\evidence\split-editor\`. Baseline `npm run verify` at the base: exit 0.
+
+- **Slice 1 — done** (`621eb56`, `976f38a`, `d4e2165`). The Check is green, including the five regress terms.
+  `docs.test.ts` was rewritten accessor-only. The whole-map identity checks
+  `next.activeBySession toBe prev.activeBySession` became `remembered(next,'S1') toBe remembered(prev,'S1')`
+  (4 places), because a background pin now changes `layouts`. Deviations:
+  - (a) `cycleTab`, `navGoToTab` and the tab-menu close lists already read group 1's tab order. T3.2 swaps `1` for
+    `activeGroupOf`.
+  - (b) `doc-tabs-conflict.test.ts` got the `previewIds` fixture.
+  - (c) The `splitRight` contract line "pin x's group-1 tab" was built as spec §4: the group-2 tab is pinned and
+    group 1 stays preview. Only the commit-diff `@preview` slot is re-keyed first.
+  - (d) `finalize` with focus `null` takes the shown session's active group's active tab, rather than keeping a
+    stale `activeId`.
+  - (e) `restore` skips ids owned by another session, and gives group 2 an active tab when the file names none.
+- **Slice 2 — done** (`ce242dc`, `1dc9fc1`, `ff59038`, `ddac9aa`). The Check is green; `breadcrumbs` matches no
+  e2e scenario, so it was dropped. **D1 measured TRUE**: all three single-slot registries lost the survivor
+  (`evidence\split-editor\slice2-d1-repro.log`). Deviations:
+  - (a) `groupOfEditor` uses a module-local editor→group map in `nav-editors.ts`, because `PathRegistry` has
+    no whole scan.
+  - (b) `requestNavFocus(path, g)` has no fallback to the other group.
+  - (c) Open: MarkdownViewer's "View source" CodeViewer key `markdown-source:${path}` is still shared across
+    groups. It is picked up in Slice 4 as a per-tab key.
+- **Slice 3 — done** (`284379c`, `f13eb4a`, `c83a638`). The Check is green: the regress terms, `auto-save`,
+  `changes-active-highlight` and `html-viewer`. Deviations:
+  - (a) `save` takes no group. `saveActiveDoc` is per path and acts on `activeId` (S2).
+  - (b) The Terminal-tab "Close editor tabs" uses `closeTab(id, 1)`.
+  - (c) `fileChanged` bumps the HTML reload for each group holding the tab, and session close tombstones both
+    groups' keys.
+  - (d) `closeDoc` on an unknown id resolves `true`.
+  - (e) `CenterPane` still receives group-1 wiring (`closeTab(id,1)`, menu group 1) until Slice 4.
+- **Slice 4 — built** (`da0a8e7`, `6513df8`, `b7de49e`, `351fdc1`, `2fefc7e`, `05fb063`, `3c8cb6a`). `split-editor`
+  (E1/E2/E3/E6/E8/E12/E13), `web-view`, `middle-click-web`, `web-blank-link`, `scrollback` and `attention` pass.
+  **The regress set was RED (4/5)** because spec §9 makes the Terminal button `role="tab"`, and 25 e2e files
+  read `.tabbar [role="tab"]` as "doc tabs". Session ruling (queued as a decision): the Terminal stays a plain
+  button, as today, which keeps E14 "unchanged e2e". Adopting §9 later means updating those selectors. Fix-ups
+  in Slice 4b:
+  - `findConflicts` ignores an unbound (`''`) combo.
+  - The TrustPrompt gets its own grid row, so a group-1 web host can't cover it.
+  Other deviations:
+  - The clamp also caps to [0.15, 0.85].
+  - The icon reuses `IconSplit`.
+  - The accent rule shows only while split.
+  - `.webhost` joined the Aero ink-token scope.
+  - `context-menu-order` expectations gained "Split Right".
+  - `comboLabel` returns undefined for unbound.
+  - The markdown source key is `tabStateKey('markdown-source:'+path, g)`. **T5.1 must move this key too.**
+  - The focus-group commands are listed only while split.
+- **Slice 4b/4c — done.**
+  - `c44b73d`: the Terminal stays a plain button.
+  - `436812d`: `findConflicts` ignores `''`.
+  - `2a76469`: the trust prompt gets its own grid row. `.editorgroups` rows are `auto auto 1fr`. Group 2's body
+    and web host span rows 2–3.
+  - `6a965d1`: merge of main `8466702` (file-integrity). `moveFiles` is ported onto `layouts[s].groups[g]`, and
+    main's `docs.test.ts` cases are accessor-only.
+  - `11c3238`: the theme-tokens lookup string gains `.webhost`.
+  - `3adf2fb`: **root cause of the nav-history AC3 regression.** The `switchSession` resync of the cached
+    `activeId` ran in a passive effect. The per-group strip reads the layout directly, so for one frame Back
+    was judged against a stale `null`. It is now a `useLayoutEffect`.
+  - The regress set is 5/5 green again.
+- **Slice 5 — done** (`c498daa`, `f4b892b`, `ad1a1cf`). The Check is green: `split-editor` plus
+  `split-editor-surfaces`, the regress set, `pdf-viewer`, `web-view`, `file-integrity`, 21 review scenarios and
+  `context-menu-order`. Measurements and deviations:
+  - **E10:** no reload (D9 holds).
+  - **#4:** the web guest focus reaches the host as neither a `focusin` nor a `<webview>` `focus`, only a window
+    `blur` with `activeElement === <webview>`. `WebView.onGuestFocus` fires on that event, and `center-pane`
+    routes it by `webPlacement`.
+  - **D8:** it holds.
+  - `html-viewer`'s source key is per tab, as markdown's is.
+  - The e2e was split into `split-editor-surfaces.e2e.mjs` plus `split-editor-helpers.mjs` because of the 210s
+    runner cap.
+  - The RV assertion compares the card and offset across groups of different widths.
+  - The palette entry title uses `SPLIT_COPY.moveToOther`.
+- **Slice 6 — done** (`c156ebc`, `5a3e87e`, `83e1fa4`, `db42638`). The Check is green: `split-editor-drag`
+  (ED/BD/SI/CD/OB/ES/JG/PD), all three `split-editor` files, `dnd` and `sidebar-dnd`, and the regress set.
+  Deviations:
+  - `tab-drag.ts` also exports `subscribeTabDrag` and `acceptTabDrop`.
+  - `endTabDrag` on a session or center-view switch lives in `app.tsx`.
+  - `EditorGroups` and `CenterPane` take `onMoveTab`.
+  - A duplicate into the left group is not announced.
+  - Join also clears the view state of the duplicates it drops.
+  - The drop zones use `--accent-soft` plus a dashed `--accent` outline.
+- **Slice 7 — done.** CHANGELOG (`988a538`). The first `npm run verify` was red on
+  `files-drop-claim.test.ts`: `editor-groups.tsx` gained a dragover handler that needs a listed audit entry.
+  The entry was added (`9e5cf8d`), and `npm run verify` then exited 0
+  (`evidence\split-editor\final-verify.log`). No existing test was deleted, and no gate config changed.
+- **Review round — done.** The fixes came from an independent review (6 blockers, 14 should-fix) and QA (1
+  visual defect, plus restoring the active group). There was one commit per item.
+  - **Reducer:** B3 `5437bfa`, B4 `9c24473` (a transferred tab lands pinned), B5 `44078a5`, stale close
+    `f1b3938`, `docs.test` restorations `8c75dd2` (expected values unchanged from base).
+  - **QA 2 (`3d711c4`):** `PersistedDoc.focus?: true` restores an active group 2. Spec §3.3 is amended.
+  - **Focus:** `325bf64` adds the per-(doc, group) focus-target registry (`webview/focus-targets.ts`) and one
+    `focusView` path. It fixes the Ctrl+Tab focus loss.
+    - Session ruling in `4bc5ce8`: a pointer click on the Terminal button does not focus xterm, which E14
+      nav-history-lifecycle pins. A keyboard landing on the Terminal (Ctrl+Tab, Ctrl+PgUp/PgDn, Ctrl+1…9,
+      `navFocusTerminal`, a group collapse, Ctrl+W onto it) focuses xterm. Wording corrected in the re-review
+      round: a pointer landing (Terminal click, strip or tab-menu close) focuses the Terminal *button*, per
+      `995d7c2` and `68f16cb`.
+    - `0159fb8` extends that ruling to a strip × close that lands on the Terminal. It was the root cause of
+      the review-mode-pane regression.
+  - **View state:** L3.1–L3.9 (`78ede54`…`6c145ba`). `webview/tab-view-state.ts` is the one id list for carry
+    and teardown.
+  - **Web, drag, divider:** L4.1–L4.6 (`747dd0d`…`0aaeae6`).
+    - Web hosts render in registry order, so no sibling reload.
+    - Tab drags carry a private MIME type.
+    - The divider's hit area is off the strip row.
+    - The ratio is bounded even on a narrow pane.
+  - **Strip:** L5.1–L5.5 (`5891dde`…`485077e`).
+    - The Terminal is a sibling of the tablist; spec §9 is amended.
+    - Move to Other Group creates group 2.
+    - The split button's state is per strip.
+    - The palette entry is "Split Editor Right".
+    - The `.tabbar` scrollbar no longer takes layout space. The global `scrollbar-color` made `::-webkit-scrollbar`
+      inert, so the rule is now `scrollbar-width: none`, guarded by `tab-strip-overflow.e2e.mjs` in 3 themes.
+  - **Tab menu:** `128dadf` makes Split Right follow the strip button's rule.
+- **Re-review round — done** (2 blockers, 10 should-fix, the nits, and a QA major).
+  - **QA major, the Terminal trap (`5481f0c`):** the tab-navigation chords (Ctrl+Tab and Ctrl+Shift+Tab,
+    Ctrl+PgUp/PgDn, Ctrl+1…9) are in `RESERVED_IN_TERMINAL`, so the app handles them while xterm is focused.
+    It is one shared dispatch in the existing window-capture handler. Measured: capture plus `stopPropagation`
+    keeps the key from the PTY, so no `attachCustomKeyEventHandler` was needed. Ctrl+W still reaches the shell.
+  - **B1 (`d78ff96`):** a focus request is armed with `document.activeElement`. It expires when focus moves
+    or its tab stops being shown; the shown set is derived once in `app.tsx`.
+  - **B2 (`ca07228`):** `moveViewState` always sets the redirect, so the cursor carries on a move (I10).
+  - **Should-fix:**
+    - `01afe9e`: registry assertions in `docs.test`, expected values unchanged.
+    - `995d7c2`: a pointer close onto the Terminal focuses the Terminal button.
+    - `e618b92`: the collapse never pulls focus from where the user put it.
+    - `310d88b`: Review (its scroller, where its keymap is scoped), History and commit-diff get focus
+      targets, and commit-diff view state is per tab. A web guest swallows Ctrl+Tab (measured with real
+      guest input), and there is no forward path for it, so web registers no target.
+    - `68f16cb`: the tab menu's closes go through `closeTabsByUser`.
+    - `c1c8b97`: each strip's split button passes its own doc.
+    - `9e8195e`: the Terminal button is `type=button` with `aria-pressed`.
+    - `e4780a8`: overflow e2e for the wheel and the chevron pick.
+    - `d2ccdb8`: spec §2.2 and I3 amended.
+  - **Nits:**
+    - `416cd38`: a bad `focus` value is ignored.
+    - `d76988c`: a preview transferred from another session lands pinned, with a test.
+    - `4167786`: a staged reveal moves with its tab.
+    - `a8c80f4`: restating comments dropped.
+    - `0aafa93`: an empty strip has no tablist role.
+    - `02d470e`: a Neon strip seam rule.
+    - `c87ee30`: tab-strip-overflow cleans up its temp repo.
+    - `fd74ded` and `bac3968`: review-ID tags swept from comments and test titles.
+  - **New e2e files, split out for the 210s cap:** `split-editor-focus-keep`, `split-editor-focus-views`.
+- **Finish round — done** (merge with 0.44.0, 2 should-fix, 2 nits).
+  - **Merge `e9652b4`:** main at `4ff2703`. The split-editor changelog entry auto-merged into the released
+    0.44.0 section with no conflict; it was moved under `[Unreleased]`. The INDEX row lost its PARKED prefix.
+  - **`f2965fa`:** `focusUnmovedSince` dropped `!armed?.isConnected`. Removing the focused element already
+    drops focus to `<body>`, so that clause only ever overrode focus on a different live element.
+  - **`8a349b3`:** the tabindex=-1 focus targets now share one inset ring rule (`--focus-ring-inset` plus
+    `--focus-outline`), folding in the image and mermaid stages' hand-rolled copy. History's landing goes to
+    the selected row (its keymap lives there). Rows are windowed and render after the list is measured, so a
+    landing that finds none holds the root and hands off once the row renders.
+  - **`e2745d4`:** TK covers Ctrl+PageDown from xterm and Ctrl+9 past the doc count. xterm.js maps Ctrl+9 to
+    no bytes, so that step asserts arrival at xterm's textarea, not PTY input.
+  - **Gate:** everything passes except `npm audit --audit-level=high` (undici advisories), which fails
+    identically on main `4ff2703` with the same lockfile. It is pre-existing and needs its own dependency bump.

@@ -4,6 +4,8 @@
  * readable surface registers a synchronous selection reader under its doc PATH.
  */
 
+import type { GroupIndex } from './doc-groups';
+import { createPathRegistry } from './path-registry';
 import { activeDocPath } from './save-registry';
 
 export interface SelectionEntry {
@@ -11,15 +13,14 @@ export interface SelectionEntry {
   getSelectedText(): string;
 }
 
-const registry = new Map<string, SelectionEntry>();
+const registry = createPathRegistry<SelectionEntry>();
 
-/** Register `entry` for `path`; the returned teardown is identity-checked so a remount that
- *  already replaced the entry can't have it deleted out from under it. */
-export function registerSelection(path: string, entry: SelectionEntry): () => void {
-  registry.set(path, entry);
-  return () => {
-    if (registry.get(path) === entry) registry.delete(path);
-  };
+export function registerSelection(
+  path: string,
+  entry: SelectionEntry,
+  group: GroupIndex = 1,
+): () => void {
+  return registry.register(path, entry, group);
 }
 
 /** The active doc's selected text, or '' when the Terminal tab is active, no doc matches,
@@ -27,7 +28,8 @@ export function registerSelection(path: string, entry: SelectionEntry): () => vo
 export function selectionInActiveDoc(
   docs: readonly { id: string; path: string }[],
   activeId: string | null,
+  group: GroupIndex = 1,
 ): string {
   const path = activeDocPath(docs, activeId);
-  return path === null ? '' : (registry.get(path)?.getSelectedText() ?? '');
+  return path === null ? '' : (registry.get(path, group)?.getSelectedText() ?? '');
 }

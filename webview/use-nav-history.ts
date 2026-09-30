@@ -10,8 +10,8 @@ import {
   updateCurrent,
 } from '../src/nav-history';
 import { EDITOR_NAV_OPS, type NavEntry } from './editor-nav';
+import { cancelDocFocus } from './focus-targets';
 import { log } from './log';
-import { cancelNavFocus } from './nav-editors';
 
 export interface NavHistoryDeps {
   /** The active view as an entry, with the live cursor for a file; null for a Terminal tab / no doc (F3). */
@@ -103,7 +103,7 @@ export function useNavHistory(deps: RefObject<NavHistoryDeps>): NavHistory {
   const recordNav = useCallback(
     (to: NavEntry) => {
       const from = deps.current.currentEntry();
-      cancelNavFocus();
+      cancelDocFocus();
       enqueue(() => commit(record(stateRef.current, from, to, EDITOR_NAV_OPS)));
     },
     [deps, enqueue, commit],

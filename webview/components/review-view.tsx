@@ -65,6 +65,7 @@ import type { GitInfo } from '../../src/types';
 import { gitAction } from '../bridge';
 import { DIFF_READ_ERROR_NOTICE } from '../diff-tab-scope';
 import type { OpenMode, ReviewSource } from '../docs';
+import { useFocusTargetRef } from '../focus-targets';
 import type { GitActionIntent } from '../git-intent';
 import {
   applyHunkAction,
@@ -416,6 +417,7 @@ export function ReviewView({
   const [fileFilter, setFileFilter] = useState(memory.filter);
 
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const scrollerFocusRef = useFocusTargetRef(viewStateId, scrollerRef);
 
   // Note composer state lives HERE, not in the card: Esc must unwind composer → search → help
   // → Review in that order and `useEscapeKey` listens on window, so the state has to be visible
@@ -2199,7 +2201,7 @@ export function ReviewView({
       )}
 
       <div
-        ref={scrollerRef}
+        ref={scrollerFocusRef}
         className="review__scroll"
         // The keymap is scoped to focus inside this element, and opening Review from a tab click
         // leaves focus on the tab — so the scroller is focusable and claims it once (Lane B plan, assumption 11).
