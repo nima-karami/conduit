@@ -1,34 +1,46 @@
 /**
- * Smoke test runner — discovers test/e2e/*.e2e.mjs and runs each sequentially
- * as a child process, printing PASS / FAIL / SKIP per scenario + a final summary.
+ * e2e runner — runs test/e2e/<name>.e2e.mjs scenarios one at a time, each as a child process,
+ * printing PASS / FAIL / SKIP / TIMEOUT / FLAKY per scenario and a summary.
+ *
+ * Locally (`npm run e2e -- <name>`) it runs exactly ONE scenario, matched by exact file stem; the
+ * suite and any multi-scenario selection run remotely (`npm run e2e:remote -- --full | <names>`),
+ * because a full local run takes ~100 min of a workstation. `CONDUIT_E2E_LOCAL_FULL=1` is a
+ * human-only escape hatch. On CI (GITHUB_ACTIONS) it runs whatever it is given — a shard of the
+ * suite. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md.
  *
  * Usage:
- *   node test/e2e/run-smoke.mjs              # run the whole suite
- *   node test/e2e/run-smoke.mjs quit-guard   # run only scenarios whose name
- *   node test/e2e/run-smoke.mjs cwd reveal   # matches any given filter term
- *   node test/e2e/run-smoke.mjs --exact cwd quit-guard --json out.json
- *                                            # exact file stems; result JSON after each scenario
+ *   node test/e2e/run-smoke.mjs <name…> [--names-file f.json] [--json out.json]
+ *                                       [--artifacts dir] [--retry]
  *
- * The filter is for the inner dev loop: while building one host-boundary feature
- * you run just its scenario (~30s) instead of the whole suite (~4 min). Run the
- * full suite (no args) once before integrating, as a cross-feature regression check.
+ *   --names-file  JSON array of names, added to the positional ones
+ *   --json        result rows `[{ name, status, seconds, attempts }]`, rewritten after each scenario
+ *   --artifacts   failure artifacts root: each non-PASS attempt's log (and, from the harness, its
+ *                 trace and screenshots) lands in <dir>/<name>/attempt-<n>/
+ *   --retry       a failed or timed-out scenario runs once more; a pass then is FLAKY
  *
- * Exit codes:
- *   0 — all scenarios passed or skipped
- *   1 — at least one scenario failed
- *
+ * Exit codes: 0 all PASS/SKIP/FLAKY; 1 a scenario failed; 2 usage error or local refusal.
  * On non-win32 platforms prints a suite-level SKIP and exits 0.
  */
 
 import { spawnSync } from 'node:child_process';
-import { readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  classify,
+  finalStatus,
+  isGreen,
+  parseRunnerArgs,
+  resolveSelection,
+} from './smoke-select.mjs';
 
 /** Settle delay between scenarios: gives the prior Electron process time to fully
  *  release GPU/ConPTY handles and let the CPU quiesce before the next launch. */
 const SETTLE_MS = 3000;
+/** Runner kill. The harness watchdog (E2E_DEADLINE_MS) fires first so it can save artifacts. */
+const KILL_MS = 210_000;
+const DEADLINE_MS = 200_000;
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -60,123 +72,114 @@ if (process.platform !== 'win32') {
   process.exit(0);
 }
 
-const argv = process.argv.slice(2);
-/** Remove `flag` and its values from argv; `arity` '*' takes values up to the next `--flag`. */
-function takeFlag(flag, arity) {
-  const i = argv.indexOf(flag);
-  if (i < 0) return undefined;
-  let end = i + 1;
-  while (end < argv.length && !argv[end].startsWith('--') && (arity === '*' || end < i + 2)) end++;
-  return argv.splice(i, end - i).slice(1);
+const args = parseRunnerArgs(process.argv.slice(2));
+if (args.error) {
+  console.log(`[smoke] ${args.error}`);
+  process.exit(2);
 }
-const jsonPath = takeFlag('--json', 1)?.[0];
-const exact = takeFlag('--exact', '*');
-const filters = argv.map((t) => t.toLowerCase());
+const ci = process.env.GITHUB_ACTIONS === 'true';
+const stems = readdirSync(here)
+  .filter((f) => f.endsWith('.e2e.mjs'))
+  .map((f) => f.replace('.e2e.mjs', ''));
+const requested = [
+  ...args.names,
+  ...(args.namesFile ? JSON.parse(readFileSync(args.namesFile, 'utf8')) : []),
+];
+const selection = resolveSelection({
+  names: requested,
+  stems,
+  ci,
+  localFull: process.env.CONDUIT_E2E_LOCAL_FULL === '1',
+});
+if ('exit' in selection) {
+  console.log(selection.message);
+  process.exit(selection.exit);
+}
+if (selection.banner) console.log(`${selection.banner}\n`);
+const names = selection.names;
+const artifactsRoot = args.artifacts ? resolve(args.artifacts) : null;
 
-const allFiles = readdirSync(here).filter((f) => f.endsWith('.e2e.mjs'));
-let scenarios;
-if (exact) {
-  const stems = new Set(allFiles.map((f) => f.replace('.e2e.mjs', '')));
-  const unknown = exact.filter((n) => !stems.has(n));
-  if (unknown.length) {
-    console.log(`[smoke] Unknown scenario(s): ${unknown.join(', ')}`);
-    process.exit(1);
+console.log(`[smoke] Running ${names.length} scenario(s) sequentially...\n`);
+
+function runAttempt(name, attempt) {
+  const start = Date.now();
+  const r = spawnSync(
+    process.execPath,
+    ['--experimental-vm-modules', join(here, `${name}.e2e.mjs`)],
+    {
+      cwd: join(here, '..', '..'),
+      stdio: 'pipe',
+      encoding: 'utf8',
+      timeout: KILL_MS,
+      // CONDUIT_E2E launches the app hidden (main.ts reads it). A scenario run directly, not
+      // through this runner, still shows its window for debugging.
+      env: {
+        ...process.env,
+        CONDUIT_E2E: '1',
+        E2E_SCENARIO: name,
+        E2E_ATTEMPT: String(attempt),
+        E2E_DEADLINE_MS: String(DEADLINE_MS),
+        ...(artifactsRoot ? { E2E_ARTIFACT_DIR: artifactsRoot } : {}),
+      },
+    },
+  );
+  const output = (r.stdout || '') + (r.stderr || '');
+  const status = classify({ status: r.status, signal: r.signal, errorCode: r.error?.code, output });
+  const seconds = Number(((Date.now() - start) / 1000).toFixed(1));
+  return { name, attempt, status, seconds, exit: r.status ?? r.signal ?? r.error?.code, r, output };
+}
+
+/** A non-clean attempt: dump its output, keep its log beside the harness's artifacts, sweep. */
+function afterFailure({ name, attempt, exit, r, output }) {
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stderr.write(r.stderr);
+  if (artifactsRoot) {
+    const dir = join(artifactsRoot, name, `attempt-${attempt}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'log.txt'), `exit ${exit}\n${output}`);
   }
-  scenarios = [...new Set(exact)].sort().map((n) => join(here, `${n}.e2e.mjs`));
-} else {
-  scenarios = allFiles
-    .filter((f) => {
-      if (filters.length === 0) return true;
-      const name = f.replace('.e2e.mjs', '').toLowerCase();
-      return filters.some((t) => name.includes(t));
-    })
-    .sort()
-    .map((f) => join(here, f));
+  // Only after a non-clean exit: a scenario that finished normally already shut its app down,
+  // and the sweep costs a PowerShell spawn we don't want on the happy path.
+  const swept = sweepOrphanElectrons();
+  if (swept > 0) console.log(`  ↳ swept ${swept} orphaned Electron process(es)`);
 }
 
-if (scenarios.length === 0) {
-  const suffix = filters.length ? ` matching [${filters.join(', ')}]` : '';
-  console.log(`[smoke] No *.e2e.mjs scenarios found${suffix} — nothing to run.`);
-  process.exit(filters.length ? 1 : 0); // a filter that matches nothing is an error
-}
-
-const scope = filters.length ? ` (filter: ${filters.join(', ')})` : '';
-console.log(`[smoke] Running ${scenarios.length} scenario(s) sequentially${scope}...\n`);
-
+const settle = () => new Promise((r) => setTimeout(r, SETTLE_MS));
+const ICON = { PASS: '✓', SKIP: '○', FLAKY: '~' };
 const results = [];
 
-for (const scenarioPath of scenarios) {
-  const name = scenarioPath.replace(/.*[/\\]/, '').replace('.e2e.mjs', '');
+for (const name of names) {
   process.stdout.write(`  ${name} ... `);
-
-  const start = Date.now();
-  const result = spawnSync(process.execPath, ['--experimental-vm-modules', scenarioPath], {
-    cwd: join(here, '..', '..'),
-    stdio: 'pipe',
-    encoding: 'utf8',
-    timeout: 210_000, // 3.5-minute per-scenario guard (headroom for 120s paste READY + margin)
-    // Launch the app hidden so the suite runs in the background (main.ts reads this).
-    // A directly-run scenario (not via this runner) still shows the window for debugging.
-    env: { ...process.env, CONDUIT_E2E: '1' },
-  });
-  const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-
-  let status;
-  if (result.status === 0) {
-    const combined = (result.stdout || '') + (result.stderr || '');
-    if (/\bSKIP\b/.test(combined)) {
-      status = 'SKIP';
-    } else {
-      status = 'PASS';
-    }
-  } else if (result.status === 1) {
-    status = 'FAIL';
-  } else if (result.status === 2) {
-    status = 'ERROR';
-  } else if (result.signal || result.error?.code === 'ETIMEDOUT') {
-    status = 'TIMEOUT';
-  } else {
-    status = `EXIT(${result.status ?? '?'})`;
+  const first = runAttempt(name, 1);
+  let last = first;
+  if (args.retry && !isGreen(first.status)) {
+    console.log(`${first.status} (${first.seconds}s, exit ${first.exit}), retrying`);
+    afterFailure(first);
+    await settle();
+    process.stdout.write(`  ${name} (attempt 2) ... `);
+    last = runAttempt(name, 2);
   }
-
-  const icon = status === 'PASS' ? '✓' : status === 'SKIP' ? '○' : '✗';
-  console.log(`${icon} ${status} (${elapsed}s)`);
-
-  if (!['PASS', 'SKIP'].includes(status)) {
-    if (result.stdout) process.stdout.write(result.stdout);
-    if (result.stderr) process.stderr.write(result.stderr);
-    // Only after a non-clean exit: a scenario that finished normally already shut its app down,
-    // and the sweep costs a PowerShell spawn we don't want on the happy path.
-    const swept = sweepOrphanElectrons();
-    if (swept > 0) console.log(`  ↳ swept ${swept} orphaned Electron process(es)`);
-  }
-
-  results.push({ name, status, elapsed });
+  const status = finalStatus(first.status, last === first ? undefined : last.status);
+  const exitNote = status === 'FAIL' ? `, exit ${last.exit}` : '';
+  console.log(`${ICON[status] ?? '✗'} ${status} (${last.seconds}s${exitNote})`);
+  if (last.status !== 'PASS' && last.status !== 'SKIP') afterFailure(last);
+  results.push({ name, status, seconds: last.seconds, attempts: last === first ? 1 : 2 });
   // Rewritten after every scenario so a shard that dies mid-run still reports what it finished.
-  if (jsonPath) {
-    const rows = results.map((r) => ({
-      name: r.name,
-      status: r.status,
-      seconds: Number(r.elapsed),
-    }));
-    writeFileSync(jsonPath, `${JSON.stringify(rows, null, 2)}\n`);
-  }
-
-  if (scenarioPath !== scenarios[scenarios.length - 1]) {
-    await new Promise((r) => setTimeout(r, SETTLE_MS));
-  }
+  if (args.json) writeFileSync(args.json, `${JSON.stringify(results, null, 2)}\n`);
+  if (name !== names[names.length - 1]) await settle();
 }
 
+const count = (s) => results.filter((r) => r.status === s).length;
+const failed = results.filter((r) => !isGreen(r.status));
 console.log('\n── Summary ──────────────────────────────────────');
-const counts = { PASS: 0, SKIP: 0, FAIL: 0, ERROR: 0, TIMEOUT: 0 };
-for (const r of results) {
-  const key = Object.hasOwn(counts, r.status) ? r.status : 'ERROR';
-  counts[key]++;
-}
 console.log(
-  `  ${counts.PASS} passed  ${counts.SKIP} skipped  ${counts.FAIL} failed  ${counts.ERROR + counts.TIMEOUT} errors`,
+  `  ${count('PASS')} passed  ${count('FLAKY')} flaky  ${count('SKIP')} skipped  ${failed.length} failed`,
 );
 console.log('─────────────────────────────────────────────────\n');
-
-const anyFailed = counts.FAIL > 0 || counts.ERROR > 0 || counts.TIMEOUT > 0;
-process.exit(anyFailed ? 1 : 0);
+if (failed.length && !ci) {
+  console.log(
+    '[smoke] A loaded machine fails PTY scenarios the way a regression does. Confirm remotely ' +
+      `before debugging: npm run e2e:remote -- ${failed.map((r) => r.name).join(' ')}`,
+  );
+}
+process.exit(failed.length ? 1 : 0);
