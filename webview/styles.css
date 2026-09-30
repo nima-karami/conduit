@@ -8263,6 +8263,7 @@ button.toggle--on .toggle__knob {
 }
 .confirm__actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
 }
@@ -8275,6 +8276,70 @@ button.toggle--on .toggle__knob {
   font-size: calc(12.5px * var(--font-scale));
   color: var(--text-dim, var(--text));
   cursor: pointer;
+}
+/* The unsaved-files dialog (dirty-quit-guard spec §4): one line per file; the list scrolls. */
+.confirm--files {
+  width: min(560px, calc(100vw - 32px));
+  max-width: min(560px, calc(100vw - 32px));
+}
+.confirm__files {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  max-height: 40vh;
+  overflow: auto;
+  font-size: calc(12.5px * var(--font-scale));
+}
+.confirm__file {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 0;
+  white-space: nowrap;
+}
+.confirm__file-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.confirm__file-dir {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+.confirm__file-tag {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+.confirm__file-tag--danger {
+  color: var(--red);
+}
+.confirm__file-group {
+  padding: 8px 0 2px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.confirm__status {
+  min-height: 1.5em;
+  margin: 0 0 12px;
+  color: var(--text-dim);
+  font-size: calc(12.5px * var(--font-scale));
+}
+.quit-scrim {
+  color: var(--text);
+  font-size: calc(13px * var(--font-scale));
+  outline: none;
+}
+@media (forced-colors: active) {
+  .confirm .btn:focus-visible {
+    outline: 2px solid Highlight;
+  }
 }
 /* DELETE on the parts sheet is a tinted outline, not a solid red slab: in a palette this
    hot the destructive action reads louder as an outline than as a fill, and it keeps the
