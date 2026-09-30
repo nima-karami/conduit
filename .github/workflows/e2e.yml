@@ -1,10 +1,14 @@
 name: e2e
-run-name: e2e ${{ inputs.selection }} ${{ inputs.nonce }}
+run-name: e2e ${{ inputs.selection || 'full' }} ${{ inputs.nonce || github.event_name }}
 
-# Remote e2e on hosted Windows runners, dispatched by `npm run e2e:remote`.
+# Remote e2e on hosted Windows runners, dispatched by `npm run e2e:remote`, and nightly on main.
 # Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md. No workflow-level `concurrency`: GitHub keeps
 # one pending run per group and cancels the older one; the CLI coordinates full runs instead.
+# "Nightly" below means the schedule, or a dispatch with mode=nightly (how the nightly path is
+# exercised on a ci/e2e ref: a schedule only ever runs main's copy of this file).
 on:
+  schedule:
+    - cron: '23 8 * * *'
   workflow_dispatch:
     inputs:
       selection:
@@ -32,6 +36,11 @@ on:
         description: Also run the verify gate (verify.yml) and include it in the verdict
         type: boolean
         default: true
+      mode:
+        description: nightly = also update the e2e-state artifact and sweep stale ci/e2e refs
+        type: choice
+        options: [normal, nightly]
+        default: normal
 
 permissions:
   contents: read
@@ -52,23 +61,59 @@ jobs:
       plan: ${{ steps.plan.outputs.plan }}
       excluded: ${{ steps.plan.outputs.excluded }}
       count: ${{ steps.plan.outputs.count }}
+      state-id: ${{ steps.state.outputs.id }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+      # By artifact name, never by run conclusion: a red nightly's state is as current as a green
+      # one's. Re-uploaded into this run so the state and report jobs don't look it up again.
+      - id: state
+        name: Latest e2e-state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p state
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=e2e-state&per_page=30" > state-list.json
+          id=$(node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { newestArtifact } from "./test/e2e/ci-state.mjs";
+            const a = newestArtifact(JSON.parse(readFileSync("state-list.json", "utf8")), "e2e-state");
+            if (a) console.error(`e2e-state: artifact ${a.id} of run ${a.workflow_run?.id}, ${a.created_at}`);
+            console.log(a ? a.id : "");
+          ')
+          if [ -z "$id" ]; then
+            echo "no e2e-state artifact yet: timings from the seed"
+            exit 0
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > state.zip
+          unzip -q -o state.zip -d state
+          ls -l state
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+      - if: steps.state.outputs.id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-state-prev
+          path: state/
+          retention-days: 1
       - id: plan
         env:
-          SELECTION: ${{ inputs.selection }}
+          SELECTION: ${{ inputs.selection || 'full' }}
           SCENARIOS: ${{ inputs.scenarios }}
           SHARDS: ${{ inputs.shards }}
         run: |
           node --input-type=module -e '
-            import { readdirSync, readFileSync, appendFileSync } from "node:fs";
+            import { existsSync, readdirSync, readFileSync, appendFileSync } from "node:fs";
             import { planShards } from "./test/e2e/ci-shard-plan.mjs";
+            import { resolveTimings } from "./test/e2e/ci-state.mjs";
             import { applyExclusions } from "./test/e2e/smoke-select.mjs";
             const read = (f) => JSON.parse(readFileSync(f, "utf8"));
-            const seed = read("test/e2e/timings.seed.json");
+            const timings = resolveTimings(
+              read("test/e2e/timings.seed.json"),
+              existsSync("state/timings.json") ? read("state/timings.json") : null,
+            );
+            console.log(`timings: ${timings.source}`);
             const stems = readdirSync("test/e2e").filter((f) => f.endsWith(".e2e.mjs"))
               .map((f) => f.replace(".e2e.mjs", ""));
             const sel = process.env.SELECTION;
@@ -84,8 +129,8 @@ jobs:
             }
             const { run, excluded } = applyExclusions(names, read("test/e2e/remote-exclusions.json"));
             for (const [n, why] of Object.entries(excluded)) console.log(`EXCLUDED ${n}: ${why}`);
-            const { shards } = planShards(run, seed.medians, {
-              shards: Number(process.env.SHARDS) || 0, scale: seed.scale, cap: 16,
+            const { shards } = planShards(run, timings.medians, {
+              shards: Number(process.env.SHARDS) || 0, cap: 16,
             });
             for (const s of shards) console.log(`shard ${s.index + 1}: ~${Math.round(s.estSec)}s, ${s.names.length} scenarios`);
             const include = shards.map((s) => ({ shard: s.index + 1, names: s.names.join(" ") }));
@@ -199,7 +244,7 @@ jobs:
           EXCLUDED: ${{ needs.prepare.outputs.excluded }}
           PREPARE_RESULT: ${{ needs.prepare.result }}
           VERIFY_RESULT: ${{ needs.verify.result }}
-          SELECTION: ${{ inputs.selection }}
+          SELECTION: ${{ inputs.selection || 'full' }}
           NONCE: ${{ inputs.nonce }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > run.json
@@ -241,9 +286,114 @@ jobs:
           echo "run status: $status"
           [ "$status" = passed ] || [ "$status" = flaky-passed ]
 
-  # The run owns its ref, so a cancelled run or a killed client still cleans up.
+  # Nightly only, and whatever the verdict: a red nightly still records timings and flakes.
+  state:
+    needs: [prepare, shard]
+    if: always() && needs.prepare.result == 'success' && (github.event_name == 'schedule' || inputs.mode == 'nightly')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: test/e2e
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - if: needs.prepare.outputs.state-id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: e2e-state-prev
+          path: prev
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: e2e-results-*
+          path: results
+          merge-multiple: true
+      - name: Update state
+        run: |
+          mkdir -p out
+          node --input-type=module -e '
+            import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+            import { lastNightly, updateFlakyHistory, updateTimings } from "./test/e2e/ci-state.mjs";
+            const read = (f, d) => (existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : d);
+            const write = (f, v) => writeFileSync(`out/${f}`, JSON.stringify(v, null, 2) + "\n");
+            const rows = existsSync("results")
+              ? readdirSync("results").flatMap((f) => read(`results/${f}`, []))
+              : [];
+            const now = Date.now();
+            const sha = process.env.GITHUB_SHA;
+            const runId = Number(process.env.GITHUB_RUN_ID);
+            write("timings.json", { builtFrom: sha, ...updateTimings(read("prev/timings.json", null), rows) });
+            write("flaky-history.json", updateFlakyHistory(read("prev/flaky-history.json", {}), rows, { now }));
+            write("last-nightly.json", lastNightly(rows, { sha, runId, at: new Date(now).toISOString() }));
+            for (const f of ["coverage-map.json"]) {
+              if (existsSync(`prev/${f}`)) writeFileSync(`out/${f}`, readFileSync(`prev/${f}`));
+            }
+            console.log(`state from ${rows.length} results`);
+          '
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-state
+          path: out/
+          retention-days: 30
+
+  # Backstop for refs whose run never started; a run's own `cleanup` job deletes the rest.
+  sweep:
+    if: github.event_name == 'schedule' || inputs.mode == 'nightly'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: test/e2e
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module -e '
+            import { spawnSync } from "node:child_process";
+            import { staleCiRefs } from "./test/e2e/ci-state.mjs";
+            const repo = process.env.GITHUB_REPOSITORY;
+            const api = (...args) => {
+              const r = spawnSync("gh", ["api", ...args], { encoding: "utf8" });
+              return { ok: r.status === 0, out: r.stdout, err: r.stderr };
+            };
+            const json = (...args) => {
+              const r = api(...args);
+              if (!r.ok) throw new Error(`gh api ${args.join(" ")}: ${r.err}`);
+              return JSON.parse(r.out);
+            };
+            const refs = json("--paginate", "--slurp", `repos/${repo}/git/matching-refs/heads/ci/e2e/`).flat();
+            const described = refs.map((r) => {
+              const ref = r.ref.replace("refs/heads/", "");
+              const commitAt = json(`repos/${repo}/commits/${r.object.sha}`).commit.committer.date;
+              const runs = json(`repos/${repo}/actions/runs?branch=${encodeURIComponent(ref)}&per_page=20`)
+                .workflow_runs.map(({ status, created_at }) => ({ status, created_at }));
+              return { ref, commitAt, runs };
+            });
+            const stale = staleCiRefs(described, { now: Date.now() });
+            console.log(`${refs.length} ci/e2e ref(s), ${stale.length} stale`);
+            let failed = 0;
+            for (const ref of stale) {
+              const r = api("-X", "DELETE", `repos/${repo}/git/refs/heads/${ref}`);
+              if (r.ok) console.log(`deleted ${ref}`);
+              else if (/Reference does not exist/.test(r.err + r.out)) console.log(`${ref} already gone`);
+              else {
+                console.log(`::error::deleting ${ref}: ${r.err}`);
+                failed++;
+              }
+            }
+            process.exit(failed ? 1 : 0);
+          '
+
+  # The run owns its ref, so a cancelled run or a killed client still cleans up. After `state`,
+  # which checks the ref out.
   cleanup:
-    needs: [verify, prepare, shard, report]
+    needs: [verify, prepare, shard, report, state]
     if: always() && startsWith(github.ref, 'refs/heads/ci/e2e/')
     runs-on: ubuntu-latest
     permissions:
