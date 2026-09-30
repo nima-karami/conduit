@@ -508,7 +508,7 @@ export function App() {
     (ids: readonly string[]) => sessionDirtyPaths(docsRef.current, ids, getDirtySnapshot()),
     [],
   );
-  // Closing or moving sessions that own unsaved files asks first (dirty-quit-guard spec §5); a
+  // Closing or moving sessions that own unsaved files asks first (dirty-quit-guard spec §2.2); a
   // proceed after Save All or Don't Save means the buffers may be dropped.
   const guardSessionRemoval = useCallback(
     (

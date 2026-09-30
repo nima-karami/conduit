@@ -44,16 +44,9 @@ export async function launchDirty({ autoSave, autoSaveDelay, files, userDataDir 
   return { app, page, root, sid, launched };
 }
 
-let shots = 0;
-/** `DIRTY_QUIT_SHOTS=<absolute dir>` saves a screenshot of every dirty dialog there (runtime proof). */
 export async function dirtyDialog(page, timeout = 8000) {
   const dialog = page.locator('.confirm.confirm--files');
   await dialog.waitFor({ state: 'visible', timeout });
-  if (process.env.DIRTY_QUIT_SHOTS) {
-    shots += 1;
-    const name = `${ONLY ?? 'all'}-${process.pid}-${shots}.png`;
-    await page.screenshot({ path: join(process.env.DIRTY_QUIT_SHOTS, name) });
-  }
   return dialog;
 }
 

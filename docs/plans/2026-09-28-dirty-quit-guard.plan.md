@@ -1548,7 +1548,6 @@ the locked decision.
     had counts and used to fake sessions to call it.
   - Responder: a superseded flow's `finally` leaves toast suppression to the flow that replaced it;
     a throwing ask posts no decision (the host's timeouts cover it).
-  - `DIRTY_QUIT_SHOTS=<dir>` saves each dirty dialog as a screenshot (runtime proof).
 - **Slice 5 (2026-09-29): done** — T5.1 `72ee199`. The exited-shell warn uses the session's
   `name` (the plan said `title`; `Session` has no `title`).
 - **Slice 6 (2026-09-29): built, gate NOT green** — T6.1 `a5ceafe` (+ style fix `e717000`).

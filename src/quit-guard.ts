@@ -134,7 +134,6 @@ export function dirtySaveStatus(kind: 'saving' | 'failed', n: number): string {
 }
 
 export interface QuitConfirmCopyInput {
-  /** Count of running sessions. */
   running: number;
   busy: number;
   reason: QuitReason;

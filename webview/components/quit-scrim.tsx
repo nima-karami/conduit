@@ -16,8 +16,8 @@ export function QuitScrim() {
 
   return (
     <ModalLayer>
-      <div ref={ref} className="quit-scrim" aria-busy="true" aria-label="Quitting" tabIndex={-1}>
-        Quitting… waiting for another window
+      <div ref={ref} className="quit-scrim" role="status" aria-busy="true" tabIndex={-1}>
+        Closing…
       </div>
     </ModalLayer>
   );
