@@ -1,6 +1,6 @@
 # Dirty-editor quit guard — implementation plan
 
-**Spec:** `docs/specs/2026-09-28-dirty-quit-guard.md`  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-09-28-dirty-quit-guard.md`  **Tier:** FULL
 
 ## Goal
 

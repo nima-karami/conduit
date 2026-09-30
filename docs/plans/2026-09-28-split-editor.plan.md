@@ -1,6 +1,6 @@
 # Split editor — implementation plan
 
-**Spec:** `docs/specs/2026-09-28-split-editor.md`  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-09-28-split-editor.md`  **Tier:** FULL
 
 Triage: FULL. It adds a new state seam (per-session editor groups in the docs reducer), a new
 persisted field, a new setting, a new layout component family, and it retargets ~30 app readers
@@ -685,7 +685,7 @@ props: {
 | `webview/styles.css` | modify | `.editorgroups`, `.editor-group`, divider, web layer, `.tab--current`, drop overlays, vocabulary entries |
 | `test/unit/doc-groups.test.ts` | create | selectors, I1–I9, new actions, split-mode parametrised core behaviours, persistence round trip, `dirtyPreviewTabs` |
 | `test/unit/web-doc.test.ts` | modify (accessor-only, only if it reads `preview`/`activeBySession`) | unchanged expectations |
-| `docs/specs/2026-09-28-split-editor.md` | already amended at plan time | §2.4 webview pointer-down note; §3.1 symmetric shape; §4 viewLeave row. No executor change |
+| `docs/specs/archive/2026-09-28-split-editor.md` | already amended at plan time | §2.4 webview pointer-down note; §3.1 symmetric shape; §4 viewLeave row. No executor change |
 | `test/unit/docs.test.ts` | modify (accessor-only) | the I7 guard: reads go through accessors; **no expected literal changes** |
 | `test/unit/persistence.test.ts` | modify | `group` validation |
 | `test/unit/path-registry.test.ts` | create | multi-entry semantics |
