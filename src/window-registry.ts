@@ -75,6 +75,17 @@ function rectContains(r: Rect, p: ScreenPoint): boolean {
   return p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height;
 }
 
+/** A session dropped this close to its own window's edge (or beyond) is treated as leaving it, so
+ *  the move is guarded; see dirty-quit-guard plan, critic S1. */
+export const DRAG_STAY_INSET_PX = 8;
+
+export function pointWellInside(r: Rect, p: ScreenPoint, inset: number): boolean {
+  const width = r.width - 2 * inset;
+  const height = r.height - 2 * inset;
+  if (width <= 0 || height <= 0) return false;
+  return rectContains({ x: r.x + inset, y: r.y + inset, width, height }, p);
+}
+
 /**
  * Cross-window drag hit-test (multi-window Slice C): the id of the window whose bounds
  * contain `point`, EXCLUDING `excludeId` (the drag source — a drop back over the source is

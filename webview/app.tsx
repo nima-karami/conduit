@@ -75,6 +75,7 @@ import { canRelaunch, relaunchableSessionIds, staleSessionIds } from '../src/sta
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
 import { formatDuration } from '../src/timed-messages';
 import type { AgentDefinition, Session } from '../src/types';
+import { DRAG_STAY_INSET_PX, pointWellInside } from '../src/window-registry';
 import { activeTarget } from './active-target';
 import { AUTO_SAVE_COPY } from './auto-save-copy';
 import { afterCloseSave, type CloseStep, dirtyCloseStep } from './auto-save-policy';
@@ -270,6 +271,7 @@ import {
   setCompilerOptionsRoot,
 } from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
+import { sessionDirtyPaths } from './unsaved-files';
 import { useBackgroundOpenFeedback } from './use-background-open-feedback';
 import { useDirtyClose } from './use-dirty-close';
 import { focusOpenModal, nextModalKey, useModalSlot } from './use-modal-slot';
@@ -502,6 +504,49 @@ export function App() {
   const dirtyClose = useDirtyClose({ saves: fileSaves, rootOf, slot });
   const dirtyCloseRef = useRef(dirtyClose);
   dirtyCloseRef.current = dirtyClose;
+  const sessionDirty = useCallback(
+    (ids: readonly string[]) => sessionDirtyPaths(docsRef.current, ids, getDirtySnapshot()),
+    [],
+  );
+  // Closing or moving sessions that own unsaved files asks first (dirty-quit-guard spec §5); a
+  // proceed after Save All or Don't Save means the buffers may be dropped.
+  const guardSessionRemoval = useCallback(
+    (
+      ids: string[],
+      reason: 'sessionClose' | 'sessionMove',
+      proceed: () => void,
+      opts?: { exitedSession?: string },
+    ) => {
+      const paths = sessionDirty(ids);
+      if (paths.length === 0) {
+        proceed();
+        return;
+      }
+      const targets = sessionsRef.current.filter((x) => ids.includes(x.id));
+      const live = reason === 'sessionMove' ? [] : targets.filter((x) => x.status === 'running');
+      const titleOf = new Map(targets.map((x) => [x.id, x.name]));
+      const sessionOf = (path: string) => {
+        const owner = ids.find((id) =>
+          docsRef.current.some((d) => d.kind === 'file' && d.path === path && d.sessionId === id),
+        );
+        return owner === undefined ? undefined : titleOf.get(owner);
+      };
+      void dirtyCloseRef.current
+        .ask({
+          reason,
+          paths,
+          running: live.length,
+          busy: live.filter((x) => x.busy).length,
+          exitedSession: opts?.exitedSession,
+          grouped: ids.length > 1,
+          sessionOf,
+        })
+        .then((answer) => {
+          if (answer !== 'cancel') proceed();
+        });
+    },
+    [sessionDirty],
+  );
   const [quitLocked, setQuitLocked] = useState(false);
   const responder = useMemo(
     () =>
@@ -762,6 +807,10 @@ export function App() {
         const action = sessionExitAction({ agentId: s.agentId, hasOpenEditors });
         if (action === 'close') {
           post({ type: 'kill', id: s.id });
+        } else if (action === 'warn' && sessionDirty([s.id]).length > 0) {
+          guardSessionRemoval([s.id], 'sessionClose', () => post({ type: 'kill', id: s.id }), {
+            exitedSession: s.name,
+          });
         } else if (action === 'warn') {
           showConfirm({
             title: 'Terminal exited',
@@ -774,7 +823,7 @@ export function App() {
       }
     }
     prevStatusRef.current = new Map(sessions.map((s) => [s.id, s.status]));
-  }, [sessions, docState.docs, showConfirm]);
+  }, [sessions, docState.docs, showConfirm, sessionDirty, guardSessionRemoval]);
 
   // Relaunch all sessions that are currently stale (manual trigger — also used by
   // the "Relaunch all stale" command palette entry).
@@ -2546,6 +2595,11 @@ export function App() {
   // open editor tabs); a plain idle shell closes silently. See shouldConfirmClose.
   const requestKill = useCallback(
     (id: string) => {
+      // Unsaved files ask regardless of confirmCloseRunning (dirty-quit-guard spec A9).
+      if (sessionDirty([id]).length > 0) {
+        guardSessionRemoval([id], 'sessionClose', () => post({ type: 'kill', id }));
+        return;
+      }
       const s = sessions.find((x) => x.id === id);
       const hasOpenEditors = docState.docs.some((d) => d.sessionId === id);
       if (
@@ -2570,7 +2624,14 @@ export function App() {
         post({ type: 'kill', id });
       }
     },
-    [sessions, docState.docs, settings.confirmCloseRunning, showConfirm],
+    [
+      sessions,
+      docState.docs,
+      settings.confirmCloseRunning,
+      showConfirm,
+      sessionDirty,
+      guardSessionRemoval,
+    ],
   );
 
   // Close a set of sessions via the single-close path (`kill` per id) so each pty is
@@ -2582,6 +2643,10 @@ export function App() {
       const killAll = () => {
         for (const id of ids) post({ type: 'kill', id });
       };
+      if (sessionDirty(ids).length > 0) {
+        guardSessionRemoval(ids, 'sessionClose', killAll);
+        return;
+      }
       const anyRunning = ids.some((id) => sessions.find((x) => x.id === id)?.status === 'running');
       if (anyRunning && settings.confirmCloseRunning) {
         showConfirm({
@@ -2595,7 +2660,7 @@ export function App() {
         killAll();
       }
     },
-    [sessions, settings.confirmCloseRunning, showConfirm],
+    [sessions, settings.confirmCloseRunning, showConfirm, sessionDirty, guardSessionRemoval],
   );
 
   // Close every stale session (dead restored records) in one action. Reuses the shared
@@ -2620,13 +2685,18 @@ export function App() {
       {
         label: 'Move to new window',
         icon: <IconPlus size={14} />,
-        onClick: () => post({ type: 'session:move', sessionId, target: { kind: 'new' } }),
+        onClick: () =>
+          guardSessionRemoval([sessionId], 'sessionMove', () =>
+            post({ type: 'session:move', sessionId, target: { kind: 'new' } }),
+          ),
       },
       ...others.map((w) => ({
         label: `Move to ${w.title}`,
         icon: <IconExternal size={14} />,
         onClick: () =>
-          post({ type: 'session:move', sessionId, target: { kind: 'window', windowId: w.id } }),
+          guardSessionRemoval([sessionId], 'sessionMove', () =>
+            post({ type: 'session:move', sessionId, target: { kind: 'window', windowId: w.id } }),
+          ),
       })),
     ];
   };
@@ -3710,7 +3780,10 @@ export function App() {
           keywords: ['detach', 'pop out'],
           group: 'Commands',
           icon: <IconExternal size={14} />,
-          run: () => post({ type: 'session:move', sessionId: active.id, target: { kind: 'new' } }),
+          run: () =>
+            guardSessionRemoval([active.id], 'sessionMove', () =>
+              post({ type: 'session:move', sessionId: active.id, target: { kind: 'new' } }),
+            ),
         },
       );
       if (canRelaunch(active))
@@ -4073,6 +4146,7 @@ export function App() {
     lspLanguages,
     lspTrust,
     activeFilePath,
+    guardSessionRemoval,
   ]);
 
   // ---- Dockable layout: render the three regions in the persisted order ----
@@ -4233,9 +4307,19 @@ export function App() {
             renamingId={renamingId}
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
             onReorderSessions={(o) => post({ type: 'reorderSessions', order: o })}
-            onSessionDragEnd={(sessionId, screenX, screenY) =>
-              post({ type: 'session:dragEnd', sessionId, screenX, screenY })
-            }
+            onSessionDragEnd={(sessionId, screenX, screenY) => {
+              const drop = () => post({ type: 'session:dragEnd', sessionId, screenX, screenY });
+              const own = {
+                x: window.screenX,
+                y: window.screenY,
+                width: window.outerWidth,
+                height: window.outerHeight,
+              };
+              // A drop well inside this window is a no-op at the host; anything nearer the edge
+              // may land in another window, so it is guarded (dirty-quit-guard plan, S1).
+              if (pointWellInside(own, { x: screenX, y: screenY }, DRAG_STAY_INSET_PX)) drop();
+              else guardSessionRemoval([sessionId], 'sessionMove', drop);
+            }}
             updateStatus={updateStatus}
             updateDismissed={updateDismissed}
             onUpdateDismiss={() => setUpdateDismissed(true)}
