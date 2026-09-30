@@ -45,6 +45,33 @@ describe('preview-url', () => {
     expect(parsePreviewUrl(`conduit-preview://${TOKEN}/a/./b`)).toBeNull();
   });
 
+  it('refuses a segment whose decoding carries a separator, NUL or drive colon', () => {
+    for (const seg of ['a%2Fb', 'a%2fb', 'a%5Cb', 'a%5cb', '..%2F..%2Fy', '%2F', '%5C', 'a%00b']) {
+      expect(parsePreviewUrl(`conduit-preview://${TOKEN}/x/${seg}/c.html`), seg).toBeNull();
+    }
+    expect(parsePreviewUrl(`conduit-preview://${TOKEN}/C%3A/Windows/win.ini`)).toBeNull();
+    expect(parsePreviewUrl(`conduit-preview://${TOKEN}/C:/Windows/win.ini`)).toBeNull();
+    expect(parsePreviewUrl(`conduit-preview://${TOKEN}/secret.txt%3A%3A%24DATA`)).toBeNull();
+  });
+
+  it('refuses a dot segment in any encoding or case mix', () => {
+    for (const seg of ['%2e%2e', '%2E%2E', '%2e%2E', '.%2e', '%2E.', '%2e', '%2E']) {
+      expect(parsePreviewUrl(`conduit-preview://${TOKEN}/a/${seg}/b`), seg).toBeNull();
+    }
+  });
+
+  it('decodes once: a double-encoded separator is a literal name inside the root', () => {
+    expect(parsePreviewUrl(`conduit-preview://${TOKEN}/a/%252F/b.html`)?.segments).toEqual([
+      'a',
+      '%2F',
+      'b.html',
+    ]);
+    expect(parsePreviewUrl(`conduit-preview://${TOKEN}/%252e%252e/b.html`)?.segments).toEqual([
+      '%2e%2e',
+      'b.html',
+    ]);
+  });
+
   it('refuses an invalid or empty root token', () => {
     expect(parsePreviewUrl('conduit-preview:///a')).toBeNull();
     expect(parsePreviewUrl('conduit-preview://AB12CD34/a')).toBeNull();

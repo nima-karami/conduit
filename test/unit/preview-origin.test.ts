@@ -31,8 +31,8 @@ describe('previewVerdictForRequest — a token answers only for its own root', (
   });
 
   it('refuses a decoded segment that climbs out of X into sibling root Y', () => {
-    // `..%2Fy%2Fsecret.txt` is ONE segment to the parser and the WHATWG URL, and path.join then
-    // resolves it into /work/y — lexically inside an open root, just not the token's.
+    // The parser now refuses `..%2Fy%2Fsecret.txt` outright; this pins the second layer, where
+    // path.join would resolve it into /work/y — inside an open root, just not the token's.
     const v = previewVerdictForRequest(req(X, '../y/secret.txt'), OPEN, file, identity);
     expect(v).toMatchObject({ ok: false, reason: 'blocked', status: 404 });
   });

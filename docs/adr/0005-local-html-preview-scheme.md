@@ -69,6 +69,12 @@ with confinement moved **into the main process**.
    `.../a/%2e%2e/b` and `.../a/%2E%2E/b` all yield pathname `/b`. A traversal check built on
    `URL` would be decorative.
 
+   *Amended 2026-09-30:* the parse also refuses any segment that, decoded once, holds `/`, `\`,
+   `:` or NUL, so every segment names exactly one entry below the root. §3's per-root check had
+   already made an encoded separator harmless; this refuses it before any path is built. `%252F`
+   decodes once, to the literal name `%2F`. Consequence: a file whose name contains `:` (legal
+   off Windows) is not previewable.
+
 5. **Scripts in the previewed page run, and the page's resource loads are blocked by default.**
    The pair is the whole safety argument. A preview that cannot run the page's own JS renders a
    broken document, so blocking scripts was not an option; unrestricted network access alongside

@@ -2851,16 +2851,15 @@ app.whenReady().then(() => {
             });
             break;
           }
+          const url = buildPreviewUrl(
+            rootTokenFor(target.root),
+            path.relative(target.root, target.path).split(path.sep),
+          );
+          // A name the parser refuses (`:` is legal off Windows) would only be blocked by the guard.
           replyHere({
             type: 'html:canPreviewResult',
             requestId: m.requestId,
-            result: {
-              ok: true,
-              url: buildPreviewUrl(
-                rootTokenFor(target.root),
-                path.relative(target.root, target.path).split(path.sep),
-              ),
-            },
+            result: isPreviewUrl(url) ? { ok: true, url } : { ok: false, reason: 'unsupported' },
           });
           break;
         }

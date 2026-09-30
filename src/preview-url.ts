@@ -13,6 +13,7 @@ export const PREVIEW_SCHEME = 'conduit-preview';
 
 const PREFIX = `${PREVIEW_SCHEME}://`;
 const ROOT_TOKEN = /^[a-z0-9]{8,32}$/;
+const UNSAFE_IN_SEGMENT = /[/\\:\0]/;
 
 const DEFAULT_CONTENT_TYPE = 'application/octet-stream';
 
@@ -70,7 +71,9 @@ export function buildPreviewUrl(rootToken: string, relSegments: readonly string[
 
 /**
  * Parse one back. Returns null for a foreign scheme, an empty/invalid host, an empty path,
- * or any segment that is `.` or `..`.
+ * or any decoded segment that is `.`/`..` or holds `/`, `\`, `:` or NUL — each segment must
+ * name exactly one entry below the root (`:` is a drive letter or an NTFS stream on Windows).
+ * Decoded exactly once, so `%252F` is the literal name `%2F`.
  *
  * Parsed by hand, not through `URL`: the WHATWG parser silently collapses `..` and `%2e%2e`
  * into the resolved path, so traversal could never be seen here, let alone refused.
@@ -94,7 +97,9 @@ export function parsePreviewUrl(url: string): { token: string; segments: string[
     return null;
   }
   for (const segment of segments) {
-    if (segment === '' || segment === '.' || segment === '..') return null;
+    if (segment === '' || segment === '.' || segment === '..' || UNSAFE_IN_SEGMENT.test(segment)) {
+      return null;
+    }
   }
   return { token, segments };
 }
