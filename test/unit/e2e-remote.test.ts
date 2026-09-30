@@ -110,6 +110,12 @@ describe('runState', () => {
         ],
       }),
     ).toBe('reporting');
+    expect(
+      runState({
+        status: 'queued',
+        jobs: [job('prepare', 'completed'), job('shard 1', 'completed'), job('report', 'queued')],
+      }),
+    ).toBe('reporting');
     expect(runState({ status: 'completed' })).toBe('completed');
   });
 });

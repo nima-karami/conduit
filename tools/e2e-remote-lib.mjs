@@ -88,9 +88,10 @@ export function matchInFlight(runs, { sha, selKey, full }) {
 /** A `gh run view --json status,conclusion,jobs` payload → the spec's run state. */
 export function runState(view) {
   if (view.status === 'completed') return 'completed';
-  if (view.status !== 'in_progress') return 'queued';
   const jobs = view.jobs ?? [];
   const done = (j) => j.status === 'completed';
+  // A run goes back to 'queued' while its later jobs wait for a runner; its jobs still say where it is.
+  if (view.status !== 'in_progress' && !jobs.some(done)) return 'queued';
   const prepare = jobs.find((j) => j.name === 'prepare');
   if (!prepare || !done(prepare)) return 'preparing';
   const shards = jobs.filter((j) => /^shard \d+$/.test(j.name));
