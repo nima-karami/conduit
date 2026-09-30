@@ -32,7 +32,7 @@ All notable user-facing changes to Conduit. Format follows
   active tab, checked menu items, toggles and other controls with a glow of their own. In Neon,
   where the ring is drawn inside the control, a filled button or toggle now rings in its text
   colour instead of vanishing into the fill.
-- **Neon architecture nodes that own a child graph show their stacked-card edge again.**
+- **Neon architecture nodes show their stacked-card edge and selection ring again.**
 - **Enter in a confirm dialog activates only the focused button.** It used to run the primary
   action whichever button had focus.
 - **Switching tabs puts keyboard focus in the tab you land on.** Ctrl+Tab, Ctrl+PageUp/PageDown,

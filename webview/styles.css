@@ -7825,6 +7825,14 @@ body.gh-resizing {
 .ctxmenu__item--active:not(:disabled) {
   background: var(--state-sel-bg);
 }
+/* Forced colours flatten the fill, and a script-focused menu frame draws no ring of its own,
+   so the active row is the only focus cue left. */
+@media (forced-colors: active) {
+  .ctxmenu__item--active:not(:disabled) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
 /* A checked radio row is the current one of N — the vocabulary's selected step, spine and
    all. The branch switcher used to render its current branch `disabled` instead, which made
    the row the menu exists to confirm the faintest thing in it. */

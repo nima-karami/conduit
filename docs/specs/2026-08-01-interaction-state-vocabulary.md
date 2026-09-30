@@ -180,3 +180,10 @@ ring, found when the dirty-quit dialog gave Save All initial focus. A zero-speci
 `:where(...)` rule paints `--rest-shadow` at rest and the ring rule composes it under the
 ring. The property is registered non-inherited. `state-vocabulary.test.ts` fails on a
 `box-shadow` whose subject is a control the ring covers.
+
+A shadow token is never `none`; "no shadow" is `0 0 #0000`. `none` inside a composed list
+invalidates the whole declaration, which dropped the ring on Aero toggles and Neon's active
+tab. An accent- or amber-filled control sets `--focus-ring: var(--focus-ring-on-fill)`: Neon's
+inset ring is the accent colour and vanished into the fill, and the ring tokens are composed on
+`:root`, so re-colouring an input token on the control can't reach them. The guard test enforces
+both rules.
