@@ -197,10 +197,12 @@ export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
     // A caller may override the child env (e.g. prepend a stub `git` to PATH to prove timeouts).
     ...(env ? { env: { ...process.env, ...env } } : {}),
   });
-  await probeStart(app);
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
+  // Started once the window is ready: started right after launch, tracing made the first
+  // window's load time out on hosted runners (run 36662234121).
+  await probeStart(app);
 
   // Temp dir is in os.tmpdir() — cleaned by OS; no manual cleanup needed.
   const cleanup = () => shutdownApp(app, page);

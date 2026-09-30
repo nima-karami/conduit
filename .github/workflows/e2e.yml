@@ -75,7 +75,10 @@ jobs:
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     name: shard ${{ matrix.shard }}
     steps:
+      # git-history reads this repo's own log; a depth-1 clone has one commit.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -135,6 +138,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: 22
