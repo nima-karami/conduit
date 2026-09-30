@@ -16,12 +16,7 @@ import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  compactHostCoverage,
-  startCoverage,
-  stopCoverage,
-  withCoverageEnv,
-} from './coverage-capture.mjs';
+import { startCoverage, stopCoverage } from './coverage-capture.mjs';
 import { attemptDir, screenshotWindows, startCapture, stopTrace } from './failure-artifacts.mjs';
 import { acquireE2eLock, setBelowNormal } from './local-guard.mjs';
 import { EXIT_WATCHDOG } from './smoke-select.mjs';
@@ -194,7 +189,7 @@ export async function launchElectron(launchOpts) {
   launchStartedAt = Date.now();
   armOnce();
   const { _electron } = loadPlaywright();
-  const app = await _electron.launch(withCoverageEnv(launchOpts));
+  const app = await _electron.launch(launchOpts);
   liveApps.add(app);
   app.once('close', () => liveApps.delete(app));
   if (local) {
@@ -266,7 +261,6 @@ export function finishScenario(code) {
           Promise.all([...liveApps].map(stopCoverage)),
           new Promise((r) => setTimeout(r, CAPTURE_BUDGET_MS)),
         ]);
-        compactHostCoverage();
       }
     } catch (e) {
       console.error('[harness] artifact capture failed:', e?.message || e);
