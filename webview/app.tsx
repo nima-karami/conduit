@@ -484,7 +484,7 @@ export function App() {
   const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
-  const { hydrate, settings, update } = useSettings();
+  const { hydrate, settings, update, flushPending: flushSettings } = useSettings();
   useMonacoNavKeybindings(settings.shortcuts);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -554,6 +554,7 @@ export function App() {
       createQuitResponder({
         post,
         autoSaveMode: () => settingsRef.current.autoSave,
+        flushSettings,
         saves: fileSaves,
         dirtyPaths: () => [...getDirtySnapshot()],
         askDirty: (req) => dirtyCloseRef.current.ask(req),
@@ -590,7 +591,7 @@ export function App() {
         wait: (ms) => new Promise((r) => setTimeout(r, ms)),
         log: (message) => logToHost(message, { level: 'warn', scope: 'quit' }),
       }),
-    [slot],
+    [slot, flushSettings],
   );
 
   // ---- App-level undo/redo for file-explorer operations ----

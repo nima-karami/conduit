@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostToWebview, WebviewToHost } from '../../src/protocol';
-import type { AutoSaveMode } from '../../src/settings';
+import { type AutoSaveMode, DEFAULT_SETTINGS } from '../../src/settings';
 import {
   createQuitResponder,
   FLUSH_BOUND_MS,
@@ -67,10 +67,16 @@ function setup(
     setLocked: vi.fn(),
     wait: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
     log: vi.fn(),
+    flushSettings: vi.fn(() => {
+      if (!settings.pending) return;
+      settings.pending = false;
+      posts.push({ type: 'updateSettings', settings: DEFAULT_SETTINGS });
+    }),
   } satisfies QuitResponderDeps;
+  const settings = { pending: true };
   const responder = createQuitResponder(deps);
   const decisions = () => posts.filter((p) => p.type === 'quitDecision');
-  return { responder, deps, posts, dirtyAsks, sessionAsks, decisions };
+  return { responder, deps, posts, dirtyAsks, sessionAsks, decisions, settings };
 }
 
 beforeEach(() => {
@@ -85,6 +91,30 @@ describe('quit responder', () => {
     const t = setup({ dirty: ['/a.ts'] });
     await t.responder.onConfirmQuit(confirm({ requestId: 7 }));
     expect(t.posts[0]).toEqual({ type: 'quitAck', requestId: 7 });
+  });
+
+  it('flushes pending settings synchronously on the ask, ahead of the decision', async () => {
+    const t = setup();
+    const flow = t.responder.onConfirmQuit(confirm({ requestId: 3 }));
+    expect(t.deps.flushSettings).toHaveBeenCalledTimes(1);
+    await flow;
+    expect(t.posts.map((p) => p.type)).toEqual(['quitAck', 'updateSettings', 'quitDecision']);
+  });
+
+  it('flushes an edit made while the dialog was up before posting proceed', async () => {
+    const answer = deferred<DirtyAnswer>();
+    const t = setup({ dirty: ['/a.ts'], dirtyAnswer: () => answer.promise });
+    const flow = t.responder.onConfirmQuit(confirm({ requestId: 4 }));
+    await vi.advanceTimersByTimeAsync(0);
+    t.settings.pending = true;
+    answer.resolve('saved');
+    await flow;
+    expect(t.posts.map((p) => p.type)).toEqual([
+      'quitAck',
+      'updateSettings',
+      'updateSettings',
+      'quitDecision',
+    ]);
   });
 
   it('re-probe while asking focuses, posts nothing', async () => {

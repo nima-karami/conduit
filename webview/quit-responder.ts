@@ -12,6 +12,8 @@ type ConfirmQuitMsg = Extract<HostToWebview, { type: 'confirmQuit' }>;
 export interface QuitResponderDeps {
   post(msg: WebviewToHost): void;
   autoSaveMode(): AutoSaveMode;
+  /** Posts a settings edit still inside the provider's debounce. */
+  flushSettings(): void;
   saves: Pick<FileSaves, 'flushAll' | 'whenIdle' | 'setToastsSuppressed'>;
   dirtyPaths(): string[];
   askDirty(req: DirtyAsk): Promise<DirtyAnswer>;
@@ -75,6 +77,9 @@ export function createQuitResponder(deps: QuitResponderDeps): {
 
     try {
       deps.post({ type: 'quitAck', requestId });
+      // Before any await: the host's sync flush of settings.json runs after our answer, and a
+      // debounced edit left to pagehide raced the teardown and was lost.
+      deps.flushSettings();
       if (deps.autoSaveMode() !== 'off') {
         deps.saves.setToastsSuppressed(true);
         await Promise.race([deps.saves.flushAll('windowBlur'), deps.wait(FLUSH_BOUND_MS)]);
@@ -105,6 +110,8 @@ export function createQuitResponder(deps: QuitResponderDeps): {
         deps.setLocked(true);
         lockedFor = requestId;
       }
+      // An edit made while the dialog or the settle bound was up is still debounced.
+      deps.flushSettings();
       deps.post({ type: 'quitDecision', requestId, proceed: true });
     } finally {
       // A superseded flow leaves suppression to the flow that replaced it, whose own finally clears it.

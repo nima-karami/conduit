@@ -14,6 +14,9 @@ All notable user-facing changes to Conduit. Format follows
   many running agents the close will stop.
 
 ### Fixed
+- **A setting changed just before quitting is kept.** A change made in the last quarter second
+  before quitting or closing the window, such as a newly recorded shortcut, could be lost and
+  back at its old value on the next launch.
 - **Folders opened through a Windows short path (`C:\Users\LONGNA~1\…`) work like any other.**
   Saves, new files, renames and HTML preview were all refused as "outside the workspace",
   and Review showed every changed file in such a folder as entirely new. Conduit now records a
