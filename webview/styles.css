@@ -37,6 +37,9 @@
      shadow could never paint all four edges: Neon's chamfer (its clip-path cuts the border
      box) and Monaco's find widget (its top edge is flush with the editor's overflow-guard). */
   --focus-ring-inset: inset 0 0 0 1px var(--panel), inset 0 0 0 3px var(--focus-ring-color);
+  /* The ring on a solid accent/amber fill. Its own token because these resolve here on :root,
+     so a control overriding --focus-ring-color would never reach the composed ring. */
+  --focus-ring-on-fill: var(--focus-ring);
   /* Forced colours force every box-shadow to none, so the ring above cannot paint there at all.
      The same one ring, restated in the one property forced colours keeps — carried as a token so
      it stays a single treatment (docs/specs/2026-08-01-interaction-state-vocabulary.md) rather
@@ -143,8 +146,8 @@
   --elev-2: 0 2px 14px rgba(0, 0, 0, 0.5); /* terminal */
   --elev-3: 0 6px 20px rgba(0, 0, 0, 0.55); /* menus, popovers */
   --win-hairline: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
-  --glow-accent: none;
-  --glow-attention: none;
+  --glow-accent: 0 0 #0000;
+  --glow-attention: 0 0 #0000;
   /* The accent card: the selected repo row and the primary button (8g). Aero's soft accent
      shadow; Neon's cyan glow has to be INSET, because the chamfer's clip-path cuts the
      border box and takes any outer shadow with it. */
@@ -407,10 +410,10 @@
      showing above and below, which reads as unfinished rather than as a pill. */
   --tab-inset: 0px;
 
-  --elev-1: none;
-  --elev-2: none;
-  --elev-3: none;
-  --win-hairline: none;
+  --elev-1: 0 0 #0000;
+  --elev-2: 0 0 #0000;
+  --elev-3: 0 0 #0000;
+  --win-hairline: 0 0 #0000;
   --glow-accent: 0 0 14px rgba(0, 240, 255, 0.16);
   --glow-attention: 0 0 15px rgba(255, 45, 155, 0.2);
   --accent-shadow: inset 0 0 16px rgba(0, 240, 255, 0.16);
@@ -420,6 +423,9 @@
   /* The chamfer's clip-path cuts the border box, which would erase an OUTSET focus
      ring on every notched control - so the ring moves inside (see the chamfer block). */
   --focus-ring: var(--focus-ring-inset);
+  /* Inside the box the accent ring vanishes into an accent fill; the fill's own text colour
+     is the one guaranteed to read on it. */
+  --focus-ring-on-fill: inset 0 0 0 1px var(--panel), inset 0 0 0 3px var(--on-accent);
 
   /* Neon's panels are near-black, so every wash needs a step more alpha to clear the
      ground, and a neutral hover edge would read as grey lint on the purple hairlines —
@@ -568,9 +574,10 @@
   background: var(--accent);
 }
 [data-theme="neon"] .viewswitch__btn--on {
+  --focus-ring: var(--focus-ring-on-fill);
   background: var(--accent);
   color: var(--on-accent);
-  box-shadow: var(--glow-accent);
+  --rest-shadow: var(--glow-accent);
 }
 
 /* ---------- chrome glyphs (webview/icons.tsx) ----------
@@ -740,8 +747,19 @@ body {
 ):focus-visible {
   outline: var(--focus-outline);
   outline-offset: 2px;
-  box-shadow: var(--focus-ring);
+  box-shadow: var(--focus-ring), var(--rest-shadow, 0 0 transparent);
   border-radius: var(--r-sm);
+}
+
+/* See the state-vocabulary spec, addendum "resting shadows". Not inherited, or a glowing row
+   would hand its glow to every button inside it; wider than the ring's list so a roving
+   tabindex="-1" row keeps its spine. */
+@property --rest-shadow {
+  syntax: "*";
+  inherits: false;
+}
+:where(button, a, input, select, textarea, summary, [role], [tabindex]) {
+  box-shadow: var(--rest-shadow, none);
 }
 
 /* Controls whose own corners differ from the default ring radius keep their shape. */
@@ -1269,7 +1287,7 @@ body.resizing .panel__resize::after {
   /* Pure --amber misses 4.5:1 on its own wash, so the text tier is mixed toward the theme's
      ink: one declaration that darkens on Aero and lightens on the two dark themes. */
   color: color-mix(in srgb, var(--amber) 70%, var(--text));
-  box-shadow: var(--glow-attention);
+  --rest-shadow: var(--glow-attention);
   font-family: inherit;
   font-size: calc(11.5px * var(--font-scale));
   font-weight: 600;
@@ -1526,7 +1544,7 @@ body.resizing .panel__resize::after {
   border-color: var(--notch-line);
   color: var(--accent);
   font-weight: 600;
-  box-shadow: var(--elev-1);
+  --rest-shadow: var(--elev-1);
 }
 .ns-more {
   display: inline-flex;
@@ -2211,6 +2229,7 @@ body.resizing .panel__resize::after {
   opacity: 0.65;
 }
 .proj__add {
+  --focus-ring: var(--focus-ring-on-fill);
   width: 20px;
   height: 20px;
   display: inline-flex;
@@ -2462,10 +2481,11 @@ body.resizing .panel__resize::after {
   cursor: pointer;
 }
 .session__btn--primary {
+  --focus-ring: var(--focus-ring-on-fill);
   background: var(--amber);
   border-color: var(--amber);
   color: var(--on-accent);
-  box-shadow: var(--glow-attention);
+  --rest-shadow: var(--glow-attention);
 }
 .session__btn--primary:hover {
   background: var(--amber);
@@ -2789,7 +2809,7 @@ body.resizing .panel__resize::after {
 .tab--active {
   color: var(--text);
   background: var(--raise);
-  box-shadow: var(--elev-1);
+  --rest-shadow: var(--elev-1);
 }
 /* The active tab of the group that is not active (spec §8: the inactive-selected treatment). */
 .tab--current {
@@ -4148,7 +4168,7 @@ body.gh-resizing {
   background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r-round);
-  box-shadow: var(--elev-3);
+  --rest-shadow: var(--elev-3);
   animation: modal-fade 0.1s ease;
 }
 /* The chamfer redraws the cut corner from border-top-color, so recolouring the edge on
@@ -4513,7 +4533,7 @@ body.gh-resizing {
 .startroute--lead {
   --notch-line: var(--accent);
   border-color: var(--accent);
-  box-shadow: var(--glow-accent);
+  --rest-shadow: var(--glow-accent);
 }
 .startroute--lead:hover {
   border-color: var(--accent-2);
@@ -5078,10 +5098,11 @@ body.gh-resizing {
   cursor: pointer;
 }
 .btn--primary {
+  --focus-ring: var(--focus-ring-on-fill);
   background: var(--accent);
   color: var(--on-accent);
   border-color: var(--accent);
-  box-shadow: var(--accent-shadow);
+  --rest-shadow: var(--accent-shadow);
 }
 .btn--ghost {
   background: transparent;
@@ -5265,6 +5286,7 @@ body.gh-resizing {
   cursor: pointer;
 }
 .search__toggle--on {
+  --focus-ring: var(--focus-ring-on-fill);
   background: var(--accent);
   color: var(--on-accent);
   border-color: var(--state-on-fg);
@@ -6615,6 +6637,7 @@ body.gh-resizing {
    the affordance to close; the dot shows the buffer differs from disk. On hover the
    dot fades so the close X reads clearly (mirrors common editor behaviour). */
 .tab__dirty {
+  --focus-ring: var(--focus-ring-on-fill);
   width: 8px;
   height: 8px;
   margin-left: 4px;
@@ -6673,6 +6696,7 @@ body.gh-resizing {
 /* Inline variant used in the open-editors dropdown icon column — no margin, no
    hover behaviour (the dot is informational only in list context). */
 .tab__dirty--inline {
+  --focus-ring: var(--focus-ring-on-fill);
   display: inline-block;
   width: 8px;
   height: 8px;
@@ -6848,17 +6872,10 @@ body.gh-resizing {
 .filerow--selected {
   background: var(--state-sel-bg);
   color: var(--state-sel-fg);
-  box-shadow: inset var(--state-spine) 0 0 var(--accent);
+  --rest-shadow: inset var(--state-spine) 0 0 var(--accent);
 }
 .filerow--selected:hover {
   background: var(--state-sel-hover-bg);
-}
-/* The spine and the focus ring both ride box-shadow, so a focused selected row has to
-   draw the pair or lose one of them. */
-.filerow--selected:focus-visible {
-  box-shadow:
-    var(--focus-ring),
-    inset var(--state-spine) 0 0 var(--accent);
 }
 /* The file currently revealed/open in the editor — a soft accent tint so you can see
    where the open file sits in the tree without it reading as a folder selection. */
@@ -6996,6 +7013,7 @@ body.gh-resizing {
   gap: 6px;
 }
 .files-missing__locate {
+  --focus-ring: var(--focus-ring-on-fill);
   background: var(--amber);
   border-color: var(--amber);
   color: var(--on-accent);
@@ -7131,6 +7149,7 @@ body.gh-resizing {
   transition: width 0.3s ease;
 }
 .update-card__action {
+  --focus-ring: var(--focus-ring-on-fill);
   display: block;
   width: calc(100% - 16px);
   margin: 0 8px 8px;
@@ -7425,9 +7444,10 @@ body.gh-resizing {
 /* Neon fills the selected segment outright — the soft wash disappears against a near-black
    track, and the sheet draws it solid with the glow. */
 [data-theme="neon"] .seg__btn--active {
+  --focus-ring: var(--focus-ring-on-fill);
   background: var(--accent);
   color: var(--on-accent);
-  box-shadow: var(--glow-accent);
+  --rest-shadow: var(--glow-accent);
 }
 
 /* Theme swatches — a window miniature per theme (8d), because two of the three themes are
@@ -7458,7 +7478,7 @@ body.gh-resizing {
 }
 .swatch--active {
   border-color: var(--accent);
-  box-shadow: var(--accent-shadow);
+  --rest-shadow: var(--accent-shadow);
 }
 .swatch__mini {
   position: relative;
@@ -7774,6 +7794,8 @@ body.gh-resizing {
   border: 1px solid var(--border-2);
   border-radius: var(--r-card);
   box-shadow: var(--elev-3);
+  /* A menu that takes focus itself (RepoPickerMenu) shows it on its active row, never the frame. */
+  outline: none;
   padding: 5px;
   animation: modal-fade 0.1s ease;
 }
@@ -7803,13 +7825,21 @@ body.gh-resizing {
 .ctxmenu__item--active:not(:disabled) {
   background: var(--state-sel-bg);
 }
+/* Forced colours flatten the fill, and a script-focused menu frame draws no ring of its own,
+   so the active row is the only focus cue left. */
+@media (forced-colors: active) {
+  .ctxmenu__item--active:not(:disabled) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
 /* A checked radio row is the current one of N — the vocabulary's selected step, spine and
    all. The branch switcher used to render its current branch `disabled` instead, which made
    the row the menu exists to confirm the faintest thing in it. */
 .ctxmenu__item[aria-checked="true"] {
   background: var(--state-sel-bg);
   color: var(--state-sel-fg);
-  box-shadow: inset var(--state-spine) 0 0 var(--accent);
+  --rest-shadow: inset var(--state-spine) 0 0 var(--accent);
 }
 .ctxmenu__item[aria-checked="true"]:hover:not(:disabled, [aria-disabled="true"]) {
   background: var(--state-sel-hover-bg);
@@ -8218,9 +8248,10 @@ button.toggle {
   flex: 0 0 auto;
 }
 button.toggle--on {
+  --focus-ring: var(--focus-ring-on-fill);
   background: var(--accent);
   border-color: var(--accent);
-  box-shadow: var(--glow-accent);
+  --rest-shadow: var(--glow-accent);
 }
 .toggle__knob {
   display: block;
@@ -8263,6 +8294,7 @@ button.toggle--on .toggle__knob {
 }
 .confirm__actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
 }
@@ -8275,6 +8307,70 @@ button.toggle--on .toggle__knob {
   font-size: calc(12.5px * var(--font-scale));
   color: var(--text-dim, var(--text));
   cursor: pointer;
+}
+/* The unsaved-files dialog (dirty-quit-guard spec §4): one line per file; the list scrolls. */
+.confirm--files {
+  width: min(560px, calc(100vw - 32px));
+  max-width: min(560px, calc(100vw - 32px));
+}
+.confirm__files {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  max-height: 40vh;
+  overflow: auto;
+  font-size: calc(12.5px * var(--font-scale));
+}
+.confirm__file {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 0;
+  white-space: nowrap;
+}
+.confirm__file-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.confirm__file-dir {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+.confirm__file-tag {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+.confirm__file-tag--danger {
+  color: var(--red);
+}
+.confirm__group-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.confirm__file-group {
+  padding: 8px 0 2px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.confirm__status {
+  min-height: 1.5em;
+  margin: 0 0 12px;
+  color: var(--text-dim);
+  font-size: calc(12.5px * var(--font-scale));
+}
+.quit-scrim {
+  color: var(--text);
+  font-size: calc(13px * var(--font-scale));
+  outline: none;
 }
 /* DELETE on the parts sheet is a tinted outline, not a solid red slab: in a palette this
    hot the destructive action reads louder as an outline than as a fill, and it keeps the
@@ -8290,6 +8386,7 @@ button.toggle--on .toggle__knob {
 }
 /* The warn action: amber is its meaning (mf-live-edits spec §11, D10). */
 .btn--warn {
+  --focus-ring: var(--focus-ring-on-fill);
   background: var(--amber);
   border-color: var(--amber);
   color: var(--on-accent);
@@ -8362,7 +8459,7 @@ button.toggle--on .toggle__knob {
 
 /* ---------- drag & drop reordering ---------- */
 .tab--dropbefore {
-  box-shadow: inset 2px 0 0 var(--accent);
+  --rest-shadow: inset 2px 0 0 var(--accent);
 }
 /* Trailing drop zone past the last tab (R5.6). Fills the remaining strip width so a
    tab can be dropped at the end; keeps a small min-width so it stays reachable even
@@ -9789,7 +9886,7 @@ button.toggle--on .toggle__knob {
   background: var(--raise);
   border: 1px solid var(--border);
   border-radius: var(--r-ctl);
-  box-shadow: var(--elev-1);
+  --rest-shadow: var(--elev-1);
   cursor: pointer;
 }
 .archlod:hover {
@@ -9898,6 +9995,7 @@ button.toggle--on .toggle__knob {
   border-color: var(--accent);
 }
 .arch__iconopt--active {
+  --focus-ring: var(--focus-ring-on-fill);
   color: var(--on-accent, #fff);
   background: var(--accent);
   border-color: var(--accent);
@@ -10682,6 +10780,7 @@ button.toggle--on .toggle__knob {
   padding: 4px 10px;
 }
 .about__checkbtn--accent {
+  --focus-ring: var(--focus-ring-on-fill);
   background: var(--accent);
   border-color: transparent;
   color: var(--on-accent);
@@ -11456,6 +11555,7 @@ button.toggle--on .toggle__knob {
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .rcard__reviewed[aria-pressed="true"] {
+  --focus-ring: var(--focus-ring-on-fill);
   color: var(--on-accent);
   background: var(--accent);
   border-color: var(--accent);
@@ -13910,7 +14010,8 @@ button.toggle--on .toggle__knob {
 /* Locked rather than disabled: it stays focusable so its reason is reachable (mf-review D4). */
 .gh__reffilter[aria-disabled="true"],
 .review__stageall[aria-disabled="true"],
-.tabbar__split[aria-disabled="true"] {
+.tabbar__split[aria-disabled="true"],
+.btn[aria-disabled="true"] {
   opacity: var(--state-disabled-o);
   cursor: default;
 }

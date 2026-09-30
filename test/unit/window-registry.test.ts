@@ -4,12 +4,14 @@ import {
   assignOwner,
   buildWinList,
   clampBoundsToDisplays,
+  DRAG_STAY_INSET_PX,
   type OwnerMap,
   ownerOf,
-  parseLayout,
+  parseWindowLayout,
   planLayoutRestore,
+  pointWellInside,
   removeOwner,
-  serializeLayout,
+  serializeWindowLayout,
   sessionsForWindow,
   tearOutBounds,
   type WindowLayout,
@@ -204,7 +206,7 @@ describe('tearOutBounds (Slice C tear-out placement)', () => {
   });
 });
 
-describe('serializeLayout / parseLayout (Slice C layout persistence)', () => {
+describe('serializeWindowLayout / parseWindowLayout (Slice C layout persistence)', () => {
   const b = (x: number) => ({ x, y: 0, width: 900, height: 560 });
 
   it('round-trips a multi-window layout', () => {
@@ -212,21 +214,21 @@ describe('serializeLayout / parseLayout (Slice C layout persistence)', () => {
       { bounds: b(0), sessionIds: ['a', 'b'] },
       { bounds: b(1000), sessionIds: ['c'] },
     ];
-    expect(parseLayout(serializeLayout(layout))).toEqual(layout);
+    expect(parseWindowLayout(serializeWindowLayout(layout))).toEqual(layout);
   });
 
   it('returns [] for absent input', () => {
-    expect(parseLayout(undefined)).toEqual([]);
-    expect(parseLayout('')).toEqual([]);
+    expect(parseWindowLayout(undefined)).toEqual([]);
+    expect(parseWindowLayout('')).toEqual([]);
   });
 
   it('returns [] for malformed JSON', () => {
-    expect(parseLayout('{not json')).toEqual([]);
+    expect(parseWindowLayout('{not json')).toEqual([]);
   });
 
   it('returns [] for a wrong/absent version envelope', () => {
-    expect(parseLayout(JSON.stringify({ version: 99, windows: [] }))).toEqual([]);
-    expect(parseLayout(JSON.stringify({ windows: [] }))).toEqual([]);
+    expect(parseWindowLayout(JSON.stringify({ version: 99, windows: [] }))).toEqual([]);
+    expect(parseWindowLayout(JSON.stringify({ windows: [] }))).toEqual([]);
   });
 
   it('drops a window with a non-Rect bounds but keeps valid siblings', () => {
@@ -237,7 +239,7 @@ describe('serializeLayout / parseLayout (Slice C layout persistence)', () => {
         { bounds: b(500), sessionIds: ['c'] },
       ],
     });
-    expect(parseLayout(raw)).toEqual([{ bounds: b(500), sessionIds: ['c'] }]);
+    expect(parseWindowLayout(raw)).toEqual([{ bounds: b(500), sessionIds: ['c'] }]);
   });
 
   it('coerces non-string session ids out of the array', () => {
@@ -245,7 +247,7 @@ describe('serializeLayout / parseLayout (Slice C layout persistence)', () => {
       version: 1,
       windows: [{ bounds: b(0), sessionIds: ['a', 5, null, 'b'] }],
     });
-    expect(parseLayout(raw)).toEqual([{ bounds: b(0), sessionIds: ['a', 'b'] }]);
+    expect(parseWindowLayout(raw)).toEqual([{ bounds: b(0), sessionIds: ['a', 'b'] }]);
   });
 });
 
@@ -345,5 +347,25 @@ describe('clampBoundsToDisplays (Slice C off-screen guard)', () => {
   it('returns bounds unchanged when no displays are known', () => {
     const r = { x: 9000, y: 9000, width: 800, height: 600 };
     expect(clampBoundsToDisplays(r, [])).toEqual(r);
+  });
+});
+
+describe('pointWellInside', () => {
+  const r = { x: 100, y: 100, width: 400, height: 300 };
+  it('center point is well inside', () => {
+    expect(pointWellInside(r, { x: 300, y: 250 }, DRAG_STAY_INSET_PX)).toBe(true);
+  });
+  it('a point 4px from the edge is not', () => {
+    expect(pointWellInside(r, { x: 104, y: 250 }, DRAG_STAY_INSET_PX)).toBe(false);
+    expect(pointWellInside(r, { x: 300, y: 100 + 300 - 4 }, DRAG_STAY_INSET_PX)).toBe(false);
+  });
+  it('a point exactly at the inset is inside', () => {
+    expect(pointWellInside(r, { x: 108, y: 108 }, DRAG_STAY_INSET_PX)).toBe(true);
+  });
+  it('a point outside is not', () => {
+    expect(pointWellInside(r, { x: 50, y: 250 }, DRAG_STAY_INSET_PX)).toBe(false);
+  });
+  it('an inset larger than half the rect → never inside', () => {
+    expect(pointWellInside(r, { x: 300, y: 250 }, 200)).toBe(false);
   });
 });

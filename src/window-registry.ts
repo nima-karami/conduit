@@ -75,6 +75,17 @@ function rectContains(r: Rect, p: ScreenPoint): boolean {
   return p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height;
 }
 
+/** A session dropped this close to its own window's edge (or beyond) is treated as leaving it, so
+ *  the move is guarded; see dirty-quit-guard plan, critic S1. */
+export const DRAG_STAY_INSET_PX = 8;
+
+export function pointWellInside(r: Rect, p: ScreenPoint, inset: number): boolean {
+  const width = r.width - 2 * inset;
+  const height = r.height - 2 * inset;
+  if (width <= 0 || height <= 0) return false;
+  return rectContains({ x: r.x + inset, y: r.y + inset, width, height }, p);
+}
+
 /**
  * Cross-window drag hit-test (multi-window Slice C): the id of the window whose bounds
  * contain `point`, EXCLUDING `excludeId` (the drag source — a drop back over the source is
@@ -140,7 +151,7 @@ const LAYOUT_VERSION = 1;
 const DEFAULT_BOUNDS: Rect = { x: 0, y: 0, width: 1440, height: 900 };
 
 /** Serialize the window layout to a versioned JSON envelope (mirrors src/persistence.ts). */
-export function serializeLayout(windows: WindowLayout[]): string {
+export function serializeWindowLayout(windows: WindowLayout[]): string {
   return JSON.stringify({ version: LAYOUT_VERSION, windows });
 }
 
@@ -159,7 +170,7 @@ function isRect(v: unknown): v is Rect {
  * Parse a persisted layout blob, tolerant of malformed/absent input (→ `[]`). Drops any
  * window whose bounds aren't a valid Rect and coerces sessionIds to a string array.
  */
-export function parseLayout(raw: string | undefined): WindowLayout[] {
+export function parseWindowLayout(raw: string | undefined): WindowLayout[] {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);

@@ -1504,3 +1504,62 @@ the locked decision.
   is not changed (C12 is out of scope beyond the guard).
 - [normal] **Last-window close on darwin.** On darwin, closing the last window uses the window
   guard, so the app stays open. *Default taken:* keeps darwin's "app outlives windows" behaviour.
+
+## Run notes
+
+- **Slice 1 (2026-09-29): A1 = true.** Probe on a hidden build of `feat/dirty-quit-guard@8466702`
+  (evidence `.autoloop/evidence/dirty-quit-guard/a1-probe-final.log`, control in
+  `a1-control4.log`). A prepended `before-quit` listener that `preventDefault`s the first pass
+  left the window alive (`bq=1, windows=1` after 1 s); a second `app.quit()` fired `before-quit`
+  again (#2) and the process exited with code 0 after ~260 ms.
+  - Measurement gotcha: a fresh profile starts with a running session, so today's
+    `onWindowClose` guard sends `confirmQuit` and blocks the close until a `quitDecision` arrives.
+    The first probe run left that unanswered and read as `A1=false` (no exit in 15 s); the
+    control (a single `app.quit()` with no `preventDefault`) timed out the same way. With the
+    renderer auto-answering `quitDecision{proceed:true}`, both control and probe exit.
+  - Also observed: `window-all-closed` → `app.quit()` fires `before-quit` a further time
+    (#3) inside the same quit, so the Slice 3 `tornDown` guard is load-bearing.
+- **Slice 2 (2026-09-29): done** — T2.1 `b9f35cf`, T2.2 `8ec5b83`, T2.3 `086b188`, T2.4 `4cdcf84`,
+  T2.5 `26bd765`. Slice check: 5 files / 138 tests green, typecheck green.
+  - T2.2: A3 held on current code (no controller fix). The contract's `autoEligible:false` is the
+    code's `AttachOpts.writable === false` (renamed since the auto-save plan); `isPartial` reads it.
+    Preview-toast suppression also silences the partial-file refusal toast (same branch).
+  - T2.1 interpretations (no API change): the unresponsive box opens only in `shown`; only windows
+    that *answered* proceed are aborted on cancel/expiry (timed-out ones already got S2's abort);
+    a re-probe re-sends the original ask even after a reason upgrade; `confirmUnresponsive` must
+    not reject (Slice 3's main implementation).
+  - Not built here: `pointWellInside` / `DRAG_STAY_INSET_PX` belong to Slice 5 (T5.x), not Slice 2.
+  - Slices 3+ held until split-editor merges (they touch app.tsx / docs.ts / center-pane).
+- **Merge of main (2026-09-29, `60d1720`):** split-editor + Electron 43.7.6 landed; one conflict
+  (`test/unit/file-save-controller.test.ts`, both sides kept). Dirty state stayed per path; session
+  gating reads `filePathsClosedWithSession` through `sessionDirtyPaths` as planned.
+- **Slice 3 (2026-09-29): done** — T3.1 `2adc532`, T3.2 `a3ca900`, T3.3 `41604c0`. Units 427 files
+  green; e2e quit-guard, exit-closes-session, renderer-crash, multi-window(-restore) green.
+  - The runner's filter strips `.e2e.mjs`, so `multi-window.e2e` matches nothing; `multi-window`
+    runs both multi-window scenarios (serially).
+  - `closeApp` now quits with `app.quit()` (not a close of window 0) so a multi-window app exits and
+    every window's ask can be asserted (S3). `answerQuitAsks` reports asks over the page console so
+    they survive the window closing.
+  - The closeDoc prompt's `closePromptRef` went the same way as `quitCancelRef`/`hunkConfirmRef`:
+    its answer is now `ConfirmState.onCancel`, and displacement covers the "settle the previous
+    prompt" line.
+- **Slice 4 (2026-09-29): done** — T4.1 `2862999`, T4.2 `c4be689`, T4.3 `d1d6238`, T4.4 `b67ed08`.
+  - `quitConfirmCopy` now takes a `running` count instead of `Session[]`; the renderer only ever
+    had counts and used to fake sessions to call it.
+  - Responder: a superseded flow's `finally` leaves toast suppression to the flow that replaced it;
+    a throwing ask posts no decision (the host's timeouts cover it).
+- **Slice 5 (2026-09-29): done** — T5.1 `72ee199`. The exited-shell warn uses the session's
+  `name` (the plan said `title`; `Session` has no `title`).
+- **Slice 6 (2026-09-29): built, gate NOT green** — T6.1 `a5ceafe` (+ style fix `e717000`).
+  - Found by `closeAll`: a queued window close resumed before the proceeded window's `'closed'`
+    event, so `closeDecision` still counted it and asked with window-close copy. Fixed in main
+    (`openWindowCount` skips `windowConfirmed`); the phase now asserts the second ask is a `quit`.
+  - The planned forced-colors rule was dropped: `state-vocabulary.test.ts` forbids a solid outline
+    on `:focus`, and the global ring already switches to `Highlight` under forced colors.
+  - Gate: `verify-s6b.log` EXIT=1 on fallow dead-code "Duplicate exports": `webview/app.tsx` now
+    imports both `src/layout.ts` and `src/window-registry.ts`, which each export `parseLayout` /
+    `serializeLayout` (base 60d1720 is clean). Proposed fix: rename window-registry's pair to
+    `parseWindowLayout` / `serializeWindowLayout` (callers: electron/main.ts, its test).
+  - **Incident:** a base-commit worktree removed with `git worktree remove --force` followed the
+    node_modules junction chain and emptied `G:\awby\projects\conduit\node_modules`. Needs
+    `npm ci` in the main checkout before anything can run again.

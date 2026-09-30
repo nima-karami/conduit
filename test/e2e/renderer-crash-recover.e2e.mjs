@@ -201,7 +201,8 @@ try {
   await evalRenderer(
     app,
     `window.agentDeck.subscribe((m) => {
-       if (m.type === 'confirmQuit') window.agentDeck.post({ type: 'quitDecision', proceed: true });
+       if (m.type === 'confirmQuit')
+         window.agentDeck.post({ type: 'quitDecision', requestId: m.requestId, proceed: true });
      })`,
   ).catch(() => {});
   await app

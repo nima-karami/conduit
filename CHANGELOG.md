@@ -6,7 +6,22 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Unsaved files are never dropped on the way out.** Quitting, closing a window, relaunching for
+  an update, and closing or moving a session now ask to save unsaved files: **Save All**,
+  **Don't Save** or **Cancel**. A file that changed on disk, failed to save or only partly loaded
+  is marked in the list. One dialog replaces the prompts that used to stack, and it also says how
+  many running agents the close will stop.
+
 ### Fixed
+- **Primary buttons show the keyboard focus ring.** A focused primary button drew only its own
+  glow, so Tab and a dialog's initial focus (Save All) left no visible mark. The same held for the
+  active tab, checked menu items, toggles and other controls with a glow of their own. In Neon,
+  where the ring is drawn inside the control, a filled button or toggle now rings in its text
+  colour instead of vanishing into the fill.
+- **Neon architecture nodes show their stacked-card edge and selection ring again.**
+- **Enter in a confirm dialog activates only the focused button.** It used to run the primary
+  action whichever button had focus.
 - **Leaving the Terminal with Ctrl+Tab or Ctrl+PageUp/PageDown always focuses the tab you land
   on.** About one switch in four left focus nowhere, and the next keys were lost.
 - **Ctrl+1…9 in the Terminal never reach the shell.** A number past your last tab does nothing;

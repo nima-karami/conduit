@@ -73,6 +73,9 @@ export interface FileSaves {
   getStatus(path: string): FileSaveStatus | undefined;
   getStatusSnapshot(): ReadonlyMap<string, FileSaveStatus>;
   subscribe(cb: () => void): () => void;
+  whenIdle(): Promise<void>;
+  setToastsSuppressed(on: boolean): void;
+  isPartial(path: string): boolean;
 }
 
 interface Entry {
@@ -103,6 +106,11 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
   let delayMs = 1000;
   // While flushAll runs, failures are gathered into one toast instead of one per file.
   let collecting: { path: string; error: string }[] | null = null;
+  let toastsSuppressed = false;
+
+  const toast = (message: string) => {
+    if (!toastsSuppressed) deps.toast(message);
+  };
 
   const notify = () => {
     for (const l of listeners) l();
@@ -133,7 +141,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
   const reportFailure = (e: Entry) => {
     const error = e.error ?? '';
     if (collecting) collecting.push({ path: e.path, error });
-    else deps.toast(AUTO_SAVE_COPY.saveFailed(baseName(e.path), error));
+    else toast(AUTO_SAVE_COPY.saveFailed(baseName(e.path), error));
   };
 
   const write = async (e: Entry, kind: SaveKind) => {
@@ -231,7 +239,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
       if (kind === 'auto') return false;
       e.error = refusal;
       publish(e);
-      deps.toast(AUTO_SAVE_COPY.saveFailed(baseName(path), e.error));
+      toast(AUTO_SAVE_COPY.saveFailed(baseName(path), e.error));
       return false;
     }
     step(e, { type: 'request', kind });
@@ -362,9 +370,9 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
       } finally {
         collecting = null;
       }
-      if (failures.length >= 2) deps.toast(AUTO_SAVE_COPY.saveFailedMany(failures.length));
+      if (failures.length >= 2) toast(AUTO_SAVE_COPY.saveFailedMany(failures.length));
       else if (failures.length === 1) {
-        deps.toast(AUTO_SAVE_COPY.saveFailed(baseName(failures[0].path), failures[0].error));
+        toast(AUTO_SAVE_COPY.saveFailed(baseName(failures[0].path), failures[0].error));
       }
     },
 
@@ -385,5 +393,16 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
       listeners.add(cb);
       return () => listeners.delete(cb);
     },
+    async whenIdle() {
+      for (;;) {
+        const chains = [...entries.values()].flatMap((e) => (e.chain ? [e.chain] : []));
+        if (chains.length === 0) return;
+        await Promise.all(chains);
+      }
+    },
+    setToastsSuppressed(on) {
+      toastsSuppressed = on;
+    },
+    isPartial: (path) => entries.get(path)?.writable === false,
   };
 }
