@@ -1,0 +1,38 @@
+name: e2e
+run-name: e2e ${{ inputs.selection }} ${{ inputs.nonce }}
+
+# Stub: workflow_dispatch needs the file on the default branch; the real workflow runs from the
+# dispatched ref. See docs/plans/2026-09-29-remote-e2e-lean-loop.plan.md, Slice 0.
+on:
+  workflow_dispatch:
+    inputs:
+      selection:
+        description: full | names | affected
+        type: choice
+        options: [full, names, affected]
+        default: affected
+      scenarios:
+        description: Space-separated exact scenario names (selection=names)
+        type: string
+        default: ''
+      base:
+        description: Base sha (selection=affected)
+        type: string
+        default: ''
+      shards:
+        description: Shard count, 0 = auto
+        type: string
+        default: '0'
+      nonce:
+        description: Correlation id, embedded in the run name
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  stub:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "e2e stub; dispatch from a ref that carries the real workflow"
