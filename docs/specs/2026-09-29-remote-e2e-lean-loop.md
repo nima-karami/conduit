@@ -66,35 +66,43 @@ Plus: everything else that slows development. **Interim rule (user, 2026-09-29):
 4. The command waits, then:
    - prints `run-smoke`-style `PASS/FAIL (s)` lines and a summary;
    - writes the result JSON to the caller's evidence dir;
-   - deletes its own ref;
    - exits.
+
+   The ref is deleted by the run itself: a final always-run job of `e2e.yml` removes its own
+   `ci/e2e/*` ref, so a cancelled run or a killed client still cleans up.
 5. Each failed scenario gets an artifact bundle: log, a screenshot at failure, and a Playwright trace.
 
 **Run states:** `dispatching → queued → preparing → running (k/N shards) → reporting → passed |
 flaky-passed | failed | infra-error | cancelled | timed-out`.
 - A run is `flaky-passed` when its only non-PASS results are FLAKY.
-- `infra-error` is a shard or job failure (runner lost, `npm ci`, ref push); it is never reported as
-  a test failure.
+- `infra-error` is a shard or job failure (runner lost, `npm ci`, ref push) with **no** FAIL or
+  TIMEOUT in the run; it is never reported as a test failure. A real failure beats INFRA: a run with
+  both is `failed`, and the INFRA names are listed with the command that re-runs them.
 
 **When full runs happen:** nightly on `main` (schedule) and before a release. Integration merges run
-`--affected`. There is no `push: main` trigger. At most **one full run in flight** globally
-(concurrency group `e2e-full`, queued, never cancelled); later `--full` callers attach to the
-in-flight run if it's for the same sha, otherwise they queue.
+`--affected`. There is no `push: main` trigger and **no workflow concurrency group** (GitHub keeps
+one pending run per group and cancels the older one). Instead, `e2e:remote --full` attaches to an
+in-flight full run at the same sha, and otherwise waits for any in-flight full run to finish before
+dispatching, saying so. This is best-effort; nightly and release runs don't coordinate with it, and
+an overlap only queues jobs, it never cancels a run.
 
 ### Part A′ — Local e2e (single instance)
 
 - `npm run e2e -- <exact-name>` runs exactly one scenario. The name is matched against the file name
   without `.e2e.mjs`, **exactly**, not as a substring.
-- **Enforcement lives in `harness.mjs launchApp`,** the one choke point every scenario, `text-fit`
-  and `shots` launch goes through. When not on CI (`GITHUB_ACTIONS` unset), `launchApp`:
-  - acquires a **machine-wide e2e lock** at `%TEMP%\conduit-e2e.lock`. A waiter prints "waiting
-    for <owner pid/scenario>". A lock whose owner PID is dead is reclaimed.
+- **Enforcement lives in `harness.mjs launchElectron`,** the one choke point every scenario,
+  `text-fit` and `shots` launch goes through (`launchApp` and the scenarios that launched Electron
+  directly both call it). When not on CI (`GITHUB_ACTIONS` unset), it:
+  - acquires a **machine-wide e2e lock**: the named pipe `\\.\pipe\conduit-e2e`. Listening on it is
+    holding it; `EADDRINUSE` means it is held; the OS releases it when the owner dies, so there is
+    no stale-lock reclaim. The owner serves `{pid, scenario, cwd}`, and a waiter prints
+    "waiting for <pid> (<scenario>, <cwd>)".
   - sets the launched Electron tree to **BelowNormal** priority.
 
   So `node test/e2e/x.e2e.mjs` is covered as well.
 - `run-smoke.mjs` run locally with no filter, or with a filter matching more than one scenario,
   **refuses** and prints the `e2e:remote` command. `CONDUIT_E2E_LOCAL_FULL=1` is a human-only
-  escape hatch: logged, and never set by agents.
+  escape hatch: it prints a banner, and agents never set it.
 - The e2e lock is **separate from** `.autoloop/heavy-lock` (build-loop tooling outside the repo),
   which keeps serialising verify and build.
 
@@ -108,9 +116,19 @@ in-flight run if it's for the same sha, otherwise they queue.
   - The diff against the merge-base with `main` is mapped to scenarios through a **coverage map**
     (scenario → source files). The nightly full run builds the map from V8 coverage of host and
     renderer, mapped back through esbuild sourcemaps.
-  - **Rule:** a changed file absent from the map, or any change to `test/e2e/**`, `electron/main.ts`,
-    `electron/preload.ts`, `esbuild.mjs`, `package.json` or the lockfile, selects the full suite.
-  - A diff touching only `docs/**` and `*.md` selects none: "no e2e needed", exit 0.
+  - **Rule, in order:**
+    1. Strip the e2e-irrelevant set: `test/unit/**`, `docs/**`, `*.md`, `designs/**`,
+       `.conduit/**`, and `.github/**` except `.github/workflows/e2e.yml`. If nothing is left, the
+       selection is none: "no e2e needed", exit 0.
+    2. Any change to `test/e2e/**`, `electron/main.ts`, `electron/preload.ts`, `esbuild.mjs`,
+       `package.json`, the lockfile or `e2e.yml` selects the full suite.
+    3. A mapped file selects its scenarios. A **new** file selects the scenarios of the files that
+       import it (esbuild metafile importers, walked up to the nearest mapped file); only if none is
+       mapped does it select the full suite. An existing file absent from the map selects the full
+       suite.
+    4. The core smoke set is always added.
+  - The diff base is the merge-base with `main`; the workflow checks out with full history to
+    compute it.
 - **B3 Slow scenarios.** The harness logs per-phase timings. Scenarios with a median over 120 s are
   split into files of 120 s or less, assertions unchanged. Order: split-editor, file-integrity,
   new-session-folders, tree-chevrons, attention-signal, middle-click-surfaces.
@@ -136,23 +154,34 @@ in-flight run if it's for the same sha, otherwise they queue.
 
 ## 3. Data / interface contract
 
-- **`npm run e2e:remote -- [--full | --affected | <name>…] [--shards N] [--no-wait] [--retry-infra <run-id>]`**
+- **`npm run e2e:remote -- [--full | --affected | <name>…] [--shards N] [--no-wait] [--timeout <min>]`**
   - Preconditions: a clean committed HEAD (a dirty tree → error naming the files, nothing pushed);
     `gh` authenticated.
-  - `--retry-infra` re-dispatches only the `INFRA` scenarios of a run.
-  - Exit codes: **0** passed / flaky-passed / no e2e needed; **1** failed; **2** infra-error /
-    cancelled / timed-out / preconditions.
+  - When a run has `INFRA` scenarios, the command prints the line that re-runs only them:
+    `npm run e2e:remote -- <INFRA names>` (with the run's sha). There is no retry flag.
+  - `--timeout` counts from the run's start; queue time is reported separately.
+  - Exit codes: **0** passed / flaky-passed / no e2e needed; **1** failed (including a run that
+    also has INFRA scenarios); **2** infra-error (INFRA and no FAIL/TIMEOUT) / cancelled /
+    timed-out / preconditions; **3** dispatched with `--no-wait`, not awaited.
+  - The command never deletes a ref.
 - **`e2e.yml`:**
   - Triggers: `workflow_dispatch` (inputs `selection`, `scenarios`, `base`, `shards`, `nonce`) and
-    `schedule` (nightly, `main`, `--full`, plus a sweep deleting `ci/e2e/*` refs older than 24 h).
-  - `run-name` embeds the nonce.
-  - Permissions: `contents: write` (ref sweep), `actions: read` (download the previous nightly's
-    artifacts).
+    `schedule` (nightly, `main`, `--full`, plus a backstop sweep deleting `ci/e2e/*` refs older than
+    24 h, for refs whose run never started).
+  - `run-name` embeds the nonce. No workflow-level `concurrency`.
+  - Permissions: `contents: read`, `actions: read` (download the previous nightly's state). Only
+    the final `cleanup` job (`if: always()`, deletes `github.ref` when it starts with
+    `refs/heads/ci/e2e/`) and the sweep job get `contents: write`.
   - Must exist on the default branch before it can be dispatched (Slice 0 lands it first).
 - **Scenario status:**
   - `PASS`, `SKIP`, `FAIL` (runner exit 1 = assertion, 2 = uncaught exception — both are test
-    failures), `TIMEOUT`, `FLAKY`, `QUARANTINED-FAIL`, and `INFRA` (shard died; set by report).
-  - Runner `EXIT(n)` maps to `FAIL`.
+    failures), `TIMEOUT` (the harness watchdog's exit 124, or the runner's 210 s kill), `FLAKY`,
+    `QUARANTINED-FAIL`, and `INFRA` (no result for a planned scenario; set by report).
+  - Runner `EXIT(n)` maps to `FAIL`. Shards are classified from their result JSON only, never from
+    a job's exit code.
+  - **Run status, first match wins:** any FAIL/TIMEOUT → `failed`; any INFRA → `infra-error`;
+    all SKIP → `failed`; any FLAKY → `flaky-passed`; else `passed`. A run whose conclusion is
+    cancelled is reported `cancelled`, whatever its result JSON says.
   - **All-SKIP for a non-empty selection = run `failed`**: guards a vacuous green on a future
     non-Windows OS axis.
 - **Result JSON:**
@@ -160,15 +189,20 @@ in-flight run if it's for the same sha, otherwise they queue.
   seconds, attempts, shard, artifact? }] }`
 - **Nightly state:** a `e2e-state` artifact holding `timings.json` (scenario → median s),
   `coverage-map.json` and `flaky-history.json` (14-day rolling), retained 30 days.
-  - Each nightly downloads the previous state, updates it and re-uploads.
-  - `prepare` reads the latest successful nightly's state.
+  - Each nightly's separate `state` job downloads the previous state, updates it and re-uploads,
+    **whatever the test verdict** (a red nightly still records timings and flakes).
+  - `prepare` and `state` find the newest non-expired `e2e-state` artifact by name
+    (`actions/artifacts?name=e2e-state`), never by run conclusion.
   - Fallbacks when there is no state yet: the checked-in `test/e2e/timings.seed.json` (local
     medians, scaled by the Slice 0 slowdown factor); `--affected` → full suite.
-- **Failure artifacts:** hooked in `launchApp`. On CI it starts Playwright tracing on the Electron
-  context; on scenario failure (non-zero exit) it saves the trace, a screenshot of every open window
-  and the log to `$E2E_ARTIFACT_DIR/<scenario>/`. Uploaded only for failures, kept 7 days.
-  Screenshot of a hidden (`show:false`) window: **ASSUMED** to work via `page.screenshot` (Slice 0
-  checks).
+- **Failure artifacts:** hooked in the harness's `launchElectron`. On CI it starts Playwright
+  tracing on the Electron context. The harness owns the exit path: scenarios exit only through
+  `finishScenario(code)`, which on a non-zero code saves the trace and a screenshot of every open
+  window before exiting, and a watchdog (`E2E_DEADLINE_MS`, 200 s, set by the runner) does the same
+  and exits TIMEOUT before the runner's 210 s kill. Files go to
+  `$E2E_ARTIFACT_DIR/<scenario>/attempt-<n>/`, with the runner's log beside them; a passing attempt's
+  dir is removed. Uploaded only for failures, kept 7 days. Screenshot of a hidden (`show:false`)
+  window: **ASSUMED** to work via `page.screenshot` (Slice 0 checks).
 
 | Data / state | Produced by | Consumed by | Both in scope? |
 |---|---|---|---|
@@ -176,8 +210,8 @@ in-flight run if it's for the same sha, otherwise they queue.
 | Shard plan | prepare (selection + timings) | shard jobs | Yes |
 | timings / coverage map / flaky history | nightly report (artifact) | prepare, `--affected`, report | Yes |
 | Quarantine list | human/agent commit | runner, report | Yes |
-| Ephemeral refs | `e2e:remote` (create + delete own) | `e2e.yml` checkout; nightly sweep | Yes |
-| e2e lock + priority | `launchApp` | every local launch (scenarios, text-fit, shots) | Yes |
+| Ephemeral refs | `e2e:remote` (create) | `e2e.yml` checkout; the run's own `cleanup` job deletes it; nightly sweep as backstop | Yes |
+| e2e lock + priority | `launchElectron` | every local launch (scenarios, text-fit, shots) | Yes |
 | e2e evidence | `e2e:remote` | build-loop gates (B5, outside repo) | Yes — flagged §14 Q4 |
 | Release | `release.yml` | users | **Flagged** — §14 Q2 |
 
@@ -185,16 +219,19 @@ in-flight run if it's for the same sha, otherwise they queue.
 
 | Condition | Expected behavior |
 |---|---|
-| Two callers, same sha + selection | Second attaches to the first's run (found by querying in-flight runs' names/inputs); each deletes only its own ref (the attacher created none) |
-| Two `--full` for different SHAs | Second queues behind the first (`e2e-full` group, no cancel); the command prints queue position |
+| Two callers, same sha + selection | Second attaches to the first's run (found by querying in-flight runs' names/inputs) and pushes no ref; the run's `cleanup` job deletes the one ref |
+| Two `--full` for different SHAs | Second waits client-side for the first to finish, printing "waiting for full run <url>", then dispatches. Best-effort: nightly/release don't coordinate, and an overlap only queues jobs |
 | New commit while an older run is in flight | Older run continues (an agent may be gating on it) |
 | Selection resolves to zero on a code change | Impossible by the §B2 rule (unmapped → full); docs-only → exit 0 "no e2e needed" |
-| Shard runner dies | Its unfinished scenarios → `INFRA`; exit 2; `--retry-infra` re-runs only them |
-| Scenario > 210 s | TIMEOUT, orphan sweep, one retry |
+| Shard runner dies | Its unfinished scenarios → `INFRA`. Any FAIL/TIMEOUT elsewhere → run `failed`, exit 1; otherwise `infra-error`, exit 2. Either way the command prints `e2e:remote -- <INFRA names>` |
+| Run cancelled | `cancelled`, exit 2, even though report wrote INFRA rows; `cleanup` still deletes the ref |
+| Scenario hangs | Harness watchdog at 200 s captures screenshot + trace and exits TIMEOUT; the runner's 210 s kill is the backstop (log only); orphan sweep, one retry |
+| Scenario exits with its app still open (a direct-exit scenario's assertion path) | `finishScenario` captures that app before exiting; bare `process.exit` in a scenario fails a unit guard |
 | Fails only remotely (clipboard, GPU, DPI) | FAIL with artifacts; Slice 0 records known env differences in this spec |
-| Hosted queue > 10 min | Keep waiting and print state every minute; `--no-wait` returns the URL |
+| Hosted queue > 10 min | Keep waiting and print state every minute (queue time doesn't count toward `--timeout`); `--no-wait` returns the URL, exit 3 |
+| Client killed (Ctrl-C) mid-wait | Run continues; its `cleanup` job deletes the ref |
 | `gh` unauthenticated / offline | Exit 2 with the fix; no local full-suite fallback |
-| Local lock owner process dead | Lock reclaimed immediately |
+| Local lock owner process dead | The OS closes its pipe; the next waiter's `listen` succeeds immediately |
 | Local failure under user load | Output reminds: a loaded machine fails PTY scenarios like a regression (CLAUDE.md) — confirm with `e2e:remote -- <name>` before debugging |
 | Result JSON written twice (attach + dispatch race) | Keyed by run id; same content; idempotent |
 | Pre-existing failure on `main` (today `mf-live-edits`, `goto-index`) | v1: report marks a FAIL "also failing on last nightly" from nightly history; still a failure. MVP: plain FAIL |
@@ -207,7 +244,7 @@ in-flight run if it's for the same sha, otherwise they queue.
 | Shards | enough that each is ≤ 10 min at measured CI speed, cap 16 | `--shards` | ≤ 25 min wall incl. setup, under the concurrency limit |
 | Default selection | `--affected` | flag | Full is nightly/pre-release |
 | Retry | once, recorded FLAKY | no | Hides nothing, and hosted noise doesn't block work |
-| Full runs in flight | 1 | no | Protects the ~20-job concurrency pool |
+| Full runs in flight | 1 per `e2e:remote` caller (client-side wait); no workflow group | no | Protects the ~20-job pool without GitHub's cancel-older-pending behaviour; nightly/release overlap only queues jobs |
 | Local priority | BelowNormal | `CONDUIT_E2E_PRIORITY` (diagnosis) | The machine is also a workstation |
 | Local scope | one scenario, exact name | human-only escape hatch | The user's constraint |
 | Artifacts | failures, 7 days; nightly state 30 days | workflow | Enough to diagnose and keep history |
@@ -221,19 +258,20 @@ in-flight run if it's for the same sha, otherwise they queue.
     screenshots and tracing work.
   - Results are written back into this spec before the rest is built.
 - **MVP:**
-  - `e2e:remote` (full, names; dedup; ref lifecycle; result JSON);
-  - failure artifacts;
+  - `e2e:remote` (full, names; dedup; client-side full-run wait; result JSON);
+  - workflow-owned ref cleanup;
+  - failure artifacts, with the harness owning the exit path (`finishScenario`, watchdog);
   - retry-once + FLAKY;
-  - local exact-name single instance with lock + priority in `launchApp`;
+  - local exact-name single instance with lock + priority in `launchElectron`;
   - `run-smoke` local refusal;
   - runner comment corrected;
   - `timings.seed.json`.
 - **v1:**
   - nightly + `e2e-state`;
-  - `--affected` + coverage map;
+  - `--affected` + coverage map + the core smoke set (`core-smoke.json`);
   - quarantine list and candidates;
   - split the >120 s scenarios;
-  - release gating (per §14 Q2);
+  - release gating (per §14 Q2), after quarantine has landed;
   - `verify:quick`;
   - B5 and B7 outside the repo.
 - **Vision:**
@@ -248,16 +286,21 @@ in-flight run if it's for the same sha, otherwise they queue.
   every scenario within 25 min of the run starting, and report queue time separately.
 - When a second caller requests the same sha and selection while a run is in flight, the system
   shall attach to that run and not dispatch another.
-- While not on CI, `launchApp` shall allow at most one e2e app on the machine, at BelowNormal
+- While not on CI, `launchElectron` shall allow at most one e2e app on the machine, at BelowNormal
   priority.
 - If `run-smoke.mjs` runs locally with no filter or a filter matching more than one scenario, then
   it shall refuse and print the `e2e:remote` equivalent.
 - When a scenario fails remotely, the system shall publish its log, window screenshots and trace,
   and link them in the summary.
 - If a scenario fails and then passes on retry, then the run shall pass with that scenario FLAKY.
-- If a shard job fails, then its unfinished scenarios shall be `INFRA` and the command shall exit 2.
+- If a shard job fails, then its unfinished scenarios shall be `INFRA`, and the command shall print
+  the `e2e:remote` line that re-runs them and exit 2 only if no scenario FAILed or timed out
+  (otherwise the run is `failed`, exit 1).
+- If a scenario hangs past its deadline, then the harness shall save its window screenshots and
+  trace and exit TIMEOUT before the runner kills it.
 - If every scenario in a non-empty selection is SKIP, then the run shall be `failed`.
-- When the command finishes, the system shall have deleted the ref it created.
+- When a run on a `ci/e2e/*` ref reaches a terminal state, including cancelled, the workflow shall
+  delete that ref.
 
 **Gherkin**
 ```gherkin
