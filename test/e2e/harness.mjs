@@ -182,15 +182,26 @@ export async function launchElectron(launchOpts) {
   return app;
 }
 
-/** Chromium raises its GPU and renderer processes above what they inherit; lower them again. */
+/**
+ * Chromium raises its GPU and renderer processes above what they inherit, and not all at once:
+ * measured, a pass at the first window still left the GPU process AboveNormal, while one a few
+ * seconds later held. So lower every PID the app reports now and twice more over the next 3 s.
+ */
 function lowerAppTree(app) {
+  const pass = () =>
+    app
+      .evaluate(({ app: a }) => a.getAppMetrics().map((m) => m.pid))
+      .then((pids) => setBelowNormal(pids))
+      .catch(() => {
+        /* the app closed first */
+      });
   app
     .firstWindow()
-    .then(() => app.evaluate(({ app: a }) => a.getAppMetrics().map((m) => m.pid)))
-    .then((pids) => setBelowNormal(pids))
-    .catch(() => {
-      /* the app closed first */
-    });
+    .then(pass)
+    .then(() => {
+      for (const ms of [1000, 3000]) setTimeout(pass, ms).unref();
+    })
+    .catch(() => {});
 }
 
 /**
