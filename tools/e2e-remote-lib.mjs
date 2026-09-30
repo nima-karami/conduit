@@ -167,3 +167,34 @@ export function formatResults(result) {
   if (result.url) lines.push(`  run: ${result.url}`);
   return lines.join('\n');
 }
+
+/**
+ * Whether a failed `gh` call is worth repeating: a GitHub 5xx, 429 / secondary rate limit, or a
+ * network-level failure. Any other HTTP status (auth, not found, validation) is final.
+ */
+export function isTransientGhError(message) {
+  const m = String(message ?? '');
+  const http = /HTTP (\d{3})/.exec(m);
+  if (http) return http[1] === '429' || http[1].startsWith('5');
+  return /secondary rate limit|ECONNRESET|ETIMEDOUT|connection reset|timeout|TLS/i.test(m);
+}
+
+/**
+ * Run `fn` (sync or async) until it succeeds, a non-transient error, or `attempts` runs out; the
+ * delay doubles from `baseMs` and is capped at `maxMs`.
+ */
+export async function withGhRetry(
+  fn,
+  { attempts = 5, baseMs = 2000, maxMs = 30_000, sleep, onRetry = () => {} } = {},
+) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (attempt >= attempts || !isTransientGhError(e?.message ?? e)) throw e;
+      const delayMs = Math.min(maxMs, baseMs * 2 ** (attempt - 1));
+      onRetry(e, attempt, delayMs);
+      await sleep(delayMs);
+    }
+  }
+}

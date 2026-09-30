@@ -4,12 +4,14 @@ import {
   exitCodeFor,
   finalStatus,
   formatResults,
+  isTransientGhError,
   makeNonce,
   matchInFlight,
   parseArgs,
   parseTitle,
   runState,
   selectionKey,
+  withGhRetry,
 } from '../../tools/e2e-remote-lib.mjs';
 
 const run = (over: Partial<{ displayTitle: string; status: string; headSha: string }>) => ({
@@ -212,5 +214,103 @@ describe('checkExclusions', () => {
     expect(r).not.toHaveProperty('notice');
     expect(r.refuse).toContain('npm run e2e -- x');
     expect(r.refuse).toContain('npm run e2e -- y');
+  });
+});
+
+const GH_502 =
+  'gh run view 1 --json status failed (1): HTTP 502: Server Error (https://api.github.com/repos/o/r/actions/runs/1/jobs?per_page=100)';
+
+describe('isTransientGhError', () => {
+  it.each([
+    GH_502,
+    'HTTP 503: Service Unavailable',
+    'HTTP 429: Too Many Requests',
+    'You have exceeded a secondary rate limit',
+    'read tcp 10.0.0.1:5000->140.82.1.1:443: read: connection reset by peer',
+    'error connecting to api.github.com: ECONNRESET',
+    'connect ETIMEDOUT 140.82.1.1:443',
+    'net/http: TLS handshake timeout',
+    'Get "https://api.github.com/": context deadline exceeded (Client.Timeout exceeded)',
+  ])('retries %s', (m) => expect(isTransientGhError(m)).toBe(true));
+
+  it.each([
+    'gh run view 1 failed (1): HTTP 404: Not Found (https://api.github.com/repos/o/r/actions/runs/1)',
+    'HTTP 401: Bad credentials',
+    'HTTP 403: Resource not accessible by integration',
+    'HTTP 422: Validation Failed',
+    'no artifact matches any of the names or patterns provided',
+    'gh auth login required',
+  ])('fails fast on %s', (m) => expect(isTransientGhError(m)).toBe(false));
+});
+
+describe('withGhRetry', () => {
+  const quiet = () => {
+    const delays: number[] = [];
+    return { delays, sleep: async (ms: number) => void delays.push(ms), onRetry: () => {} };
+  };
+
+  it('returns the success after two transient failures, backing off', async () => {
+    const q = quiet();
+    let calls = 0;
+    const out = await withGhRetry(() => {
+      if (++calls <= 2) throw new Error(GH_502);
+      return 'ok';
+    }, q);
+    expect(out).toBe('ok');
+    expect(calls).toBe(3);
+    expect(q.delays).toEqual([2000, 4000]);
+  });
+
+  it('throws the last error after the attempt budget, delays capped', async () => {
+    const q = quiet();
+    let calls = 0;
+    const always = () => {
+      calls++;
+      throw new Error(GH_502);
+    };
+    await expect(withGhRetry(always, { ...q, attempts: 7 })).rejects.toThrow('HTTP 502');
+    expect(calls).toBe(7);
+    expect(q.delays).toEqual([2000, 4000, 8000, 16000, 30000, 30000]);
+  });
+
+  it('defaults to 5 attempts', async () => {
+    const q = quiet();
+    let calls = 0;
+    await expect(
+      withGhRetry(() => {
+        calls++;
+        throw new Error('HTTP 504: Gateway Timeout');
+      }, q),
+    ).rejects.toThrow('504');
+    expect(calls).toBe(5);
+  });
+
+  it('does not retry a non-transient failure', async () => {
+    const q = quiet();
+    let calls = 0;
+    await expect(
+      withGhRetry(() => {
+        calls++;
+        throw new Error('HTTP 404: Not Found');
+      }, q),
+    ).rejects.toThrow('404');
+    expect(calls).toBe(1);
+    expect(q.delays).toEqual([]);
+  });
+
+  it('reports each retry', async () => {
+    const seen: [number, number][] = [];
+    let calls = 0;
+    await withGhRetry(
+      () => {
+        if (++calls === 1) throw new Error(GH_502);
+        return 1;
+      },
+      {
+        sleep: async () => {},
+        onRetry: (_e, attempt, delayMs) => void seen.push([attempt, delayMs]),
+      },
+    );
+    expect(seen).toEqual([[1, 2000]]);
   });
 });

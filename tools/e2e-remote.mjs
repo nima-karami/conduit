@@ -11,6 +11,9 @@
  * e2e-irrelevant files ends here, "no e2e needed", and pushes nothing. The run's `prepare` job
  * maps the rest to scenarios (test/e2e/ci-affected.mjs).
  *
+ * Read-only gh calls (run list/view/download) retry transient GitHub failures (5xx, 429, network);
+ * the ref push and the dispatch do not, so either failing stays fatal.
+ *
  * Exit: 0 passed / flaky-passed / no e2e needed; 1 failed; 2 infra-error, cancelled, timed-out or a precondition;
  * 3 dispatched with --no-wait.
  */
@@ -31,6 +34,7 @@ import {
   runState,
   selectionKey,
   USAGE,
+  withGhRetry,
 } from './e2e-remote-lib.mjs';
 
 const WORKFLOW = 'e2e.yml';
@@ -46,10 +50,17 @@ function sh(cmd, args, { allowFail = false } = {}) {
   }
   return r;
 }
-const gh = (...args) => sh('gh', args).stdout;
-const ghJson = (...args) => JSON.parse(gh(...args));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const say = (m) => console.log(`[e2e:remote] ${m}`);
+const retrying = (fn) =>
+  withGhRetry(fn, {
+    sleep,
+    onRetry: (e, attempt, delayMs) =>
+      say(
+        `transient gh failure (attempt ${attempt}), retrying in ${delayMs / 1000}s: ${e.message}`,
+      ),
+  });
+const ghJson = (...args) => retrying(() => JSON.parse(sh('gh', args).stdout));
 const stamp = () => new Date().toISOString().slice(11, 19);
 
 function fail(message, code = 2) {
@@ -88,13 +99,13 @@ function affectedBase() {
   return base;
 }
 
-function inFlight() {
+async function inFlight() {
   return ghJson('run', 'list', '-w', WORKFLOW, '--json', RUN_FIELDS, '-L', '50');
 }
 
 async function waitUntilDone(run) {
   for (;;) {
-    const v = ghJson('run', 'view', String(run.databaseId), '--json', 'status');
+    const v = await ghJson('run', 'view', String(run.databaseId), '--json', 'status');
     if (v.status === 'completed') return;
     await sleep(30_000);
   }
@@ -114,6 +125,8 @@ async function dispatch(o, sha, selKey) {
     nonce,
     verify: String(o.verify),
   };
+  // Not retried: a 5xx can land after GitHub accepted the dispatch, and a repeat would start a
+  // second run on the same ref.
   sh('gh', [
     'workflow',
     'run',
@@ -123,7 +136,18 @@ async function dispatch(o, sha, selKey) {
     ...Object.entries(inputs).flatMap(([k, v]) => ['-f', `${k}=${v}`]),
   ]);
   for (let waited = 0; waited <= 90_000; waited += 3000) {
-    const runs = ghJson('run', 'list', '-w', WORKFLOW, '-b', ref, '--json', RUN_FIELDS, '-L', '10');
+    const runs = await ghJson(
+      'run',
+      'list',
+      '-w',
+      WORKFLOW,
+      '-b',
+      ref,
+      '--json',
+      RUN_FIELDS,
+      '-L',
+      '10',
+    );
     const run = runs.find((r) => r.displayTitle.endsWith(` ${nonce}`));
     if (run) return run;
     await sleep(3000);
@@ -137,7 +161,7 @@ async function follow(run, o) {
   let lastPrint = 0;
   let queuedFor = null;
   for (;;) {
-    const v = ghJson(
+    const v = await ghJson(
       'run',
       'view',
       String(run.databaseId),
@@ -168,14 +192,16 @@ async function follow(run, o) {
   }
 }
 
-function downloadResult(runId) {
+/** null when there is no result artifact: the caller reports infra-error. */
+async function downloadResult(runId) {
   const dir = mkdtempSync(join(tmpdir(), 'e2e-result-'));
   try {
-    const r = sh('gh', ['run', 'download', String(runId), '-n', 'e2e-result', '-D', dir], {
-      allowFail: true,
-    });
+    await retrying(() => {
+      rmSync(dir, { recursive: true, force: true });
+      sh('gh', ['run', 'download', String(runId), '-n', 'e2e-result', '-D', dir]);
+    }).catch((e) => say(`no result downloaded: ${e.message}`));
     const file = join(dir, 'result.json');
-    return r.status === 0 && existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
+    return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -191,7 +217,7 @@ async function main() {
 
   let run;
   for (;;) {
-    const m = matchInFlight(inFlight(), { sha, selKey, full: o.full });
+    const m = matchInFlight(await inFlight(), { sha, selKey, full: o.full });
     if (m.attach) {
       run = m.attach;
       say(`attaching to run ${run.url} (same sha and selection already in flight)`);
@@ -216,7 +242,7 @@ async function main() {
   const started = Date.now();
   const { view, timedOut, queuedFor } = await follow(run, o);
   if (timedOut) process.exit(exitCodeFor('timed-out'));
-  const result = view.conclusion === 'cancelled' ? null : downloadResult(run.databaseId);
+  const result = view.conclusion === 'cancelled' ? null : await downloadResult(run.databaseId);
   const status = finalStatus(view.conclusion, result);
   if (result) {
     result.status = status;

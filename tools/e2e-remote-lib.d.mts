@@ -61,3 +61,14 @@ export function formatResults(result: {
     alsoFailingOnNightly?: boolean;
   }[];
 }): string;
+export function isTransientGhError(message: unknown): boolean;
+export function withGhRetry<T>(
+  fn: () => T | Promise<T>,
+  o: {
+    attempts?: number;
+    baseMs?: number;
+    maxMs?: number;
+    sleep: (ms: number) => Promise<void>;
+    onRetry?: (error: unknown, attempt: number, delayMs: number) => void;
+  },
+): Promise<T>;
