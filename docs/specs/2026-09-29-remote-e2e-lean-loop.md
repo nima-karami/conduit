@@ -120,6 +120,38 @@ Plus: everything else that slows development. **Interim rule (user, 2026-09-29):
   process to AboveNormal and the renderer to Normal after launch; the harness lowers every PID the
   app reports (`getAppMetrics`) at the first window and again over 3 s (measured all BelowNormal).
 
+### v1 results (measured 2026-09-30, feat/remote-e2e-v1)
+
+- **Nightly path** (dispatch `mode=nightly`; a `schedule` only runs main's file): the `state` job
+  uploaded `e2e-state` from a run whose report failed (forced `cwd` FAIL, run 36682639505); the next
+  run's `prepare` found it by name and planned from its timings (36683062930). The sweep deleted a
+  hand-pushed `ci/e2e/*` ref on a 4-day-old commit with no run, and kept the in-flight one.
+- **Coverage map:** Playwright's `page.coverage` and `NODE_V8_COVERAGE` record *block* coverage,
+  which slowed the app enough that `change-map-geometry` and `nav-keybindings-settings` failed in
+  the first coverage nightly (36683998318) and passed without it (36685668969); `split-editor` went
+  157 → 198 s. Function-level precise coverage over CDP (renderer, and the host through an
+  in-process inspector session) left both passing and `split-editor` at 170 s (36686481573).
+  Files are attributed by the function that **defines** the executed code, because esbuild hoists
+  every module's top level into one bundle scope that runs at load. Result: 146 of 151 run
+  scenarios mapped (the rest ended through `closeApp`, since fixed), 449 of 492 `src`/`webview`/
+  `electron` `.ts(x)` files mapped, **13/13 (100 %)** of the code files touched by main's last 20
+  commits mapped. Selectivity is bimodal: per file, p25 5 / p50 101 / p90 144 scenarios — leaf
+  components select a handful, shell files most of the suite.
+- **`--affected`** (runs 36687342106/-252/-297, base = parent commit): one mapped webview file →
+  its 3 scenarios + core + 11 not-yet-mapped; a new file → its importer's scenario via the metafile
+  (`npm ci --ignore-scripts` + build ≈ 25 s, only when a new file needs the graph); a
+  `test/e2e/**` change → full. A docs + unit-test-only commit → "no e2e needed", exit 0, nothing
+  pushed. A scenario absent from the map (new or split since the last nightly) is always selected.
+- **Quarantine:** a quarantined forced failure → `QUARANTINED-FAIL`, run `passed` (36683062930).
+- **Splits (§B3):** split-editor, file-integrity, new-session-folders, tree-chevrons,
+  attention-signal and middle-click-surfaces → 19 files, **31.7–74.6 s remotely** (36691871954);
+  assert counts identical per original (83/49/41/27/19/43).
+- **Release gating:** a throwaway caller on a non-`ci/e2e` ref: e2e passed → the dependent job ran;
+  e2e failed → it was skipped; `cleanup` skipped both times (36684631261, 36684642621).
+- **`verify:quick`:** Biome 0.2 s, each `tsc --incremental` 2.3 s warm (3.9 s cold; TS 7.0.2
+  accepts `--incremental` with `--noEmit`), `vitest --changed` 27 s for two widely imported `src`
+  files vs 74 s for the full unit suite; a branch that touches `package.json` runs every test.
+
 ### Part A — Remote e2e
 
 1. `npm run e2e:remote -- <selection>` from a committed HEAD. Selection: `--full`, `--affected`
@@ -361,6 +393,9 @@ an overlap only queues jobs, it never cancels a run.
   - release gating (per §14 Q2), after quarantine has landed;
   - `verify:quick`;
   - B5 and B7 outside the repo.
+  - *Built on feat/remote-e2e-v1 (all but B5/B7), measured in §2 "v1 results".* The nightly
+    `schedule` itself first fires once `e2e.yml` is on main; until then its path is exercised by
+    dispatching `mode=nightly`.
 - **Vision:**
   - make the app run on macOS/Linux (own spec);
   - populate the `os` axis with a portable scenario subset.
