@@ -134,7 +134,8 @@ export function dirtySaveStatus(kind: 'saving' | 'failed', n: number): string {
 }
 
 export interface QuitConfirmCopyInput {
-  running: Session[];
+  /** Count of running sessions. */
+  running: number;
   busy: number;
   reason: QuitReason;
 }
@@ -168,7 +169,7 @@ export function busySessions(sessions: Session[]): Session[] {
  * - Singular/plural handled throughout.
  */
 export function quitConfirmCopy({ running, busy, reason }: QuitConfirmCopyInput): QuitConfirmCopy {
-  const n = running.length;
+  const n = running;
   const sessionWord = n === 1 ? 'session' : 'sessions';
   const title = `${n} ${sessionWord} still running`;
 

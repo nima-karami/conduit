@@ -107,7 +107,7 @@ describe('busySessions', () => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe('quitConfirmCopy', () => {
-  const twoRunning = [makeSession({ id: 'a' }), makeSession({ id: 'b' })];
+  const twoRunning = 2;
 
   describe('reason: quit — plural, with busy', () => {
     it('title counts sessions', () => {
@@ -140,7 +140,7 @@ describe('quitConfirmCopy', () => {
   });
 
   describe('reason: quit — singular', () => {
-    const oneRunning = [makeSession({ id: 'a' })];
+    const oneRunning = 1;
 
     it('title uses singular "session"', () => {
       const { title } = quitConfirmCopy({ running: oneRunning, busy: 0, reason: 'quit' });
@@ -181,7 +181,7 @@ describe('quitConfirmCopy', () => {
   });
 
   describe('reason: update — singular', () => {
-    const oneRunning = [makeSession({ id: 'a' })];
+    const oneRunning = 1;
 
     it('title uses singular "session"', () => {
       const { title } = quitConfirmCopy({ running: oneRunning, busy: 0, reason: 'update' });
@@ -198,7 +198,7 @@ describe('quitConfirmCopy', () => {
 
 describe('quitConfirmCopy windowClose', () => {
   it('quitConfirmCopy windowClose == quit copy', () => {
-    const running = [makeSession({ id: 'a' }), makeSession({ id: 'b' })];
+    const running = 2;
     expect(quitConfirmCopy({ running, busy: 1, reason: 'windowClose' })).toEqual(
       quitConfirmCopy({ running, busy: 1, reason: 'quit' }),
     );

@@ -83,6 +83,7 @@ import {
   fsDndMove,
   fsMutate,
   gitAction,
+  isHosted,
   logToHost,
   lspInvoke,
   post,
@@ -107,11 +108,13 @@ import { CenterPane } from './components/center-pane';
 import { CommandPalette, type PaletteEntry } from './components/command-palette';
 import { ConfirmDialog, type ConfirmState } from './components/confirm-dialog';
 import { ContextMenu, type MenuItem, type MenuState } from './components/context-menu';
+import { DirtyCloseDialog } from './components/dirty-close-dialog';
 import { ErrorBoundary } from './components/error-boundary';
 import { IconPickerModal } from './components/icon-picker-modal';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
 import { ProjectPicker } from './components/project-picker';
+import { QuitScrim } from './components/quit-scrim';
 import { RightPane, type RightPaneHandle } from './components/right-pane';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
@@ -222,6 +225,7 @@ import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from '
 import { probePathExists } from './path-probe';
 import { planExternalChanges } from './plan-store';
 import { clearReveal, fileUri, peekReveal, setDefinitionOpener, setReveal } from './project-index';
+import { createQuitResponder } from './quit-responder';
 import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from './recent-docs';
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
@@ -267,6 +271,7 @@ import {
 } from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
 import { useBackgroundOpenFeedback } from './use-background-open-feedback';
+import { useDirtyClose } from './use-dirty-close';
 import { focusOpenModal, nextModalKey, useModalSlot } from './use-modal-slot';
 import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-history';
 import { useReviewModeLayout } from './use-review-mode-layout';
@@ -443,9 +448,6 @@ export function App() {
     (state: ConfirmState) => slot.open({ kind: 'confirm', key: nextModalKey(), state }),
     [slot],
   );
-  // The host's live quit ask and the slot entry answering it; a re-sent ask with its requestId is a
-  // re-probe (dirty-quit-guard plan, B1b).
-  const quitAskRef = useRef<{ requestId: number; key: number } | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateDismissed, setUpdateDismissed] = useState(false);
   // D3: session icon-picker modal state. `null` = closed; non-null = picker open for session.id.
@@ -481,6 +483,69 @@ export function App() {
   const [overRegion, setOverRegion] = useState<Region | null>(null);
   const { hydrate, settings, update } = useSettings();
   useMonacoNavKeybindings(settings.shortcuts);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  // A path's rows in the unsaved-files dialog show their folder relative to the owning session's
+  // deepest root.
+  const rootOf = useCallback((path: string) => {
+    const owner = docsRef.current.find((d) => d.kind === 'file' && d.path === path)?.sessionId;
+    const session = sessionsRef.current.find((x) => x.id === owner);
+    let best: string | undefined;
+    for (const root of session ? [session.home, ...session.roots] : []) {
+      if (pathBelow(path, root) === null) continue;
+      if (best === undefined || canonicalPath(root).length > canonicalPath(best).length)
+        best = root;
+    }
+    return best;
+  }, []);
+  const dirtyClose = useDirtyClose({ saves: fileSaves, rootOf, slot });
+  const dirtyCloseRef = useRef(dirtyClose);
+  dirtyCloseRef.current = dirtyClose;
+  const [quitLocked, setQuitLocked] = useState(false);
+  const responder = useMemo(
+    () =>
+      createQuitResponder({
+        post,
+        autoSaveMode: () => settingsRef.current.autoSave,
+        saves: fileSaves,
+        dirtyPaths: () => [...getDirtySnapshot()],
+        askDirty: (req) => dirtyCloseRef.current.ask(req),
+        askSessions: ({ reason, running, busy, onShown, signal }) =>
+          new Promise<boolean>((resolve) => {
+            const copy = quitConfirmCopy({ running, busy, reason });
+            const key = nextModalKey();
+            signal.addEventListener(
+              'abort',
+              () => {
+                slot.close(key);
+                resolve(false);
+              },
+              { once: true },
+            );
+            slot.open({
+              kind: 'confirm',
+              key,
+              state: {
+                title: copy.title,
+                message: copy.body,
+                confirmLabel: copy.confirmLabel,
+                danger: true,
+                // Cancel is the keyboard default so an accidental Enter never quits.
+                focusCancel: true,
+                onShown,
+                onCancel: () => resolve(false),
+                onConfirm: () => resolve(true),
+              },
+            });
+          }),
+        focusDialog: focusOpenModal,
+        setLocked: setQuitLocked,
+        wait: (ms) => new Promise((r) => setTimeout(r, ms)),
+        log: (message) => logToHost(message, { level: 'warn', scope: 'quit' }),
+      }),
+    [slot],
+  );
 
   // ---- App-level undo/redo for file-explorer operations ----
   const [fsUndoState, setFsUndoState] = useState<FsUndoState>({ undo: [], redo: [] });
@@ -595,50 +660,12 @@ export function App() {
         // rest of the lifecycle inline, so no toast is needed.
         if (msg.status === 'ready') setUpdateDismissed(false);
       } else if (msg.type === 'confirmQuit') {
-        const { requestId } = msg;
-        const live = quitAskRef.current;
-        if (live?.requestId === requestId) {
-          if (slot.current?.key === live.key) focusOpenModal();
-          else post({ type: 'quitDecision', requestId, proceed: false });
-          return;
-        }
-        post({ type: 'quitAck', requestId });
-        if (msg.running === 0) {
-          post({ type: 'quitDecision', requestId, proceed: true });
-          return;
-        }
-        const fakeSessions = Array.from({ length: msg.running }, (_, i) => ({
-          id: `run-${i}`,
-          name: '',
-          agentId: '',
-          home: '',
-          roots: [],
-          status: 'running' as const,
-          createdAt: 0,
-          lastActiveAt: 0,
-        }));
-        const copy = quitConfirmCopy({ running: fakeSessions, busy: msg.busy, reason: msg.reason });
-        const reply = (proceed: boolean) => post({ type: 'quitDecision', requestId, proceed });
-        const key = nextModalKey();
-        quitAskRef.current = { requestId, key };
-        slot.open({
-          kind: 'confirm',
-          key,
-          state: {
-            title: copy.title,
-            message: copy.body,
-            confirmLabel: copy.confirmLabel,
-            danger: true,
-            // Cancel is the keyboard default so an accidental Enter never quits.
-            focusCancel: true,
-            onShown: () => post({ type: 'quitDialogShown', requestId }),
-            onCancel: () => reply(false),
-            onConfirm: () => reply(true),
-          },
-        });
+        void responder.onConfirmQuit(msg);
+      } else if (msg.type === 'quitAborted') {
+        responder.onQuitAborted(msg.requestId);
       }
     });
-  }, [hydrate, slot, showConfirm]);
+  }, [hydrate, showConfirm, responder]);
 
   // `ready` is the handshake the host answers with the whole startup burst (state, win:list,
   // restoreDocs, review:marks), so it must not be posted before this subscription exists. It used
@@ -676,18 +703,18 @@ export function App() {
     return () => window.removeEventListener('blur', onBlur);
   }, []);
 
-  // Best-effort save-all on browser navigation/refresh (beforeunload). This fires
-  // reliably in the browser preview; in the Electron host it rarely fires on OS-level
-  // window close (the host closes windows directly, bypassing beforeunload). A proper
-  // Electron close interceptor is out of scope — see docs/specs/archive/2026-06-11-editor-depth.md.
+  // Best-effort save-all on unload: the browser preview's only guard, and under Electron the
+  // backstop for every path where the close guard gives up. Only a Don't Save answer skips it
+  // (dirty-quit-guard spec D2, B3).
   useEffect(() => {
     const onUnload = () => {
+      if (isHosted && responder.discarded()) return;
       const dirty = getDirtySnapshot();
       if (dirty.size > 0) void saveAllDirtyDocs(dirty);
     };
     window.addEventListener('beforeunload', onUnload);
     return () => window.removeEventListener('beforeunload', onUnload);
-  }, []);
+  }, [responder]);
 
   const hostSessions: Session[] = useMemo(() => state?.sessions ?? [], [state]);
   // Snooze is applied here, above everything that reads a session's attention state, so the
@@ -4392,6 +4419,8 @@ export function App() {
         />
       )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+      {modal?.kind === 'dirty' && <DirtyCloseDialog key={modal.key} {...modal.props} />}
+      {quitLocked && <QuitScrim />}
       {modal?.kind === 'confirm' && (
         <ConfirmDialog key={modal.key} state={modal.state} onClose={() => slot.close(modal.key)} />
       )}
