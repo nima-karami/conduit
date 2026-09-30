@@ -272,6 +272,17 @@ export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
   return { app, page, userDataDir: udd, cleanup };
 }
 
+/**
+ * Make the page behave as if its window had OS focus. A hosted runner never gives the hidden
+ * window focus, so xterm sends its focus-out report into the shell and focus-dependent UI never
+ * reveals; locally the window happens to have it. For scenarios that assert DOM focus and typed
+ * input, not OS window activation.
+ */
+export async function emulateWindowFocus(app, page) {
+  const cdp = await app.context().newCDPSession(page);
+  await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Bridge helpers
 // ──────────────────────────────────────────────────────────────────────────────

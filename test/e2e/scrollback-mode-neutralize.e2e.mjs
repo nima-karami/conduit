@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
+  emulateWindowFocus,
   finishScenario,
   launchElectron,
   makeLog,
@@ -77,6 +78,7 @@ try {
   page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
+  await emulateWindowFocus(app, page);
   await tapBridge(page);
 
   await page.waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), SID, {

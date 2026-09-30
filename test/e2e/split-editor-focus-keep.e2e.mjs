@@ -15,7 +15,13 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { changeRow, commitBase, installTabHelpers } from './changes-fixture.mjs';
-import { assert, openChangesTab, openSession, runScenario } from './harness.mjs';
+import {
+  assert,
+  emulateWindowFocus,
+  openChangesTab,
+  openSession,
+  runScenario,
+} from './harness.mjs';
 import {
   G,
   groupCount,
@@ -35,6 +41,7 @@ writeFileSync(join(root, 'd.txt'), 'one\nTWO changed\n');
 const DIFF_DELAY_MS = 4000;
 
 runScenario('split-editor-focus-keep', async ({ app, page, log }) => {
+  await emulateWindowFocus(app, page);
   const misses = [];
   await page.evaluate(() => {
     window.__terms = {};
