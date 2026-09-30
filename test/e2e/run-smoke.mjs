@@ -6,6 +6,8 @@
  *   node test/e2e/run-smoke.mjs              # run the whole suite
  *   node test/e2e/run-smoke.mjs quit-guard   # run only scenarios whose name
  *   node test/e2e/run-smoke.mjs cwd reveal   # matches any given filter term
+ *   node test/e2e/run-smoke.mjs --exact cwd quit-guard --json out.json
+ *                                            # exact file stems; result JSON after each scenario
  *
  * The filter is for the inner dev loop: while building one host-boundary feature
  * you run just its scenario (~30s) instead of the whole suite (~4 min). Run the
@@ -19,7 +21,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,17 +60,39 @@ if (process.platform !== 'win32') {
   process.exit(0);
 }
 
-const filters = process.argv.slice(2).map((t) => t.toLowerCase());
+const argv = process.argv.slice(2);
+/** Remove `flag` and its values from argv; `arity` '*' takes values up to the next `--flag`. */
+function takeFlag(flag, arity) {
+  const i = argv.indexOf(flag);
+  if (i < 0) return undefined;
+  let end = i + 1;
+  while (end < argv.length && !argv[end].startsWith('--') && (arity === '*' || end < i + 2)) end++;
+  return argv.splice(i, end - i).slice(1);
+}
+const jsonPath = takeFlag('--json', 1)?.[0];
+const exact = takeFlag('--exact', '*');
+const filters = argv.map((t) => t.toLowerCase());
 
-const scenarios = readdirSync(here)
-  .filter((f) => f.endsWith('.e2e.mjs'))
-  .filter((f) => {
-    if (filters.length === 0) return true;
-    const name = f.replace('.e2e.mjs', '').toLowerCase();
-    return filters.some((t) => name.includes(t));
-  })
-  .sort()
-  .map((f) => join(here, f));
+const allFiles = readdirSync(here).filter((f) => f.endsWith('.e2e.mjs'));
+let scenarios;
+if (exact) {
+  const stems = new Set(allFiles.map((f) => f.replace('.e2e.mjs', '')));
+  const unknown = exact.filter((n) => !stems.has(n));
+  if (unknown.length) {
+    console.log(`[smoke] Unknown scenario(s): ${unknown.join(', ')}`);
+    process.exit(1);
+  }
+  scenarios = [...new Set(exact)].sort().map((n) => join(here, `${n}.e2e.mjs`));
+} else {
+  scenarios = allFiles
+    .filter((f) => {
+      if (filters.length === 0) return true;
+      const name = f.replace('.e2e.mjs', '').toLowerCase();
+      return filters.some((t) => name.includes(t));
+    })
+    .sort()
+    .map((f) => join(here, f));
+}
 
 if (scenarios.length === 0) {
   const suffix = filters.length ? ` matching [${filters.join(', ')}]` : '';
@@ -128,6 +152,15 @@ for (const scenarioPath of scenarios) {
   }
 
   results.push({ name, status, elapsed });
+  // Rewritten after every scenario so a shard that dies mid-run still reports what it finished.
+  if (jsonPath) {
+    const rows = results.map((r) => ({
+      name: r.name,
+      status: r.status,
+      seconds: Number(r.elapsed),
+    }));
+    writeFileSync(jsonPath, `${JSON.stringify(rows, null, 2)}\n`);
+  }
 
   if (scenarioPath !== scenarios[scenarios.length - 1]) {
     await new Promise((r) => setTimeout(r, SETTLE_MS));
