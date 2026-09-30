@@ -10,7 +10,7 @@ import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { protocol, type Session } from 'electron';
-import { isInsideAnyRoot, realPathLeaf } from '../src/path-guard';
+import { isInsideRoot, realPathLeaf } from '../src/path-guard';
 import {
   isPreviewUrl,
   PREVIEW_SCHEME,
@@ -85,21 +85,23 @@ export function previewStat(p: string): PreviewStat {
 /**
  * Pure, with `stat`/`realPath` injected so it needs no filesystem and no Electron.
  *
- * Containment is checked TWICE on purpose: `isInsideAnyRoot` is purely lexical and catches
+ * Confined to ONE root, never "any open root": the root is the origin (ADR 0005 §1), and a
+ * file of another open root served under this one's token is a cross-project read.
+ * Containment is checked TWICE on purpose: `isInsideRoot` is purely lexical and catches
  * `../..`, while only re-checking the symlink-resolved path catches a file (or parent dir)
  * inside the root that links outside it.
  */
 export function previewVerdictForPath(
   absPath: string,
-  roots: readonly string[],
+  root: string,
   stat: (p: string) => PreviewStat,
   realPath: (p: string) => string,
 ): PreviewVerdict {
-  if (!isInsideAnyRoot(absPath, roots)) {
+  if (!isInsideRoot(absPath, root)) {
     return { ok: false, reason: 'blocked', status: 404, detail: 'Outside the open workspace.' };
   }
   const real = realPath(absPath);
-  if (!isInsideAnyRoot(real, roots)) {
+  if (!isInsideRoot(real, root)) {
     return { ok: false, reason: 'blocked', status: 404, detail: 'Resolves outside the workspace.' };
   }
   const st = stat(real);
@@ -115,8 +117,56 @@ export function previewVerdictForPath(
   return { ok: true, path: real, contentType: previewContentType(real) };
 }
 
+/** The protocol handler's decision: the token's root, and only while that root is still open. */
+export function previewVerdictForRequest(
+  parsed: { token: string; segments: readonly string[] },
+  openRoots: readonly string[],
+  stat: (p: string) => PreviewStat,
+  realPath: (p: string) => string,
+): PreviewVerdict {
+  const root = rootForToken(parsed.token);
+  if (root === undefined) return { ok: false, reason: 'unsupported', status: 404 };
+  if (!openRoots.includes(root)) {
+    return { ok: false, reason: 'blocked', status: 404, detail: 'Outside the open workspace.' };
+  }
+  return previewVerdictForPath(path.join(root, ...parsed.segments), root, stat, realPath);
+}
+
+type PreviewRefusal = Extract<PreviewVerdict, { ok: false }>;
+export type PreviewTarget =
+  | PreviewRefusal
+  | { ok: true; root: string; path: string; contentType: string };
+
+/**
+ * `html:canPreview`'s decision: the DEEPEST open root that passes `previewVerdictForPath` on its
+ * own, so the URL built from its token is one the handler will serve. Deepest, not first: a
+ * project nested under an open enclosing folder (a session at the home dir) must not be issued
+ * the enclosing origin, which can read everything under it. A path inside X that resolves into
+ * Y is refused, not re-homed under Y's origin.
+ */
+export function previewTargetForPath(
+  absPath: string,
+  openRoots: readonly string[],
+  stat: (p: string) => PreviewStat,
+  realPath: (p: string) => string,
+): PreviewTarget {
+  // Every candidate contains absPath, so they are ancestors of one another: longer is deeper.
+  const candidates = openRoots
+    .filter((root) => isInsideRoot(absPath, root))
+    .sort((a, b) => path.resolve(b).length - path.resolve(a).length);
+  let refusal: PreviewRefusal | undefined;
+  for (const root of candidates) {
+    const verdict = previewVerdictForPath(absPath, root, stat, realPath);
+    if (verdict.ok) return { ...verdict, root };
+    refusal ??= verdict;
+  }
+  return (
+    refusal ?? { ok: false, reason: 'blocked', status: 404, detail: 'Outside the open workspace.' }
+  );
+}
+
 const REASON_TEXT: Record<PreviewReason, string> = {
-  blocked: 'This file is outside every open workspace folder.',
+  blocked: 'This file is outside the workspace folder it was requested from.',
   'too-large': 'This file is larger than the 8 MB preview limit.',
   missing: 'This file no longer exists.',
   unsupported: 'This is not a valid preview address.',
@@ -153,15 +203,7 @@ export function registerPreviewProtocol(
     if (!parsed) return failure('unsupported', 404);
     const leafType = previewContentType(parsed.segments[parsed.segments.length - 1]);
 
-    const root = rootForToken(parsed.token);
-    if (root === undefined) return failure('unsupported', 404, leafType);
-
-    const verdict = previewVerdictForPath(
-      path.join(root, ...parsed.segments),
-      getRoots(),
-      previewStat,
-      realPathLeaf,
-    );
+    const verdict = previewVerdictForRequest(parsed, getRoots(), previewStat, realPathLeaf);
     if (!verdict.ok) return failure(verdict.reason, verdict.status, leafType);
 
     try {

@@ -12,14 +12,13 @@ import { isValidRootToken } from '../../src/preview-url';
 // node:path, so a Windows drive path resolves to nonsense on the ubuntu CI runner that owns
 // the gate (src/path-guard.ts:35, plan Revision 2 S9).
 const ROOT = '/work/proj';
-const ROOTS = [ROOT, '/work/other'];
 
 const file = (size: number) => (): PreviewStat => ({ kind: 'file', size });
 const identity = (p: string) => p;
 
 describe('previewVerdictForPath — the confinement decision', () => {
   it('serves a file inside a root', () => {
-    const v = previewVerdictForPath(`${ROOT}/a.html`, ROOTS, file(120), identity);
+    const v = previewVerdictForPath(`${ROOT}/a.html`, ROOT, file(120), identity);
     expect(v.ok).toBe(true);
     if (!v.ok) throw new Error('expected ok');
     expect(v.contentType).toBe('text/html');
@@ -27,14 +26,14 @@ describe('previewVerdictForPath — the confinement decision', () => {
   });
 
   it('refuses a path outside every root', () => {
-    const v = previewVerdictForPath('/etc/passwd', ROOTS, file(12), identity);
+    const v = previewVerdictForPath('/etc/passwd', ROOT, file(12), identity);
     expect(v.ok).toBe(false);
     if (v.ok) throw new Error('expected a refusal');
     expect(v.reason).toBe('blocked');
     expect(v.status).toBe(404);
 
     // Real path lands back INSIDE a root, so only the lexical check can refuse this one.
-    const decoy = previewVerdictForPath('/etc/passwd', ROOTS, file(12), () => `${ROOT}/decoy.html`);
+    const decoy = previewVerdictForPath('/etc/passwd', ROOT, file(12), () => `${ROOT}/decoy.html`);
     expect(decoy.ok).toBe(false);
     if (decoy.ok) throw new Error('expected a refusal');
     expect(decoy.reason).toBe('blocked');
@@ -46,7 +45,7 @@ describe('previewVerdictForPath — the confinement decision', () => {
     // catches the symlink escape. This is why both run.
     const v = previewVerdictForPath(
       `${ROOT}/link.html`,
-      ROOTS,
+      ROOT,
       file(40),
       () => '/elsewhere/secret.html',
     );
@@ -57,7 +56,7 @@ describe('previewVerdictForPath — the confinement decision', () => {
   });
 
   it('refuses a directory and a missing file', () => {
-    const dir = previewVerdictForPath(`${ROOT}/sub`, ROOTS, () => ({ kind: 'other' }), identity);
+    const dir = previewVerdictForPath(`${ROOT}/sub`, ROOT, () => ({ kind: 'other' }), identity);
     expect(dir.ok).toBe(false);
     if (dir.ok) throw new Error('expected a refusal');
     expect(dir.reason).toBe('missing');
@@ -65,7 +64,7 @@ describe('previewVerdictForPath — the confinement decision', () => {
 
     const gone = previewVerdictForPath(
       `${ROOT}/gone.html`,
-      ROOTS,
+      ROOT,
       () => ({ kind: 'missing' }),
       identity,
     );
@@ -80,7 +79,7 @@ describe('previewVerdictForPath — the confinement decision', () => {
     // could see but not open reported "no longer exists" — a lie about why it failed.
     const denied = previewVerdictForPath(
       `${ROOT}/locked.html`,
-      ROOTS,
+      ROOT,
       () => ({ kind: 'unreadable', detail: 'EACCES' }),
       identity,
     );
@@ -94,7 +93,7 @@ describe('previewVerdictForPath — the confinement decision', () => {
   it('refuses a file over the cap', () => {
     const over = previewVerdictForPath(
       `${ROOT}/big.html`,
-      ROOTS,
+      ROOT,
       file(MAX_PREVIEW_BYTES + 1),
       identity,
     );
@@ -105,7 +104,7 @@ describe('previewVerdictForPath — the confinement decision', () => {
 
     const atCap = previewVerdictForPath(
       `${ROOT}/big.html`,
-      ROOTS,
+      ROOT,
       file(MAX_PREVIEW_BYTES),
       identity,
     );

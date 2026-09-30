@@ -273,7 +273,7 @@ import { PlanWatcher } from './plan-watcher';
 import {
   PREVIEW_PARTITION,
   previewStat,
-  previewVerdictForPath,
+  previewTargetForPath,
   registerPreviewProtocol,
   registerPreviewScheme,
   rootTokenFor,
@@ -2842,35 +2842,24 @@ app.whenReady().then(() => {
         case 'html:canPreview': {
           // Content-triggered, root-confined read like `md:image` above — the same verdict the
           // protocol handler applies, asked up front so a refusal has something to render.
-          const roots = writeRoots();
-          const verdict = previewVerdictForPath(m.path, roots, previewStat, realPathLeaf);
-          if (!verdict.ok) {
+          const target = previewTargetForPath(m.path, writeRoots(), previewStat, realPathLeaf);
+          if (!target.ok) {
             replyHere({
               type: 'html:canPreviewResult',
               requestId: m.requestId,
-              result: { ok: false, reason: verdict.reason, detail: verdict.detail },
+              result: { ok: false, reason: target.reason, detail: target.detail },
             });
             break;
           }
-          const root = roots.find((r) => isInsideRoot(verdict.path, r));
-          if (!root) {
-            replyHere({
-              type: 'html:canPreviewResult',
-              requestId: m.requestId,
-              result: { ok: false, reason: 'blocked' },
-            });
-            break;
-          }
+          const url = buildPreviewUrl(
+            rootTokenFor(target.root),
+            path.relative(target.root, target.path).split(path.sep),
+          );
+          // A name the parser refuses (`:` is legal off Windows) would only be blocked by the guard.
           replyHere({
             type: 'html:canPreviewResult',
             requestId: m.requestId,
-            result: {
-              ok: true,
-              url: buildPreviewUrl(
-                rootTokenFor(root),
-                path.relative(root, verdict.path).split(path.sep),
-              ),
-            },
+            result: isPreviewUrl(url) ? { ok: true, url } : { ok: false, reason: 'unsupported' },
           });
           break;
         }

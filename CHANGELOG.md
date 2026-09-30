@@ -34,6 +34,11 @@ All notable user-facing changes to Conduit. Format follows
 - **Switching to History or Review from the keyboard shows the focus ring** on the row or view
   that takes your keys.
 
+### Security
+- **A previewed HTML page can read only the folder it was opened from.** With several folders
+  open, a page from one could, in some folder layouts, read files belonging to another. An HTML
+  file that is really a link into a different open folder now previews only from that folder.
+
 ## [0.45.0] — 2026-09-29
 
 ### Added
