@@ -50,11 +50,19 @@ with confinement moved **into the main process**.
    `webSecurity: true` would then use to block every subresource. The entire URL shape depends
    on this registration.
 
-3. **Confinement is enforced only in the main process**, per request, by
-   `isInsideAnyRoot(abs, roots())` **and** `isInsideAnyRoot(realPathLeaf(abs), roots())`. Both,
-   because `isInsideAnyRoot` is purely lexical: it catches `../..` and does **not** catch a
-   symlink escape, which is what `realPathLeaf` exists for. This is the pair `fs-dnd` and
-   `fs-import` already use, one notch stronger than `md:image`'s single check.
+3. **Confinement is enforced only in the main process**, per request, against **the token's
+   own root** — `isInsideRoot(abs, root)` **and** `isInsideRoot(realPathLeaf(abs), root)`, with
+   that root still open. Both, because `isInsideRoot` is purely lexical: it catches `../..` and
+   does **not** catch a symlink escape, which is what `realPathLeaf` exists for.
+
+   *Amended 2026-09-30:* this first shipped checking against **every** open root
+   (`isInsideAnyRoot(…, roots())`, the pair `fs-dnd`/`fs-import` use). That kept §1's promise
+   only for cross-origin reads: a junction inside root A pointing at root B, or one decoded
+   segment carrying an encoded separator out of A into a sibling B, was served under A's
+   origin — same-origin to A's page, so the browser never objects. The precheck
+   (`html:canPreview`) applies the same per-root rule and refuses such a path rather than
+   re-homing it under B's token. Pinned by `test/unit/preview-origin.test.ts` and
+   `test/e2e/preview-origin.e2e.mjs`.
 
 4. **Traversal is refused at the parse boundary, and the parse is hand-written.** Measured: the
    WHATWG `URL` parser collapses dot segments before anything can inspect them — `.../a/../b`,

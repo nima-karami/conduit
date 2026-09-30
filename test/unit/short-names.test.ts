@@ -170,11 +170,11 @@ describe('a root stored through expandShortNames keeps confinement exactly as st
     const { deps } = volume(P, entries, real);
     const root = await expandShortNames('/home/RUNNER~1/proj', deps);
     expect(root).toBe('/home/runneradmin/proj');
-    expect(previewVerdictForPath(`${root}/a.html`, [root], file, osRealPath).ok).toBe(true);
+    expect(previewVerdictForPath(`${root}/a.html`, root, file, osRealPath).ok).toBe(true);
     // Before the fix: the root kept the alias and the realpath stage refused its own file.
     const before = previewVerdictForPath(
       '/home/RUNNER~1/proj/a.html',
-      ['/home/RUNNER~1/proj'],
+      '/home/RUNNER~1/proj',
       file,
       osRealPath,
     );
@@ -184,7 +184,7 @@ describe('a root stored through expandShortNames keeps confinement exactly as st
   it('still refuses `../..` out of the canonical root (lexical stage)', async () => {
     const { deps } = volume(P, entries, real);
     const root = await expandShortNames('/home/RUNNER~1/proj', deps);
-    const v = previewVerdictForPath(`${root}/../../../etc/passwd`, [root], file, osRealPath);
+    const v = previewVerdictForPath(`${root}/../../../etc/passwd`, root, file, osRealPath);
     expect(v).toMatchObject({
       ok: false,
       reason: 'blocked',
@@ -195,7 +195,7 @@ describe('a root stored through expandShortNames keeps confinement exactly as st
   it('still refuses a symlink inside the canonical root that points out (realpath stage)', async () => {
     const { deps } = volume(P, entries, real);
     const root = await expandShortNames('/home/RUNNER~1/proj', deps);
-    const v = previewVerdictForPath(`${root}/out-link.html`, [root], file, osRealPath);
+    const v = previewVerdictForPath(`${root}/out-link.html`, root, file, osRealPath);
     expect(v).toMatchObject({
       ok: false,
       reason: 'blocked',
@@ -206,7 +206,7 @@ describe('a root stored through expandShortNames keeps confinement exactly as st
   it('still refuses a sibling that only shares the long prefix', async () => {
     const { deps } = volume(P, entries, real);
     const root = await expandShortNames('/home/RUNNER~1/proj', deps);
-    const v = previewVerdictForPath('/home/runneradmin/proj-evil/a.html', [root], file, osRealPath);
+    const v = previewVerdictForPath('/home/runneradmin/proj-evil/a.html', root, file, osRealPath);
     expect(v.ok).toBe(false);
   });
 });
