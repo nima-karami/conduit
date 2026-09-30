@@ -274,9 +274,9 @@ export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
 
 /**
  * Make the page behave as if its window had OS focus. A hosted runner never gives the hidden
- * window focus, so xterm sends its focus-out report into the shell and focus-dependent UI never
- * reveals; locally the window happens to have it. For scenarios that assert DOM focus and typed
- * input, not OS window activation.
+ * window focus, and focus-dependent UI (review-mode-pane's hover-revealed row actions) then never
+ * shows; locally the window happens to have it. Not enough for xterm's focus reporting — see
+ * remote-exclusions.json. For scenarios that assert page UI, not OS window activation.
  */
 export async function emulateWindowFocus(app, page) {
   const cdp = await app.context().newCDPSession(page);
