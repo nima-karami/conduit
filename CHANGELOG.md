@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.45.0] — 2026-09-29
+
 ### Added
 - **Split editor.** Ctrl+\ (or "Split Right" on a tab, or the button at the end of the tab strip)
   opens the current tab in a second editor group on the right. Each group has its own tabs and
