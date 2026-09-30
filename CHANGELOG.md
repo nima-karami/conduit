@@ -20,8 +20,15 @@ All notable user-facing changes to Conduit. Format follows
   - Close the right group from its strip's right-click menu or the palette ("Close Editor Group"
     or "Join Editor Groups"). It also closes when its last tab does.
   - The split and each group's tabs come back after a restart.
+- **Unsaved files are never dropped on the way out.** Quitting, closing a window, relaunching for
+  an update, and closing or moving a session now ask to save unsaved files: **Save All**,
+  **Don't Save** or **Cancel**. A file that changed on disk, failed to save or only partly loaded
+  is marked in the list. One dialog replaces the prompts that used to stack, and it also says how
+  many running agents the close will stop.
 
 ### Fixed
+- **Enter in a confirm dialog activates only the focused button.** It used to run the primary
+  action whichever button had focus.
 - **Switching tabs puts keyboard focus in the tab you land on.** Ctrl+Tab, Ctrl+PageUp/PageDown,
   Ctrl+1…9, a tab click and closing a tab used to leave focus nowhere, so the next keys were lost.
 - **Tab-switching keys work from the Terminal.** Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageUp/PageDown

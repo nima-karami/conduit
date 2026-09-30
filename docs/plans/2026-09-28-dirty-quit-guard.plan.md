@@ -1530,3 +1530,37 @@ the locked decision.
     not reject (Slice 3's main implementation).
   - Not built here: `pointWellInside` / `DRAG_STAY_INSET_PX` belong to Slice 5 (T5.x), not Slice 2.
   - Slices 3+ held until split-editor merges (they touch app.tsx / docs.ts / center-pane).
+- **Merge of main (2026-09-29, `60d1720`):** split-editor + Electron 43.7.6 landed; one conflict
+  (`test/unit/file-save-controller.test.ts`, both sides kept). Dirty state stayed per path; session
+  gating reads `filePathsClosedWithSession` through `sessionDirtyPaths` as planned.
+- **Slice 3 (2026-09-29): done** — T3.1 `2adc532`, T3.2 `a3ca900`, T3.3 `41604c0`. Units 427 files
+  green; e2e quit-guard, exit-closes-session, renderer-crash, multi-window(-restore) green.
+  - The runner's filter strips `.e2e.mjs`, so `multi-window.e2e` matches nothing; `multi-window`
+    runs both multi-window scenarios (serially).
+  - `closeApp` now quits with `app.quit()` (not a close of window 0) so a multi-window app exits and
+    every window's ask can be asserted (S3). `answerQuitAsks` reports asks over the page console so
+    they survive the window closing.
+  - The closeDoc prompt's `closePromptRef` went the same way as `quitCancelRef`/`hunkConfirmRef`:
+    its answer is now `ConfirmState.onCancel`, and displacement covers the "settle the previous
+    prompt" line.
+- **Slice 4 (2026-09-29): done** — T4.1 `2862999`, T4.2 `c4be689`, T4.3 `d1d6238`, T4.4 `b67ed08`.
+  - `quitConfirmCopy` now takes a `running` count instead of `Session[]`; the renderer only ever
+    had counts and used to fake sessions to call it.
+  - Responder: a superseded flow's `finally` leaves toast suppression to the flow that replaced it;
+    a throwing ask posts no decision (the host's timeouts cover it).
+  - `DIRTY_QUIT_SHOTS=<dir>` saves each dirty dialog as a screenshot (runtime proof).
+- **Slice 5 (2026-09-29): done** — T5.1 `72ee199`. The exited-shell warn uses the session's
+  `name` (the plan said `title`; `Session` has no `title`).
+- **Slice 6 (2026-09-29): built, gate NOT green** — T6.1 `a5ceafe` (+ style fix `e717000`).
+  - Found by `closeAll`: a queued window close resumed before the proceeded window's `'closed'`
+    event, so `closeDecision` still counted it and asked with window-close copy. Fixed in main
+    (`openWindowCount` skips `windowConfirmed`); the phase now asserts the second ask is a `quit`.
+  - The planned forced-colors rule was dropped: `state-vocabulary.test.ts` forbids a solid outline
+    on `:focus`, and the global ring already switches to `Highlight` under forced colors.
+  - Gate: `verify-s6b.log` EXIT=1 on fallow dead-code "Duplicate exports": `webview/app.tsx` now
+    imports both `src/layout.ts` and `src/window-registry.ts`, which each export `parseLayout` /
+    `serializeLayout` (base 60d1720 is clean). Proposed fix: rename window-registry's pair to
+    `parseWindowLayout` / `serializeWindowLayout` (callers: electron/main.ts, its test).
+  - **Incident:** a base-commit worktree removed with `git worktree remove --force` followed the
+    node_modules junction chain and emptied `G:\awby\projects\conduit\node_modules`. Needs
+    `npm ci` in the main checkout before anything can run again.
