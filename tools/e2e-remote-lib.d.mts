@@ -31,6 +31,10 @@ export function runState(view: {
 }): string;
 export function finalStatus(conclusion: string, result?: { status: string } | null): string;
 export function exitCodeFor(status: string): number;
+export function checkExclusions(
+  names: string[],
+  exclusions: Record<string, string>,
+): { refuse?: string; notice?: string };
 export function formatResults(result: {
   status: string;
   sha: string;

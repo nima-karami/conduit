@@ -281,10 +281,10 @@ if (process.platform !== 'win32') {
 
 main().then(
   () => finishScenario(0),
-  (e) => {
+  async (e) => {
     if (e?.name === 'AssertionError') {
       log('FAIL ✗', e.message);
-      finishScenario(1);
+      return await finishScenario(1);
     }
     console.error('[review-row-pixels] ERROR:', e?.message || e);
     if (e?.stack) console.error(e.stack);

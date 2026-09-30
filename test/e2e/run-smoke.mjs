@@ -126,9 +126,12 @@ function runAttempt(name, attempt) {
     },
   );
   const r = { stdout: '', stderr: '', status: null, signal: null };
+  let partial = '';
   child.stdout.setEncoding('utf8').on('data', (d) => {
     r.stdout += d;
-    for (const line of d.split('\n')) if (line.startsWith('[e2e-lock]')) console.log(`\n  ${line}`);
+    const lines = (partial + d).split('\n');
+    partial = lines.pop();
+    for (const line of lines) if (line.startsWith('[e2e-lock]')) console.log(`\n  ${line}`);
   });
   child.stderr.setEncoding('utf8').on('data', (d) => {
     r.stderr += d;

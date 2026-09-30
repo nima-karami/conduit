@@ -9,7 +9,7 @@ import { rmSync } from 'node:fs';
 import { connect, createServer } from 'node:net';
 import { constants, setPriority } from 'node:os';
 
-export const DEFAULT_PIPE = '\\\\.\\pipe\\conduit-e2e';
+const DEFAULT_PIPE = '\\\\.\\pipe\\conduit-e2e';
 const REPORT_EVERY_MS = 30_000;
 
 let held = null;

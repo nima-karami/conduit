@@ -62,7 +62,9 @@ describe('mergeResults', () => {
       status: 'EXCLUDED',
       reason: 'needs OS focus',
     });
-    expect(summaryMarkdown(r)).toContain('| z | EXCLUDED | 0 | 0 |  | needs OS focus |');
+    expect(summaryMarkdown(r)).toContain(
+      '| z | EXCLUDED | 0 | 0 |  | needs OS focus; run locally: `npm run e2e -- z` |',
+    );
   });
 
   it('a failed verify job fails an otherwise green run', () => {
@@ -84,6 +86,18 @@ describe('runStatus', () => {
     [s('PASS', 'SKIP', 'EXCLUDED'), 'passed'],
   ])('%j → %s', (results, expected) => {
     expect(runStatus(results)).toBe(expected);
+  });
+
+  it.each(['cancelled', 'timed_out', 'failure'])(
+    'a requested verify that ended %s fails the run',
+    (verify) => {
+      expect(runStatus(s('PASS'), { verify })).toBe('failed');
+    },
+  );
+
+  it('a failed prepare is infra, but never masks a failed verify', () => {
+    expect(runStatus([], { prepare: 'failure', verify: 'success' })).toBe('infra-error');
+    expect(runStatus([], { prepare: 'failure', verify: 'failure' })).toBe('failed');
   });
 
   it('a successful or skipped verify leaves the scenario verdict alone', () => {

@@ -49,7 +49,6 @@ describe('classify', () => {
     [{ status: 0 }, 'PASS'],
     [{ status: 0, output: '[x] SKIP — no pwsh' }, 'SKIP'],
     [{ status: 124 }, 'TIMEOUT'],
-    [{ status: null, errorCode: 'ETIMEDOUT' }, 'TIMEOUT'],
     [{ status: null, signal: 'SIGTERM' }, 'TIMEOUT'],
     [{ status: 1 }, 'FAIL'],
     [{ status: 2 }, 'FAIL'],

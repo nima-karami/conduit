@@ -64,13 +64,12 @@ export function applyExclusions(names, exclusions) {
 }
 
 /**
- * @param {{ status: number | null, signal?: string | null, errorCode?: string, output?: string }} r
- *   a finished `spawnSync` child
+ * @param {{ status: number | null, signal?: string | null, output?: string }} r a finished child
  * @returns {'PASS' | 'SKIP' | 'TIMEOUT' | 'FAIL'}
  */
-export function classify({ status, signal, errorCode, output = '' }) {
+export function classify({ status, signal, output = '' }) {
   if (status === 0) return /\bSKIP\b/.test(output) ? 'SKIP' : 'PASS';
-  if (status === EXIT_WATCHDOG || errorCode === 'ETIMEDOUT' || signal) return 'TIMEOUT';
+  if (status === EXIT_WATCHDOG || signal) return 'TIMEOUT';
   return 'FAIL';
 }
 

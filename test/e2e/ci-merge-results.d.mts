@@ -17,12 +17,16 @@ export interface ResultJson {
   startedAt?: string;
   finishedAt?: string;
   verify?: string;
+  prepare?: string;
   shards: number;
   status: string;
   rerun: string | null;
   results: ResultRow[];
 }
-export function runStatus(results: { status: string }[], opts?: { verify?: string }): string;
+export function runStatus(
+  results: { status: string }[],
+  opts?: { verify?: string; prepare?: string },
+): string;
 export function infraRerunLine(
   results: { name: string; status: string }[],
   sha?: string,
@@ -43,6 +47,7 @@ export function mergeResults(
     startedAt?: string;
     finishedAt?: string;
     verify?: string;
+    prepare?: string;
     artifactUrls?: Record<number, string>;
     excluded?: Record<string, string>;
   },

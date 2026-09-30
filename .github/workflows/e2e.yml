@@ -113,6 +113,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -140,7 +141,7 @@ jobs:
       - if: contains(format(' {0} ', matrix.names), ' go-lsp ') || contains(format(' {0} ', matrix.names), ' mf-files ')
         shell: pwsh
         run: |
-          go install golang.org/x/tools/gopls@latest
+          go install golang.org/x/tools/gopls@v0.23.0
           Join-Path (go env GOPATH) bin >> $env:GITHUB_PATH
       # Scenarios build scratch repos and commit; a hosted runner has no git identity.
       - run: |
@@ -222,10 +223,9 @@ jobs:
               sha: process.env.GITHUB_SHA, nonce: process.env.NONCE, selection: process.env.SELECTION,
               runId: run.id, url: run.html_url, queuedAt: run.created_at, startedAt: run.run_started_at,
               finishedAt: new Date().toISOString(), verify: process.env.VERIFY_RESULT,
+              prepare: process.env.PREPARE_RESULT,
               artifactUrls, excluded: process.env.EXCLUDED ? JSON.parse(process.env.EXCLUDED) : {},
             });
-            // A failed prepare means nothing was planned or run: infra, never a vacuous pass.
-            if (process.env.PREPARE_RESULT !== "success") result.status = "infra-error";
             writeFileSync("out/result.json", JSON.stringify(result, null, 2) + "\n");
             appendFileSync(process.env.GITHUB_STEP_SUMMARY, summaryMarkdown(result));
             console.log(`status: ${result.status}`);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  checkExclusions,
   exitCodeFor,
   finalStatus,
   formatResults,
@@ -152,8 +153,31 @@ describe('verdict', () => {
     });
     expect(out).toContain('  a ... ✓ PASS (12.3s) [s3]');
     expect(out).toContain('  b ... ✗ FAIL (4s) [s1]');
-    expect(out).toContain('  z ... - EXCLUDED (0s) — focus');
+    expect(out).toContain('  z ... - EXCLUDED (0s) — focus; run locally: npm run e2e -- z');
     expect(out).toContain('artifacts: https://art');
     expect(out).toContain('re-run the INFRA scenarios: npm run e2e:remote -- c (at abcdef1)');
+  });
+});
+
+describe('checkExclusions', () => {
+  const exclusions = { x: 'needs focus', y: 'too slow' };
+
+  it('nothing excluded → nothing to say', () => {
+    expect(checkExclusions(['a', 'b'], exclusions)).toEqual({});
+  });
+
+  it('some excluded → a notice naming each with its local command', () => {
+    const r = checkExclusions(['a', 'x'], exclusions);
+    expect(r).not.toHaveProperty('refuse');
+    expect(r.notice).toContain('x: needs focus');
+    expect(r.notice).toContain('npm run e2e -- x');
+    expect(r.notice).not.toContain('npm run e2e -- a');
+  });
+
+  it('all excluded → refuse, with a local command per name', () => {
+    const r = checkExclusions(['x', 'y'], exclusions);
+    expect(r).not.toHaveProperty('notice');
+    expect(r.refuse).toContain('npm run e2e -- x');
+    expect(r.refuse).toContain('npm run e2e -- y');
   });
 });

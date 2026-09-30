@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  checkExclusions,
   exitCodeFor,
   finalStatus,
   formatResults,
@@ -58,6 +59,13 @@ function preconditions(o) {
   if (dirty) fail(`the working tree is not clean; commit or stash first:\n${dirty}`);
   const unknown = o.names.filter((n) => !existsSync(join('test', 'e2e', `${n}.e2e.mjs`)));
   if (unknown.length) fail(`unknown scenario(s): ${unknown.join(', ')}`);
+  if (o.full) return;
+  const exclusions = JSON.parse(
+    readFileSync(join('test', 'e2e', 'remote-exclusions.json'), 'utf8'),
+  );
+  const { refuse, notice } = checkExclusions(o.names, exclusions);
+  if (refuse) fail(refuse);
+  if (notice) say(notice);
 }
 
 function inFlight() {

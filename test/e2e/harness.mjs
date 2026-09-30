@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { attemptDir, screenshotWindows, startCapture, stopTrace } from './failure-artifacts.mjs';
 import { acquireE2eLock, setBelowNormal } from './local-guard.mjs';
+import { EXIT_WATCHDOG } from './smoke-select.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 export const REPO = join(here, '..', '..');
@@ -119,8 +120,6 @@ export async function shutdownApp(app, page) {
   }
 }
 
-/** Harness watchdog exit code; run-smoke classifies it as TIMEOUT with artifacts captured. */
-const EXIT_WATCHDOG = 124;
 /** Failure capture must land before the runner's 210 s kill: 200 s deadline + this. */
 const CAPTURE_BUDGET_MS = 8000;
 

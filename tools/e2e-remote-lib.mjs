@@ -112,13 +112,33 @@ export function exitCodeFor(status) {
   return 2;
 }
 
+const localCommand = (name) => `npm run e2e -- ${name}`;
+
+/**
+ * Named scenarios that `exclusions` (test/e2e/remote-exclusions.json) keeps off the runner: all of
+ * them → refuse; some → a notice. Either way each name comes with its local command.
+ * @returns {{ refuse?: string, notice?: string }}
+ */
+export function checkExclusions(names, exclusions) {
+  const excluded = names.filter((n) => Object.hasOwn(exclusions, n));
+  if (!excluded.length) return {};
+  const list = excluded
+    .map((n) => `  ${n}: ${exclusions[n]}\n    run locally: ${localCommand(n)}`)
+    .join('\n');
+  if (excluded.length === names.length) {
+    return { refuse: `every named scenario is excluded from the runner:\n${list}` };
+  }
+  return { notice: `excluded from the runner (reported EXCLUDED, not run):\n${list}` };
+}
+
 const ICON = { PASS: '✓', FLAKY: '~', SKIP: '○', EXCLUDED: '-' };
 
 export function formatResults(result) {
   const lines = [];
   for (const r of result.results) {
     const where = r.shard ? ` [s${r.shard}]` : '';
-    const why = r.reason ? ` — ${r.reason}` : '';
+    let why = r.reason ? ` — ${r.reason}` : '';
+    if (r.status === 'EXCLUDED') why += `; run locally: ${localCommand(r.name)}`;
     lines.push(
       `  ${r.name} ... ${ICON[r.status] ?? '✗'} ${r.status} (${r.seconds}s)${where}${why}`,
     );

@@ -3,24 +3,28 @@
  * the `report` job of .github/workflows/e2e.yml. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md §3.
  */
 
-const NOT_RUN = new Set(['PASS', 'SKIP', 'EXCLUDED']);
+const NO_ARTIFACT = new Set(['PASS', 'SKIP', 'EXCLUDED', 'INFRA']);
 
 /**
  * First match wins (spec §3). EXCLUDED rows are neutral, but a selection where nothing ran at all
- * is as vacuous as an all-SKIP one. A failed `verify` job fails the run.
+ * is as vacuous as an all-SKIP one. A requested `verify` job that did not succeed (a failure, or a
+ * timeout's `cancelled`) fails the run; `skipped` means it was not requested. A failed `prepare`
+ * planned nothing, so it is infra unless verify already failed the run.
  */
-export function runStatus(results, { verify } = {}) {
+export function runStatus(results, { verify, prepare } = {}) {
+  if (verify && verify !== 'success' && verify !== 'skipped') return 'failed';
+  if (prepare && prepare !== 'success') return 'infra-error';
   const ran = results.filter((r) => r.status !== 'EXCLUDED');
   const has = (s) => ran.some((r) => r.status === s);
-  let status;
-  if (results.length === 0) status = 'passed';
-  else if (has('FAIL') || has('TIMEOUT')) status = 'failed';
-  else if (has('INFRA')) status = 'infra-error';
-  else if (ran.every((r) => r.status === 'SKIP')) status = 'failed';
-  else if (has('FLAKY')) status = 'flaky-passed';
-  else status = 'passed';
-  return verify === 'failure' ? 'failed' : status;
+  if (results.length === 0) return 'passed';
+  if (has('FAIL') || has('TIMEOUT')) return 'failed';
+  if (has('INFRA')) return 'infra-error';
+  if (ran.every((r) => r.status === 'SKIP')) return 'failed';
+  if (has('FLAKY')) return 'flaky-passed';
+  return 'passed';
 }
+
+const localCommand = (name) => `npm run e2e -- ${name}`;
 
 export function infraRerunLine(results, sha) {
   const names = results.filter((r) => r.status === 'INFRA').map((r) => r.name);
@@ -33,7 +37,7 @@ export function infraRerunLine(results, sha) {
  * @param {{ shards: { index: number, names: string[] }[] }} plan  shard n is `index + 1`
  * @param {{ shard: number, results: { name: string, status: string, seconds: number, attempts?: number }[] }[]} shardFiles
  * @param {{ sha: string, nonce: string, selection: string, runId?: number, url?: string,
- *   queuedAt?: string, startedAt?: string, finishedAt?: string, verify?: string,
+ *   queuedAt?: string, startedAt?: string, finishedAt?: string, verify?: string, prepare?: string,
  *   artifactUrls?: Record<number, string>, excluded?: Record<string, string> }} meta
  */
 export function mergeResults(plan, shardFiles, meta) {
@@ -48,7 +52,7 @@ export function mergeResults(plan, shardFiles, meta) {
         ? { name, status: r.status, seconds: r.seconds, attempts: r.attempts ?? 1, shard }
         : { name, status: 'INFRA', seconds: 0, attempts: 0, shard };
       const artifact = meta.artifactUrls?.[shard];
-      if (artifact && !NOT_RUN.has(row.status) && row.status !== 'INFRA') row.artifact = artifact;
+      if (artifact && !NO_ARTIFACT.has(row.status)) row.artifact = artifact;
       results.push(row);
     }
   }
@@ -60,7 +64,7 @@ export function mergeResults(plan, shardFiles, meta) {
   return {
     ...rest,
     shards: plan.shards.length,
-    status: runStatus(results, { verify: meta.verify }),
+    status: runStatus(results, { verify: meta.verify, prepare: meta.prepare }),
     rerun: infraRerunLine(results, meta.sha),
     results,
   };
@@ -86,7 +90,9 @@ export function summaryMarkdown(result) {
   md +=
     '| scenario | status | s | attempts | shard | artifacts / reason |\n|---|---|---|---|---|---|\n';
   for (const r of rows) {
-    const extra = r.artifact ? `[e2e-fail-${r.shard}](${r.artifact})` : (r.reason ?? '');
+    let extra = r.reason ?? '';
+    if (r.artifact) extra = `[e2e-fail-${r.shard}](${r.artifact})`;
+    else if (r.status === 'EXCLUDED') extra += `; run locally: \`${localCommand(r.name)}\``;
     md += `| ${r.name} | ${r.status} | ${r.seconds} | ${r.attempts} | ${r.shard ?? ''} | ${extra} |\n`;
   }
   return md;

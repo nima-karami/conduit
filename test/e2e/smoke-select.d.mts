@@ -23,7 +23,6 @@ export function applyExclusions(
 export function classify(r: {
   status: number | null;
   signal?: string | null;
-  errorCode?: string;
   output?: string;
 }): 'PASS' | 'SKIP' | 'TIMEOUT' | 'FAIL';
 export function finalStatus(first: ScenarioStatus, retry?: ScenarioStatus): ScenarioStatus;

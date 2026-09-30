@@ -1,4 +1,3 @@
-export const DEFAULT_PIPE: string;
 export function acquireE2eLock(opts?: {
   pipePath?: string;
   scenario?: string;
