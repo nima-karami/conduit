@@ -18,6 +18,11 @@ export function parseNameStatus(text: string): Change[];
 export function parseZeroContextDiff(
   text: string,
 ): Record<string, { absent: boolean; hunks: Hunk[] }>;
+export function withMapBuildHunks(
+  changed: Change[],
+  map: { builtFrom: string },
+  cwd?: string,
+): Change[];
 export function selectAffected(
   changed: Change[],
   ctx: {

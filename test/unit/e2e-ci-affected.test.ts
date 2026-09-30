@@ -1,9 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   isE2eIrrelevant,
   parseNameStatus,
   parseZeroContextDiff,
   selectAffected,
+  withMapBuildHunks,
 } from '../e2e/ci-affected.mjs';
 
 /**
@@ -139,9 +144,10 @@ describe('selectAffected: changed lines against credited function ranges', () =>
     expect(r.reasons.join('\n')).toContain('webview/split.tsx');
   });
 
-  it('a modified mapped file identical to the map build adds nothing', () => {
+  it('a modified mapped file identical to the map build adds nothing, and says so', () => {
     const r = selectAffected([m('webview/split.tsx', 'M', [])], ctx);
     expect(r).toMatchObject({ kind: 'names', names: CORE_AND_FRESH });
+    expect(r.reasons).toContain("webview/split.tsx: identical to the map's build");
   });
 
   it('the review case: top-level data (editor-menu.ts NAVIGATION) → full', () => {
@@ -312,5 +318,143 @@ describe('parseZeroContextDiff', () => {
       'webview/new file.ts': { absent: true, hunks: [{ start: 0, count: 0 }] },
       'src/gone.ts': { absent: false, hunks: [{ start: 1, count: 2 }] },
     });
+  });
+
+  it('a removed `-- ` or added `++ ` body line is content, not a file header', () => {
+    const text = [
+      'diff --git a/src/f.ts b/src/f.ts',
+      'index 1111111..2222222 100644',
+      '--- a/src/f.ts',
+      '+++ b/src/f.ts',
+      '@@ -4 +4 @@ export function f() {',
+      '--- a',
+      '+++ b',
+      '@@ -8 +8 @@',
+      '-export const bottom = 1;',
+      '\\ No newline at end of file',
+      '+export const bottom = 2;',
+      '\\ No newline at end of file',
+      '',
+    ].join('\n');
+    expect(parseZeroContextDiff(text)).toEqual({
+      'src/f.ts': {
+        absent: false,
+        hunks: [
+          { start: 4, count: 1 },
+          { start: 8, count: 1 },
+        ],
+      },
+    });
+  });
+
+  it('reads a C-quoted path', () => {
+    const text = [
+      'diff --git "a/src/t\\tb.ts" "b/src/t\\tb.ts"',
+      '--- "a/src/t\\tb.ts"',
+      '+++ "b/src/t\\tb.ts"',
+      '@@ -2 +2 @@',
+      '-x',
+      '+y',
+      '',
+    ].join('\n');
+    expect(parseZeroContextDiff(text)).toEqual({
+      'src/t\tb.ts': { absent: false, hunks: [{ start: 2, count: 1 }] },
+    });
+  });
+});
+
+describe('withMapBuildHunks and the CLI, against a real git repo', () => {
+  const CLI = join(__dirname, '..', 'e2e', 'ci-affected.mjs');
+  let repo = '';
+  let build = '';
+  const git = (...args: string[]) =>
+    execFileSync(
+      'git',
+      ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args],
+      { cwd: repo, encoding: 'utf8' },
+    ).trim();
+  const put = (path: string, text: string) => {
+    mkdirSync(dirname(join(repo, path)), { recursive: true });
+    writeFileSync(join(repo, path), text);
+  };
+  const fBody = (inner: string, bottom: number) =>
+    [
+      'export const top = 1;',
+      'export function f() {',
+      '  const s = `',
+      inner,
+      '`;',
+      '  return s;',
+      '}',
+      `export const bottom = ${bottom};`,
+      '',
+    ].join('\n');
+  // Scenario `a` ran f (lines 2–7); line 8 is top-level code no scenario is credited with.
+  const map = () => ({
+    schema: 2,
+    builtFrom: build,
+    scenarios: {
+      a: {
+        builtFrom: build,
+        files: { 'src/f.ts': [[2, 7]], 'src/g.ts': [[1, 3]], 'src/h.ts': [[1, 1]] },
+      },
+    },
+  });
+
+  beforeAll(() => {
+    repo = mkdtempSync(join(tmpdir(), 'ci-affected-'));
+    git('init', '-q');
+    // Settings a developer may have: none of them may change what the parser reads.
+    git('config', 'diff.noprefix', 'true');
+    git('config', 'color.diff', 'always');
+    git('config', 'core.autocrlf', 'false');
+    for (const n of ['a', 'b', 'core']) put(`test/e2e/${n}.e2e.mjs`, '');
+    put('test/e2e/core-smoke.json', '["core"]');
+    put('test/e2e/remote-exclusions.json', '{}');
+    put('src/f.ts', fBody('-- a', 1));
+    put('src/g.ts', 'export function g() {\n  return 1;\n}\n');
+    put('src/h.ts', 'export function h() {}\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'map build');
+    build = git('rev-parse', 'HEAD');
+    // Line 4 `-- a` → `++ b` shows in the diff as `--- a` / `+++ b`; line 8 is top-level.
+    put('src/f.ts', fBody('++ b', 2));
+    git('update-index', '--chmod=+x', 'src/h.ts');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'change');
+  });
+  afterAll(() => rmSync(repo, { recursive: true, force: true }));
+
+  it('reads both hunks past `-- `/`++ ` body lines, whatever the diff config', () => {
+    const [f] = withMapBuildHunks([{ path: 'src/f.ts', status: 'M' }], map(), repo);
+    expect(f.hunks).toEqual([
+      { start: 4, count: 1 },
+      { start: 8, count: 1 },
+    ]);
+  });
+
+  it('a file identical to the map build gets no hunks; one git lists but the parser missed gets none', () => {
+    const [g, h] = withMapBuildHunks(
+      [
+        { path: 'src/g.ts', status: 'M' },
+        { path: 'src/h.ts', status: 'M' },
+      ],
+      map(),
+      repo,
+    );
+    expect(g.hunks).toEqual([]);
+    // A mode-only change: `git diff --name-only` lists it, the -U0 diff has no hunk for it.
+    expect(h.hunks).toBeUndefined();
+  });
+
+  it('the CLI selects the full suite for the change past the `-- ` line', () => {
+    writeFileSync(join(repo, 'map.json'), JSON.stringify(map()));
+    execFileSync(process.execPath, [CLI, build, 'map.json', 'out.json'], {
+      cwd: repo,
+      encoding: 'utf8',
+    });
+    const out = JSON.parse(readFileSync(join(repo, 'out.json'), 'utf8'));
+    expect(out.kind).toBe('full');
+    expect(out.reasons.join('\n')).toContain('src/f.ts:8');
   });
 });

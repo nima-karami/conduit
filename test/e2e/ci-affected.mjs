@@ -33,12 +33,41 @@ export function isE2eIrrelevant(path) {
   return IRRELEVANT.some((re) => re.test(path));
 }
 
+const C_ESCAPES = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 };
+
+/**
+ * A path as git prints it: C-quoted (`"src/a\tb.ts"`, octal UTF-8 bytes) when it holds a character
+ * `core.quotePath=false` still escapes, else verbatim.
+ */
+function unquotePath(s) {
+  if (!s.startsWith('"') || !s.endsWith('"') || s.length < 2) return s;
+  const bytes = [];
+  const body = s.slice(1, -1);
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] !== '\\') {
+      bytes.push(...Buffer.from(body[i], 'utf8'));
+      continue;
+    }
+    const oct = /^[0-7]{3}/.exec(body.slice(i + 1));
+    if (oct) {
+      bytes.push(Number.parseInt(oct[0], 8));
+      i += 3;
+    } else {
+      bytes.push(C_ESCAPES[body[i + 1]] ?? body.charCodeAt(i + 1));
+      i += 1;
+    }
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
 /** `git diff --name-status` output → changes; a rename is a delete plus an add, a copy an add. */
 export function parseNameStatus(text) {
   const out = [];
   for (const line of text.split('\n')) {
-    const [code, a, b] = line.split('\t');
-    if (!code || !a) continue;
+    const [code, qa, qb] = line.split('\t');
+    if (!code || !qa) continue;
+    const a = unquotePath(qa);
+    const b = qb === undefined ? qb : unquotePath(qb);
     if (code[0] === 'R' || code[0] === 'C') {
       if (code[0] === 'R') out.push({ path: a, status: 'D' });
       out.push({ path: b, status: 'A' });
@@ -47,29 +76,53 @@ export function parseNameStatus(text) {
   return out;
 }
 
+/** A `--- a/x` / `+++ b/x` header's path (prefixes forced by `withMapBuildHunks`), or null. */
+function headerPath(line) {
+  const rest = unquotePath(line.slice(4).replace(/\t$/, ''));
+  return rest === '/dev/null' ? null : rest.slice(2);
+}
+
 /**
  * `git diff -U0 --no-renames <map build> HEAD` → per file, the BASE-side hunks: `{ start, count }`
  * are 1-based lines of the map build's copy; `count` 0 is a pure insertion after line `start`.
  * `absent`: the file did not exist in the map build.
+ *
+ * A hunk's body is skipped by the counts in its `@@ -a,b +c,d @@` header: a removed line `-- x`
+ * prints as `--- x`, an added `++ x` as `+++ x`, and read as headers they re-keyed the file.
  */
 export function parseZeroContextDiff(text) {
   const out = {};
   let cur = null;
   let oldPath = null;
+  let oldLeft = 0;
+  let newLeft = 0;
   for (const line of text.split('\n')) {
+    if (oldLeft > 0 || newLeft > 0) {
+      if (line[0] === '-') oldLeft--;
+      else if (line[0] === '+') newLeft--;
+      else if (line[0] === ' ') {
+        oldLeft--;
+        newLeft--;
+      }
+      continue;
+    }
     if (line.startsWith('diff --git ')) {
       cur = null;
       oldPath = null;
     } else if (line.startsWith('--- ')) {
-      oldPath = line === '--- /dev/null' ? null : line.slice(6).replace(/\t$/, '');
+      oldPath = headerPath(line);
     } else if (line.startsWith('+++ ')) {
-      const newPath = line === '+++ /dev/null' ? null : line.slice(6).replace(/\t$/, '');
-      const path = oldPath ?? newPath;
+      const path = oldPath ?? headerPath(line);
       cur = { absent: oldPath === null, hunks: [] };
       if (path) out[path] = cur;
     } else if (cur && line.startsWith('@@ ')) {
-      const m = /^@@ -(\d+)(?:,(\d+))? /.exec(line);
-      if (m) cur.hunks.push({ start: Number(m[1]), count: m[2] === undefined ? 1 : Number(m[2]) });
+      const m = /^@@ -(\d+)(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
+      if (m) {
+        const count = m[2] === undefined ? 1 : Number(m[2]);
+        cur.hunks.push({ start: Number(m[1]), count });
+        oldLeft = count;
+        newLeft = m[3] === undefined ? 1 : Number(m[3]);
+      }
     }
   }
   return out;
@@ -170,7 +223,11 @@ export function selectAffected(changed, ctx) {
       ]);
     }
     for (const n of hit.names) names.add(n);
-    reasons.push(`${path}: changed lines lie in functions ${hit.names.size} scenario(s) ran`);
+    reasons.push(
+      hunks.length
+        ? `${path}: changed lines lie in functions ${hit.names.size} scenario(s) ran`
+        : `${path}: identical to the map's build`,
+    );
   }
   const excluded = new Set(ctx.excluded ?? []);
   const unseen = ctx.all.filter((n) => !Object.hasOwn(ctx.map.scenarios, n) && !excluded.has(n));
@@ -184,40 +241,53 @@ export function selectAffected(changed, ctx) {
   return { kind: 'names', names: [...names].sort(), reasons };
 }
 
-const git = (...args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 1 << 28 });
+/** Every diff this file parses: the output format pinned against the user's and repo's git config. */
+const DIFF = [
+  '-c',
+  'core.quotePath=false',
+  'diff',
+  '--no-ext-diff',
+  '--no-textconv',
+  '--no-color',
+  '--no-renames',
+  '--src-prefix=a/',
+  '--dst-prefix=b/',
+];
 
-function hasCommit(sha) {
+const gitIn = (cwd, args) =>
+  execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 1 << 28 });
+
+function hasCommit(sha, cwd) {
   try {
-    git('cat-file', '-e', `${sha}^{commit}`);
+    gitIn(cwd, ['cat-file', '-e', `${sha}^{commit}`]);
     return true;
   } catch {
     return false;
   }
 }
 
-/** Base-side hunks against the map's build, for the modified code files. */
-function withMapBuildHunks(changed, map) {
+/**
+ * Base-side hunks against the map's build, for the modified code files. A file git lists as changed
+ * that the hunk parse has no entry for gets no `hunks` (→ full): an unparsed diff must never read
+ * as "identical to the map's build".
+ */
+export function withMapBuildHunks(changed, map, cwd = process.cwd()) {
   const paths = changed.filter((c) => c.status === 'M' && CODE.test(c.path)).map((c) => c.path);
-  if (!paths.length || !hasCommit(map.builtFrom)) return changed;
-  const diff = parseZeroContextDiff(
-    git(
-      '-c',
-      'core.quotePath=false',
-      'diff',
-      '--no-ext-diff',
-      '--no-renames',
-      '-U0',
-      map.builtFrom,
-      'HEAD',
-      '--',
-      ...paths,
-    ),
+  if (!paths.length || !hasCommit(map.builtFrom, cwd)) return changed;
+  const range = [map.builtFrom, 'HEAD', '--', ...paths];
+  const diff = parseZeroContextDiff(gitIn(cwd, [...DIFF, '-U0', ...range]));
+  const listed = new Set(
+    gitIn(cwd, [...DIFF, '--name-only', ...range])
+      .split('\n')
+      .filter(Boolean)
+      .map(unquotePath),
   );
   return changed.map((c) => {
     if (!paths.includes(c.path)) return c;
     const d = diff[c.path];
     if (d?.absent) return { ...c, status: 'A' };
-    return { ...c, hunks: d ? d.hunks : [] };
+    if (d) return { ...c, hunks: d.hunks };
+    return listed.has(c.path) ? c : { ...c, hunks: [] };
   });
 }
 
@@ -230,7 +300,9 @@ function main([base, mapFile, outFile]) {
   let r;
   if (!base) r = { kind: 'full', names: [...all].sort(), reasons: ['no diff base given'] };
   else {
-    const changed = parseNameStatus(git('diff', '--name-status', `${base}...HEAD`));
+    const changed = parseNameStatus(
+      gitIn(process.cwd(), [...DIFF, '--name-status', `${base}...HEAD`]),
+    );
     r = selectAffected(map?.schema === MAP_SCHEMA ? withMapBuildHunks(changed, map) : changed, {
       map,
       all,
