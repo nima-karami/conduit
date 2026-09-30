@@ -137,19 +137,26 @@ describe('orphanVictims: the sweep only touches Electrons of this run', () => {
     ParentProcessId,
     CommandLine,
   });
-  const udd = (n: string) => String.raw`--user-data-dir=C:\Users\me\AppData\Local\Temp\cud-` + n;
+  // Quoted as measured on Windows: Playwright quotes each whole argument of the app it launches,
+  // Chromium quotes only the value in the switches it passes its children.
+  const dir = (n: string) => String.raw`C:\Users\Jo Doe\AppData\Local\Temp\conduit-ud-` + n;
+  const exe = String.raw`"G:\repo\node_modules\electron\dist\electron.exe"`;
+  const root = (n: string, run: string) =>
+    `${exe}  "--inspect=0" "--user-data-dir=${dir(n)}" "G:\\repo" "${RUN_MARKER}=${run}"`;
+  const child = (type: string, n: string) => `${exe} --type=${type} --user-data-dir="${dir(n)}"`;
   const procs = [
     // This run's app: marked root, a child, and a GPU process whose parent already died.
-    proc(10, 1, `electron.exe ${udd('mine')} G:\\repo ${RUN_MARKER}=run-A`),
-    proc(11, 10, `electron.exe --type=renderer ${udd('mine')}`),
-    proc(12, 999, `electron.exe --type=gpu-process ${udd('mine')}`),
+    proc(10, 1, root('mine', 'run-A')),
+    proc(11, 10, child('renderer', 'mine')),
+    proc(12, 999, child('gpu-process', 'mine')),
     // Another worktree's run holding the e2e lock: same temp dir, different run.
-    proc(20, 1, `electron.exe ${udd('theirs')} G:\\other ${RUN_MARKER}=run-B`),
-    proc(21, 20, `electron.exe --type=renderer ${udd('theirs')}`),
-    // A prefix of this run's profile dir is someone else's.
-    proc(22, 1, `electron.exe ${udd('mine2')} ${RUN_MARKER}=run-D`),
+    proc(20, 1, root('theirs', 'run-B')),
+    proc(21, 20, child('renderer', 'theirs')),
+    // Prefixes of this run's profile dir and run id are someone else's.
+    proc(22, 1, root('mine2', 'run-D')),
+    proc(23, 1, root('other', 'run-A-2')),
     // The developer's own Conduit.
-    proc(30, 1, String.raw`electron.exe G:\awby\projects\conduit`),
+    proc(30, 1, String.raw`"C:\Program Files\Conduit\Conduit.exe" G:\awby\projects\conduit`),
   ];
 
   it("kills this run's tree and nothing else", () => {

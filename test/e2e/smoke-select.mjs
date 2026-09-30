@@ -122,11 +122,34 @@ export function lockWaitMsFromLine(line) {
 /** Appended by `launchElectron` to every app it launches; names the runner invocation. */
 export const RUN_MARKER = '--conduit-e2e-run';
 
-const userDataDir = (cmd) =>
-  /--user-data-dir=(?:"([^"]+)"|(\S+))/
-    .exec(cmd ?? '')
-    ?.slice(1)
-    .find(Boolean);
+/**
+ * A Windows command line → its arguments, quotes removed. Measured: Playwright quotes each whole
+ * argument (`"--user-data-dir=C:\…"`), Chromium only the value (`--user-data-dir="C:\…"`).
+ */
+function argvOf(cmd) {
+  const out = [];
+  let cur = '';
+  let quoted = false;
+  let any = false;
+  for (const ch of cmd ?? '') {
+    if (ch === '"') {
+      quoted = !quoted;
+      any = true;
+    } else if (!quoted && /\s/.test(ch)) {
+      if (any) out.push(cur);
+      cur = '';
+      any = false;
+    } else {
+      cur += ch;
+      any = true;
+    }
+  }
+  if (any) out.push(cur);
+  return out;
+}
+
+const userDataDir = (argv) =>
+  argv.find((a) => a.startsWith('--user-data-dir='))?.slice('--user-data-dir='.length);
 
 /**
  * The Electron processes a runner's orphan sweep may kill: the apps this run launched (marked with
@@ -139,11 +162,12 @@ const userDataDir = (cmd) =>
  */
 export function orphanVictims(procs, runId) {
   const mark = `${RUN_MARKER}=${runId}`;
-  const roots = procs.filter((p) => (p.CommandLine ?? '').split(/\s+/).includes(mark));
-  const dirs = new Set(roots.map((p) => userDataDir(p.CommandLine)).filter(Boolean));
+  const parsed = procs.map((p) => ({ ...p, argv: argvOf(p.CommandLine) }));
+  const roots = parsed.filter((p) => p.argv.includes(mark));
+  const dirs = new Set(roots.map((p) => userDataDir(p.argv)).filter(Boolean));
   const victims = new Set(roots.map((p) => p.ProcessId));
-  for (const p of procs) {
-    const dir = userDataDir(p.CommandLine);
+  for (const p of parsed) {
+    const dir = userDataDir(p.argv);
     if (dir && dirs.has(dir)) victims.add(p.ProcessId);
   }
   for (let grew = true; grew; ) {
