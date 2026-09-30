@@ -122,9 +122,7 @@ log('shared userData =', userDataDir);
 
 let app1 = null;
 let app2 = null;
-// Set from the primary display's work area at launch 1: the host clamps restored bounds onto a
-// display, so a fixed x=1100 came back at 0,0 on a hosted runner's smaller screen.
-let WIN2_BOUNDS = null;
+const WIN2_BOUNDS = { x: 1100, y: 80, width: 1000, height: 640 };
 
 try {
   // ════════════════════════════════════════════════════════════════════════════
@@ -133,16 +131,6 @@ try {
   {
     const { app, page: page1 } = await launch(userDataDir);
     app1 = app;
-    const wa = await app.evaluate((e) => e.screen.getPrimaryDisplay().workArea);
-    const width = Math.min(1000, wa.width - 120);
-    const height = Math.min(640, wa.height - 120);
-    WIN2_BOUNDS = { x: wa.x + wa.width - width - 20, y: wa.y + 80, width, height };
-    log(
-      'launch1: primary work area',
-      JSON.stringify(wa),
-      '→ window-2 bounds',
-      JSON.stringify(WIN2_BOUNDS),
-    );
     await tap(page1);
 
     // A fresh launch auto-opens a session from the REPO launch arg; clear it so the layout we
