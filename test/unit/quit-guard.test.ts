@@ -7,7 +7,6 @@ import {
   type DirtyTag,
   dirtyCloseCopy,
   dirtySaveStatus,
-  needsQuitConfirm,
   quitConfirmCopy,
   runningSessions,
 } from '../../src/quit-guard';
@@ -100,40 +99,6 @@ describe('busySessions', () => {
 
   it('returns empty array for empty input', () => {
     expect(busySessions([])).toEqual([]);
-  });
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// needsQuitConfirm
-// ──────────────────────────────────────────────────────────────────────────────
-
-describe('needsQuitConfirm', () => {
-  it('returns true when at least one session is running', () => {
-    const sessions: Session[] = [
-      makeSession({ status: 'running' }),
-      makeSession({ id: 'b', status: 'exited' }),
-    ];
-    expect(needsQuitConfirm(sessions)).toBe(true);
-  });
-
-  it('returns false when no sessions are running', () => {
-    const sessions: Session[] = [
-      makeSession({ status: 'exited' }),
-      makeSession({ id: 'b', status: 'stale' }),
-    ];
-    expect(needsQuitConfirm(sessions)).toBe(false);
-  });
-
-  it('returns false for empty session list', () => {
-    expect(needsQuitConfirm([])).toBe(false);
-  });
-
-  it('returns true when all sessions are running', () => {
-    const sessions: Session[] = [
-      makeSession({ id: 'a', status: 'running' }),
-      makeSession({ id: 'b', status: 'running' }),
-    ];
-    expect(needsQuitConfirm(sessions)).toBe(true);
   });
 });
 

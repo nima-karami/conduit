@@ -159,14 +159,6 @@ export function busySessions(sessions: Session[]): Session[] {
 }
 
 /**
- * True when quitting/closing requires confirmation (≥1 live PTY session).
- * False-negatives cost agent work; false-positives cost one keypress.
- */
-export function needsQuitConfirm(sessions: Session[]): boolean {
-  return runningSessions(sessions).length > 0;
-}
-
-/**
  * Build the dialog copy for the quit/close/update confirmation.
  *
  * - Quit/close: title "N session(s) still running", body "Quitting will stop them …",

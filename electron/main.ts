@@ -28,6 +28,7 @@ import { scopeFromSpawnArgs } from '../src/agent-scope';
 import { isAppIndexUrl } from '../src/app-navigation';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
+import { createCloseGuard, createQuitGrant, GRANT_TTL_MS } from '../src/close-guard';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
 import { loadAgents, readBlob, readFileState } from '../src/config';
 import { searchContentFs } from '../src/content-search-fs';
@@ -140,8 +141,7 @@ import type {
 } from '../src/protocol';
 import { PtyHost } from '../src/pty-host';
 import { summarizeQueue } from '../src/queue-summary';
-import type { QuitReason } from '../src/quit-guard';
-import { busySessions, needsQuitConfirm, runningSessions } from '../src/quit-guard';
+import { busySessions, runningSessions } from '../src/quit-guard';
 import { resolveRangePreset } from '../src/range-preset';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { buildRepoChanges } from '../src/repo-changes';
@@ -945,6 +945,9 @@ function createWindow(opts: {
   primary?: boolean;
   onClose: (w: BrowserWindow, ev: Electron.Event) => void;
   onClosed: (windowId: number) => void;
+  onGone: (windowId: number) => void;
+  onUnresponsive: (windowId: number) => void;
+  onSessionEnd: () => void;
 }): BrowserWindow {
   const w = new BrowserWindow({
     width: 1440,
@@ -1063,6 +1066,7 @@ function createWindow(opts: {
   // in place instead: the renderer boots like a fresh start and term:start takes the attach path.
   // See docs/specs/2026-08-20-renderer-crash-recovery.md.
   w.webContents.on('render-process-gone', (_ev, details) => {
+    opts.onGone(w.id);
     const decision = decideCrashRecovery(details.reason, crashReloads.get(w) ?? [], Date.now());
     crashReloads.set(w, decision.reloads);
     hostLog?.error('window', `render process gone (${details.reason})`, {
@@ -1078,6 +1082,9 @@ function createWindow(opts: {
   });
 
   w.on('close', (ev) => opts.onClose(w, ev));
+  w.on('unresponsive', () => opts.onUnresponsive(w.id));
+  // OS shutdown/logoff is not guarded (dirty-quit-guard D8), but the state snapshot still lands.
+  w.on('session-end', () => opts.onSessionEnd());
   w.on('closed', () => {
     windows.delete(w.id);
     windowOrdinal.delete(w.id);
@@ -2291,79 +2298,97 @@ app.whenReady().then(() => {
   // shared notifications — broadcast to every window.
   const stopUpdater = initUpdater(broadcast, (event, data) => log.info('updater', event, data));
 
-  // ── Quit / close / update-relaunch guard (W2) ────────────────────────────
-  // Per-window confirm flags (multi-window Slice A): a window id is added once the user
-  // confirms its close so the re-fired close event passes without a second prompt
-  // (prevents an infinite preventDefault loop). Removed when its close is cancelled.
+  // ── Quit / close / update-relaunch guard (dirty-quit-guard spec §2) ──────────────
+  // A window whose close the guard already proceeded: its re-fired close event passes through.
   const windowConfirmed = new Set<number>();
 
-  /**
-   * Ask the user to confirm a destructive action (quit/close/update-relaunch), scoped to
-   * `targetWin` (multi-window Slice A): only that window's sessions are counted, the dialog
-   * is sent to that window only, and only that window's `quitDecision` is accepted (two
-   * windows' dialogs never cross).
-   *
-   * Sends `confirmQuit` to the renderer and waits for an explicit `quitDecision`.
-   * The 3000 ms timeout is ONLY a guard against a wedged renderer that never even
-   * shows the dialog: it is disarmed the moment the renderer ACKs with
-   * `quitDialogShown`, so a dialog the user is reading never auto-resolves (the
-   * earlier blanket timeout silently quit on its own, defeating the warning).
-   * If the renderer never ACKs within 3000 ms it falls through to **proceed** —
-   * so the app is never made unclosable. No native dialog (decision 2026-06-16).
-   *
-   * Returns true if the user confirmed (proceed), false if cancelled.
-   */
-  async function confirmWithRenderer(
-    reason: QuitReason,
-    targetWin: BrowserWindow,
-  ): Promise<boolean> {
-    const sessions = activity.apply(sessionsOwnedBy(sessionOwner, targetWin.id, mgr.list()));
-    const running = runningSessions(sessions);
-    const busy = busySessions(sessions).length;
+  const liveWindow = (id: number): BrowserWindow | undefined => {
+    const w = windows.get(id);
+    return w && !w.isDestroyed() ? w : undefined;
+  };
 
-    return new Promise<boolean>((resolve) => {
-      const RENDERER_TIMEOUT_MS = 3000;
+  const closeGuard = createCloseGuard({
+    windowIds: () => {
+      const ids = [...windows.keys()].filter((id) => liveWindow(id));
+      const focused = BrowserWindow.getFocusedWindow()?.id;
+      if (focused === undefined || !ids.includes(focused)) return ids;
+      return [focused, ...ids.filter((id) => id !== focused)];
+    },
+    prepare: (id) => {
+      const w = liveWindow(id);
+      if (!w) return;
+      if (w.isMinimized()) w.restore();
+      if (process.env.CONDUIT_E2E !== '1') w.show();
+      w.focus();
+    },
+    focus: (id) => liveWindow(id)?.focus(),
+    counts: (id) => {
+      const sessions = activity.apply(sessionsOwnedBy(sessionOwner, id, mgr.list()));
+      return { running: runningSessions(sessions).length, busy: busySessions(sessions).length };
+    },
+    ask: (id, ask) =>
+      liveWindow(id)?.webContents.send('to-webview', { type: 'confirmQuit', ...ask }),
+    abort: (id, requestId) =>
+      liveWindow(id)?.webContents.send('to-webview', { type: 'quitAborted', requestId }),
+    confirmUnresponsive: (id, signal) => {
+      const w = liveWindow(id);
+      if (!w) return Promise.resolve(true);
+      return dialog
+        .showMessageBox(w, {
+          type: 'warning',
+          buttons: ['Wait', 'Close anyway'],
+          defaultId: 0,
+          cancelId: 0,
+          message: "Conduit isn't responding.",
+          detail: "Unsaved changes in this window can't be saved.",
+          signal,
+        })
+        .then(
+          (r) => r.response === 1,
+          () => false,
+        );
+    },
+    proceedApp: (reason) => {
+      quitGrant.issue();
+      if (reason === 'update') quitAndInstall();
+      else setImmediate(() => app.quit());
+    },
+    proceedWindow: (id) => {
+      const w = liveWindow(id);
+      if (!w) return;
+      // Its sibling vanished mid-guard, so this close is now a quit and its sessions are kept for
+      // restore (dirty-quit-guard plan, critic nit).
+      if (windows.size === 1 && process.platform !== 'darwin') {
+        quitGrant.issue();
+        setImmediate(() => app.quit());
+        return;
+      }
+      windowConfirmed.add(id);
+      for (const s of sessionsOwnedBy(sessionOwner, id, mgr.list())) disposeSession(s.id);
+      w.close();
+    },
+    resumeWindowClose: (id) => {
+      const w = liveWindow(id);
+      if (w) closeDecision(w);
+    },
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    log: (message) => log.warn('window', message),
+  });
 
-      let settled = false;
-      const settle = (val: boolean) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        resolve(val);
-      };
+  const quitGrant = createQuitGrant({
+    ttlMs: GRANT_TTL_MS,
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    onExpire: () => closeGuard.unlockAnswered(),
+  });
 
-      const onDecision = (e: IpcMainEvent, m: WebviewToHost) => {
-        // Only accept the decision from the target window's renderer so two windows'
-        // dialogs don't cross (multi-window Slice A).
-        if (e.sender !== targetWin.webContents) return;
-        const t = (m as { type: string }).type;
-        if (t === 'quitDialogShown') {
-          // Renderer is alive and showing the dialog: disarm the fallback and wait
-          // indefinitely for the user's explicit Cancel/Confirm.
-          clearTimeout(timer);
-        } else if (t === 'quitDecision') {
-          settle((m as { proceed: boolean }).proceed);
-        }
-      };
-      ipcMain.on('to-host', onDecision);
-
-      // Fallback only for a renderer that never ACKs `quitDialogShown` (i.e. never
-      // displays the dialog): the app must never be made unclosable.
-      const timer = setTimeout(() => settle(true), RENDERER_TIMEOUT_MS);
-
-      const cleanup = () => {
-        clearTimeout(timer);
-        ipcMain.removeListener('to-host', onDecision);
-      };
-
-      targetWin.webContents.send('to-webview', {
-        type: 'confirmQuit',
-        reason,
-        running: running.length,
-        busy,
-      });
-    });
-  }
+  // Closing the last window is a quit (its sessions are kept for restore); closing any other window
+  // ends only that window's sessions. darwin keeps the app alive with no windows.
+  const closeDecision = (w: BrowserWindow) => {
+    if (windows.size === 1 && process.platform !== 'darwin') app.quit();
+    else closeGuard.requestWindowClose(w.id);
+  };
 
   // These artifact helpers take an explicit `dispatch` (multi-window Slice A): a request
   // handler passes a sender-scoped reply; the armed watcher passes `broadcast` so later
@@ -4130,20 +4155,16 @@ app.whenReady().then(() => {
           checkForUpdate();
           break;
         case 'updateRelaunch':
-          // W2: guard update-relaunch behind a session-running confirm. On proceed, mark
-          // every window confirmed so the close events fired by quitAndInstall() pass
-          // through. Scoped to the sender's window for the confirm dialog itself.
-          if (!needsQuitConfirm(mgr.list())) {
-            quitAndInstall();
-          } else {
-            void confirmWithRenderer('update', senderWin).then((proceed) => {
-              if (proceed) {
-                for (const id of windows.keys()) windowConfirmed.add(id);
-                quitAndInstall();
-              }
-              // Cancel: stay open, update remains pending.
-            });
-          }
+          closeGuard.requestAppQuit('update', senderId);
+          break;
+        case 'quitAck':
+          closeGuard.onAck(senderId, m.requestId);
+          break;
+        case 'quitDialogShown':
+          closeGuard.onShown(senderId, m.requestId);
+          break;
+        case 'quitDecision':
+          closeGuard.onDecision(senderId, m.requestId, m.proceed);
           break;
       }
     } catch (err: unknown) {
@@ -4473,7 +4494,19 @@ app.whenReady().then(() => {
     e.returnValue = settings;
   });
 
-  app.on('before-quit', () => {
+  // before-quit fires again for every app.quit() inside one quit (window-all-closed re-quits);
+  // teardown runs once. See dirty-quit-guard plan, Slice 1 run notes.
+  let tornDown = false;
+  app.on('before-quit', (ev) => {
+    if (tornDown) return;
+    if (!quitGrant.consume()) {
+      // Snapshot first: if the process dies while the guard waits, state is already on disk (B2).
+      flushStateSync();
+      ev.preventDefault();
+      closeGuard.requestAppQuit('quit');
+      return;
+    }
+    tornDown = true;
     // Flag the quit BEFORE the cleanup below so the per-window close events fired during
     // teardown take the quit branch (preserve sessions for restore), not the per-window
     // dispose branch (Slice C).
@@ -4513,36 +4546,13 @@ app.whenReady().then(() => {
     pty.disposeAll();
   });
 
-  // Per-window quit-guard close handler (multi-window Slice A, replaces the single global
-  // win.on('close')). Covers custom ✕ (win:close → w.close()), OS close (Alt+F4 / taskbar),
-  // and the update-relaunch path. The guard is scoped to THIS window's owned sessions: if it
-  // owns running sessions and isn't already confirmed, prevent the close, confirm with that
-  // window's renderer, dispose its sessions, then re-close (a confirmed flag lets the re-close
-  // pass). Closing a window disposes only ITS sessions; window-all-closed quits the app.
+  // Every close of a window (custom ✕, Alt+F4, taskbar) goes through the guard; the close re-fires
+  // once the guard proceeds, and during a quit the teardown's closes pass straight through.
   const onWindowClose = (w: BrowserWindow, ev: Electron.Event) => {
     log.info('window', 'close', { windowId: w.id });
-    if (windowConfirmed.has(w.id)) return; // already confirmed — let it through
-    // Quit (Cmd+Q, or closing the FINAL window) vs. deliberately closing one window among
-    // several (Slice C). On quit we PRESERVE this window's sessions so they persist to
-    // sessions.json and restore next launch (pre-multi-window semantics); the per-window
-    // close still ENDS the closing window's sessions (Slice A). before-quit's disposeAll
-    // kills the PTYs in the quit case — only the session RECORDS survive, as for restore.
-    const isQuit = isQuitting || windows.size === 1;
-    const owned = sessionsOwnedBy(sessionOwner, w.id, mgr.list());
-    if (!needsQuitConfirm(owned)) return; // no running sessions in this window — no prompt
+    if (isQuitting || windowConfirmed.has(w.id)) return;
     ev.preventDefault();
-    void confirmWithRenderer('quit', w).then((proceed) => {
-      if (proceed) {
-        windowConfirmed.add(w.id);
-        // Only the deliberate single-window close disposes its sessions; on quit they stay in
-        // `mgr` so they restore (with this window's geometry) next launch.
-        if (!isQuit) {
-          for (const s of sessionsOwnedBy(sessionOwner, w.id, mgr.list())) disposeSession(s.id);
-        }
-        w.close();
-      }
-      // Cancel: not confirmed; window survives.
-    });
+    closeDecision(w);
   };
 
   // Factory for an additional/empty window (New Window + the primary). Wires the engine-scoped
@@ -4551,7 +4561,11 @@ app.whenReady().then(() => {
     const w = createWindow({
       primary: opts?.primary,
       onClose: onWindowClose,
+      onGone: (windowId) => closeGuard.onWindowGone(windowId),
+      onUnresponsive: (windowId) => closeGuard.onUnresponsive(windowId),
+      onSessionEnd: flushStateSync,
       onClosed: (windowId) => {
+        closeGuard.onWindowGone(windowId);
         windowConfirmed.delete(windowId);
         // Its visible-session set dies with it, or sessions it was showing would stay
         // exempt from attention forever.
@@ -4563,6 +4577,7 @@ app.whenReady().then(() => {
       },
     });
     log.info('window', 'create', { windowId: w.id });
+    closeGuard.onWindowCreated(w.id);
     broadcastWinList?.();
     schedulePersistLayout?.(); // a new window changes the layout (Slice C)
     return w;
