@@ -1,7 +1,10 @@
 import { useMemo, useRef, useState } from 'react';
 import type { ConfirmState } from './components/confirm-dialog';
+import type { DirtyCloseDialogProps } from './components/dirty-close-dialog';
 
-export type ModalEntry = { kind: 'confirm'; key: number; state: ConfirmState };
+export type ModalEntry =
+  | { kind: 'confirm'; key: number; state: ConfirmState }
+  | { kind: 'dirty'; key: number; props: DirtyCloseDialogProps };
 
 export interface ModalSlot {
   readonly current: ModalEntry | null;
@@ -18,7 +21,8 @@ export function nextModalKey(): number {
 }
 
 function settle(entry: ModalEntry): void {
-  entry.state.onCancel?.();
+  if (entry.kind === 'confirm') entry.state.onCancel?.();
+  else entry.props.onCancel();
 }
 
 /**

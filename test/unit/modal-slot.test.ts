@@ -47,7 +47,7 @@ async function mountSlot() {
   return out as { slot: ModalSlot; renders: Array<number | null> };
 }
 
-function confirm(overrides: Partial<ConfirmState> = {}): ModalEntry {
+function confirm(overrides: Partial<ConfirmState> = {}): Extract<ModalEntry, { kind: 'confirm' }> {
   return {
     kind: 'confirm',
     key: nextModalKey(),
