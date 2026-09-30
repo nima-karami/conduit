@@ -102,13 +102,36 @@ describe('DirtyCloseDialog', () => {
     ]);
   });
 
-  it("saving disables Save All and Don't Save, Cancel enabled", async () => {
+  it("saving locks Save All and Don't Save, Cancel stays live", async () => {
     const { props } = await renderDialog({ phase: 'saving', status: 'Saving 1 file' });
-    expect(button('Saving…').disabled).toBe(true);
-    expect(button("Don't Save").disabled).toBe(true);
-    expect(button('Cancel').disabled).toBe(false);
+    expect(button('Saving…').getAttribute('aria-disabled')).toBe('true');
+    expect(button("Don't Save").getAttribute('aria-disabled')).toBe('true');
+    expect(button('Cancel').hasAttribute('aria-disabled')).toBe(false);
+    await act(async () => {
+      click(button('Saving…'));
+      click(button("Don't Save"));
+    });
+    expect(props.onSaveAll).not.toHaveBeenCalled();
+    expect(props.onDiscard).not.toHaveBeenCalled();
     await act(async () => click(button('Cancel')));
     expect(props.onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('focus stays on Save All through a save and Tab still wraps inside the dialog (spec §9)', async () => {
+    const { props, rerender } = await renderDialog();
+    const save = button('Save All');
+    expect(document.activeElement).toBe(save);
+    await rerender({ ...props, phase: 'saving', status: 'Saving 1 file' });
+    expect(save.disabled).toBe(false);
+    expect(document.activeElement).toBe(save);
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    save.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(button('Cancel'));
+    save.focus();
+    await rerender({ ...props, phase: 'ready', status: "1 file couldn't be saved" });
+    expect(document.activeElement).toBe(save);
+    expect(save.hasAttribute('aria-disabled')).toBe(false);
   });
 
   it('Escape calls onCancel', async () => {
@@ -151,12 +174,23 @@ describe('DirtyCloseDialog', () => {
         true,
       ),
     });
-    const items = [...dialog().querySelectorAll('ul.confirm__files > li')].map((li) =>
-      li.classList.contains('confirm__file-group')
-        ? `#${li.textContent}`
-        : li.getAttribute('title'),
+    const groups = [...dialog().querySelectorAll('ul.confirm__files > li.confirm__group')].map(
+      (li) => {
+        const list = li.querySelector('ul');
+        const label = document.getElementById(list?.getAttribute('aria-labelledby') ?? '');
+        return {
+          label: label?.textContent,
+          rows: [...(list?.querySelectorAll(':scope > li') ?? [])].map((r) =>
+            r.getAttribute('title'),
+          ),
+        };
+      },
     );
-    expect(items).toEqual(['#one', '/p/a.ts', '/p/b.ts', '#two', '/p/c.ts']);
+    expect(groups).toEqual([
+      { label: 'one', rows: ['/p/a.ts', '/p/b.ts'] },
+      { label: 'two', rows: ['/p/c.ts'] },
+    ]);
+    expect(dialog().querySelectorAll('li.confirm__file-group')).toHaveLength(0);
   });
 
   it('overflow line', async () => {
@@ -196,15 +230,15 @@ describe('DirtyCloseDialog', () => {
 });
 
 describe('QuitScrim', () => {
-  it('is focused, busy, labelled, and swallows keys', async () => {
+  it('is focused, busy, a status, and swallows keys', async () => {
     const r = mount();
     await act(async () => r.render(createElement(QuitScrim)));
     const scrim = document.body.querySelector<HTMLElement>('.modal__backdrop .quit-scrim');
     expect(scrim).not.toBeNull();
     expect(document.activeElement).toBe(scrim);
     expect(scrim?.getAttribute('aria-busy')).toBe('true');
-    expect(scrim?.getAttribute('aria-label')).toBe('Quitting');
-    expect(scrim?.textContent).toBe('Quitting… waiting for another window');
+    expect(scrim?.getAttribute('role')).toBe('status');
+    expect(scrim?.textContent).toBe('Closing…');
     const seen = vi.fn();
     document.addEventListener('keydown', seen);
     const e = new KeyboardEvent('keydown', {
@@ -352,7 +386,7 @@ describe('useDirtyClose', () => {
     expect(document.body.querySelector('.confirm__status')?.textContent).toBe(
       "1 file couldn't be saved",
     );
-    expect(button('Save All').disabled).toBe(false);
+    expect(button('Save All').hasAttribute('aria-disabled')).toBe(false);
   });
 
   it("Don't Save → discarded", async () => {
@@ -379,7 +413,7 @@ describe('useDirtyClose', () => {
     const h = await mountHook(saves);
     const { answer, settled } = await h.ask({ paths });
     await act(async () => click(button('Save All')));
-    expect(button('Saving…').disabled).toBe(true);
+    expect(button('Saving…').getAttribute('aria-disabled')).toBe('true');
     expect(document.body.querySelector('.confirm__status')?.textContent).toBe('Saving 1 file');
     await act(async () => click(button('Cancel')));
     await expect(answer).resolves.toBe('cancel');

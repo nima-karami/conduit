@@ -366,7 +366,7 @@ with an injected native dialog (Playwright can't drive native dialogs, CLAUDE.md
 | | partial failure / unsaveable | rows cut to what's unsaved, each with its reason in the danger color; title recounts | Save All (retry) / Don't Save / Cancel |
 | | row saved late | row tag "Saved" | same |
 | | overflow | 10 rows + "and N more" | same |
-| "Quitting…" scrim | locked | full-window scrim "Quitting… waiting for another window" | none (unlocks on `quitAborted`) |
+| "Quitting…" scrim | locked | full-window scrim "Closing…" (`role="status"`) | none (unlocks on `quitAborted`) |
 | Session dialog (no dirty) | unchanged | today's copy | Cancel / Quit / Relaunch & update |
 
 No button gets danger styling: Save All is primary; Don't Save and Cancel are neutral. The
@@ -386,7 +386,8 @@ running line says what is destructive.
 - **New work (not existing):** `ModalLayer` only stacks and dismisses. It doesn't trap focus or
   restore it. The dialog traps Tab and returns focus to the previously focused element on Cancel.
   `ConfirmDialog` gains `aria-labelledby`/`aria-describedby`.
-- Disabled buttons use `disabled`. The focus ring stays visible in forced-colors mode (system
+- While saving, Save All and Don't Save are locked with `aria-disabled`, not `disabled`: disabling the
+  focused button would drop focus out of the trap. The focus ring stays visible in forced-colors mode (system
   `Highlight` outline). Contrast comes from existing tokens in all three themes.
 - Plurals go through `countNoun` (`src/menu-selection.ts`), including "Saving N files" and the
   recounted title. All copy lives in the pure copy function. English only, like the rest of the app.

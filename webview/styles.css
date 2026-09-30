@@ -8318,6 +8318,11 @@ button.toggle--on .toggle__knob {
 .confirm__file-tag--danger {
   color: var(--red);
 }
+.confirm__group-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
 .confirm__file-group {
   padding: 8px 0 2px;
   font-weight: 600;
@@ -13970,7 +13975,8 @@ button.toggle--on .toggle__knob {
 /* Locked rather than disabled: it stays focusable so its reason is reachable (mf-review D4). */
 .gh__reffilter[aria-disabled="true"],
 .review__stageall[aria-disabled="true"],
-.tabbar__split[aria-disabled="true"] {
+.tabbar__split[aria-disabled="true"],
+.btn[aria-disabled="true"] {
   opacity: var(--state-disabled-o);
   cursor: default;
 }
