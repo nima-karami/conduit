@@ -5,8 +5,7 @@
  * `DIRTY_QUIT_PHASE=<phase>` runs one phase.
  */
 
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDirty } from './auto-save-helpers.mjs';
 import {
@@ -21,7 +20,7 @@ import {
   waitExit,
   windowCount,
 } from './dirty-quit-helpers.mjs';
-import { answerQuitAsks, launchApp, openSession, REPO } from './harness.mjs';
+import { answerQuitAsks, launchApp, openSession, profileDir, REPO } from './harness.mjs';
 
 const disk = (root) => readFileSync(join(root, 'a.ts'), 'utf8');
 const scrim = (page) => page.locator('.quit-scrim');
@@ -59,7 +58,7 @@ async function firstAsked(pages, timeout = 10000) {
 
 await runPhases('dirty-quit-windows', {
   async nonLast({ log, track }) {
-    const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-dirtyquit-ud-'));
+    const userDataDir = profileDir('dirtyquit');
     writeFileSync(
       join(userDataDir, 'agents.json'),
       JSON.stringify([

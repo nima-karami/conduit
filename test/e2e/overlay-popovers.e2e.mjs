@@ -32,6 +32,7 @@ import {
   makeLog,
   openReview,
   openSession,
+  profileDir,
 } from './harness.mjs';
 
 const log = makeLog('overlay-popovers');
@@ -43,7 +44,7 @@ function git(dir, ...args) {
 /** Seeds a profile on the Neon theme so the very first paint is already themed — the same
  *  technique `visual/shoot.mjs:387`'s `seedProfile` uses. */
 function seedNeonProfile() {
-  const dir = mkdtempSync(join(tmpdir(), 'conduit-overlay-popovers-ud-'));
+  const dir = profileDir('overlay-popovers');
   writeFileSync(
     join(dir, 'settings.json'),
     JSON.stringify({ version: 1, settings: { theme: 'neon', restoreSessions: false } }),

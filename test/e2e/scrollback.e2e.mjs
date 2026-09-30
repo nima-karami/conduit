@@ -16,16 +16,14 @@
  * Until that key exists, this file exits SKIP.
  */
 
-import { mkdtempSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   assert,
   finishScenario,
   launchElectron,
   makeLog,
   openSession,
+  profileDir,
   REPO,
   shutdownApp,
   tapBridge,
@@ -70,7 +68,7 @@ async function checkFeaturePresent(page) {
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-sb-'));
+const userDataDir = profileDir('sb');
 
 let firstApp;
 let secondApp;

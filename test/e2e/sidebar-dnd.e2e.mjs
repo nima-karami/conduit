@@ -12,9 +12,8 @@
  * Windows only.
  */
 
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
@@ -22,6 +21,7 @@ import {
   finishScenario,
   launchElectron,
   makeLog,
+  profileDir,
   REPO,
   shutdownApp,
   tapBridge,
@@ -50,7 +50,7 @@ async function launchOnDir(userDataDir) {
 }
 
 // Shared user-data dir: collapse state must survive a relaunch on the same dir.
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-w3-'));
+const userDataDir = profileDir('w3');
 log('userDataDir:', userDataDir);
 
 let app1 = null;

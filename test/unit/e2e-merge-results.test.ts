@@ -84,6 +84,11 @@ describe('runStatus', () => {
     [s('EXCLUDED'), 'failed'],
     [s('PASS', 'FLAKY', 'SKIP'), 'flaky-passed'],
     [s('PASS', 'SKIP', 'EXCLUDED'), 'passed'],
+    [s('PASS', 'QUARANTINED-FAIL'), 'passed'],
+    [s('QUARANTINED-FAIL', 'FLAKY'), 'flaky-passed'],
+    [s('QUARANTINED-FAIL', 'FAIL'), 'failed'],
+    [s('QUARANTINED-FAIL'), 'failed'],
+    [s('QUARANTINED-FAIL', 'SKIP', 'EXCLUDED'), 'failed'],
   ])('%j → %s', (results, expected) => {
     expect(runStatus(results)).toBe(expected);
   });
@@ -103,5 +108,63 @@ describe('runStatus', () => {
   it('a successful or skipped verify leaves the scenario verdict alone', () => {
     expect(runStatus(s('PASS'), { verify: 'success' })).toBe('passed');
     expect(runStatus(s('FLAKY'), { verify: 'skipped' })).toBe('flaky-passed');
+  });
+});
+
+describe('quarantine and nightly history in the report', () => {
+  it('links artifacts for a QUARANTINED-FAIL and lists it in the summary', () => {
+    const r = mergeResults(
+      plan,
+      [
+        { shard: 1, results: [row('a', 'QUARANTINED-FAIL'), row('b', 'PASS')] },
+        { shard: 2, results: [row('c', 'PASS')] },
+      ],
+      { ...meta, artifactUrls: { 1: 'https://x/artifacts/1' } },
+    );
+    expect(r.status).toBe('passed');
+    expect(r.results[0]).toMatchObject({ name: 'a', artifact: 'https://x/artifacts/1' });
+    expect(summaryMarkdown(r)).toContain('1 QUARANTINED-FAIL');
+  });
+
+  it('marks a failure the last nightly also had, and it still fails the run', () => {
+    const r = mergeResults(
+      plan,
+      [
+        { shard: 1, results: [row('a', 'FAIL'), row('b', 'FAIL')] },
+        { shard: 2, results: [row('c', 'PASS')] },
+      ],
+      { ...meta, lastNightly: { sha: 'feedbeef99', runId: 9, at: 't', failing: ['a', 'c'] } },
+    );
+    expect(r.status).toBe('failed');
+    expect(r.results.find((x) => x.name === 'a')).toMatchObject({ alsoFailingOnNightly: true });
+    expect(r.results.find((x) => x.name === 'b')).not.toHaveProperty('alsoFailingOnNightly');
+    expect(r.results.find((x) => x.name === 'c')).not.toHaveProperty('alsoFailingOnNightly');
+    expect(summaryMarkdown(r)).toContain('also failing on the last nightly (feedbee)');
+  });
+
+  it('warns about a quarantine entry older than 14 days, and only about that one', () => {
+    const quarantine = {
+      scenarios: {
+        a: { reason: 'flaky focus', since: '2026-09-10' },
+        b: { reason: 'new', since: '2026-09-25' },
+      },
+    };
+    const r = mergeResults(plan, allPass, {
+      ...meta,
+      quarantine,
+      finishedAt: '2026-09-30T08:00:00Z',
+    });
+    expect(r.warnings).toEqual(['a: quarantined > 14 days (since 2026-09-10) — re-check']);
+    expect(summaryMarkdown(r)).toContain('a: quarantined > 14 days (since 2026-09-10) — re-check');
+    expect(mergeResults(plan, allPass, meta).warnings).toEqual([]);
+  });
+
+  it('carries quarantine candidates into the result and the summary', () => {
+    const candidates = [{ name: 'multi-repo', count: 3, last: '2026-09-30T08:00:00.000Z' }];
+    const r = mergeResults(plan, allPass, { ...meta, quarantineCandidates: candidates });
+    expect(r.quarantineCandidates).toEqual(candidates);
+    expect(summaryMarkdown(r)).toContain('Quarantine candidates');
+    expect(summaryMarkdown(r)).toContain('multi-repo: FLAKY 3');
+    expect(summaryMarkdown(mergeResults(plan, allPass, meta))).not.toContain('Quarantine');
   });
 });

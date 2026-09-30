@@ -1,6 +1,7 @@
 /**
  * e2e runner — runs test/e2e/<name>.e2e.mjs scenarios one at a time, each as a child process,
- * printing PASS / FAIL / SKIP / TIMEOUT / FLAKY per scenario and a summary.
+ * printing PASS / FAIL / SKIP / TIMEOUT / FLAKY per scenario and a summary. LOCK-TIMEOUT (local
+ * only): the scenario waited on another checkout's e2e app for longer than the 20 min cap.
  *
  * Locally (`npm run e2e -- <name>`) it runs exactly ONE scenario, matched by exact file stem; the
  * suite and any multi-scenario selection run remotely (`npm run e2e:remote -- --full | <names>`),
@@ -10,27 +11,33 @@
  *
  * Usage:
  *   node test/e2e/run-smoke.mjs <name…> [--names-file f.json] [--json out.json]
- *                                       [--artifacts dir] [--retry]
+ *                                       [--artifacts dir] [--retry] [--quarantine q.json]
  *
  *   --names-file  JSON array of names, added to the positional ones
  *   --json        result rows `[{ name, status, seconds, attempts }]`, rewritten after each scenario
  *   --artifacts   failure artifacts root: each non-PASS attempt's log (and, from the harness, its
  *                 trace and screenshots) lands in <dir>/<name>/attempt-<n>/
  *   --retry       a failed or timed-out scenario runs once more; a pass then is FLAKY
+ *   --quarantine  test/e2e/quarantine.json: a listed scenario that still fails is
+ *                 QUARANTINED-FAIL, reported but not failing the run
  *
- * Exit codes: 0 all PASS/SKIP/FLAKY; 1 a scenario failed; 2 usage error or local refusal.
+ * Exit codes: 0 all PASS/SKIP/FLAKY/QUARANTINED-FAIL; 1 a scenario failed; 2 usage error or local refusal.
  * On non-win32 platforms prints a suite-level SKIP and exits 0.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  applyQuarantine,
   classify,
   finalStatus,
   isGreen,
+  killTimerOnLine,
+  killTimerStart,
+  orphanVictims,
   parseRunnerArgs,
   resolveSelection,
 } from './smoke-select.mjs';
@@ -38,33 +45,46 @@ import {
 /** Settle delay between scenarios: gives the prior Electron process time to fully
  *  release GPU/ConPTY handles and let the CPU quiesce before the next launch. */
 const SETTLE_MS = 3000;
-/** Runner kill. The harness watchdog (E2E_DEADLINE_MS) fires first so it can save artifacts. */
+/**
+ * Runner kill. The harness watchdog (E2E_DEADLINE_MS) fires first so it can save artifacts. Its
+ * clock stops while the scenario waits on the e2e lock (`killTimerOnLine`).
+ */
 const KILL_MS = 210_000;
 const DEADLINE_MS = 200_000;
 
 const here = dirname(fileURLToPath(import.meta.url));
+/** Every app this invocation's scenarios launch carries it (harness `launchElectron`). */
+const RUN_ID = `${process.pid}-${randomBytes(4).toString('hex')}`;
 
 /**
  * Kill Electrons left behind by a scenario the runner had to kill itself. `spawnSync`'s timeout
  * only reaches the node child; the Electron it spawned survives, holding GPU/ConPTY handles and
  * CPU — which is what turns ONE wedged scenario into a run of "flaky" timeouts after it.
  *
- * Scoped by `--user-data-dir` under the OS temp dir: that is a harness-launched throwaway profile
- * and nothing else. A real Conduit reads its profile from `app.getPath('userData')` and passes no
- * such flag, so a developer's running app is never touched.
+ * Scoped to THIS invocation's apps (`orphanVictims`): another checkout's scenario may be running,
+ * or holding the e2e lock, with the same temp-dir profile prefix, and a developer's own Conduit
+ * carries no marker at all.
  */
 function sweepOrphanElectrons() {
   if (process.platform !== 'win32') return 0;
-  const marker = `--user-data-dir=${tmpdir()}`;
   const script =
-    `Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | ` +
-    `Where-Object { $_.CommandLine -like '*${marker.replace(/'/g, "''")}*' } | ` +
-    'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; 1 }';
+    `@(Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | ` +
+    'Select-Object ProcessId, ParentProcessId, CommandLine) | ConvertTo-Json -Compress';
   const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
     encoding: 'utf8',
     stdio: 'pipe',
   });
-  return (r.stdout || '').trim().split('\n').filter(Boolean).length;
+  let procs;
+  try {
+    procs = [JSON.parse(r.stdout || '[]')].flat();
+  } catch {
+    return 0;
+  }
+  const pids = orphanVictims(procs, RUN_ID);
+  for (const pid of pids) {
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+  }
+  return pids.length;
 }
 
 if (process.platform !== 'win32') {
@@ -98,6 +118,7 @@ if ('exit' in selection) {
 if (selection.banner) console.log(`${selection.banner}\n`);
 const names = selection.names;
 const artifactsRoot = args.artifacts ? resolve(args.artifacts) : null;
+const quarantine = args.quarantine ? JSON.parse(readFileSync(args.quarantine, 'utf8')) : null;
 
 console.log(`[smoke] Running ${names.length} scenario(s) sequentially...\n`);
 
@@ -119,6 +140,7 @@ function runAttempt(name, attempt) {
         ...process.env,
         CONDUIT_E2E: '1',
         E2E_SCENARIO: name,
+        E2E_RUN_ID: RUN_ID,
         E2E_ATTEMPT: String(attempt),
         E2E_DEADLINE_MS: String(DEADLINE_MS),
         ...(artifactsRoot ? { E2E_ARTIFACT_DIR: artifactsRoot } : {}),
@@ -127,16 +149,42 @@ function runAttempt(name, attempt) {
   );
   const r = { stdout: '', stderr: '', status: null, signal: null };
   let partial = '';
+  let timer = killTimerStart(start, { killMs: KILL_MS });
+  let lockTimeout = false;
+  let kill;
+  const arm = () => {
+    clearTimeout(kill);
+    kill = setTimeout(
+      () => {
+        if (timer.reason === 'lock-wait') {
+          lockTimeout = true;
+          console.log(
+            `\n  [e2e-lock] lock wait timeout: gave up after ${timer.waitCapMs / 60_000} min waiting for another e2e app`,
+          );
+        }
+        child.kill();
+      },
+      Math.max(0, timer.deadline - Date.now()),
+    );
+  };
+  arm();
   child.stdout.setEncoding('utf8').on('data', (d) => {
     r.stdout += d;
     const lines = (partial + d).split('\n');
     partial = lines.pop();
-    for (const line of lines) if (line.startsWith('[e2e-lock]')) console.log(`\n  ${line}`);
+    for (const line of lines) {
+      if (!line.startsWith('[e2e-lock]')) continue;
+      console.log(`\n  ${line}`);
+      const next = killTimerOnLine(timer, line.trimEnd(), Date.now());
+      if (next !== timer) {
+        timer = next;
+        arm();
+      }
+    }
   });
   child.stderr.setEncoding('utf8').on('data', (d) => {
     r.stderr += d;
   });
-  const kill = setTimeout(() => child.kill(), KILL_MS);
   return new Promise((resolveAttempt) => {
     let done = false;
     const finish = (status, signal) => {
@@ -146,7 +194,7 @@ function runAttempt(name, attempt) {
       r.status = status;
       r.signal = signal;
       const output = r.stdout + r.stderr;
-      const result = classify({ status, signal, output });
+      const result = classify({ status, signal, output, lockTimeout });
       const seconds = Number(((Date.now() - start) / 1000).toFixed(1));
       resolveAttempt({ name, attempt, status: result, seconds, exit: status ?? signal, r, output });
     };
@@ -172,21 +220,26 @@ function afterFailure({ name, attempt, exit, r, output }) {
 }
 
 const settle = () => new Promise((r) => setTimeout(r, SETTLE_MS));
-const ICON = { PASS: '✓', SKIP: '○', FLAKY: '~' };
+const ICON = { PASS: '✓', SKIP: '○', FLAKY: '~', 'QUARANTINED-FAIL': 'q' };
 const results = [];
 
 for (const name of names) {
   process.stdout.write(`  ${name} ... `);
   const first = await runAttempt(name, 1);
   let last = first;
-  if (args.retry && !isGreen(first.status)) {
+  // A retry after a lock-wait timeout would only wait on the same other app again.
+  if (args.retry && !isGreen(first.status) && first.status !== 'LOCK-TIMEOUT') {
     console.log(`${first.status} (${first.seconds}s, exit ${first.exit}), retrying`);
     afterFailure(first);
     await settle();
     process.stdout.write(`  ${name} (attempt 2) ... `);
     last = await runAttempt(name, 2);
   }
-  const status = finalStatus(first.status, last === first ? undefined : last.status);
+  const status = applyQuarantine(
+    name,
+    finalStatus(first.status, last === first ? undefined : last.status),
+    quarantine,
+  );
   const exitNote = status === 'FAIL' ? `, exit ${last.exit}` : '';
   console.log(`${ICON[status] ?? '✗'} ${status} (${last.seconds}s${exitNote})`);
   if (last.status !== 'PASS' && last.status !== 'SKIP') afterFailure(last);
@@ -200,7 +253,8 @@ const count = (s) => results.filter((r) => r.status === s).length;
 const failed = results.filter((r) => !isGreen(r.status));
 console.log('\n── Summary ──────────────────────────────────────');
 console.log(
-  `  ${count('PASS')} passed  ${count('FLAKY')} flaky  ${count('SKIP')} skipped  ${failed.length} failed`,
+  `  ${count('PASS')} passed  ${count('FLAKY')} flaky  ${count('SKIP')} skipped  ` +
+    `${count('QUARANTINED-FAIL')} quarantined-failed  ${failed.length} failed`,
 );
 console.log('─────────────────────────────────────────────────\n');
 if (failed.length && !ci) {

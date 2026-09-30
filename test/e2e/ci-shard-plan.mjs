@@ -3,7 +3,7 @@
  * Pure: no I/O. Used by the `prepare` job of .github/workflows/e2e.yml.
  */
 
-function median(values) {
+export function median(values) {
   if (values.length === 0) return 0;
   const s = [...values].sort((a, b) => a - b);
   const mid = Math.floor(s.length / 2);

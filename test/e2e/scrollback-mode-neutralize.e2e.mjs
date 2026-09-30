@@ -12,15 +12,15 @@
  * relaunches the way the UI does, then asserts on the REAL xterm instance: mouse tracking is
  * off, and actual pointer movement over the viewport produces no report on `onData`.
  */
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
   finishScenario,
   launchElectron,
   makeLog,
+  profileDir,
   REPO,
   shutdownApp,
   tapBridge,
@@ -35,7 +35,7 @@ const log = makeLog('scrollback-mode-neutralize');
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-sbmn-'));
+const userDataDir = profileDir('sbmn');
 const SID = 'mouseseed1';
 const SENTINEL = `SBMN-${Date.now()}`;
 

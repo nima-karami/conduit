@@ -25,7 +25,7 @@ import {
   waitFor,
   writesTo,
 } from './auto-save-helpers.mjs';
-import { assert, closeApp, launchApp, openSession, shutdownApp } from './harness.mjs';
+import { assert, closeApp, launchApp, openSession, profileDir, shutdownApp } from './harness.mjs';
 
 async function openAppearance(page) {
   await page.click('.footbtn[title^="Settings"]');
@@ -39,7 +39,7 @@ const persistedDelay = (udd) => {
 };
 
 async function phaseSettings({ log }) {
-  const udd = mkdtempSync(join(tmpdir(), 'conduit-ud-autosave-'));
+  const udd = profileDir('autosave');
   let launched = await launchApp({ userDataDir: udd });
   try {
     let { page } = launched;

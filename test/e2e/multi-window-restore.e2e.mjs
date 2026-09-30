@@ -17,9 +17,8 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -28,6 +27,7 @@ import {
   finishScenario,
   launchElectron,
   makeLog,
+  profileDir,
   REPO,
 } from './harness.mjs';
 
@@ -124,7 +124,7 @@ function killStrayElectrons() {
   }
 }
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-mwr-'));
+const userDataDir = profileDir('mwr');
 log('shared userData =', userDataDir);
 
 let app1 = null;

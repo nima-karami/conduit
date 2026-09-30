@@ -34,16 +34,29 @@ describe('parseArgs', () => {
     });
   });
 
-  it('--affected is a clear not-until-v1 error', () => {
-    expect(parseArgs(['--affected'])).toEqual({
-      error: expect.stringContaining('not available until v1'),
+  it('--affected is the default selection', () => {
+    expect(parseArgs([])).toMatchObject({ affected: true, full: false, names: [] });
+    expect(parseArgs(['--affected', '--no-verify'])).toMatchObject({
+      affected: true,
+      verify: false,
     });
+    expect(parseArgs(['--full'])).toMatchObject({ affected: false });
+    expect(parseArgs(['cwd'])).toMatchObject({ affected: false });
   });
 
-  it('needs a selection, and not both kinds', () => {
-    expect(parseArgs([])).toHaveProperty('error');
+  it('takes one kind of selection', () => {
     expect(parseArgs(['--full', 'cwd'])).toHaveProperty('error');
+    expect(parseArgs(['--affected', 'cwd'])).toHaveProperty('error');
+    expect(parseArgs(['--affected', '--full'])).toHaveProperty('error');
     expect(parseArgs(['--shards', 'x', 'cwd'])).toHaveProperty('error');
+  });
+});
+
+describe('affected selection key', () => {
+  it('is keyed by the diff base', () => {
+    const o = { full: false, names: [], affected: true, base: 'abcdef1234', verify: true };
+    expect(selectionKey(o)).toBe('a-abcdef1');
+    expect(selectionKey({ ...o, verify: false })).toBe('a-abcdef1-nv');
   });
 });
 
@@ -156,6 +169,26 @@ describe('verdict', () => {
     expect(out).toContain('  z ... - EXCLUDED (0s) — focus; run locally: npm run e2e -- z');
     expect(out).toContain('artifacts: https://art');
     expect(out).toContain('re-run the INFRA scenarios: npm run e2e:remote -- c (at abcdef1)');
+  });
+
+  it('prints quarantined failures, failures the last nightly shared, and quarantine candidates', () => {
+    const out = formatResults({
+      status: 'failed',
+      sha: 'abcdef123',
+      lastNightlySha: 'feedbeef99',
+      quarantineCandidates: [{ name: 'multi-repo', count: 4, last: '2026-09-30T08:00:00Z' }],
+      warnings: ['q: quarantined > 14 days (since 2026-09-10) — re-check'],
+      results: [
+        { name: 'q', status: 'QUARANTINED-FAIL', seconds: 5, shard: 2 },
+        { name: 'b', status: 'FAIL', seconds: 4, shard: 1, alsoFailingOnNightly: true },
+      ],
+    });
+    expect(out).toContain('  q ... q QUARANTINED-FAIL (5s) [s2]');
+    expect(out).toContain('  warning: q: quarantined > 14 days (since 2026-09-10) — re-check');
+    expect(out).toContain('  b ... ✗ FAIL (4s) [s1] (also failing on the last nightly, feedbee)');
+    expect(out).toContain(
+      'quarantine candidate: multi-repo (FLAKY 4 in 14 days); quarantine via test/e2e/quarantine.json',
+    );
   });
 });
 

@@ -26,6 +26,7 @@ import {
   makeLog,
   openReview,
   openSession,
+  profileDir,
   REPO,
   tapBridge,
 } from './harness.mjs';
@@ -41,7 +42,7 @@ const lines = (n, f) => Array.from({ length: n }, (_, i) => f(i)).join('\n');
 
 // ── Fixture ────────────────────────────────────────────────────────────────────────────────────
 const root = mkdtempSync(join(tmpdir(), 'conduit-rkp-'));
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-rkp-ud-'));
+const userDataDir = profileDir('rkp');
 
 const committed = {
   // Three changes far enough apart to become three separate hunks — that is what j/k walk.

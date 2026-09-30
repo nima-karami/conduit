@@ -48,6 +48,7 @@ import {
   launchApp,
   makeLog,
   openSession,
+  profileDir,
   REPO,
   removeDir,
   shutdownApp,
@@ -62,7 +63,7 @@ if (process.platform !== 'win32') {
   await finishScenario(0);
 }
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-mle-'));
+const userDataDir = profileDir('mle');
 const work = mkdtempSync(join(tmpdir(), 'conduit-mle-work-'));
 const dir = (name) => {
   const p = join(work, name);

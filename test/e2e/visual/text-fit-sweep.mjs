@@ -24,14 +24,7 @@
  * leaves a hidden window's compositor on the previous theme), one app at a time, closeApp.
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -40,6 +33,7 @@ import {
   openChangesTab,
   openHistory,
   openReview,
+  profileDir,
   removeDir,
   tapBridge,
 } from '../harness.mjs';
@@ -447,7 +441,7 @@ const settle = (page) =>
 // ── pass driver ──────────────────────────────────────────────────────────────
 
 function seedProfile(theme) {
-  const dir = mkdtempSync(join(tmpdir(), 'conduit-textfit-ud-'));
+  const dir = profileDir('textfit');
   writeFileSync(
     join(dir, 'settings.json'),
     JSON.stringify({ version: 1, settings: { theme, restoreSessions: false } }),

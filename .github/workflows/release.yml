@@ -6,6 +6,8 @@ on:
 
 permissions:
   contents: write
+  # e2e.yml reads the newest e2e-state artifact.
+  actions: read
 
 jobs:
   # Run the full authoritative gate (Biome, typecheck, tests, fallow, audit, Semgrep,
@@ -15,8 +17,17 @@ jobs:
   gate:
     uses: ./.github/workflows/verify.yml
 
+  # The full e2e suite at the tag's commit (spec docs/specs/2026-09-29-remote-e2e-lean-loop.md
+  # §14 Q2): passed or flaky-passed proceeds; a QUARANTINED-FAIL doesn't block. `gate` already
+  # runs verify, so e2e doesn't repeat it.
+  e2e:
+    uses: ./.github/workflows/e2e.yml
+    with:
+      selection: full
+      verify: false
+
   build-and-publish:
-    needs: gate
+    needs: [gate, e2e]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

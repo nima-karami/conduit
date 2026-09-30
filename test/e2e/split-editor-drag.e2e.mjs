@@ -19,7 +19,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, finishScenario, launchApp, makeLog, openSession } from './harness.mjs';
+import { assert, finishScenario, launchApp, makeLog, openSession, profileDir } from './harness.mjs';
 import {
   G,
   groupCount,
@@ -304,7 +304,7 @@ let launched = null;
 let code = 0;
 try {
   launched = await launchApp({
-    userDataDir: mkdtempSync(join(tmpdir(), 'conduit-split-drag-ud-')),
+    userDataDir: profileDir('split-drag'),
   });
   const { page } = launched;
   await openSession(page, { path: repoArg });

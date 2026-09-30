@@ -9,3 +9,4 @@ export function planShards(
   timings: Record<string, number>,
   opts?: { shards?: number; targetSec?: number; cap?: number; scale?: number; setupSec?: number },
 ): { shards: Shard[] };
+export function median(values: number[]): number;

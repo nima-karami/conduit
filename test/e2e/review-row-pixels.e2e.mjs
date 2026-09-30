@@ -38,6 +38,7 @@ import {
   makeLog,
   openReview,
   openSession,
+  profileDir,
 } from './harness.mjs';
 import { decodePng, hex, pxAt } from './png.mjs';
 import { contrast, installRowProbe, toHex } from './row-color.mjs';
@@ -79,7 +80,7 @@ function makeRepo() {
 }
 
 function seedProfile(theme) {
-  const dir = mkdtempSync(join(tmpdir(), 'conduit-ud-'));
+  const dir = profileDir();
   writeFileSync(
     join(dir, 'settings.json'),
     JSON.stringify({ version: 1, settings: { theme, restoreSessions: false } }),

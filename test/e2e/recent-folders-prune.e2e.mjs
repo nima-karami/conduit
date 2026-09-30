@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, finishScenario, launchElectron, makeLog, REPO } from './harness.mjs';
+import { assert, finishScenario, launchElectron, makeLog, profileDir, REPO } from './harness.mjs';
 
 const log = makeLog('recent-folders-prune');
 
@@ -23,7 +23,7 @@ if (process.platform !== 'win32') {
 }
 
 const require = createRequire(import.meta.url);
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-ud-'));
+const userDataDir = profileDir();
 const realRepo = mkdtempSync(join(tmpdir(), 'conduit-real-'));
 const goneRepo = join(tmpdir(), `conduit-gone-${Date.now()}`); // never created → missing on disk
 const fwd = (p) => p.replace(/\\/g, '/');

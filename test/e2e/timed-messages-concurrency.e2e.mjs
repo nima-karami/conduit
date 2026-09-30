@@ -31,6 +31,7 @@ import {
   launchElectron,
   makeLog,
   openSession,
+  profileDir,
   REPO,
   tapBridge,
 } from './harness.mjs';
@@ -72,7 +73,7 @@ $submitted = '${mine}' + [char]13
 "mine=$($s.Contains('${mine}')) enter=$($s.Contains($submitted)) other=$($s.Contains('${other}'))" | Out-File $env:DUMP -Encoding ascii
 `;
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-parallel-'));
+const userDataDir = profileDir('parallel');
 const workA = mkdtempSync(join(tmpdir(), 'conduit-par-a-'));
 const workB = mkdtempSync(join(tmpdir(), 'conduit-par-b-'));
 

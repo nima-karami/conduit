@@ -1,9 +1,9 @@
 /**
- * Tree chevrons (real-app smoke): the Files folder bar and the Changes repo head lead with the
- * same left-hand chevron on one column with the depth-0 tree rows, Changes rows take the Files
- * row metrics, and a collapsed Changes repo survives a tab switch.
- * docs/specs/2026-09-28-tree-chevrons.md §7 AC1–AC10, AC12 (geometry), AC13, in aero, aero-dark
- * and neon — geometry is layout, so only the running app can prove it.
+ * Shared driver for the tree-chevrons scenarios, one theme each: the Files folder bar and the
+ * Changes repo head lead with the same left-hand chevron on one column with the depth-0 tree
+ * rows, Changes rows take the Files row metrics, and a collapsed Changes repo survives a tab
+ * switch. docs/specs/2026-09-28-tree-chevrons.md §7 AC1–AC10, AC12 (geometry), AC13 — geometry
+ * is layout, so only the running app can prove it.
  */
 
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -17,18 +17,13 @@ import {
   makeLog,
   openChangesTab,
   openSession,
+  profileDir,
   removeDir,
 } from './harness.mjs';
 
 const NAME = 'tree-chevrons';
 const log = makeLog(NAME);
 
-if (process.platform !== 'win32') {
-  console.log(`[${NAME}] SKIP — suite is Windows-only (non-win32 platform)`);
-  await finishScenario(0);
-}
-
-const THEMES = ['aero', 'aero-dark', 'neon'];
 const OPEN = 'matrix(0, 1, -1, 0, 0, 0)';
 const near = (a, b) => Math.abs(a - b) <= 1;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -164,7 +159,7 @@ async function runTheme(theme) {
   const ref = join(work, 'ref');
   makeRepo(home);
   makeRepo(ref);
-  const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-tc-ud-'));
+  const userDataDir = profileDir('tc');
   writeFileSync(
     join(userDataDir, 'settings.json'),
     JSON.stringify({ version: 1, settings: { theme, restoreSessions: false } }),
@@ -431,18 +426,24 @@ async function runTheme(theme) {
   }
 }
 
-let code = 0;
-try {
-  for (const theme of THEMES) await runTheme(theme);
-  log('PASS ✓');
-} catch (e) {
-  if (e?.name === 'AssertionError') {
-    log('FAIL ✗', e.message);
-    code = 1;
-  } else {
-    console.error(`[${NAME}] ERROR:`, e?.message || e);
-    if (e?.stack) console.error(e.stack);
-    code = 2;
+export async function runTreeChevrons(theme) {
+  if (process.platform !== 'win32') {
+    console.log(`[${NAME}] SKIP — suite is Windows-only (non-win32 platform)`);
+    await finishScenario(0);
   }
+  let code = 0;
+  try {
+    await runTheme(theme);
+    log('PASS ✓');
+  } catch (e) {
+    if (e?.name === 'AssertionError') {
+      log('FAIL ✗', e.message);
+      code = 1;
+    } else {
+      console.error(`[${NAME}] ERROR:`, e?.message || e);
+      if (e?.stack) console.error(e.stack);
+      code = 2;
+    }
+  }
+  await finishScenario(code);
 }
-await finishScenario(code);

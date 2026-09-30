@@ -5,13 +5,14 @@
 import { createHash } from 'node:crypto';
 
 export const USAGE =
-  'usage: npm run e2e:remote -- (--full | <name>…) [--shards N] [--no-wait] [--no-verify] [--out <dir>] [--timeout <min>]';
+  'usage: npm run e2e:remote -- [--affected (default) | --full | <name>…] [--shards N] [--no-wait] [--no-verify] [--out <dir>] [--timeout <min>]';
 
 const IN_FLIGHT = new Set(['queued', 'in_progress', 'waiting', 'pending', 'requested']);
 
 export function parseArgs(argv) {
   const o = {
     full: false,
+    affected: false,
     names: [],
     shards: 0,
     wait: true,
@@ -26,12 +27,8 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--full') o.full = true;
-    else if (a === '--affected') {
-      return {
-        error:
-          '--affected is not available until v1 (it needs the nightly coverage map); pass --full or names',
-      };
-    } else if (a === '--no-wait') o.wait = false;
+    else if (a === '--affected') o.affected = true;
+    else if (a === '--no-wait') o.wait = false;
     else if (a === '--no-verify') o.verify = false;
     else if (a === '--shards' || a === '--timeout') {
       const n = num(a, argv[++i]);
@@ -44,18 +41,21 @@ export function parseArgs(argv) {
     } else if (a.startsWith('--')) return { error: `unknown flag ${a}` };
     else o.names.push(a);
   }
-  if (o.full && o.names.length) return { error: 'pass either --full or names, not both' };
-  if (!o.full && !o.names.length)
-    return { error: 'pass --full or scenario names (--affected lands in v1)' };
+  if ([o.full, o.affected, o.names.length > 0].filter(Boolean).length > 1) {
+    return { error: 'pass one of --affected, --full or names' };
+  }
+  if (!o.full && !o.names.length) o.affected = true;
   o.names = [...new Set(o.names)].sort();
   return o;
 }
 
-export function selectionKey({ full, names, verify }) {
-  const base = full
-    ? 'full'
-    : `n-${createHash('sha256').update(names.join(' ')).digest('hex').slice(0, 8)}`;
-  return verify ? base : `${base}-nv`;
+/** `base` is the diff base of an `--affected` selection: the same HEAD and base select the same. */
+export function selectionKey({ full, affected, names, verify, base }) {
+  let key;
+  if (full) key = 'full';
+  else if (affected) key = `a-${base.slice(0, 7)}`;
+  else key = `n-${createHash('sha256').update(names.join(' ')).digest('hex').slice(0, 8)}`;
+  return verify ? key : `${key}-nv`;
 }
 
 export function makeNonce(selKey, rand) {
@@ -131,7 +131,7 @@ export function checkExclusions(names, exclusions) {
   return { notice: `excluded from the runner (reported EXCLUDED, not run):\n${list}` };
 }
 
-const ICON = { PASS: '✓', FLAKY: '~', SKIP: '○', EXCLUDED: '-' };
+const ICON = { PASS: '✓', FLAKY: '~', SKIP: '○', EXCLUDED: '-', 'QUARANTINED-FAIL': 'q' };
 
 export function formatResults(result) {
   const lines = [];
@@ -139,6 +139,9 @@ export function formatResults(result) {
     const where = r.shard ? ` [s${r.shard}]` : '';
     let why = r.reason ? ` — ${r.reason}` : '';
     if (r.status === 'EXCLUDED') why += `; run locally: ${localCommand(r.name)}`;
+    if (r.alsoFailingOnNightly) {
+      why += ` (also failing on the last nightly, ${result.lastNightlySha?.slice(0, 7)})`;
+    }
     lines.push(
       `  ${r.name} ... ${ICON[r.status] ?? '✗'} ${r.status} (${r.seconds}s)${where}${why}`,
     );
@@ -155,6 +158,12 @@ export function formatResults(result) {
   const links = [...new Set(result.results.map((r) => r.artifact).filter(Boolean))];
   for (const l of links) lines.push(`  artifacts: ${l}`);
   if (result.rerun) lines.push(`  re-run the INFRA scenarios: ${result.rerun}`);
+  for (const c of result.quarantineCandidates ?? []) {
+    lines.push(
+      `  quarantine candidate: ${c.name} (FLAKY ${c.count} in 14 days); quarantine via test/e2e/quarantine.json`,
+    );
+  }
+  for (const w of result.warnings ?? []) lines.push(`  warning: ${w}`);
   if (result.url) lines.push(`  run: ${result.url}`);
   return lines.join('\n');
 }

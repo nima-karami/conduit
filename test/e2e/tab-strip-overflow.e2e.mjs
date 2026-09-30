@@ -23,7 +23,15 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, finishScenario, launchApp, makeLog, openSession, removeDir } from './harness.mjs';
+import {
+  assert,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+  profileDir,
+  removeDir,
+} from './harness.mjs';
 import { G, groupCount, openFromExplorer, sleep, waitShown } from './split-editor-helpers.mjs';
 
 if (process.platform !== 'win32') {
@@ -139,7 +147,7 @@ async function scrollAlong(page, theme, last) {
 }
 
 async function runTheme(theme) {
-  const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-strip-ud-'));
+  const userDataDir = profileDir('strip');
   writeFileSync(
     join(userDataDir, 'settings.json'),
     JSON.stringify({ version: 1, settings: { theme, restoreSessions: false } }),

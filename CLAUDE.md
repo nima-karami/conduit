@@ -177,9 +177,12 @@ discoverable by reading the tree.
   pass one and fail the other.
 - **Host/PTY/IPC-boundary items get an e2e scenario** instead of `needs-human-smoke` — a new
   `test/e2e/<name>.e2e.mjs` on the shared harness. **The suite runs remotely, never here:**
-  `npm run e2e:remote -- --full | <names…>` (sharded `windows-latest`, ~15 min; result JSON to
-  `$E2E_EVIDENCE_DIR`; `--affected` is v1). **Locally, ONE scenario by exact name:**
-  `npm run e2e -- <name>`; more than one refuses. `launchElectron` holds a machine-wide lock
+  `npm run e2e:remote` (default `--affected`: the diff vs `origin/main` through the nightly
+  coverage map, plus `test/e2e/core-smoke.json`) or `-- --full | <names…>` (sharded
+  `windows-latest`, full ~15 min; result JSON to `$E2E_EVIDENCE_DIR`). A flaky scenario is
+  quarantined only by a reviewed edit to `test/e2e/quarantine.json`. **Inner loop:**
+  `npm run verify:quick` (changed files only); `npm run verify` is still the gate. **Locally,
+  ONE scenario by exact name:** `npm run e2e -- <name>`; more than one refuses. `launchElectron` holds a machine-wide lock
   (a second run waits and names the owner) and runs the app BelowNormal — launch only through it,
   exit only through `finishScenario` (`test/unit/e2e-harness-guards.test.ts`). Scenarios that need
   real OS focus or a big display are skipped remotely and listed EXCLUDED

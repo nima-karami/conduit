@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -35,10 +36,20 @@ afterEach(() => {
 });
 
 describe('acquireE2eLock', () => {
-  it('acquires a free lock and is re-entrant within one process', async () => {
+  it('acquires a free lock and is re-entrant within one process, reporting no wait', async () => {
     const pipePath = freshPipe();
-    await acquireE2eLock({ pipePath, scenario: 'a', log: () => {} });
-    await acquireE2eLock({ pipePath, scenario: 'a', log: () => {} });
+    expect(await acquireE2eLock({ pipePath, scenario: 'a', log: () => {} })).toBe(0);
+    expect(await acquireE2eLock({ pipePath, scenario: 'a', log: () => {} })).toBe(0);
+  });
+
+  it('the owner survives waiters that hang up before it answers (EPIPE)', async () => {
+    const pipePath = freshPipe();
+    const ownerProc = await spawnOwner(pipePath);
+    owner = ownerProc;
+    for (let i = 0; i < 40; i++) connect(pipePath).destroy();
+    await new Promise((r) => setTimeout(r, 500));
+    expect(ownerProc.exitCode).toBeNull();
+    expect(ownerProc.signalCode).toBeNull();
   });
 
   it('a second process waits, names the owner, and gets the lock the moment the owner dies', async () => {
@@ -52,8 +63,9 @@ describe('acquireE2eLock', () => {
       scenario: 'b',
       pollMs: 50,
       log: (l: string) => lines.push(l),
-    }).then(() => {
+    }).then((ms) => {
       acquired = true;
+      return ms;
     });
     await new Promise((r) => setTimeout(r, 500));
     expect(acquired).toBe(false);
@@ -63,7 +75,8 @@ describe('acquireE2eLock', () => {
 
     const killedAt = Date.now();
     ownerProc.kill('SIGKILL');
-    await waiting;
+    const waited = await waiting;
     expect(Date.now() - killedAt).toBeLessThan(3000);
+    expect(waited).toBeGreaterThanOrEqual(500);
   });
 });

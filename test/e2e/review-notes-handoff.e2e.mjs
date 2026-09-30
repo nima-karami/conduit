@@ -42,6 +42,7 @@ import {
   makeLog,
   openReview,
   openSession,
+  profileDir,
   tapBridge,
 } from './harness.mjs';
 
@@ -55,7 +56,7 @@ const lines = (n, f) => Array.from({ length: n }, (_, i) => f(i)).join('\n');
 
 // ── Fixture ────────────────────────────────────────────────────────────────────────────────────
 const root = mkdtempSync(join(tmpdir(), 'conduit-rnh-'));
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-rnh-ud-'));
+const userDataDir = profileDir('rnh');
 const notesPath = join(root, '.conduit', 'review-notes.json');
 
 const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8' });

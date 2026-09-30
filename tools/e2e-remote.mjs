@@ -1,13 +1,17 @@
 /**
- * `npm run e2e:remote -- (--full | <name>…) [--shards N] [--no-wait] [--no-verify] [--out <dir>]
- * [--timeout <min>]` — run e2e scenarios on GitHub-hosted Windows runners at the committed HEAD
+ * `npm run e2e:remote -- [--affected | --full | <name>…] [--shards N] [--no-wait] [--no-verify]
+ * [--out <dir>] [--timeout <min>]` — run e2e scenarios on GitHub-hosted Windows runners at the committed HEAD
  * and print run-smoke-style results. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md §A, §3.
  *
  * Pushes HEAD to an ephemeral `ci/e2e/<sha7>-<rand>` ref and dispatches e2e.yml there; the run
  * deletes its own ref, so this never does (and Ctrl-C needs no handling). A run already in flight
  * for the same sha and selection is attached to instead.
  *
- * Exit: 0 passed / flaky-passed; 1 failed; 2 infra-error, cancelled, timed-out or a precondition;
+ * `--affected` (the default) diffs HEAD against its merge-base with origin/main; a diff of only
+ * e2e-irrelevant files ends here, "no e2e needed", and pushes nothing. The run's `prepare` job
+ * maps the rest to scenarios (test/e2e/ci-affected.mjs).
+ *
+ * Exit: 0 passed / flaky-passed / no e2e needed; 1 failed; 2 infra-error, cancelled, timed-out or a precondition;
  * 3 dispatched with --no-wait.
  */
 import { spawnSync } from 'node:child_process';
@@ -15,6 +19,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { isE2eIrrelevant, parseNameStatus } from '../test/e2e/ci-affected.mjs';
 import {
   checkExclusions,
   exitCodeFor,
@@ -59,13 +64,28 @@ function preconditions(o) {
   if (dirty) fail(`the working tree is not clean; commit or stash first:\n${dirty}`);
   const unknown = o.names.filter((n) => !existsSync(join('test', 'e2e', `${n}.e2e.mjs`)));
   if (unknown.length) fail(`unknown scenario(s): ${unknown.join(', ')}`);
-  if (o.full) return;
+  if (o.full || o.affected) return;
   const exclusions = JSON.parse(
     readFileSync(join('test', 'e2e', 'remote-exclusions.json'), 'utf8'),
   );
   const { refuse, notice } = checkExclusions(o.names, exclusions);
   if (refuse) fail(refuse);
   if (notice) say(notice);
+}
+
+/** The `--affected` diff base, or exit 0 when nothing in the diff can affect an e2e scenario. */
+function affectedBase() {
+  const mb = sh('git', ['merge-base', 'HEAD', 'origin/main'], { allowFail: true });
+  if (mb.status !== 0) fail('no merge-base with origin/main (run git fetch origin main)');
+  const base = mb.stdout.trim();
+  const diff = sh('git', ['diff', '--name-status', `${base}...HEAD`]).stdout;
+  const relevant = parseNameStatus(diff).filter((c) => !isE2eIrrelevant(c.path));
+  if (!relevant.length) {
+    say(`no e2e needed: nothing since ${base.slice(0, 7)} can affect a scenario`);
+    process.exit(0);
+  }
+  say(`affected: ${relevant.length} relevant change(s) since ${base.slice(0, 7)}`);
+  return base;
 }
 
 function inFlight() {
@@ -87,8 +107,9 @@ async function dispatch(o, sha, selKey) {
   sh('git', ['push', '--quiet', 'origin', `HEAD:refs/heads/${ref}`]);
   say(`pushed ${ref}`);
   const inputs = {
-    selection: o.full ? 'full' : 'names',
+    selection: o.full ? 'full' : o.affected ? 'affected' : 'names',
     scenarios: o.names.join(' '),
+    base: o.base ?? '',
     shards: String(o.shards),
     nonce,
     verify: String(o.verify),
@@ -164,6 +185,7 @@ async function main() {
   const o = parseArgs(process.argv.slice(2));
   if (o.error) fail(`${o.error}\n${USAGE}`);
   preconditions(o);
+  if (o.affected) o.base = affectedBase();
   const sha = sh('git', ['rev-parse', 'HEAD']).stdout.trim();
   const selKey = selectionKey(o);
 

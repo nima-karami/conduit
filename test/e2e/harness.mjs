@@ -16,9 +16,10 @@ import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { markCoverageIncomplete, startCoverage, stopCoverage } from './coverage-capture.mjs';
 import { attemptDir, screenshotWindows, startCapture, stopTrace } from './failure-artifacts.mjs';
 import { acquireE2eLock, setBelowNormal } from './local-guard.mjs';
-import { EXIT_WATCHDOG } from './smoke-select.mjs';
+import { EXIT_WATCHDOG, profilePrefix, RUN_MARKER, watchdogDelayMs } from './smoke-select.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 export const REPO = join(here, '..', '..');
@@ -101,6 +102,7 @@ function killAppTree(app) {
  */
 export async function shutdownApp(app, page) {
   if (!app) return;
+  await stopCoverageWithin(app);
   await stopTrace(app);
   const graceful = (async () => {
     try {
@@ -123,9 +125,36 @@ export async function shutdownApp(app, page) {
 /** Failure capture must land before the runner's 210 s kill: 200 s deadline + this. */
 const CAPTURE_BUDGET_MS = 8000;
 
+/**
+ * A wedged renderer must not hang teardown on coverage it would never hand over; the nightly must
+ * then not trust this attempt's coverage.
+ */
+async function stopCoverageWithin(...apps) {
+  const outcome = await Promise.race([
+    Promise.all(apps.map(stopCoverage)).then(() => 'stopped'),
+    new Promise((r) => setTimeout(() => r('timeout'), CAPTURE_BUDGET_MS).unref()),
+  ]);
+  if (outcome === 'timeout') markCoverageIncomplete('coverage capture timed out');
+}
+
 const liveApps = new Set();
 let armed = false;
 let finishing = null;
+let launchStartedAt = 0;
+let currentPhase = null;
+
+/**
+ * Per-phase timing (spec §B3): logs how long the previous phase took and starts `label`;
+ * `finishScenario` closes the last one. What a scenario split is planned from.
+ * @param {string | null} label
+ */
+export function phase(label) {
+  const now = Date.now();
+  if (currentPhase) {
+    console.log(`[phase] ${currentPhase.label}: ${((now - currentPhase.at) / 1000).toFixed(1)}s`);
+  }
+  currentPhase = label ? { label, at: now } : null;
+}
 
 function scenarioName() {
   return (
@@ -134,7 +163,8 @@ function scenarioName() {
   );
 }
 
-function armOnce() {
+/** @param {number} lockWaitMs time spent waiting on another checkout's e2e app: not ours to count */
+function armOnce(lockWaitMs) {
   if (armed) return;
   armed = true;
   const deadline = Number(process.env.E2E_DEADLINE_MS);
@@ -144,7 +174,7 @@ function armOnce() {
         console.log(`[harness] WATCHDOG ${deadline}ms: capturing and exiting`);
         finishScenario(EXIT_WATCHDOG);
       },
-      Math.max(0, deadline - process.uptime() * 1000),
+      watchdogDelayMs({ deadlineMs: deadline, uptimeMs: process.uptime() * 1000, lockWaitMs }),
     ).unref();
   }
   if (attemptDir()) {
@@ -157,20 +187,53 @@ function armOnce() {
   }
 }
 
+/** The runner invocation this process belongs to; `solo-<pid>` when a scenario runs directly. */
+const runId = () => process.env.E2E_RUN_ID || `solo-${process.pid}`;
+
+/**
+ * A throwaway Electron profile dir. THE only kind `launchElectron` accepts: its run-scoped name is
+ * how the runner's orphan sweep finds this run's Chromium children after their root has died.
+ * @param {string} [label]
+ */
+export function profileDir(label = '') {
+  return mkdtempSync(join(tmpdir(), `${profilePrefix(runId())}${label ? `${label}-` : ''}`));
+}
+
+function assertRunScopedProfile(args = []) {
+  const dir = args
+    .find((a) => a.startsWith('--user-data-dir='))
+    ?.slice('--user-data-dir='.length)
+    .replace(/[\\/]+$/, '')
+    .replace(/.*[\\/]/, '');
+  if (dir === undefined || !dir.startsWith(profilePrefix(runId()))) {
+    throw new Error(
+      `launchElectron: --user-data-dir must come from harness profileDir() (got ${dir ?? 'none'})`,
+    );
+  }
+}
+
 /**
  * THE only way anything in the e2e suite launches Electron (a unit guard enforces it). Takes
  * Playwright's `_electron.launch` options. Locally it holds the machine-wide e2e lock and drops to
- * below-normal priority first; on CI it traces the app for failure artifacts.
+ * below-normal priority first; on CI it traces the app for failure artifacts, and on the nightly
+ * records coverage for `--affected`.
  */
 export async function launchElectron(launchOpts) {
+  assertRunScopedProfile(launchOpts.args);
   const local = process.env.GITHUB_ACTIONS !== 'true';
+  let lockWaitMs = 0;
   if (local) {
-    await acquireE2eLock({ scenario: scenarioName() });
+    lockWaitMs = await acquireE2eLock({ scenario: scenarioName() });
     setBelowNormal();
   }
-  armOnce();
+  launchStartedAt = Date.now();
+  armOnce(lockWaitMs);
   const { _electron } = loadPlaywright();
-  const app = await _electron.launch(launchOpts);
+  // The runner's orphan sweep kills only apps carrying its own run id (run-smoke.mjs).
+  const app = await _electron.launch({
+    ...launchOpts,
+    args: [...(launchOpts.args ?? []), `${RUN_MARKER}=${runId()}`],
+  });
   liveApps.add(app);
   app.once('close', () => liveApps.delete(app));
   if (local) {
@@ -178,6 +241,7 @@ export async function launchElectron(launchOpts) {
     app.on('window', () => lowerAppTree(app));
   }
   startCapture(app);
+  startCoverage(app);
   return app;
 }
 
@@ -227,6 +291,7 @@ export async function captureFailure() {
  */
 export function finishScenario(code) {
   finishing ??= (async () => {
+    phase(null);
     const dir = attemptDir();
     try {
       if (dir && code !== 0) {
@@ -235,6 +300,7 @@ export function finishScenario(code) {
       } else if (dir) {
         rmSync(dir, { recursive: true, force: true });
       }
+      if (code === 0) await stopCoverageWithin(...liveApps);
     } catch (e) {
       console.error('[harness] artifact capture failed:', e?.message || e);
     }
@@ -253,7 +319,7 @@ export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
   const electronPath = require('electron');
   // A caller may pass a fixed user-data dir to relaunch against the same profile (e.g. a
   // durability/restore assertion); otherwise a throwaway dir the OS reaps.
-  const udd = userDataDir || mkdtempSync(join(tmpdir(), 'conduit-ud-'));
+  const udd = userDataDir || profileDir();
   const app = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${udd}`, REPO, ...extraArgs],
@@ -264,6 +330,7 @@ export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
+  console.log(`[phase] launch: ${((Date.now() - launchStartedAt) / 1000).toFixed(1)}s`);
 
   // Temp dir is in os.tmpdir() — cleaned by OS; no manual cleanup needed.
   const cleanup = () => shutdownApp(app, page);
@@ -510,6 +577,7 @@ export async function answerQuitAsks(app, { proceed }) {
  * @param {object} _page Its first window's page (kept for callers; the hook covers every window).
  */
 export async function closeApp(app, _page) {
+  await stopCoverageWithin(app);
   await stopTrace(app);
   const startIds = await app
     .evaluate((electron) => electron.BrowserWindow.getAllWindows().map((w) => w.id))

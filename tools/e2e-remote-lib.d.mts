@@ -1,6 +1,7 @@
 export const USAGE: string;
 export interface RemoteArgs {
   full: boolean;
+  affected: boolean;
   names: string[];
   shards: number;
   wait: boolean;
@@ -16,7 +17,13 @@ export interface RunListItem {
   url: string;
 }
 export function parseArgs(argv: string[]): RemoteArgs | { error: string };
-export function selectionKey(o: { full: boolean; names: string[]; verify: boolean }): string;
+export function selectionKey(o: {
+  full: boolean;
+  affected?: boolean;
+  names: string[];
+  verify: boolean;
+  base?: string;
+}): string;
 export function makeNonce(selKey: string, rand: string): string;
 export function parseTitle(
   title: string,
@@ -41,6 +48,9 @@ export function formatResults(result: {
   url?: string;
   verify?: string;
   rerun?: string | null;
+  lastNightlySha?: string | null;
+  quarantineCandidates?: { name: string; count: number; last: string }[];
+  warnings?: string[];
   results: {
     name: string;
     status: string;
@@ -48,5 +58,6 @@ export function formatResults(result: {
     shard: number | null;
     artifact?: string;
     reason?: string;
+    alsoFailingOnNightly?: boolean;
   }[];
 }): string;

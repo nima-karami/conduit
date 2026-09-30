@@ -23,6 +23,7 @@ import {
   launchElectron,
   makeLog,
   openSession,
+  profileDir,
   REPO,
   tapBridge,
 } from './harness.mjs';
@@ -45,7 +46,7 @@ try {
 const repoArg = repo.replace(/\\/g, '/');
 
 // SHARED user-data dir across both launches so docs.json + sessions.json persist.
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-tabs-ud-'));
+const userDataDir = profileDir('tabs');
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 

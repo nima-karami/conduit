@@ -29,6 +29,7 @@ import {
   makeLog,
   openReview,
   openSession,
+  profileDir,
   tapBridge,
 } from './harness.mjs';
 
@@ -484,7 +485,7 @@ async function retryRecoversAndKeepsFocus(page) {
 
 // ── Run ────────────────────────────────────────────────────────────────────────────────────
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-ud-scoped-'));
+const userDataDir = profileDir('scoped');
 let launched = null;
 let code = 0;
 try {
