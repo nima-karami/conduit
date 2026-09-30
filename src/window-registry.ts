@@ -151,7 +151,7 @@ const LAYOUT_VERSION = 1;
 const DEFAULT_BOUNDS: Rect = { x: 0, y: 0, width: 1440, height: 900 };
 
 /** Serialize the window layout to a versioned JSON envelope (mirrors src/persistence.ts). */
-export function serializeLayout(windows: WindowLayout[]): string {
+export function serializeWindowLayout(windows: WindowLayout[]): string {
   return JSON.stringify({ version: LAYOUT_VERSION, windows });
 }
 
@@ -170,7 +170,7 @@ function isRect(v: unknown): v is Rect {
  * Parse a persisted layout blob, tolerant of malformed/absent input (→ `[]`). Drops any
  * window whose bounds aren't a valid Rect and coerces sessionIds to a string array.
  */
-export function parseLayout(raw: string | undefined): WindowLayout[] {
+export function parseWindowLayout(raw: string | undefined): WindowLayout[] {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);

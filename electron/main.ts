@@ -219,10 +219,10 @@ import {
   buildWinList,
   clampBoundsToDisplays,
   type OwnerMap,
-  parseLayout,
+  parseWindowLayout,
   planLayoutRestore,
   removeOwner,
-  serializeLayout,
+  serializeWindowLayout,
   sessionsForWindow as sessionsOwnedBy,
   tearOutBounds,
   type WindowLayout,
@@ -1955,7 +1955,7 @@ app.whenReady().then(() => {
     const snapshot = buildLayoutSnapshot();
     if (snapshot.length === 0) return;
     log.debug('window', 'layout-persist', { windows: snapshot.length });
-    persistFile(windowsLayoutFile(), serializeLayout(snapshot), 'windows.json');
+    persistFile(windowsLayoutFile(), serializeWindowLayout(snapshot), 'windows.json');
   };
 
   // Durable, SYNCHRONOUS flush of the critical state on quit. The async persistFile writes are
@@ -2002,7 +2002,7 @@ app.whenReady().then(() => {
     if (settings.restoreSessions) {
       const snapshot = buildLayoutSnapshot();
       if (snapshot.length > 0)
-        write(windowsLayoutFile(), serializeLayout(snapshot), 'windows.json');
+        write(windowsLayoutFile(), serializeWindowLayout(snapshot), 'windows.json');
     }
   };
 
@@ -4596,7 +4596,9 @@ app.whenReady().then(() => {
   // planLayoutRestore returns a single primary window owning all (or zero) restored sessions
   // — exactly the pre-Slice-C behavior. The first planned window is the primary (sets
   // primaryWindowId, the cold-launch OS-open + second-instance fallback target).
-  const savedLayout = settings.restoreSessions ? parseLayout(readBlob(windowsLayoutFile())) : [];
+  const savedLayout = settings.restoreSessions
+    ? parseWindowLayout(readBlob(windowsLayoutFile()))
+    : [];
   const restorePlan = planLayoutRestore(
     savedLayout,
     mgr.list().map((s) => s.id),
