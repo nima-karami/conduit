@@ -8336,11 +8336,6 @@ button.toggle--on .toggle__knob {
   font-size: calc(13px * var(--font-scale));
   outline: none;
 }
-@media (forced-colors: active) {
-  .confirm .btn:focus-visible {
-    outline: 2px solid Highlight;
-  }
-}
 /* DELETE on the parts sheet is a tinted outline, not a solid red slab: in a palette this
    hot the destructive action reads louder as an outline than as a fill, and it keeps the
    filled treatment reserved for the one safe primary in the dialog. */
