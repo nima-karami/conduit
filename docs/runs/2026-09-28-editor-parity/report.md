@@ -76,3 +76,46 @@ Specs archived to `docs/specs/archive/2026-09-28-*.md`. Plans in `docs/plans/202
 ## Learnings
 
 `learnings.md` in this folder (tagged per destination).
+
+---
+
+# Continuation — 2026-09-29 → 2026-09-30
+
+Resumed after v0.44.0; v0.45.0 released mid-run (split editor, Electron 43.7.6, tab-switch focus).
+Then, on user request, e2e moved off the local machine; the parked items and four discovery
+items were gated with it. Unattended from "I won't be here".
+
+## On origin/main (each gated by a full remote run incl. verify + the excluded scenarios run locally, one at a time)
+
+| Item | Pushed | Notes |
+|---|---|---|
+| Remote e2e MVP (`npm run e2e:remote`; local = one exact-name scenario, BelowNormal, pipe lock) | `c3dfa39` | full suite ~14 min remote vs ~107 min local; 8 focus/display scenarios excluded remotely, run locally |
+| Focus lands in the tab after leaving the Terminal | `c3dfa39` | root cause: a passive effect flushed at the next chord's render |
+| Unsaved-files quit/close guard (Save / Don't Save / Cancel) | `58c4ff3` | the merge broke Back/Forward (`!!confirm` bound to `window.confirm`); caught by the remote full run, fixed + biome `noRestrictedGlobals` guard; focus ring on primary buttons fixed app-wide (`--rest-shadow`) |
+| Milkdown timer unit-test flake | `87c4181` | uncleared upstream `setTimeout`; test outlives it |
+| Folders opened via an 8.3 short path | `05f7174` | were refused for save/rename/preview and diffed as new; roots now canonicalised at registration only |
+| **Security:** preview reads only its own folder | `902f054` | a junction or encoded `..%2F` segment let a page under root A read root B same-origin; per-root verdict, parser rejects separators, deepest root wins |
+
+## Not pushed
+
+- **Remote e2e v1** (nightly state, `--affected` by per-function coverage, quarantine, 6 slow
+  scenarios split into 19, release gated on the full suite, `verify:quick`, 3 harness fixes) is
+  merged into local `main` at `96ff52d`. Review APPROVE after 3 rounds. Its merged-tree gate was
+  **stopped by the system (low memory)** before the remote run dispatched. To finish:
+  `npm run e2e:remote -- --full`, the excluded scenarios locally, then push.
+
+## Needs a human
+
+- Quit guard's native "Wait / Close anyway" box (unresponsive renderer).
+- Auto save **On window change** (hidden windows get no blur).
+- Review `~/.claude/skills/autonomous-build-loop` edits: originals + diff in `.autoloop/evidence/slice-x/`.
+
+## Decisions queued
+
+- `--affected` selectivity is modest under the per-line rule; revisit with real main-nightly stats.
+- Residual under-selection: functions run at startup are credited only to scenarios calling them
+  later (mitigated by the always-run core smoke set + nightly/release full runs).
+- Quarantine candidates to watch: timed-messages, review-multi-repo, multi-repo.
+- Upstream Milkdown: `Timer` should clear its timeout (issue not filed).
+- Earlier queue still open: Terminal click focusing xterm, Ctrl+Tab from web guests, the 2 MB
+  cap, undo across rename, Monaco 0.57 for dompurify.
