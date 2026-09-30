@@ -685,9 +685,16 @@ export type HostToWebview =
       percent?: number;
       message?: string;
     }
-  // Main asks the renderer to confirm a quit/close/update-relaunch when running
-  // sessions are active (W2). `running` / `busy` are counts for display copy.
-  | { type: 'confirmQuit'; reason: 'quit' | 'update'; running: number; busy: number }
+  // The close guard's ask to one window (dirty-quit-guard spec §2). A re-sent ask with the same
+  // requestId re-probes a dialog already shown; it is not a new attempt.
+  | {
+      type: 'confirmQuit';
+      requestId: number;
+      reason: 'quit' | 'windowClose' | 'update';
+      running: number;
+      busy: number;
+    }
+  | { type: 'quitAborted'; requestId: number }
   // D11: reply to `pathExists` — tells the renderer whether a terminal-printed path token
   // points at a real entry, and whether it is a directory (affects the click action).
   | { type: 'pathExistsResult'; path: string; exists: boolean; isDir: boolean }
@@ -1017,11 +1024,10 @@ export type WebviewToHost =
   | { type: 'term:dispose'; sessionId: string }
   | { type: 'updateCheck' }
   | { type: 'updateRelaunch' }
-  // Renderer's reply to `confirmQuit` (W2): proceed = user confirmed the destructive action.
-  | { type: 'quitDecision'; proceed: boolean }
-  // Renderer ACK that the quit confirm dialog is now on screen (W2). Disarms the host's
-  // wedged-renderer timeout so a dialog the user is reading never auto-dismisses.
-  | { type: 'quitDialogShown' }
+  // Replies to `confirmQuit`, each disarming one guard timeout (dirty-quit-guard spec §2).
+  | { type: 'quitAck'; requestId: number }
+  | { type: 'quitDialogShown'; requestId: number }
+  | { type: 'quitDecision'; requestId: number; proceed: boolean }
   // D11: cheap existence check for terminal path-link validation. The host replies with
   // `pathExistsResult`. This is a read-only check (no write surface); the host uses
   // fs.existsSync without workspace-containment validation because the renderer can
