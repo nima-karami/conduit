@@ -165,6 +165,7 @@ import { shouldReplaceContent } from './file-freshness';
 import { fileSaves, moveFileBuffer, setDocCloser } from './file-saves';
 import { buildRowChangeMap } from './file-tree';
 import {
+  asKeyboardLanding,
   dropDocFocusUnless,
   requestDocFocus,
   terminalFocusKey,
@@ -1320,8 +1321,13 @@ export function App() {
   // it binds, so the editor wins its own keys and app shortcuts fire for the rest.
   useEffect(() => {
     // navGoToTab is one action but needs the pressed digit; read it at dispatch. A digit past
-    // the open-doc count is a no-op that lets the key through.
-    const runnerFor = (id: string, e: KeyboardEvent): (() => void) | undefined => {
+    // the open-doc count lets the key through, except in xterm: the digits are reserved there
+    // (decide-shortcut.ts), so a key the shell would read as ESC is swallowed.
+    const runnerFor = (
+      id: string,
+      e: KeyboardEvent,
+      inTerminal: boolean,
+    ): (() => void) | undefined => {
       if (id !== 'navGoToTab') return actionMap[id];
       const sessionId = activeIdRef.current ?? '';
       const doc = groupDocs(
@@ -1329,7 +1335,8 @@ export function App() {
         sessionId,
         activeGroupOf(docStateRef.current, sessionId),
       )[Number(e.key) - 1];
-      return doc ? () => activateDocByUser(doc.id, sessionId) : undefined;
+      if (doc) return () => activateDocByUser(doc.id, sessionId);
+      return inTerminal ? () => {} : undefined;
     };
     const dispatch = (
       e: KeyboardEvent,
@@ -1340,11 +1347,11 @@ export function App() {
         if (!matchCombo(e, combo)) continue;
         const ctx = { ...where, defaultPrevented: e.defaultPrevented, combo };
         if (!decideShortcut(ctx, action.id)) continue;
-        const run = runnerFor(action.id, e);
+        const run = runnerFor(action.id, e, where.inTerminal);
         if (!run) continue;
         e.preventDefault();
         e.stopPropagation();
-        run();
+        asKeyboardLanding(run);
         return;
       }
     };
@@ -1437,9 +1444,10 @@ export function App() {
   const layout = useMemo(() => centerLayout(docState, activeId), [docState, activeId]);
   // Spec §10: a collapse that stranded focus in the closed group hands it to group 1; focus the
   // user put anywhere else stays. Keyed by session, so switching to a session with one group is
-  // not a collapse.
+  // not a collapse. A layout effect for the same reason as the one below: flushed late, it would
+  // read a chord's not-yet-mounted landing as stranded focus and overwrite its request.
   const groupCountRef = useRef({ sessionId: activeId, count: layout.groups.length });
-  useEffect(() => {
+  useLayoutEffect(() => {
     const prev = groupCountRef.current;
     groupCountRef.current = { sessionId: activeId, count: layout.groups.length };
     if (prev.sessionId !== activeId || prev.count !== 2 || layout.groups.length !== 1) return;
@@ -1448,7 +1456,9 @@ export function App() {
     if (!activeId || !stranded) return;
     focusView(activeId, 1, layout.groups[0].activeDocId);
   }, [activeId, layout]);
-  useEffect(() => {
+  // A layout effect: a passive one can be flushed at the start of the NEXT event's render, and
+  // would then judge the focus request that event just made against this older render.
+  useLayoutEffect(() => {
     const shown = shownFocusKeys(
       docState,
       sessions.map((s) => s.id),

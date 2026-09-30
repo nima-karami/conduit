@@ -3,7 +3,8 @@
  * (docs/specs/2026-09-28-split-editor.md §10):
  *   TK  the tab-navigation chords leave the Terminal (VS Code's commandsToSkipShell): Ctrl+Tab
  *       cycles on out of xterm, and Ctrl+2 and Ctrl+PageDown leave it, sending nothing to the
- *       shell; Ctrl+9 with fewer than 9 docs and Ctrl+W still reach xterm and change no tab
+ *       shell; Ctrl+9 with fewer than 9 docs is still the app's (a no-op that never reaches xterm)
+ *       and Ctrl+W still reaches xterm; neither changes a tab
  *   LM  a view that mounts late (its diff reply held back by the host) does not take focus back
  *       from xterm, where the user clicked and typed after asking for it
  *   CG  closing the right group from its strip menu by keyboard leaves focus in the explorer
@@ -172,8 +173,8 @@ runScenario('split-editor-focus-keep', async ({ app, page, log }) => {
   if ((await bufferText()) !== beforePage)
     misses.push('TK: the prompt changed after Ctrl+PageDown');
 
-  // TK: Ctrl+9 past the open-doc count is not the app's, so xterm gets the key. xterm.js maps
-  // Ctrl+9 to no bytes, so arrival at its textarea is the observable, not PTY input.
+  // TK: Ctrl+9 past the open-doc count is consumed, not handed to xterm (Ctrl+3 would reach the
+  // shell as ESC). xterm.js maps Ctrl+9 to no bytes, so its textarea's keydown is the observable.
   await cycleToTerminal();
   await page.locator(`${G(1)} .xterm:visible`).click();
   await ptyIn();
@@ -193,7 +194,7 @@ runScenario('split-editor-focus-keep', async ({ app, page, log }) => {
   log(
     `TK Ctrl+9 with 2 docs: xterm saw ${JSON.stringify(reached)} · sent ${JSON.stringify(sentOnNine)} · still on the Terminal in xterm ${stayed9}`,
   );
-  if (!reached.includes('C-9')) misses.push('TK: Ctrl+9 with 2 docs never reached xterm');
+  if (reached.includes('C-9')) misses.push('TK: Ctrl+9 with 2 docs reached xterm');
   if (!stayed9) misses.push('TK: Ctrl+9 with 2 docs left the Terminal');
 
   // TK: Ctrl+W in xterm is the shell's.

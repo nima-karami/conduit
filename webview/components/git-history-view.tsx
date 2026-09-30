@@ -161,16 +161,16 @@ export function GitHistoryView({
   // windowed and render only after the list is measured, so a landing that finds none holds the
   // root and hands off to the selected row once it renders.
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const handoffRef = useRef(false);
+  const handoffRef = useRef<{ options: FocusOptions | undefined } | null>(null);
   const rootFocusRef = useCallback(
     (el: HTMLDivElement | null) => {
       rootRef.current = el;
       if (!el || viewStateId === undefined) return undefined;
       return registerFocusTarget(viewStateId, {
-        focus: () => {
+        focus: (options) => {
           const row = selectedRowIn(el);
-          (row ?? el).focus();
-          handoffRef.current = !row && document.activeElement === el;
+          (row ?? el).focus(options);
+          handoffRef.current = !row && document.activeElement === el ? { options } : null;
         },
       });
     },
@@ -178,14 +178,15 @@ export function GitHistoryView({
   );
   useLayoutEffect(() => {
     const root = rootRef.current;
-    if (!handoffRef.current || !root) return;
+    const handoff = handoffRef.current;
+    if (!handoff || !root) return;
     const row = selectedRowIn(root);
     if (!row) return;
-    handoffRef.current = false;
-    row.focus();
+    handoffRef.current = null;
+    row.focus(handoff.options);
   });
   const endHandoff = () => {
-    handoffRef.current = false;
+    handoffRef.current = null;
   };
   const searchRef = useRef<HTMLInputElement>(null);
   const splitRef = useRef<HTMLDivElement>(null);
