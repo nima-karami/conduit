@@ -157,6 +157,24 @@ describe('verdict', () => {
     expect(out).toContain('artifacts: https://art');
     expect(out).toContain('re-run the INFRA scenarios: npm run e2e:remote -- c (at abcdef1)');
   });
+
+  it('prints quarantined failures, failures the last nightly shared, and quarantine candidates', () => {
+    const out = formatResults({
+      status: 'failed',
+      sha: 'abcdef123',
+      lastNightlySha: 'feedbeef99',
+      quarantineCandidates: [{ name: 'multi-repo', count: 4, last: '2026-09-30T08:00:00Z' }],
+      results: [
+        { name: 'q', status: 'QUARANTINED-FAIL', seconds: 5, shard: 2 },
+        { name: 'b', status: 'FAIL', seconds: 4, shard: 1, alsoFailingOnNightly: true },
+      ],
+    });
+    expect(out).toContain('  q ... q QUARANTINED-FAIL (5s) [s2]');
+    expect(out).toContain('  b ... ✗ FAIL (4s) [s1] (also failing on the last nightly, feedbee)');
+    expect(out).toContain(
+      'quarantine candidate: multi-repo (FLAKY 4 in 14 days); quarantine via test/e2e/quarantine.json',
+    );
+  });
 });
 
 describe('checkExclusions', () => {

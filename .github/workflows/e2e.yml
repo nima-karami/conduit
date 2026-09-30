@@ -206,7 +206,7 @@ jobs:
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'e2e-out'
           New-Item -ItemType Directory -Force "$out/results", "$out/artifacts" | Out-Null
-          node test/e2e/run-smoke.mjs @($env:E2E_NAMES -split " ") --json "$out/results/shard-$env:SHARD.json" --artifacts "$out/artifacts" --retry
+          node test/e2e/run-smoke.mjs @($env:E2E_NAMES -split " ") --json "$out/results/shard-$env:SHARD.json" --artifacts "$out/artifacts" --retry --quarantine test/e2e/quarantine.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -237,9 +237,15 @@ jobs:
           pattern: e2e-results-*
           path: results
           merge-multiple: true
+      - if: needs.prepare.outputs.state-id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: e2e-state-prev
+          path: state
       - name: Merge results
         env:
           GH_TOKEN: ${{ github.token }}
+          NIGHTLY: ${{ github.event_name == 'schedule' || inputs.mode == 'nightly' }}
           PLAN: ${{ needs.prepare.outputs.plan }}
           EXCLUDED: ${{ needs.prepare.outputs.excluded }}
           PREPARE_RESULT: ${{ needs.prepare.result }}
@@ -253,7 +259,9 @@ jobs:
           node --input-type=module -e '
             import { existsSync, readdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
             import { mergeResults, summaryMarkdown } from "./test/e2e/ci-merge-results.mjs";
+            import { quarantineCandidates, updateFlakyHistory } from "./test/e2e/ci-state.mjs";
             const read = (f) => JSON.parse(readFileSync(f, "utf8"));
+            const readState = (f) => (existsSync(`state/${f}`) ? read(`state/${f}`) : null);
             const run = read("run.json");
             const artifactUrls = {};
             for (const a of read("artifacts.json").artifacts ?? []) {
@@ -264,7 +272,15 @@ jobs:
               shard: Number(/shard-(\d+)/.exec(f)[1]), results: read(`results/${f}`),
             })) : [];
             const plan = process.env.PLAN ? JSON.parse(process.env.PLAN) : { shards: [] };
+            const now = Date.now();
+            // A nightly counts its own flakes, as the state job will record them.
+            let history = readState("flaky-history.json") ?? {};
+            if (process.env.NIGHTLY === "true") {
+              history = updateFlakyHistory(history, shardFiles.flatMap((f) => f.results), { now });
+            }
             const result = mergeResults(plan, shardFiles, {
+              lastNightly: readState("last-nightly.json"),
+              quarantineCandidates: quarantineCandidates(history, { now }),
               sha: process.env.GITHUB_SHA, nonce: process.env.NONCE, selection: process.env.SELECTION,
               runId: run.id, url: run.html_url, queuedAt: run.created_at, startedAt: run.run_started_at,
               finishedAt: new Date().toISOString(), verify: process.env.VERIFY_RESULT,

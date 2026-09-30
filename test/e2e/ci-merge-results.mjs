@@ -4,9 +4,10 @@
  */
 
 const NO_ARTIFACT = new Set(['PASS', 'SKIP', 'EXCLUDED', 'INFRA']);
+const FAILED = new Set(['FAIL', 'TIMEOUT']);
 
 /**
- * First match wins (spec §3). EXCLUDED rows are neutral, but a selection where nothing ran at all
+ * First match wins (spec §3). EXCLUDED and QUARANTINED-FAIL rows are neutral, but a selection where nothing ran at all
  * is as vacuous as an all-SKIP one. A requested `verify` job that did not succeed (a failure, or a
  * timeout's `cancelled`) fails the run; `skipped` means it was not requested. A failed `prepare`
  * planned nothing, so it is infra unless verify already failed the run.
@@ -38,7 +39,9 @@ export function infraRerunLine(results, sha) {
  * @param {{ shard: number, results: { name: string, status: string, seconds: number, attempts?: number }[] }[]} shardFiles
  * @param {{ sha: string, nonce: string, selection: string, runId?: number, url?: string,
  *   queuedAt?: string, startedAt?: string, finishedAt?: string, verify?: string, prepare?: string,
- *   artifactUrls?: Record<number, string>, excluded?: Record<string, string> }} meta
+ *   artifactUrls?: Record<number, string>, excluded?: Record<string, string>,
+ *   lastNightly?: { sha: string, failing: string[] } | null,
+ *   quarantineCandidates?: { name: string, count: number, last: string }[] }} meta
  */
 export function mergeResults(plan, shardFiles, meta) {
   const got = new Map();
@@ -53,6 +56,9 @@ export function mergeResults(plan, shardFiles, meta) {
         : { name, status: 'INFRA', seconds: 0, attempts: 0, shard };
       const artifact = meta.artifactUrls?.[shard];
       if (artifact && !NO_ARTIFACT.has(row.status)) row.artifact = artifact;
+      if (FAILED.has(row.status) && meta.lastNightly?.failing.includes(name)) {
+        row.alsoFailingOnNightly = true;
+      }
       results.push(row);
     }
   }
@@ -60,9 +66,11 @@ export function mergeResults(plan, shardFiles, meta) {
     results.push({ name, status: 'EXCLUDED', seconds: 0, attempts: 0, shard: null, reason });
   }
   results.sort((a, b) => a.name.localeCompare(b.name));
-  const { artifactUrls: _a, excluded: _e, ...rest } = meta;
+  const { artifactUrls: _a, excluded: _e, lastNightly, quarantineCandidates = [], ...rest } = meta;
   return {
     ...rest,
+    lastNightlySha: lastNightly?.sha ?? null,
+    quarantineCandidates,
     shards: plan.shards.length,
     status: runStatus(results, { verify: meta.verify, prepare: meta.prepare }),
     rerun: infraRerunLine(results, meta.sha),
@@ -70,7 +78,7 @@ export function mergeResults(plan, shardFiles, meta) {
   };
 }
 
-const ORDER = ['FAIL', 'TIMEOUT', 'INFRA', 'FLAKY', 'EXCLUDED', 'SKIP', 'PASS'];
+const ORDER = ['FAIL', 'TIMEOUT', 'INFRA', 'QUARANTINED-FAIL', 'FLAKY', 'EXCLUDED', 'SKIP', 'PASS'];
 
 export function countByStatus(results) {
   const c = {};
@@ -84,6 +92,14 @@ export function summaryMarkdown(result) {
   let md = `## e2e ${result.status}: ${parts.join(', ') || 'no scenarios'}\n\n`;
   if (result.verify) md += `verify job: **${result.verify}**\n\n`;
   if (result.rerun) md += `Re-run the INFRA scenarios: \`${result.rerun}\`\n\n`;
+  if (result.quarantineCandidates?.length) {
+    md += 'Quarantine candidates (FLAKY 3+ times in 14 days of nightlies; a reviewed edit to ';
+    md += '`test/e2e/quarantine.json` quarantines one):\n\n';
+    for (const c of result.quarantineCandidates) {
+      md += `- ${c.name}: FLAKY ${c.count}, last ${c.last}\n`;
+    }
+    md += '\n';
+  }
   const rows = [...result.results].sort(
     (a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status) || a.name.localeCompare(b.name),
   );
@@ -93,6 +109,9 @@ export function summaryMarkdown(result) {
     let extra = r.reason ?? '';
     if (r.artifact) extra = `[e2e-fail-${r.shard}](${r.artifact})`;
     else if (r.status === 'EXCLUDED') extra += `; run locally: \`${localCommand(r.name)}\``;
+    if (r.alsoFailingOnNightly) {
+      extra += ` also failing on the last nightly (${result.lastNightlySha?.slice(0, 7)})`;
+    }
     md += `| ${r.name} | ${r.status} | ${r.seconds} | ${r.attempts} | ${r.shard ?? ''} | ${extra} |\n`;
   }
   return md;

@@ -10,15 +10,17 @@
  *
  * Usage:
  *   node test/e2e/run-smoke.mjs <name…> [--names-file f.json] [--json out.json]
- *                                       [--artifacts dir] [--retry]
+ *                                       [--artifacts dir] [--retry] [--quarantine q.json]
  *
  *   --names-file  JSON array of names, added to the positional ones
  *   --json        result rows `[{ name, status, seconds, attempts }]`, rewritten after each scenario
  *   --artifacts   failure artifacts root: each non-PASS attempt's log (and, from the harness, its
  *                 trace and screenshots) lands in <dir>/<name>/attempt-<n>/
  *   --retry       a failed or timed-out scenario runs once more; a pass then is FLAKY
+ *   --quarantine  test/e2e/quarantine.json: a listed scenario that still fails is
+ *                 QUARANTINED-FAIL, reported but not failing the run
  *
- * Exit codes: 0 all PASS/SKIP/FLAKY; 1 a scenario failed; 2 usage error or local refusal.
+ * Exit codes: 0 all PASS/SKIP/FLAKY/QUARANTINED-FAIL; 1 a scenario failed; 2 usage error or local refusal.
  * On non-win32 platforms prints a suite-level SKIP and exits 0.
  */
 
@@ -28,6 +30,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  applyQuarantine,
   classify,
   finalStatus,
   isGreen,
@@ -98,6 +101,7 @@ if ('exit' in selection) {
 if (selection.banner) console.log(`${selection.banner}\n`);
 const names = selection.names;
 const artifactsRoot = args.artifacts ? resolve(args.artifacts) : null;
+const quarantine = args.quarantine ? JSON.parse(readFileSync(args.quarantine, 'utf8')) : null;
 
 console.log(`[smoke] Running ${names.length} scenario(s) sequentially...\n`);
 
@@ -172,7 +176,7 @@ function afterFailure({ name, attempt, exit, r, output }) {
 }
 
 const settle = () => new Promise((r) => setTimeout(r, SETTLE_MS));
-const ICON = { PASS: '✓', SKIP: '○', FLAKY: '~' };
+const ICON = { PASS: '✓', SKIP: '○', FLAKY: '~', 'QUARANTINED-FAIL': 'q' };
 const results = [];
 
 for (const name of names) {
@@ -186,7 +190,11 @@ for (const name of names) {
     process.stdout.write(`  ${name} (attempt 2) ... `);
     last = await runAttempt(name, 2);
   }
-  const status = finalStatus(first.status, last === first ? undefined : last.status);
+  const status = applyQuarantine(
+    name,
+    finalStatus(first.status, last === first ? undefined : last.status),
+    quarantine,
+  );
   const exitNote = status === 'FAIL' ? `, exit ${last.exit}` : '';
   console.log(`${ICON[status] ?? '✗'} ${status} (${last.seconds}s${exitNote})`);
   if (last.status !== 'PASS' && last.status !== 'SKIP') afterFailure(last);
@@ -200,7 +208,8 @@ const count = (s) => results.filter((r) => r.status === s).length;
 const failed = results.filter((r) => !isGreen(r.status));
 console.log('\n── Summary ──────────────────────────────────────');
 console.log(
-  `  ${count('PASS')} passed  ${count('FLAKY')} flaky  ${count('SKIP')} skipped  ${failed.length} failed`,
+  `  ${count('PASS')} passed  ${count('FLAKY')} flaky  ${count('SKIP')} skipped  ` +
+    `${count('QUARANTINED-FAIL')} quarantined-failed  ${failed.length} failed`,
 );
 console.log('─────────────────────────────────────────────────\n');
 if (failed.length && !ci) {

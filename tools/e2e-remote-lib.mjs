@@ -131,7 +131,7 @@ export function checkExclusions(names, exclusions) {
   return { notice: `excluded from the runner (reported EXCLUDED, not run):\n${list}` };
 }
 
-const ICON = { PASS: '✓', FLAKY: '~', SKIP: '○', EXCLUDED: '-' };
+const ICON = { PASS: '✓', FLAKY: '~', SKIP: '○', EXCLUDED: '-', 'QUARANTINED-FAIL': 'q' };
 
 export function formatResults(result) {
   const lines = [];
@@ -139,6 +139,9 @@ export function formatResults(result) {
     const where = r.shard ? ` [s${r.shard}]` : '';
     let why = r.reason ? ` — ${r.reason}` : '';
     if (r.status === 'EXCLUDED') why += `; run locally: ${localCommand(r.name)}`;
+    if (r.alsoFailingOnNightly) {
+      why += ` (also failing on the last nightly, ${result.lastNightlySha?.slice(0, 7)})`;
+    }
     lines.push(
       `  ${r.name} ... ${ICON[r.status] ?? '✗'} ${r.status} (${r.seconds}s)${where}${why}`,
     );
@@ -155,6 +158,11 @@ export function formatResults(result) {
   const links = [...new Set(result.results.map((r) => r.artifact).filter(Boolean))];
   for (const l of links) lines.push(`  artifacts: ${l}`);
   if (result.rerun) lines.push(`  re-run the INFRA scenarios: ${result.rerun}`);
+  for (const c of result.quarantineCandidates ?? []) {
+    lines.push(
+      `  quarantine candidate: ${c.name} (FLAKY ${c.count} in 14 days); quarantine via test/e2e/quarantine.json`,
+    );
+  }
   if (result.url) lines.push(`  run: ${result.url}`);
   return lines.join('\n');
 }

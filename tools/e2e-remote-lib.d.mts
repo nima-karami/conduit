@@ -41,6 +41,8 @@ export function formatResults(result: {
   url?: string;
   verify?: string;
   rerun?: string | null;
+  lastNightlySha?: string | null;
+  quarantineCandidates?: { name: string; count: number; last: string }[];
   results: {
     name: string;
     status: string;
@@ -48,5 +50,6 @@ export function formatResults(result: {
     shard: number | null;
     artifact?: string;
     reason?: string;
+    alsoFailingOnNightly?: boolean;
   }[];
 }): string;

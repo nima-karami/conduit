@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyExclusions,
+  applyQuarantine,
   classify,
   finalStatus,
+  isGreen,
   parseRunnerArgs,
   resolveSelection,
 } from '../e2e/smoke-select.mjs';
@@ -74,6 +76,10 @@ describe('parseRunnerArgs / applyExclusions', () => {
       json: 'o.json',
       artifacts: 'a',
       retry: true,
+      quarantine: null,
+    });
+    expect(parseRunnerArgs(['cwd', '--quarantine', 'q.json'])).toMatchObject({
+      quarantine: 'q.json',
     });
     expect(parseRunnerArgs(['--json'])).toHaveProperty('error');
     expect(parseRunnerArgs(['--exact', 'cwd'])).toHaveProperty('error');
@@ -84,5 +90,22 @@ describe('parseRunnerArgs / applyExclusions', () => {
       run: ['a'],
       excluded: { b: 'focus' },
     });
+  });
+});
+
+describe('applyQuarantine', () => {
+  const q = { scenarios: { flaky: { reason: 'races the watcher', since: '2026-09-30' } } };
+
+  it('turns a quarantined FAIL or TIMEOUT into QUARANTINED-FAIL, which does not fail the run', () => {
+    expect(applyQuarantine('flaky', 'FAIL', q)).toBe('QUARANTINED-FAIL');
+    expect(applyQuarantine('flaky', 'TIMEOUT', q)).toBe('QUARANTINED-FAIL');
+    expect(isGreen('QUARANTINED-FAIL')).toBe(true);
+  });
+
+  it('leaves passes, flakes and scenarios that are not quarantined alone', () => {
+    expect(applyQuarantine('flaky', 'PASS', q)).toBe('PASS');
+    expect(applyQuarantine('flaky', 'FLAKY', q)).toBe('FLAKY');
+    expect(applyQuarantine('other', 'FAIL', q)).toBe('FAIL');
+    expect(applyQuarantine('flaky', 'FAIL', null)).toBe('FAIL');
   });
 });

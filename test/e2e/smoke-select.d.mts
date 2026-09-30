@@ -1,5 +1,5 @@
 export const EXIT_WATCHDOG: 124;
-export type ScenarioStatus = 'PASS' | 'SKIP' | 'TIMEOUT' | 'FAIL' | 'FLAKY';
+export type ScenarioStatus = 'PASS' | 'SKIP' | 'TIMEOUT' | 'FAIL' | 'FLAKY' | 'QUARANTINED-FAIL';
 
 export function parseRunnerArgs(argv: string[]):
   | {
@@ -8,6 +8,7 @@ export function parseRunnerArgs(argv: string[]):
       json: string | null;
       artifacts: string | null;
       retry: boolean;
+      quarantine: string | null;
     }
   | { error: string };
 export function resolveSelection(o: {
@@ -26,4 +27,9 @@ export function classify(r: {
   output?: string;
 }): 'PASS' | 'SKIP' | 'TIMEOUT' | 'FAIL';
 export function finalStatus(first: ScenarioStatus, retry?: ScenarioStatus): ScenarioStatus;
+export function applyQuarantine(
+  name: string,
+  status: ScenarioStatus,
+  quarantine: { scenarios?: Record<string, { reason: string; since: string }> } | null,
+): ScenarioStatus;
 export function isGreen(status: string): boolean;

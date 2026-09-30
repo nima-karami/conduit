@@ -6,6 +6,12 @@ export interface ResultRow {
   shard: number | null;
   artifact?: string;
   reason?: string;
+  alsoFailingOnNightly?: boolean;
+}
+export interface QuarantineCandidate {
+  name: string;
+  count: number;
+  last: string;
 }
 export interface ResultJson {
   sha: string;
@@ -21,6 +27,8 @@ export interface ResultJson {
   shards: number;
   status: string;
   rerun: string | null;
+  lastNightlySha: string | null;
+  quarantineCandidates: QuarantineCandidate[];
   results: ResultRow[];
 }
 export function runStatus(
@@ -50,6 +58,8 @@ export function mergeResults(
     prepare?: string;
     artifactUrls?: Record<number, string>;
     excluded?: Record<string, string>;
+    lastNightly?: { sha: string; runId?: number; at?: string; failing: string[] } | null;
+    quarantineCandidates?: QuarantineCandidate[];
   },
 ): ResultJson;
 export function countByStatus(results: { status: string }[]): Record<string, number>;

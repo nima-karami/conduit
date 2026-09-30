@@ -6,15 +6,29 @@
 /** Exit code of the harness watchdog (`finishScenario(EXIT_WATCHDOG)`); artifacts were captured. */
 export const EXIT_WATCHDOG = 124;
 
+const VALUE_FLAGS = {
+  '--names-file': 'namesFile',
+  '--json': 'json',
+  '--artifacts': 'artifacts',
+  '--quarantine': 'quarantine',
+};
+
 export function parseRunnerArgs(argv) {
-  const out = { names: [], namesFile: null, json: null, artifacts: null, retry: false };
+  const out = {
+    names: [],
+    namesFile: null,
+    json: null,
+    artifacts: null,
+    retry: false,
+    quarantine: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--retry') out.retry = true;
-    else if (a === '--names-file' || a === '--json' || a === '--artifacts') {
+    else if (Object.hasOwn(VALUE_FLAGS, a)) {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) return { error: `${a} needs a value` };
-      out[{ '--names-file': 'namesFile', '--json': 'json', '--artifacts': 'artifacts' }[a]] = v;
+      out[VALUE_FLAGS[a]] = v;
     } else if (a.startsWith('--')) return { error: `unknown flag ${a}` };
     else out.names.push(a);
   }
@@ -79,6 +93,17 @@ export function finalStatus(first, retry) {
   return retry === 'PASS' || retry === 'SKIP' ? 'FLAKY' : retry;
 }
 
+/**
+ * A quarantined scenario (test/e2e/quarantine.json, `{ scenarios: { name: { reason, since } } }`)
+ * still runs and reports, but its failure no longer fails the run (spec §B4).
+ */
+export function applyQuarantine(name, status, quarantine) {
+  if (isGreen(status) || !Object.hasOwn(quarantine?.scenarios ?? {}, name)) return status;
+  return 'QUARANTINED-FAIL';
+}
+
 export function isGreen(status) {
-  return status === 'PASS' || status === 'SKIP' || status === 'FLAKY';
+  return (
+    status === 'PASS' || status === 'SKIP' || status === 'FLAKY' || status === 'QUARANTINED-FAIL'
+  );
 }
