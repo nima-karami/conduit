@@ -133,6 +133,11 @@ discoverable by reading the tree.
   parent can't be deleted or the dir recreated. `watchDir` closes on that self-event; what "gone"
   means is the consumer's call (`watchDirWhilePresent` re-arms once it is back). File watches don't
   loop. Pinned in `test/unit/watch-dir.test.ts`.
+- **A removed variable named after a DOM global still type-checks.** When the modal slot replaced
+  `app.tsx`'s `confirm` state, a leftover `!!confirm` bound to `window.confirm` (always truthy), so
+  "a modal is open" stuck true and Back/Forward went dead from every key and mouse button. Biome's
+  `noRestrictedGlobals` now bans bare `confirm`/`alert`/`prompt`; `name`, `status`, `open`, `event`
+  are still unguarded — grep for leftovers when you rename state with those names.
 - **Rows of a virtualized list must be direct keyed children.** Returning `[row, extra?]`
   per row from `.map` keys each row by its window index too, so every scroll of the window
   remounts every visible row and a click pressed across it lands on nothing (the Explorer
