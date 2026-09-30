@@ -4,10 +4,22 @@ These drive the **real built Electron app** via Playwright's Electron driver. Th
 are **deliberately excluded from `npm run verify`** — vitest only globs
 `test/unit/**`, and these need a real GUI.
 
-- **The suite runs remotely:** `npm run e2e:remote -- --full` or `-- <name…>` shards it across
-  GitHub-hosted `windows-latest` runners, retries a failure once (a pass is FLAKY), uploads a
-  log, trace and screenshots per failed attempt, and writes the result JSON to
-  `$E2E_EVIDENCE_DIR` (else `%TEMP%\conduit-e2e`). Needs a clean committed HEAD and `gh`.
+- **The suite runs remotely:** `npm run e2e:remote` (= `--affected`), `-- --full` or
+  `-- <name…>` shards it across GitHub-hosted `windows-latest` runners, retries a failure once
+  (a pass is FLAKY), uploads a log, trace and screenshots per failed attempt, and writes the
+  result JSON to `$E2E_EVIDENCE_DIR` (else `%TEMP%\conduit-e2e`). Needs a clean committed HEAD
+  and `gh`.
+- **`--affected`** diffs HEAD against its merge-base with `origin/main`: docs/unit-test/design-only
+  changes need no e2e (exit 0, nothing pushed); `test/e2e/**`, `electron/main.ts`,
+  `electron/preload.ts`, `esbuild.mjs`, `package*.json` or `e2e.yml` run the full suite; other
+  files select the scenarios the nightly coverage map says run them (a new file: its importers'),
+  plus `core-smoke.json`. A changed file no scenario covers runs the full suite (`ci-affected.mjs`).
+- **Nightly** (`schedule` on main; `-f mode=nightly` on a dispatch): full suite with coverage, then
+  the `e2e-state` artifact (timings, flaky history, coverage map) and a sweep of stale `ci/e2e/*`
+  refs. **Releases** run the full suite first (`release.yml` → `e2e.yml`).
+- **`quarantine.json`** (`{ "scenarios": { "<name>": { "reason", "since" } } }`, reviewed edits
+  only): a listed scenario still runs, but its failure is `QUARANTINED-FAIL` and doesn't fail the
+  run. The report lists quarantine candidates (FLAKY 3+ times in 14 nightly days).
 - **Locally, one scenario at a time:** `npm run e2e -- <exact-name>`. More than one refuses
   (`CONDUIT_E2E_LOCAL_FULL=1` is a human-only escape hatch). A second local run waits on the
   machine-wide lock and names the owner; the app runs at BelowNormal priority.
