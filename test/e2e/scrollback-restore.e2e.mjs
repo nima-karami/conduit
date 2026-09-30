@@ -16,15 +16,22 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, loadPlaywright, makeLog, REPO, shutdownApp, tapBridge } from './harness.mjs';
+import {
+  assert,
+  finishScenario,
+  launchElectron,
+  makeLog,
+  REPO,
+  shutdownApp,
+  tapBridge,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[scrollback-restore] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('scrollback-restore');
-const { _electron } = loadPlaywright();
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 
@@ -61,7 +68,7 @@ writeFileSync(
 let app;
 let page;
 try {
-  app = await _electron.launch({
+  app = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
@@ -112,11 +119,11 @@ try {
   // shutdownApp, not app.close(): this session is RUNNING, so a bare close waits on the quit
   // guard forever — every assertion above passed and the runner still called it a 210s TIMEOUT.
   await shutdownApp(app, page);
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) console.log('[scrollback-restore] FAIL ✗', e.message);
   else console.error('[scrollback-restore] ERROR:', e?.message || e, e?.stack ?? '');
   await shutdownApp(app, page).catch(() => {});
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 }

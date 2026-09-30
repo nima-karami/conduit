@@ -9,11 +9,11 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, launchApp, openSession, tapBridge } from './harness.mjs';
+import { assert, finishScenario, launchApp, openSession, tapBridge } from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[live-watch] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const project = mkdtempSync(join(tmpdir(), 'conduit-live-'));
@@ -45,7 +45,7 @@ try {
 
   await launched.cleanup();
   console.log('[live-watch] PASS ✓');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   console.log(`[live-watch] ${isAssertion ? 'FAIL ✗' : 'ERROR:'}`, e?.message || e);
@@ -54,7 +54,7 @@ try {
   } catch {
     /* ignore */
   }
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 } finally {
   rmSync(project, { recursive: true, force: true });
 }

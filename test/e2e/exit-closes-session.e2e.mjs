@@ -9,11 +9,19 @@
  * Windows only.
  */
 
-import { assert, launchApp, makeLog, openSession, REPO, tapBridge } from './harness.mjs';
+import {
+  assert,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+  REPO,
+  tapBridge,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[exit-closes-session] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('exit-closes-session');
@@ -62,7 +70,7 @@ try {
   // Bound the teardown — app.close() can hang on a loaded machine; the assertion already
   // passed, so don't let a slow close turn a PASS into a TIMEOUT.
   await Promise.race([launched.cleanup(), new Promise((r) => setTimeout(r, 5000))]);
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   console.log(`[exit-closes-session] ${isAssertion ? 'FAIL ✗' : 'ERROR:'}`, e?.message || e);
@@ -71,5 +79,5 @@ try {
   } catch {
     /* ignore */
   }
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 }

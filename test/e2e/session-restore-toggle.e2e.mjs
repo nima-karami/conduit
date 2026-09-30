@@ -16,22 +16,29 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, loadPlaywright, makeLog, REPO, tapBridge } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  finishScenario,
+  launchElectron,
+  makeLog,
+  REPO,
+  tapBridge,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[session-restore-toggle] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('session-restore-toggle');
 
 const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-restore-toggle-'));
-const { _electron } = loadPlaywright();
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 
 async function launch() {
-  const app = await _electron.launch({
+  const app = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
@@ -166,12 +173,12 @@ try {
   appHandle = null;
 
   log('PASS ✓ session-restore-toggle: all assertions passed');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) {
     console.log('[session-restore-toggle] FAIL ✗', e.message);
-    process.exit(1);
+    await finishScenario(1);
   }
   console.error('[session-restore-toggle] ERROR:', e?.message || e);
   try {
@@ -179,5 +186,5 @@ try {
   } catch {
     /* ignore */
   }
-  process.exit(2);
+  await finishScenario(2);
 }

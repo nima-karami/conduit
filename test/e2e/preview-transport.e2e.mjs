@@ -30,11 +30,11 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, finishScenario, openSession, runScenario } from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[preview-transport] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 /** A page that exercises relative CSS, relative JS, a same-origin fetch, a cross-root

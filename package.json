@@ -15,6 +15,8 @@
     "start": "npm run build && electron .",
     "rebuild": "electron-rebuild -f -w @lydell/node-pty",
     "test:unit": "vitest run",
+    "e2e": "node test/e2e/run-smoke.mjs",
+    "e2e:remote": "node tools/e2e-remote.mjs",
     "test:smoke": "node test/e2e/run-smoke.mjs",
     "test:stress": "node test/e2e/stress/run-stress.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.webview.json --noEmit",

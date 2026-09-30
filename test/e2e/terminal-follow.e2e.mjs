@@ -15,11 +15,19 @@
  *   - it scrolls while the terminal is IDLE, because a running producer fires onScroll on
  *     every line of output and hides whether the wheel path reports anything at all.
  */
-import { assert, closeApp, launchApp, makeLog, openSession, REPO } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+  REPO,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[terminal-follow] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('terminal-follow');
@@ -124,5 +132,5 @@ try {
 } catch (err) {
   console.error('[terminal-follow] FAIL', err);
   if (launched) await closeApp(launched.app, launched.page).catch(() => {});
-  process.exit(1);
+  await finishScenario(1);
 }

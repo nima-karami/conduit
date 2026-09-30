@@ -24,7 +24,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, launchApp, makeLog, openReview, openSession } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openReview,
+  openSession,
+} from './harness.mjs';
 
 const log = makeLog('overlay-popovers');
 
@@ -321,5 +329,5 @@ try {
       .catch(() => {});
     await closeApp(launched.app, launched.page).catch(() => {});
   }
-  process.exit(err?.name === 'AssertionError' ? 1 : 2);
+  await finishScenario(err?.name === 'AssertionError' ? 1 : 2);
 }

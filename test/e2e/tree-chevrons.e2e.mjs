@@ -10,14 +10,22 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commitBase, git } from './changes-fixture.mjs';
-import { assert, launchApp, makeLog, openChangesTab, openSession, removeDir } from './harness.mjs';
+import {
+  assert,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openChangesTab,
+  openSession,
+  removeDir,
+} from './harness.mjs';
 
 const NAME = 'tree-chevrons';
 const log = makeLog(NAME);
 
 if (process.platform !== 'win32') {
   console.log(`[${NAME}] SKIP — suite is Windows-only (non-win32 platform)`);
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const THEMES = ['aero', 'aero-dark', 'neon'];
@@ -437,4 +445,4 @@ try {
     code = 2;
   }
 }
-process.exit(code);
+await finishScenario(code);

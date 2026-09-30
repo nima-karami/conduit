@@ -23,12 +23,12 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, launchApp, makeLog, openSession, removeDir } from './harness.mjs';
+import { assert, finishScenario, launchApp, makeLog, openSession, removeDir } from './harness.mjs';
 import { G, groupCount, openFromExplorer, sleep, waitShown } from './split-editor-helpers.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[tab-strip-overflow] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('tab-strip-overflow');
@@ -264,4 +264,4 @@ try {
   console.error('[tab-strip-overflow] ERROR: the fixture repo was not removed:', e?.message || e);
   code ||= 2;
 }
-process.exit(code);
+await finishScenario(code);

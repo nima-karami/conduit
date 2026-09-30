@@ -13,13 +13,13 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, loadPlaywright, makeLog, REPO } from './harness.mjs';
+import { assert, finishScenario, launchElectron, makeLog, REPO } from './harness.mjs';
 
 const log = makeLog('recent-folders-prune');
 
 if (process.platform !== 'win32') {
   console.log('[recent-folders-prune] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const require = createRequire(import.meta.url);
@@ -39,11 +39,10 @@ writeFileSync(
   }),
 );
 
-const { _electron } = loadPlaywright();
 const electronPath = require('electron');
 let app;
 try {
-  app = await _electron.launch({
+  app = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
@@ -69,11 +68,11 @@ try {
   assert(!has(goneRepo), `deleted recent folder should be filtered out: ${goneRepo}`);
 
   log('PASS ✓');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   console.error(`[recent-folders-prune] ${isAssertion ? 'FAIL ✗' : 'ERROR'}:`, e?.message || e);
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 } finally {
   try {
     await app?.close();

@@ -37,6 +37,7 @@ import { join } from 'node:path';
 import {
   assert,
   closeApp,
+  finishScenario,
   launchApp,
   makeLog,
   openReview,
@@ -46,7 +47,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[review-notes-handoff] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('review-notes-handoff');
@@ -402,7 +403,7 @@ try {
   secondApp = null;
 
   log('PASS ✓ review-notes-handoff');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) log('FAIL ✗', e.message);
@@ -416,5 +417,5 @@ try {
   } catch {
     /* already gone */
   }
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 }

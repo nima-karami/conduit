@@ -12,11 +12,11 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, finishScenario, openSession, runScenario } from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[search-selection] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const FIXTURE = [

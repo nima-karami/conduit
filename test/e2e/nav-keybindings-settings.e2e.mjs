@@ -8,7 +8,7 @@
  * dir. Run: `npm run build`, then `node test/e2e/run-smoke.mjs nav-keybindings-settings`.
  */
 
-import { assert, closeApp, launchApp, makeLog, openSession } from './harness.mjs';
+import { assert, closeApp, finishScenario, launchApp, makeLog, openSession } from './harness.mjs';
 import {
   activeTab,
   cursorLine,
@@ -23,7 +23,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[nav-keybindings-settings] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('nav-keybindings-settings');
@@ -115,14 +115,17 @@ try {
   // AC-1
   await openShortcuts(page);
   const groups = await page.locator('.shortcuts__gtitle').allTextContents();
+  const editor = groups.indexOf('Editor');
   assert(
-    groups.indexOf('Code navigation') === groups.indexOf('Editor') + 1,
-    `"Code navigation" should follow "Editor", groups ${JSON.stringify(groups)}`,
+    editor >= 0 &&
+      groups.indexOf('Editor groups') === editor + 1 &&
+      groups.indexOf('Code navigation') === editor + 2,
+    `"Code navigation" should follow "Editor" and "Editor groups", groups ${JSON.stringify(groups)}`,
   );
   await waitRowCombo(page, DEF, 'F12');
   await waitRowCombo(page, 'Go to Implementations', 'Ctrl + F12');
   await waitRowCombo(page, 'Go to References', 'Shift + F12');
-  log('AC-1 Code navigation group after Editor with the default chords ✓');
+  log('AC-1 Code navigation group after Editor and Editor groups with the default chords ✓');
 
   // AC-2
   await page.evaluate(() => {
@@ -313,4 +316,4 @@ try {
 } catch {
   /* already gone */
 }
-process.exit(code);
+await finishScenario(code);

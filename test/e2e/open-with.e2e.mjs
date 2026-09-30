@@ -16,6 +16,7 @@ import {
   assert,
   assertCall,
   clearSpyCalls,
+  finishScenario,
   getSpyCalls,
   launchApp,
   makeLog,
@@ -27,7 +28,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[open-with] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('open-with');
@@ -63,12 +64,12 @@ try {
 
   await launched.cleanup();
   log('PASS ✓ open-with: all driveable assertions passed (chooser dialog = needs-human-smoke)');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) {
     console.log('[open-with] FAIL ✗', e.message);
-    process.exit(1);
+    await finishScenario(1);
   }
   console.error('[open-with] ERROR:', e?.message || e);
   try {
@@ -76,5 +77,5 @@ try {
   } catch {
     /* ignore */
   }
-  process.exit(2);
+  await finishScenario(2);
 }

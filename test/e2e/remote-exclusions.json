@@ -1,0 +1,10 @@
+{
+  "multi-window-restore": "the runner display is 1024x720: fixed bounds x=1100 are clamped to 0,0, and with display-relative bounds the restore brings back 1 window instead of 2 (run 36667070538); not isolated",
+  "split-editor-focus-keep": "the runner window has no OS focus: xterm focus reports reach the shell and 4 focus steps miss, even with CDP focus emulation (run 36667070538)",
+  "scrollback-mode-neutralize": "the runner window has no OS focus: replayed focus reporting leaks onto the fresh shell, even with CDP focus emulation (run 36667070538)",
+  "attention": "needs a real focusable window (opts out of hidden mode); the runner has no OS foreground",
+  "terminal-focus": "opts out of hidden mode; the runner is 7-11x slower on a non-hidden window, which pushes it into the 200 s watchdog (TIMEOUT fails the run), not merely flaky",
+  "shortcut-precedence": "opts out of hidden mode; the runner is 7-11x slower on a non-hidden window, which pushes it into the 200 s watchdog (TIMEOUT fails the run), not merely flaky",
+  "review-mode-pane": "hovering a navigator row leaves its Stage action at opacity 0 on the runner, also with CDP focus emulation (runs 36667070538, 36667732842); cause not isolated",
+  "terminal-exit-focus": "the runner window has no OS focus: every Terminal-exit chord also sends xterm focus reports (ESC[I/ESC[O) to the shell (run 36667732842, both attempts); added after Slice 0 measured the suite"
+}

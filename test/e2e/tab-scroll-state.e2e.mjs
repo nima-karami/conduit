@@ -18,11 +18,11 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, launchApp, makeLog, openSession } from './harness.mjs';
+import { assert, closeApp, finishScenario, launchApp, makeLog, openSession } from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[tab-scroll-state] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('tab-scroll-state');
@@ -168,7 +168,7 @@ try {
   await closeApp(app, page);
   launched = null;
   log('PASS ✓ tab-scroll-state: all assertions passed');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) {
@@ -181,5 +181,5 @@ try {
   } catch {
     /* ignore */
   }
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 }

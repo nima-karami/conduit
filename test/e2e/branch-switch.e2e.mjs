@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
+  finishScenario,
   launchApp,
   makeLog,
   openChangesTab,
@@ -34,7 +35,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[branch-switch] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 function hasGit() {
@@ -47,7 +48,7 @@ function hasGit() {
 }
 if (!hasGit()) {
   console.log('[branch-switch] SKIP — git not on PATH');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('branch-switch');
@@ -308,7 +309,7 @@ try {
       /* best-effort */
     }
   }
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) console.log('[branch-switch] FAIL ✗', e.message);
@@ -325,5 +326,5 @@ try {
       /* ignore */
     }
   }
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 }

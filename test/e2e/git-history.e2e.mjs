@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
+  finishScenario,
   launchApp,
   makeLog,
   openChangesTab,
@@ -34,7 +35,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[git-history] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('git-history');
@@ -419,12 +420,12 @@ try {
 
   log('PASS ✓ git-history Slice B: all assertions passed');
   await launched.cleanup();
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) {
     console.log('[git-history] FAIL ✗', e.message);
-    process.exit(1);
+    await finishScenario(1);
   }
   console.error('[git-history] ERROR:', e?.message || e);
   try {
@@ -432,5 +433,5 @@ try {
   } catch {
     /* ignore */
   }
-  process.exit(2);
+  await finishScenario(2);
 }

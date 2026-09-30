@@ -22,14 +22,14 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assert, loadPlaywright, makeLog, REPO } from './harness.mjs';
+import { assert, finishScenario, launchElectron, makeLog, REPO } from './harness.mjs';
 
 const log = makeLog('multi-window-restore');
 const require = createRequire(import.meta.url);
 
 if (process.platform !== 'win32') {
   console.log('[multi-window-restore] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -40,12 +40,11 @@ const shot = (page, name) =>
     /* hidden window screenshot is best-effort */
   });
 
-const { _electron } = loadPlaywright();
 const electronPath = require('electron');
 
 /** Launch the real app against an explicit (shared) userData dir. */
 async function launch(userDataDir) {
-  const app = await _electron.launch({
+  const app = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
@@ -309,12 +308,12 @@ try {
   }
 
   killStrayElectrons();
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) log('FAIL ✗', e.message);
   else console.error('[multi-window-restore] ERROR:', e?.message || e);
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 } finally {
   for (const a of [app1, app2]) {
     try {

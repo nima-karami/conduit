@@ -18,13 +18,13 @@ import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assert, launchApp, makeLog, REPO } from './harness.mjs';
+import { assert, finishScenario, launchApp, makeLog, REPO } from './harness.mjs';
 
 const log = makeLog('multi-window');
 
 if (process.platform !== 'win32') {
   console.log('[multi-window] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -565,12 +565,12 @@ try {
   log('PASS close: window-2 closed, window-1 survives ✓');
 
   log('PASS ✓ multi-window Slice A: isolation + routing + independent close');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) log('FAIL ✗', e.message);
   else console.error('[multi-window] ERROR:', e?.message || e);
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 } finally {
   try {
     await launched?.cleanup();
