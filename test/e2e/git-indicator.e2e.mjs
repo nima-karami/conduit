@@ -18,11 +18,19 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { assert, launchApp, makeLog, openChangesTab, openSession, tapBridge } from './harness.mjs';
+import {
+  assert,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openChangesTab,
+  openSession,
+  tapBridge,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[git-indicator] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 function hasGit() {
@@ -36,7 +44,7 @@ function hasGit() {
 
 if (!hasGit()) {
   console.log('[git-indicator] SKIP — git not on PATH');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('git-indicator');
@@ -299,7 +307,7 @@ try {
     }
   }
   log('PASS ✓ branch chip: all assertions passed');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) {
@@ -319,5 +327,5 @@ try {
       /* ignore */
     }
   }
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 }

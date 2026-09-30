@@ -23,6 +23,7 @@ import { dirname, join } from 'node:path';
 import {
   assert,
   closeApp,
+  finishScenario,
   launchApp,
   makeLog,
   openSession,
@@ -34,7 +35,7 @@ const log = makeLog('new-session-folders');
 
 if (process.platform !== 'win32') {
   console.log('[new-session-folders] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 // ── fixture ─────────────────────────────────────────────────────────────────
@@ -652,4 +653,4 @@ for (const dir of [root, userDataDir]) {
     log('could not remove', dir, e?.code ?? e);
   }
 }
-process.exit(code);
+await finishScenario(code);

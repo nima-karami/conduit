@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, launchApp, makeLog, openSession } from './harness.mjs';
+import { assert, closeApp, finishScenario, launchApp, makeLog, openSession } from './harness.mjs';
 
 const log = makeLog('arch-node-graph');
 
@@ -486,5 +486,5 @@ try {
     await launched.page.screenshot({ path: join(tmpdir(), 'arch-fail.png') }).catch(() => {});
     await closeApp(launched.app, launched.page).catch(() => {});
   }
-  process.exit(1);
+  await finishScenario(1);
 }

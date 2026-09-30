@@ -20,7 +20,8 @@ import { join } from 'node:path';
 import {
   assert,
   closeApp,
-  loadPlaywright,
+  finishScenario,
+  launchElectron,
   makeLog,
   openSession,
   REPO,
@@ -30,7 +31,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[timed-messages] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('timed-messages');
@@ -57,12 +58,11 @@ const workDir = mkdtempSync(join(tmpdir(), 'conduit-timed-work-'));
 const shotDir = join(process.env.TEMP || tmpdir(), 'claude-scratch');
 mkdirSync(shotDir, { recursive: true });
 
-const { _electron } = loadPlaywright();
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 
 async function launch() {
-  const app = await _electron.launch({
+  const app = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
@@ -326,7 +326,7 @@ try {
   second = null;
 
   log('PASS ✓ all assertions passed');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   if (e?.name === 'AssertionError') {
     console.log('[timed-messages] FAIL ✗', e.message);
@@ -344,5 +344,5 @@ try {
       /* already gone */
     }
   }
-  process.exit(e?.name === 'AssertionError' ? 1 : 2);
+  await finishScenario(e?.name === 'AssertionError' ? 1 : 2);
 }

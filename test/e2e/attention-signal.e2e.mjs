@@ -16,6 +16,7 @@
 import {
   assert,
   clearSpyCalls,
+  finishScenario,
   getSpyCalls,
   launchApp,
   makeLog,
@@ -27,7 +28,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[attention-signal] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('attention-signal');
@@ -253,7 +254,7 @@ try {
 
   await launched.cleanup();
   log('PASS ✓ attention signal matrix: all rows passed');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) {
@@ -267,5 +268,5 @@ try {
   } catch {
     /* already gone */
   }
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 }

@@ -16,7 +16,7 @@ import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, launchApp, makeLog, openSession, REPO } from './harness.mjs';
+import { assert, finishScenario, launchApp, makeLog, openSession, REPO } from './harness.mjs';
 import {
   explorer,
   G,
@@ -30,7 +30,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[split-editor-surfaces] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('split-editor-surfaces');
@@ -341,4 +341,4 @@ try {
   /* already gone */
 }
 httpServer.close();
-process.exit(code);
+await finishScenario(code);

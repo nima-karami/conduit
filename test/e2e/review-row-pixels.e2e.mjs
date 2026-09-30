@@ -30,7 +30,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, launchApp, makeLog, openReview, openSession } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openReview,
+  openSession,
+} from './harness.mjs';
 import { decodePng, hex, pxAt } from './png.mjs';
 import { contrast, installRowProbe, toHex } from './row-color.mjs';
 
@@ -268,18 +276,18 @@ async function main() {
 
 if (process.platform !== 'win32') {
   console.log('[review-row-pixels] SKIP — suite is Windows-only (non-win32 platform)');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 main().then(
-  () => process.exit(0),
+  () => finishScenario(0),
   (e) => {
     if (e?.name === 'AssertionError') {
       log('FAIL ✗', e.message);
-      process.exit(1);
+      finishScenario(1);
     }
     console.error('[review-row-pixels] ERROR:', e?.message || e);
     if (e?.stack) console.error(e.stack);
-    process.exit(2);
+    finishScenario(2);
   },
 );

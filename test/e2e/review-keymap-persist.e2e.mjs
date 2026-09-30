@@ -21,7 +21,8 @@ import { join } from 'node:path';
 import {
   assert,
   closeApp,
-  loadPlaywright,
+  finishScenario,
+  launchElectron,
   makeLog,
   openReview,
   openSession,
@@ -31,7 +32,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[review-keymap-persist] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('review-keymap-persist');
@@ -76,12 +77,11 @@ const porcelainBefore = git(root, 'status', '--porcelain');
 log(`fixture: ${root}`);
 
 // ── Launch plumbing (two launches, one profile — see test/e2e/durability.e2e.mjs) ───────────────
-const { _electron } = loadPlaywright();
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 
 async function launch() {
-  const app = await _electron.launch({
+  const app = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
@@ -394,7 +394,7 @@ try {
   secondApp = null;
 
   log('PASS ✓ review-keymap-persist');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) log('FAIL ✗', e.message);
@@ -408,5 +408,5 @@ try {
   } catch {
     /* already gone */
   }
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 }

@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
+  finishScenario,
   launchApp,
   loadPlaywright,
   makeLog,
@@ -31,7 +32,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[paste] SKIP — this test targets Windows ConPTY bracketed paste.');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 // A PowerShell reader: enables ENABLE_VIRTUAL_TERMINAL_INPUT (so ConPTY forwards the
@@ -276,12 +277,12 @@ try {
   );
 
   log(`PASS ✓ bracketed AND byte-exact: ${got} bytes for a ${LINES}-line paste`);
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) {
     log('FAIL ✗', e.message);
-    process.exit(1);
+    await finishScenario(1);
   }
   console.error('[paste] ERROR:', e?.message || e);
   try {
@@ -289,5 +290,5 @@ try {
   } catch {
     /* ignore */
   }
-  process.exit(2);
+  await finishScenario(2);
 }

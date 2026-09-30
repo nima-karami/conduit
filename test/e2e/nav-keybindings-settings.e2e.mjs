@@ -8,7 +8,7 @@
  * dir. Run: `npm run build`, then `node test/e2e/run-smoke.mjs nav-keybindings-settings`.
  */
 
-import { assert, closeApp, launchApp, makeLog, openSession } from './harness.mjs';
+import { assert, closeApp, finishScenario, launchApp, makeLog, openSession } from './harness.mjs';
 import {
   activeTab,
   cursorLine,
@@ -23,7 +23,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[nav-keybindings-settings] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('nav-keybindings-settings');
@@ -313,4 +313,4 @@ try {
 } catch {
   /* already gone */
 }
-process.exit(code);
+await finishScenario(code);

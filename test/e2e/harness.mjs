@@ -11,19 +11,13 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import {
-  appendFileSync,
-  existsSync,
-  mkdtempSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { attemptDir, screenshotWindows, startCapture, stopTrace } from './failure-artifacts.mjs';
+import { acquireE2eLock, setBelowNormal } from './local-guard.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 export const REPO = join(here, '..', '..');
@@ -106,7 +100,7 @@ function killAppTree(app) {
  */
 export async function shutdownApp(app, page) {
   if (!app) return;
-  await probeCapture(app);
+  await stopTrace(app);
   const graceful = (async () => {
     try {
       if (page) await closeApp(app, page);
@@ -125,65 +119,102 @@ export async function shutdownApp(app, page) {
   }
 }
 
-// SPIKE ONLY (remote-e2e plan, Slice 0): measures whether tracing and hidden-window screenshots
-// work on a hosted runner, and what they cost. Inert unless E2E_PROBE_DIR is set; MVP replaces
-// it with failure-artifacts.mjs.
-const probeStarted = new WeakMap();
-const probeScenario = () => (process.argv[1] || '').replace(/.*[/\\]/, '').replace('.e2e.mjs', '');
+/** Harness watchdog exit code; run-smoke classifies it as TIMEOUT with artifacts captured. */
+const EXIT_WATCHDOG = 124;
+/** Failure capture must land before the runner's 210 s kill: 200 s deadline + this. */
+const CAPTURE_BUDGET_MS = 8000;
 
-async function probeStart(app) {
-  if (!process.env.E2E_PROBE_DIR) return;
-  const t = Date.now();
-  let error;
-  try {
-    await app
-      .context()
-      .tracing.start(
-        JSON.parse(process.env.E2E_PROBE_TRACE_OPTS || '{"screenshots":true,"snapshots":true}'),
-      );
-  } catch (e) {
-    error = String(e?.message || e);
-  }
-  probeStarted.set(app, {
-    startMs: Date.now() - t,
-    startError: error,
-    opts: process.env.E2E_PROBE_TRACE_OPTS,
-  });
+const liveApps = new Set();
+let armed = false;
+let finishing = null;
+
+function scenarioName() {
+  return (
+    process.env.E2E_SCENARIO ||
+    (process.argv[1] || '').replace(/.*[/\\]/, '').replace(/(\.e2e)?\.mjs$/, '')
+  );
 }
 
-async function probeCapture(app) {
-  const dir = process.env.E2E_PROBE_DIR;
-  const started = dir && probeStarted.get(app);
-  if (!started || started.done) return;
-  started.done = true;
-  const scenario = probeScenario();
-  const stamp = `${scenario}-${process.pid}-${Date.now()}`;
-  const row = { scenario, ...started };
-  try {
-    row.visible = await app.evaluate((e) =>
-      e.BrowserWindow.getAllWindows().map((w) => w.isVisible()),
-    );
-    const shots = [];
-    for (const [i, w] of app.windows().entries()) {
-      const t = Date.now();
-      const path = join(dir, `${stamp}-win${i}.png`);
-      await w.screenshot({ path, timeout: 15000 });
-      shots.push({ ms: Date.now() - t, bytes: statSync(path).size });
+function armOnce() {
+  if (armed) return;
+  armed = true;
+  const deadline = Number(process.env.E2E_DEADLINE_MS);
+  if (deadline > 0) {
+    setTimeout(
+      () => {
+        console.log(`[harness] WATCHDOG ${deadline}ms: capturing and exiting`);
+        finishScenario(EXIT_WATCHDOG);
+      },
+      Math.max(0, deadline - process.uptime() * 1000),
+    ).unref();
+  }
+  if (attemptDir()) {
+    const crash = (e) => {
+      console.error('[harness] uncaught:', e?.stack || e);
+      finishScenario(2);
+    };
+    process.on('uncaughtException', crash);
+    process.on('unhandledRejection', crash);
+  }
+}
+
+/**
+ * THE only way anything in the e2e suite launches Electron (a unit guard enforces it). Takes
+ * Playwright's `_electron.launch` options. Locally it holds the machine-wide e2e lock and drops to
+ * below-normal priority first; on CI it traces the app for failure artifacts.
+ */
+export async function launchElectron(launchOpts) {
+  if (process.env.GITHUB_ACTIONS !== 'true') {
+    await acquireE2eLock({ scenario: scenarioName() });
+    setBelowNormal();
+  }
+  armOnce();
+  const { _electron } = loadPlaywright();
+  const app = await _electron.launch(launchOpts);
+  liveApps.add(app);
+  app.once('close', () => liveApps.delete(app));
+  startCapture(app);
+  return app;
+}
+
+/**
+ * Save every still-open app's trace, then its screenshots (slow on runners), within the budget.
+ * For a failure path that closes its apps before it reaches `finishScenario`. No-op locally.
+ */
+export async function captureFailure() {
+  if (!attemptDir()) return;
+  const apps = [...liveApps];
+  const work = (async () => {
+    for (const app of apps) await stopTrace(app);
+    for (const app of apps) await screenshotWindows(app);
+  })();
+  await Promise.race([work, new Promise((r) => setTimeout(r, CAPTURE_BUDGET_MS))]);
+}
+
+/**
+ * THE only exit path for a scenario (a unit guard forbids `process.exit` in scenarios). On CI a
+ * non-zero code captures the apps still open before exiting; a zero code drops this attempt's
+ * artifact dir. First call wins, and it never settles.
+ *
+ * @param {number} code
+ * @returns {Promise<never>}
+ */
+export function finishScenario(code) {
+  finishing ??= (async () => {
+    const dir = attemptDir();
+    try {
+      if (dir && code !== 0) {
+        await captureFailure();
+        for (const app of liveApps) killAppTree(app);
+      } else if (dir) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    } catch (e) {
+      console.error('[harness] artifact capture failed:', e?.message || e);
     }
-    row.shots = shots;
-  } catch (e) {
-    row.shotError = String(e?.message || e);
-  }
-  try {
-    const t = Date.now();
-    const path = join(dir, `${stamp}-trace.zip`);
-    await app.context().tracing.stop({ path });
-    row.stopMs = Date.now() - t;
-    row.traceBytes = statSync(path).size;
-  } catch (e) {
-    row.traceError = String(e?.message || e);
-  }
-  appendFileSync(join(dir, 'probe.jsonl'), `${JSON.stringify(row)}\n`);
+    process.exit(code);
+  })();
+  return finishing;
 }
 
 /**
@@ -193,12 +224,11 @@ async function probeCapture(app) {
  * @returns {{ app, page, userDataDir: string, cleanup: () => Promise<void> }}
  */
 export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
-  const { _electron } = loadPlaywright();
   const electronPath = require('electron');
   // A caller may pass a fixed user-data dir to relaunch against the same profile (e.g. a
   // durability/restore assertion); otherwise a throwaway dir the OS reaps.
   const udd = userDataDir || mkdtempSync(join(tmpdir(), 'conduit-ud-'));
-  const app = await _electron.launch({
+  const app = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${udd}`, REPO, ...extraArgs],
     cwd: REPO,
@@ -208,9 +238,6 @@ export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
-  // Started once the window is ready: started right after launch, tracing made the first
-  // window's load time out on hosted runners (run 36662234121).
-  await probeStart(app);
 
   // Temp dir is in os.tmpdir() — cleaned by OS; no manual cleanup needed.
   const cleanup = () => shutdownApp(app, page);
@@ -409,7 +436,7 @@ export async function openHistory(page, { repo } = {}) {
  * @param {object} page Its first window's page (already bridge-tapped).
  */
 export async function closeApp(app, page) {
-  await probeCapture(app);
+  await stopTrace(app);
   await page.evaluate(() => {
     window.__quitAsked = false;
     window.agentDeck.subscribe((m) => {
@@ -824,7 +851,7 @@ class AssertionError extends Error {
 export async function runScenario(name, fn, { env } = {}) {
   if (process.platform !== 'win32') {
     console.log(`[${name}] SKIP — suite is Windows-only (non-win32 platform)`);
-    process.exit(0);
+    await finishScenario(0);
   }
 
   const scenarioLog = makeLog(name);
@@ -847,11 +874,13 @@ export async function runScenario(name, fn, { env } = {}) {
   }
   // Cleanup runs BEFORE the exit, never in a `finally` around it: process.exit() terminates
   // synchronously, so a `finally` placed after it never executes and every scenario — passing
-  // ones included — orphaned its Electron for the rest of the suite.
+  // ones included — orphaned its Electron for the rest of the suite. A failure is captured first:
+  // cleanup closes the windows the screenshots need.
+  if (code !== 0) await captureFailure();
   try {
     await launched?.cleanup();
   } catch {
     /* already gone */
   }
-  process.exit(code);
+  await finishScenario(code);
 }

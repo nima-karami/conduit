@@ -13,11 +13,19 @@
  */
 
 import { createServer } from 'node:http';
-import { assert, launchApp, makeLog, openSession, REPO, tapBridge } from './harness.mjs';
+import {
+  assert,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+  REPO,
+  tapBridge,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[web-view] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('web-view');
@@ -82,7 +90,7 @@ try {
   await launched.cleanup();
   server.close();
   log('PASS ✓ web-view: all assertions passed');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   console.log(`[web-view] ${isAssertion ? 'FAIL ✗' : 'ERROR:'}`, e?.message || e);
@@ -96,5 +104,5 @@ try {
   } catch {
     /* ignore */
   }
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 }

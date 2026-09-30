@@ -1,6 +1,7 @@
 import {
   assert,
   clearSpyCalls,
+  finishScenario,
   getSpyCalls,
   launchApp,
   makeLog,
@@ -13,7 +14,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[attention] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 // Attention routing hinges on real window focus/blur semantics, so it needs a
@@ -241,12 +242,12 @@ try {
 
   await launched.cleanup();
   log('PASS ✓ T1A attention routing: all assertions passed');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) {
     console.log('[attention] FAIL ✗', e.message);
-    process.exit(1);
+    await finishScenario(1);
   }
   console.error('[attention] ERROR:', e?.message || e);
   try {
@@ -254,5 +255,5 @@ try {
   } catch {
     /* ignore */
   }
-  process.exit(2);
+  await finishScenario(2);
 }

@@ -10,11 +10,19 @@
  * of the suite's hidden-window mode (same as attention.e2e.mjs).
  */
 import { join } from 'node:path';
-import { assert, closeApp, launchApp, makeLog, openSession, REPO } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+  REPO,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[terminal-focus] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 delete process.env.CONDUIT_E2E;
@@ -99,5 +107,5 @@ try {
 } catch (err) {
   console.error('[terminal-focus] FAIL', err);
   if (launched) await closeApp(launched.app, launched.page).catch(() => {});
-  process.exit(1);
+  await finishScenario(1);
 }

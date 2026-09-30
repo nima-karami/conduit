@@ -13,11 +13,11 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, launchApp, openSession, tapBridge } from './harness.mjs';
+import { assert, closeApp, finishScenario, launchApp, openSession, tapBridge } from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[explorer-dnd-polish] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = (...a) => console.log('[explorer-dnd-polish]', ...a);
@@ -129,7 +129,7 @@ try {
   // use closeApp, which answers the in-app confirm.
   await closeApp(launched.app, page);
   console.log('[explorer-dnd-polish] PASS ✓');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   console.log(`[explorer-dnd-polish] ${isAssertion ? 'FAIL ✗' : 'ERROR:'}`, e?.message || e);
@@ -138,7 +138,7 @@ try {
   } catch {
     /* ignore */
   }
-  process.exit(isAssertion ? 1 : 2);
+  await finishScenario(isAssertion ? 1 : 2);
 } finally {
   rmSync(project, { recursive: true, force: true });
 }

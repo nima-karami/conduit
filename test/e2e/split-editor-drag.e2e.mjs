@@ -19,7 +19,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, launchApp, makeLog, openSession } from './harness.mjs';
+import { assert, finishScenario, launchApp, makeLog, openSession } from './harness.mjs';
 import {
   G,
   groupCount,
@@ -33,7 +33,7 @@ import {
 
 if (process.platform !== 'win32') {
   console.log('[split-editor-drag] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('split-editor-drag');
@@ -331,4 +331,4 @@ try {
 } catch {
   /* already gone */
 }
-process.exit(code);
+await finishScenario(code);

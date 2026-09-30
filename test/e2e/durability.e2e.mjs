@@ -14,23 +14,30 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, loadPlaywright, makeLog, REPO, tapBridge } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  finishScenario,
+  launchElectron,
+  makeLog,
+  REPO,
+  tapBridge,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[durability] SKIP — suite is Windows-only');
-  process.exit(0);
+  await finishScenario(0);
 }
 
 const log = makeLog('durability');
 
 // Use a SHARED user-data dir across both launches so sessions persist.
 const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-dur-'));
-const { _electron } = loadPlaywright();
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 
 async function launch() {
-  const app = await _electron.launch({
+  const app = await launchElectron({
     executablePath: electronPath,
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
@@ -138,12 +145,12 @@ try {
   secondApp = null;
 
   log('PASS ✓ T1B durability: all assertions passed');
-  process.exit(0);
+  await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
   if (isAssertion) {
     console.log('[durability] FAIL ✗', e.message);
-    process.exit(1);
+    await finishScenario(1);
   }
   console.error('[durability] ERROR:', e?.message || e);
   try {
@@ -156,5 +163,5 @@ try {
   } catch {
     /* ignore */
   }
-  process.exit(2);
+  await finishScenario(2);
 }
