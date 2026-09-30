@@ -142,6 +142,8 @@ Plus: everything else that slows development. **Interim rule (user, 2026-09-29):
   (`npm ci --ignore-scripts` + build ≈ 25 s, only when a new file needs the graph); a
   `test/e2e/**` change → full. A docs + unit-test-only commit → "no e2e needed", exit 0, nothing
   pushed. A scenario absent from the map (new or split since the last nightly) is always selected.
+  *Superseded after the v1 review:* the map is now line spans of credited functions, a new file
+  selects the full suite, and the metafile step is gone (§B2).
 - **Quarantine:** a quarantined forced failure → `QUARANTINED-FAIL`, run `passed` (36683062930).
 - **Splits (§B3):** split-editor, file-integrity, new-session-folders, tree-chevrons,
   attention-signal and middle-click-surfaces → 19 files, **31.7–74.6 s remotely** (36691871954);
@@ -222,19 +224,39 @@ an overlap only queues jobs, it never cancels a run.
   - The diff against the merge-base with `main` is mapped to scenarios through a **coverage map**
     (scenario → source files). The nightly full run builds the map from V8 coverage of host and
     renderer, mapped back through esbuild sourcemaps.
-  - **Rule, in order:**
-    1. Strip the e2e-irrelevant set: `test/unit/**`, `docs/**`, `*.md`, `designs/**`,
-       `.conduit/**`, and `.github/**` except `.github/workflows/e2e.yml`. If nothing is left, the
-       selection is none: "no e2e needed", exit 0.
-    2. Any change to `test/e2e/**`, `electron/main.ts`, `electron/preload.ts`, `esbuild.mjs`,
+  - **Rule, in order** (revised after the v1 review, 2026-09-30):
+    1. Any change to `test/e2e/**`, `electron/main.ts`, `electron/preload.ts`, `esbuild.mjs`,
        `package.json`, the lockfile or `e2e.yml` selects the full suite.
-    3. A mapped file selects its scenarios. A **new** file selects the scenarios of the files that
-       import it (esbuild metafile importers, walked up to the nearest mapped file); only if none is
-       mapped does it select the full suite. An existing file absent from the map selects the full
-       suite.
-    4. The core smoke set is always added.
+    2. Strip the e2e-irrelevant set: `test/unit/**`, `docs/**`, `*.md`, `designs/**`,
+       `.conduit/**`, and `.github/**` except `.github/workflows/e2e.yml`. `test/e2e/**` and
+       `resources/**` are never in it (fixtures and skills' `SKILL.md` are read at runtime). If
+       nothing is left, the selection is none: "no e2e needed", exit 0.
+    3. The coverage map credits, per scenario, the **line spans of the functions it ran**. Every
+       changed line of a modified code file must lie inside a credited span, and selects the
+       scenarios whose spans hold it; a line outside every span selects the full suite. That covers
+       top-level code (esbuild hoists module top levels into one load-time scope, and wraps lazily
+       loaded modules in an `__esm` init, so it is never credited), functions that only run before
+       coverage starts (startup), functions no scenario reached, and new code between functions.
+       A pure insertion after base line `a` is inside a function only if one span holds both `a`
+       and `a + 1`. A function's first or last line is not credited when other code of the same
+       file shares it (a one-line arrow in a data table, `export const f = () => {`).
+    4. Line positions are **base-side positions in the map's build**: the changed files come from
+       the merge-base diff, their lines from `git diff -U0 <map.builtFrom> HEAD` (a deleted or
+       replaced line at its `-` position, an insertion after its `-` anchor). A file absent from
+       that build, or a build commit the checkout lacks, selects the full suite. An entry kept from
+       an older nightly (its scenario failed since) is in that build's line numbers: it credits
+       nothing and always runs.
+    5. A **new** file selects the full suite (conservative: its code has never run, and adding it
+       also changes an importer's top-level `import`). A deleted `.ts`/`.tsx` file selects every
+       scenario that ran any of its functions (its importers' own edits are judged by rule 3); any
+       other deleted file (CSS, JSON, a resource) selects the full suite. A modified file absent
+       from the map selects the full suite.
+    6. The core smoke set is always added, and so is every scenario the map has never seen.
   - The diff base is the merge-base with `main`; the workflow checks out with full history to
     compute it.
+  - **Known limit:** judged by base-side positions, new code spliced *inside* an existing function's
+    span (a helper defined mid-function) counts as that function. A call to it from elsewhere is a
+    changed line of its own and is judged there.
 - **B3 Slow scenarios.** The harness logs per-phase timings. Scenarios with a median over 120 s are
   split into files of 120 s or less, assertions unchanged. Order: split-editor, file-integrity,
   new-session-folders, tree-chevrons, attention-signal, middle-click-surfaces.
@@ -293,10 +315,12 @@ an overlap only queues jobs, it never cancels a run.
   - Runner `EXIT(n)` maps to `FAIL`. Shards are classified from their result JSON only, never from
     a job's exit code.
   - **Run status, first match wins:** any FAIL/TIMEOUT → `failed`; any INFRA → `infra-error`;
-    all SKIP → `failed`; any FLAKY → `flaky-passed`; else `passed`. A run whose conclusion is
-    cancelled is reported `cancelled`, whatever its result JSON says.
-  - **All-SKIP for a non-empty selection = run `failed`**: guards a vacuous green on a future
-    non-Windows OS axis.
+    nothing PASS or FLAKY → `failed`; any FLAKY → `flaky-passed`; else `passed`. A run whose
+    conclusion is cancelled is reported `cancelled`, whatever its result JSON says.
+  - **A non-empty selection with no PASS or FLAKY row = run `failed`** (all SKIP, EXCLUDED or
+    QUARANTINED-FAIL): guards a vacuous green, e.g. on a future non-Windows OS axis.
+  - A quarantine entry whose `since` is over 14 days old adds a warning to the result and the
+    summary ("quarantined > 14 days — re-check"); it doesn't change the status.
 - **Result JSON:**
   `{ sha, nonce, selection, shards, queuedAt, startedAt, finishedAt, results: [{ name, status,
   seconds, attempts, shard, artifact? }] }`
@@ -305,9 +329,22 @@ an overlap only queues jobs, it never cancels a run.
   - Each nightly's separate `state` job downloads the previous state, updates it and re-uploads,
     **whatever the test verdict** (a red nightly still records timings and flakes).
   - `prepare` and `state` find the newest non-expired `e2e-state` artifact by name
-    (`actions/artifacts?name=e2e-state`), never by run conclusion.
+    (`actions/artifacts?name=e2e-state`), never by run conclusion, and **only from a run on
+    `main`** (`workflow_run.head_branch`). Only a run on `main` uploads `e2e-state`; a
+    `mode=nightly` dispatch on any other ref runs the same update but uploads it as
+    `e2e-state-dry-run` (1 day), which nothing reads. Otherwise one exercise of the nightly path on
+    a branch would become every later run's timings and coverage map.
+  - The coverage map takes a scenario's new entry only if it ended PASS or FLAKY this nightly; a
+    failed run stops early and would under-credit, so the previous entry (with its own
+    `builtFrom`) is kept.
+  - Timings and flaky history come from the nightly, which records coverage: they carry its
+    overhead (function-level, +0–10 % measured, §2) that ordinary runs don't pay. Shard plans are
+    slightly pessimistic, never optimistic.
   - Fallbacks when there is no state yet: the checked-in `test/e2e/timings.seed.json` (local
     medians, scaled by the Slice 0 slowdown factor); `--affected` → full suite.
+  - The sweep dates a `ci/e2e/*` ref by its `branch_creation` entry in the repository activity
+    log (the commit can be days older than the push), falling back to the commit time only when
+    there is none; it deletes a ref with nothing in flight and neither created nor run in 24 h.
 - **Failure artifacts:** hooked in the harness's `launchElectron`. On CI it starts Playwright
   tracing on the Electron context. The harness owns the exit path: scenarios exit only through
   `finishScenario(code)`, which on a non-zero code saves the trace and a screenshot of every open
@@ -350,6 +387,9 @@ an overlap only queues jobs, it never cancels a run.
 | Client killed (Ctrl-C) mid-wait | Run continues; its `cleanup` job deletes the ref |
 | `gh` unauthenticated / offline | Exit 2 with the fix; no local full-suite fallback |
 | Local lock owner process dead | The OS closes its pipe; the next waiter's `listen` succeeds immediately |
+| Local scenario waits on the lock | The wait is off the clock: the harness watchdog counts from process start minus the wait, and the runner extends its 210 s kill by the wait the harness reports (`[e2e-lock] acquired after Ns`) |
+| A waiter hangs up before the owner answers | The owner ignores the socket error (EPIPE); it kept crashing the lock holder's scenario before v1-r1 |
+| Two checkouts run a scenario each | A runner's orphan sweep kills only Electrons carrying its own `--conduit-e2e-run=<id>` (appended by `launchElectron`), their descendants and processes sharing their `--user-data-dir` — never the other checkout's app |
 | Local failure under user load | Output reminds: a loaded machine fails PTY scenarios like a regression (CLAUDE.md) — confirm with `e2e:remote -- <name>` before debugging |
 | Result JSON written twice (attach + dispatch race) | Keyed by run id; same content; idempotent |
 | Pre-existing failure on `main` (today `mf-live-edits`, `goto-index`) | v1: report marks a FAIL "also failing on last nightly" from nightly history; still a failure. MVP: plain FAIL |

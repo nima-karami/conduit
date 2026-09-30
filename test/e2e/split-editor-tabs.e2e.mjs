@@ -1,7 +1,8 @@
 /**
  * split-editor-tabs — dirty and preview tabs across groups, and group-scoped tab keys
  * (docs/specs/2026-09-28-split-editor.md §7). Starts from split-editor-move's end state, replayed
- * as setup in one launch (`replaySplitToE6` + `replayMoves`):
+ * as setup in one launch (`replaySplitToE6` + `replayMoves`). These steps run in that session, not
+ * after a restart as in the unsplit original, so they no longer exercise a restored layout:
  *   E7  closing one of two dirty tabs of a file doesn't prompt; the survivor stays dirty.
  *   E15 the survivor then saves (Ctrl+S) and navigates changes (Alt+F5).
  *   E16 single clicks with the left group active reuse its preview, never the right's pinned tab.

@@ -9,14 +9,18 @@ are **deliberately excluded from `npm run verify`** — vitest only globs
   (a pass is FLAKY), uploads a log, trace and screenshots per failed attempt, and writes the
   result JSON to `$E2E_EVIDENCE_DIR` (else `%TEMP%\conduit-e2e`). Needs a clean committed HEAD
   and `gh`.
-- **`--affected`** diffs HEAD against its merge-base with `origin/main`: docs/unit-test/design-only
-  changes need no e2e (exit 0, nothing pushed); `test/e2e/**`, `electron/main.ts`,
-  `electron/preload.ts`, `esbuild.mjs`, `package*.json` or `e2e.yml` run the full suite; other
-  files select the scenarios the nightly coverage map says run them (a new file: its importers'),
-  plus `core-smoke.json`. A changed file no scenario covers runs the full suite (`ci-affected.mjs`).
+- **`--affected`** diffs HEAD against its merge-base with `origin/main` (`ci-affected.mjs`), in
+  this order: `test/e2e/**`, `electron/main.ts`, `electron/preload.ts`, `esbuild.mjs`,
+  `package*.json` or `e2e.yml` run the full suite; then, if only docs/unit-test/design files are
+  left, no e2e is needed (exit 0, nothing pushed; `test/e2e/**` and `resources/**` never count as
+  docs, whatever the extension). Otherwise every changed line, placed in the last main nightly's
+  build, must lie inside a function some scenario ran there, and selects those scenarios plus
+  `core-smoke.json`. A line anywhere else (top-level code, a function no scenario reached, a new
+  file, a deleted non-`.ts` file) runs the full suite.
 - **Nightly** (`schedule` on main; `-f mode=nightly` on a dispatch): full suite with coverage, then
   the `e2e-state` artifact (timings, flaky history, coverage map) and a sweep of stale `ci/e2e/*`
-  refs. **Releases** run the full suite first (`release.yml` → `e2e.yml`).
+  refs. Only a run on `main` publishes `e2e-state`, and only main's is ever read; a
+  `mode=nightly` dispatch elsewhere uploads `e2e-state-dry-run` instead. **Releases** run the full suite first (`release.yml` → `e2e.yml`).
 - **`quarantine.json`** (`{ "scenarios": { "<name>": { "reason", "since" } } }`, reviewed edits
   only): a listed scenario still runs, but its failure is `QUARANTINED-FAIL` and doesn't fail the
   run. The report lists quarantine candidates (FLAKY 3+ times in 14 nightly days).
