@@ -33,3 +33,14 @@ export function applyQuarantine(
   quarantine: { scenarios?: Record<string, { reason: string; since: string }> } | null,
 ): ScenarioStatus;
 export function isGreen(status: string): boolean;
+export function watchdogDelayMs(o: {
+  deadlineMs: number;
+  uptimeMs: number;
+  lockWaitMs: number;
+}): number;
+export function lockWaitMsFromLine(line: string): number | null;
+export const RUN_MARKER: '--conduit-e2e-run';
+export function orphanVictims(
+  procs: { ProcessId: number; ParentProcessId: number; CommandLine: string | null }[],
+  runId: string,
+): number[];

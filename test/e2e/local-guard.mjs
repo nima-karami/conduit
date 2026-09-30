@@ -16,9 +16,15 @@ let held = null;
 
 function tryListen(pipePath, owner) {
   return new Promise((resolve, reject) => {
-    const server = createServer((s) => s.end(JSON.stringify(owner)));
+    // A waiter that hangs up before the answer lands (its 2 s read timeout, a killed process)
+    // makes the write fail with EPIPE; unhandled, that error took the lock holder down with it.
+    const server = createServer((s) => {
+      s.on('error', () => {});
+      s.end(JSON.stringify(owner));
+    });
     server.once('error', (e) => (e.code === 'EADDRINUSE' ? resolve(null) : reject(e)));
     server.listen(pipePath, () => {
+      server.on('error', () => {});
       server.unref();
       resolve(server);
     });
@@ -52,14 +58,17 @@ function describeOwner(o) {
   return o && !o.refused ? `pid ${o.pid} (${o.scenario}, ${o.cwd})` : 'unknown owner';
 }
 
-/** Re-entrant per process: a scenario that relaunches its app holds the lock across launches. */
+/**
+ * Re-entrant per process: a scenario that relaunches its app holds the lock across launches.
+ * Resolves to the milliseconds spent waiting, which the harness keeps off its watchdog's clock.
+ */
 export async function acquireE2eLock({
   pipePath = DEFAULT_PIPE,
   scenario = 'unknown',
   pollMs = 1000,
   log = console.log,
 } = {}) {
-  if (held) return;
+  if (held) return 0;
   const owner = { pid: process.pid, scenario, cwd: process.cwd() };
   const since = Date.now();
   let lastReport = 0;
@@ -67,8 +76,10 @@ export async function acquireE2eLock({
     const server = await tryListen(pipePath, owner);
     if (server) {
       held = server;
-      if (lastReport) log(`[e2e-lock] acquired after ${Math.round((Date.now() - since) / 1000)}s`);
-      return;
+      if (!lastReport) return 0;
+      const waited = Date.now() - since;
+      log(`[e2e-lock] acquired after ${Math.ceil(waited / 1000)}s`);
+      return waited;
     }
     const current = await readOwner(pipePath);
     // A Unix socket file outlives a killed owner (a Windows pipe does not); nobody accepting on it

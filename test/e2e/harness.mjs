@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { startCoverage, stopCoverage } from './coverage-capture.mjs';
 import { attemptDir, screenshotWindows, startCapture, stopTrace } from './failure-artifacts.mjs';
 import { acquireE2eLock, setBelowNormal } from './local-guard.mjs';
-import { EXIT_WATCHDOG } from './smoke-select.mjs';
+import { EXIT_WATCHDOG, RUN_MARKER, watchdogDelayMs } from './smoke-select.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 export const REPO = join(here, '..', '..');
@@ -102,7 +102,7 @@ function killAppTree(app) {
  */
 export async function shutdownApp(app, page) {
   if (!app) return;
-  await stopCoverage(app);
+  await stopCoverageWithin(app);
   await stopTrace(app);
   const graceful = (async () => {
     try {
@@ -124,6 +124,14 @@ export async function shutdownApp(app, page) {
 
 /** Failure capture must land before the runner's 210 s kill: 200 s deadline + this. */
 const CAPTURE_BUDGET_MS = 8000;
+
+/** A wedged renderer must not hang teardown on coverage it would never hand over. */
+function stopCoverageWithin(app) {
+  return Promise.race([
+    stopCoverage(app),
+    new Promise((r) => setTimeout(r, CAPTURE_BUDGET_MS).unref()),
+  ]);
+}
 
 const liveApps = new Set();
 let armed = false;
@@ -151,7 +159,8 @@ function scenarioName() {
   );
 }
 
-function armOnce() {
+/** @param {number} lockWaitMs time spent waiting on another checkout's e2e app: not ours to count */
+function armOnce(lockWaitMs) {
   if (armed) return;
   armed = true;
   const deadline = Number(process.env.E2E_DEADLINE_MS);
@@ -161,7 +170,7 @@ function armOnce() {
         console.log(`[harness] WATCHDOG ${deadline}ms: capturing and exiting`);
         finishScenario(EXIT_WATCHDOG);
       },
-      Math.max(0, deadline - process.uptime() * 1000),
+      watchdogDelayMs({ deadlineMs: deadline, uptimeMs: process.uptime() * 1000, lockWaitMs }),
     ).unref();
   }
   if (attemptDir()) {
@@ -182,14 +191,20 @@ function armOnce() {
  */
 export async function launchElectron(launchOpts) {
   const local = process.env.GITHUB_ACTIONS !== 'true';
+  let lockWaitMs = 0;
   if (local) {
-    await acquireE2eLock({ scenario: scenarioName() });
+    lockWaitMs = await acquireE2eLock({ scenario: scenarioName() });
     setBelowNormal();
   }
   launchStartedAt = Date.now();
-  armOnce();
+  armOnce(lockWaitMs);
   const { _electron } = loadPlaywright();
-  const app = await _electron.launch(launchOpts);
+  // The runner's orphan sweep kills only apps carrying its own run id (run-smoke.mjs).
+  const runId = process.env.E2E_RUN_ID || `solo-${process.pid}`;
+  const app = await _electron.launch({
+    ...launchOpts,
+    args: [...(launchOpts.args ?? []), `${RUN_MARKER}=${runId}`],
+  });
   liveApps.add(app);
   app.once('close', () => liveApps.delete(app));
   if (local) {
@@ -538,7 +553,7 @@ export async function answerQuitAsks(app, { proceed }) {
  * @param {object} _page Its first window's page (kept for callers; the hook covers every window).
  */
 export async function closeApp(app, _page) {
-  await stopCoverage(app);
+  await stopCoverageWithin(app);
   await stopTrace(app);
   const startIds = await app
     .evaluate((electron) => electron.BrowserWindow.getAllWindows().map((w) => w.id))

@@ -5,8 +5,12 @@ import {
   classify,
   finalStatus,
   isGreen,
+  lockWaitMsFromLine,
+  orphanVictims,
   parseRunnerArgs,
+  RUN_MARKER,
   resolveSelection,
+  watchdogDelayMs,
 } from '../e2e/smoke-select.mjs';
 
 const stems = ['cwd', 'durability', 'quit-guard'];
@@ -107,5 +111,53 @@ describe('applyQuarantine', () => {
     expect(applyQuarantine('flaky', 'FLAKY', q)).toBe('FLAKY');
     expect(applyQuarantine('other', 'FAIL', q)).toBe('FAIL');
     expect(applyQuarantine('flaky', 'FAIL', null)).toBe('FAIL');
+  });
+});
+
+describe('the e2e lock wait is off the scenario clock', () => {
+  it('the harness watchdog counts from process start minus the lock wait', () => {
+    expect(watchdogDelayMs({ deadlineMs: 200_000, uptimeMs: 5_000, lockWaitMs: 0 })).toBe(195_000);
+    // Waited 150 s for another checkout's app: the scenario still gets its full budget.
+    expect(watchdogDelayMs({ deadlineMs: 200_000, uptimeMs: 155_000, lockWaitMs: 150_000 })).toBe(
+      195_000,
+    );
+    expect(watchdogDelayMs({ deadlineMs: 200_000, uptimeMs: 250_000, lockWaitMs: 0 })).toBe(0);
+  });
+
+  it('the runner reads the wait from the harness line that extends its kill timer', () => {
+    expect(lockWaitMsFromLine('[e2e-lock] acquired after 42s')).toBe(42_000);
+    expect(lockWaitMsFromLine('[e2e-lock] waiting for pid 7 (cwd, G:/x)')).toBeNull();
+    expect(lockWaitMsFromLine('[scenario] acquired after 3s')).toBeNull();
+  });
+});
+
+describe('orphanVictims: the sweep only touches Electrons of this run', () => {
+  const proc = (ProcessId: number, ParentProcessId: number, CommandLine: string) => ({
+    ProcessId,
+    ParentProcessId,
+    CommandLine,
+  });
+  const udd = (n: string) => String.raw`--user-data-dir=C:\Users\me\AppData\Local\Temp\cud-` + n;
+  const procs = [
+    // This run's app: marked root, a child, and a GPU process whose parent already died.
+    proc(10, 1, `electron.exe ${udd('mine')} G:\\repo ${RUN_MARKER}=run-A`),
+    proc(11, 10, `electron.exe --type=renderer ${udd('mine')}`),
+    proc(12, 999, `electron.exe --type=gpu-process ${udd('mine')}`),
+    // Another worktree's run holding the e2e lock: same temp dir, different run.
+    proc(20, 1, `electron.exe ${udd('theirs')} G:\\other ${RUN_MARKER}=run-B`),
+    proc(21, 20, `electron.exe --type=renderer ${udd('theirs')}`),
+    // A prefix of this run's profile dir is someone else's.
+    proc(22, 1, `electron.exe ${udd('mine2')} ${RUN_MARKER}=run-D`),
+    // The developer's own Conduit.
+    proc(30, 1, String.raw`electron.exe G:\awby\projects\conduit`),
+  ];
+
+  it("kills this run's tree and nothing else", () => {
+    expect(orphanVictims(procs, 'run-A')).toEqual([10, 11, 12]);
+  });
+
+  it('a run with nothing left finds nothing', () => {
+    expect(orphanVictims(procs, 'run-C')).toEqual([]);
+    expect(orphanVictims([], 'run-A')).toEqual([]);
   });
 });

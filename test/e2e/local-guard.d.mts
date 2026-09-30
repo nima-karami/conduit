@@ -3,6 +3,6 @@ export function acquireE2eLock(opts?: {
   scenario?: string;
   pollMs?: number;
   log?: (line: string) => void;
-}): Promise<void>;
+}): Promise<number>;
 export function releaseE2eLock(): void;
 export function setBelowNormal(pids?: number[]): void;

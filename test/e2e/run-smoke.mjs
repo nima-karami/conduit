@@ -25,8 +25,8 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -34,6 +34,8 @@ import {
   classify,
   finalStatus,
   isGreen,
+  lockWaitMsFromLine,
+  orphanVictims,
   parseRunnerArgs,
   resolveSelection,
 } from './smoke-select.mjs';
@@ -46,28 +48,38 @@ const KILL_MS = 210_000;
 const DEADLINE_MS = 200_000;
 
 const here = dirname(fileURLToPath(import.meta.url));
+/** Every app this invocation's scenarios launch carries it (harness `launchElectron`). */
+const RUN_ID = `${process.pid}-${randomBytes(4).toString('hex')}`;
 
 /**
  * Kill Electrons left behind by a scenario the runner had to kill itself. `spawnSync`'s timeout
  * only reaches the node child; the Electron it spawned survives, holding GPU/ConPTY handles and
  * CPU — which is what turns ONE wedged scenario into a run of "flaky" timeouts after it.
  *
- * Scoped by `--user-data-dir` under the OS temp dir: that is a harness-launched throwaway profile
- * and nothing else. A real Conduit reads its profile from `app.getPath('userData')` and passes no
- * such flag, so a developer's running app is never touched.
+ * Scoped to THIS invocation's apps (`orphanVictims`): another checkout's scenario may be running,
+ * or holding the e2e lock, with the same temp-dir profile prefix, and a developer's own Conduit
+ * carries no marker at all.
  */
 function sweepOrphanElectrons() {
   if (process.platform !== 'win32') return 0;
-  const marker = `--user-data-dir=${tmpdir()}`;
   const script =
-    `Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | ` +
-    `Where-Object { $_.CommandLine -like '*${marker.replace(/'/g, "''")}*' } | ` +
-    'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; 1 }';
+    `@(Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | ` +
+    'Select-Object ProcessId, ParentProcessId, CommandLine) | ConvertTo-Json -Compress';
   const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
     encoding: 'utf8',
     stdio: 'pipe',
   });
-  return (r.stdout || '').trim().split('\n').filter(Boolean).length;
+  let procs;
+  try {
+    procs = [JSON.parse(r.stdout || '[]')].flat();
+  } catch {
+    return 0;
+  }
+  const pids = orphanVictims(procs, RUN_ID);
+  for (const pid of pids) {
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+  }
+  return pids.length;
 }
 
 if (process.platform !== 'win32') {
@@ -123,6 +135,7 @@ function runAttempt(name, attempt) {
         ...process.env,
         CONDUIT_E2E: '1',
         E2E_SCENARIO: name,
+        E2E_RUN_ID: RUN_ID,
         E2E_ATTEMPT: String(attempt),
         E2E_DEADLINE_MS: String(DEADLINE_MS),
         ...(artifactsRoot ? { E2E_ARTIFACT_DIR: artifactsRoot } : {}),
@@ -131,16 +144,25 @@ function runAttempt(name, attempt) {
   );
   const r = { stdout: '', stderr: '', status: null, signal: null };
   let partial = '';
+  let kill = setTimeout(() => child.kill(), KILL_MS);
   child.stdout.setEncoding('utf8').on('data', (d) => {
     r.stdout += d;
     const lines = (partial + d).split('\n');
     partial = lines.pop();
-    for (const line of lines) if (line.startsWith('[e2e-lock]')) console.log(`\n  ${line}`);
+    for (const line of lines) {
+      if (!line.startsWith('[e2e-lock]')) continue;
+      console.log(`\n  ${line}`);
+      // The harness keeps the lock wait off its watchdog's clock; this backstop must too.
+      const waited = lockWaitMsFromLine(line);
+      if (waited !== null) {
+        clearTimeout(kill);
+        kill = setTimeout(() => child.kill(), start + KILL_MS + waited - Date.now());
+      }
+    }
   });
   child.stderr.setEncoding('utf8').on('data', (d) => {
     r.stderr += d;
   });
-  const kill = setTimeout(() => child.kill(), KILL_MS);
   return new Promise((resolveAttempt) => {
     let done = false;
     const finish = (status, signal) => {
