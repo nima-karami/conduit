@@ -1444,9 +1444,10 @@ export function App() {
   const layout = useMemo(() => centerLayout(docState, activeId), [docState, activeId]);
   // Spec §10: a collapse that stranded focus in the closed group hands it to group 1; focus the
   // user put anywhere else stays. Keyed by session, so switching to a session with one group is
-  // not a collapse.
+  // not a collapse. A layout effect for the same reason as the one below: flushed late, it would
+  // read a chord's not-yet-mounted landing as stranded focus and overwrite its request.
   const groupCountRef = useRef({ sessionId: activeId, count: layout.groups.length });
-  useEffect(() => {
+  useLayoutEffect(() => {
     const prev = groupCountRef.current;
     groupCountRef.current = { sessionId: activeId, count: layout.groups.length };
     if (prev.sessionId !== activeId || prev.count !== 2 || layout.groups.length !== 1) return;
