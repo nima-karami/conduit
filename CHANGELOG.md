@@ -6,6 +6,11 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Security
+- **Electron updated from 43.3.0 to 43.7.6**, which fixes the high-severity Electron advisories
+  published against 43.0.0–43.4.1 (sandbox inheritance for opened windows, cross-origin reads via
+  protocol handlers, preload code-cache poisoning, and others).
+
 ## [0.44.0] — 2026-09-29
 
 ### Added
