@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * The e2e harness owns two choke points (spec docs/specs/2026-09-29-remote-e2e-lean-loop.md §A′,
+ * The e2e harness owns two choke points (spec docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md §A′,
  * §3): `launchElectron` is the only launch, because the local single-instance lock, the priority
  * drop and CI tracing hang off it; `finishScenario` is the only exit, because a bare
  * `process.exit` skips failure capture. A scenario that bypasses either still passes every

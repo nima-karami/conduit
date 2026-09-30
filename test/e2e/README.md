@@ -34,7 +34,7 @@ are **deliberately excluded from `npm run verify`** — vitest only globs
 - **`remote-exclusions.json`** lists scenarios the hosted runner can't run (no OS focus, small
   display). They are skipped remotely, reported EXCLUDED with the reason, and run locally.
 
-Spec: `docs/specs/2026-09-29-remote-e2e-lean-loop.md`.
+Spec: `docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md`.
 
 ## `paste.e2e.mjs` — terminal bracketed paste (Windows)
 

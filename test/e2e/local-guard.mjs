@@ -1,6 +1,6 @@
 /**
  * Local-only e2e guards, applied by the harness's `launchElectron`: one e2e app per machine, run
- * at below-normal priority. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md §A′.
+ * at below-normal priority. Spec: docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md §A′.
  *
  * Holding the lock = listening on a named pipe. The OS closes the pipe when the owner dies, so
  * there is no stale-lock reclaim, PID probe or age check.

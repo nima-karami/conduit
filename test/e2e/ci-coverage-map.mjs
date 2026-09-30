@@ -1,5 +1,5 @@
 /**
- * Coverage → `coverage-map.json` for e2e `--affected` (spec docs/specs/2026-09-29-remote-e2e-lean-loop.md
+ * Coverage → `coverage-map.json` for e2e `--affected` (spec docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md
  * §B2). The harness (coverage-capture.mjs) records, per bundle, the generated range of every
  * function a scenario executed; this maps each range back through the bundle's sourcemap to the
  * source LINES of the function that defines it, so `--affected` can tell a change inside a function

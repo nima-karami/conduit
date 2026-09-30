@@ -1,7 +1,7 @@
 /**
  * `npm run e2e:remote -- [--affected | --full | <name>…] [--shards N] [--no-wait] [--no-verify]
  * [--out <dir>] [--timeout <min>]` — run e2e scenarios on GitHub-hosted Windows runners at the committed HEAD
- * and print run-smoke-style results. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md §A, §3.
+ * and print run-smoke-style results. Spec: docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md §A, §3.
  *
  * Pushes HEAD to an ephemeral `ci/e2e/<sha7>-<rand>` ref and dispatches e2e.yml there; the run
  * deletes its own ref, so this never does (and Ctrl-C needs no handling). A run already in flight

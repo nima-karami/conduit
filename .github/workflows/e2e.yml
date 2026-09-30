@@ -2,7 +2,7 @@ name: e2e
 run-name: e2e ${{ inputs.selection || 'full' }} ${{ inputs.nonce || github.event_name }}
 
 # Remote e2e on hosted Windows runners, dispatched by `npm run e2e:remote`, and nightly on main.
-# Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md. No workflow-level `concurrency`: GitHub keeps
+# Spec: docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md. No workflow-level `concurrency`: GitHub keeps
 # one pending run per group and cancels the older one; the CLI coordinates full runs instead.
 # "Nightly" below means the schedule, or a dispatch with mode=nightly (how the nightly path is
 # exercised on a ci/e2e ref: a schedule only ever runs main's copy of this file).

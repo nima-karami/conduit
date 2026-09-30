@@ -7,7 +7,7 @@
  * suite and any multi-scenario selection run remotely (`npm run e2e:remote -- --full | <names>`),
  * because a full local run takes ~100 min of a workstation. `CONDUIT_E2E_LOCAL_FULL=1` is a
  * human-only escape hatch. On CI (GITHUB_ACTIONS) it runs whatever it is given — a shard of the
- * suite. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md.
+ * suite. Spec: docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md.
  *
  * Usage:
  *   node test/e2e/run-smoke.mjs <name…> [--names-file f.json] [--json out.json]

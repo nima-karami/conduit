@@ -2,7 +2,7 @@
  * `npm run verify:quick` — the inner-loop check: Biome on the files changed since the merge-base
  * with origin/main (committed, uncommitted and untracked), both tsconfigs incrementally, and
  * `vitest --changed`. Not a gate: `npm run verify` is, unchanged (CLAUDE.md). Spec
- * docs/specs/2026-09-29-remote-e2e-lean-loop.md §B6.
+ * docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md §B6.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';

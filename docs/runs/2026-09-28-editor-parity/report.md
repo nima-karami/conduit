@@ -119,3 +119,17 @@ items were gated with it. Unattended from "I won't be here".
 - Upstream Milkdown: `Timer` should clear its timeout (issue not filed).
 - Earlier queue still open: Terminal click focusing xterm, Ctrl+Tab from web guests, the 2 MB
   cap, undo across rename, Monaco 0.57 for dompurify.
+
+## Remote e2e completed — 2026-09-30
+
+- **v1 pushed** at `ac30e67`. Merged-tree gate: remote `--full` run 36715075298 flaky-passed
+  (169 PASS, 1 FLAKY timed-messages, 8 EXCLUDED, verify success). Excluded scenarios locally: 7/9 on
+  the first pass; split-editor-focus-keep and terminal-exit-focus timed out while the machine was
+  loaded and passed when re-run alone (CPU 2%).
+- **Nightly state seeded on main**: run 36717552075 (mode=nightly) published `e2e-state` from `main`.
+  The schedule (`23 8 * * *`) now runs from main.
+- **`--affected` proven end to end on real state**, using throwaway commits (deleted):
+  - a docs-only commit → "no e2e needed", exit 0, nothing dispatched;
+  - one edit inside `selectionToHtml` (markdown-viewer.tsx) → 41 of 176 scenarios (markdown-viewer, the
+    core smoke set, and the always-run relaunch/multi-window scenarios), all PASS, verify success.
+- Spec archived: `docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md`.

@@ -1,6 +1,6 @@
 /**
  * Pure pieces of run-smoke.mjs: argument parsing, the local single-scenario rule, exclusions and
- * exit → status classification. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md §A′, §3.
+ * exit → status classification. Spec: docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md §A′, §3.
  */
 
 /** Exit code of the harness watchdog (`finishScenario(EXIT_WATCHDOG)`); artifacts were captured. */

@@ -1,5 +1,5 @@
 /**
- * `--affected`: which e2e scenarios a diff needs (spec docs/specs/2026-09-29-remote-e2e-lean-loop.md
+ * `--affected`: which e2e scenarios a diff needs (spec docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md
  * §B2, rules in order). `e2e:remote` applies only the first two rules client-side; the `prepare` job
  * of .github/workflows/e2e.yml runs this file as a CLI, which applies all of them.
  *

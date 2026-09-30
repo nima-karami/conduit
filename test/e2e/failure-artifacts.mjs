@@ -1,6 +1,6 @@
 /**
  * CI failure artifacts for e2e scenarios, driven by the harness (`launchElectron`, teardown,
- * `finishScenario`). Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md §3 "Failure artifacts".
+ * `finishScenario`). Spec: docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md §3 "Failure artifacts".
  *
  * Measured on hosted runners (spec §2, Slice 0 results): tracing only works snapshots-only and
  * started once the first window is ready, and a screenshot costs 1–8 s per window — so every app

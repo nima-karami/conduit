@@ -1,6 +1,6 @@
 # Plan: Remote e2e on GitHub Actions + a leaner dev loop
 
-Spec: [`docs/specs/2026-09-29-remote-e2e-lean-loop.md`](../specs/2026-09-29-remote-e2e-lean-loop.md).
+Spec: [`docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md`](../specs/archive/2026-09-29-remote-e2e-lean-loop.md).
 The rationale is in the spec; this plan covers files, interfaces, order and verification.
 Interim rule: **no local `npm run verify`, no local suite, no builds or installs** until
 Slice 0's remote run exists. Local checks are limited to targeted `npx vitest run <file>`, `npx biome check <files>`,

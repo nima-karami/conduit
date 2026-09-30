@@ -1,7 +1,7 @@
 /**
  * The nightly `e2e-state` artifact: timings, flaky history, the last nightly's failures, and the
  * ref sweep's decision. Pure; the `prepare`, `state`, `report` and `sweep` jobs of
- * .github/workflows/e2e.yml do the I/O. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md §3.
+ * .github/workflows/e2e.yml do the I/O. Spec: docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md §3.
  */
 import { median } from './ci-shard-plan.mjs';
 

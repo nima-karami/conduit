@@ -1,6 +1,6 @@
 /**
  * Pure pieces of `npm run e2e:remote` (tools/e2e-remote.mjs): argument parsing, run correlation,
- * in-flight matching, state mapping and printing. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md §A, §3.
+ * in-flight matching, state mapping and printing. Spec: docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md §A, §3.
  */
 import { createHash } from 'node:crypto';
 

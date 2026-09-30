@@ -187,7 +187,7 @@ discoverable by reading the tree.
   exit only through `finishScenario` (`test/unit/e2e-harness-guards.test.ts`). Scenarios that need
   real OS focus or a big display are skipped remotely and listed EXCLUDED
   (`test/e2e/remote-exclusions.json`); run those locally. Spec:
-  `docs/specs/2026-09-29-remote-e2e-lean-loop.md`.
+  `docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md`.
 - **Docs layout is a contract (ADR 0003), not a free-for-all.** `docs/adr/NNNN-slug.md`
   = durable decisions; `docs/specs/YYYY-MM-DD-slug.md` = active feature specs (with
   `status:`/`date:` frontmatter + a row in `docs/specs/INDEX.md`), moved to

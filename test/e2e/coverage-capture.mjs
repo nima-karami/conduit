@@ -2,7 +2,7 @@
  * Nightly coverage for e2e `--affected`: which functions of the app's bundles a scenario ran. Only
  * when the runner sets `E2E_COVERAGE_DIR` (the nightly); hooked from the harness's
  * `launchElectron`, `closeApp`, `shutdownApp` and `finishScenario`. ci-coverage-map.mjs turns the
- * result into credited source lines. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md §B2.
+ * result into credited source lines. Spec: docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md §B2.
  *
  * Writes `<E2E_COVERAGE_DIR>/<scenario>/<n>.json` = `{ "webview.js" | "main.js": [[start, end]
  * generated offsets of each executed function] }`.

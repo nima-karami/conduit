@@ -1,6 +1,6 @@
 /**
  * Merge per-shard result JSON into the run's result JSON and decide the run status. Pure; used by
- * the `report` job of .github/workflows/e2e.yml. Spec: docs/specs/2026-09-29-remote-e2e-lean-loop.md §3.
+ * the `report` job of .github/workflows/e2e.yml. Spec: docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md §3.
  */
 
 const NO_ARTIFACT = new Set(['PASS', 'SKIP', 'EXCLUDED', 'INFRA']);
