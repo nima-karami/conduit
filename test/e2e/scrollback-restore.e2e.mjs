@@ -12,15 +12,15 @@
  * Pre-seeds sessions.json + scrollback-<id>.json directly (deterministic — no live shell
  * echo to race), then relaunches the restored session the way the UI does.
  */
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
   finishScenario,
   launchElectron,
   makeLog,
+  profileDir,
   REPO,
   shutdownApp,
   tapBridge,
@@ -35,7 +35,7 @@ const log = makeLog('scrollback-restore');
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-sbr-'));
+const userDataDir = profileDir('sbr');
 const SID = 'restoreseed1';
 const SENTINEL = `SBR-${Date.now()}`;
 

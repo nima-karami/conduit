@@ -10,9 +10,8 @@
  * Windows only.
  */
 
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
@@ -20,6 +19,7 @@ import {
   finishScenario,
   launchElectron,
   makeLog,
+  profileDir,
   REPO,
   tapBridge,
 } from './harness.mjs';
@@ -32,7 +32,7 @@ if (process.platform !== 'win32') {
 const log = makeLog('durability');
 
 // Use a SHARED user-data dir across both launches so sessions persist.
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-dur-'));
+const userDataDir = profileDir('dur');
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 

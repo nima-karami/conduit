@@ -5,9 +5,13 @@ import {
   classify,
   finalStatus,
   isGreen,
+  KILL_TIMER_LOCK_CAP_MS,
+  killTimerOnLine,
+  killTimerStart,
   lockWaitMsFromLine,
   orphanVictims,
   parseRunnerArgs,
+  profilePrefix,
   RUN_MARKER,
   resolveSelection,
   watchdogDelayMs,
@@ -59,6 +63,7 @@ describe('classify', () => {
     [{ status: 1 }, 'FAIL'],
     [{ status: 2 }, 'FAIL'],
     [{ status: 3 }, 'FAIL'],
+    [{ status: null, signal: 'SIGTERM', lockTimeout: true }, 'LOCK-TIMEOUT'],
   ])('%j → %s', (r, expected) => {
     expect(classify(r)).toBe(expected);
   });
@@ -131,6 +136,38 @@ describe('the e2e lock wait is off the scenario clock', () => {
   });
 });
 
+describe('the runner kill timer', () => {
+  const KILL = 210_000;
+  const s0 = killTimerStart(1_000, { killMs: KILL });
+  const waiting = '[e2e-lock] waiting for pid 7 (split-editor, G:/x)';
+
+  it('a scenario that never waits is killed KILL_MS after its start', () => {
+    expect(s0).toMatchObject({ deadline: 1_000 + KILL, reason: 'run' });
+    expect(killTimerOnLine(s0, '[e2e-lock] something else', 5_000)).toBe(s0);
+  });
+
+  it('the first waiting line suspends the scenario clock; only the wait cap can fire', () => {
+    const w = killTimerOnLine(s0, waiting, 3_000);
+    expect(w).toMatchObject({ reason: 'lock-wait', deadline: 3_000 + KILL_TIMER_LOCK_CAP_MS });
+    // The report repeats every 30 s while waiting; it must not re-arm anything.
+    const later = killTimerOnLine(w, waiting, 400_000);
+    expect(later).toEqual(w);
+    expect(later.deadline).toBeGreaterThan(1_000 + KILL + 400_000);
+  });
+
+  it('acquiring re-arms the kill at start + KILL_MS + the wait the harness reports', () => {
+    const w = killTimerOnLine(s0, waiting, 3_000);
+    const a = killTimerOnLine(w, '[e2e-lock] acquired after 400s', 403_000);
+    expect(a).toMatchObject({ reason: 'run', deadline: 1_000 + KILL + 400_000 });
+  });
+
+  it('the wait cap is 20 minutes unless overridden', () => {
+    expect(KILL_TIMER_LOCK_CAP_MS).toBe(20 * 60_000);
+    const w = killTimerOnLine(killTimerStart(0, { killMs: KILL, waitCapMs: 50 }), waiting, 10);
+    expect(w).toMatchObject({ reason: 'lock-wait', deadline: 60 });
+  });
+});
+
 describe('orphanVictims: the sweep only touches Electrons of this run', () => {
   const proc = (ProcessId: number, ParentProcessId: number, CommandLine: string) => ({
     ProcessId,
@@ -161,6 +198,19 @@ describe('orphanVictims: the sweep only touches Electrons of this run', () => {
 
   it("kills this run's tree and nothing else", () => {
     expect(orphanVictims(procs, 'run-A')).toEqual([10, 11, 12]);
+  });
+
+  it('a child whose root already died is found by its run-scoped profile dir', () => {
+    const scoped = (run: string, label: string) =>
+      `C:\\Users\\Jo Doe\\AppData\\Local\\Temp\\${profilePrefix(run)}${label}`;
+    const orphans = [
+      proc(40, 999, `${exe} --type=renderer --user-data-dir="${scoped('9-aaaa0001', 'x1')}"`),
+      proc(41, 40, `${exe} --type=utility`),
+      proc(42, 999, `${exe} --type=gpu-process --user-data-dir="${scoped('9-aaaa0002', 'x1')}"`),
+      proc(43, 999, `${exe} --type=gpu-process --user-data-dir="${dir('9-aaaa0001x')}"`),
+    ];
+    expect(profilePrefix('9-aaaa0001')).toBe('conduit-ud-9-aaaa0001-');
+    expect(orphanVictims(orphans, '9-aaaa0001')).toEqual([40, 41]);
   });
 
   it('a run with nothing left finds nothing', () => {

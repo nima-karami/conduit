@@ -12,9 +12,8 @@
  * Windows only.
  */
 
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
@@ -22,6 +21,7 @@ import {
   finishScenario,
   launchElectron,
   makeLog,
+  profileDir,
   REPO,
   tapBridge,
 } from './harness.mjs';
@@ -33,7 +33,7 @@ if (process.platform !== 'win32') {
 
 const log = makeLog('session-restore-toggle');
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-restore-toggle-'));
+const userDataDir = profileDir('restore-toggle');
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 

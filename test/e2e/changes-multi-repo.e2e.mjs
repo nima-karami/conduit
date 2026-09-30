@@ -19,6 +19,7 @@ import {
   openChangesTab,
   openHistory,
   openSession,
+  profileDir,
   shutdownApp,
   tapBridge,
 } from './harness.mjs';
@@ -74,7 +75,7 @@ mkdirSync(plain, { recursive: true });
 writeFileSync(join(plain, 'notes.txt'), 'not a repo\n');
 makeRepo(solo, 'solo-subject');
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-cmr-ud-'));
+const userDataDir = profileDir('cmr');
 
 const sessionOf = (page, id) =>
   page.evaluate((sid) => (window.__sessions || []).find((s) => s.id === sid) ?? null, id);

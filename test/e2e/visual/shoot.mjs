@@ -23,7 +23,14 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { closeApp, launchApp, openChangesTab, openHistory, openReview } from '../harness.mjs';
+import {
+  closeApp,
+  launchApp,
+  openChangesTab,
+  openHistory,
+  openReview,
+  profileDir,
+} from '../harness.mjs';
 import { ensureFixtureRepo, setArchProposal } from './fixture-repo.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
@@ -505,7 +512,7 @@ const SCENES = {
 
 /** Pre-seed a profile so the very first paint is already on the requested theme. */
 function seedProfile(theme) {
-  const dir = mkdtempSync(join(tmpdir(), 'conduit-shots-'));
+  const dir = profileDir('shots');
   if (theme) {
     writeFileSync(
       join(dir, 'settings.json'),

@@ -16,7 +16,15 @@ import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, finishScenario, launchApp, makeLog, openSession, REPO } from './harness.mjs';
+import {
+  assert,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+  profileDir,
+  REPO,
+} from './harness.mjs';
 import {
   explorer,
   G,
@@ -49,7 +57,7 @@ const repoArg = repo.replace(/\\/g, '/');
 
 const WEB_PAGES = { '/a': 'Split Web A', '/b': 'Split Web B' };
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-split-surf-ud-'));
+const userDataDir = profileDir('split-surf');
 writeFileSync(
   join(userDataDir, 'settings.json'),
   JSON.stringify({ version: 1, settings: { autoSave: 'onFocusChange' } }),

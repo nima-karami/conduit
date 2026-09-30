@@ -24,6 +24,7 @@ import {
   launchElectron,
   makeLog,
   openSession,
+  profileDir,
   REPO,
   runShellReader,
   tapBridge,
@@ -53,7 +54,7 @@ $s = -join ($acc.ToArray() | ForEach-Object { [char]$_ })
 "text=$($s.Contains('conduit-timed-ok')) enter=$($s.Contains([char]13))" | Out-File $env:DUMP -Encoding ascii
 `;
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-timed-'));
+const userDataDir = profileDir('timed');
 const workDir = mkdtempSync(join(tmpdir(), 'conduit-timed-work-'));
 const shotDir = join(process.env.TEMP || tmpdir(), 'claude-scratch');
 mkdirSync(shotDir, { recursive: true });

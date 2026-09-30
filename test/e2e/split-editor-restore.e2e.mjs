@@ -10,9 +10,9 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
@@ -20,6 +20,7 @@ import {
   launchApp,
   makeLog,
   openSession,
+  profileDir,
   shutdownApp,
   tapBridge,
 } from './harness.mjs';
@@ -52,7 +53,7 @@ if (process.platform !== 'win32') {
 const log = makeLog('split-editor-restore');
 
 const { repoArg, repoName, hasGit } = makeSplitRepo();
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-split-ud-'));
+const userDataDir = profileDir('split');
 
 const hasBinary = (name) => spawnSync('where', [name], { stdio: 'ignore' }).status === 0;
 const goplsInstalled = () =>

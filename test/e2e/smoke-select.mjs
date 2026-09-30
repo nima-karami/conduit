@@ -78,10 +78,12 @@ export function applyExclusions(names, exclusions) {
 }
 
 /**
- * @param {{ status: number | null, signal?: string | null, output?: string }} r a finished child
- * @returns {'PASS' | 'SKIP' | 'TIMEOUT' | 'FAIL'}
+ * @param {{ status: number | null, signal?: string | null, output?: string, lockTimeout?: boolean }} r
+ *   a finished child; `lockTimeout`: the runner killed it for waiting on the e2e lock too long
+ * @returns {'PASS' | 'SKIP' | 'TIMEOUT' | 'FAIL' | 'LOCK-TIMEOUT'}
  */
-export function classify({ status, signal, output = '' }) {
+export function classify({ status, signal, output = '', lockTimeout = false }) {
+  if (lockTimeout) return 'LOCK-TIMEOUT';
   if (status === 0) return /\bSKIP\b/.test(output) ? 'SKIP' : 'PASS';
   if (status === EXIT_WATCHDOG || signal) return 'TIMEOUT';
   return 'FAIL';
@@ -119,8 +121,55 @@ export function lockWaitMsFromLine(line) {
   return m ? Number(m[1]) * 1000 : null;
 }
 
+/** How long the runner lets a scenario wait on another checkout's e2e app before giving up. */
+export const KILL_TIMER_LOCK_CAP_MS = 20 * 60_000;
+
+/**
+ * The runner's kill timer: `deadline` is when it kills the child, `reason` why. The scenario clock
+ * (`killMs`) stops while the harness waits on the e2e lock — a waiter is not a wedged scenario — and
+ * resumes, extended by the reported wait, once the lock is acquired; the wait itself is capped.
+ */
+export function killTimerStart(start, { killMs, waitCapMs = KILL_TIMER_LOCK_CAP_MS }) {
+  return {
+    start,
+    killMs,
+    waitCapMs,
+    waitedMs: 0,
+    waitingSince: null,
+    deadline: start + killMs,
+    reason: 'run',
+  };
+}
+
+export function killTimerOnLine(state, line, now) {
+  const waited = lockWaitMsFromLine(line);
+  if (waited !== null) {
+    const waitedMs = state.waitedMs + waited;
+    return {
+      ...state,
+      waitedMs,
+      waitingSince: null,
+      deadline: state.start + state.killMs + waitedMs,
+      reason: 'run',
+    };
+  }
+  if (state.waitingSince === null && /^\[e2e-lock\] waiting\b/.test(line)) {
+    return { ...state, waitingSince: now, deadline: now + state.waitCapMs, reason: 'lock-wait' };
+  }
+  return state;
+}
+
 /** Appended by `launchElectron` to every app it launches; names the runner invocation. */
 export const RUN_MARKER = '--conduit-e2e-run';
+
+/**
+ * Every e2e profile dir's basename starts with this (harness `profileDir`, enforced by
+ * `launchElectron`), so the sweep finds a run's Chromium children even after their root died.
+ * Run ids are `<pid>-<8 hex>` or `solo-<pid>`, so one run's prefix never prefixes another's.
+ */
+export function profilePrefix(runId) {
+  return `conduit-ud-${runId}-`;
+}
 
 /**
  * A Windows command line → its arguments, quotes removed. Measured: Playwright quotes each whole
@@ -153,9 +202,10 @@ const userDataDir = (argv) =>
 
 /**
  * The Electron processes a runner's orphan sweep may kill: the apps this run launched (marked with
- * `RUN_MARKER=<runId>`), their descendants, and any process sharing one of their `--user-data-dir`s
- * (a child whose parent already died). Never another run's — a second worktree's scenario may be
- * holding the e2e lock with the same temp-dir profile prefix — nor the developer's own Conduit.
+ * `RUN_MARKER=<runId>`), their descendants, and any process whose `--user-data-dir` is one of theirs
+ * or carries this run's `profilePrefix` (a child whose parent, maybe the root, already died). Never
+ * another run's — a second worktree's scenario may be holding the e2e lock — nor the developer's
+ * own Conduit.
  *
  * @param {{ ProcessId: number, ParentProcessId: number, CommandLine: string | null }[]} procs
  * @returns {number[]} sorted PIDs
@@ -166,9 +216,12 @@ export function orphanVictims(procs, runId) {
   const roots = parsed.filter((p) => p.argv.includes(mark));
   const dirs = new Set(roots.map((p) => userDataDir(p.argv)).filter(Boolean));
   const victims = new Set(roots.map((p) => p.ProcessId));
+  const prefix = profilePrefix(runId);
   for (const p of parsed) {
     const dir = userDataDir(p.argv);
-    if (dir && dirs.has(dir)) victims.add(p.ProcessId);
+    if (!dir) continue;
+    const base = dir.replace(/[\\/]+$/, '').replace(/.*[\\/]/, '');
+    if (dirs.has(dir) || base.startsWith(prefix)) victims.add(p.ProcessId);
   }
   for (let grew = true; grew; ) {
     grew = false;

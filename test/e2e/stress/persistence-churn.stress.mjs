@@ -12,6 +12,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { profileDir } from '../harness.mjs';
 import {
   assertInvariant,
   closeApp,
@@ -33,7 +34,7 @@ if (process.platform !== 'win32') {
   process.exit(0);
 }
 
-const udd = mkdtempSync(join(tmpdir(), 'conduit-persist-udd-'));
+const udd = profileDir('persist');
 let exitCode = 0;
 let l1 = null;
 try {

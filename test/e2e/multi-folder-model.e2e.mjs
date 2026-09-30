@@ -42,6 +42,7 @@ import {
   launchApp,
   makeLog,
   openSession,
+  profileDir,
   removeDir,
   shutdownApp,
   tapBridge,
@@ -55,7 +56,7 @@ if (process.platform !== 'win32') {
   await finishScenario(0);
 }
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-mfm-'));
+const userDataDir = profileDir('mfm');
 const work = mkdtempSync(join(tmpdir(), 'conduit-mfm-work-'));
 const dirA = join(work, 'A');
 const dirB = join(work, 'B');

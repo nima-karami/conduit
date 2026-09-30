@@ -17,6 +17,7 @@ import {
   makeLog,
   openChangesTab,
   openSession,
+  profileDir,
   removeDir,
 } from './harness.mjs';
 
@@ -158,7 +159,7 @@ async function runTheme(theme) {
   const ref = join(work, 'ref');
   makeRepo(home);
   makeRepo(ref);
-  const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-tc-ud-'));
+  const userDataDir = profileDir('tc');
   writeFileSync(
     join(userDataDir, 'settings.json'),
     JSON.stringify({ version: 1, settings: { theme, restoreSessions: false } }),

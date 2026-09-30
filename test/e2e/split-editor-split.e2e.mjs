@@ -14,15 +14,13 @@
  * split-editor-move, -tabs and -restore replay these steps as setup and continue from there.
  */
 
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   assert,
   finishScenario,
   launchApp,
   makeLog,
   openSession,
+  profileDir,
   shutdownApp,
   tapBridge,
 } from './harness.mjs';
@@ -43,7 +41,7 @@ if (process.platform !== 'win32') {
 const log = makeLog('split-editor-split');
 
 const { repoArg, repoName } = makeSplitRepo();
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-split-ud-'));
+const userDataDir = profileDir('split');
 
 const firstLine = (page, g) =>
   page.evaluate((sel) => {

@@ -26,6 +26,7 @@ import {
   launchApp,
   makeLog,
   openSession,
+  profileDir,
   removeDir,
   shutdownApp,
   tapBridge,
@@ -97,7 +98,7 @@ async function hoverPlus(page, name) {
   return probe;
 }
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-ud-projects-'));
+const userDataDir = profileDir('projects');
 const work = mkdtempSync(join(tmpdir(), 'conduit-projects-'));
 let launched = null;
 let code = 0;

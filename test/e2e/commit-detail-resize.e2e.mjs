@@ -29,6 +29,7 @@ import {
   makeLog,
   openHistory,
   openSession,
+  profileDir,
   REPO,
   tapBridge,
 } from './harness.mjs';
@@ -60,7 +61,7 @@ try {
 }
 const repoArg = repo.replace(/\\/g, '/');
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-cdr-ud-'));
+const userDataDir = profileDir('cdr');
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 

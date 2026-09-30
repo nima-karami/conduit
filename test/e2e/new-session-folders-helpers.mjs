@@ -16,6 +16,7 @@ import {
   finishScenario,
   launchApp,
   makeLog,
+  profileDir,
   shutdownApp,
   tapBridge,
 } from './harness.mjs';
@@ -63,7 +64,7 @@ function makeFixture() {
     mkdirSync(path);
     return { path, name: `recent-${i}`, lastOpened: 100 - i };
   });
-  const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-ud-'));
+  const userDataDir = profileDir();
   writeFileSync(join(userDataDir, 'repos.json'), JSON.stringify({ version: 1, repos: recents }));
 
   const gitDir = dirname(

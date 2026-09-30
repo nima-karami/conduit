@@ -1,6 +1,7 @@
 /**
  * e2e runner — runs test/e2e/<name>.e2e.mjs scenarios one at a time, each as a child process,
- * printing PASS / FAIL / SKIP / TIMEOUT / FLAKY per scenario and a summary.
+ * printing PASS / FAIL / SKIP / TIMEOUT / FLAKY per scenario and a summary. LOCK-TIMEOUT (local
+ * only): the scenario waited on another checkout's e2e app for longer than the 20 min cap.
  *
  * Locally (`npm run e2e -- <name>`) it runs exactly ONE scenario, matched by exact file stem; the
  * suite and any multi-scenario selection run remotely (`npm run e2e:remote -- --full | <names>`),
@@ -34,7 +35,8 @@ import {
   classify,
   finalStatus,
   isGreen,
-  lockWaitMsFromLine,
+  killTimerOnLine,
+  killTimerStart,
   orphanVictims,
   parseRunnerArgs,
   resolveSelection,
@@ -43,7 +45,10 @@ import {
 /** Settle delay between scenarios: gives the prior Electron process time to fully
  *  release GPU/ConPTY handles and let the CPU quiesce before the next launch. */
 const SETTLE_MS = 3000;
-/** Runner kill. The harness watchdog (E2E_DEADLINE_MS) fires first so it can save artifacts. */
+/**
+ * Runner kill. The harness watchdog (E2E_DEADLINE_MS) fires first so it can save artifacts. Its
+ * clock stops while the scenario waits on the e2e lock (`killTimerOnLine`).
+ */
 const KILL_MS = 210_000;
 const DEADLINE_MS = 200_000;
 
@@ -144,7 +149,25 @@ function runAttempt(name, attempt) {
   );
   const r = { stdout: '', stderr: '', status: null, signal: null };
   let partial = '';
-  let kill = setTimeout(() => child.kill(), KILL_MS);
+  let timer = killTimerStart(start, { killMs: KILL_MS });
+  let lockTimeout = false;
+  let kill;
+  const arm = () => {
+    clearTimeout(kill);
+    kill = setTimeout(
+      () => {
+        if (timer.reason === 'lock-wait') {
+          lockTimeout = true;
+          console.log(
+            `\n  [e2e-lock] lock wait timeout: gave up after ${timer.waitCapMs / 60_000} min waiting for another e2e app`,
+          );
+        }
+        child.kill();
+      },
+      Math.max(0, timer.deadline - Date.now()),
+    );
+  };
+  arm();
   child.stdout.setEncoding('utf8').on('data', (d) => {
     r.stdout += d;
     const lines = (partial + d).split('\n');
@@ -152,11 +175,10 @@ function runAttempt(name, attempt) {
     for (const line of lines) {
       if (!line.startsWith('[e2e-lock]')) continue;
       console.log(`\n  ${line}`);
-      // The harness keeps the lock wait off its watchdog's clock; this backstop must too.
-      const waited = lockWaitMsFromLine(line);
-      if (waited !== null) {
-        clearTimeout(kill);
-        kill = setTimeout(() => child.kill(), start + KILL_MS + waited - Date.now());
+      const next = killTimerOnLine(timer, line.trimEnd(), Date.now());
+      if (next !== timer) {
+        timer = next;
+        arm();
       }
     }
   });
@@ -172,7 +194,7 @@ function runAttempt(name, attempt) {
       r.status = status;
       r.signal = signal;
       const output = r.stdout + r.stderr;
-      const result = classify({ status, signal, output });
+      const result = classify({ status, signal, output, lockTimeout });
       const seconds = Number(((Date.now() - start) / 1000).toFixed(1));
       resolveAttempt({ name, attempt, status: result, seconds, exit: status ?? signal, r, output });
     };
@@ -205,7 +227,8 @@ for (const name of names) {
   process.stdout.write(`  ${name} ... `);
   const first = await runAttempt(name, 1);
   let last = first;
-  if (args.retry && !isGreen(first.status)) {
+  // A retry after a lock-wait timeout would only wait on the same other app again.
+  if (args.retry && !isGreen(first.status) && first.status !== 'LOCK-TIMEOUT') {
     console.log(`${first.status} (${first.seconds}s, exit ${first.exit}), retrying`);
     afterFailure(first);
     await settle();
