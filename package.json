@@ -28,6 +28,7 @@
     "secret-scan": "node tools/secret-scan.mjs",
     "security": "node tools/security-scan.mjs && node tools/secret-scan.mjs",
     "verify": "npm run check && npm run typecheck && npm run build && npm run test:unit && npm run fallow:check && npm run audit && npm run security",
+    "verify:quick": "node tools/verify-quick.mjs",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder --win",
     "release": "npm version patch && git push --follow-tags",
