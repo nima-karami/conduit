@@ -6,7 +6,7 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
-## [0.45.4] — 2026-10-01
+## [0.45.5] — 2026-10-01
 
 ### Fixed
 - **Background sessions do less supporting work.** Git refreshes batch visible sessions and split

@@ -1692,6 +1692,7 @@ export function App() {
     if (active)
       post({
         type: 'requestProject',
+        auto: true,
         requestId: projectReplies.current.next(),
         path: activeCwd(active),
         changesRoot: active.activeRepoRoot,
@@ -1723,23 +1724,27 @@ export function App() {
   // Re-read the working-tree change list (R5.3). Used both by the manual refresh button
   // in the Changes tab and by the focus/visibility auto-refresh below.
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + home only)
-  const refreshChanges = useCallback(() => {
-    if (active)
-      post({
-        type: 'requestProject',
-        requestId: projectReplies.current.next(),
-        path: activeCwd(active),
-        changesRoot: active.activeRepoRoot,
-        sessionId: active.id,
-      });
-  }, [
-    active?.id,
-    active?.home,
-    active?.cwd,
-    active?.activeRepoRoot,
-    repoSetKey(active?.repos ?? []),
-    active?.repos === undefined,
-  ]);
+  const refreshChanges = useCallback(
+    (auto = false) => {
+      if (active)
+        post({
+          type: 'requestProject',
+          auto: auto === true,
+          requestId: projectReplies.current.next(),
+          path: activeCwd(active),
+          changesRoot: active.activeRepoRoot,
+          sessionId: active.id,
+        });
+    },
+    [
+      active?.id,
+      active?.home,
+      active?.cwd,
+      active?.activeRepoRoot,
+      repoSetKey(active?.repos ?? []),
+      active?.repos === undefined,
+    ],
+  );
 
   // ---- FS undo/redo: record, execute, and refresh ----
 
@@ -1851,13 +1856,13 @@ export function App() {
     };
     const onFocus = () => {
       if (document.visibilityState !== 'hidden') {
-        refreshChanges();
+        refreshChanges(true);
         rereadVisibleFiles();
       }
     };
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
-        refreshChanges();
+        refreshChanges(true);
         rereadVisibleFiles();
       }
     };
@@ -1877,7 +1882,7 @@ export function App() {
   useEffect(() => {
     return subscribe((msg) => {
       if (msg.type !== 'fsChanged') return;
-      refreshChanges();
+      refreshChanges(true);
       rereadOpenDiffs((d) => msg.folders.some((f) => isUnderRoot(f, d.path)));
     });
   }, [refreshChanges, rereadOpenDiffs]);

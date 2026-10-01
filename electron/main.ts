@@ -1347,8 +1347,8 @@ app.whenReady().then(() => {
     },
     onError: (sessionId, e) => log.error('repo', `scan failed for ${sessionId}: ${String(e)}`),
   });
-  const scheduleRepoScan = (sessionId: string) => {
-    if (mgr.get(sessionId)?.repos !== undefined && !gitDemand.isVisible(sessionId)) {
+  const scheduleRepoScan = (sessionId: string, force = false) => {
+    if (!force && mgr.get(sessionId)?.repos !== undefined && !gitDemand.isVisible(sessionId)) {
       deferredRepoScans.add(sessionId);
       return;
     }
@@ -2527,16 +2527,17 @@ app.whenReady().then(() => {
     changesRoot: string | undefined,
     sessionId: string | undefined,
     requestId: number,
+    auto = false,
   ) {
     deferredProjectRequests.delete(windowId);
-    if (sessionId && !gitDemand.isVisible(sessionId)) {
+    if (auto && sessionId && !gitDemand.isVisible(sessionId)) {
       deferredProjectRequests.set(windowId, {
         sessionId,
-        run: () => void sendProject(dispatch, windowId, p, changesRoot, sessionId, requestId),
+        run: () => void sendProject(dispatch, windowId, p, changesRoot, sessionId, requestId, true),
       });
       return;
     }
-    folders.requestProject(p, sessionId, windowId);
+    folders.requestProject(p, sessionId, windowId, !auto);
     const session = () => (sessionId === undefined ? undefined : mgr.get(sessionId));
     try {
       const activeRoot = changesRoot ?? p;
@@ -2891,7 +2892,15 @@ app.whenReady().then(() => {
           });
           break;
         case 'requestProject':
-          await sendProject(replyHere, senderId, m.path, m.changesRoot, m.sessionId, m.requestId);
+          await sendProject(
+            replyHere,
+            senderId,
+            m.path,
+            m.changesRoot,
+            m.sessionId,
+            m.requestId,
+            m.auto === true,
+          );
           break;
         case 'readDir': {
           const entries = await readDir(m.path);

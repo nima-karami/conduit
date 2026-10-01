@@ -822,6 +822,7 @@ export type WebviewToHost =
   | {
       type: 'requestProject';
       path: string;
+      auto?: boolean;
       changesRoot?: string;
       sessionId?: string;
       /** Echoed on the `project` reply so the renderer can drop an out-of-order one. Required:

@@ -12,7 +12,7 @@ import type { FsFire, ProjectWatcher } from './project-watcher';
 
 export interface SessionFolderRuntimeDeps {
   mgr: Pick<SessionManager, 'get' | 'list' | 'setFolderHealth'>;
-  scheduleRepoScan: (sessionId: string) => void;
+  scheduleRepoScan: (sessionId: string, force?: boolean) => void;
   reconcilePlans: (homes: string[]) => void;
   broadcastFsChanged: (fire: FsFire) => void;
   dropResolutionsForRoot: (root: string) => void;
@@ -77,7 +77,7 @@ export class SessionFolderRuntime {
     this.check(sessionId);
   }
 
-  requestProject(p: string, sessionId: string | undefined, windowId: number): void {
+  requestProject(p: string, sessionId: string | undefined, windowId: number, force = false): void {
     if (!p) return;
     const id = sessionId ? this.deps.mgr.get(sessionId)?.id : undefined;
     const switched = this.shownBy.get(windowId) !== id;
@@ -90,7 +90,7 @@ export class SessionFolderRuntime {
     this.reconcilePlans();
     // A repo created outside every watched folder is only ever found by these refreshes.
     for (const s of this.deps.mgr.list()) {
-      if (sessionContains(s, p)) this.deps.scheduleRepoScan(s.id);
+      if (sessionContains(s, p)) this.deps.scheduleRepoScan(s.id, force && (!id || id === s.id));
     }
   }
 
