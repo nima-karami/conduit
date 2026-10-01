@@ -1,6 +1,7 @@
 // Edit intents → a minimal text patch of the fence. Every rule here is spec §3.2
 // (docs/specs/2026-09-30-interactive-plan-v2.md); the invariants are listed in the plan's item 1
-// Contracts (docs/plans/2026-09-30-interactive-plan-v2.plan.md).
+// Contracts (docs/plans/2026-09-30-interactive-plan-v2.plan.md). Membership is mermaid's own
+// listing rule — see `Membership` in mermaid-flow.ts.
 
 import {
   FLOW_ARROWS,
@@ -46,7 +47,8 @@ export type FlowEditResult =
   | { ok: true; source: string; doc: FlowDoc }
   | { ok: false; refusal: FlowEditRefusal; at: number };
 
-const LABEL_QUOTE_RE = /["[\]{}()|#<>]/;
+// A leading `/` or `\` would read as a trapezoid/parallelogram opener (`a[/x/]`).
+const LABEL_QUOTE_RE = /["[\]{}()|#<>]|^[/\\]/;
 const FULL_ID_RE = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
 // A statement starting with one of these words is read as that keyword, never as a node.
 const RESERVED_IDS = new Set([
@@ -62,7 +64,8 @@ const RESERVED_IDS = new Set([
 ]);
 const LINK_STYLE_RE = /^(linkStyle[ \t]+)(\d+(?:[ \t]*,[ \t]*\d+)*)(.*)$/;
 const NODE_TRAILER_RE = /^(style|click)[ \t]+([A-Za-z0-9_][A-Za-z0-9_-]*)/;
-const CLASS_RE = /^(class[ \t]+)(\S+)(.*)$/;
+const CLASS_RE = /^(class[ \t]+)([^ \t,]+(?:[ \t]*,[ \t]*[^ \t,]+)*)([ \t]+\S.*)$/;
+const TEXT_LINK_RE = /^--[ \t]/;
 const DEFAULT_UNIT = '  ';
 
 export function encodeLabel(label: string): string {
@@ -85,8 +88,17 @@ function nodeText(id: string, label: string, shape: FlowShape): string {
   return `${id}${t.open}${encodeLabel(label)}${t.close}`;
 }
 
-function linkText(kind: FlowEdgeKind, label: string | null): string {
-  return label === null ? FLOW_ARROWS[kind] : `${FLOW_ARROWS[kind]}|${encodeLabel(label)}|`;
+/** `was` is the link as written; a `-- x -->` spelling survives a plain relabel. */
+function linkText(
+  kind: FlowEdgeKind,
+  label: string | null,
+  was?: { text: string; kind: FlowEdgeKind },
+) {
+  if (label === null) return FLOW_ARROWS[kind];
+  const plain = encodeLabel(label) === label && !label.includes('-');
+  if (was && was.kind === kind && plain && TEXT_LINK_RE.test(was.text))
+    return `-- ${label} ${FLOW_ARROWS[kind]}`;
+  return `${FLOW_ARROWS[kind]}|${encodeLabel(label)}|`;
 }
 
 const subgraphHeader = (id: string, title: string): string =>
@@ -101,7 +113,8 @@ interface NodeState {
   parent: string | null;
   input: FlowNode | null;
   removed: boolean;
-  restyled: boolean;
+  renamed: boolean;
+  reshaped: boolean;
   moved: boolean;
 }
 
@@ -131,9 +144,19 @@ type EdgeTag = number | null;
 interface Line {
   indent: string;
   text: string;
+  /** The line break written after this line. */
+  eol: string;
+  /** The subgraph whose body this line ends up in. */
+  scope: string | null;
   edges: EdgeTag[];
   refs: string[];
+  /** Ids this line mentions WITH a label. */
+  labelled: string[];
   trailer: boolean;
+  /** A lone node left behind by a split or a relocation; kept only if something needs it. */
+  lone?: boolean;
+  /** A declaration whose label is decided once every other line is known. */
+  decl?: string;
 }
 
 type Item = { kind: 'decl'; id: string } | { kind: 'block'; id: string };
@@ -149,7 +172,7 @@ function refuse(refusal: FlowEditRefusal): never {
 export function applyFlowEdits(source: string, edits: readonly FlowEdit[]): FlowEditResult {
   const parsed = parseFlowchart(source);
   if (!parsed.ok) return { ok: false, refusal: 'unsupported', at: 0 };
-  const patch = new Patch(parsed.doc);
+  const patch = new Patch(parsed.doc, source.match(/\r?\n/g) ?? []);
   for (let at = 0; at < edits.length; at++) {
     try {
       patch.apply(edits[at]);
@@ -167,9 +190,10 @@ export function applyFlowEdits(source: string, edits: readonly FlowEdit[]): Flow
     throw e;
   }
   const result = parseFlowchart(text);
-  // Every rule above is meant to keep the fence parseable; a batch that still breaks it is one
-  // the patcher can't express, and the batch is all-or-nothing.
-  if (!result.ok) return { ok: false, refusal: 'unsupported', at: edits.length - 1 };
+  // The root guard: whatever the rules above produced, the batch only lands if mermaid would read
+  // exactly the intended graph back — no untargeted node relabelled, reshaped or re-parented.
+  if (!result.ok || !patch.matches(result.doc.graph))
+    return { ok: false, refusal: 'unsupported', at: edits.length - 1 };
   return { ok: true, source: text, doc: result.doc };
 }
 
@@ -183,8 +207,13 @@ class Patch {
   private readonly appends = new Map<string | null, Item[]>();
   private readonly moves: string[] = [];
   private readonly subMoves: string[] = [];
+  /** Every mention carrying a label, per node — a rename rewrites them all (mermaid keeps the last). */
+  private readonly labelledSpans = new Map<string, FlowSpan[]>();
 
-  constructor(private readonly doc: FlowDoc) {
+  constructor(
+    private readonly doc: FlowDoc,
+    private readonly seps: readonly string[],
+  ) {
     this.g = doc.graph;
     for (const n of this.g.nodes)
       this.nodes.set(n.id, {
@@ -194,7 +223,8 @@ class Patch {
         parent: n.parent,
         input: n,
         removed: false,
-        restyled: false,
+        renamed: false,
+        reshaped: false,
         moved: false,
       });
     for (const s of this.g.subgraphs)
@@ -216,6 +246,20 @@ class Patch {
       relinked: false,
       reconnected: false,
     }));
+    for (const stmt of doc.statements) {
+      if (stmt.kind !== 'chain') continue;
+      for (const span of stmt.refs) {
+        const ref = readFlowRef(this.spanText(span));
+        if (!ref || ref.label === null) continue;
+        const list = this.labelledSpans.get(ref.id);
+        if (list) list.push(span);
+        else this.labelledSpans.set(ref.id, [span]);
+      }
+    }
+  }
+
+  private spanText(s: FlowSpan): string {
+    return this.doc.lines[s.line].slice(s.start, s.end);
   }
 
   // ── intents ──────────────────────────────────────────────────────────────────────────────
@@ -232,7 +276,7 @@ class Patch {
         const n = this.liveNode(edit.id);
         if (n.label === edit.label) return;
         n.label = edit.label;
-        n.restyled = true;
+        n.renamed = true;
         this.changed = true;
         return;
       }
@@ -240,7 +284,7 @@ class Patch {
         const n = this.liveNode(edit.id);
         if (n.shape === edit.shape) return;
         n.shape = edit.shape;
-        n.restyled = true;
+        n.reshaped = true;
         this.changed = true;
         return;
       }
@@ -374,7 +418,8 @@ class Patch {
       parent,
       input: null,
       removed: false,
-      restyled: false,
+      renamed: false,
+      reshaped: false,
       moved: false,
     });
     this.append(parent, { kind: 'decl', id });
@@ -427,7 +472,7 @@ class Patch {
     const n = this.nodes.get(id);
     if (!n) refuse('unknown-id');
     if (n.removed) return;
-    if (n.restyled || n.moved || n.input === null) refuse('conflict');
+    if (n.renamed || n.reshaped || n.moved || n.input === null) refuse('conflict');
     this.dropIncident(id);
     n.removed = true;
     this.changed = true;
@@ -466,7 +511,7 @@ class Patch {
       this.liveSub(id);
       if (target !== null && this.descends(target, id)) refuse('cycle');
       if (sub.parent === target) return;
-      if (sub.moved || sub.input === null) refuse('unsupported');
+      if (sub.moved || sub.input === null || this.appends.get(id)?.length) refuse('conflict');
       sub.parent = target;
       sub.moved = true;
       this.subMoves.push(id);
@@ -487,18 +532,55 @@ class Patch {
     this.moves.push(id);
   }
 
+  // ── the root guard ───────────────────────────────────────────────────────────────────────
+
+  matches(out: FlowGraph): boolean {
+    const nodes = new Map(out.nodes.map((n) => [n.id, n]));
+    const subs = new Map(out.subgraphs.map((s) => [s.id, s]));
+    const liveNodes = [...this.nodes.values()].filter((n) => !n.removed);
+    const liveSubs = [...this.subs.values()].filter((s) => !s.removed);
+    if (nodes.size !== liveNodes.length || subs.size !== liveSubs.length) return false;
+    for (const n of liveNodes) {
+      const o = nodes.get(n.id);
+      if (!o || o.label !== n.label || o.shape !== n.shape || o.parent !== n.parent) return false;
+    }
+    for (const s of liveSubs) {
+      const o = subs.get(s.id);
+      if (!o || o.title !== s.title || o.parent !== s.parent) return false;
+    }
+    const key = (e: { source: string; target: string; kind: string; label: string | null }) =>
+      `${e.source}\0${e.target}\0${e.kind}\0${e.label ?? '\0'}`;
+    const want = [...this.edges, ...this.newEdges]
+      .filter((e) => !e.removed)
+      .map(key)
+      .sort();
+    const got = out.edges.map(key).sort();
+    return want.length === got.length && want.every((k, i) => k === got[i]);
+  }
+
   // ── emission ─────────────────────────────────────────────────────────────────────────────
 
-  private replace = new Map<string, string>();
+  private readonly replace = new Map<string, string>();
   /** Statements moved to the top level, by input line; their place holds `produced[line]`. */
   private readonly relocated = new Map<number, Line[]>();
-  private readonly relocatedFrags: Line[] = [];
   private readonly blocks = new Map<string, Line[]>();
+
+  private eolOf(line: number): string {
+    return this.seps[line] ?? this.doc.eol;
+  }
+
+  /** The text a renamed/reshaped node's mention at `span` becomes. */
+  private mentionText(n: NodeState, span: FlowSpan): string {
+    const ref = readFlowRef(this.spanText(span));
+    if (!n.reshaped && ref && ref.label !== null)
+      return `${n.id}${ref.open}${encodeLabel(n.label)}${ref.close}`;
+    return n.shape === 'verbatim' ? this.refText(n) : nodeText(n.id, n.label, n.shape);
+  }
 
   private refText(n: NodeState): string {
     if (n.shape !== 'verbatim') return nodeText(n.id, n.label, n.shape);
-    const def = n.input?.def;
-    const ref = def ? readFlowRef(this.doc.lines[def.line].slice(def.start, def.end)) : null;
+    const spans = this.labelledSpans.get(n.id) ?? [];
+    const ref = spans.length ? readFlowRef(this.spanText(spans[spans.length - 1])) : null;
     if (!ref) return refuse('unsupported');
     return `${n.id}${ref.open}${encodeLabel(n.label)}${ref.close}`;
   }
@@ -547,32 +629,35 @@ class Patch {
   }
 
   private refIds(stmt: FlowStatement): string[] {
-    const raw = this.doc.lines[stmt.line];
-    return stmt.refs.map((s) => readFlowRef(raw.slice(s.start, s.end))?.id ?? '');
+    return stmt.refs.map((s) => readFlowRef(this.spanText(s))?.id ?? '');
   }
 
-  /** Whether a bare mention of `id` at `line` (in `scope`) leaves its membership alone. */
-  private canMention(id: string, line: number, scope: string | null): boolean {
-    const s = this.subs.get(id);
-    if (s) return s.input !== null && !s.moved && s.input.open < line;
-    const n = this.nodes.get(id);
-    if (!n?.input || n.moved) return false;
-    return n.input.first.line <= line || n.input.parent === scope;
+  private isLabelled(span: FlowSpan): boolean {
+    return (readFlowRef(this.spanText(span))?.label ?? null) !== null;
   }
 
-  /** `null` when the statement is untouched and keeps its bytes. */
-  private chainLines(stmt: FlowStatement): Line[] | null {
+  /**
+   * The statement's lines. `relocate` re-emits it for the top level: every mention bare (the label
+   * stays with what is left behind) and no lone nodes. Otherwise `null` = untouched, keep the bytes.
+   */
+  private chainLines(stmt: FlowStatement, relocate: boolean): Line[] | null {
     const raw = this.doc.lines[stmt.line];
     const ids = this.refIds(stmt);
     const links = stmt.links.map((_, k) => this.edgeIndex(stmt.line, k));
     const node = (id: string) => this.nodes.get(id);
+    const scope = relocate ? null : stmt.scope;
+    if (stmt.links.length === 0) {
+      const n = node(ids[0]);
+      if (n?.removed || n?.moved) return [];
+    }
     const touched =
+      relocate ||
       links.some((e) => {
         const st = this.edges[e];
         return st.removed || st.relinked || st.reconnected;
       }) ||
       stmt.refs.some((s) => this.replace.has(spanKey(s))) ||
-      ids.some((id) => node(id)?.removed || node(id)?.moved || this.subs.get(id)?.removed);
+      ids.some((id) => node(id)?.removed || this.subs.get(id)?.removed);
     if (!touched) return null;
 
     // An edit to one link of a chain splits the chain at that link (spec §3.2); a fragment that
@@ -600,56 +685,68 @@ class Patch {
 
     const whole = frags.length === 1;
     const refOut = (k: number, bare: boolean): string => {
-      if (bare) return ids[k];
+      if (bare || relocate) return ids[k];
       const s = stmt.refs[k];
       return this.replace.get(spanKey(s)) ?? raw.slice(s.start, s.end);
     };
+    const labelledAt = (k: number) => !relocate && this.isLabelled(stmt.refs[k]);
     const linkOut = (k: number): string => {
       const st = this.edges[links[k]];
       const s = stmt.links[k];
-      return st.relinked ? linkText(st.kind, st.label) : raw.slice(s.start, s.end);
+      const text = raw.slice(s.start, s.end);
+      return st.relinked
+        ? linkText(st.kind, st.label, { text, kind: this.g.edges[links[k]].kind })
+        : text;
     };
-    const line = (text: string, edges: EdgeTag[], refs: string[]): Line => ({
+    const line = (
+      text: string,
+      edges: EdgeTag[],
+      refs: string[],
+      labelled: string[],
+      lone = false,
+    ): Line => ({
       indent: stmt.indent,
-      text: whole ? `${text}${raw.slice(stmt.refs[stmt.refs.length - 1].end)}` : text,
+      text: whole && !relocate ? `${text}${raw.slice(stmt.refs[stmt.refs.length - 1].end)}` : text,
+      eol: this.eolOf(stmt.line),
+      scope,
       edges,
       refs,
+      labelled,
       trailer: false,
+      lone,
     });
 
     const out: Line[] = [];
     for (const f of frags) {
       if ('reconnect' in f) {
         const st = this.edges[links[f.reconnect]];
-        const l = line(
-          `${st.source} ${linkOut(f.reconnect)} ${st.target}`,
-          [links[f.reconnect]],
-          [st.source, st.target],
+        out.push(
+          line(
+            `${st.source} ${linkOut(f.reconnect)} ${st.target}`,
+            [links[f.reconnect]],
+            [st.source, st.target],
+            [],
+          ),
         );
-        const here =
-          this.canMention(st.source, stmt.line, stmt.scope) &&
-          this.canMention(st.target, stmt.line, stmt.scope);
-        (here ? out : this.relocatedFrags).push(l);
         continue;
       }
       if (f.to === f.from) {
-        // A lone node left behind by a split survives only if it is what declares that node.
-        const n = node(ids[f.from])?.input;
-        const key = spanKey(stmt.refs[f.from]);
-        const declares =
-          !!n && (stmt.links.length === 0 || spanKey(n.first) === key || spanKey(n.def) === key);
-        const st = node(ids[f.from]);
-        if (f.shared || !declares || !st || st.removed || st.moved) continue;
-        out.push(line(refOut(f.from, false), [], [ids[f.from]]));
+        const id = ids[f.from];
+        const n = node(id);
+        if (relocate || f.shared || !n || n.removed || n.moved) continue;
+        const lone = stmt.links.length > 0;
+        out.push(line(refOut(f.from, false), [], [id], labelledAt(f.from) ? [id] : [], lone));
         continue;
       }
       let text = refOut(f.from, f.shared);
+      const labelled = f.shared ? [] : labelledAt(f.from) ? [ids[f.from]] : [];
       for (let k = f.from; k < f.to; k++) {
         const gapA = raw.slice(stmt.refs[k].end, stmt.links[k].start);
         const gapB = raw.slice(stmt.links[k].end, stmt.refs[k + 1].start);
         text += `${gapA}${linkOut(k)}${gapB}${refOut(k + 1, false)}`;
+        if (labelledAt(k + 1)) labelled.push(ids[k + 1]);
       }
-      out.push(line(text, links.slice(f.from, f.to), ids.slice(f.from, f.to + 1)));
+      out.push(line(text, links.slice(f.from, f.to), ids.slice(f.from, f.to + 1), labelled));
     }
     return out;
   }
@@ -661,18 +758,22 @@ class Patch {
       const keep: Line = {
         indent: stmt.indent,
         text: raw.slice(stmt.indent.length),
+        eol: this.eolOf(stmt.line),
+        scope: stmt.scope,
         edges: [],
         refs: [],
+        labelled: [],
         trailer: stmt.kind === 'trailer',
       };
       if (stmt.kind === 'chain') {
-        const out = this.chainLines(stmt);
+        const ids = this.refIds(stmt);
         produced.push(
-          out ?? [
+          this.chainLines(stmt, false) ?? [
             {
               ...keep,
               edges: stmt.links.map((_, k) => this.edgeIndex(stmt.line, k)),
-              refs: this.refIds(stmt),
+              refs: ids,
+              labelled: ids.filter((_, k) => this.isLabelled(stmt.refs[k])),
             },
           ],
         );
@@ -692,33 +793,51 @@ class Patch {
     return produced;
   }
 
+  /** Whether subgraph `s` registers before `target` would — mermaid's earliest-closed rule. */
+  private closesBefore(s: string, target: string | null): boolean {
+    const close = this.subs.get(s)?.input?.close ?? Number.POSITIVE_INFINITY;
+    if (target === null) return true;
+    const t = this.subs.get(target)?.input;
+    return close < (t ? t.close : this.landing(target));
+  }
+
   /**
-   * Mermaid puts a node where it is first mentioned, so a move leaves no earlier mention of it in
-   * another scope: each such statement moves to the top level, and every other node whose first or
-   * defining mention it held is re-declared where it stood (spec §3.2, plan invariant B2).
+   * A node belongs to the earliest-closed subgraph whose body mentions it, so a move takes every
+   * statement that would out-rank the target to the top level, where mentions confer nothing. What
+   * those statements also said about other nodes is left behind as lone declarations (B2).
    */
   private relocateForMoves(produced: Line[][]): void {
     for (const id of this.moves) {
       const target = this.nodes.get(id)?.parent ?? null;
-      const landing = this.landing(target);
-      for (let line = 0; line < landing; line++) {
-        if (!produced[line].some((l) => l.refs.includes(id))) continue;
-        if (this.doc.statements[line].scope === target) break;
-        const stmt = this.doc.statements[line];
+      for (const stmt of this.doc.statements) {
+        if (stmt.kind !== 'chain' || stmt.scope === null || stmt.scope === target) continue;
+        if (this.relocated.has(stmt.line) || !this.closesBefore(stmt.scope, target)) continue;
+        if (!produced[stmt.line].some((l) => l.refs.includes(id))) continue;
         const left: Line[] = [];
-        for (const other of new Set(this.refIds(stmt))) {
+        const ids = this.refIds(stmt);
+        for (const other of new Set(ids)) {
           const n = this.nodes.get(other);
-          if (!n?.input || other === id || n.removed || n.moved) continue;
-          const defHere = n.input.def.line === line;
-          if (!defHere && n.input.first.line !== line) continue;
-          const def = n.input.def;
-          const text = defHere
-            ? (this.replace.get(spanKey(def)) ?? this.doc.lines[line].slice(def.start, def.end))
-            : other;
-          left.push({ indent: stmt.indent, text, edges: [], refs: [other], trailer: false });
+          if (!n?.input || n.removed || n.moved) continue;
+          const k = ids.lastIndexOf(other);
+          let labelledK = -1;
+          ids.forEach((x, i) => {
+            if (x === other && this.isLabelled(stmt.refs[i])) labelledK = i;
+          });
+          const span = stmt.refs[labelledK >= 0 ? labelledK : k];
+          left.push({
+            indent: stmt.indent,
+            text: labelledK >= 0 ? (this.replace.get(spanKey(span)) ?? this.spanText(span)) : other,
+            eol: this.eolOf(stmt.line),
+            scope: stmt.scope,
+            edges: [],
+            refs: [other],
+            labelled: labelledK >= 0 ? [other] : [],
+            trailer: false,
+            lone: true,
+          });
         }
-        this.relocated.set(line, produced[line]);
-        produced[line] = left;
+        this.relocated.set(stmt.line, this.chainLines(stmt, true) ?? []);
+        produced[stmt.line] = left;
       }
     }
   }
@@ -727,17 +846,8 @@ class Patch {
     for (const id of this.subMoves) {
       const s = this.subs.get(id);
       if (!s?.input) continue;
-      const { open, close } = s.input;
-      const landing = this.landing(s.parent);
-      // A node first mentioned inside the block and mentioned again between its old and new place
-      // would change membership; refusing beats silently re-parenting it.
-      for (const n of this.g.nodes) {
-        if (n.first.line < open || n.first.line > close) continue;
-        for (let line = close + 1; line < landing; line++)
-          if (produced[line].some((l) => l.refs.includes(n.id))) refuse('unsupported');
-      }
       const lines: Line[] = [];
-      for (let line = open; line <= close; line++) {
+      for (let line = s.input.open; line <= s.input.close; line++) {
         lines.push(...produced[line]);
         produced[line] = [];
       }
@@ -747,9 +857,11 @@ class Patch {
   }
 
   emit(): string {
-    for (const n of this.nodes.values())
-      if (n.input && n.restyled && !n.removed)
-        this.replace.set(spanKey(n.input.def), this.refText(n));
+    for (const n of this.nodes.values()) {
+      if (!n.input || n.removed || (!n.renamed && !n.reshaped)) continue;
+      const spans = this.labelledSpans.get(n.id) ?? [n.input.def];
+      for (const span of spans) this.replace.set(spanKey(span), this.mentionText(n, span));
+    }
     const produced = this.produce();
     this.relocateForMoves(produced);
     this.cutSubgraphBlocks(produced);
@@ -759,21 +871,30 @@ class Patch {
       for (const [scope, items] of this.appends) {
         if (scope !== null && this.subs.get(scope)?.input === null) continue;
         if (this.insertAt(scope) === at)
-          out.push(...this.renderItems(items, this.siblingIndent(scope)));
+          out.push(...this.renderItems(items, this.siblingIndent(scope), scope));
       }
       if (this.insertAt(null) !== at) return;
       const top = this.siblingIndent(null);
+      const bare = (text: string, edges: EdgeTag[], refs: string[]): Line => ({
+        indent: top,
+        text,
+        eol: this.doc.eol,
+        scope: null,
+        edges,
+        refs,
+        labelled: [],
+        trailer: false,
+      });
       for (const line of [...this.relocated.keys()].sort((a, b) => a - b))
         for (const l of this.relocated.get(line) ?? []) out.push({ ...l, indent: top });
-      for (const l of this.relocatedFrags) out.push({ ...l, indent: top });
       for (const e of this.newEdges)
-        out.push({
-          indent: top,
-          text: `${e.source} ${linkText(e.kind, e.label)} ${e.target}`,
-          edges: [null],
-          refs: [e.source, e.target],
-          trailer: false,
-        });
+        out.push(
+          bare(
+            `${e.source} ${linkText(e.kind, e.label)} ${e.target}`,
+            [null],
+            [e.source, e.target],
+          ),
+        );
     };
     for (let i = 0; i < this.doc.lines.length; i++) {
       flush(i);
@@ -781,18 +902,74 @@ class Patch {
     }
     flush(this.doc.lines.length);
 
-    return this.fixTrailer(out)
-      .map((l) => `${l.indent}${l.text}`)
-      .join(this.doc.eol);
+    const lines = this.fixTrailer(this.settleDecls(this.settleLone(out)));
+    // The input's last line carries no break; one written after it needs the fence's own.
+    return lines
+      .map((l, i) =>
+        i < lines.length - 1 ? `${l.indent}${l.text}${l.eol}` : `${l.indent}${l.text}`,
+      )
+      .join('');
   }
 
-  private renderItems(items: readonly Item[], indent: string): Line[] {
+  /**
+   * A lone node stays only if it is needed: it carries a label, or nothing else in its subgraph's
+   * body lists it any more (membership), or nothing else mentions it at all (existence).
+   */
+  private settleLone(out: Line[]): Line[] {
+    const inScope = new Map<string | null, Set<string>>();
+    const anywhere = new Set<string>();
+    const note = (l: Line) => {
+      for (const id of l.refs) {
+        anywhere.add(id);
+        const set = inScope.get(l.scope);
+        if (set) set.add(id);
+        else inScope.set(l.scope, new Set([id]));
+      }
+    };
+    for (const l of out) if (!l.lone) note(l);
+    const kept: Line[] = [];
+    for (const l of out) {
+      if (l.lone) {
+        const id = l.refs[0];
+        const needed =
+          l.labelled.length > 0 ||
+          (l.scope !== null && !inScope.get(l.scope)?.has(id)) ||
+          !anywhere.has(id);
+        if (!needed) continue;
+        note(l);
+      }
+      kept.push(l);
+    }
+    return kept;
+  }
+
+  /** A declaration carries the label only when no other mention still does (Q1: one label). */
+  private settleDecls(out: Line[]): Line[] {
+    return out.map((l) => {
+      if (l.decl === undefined) return l;
+      const n = this.nodes.get(l.decl);
+      if (!n) return l;
+      const elsewhere = out.some((o) => o !== l && o.labelled.includes(n.id));
+      return elsewhere ? l : { ...l, text: this.refText(n), labelled: [n.id] };
+    });
+  }
+
+  private renderItems(items: readonly Item[], indent: string, scope: string | null): Line[] {
     const out: Line[] = [];
+    const plain = (text: string, s: string | null): Line => ({
+      indent,
+      text,
+      eol: this.doc.eol,
+      scope: s,
+      edges: [],
+      refs: [],
+      labelled: [],
+      trailer: false,
+    });
     for (const it of items) {
       if (it.kind === 'decl') {
         const n = this.nodes.get(it.id);
-        if (n && !n.removed)
-          out.push({ indent, text: this.refText(n), edges: [], refs: [n.id], trailer: false });
+        if (n && !n.removed) out.push({ ...plain(n.id, scope), refs: [n.id], decl: n.id });
         continue;
       }
       const moved = this.blocks.get(it.id);
@@ -809,15 +986,9 @@ class Patch {
       }
       const s = this.subs.get(it.id);
       if (!s) continue;
-      out.push({
-        indent,
-        text: subgraphHeader(s.id, s.title),
-        edges: [],
-        refs: [],
-        trailer: false,
-      });
-      out.push(...this.renderItems(this.appends.get(s.id) ?? [], `${indent}${this.unit()}`));
-      out.push({ indent, text: 'end', edges: [], refs: [], trailer: false });
+      out.push(plain(subgraphHeader(s.id, s.title), scope));
+      out.push(...this.renderItems(this.appends.get(s.id) ?? [], `${indent}${this.unit()}`, s.id));
+      out.push(plain('end', scope));
     }
     return out;
   }
@@ -847,11 +1018,12 @@ class Patch {
       if (node && removed.has(node[2])) continue;
       const cls = CLASS_RE.exec(l.text);
       if (cls) {
-        const ids = cls[2].split(',');
+        const ids = cls[2].split(/[ \t]*,[ \t]*/);
         const left = ids.filter((id) => !removed.has(id));
         if (left.length === 0) continue;
+        const sep = /[ \t]*,[ \t]*/.exec(cls[2])?.[0] ?? ',';
         kept.push(
-          left.length === ids.length ? l : { ...l, text: `${cls[1]}${left.join(',')}${cls[3]}` },
+          left.length === ids.length ? l : { ...l, text: `${cls[1]}${left.join(sep)}${cls[3]}` },
         );
         continue;
       }

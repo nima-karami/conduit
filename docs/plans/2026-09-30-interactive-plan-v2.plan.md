@@ -82,6 +82,20 @@ renderer  plan:asked ─▶ pasteToTerminal(sessionId, planAskBrief) | clipboard
 - **Duplicate edges** (§3.2 says "keeps"): v1 refuses any edge with the same endpoints and shows no
   notice (`src/mermaid-flow.ts:388`). The kind+label rule and the notice are new behaviour.
 - **Unknown bracket forms** (§3.2): v1 fails the whole fence on them. Item 1 adds them as verbatim.
+- **Membership, re-locked in the item 1 review** (§3.2 "a node belongs where it is first
+  mentioned"): replaced by mermaid's own flowDb rule. A subgraph lists every id its own body
+  mentions, edge endpoints included, and the earliest-closed subgraph that lists an id owns it.
+  Top-level mentions confer nothing. `FlowNode.first` stays a span but no longer decides
+  membership. A move relocates to the top level only the statements in subgraphs that close
+  before the target. Pinned against mermaid's parser in `test/unit/mermaid-flow-membership.test.ts`.
+- **Labels** (§3.2 "defining mention"): a node's label and shape are its last labelled mention,
+  because mermaid's `addVertex` overwrites. `def` is still the first labelled mention. A rename
+  rewrites every labelled mention, and a relocated statement is re-emitted bare.
+- **Root guard** (review R2): `applyFlowEdits` re-parses its own output and refuses with
+  `unsupported` unless every node, subgraph and edge equals the intended state.
+- **`writeDiagram(view, key, edits, basis)`** (review S1): the 4th parameter is the fence text the
+  edits were computed against. A fence that has moved on returns `gone`.
+  `writeFenceTextAt(view, pos, text)` is the text path for keyless mermaid fences.
 - **Toast** (§2.1): pushed in `webview/app.tsx:2471-2498`, not in `plan-store.ts`.
 - **Export** (§2.4): the `mermaid-export` helpers take an SVG string, but the canvas is HTML. Item 3
   extracts `renderMermaidSvg` from `mermaid-diagram.tsx:75-81`.

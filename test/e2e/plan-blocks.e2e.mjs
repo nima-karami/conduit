@@ -313,7 +313,7 @@ try {
 
   // ── fidelity: one diagram edit changes only the lines it touches (spec §3.2, §7) ─────────
   const BATCH_LINE = '    parse -- batch --> db[(Store)]';
-  const LOAD_LINE = '    parse -->|load| db[(Store)]';
+  const LOAD_LINE = '    parse -- load --> db[(Store)]';
 
   const openFixture = async (fixture, slug) => {
     const file = join(plans, `${slug}.md`);
@@ -395,14 +395,46 @@ try {
     crlfBefore.includes(`\r\n${BATCH_LINE}\r\n`) && crlfBefore.includes('~~~mermaid\r\n'),
     'the CRLF fixture must reach disk with CRLF and its ~~~ fence',
   );
+  // A node rename first: the label double-click right after it used to land on a canvas whose
+  // edges had blinked out, and zoom instead of edit (QA Q2); and focus used to drop to <body>.
+  const parseNode = page.locator('.react-flow__node[data-id="parse"]:visible').first();
+  await parseNode.scrollIntoViewIfNeeded();
+  const parseBox = await parseNode.boundingBox();
+  assert(parseBox !== null, 'the parse node must have a box on screen');
+  await page.mouse.dblclick(parseBox.x + parseBox.width / 2, parseBox.y + parseBox.height / 2);
+  await page
+    .locator('.planflow__input:visible')
+    .first()
+    .waitFor({ state: 'visible', timeout: 4000 });
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('Parser');
+  await page.keyboard.press('Enter');
+  const renamed = crlfBefore.replace('parse[Parse]', 'parse[Parser]');
+  const wroteRename = await until(() => readFileSync(crlfFile, 'utf8') === renamed, 4000);
+  assert(
+    wroteRename !== null,
+    `the rename must change only the parse mention, the file held:\n${JSON.stringify(readFileSync(crlfFile, 'utf8'))}`,
+  );
+  const focusAfterRename = await page.evaluate(() => {
+    const active = document.activeElement;
+    return (
+      active?.closest('.react-flow__node')?.getAttribute('data-id') ??
+      `${active?.tagName}.${active?.className}`
+    );
+  });
+  assert(
+    focusAfterRename === 'parse',
+    `focus must return to the renamed node, got ${focusAfterRename}`,
+  );
+
   await relabelBatch();
-  const crlfAfter = crlfBefore.replace(`\r\n${BATCH_LINE}\r\n`, `\r\n${LOAD_LINE}\r\n`);
+  const crlfAfter = renamed.replace(`\r\n${BATCH_LINE}\r\n`, `\r\n${LOAD_LINE}\r\n`);
   const wroteCrlf = await until(() => readFileSync(crlfFile, 'utf8') === crlfAfter, 4000);
   assert(
     wroteCrlf !== null,
-    `the CRLF/~~~ plan must change only the edited line, the file held:\n${JSON.stringify(readFileSync(crlfFile, 'utf8'))}`,
+    `the CRLF/~~~ plan must change only the edited lines, the file held:\n${JSON.stringify(readFileSync(crlfFile, 'utf8'))}`,
   );
-  log(`CRLF + ~~~ fence kept byte-for-byte around the edit, in ${wroteCrlf} ms ✓`);
+  log(`rename then label edit kept CRLF + ~~~ byte-for-byte, in ${wroteCrlf} ms ✓`);
 
   // ── an empty plan still takes a keystroke ────────────────────────────────────────────────
   // A zero-byte or frontmatter-only plan has no blocks, while ProseMirror always holds one empty

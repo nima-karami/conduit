@@ -111,6 +111,9 @@ function InlineInput({
   onCancel: () => void;
 }) {
   const [value, setValue] = useState(initial);
+  // Enter or Escape already ended the edit; the blur that follows when focus is handed back to the
+  // canvas must not commit a second time — after Escape, that would save what was cancelled.
+  const doneRef = useRef(false);
   return (
     <input
       className={`${className} nodrag nopan`}
@@ -120,14 +123,18 @@ function InlineInput({
       style={style}
       onChange={(e) => setValue(e.target.value)}
       onFocus={(e) => e.currentTarget.select()}
-      onBlur={() => onCommit(value)}
+      onBlur={() => {
+        if (!doneRef.current) onCommit(value);
+      }}
       onKeyDown={(e) => {
         e.stopPropagation();
         if (e.key === 'Enter') {
           e.preventDefault();
+          doneRef.current = true;
           onCommit(value);
         } else if (e.key === 'Escape') {
           e.preventDefault();
+          doneRef.current = true;
           onCancel();
         }
       }}
@@ -420,17 +427,46 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
       ? Position.Right
       : Position.Left;
 
+  const editingRef = useRef<Editing>(null);
+  editingRef.current = editing;
+  const refocusRef = useRef<string | null>(null);
+
+  // The inline input held focus, and unmounting it drops focus to <body>, where neither the canvas
+  // nor the document's undo hears a key (QA Q3). Hand it back to what was being edited — unless the
+  // edit ended because focus went somewhere else on purpose. An effect, not a frame callback: a
+  // hidden window never runs rAF.
+  const stopEditing = useCallback(() => {
+    const was = editingRef.current;
+    setEditing(null);
+    if (!was) return;
+    refocusRef.current =
+      was.kind === 'node'
+        ? `.react-flow__node[data-id="${CSS.escape(was.id)}"]`
+        : `.react-flow__edge[data-id="e${was.index}"]`;
+  }, []);
+
+  useEffect(() => {
+    const selector = refocusRef.current;
+    if (editing !== null || selector === null) return;
+    refocusRef.current = null;
+    // The input may still be mounted here — xyflow re-renders its nodes after this effect.
+    const active = document.activeElement;
+    const root = rootRef.current;
+    if (active && active !== document.body && !root?.contains(active)) return;
+    root?.querySelector<HTMLElement>(selector)?.focus();
+  }, [editing]);
+
   const commitNodeName = useCallback(
     (id: string, label: string) => {
-      setEditing(null);
+      stopEditing();
       apply([{ op: 'renameNode', id, label: label.trim() || id }], `Renamed ${id}`);
     },
-    [apply],
+    [apply, stopEditing],
   );
 
   const commitEdgeLabel = useCallback(
     (id: string, label: string) => {
-      setEditing(null);
+      stopEditing();
       const index = Number(id.slice(1));
       const e = graph.edges[index];
       if (!e) return;
@@ -439,10 +475,8 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
         `Relabelled edge ${e.source} to ${e.target}`,
       );
     },
-    [graph, apply],
+    [graph, apply, stopEditing],
   );
-
-  const cancelEditing = useCallback(() => setEditing(null), []);
 
   const editEdge = useCallback(
     (id: string) => {
@@ -454,14 +488,21 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
 
   const rfNodes = useMemo(() => {
     // xyflow reads `parentId` against the nodes already in the array, so every region has to
-    // precede its members; `graph.subgraphs` is in source order, where a parent's header always
-    // comes before its children's.
+    // precede its members. Membership is mermaid's (a subgraph can be claimed by one declared after
+    // it), so source order is not enough: regions go shallowest first.
     const out: Node[] = [];
+    const depth = (id: string | null): number => {
+      let d = 0;
+      for (let at = id; at !== null && d <= graph.subgraphs.length; d++)
+        at = graph.subgraphs.find((s) => s.id === at)?.parent ?? null;
+      return d;
+    };
+    const regions = [...graph.subgraphs].sort((a, b) => depth(a.id) - depth(b.id));
     const relative = (x: number, y: number, parent: string | null): XY => {
       const box = parent ? layout.regions[parent] : undefined;
       return box ? { x: x - box.x, y: y - box.y } : { x, y };
     };
-    for (const s of graph.subgraphs) {
+    for (const s of regions) {
       const r = layout.regions[s.id];
       if (!r) continue;
       const nested = s.parent && layout.regions[s.parent] ? { parentId: s.parent } : {};
@@ -471,6 +512,10 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
         position: relative(r.x, r.y, s.parent),
         width: r.w,
         height: r.h,
+        // Every render builds fresh node objects, and xyflow treats one without `measured` as
+        // unmeasured: it stops drawing its edges until a re-measure, which is what swallowed the
+        // first click of a double-click after a rename (QA Q2). The size is ours, so state it.
+        measured: { width: r.w, height: r.h },
         style: { width: r.w, height: r.h },
         data: { title: s.title } satisfies FlowRegionData,
         draggable: false,
@@ -493,6 +538,7 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
         position: dragged[n.id] ?? relative(p.x, p.y, n.parent),
         width: size.w,
         height: size.h,
+        measured: { width: size.w, height: size.h },
         sourcePosition,
         targetPosition,
         draggable: !readOnly,
@@ -505,7 +551,7 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
           shape: n.shape,
           editing: editing?.kind === 'node' && editing.id === n.id,
           onCommit: commitNodeName,
-          onCancel: cancelEditing,
+          onCancel: stopEditing,
         } satisfies FlowNodeData,
         ...nested,
         ...(nested.parentId ? { extent: 'parent' as const } : {}),
@@ -522,7 +568,7 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
     sourcePosition,
     targetPosition,
     commitNodeName,
-    cancelEditing,
+    stopEditing,
   ]);
 
   const rfEdges = useMemo<Edge[]>(
@@ -543,11 +589,11 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
           thick: e.kind === 'thick',
           editing: editing?.kind === 'edge' && editing.index === i,
           onCommit: commitEdgeLabel,
-          onCancel: cancelEditing,
+          onCancel: stopEditing,
           onEdit: editEdge,
         } satisfies FlowEdgeData,
       })),
-    [graph, editing, readOnly, selectedEdges, commitEdgeLabel, cancelEditing, editEdge],
+    [graph, editing, readOnly, selectedEdges, commitEdgeLabel, stopEditing, editEdge],
   );
 
   const onNodesChange = useCallback(

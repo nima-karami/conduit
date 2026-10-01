@@ -25,8 +25,9 @@ const isCloser = (line: string, fence: string): boolean =>
 /**
  * The serialiser re-spells a fence it re-emits (``` for ~~~, the info string cut to the language),
  * so a fence→fence replacement keeps the old opener and closer and takes only the new content.
- * `null` when that would not be the same fence: an indented opener (its content is indented too) or
- * content holding a line that would close the old fence early.
+ * `null` when that would not be the same fence: an indented opener (its content is indented too), a
+ * changed language (the old opener would restate the old one), or content holding a line that
+ * would close the old fence early.
  */
 function rewrapFence(old: string, next: string, eol: Eol): string | null {
   const oldLines = old.split(/\r?\n/);
@@ -34,6 +35,8 @@ function rewrapFence(old: string, next: string, eol: Eol): string | null {
   const opener = FENCE_RE.exec(oldLines[0]);
   const nextOpener = FENCE_RE.exec(nextLines[0]);
   if (!opener || !nextOpener) return null;
+  const language = (line: string, fence: string) => line.slice(fence.length).trim().split(/\s+/)[0];
+  if (language(oldLines[0], opener[1]) !== language(nextLines[0], nextOpener[1])) return null;
   const nextClosed =
     nextLines.length > 1 && isCloser(nextLines[nextLines.length - 1], nextOpener[1]);
   const content = nextLines.slice(1, nextClosed ? -1 : undefined);

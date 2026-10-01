@@ -74,7 +74,14 @@ describe('writeDiagram', () => {
     view.dispatch(view.state.tr.insert(0, para));
     expect(locateDiagram(view.state.doc, 'flow-1')?.pos).not.toBe(before?.pos);
 
-    expect(writeDiagram(view, 'flow-1', [{ op: 'relabelEdge', edge: 0, label: 'go' }])).toBeNull();
+    expect(
+      writeDiagram(
+        view,
+        'flow-1',
+        [{ op: 'relabelEdge', edge: 0, label: 'go' }],
+        fenceText(view, 'flow-1') ?? '',
+      ),
+    ).toBeNull();
     expect(fenceText(view, 'flow-1')).toBe('flowchart TD\n  x -->|go| y');
     expect(fenceText(view, 'flow-0')).toBe('flowchart LR\n  a --> b');
     expect(view.state.doc.child(0).textContent).toBe('new');
@@ -82,7 +89,14 @@ describe('writeDiagram', () => {
 
   it('returns gone when the key no longer exists', async () => {
     const view = await mount(PLAN);
-    expect(writeDiagram(view, 'flow-2', [{ op: 'removeEdge', edge: 0 }])).toBe('gone');
+    expect(
+      writeDiagram(
+        view,
+        'flow-2',
+        [{ op: 'removeEdge', edge: 0 }],
+        fenceText(view, 'flow-2') ?? '',
+      ),
+    ).toBe('gone');
     expect(writeDiagramText(view, 'flow-2', 'flowchart LR')).toBe('gone');
   });
 
@@ -90,19 +104,41 @@ describe('writeDiagram', () => {
     const view = await mount(PLAN);
     const doc = view.state.doc;
     expect(
-      writeDiagram(view, 'flow-0', [
-        { op: 'addEdge', source: 'a', target: 'b', kind: 'arrow', label: null },
-      ]),
+      writeDiagram(
+        view,
+        'flow-0',
+        [{ op: 'addEdge', source: 'a', target: 'b', kind: 'arrow', label: null }],
+        fenceText(view, 'flow-0') ?? '',
+      ),
     ).toBe('duplicate-edge');
+    expect(view.state.doc).toBe(doc);
+  });
+
+  it('returns gone, writing nothing, when the fence is no longer the text the edits were made on', async () => {
+    const view = await mount(PLAN);
+    const doc = view.state.doc;
+    expect(
+      writeDiagram(view, 'flow-0', [{ op: 'removeEdge', edge: 0 }], 'flowchart LR\n  a --> c'),
+    ).toBe('gone');
     expect(view.state.doc).toBe(doc);
   });
 
   it('one call = one history event', async () => {
     const view = await mount(PLAN);
     const start = undoDepth(view.state);
-    writeDiagram(view, 'flow-0', [{ op: 'relabelEdge', edge: 0, label: 'one' }]);
+    writeDiagram(
+      view,
+      'flow-0',
+      [{ op: 'relabelEdge', edge: 0, label: 'one' }],
+      fenceText(view, 'flow-0') ?? '',
+    );
     expect(undoDepth(view.state)).toBe(start + 1);
-    writeDiagram(view, 'flow-0', [{ op: 'relabelEdge', edge: 0, label: 'two' }]);
+    writeDiagram(
+      view,
+      'flow-0',
+      [{ op: 'relabelEdge', edge: 0, label: 'two' }],
+      fenceText(view, 'flow-0') ?? '',
+    );
     expect(undoDepth(view.state)).toBe(start + 2);
     writeDiagramText(view, 'flow-0', 'flowchart LR\n  a --> c');
     expect(undoDepth(view.state)).toBe(start + 3);

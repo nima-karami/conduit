@@ -90,3 +90,57 @@ describe('FlowEditor intents', () => {
     expect(notice(el)).toBe('');
   });
 });
+
+async function typeInto(input: HTMLInputElement, value: string) {
+  await act(async () => {
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    set?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+describe('FlowEditor rendering and focus', () => {
+  it('after a rename commits, focus returns to the renamed node', async () => {
+    const onEdits = vi.fn(() => null);
+    const el = await mount(onEdits);
+    const node = el.querySelector<HTMLElement>('.react-flow__node[data-id="a"]');
+    await act(async () => {
+      node?.focus();
+      node?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    const input = el.querySelector<HTMLInputElement>('.planflow__input');
+    expect(input).not.toBeNull();
+    if (!input) return;
+    await typeInto(input, 'Alpha');
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onEdits).toHaveBeenCalledTimes(1);
+    expect(onEdits).toHaveBeenCalledWith([{ op: 'renameNode', id: 'a', label: 'Alpha' }]);
+    expect(document.activeElement?.getAttribute('data-id')).toBe('a');
+  });
+
+  it('Escape cancels a rename, writes nothing, and hands focus back to the node', async () => {
+    const onEdits = vi.fn(() => null);
+    const el = await mount(onEdits);
+    const node = el.querySelector<HTMLElement>('.react-flow__node[data-id="a"]');
+    await act(async () => {
+      node?.focus();
+      node?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    const input = el.querySelector<HTMLInputElement>('.planflow__input');
+    if (!input) throw new Error('no rename input');
+    await typeInto(input, 'Discarded');
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(onEdits).not.toHaveBeenCalled();
+    expect(document.activeElement?.getAttribute('data-id')).toBe('a');
+  });
+});

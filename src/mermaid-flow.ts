@@ -23,13 +23,14 @@ export interface FlowSpan {
 
 export interface FlowNode {
   id: string;
+  /** Label and shape come from the LAST labelled mention: mermaid's `addVertex` overwrites. */
   label: string;
+  /** Mermaid's membership rule — see `claimMembers`. */
   parent: string | null;
   /** 'verbatim' = `>x]` `[/x/]` `[\x\]` `[/x\]` `[\x/]`: kept as written, never re-emitted. */
   shape: FlowShape | 'verbatim';
   /** The first mention carrying a label or shape, else the first mention. */
   def: FlowSpan;
-  /** Decides membership (spec §3.2). */
   first: FlowSpan;
 }
 
@@ -153,7 +154,7 @@ const CONNECTORS: { text: string; kind: FlowEdgeKind }[] = (
   ['bidir', 'dotted', 'thick', 'arrow', 'open'] as const
 ).map((kind) => ({ text: FLOW_ARROWS[kind], kind }));
 
-export interface FlowRef {
+interface FlowRef {
   id: string;
   label: string | null;
   shape: FlowShape | 'verbatim';
@@ -306,6 +307,33 @@ function readSubgraph(rest: string): { id: string; title: string } | null {
   return { id: id[0], title: unquote(tail.slice(1, -1).trim()) };
 }
 
+/**
+ * Mermaid's own membership rule (mermaid 11 flowDb `addSubGraph` + `makeUniq`, and `getData`'s
+ * parentDB): a subgraph lists every id its OWN body mentions — node statements, both ends of every
+ * edge, and its direct child subgraphs — and is registered when its `end` is reached. An id goes to
+ * the first subgraph registered that lists it, i.e. the earliest-closed. Top-level mentions confer
+ * nothing. Pinned against mermaid's parser in test/unit/mermaid-flow.test.ts.
+ */
+class Membership {
+  private readonly listed = new Map<string, string[]>();
+  private readonly owner = new Map<string, string>();
+
+  list(scope: string | null, id: string): void {
+    if (scope === null) return;
+    const ids = this.listed.get(scope);
+    if (ids) ids.push(id);
+    else this.listed.set(scope, [id]);
+  }
+
+  close(sub: string): void {
+    for (const id of this.listed.get(sub) ?? []) if (!this.owner.has(id)) this.owner.set(id, sub);
+  }
+
+  parentOf(id: string): string | null {
+    return this.owner.get(id) ?? null;
+  }
+}
+
 export function parseFlowchart(source: string): FlowParse {
   const fail = (reason: string, line: number): FlowParse => ({ ok: false, reason, line });
   const lines = source.split(/\r?\n/);
@@ -314,6 +342,7 @@ export function parseFlowchart(source: string): FlowParse {
   const nodes: FlowNode[] = [];
   const byId = new Map<string, FlowNode>();
   const labelled = new Set<string>();
+  const members = new Membership();
   const edges: FlowEdge[] = [];
   const subgraphs: FlowSubgraph[] = [];
   const subById = new Map<string, FlowSubgraph>();
@@ -353,6 +382,7 @@ export function parseFlowchart(source: string): FlowParse {
       const closing = open.pop();
       if (!closing) return fail('end without an open subgraph', at);
       closing.close = i;
+      members.close(closing.id);
       push('end', closing.parent);
       continue;
     }
@@ -365,6 +395,7 @@ export function parseFlowchart(source: string): FlowParse {
       subgraphs.push(sub);
       subById.set(sub.id, sub);
       open.push(sub);
+      members.list(scope, sub.id);
       push('subgraph');
       continue;
     }
@@ -386,13 +417,14 @@ export function parseFlowchart(source: string): FlowParse {
       links: scanned.links.map((l) => l.span),
     });
     for (const { ref, span } of scanned.refs) {
+      members.list(scope, ref.id);
       if (subById.has(ref.id)) continue;
       const existing = byId.get(ref.id);
       if (!existing) {
         const node: FlowNode = {
           id: ref.id,
           label: ref.label ?? ref.id,
-          parent: scope,
+          parent: null,
           shape: ref.label === null ? 'rect' : ref.shape,
           def: span,
           first: span,
@@ -400,10 +432,10 @@ export function parseFlowchart(source: string): FlowParse {
         nodes.push(node);
         byId.set(ref.id, node);
         if (ref.label !== null) labelled.add(ref.id);
-      } else if (ref.label !== null && !labelled.has(ref.id)) {
+      } else if (ref.label !== null) {
         existing.label = ref.label;
         existing.shape = ref.shape;
-        existing.def = span;
+        if (!labelled.has(ref.id)) existing.def = span;
         labelled.add(ref.id);
       }
     }
@@ -422,6 +454,8 @@ export function parseFlowchart(source: string): FlowParse {
   if (!keyword) return fail('expected a flowchart or graph header', 1);
   const unclosed = open[open.length - 1];
   if (unclosed) return fail('unclosed subgraph', unclosed.open + 1);
+  for (const n of nodes) n.parent = members.parentOf(n.id);
+  for (const sub of subgraphs) sub.parent = members.parentOf(sub.id);
   return {
     ok: true,
     doc: { lines, eol, statements, graph: { keyword, direction, nodes, edges, subgraphs } },

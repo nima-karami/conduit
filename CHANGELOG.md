@@ -17,11 +17,14 @@ All notable user-facing changes to Conduit. Format follows
   Comments (`%%`), blank lines, indentation, chains like `a --> b --> c`, edge spellings like
   `-- x -->`, node shapes, `style`/`class` lines and the fence itself (`~~~`, an info string,
   CRLF line endings) stay exactly as the agent wrote them. `linkStyle` indices follow the edges
-  they styled, and removing a node drops its `style`/`class`/`click` references. Cylinder `[( )]`
-  and hexagon `{{ }}` nodes are now editable, and other bracket shapes are kept as written instead
-  of making the whole diagram read-only. Double-clicking an edge label edits it. Connecting two
-  nodes that already have an identical edge says "That connection already exists"; a second edge
-  with a different label or style is now allowed.
+  they styled, and removing a node drops its `style`/`class`/`click` references. Moving a node
+  between subgraphs follows Mermaid's own grouping rules, and a rename updates every place the
+  label is written. Cylinder `[( )]` and hexagon `{{ }}` nodes are now editable and drawn as their
+  shapes, in every theme. Other bracket shapes are kept as written instead of making the whole
+  diagram read-only. Double-clicking an edge label edits it, even right after a rename. After an
+  inline rename, focus stays on the node, so Ctrl+Z undoes it. Connecting two nodes that already
+  have an identical edge says "That connection already exists"; a second edge with a different
+  label or style is now allowed.
 
 ### Fixed
 - **A setting changed just before quitting is kept.** A change made in the last quarter second

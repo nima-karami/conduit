@@ -122,7 +122,7 @@ const CASES: Case[] = [
       subgraphs: [WORKERS],
     },
     changedLines: [3],
-    lines: { 3: '    parse -->|load| db[(Store)]' },
+    lines: { 3: '    parse -- load --> db[(Store)]' },
   },
   {
     name: 'rename rewrites only the def mention, inside a chain',
@@ -253,23 +253,30 @@ const CASES: Case[] = [
     lines: { 9: '    w1 -.-> w2', 10: '    w2{{Worker two}}', 11: '    classDef hot fill:#f96' },
   },
   {
-    name: 'a move into a subgraph relocates the chain that first mentioned the node',
+    // Top-level mentions confer no membership in mermaid, so listing `sink` in the target is all
+    // a move needs: the chain that mentions it stays where it is.
+    name: 'a move into a subgraph only adds the listing; top-level mentions stay put',
     source: FIDELITY,
     edits: [{ op: 'moveToSubgraph', id: 'sink', subgraph: 'workers' }],
     expected: {
       nodes: nodesWith('sink', ['sink', 'sink', 'rect', 'workers']),
-      edges: [E3, E4, E5, E0, E1, E2],
+      edges: [E0, E1, E2, E3, E4, E5],
       subgraphs: [WORKERS],
     },
-    changedLines: [2, 13],
-    lines: {
-      2: '    src[Source]',
-      3: '    parse[Parse]',
-      4: '    enrich(Enrich)',
-      9: '        sink',
-      14: '    src[Source] --> parse[Parse] --> enrich(Enrich) --> sink',
-      17: '    linkStyle 4 stroke:#0a0',
+    changedLines: [],
+    lines: { 7: '        sink', 8: '    end', 14: '    linkStyle 1 stroke:#0a0' },
+  },
+  {
+    name: 'a move out of a subgraph relocates the edge that listed it there',
+    source: FIDELITY,
+    edits: [{ op: 'moveToSubgraph', id: 'w1', subgraph: null }],
+    expected: {
+      nodes: nodesWith('w1', ['w1', 'Worker one', 'rect', null]),
+      edges: [E0, E1, E2, E3, E4, E5],
+      subgraphs: [WORKERS],
     },
+    changedLines: [5],
+    lines: { 10: '    w1[Worker one]', 11: '    classDef hot fill:#f96' },
   },
 ];
 
@@ -450,7 +457,11 @@ describe('applyFlowEdits — node and edge edits', () => {
     const r = applyFlowEdits('flowchart LR\r\n  a -- x --> b\r\n  b --> c', [
       { op: 'relabelEdge', edge: 0, label: 'y' },
     ]);
-    expect(r.ok && r.source).toBe('flowchart LR\r\n  a -->|y| b\r\n  b --> c');
+    expect(r.ok && r.source).toBe('flowchart LR\r\n  a -- y --> b\r\n  b --> c');
+    const mixed = applyFlowEdits('flowchart LR\r\n  a --> b\n  b --> c\r\n  c --> d', [
+      { op: 'relabelEdge', edge: 1, label: 'y' },
+    ]);
+    expect(mixed.ok && mixed.source).toBe('flowchart LR\r\n  a --> b\n  b -->|y| c\r\n  c --> d');
     const trailing = applyFlowEdits('flowchart LR\n  a\n', [
       { op: 'addNode', id: 'n1', label: 'n1', shape: 'rect', parent: null },
     ]);
@@ -474,9 +485,99 @@ describe('applyFlowEdits — subgraph edits', () => {
 
   it('move whose first mention is an edge in the old scope moves that edge to top level', () => {
     const r = applyFlowEdits(TWO, [{ op: 'moveToSubgraph', id: 'a', subgraph: 't' }]);
+    // The relocated copy is bare: the label stays with the declaration left behind (QA Q1).
     expect(r.ok && r.source).toBe(
-      'flowchart LR\n  subgraph s [S]\n    b[Bee]\n  end\n  subgraph t [T]\n    c\n    a\n  end\n  a --> b[Bee]',
+      'flowchart LR\n  subgraph s [S]\n    b[Bee]\n  end\n  subgraph t [T]\n    c\n    a\n  end\n  a --> b',
     );
+  });
+
+  it('a move leaves one label per node, and a later rename reaches it', () => {
+    // t closes before s, so the edge listing d in t has to leave t for d to become s's.
+    const src =
+      'flowchart LR\n  subgraph t [T]\n    c[Gamma] --> d\n  end\n  subgraph s [S]\n    a\n  end';
+    const moved = applyFlowEdits(src, [{ op: 'moveToSubgraph', id: 'd', subgraph: 's' }]);
+    if (!moved.ok) throw new Error(moved.refusal);
+    expect(moved.source).toBe(
+      'flowchart LR\n  subgraph t [T]\n    c[Gamma]\n  end\n  subgraph s [S]\n    a\n    d\n  end\n  c --> d',
+    );
+    expect(moved.source.match(/Gamma/g)).toHaveLength(1);
+    const renamed = applyFlowEdits(moved.source, [{ op: 'renameNode', id: 'c', label: 'Gamma2' }]);
+    if (!renamed.ok) throw new Error(renamed.refusal);
+    expect(renamed.source).not.toContain('Gamma]');
+    expect(renamed.doc.graph.nodes.find((n) => n.id === 'c')?.label).toBe('Gamma2');
+  });
+
+  it('a move leaves alone a listing in a subgraph that closes after the target', () => {
+    const src =
+      'flowchart LR\n  subgraph t [T]\n    a\n  end\n  subgraph u [U]\n    x --> u1\n  end';
+    const r = applyFlowEdits(src, [{ op: 'moveToSubgraph', id: 'x', subgraph: 't' }]);
+    expect(r.ok && r.source).toBe(
+      'flowchart LR\n  subgraph t [T]\n    a\n    x\n  end\n  subgraph u [U]\n    x --> u1\n  end',
+    );
+  });
+
+  it('a rename rewrites every labelled mention, since mermaid draws the last', () => {
+    const r = applyFlowEdits('flowchart LR\n  c[Gamma] --> d\n  e --> c(Gamma)', [
+      { op: 'renameNode', id: 'c', label: 'New' },
+    ]);
+    expect(r.ok && r.source).toBe('flowchart LR\n  c[New] --> d\n  e --> c(New)');
+  });
+
+  it('the root guard refuses a subgraph move that would re-parent an untargeted node', () => {
+    // x is listed in S and U; S closes first, so x is S's. Moving S's block into T, which closes
+    // after U, would hand x to U.
+    const src = [
+      'flowchart LR',
+      '  subgraph S',
+      '    x',
+      '  end',
+      '  subgraph U',
+      '    x --> u',
+      '  end',
+      '  subgraph T',
+      '    t1',
+      '  end',
+    ].join('\n');
+    expect(applyFlowEdits(src, [{ op: 'moveToSubgraph', id: 'S', subgraph: 'T' }])).toEqual({
+      ok: false,
+      refusal: 'unsupported',
+      at: 0,
+    });
+  });
+
+  it("the reviewer's backward subgraph move keeps x in S and y at the top", () => {
+    const src =
+      'flowchart LR\n  subgraph T\n    t1\n  end\n  x[Ex] --> y\n  subgraph S\n    x\n  end';
+    const r = applyFlowEdits(src, [{ op: 'moveToSubgraph', id: 'S', subgraph: 'T' }]);
+    if (!r.ok) throw new Error(r.refusal);
+    const parents = Object.fromEntries(r.doc.graph.nodes.map((n) => [n.id, n.parent]));
+    expect(parents).toEqual({ t1: 'T', x: 'S', y: null });
+    expect(r.doc.graph.subgraphs.find((s) => s.id === 'S')?.parent).toBe('T');
+  });
+
+  it('labels starting with a slash are quoted', () => {
+    const r = applyFlowEdits('flowchart LR\n  a', [
+      { op: 'renameNode', id: 'a', label: '/api/users' },
+    ]);
+    expect(r.ok && r.source).toBe('flowchart LR\n  a["/api/users"]');
+    expect(r.ok && r.doc.graph.nodes[0]).toMatchObject({ label: '/api/users', shape: 'rect' });
+  });
+
+  it('class lines written with spaces after commas are pruned too', () => {
+    const r = applyFlowEdits('flowchart LR\n  a --> n\n  class a, n, b x\n  b', [
+      { op: 'removeNode', id: 'n' },
+    ]);
+    expect(r.ok && r.source).toBe('flowchart LR\n  a\n  class a, b x\n  b');
+  });
+
+  it('moving a subgraph with pending additions is a conflict', () => {
+    const src = 'flowchart LR\n  subgraph s [S]\n    a\n  end\n  subgraph t [T]\n    b\n  end';
+    expect(
+      applyFlowEdits(src, [
+        { op: 'addNode', id: 'n1', label: 'n1', shape: 'rect', parent: 's' },
+        { op: 'moveToSubgraph', id: 's', subgraph: 't' },
+      ]),
+    ).toEqual({ ok: false, refusal: 'conflict', at: 1 });
   });
 
   it('membership move of an edge statement re-declares the other endpoint in the old scope when the edge was its first mention', () => {

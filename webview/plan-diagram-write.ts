@@ -48,9 +48,11 @@ export function writeDiagram(
   view: EditorView,
   key: string,
   edits: readonly FlowEdit[],
+  /** The fence text the edits were computed against; their indices mean nothing on any other. */
+  basis: string,
 ): FlowEditRefusal | 'gone' | null {
   const at = locateDiagram(view.state.doc, key);
-  if (!at) return 'gone';
+  if (!at || at.node.textContent !== basis) return 'gone';
   const result = applyFlowEdits(at.node.textContent, edits);
   if (!result.ok) return result.refusal;
   if (result.source !== at.node.textContent) replaceFence(view, at, result.source);

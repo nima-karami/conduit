@@ -8,7 +8,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { splitPlan } from '../../src/plan-blocks';
 import { PlanEditor, type PlanEditorHandle } from '../../webview/components/plan-editor';
-import { writeDiagram } from '../../webview/plan-diagram-write';
+import { locateDiagram, writeDiagram } from '../../webview/plan-diagram-write';
 
 /**
  * The two block components are stubbed: the real ones reach `monaco-editor` and `@xyflow/react`,
@@ -514,9 +514,10 @@ describe('fence fidelity through the write path', () => {
     await act(async () => {
       const view = handle.current?.view();
       if (!view) throw new Error('the editor exposed no ProseMirror view');
-      expect(writeDiagram(view, 'flow-0', [{ op: 'relabelEdge', edge: 0, label: 'load' }])).toBe(
-        null,
-      );
+      const basis = locateDiagram(view.state.doc, 'flow-0')?.node.textContent ?? '';
+      expect(
+        writeDiagram(view, 'flow-0', [{ op: 'relabelEdge', edge: 0, label: 'load' }], basis),
+      ).toBe(null);
     });
     await flushListener();
   }
@@ -541,7 +542,7 @@ describe('fence fidelity through the write path', () => {
 
     await editDiagram(handle);
 
-    expect(bodies).toEqual([body.replace('  a -- batch --> b', '  a -->|load| b')]);
+    expect(bodies).toEqual([body.replace('  a -- batch --> b', '  a -- load --> b')]);
   });
 
   it('a CRLF plan stays CRLF after one diagram edit (joins and new block)', async () => {
@@ -562,7 +563,7 @@ describe('fence fidelity through the write path', () => {
     const { handle } = await mount(body, (next) => bodies.push(next));
 
     await editDiagram(handle);
-    expect(bodies).toEqual([body.replace('  a -- batch --> b', '  a -->|load| b')]);
+    expect(bodies).toEqual([body.replace('  a -- batch --> b', '  a -- load --> b')]);
 
     await act(async () => {
       const view = handle.current?.view();

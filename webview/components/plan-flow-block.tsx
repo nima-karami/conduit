@@ -1,5 +1,6 @@
+import { redo, undo } from '@milkdown/kit/prose/history';
 import { useNodeViewContext } from '@prosemirror-adapter/react';
-import { useCallback, useContext, useRef, useState } from 'react';
+import { type KeyboardEvent, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { parseFlowchart } from '../../src/mermaid-flow';
 import type { FlowEdit } from '../../src/mermaid-flow-edit';
 import {
@@ -63,16 +64,26 @@ export function PlanFlowBlock() {
   const { readOnly } = useContext(PlanDocContext);
   const [asSource, setAsSource] = useState(false);
   const source = node.textContent;
-  const at = getPos();
-  const key = at === undefined ? null : diagramKeyAt(view.state.doc, at);
 
+  // ProseMirror keeps an unchanged node view without calling update(), so nothing rendered here can
+  // be trusted to still name this fence: the key is read from the document at call time.
+  const keyNow = useCallback((): string | null => {
+    const pos = getPos();
+    return pos === undefined ? null : diagramKeyAt(view.state.doc, pos);
+  }, [view, getPos]);
+
+  // `source` is what the edits were computed against; writeDiagram refuses a fence that has moved on.
   const onEdits = useCallback(
-    (edits: readonly FlowEdit[]) => (key === null ? 'gone' : writeDiagram(view, key, edits)),
-    [view, key],
+    (edits: readonly FlowEdit[]) => {
+      const key = keyNow();
+      return key === null ? 'gone' : writeDiagram(view, key, edits, source);
+    },
+    [view, keyNow, source],
   );
 
   const writeText = useCallback(
     (text: string) => {
+      const key = keyNow();
       if (key !== null) {
         writeDiagramText(view, key, text);
         return;
@@ -80,12 +91,25 @@ export function PlanFlowBlock() {
       const pos = getPos();
       if (pos !== undefined) writeFenceTextAt(view, pos, text);
     },
-    [view, key, getPos],
+    [view, keyNow, getPos],
   );
 
   const onLeave = useCallback(() => leaveBlock(view, getPos, node), [view, getPos, node]);
 
-  const parsed = parseFlowchart(source);
+  const parsed = useMemo(() => parseFlowchart(source), [source]);
+
+  const onUndoKey = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      const target = e.target as HTMLElement;
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || target.closest('input, textarea')) return;
+      const key = e.key.toLowerCase();
+      const command = key === 'z' ? (e.shiftKey ? redo : undo) : key === 'y' ? redo : null;
+      if (!command || readOnly) return;
+      e.preventDefault();
+      command(view.state, view.dispatch);
+    },
+    [view, readOnly],
+  );
 
   if (asSource) {
     return (
@@ -117,7 +141,10 @@ export function PlanFlowBlock() {
   }
 
   return (
-    <div className="planflow" role="group" aria-label="Diagram block">
+    // The node view stops every event from reaching ProseMirror, its undo keymap included, so the
+    // canvas forwards undo/redo itself; an inline input keeps its own (decision #5 hands canvas undo
+    // to the document's history).
+    <div className="planflow" role="group" aria-label="Diagram block" onKeyDown={onUndoKey}>
       <FlowEditor
         graph={parsed.doc.graph}
         onEdits={onEdits}

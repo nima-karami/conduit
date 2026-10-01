@@ -112,6 +112,18 @@ describe('spliceBody', () => {
     );
   });
 
+  it('a fence whose language changed is written as the serialiser wrote it', () => {
+    const body = 'Intro.\n\n~~~mermaid title="x"\nflowchart LR\n~~~\n';
+    const { blocks } = splitPlan(body);
+
+    expect(
+      spliceBody(body, blocks, [
+        keep(0),
+        { kind: 'new', source: '```ts\nconst a = 1;\n```', replaces: 1 },
+      ]),
+    ).toBe('Intro.\n\n```ts\nconst a = 1;\n```\n');
+  });
+
   it('a CRLF body takes CRLF for new blocks and their joins', () => {
     const body = '# Title\r\n\r\nfirst.\r\n';
     const { blocks } = splitPlan(body);

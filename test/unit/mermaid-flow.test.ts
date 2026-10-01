@@ -95,11 +95,12 @@ describe('parseFlowchart', () => {
     ]);
   });
 
-  it('def is the first mention with a label', () => {
-    const doc = docOf('flowchart LR\na --> b\nb[Bee]\nb[Later]\n');
+  it('def is the first mention with a label; the label is the last one, as mermaid draws it', () => {
+    const doc = docOf('flowchart LR\na --> b\nb[Bee]\nb(Later)\n');
     const b = doc.graph.nodes.find((n) => n.id === 'b');
 
-    expect(b?.label).toBe('Bee');
+    expect(b?.label).toBe('Later');
+    expect(b?.shape).toBe('round');
     expect(b?.def.line).toBe(2);
     expect(b?.first.line).toBe(1);
     expect(textAt(doc, b?.def ?? { line: 0, start: 0, end: 0 })).toBe('b[Bee]');
