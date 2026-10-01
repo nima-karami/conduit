@@ -86,6 +86,7 @@ export interface LspServerHandle {
 
 const STDERR_LINES = 50;
 const SHUTDOWN_WAIT_MS = 2_000;
+const INITIALIZE_TIMEOUT_MS = 90_000;
 const SCOPE = 'lsp';
 
 function initializeParams(root: string) {
@@ -201,9 +202,16 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
   conn.listen();
 
   const initialized = (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
         conn.sendRequest('initialize', initializeParams(root)),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('initialize timed out')),
+            INITIALIZE_TIMEOUT_MS,
+          );
+        }),
         exitedP.then(() => {
           throw new Error('exited before initialize');
         }),
@@ -211,6 +219,8 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
       await conn.sendNotification('initialized', {});
     } catch (err) {
       throw new LspRequestError('server-error', String(err instanceof Error ? err.message : err));
+    } finally {
+      clearTimeout(timer);
     }
   })();
   initialized.catch(() => {});

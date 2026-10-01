@@ -6,8 +6,9 @@
  * card and the session rail instead (§2 "Waiting").
  */
 import { useEffect, useReducer, useSyncExternalStore } from 'react';
-import { describeNext, formatDuration, HOUR_MS, type TimedMessage } from '../../src/timed-messages';
+import { describeNext, formatDuration, type TimedMessage } from '../../src/timed-messages';
 import { IconClock } from '../icons';
+import { startTimerCountdown } from '../timer-countdown';
 import {
   cancelTimedMessage,
   getTimerSnapshot,
@@ -26,10 +27,12 @@ const earliest = (list: TimedMessage[]): TimedMessage | null =>
 export function TimerChip({
   sessionId,
   stacked,
+  visible,
   onOpen,
 }: {
   sessionId: string;
   stacked: boolean;
+  visible: boolean;
   onOpen: () => void;
 }) {
   const snap = useSyncExternalStore(subscribeTimers, getTimerSnapshot, getTimerSnapshot);
@@ -67,29 +70,8 @@ export function TimerChip({
   const nextAt = next?.nextAt ?? null;
   useEffect(() => {
     if (nextAt === null) return;
-    let handle: ReturnType<typeof setTimeout> | null = null;
-    const arm = () => {
-      if (document.visibilityState === 'hidden') return;
-      handle = setTimeout(
-        () => {
-          tick();
-          arm();
-        },
-        nextAt - Date.now() < HOUR_MS ? 1000 : 60_000,
-      );
-    };
-    const onVisibility = () => {
-      if (handle) clearTimeout(handle);
-      tick();
-      arm();
-    };
-    arm();
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      if (handle) clearTimeout(handle);
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [nextAt]);
+    return startTimerCountdown(nextAt, visible, tick);
+  }, [nextAt, visible]);
 
   const flashing = flashUntil !== null && now < flashUntil;
   if (!next && !offer && !flashing) return null;

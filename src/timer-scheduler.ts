@@ -331,7 +331,7 @@ export class TimerScheduler {
     const now = this.now();
     let earliest = Number.POSITIVE_INFINITY;
     for (const s of this.schedules) {
-      if (s.state === 'done' || s.state === 'waiting') continue;
+      if (s.state === 'done' || s.state === 'waiting' || this.inFlight.has(s.id)) continue;
       // Floored by its session's settle expiry: a schedule that is already due inside that window
       // is skipped by evaluate(), so arming at `now` would spin setTimeout(0) → evaluate() → arm()
       // for the rest of the window.

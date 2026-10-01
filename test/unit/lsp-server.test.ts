@@ -119,6 +119,14 @@ const until = async (pred: () => boolean, ms = 2000) => {
 const signal = () => new AbortController().signal;
 
 describe('startLanguageServer', () => {
+  it('rejects initialize when a live server never answers within 90 seconds', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const h = start({ initialize: () => new Promise(() => {}) });
+    const rejected = expect(h.handle.initialized).rejects.toThrow('initialize timed out');
+    await vi.advanceTimersByTimeAsync(90_000);
+    await rejected;
+    expect(h.notifications.map((n) => n.method)).not.toContain('initialized');
+  });
   it('spawns the resolved absolute binary with no shell, cwd = root, detached only on posix, env from childEnv (GOTOOLCHAIN=local, no relative PATH entries)', async () => {
     const posix = start({ platform: 'linux', root: '/w/m', hostEnv: { PATH: '.:bin:/usr/bin' } });
     const [file, args, o] = posix.spawn.mock.calls[0] ?? [];

@@ -5,6 +5,7 @@ import {
   type SearchQuery,
   searchContentAsync,
 } from './content-search';
+import { runRegexSearch } from './content-search-runner';
 
 /**
  * Host-side wiring of the pure content-search core against the real filesystem. Kept
@@ -17,7 +18,7 @@ import {
  * file's size before its body is read so a giant file is never slurped into memory. The
  * walker takes forward-slash paths; node's fs accepts those on every platform.
  */
-const hostAsyncDeps = (
+export const hostAsyncDeps = (
   isCancelled?: () => boolean,
   files?: { abs: string; rel: string }[],
 ): AsyncContentSearchDeps => ({
@@ -42,5 +43,6 @@ export function searchContentFs(
   isCancelled?: () => boolean,
   files?: { abs: string; rel: string }[],
 ): Promise<ContentSearchResponse> {
+  if (query.regex) return runRegexSearch({ root, query, files }, isCancelled);
   return searchContentAsync(root, query, hostAsyncDeps(isCancelled, files));
 }

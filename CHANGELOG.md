@@ -6,6 +6,26 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.45.3] — 2026-10-01
+
+### Fixed
+- **Background sessions do less supporting work.** Git refreshes batch visible sessions and split
+  panes across windows, share HEAD watchers and concurrent root discovery, and defer hidden
+  refreshes and indexing until the session returns. Agents, terminal output, and scheduled
+  messages continue running.
+- **Large Changes views stay bounded.** Deleted-file Git reads share a four-process limit and
+  retain line counts instead of whole blobs. Project-tree reads are asynchronous and stop at
+  the display budget. File-index and commit-link caches now expire and have size limits.
+- **Overlapping saves keep the latest snapshot.** Persistence coalesces bursts and prevents
+  older asynchronous writes from overwriting the final quit snapshot.
+- **Pathological regular expressions cannot freeze the app.** Regex content searches run in
+  bounded workers with cancellation and a deadline.
+- **Unused rendering resources are released.** Shader cleanup frees graphics objects, hidden
+  panes stop countdown ticks, and terminal link caches and pending requests are bounded.
+- **Language-server work ends when its consumer disappears.** Delayed opens from retired
+  windows are rejected, initialization has a deadline, and navigation target reads honor
+  cancellation and a total text budget. Scheduled deliveries no longer spin while in flight.
+
 ## [0.45.2] — 2026-10-01
 
 ### Added

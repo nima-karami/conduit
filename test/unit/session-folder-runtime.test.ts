@@ -178,6 +178,25 @@ describe('SessionFolderRuntime (core)', () => {
 });
 
 describe('SessionFolderRuntime (watcher)', () => {
+  it('keeps both visible windows watched and releases a closed window', () => {
+    const h = harness();
+    h.rt.requestProject('/w/a', 'a', 1);
+    h.rt.requestProject('/w/b', 'b', 2);
+    expect(h.armed.at(-1)).toEqual(['/w/a', '/w/b']);
+    h.rt.windowClosed(1);
+    expect(h.armed.at(-1)).toEqual(['/w/b']);
+  });
+  it('checks and rearms a non-latest window when its attached folder disappears', async () => {
+    const h = harness();
+    h.sessions[0].roots = ['/x/R'];
+    h.rt.requestProject('/w/a', 'a', 1);
+    h.rt.requestProject('/w/b', 'b', 2);
+    h.checks.length = 0;
+    h.suspect(['/x/R']);
+    expect(h.checks).toEqual([['a', ['/x/R']]]);
+    await h.report('a', '/w/a', { '/x/R': 'missing' });
+    expect(h.armed.at(-1)).toEqual(['/w/a', '/w/b']);
+  });
   it('requestProject arms watchFoldersFor(p, session)', () => {
     const h = harness();
     h.sessions[0].roots = ['/x/R', '/x/gone'];
@@ -222,7 +241,7 @@ describe('SessionFolderRuntime (watcher)', () => {
     h.armed.length = 0;
     h.sessions[0].roots = ['/x/R'];
     h.rt.foldersChanged('a', { homeChanged: false });
-    expect(h.armed).toEqual([['/w/a', '/w/a', '/x/R']]);
+    expect(h.armed).toEqual([['/w/a', '/x/R']]);
     h.sessions[1].roots = ['/x/S'];
     h.rt.foldersChanged('b', { homeChanged: false });
     expect(h.armed).toHaveLength(1);
@@ -390,7 +409,7 @@ describe('SessionFolderRuntime (health)', () => {
     await h.report('a', '/w/a', { '/w/a': 'present', '/x/R': 'missing' });
     expect(h.sessions[0].missingRoots).toEqual(['/x/R']);
     expect(h.events).toEqual(['scan:a', 'hook:a']);
-    expect(h.armed).toEqual([['/w/a', '/w/a']]);
+    expect(h.armed).toEqual([['/w/a']]);
 
     h.events.length = 0;
     await h.report('a', '/w/a', { '/x/R': 'missing' });

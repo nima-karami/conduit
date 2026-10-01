@@ -76,7 +76,16 @@ export function createGitRefresher<T extends RefreshTarget>(deps: {
           if (!unique.has(folderKey(root))) unique.set(folderKey(root), root);
       }
       const results = await interrogateRepos([...unique.values()], (root) =>
-        limited(() => deps.interrogate(root)),
+        limited(() => {
+          const needed = targets.some(
+            (t) =>
+              generation.get(t.sessionId) === mine &&
+              t.roots.some((r) => folderKey(r) === folderKey(root)),
+          );
+          return needed
+            ? deps.interrogate(root)
+            : Promise.resolve({ info: { kind: 'none' as const } });
+        }),
       );
       const byKey = new Map(results.map((r) => [folderKey(r.root), r]));
       for (const t of targets) {

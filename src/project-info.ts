@@ -12,6 +12,20 @@ const MAX_DEPTH = 2;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 // How many working-tree files to line-count at once (bounds the fs threadpool + memory).
 const COUNT_CONCURRENCY = 8;
+const HEAD_CONCURRENCY = 4;
+let activeHeadReads = 0;
+const waitingHeadReads: (() => void)[] = [];
+async function deletedFileLines(cwd: string, file: string): Promise<number> {
+  if (activeHeadReads < HEAD_CONCURRENCY) activeHeadReads++;
+  else await new Promise<void>((resolve) => waitingHeadReads.push(resolve));
+  try {
+    return countLines(await run('git', ['show', `HEAD:${file}`], cwd));
+  } finally {
+    const next = waitingHeadReads.shift();
+    if (next) next();
+    else activeHeadReads--;
+  }
+}
 
 // All callers pass 'git'; the arg array is what matters. Bounded via the shared runner so a wedged
 // git (index.lock, stalled FS) yields '' like any other failure instead of hanging the Changes load.
@@ -175,14 +189,11 @@ export async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
     }
   }
 
-  // Fetch HEAD content for deleted files via `git show HEAD:<path>`.
-  const headContents = new Map<string, string>();
-  await Promise.all(
-    [...needsHead].map(async (p) => {
-      const content = await run('git', ['show', `HEAD:${p}`], cwd);
-      headContents.set(p, content);
-    }),
-  );
+  // Retain counts, not all deleted blobs; the slot pool also covers other project refreshes.
+  const headLineCounts = new Map<string, number>();
+  await mapWithConcurrency([...needsHead], HEAD_CONCURRENCY, async (p) => {
+    headLineCounts.set(p, await deletedFileLines(cwd, p));
+  });
 
   // Line-count working-tree files for added/untracked entries — async + streamed + concurrency-
   // bounded so a big untracked file can never freeze the host (was a synchronous readFileSync loop).
@@ -212,12 +223,10 @@ export async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
   ) => {
     if (code === ' ' || code === '?') return;
     const kind = kindFromCode(code);
-    const { added, removed } = resolveLineCounts(
-      kind,
-      numstatMap.get(p),
-      fileLineCounts.get(p),
-      headContents.get(p),
-    );
+    const { added, removed } =
+      kind === 'D'
+        ? { added: 0, removed: headLineCounts.get(p) ?? 0 }
+        : resolveLineCounts(kind, numstatMap.get(p), fileLineCounts.get(p), undefined);
     changes.push({
       path: p,
       added,
@@ -247,29 +256,30 @@ export async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
   return changes;
 }
 
-function fileTree(root: string): FileNodeDTO[] {
+async function fileTree(root: string): Promise<FileNodeDTO[]> {
   const out: FileNodeDTO[] = [];
-  const walk = (dir: string, depth: number) => {
-    if (depth > MAX_DEPTH) return;
+  const walk = async (dir: string, depth: number): Promise<void> => {
+    if (depth > MAX_DEPTH || out.length >= 400) return;
     let entries: fs.Dirent[];
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
-    entries
+    const sorted = entries
       .filter((e) => !IGNORED_DIRS.has(e.name))
       .sort((a, b) => {
         if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
         return a.name.localeCompare(b.name);
-      })
-      .forEach((e) => {
-        out.push({ name: e.name, kind: e.isDirectory() ? 'dir' : 'file', depth });
-        if (e.isDirectory()) walk(path.join(dir, e.name), depth + 1);
       });
+    for (const e of sorted) {
+      if (out.length >= 400) break;
+      out.push({ name: e.name, kind: e.isDirectory() ? 'dir' : 'file', depth });
+      if (e.isDirectory()) await walk(path.join(dir, e.name), depth + 1);
+    }
   };
-  walk(root, 0);
-  return out.slice(0, 400); // safety cap
+  await walk(root, 0);
+  return out;
 }
 
 function countEntries(dir: string, predicate: (e: fs.Dirent) => boolean): number {
@@ -356,7 +366,7 @@ export async function getProjectInfo(
     changesRoot && fs.existsSync(changesRoot)
       ? gitChanges(changesRoot)
       : Promise.resolve<ChangeDTO[]>([]),
-    Promise.resolve(fileTree(cwd)),
+    fileTree(cwd),
   ]);
   // Tag file nodes with git status by matching path suffix.
   const statusByName = new Map<string, ChangeKind>();

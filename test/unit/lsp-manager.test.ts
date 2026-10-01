@@ -378,6 +378,33 @@ describe('LspManager — sharing and validation', () => {
 });
 
 describe('LspManager — clients and epochs (#2)', () => {
+  it.each(['reload', 'destroy'] as const)(
+    'rejects an open resolving after client %s',
+    async (action) => {
+      const t = setup();
+      const root = await t.deps.resolveRoot('/w/m/main.go', GO_SERVER);
+      let release: () => void = () => {};
+      t.resolveRoot.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve(root);
+          }),
+      );
+      const opening = t.open('/w/m/main.go', 'package main', { epoch: 'old' });
+      await flush();
+      if (action === 'reload') await t.send(1, 'new', { type: 'lsp:statusSnapshot' });
+      else t.mgr.dropWebContents(1);
+      release();
+      expect(await opening).toEqual({ serverKey: null, state: 'no-root' });
+      expect(t.startServer).not.toHaveBeenCalled();
+      const internals = t.mgr as unknown as {
+        docs: Map<string, unknown>;
+        servers: Map<string, unknown>;
+      };
+      expect(internals.docs.size).toBe(0);
+      expect(internals.servers.size).toBe(0);
+    },
+  );
   it('E13: a new epoch on the same webContents retires the old epoch; the new epoch re-syncs and is answered', async () => {
     const t = setup();
     await t.open('/w/m/main.go', 'package main', { epoch: 'old' });
@@ -1105,6 +1132,53 @@ describe('LspManager — replies, re-home and status', () => {
     expect(reply.targets).toHaveLength(TARGETS_MAX - 1);
     expect(reply.dropped).toBe(6);
     expect(s.requests[0]?.params).toMatchObject({ context: { includeDeclaration: true } });
+  });
+
+  it('cancellation during a target read stops reading subsequent targets', async () => {
+    const t = setup();
+    await t.open('/w/m/main.go');
+    await t.ready();
+    t.servers[0]?.answers.set('textDocument/references', () => [
+      { uri: 'file:///w/m/a.go', range: DEF[0]?.range },
+      { uri: 'file:///w/m/b.go', range: DEF[0]?.range },
+    ]);
+    let release: () => void = () => {};
+    const read = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          release = () => resolve('package main');
+        }),
+    );
+    t.deps.readTarget = read;
+    const request = t.req('/w/m/main.go', 'references', { id: 'targets' });
+    await flush();
+    expect(read).toHaveBeenCalledTimes(1);
+    await t.send(1, 'e1', { type: 'lsp:cancel', requestId: 'targets' });
+    release();
+    await flush();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(await request).toMatchObject({ kind: 'empty' });
+  });
+
+  it('bounds target payload bytes and stops further file reads', async () => {
+    const t = setup();
+    await t.open('/w/m/main.go');
+    await t.ready();
+    const content = 'é'.repeat(1024 * 1024);
+    const count = 8;
+    t.servers[0]?.answers.set('textDocument/references', () =>
+      Array.from({ length: count + 4 }, (_, i) => ({
+        uri: `file:///w/m/f${i}.go`,
+        range: DEF[0]?.range,
+      })),
+    );
+    const read = vi.fn(async () => content);
+    t.deps.readTarget = read;
+    const reply = await t.req('/w/m/main.go', 'references');
+    expect(reply).toMatchObject({ kind: 'locations', dropped: 4 });
+    if (reply.kind !== 'locations') throw new Error(reply.kind);
+    expect(reply.targets).toHaveLength(count);
+    expect(read).toHaveBeenCalledTimes(count);
   });
 
   it('empty result under an ad-hoc root → {kind:"empty", adHocRoot:true}', async () => {

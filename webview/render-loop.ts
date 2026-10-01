@@ -6,16 +6,18 @@
  * backgrounds so the loop/visibility plumbing lives in one place.
  */
 export function runRenderLoop(draw: (t: number) => void): () => void {
-  let running = true;
+  let running = !document.hidden;
   let raf = 0;
   const tick = (t: number) => {
     draw(t);
     if (running) raf = requestAnimationFrame(tick);
   };
-  raf = requestAnimationFrame(tick);
+  if (running) raf = requestAnimationFrame(tick);
 
   const onVis = () => {
-    running = !document.hidden;
+    const next = !document.hidden;
+    if (next === running) return;
+    running = next;
     if (running) raf = requestAnimationFrame(tick);
     else cancelAnimationFrame(raf);
   };

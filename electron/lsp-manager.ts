@@ -80,6 +80,7 @@ export const SYMBOLS_TIMEOUT_MS = 5_000;
 export const INIT_WAIT_SHORT_MS = 3_000;
 export const ORIGIN_LRU_MAX = 2_000;
 export const TARGETS_MAX = 200;
+const TARGET_BYTES_MAX = 16 * 1024 * 1024;
 
 const SCOPE = 'lsp';
 
@@ -241,6 +242,13 @@ export class LspManager {
         this.afterRefsDropped(d);
       });
     }
+  }
+
+  private isCurrentClient(client: ClientKey): boolean {
+    const separator = client.indexOf(':');
+    const id = Number(client.slice(0, separator));
+    const epoch = this.currentEpoch.get(id);
+    return epoch !== undefined && `${id}:${epoch}` === client;
   }
 
   // ---------- dispatch ----------
@@ -406,12 +414,15 @@ export class LspManager {
     client: ClientKey,
     msg: LspMessage<'lsp:open'>,
   ): Promise<LspCalls['lsp:open']['res']> {
+    if (this.disposed || !this.isCurrentClient(client))
+      return { serverKey: null, state: 'no-root' };
     const spec = serverSpecFor(msg.languageId, this.deps.registry);
     if (!spec) return { serverKey: null, state: 'no-root' };
     let doc = this.docs.get(msg.path);
     if (!doc) {
-      const { key, escapesWorkspace } = await this.keyFor(msg.path, spec);
-      if (this.disposed) return { serverKey: null, state: 'no-root' };
+      const { key, escapesWorkspace } = await this.keyFor(msg.path, spec, client);
+      if (this.disposed || !this.isCurrentClient(client))
+        return { serverKey: null, state: 'no-root' };
       doc = this.docs.get(msg.path);
       if (!doc) {
         doc = {
@@ -514,8 +525,11 @@ export class LspManager {
   private async keyFor(
     path: string,
     spec: LanguageServerSpec,
+    client: ClientKey,
   ): Promise<{ key: string | null; escapesWorkspace: boolean }> {
     const root = await this.deps.resolveRoot(path, spec);
+    if (this.disposed || !this.isCurrentClient(client))
+      return { key: null, escapesWorkspace: false };
     if (isEscapedRoot(root)) return { key: null, escapesWorkspace: true };
     if (root) return { key: this.ensureRecord(root, spec).key, escapesWorkspace: false };
     const origin = this.originLru.get(path);
@@ -921,13 +935,14 @@ export class LspManager {
         tree: toNavTree(result as Parameters<typeof toNavTree>[0], doc.text, base),
       };
     }
-    return this.locationsReply(client, rec, result as Parameters<typeof toLocations>[0]);
+    return this.locationsReply(client, rec, result as Parameters<typeof toLocations>[0], signal);
   }
 
   private async locationsReply(
     client: ClientKey,
     rec: ServerRecord,
     result: Parameters<typeof toLocations>[0],
+    signal: AbortSignal,
   ): Promise<LspReply> {
     const locations = toLocations(result).map((l) => ({
       path: toLexicalPath(l.path, rec.realRoot, rec.lexicalRoot, this.deps.platform),
@@ -940,10 +955,25 @@ export class LspManager {
     );
     const targets: { path: string; text: string }[] = [];
     let dropped = Math.max(0, distinct.length - TARGETS_MAX);
-    for (const path of distinct.slice(0, TARGETS_MAX)) {
+    let bytes = 0;
+    const candidates = distinct.slice(0, TARGETS_MAX);
+    for (const [i, path] of candidates.entries()) {
+      if (signal.aborted) return abortedReply(signal);
+      if (bytes >= TARGET_BYTES_MAX) {
+        dropped += candidates.length - i;
+        break;
+      }
       const text = await this.deps.readTarget(path);
+      if (signal.aborted) return abortedReply(signal);
       if (text === null) dropped++;
-      else targets.push({ path, text });
+      else {
+        bytes += Buffer.byteLength(text, 'utf8');
+        if (bytes > TARGET_BYTES_MAX) {
+          dropped += candidates.length - i;
+          break;
+        }
+        targets.push({ path, text });
+      }
     }
     return { kind: 'locations', locations, targets, dropped };
   }

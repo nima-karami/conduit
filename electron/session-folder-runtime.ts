@@ -35,8 +35,12 @@ export class SessionFolderRuntime {
   private readonly watcher: Pick<ProjectWatcher, 'setFolders' | 'stop'>;
   private readonly health: Pick<FolderHealth, 'check' | 'pending' | 'dispose'>;
   private readonly loggedRejections = new Map<string, SessionOpReason>();
-  // The single global watcher follows the latest requestProject from any window (spec §12).
+  // Latest request supplies focus health checks; directory watches cover every window's view.
   private watched: { p: string; sessionId: string | undefined } | null = null;
+  private readonly projectsByWindow = new Map<
+    number,
+    { p: string; sessionId: string | undefined }
+  >();
   // A switch is per window: two windows on different sessions alternate requestProject on every
   // fire, so against `watched` each call would read as a switch and health-check (review R1).
   private readonly shownBy = new Map<number, string | undefined>();
@@ -68,7 +72,7 @@ export class SessionFolderRuntime {
   foldersChanged(sessionId: string, change: { homeChanged: boolean }): void {
     this.deps.scheduleRepoScan(sessionId);
     if (change.homeChanged) this.reconcilePlans();
-    if (this.watched?.sessionId === sessionId) this.arm();
+    if ([...this.projectsByWindow.values()].some((p) => p.sessionId === sessionId)) this.arm();
     this.emit(sessionId);
     this.check(sessionId);
   }
@@ -79,6 +83,7 @@ export class SessionFolderRuntime {
     const switched = this.shownBy.get(windowId) !== id;
     this.shownBy.set(windowId, id);
     this.watched = { p, sessionId: id };
+    this.projectsByWindow.set(windowId, this.watched);
     this.arm();
     // Only on a switch: every fsChanged comes back as a requestProject (spec §2.6, L12 S4).
     if (id && switched) this.check(id);
@@ -91,6 +96,9 @@ export class SessionFolderRuntime {
 
   windowClosed(windowId: number): void {
     this.shownBy.delete(windowId);
+    this.projectsByWindow.delete(windowId);
+    this.watched = [...this.projectsByWindow.values()].at(-1) ?? null;
+    this.arm();
   }
 
   focused(): void {
@@ -109,11 +117,13 @@ export class SessionFolderRuntime {
   }
 
   private arm() {
-    if (!this.watched) return;
-    const { p, sessionId } = this.watched;
-    this.watcher.setFolders(
-      watchFoldersFor(p, sessionId ? this.deps.mgr.get(sessionId) : undefined),
-    );
+    this.watcher.setFolders([
+      ...new Set(
+        [...this.projectsByWindow.values()].flatMap(({ p, sessionId }) =>
+          watchFoldersFor(p, sessionId ? this.deps.mgr.get(sessionId) : undefined),
+        ),
+      ),
+    ]);
   }
 
   private reconcilePlans() {
@@ -135,7 +145,16 @@ export class SessionFolderRuntime {
 
   private suspect(folders: string[]) {
     this.deps.log('warn', 'watch suspect', { folders });
-    if (this.watched?.sessionId) this.check(this.watched.sessionId, folders);
+    const keys = new Set(folders.map(folderKey));
+    const affected = new Set(
+      [...this.projectsByWindow.values()].flatMap(({ p, sessionId }) =>
+        sessionId &&
+        watchFoldersFor(p, this.deps.mgr.get(sessionId)).some((root) => keys.has(folderKey(root)))
+          ? [sessionId]
+          : [],
+      ),
+    );
+    for (const id of affected) this.check(id, folders);
   }
 
   // FolderHealth awaits this, so it must not reject.
@@ -176,7 +195,7 @@ export class SessionFolderRuntime {
     const cur = this.deps.mgr.get(r.sessionId);
     if (!cur || !this.deps.mgr.setFolderHealth(cur.id, applyHealthReport(cur, r, rejected))) return;
     this.deps.scheduleRepoScan(cur.id);
-    if (this.watched?.sessionId === cur.id) this.arm();
+    if ([...this.projectsByWindow.values()].some((p) => p.sessionId === cur.id)) this.arm();
     this.emit(cur.id);
   }
 

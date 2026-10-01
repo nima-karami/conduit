@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { runRenderLoop } from '../render-loop';
+import { createShaderResources } from '../shader-resources';
 
 const ALPHA: Record<string, number> = { subtle: 0.12, balanced: 0.22, vivid: 0.36 };
 
@@ -29,14 +30,6 @@ void main(){
   col = mix(col, u_c3, smoothstep(0.55, 1.0, m));
   gl_FragColor = vec4(col, u_alpha);
 }`;
-
-function compile(gl: WebGLRenderingContext, type: number, src: string): WebGLShader | null {
-  const s = gl.createShader(type);
-  if (!s) return null;
-  gl.shaderSource(s, src);
-  gl.compileShader(s);
-  return gl.getShaderParameter(s, gl.COMPILE_STATUS) ? s : null;
-}
 
 const MAX_ATTEMPTS = 8;
 
@@ -80,26 +73,16 @@ export function ShaderBg({
       return;
     }
 
-    const vs = compile(gl, gl.VERTEX_SHADER, VERT);
-    const fs = compile(gl, gl.FRAGMENT_SHADER, source || FRAG);
-    const prog = gl.createProgram();
-    if (!vs || !fs || !prog) {
+    const resources = createShaderResources(gl, VERT, source || FRAG);
+    if (!resources) {
       setDead(true);
       onUnsupported();
       return;
     }
-    gl.attachShader(prog, vs);
-    gl.attachShader(prog, fs);
-    gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      setDead(true);
-      onUnsupported();
-      return;
-    }
+    const { program: prog, buffer: buf } = resources;
     // biome-ignore lint/correctness/useHookAtTopLevel: gl.useProgram is a WebGL API, not a React hook
     gl.useProgram(prog);
 
-    const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     const loc = gl.getAttribLocation(prog, 'p');
@@ -154,6 +137,7 @@ export function ShaderBg({
       stop();
       window.removeEventListener('resize', resize);
       canvas.removeEventListener('webglcontextlost', onLost);
+      resources.dispose();
     };
   }, [attempt, intensity, source, dead, onUnsupported]);
 

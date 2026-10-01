@@ -343,6 +343,7 @@ export function CenterPane({
                 sessionId={s.id}
                 agentId={s.agentId}
                 cwd={s.cwd ?? s.home}
+                visible={visible && groupOne.activeDocId === null}
                 onOpenFile={onOpenFileAt}
                 onRevealFolder={onRevealFolder}
                 onOpenCommitReview={onOpenCommitReview}

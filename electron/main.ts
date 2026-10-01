@@ -26,6 +26,7 @@ import { type AgentScopeReason, runAddDir } from '../src/add-dir-delivery';
 import { AgentRegistry } from '../src/agent-registry';
 import { scopeFromSpawnArgs } from '../src/agent-scope';
 import { isAppIndexUrl } from '../src/app-navigation';
+import { asyncSingleFlight } from '../src/async-singleflight';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
 import { createCloseGuard, createQuitGrant, GRANT_TTL_MS, openWindowIds } from '../src/close-guard';
@@ -34,6 +35,7 @@ import { loadAgents, readBlob, readFileState } from '../src/config';
 import { searchContentFs } from '../src/content-search-fs';
 import { decideCrashRecovery } from '../src/crash-recovery';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
+import { ExpiringCache } from '../src/expiring-cache';
 import { indexToSearchHits, walkFilesAsync } from '../src/file-search';
 import {
   parseWriteOptions,
@@ -178,10 +180,11 @@ import {
   serializeScrollback,
 } from '../src/scrollback-persistence';
 import { SessionActivity } from '../src/session-activity';
-import { presentRoots } from '../src/session-folders';
+import { presentRoots, sessionContains } from '../src/session-folders';
 import { SessionManager } from '../src/session-manager';
 import { buildStartupModel } from '../src/session-migration';
 import { createSessionOps, type SessionOpResult } from '../src/session-ops';
+import { createSessionResourceDemand } from '../src/session-resource-demand';
 import {
   type AppSettings,
   coerceSettings,
@@ -450,7 +453,16 @@ const contentSearchGen = new Map<string, number>();
 // path-links v1: per-project file index for token suffix-search, cached briefly so files
 // created after the cache was built still become linkable without a manual refresh.
 const FILE_INDEX_TTL_MS = 5000;
-const fileIndexCache = new Map<string, { files: IndexedFile[]; at: number; fromGit: boolean }>();
+const fileIndexCache = new ExpiringCache<
+  string,
+  { files: IndexedFile[]; at: number; fromGit: boolean }
+>({
+  ttlMs: FILE_INDEX_TTL_MS,
+  maxEntries: 64,
+  maxBytes: 32 * 1024 * 1024,
+  sizeOf: (entry) =>
+    entry.files.reduce((bytes, file) => bytes + (file.rel.length + file.abs.length) * 2 + 96, 0),
+});
 
 const statKind = (absPath: string): 'file' | 'dir' | null => {
   try {
@@ -708,7 +720,10 @@ async function resolvePathTokens(
 // terminal-commit-link: a commit oid is immutable, so collapse repeat validations across
 // re-paints with a short TTL cache keyed by `${root}\0${token}` (mirrors FILE_INDEX_TTL_MS).
 const COMMIT_VALIDATE_TTL_MS = 5000;
-const commitValidateCache = new Map<string, { commit: string | null; at: number }>();
+const commitValidateCache = new ExpiringCache<string, { commit: string | null; at: number }>({
+  ttlMs: COMMIT_VALIDATE_TTL_MS,
+  maxEntries: 2048,
+});
 
 /** Run `git cat-file --batch-check`, feeding the (already shape-validated) tokens on stdin. */
 function gitBatchCheck(tokens: string[], root: string): Promise<string> {
@@ -1258,23 +1273,88 @@ app.whenReady().then(() => {
   // `state` broadcast (no new channel). Refresh triggers: repo-set change, cwd-change (E2 seam),
   // best-effort fs.watch of each resolved HEAD (an external `git checkout` that doesn't
   // move cwd), and window-focus. Debounced 150 ms per session; NO interval polling.
-  const GIT_DEBOUNCE_MS = 150;
-  const gitDebounce = new Map<string, ReturnType<typeof setTimeout>>();
+  const gitDemand = createSessionResourceDemand(
+    (ids) => {
+      for (const id of ids) if (deferredRepoScans.has(id)) scheduleRepoScan(id);
+      for (const w of windows.values()) {
+        const shown = ids
+          .filter((id) => gitDemand.isVisibleInWindow(w.id, id))
+          .flatMap((id) => {
+            const s = mgr.get(id);
+            return s ? [s.home, ...presentRoots(s)] : [];
+          });
+        const stale = shown.filter((root) => pendingFsByWindow.get(w.id)?.has(root));
+        for (const root of stale) pendingFsByWindow.get(w.id)?.delete(root);
+        if (stale.length)
+          w.webContents.send('to-webview', {
+            type: 'fsChanged',
+            root: stale[0],
+            folders: [...new Set(stale)],
+          });
+      }
+      for (const [windowId, request] of deferredProjectRequests) {
+        if (!request.sessionId || !ids.includes(request.sessionId)) continue;
+        deferredProjectRequests.delete(windowId);
+        request.run();
+      }
+      for (const [key, request] of deferredIndexes) {
+        if (
+          !ids.some((id) => {
+            const s = mgr.get(id);
+            return s && sessionContains(s, request.root);
+          })
+        )
+          continue;
+        deferredIndexes.delete(key);
+        request.run();
+      }
+      runGitRefresh(ids);
+    },
+    (ids) => {
+      for (const id of ids) {
+        gitRefresher.forget(id);
+        repoScanner.forget(id);
+        deferredRepoScans.add(id);
+      }
+    },
+  );
+  const deferredRepoScans = new Set<string>();
+  const pendingFsByWindow = new Map<number, Set<string>>();
+  const deferredProjectRequests = new Map<number, { sessionId: string; run: () => void }>();
+  const deferredIndexes = new Map<string, { root: string; windowId: number; run: () => void }>();
   /** sessionId → headPath → watcher. */
   const gitWatchers = new Map<string, Map<string, fs.FSWatcher>>();
+  const sharedHeadWatches = new Map<string, { watcher: fs.FSWatcher; sessions: Set<string> }>();
+  const releaseHeadWatch = (sessionId: string, headPath: string) => {
+    const shared = sharedHeadWatches.get(headPath);
+    shared?.sessions.delete(sessionId);
+    if (shared && shared.sessions.size === 0) {
+      shared.watcher.close();
+      sharedHeadWatches.delete(headPath);
+    }
+  };
 
   // Multi-repo: debounced sub-repo scan per session (re-detect on open + project changes).
+  const detectShared = asyncSingleFlight(detectRepos, folderKey);
+  const enclosingShared = asyncSingleFlight(repoTopLevel, folderKey);
   const repoScanner = createRepoScanScheduler({
     scan: async (sessionId) => {
       const s = mgr.get(sessionId);
-      return s ? scanSessionRepos(s, { detect: detectRepos, enclosing: repoTopLevel }) : [];
+      return s ? scanSessionRepos(s, { detect: detectShared, enclosing: enclosingShared }) : [];
     },
     apply: (sessionId, repos) => {
       if (mgr.setRepos(sessionId, repos)) scheduleGitRefresh(sessionId);
     },
     onError: (sessionId, e) => log.error('repo', `scan failed for ${sessionId}: ${String(e)}`),
   });
-  const scheduleRepoScan = (sessionId: string) => repoScanner.schedule(sessionId);
+  const scheduleRepoScan = (sessionId: string) => {
+    if (mgr.get(sessionId)?.repos !== undefined && !gitDemand.isVisible(sessionId)) {
+      deferredRepoScans.add(sessionId);
+      return;
+    }
+    deferredRepoScans.delete(sessionId);
+    repoScanner.schedule(sessionId);
+  };
 
   // Re-sync the HEAD watches each interrogation so they always track the CURRENT repos'
   // HEADs (a worktree/branch switch re-points the git-dir). Best-effort: if fs.watch throws,
@@ -1293,21 +1373,31 @@ app.whenReady().then(() => {
     const watched = gitWatchers.get(sessionId) ?? new Map<string, fs.FSWatcher>();
     gitWatchers.set(sessionId, watched);
     const wanted = new Set(headPaths);
-    for (const [headPath, watcher] of watched) {
+    for (const headPath of watched.keys()) {
       if (wanted.has(headPath)) continue;
-      watcher.close();
+      releaseHeadWatch(sessionId, headPath);
       watched.delete(headPath);
     }
     for (const headPath of wanted) {
       if (watched.has(headPath)) continue;
+      const shared = sharedHeadWatches.get(headPath);
+      if (shared) {
+        shared.sessions.add(sessionId);
+        watched.set(headPath, shared.watcher);
+        continue;
+      }
       try {
         const watcher = fs.watch(headPath, { persistent: false }, () => {
-          scheduleGitRefresh(sessionId);
+          for (const id of sharedHeadWatches.get(headPath)?.sessions ?? []) scheduleGitRefresh(id);
         });
         watcher.on('error', () => {
           watcher.close();
-          if (watched.get(headPath) === watcher) watched.delete(headPath);
+          if (sharedHeadWatches.get(headPath)?.watcher !== watcher) return;
+          for (const id of sharedHeadWatches.get(headPath)?.sessions ?? [])
+            gitWatchers.get(id)?.delete(headPath);
+          sharedHeadWatches.delete(headPath);
         });
+        sharedHeadWatches.set(headPath, { watcher, sessions: new Set([sessionId]) });
         watched.set(headPath, watcher);
       } catch (e) {
         if (!loggedWatchFailure.has(sessionId)) {
@@ -1319,7 +1409,8 @@ app.whenReady().then(() => {
   };
 
   const closeHeadWatches = (sessionId: string) => {
-    for (const watcher of gitWatchers.get(sessionId)?.values() ?? []) watcher.close();
+    for (const headPath of gitWatchers.get(sessionId)?.keys() ?? [])
+      releaseHeadWatch(sessionId, headPath);
     gitWatchers.delete(sessionId);
   };
 
@@ -1351,7 +1442,7 @@ app.whenReady().then(() => {
   const runGitRefresh = (sessionIds: readonly string[]) => {
     const targets = sessionIds.flatMap((sessionId): GitRefreshTarget[] => {
       const session = mgr.get(sessionId);
-      if (!session) return [];
+      if (!session || session.status === 'exited') return [];
       // A relaunched session reuses its id; clear the torn-down latch so its HEAD can be
       // re-watched (teardown set it on the previous exit).
       gitTornDown.delete(sessionId);
@@ -1364,15 +1455,7 @@ app.whenReady().then(() => {
   };
 
   function scheduleGitRefresh(sessionId: string) {
-    const existing = gitDebounce.get(sessionId);
-    if (existing) clearTimeout(existing);
-    gitDebounce.set(
-      sessionId,
-      setTimeout(() => {
-        gitDebounce.delete(sessionId);
-        runGitRefresh([sessionId]);
-      }, GIT_DEBOUNCE_MS),
-    );
+    gitDemand.schedule(sessionId);
   }
 
   const teardownGitRefresh = (sessionId: string) => {
@@ -1381,27 +1464,15 @@ app.whenReady().then(() => {
     // the close below.
     gitTornDown.add(sessionId);
     gitRefresher.forget(sessionId);
-    const t = gitDebounce.get(sessionId);
-    if (t) clearTimeout(t);
-    gitDebounce.delete(sessionId);
+    gitDemand.clearPending(sessionId);
+    deferredRepoScans.delete(sessionId);
     closeHeadWatches(sessionId);
     loggedWatchFailure.delete(sessionId);
   };
 
   // One wave for every session, so a repo several sessions share is interrogated once.
-  let gitWave: ReturnType<typeof setTimeout> | undefined;
-  const cancelGitWave = () => {
-    if (gitWave) clearTimeout(gitWave);
-    gitWave = undefined;
-  };
   const refreshAllGit = () => {
-    for (const t of gitDebounce.values()) clearTimeout(t);
-    gitDebounce.clear();
-    cancelGitWave();
-    gitWave = setTimeout(() => {
-      gitWave = undefined;
-      runGitRefresh(mgr.list().map((s) => s.id));
-    }, GIT_DEBOUNCE_MS);
+    for (const s of mgr.list()) scheduleGitRefresh(s.id);
   };
 
   // Session ids that have been relaunched and are waiting for their next term:start
@@ -1820,6 +1891,16 @@ app.whenReady().then(() => {
   // setting would let a mid-run re-enable + quit wipe the preserved list. See persistence.ts.
   const sessionsPersistGate = shouldPersistSessions(settings);
   mgr.onChange(() => {
+    if (deferredIndexes.size || pendingFsByWindow.size) {
+      const sessions = mgr.list();
+      const owned = (root: string) => sessions.some((s) => sessionContains(s, root));
+      for (const [key, request] of deferredIndexes)
+        if (!owned(request.root)) deferredIndexes.delete(key);
+      for (const [windowId, roots] of pendingFsByWindow) {
+        for (const root of roots) if (!owned(root)) roots.delete(root);
+        if (roots.size === 0) pendingFsByWindow.delete(windowId);
+      }
+    }
     // Never persist once the quit has flushed: `before-quit` writes the final snapshot
     // synchronously and THEN calls pty.disposeAll(), whose exits drop every session from the
     // manager (exit-closes-session). That churn fired this handler and its async write landed
@@ -2126,7 +2207,25 @@ app.whenReady().then(() => {
     mgr,
     scheduleRepoScan,
     reconcilePlans: (homes) => planWatcher.reconcile(homes.map(normalizeRoot)),
-    broadcastFsChanged: (fire) => broadcast({ type: 'fsChanged', ...fire }),
+    broadcastFsChanged: (fire) => {
+      for (const w of windows.values()) {
+        const needed = mgr
+          .list()
+          .some(
+            (s) =>
+              gitDemand.isVisibleInWindow(w.id, s.id) &&
+              fire.folders.some((root) => sessionContains(s, root)),
+          );
+        if (needed) w.webContents.send('to-webview', { type: 'fsChanged', ...fire });
+        else {
+          const pending = pendingFsByWindow.get(w.id) ?? new Set<string>();
+          for (const root of fire.folders)
+            if (mgr.list().some((s) => sessionOwner.get(s.id) === w.id && sessionContains(s, root)))
+              pending.add(root);
+          pendingFsByWindow.set(w.id, pending);
+        }
+      }
+    },
     // Folder-scoped, not per package: `fsChanged` carries no changed path, and
     // `shouldIgnoreWatchPath` drops every `node_modules` event before the debounce — so an
     // npm install emits nothing at all and no finer signal exists to key on. A resolution
@@ -2429,6 +2528,14 @@ app.whenReady().then(() => {
     sessionId: string | undefined,
     requestId: number,
   ) {
+    deferredProjectRequests.delete(windowId);
+    if (sessionId && !gitDemand.isVisible(sessionId)) {
+      deferredProjectRequests.set(windowId, {
+        sessionId,
+        run: () => void sendProject(dispatch, windowId, p, changesRoot, sessionId, requestId),
+      });
+      return;
+    }
     folders.requestProject(p, sessionId, windowId);
     const session = () => (sessionId === undefined ? undefined : mgr.get(sessionId));
     try {
@@ -2484,6 +2591,9 @@ app.whenReady().then(() => {
       if (!mgr.list().some((s) => normalizeRoot(s.home) === key)) planWatcher.unwatch(key);
     }
     activity.forget(id);
+    gitDemand.forget(id);
+    for (const [windowId, request] of deferredProjectRequests)
+      if (request.sessionId === id) deferredProjectRequests.delete(windowId);
     cwdScanners.delete(id);
     bellScanState.delete(id);
     pasteModes.delete(id);
@@ -3442,6 +3552,8 @@ app.whenReady().then(() => {
           // it and exempts it from arming; the sets are per window, so another window's
           // active session is not silenced. See the attention-signal-quality spec §4.
           if (activity.setVisible(senderId, m.ids)) scheduleActivityBroadcast();
+          gitDemand.setVisible(senderId, m.ids);
+          for (const id of m.ids) if (deferredRepoScans.has(id)) scheduleRepoScan(id);
           break;
         case 'duplicate': {
           log.info('session', 'duplicate', { sessionId: m.id });
@@ -3504,9 +3616,21 @@ app.whenReady().then(() => {
           }
           break;
         }
-        case 'indexProject':
+        case 'indexProject': {
+          const owners = mgr.list().filter((s) => sessionContains(s, m.root));
+          if (owners.length && !owners.some((s) => gitDemand.isVisible(s.id))) {
+            const key = `${senderId}\0${folderKey(m.root)}`;
+            deferredIndexes.set(key, {
+              root: m.root,
+              windowId: senderId,
+              run: () =>
+                void queueProjectIndex(m.root, m.seeds ?? [], replyHere, log, !!m.incremental),
+            });
+            break;
+          }
           await queueProjectIndex(m.root, m.seeds ?? [], replyHere, log, !!m.incremental);
           break;
+        }
         case 'resolveModule': {
           const root = mgr.get(m.sessionId)?.home;
           if (!root) {
@@ -4527,8 +4651,11 @@ app.whenReady().then(() => {
     for (const sessionId of scrollbackPersistTimers.keys()) flushScrollback(sessionId);
     // Git indicator (Slice A): close every HEAD watcher + cancel pending refreshes so
     // no fs.watch handle keeps the main process alive past quit.
-    cancelGitWave();
-    for (const id of [...gitDebounce.keys(), ...gitWatchers.keys()]) teardownGitRefresh(id);
+    gitDemand.stop();
+    deferredProjectRequests.clear();
+    deferredIndexes.clear();
+    pendingFsByWindow.clear();
+    for (const id of gitWatchers.keys()) teardownGitRefresh(id);
     lspManager.killAllSync();
     pty.disposeAll();
   });
@@ -4557,12 +4684,19 @@ app.whenReady().then(() => {
         // Its visible-session set dies with it, or sessions it was showing would stay
         // exempt from attention forever.
         activity.dropWindow(windowId);
+        gitDemand.dropWindow(windowId);
+        deferredProjectRequests.delete(windowId);
+        pendingFsByWindow.delete(windowId);
+        for (const [key, request] of deferredIndexes)
+          if (request.windowId === windowId) deferredIndexes.delete(key);
         folders.windowClosed(windowId);
         log.info('window', 'closed', { windowId });
         // A closed window drops out of the move picker (Slice B).
         broadcastWinList?.();
       },
     });
+    w.on('minimize', () => gitDemand.setSuspended(w.id, true));
+    w.on('restore', () => gitDemand.setSuspended(w.id, false));
     log.info('window', 'create', { windowId: w.id });
     closeGuard.onWindowCreated(w.id);
     broadcastWinList?.();

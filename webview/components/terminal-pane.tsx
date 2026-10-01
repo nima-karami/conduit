@@ -25,6 +25,7 @@ import {
 } from '../terminal-links';
 import { isViewportAtBottom, shouldHandleWheelLocally, wheelScrollLines } from '../terminal-scroll';
 import { attachScrollDiagnostics } from '../terminal-scroll-diagnostics';
+import { createTerminalTokenCache } from '../terminal-token-cache';
 import { pushToast } from '../toast-store';
 import { buildXtermTheme, monoStack } from '../xterm-theme';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
@@ -49,11 +50,13 @@ const IS_WINDOWS = typeof navigator !== 'undefined' && /Win/i.test(navigator.pla
 // resolve (large repo, loaded machine) still lands its links rather than falling back to
 // plain text; on the rare real timeout, the next repaint re-runs against the cache.
 const LINK_RESOLVE_TIMEOUT_MS = 10_000;
+const LINK_CACHE_CAPACITY = 2048;
 
 export function TerminalPane({
   sessionId,
   agentId,
   cwd,
+  visible,
   onOpenFile,
   onRevealFolder,
   onOpenCommitReview,
@@ -62,6 +65,7 @@ export function TerminalPane({
   sessionId: string;
   agentId?: string;
   cwd?: string;
+  visible: boolean;
   /** Called when a file path link is clicked: absolute path + optional position +
    * this pane's session id, so the doc opens in the session whose terminal was clicked
    * (not the globally-active one — they differ in split view / same-folder sessions). */
@@ -303,103 +307,34 @@ export function TerminalPane({
     let linkProviderDisposable: { dispose(): void } | null = null;
     let unsubResolve: (() => void) | null = null;
     let unsubValidate: (() => void) | null = null;
+    let disposeLinkCaches = () => {};
     if (window.agentDeck) {
       type Resolution = { candidates: PathCandidate[]; truncated: boolean };
-      // token → resolution, scoped to this pane (so a token can't cross sessions/cwds).
-      const resolveCache = new Map<string, Resolution>();
-      const pending = new Map<string, Array<(r: Resolution) => void>>();
-
+      const cacheOptions = { capacity: LINK_CACHE_CAPACITY, timeoutMs: LINK_RESOLVE_TIMEOUT_MS };
+      const resolveCache = createTerminalTokenCache<Resolution>(
+        (tokens) => post({ type: 'resolvePathToken', sessionId, tokens }),
+        cacheOptions,
+      );
+      const commitCache = createTerminalTokenCache<string | null>(
+        (tokens) => post({ type: 'validateCommits', sessionId, tokens }),
+        cacheOptions,
+      );
+      let commitRepoRoot: string | undefined;
+      disposeLinkCaches = () => {
+        resolveCache.dispose();
+        commitCache.dispose();
+      };
       unsubResolve = subscribe((msg) => {
         if (msg.type !== 'resolvePathTokenResult' || msg.sessionId !== sessionId) return;
         for (const r of msg.results) {
-          const entry: Resolution = { candidates: r.candidates, truncated: r.truncated };
-          resolveCache.set(r.token, entry);
-          const cbs = pending.get(r.token);
-          if (cbs) {
-            pending.delete(r.token);
-            for (const cb of cbs) cb(entry);
-          }
+          resolveCache.resolve(r.token, { candidates: r.candidates, truncated: r.truncated });
         }
       });
-
-      const resolveTokens = (rawTokens: string[]): Promise<Map<string, Resolution>> => {
-        const out = new Map<string, Resolution>();
-        const need: string[] = [];
-        const waits: Promise<void>[] = [];
-        for (const tok of rawTokens) {
-          const cached = resolveCache.get(tok);
-          if (cached) {
-            out.set(tok, cached);
-            continue;
-          }
-          waits.push(
-            new Promise<void>((resolve) => {
-              let cbs = pending.get(tok);
-              if (!cbs) {
-                cbs = [];
-                pending.set(tok, cbs);
-                need.push(tok);
-              }
-              cbs.push((entry) => {
-                out.set(tok, entry);
-                resolve();
-              });
-            }),
-          );
-        }
-        if (need.length > 0) post({ type: 'resolvePathToken', sessionId, tokens: need });
-        return Promise.all(waits).then(() => out);
-      };
-
-      // terminal-commit-link: parallel validate round-trip mirroring resolveTokens. token →
-      // full sha | null, cached per pane (the cache is also keyed by repo host-side). A null is
-      // cached too so a non-commit token isn't re-validated on every re-paint. See spec §3.2.
-      const commitCache = new Map<string, string | null>();
-      const commitPending = new Map<string, Array<(c: string | null) => void>>();
-      // The cwd repo the host validated against; threaded to Review so a clicked commit opens
-      // against THIS terminal's repo, not the pinned active repo (feat-link-cwd).
-      let commitRepoRoot: string | undefined;
-
       unsubValidate = subscribe((msg) => {
         if (msg.type !== 'validateCommitsResult' || msg.sessionId !== sessionId) return;
         if (msg.root) commitRepoRoot = msg.root;
-        for (const r of msg.results) {
-          commitCache.set(r.token, r.commit);
-          const cbs = commitPending.get(r.token);
-          if (cbs) {
-            commitPending.delete(r.token);
-            for (const cb of cbs) cb(r.commit);
-          }
-        }
+        for (const r of msg.results) commitCache.resolve(r.token, r.commit);
       });
-
-      const validateCommits = (rawTokens: string[]): Promise<Map<string, string | null>> => {
-        const out = new Map<string, string | null>();
-        const need: string[] = [];
-        const waits: Promise<void>[] = [];
-        for (const tok of rawTokens) {
-          if (commitCache.has(tok)) {
-            out.set(tok, commitCache.get(tok) ?? null);
-            continue;
-          }
-          waits.push(
-            new Promise<void>((resolve) => {
-              let cbs = commitPending.get(tok);
-              if (!cbs) {
-                cbs = [];
-                commitPending.set(tok, cbs);
-                need.push(tok);
-              }
-              cbs.push((commit) => {
-                out.set(tok, commit);
-                resolve();
-              });
-            }),
-          );
-        }
-        if (need.length > 0) post({ type: 'validateCommits', sessionId, tokens: need });
-        return Promise.all(waits).then(() => out);
-      };
 
       const linkProvider: ILinkProvider = {
         provideLinks(bufferLineNumber, callback) {
@@ -458,10 +393,10 @@ export function TerminalPane({
           void withTimeout(
             Promise.all([
               tokens.length > 0
-                ? resolveTokens(tokens.map((t) => t.raw))
+                ? resolveCache.get(tokens.map((t) => t.raw))
                 : Promise.resolve(new Map<string, Resolution>()),
               commitTokens.length > 0
-                ? validateCommits(commitTokens.map((t) => t.raw))
+                ? commitCache.get(commitTokens.map((t) => t.raw))
                 : Promise.resolve(new Map<string, string | null>()),
             ]),
             LINK_RESOLVE_TIMEOUT_MS,
@@ -667,6 +602,7 @@ export function TerminalPane({
         /* no-op */
       }
       ro.disconnect();
+      disposeLinkCaches();
       if (started) post({ type: 'term:dispose', sessionId });
       disposeTerminal(term, [webgl, fit, search]);
       {
@@ -970,6 +906,7 @@ export function TerminalPane({
       {onOpenTimedMessages && (
         <TimerChip
           sessionId={sessionId}
+          visible={visible}
           // The find bar owns the top-right corner while it is open (§4).
           stacked={search.open}
           onOpen={() => onOpenTimedMessages(sessionId)}

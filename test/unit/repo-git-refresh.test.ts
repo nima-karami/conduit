@@ -69,6 +69,27 @@ describe('createGitRefresher', () => {
   type Target = { sessionId: string; roots: readonly string[] };
   const branch = (b: string): GitInterrogation => ({ info: { kind: 'branch', branch: b } });
 
+  it('does not interrogate queued roots after their last consumer was forgotten', async () => {
+    const gates: ReturnType<typeof deferred>[] = [];
+    const interrogate = vi.fn(() => {
+      const gate = deferred();
+      gates.push(gate);
+      return gate.promise;
+    });
+    const refresher = createGitRefresher<Target>({ interrogate, apply: vi.fn() });
+    const run = refresher.refresh([
+      { sessionId: 's', roots: Array.from({ length: 20 }, (_, i) => `/r${i}`) },
+    ]);
+    await flush();
+    refresher.forget('s');
+    for (const gate of gates) gate.resolve(branch('main'));
+    await flush();
+    expect(interrogate).toHaveBeenCalledTimes(GIT_INTERROGATION_LIMIT);
+    // Unblock any erroneously started work so a failure cannot hang the suite.
+    for (const gate of gates) gate.resolve(branch('main'));
+    if (gates.length === GIT_INTERROGATION_LIMIT) await run;
+  });
+
   it('a slower, older refresh of the same session never overwrites a newer one', async () => {
     const gates: ReturnType<typeof deferred>[] = [];
     const applied: string[] = [];

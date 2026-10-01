@@ -86,6 +86,21 @@ const arm = (h: ReturnType<typeof harness>, over: Record<string, unknown> = {}) 
   });
 
 describe('arming', () => {
+  it('does not rearm due schedules while their delivery is in flight', async () => {
+    let release!: (value: boolean) => void;
+    const pending = new Promise<boolean>((resolve) => {
+      release = resolve;
+    });
+    const h = harness({ deliver: () => pending });
+    arm(h);
+    await h.tick(60_000);
+    expect(h.nextWaitMs()).toBe(null);
+    release(true);
+    await h.tick(0);
+    expect(h.fired).toHaveLength(1);
+    expect(h.scheduler.list()[0].state).toBe('done');
+  });
+
   it('accepts a schedule, derives nextAt from the trigger and arms the earliest timer', () => {
     const h = harness();
     const r = arm(h);
