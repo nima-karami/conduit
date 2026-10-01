@@ -8,6 +8,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { splitPlan } from '../../src/plan-blocks';
 import { PlanEditor, type PlanEditorHandle } from '../../webview/components/plan-editor';
+import { writeDiagram } from '../../webview/plan-diagram-write';
 
 /**
  * The two block components are stubbed: the real ones reach `monaco-editor` and `@xyflow/react`,
@@ -505,5 +506,72 @@ describe('Retry after a refused emit', () => {
     expect(handle.current?.view()?.state.doc).toBe(before);
     expect(bodies).toHaveLength(2);
     expect(bodies[1]).toContain('ZZTOP');
+  });
+});
+
+describe('fence fidelity through the write path', () => {
+  async function editDiagram(handle: RefObject<PlanEditorHandle | null>): Promise<void> {
+    await act(async () => {
+      const view = handle.current?.view();
+      if (!view) throw new Error('the editor exposed no ProseMirror view');
+      expect(writeDiagram(view, 'flow-0', [{ op: 'relabelEdge', edge: 0, label: 'load' }])).toBe(
+        null,
+      );
+    });
+    await flushListener();
+  }
+
+  it('editing a ~~~ fence with info string `mermaid title="x"` keeps its opener/closer', async () => {
+    const body = [
+      '# Plan',
+      '',
+      'Intro.',
+      '',
+      '~~~mermaid title="x"',
+      'flowchart LR',
+      '  %% kept',
+      '  a -- batch --> b',
+      '~~~',
+      '',
+      'After.',
+      '',
+    ].join('\n');
+    const bodies: string[] = [];
+    const { handle } = await mount(body, (next) => bodies.push(next));
+
+    await editDiagram(handle);
+
+    expect(bodies).toEqual([body.replace('  a -- batch --> b', '  a -->|load| b')]);
+  });
+
+  it('a CRLF plan stays CRLF after one diagram edit (joins and new block)', async () => {
+    const body = [
+      '# Plan',
+      '',
+      'Intro.',
+      '',
+      '```mermaid',
+      'flowchart LR',
+      '  a -- batch --> b',
+      '```',
+      '',
+      'After.',
+      '',
+    ].join('\r\n');
+    const bodies: string[] = [];
+    const { handle } = await mount(body, (next) => bodies.push(next));
+
+    await editDiagram(handle);
+    expect(bodies).toEqual([body.replace('  a -- batch --> b', '  a -->|load| b')]);
+
+    await act(async () => {
+      const view = handle.current?.view();
+      if (!view) throw new Error('the editor exposed no ProseMirror view');
+      const para = view.state.schema.nodes.paragraph.create(null, view.state.schema.text('New.'));
+      view.dispatch(view.state.tr.insert(view.state.doc.content.size, para));
+    });
+    await flushListener();
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toBe(`${bodies[0].replace(/\r\n$/, '')}\r\n\r\nNew.\r\n`);
   });
 });

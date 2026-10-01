@@ -85,6 +85,42 @@ describe('spliceBody', () => {
     expect(spliceBody(body, blocks, [fresh('only.\n\n')])).toBe('only.\n');
   });
 
+  it('a block that replaces one keeps the old gaps on both sides', () => {
+    const body = '# Title\n\n\nold paragraph.\n\n\n\nlast.\n';
+    const { blocks } = splitPlan(body);
+
+    expect(
+      spliceBody(body, blocks, [
+        keep(0),
+        { kind: 'new', source: 'new paragraph.', replaces: 1 },
+        keep(2),
+      ]),
+    ).toBe('# Title\n\n\nnew paragraph.\n\n\n\nlast.\n');
+  });
+
+  it('a fence that replaces a fence keeps its opener and closer, and refuses one it would break', () => {
+    const body = 'Intro.\n\n~~~~mermaid title="x"\nflowchart LR\n  a --> b\n~~~~\n';
+    const { blocks } = splitPlan(body);
+    const swap = (source: string) =>
+      spliceBody(body, blocks, [keep(0), { kind: 'new', source, replaces: 1 }]);
+
+    expect(swap('```mermaid\nflowchart LR\n  a --> c\n```\n')).toBe(
+      'Intro.\n\n~~~~mermaid title="x"\nflowchart LR\n  a --> c\n~~~~\n',
+    );
+    expect(swap('`````mermaid\nflowchart LR\n~~~~\n`````')).toBe(
+      'Intro.\n\n`````mermaid\nflowchart LR\n~~~~\n`````\n',
+    );
+  });
+
+  it('a CRLF body takes CRLF for new blocks and their joins', () => {
+    const body = '# Title\r\n\r\nfirst.\r\n';
+    const { blocks } = splitPlan(body);
+
+    expect(spliceBody(body, blocks, [keep(0), fresh('two\nlines.'), keep(1)])).toBe(
+      '# Title\r\n\r\ntwo\r\nlines.\r\n\r\nfirst.\r\n',
+    );
+  });
+
   it('empty items yields empty string', () => {
     const { body, blocks } = splitPlan(DOC);
 

@@ -12,6 +12,16 @@ All notable user-facing changes to Conduit. Format follows
   **Don't Save** or **Cancel**. A file that changed on disk, failed to save or only partly loaded
   is marked in the list. One dialog replaces the prompts that used to stack, and it also says how
   many running agents the close will stop.
+- **Editing a plan diagram changes only the lines you touched.** Relabelling an edge, renaming or
+  reshaping a node, connecting, deleting or regrouping now rewrites just the statements involved.
+  Comments (`%%`), blank lines, indentation, chains like `a --> b --> c`, edge spellings like
+  `-- x -->`, node shapes, `style`/`class` lines and the fence itself (`~~~`, an info string,
+  CRLF line endings) stay exactly as the agent wrote them. `linkStyle` indices follow the edges
+  they styled, and removing a node drops its `style`/`class`/`click` references. Cylinder `[( )]`
+  and hexagon `{{ }}` nodes are now editable, and other bracket shapes are kept as written instead
+  of making the whole diagram read-only. Double-clicking an edge label edits it. Connecting two
+  nodes that already have an identical edge says "That connection already exists"; a second edge
+  with a different label or style is now allowed.
 
 ### Fixed
 - **A setting changed just before quitting is kept.** A change made in the last quarter second

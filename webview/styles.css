@@ -13436,6 +13436,19 @@ button.toggle--on .toggle__knob {
 .planflow__picker-option--active {
   background: var(--state-sel-bg);
 }
+/* In flow under the canvas rather than floated over it, so it never competes with xyflow's layers.
+   Empty, it collapses to nothing but stays rendered, so it is still a live region when text lands. */
+.planflow__notice {
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  border-left: 2px solid var(--yellow);
+  color: var(--text-dim);
+  font-size: calc(11.5px * var(--font-scale));
+}
+.planflow__notice:empty {
+  padding: 0;
+  border: 0;
+}
 .planflow__unsupported {
   margin: 0;
   padding: 8px 12px;

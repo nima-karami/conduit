@@ -21,27 +21,16 @@ import '@xyflow/react/dist/style.css';
 import type { XY } from '../../src/arch-layout';
 import { layoutFlow } from '../../src/flow-layout';
 import type { Rect } from '../../src/menu-position';
-import {
-  addEdge,
-  addNode,
-  addSubgraph,
-  type FlowGraph,
-  type FlowNode,
-  type FlowShape,
-  moveToSubgraph,
-  nextNodeId,
-  relabelEdge,
-  removeEdge,
-  removeNode,
-  renameNode,
-} from '../../src/mermaid-flow';
+import type { FlowGraph, FlowNode, FlowShape } from '../../src/mermaid-flow';
+import { type FlowEdit, type FlowEditRefusal, nextNodeId } from '../../src/mermaid-flow-edit';
 import { flowEdgeMenu, flowNodeMenu, flowPaneMenu } from '../plan-menu';
 import { ContextMenu, type MenuState } from './context-menu';
 import { Popover } from './popover';
 
 export interface FlowEditorProps {
   graph: FlowGraph;
-  onGraph(g: FlowGraph): void;
+  /** `null` = applied. The edits address `graph`, the fence as this render parsed it. */
+  onEdits(edits: readonly FlowEdit[]): FlowEditRefusal | 'gone' | null;
   readOnly: boolean;
   /** Wired by `PlanFlowBlock`, which owns the textarea fallback; absent here drops the row. */
   onEditAsText?: () => void;
@@ -57,6 +46,17 @@ function estimateSize(n: FlowNode): { w: number; h: number } {
   return { w: 8 * n.label.length + 32, h: 40 };
 }
 
+const NOTICES: Record<FlowEditRefusal | 'gone', string> = {
+  'duplicate-edge': 'That connection already exists',
+  'unknown-id': 'That element is no longer in the diagram',
+  'invalid-id': "That id can't be used in a flowchart",
+  'id-taken': 'That id is already taken',
+  cycle: "A subgraph can't move inside itself",
+  conflict: 'Those changes contradict each other',
+  unsupported: "That change can't be written into this diagram's text",
+  gone: 'The diagram changed underneath the editor — try again',
+};
+
 /** The Move-to picker's "no subgraph" row; a real subgraph id can never start with '('. */
 const NONE = '(none)';
 const EMPTY_MOVES: Record<string, XY> = {};
@@ -71,7 +71,7 @@ function rectOf(el: Element): Rect {
 
 interface FlowNodeData {
   label: string;
-  shape: FlowShape;
+  shape: FlowShape | 'verbatim';
   editing: boolean;
   onCommit: (id: string, label: string) => void;
   onCancel: () => void;
@@ -90,6 +90,8 @@ interface FlowEdgeData {
   editing: boolean;
   onCommit: (id: string, label: string) => void;
   onCancel: () => void;
+  /** The label sits over the edge and takes the pointer, so it starts the edit itself. */
+  onEdit: (id: string) => void;
   [key: string]: unknown;
 }
 
@@ -216,6 +218,7 @@ function FlowEdgeView({
             <div
               className="planflow__edge-label nodrag nopan"
               style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+              onDoubleClick={() => d.onEdit(id)}
             >
               {d.label}
             </div>
@@ -337,7 +340,7 @@ function foldSelection(
   return next;
 }
 
-function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: FlowEditorProps) {
+function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: FlowEditorProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const rf = useReactFlow();
@@ -362,38 +365,32 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
   }>({ graph, ids: EMPTY_IDS });
   const selectedEdges = edgeSelection.graph === graph ? edgeSelection.ids : EMPTY_IDS;
 
-  // xyflow reports one deletion as two synchronous callbacks — the connected edges, then the node
-  // — while the host writes the fence for every graph it is handed, out of a node view that only
-  // re-reads its node on render: the second write would splice against a stale fence. So a tick's
-  // mutations compose onto each other and leave as one.
-  const pendingRef = useRef<FlowGraph | null>(null);
-  const flushRef = useRef(false);
-  const live = useCallback((): FlowGraph => pendingRef.current ?? graph, [graph]);
+  const [notice, setNotice] = useState('');
 
-  /**
-   * Takes the mutation, not its result, so composition onto a same-tick mutation is structural: a
-   * caller that computed from the render's `graph` and handed the finished value over would replace
-   * whatever is pending instead of building on it, and nothing in the types would say so.
-   */
+  // xyflow reports one deletion as two synchronous callbacks — the connected edges, then the node.
+  // A tick's intents leave as one batch, so they land as one write and one undo step, and every
+  // index in it addresses the fence this render parsed.
+  const pendingRef = useRef<{ edits: FlowEdit[]; message: string } | null>(null);
+
   const apply = useCallback(
-    (mutate: (g: FlowGraph) => FlowGraph, message: string | (() => string)) => {
-      const current = live();
-      const next = mutate(current);
-      if (next === current) return;
-      pendingRef.current = next;
-      // A thunk is read after the mutation ran, so a mutation that picks an id off the live graph
-      // can name it without the caller having to re-derive it from the render's `graph`.
-      setAnnouncement(typeof message === 'string' ? message : message());
-      if (flushRef.current) return;
-      flushRef.current = true;
+    (edits: readonly FlowEdit[], message: string) => {
+      setNotice('');
+      if (pendingRef.current) {
+        pendingRef.current.edits.push(...edits);
+        pendingRef.current.message = message;
+        return;
+      }
+      pendingRef.current = { edits: [...edits], message };
       queueMicrotask(() => {
-        flushRef.current = false;
-        const emitted = pendingRef.current;
+        const batch = pendingRef.current;
         pendingRef.current = null;
-        if (emitted !== null) onGraph(emitted);
+        if (!batch) return;
+        const refused = onEdits(batch.edits);
+        if (refused === null) setAnnouncement(batch.message);
+        else setNotice(NOTICES[refused]);
       });
     },
-    [live, onGraph],
+    [onEdits],
   );
 
   // A deleted id must not come back selected when a later node is given the same one.
@@ -426,7 +423,7 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
   const commitNodeName = useCallback(
     (id: string, label: string) => {
       setEditing(null);
-      apply((g) => renameNode(g, id, label.trim() || id), `Renamed ${id}`);
+      apply([{ op: 'renameNode', id, label: label.trim() || id }], `Renamed ${id}`);
     },
     [apply],
   );
@@ -437,16 +434,28 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
       const index = Number(id.slice(1));
       const e = graph.edges[index];
       if (!e) return;
-      apply((g) => relabelEdge(g, index, label), `Relabelled edge ${e.source} to ${e.target}`);
+      apply(
+        [{ op: 'relabelEdge', edge: index, label }],
+        `Relabelled edge ${e.source} to ${e.target}`,
+      );
     },
     [graph, apply],
   );
 
   const cancelEditing = useCallback(() => setEditing(null), []);
 
+  const editEdge = useCallback(
+    (id: string) => {
+      const index = Number(id.slice(1));
+      if (!readOnly && graph.edges[index]) setEditing({ kind: 'edge', index });
+    },
+    [readOnly, graph],
+  );
+
   const rfNodes = useMemo(() => {
     // xyflow reads `parentId` against the nodes already in the array, so every region has to
-    // precede its members; `graph.subgraphs` is canonically depth-first, which is that order.
+    // precede its members; `graph.subgraphs` is in source order, where a parent's header always
+    // comes before its children's.
     const out: Node[] = [];
     const relative = (x: number, y: number, parent: string | null): XY => {
       const box = parent ? layout.regions[parent] : undefined;
@@ -535,9 +544,10 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
           editing: editing?.kind === 'edge' && editing.index === i,
           onCommit: commitEdgeLabel,
           onCancel: cancelEditing,
+          onEdit: editEdge,
         } satisfies FlowEdgeData,
       })),
-    [graph, editing, readOnly, selectedEdges, commitEdgeLabel, cancelEditing],
+    [graph, editing, readOnly, selectedEdges, commitEdgeLabel, cancelEditing, editEdge],
   );
 
   const onNodesChange = useCallback(
@@ -561,11 +571,7 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
       const removed = changes.filter((c) => c.type === 'remove').map((c) => c.id);
       if (!removed.length) return;
       apply(
-        (g) => {
-          let next = g;
-          for (const id of removed) next = removeNode(next, id);
-          return next;
-        },
+        removed.map((id): FlowEdit => ({ op: 'removeNode', id })),
         `Removed node ${removed.join(', ')}`,
       );
     },
@@ -581,21 +587,14 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
       });
 
       if (readOnly) return;
-      // Edge identity is the array index, so removals are applied high-to-low: the other order
-      // would shift every index still to be removed.
       const indices = changes
         .filter((c) => c.type === 'remove')
         .map((c) => Number(c.id.slice(1)))
-        .filter((i) => Number.isInteger(i) && graph.edges[i])
-        .sort((a, b) => b - a);
+        .filter((i) => Number.isInteger(i) && graph.edges[i]);
       if (!indices.length) return;
       const said = indices.map((i) => `${graph.edges[i].source} to ${graph.edges[i].target}`);
       apply(
-        (g) => {
-          let next = g;
-          for (const i of indices) next = removeEdge(next, i);
-          return next;
-        },
+        indices.map((edge): FlowEdit => ({ op: 'removeEdge', edge })),
         `Removed edge ${said.join(', ')}`,
       );
     },
@@ -605,7 +604,10 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
   const onConnect = useCallback(
     (c: Connection) => {
       if (readOnly || !c.source || !c.target) return;
-      apply((g) => addEdge(g, c.source, c.target), `Connected ${c.source} to ${c.target}`);
+      apply(
+        [{ op: 'addEdge', source: c.source, target: c.target, kind: 'arrow', label: null }],
+        `Connected ${c.source} to ${c.target}`,
+      );
     },
     [readOnly, apply],
   );
@@ -636,12 +638,18 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
       if (!picker) return;
       closePicker();
       if (picker.kind === 'connect') {
-        apply((g) => addEdge(g, picker.nodeId, value), `Connected ${picker.nodeId} to ${value}`);
+        apply(
+          [{ op: 'addEdge', source: picker.nodeId, target: value, kind: 'arrow', label: null }],
+          `Connected ${picker.nodeId} to ${value}`,
+        );
         return;
       }
       const to = value === NONE ? null : value;
       const title = to === null ? NONE : (graph.subgraphs.find((s) => s.id === to)?.title ?? to);
-      apply((g) => moveToSubgraph(g, picker.nodeId, to), `Moved ${picker.nodeId} to ${title}`);
+      apply(
+        [{ op: 'moveToSubgraph', id: picker.nodeId, subgraph: to }],
+        `Moved ${picker.nodeId} to ${title}`,
+      );
     },
     [picker, graph, apply, closePicker],
   );
@@ -656,29 +664,15 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
     return el ? rectOf(el) : null;
   }, []);
 
-  // The id is picked off the graph the mutation composes onto, never the render's: two adds in one
-  // microtask would otherwise both number against the pre-add graph and pick the same id.
   const addFlowNode = useCallback(() => {
-    let id = '';
-    apply(
-      (g) => {
-        id = nextNodeId(g, 'n');
-        return addNode(g, id, id);
-      },
-      () => `Added node ${id}`,
-    );
-  }, [apply]);
+    const id = nextNodeId(graph, 'n');
+    apply([{ op: 'addNode', id, label: id, shape: 'rect', parent: null }], `Added node ${id}`);
+  }, [graph, apply]);
 
   const addFlowSubgraph = useCallback(() => {
-    let id = '';
-    apply(
-      (g) => {
-        id = nextNodeId(g, 'group');
-        return addSubgraph(g, id, 'Group');
-      },
-      () => `Added subgraph ${id}`,
-    );
-  }, [apply]);
+    const id = nextNodeId(graph, 'group');
+    apply([{ op: 'addSubgraph', id, title: 'Group', parent: null }], `Added subgraph ${id}`);
+  }, [graph, apply]);
 
   const fit = useCallback(
     () => rf.fitView({ padding: 0.1, maxZoom: 1.2, duration: prefersReducedMotion() ? 0 : 200 }),
@@ -721,7 +715,7 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
             const at = anchor ?? pickerAnchorFor(id);
             if (at) openPicker('move', id, at);
           },
-          onDelete: () => apply((g) => removeNode(g, id), `Removed node ${id}`),
+          onDelete: () => apply([{ op: 'removeNode', id }], `Removed node ${id}`),
         }),
       });
     },
@@ -742,7 +736,7 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
         items: flowEdgeMenu({
           onRelabel: () => setEditing({ kind: 'edge', index }),
           onDelete: () =>
-            apply((g) => removeEdge(g, index), `Removed edge ${e.source} to ${e.target}`),
+            apply([{ op: 'removeEdge', edge: index }], `Removed edge ${e.source} to ${e.target}`),
         }),
       });
     },
@@ -860,82 +854,84 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
     : [];
 
   return (
-    <div className="planflow__canvas" ref={rootRef}>
-      {/* Read-only drops the buttons that edit the graph, never Fit or Edit as text: neither
+    <>
+      <div className="planflow__canvas" ref={rootRef}>
+        {/* Read-only drops the buttons that edit the graph, never Fit or Edit as text: neither
           changes the diagram, and they are how a locked plan is read at all. */}
-      <div className="planflow__toolbar">
-        {!readOnly && (
-          <>
-            <button type="button" className="planflow__button" onClick={addFlowNode}>
-              Add node
-            </button>
-            <button type="button" className="planflow__button" onClick={addFlowSubgraph}>
-              Add subgraph
-            </button>
-          </>
-        )}
-        <button type="button" className="planflow__button" onClick={fit}>
-          Fit
-        </button>
-        {onEditAsText && (
-          <button type="button" className="planflow__button" onClick={onEditAsText}>
-            Edit as text
+        <div className="planflow__toolbar">
+          {!readOnly && (
+            <>
+              <button type="button" className="planflow__button" onClick={addFlowNode}>
+                Add node
+              </button>
+              <button type="button" className="planflow__button" onClick={addFlowSubgraph}>
+                Add subgraph
+              </button>
+            </>
+          )}
+          <button type="button" className="planflow__button" onClick={fit}>
+            Fit
           </button>
-        )}
-      </div>
-      <ReactFlow
-        nodes={rfNodes}
-        edges={rfEdges}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        nodesDraggable={!readOnly}
-        nodesConnectable={!readOnly}
-        elementsSelectable
-        deleteKeyCode={readOnly ? null : ['Delete', 'Backspace']}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        onNodeDoubleClick={(_e, n) => {
-          if (!readOnly && n.type === 'flowNode') setEditing({ kind: 'node', id: n.id });
-        }}
-        onEdgeDoubleClick={(_e, edge) => {
-          const index = Number(edge.id.slice(1));
-          if (!readOnly && graph.edges[index]) setEditing({ kind: 'edge', index });
-        }}
-        onNodeContextMenu={(e, n) => {
-          e.preventDefault();
-          if (n.type === 'flowNode') openNodeMenu(e.clientX, e.clientY, n.id);
-          else openPaneMenu(e.clientX, e.clientY);
-        }}
-        onEdgeContextMenu={(e, edge) => {
-          e.preventDefault();
-          openEdgeMenu(e.clientX, e.clientY, edge.id);
-        }}
-        onPaneContextMenu={(e) => {
-          e.preventDefault();
-          openPaneMenu('clientX' in e ? e.clientX : 0, 'clientY' in e ? e.clientY : 0);
-        }}
-        onPaneClick={() => setEditing(null)}
-        fitView
-        fitViewOptions={{ padding: 0.1, maxZoom: 1.2 }}
-        proOptions={{ hideAttribution: true }}
-        minZoom={0.2}
-        maxZoom={2}
-      />
-      {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
-      {picker && (
-        <IdPicker
-          title={picker.kind === 'connect' ? 'Connect to…' : 'Move to subgraph…'}
-          options={pickerOptions}
-          anchor={picker.anchor}
-          onPick={onPick}
-          onClose={closePicker}
+          {onEditAsText && (
+            <button type="button" className="planflow__button" onClick={onEditAsText}>
+              Edit as text
+            </button>
+          )}
+        </div>
+        <ReactFlow
+          nodes={rfNodes}
+          edges={rfEdges}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          nodesDraggable={!readOnly}
+          nodesConnectable={!readOnly}
+          elementsSelectable
+          deleteKeyCode={readOnly ? null : ['Delete', 'Backspace']}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          onNodeDoubleClick={(_e, n) => {
+            if (!readOnly && n.type === 'flowNode') setEditing({ kind: 'node', id: n.id });
+          }}
+          onEdgeDoubleClick={(_e, edge) => editEdge(edge.id)}
+          onNodeContextMenu={(e, n) => {
+            e.preventDefault();
+            if (n.type === 'flowNode') openNodeMenu(e.clientX, e.clientY, n.id);
+            else openPaneMenu(e.clientX, e.clientY);
+          }}
+          onEdgeContextMenu={(e, edge) => {
+            e.preventDefault();
+            openEdgeMenu(e.clientX, e.clientY, edge.id);
+          }}
+          onPaneContextMenu={(e) => {
+            e.preventDefault();
+            openPaneMenu('clientX' in e ? e.clientX : 0, 'clientY' in e ? e.clientY : 0);
+          }}
+          onPaneClick={() => setEditing(null)}
+          fitView
+          fitViewOptions={{ padding: 0.1, maxZoom: 1.2 }}
+          proOptions={{ hideAttribution: true }}
+          minZoom={0.2}
+          maxZoom={2}
         />
-      )}
-      <div className="planflow__live" role="status" aria-live="polite">
-        {announcement}
+        {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
+        {picker && (
+          <IdPicker
+            title={picker.kind === 'connect' ? 'Connect to…' : 'Move to subgraph…'}
+            options={pickerOptions}
+            anchor={picker.anchor}
+            onPick={onPick}
+            onClose={closePicker}
+          />
+        )}
+        <div className="planflow__live" role="status" aria-live="polite">
+          {announcement}
+        </div>
       </div>
-    </div>
+      <div className="planflow__notice" role="status">
+        {notice}
+      </div>
+    </>
   );
 }
 

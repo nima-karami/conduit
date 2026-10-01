@@ -1,15 +1,36 @@
 // Hand-rolled because mermaid ships a renderer, not a graph you can read back out of it.
-// Supported subset + canonical output: docs/plans/2026-09-19-interactive-plan.plan.md, Contracts.
+// Span-preserving: every statement keeps its line so an edit can re-emit only what it touches —
+// docs/specs/2026-09-30-interactive-plan-v2.md §3.2. Edits live in `mermaid-flow-edit.ts`.
 
 export type FlowDirection = 'TB' | 'TD' | 'BT' | 'LR' | 'RL';
-export type FlowShape = 'rect' | 'round' | 'stadium' | 'subroutine' | 'diamond' | 'circle';
+export type FlowShape =
+  | 'rect'
+  | 'round'
+  | 'stadium'
+  | 'subroutine'
+  | 'diamond'
+  | 'circle'
+  | 'cylinder'
+  | 'hexagon';
 export type FlowEdgeKind = 'arrow' | 'open' | 'dotted' | 'thick' | 'bidir';
+
+/** 0-based fence line; character offsets into that line. */
+export interface FlowSpan {
+  line: number;
+  start: number;
+  end: number;
+}
 
 export interface FlowNode {
   id: string;
   label: string;
-  shape: FlowShape;
   parent: string | null;
+  /** 'verbatim' = `>x]` `[/x/]` `[\x\]` `[/x\]` `[\x/]`: kept as written, never re-emitted. */
+  shape: FlowShape | 'verbatim';
+  /** The first mention carrying a label or shape, else the first mention. */
+  def: FlowSpan;
+  /** Decides membership (spec §3.2). */
+  first: FlowSpan;
 }
 
 export interface FlowEdge {
@@ -17,57 +38,82 @@ export interface FlowEdge {
   target: string;
   kind: FlowEdgeKind;
   label: string | null;
+  /** Statement index. */
+  stmt: number;
+  /** Link index inside the statement's chain. */
+  link: number;
 }
 
 export interface FlowSubgraph {
   id: string;
   title: string;
   parent: string | null;
+  /** Lines of the `subgraph` header and its `end`. */
+  open: number;
+  close: number;
+}
+
+export type FlowStatementKind =
+  | 'header'
+  | 'blank'
+  | 'comment'
+  | 'chain'
+  | 'subgraph'
+  | 'end'
+  | 'trailer';
+
+export interface FlowStatement {
+  kind: FlowStatementKind;
+  line: number;
+  indent: string;
+  /** The enclosing subgraph; a `subgraph`/`end` line sits in its parent's scope. */
+  scope: string | null;
+  /** Chain only: `refs.length === links.length + 1`. */
+  refs: FlowSpan[];
+  links: FlowSpan[];
 }
 
 export interface FlowGraph {
   keyword: 'flowchart' | 'graph';
   direction: FlowDirection;
   nodes: FlowNode[];
+  /** Source order — `linkStyle` indices count in it. */
   edges: FlowEdge[];
   subgraphs: FlowSubgraph[];
-  trailer: string[];
 }
 
-export type FlowParse =
-  | { ok: true; graph: FlowGraph }
-  | { ok: false; reason: string; line: number };
+export interface FlowDoc {
+  lines: string[];
+  eol: '\n' | '\r\n';
+  statements: FlowStatement[];
+  graph: FlowGraph;
+}
+
+export type FlowParse = { ok: true; doc: FlowDoc } | { ok: false; reason: string; line: number };
 
 const HEADER_RE = /^(flowchart|graph)[ \t]+(TB|TD|BT|LR|RL)$/;
 const TRAILER_RE = /^(classDef|class|style|click|linkStyle)[ \t]/;
 const SUBGRAPH_RE = /^subgraph([ \t]|$)/;
 const ID_RE = /^[A-Za-z0-9_][A-Za-z0-9_-]*/;
 const FULL_ID_RE = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
-const QUOTE_RE = /["[\]{}()|]/;
-// A quoted label cannot contain a bare `"`; mermaid's own entity escape is the only way through.
-const QUOT_ENTITY = '#quot;';
-const QUOT_ENTITY_RE = /#quot;/g;
+const ENTITY_RE = /#(quot|35);/g;
 
-const unquoteLabel = (text: string): string => text.replace(QUOT_ENTITY_RE, '"');
+/** Mermaid's own entity escapes; a quoted label cannot hold a bare `"`. */
+const decodeLabel = (text: string): string =>
+  text.replace(ENTITY_RE, (_m, name: string) => (name === 'quot' ? '"' : '#'));
 
-const SHAPES: { open: string; close: string; shape: FlowShape }[] = [
-  { open: '([', close: '])', shape: 'stadium' },
-  { open: '[[', close: ']]', shape: 'subroutine' },
-  { open: '((', close: '))', shape: 'circle' },
-  { open: '[', close: ']', shape: 'rect' },
-  { open: '(', close: ')', shape: 'round' },
-  { open: '{', close: '}', shape: 'diamond' },
-];
+export const FLOW_SHAPE_TOKENS: Record<FlowShape, { open: string; close: string }> = {
+  rect: { open: '[', close: ']' },
+  round: { open: '(', close: ')' },
+  stadium: { open: '([', close: '])' },
+  subroutine: { open: '[[', close: ']]' },
+  diamond: { open: '{', close: '}' },
+  circle: { open: '((', close: '))' },
+  cylinder: { open: '[(', close: ')]' },
+  hexagon: { open: '{{', close: '}}' },
+};
 
-const CONNECTORS: { text: string; kind: FlowEdgeKind }[] = [
-  { text: '<-->', kind: 'bidir' },
-  { text: '-.->', kind: 'dotted' },
-  { text: '==>', kind: 'thick' },
-  { text: '-->', kind: 'arrow' },
-  { text: '---', kind: 'open' },
-];
-
-const ARROWS: Record<FlowEdgeKind, string> = {
+export const FLOW_ARROWS: Record<FlowEdgeKind, string> = {
   arrow: '-->',
   open: '---',
   dotted: '-.->',
@@ -75,10 +121,84 @@ const ARROWS: Record<FlowEdgeKind, string> = {
   bidir: '<-->',
 };
 
-interface NodeRef {
+interface ShapeForm {
+  open: string;
+  /** Several closers for the slanted verbatim forms; the earliest one wins. */
+  close: string[];
+  shape: FlowShape | 'verbatim';
+}
+
+const sym = (shape: FlowShape): ShapeForm => ({
+  open: FLOW_SHAPE_TOKENS[shape].open,
+  close: [FLOW_SHAPE_TOKENS[shape].close],
+  shape,
+});
+
+// Longest openers first: `[(` / `[[` / `[/` must win over `[`, `((` / `([` over `(`.
+const FORMS: ShapeForm[] = [
+  sym('stadium'),
+  sym('subroutine'),
+  sym('cylinder'),
+  { open: '[/', close: ['/]', '\\]'], shape: 'verbatim' },
+  { open: '[\\', close: ['\\]', '/]'], shape: 'verbatim' },
+  sym('circle'),
+  sym('hexagon'),
+  sym('rect'),
+  sym('round'),
+  sym('diamond'),
+  { open: '>', close: [']'], shape: 'verbatim' },
+];
+
+const CONNECTORS: { text: string; kind: FlowEdgeKind }[] = (
+  ['bidir', 'dotted', 'thick', 'arrow', 'open'] as const
+).map((kind) => ({ text: FLOW_ARROWS[kind], kind }));
+
+export interface FlowRef {
   id: string;
   label: string | null;
-  shape: FlowShape;
+  shape: FlowShape | 'verbatim';
+  open: string;
+  close: string;
+  /** Offset just past the ref. */
+  next: number;
+}
+
+/** Reads one node mention (`id`, `id[Label]`, `id(["x"])` …) starting at `at`. */
+export function readFlowRef(line: string, at = 0): FlowRef | null {
+  const id = ID_RE.exec(line.slice(at));
+  if (!id) return null;
+  const start = at + id[0].length;
+  for (const form of FORMS) {
+    if (!line.startsWith(form.open, start)) continue;
+    let p = start + form.open.length;
+    let label: string;
+    let close: string;
+    if (line[p] === '"') {
+      const quote = line.indexOf('"', p + 1);
+      if (quote < 0) return null;
+      const closer = form.close.find((c) => line.startsWith(c, quote + 1));
+      if (closer === undefined) return null;
+      label = decodeLabel(line.slice(p + 1, quote));
+      close = closer;
+      p = quote + 1 + closer.length;
+    } else {
+      let best = -1;
+      let closer = '';
+      for (const c of form.close) {
+        const i = line.indexOf(c, p);
+        if (i >= 0 && (best < 0 || i < best)) {
+          best = i;
+          closer = c;
+        }
+      }
+      if (best < 0) return null;
+      label = decodeLabel(line.slice(p, best).trim());
+      close = closer;
+      p = best + closer.length;
+    }
+    return { id: id[0], label, shape: form.shape, open: form.open, close, next: p };
+  }
+  return { id: id[0], label: null, shape: 'rect', open: '', close: '', next: start };
 }
 
 interface Link {
@@ -88,30 +208,10 @@ interface Link {
 
 const isSpace = (c: string | undefined): boolean => c === ' ' || c === '\t';
 
-function readNodeRef(line: string, at: number): { ref: NodeRef; next: number } | null {
-  const id = ID_RE.exec(line.slice(at));
-  if (!id) return null;
-  const start = at + id[0].length;
-  for (const s of SHAPES) {
-    if (!line.startsWith(s.open, start)) continue;
-    let p = start + s.open.length;
-    let label: string;
-    if (line[p] === '"') {
-      const quote = line.indexOf('"', p + 1);
-      if (quote < 0) return null;
-      label = unquoteLabel(line.slice(p + 1, quote));
-      p = quote + 1;
-      if (!line.startsWith(s.close, p)) return null;
-      p += s.close.length;
-    } else {
-      const close = line.indexOf(s.close, p);
-      if (close < 0) return null;
-      label = line.slice(p, close).trim();
-      p = close + s.close.length;
-    }
-    return { ref: { id: id[0], label, shape: s.shape }, next: p };
-  }
-  return { ref: { id: id[0], label: null, shape: 'rect' }, next: start };
+function unquote(text: string): string {
+  return text.length >= 2 && text.startsWith('"') && text.endsWith('"')
+    ? decodeLabel(text.slice(1, -1))
+    : decodeLabel(text.trim());
 }
 
 function readConnector(line: string, at: number): { link: Link; next: number } | null {
@@ -133,12 +233,12 @@ function readConnector(line: string, at: number): { link: Link; next: number } |
       if (line[p + 1] === '"') {
         const quote = line.indexOf('"', p + 2);
         if (quote < 0 || line[quote + 1] !== '|') return null;
-        label = unquoteLabel(line.slice(p + 2, quote)) || null;
+        label = decodeLabel(line.slice(p + 2, quote)) || null;
         p = quote + 2;
       } else {
         const close = line.indexOf('|', p + 1);
         if (close < 0) return null;
-        label = line.slice(p + 1, close).trim() || null;
+        label = decodeLabel(line.slice(p + 1, close).trim()) || null;
         p = close + 1;
       }
     }
@@ -147,11 +247,18 @@ function readConnector(line: string, at: number): { link: Link; next: number } |
   return null;
 }
 
-function scanLine(line: string): { refs: NodeRef[]; links: Link[] } | null {
-  const first = readNodeRef(line, 0);
+interface Scanned {
+  refs: { ref: FlowRef; span: FlowSpan }[];
+  links: { link: Link; span: FlowSpan }[];
+}
+
+function scanChain(line: string, lineNo: number, from: number): Scanned | null {
+  const first = readFlowRef(line, from);
   if (!first) return null;
-  const refs = [first.ref];
-  const links: Link[] = [];
+  const out: Scanned = {
+    refs: [{ ref: first, span: { line: lineNo, start: from, end: first.next } }],
+    links: [],
+  };
   let at = first.next;
   while (at < line.length) {
     const beforeGap = at;
@@ -160,17 +267,20 @@ function scanLine(line: string): { refs: NodeRef[]; links: Link[] } | null {
     if (at === beforeGap) return null;
     const connector = readConnector(line, at);
     if (!connector) return null;
+    out.links.push({
+      link: connector.link,
+      span: { line: lineNo, start: at, end: connector.next },
+    });
     at = connector.next;
     const afterGap = at;
     while (isSpace(line[at])) at++;
     if (at === afterGap) return null;
-    const target = readNodeRef(line, at);
+    const target = readFlowRef(line, at);
     if (!target) return null;
-    refs.push(target.ref);
-    links.push(connector.link);
+    out.refs.push({ ref: target, span: { line: lineNo, start: at, end: target.next } });
     at = target.next;
   }
-  return { refs, links };
+  return out;
 }
 
 function slug(title: string): string {
@@ -180,17 +290,11 @@ function slug(title: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-function unquote(text: string): string {
-  return text.length >= 2 && text.startsWith('"') && text.endsWith('"')
-    ? unquoteLabel(text.slice(1, -1))
-    : text.trim();
-}
-
 function readSubgraph(rest: string): { id: string; title: string } | null {
   if (rest.startsWith('"')) {
     const quote = rest.indexOf('"', 1);
     if (quote < 0 || rest.slice(quote + 1).trim()) return null;
-    const title = rest.slice(1, quote);
+    const title = decodeLabel(rest.slice(1, quote));
     const id = slug(title);
     return id && FULL_ID_RE.test(id) ? { id, title } : null;
   }
@@ -202,240 +306,124 @@ function readSubgraph(rest: string): { id: string; title: string } | null {
   return { id: id[0], title: unquote(tail.slice(1, -1).trim()) };
 }
 
-// Array order is part of deep equality, so parse and every reducer settle on the one order
-// serializeFlowchart emits: subgraphs depth-first, nodes grouped by owner, loose nodes last.
-function canonical(g: FlowGraph): FlowGraph {
-  const subgraphs: FlowSubgraph[] = [];
-  const walk = (parent: string | null): void => {
-    for (const s of g.subgraphs) {
-      if (s.parent !== parent) continue;
-      subgraphs.push(s);
-      walk(s.id);
-    }
-  };
-  walk(null);
-  const placed = new Set(subgraphs);
-  for (const s of g.subgraphs) if (!placed.has(s)) subgraphs.push(s);
-
-  const nodes: FlowNode[] = [];
-  const owners = [...subgraphs.map((s) => s.id), null];
-  for (const owner of owners) for (const n of g.nodes) if (n.parent === owner) nodes.push(n);
-  const kept = new Set(nodes);
-  for (const n of g.nodes) if (!kept.has(n)) nodes.push(n);
-
-  return { ...g, subgraphs, nodes };
-}
-
 export function parseFlowchart(source: string): FlowParse {
   const fail = (reason: string, line: number): FlowParse => ({ ok: false, reason, line });
   const lines = source.split(/\r?\n/);
+  const eol = source.includes('\r\n') ? '\r\n' : '\n';
+  const statements: FlowStatement[] = [];
   const nodes: FlowNode[] = [];
   const byId = new Map<string, FlowNode>();
+  const labelled = new Set<string>();
   const edges: FlowEdge[] = [];
   const subgraphs: FlowSubgraph[] = [];
-  const subgraphIds = new Set<string>();
-  const trailer: string[] = [];
-  const open: { id: string; line: number }[] = [];
+  const subById = new Map<string, FlowSubgraph>();
+  const open: FlowSubgraph[] = [];
   let keyword: 'flowchart' | 'graph' | null = null;
   let direction: FlowDirection = 'LR';
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
+    const content = lines[i].trimEnd();
+    const indent = /^[ \t]*/.exec(content)?.[0] ?? '';
+    const text = content.slice(indent.length);
     const at = i + 1;
-    if (!line || line.startsWith('%%')) continue;
+    const scope = open.length ? open[open.length - 1].id : null;
+    const push = (kind: FlowStatementKind, s: string | null = scope): void => {
+      statements.push({ kind, line: i, indent, scope: s, refs: [], links: [] });
+    };
+
+    if (!text) {
+      push('blank');
+      continue;
+    }
+    if (text.startsWith('%%')) {
+      push('comment');
+      continue;
+    }
 
     if (!keyword) {
-      const header = HEADER_RE.exec(line);
+      const header = HEADER_RE.exec(text);
       if (!header) return fail('expected a flowchart or graph header', at);
       keyword = header[1] as 'flowchart' | 'graph';
       direction = header[2] as FlowDirection;
+      push('header');
       continue;
     }
 
-    if (line === 'end') {
-      if (!open.length) return fail('end without an open subgraph', at);
-      open.pop();
+    if (text === 'end') {
+      const closing = open.pop();
+      if (!closing) return fail('end without an open subgraph', at);
+      closing.close = i;
+      push('end', closing.parent);
       continue;
     }
 
-    const parent = open.length ? open[open.length - 1].id : null;
-
-    if (SUBGRAPH_RE.test(line)) {
-      const head = readSubgraph(line.slice('subgraph'.length).trim());
+    if (SUBGRAPH_RE.test(text)) {
+      const head = readSubgraph(text.slice('subgraph'.length).trim());
       if (!head) return fail('unsupported subgraph header', at);
-      if (subgraphIds.has(head.id) || byId.has(head.id)) return fail('duplicate id', at);
-      subgraphs.push({ id: head.id, title: head.title, parent });
-      subgraphIds.add(head.id);
-      open.push({ id: head.id, line: at });
+      if (subById.has(head.id) || byId.has(head.id)) return fail('duplicate id', at);
+      const sub: FlowSubgraph = { ...head, parent: scope, open: i, close: -1 };
+      subgraphs.push(sub);
+      subById.set(sub.id, sub);
+      open.push(sub);
+      push('subgraph');
       continue;
     }
 
-    if (TRAILER_RE.test(line)) {
-      trailer.push(line);
+    if (TRAILER_RE.test(text)) {
+      push('trailer');
       continue;
     }
 
-    const scanned = scanLine(line);
+    const scanned = scanChain(content, i, indent.length);
     if (!scanned) return fail('unsupported syntax', at);
-    for (const ref of scanned.refs) {
+    const stmt = statements.length;
+    statements.push({
+      kind: 'chain',
+      line: i,
+      indent,
+      scope,
+      refs: scanned.refs.map((r) => r.span),
+      links: scanned.links.map((l) => l.span),
+    });
+    for (const { ref, span } of scanned.refs) {
+      if (subById.has(ref.id)) continue;
       const existing = byId.get(ref.id);
-      if (existing) {
-        if (ref.label !== null) {
-          existing.label = ref.label;
-          existing.shape = ref.shape;
-        }
-        continue;
+      if (!existing) {
+        const node: FlowNode = {
+          id: ref.id,
+          label: ref.label ?? ref.id,
+          parent: scope,
+          shape: ref.label === null ? 'rect' : ref.shape,
+          def: span,
+          first: span,
+        };
+        nodes.push(node);
+        byId.set(ref.id, node);
+        if (ref.label !== null) labelled.add(ref.id);
+      } else if (ref.label !== null && !labelled.has(ref.id)) {
+        existing.label = ref.label;
+        existing.shape = ref.shape;
+        existing.def = span;
+        labelled.add(ref.id);
       }
-      if (subgraphIds.has(ref.id)) continue;
-      const node: FlowNode = { id: ref.id, label: ref.label ?? ref.id, shape: ref.shape, parent };
-      nodes.push(node);
-      byId.set(ref.id, node);
     }
-    for (let k = 0; k < scanned.links.length; k++) {
+    scanned.links.forEach(({ link }, k) => {
       edges.push({
-        source: scanned.refs[k].id,
-        target: scanned.refs[k + 1].id,
-        kind: scanned.links[k].kind,
-        label: scanned.links[k].label,
+        source: scanned.refs[k].ref.id,
+        target: scanned.refs[k + 1].ref.id,
+        kind: link.kind,
+        label: link.label,
+        stmt,
+        link: k,
       });
-    }
+    });
   }
 
   if (!keyword) return fail('expected a flowchart or graph header', 1);
-  if (open.length) return fail('unclosed subgraph', open[open.length - 1].line);
-  return { ok: true, graph: canonical({ keyword, direction, nodes, edges, subgraphs, trailer }) };
-}
-
-function quoteLabel(label: string): string {
-  return QUOTE_RE.test(label) ? `"${label.replace(/"/g, QUOT_ENTITY)}"` : label;
-}
-
-function nodeLine(n: FlowNode): string {
-  if (n.label === n.id && n.shape === 'rect') return n.id;
-  const shape = SHAPES.find((s) => s.shape === n.shape) ?? SHAPES[3];
-  return `${n.id}${shape.open}${quoteLabel(n.label)}${shape.close}`;
-}
-
-function edgeLine(e: FlowEdge): string {
-  const label = e.label === null ? '' : `|${quoteLabel(e.label)}|`;
-  return `${e.source} ${ARROWS[e.kind]}${label} ${e.target}`;
-}
-
-export function serializeFlowchart(g: FlowGraph): string {
-  const out = [`${g.keyword} ${g.direction}`];
-  const emit = (s: FlowSubgraph, depth: number): void => {
-    const pad = '  '.repeat(depth);
-    out.push(`${pad}subgraph ${s.id} [${quoteLabel(s.title)}]`);
-    for (const n of g.nodes) if (n.parent === s.id) out.push(`${pad}  ${nodeLine(n)}`);
-    for (const child of g.subgraphs) if (child.parent === s.id) emit(child, depth + 1);
-    out.push(`${pad}end`);
+  const unclosed = open[open.length - 1];
+  if (unclosed) return fail('unclosed subgraph', unclosed.open + 1);
+  return {
+    ok: true,
+    doc: { lines, eol, statements, graph: { keyword, direction, nodes, edges, subgraphs } },
   };
-  for (const s of g.subgraphs) if (s.parent === null) emit(s, 0);
-  for (const n of g.nodes) if (n.parent === null) out.push(nodeLine(n));
-  for (const e of g.edges) out.push(edgeLine(e));
-  out.push(...g.trailer);
-  return `${out.join('\n')}\n`;
-}
-
-const hasId = (g: FlowGraph, id: string): boolean =>
-  g.nodes.some((n) => n.id === id) || g.subgraphs.some((s) => s.id === id);
-
-const hasSubgraph = (g: FlowGraph, id: string): boolean => g.subgraphs.some((s) => s.id === id);
-
-function descendsFrom(g: FlowGraph, id: string, ancestor: string): boolean {
-  let at: string | null = id;
-  const seen = new Set<string>();
-  while (at !== null && !seen.has(at)) {
-    if (at === ancestor) return true;
-    seen.add(at);
-    at = g.subgraphs.find((s) => s.id === at)?.parent ?? null;
-  }
-  return false;
-}
-
-export function addNode(
-  g: FlowGraph,
-  id: string,
-  label: string,
-  shape: FlowShape = 'rect',
-  parent: string | null = null,
-): FlowGraph {
-  if (!FULL_ID_RE.test(id) || hasId(g, id)) return g;
-  if (parent !== null && !hasSubgraph(g, parent)) return g;
-  return canonical({ ...g, nodes: [...g.nodes, { id, label, shape, parent }] });
-}
-
-export function removeNode(g: FlowGraph, id: string): FlowGraph {
-  if (!g.nodes.some((n) => n.id === id)) return g;
-  return canonical({
-    ...g,
-    nodes: g.nodes.filter((n) => n.id !== id),
-    edges: g.edges.filter((e) => e.source !== id && e.target !== id),
-  });
-}
-
-export function renameNode(g: FlowGraph, id: string, label: string): FlowGraph {
-  if (!g.nodes.some((n) => n.id === id)) return g;
-  return canonical({ ...g, nodes: g.nodes.map((n) => (n.id === id ? { ...n, label } : n)) });
-}
-
-export function addEdge(
-  g: FlowGraph,
-  source: string,
-  target: string,
-  kind: FlowEdgeKind = 'arrow',
-): FlowGraph {
-  if (!hasId(g, source) || !hasId(g, target)) return g;
-  if (g.edges.some((e) => e.source === source && e.target === target)) return g;
-  return canonical({ ...g, edges: [...g.edges, { source, target, kind, label: null }] });
-}
-
-export function removeEdge(g: FlowGraph, edgeIndex: number): FlowGraph {
-  if (!g.edges[edgeIndex]) return g;
-  return canonical({ ...g, edges: g.edges.filter((_, i) => i !== edgeIndex) });
-}
-
-export function relabelEdge(g: FlowGraph, edgeIndex: number, label: string | null): FlowGraph {
-  if (!g.edges[edgeIndex]) return g;
-  const next = label === null || !label.trim() ? null : label.trim();
-  return canonical({
-    ...g,
-    edges: g.edges.map((e, i) => (i === edgeIndex ? { ...e, label: next } : e)),
-  });
-}
-
-export function addSubgraph(
-  g: FlowGraph,
-  id: string,
-  title: string,
-  parent: string | null = null,
-): FlowGraph {
-  if (!FULL_ID_RE.test(id) || hasId(g, id)) return g;
-  if (parent !== null && !hasSubgraph(g, parent)) return g;
-  return canonical({ ...g, subgraphs: [...g.subgraphs, { id, title, parent }] });
-}
-
-export function moveToSubgraph(g: FlowGraph, nodeId: string, subgraphId: string | null): FlowGraph {
-  if (subgraphId !== null && !hasSubgraph(g, subgraphId)) return g;
-  const node = g.nodes.find((n) => n.id === nodeId);
-  if (node) {
-    if (node.parent === subgraphId) return g;
-    return canonical({
-      ...g,
-      nodes: g.nodes.map((n) => (n.id === nodeId ? { ...n, parent: subgraphId } : n)),
-    });
-  }
-  const subgraph = g.subgraphs.find((s) => s.id === nodeId);
-  if (!subgraph || subgraph.parent === subgraphId) return g;
-  if (subgraphId !== null && descendsFrom(g, subgraphId, nodeId)) return g;
-  return canonical({
-    ...g,
-    subgraphs: g.subgraphs.map((s) => (s.id === nodeId ? { ...s, parent: subgraphId } : s)),
-  });
-}
-
-export function nextNodeId(g: FlowGraph, base: string): string {
-  let n = 1;
-  while (hasId(g, `${base}${n}`)) n++;
-  return `${base}${n}`;
 }

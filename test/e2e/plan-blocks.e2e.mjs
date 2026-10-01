@@ -3,7 +3,8 @@
  * disk, and the `mermaid` fence is a structural node/edge editor whose every mutation is written
  * back as flowchart source.
  *
- * The whole Slice 5 Check (docs/plans/2026-09-19-interactive-plan.plan.md).
+ * The whole Slice 5 Check (docs/plans/2026-09-19-interactive-plan.plan.md), plus the fence-fidelity
+ * phase of docs/plans/2026-09-30-interactive-plan-v2.plan.md Task 1.3.4.
  *
  * Setup matches plan-editor.e2e.mjs: `.conduit/plans/` exists before the project is opened (the
  * host watcher can only attach to a directory that exists), the plan is written after, and the app
@@ -200,31 +201,39 @@ try {
   log(`edge delete written through in ${wroteDelete} ms ✓`);
 
   // ── pane menu → Add node ─────────────────────────────────────────────────────────────────
-  const paneAt = await page.evaluate(() => {
-    const pane = document.querySelector('.planflow .react-flow__pane');
-    if (!pane) return null;
-    const box = pane.getBoundingClientRect();
-    const blockers = [...document.querySelectorAll('.react-flow__node, .planflow__toolbar')].map(
-      (el) => el.getBoundingClientRect(),
-    );
-    const clear = (x, y) =>
-      !blockers.some(
-        (b) => x >= b.left - 8 && x <= b.right + 8 && y >= b.top - 8 && y <= b.bottom + 8,
+  // A plan opened earlier keeps its tab in the DOM, hidden, so only a pane with a box counts.
+  const clearPanePoint = () =>
+    page.evaluate(() => {
+      const pane = [...document.querySelectorAll('.planflow .react-flow__pane')].find(
+        (el) => el.getClientRects().length > 0,
       );
-    for (let y = box.bottom - 10; y > box.top + 10; y -= 10) {
-      for (let x = box.left + 10; x < box.right - 10; x += 10) {
-        if (clear(x, y)) return { x, y };
+      if (!pane) return null;
+      const box = pane.getBoundingClientRect();
+      const blockers = [
+        ...document.querySelectorAll(
+          '.react-flow__node, .planflow__toolbar, .planflow__edge-label',
+        ),
+      ].map((el) => el.getBoundingClientRect());
+      const clear = (x, y) =>
+        !blockers.some(
+          (b) => x >= b.left - 8 && x <= b.right + 8 && y >= b.top - 8 && y <= b.bottom + 8,
+        );
+      for (let y = box.bottom - 10; y > box.top + 10; y -= 10) {
+        for (let x = box.left + 10; x < box.right - 10; x += 10) {
+          if (clear(x, y)) return { x, y };
+        }
       }
-    }
-    return null;
-  });
+      return null;
+    });
+  const paneAt = await clearPanePoint();
   assert(paneAt !== null, 'the diagram canvas must have a point clear of its nodes');
   await page.mouse.click(paneAt.x, paneAt.y, { button: 'right' });
 
   await menu.waitFor({ state: 'visible', timeout: 4000 });
   await menu.locator('.ctxmenu__item', { hasText: 'Add node' }).first().click();
 
-  const wroteAdd = await untilFile((t) => /^n1$/m.test(fenceOf(t, 'mermaid') ?? ''), 4000);
+  // New statements take their siblings' indent (spec §3.2); the fixture's top level is 2 spaces.
+  const wroteAdd = await untilFile((t) => /^ {2}n1$/m.test(fenceOf(t, 'mermaid') ?? ''), 4000);
   assert(wroteAdd !== null, 'Add node must reach the file within 4 s');
   log(`added node written through in ${wroteAdd} ms ✓`);
 
@@ -302,6 +311,80 @@ try {
     'the ts fence must be untouched by the diagram edits',
   );
 
+  // ── fidelity: one diagram edit changes only the lines it touches (spec §3.2, §7) ─────────
+  const BATCH_LINE = '    parse -- batch --> db[(Store)]';
+  const LOAD_LINE = '    parse -->|load| db[(Store)]';
+
+  const openFixture = async (fixture, slug) => {
+    const file = join(plans, `${slug}.md`);
+    copyFileSync(join(here, 'fixtures', 'plan', fixture), file);
+    const opened = page.locator('.toast', { hasText: `Agent updated plan ${slug}` }).first();
+    await opened.waitFor({ state: 'visible', timeout: 6000 });
+    await opened.locator('.toast__action', { hasText: 'Open' }).click();
+    await page
+      .locator('.planflow .react-flow:visible')
+      .first()
+      .waitFor({ state: 'visible', timeout: 10000 });
+    return file;
+  };
+
+  const relabelBatch = async () => {
+    const label = page.locator('.planflow__edge-label:visible', { hasText: 'batch' }).first();
+    await label.waitFor({ state: 'visible', timeout: 6000 });
+    const box = await label.boundingBox();
+    assert(box !== null, 'the "batch" edge label must have a box on screen');
+    await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
+    const input = page.locator('.planflow__edge-input:visible').first();
+    await input.waitFor({ state: 'visible', timeout: 4000 });
+    await page.keyboard.press('Control+A');
+    await page.keyboard.type('load');
+    await page.keyboard.press('Enter');
+  };
+
+  const fidelityFile = await openFixture('fidelity.md', 'fidelity');
+  const fidelityBefore = readFileSync(fidelityFile, 'utf8');
+  assert(fidelityBefore.includes(`\n${BATCH_LINE}\n`), 'the fixture must hold the batch edge');
+  await relabelBatch();
+  const relabelled = fidelityBefore.replace(`\n${BATCH_LINE}\n`, `\n${LOAD_LINE}\n`);
+  const wroteRelabel = await until(() => readFileSync(fidelityFile, 'utf8') === relabelled, 4000);
+  assert(
+    wroteRelabel !== null,
+    `relabelling one edge must change exactly that line, the file held:\n${readFileSync(fidelityFile, 'utf8')}`,
+  );
+  assert(
+    relabelled.includes('    %% ingest pipeline\n') && relabelled.includes('    %% wiring\n'),
+    'the %% lines must survive the edit',
+  );
+  log(`edge relabel changed exactly one line, in ${wroteRelabel} ms ✓`);
+
+  const fidelityPane = await clearPanePoint();
+  assert(fidelityPane !== null, 'the fidelity canvas must have a point clear of its nodes');
+  await page.mouse.click(fidelityPane.x, fidelityPane.y, { button: 'right' });
+  await menu.waitFor({ state: 'visible', timeout: 4000 });
+  await menu.locator('.ctxmenu__item', { hasText: 'Add node' }).first().click();
+  const added = relabelled.replace('    w1 -.-> w2\n', '    w1 -.-> w2\n    n1\n');
+  const wroteNode = await until(() => readFileSync(fidelityFile, 'utf8') === added, 4000);
+  assert(
+    wroteNode !== null,
+    `Add node must append exactly one line, the file held:\n${readFileSync(fidelityFile, 'utf8')}`,
+  );
+  log(`pane-menu Add node appended exactly one line, in ${wroteNode} ms ✓`);
+
+  const crlfFile = await openFixture('fidelity-crlf.md', 'fidelity-crlf');
+  const crlfBefore = readFileSync(crlfFile, 'utf8');
+  assert(
+    crlfBefore.includes(`\r\n${BATCH_LINE}\r\n`) && crlfBefore.includes('~~~mermaid\r\n'),
+    'the CRLF fixture must reach disk with CRLF and its ~~~ fence',
+  );
+  await relabelBatch();
+  const crlfAfter = crlfBefore.replace(`\r\n${BATCH_LINE}\r\n`, `\r\n${LOAD_LINE}\r\n`);
+  const wroteCrlf = await until(() => readFileSync(crlfFile, 'utf8') === crlfAfter, 4000);
+  assert(
+    wroteCrlf !== null,
+    `the CRLF/~~~ plan must change only the edited line, the file held:\n${JSON.stringify(readFileSync(crlfFile, 'utf8'))}`,
+  );
+  log(`CRLF + ~~~ fence kept byte-for-byte around the edit, in ${wroteCrlf} ms ✓`);
+
   // ── an empty plan still takes a keystroke ────────────────────────────────────────────────
   // A zero-byte or frontmatter-only plan has no blocks, while ProseMirror always holds one empty
   // paragraph. Read as the two parsers disagreeing, that refused every keystroke on a plan the
@@ -312,7 +395,7 @@ try {
   await emptyToast.waitFor({ state: 'visible', timeout: 6000 });
   await emptyToast.locator('.toast__action', { hasText: 'Open' }).click();
 
-  const prose = page.locator('.plan__editor .ProseMirror').first();
+  const prose = page.locator('.plan__editor .ProseMirror:visible').first();
   await prose.waitFor({ state: 'visible', timeout: 6000 });
   await prose.click();
   await page.keyboard.type('Hello plan');

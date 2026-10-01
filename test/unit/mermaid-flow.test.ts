@@ -1,20 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import {
-  addEdge,
-  addNode,
-  addSubgraph,
-  type FlowGraph,
-  moveToSubgraph,
-  nextNodeId,
-  parseFlowchart,
-  relabelEdge,
-  removeEdge,
-  removeNode,
-  renameNode,
-  serializeFlowchart,
-} from '../../src/mermaid-flow';
+import { type FlowDoc, parseFlowchart } from '../../src/mermaid-flow';
 
 const FIXTURE = path.join(__dirname, '..', 'e2e', 'fixtures', 'plan', 'identity.md');
 
@@ -25,238 +12,190 @@ function fixtureDiagram(): string {
   return fence[1];
 }
 
-function graphOf(source: string): FlowGraph {
+function docOf(source: string): FlowDoc {
   const parsed = parseFlowchart(source);
   if (!parsed.ok) throw new Error(`${parsed.reason} (line ${parsed.line})`);
-  return parsed.graph;
+  return parsed.doc;
 }
 
-const NESTED = [
-  'flowchart TB',
-  '  subgraph outer [Outer group]',
-  '    a([Start])',
-  '    subgraph inner [Inner]',
-  '      b{Decide}',
-  '      c((Done))',
-  '    end',
-  '  end',
-  '  d[[Worker]]',
-  '  e(Plain)',
-  '  a --> b',
-  '  b -.->|no| c',
-  '  b ==> d',
-  '  d <--> e',
-  '  e --- a',
-  '',
-].join('\n');
-
-const TRAILER = [
-  'flowchart LR',
-  '  %% styling lives below the graph',
-  '  a -- retry --> b',
-  '  classDef hot fill:#f00',
-  '  class a hot',
-  '  linkStyle 0 stroke:#0f0',
-  '',
-].join('\n');
+const textAt = (doc: FlowDoc, s: { line: number; start: number; end: number }): string =>
+  doc.lines[s.line].slice(s.start, s.end);
 
 describe('parseFlowchart', () => {
   it('parses the fixture diagram into 3 nodes, 1 subgraph, 3 edges with the labelled edge', () => {
-    const g = graphOf(fixtureDiagram());
+    const { graph: g } = docOf(fixtureDiagram());
 
     expect(g.keyword).toBe('flowchart');
     expect(g.direction).toBe('LR');
-    expect(g.subgraphs).toEqual([{ id: 'backend', title: 'Backend', parent: null }]);
-    expect(g.nodes).toEqual([
-      { id: 'identity', label: 'Identity service', shape: 'rect', parent: 'backend' },
-      { id: 'txn', label: 'Transaction service', shape: 'rect', parent: 'backend' },
-      { id: 'web', label: 'Web app', shape: 'rect', parent: null },
+    expect(g.subgraphs).toEqual([
+      { id: 'backend', title: 'Backend', parent: null, open: 1, close: 4 },
     ]);
-    expect(g.edges).toEqual([
-      { source: 'web', target: 'identity', kind: 'arrow', label: null },
-      { source: 'web', target: 'txn', kind: 'arrow', label: null },
-      { source: 'txn', target: 'identity', kind: 'arrow', label: 'lookup' },
+    expect(g.nodes.map((n) => [n.id, n.label, n.shape, n.parent])).toEqual([
+      ['identity', 'Identity service', 'rect', 'backend'],
+      ['txn', 'Transaction service', 'rect', 'backend'],
+      ['web', 'Web app', 'rect', null],
     ]);
-    expect(g.trailer).toEqual([]);
+    expect(g.edges.map((e) => [e.source, e.target, e.kind, e.label])).toEqual([
+      ['web', 'identity', 'arrow', null],
+      ['web', 'txn', 'arrow', null],
+      ['txn', 'identity', 'arrow', 'lookup'],
+    ]);
   });
 
-  it('parse → serialize → parse is deep-equal', () => {
-    for (const source of [fixtureDiagram(), NESTED, TRAILER]) {
-      const once = graphOf(source);
-      const twice = graphOf(serializeFlowchart(once));
-      // A parser that dropped every line would round-trip vacuously.
-      expect(once.nodes.length + once.edges.length + once.trailer.length).toBeGreaterThan(4);
-      expect(twice).toEqual(once);
-    }
+  it('records statement line, indent, eol', () => {
+    const doc = docOf('flowchart LR\n    a --> b\n  subgraph s [S]\n\tc\n  end\n');
+
+    expect(doc.eol).toBe('\n');
+    expect(doc.lines).toEqual([
+      'flowchart LR',
+      '    a --> b',
+      '  subgraph s [S]',
+      '\tc',
+      '  end',
+      '',
+    ]);
+    expect(doc.statements.map((s) => [s.kind, s.line, s.indent, s.scope])).toEqual([
+      ['header', 0, '', null],
+      ['chain', 1, '    ', null],
+      ['subgraph', 2, '  ', null],
+      ['chain', 3, '\t', 's'],
+      ['end', 4, '  ', null],
+      ['blank', 5, '', null],
+    ]);
+  });
+
+  it('chain refs/links spans', () => {
+    const doc = docOf('flowchart LR\n  a --> b -- x --> c\n');
+    const chain = doc.statements[1];
+
+    expect(chain.refs).toHaveLength(3);
+    expect(chain.links).toHaveLength(2);
+    expect(chain.refs.map((s) => textAt(doc, s))).toEqual(['a', 'b', 'c']);
+    expect(chain.links.map((s) => textAt(doc, s))).toEqual(['-->', '-- x -->']);
+    expect(doc.graph.edges[1]).toMatchObject({
+      source: 'b',
+      target: 'c',
+      label: 'x',
+      stmt: 1,
+      link: 1,
+    });
+    expect(doc.graph.edges[0]).toMatchObject({ stmt: 1, link: 0 });
+  });
+
+  it('%% and blank lines are statements', () => {
+    const doc = docOf('%% lead\nflowchart TD\n\n  %% note\n  a\n');
+
+    expect(doc.statements.map((s) => s.kind)).toEqual([
+      'comment',
+      'header',
+      'blank',
+      'comment',
+      'chain',
+      'blank',
+    ]);
+  });
+
+  it('def is the first mention with a label', () => {
+    const doc = docOf('flowchart LR\na --> b\nb[Bee]\nb[Later]\n');
+    const b = doc.graph.nodes.find((n) => n.id === 'b');
+
+    expect(b?.label).toBe('Bee');
+    expect(b?.def.line).toBe(2);
+    expect(b?.first.line).toBe(1);
+    expect(textAt(doc, b?.def ?? { line: 0, start: 0, end: 0 })).toBe('b[Bee]');
+    const a = doc.graph.nodes.find((n) => n.id === 'a');
+    expect(a?.def).toEqual(a?.first);
+  });
+
+  it('cylinder/hexagon parse', () => {
+    const { graph } = docOf('flowchart LR\ndb[(Store)] --> h{{Hex}}\nr[Rect]\n');
+
+    expect(graph.nodes.map((n) => [n.id, n.shape, n.label])).toEqual([
+      ['db', 'cylinder', 'Store'],
+      ['h', 'hexagon', 'Hex'],
+      ['r', 'rect', 'Rect'],
+    ]);
+  });
+
+  it('verbatim bracket forms parse', () => {
+    const doc = docOf(
+      'flowchart LR\nn>Flag] --> p[/Para/]\nq[\\Back\\] --> t[/Trap\\]\nu[\\Inv/] --> v[Plain]\n',
+    );
+
+    expect(doc.graph.nodes.map((n) => [n.id, n.shape, n.label])).toEqual([
+      ['n', 'verbatim', 'Flag'],
+      ['p', 'verbatim', 'Para'],
+      ['q', 'verbatim', 'Back'],
+      ['t', 'verbatim', 'Trap'],
+      ['u', 'verbatim', 'Inv'],
+      ['v', 'rect', 'Plain'],
+    ]);
+    const t = doc.graph.nodes.find((n) => n.id === 't');
+    expect(textAt(doc, t?.def ?? { line: 0, start: 0, end: 0 })).toBe('t[/Trap\\]');
+  });
+
+  it('decodes #quot; and #35;', () => {
+    const { graph } = docOf('flowchart LR\na["say #quot;hi#quot;"] -->|"#35;1"| b["#35;quot;"]\n');
+
+    expect(graph.nodes[0].label).toBe('say "hi"');
+    expect(graph.edges[0].label).toBe('#1');
+    expect(graph.nodes[1].label).toBe('#quot;');
+  });
+
+  it('trailer lines are statements', () => {
+    const doc = docOf(
+      'flowchart LR\n  a -- retry --> b\n  classDef hot fill:#f00\n  class a hot\n  linkStyle 0 stroke:#0f0\n',
+    );
+
+    expect(doc.statements.map((s) => s.kind)).toEqual([
+      'header',
+      'chain',
+      'trailer',
+      'trailer',
+      'trailer',
+      'blank',
+    ]);
+  });
+
+  it('CRLF source parses with eol \\r\\n', () => {
+    const doc = docOf('flowchart LR\r\n  a --> b\r\n');
+
+    expect(doc.eol).toBe('\r\n');
+    expect(doc.lines).toEqual(['flowchart LR', '  a --> b', '']);
+    expect(doc.graph.edges).toHaveLength(1);
   });
 
   it('unsupported syntax reports the line', () => {
-    expect(parseFlowchart('flowchart LR\na & b --> c\n')).toMatchObject({ ok: false, line: 2 });
+    expect(parseFlowchart('flowchart LR\na & b --> c\n')).toMatchObject({
+      ok: false,
+      reason: 'unsupported syntax',
+      line: 2,
+    });
     expect(parseFlowchart('flowchart LR\na --> b\na:::hot\n')).toMatchObject({
       ok: false,
       line: 3,
     });
     expect(parseFlowchart('flowchart LR\na ~~~ b\n')).toMatchObject({ ok: false, line: 2 });
     expect(parseFlowchart('flowchart LR\na -->|x|b\n')).toMatchObject({ ok: false, line: 2 });
-  });
-});
-
-describe('serializeFlowchart', () => {
-  it('serialize is canonical', () => {
-    expect(serializeFlowchart(graphOf(fixtureDiagram()))).toBe(
-      [
-        'flowchart LR',
-        'subgraph backend [Backend]',
-        '  identity[Identity service]',
-        '  txn[Transaction service]',
-        'end',
-        'web[Web app]',
-        'web --> identity',
-        'web --> txn',
-        'txn -->|lookup| identity',
-        '',
-      ].join('\n'),
-    );
-  });
-
-  it('labels with brackets are quoted on serialize', () => {
-    const g = addNode(graphOf('flowchart LR\n'), 'n1', 'array[0]');
-    expect(serializeFlowchart(g)).toBe('flowchart LR\nn1["array[0]"]\n');
-    expect(graphOf(serializeFlowchart(g)).nodes[0].label).toBe('array[0]');
-  });
-
-  it('a label containing a quote round-trips', () => {
-    const g = addNode(graphOf('flowchart LR\n'), 'n1', 'he said "hi"');
-    const text = serializeFlowchart(g);
-
-    expect(text).toContain('#quot;');
-    expect(graphOf(text)).toEqual(g);
-  });
-
-  it('an edge label relabelled to delimiter characters round-trips', () => {
-    // The reducer takes whatever the human typed, so `|` — mermaid's own edge-label delimiter —
-    // reaches the serialiser, where an unquoted label closed early and left an unparseable fence.
-    for (const label of ['a|b', 'he said "hi"', 'array[0]', '{x}', 'a|b "c" [d]']) {
-      const g = relabelEdge(graphOf(fixtureDiagram()), 0, label);
-      const text = serializeFlowchart(g);
-
-      expect(parseFlowchart(text).ok).toBe(true);
-      expect(graphOf(text)).toEqual(g);
-      expect(graphOf(text).edges[0].label).toBe(label);
-    }
-
-    expect(serializeFlowchart(relabelEdge(graphOf(fixtureDiagram()), 0, 'a|b'))).toContain(
-      'web -->|"a|b"| identity',
-    );
-  });
-});
-
-describe('reducers', () => {
-  it('removeEdge by index drops exactly that edge', () => {
-    const g = graphOf(fixtureDiagram());
-    const next = removeEdge(g, 1);
-
-    expect(next.edges).toEqual([
-      { source: 'web', target: 'identity', kind: 'arrow', label: null },
-      { source: 'txn', target: 'identity', kind: 'arrow', label: 'lookup' },
-    ]);
-    expect(next.nodes).toEqual(g.nodes);
-    expect(removeEdge(g, 3)).toBe(g);
-  });
-
-  it('removeNode drops incident edges', () => {
-    const g = graphOf(fixtureDiagram());
-    const next = removeNode(g, 'txn');
-
-    expect(next.nodes.map((n) => n.id)).toEqual(['identity', 'web']);
-    expect(next.edges).toEqual([{ source: 'web', target: 'identity', kind: 'arrow', label: null }]);
-    expect(removeNode(g, 'nope')).toBe(g);
-  });
-
-  it('addEdge duplicate is a no-op returning the same reference', () => {
-    const g = graphOf(fixtureDiagram());
-    const once = addEdge(g, 'identity', 'web');
-
-    expect(once.edges).toHaveLength(4);
-    expect(once.edges[3]).toEqual({
-      source: 'identity',
-      target: 'web',
-      kind: 'arrow',
-      label: null,
+    expect(parseFlowchart('sequenceDiagram\n')).toMatchObject({
+      ok: false,
+      reason: 'expected a flowchart or graph header',
+      line: 1,
     });
-    expect(addEdge(once, 'identity', 'web')).toBe(once);
-    expect(addEdge(once, 'identity', 'ghost')).toBe(once);
-    expect(relabelEdge(once, 3, 'sso').edges[3].label).toBe('sso');
-  });
-
-  it('moveToSubgraph into a descendant is refused', () => {
-    const g = graphOf(NESTED);
-
-    expect(moveToSubgraph(g, 'outer', 'inner')).toBe(g);
-    expect(moveToSubgraph(g, 'outer', 'outer')).toBe(g);
-    expect(moveToSubgraph(g, 'd', 'ghost')).toBe(g);
-
-    const moved = moveToSubgraph(g, 'd', 'inner');
-    expect(moved.nodes.find((n) => n.id === 'd')?.parent).toBe('inner');
-    expect(moveToSubgraph(moved, 'inner', null).subgraphs).toEqual([
-      { id: 'outer', title: 'Outer group', parent: null },
-      { id: 'inner', title: 'Inner', parent: null },
-    ]);
-  });
-
-  it('renameNode changes the label and nothing else', () => {
-    const g = graphOf(fixtureDiagram());
-    const next = renameNode(g, 'identity', 'Identity API');
-
-    expect(next.nodes).toEqual([
-      { id: 'identity', label: 'Identity API', shape: 'rect', parent: 'backend' },
-      { id: 'txn', label: 'Transaction service', shape: 'rect', parent: 'backend' },
-      { id: 'web', label: 'Web app', shape: 'rect', parent: null },
-    ]);
-    expect(next.edges).toEqual(g.edges);
-    expect(next.subgraphs).toEqual(g.subgraphs);
-    // the reducer is pure — the graph it was handed still carries the old label
-    expect(g.nodes.find((n) => n.id === 'identity')?.label).toBe('Identity service');
-
-    const text = serializeFlowchart(next);
-    expect(text).toContain('identity[Identity API]');
-    expect(text).not.toContain('Identity service');
-
-    expect(renameNode(g, 'nope', 'x')).toBe(g);
-  });
-
-  it('addSubgraph adds a subgraph and refuses a duplicate id', () => {
-    const g = graphOf(fixtureDiagram());
-    const g2 = addSubgraph(g, 'infra', 'Infra');
-
-    expect(g2.subgraphs).toEqual([
-      { id: 'backend', title: 'Backend', parent: null },
-      { id: 'infra', title: 'Infra', parent: null },
-    ]);
-    expect(g2.nodes).toEqual(g.nodes);
-    expect(g2.edges).toEqual(g.edges);
-    expect(graphOf(serializeFlowchart(g2))).toEqual(g2);
-
-    expect(addSubgraph(g2, 'infra', 'again')).toBe(g2);
-    // hasId spans nodes as well, so a node id is just as taken as a subgraph id
-    expect(addSubgraph(g2, 'web', 'Web')).toBe(g2);
-    expect(addSubgraph(g2, 'not an id', 'Nope')).toBe(g2);
-    expect(addSubgraph(g2, 'db', 'DB', 'ghost')).toBe(g2);
-
-    const g3 = addSubgraph(g2, 'db', 'DB', 'infra');
-    expect(g3.subgraphs).toEqual([
-      { id: 'backend', title: 'Backend', parent: null },
-      { id: 'infra', title: 'Infra', parent: null },
-      { id: 'db', title: 'DB', parent: 'infra' },
-    ]);
-    expect(graphOf(serializeFlowchart(g3))).toEqual(g3);
-  });
-
-  it('nextNodeId skips taken ids', () => {
-    const g = graphOf('flowchart LR\nsubgraph n2 [Two]\n  n1[One]\nend\nn4[Four]\n');
-
-    expect(nextNodeId(g, 'n')).toBe('n3');
-    expect(nextNodeId(addNode(g, 'n3', 'Three'), 'n')).toBe('n5');
-    expect(nextNodeId(g, 'svc')).toBe('svc1');
+    expect(parseFlowchart('flowchart LR\nend\n')).toMatchObject({
+      ok: false,
+      reason: 'end without an open subgraph',
+      line: 2,
+    });
+    expect(parseFlowchart('flowchart LR\nsubgraph s\na\n')).toMatchObject({
+      ok: false,
+      reason: 'unclosed subgraph',
+      line: 2,
+    });
+    expect(parseFlowchart('flowchart LR\na\nsubgraph a\nend\n')).toMatchObject({
+      ok: false,
+      reason: 'duplicate id',
+      line: 3,
+    });
   });
 });

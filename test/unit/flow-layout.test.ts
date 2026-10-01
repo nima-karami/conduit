@@ -9,7 +9,7 @@ const FIXTURE = path.join(__dirname, '..', 'e2e', 'fixtures', 'plan', 'identity.
 function graphOf(source: string): FlowGraph {
   const parsed = parseFlowchart(source);
   if (!parsed.ok) throw new Error(`${parsed.reason} (line ${parsed.line})`);
-  return parsed.graph;
+  return parsed.doc.graph;
 }
 
 function fixtureGraph(): FlowGraph {

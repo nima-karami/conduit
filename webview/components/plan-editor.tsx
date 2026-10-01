@@ -229,11 +229,17 @@ function PlanEditorSurface({
     for (let index = 0; index < nodes.length; index++) {
       const node = nodes[index];
       const oldIndex = kept[index];
-      items.push(
-        oldIndex === null
-          ? { kind: 'new', source: getMarkdown({ from: pos, to: pos + node.nodeSize })(ctx) }
-          : { kind: 'keep', oldIndex },
-      );
+      if (oldIndex !== null) {
+        items.push({ kind: 'keep', oldIndex });
+      } else {
+        const source = getMarkdown({ from: pos, to: pos + node.nodeSize })(ctx);
+        const prev = index > 0 ? kept[index - 1] : -1;
+        const after = index + 1 < nodes.length ? kept[index + 1] : base.blocks.length;
+        // A new block alone between two keeps one old block apart is that old block, rewritten.
+        const replaces =
+          prev !== null && after !== null && after - prev === 2 ? prev + 1 : undefined;
+        items.push({ kind: 'new', source, replaces });
+      }
       pos += node.nodeSize;
     }
 

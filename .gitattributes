@@ -1,3 +1,4 @@
 * text=auto eol=lf
 *.png binary
 *.ico binary
+test/e2e/fixtures/plan/fidelity-crlf.md -text
