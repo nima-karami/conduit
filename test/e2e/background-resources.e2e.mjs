@@ -96,6 +96,26 @@ runScenario('background-resources', async ({ app, page, log }) => {
       (await app.evaluate(() => globalThis.__resources.calls)) > 0,
       'returning to a hidden session refreshes Git',
     );
+    await page.evaluate((root) => {
+      window.__resourceSearch = undefined;
+      window.agentDeck.subscribe((m) => {
+        if (m.type === 'contentSearchResults' && m.requestId === 98765) window.__resourceSearch = m;
+      });
+      window.agentDeck.post({
+        type: 'contentSearch',
+        root,
+        requestId: 98765,
+        query: { text: 'se+d', regex: true, caseSensitive: false, wholeWord: false },
+      });
+    }, folder);
+    await page.waitForFunction(() => window.__resourceSearch !== undefined, null, {
+      timeout: 10000,
+    });
+    const search = await page.evaluate(() => window.__resourceSearch);
+    assert(
+      !search.error && search.results.length > 0,
+      'packaged regex worker returns file matches',
+    );
     log(
       `eight sessions, one watcher, ${calls} Git commands for shared split demand; background output and wake verified`,
     );

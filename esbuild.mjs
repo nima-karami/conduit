@@ -24,6 +24,14 @@ const preload = {
   external: ['electron'],
 };
 
+const contentSearchWorker = {
+  ...common,
+  entryPoints: ['src/content-search-worker.ts'],
+  outfile: 'out/content-search-worker.js',
+  platform: 'node',
+  format: 'cjs',
+};
+
 // Renderer (React + xterm). Imported CSS is emitted as out/webview.css.
 const web = {
   ...common,
@@ -90,11 +98,15 @@ function writeHtml() {
 
 if (watch) {
   const ctxs = await Promise.all(
-    [main, preload, web, monacoWorker, pdfWorker].map((c) => esbuild.context(c)),
+    [main, preload, web, monacoWorker, pdfWorker, contentSearchWorker].map((c) =>
+      esbuild.context(c),
+    ),
   );
   await Promise.all(ctxs.map((c) => c.watch()));
   writeHtml();
 } else {
-  await Promise.all([main, preload, web, monacoWorker, pdfWorker].map((c) => esbuild.build(c)));
+  await Promise.all(
+    [main, preload, web, monacoWorker, pdfWorker, contentSearchWorker].map((c) => esbuild.build(c)),
+  );
   writeHtml();
 }
