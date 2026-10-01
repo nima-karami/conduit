@@ -51,23 +51,28 @@ afterAll(async () => {
   await new Promise((resolve) => setImmediate(resolve));
 });
 
-async function mount(body: string) {
+async function mount(body: string, readOnly = false) {
   const handle = createRef<PlanEditorHandle>();
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
+  const { PlanDocContext } = await import('../../webview/components/plan-code-block');
   await act(async () => {
     root?.render(
-      createElement(PlanEditor, {
-        ref: handle,
-        body,
-        readOnly: false,
-        fileReadOnly: false,
-        onBody: () => {},
-        onBodyRefused: () => {},
-        onBlockFocus: () => {},
-        agentChanged: new Set<string>(),
-      }),
+      createElement(
+        PlanDocContext.Provider,
+        { value: { root: '', slug: '', readOnly } },
+        createElement(PlanEditor, {
+          ref: handle,
+          body,
+          readOnly,
+          fileReadOnly: readOnly,
+          onBody: () => {},
+          onBodyRefused: () => {},
+          onBlockFocus: () => {},
+          agentChanged: new Set<string>(),
+        }),
+      ),
     );
   });
   for (let i = 0; i < 50 && !host.querySelector('.planflow'); i += 1) {
@@ -154,5 +159,20 @@ describe('PlanFlowBlock undo', () => {
       );
     });
     expect(fence()).toBe('flowchart LR\n  a[Alpha] --> b');
+  });
+
+  it('on a read-only plan Ctrl+Z is still claimed, so no app-wide undo acts on it', async () => {
+    const { el } = await mount('# Plan\n\n```mermaid\nflowchart LR\n  a --> b\n```\n', true);
+    const node = el.querySelector<HTMLElement>('.react-flow__node[data-id="a"]');
+    const press = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      node?.dispatchEvent(press);
+    });
+    expect(press.defaultPrevented).toBe(true);
   });
 });

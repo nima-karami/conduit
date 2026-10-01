@@ -104,9 +104,10 @@ export function PlanFlowBlock() {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || target.closest('input, textarea')) return;
       const key = e.key.toLowerCase();
       const command = key === 'z' ? (e.shiftKey ? redo : undo) : key === 'y' ? redo : null;
-      if (!command || readOnly) return;
+      if (!command) return;
+      // Claimed even when read-only: let through, it reaches the app-wide undo of file operations.
       e.preventDefault();
-      command(view.state, view.dispatch);
+      if (!readOnly) command(view.state, view.dispatch);
     },
     [view, readOnly],
   );

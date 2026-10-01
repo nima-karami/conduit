@@ -13292,7 +13292,14 @@ button.toggle--on .toggle__knob {
   color: var(--text-dim);
   font-size: calc(11px * var(--font-scale));
 }
+/* The outline is a diagram stroke, not panel chrome: --border-2 is near-invisible on Aero's white
+   page, and --text-faint clears 3:1 against the canvas in all three themes. Stroke and fill are
+   properties so the diamond, which paints both on pseudo-elements, follows selection too. */
 .planflow__node {
+  --planflow-stroke: var(--text-faint);
+  --planflow-fill: var(--raise);
+  position: relative;
+  isolation: isolate;
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -13300,9 +13307,9 @@ button.toggle--on .toggle__knob {
   width: 100%;
   height: 100%;
   padding: 0 12px;
-  border: 1px solid var(--border-2);
+  border: 1px solid var(--planflow-stroke);
   border-radius: var(--r-sm);
-  background: var(--raise);
+  background: var(--planflow-fill);
   color: var(--text);
   font-size: calc(12px * var(--font-scale));
 }
@@ -13311,6 +13318,9 @@ button.toggle--on .toggle__knob {
    the shape's meaning, not chrome, so they are fixed geometry rather than the radius tokens — a
    theme that squares its chrome (Neon zeroes --r-card and --r-round) must not erase which node is
    a database and which a decision. */
+.planflow__node--rect {
+  border-radius: 2px;
+}
 .planflow__node--round {
   border-radius: 10px;
 }
@@ -13322,13 +13332,29 @@ button.toggle--on .toggle__knob {
 }
 .planflow__node--subroutine {
   box-shadow:
-    inset 3px 0 0 0 var(--border-2),
-    inset -3px 0 0 0 var(--border-2);
+    inset 3px 0 0 0 var(--planflow-stroke),
+    inset -3px 0 0 0 var(--planflow-stroke);
 }
+/* The box stays the laid-out rectangle so the label is never clipped; the diamond is painted
+   behind it — the stroke polygon, then the fill polygon inset inside it. */
 .planflow__node--diamond {
-  border-width: 2px;
-  border-radius: 10px;
-  corner-shape: bevel;
+  border-color: transparent;
+  background: none;
+}
+.planflow__node--diamond::before,
+.planflow__node--diamond::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+.planflow__node--diamond::before {
+  inset: -1px;
+  background: var(--planflow-stroke);
+}
+.planflow__node--diamond::after {
+  inset: 1px 3px;
+  background: var(--planflow-fill);
 }
 .planflow__node--hexagon {
   border-radius: 16px / 50%;
@@ -13337,11 +13363,11 @@ button.toggle--on .toggle__knob {
 /* The lid of the can: elliptical caps, the top one rimmed. */
 .planflow__node--cylinder {
   border-radius: 50% / 9px;
-  box-shadow: inset 0 5px 0 -3px var(--border-2);
+  box-shadow: inset 0 5px 0 -3px var(--planflow-stroke);
 }
 .planflow__node--selected {
-  border-color: var(--accent);
-  background: var(--state-sel-bg);
+  --planflow-stroke: var(--accent);
+  --planflow-fill: var(--state-sel-bg);
 }
 @media (forced-colors: active) {
   /* Both the accent border and the selected fill are forced flat, so selection rides the width. */

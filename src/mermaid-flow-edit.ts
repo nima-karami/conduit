@@ -209,6 +209,10 @@ class Patch {
   private readonly subMoves: string[] = [];
   /** Every mention carrying a label, per node — a rename rewrites them all (mermaid keeps the last). */
   private readonly labelledSpans = new Map<string, FlowSpan[]>();
+  /** The ids each subgraph's own body lists — the input to mermaid's membership rule. */
+  private readonly listed = new Map<string, Set<string>>();
+  /** Reconnected links that would give an endpoint a new listing; they go to the top level. */
+  private readonly lifted: Line[] = [];
 
   constructor(
     private readonly doc: FlowDoc,
@@ -247,7 +251,12 @@ class Patch {
       reconnected: false,
     }));
     for (const stmt of doc.statements) {
+      if (stmt.kind === 'subgraph' && stmt.scope !== null) {
+        const sub = this.g.subgraphs.find((x) => x.open === stmt.line);
+        if (sub) this.list(stmt.scope, sub.id);
+      }
       if (stmt.kind !== 'chain') continue;
+      if (stmt.scope !== null) for (const id of this.refIds(stmt)) this.list(stmt.scope, id);
       for (const span of stmt.refs) {
         const ref = readFlowRef(this.spanText(span));
         if (!ref || ref.label === null) continue;
@@ -256,6 +265,22 @@ class Patch {
         else this.labelledSpans.set(ref.id, [span]);
       }
     }
+  }
+
+  private list(scope: string, id: string): void {
+    const ids = this.listed.get(scope);
+    if (ids) ids.add(id);
+    else this.listed.set(scope, new Set([id]));
+  }
+
+  /** Mermaid's owner of `id`: the earliest-closed live subgraph whose body lists it. */
+  private ownerOf(id: string): string | null {
+    let owner: SubState | null = null;
+    for (const s of this.subs.values()) {
+      if (s.removed || !s.input || !this.listed.get(s.id)?.has(id)) continue;
+      if (!owner?.input || s.input.close < owner.input.close) owner = s;
+    }
+    return owner?.id ?? null;
   }
 
   private spanText(s: FlowSpan): string {
@@ -486,8 +511,13 @@ class Patch {
       refuse('conflict');
     this.dropIncident(id);
     s.removed = true;
-    for (const n of this.nodes.values()) if (n.parent === id) n.parent = s.parent;
-    for (const c of this.subs.values()) if (c.parent === id) c.parent = s.parent;
+    // Its body lines stay, now in the scope its header was written in; who owns its members is
+    // mermaid's rule again, not simply its parent (a sibling listing a member can claim it).
+    const lexical = this.doc.statements[s.input.open].scope;
+    if (lexical !== null) for (const x of this.listed.get(id) ?? []) this.list(lexical, x);
+    this.listed.delete(id);
+    for (const n of this.nodes.values()) if (n.parent === id) n.parent = this.ownerOf(n.id);
+    for (const c of this.subs.values()) if (c.parent === id) c.parent = this.ownerOf(c.id);
     this.changed = true;
   }
 
@@ -720,14 +750,18 @@ class Patch {
     for (const f of frags) {
       if ('reconnect' in f) {
         const st = this.edges[links[f.reconnect]];
-        out.push(
-          line(
-            `${st.source} ${linkOut(f.reconnect)} ${st.target}`,
-            [links[f.reconnect]],
-            [st.source, st.target],
-            [],
-          ),
+        const l = line(
+          `${st.source} ${linkOut(f.reconnect)} ${st.target}`,
+          [links[f.reconnect]],
+          [st.source, st.target],
+          [],
         );
+        // Written in a subgraph, a new endpoint would be listed there and could change owner;
+        // at the top level a mention confers nothing.
+        const listing = scope === null ? null : this.listed.get(scope);
+        if (listing !== null && ![st.source, st.target].every((id) => listing?.has(id)))
+          this.lifted.push({ ...l, scope: null });
+        else out.push(l);
         continue;
       }
       if (f.to === f.from) {
@@ -887,6 +921,7 @@ class Patch {
       });
       for (const line of [...this.relocated.keys()].sort((a, b) => a - b))
         for (const l of this.relocated.get(line) ?? []) out.push({ ...l, indent: top });
+      for (const l of this.lifted) out.push({ ...l, indent: top });
       for (const e of this.newEdges)
         out.push(
           bare(

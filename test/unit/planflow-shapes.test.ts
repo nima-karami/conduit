@@ -35,4 +35,26 @@ describe('flow editor node shapes', () => {
     const unique = new Set(drawn.map(([, css]) => css));
     expect(unique.size).toBe(SHAPES.length);
   });
+
+  it('rect is nearly square-cornered and round clearly rounded, in every theme', () => {
+    const radius = (shape: FlowShape) => /border-radius:\s*(\d+)px/.exec(treatment(shape))?.[1];
+    expect(Number(radius('rect'))).toBeLessThanOrEqual(3);
+    expect(Number(radius('round'))).toBeGreaterThanOrEqual(8);
+  });
+
+  it('the diamond is a true diamond drawn behind an upright, unclipped label', () => {
+    const pseudo = (which: string) =>
+      new RegExp(`\\.planflow__node--diamond::${which}[^{]*\\{([^}]*)\\}`).exec(CSS)?.[1] ?? '';
+    expect(pseudo('before')).toMatch(
+      /clip-path:\s*polygon\(50% 0%?, 100% 50%, 50% 100%, 0%? 50%\)/,
+    );
+    expect(treatment('diamond')).not.toMatch(/clip-path|rotate/);
+  });
+
+  it('node outlines use a stroke strong enough to read on the canvas, not the faint border tiers', () => {
+    const base = /(?:^|[}/])\s*\.planflow__node\s*\{([^}]*)\}/.exec(CSS)?.[1] ?? '';
+    const stroke = /--planflow-stroke:\s*var\((--[a-z0-9-]+)\)/.exec(base)?.[1];
+    expect(stroke).toBeDefined();
+    expect(['--border', '--border-2']).not.toContain(stroke);
+  });
 });

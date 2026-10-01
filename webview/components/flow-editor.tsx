@@ -352,7 +352,19 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const rf = useReactFlow();
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [editing, setEditing] = useState<Editing>(null);
+  // An edit addresses the graph it was opened on — an edge by its index — so a fence that changes
+  // underneath (an agent's write) ends it rather than redirecting it to whatever took that index.
+  const [editState, setEditState] = useState<{
+    target: NonNullable<Editing>;
+    graph: FlowGraph;
+  } | null>(null);
+  const graphRef = useRef(graph);
+  graphRef.current = graph;
+  const editing: Editing = editState?.graph === graph ? editState.target : null;
+  const setEditing = useCallback(
+    (target: Editing) => setEditState(target === null ? null : { target, graph: graphRef.current }),
+    [],
+  );
   const [picker, setPicker] = useState<Picker>(null);
   const [announcement, setAnnouncement] = useState('');
   // Drag offsets are keyed to the graph they were made against, so a graph edit drops them in the
@@ -443,7 +455,7 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
       was.kind === 'node'
         ? `.react-flow__node[data-id="${CSS.escape(was.id)}"]`
         : `.react-flow__edge[data-id="e${was.index}"]`;
-  }, []);
+  }, [setEditing]);
 
   useEffect(() => {
     const selector = refocusRef.current;
@@ -458,6 +470,8 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
 
   const commitNodeName = useCallback(
     (id: string, label: string) => {
+      const was = editingRef.current;
+      if (was?.kind !== 'node' || was.id !== id) return;
       stopEditing();
       apply([{ op: 'renameNode', id, label: label.trim() || id }], `Renamed ${id}`);
     },
@@ -466,6 +480,8 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
 
   const commitEdgeLabel = useCallback(
     (id: string, label: string) => {
+      const was = editingRef.current;
+      if (was?.kind !== 'edge' || `e${was.index}` !== id) return;
       stopEditing();
       const index = Number(id.slice(1));
       const e = graph.edges[index];
@@ -483,7 +499,7 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
       const index = Number(id.slice(1));
       if (!readOnly && graph.edges[index]) setEditing({ kind: 'edge', index });
     },
-    [readOnly, graph],
+    [readOnly, graph, setEditing],
   );
 
   const rfNodes = useMemo(() => {
@@ -765,7 +781,7 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
         }),
       });
     },
-    [readOnly, apply, openPicker, pickerAnchorFor],
+    [readOnly, apply, openPicker, pickerAnchorFor, setEditing],
   );
 
   const openEdgeMenu = useCallback(
@@ -786,7 +802,7 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
         }),
       });
     },
-    [readOnly, graph, apply],
+    [readOnly, graph, apply, setEditing],
   );
 
   const openPaneMenu = useCallback(
@@ -874,7 +890,7 @@ function FlowEditorSurface({ graph, onEdits, readOnly, onEditAsText, onLeave }: 
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [readOnly, graph, openPicker]);
+  }, [readOnly, graph, openPicker, setEditing]);
 
   // Spec §10: Esc leaves the diagram in one keystroke, wherever inside it focus happens to be.
   // Read-only is no exception — the canvas is still navigable there.

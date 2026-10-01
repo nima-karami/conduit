@@ -469,6 +469,60 @@ describe('applyFlowEdits — node and edge edits', () => {
   });
 });
 
+describe('applyFlowEdits — reconnect across subgraphs', () => {
+  const parents = (r: ReturnType<typeof applyFlowEdits>) => {
+    if (!r.ok) throw new Error(`refused: ${r.refusal}`);
+    return Object.fromEntries(r.doc.graph.nodes.map((n) => [n.id, n.parent]));
+  };
+
+  it('a reconnect from inside a subgraph to a top-level node goes to the top level', () => {
+    const r = applyFlowEdits('flowchart LR\n  subgraph S\n    a --> b\n  end\n  c', [
+      { op: 'reconnectEdge', edge: 0, source: 'a', target: 'c' },
+    ]);
+    expect(parents(r)).toEqual({ a: 'S', b: 'S', c: null });
+    expect(r.ok && r.source).toBe(
+      'flowchart LR\n  subgraph S\n    a\n    b\n  end\n  c\n  a --> c',
+    );
+  });
+
+  it('a reconnect from one subgraph to a node in another keeps both memberships', () => {
+    const r = applyFlowEdits(
+      'flowchart LR\n  subgraph S\n    a --> b\n  end\n  subgraph T\n    t\n  end',
+      [{ op: 'reconnectEdge', edge: 0, source: 'a', target: 't' }],
+    );
+    expect(parents(r)).toEqual({ a: 'S', b: 'S', t: 'T' });
+  });
+
+  it('a top-level reconnect onto a node in a subgraph stays where it is', () => {
+    const r = applyFlowEdits('flowchart LR\n  subgraph S\n    s\n  end\n  a --> b', [
+      { op: 'reconnectEdge', edge: 0, source: 'a', target: 's' },
+    ]);
+    expect(parents(r)).toEqual({ s: 'S', a: null, b: null });
+    expect(r.ok && r.source).toBe('flowchart LR\n  subgraph S\n    s\n  end\n  a --> s\n  b');
+  });
+
+  it('the fidelity corpus: w1 -.-> w2 reconnected to db', () => {
+    const r = applyFlowEdits(FIDELITY, [
+      { op: 'reconnectEdge', edge: 5, source: 'w1', target: 'db' },
+    ]);
+    expect(parents(r)).toMatchObject({ w1: 'workers', w2: 'workers', db: null });
+  });
+});
+
+describe('applyFlowEdits — removeSubgraph follows mermaid membership', () => {
+  it('a member also listed in a sibling goes to that sibling', () => {
+    const r = applyFlowEdits(
+      'flowchart LR\n  subgraph S\n    a\n  end\n  subgraph T\n    a --> b\n  end',
+      [{ op: 'removeSubgraph', id: 'S' }],
+    );
+    if (!r.ok) throw new Error(r.refusal);
+    expect(Object.fromEntries(r.doc.graph.nodes.map((n) => [n.id, n.parent]))).toEqual({
+      a: 'T',
+      b: 'T',
+    });
+  });
+});
+
 describe('applyFlowEdits — subgraph edits', () => {
   const TWO =
     'flowchart LR\n  subgraph s [S]\n    a --> b[Bee]\n  end\n  subgraph t [T]\n    c\n  end';

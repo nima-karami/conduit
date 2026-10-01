@@ -143,4 +143,31 @@ describe('FlowEditor rendering and focus', () => {
     expect(onEdits).not.toHaveBeenCalled();
     expect(document.activeElement?.getAttribute('data-id')).toBe('a');
   });
+
+  it('an open edit ends, unsaved, when the fence changes underneath it', async () => {
+    const onEdits = vi.fn(() => null);
+    const el = await mount(onEdits);
+    const node = el.querySelector<HTMLElement>('.react-flow__node[data-id="a"]');
+    await act(async () => {
+      node?.focus();
+      node?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    const input = el.querySelector<HTMLInputElement>('.planflow__input');
+    if (!input) throw new Error('no rename input');
+    await typeInto(input, 'Typed');
+
+    await act(async () => {
+      root?.render(
+        createElement(FlowEditor, {
+          graph: graphOf('flowchart LR\n  b --> a'),
+          onEdits,
+          readOnly: false,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(el.querySelector('.planflow__input')).toBeNull();
+    expect(onEdits).not.toHaveBeenCalled();
+  });
 });
