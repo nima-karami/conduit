@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, runScenario } from './harness.mjs';
 
 runScenario('large-folder-tree', async ({ app, page, log }) => {
   const root = mkdtempSync(join(tmpdir(), 'conduit-large-tree-'));
@@ -54,7 +54,8 @@ runScenario('large-folder-tree', async ({ app, page, log }) => {
     assert(pulse.gap < 1000, `host stayed responsive; largest timer gap ${pulse.gap}ms`);
     log(`24 nested repos and 24 source files found; largest host timer gap ${pulse.gap}ms`);
   } finally {
-    await app.evaluate(() => clearInterval(globalThis.__treeTimer));
-    rmSync(root, { recursive: true, force: true });
+    await closeApp(app, page);
+    await app.close();
+    rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });

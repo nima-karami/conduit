@@ -6,7 +6,7 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
-## [0.45.1] — 2026-10-01
+## [0.45.2] — 2026-10-01
 
 ### Added
 - **Unsaved files are never dropped on the way out.** Quitting, closing a window, relaunching for
