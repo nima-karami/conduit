@@ -331,11 +331,29 @@ try {
   const relabelBatch = async () => {
     const label = page.locator('.planflow__edge-label:visible', { hasText: 'batch' }).first();
     await label.waitFor({ state: 'visible', timeout: 6000 });
+    // The diagram sits below the plan's prose, so it may open beneath the fold.
+    await label.scrollIntoViewIfNeeded();
     const box = await label.boundingBox();
     assert(box !== null, 'the "batch" edge label must have a box on screen');
-    await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    const hit = await page.evaluate(
+      ([px, py]) => {
+        const el = document.elementFromPoint(px, py);
+        return el ? `${el.tagName}.${el.className}` : 'nothing';
+      },
+      [x, y],
+    );
+    await page.mouse.dblclick(x, y);
     const input = page.locator('.planflow__edge-input:visible').first();
-    await input.waitFor({ state: 'visible', timeout: 4000 });
+    const editing = await input
+      .waitFor({ state: 'visible', timeout: 4000 })
+      .then(() => true)
+      .catch(() => false);
+    assert(
+      editing,
+      `double-clicking the "batch" label must open its input; the point hit ${hit}, focus is on ${await page.evaluate(() => `${document.activeElement?.tagName}.${document.activeElement?.className}`)}`,
+    );
     await page.keyboard.press('Control+A');
     await page.keyboard.type('load');
     await page.keyboard.press('Enter');
@@ -357,6 +375,7 @@ try {
   );
   log(`edge relabel changed exactly one line, in ${wroteRelabel} ms ✓`);
 
+  await page.locator('.planflow__canvas:visible').first().scrollIntoViewIfNeeded();
   const fidelityPane = await clearPanePoint();
   assert(fidelityPane !== null, 'the fidelity canvas must have a point clear of its nodes');
   await page.mouse.click(fidelityPane.x, fidelityPane.y, { button: 'right' });
