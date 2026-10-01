@@ -24,9 +24,9 @@ const REPO_SCAN_CAP = 200;
 const slash = (p: string): string => p.replace(/\\/g, '/');
 
 /** A `.git` dir OR file marks a repo (the file form covers submodules / linked worktrees). */
-function isRepoRoot(dir: string): boolean {
+async function isRepoRoot(dir: string): Promise<boolean> {
   try {
-    fs.statSync(path.join(dir, '.git'));
+    await fs.promises.stat(path.join(dir, '.git'));
     return true;
   } catch {
     return false;
@@ -53,18 +53,18 @@ export async function detectRepos(
     return rel === '' ? '.' : rel;
   };
 
-  const walk = (dir: string, depth: number) => {
+  const walk = async (dir: string, depth: number): Promise<void> => {
     if (out.length >= cap) return;
     let real: string;
     try {
-      real = fs.realpathSync(dir);
+      real = await fs.promises.realpath(dir);
     } catch {
       return;
     }
     if (seen.has(real)) return; // symlink-cycle guard
     seen.add(real);
 
-    if (isRepoRoot(dir)) {
+    if (await isRepoRoot(dir)) {
       const abs = path.resolve(dir);
       out.push({ root: slash(abs), name: nameFor(abs) });
       return; // do not descend into a found repo
@@ -73,18 +73,18 @@ export async function detectRepos(
 
     let entries: fs.Dirent[];
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
     for (const e of entries) {
       if (out.length >= cap) return;
       if (!e.isDirectory() || IGNORED_DIRS.has(e.name)) continue;
-      walk(path.join(dir, e.name), depth + 1);
+      await walk(path.join(dir, e.name), depth + 1);
     }
   };
 
-  walk(openedRoot, 0);
+  await walk(openedRoot, 0);
   return out;
 }
 

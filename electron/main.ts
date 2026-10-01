@@ -34,7 +34,7 @@ import { loadAgents, readBlob, readFileState } from '../src/config';
 import { searchContentFs } from '../src/content-search-fs';
 import { decideCrashRecovery } from '../src/crash-recovery';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
-import { indexToSearchHits, walkFiles } from '../src/file-search';
+import { indexToSearchHits, walkFilesAsync } from '../src/file-search';
 import {
   parseWriteOptions,
   readDiffReply,
@@ -156,6 +156,7 @@ import {
 } from '../src/repo-history';
 import { repoRelPath } from '../src/repo-rel';
 import { detectRepos, scanSessionRepos } from '../src/repo-scan';
+import { createRepoScanScheduler } from '../src/repo-scan-scheduler';
 import { revealActionFor } from '../src/reveal-action';
 import {
   contentHash,
@@ -484,7 +485,10 @@ async function projectFileIndexMeta(
     // A generous cap for the non-git fallback: this index also backs the source index for
     // go-to-definition, and the search-sized default truncated deep source directories out
     // of it (they were never even offered to selectIndexHits).
-    files = walkFiles(root, 20000).map((h) => ({ rel: h.rel, abs: h.abs.replace(/\\/g, '/') }));
+    files = (await walkFilesAsync(root, 20000)).map((h) => ({
+      rel: h.rel,
+      abs: h.abs.replace(/\\/g, '/'),
+    }));
   }
   fileIndexCache.set(root, { files, at: Date.now(), fromGit });
   return { files, fromGit };
@@ -1260,25 +1264,17 @@ app.whenReady().then(() => {
   const gitWatchers = new Map<string, Map<string, fs.FSWatcher>>();
 
   // Multi-repo: debounced sub-repo scan per session (re-detect on open + project changes).
-  const repoScanDebounce = new Map<string, ReturnType<typeof setTimeout>>();
-  const scheduleRepoScan = (sessionId: string) => {
-    const existing = repoScanDebounce.get(sessionId);
-    if (existing) clearTimeout(existing);
-    repoScanDebounce.set(
-      sessionId,
-      setTimeout(async () => {
-        repoScanDebounce.delete(sessionId);
-        const s = mgr.get(sessionId);
-        if (!s) return;
-        try {
-          const repos = await scanSessionRepos(s, { detect: detectRepos, enclosing: repoTopLevel });
-          if (mgr.setRepos(sessionId, repos)) scheduleGitRefresh(sessionId);
-        } catch (e) {
-          log.error('repo', `scan failed for ${sessionId}: ${String(e)}`);
-        }
-      }, 150),
-    );
-  };
+  const repoScanner = createRepoScanScheduler({
+    scan: async (sessionId) => {
+      const s = mgr.get(sessionId);
+      return s ? scanSessionRepos(s, { detect: detectRepos, enclosing: repoTopLevel }) : [];
+    },
+    apply: (sessionId, repos) => {
+      if (mgr.setRepos(sessionId, repos)) scheduleGitRefresh(sessionId);
+    },
+    onError: (sessionId, e) => log.error('repo', `scan failed for ${sessionId}: ${String(e)}`),
+  });
+  const scheduleRepoScan = (sessionId: string) => repoScanner.schedule(sessionId);
 
   // Re-sync the HEAD watches each interrogation so they always track the CURRENT repos'
   // HEADs (a worktree/branch switch re-points the git-dir). Best-effort: if fs.watch throws,
@@ -2496,11 +2492,7 @@ app.whenReady().then(() => {
     timers.onSessionDisposed(id);
     limitEpisodes.delete(id);
     if (limitOffer?.sessionId === id) limitOffer = null;
-    const repoTimer = repoScanDebounce.get(id);
-    if (repoTimer) {
-      clearTimeout(repoTimer);
-      repoScanDebounce.delete(id);
-    }
+    repoScanner.forget(id);
     // T2: the session is gone — drop its scrollback ring/timer and delete the file so
     // userData doesn't accumulate orphans. Best-effort, ENOENT-tolerant.
     scrollbacks.delete(id);

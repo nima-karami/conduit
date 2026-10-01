@@ -1,13 +1,19 @@
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { type DetectedRepo, detectRepos, scanSessionRepos } from '../../src/repo-scan';
 import type { Session } from '../../src/types';
 
+const trees: string[] = [];
 function tmp(): string {
-  return mkdtempSync(join(tmpdir(), 'reposcan-'));
+  const root = mkdtempSync(join(tmpdir(), 'reposcan-'));
+  trees.push(root);
+  return root;
 }
+afterEach(() => {
+  for (const root of trees.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 // `detectRepos` only checks for a `.git` entry, so a bare `.git` dir is enough — no need to
 // shell out to real `git init` (that flakes under parallel-vitest contention).
 function gitInit(dir: string) {
@@ -15,6 +21,24 @@ function gitInit(dir: string) {
 }
 
 describe('detectRepos', () => {
+  it('allows host timers to run while scanning a wide tree', async () => {
+    const root = tmp();
+    try {
+      for (let i = 0; i < 300; i++)
+        mkdirSync(join(root, `group-${i}`, 'empty'), { recursive: true });
+      gitInit(join(root, 'repo'));
+      let responsive = false;
+      const tick = setTimeout(() => {
+        responsive = true;
+      }, 0);
+      const repos = await detectRepos(root);
+      clearTimeout(tick);
+      expect(responsive).toBe(true);
+      expect(repos.map((r) => r.name)).toEqual(['repo']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   it('finds direct-child repos and names them relative to the opened root', async () => {
     const root = tmp();
     gitInit(join(root, 'repo-a'));

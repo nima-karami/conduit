@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.45.1] — 2026-10-01
+
 ### Added
 - **Unsaved files are never dropped on the way out.** Quitting, closing a window, relaunching for
   an update, and closing or moving a session now ask to save unsaved files: **Save All**,
@@ -27,6 +29,9 @@ All notable user-facing changes to Conduit. Format follows
   label or style is now allowed.
 
 ### Fixed
+- **Large folder trees stay responsive while opening a session.** Repository discovery and
+  file indexing now read directories asynchronously, so opening a parent folder containing
+  many repositories no longer blocks terminals, clicks, and other host work during the scan.
 - **A setting changed just before quitting is kept.** A change made in the last quarter second
   before quitting or closing the window, such as a newly recorded shortcut, could be lost and
   back at its old value on the next launch.

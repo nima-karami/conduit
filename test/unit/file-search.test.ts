@@ -1,12 +1,18 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { indexToSearchHits, SEARCH_IGNORE, walkFiles } from '../../src/file-search';
+import { afterEach, describe, expect, it } from 'vitest';
+import { indexToSearchHits, SEARCH_IGNORE, walkFiles, walkFilesAsync } from '../../src/file-search';
 import type { IndexedFile } from '../../src/path-resolve';
+
+const trees: string[] = [];
+afterEach(() => {
+  for (const root of trees.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
 
 function tmpTree(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fsearch-'));
+  trees.push(root);
   fs.mkdirSync(path.join(root, 'src'));
   fs.mkdirSync(path.join(root, 'node_modules', 'pkg'), { recursive: true });
   fs.writeFileSync(path.join(root, 'README.md'), '#');
@@ -17,6 +23,23 @@ function tmpTree(): string {
 }
 
 describe('walkFiles', () => {
+  it('the async host walk stays responsive and preserves the search results', async () => {
+    const root = tmpTree();
+    try {
+      for (let i = 0; i < 300; i++) fs.mkdirSync(path.join(root, `empty-${i}`));
+      let responsive = false;
+      const tick = setTimeout(() => {
+        responsive = true;
+      }, 0);
+      const hits = await walkFilesAsync(root);
+      clearTimeout(tick);
+      expect(responsive).toBe(true);
+      expect(hits).toEqual(walkFiles(root));
+      expect(await walkFilesAsync(root, 2)).toEqual(walkFiles(root, 2));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
   it('lists files recursively with forward-slash rel paths', () => {
     const root = tmpTree();
     const rels = walkFiles(root)

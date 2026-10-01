@@ -28,17 +28,46 @@ export function walkFiles(
   readdir: (p: string) => fs.Dirent[] = (p) => fs.readdirSync(p, { withFileTypes: true }),
   ignore: ReadonlySet<string> = SEARCH_IGNORE,
 ): SearchHit[] {
-  const hits: SearchHit[] = [];
-  const queue: string[] = [root];
-  while (queue.length && hits.length < cap) {
-    const dir = queue.shift();
-    if (dir === undefined) break;
+  const walk = fileWalk(root, cap, ignore);
+  let step = walk.next();
+  while (!step.done) {
     let entries: fs.Dirent[];
     try {
-      entries = readdir(dir);
+      entries = readdir(step.value);
     } catch {
-      continue;
+      entries = [];
     }
+    step = walk.next(entries);
+  }
+  return step.value;
+}
+
+export async function walkFilesAsync(root: string, cap = DEFAULT_CAP): Promise<SearchHit[]> {
+  const walk = fileWalk(root, cap, SEARCH_IGNORE);
+  let step = walk.next();
+  while (!step.done) {
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(step.value, { withFileTypes: true });
+    } catch {
+      entries = [];
+    }
+    step = walk.next(entries);
+  }
+  return step.value;
+}
+
+function* fileWalk(
+  root: string,
+  cap: number,
+  ignore: ReadonlySet<string>,
+): Generator<string, SearchHit[], fs.Dirent[]> {
+  const hits: SearchHit[] = [];
+  const queue: string[] = [root];
+  for (let next = 0; next < queue.length && hits.length < cap; next++) {
+    const dir = queue[next];
+    if (dir === undefined) break;
+    const entries = yield dir;
     for (const e of entries) {
       const abs = path.join(dir, e.name);
       if (e.isDirectory()) {
