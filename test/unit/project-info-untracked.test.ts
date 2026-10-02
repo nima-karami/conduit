@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { getProjectInfo } from '../../src/project-info';
+import { getProjectInfo, gitChanges } from '../../src/project-info';
 
 // Regression: a brand-new untracked folder must surface each file inside it as its
 // own change, not collapse to a single `folder/` entry (git's default porcelain
@@ -43,4 +43,43 @@ describe('getProjectInfo — untracked folder expansion', () => {
     expect(untracked).not.toContain('feature/');
     expect(untracked).not.toContain('feature');
   });
+});
+
+it('preserves HEAD deletion counts after staged edits and staged deletions with replacements', async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'conduit-deletion-counts-'));
+  const git = (...args: string[]) =>
+    execFileSync('git', args, {
+      cwd: repo,
+      windowsHide: true,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+    });
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    const originals = {
+      'staged edit.txt': 'one\ntwo\n',
+      'staged deletion.txt': 'one\ntwo\nthree',
+      'empty.txt': '',
+      'unicode-é.txt': 'one\r\ntwo',
+    };
+    for (const [name, content] of Object.entries(originals))
+      fs.writeFileSync(path.join(repo, name), content);
+    git('add', '.');
+    git('commit', '-qm', 'seed');
+    fs.writeFileSync(path.join(repo, 'staged edit.txt'), 'replacement\n');
+    git('add', 'staged edit.txt');
+    for (const name of Object.keys(originals)) fs.unlinkSync(path.join(repo, name));
+    git('add', 'staged deletion.txt');
+    fs.writeFileSync(path.join(repo, 'staged deletion.txt'), 'untracked replacement\n');
+    const deleted = (await gitChanges(repo)).filter((change) => change.kind === 'D');
+    expect(deleted.map((change) => [change.path, change.removed]).sort()).toEqual([
+      ['empty.txt', 0],
+      ['staged deletion.txt', 3],
+      ['staged edit.txt', 2],
+      ['unicode-é.txt', 2],
+    ]);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });

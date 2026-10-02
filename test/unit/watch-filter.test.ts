@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { shouldIgnoreWatchPath } from '../../src/watch-filter';
 
 describe('shouldIgnoreWatchPath', () => {
+  it('filters Git noise at any repository depth while preserving meaningful events', () => {
+    for (const prefix of ['', 'repo/', 'group/repo/']) {
+      expect(shouldIgnoreWatchPath(`${prefix}.git/index.lock`)).toBe(true);
+      expect(shouldIgnoreWatchPath(`${prefix}.git/objects/ab/cdef`)).toBe(true);
+      expect(shouldIgnoreWatchPath(`${prefix}.git/logs/HEAD`)).toBe(true);
+      expect(shouldIgnoreWatchPath(`${prefix}.git/worktrees/wt/index.lock`)).toBe(true);
+      expect(shouldIgnoreWatchPath(`${prefix}.git/HEAD`)).toBe(false);
+      expect(shouldIgnoreWatchPath(`${prefix}.git/index`)).toBe(false);
+      expect(shouldIgnoreWatchPath(`${prefix}.git/refs/heads/main`)).toBe(false);
+    }
+  });
   it('reacts to normal source edits', () => {
     expect(shouldIgnoreWatchPath('src/app.ts')).toBe(false);
     expect(shouldIgnoreWatchPath('webview\\components\\x.tsx')).toBe(false);
@@ -17,6 +28,10 @@ describe('shouldIgnoreWatchPath', () => {
     expect(shouldIgnoreWatchPath('packages/a/node_modules/x.js')).toBe(true);
     expect(shouldIgnoreWatchPath('dist/bundle.js')).toBe(true);
     expect(shouldIgnoreWatchPath('coverage/lcov.info')).toBe(true);
+    expect(shouldIgnoreWatchPath('node_modules/pkg/.git/HEAD')).toBe(true);
+    expect(shouldIgnoreWatchPath('dist/vendor/.git/index')).toBe(true);
+    expect(shouldIgnoreWatchPath('.git/refs/heads/build')).toBe(false);
+    expect(shouldIgnoreWatchPath('group/repo/.git/refs/heads/dist')).toBe(false);
   });
 
   it('reacts to meaningful .git files (branch/commit/index)', () => {

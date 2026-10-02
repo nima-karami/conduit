@@ -1,8 +1,9 @@
 import * as fs from 'node:fs';
 import { afterEach, expect, it, vi } from 'vitest';
+import { runGit } from '../../src/git-exec';
 import { getProjectInfo, gitChanges } from '../../src/project-info';
 
-const mock = vi.hoisted(() => ({ active: 0, peak: 0 }));
+const mock = vi.hoisted(() => ({ active: 0, peak: 0, summarize: false }));
 vi.mock('node:fs', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs')>();
   return {
@@ -20,6 +21,8 @@ vi.mock('../../src/git-exec', async (importOriginal) => {
       let stdout = '';
       if (args[0] === 'status')
         stdout = Array.from({ length: 30 }, (_, i) => ` D file${i}.txt\0`).join('');
+      if (mock.summarize && args.includes('--diff-filter=D'))
+        stdout = Array.from({ length: 30 }, (_, i) => `0\t2\tfile${i}.txt\0`).join('');
       if (args[0] === 'show') {
         mock.peak = Math.max(mock.peak, ++mock.active);
         await new Promise((r) => setTimeout(r, 0));
@@ -30,7 +33,20 @@ vi.mock('../../src/git-exec', async (importOriginal) => {
     }),
   };
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  mock.summarize = false;
+  vi.restoreAllMocks();
+  vi.mocked(runGit).mockClear();
+});
+
+it('counts large deletion sets from one HEAD diff rather than one process per file', async () => {
+  mock.summarize = true;
+  const changes = await gitChanges('/repo');
+  expect(changes).toHaveLength(30);
+  expect(changes.every((change) => change.removed === 2)).toBe(true);
+  expect(vi.mocked(runGit).mock.calls.filter(([args]) => args[0] === 'show')).toHaveLength(0);
+  expect(vi.mocked(runGit).mock.calls).toHaveLength(4);
+});
 
 it('bounds deleted-file subprocesses across simultaneous project refreshes', async () => {
   mock.peak = mock.active = 0;

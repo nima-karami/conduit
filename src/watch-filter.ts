@@ -33,8 +33,10 @@ export function shouldIgnoreWatchPath(rel: string): boolean {
   if (segs.length === 0) return false;
   const last = segs[segs.length - 1] ?? '';
 
-  if (segs[0] === '.git') {
-    if (segs[1] === 'objects' || segs[1] === 'logs') return true;
+  const git = segs.indexOf('.git');
+  if (git !== -1) {
+    if (segs.slice(0, git).some((s) => IGNORED_DIR_SEGMENTS.has(s))) return true;
+    if (segs[git + 1] === 'objects' || segs[git + 1] === 'logs') return true;
     if (last.endsWith('.lock') || last.includes('.watchman-cookie-')) return true;
     return false; // HEAD, index, refs/**, MERGE_HEAD, … are meaningful
   }

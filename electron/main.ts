@@ -30,6 +30,7 @@ import { asyncSingleFlight } from '../src/async-singleflight';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
 import { createCloseGuard, createQuitGrant, GRANT_TTL_MS, openWindowIds } from '../src/close-guard';
+import { coalescedRefresh } from '../src/coalesced-refresh';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
 import { loadAgents, readBlob, readFileState } from '../src/config';
 import { searchContentFs } from '../src/content-search-fs';
@@ -2520,6 +2521,26 @@ app.whenReady().then(() => {
     proposalWatcher.watch(p, (kind) => sendProposal(broadcast, p, kind));
   }
 
+  const refreshProject = coalescedRefresh(
+    async (p: string, changesRoot: string | undefined, sessionId: string | undefined) => {
+      const activeRoot = changesRoot ?? p;
+      const info = await getProjectInfo(p, activeRoot);
+      const s = sessionId === undefined ? undefined : mgr.get(sessionId);
+      const repoChanges =
+        s?.repos === undefined
+          ? undefined
+          : await buildRepoChanges({
+              repos: orderRepos(s.repos, s.roots),
+              activeRoot,
+              activeChanges: info.changes,
+              changesFor: gitChanges,
+            });
+      return { ...info, ...(repoChanges === undefined ? {} : { repoChanges }) };
+    },
+    (p, changesRoot, sessionId) =>
+      JSON.stringify([folderKey(p), folderKey(changesRoot ?? p), sessionId]),
+  );
+
   async function sendProject(
     dispatch: Dispatch,
     windowId: number,
@@ -2540,25 +2561,11 @@ app.whenReady().then(() => {
     folders.requestProject(p, sessionId, windowId, !auto);
     const session = () => (sessionId === undefined ? undefined : mgr.get(sessionId));
     try {
-      const activeRoot = changesRoot ?? p;
-      const info = await getProjectInfo(p, activeRoot);
-      const s = session();
-      const repoChanges =
-        s?.repos === undefined
-          ? undefined
-          : await buildRepoChanges({
-              repos: orderRepos(s.repos, s.roots),
-              activeRoot,
-              activeChanges: info.changes,
-              changesFor: gitChanges,
-            });
+      const info = await refreshProject(p, changesRoot, sessionId);
       dispatch({
         type: 'project',
         path: p,
-        changes: info.changes,
-        files: info.files,
-        customizations: info.customizations,
-        ...(repoChanges === undefined ? {} : { repoChanges }),
+        ...info,
         requestId,
       });
     } catch {

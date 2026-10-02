@@ -6,6 +6,16 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.45.6] — 2026-10-01
+
+### Fixed
+- **Nested repository Changes views avoid refresh storms.** Git object, log, and lock events
+  are filtered at every repository depth. Overlapping project refreshes share one fresh
+  follow-up instead of spawning duplicate scans. Meaningful Git and source changes still refresh.
+- **Large deletion sets load faster.** Deleted-file line counts use one HEAD diff per repository,
+  retaining bounded blob reads for paths Git cannot summarize. Added, staged, and modified files
+  keep their existing behavior.
+
 ## [0.45.5] — 2026-10-01
 
 ### Fixed

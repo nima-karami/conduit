@@ -44,6 +44,19 @@ afterEach(() => {
 });
 
 describe('ProjectWatcher', () => {
+  it('filters nested repo Git noise when only the containing workspace is watched', () => {
+    const h = setup();
+    h.pw.setFolders(['/workspace']);
+    h.emit('/workspace', 'group/repo/.git/index.lock');
+    h.emit('/workspace', 'group/repo/.git/objects/ab/cdef');
+    h.emit('/workspace', 'group/repo/.git/logs/HEAD');
+    vi.advanceTimersByTime(300);
+    expect(h.fires).toEqual([]);
+    h.emit('/workspace', 'group/repo/.git/index');
+    h.emit('/workspace', 'group/repo/.git/refs/heads/main');
+    vi.advanceTimersByTime(300);
+    expect(h.fires).toEqual([{ root: '/workspace', folders: ['/workspace'] }]);
+  });
   it('single folder: one watch, one fire per window {root:p, folders:[p]}', () => {
     const h = setup();
     h.pw.setFolders(['C:\\w\\p']);

@@ -189,10 +189,30 @@ export async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
     }
   }
 
-  // Retain counts, not all deleted blobs; the slot pool also covers other project refreshes.
+  // HEAD, rather than index, preserves the count when a staged edit was subsequently deleted.
+  // Aggregate deletions avoid one process per file; unresolved/conflicted paths retain the
+  // bounded blob-read fallback.
+  const deletedStats = needsHead.size
+    ? parseNumstatZ(
+        await run(
+          'git',
+          [
+            'diff',
+            '--numstat',
+            '-z',
+            '--no-renames',
+            '--no-ext-diff',
+            '--no-textconv',
+            '--diff-filter=D',
+            'HEAD',
+          ],
+          cwd,
+        ),
+      )
+    : new Map<string, { added: number; removed: number }>();
   const headLineCounts = new Map<string, number>();
   await mapWithConcurrency([...needsHead], HEAD_CONCURRENCY, async (p) => {
-    headLineCounts.set(p, await deletedFileLines(cwd, p));
+    headLineCounts.set(p, deletedStats.get(p)?.removed ?? (await deletedFileLines(cwd, p)));
   });
 
   // Line-count working-tree files for added/untracked entries — async + streamed + concurrency-
