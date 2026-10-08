@@ -47,3 +47,15 @@ navigation for C# when a server is installed, and nothing new running for inacti
 - Lane B merged into feat/language-support (5dbacf5).
 - Lane A review: REQUEST_CHANGES (blocker: file-service.ts mojibake from PowerShell rewrite; cap race; bare-CR
   golden; tail boundary). Sent back with golden-LSP filter + save-refusal copy (lane A now merges integration first).
+- Lane A re-review APPROVE; two should-fixes (2 MB alloc per read = +55% small-file reads; read-only
+  seed made goldens "unsaved") fixed in d9fe699/db31d3e, conductor read the diff.
+- Lane A merged: 0b34713. FULL `npm run verify` on integrated tree: exit 0.
+- Full remote e2e (--full) on 0b34713 + runtime QA (Opus, real app, 3 themes) dispatched.
+- Release plan: v0.46.0 (minor — new language support).
+- Full remote e2e on 0b34713: 177 PASS / 8 EXCLUDED (pre-existing) / verify job success — run 37821404454.
+- Runtime QA on 0b34713: FAIL — D1 mixed-EOL/bare-CR golden opens dirty (close+quit prompt) despite db31d3e's
+  unit test; e2e AC-A5 never asserted dirty state. Everything else PASS in 3 themes (40 MB log opens ~1.1 s,
+  +18–25 MB). Taste: WARN≈timestamp colour; prose "error" coloured. Sent back for root cause + e2e
+  dirty assertion + T1 (muted timestamps) + T2 (level words only uppercase or level-shaped positions).
+- NOT_COVERED by QA: visible-window FOUC (hidden window paints ~2 fps — same for pre-existing JSON/C#),
+  C# with csharp-ls installed locally (covered by remote e2e csharp-lsp/csharp-lsp-idle).
