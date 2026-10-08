@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   csharpLsInstalled,
+  GREET_CALL,
   lsp,
   READY_CEILING_MS,
   recordTree,
@@ -18,6 +19,7 @@ import {
   survivorsAfter,
   trustViaHost,
   waitCsState,
+  waitDefinition,
   writeCsharpFixture,
 } from './csharp-fixture.mjs';
 import { closeAllDocs, openDoc } from './goto-matrix.mjs';
@@ -39,8 +41,15 @@ runScenario('csharp-lsp-idle', async ({ app, page, log }) => {
 
   await openDoc(app, page, sid, program);
   const live = await waitCsState(page, 'ready', log, READY_CEILING_MS);
+  // Only an answered definition proves the project is loaded — the point at which MSBuild build
+  // hosts exist — so the tree is taken after it, and must hold more than csharp-ls itself.
+  await waitDefinition(page, program, GREET_CALL.line, GREET_CALL.character, log, 90_000);
   const tree = recordTree(live.pid);
   log(`csharp-ls tree: ${tree.map((p) => `${p.name}:${p.pid}`).join(', ')}`);
+  assert(
+    tree.length > 1,
+    `csharp-ls has no descendants after loading the project: ${JSON.stringify(tree)}`,
+  );
 
   await closeAllDocs(page);
   const t0 = Date.now();

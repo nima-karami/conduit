@@ -10,3 +10,5 @@
 - [none] csharp-ls 0.28.0 targets net10.0 only (measured from the nupkg's runtimeconfig), so "the
   runner's preinstalled SDK" was the wrong axis for D1 — pinning the SDK with setup-dotnet, as
   setup-go does for gopls, makes B3/B4 gate instead of becoming exclusions.
+- [none] Known limitation, accepted unfixed by the lane-B review (finding N4): see the review
+  record for its text; the builder's fix brief did not restate it.

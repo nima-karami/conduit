@@ -11,6 +11,12 @@ import { assert } from './harness.mjs';
 export const READY_CEILING_MS = 150_000;
 export const CSHARP_TOOLS = /csharp-ls|dotnet/i;
 
+/** `g.Greet("x")` in Program.cs, 0-based for `lsp:request`. */
+export const GREET_CALL = {
+  line: 7,
+  character: 8 + 'System.Console.WriteLine(g.Greet("x"));'.indexOf('Greet'),
+};
+
 const PROJECT_GUID = '{6F1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D}';
 
 /** `App.sln` → `src/App/App.csproj` → `Program.cs` calling `Greeter.Greet` in `Greeter.cs`. */
@@ -56,9 +62,12 @@ export function writeCsharpFixture(dir) {
 /** csharp-ls loads projects through MSBuild without restoring them; an unrestored SDK project has
  *  no assets file, so restore it up front the way a developer's tree would already be. */
 export function restoreFixture(dir, log) {
-  const r = spawnSync('dotnet', ['restore', join(dir, 'App.sln')], {
+  // No build servers or reused MSBuild nodes: they outlive the restore and would show up as
+  // dotnet processes in the scenarios' process-tree assertions.
+  const r = spawnSync('dotnet', ['restore', join(dir, 'App.sln'), '--disable-build-servers'], {
     encoding: 'utf8',
     timeout: 90_000,
+    env: { ...process.env, MSBUILDDISABLENODEREUSE: '1' },
   });
   log(`dotnet restore → status ${r.status} ${(r.stdout ?? '').trim().split('\n').at(-1) ?? ''}`);
   assert(r.status === 0, `dotnet restore failed: ${r.stderr || r.stdout || r.error}`);
