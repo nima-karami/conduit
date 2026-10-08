@@ -74,6 +74,8 @@ export function ensureTheme(code?: { surfaceColor: string; codeOpacity: number }
       { token: 'log-error', foreground: syn('--syn-error', '#f2837b') },
       { token: 'log-warn', foreground: syn('--syn-warn', '#e8c46a') },
       { token: 'log-info', foreground: syn('--syn-type', '#9db4f0') },
+      // Muted and upright: a timestamp on every line must not compete with the level beside it.
+      { token: 'log-time', foreground: syn('--syn-comment', '#6f748a'), fontStyle: '' },
       // Level words keep their weight and slant: DEBUG/TRACE are words, not comments
       // (spec 2026-10-08-language-support §10).
       { token: 'comment.log', foreground: syn('--syn-comment', '#6f748a'), fontStyle: '' },
