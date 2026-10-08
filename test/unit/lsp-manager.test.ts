@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import {
   ABSENT_TTL_MS,
+  EVICT_EXIT_WAIT_MS,
   HOVER_TIMEOUT_MS,
   IDLE_GRACE_MS,
   INIT_WAIT_SHORT_MS,
@@ -15,7 +16,13 @@ import {
 import { type LspLog, LspRequestError, type LspServerHandle } from '../../electron/lsp-server';
 import type { WatchedChange } from '../../electron/lsp-watcher';
 import type { LspMessage, LspReply, LspServerStatus, LspTrustPrompt } from '../../src/lsp-protocol';
-import { CSHARP_SERVER, GO_SERVER, type LanguageServerSpec } from '../../src/lsp-registry';
+import {
+  CSHARP_SERVER,
+  GO_SERVER,
+  type LanguageServerSpec,
+  type ServerWeight,
+} from '../../src/lsp-registry';
+import { DORMANT_MS, EVICT_MIN_HIDDEN_MS } from '../../src/lsp-residency';
 import { resolveServerRoot } from '../../src/lsp-root';
 import type { TrustStore } from '../../src/workspace-trust';
 
@@ -39,7 +46,9 @@ class FakeServer implements LspServerHandle {
   requests: { method: string; params: unknown; timeoutMs: number }[] = [];
   answers = new Map<string, Answer>();
   cancelled: string[] = [];
-  exited = false;
+  gone = false;
+  readonly exited: Promise<void>;
+  private resolveExited: () => void = () => {};
   stop = vi.fn(async () => {
     this.emitExit(0);
   });
@@ -56,7 +65,13 @@ class FakeServer implements LspServerHandle {
   resolveInitialized: () => void = () => {};
   rejectInitialized: (e: Error) => void = () => {};
 
-  constructor(readonly root: string) {
+  constructor(
+    readonly root: string,
+    readonly binary = '',
+  ) {
+    this.exited = new Promise<void>((res) => {
+      this.resolveExited = res;
+    });
     this.initialized = new Promise<void>((res, rej) => {
       this.resolveInitialized = res;
       this.rejectInitialized = rej;
@@ -108,8 +123,9 @@ class FakeServer implements LspServerHandle {
     for (const cb of this.progressCbs) cb(loading, title);
   }
   emitExit(code: number | null = 1) {
-    if (this.exited) return;
-    this.exited = true;
+    if (this.gone) return;
+    this.gone = true;
+    this.resolveExited();
     for (const r of this.pendingRejects) r(new LspRequestError('server-error', 'exited'));
     for (const cb of this.exitCbs) cb({ code, signal: null, stderrTail: ['boom'] });
   }
@@ -140,11 +156,14 @@ interface Setup {
   targets: Map<string, string>;
   binary: { present: boolean };
   send: (wc: number, epoch: string, msg: LspMessage) => Promise<unknown>;
+  /** Shows the doc first (D7: only a shown doc launches) unless `visible: false`. */
   open: (
     path: string,
     text?: string,
-    o?: { wc?: number; epoch?: string; version?: number; languageId?: string },
+    o?: { wc?: number; epoch?: string; version?: number; languageId?: string; visible?: boolean },
   ) => Promise<unknown>;
+  /** Replaces what one window shows. */
+  show: (paths: string[], o?: { wc?: number; epoch?: string }) => Promise<unknown>;
   req: (
     path: string,
     op: LspMessage<'lsp:request'>['op'],
@@ -194,8 +213,8 @@ function setup(
       platform,
     ),
   );
-  const startServer = vi.fn((x: { root: string }) => {
-    const s = new FakeServer(x.root);
+  const startServer = vi.fn((x: { root: string; spec: LanguageServerSpec }) => {
+    const s = new FakeServer(x.root, x.spec.binary);
     servers.push(s);
     return s;
   });
@@ -230,14 +249,26 @@ function setup(
   const mgr = new LspManager(deps);
   const versions = new Map<string, number>();
   const send = (wc: number, epoch: string, msg: LspMessage) => mgr.handle(wc, { epoch, msg });
-  const open: Setup['open'] = (path, text = 'package main', x = {}) =>
-    send(x.wc ?? 1, x.epoch ?? 'e1', {
+  const shown = new Map<string, string[]>();
+  const show: Setup['show'] = (paths, x = {}) => {
+    const wc = x.wc ?? 1;
+    const epoch = x.epoch ?? 'e1';
+    shown.set(`${wc}:${epoch}`, paths);
+    return send(wc, epoch, { type: 'lsp:visible', paths });
+  };
+  const open: Setup['open'] = (path, text = 'package main', x = {}) => {
+    const wc = x.wc ?? 1;
+    const epoch = x.epoch ?? 'e1';
+    const now = shown.get(`${wc}:${epoch}`) ?? [];
+    if (x.visible !== false && !now.includes(path)) void show([...now, path], { wc, epoch });
+    return send(wc, epoch, {
       type: 'lsp:open',
       path,
       languageId: x.languageId ?? 'go',
       version: x.version ?? 1,
       text,
     });
+  };
   let reqId = 0;
   const req: Setup['req'] = (path, op, x = {}) =>
     send(x.wc ?? 1, x.epoch ?? 'e1', {
@@ -269,6 +300,7 @@ function setup(
     binary,
     send,
     open,
+    show,
     req,
     ready,
     trust,
@@ -973,7 +1005,7 @@ describe('LspManager — restart command', () => {
     expect(await asked).toEqual({ kind: 'unavailable', reason: 'loading-timeout' });
     expect(t.startServer).toHaveBeenCalledTimes(1);
     t.mgr.killAllSync();
-    expect(t.servers.every((s) => s.exited)).toBe(true);
+    expect(t.servers.every((s) => s.gone)).toBe(true);
   });
 
   it('a request that arrives while an ordered stop is in flight is answered by the restarted server (review #4)', async () => {
@@ -1687,5 +1719,371 @@ describe('LspManager — a server with several language ids', () => {
     t.servers[2]?.answers.set('textDocument/hover', () => null);
     t.servers[2]?.resolveInitialized();
     expect(await asked).toEqual({ kind: 'empty', adHocRoot: false });
+  });
+});
+
+describe('LspManager — residency (spec 2026-10-08-language-coverage §2.6)', () => {
+  const spec = (id: string, weight: ServerWeight): LanguageServerSpec => ({
+    ...GO_SERVER,
+    languageIds: [id],
+    binary: id,
+    weight,
+  });
+  const LANGS = {
+    rust: 'heavy',
+    cpp: 'heavy',
+    csharp: 'heavy',
+    go: 'light',
+    python: 'light',
+    shell: 'light',
+    lua: 'light',
+    ruby: 'light',
+  } as const;
+  type Lang = keyof typeof LANGS;
+  const P = Object.fromEntries(Object.keys(LANGS).map((l) => [l, `/w/m/a.${l}`])) as Record<
+    Lang,
+    string
+  >;
+  const mk = (o: { trusted?: string[]; roots?: string[]; files?: string[] } = {}) =>
+    setup({
+      registry: Object.entries(LANGS).map(([id, w]) => spec(id, w)),
+      files: o.files ?? ['/w/m/go.mod', '/w/n/go.mod'],
+      ...(o.trusted ? { trusted: o.trusted } : {}),
+      ...(o.roots ? { roots: o.roots } : {}),
+    });
+  const adv = (ms: number) => vi.advanceTimersByTimeAsync(ms);
+  const srv = (t: Setup, lang: Lang, nth = -1) =>
+    t.servers.filter((s) => s.binary === lang).at(nth) as FakeServer;
+  const started = (t: Setup) => t.servers.map((s) => s.binary);
+  const stateOf = (t: Setup, lang: Lang) =>
+    t.mgr.statuses().find((s) => s.languageId === lang)?.state ?? 'stopped';
+  const logged = (t: Setup, level: 'info' | 'warn', text: string) =>
+    (t.deps.log[level] as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+      String(c[1]).includes(text),
+    ).length;
+  const openDoc = (
+    t: Setup,
+    lang: Lang,
+    o: { visible?: boolean; wc?: number; epoch?: string } = {},
+  ) => t.open(P[lang], `${lang} v1`, { languageId: lang, ...o });
+  /** Window 1 shows `lang` (plus `alsoShow`) and nothing else; its server comes up live. */
+  const bringUp = async (t: Setup, lang: Lang, alsoShow: Lang[] = []) => {
+    await t.show([P[lang], ...alsoShow.map((l) => P[l])]);
+    await openDoc(t, lang);
+    await flush();
+    srv(t, lang).resolveInitialized();
+    await flush();
+  };
+  const holdStop = (s: FakeServer) => {
+    let release: () => void = () => {};
+    s.stop.mockImplementationOnce(
+      () =>
+        new Promise<void>((r) => {
+          release = () => {
+            s.emitExit(0);
+            r();
+          };
+        }),
+    );
+    return () => release();
+  };
+  /** AC-C1's setup: `.rs` shown at t0, `.cpp` at t1, then 61 s — `.rs` hidden 61 s. */
+  const rustHidden61s = async (t: Setup) => {
+    await bringUp(t, 'rust');
+    await adv(1_000);
+    await bringUp(t, 'cpp');
+    await adv(EVICT_MIN_HIDDEN_MS + 1_000);
+  };
+  const showCs = async (t: Setup, also: Lang[] = []) => {
+    await t.show([P.csharp, ...also.map((l) => P[l])]);
+    await openDoc(t, 'csharp');
+    await flush();
+  };
+
+  it('lsp:visible is acknowledged', async () => {
+    const t = mk();
+    expect(await t.show([P.go])).toEqual({ ok: true });
+  });
+
+  it('an invisible open registers the doc but starts nothing; showing it launches', async () => {
+    const t = mk();
+    expect(await openDoc(t, 'go', { visible: false })).toEqual({
+      serverKey: 'go:/w/m',
+      state: 'stopped',
+    });
+    await adv(5_000);
+    expect(t.startServer).not.toHaveBeenCalled();
+    expect(t.mgr.statuses()).toEqual([]);
+    await t.show([P.go]);
+    await flush();
+    expect(started(t)).toEqual(['go']);
+    srv(t, 'go').resolveInitialized();
+    await flush();
+    expect(srv(t, 'go').opened()).toEqual(['file:///w/m/a.go']);
+  });
+
+  it('a doc shown before its open launches on the open', async () => {
+    const t = mk();
+    await t.show([P.go]);
+    await flush();
+    expect(t.startServer).not.toHaveBeenCalled();
+    await openDoc(t, 'go');
+    await flush();
+    expect(started(t)).toEqual(['go']);
+  });
+
+  it('a request on an invisible doc launches, also with a cached resolve', async () => {
+    const t = mk();
+    await openDoc(t, 'go', { visible: false });
+    const first = t.req(P.go, 'definition');
+    await flush();
+    expect(started(t)).toEqual(['go']);
+    srv(t, 'go').answers.set('textDocument/definition', () => DEF);
+    srv(t, 'go').resolveInitialized();
+    expect((await first).kind).toBe('locations');
+    await adv(DORMANT_MS);
+    expect(srv(t, 'go').stop).toHaveBeenCalledTimes(1);
+    expect(stateOf(t, 'go')).toBe('stopped');
+    const second = t.req(P.go, 'definition');
+    await flush();
+    expect(started(t)).toEqual(['go', 'go']);
+    expect(t.resolveBinary).toHaveBeenCalledTimes(1);
+    srv(t, 'go').answers.set('textDocument/definition', () => DEF);
+    srv(t, 'go').resolveInitialized();
+    expect((await second).kind).toBe('locations');
+  });
+
+  it('absent and restricted launches evict nothing', async () => {
+    const t = mk({ roots: ['/w', '/v'], files: ['/w/m/go.mod', '/v/go.mod'], trusted: ['/w'] });
+    await rustHidden61s(t);
+    await t.show([]);
+    await adv(EVICT_MIN_HIDDEN_MS + 1_000);
+    t.binary.present = false;
+    await showCs(t);
+    expect(stateOf(t, 'csharp')).toBe('absent');
+    t.binary.present = true;
+    await adv(ABSENT_TTL_MS);
+    await t.show(['/v/a.csharp']);
+    await t.open('/v/a.csharp', 'cs', { languageId: 'csharp' });
+    await flush();
+    expect(t.mgr.statuses().find((s) => s.root === '/v')?.state).toBe('restricted');
+    expect(srv(t, 'rust').stop).not.toHaveBeenCalled();
+    expect(srv(t, 'cpp').stop).not.toHaveBeenCalled();
+    expect(started(t)).toEqual(['rust', 'cpp']);
+  });
+
+  it('trust granted while every doc is hidden launches nothing; showing one does', async () => {
+    const t = mk({ trusted: [] });
+    await openDoc(t, 'go');
+    await flush();
+    expect(stateOf(t, 'go')).toBe('restricted');
+    await t.show([]);
+    const promptId = t.trustPushes.at(-1)?.prompt?.id ?? '';
+    await t.send(1, 'e1', { type: 'lsp:trustAnswer', promptId, choice: 'trust' });
+    await flush();
+    expect(t.startServer).not.toHaveBeenCalled();
+    expect(stateOf(t, 'go')).toBe('stopped');
+    await t.show([P.go]);
+    await flush();
+    expect(started(t)).toEqual(['go']);
+  });
+
+  it('a window closed while its launch resolves the binary spawns nothing', async () => {
+    const t = mk();
+    let release: () => void = () => {};
+    t.resolveBinary.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          release = () => r({ binary: '/bin/go', toolDir: null });
+        }),
+    );
+    await openDoc(t, 'go');
+    await flush();
+    t.mgr.dropWebContents(1);
+    await flush();
+    release();
+    await flush();
+    expect(t.startServer).not.toHaveBeenCalled();
+    const rec = (t.mgr as unknown as { servers: Map<string, { state: string }> }).servers.get(
+      'go:/w/m',
+    );
+    expect(rec?.state).toBe('stopped');
+  });
+
+  it('a third heavy stops the LRU heavy, waits for its exit, then spawns', async () => {
+    const t = mk();
+    await rustHidden61s(t);
+    const rust = srv(t, 'rust');
+    rust.stop.mockImplementationOnce(async () => {});
+    await showCs(t);
+    expect(rust.stop).toHaveBeenCalledTimes(1);
+    expect(srv(t, 'cpp').stop).not.toHaveBeenCalled();
+    expect(started(t)).toEqual(['rust', 'cpp']);
+    rust.emitExit(0);
+    await flush();
+    expect(started(t)).toEqual(['rust', 'cpp', 'csharp']);
+    expect(logged(t, 'warn', 'after eviction')).toBe(0);
+  });
+
+  it('an evictee that never exits holds the launch for EVICT_EXIT_WAIT_MS, then logs once', async () => {
+    const t = mk();
+    await rustHidden61s(t);
+    srv(t, 'rust').stop.mockImplementationOnce(async () => {});
+    await showCs(t);
+    await adv(EVICT_EXIT_WAIT_MS - 1);
+    expect(started(t)).toEqual(['rust', 'cpp']);
+    await adv(1);
+    expect(started(t)).toEqual(['rust', 'cpp', 'csharp']);
+    expect(logged(t, 'warn', 'after eviction')).toBe(1);
+  });
+
+  it('an evictee shown while an earlier eviction is stopping is re-checked and kept', async () => {
+    const t = mk();
+    const order: Lang[] = ['go', 'python', 'rust', 'cpp', 'shell'];
+    for (const [i, lang] of order.entries()) {
+      await bringUp(t, lang, order.slice(0, i));
+      await adv(1_000);
+    }
+    expect(logged(t, 'info', 'over budget')).toBe(1);
+    await t.show([]);
+    await adv(EVICT_MIN_HIDDEN_MS + 1_000);
+    const release = holdStop(srv(t, 'rust'));
+    await showCs(t);
+    expect(srv(t, 'rust').stop).toHaveBeenCalledTimes(1);
+    await t.show([P.csharp, P.go]);
+    release();
+    await flush();
+    expect(srv(t, 'go').stop).not.toHaveBeenCalled();
+    expect(started(t).at(-1)).toBe('csharp');
+    expect(logged(t, 'info', 'over budget')).toBe(1);
+  });
+
+  it('an evictee shown again while it stops is relaunched when the stop ends', async () => {
+    const t = mk();
+    await rustHidden61s(t);
+    const release = holdStop(srv(t, 'rust'));
+    await showCs(t);
+    await t.show([P.csharp, P.rust]);
+    release();
+    await flush();
+    expect(started(t)).toEqual(['rust', 'cpp', 'csharp', 'rust']);
+  });
+
+  it('an evicted server keeps its docs: shown again, it replays the latest unsaved text', async () => {
+    const t = mk();
+    await rustHidden61s(t);
+    await showCs(t);
+    expect(srv(t, 'rust').gone).toBe(true);
+    await t.send(1, 'e1', { type: 'lsp:change', path: P.rust, version: 2, text: 'rust v2' });
+    await t.show([P.rust]);
+    await flush();
+    expect(started(t)).toEqual(['rust', 'cpp', 'csharp', 'rust']);
+    srv(t, 'rust').resolveInitialized();
+    await flush();
+    const open = srv(t, 'rust').notifies.find((n) => n.method === 'textDocument/didOpen');
+    expect(open?.params.textDocument?.text).toBe('rust v2');
+  });
+
+  it('a server hidden < 60 s is kept: the launch goes over budget, logged once', async () => {
+    const t = mk();
+    await bringUp(t, 'rust');
+    await bringUp(t, 'cpp');
+    await showCs(t);
+    expect(started(t)).toEqual(['rust', 'cpp', 'csharp']);
+    expect(srv(t, 'rust').stop).not.toHaveBeenCalled();
+    await t.show(['/w/n/b.rust']);
+    await t.open('/w/n/b.rust', 'r', { languageId: 'rust' });
+    await flush();
+    expect(started(t)).toEqual(['rust', 'cpp', 'csharp', 'rust']);
+    expect(logged(t, 'info', 'over budget')).toBe(1);
+  });
+
+  it('a server with a request in flight is not evicted', async () => {
+    const t = mk();
+    await bringUp(t, 'rust');
+    await bringUp(t, 'cpp');
+    await t.show([]);
+    await adv(EVICT_MIN_HIDDEN_MS + 1_000);
+    const a = t.req(P.rust, 'definition');
+    const b = t.req(P.cpp, 'definition');
+    await flush();
+    await showCs(t);
+    expect(srv(t, 'rust').stop).not.toHaveBeenCalled();
+    expect(srv(t, 'cpp').stop).not.toHaveBeenCalled();
+    expect(started(t).at(-1)).toBe('csharp');
+    await adv(NAV_TIMEOUT_MS);
+    await Promise.all([a, b]);
+  });
+
+  it('dormancy: hidden and idle for DORMANT_MS stops it; a change re-arms the clock', async () => {
+    const t = mk();
+    await bringUp(t, 'go');
+    await t.show([]);
+    await adv(DORMANT_MS / 2);
+    await t.send(1, 'e1', { type: 'lsp:change', path: P.go, version: 2, text: 'go v2' });
+    await adv(DORMANT_MS / 2 + 1);
+    expect(srv(t, 'go').stop).not.toHaveBeenCalled();
+    await adv(DORMANT_MS / 2);
+    expect(srv(t, 'go').stop).toHaveBeenCalledTimes(1);
+    expect(stateOf(t, 'go')).toBe('stopped');
+  });
+
+  it('a dormant server shown again while it stops is relaunched', async () => {
+    const t = mk();
+    await bringUp(t, 'go');
+    await t.show([]);
+    const release = holdStop(srv(t, 'go'));
+    await adv(DORMANT_MS);
+    expect(srv(t, 'go').stop).toHaveBeenCalledTimes(1);
+    await t.show([P.go]);
+    release();
+    await flush();
+    expect(started(t)).toEqual(['go', 'go']);
+  });
+
+  it('visibility is the union across windows; a dropped or minimized window shows nothing', async () => {
+    const t = mk();
+    await openDoc(t, 'go', { wc: 1, epoch: 'a', visible: false });
+    await openDoc(t, 'go', { wc: 2, epoch: 'b', visible: false });
+    await flush();
+    expect(t.startServer).not.toHaveBeenCalled();
+    await t.show([P.go], { wc: 2, epoch: 'b' });
+    await flush();
+    srv(t, 'go').resolveInitialized();
+    await t.show([], { wc: 1, epoch: 'a' });
+    await adv(DORMANT_MS);
+    expect(srv(t, 'go').stop).not.toHaveBeenCalled();
+    t.mgr.setWindowMinimized(2, true);
+    await adv(DORMANT_MS);
+    expect(srv(t, 'go').stop).toHaveBeenCalledTimes(1);
+    t.mgr.setWindowMinimized(2, false);
+    await flush();
+    expect(started(t)).toEqual(['go', 'go']);
+    srv(t, 'go').resolveInitialized();
+    await flush();
+    t.mgr.dropWebContents(2);
+    await adv(DORMANT_MS);
+    expect(srv(t, 'go').stop).toHaveBeenCalledTimes(1);
+    t.mgr.setWindowMinimized(5, true);
+    t.mgr.dropWebContents(5);
+    expect((t.mgr as unknown as { minimized: Set<number> }).minimized.has(5)).toBe(false);
+  });
+
+  it('two launches at once over the total cap never exceed it (one launch queue)', async () => {
+    const t = mk();
+    for (const lang of ['go', 'python', 'shell', 'lua'] as const) {
+      await bringUp(t, lang);
+      await adv(1_000);
+    }
+    await t.show([]);
+    await adv(EVICT_MIN_HIDDEN_MS + 1_000);
+    await t.show([P.ruby, P.csharp]);
+    await Promise.all([openDoc(t, 'ruby'), openDoc(t, 'csharp')]);
+    await flush();
+    expect(started(t).slice(4).sort()).toEqual(['csharp', 'ruby']);
+    expect(t.servers.filter((s) => !s.gone)).toHaveLength(4);
+    expect(srv(t, 'go').stop).toHaveBeenCalled();
+    expect(srv(t, 'python').stop).toHaveBeenCalled();
+    expect(srv(t, 'lua').stop).not.toHaveBeenCalled();
   });
 });

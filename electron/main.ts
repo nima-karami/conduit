@@ -4715,8 +4715,17 @@ app.whenReady().then(() => {
         broadcastWinList?.();
       },
     });
-    w.on('minimize', () => gitDemand.setSuspended(w.id, true));
-    w.on('restore', () => gitDemand.setSuspended(w.id, false));
+    // The webContents is destroyed with the window, so the id is captured now; its minimized
+    // entry is dropped by the LSP channel's `destroyed` → dropWebContents.
+    const wcId = w.webContents.id;
+    w.on('minimize', () => {
+      gitDemand.setSuspended(w.id, true);
+      lspManager.setWindowMinimized(wcId, true);
+    });
+    w.on('restore', () => {
+      gitDemand.setSuspended(w.id, false);
+      lspManager.setWindowMinimized(wcId, false);
+    });
     log.info('window', 'create', { windowId: w.id });
     closeGuard.onWindowCreated(w.id);
     broadcastWinList?.();

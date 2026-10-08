@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
+  LSP_VISIBLE_MAX,
   type LspMessage,
   type LspResult,
   parseLspEnvelope,
@@ -30,8 +31,35 @@ describe('parseLspMessage', () => {
       { type: 'lsp:trustRequest', path: '/w/m/a.go', languageId: 'go' },
       { type: 'lsp:trustAnswer', promptId: 'p1', choice: 'trustParent' },
       { type: 'lsp:trustRevoke', path: 'C:\\w' },
+      { type: 'lsp:visible', paths: ['/m/a.go', 'C:\\m\\b.rs'] },
+      { type: 'lsp:visible', paths: [] },
     ];
     for (const m of msgs) expect(parseLspMessage(m)).toEqual(m);
+  });
+
+  it('lsp:visible copies the path array and bounds it', () => {
+    const paths = ['/m/a.go'];
+    const parsed = parseLspMessage({ type: 'lsp:visible', paths }) as { paths: string[] };
+    expect(parsed.paths).toEqual(paths);
+    expect(parsed.paths).not.toBe(paths);
+    const max = Array.from({ length: LSP_VISIBLE_MAX }, (_, i) => `/m/${i}.go`);
+    expect(parseLspMessage({ type: 'lsp:visible', paths: max })).not.toBeNull();
+    expect(parseLspMessage({ type: 'lsp:visible', paths: [...max, '/m/x.go'] })).toBeNull();
+    expect(LSP_VISIBLE_MAX).toBe(64);
+  });
+
+  it.each([
+    ['a relative path', ['m/a.go']],
+    ['a dot-dot segment', ['/m/../a.go']],
+    ['a non-string', [1]],
+    ['an empty string', ['']],
+  ])('lsp:visible with %s is refused', (_label, paths) => {
+    expect(parseLspMessage({ type: 'lsp:visible', paths })).toBeNull();
+  });
+
+  it('lsp:visible without an array is refused', () => {
+    expect(parseLspMessage({ type: 'lsp:visible', paths: '/m/a.go' })).toBeNull();
+    expect(parseLspMessage({ type: 'lsp:visible' })).toBeNull();
   });
 
   it('copies only known fields', () => {
