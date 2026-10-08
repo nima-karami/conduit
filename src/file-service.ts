@@ -1,7 +1,8 @@
+import { isUtf8 } from 'node:buffer';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { isBinary } from './content-search';
-import { langFromPath } from './lang';
+import { isGoldenPath, langFromPath } from './lang';
 import { imageMime, mediaKindForPath, pdfKindForPath } from './media-kind';
 import {
   isInsideRoot,
@@ -15,10 +16,10 @@ import type { GrantStore } from './read-grants';
 
 export { isBinary, langFromPath };
 
-// Explorer tree ignore set — mirrors VS Code's default `files.exclude`: hide only VCS/OS
+// Explorer tree ignore set â€” mirrors VS Code's default `files.exclude`: hide only VCS/OS
 // metadata, show everything else (dist/out/node_modules), each read lazily per dir on expand.
 const IGNORED = new Set(['.git', '.svn', '.hg', '.DS_Store', 'Thumbs.db']);
-/** Text-file ceiling shared by readDiff and the editor's HEAD-blob read — the two must agree,
+/** Text-file ceiling shared by readDiff and the editor's HEAD-blob read â€” the two must agree,
  *  or the editor would mark a file Review refuses to diff. */
 export const MAX_BYTES = 2 * 1024 * 1024;
 
@@ -107,12 +108,36 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
       };
     }
     const stat = await fs.promises.stat(absPath);
+    if (stat.size > cap) {
+      const tail = language === 'log';
+      const buf = await readWindow(absPath, tail ? stat.size - cap : 0, cap);
+      if (isBinary(buf))
+        return { path: absPath, content: '', language, truncated: false, binary: true };
+      return {
+        path: absPath,
+        content: (tail ? fromFirstWholeLine(buf) : buf).toString('utf8'),
+        language,
+        truncated: true,
+        binary: false,
+        ...(tail ? { window: 'tail' as const } : {}),
+      };
+    }
     const buf = await fs.promises.readFile(absPath);
     if (isBinary(buf))
       return { path: absPath, content: '', language, truncated: false, binary: true };
-    const truncated = stat.size > cap;
-    const content = (truncated ? buf.subarray(0, cap) : buf).toString('utf8');
-    return { path: absPath, content, language, truncated, binary: false };
+    const readOnlyReason = !isUtf8(buf)
+      ? 'invalid-utf8'
+      : isGoldenPath(absPath) && eolKinds(buf) > 1
+        ? 'mixed-eol'
+        : undefined;
+    return {
+      path: absPath,
+      content: buf.toString('utf8'),
+      language,
+      truncated: false,
+      binary: false,
+      ...(readOnlyReason ? { readOnlyReason } : {}),
+    };
   } catch {
     return {
       path: absPath,
@@ -123,6 +148,45 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
       error: 'File could not be read.',
     };
   }
+}
+
+/** At most `length` bytes from `position`, through a handle: an over-cap file is never read whole
+ *  (a 640 MB log cost +645 MB RSS that way â€” spec 2026-10-08-language-support Â§2.5). */
+async function readWindow(absPath: string, position: number, length: number): Promise<Buffer> {
+  const fh = await fs.promises.open(absPath, 'r');
+  try {
+    const buf = Buffer.alloc(length);
+    const { bytesRead } = await fh.read(buf, 0, length, position);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await fh.close();
+  }
+}
+
+/** A tail window starts at an arbitrary byte: drop the partial first line (a split CRLF or UTF-8
+ *  sequence with it). With no newline at all, only a split character's continuation bytes go. */
+function fromFirstWholeLine(buf: Buffer): Buffer {
+  const nl = buf.indexOf(0x0a);
+  if (nl !== -1) return buf.subarray(nl + 1);
+  let i = 0;
+  while (i < 3 && i < buf.length && (buf[i] & 0xc0) === 0x80) i++;
+  return buf.subarray(i);
+}
+
+/** How many of CRLF, bare LF and bare CR occur in `buf` (0â€“3). */
+function eolKinds(buf: Uint8Array): number {
+  let crlf = 0;
+  let lf = 0;
+  let cr = 0;
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i] === 0x0d) {
+      if (buf[i + 1] === 0x0a) {
+        crlf = 1;
+        i++;
+      } else cr = 1;
+    } else if (buf[i] === 0x0a) lf = 1;
+  }
+  return crlf + lf + cr;
 }
 
 /** Refusal when the target's current content isn't `expected`; null when it matches. Uncapped
@@ -142,8 +206,8 @@ async function compareOnDisk(target: string, expected: string): Promise<WriteRes
     : { ok: false, conflict: 'changed', error: 'The file changed on disk.' };
 }
 
-/** IPC trust boundary for `writeFile`'s options: `undefined` → `{}`; a plain object whose
- *  `expected` is absent or a string → `{expected?}` (other keys ignored); anything else → null. */
+/** IPC trust boundary for `writeFile`'s options: `undefined` â†’ `{}`; a plain object whose
+ *  `expected` is absent or a string â†’ `{expected?}` (other keys ignored); anything else â†’ null. */
 export function parseWriteOptions(raw: unknown): WriteOptions | null {
   if (raw === undefined) return {};
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -165,16 +229,16 @@ export function parseWriteOptions(raw: unknown): WriteOptions | null {
  * so the renderer can keep the buffer dirty rather than falsely clearing it.
  *
  * A write is permitted when EITHER `validateWrite` passes against `roots`, OR (K2)
- * the canonical real path of the target is a recorded read-grant — a file the host
+ * the canonical real path of the target is a recorded read-grant â€” a file the host
  * itself served via `readFile`, which can legitimately live outside every root
  * (go-to-definition targets, out-of-root recents). The grant branch still rejects a
  * directory and still re-canonicalizes the CURRENT real path at write time (so a
- * post-read symlink swap can't redirect the write — it just fails closed back to the
+ * post-read symlink swap can't redirect the write â€” it just fails closed back to the
  * root check). `validateWrite` itself is never weakened. See src/read-grants.ts.
  *
  * `opts.expected` (auto-save) adds a compare-before-write that runs only AFTER the target is
  * confined, so a rejected path answers exactly as it would without it. See
- * docs/specs/2026-09-28-auto-save.md §3.
+ * docs/specs/2026-09-28-auto-save.md Â§3.
  */
 export async function writeFile(
   absPath: string,
@@ -188,17 +252,17 @@ export async function writeFile(
   if (verdict.ok) {
     target = verdict.path;
   } else {
-    // Root containment rejected — fall back to the read-grant allowance. Resolve the
+    // Root containment rejected â€” fall back to the read-grant allowance. Resolve the
     // CURRENT real path and check it against the grants the host recorded on read.
     const real = realPathLeaf(path.resolve(absPath));
-    if (!grants?.has(real)) return verdict; // neither rooted nor granted — original reason
+    if (!grants?.has(real)) return verdict; // neither rooted nor granted â€” original reason
     // A grant is an exact FILE; never clobber a directory even on this branch.
     try {
       if (fs.statSync(real).isDirectory()) {
         return { ok: false, error: `Refusing to write over a directory: ${absPath}` };
       }
     } catch {
-      /* missing target — a granted file that's since been deleted; the write recreates it */
+      /* missing target â€” a granted file that's since been deleted; the write recreates it */
     }
     target = real;
   }
@@ -212,7 +276,7 @@ export async function writeFile(
   try {
     // Overwrite of a buffer whose folder was deleted under it. Rooted writes only: validateWrite
     // proved the whole path inside a root; a read grant is one exact file, never its folders.
-    // And only below a root that still exists — a recursive mkdir would otherwise recreate a
+    // And only below a root that still exists â€” a recursive mkdir would otherwise recreate a
     // deleted root and every missing ancestor above it, outside every root.
     if (verdict.ok && !fs.statSync(dir, { throwIfNoEntry: false })) {
       const root = roots.find((r) => isInsideRoot(target, r));
@@ -244,7 +308,7 @@ export function buildImageDiff(
 
   const workOver = workBuf != null && workBuf.length > MAX_IMAGE_BYTES;
   const headOver = headBuf != null && headBuf.length > MAX_IMAGE_BYTES;
-  // Either side over the cap ⇒ degrade to the plain "no preview" notice (never a
+  // Either side over the cap â‡’ degrade to the plain "no preview" notice (never a
   // misleading one-sided diff). binary:true keeps non-image consumers unaffected.
   if (workOver || headOver) {
     return {
@@ -258,13 +322,13 @@ export function buildImageDiff(
 
   const work = workBuf ? { dataUrl: toData(workBuf), bytes: workBuf.length } : undefined;
   const head = headBuf ? { dataUrl: toData(headBuf), bytes: headBuf.length } : undefined;
-  // Status is derived from which sides exist — the renderer never re-derives it.
+  // Status is derived from which sides exist â€” the renderer never re-derives it.
   const status: 'modified' | 'added' | 'deleted' = !head ? 'added' : !work ? 'deleted' : 'modified';
   return { path: absPath, head: '', work: '', binary: true, image: { head, work, status } };
 }
 
 /** An UNMERGED path, which a blob read reports instead of text/bytes. A conflict leaves no
- *  stage-0 index entry, and an empty read is otherwise indistinguishable from an empty blob —
+ *  stage-0 index entry, and an empty read is otherwise indistinguishable from an empty blob â€”
  *  which renders the whole file as deleted. */
 export const UNMERGED = { unmerged: true } as const;
 export type Unmerged = typeof UNMERGED;
@@ -339,7 +403,7 @@ export async function readDiff(
   const effectiveBinary = binary || headBinary;
   return {
     path: absPath,
-    // Normalize CRLF→LF for display only (never a write path): under Windows +
+    // Normalize CRLFâ†’LF for display only (never a write path): under Windows +
     // core.autocrlf=true the working file is CRLF while `git show` returns LF, so the
     // Monaco diff would otherwise mark every line changed. On-disk EOLs are untouched.
     head: effectiveBinary ? '' : toLf(head),
@@ -349,7 +413,7 @@ export async function readDiff(
 }
 
 /** `readDiff` for the IPC reply: a throw becomes `error` on the DTO, so the tab that asked
- *  always gets an answer instead of waiting on `Loading diff…` forever (spec 2026-09-22 §13 D7). */
+ *  always gets an answer instead of waiting on `Loading diffâ€¦` forever (spec 2026-09-22 Â§13 D7). */
 export async function readDiffReply(
   absPath: string,
   gitShow: (p: string, ref: DiffBase) => Promise<string | Unmerged>,
@@ -369,5 +433,5 @@ export async function readDiffReply(
   }
 }
 
-/** CRLF→LF for DISPLAY only, never a write path. Shared with src/head-blob.ts. */
+/** CRLFâ†’LF for DISPLAY only, never a write path. Shared with src/head-blob.ts. */
 export const toLf = (s: string): string => s.replace(/\r\n/g, '\n');

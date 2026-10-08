@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildImageDiff,
   isBinary,
@@ -98,6 +98,40 @@ describe('fileService readers', () => {
     expect(doc.content).toBe('');
   });
 
+  it('readFile keeps a UTF-8 BOM in the content', async () => {
+    const f = path.join(tmp(), 'bom.txt');
+    fs.writeFileSync(f, Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0x0a]));
+    const doc = await readFile(f);
+    expect(doc.content).toBe('﻿a\n');
+    expect(doc.readOnlyReason).toBeUndefined();
+  });
+
+  it('readFile marks invalid UTF-8 read-only instead of decoding it to U+FFFD', async () => {
+    const f = path.join(tmp(), 'latin1.txt');
+    fs.writeFileSync(f, Buffer.from([0x61, 0xe9, 0x62, 0x0a]));
+    const doc = await readFile(f);
+    expect(doc.readOnlyReason).toBe('invalid-utf8');
+    expect(doc.truncated).toBe(false);
+  });
+
+  it('readFile marks a mixed-EOL golden read-only, but not a mixed-EOL source file', async () => {
+    const d = tmp();
+    for (const [name, want] of [
+      ['mixed.txt.golden', 'mixed-eol'],
+      ['cr.golden', 'mixed-eol'],
+      ['mixed.ts', undefined],
+    ] as const) {
+      const f = path.join(d, name);
+      fs.writeFileSync(f, name === 'cr.golden' ? 'a\rb\nc\n' : 'a\r\nb\nc\r\n');
+      expect((await readFile(f)).readOnlyReason, name).toBe(want);
+    }
+    for (const body of ['a\r\nb\r\n', 'a\nb\n', 'a\rb\r', 'no newline']) {
+      const f = path.join(d, 'pure.txt.golden');
+      fs.writeFileSync(f, body);
+      expect((await readFile(f)).readOnlyReason, JSON.stringify(body)).toBeUndefined();
+    }
+  });
+
   it('readDiff combines working file + injected HEAD content', async () => {
     const d = tmp();
     const f = path.join(d, 'x.ts');
@@ -113,6 +147,76 @@ describe('fileService readers', () => {
     const diff = await readDiff(f, async () => 'a\nb\nc\n');
     expect(diff.work).toBe('a\nB\nc\n');
     expect(diff.head).toBe('a\nb\nc\n');
+  });
+});
+
+describe('fileService readFile over the cap (spec 2026-10-08-language-support §2.5)', () => {
+  const lines = (from: number, to: number) => {
+    let s = '';
+    for (let i = from; i <= to; i++) s += `line ${String(i).padStart(4, '0')}\n`;
+    return s;
+  };
+  // 10 bytes per line; a 64-byte cap is 6.4 lines.
+  const CAP = 64;
+  const body = lines(1, 50);
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('reads only the head window of a non-log file, never the whole file', async () => {
+    const f = path.join(tmp(), 'big.txt');
+    fs.writeFileSync(f, body);
+    const whole = vi.spyOn(fs.promises, 'readFile');
+    const doc = await readFile(f, CAP);
+    expect(whole).not.toHaveBeenCalled();
+    expect(doc.content).toBe(body.slice(0, CAP));
+    expect(doc).toMatchObject({ truncated: true, binary: false, language: 'plaintext' });
+    expect(doc.window).toBeUndefined();
+  });
+
+  it('reads the tail window of a log, starting on a whole line', async () => {
+    const f = path.join(tmp(), 'big.log');
+    fs.writeFileSync(f, body);
+    const whole = vi.spyOn(fs.promises, 'readFile');
+    const doc = await readFile(f, CAP);
+    expect(whole).not.toHaveBeenCalled();
+    const tail = body.slice(body.length - CAP);
+    expect(doc.content).toBe(tail.slice(tail.indexOf('\n') + 1));
+    expect(doc.content.startsWith('line ')).toBe(true);
+    expect(doc.content.endsWith('line 0050\n')).toBe(true);
+    expect(doc).toMatchObject({ truncated: true, window: 'tail', language: 'log' });
+  });
+
+  it('cuts a tail window that starts mid-CRLF and keeps one with no newline as-is', async () => {
+    const d = tmp();
+    const crlf = path.join(d, 'crlf.log');
+    fs.writeFileSync(crlf, `${'x'.repeat(CAP - 1)}\r\nlast\r\n`);
+    expect((await readFile(crlf, CAP)).content).toBe('last\r\n');
+    const flat = path.join(d, 'flat.log');
+    fs.writeFileSync(flat, 'y'.repeat(CAP * 2));
+    expect((await readFile(flat, CAP)).content).toBe('y'.repeat(CAP));
+  });
+
+  it('never starts a tail window inside a multi-byte character', async () => {
+    const f = path.join(tmp(), 'utf8.log');
+    fs.writeFileSync(f, `${'é'.repeat(CAP)}\nend\n`);
+    const doc = await readFile(f, CAP);
+    expect(doc.content).toBe('end\n');
+  });
+
+  it('sniffs binary on the window it read', async () => {
+    const f = path.join(tmp(), 'nul.log');
+    fs.writeFileSync(f, Buffer.concat([Buffer.from(body), Buffer.from([0, 1, 2, 0x0a])]));
+    const doc = await readFile(f, CAP);
+    expect(doc.binary).toBe(true);
+    expect(doc.content).toBe('');
+  });
+
+  it('reads a file at the cap whole, in one read, with no window', async () => {
+    const f = path.join(tmp(), 'exact.log');
+    fs.writeFileSync(f, body.slice(0, CAP));
+    const doc = await readFile(f, CAP);
+    expect(doc).toMatchObject({ content: body.slice(0, CAP), truncated: false });
+    expect(doc.window).toBeUndefined();
   });
 });
 

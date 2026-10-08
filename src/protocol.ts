@@ -166,6 +166,12 @@ export interface FileContentDTO {
    *  base64 data URL to a `Uint8Array` for pdf.js (`getDocument({ data })`). Over-cap
    *  returns the `error` notice instead, mirroring the image branch. */
   pdf?: { dataUrl: string; bytes: number };
+  /** With `truncated`: the content is the file's LAST `cap` bytes from its first whole line, not
+   *  its first `cap` bytes (logs only). Line numbers count from the window. */
+  window?: 'tail';
+  /** The content is the whole file, but saving it could change bytes the user never touched
+   *  (spec 2026-10-08-language-support §2.4), so the doc opens read-only. */
+  readOnlyReason?: 'invalid-utf8' | 'mixed-eol';
 }
 
 export interface FileDiffDTO {
