@@ -223,7 +223,13 @@ import {
   useLspStatuses,
   useLspTrust,
 } from './lsp-status';
-import { initLspClient, type LspDocInput, reconcileLspDocs, requestTrust } from './lsp-sync';
+import {
+  initLspClient,
+  type LspDocInput,
+  reconcileLspDocs,
+  requestTrust,
+  syncLanguageFor,
+} from './lsp-sync';
 import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
 import { useMonacoNavKeybindings } from './monaco-nav-keybindings';
@@ -1650,8 +1656,8 @@ export function App() {
     for (const d of docState.docs) {
       if (d.kind !== 'file' || seen.has(d.path)) continue;
       seen.add(d.path);
-      const languageId = langFromPath(d.path);
-      if (!served.has(languageId)) continue;
+      const languageId = syncLanguageFor(d.path, served);
+      if (languageId === null) continue;
       const model = monaco.editor.getModel(fileUri(d.path));
       const text =
         model && dirtySet.has(d.path)

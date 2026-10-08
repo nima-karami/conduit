@@ -81,6 +81,7 @@ const LANG = {
   svg: 'xml',
   xaml: 'xml',
   plist: 'xml',
+  log: 'log',
 } as const;
 
 // Extension-less or fixed-name files that still have a known language.
@@ -102,11 +103,27 @@ type LanguageId = (typeof LANG)[keyof typeof LANG] | (typeof FILENAME)[keyof typ
 const LANG_BY_EXT: Readonly<Record<string, LanguageId>> = LANG;
 const LANG_BY_FILENAME: Readonly<Record<string, LanguageId>> = FILENAME;
 
-export function langFromPath(p: string): string {
-  const name = (p.split(/[\\/]/).pop() ?? '').toLowerCase();
+const GOLDEN = '.golden';
+// `app.log.3`, `app.log.2026-10-01_13`; a further `.` (`app.log.1.gz`) is a compressed rotation.
+const ROTATED_LOG = /\.log\.(?:\d+|\d{4}-\d{2}-\d{2}[^.]*)$/;
+
+const baseNameLower = (p: string): string => (p.split(/[\\/]/).pop() ?? '').toLowerCase();
+
+/** An expected-output fixture: its bytes are the point (spec 2026-10-08-language-support §2.3). */
+export function isGoldenPath(p: string): boolean {
+  return baseNameLower(p).endsWith(GOLDEN);
+}
+
+function langFromName(name: string): string {
   if (Object.hasOwn(LANG_BY_FILENAME, name)) return LANG_BY_FILENAME[name];
+  if (ROTATED_LOG.test(name)) return 'log';
   const ext = name.includes('.') ? (name.split('.').pop() ?? '') : '';
   return Object.hasOwn(LANG_BY_EXT, ext) ? LANG_BY_EXT[ext] : 'plaintext';
+}
+
+export function langFromPath(p: string): string {
+  const name = baseNameLower(p);
+  return langFromName(name.endsWith(GOLDEN) ? name.slice(0, -GOLDEN.length) : name);
 }
 
 // Typed by LanguageId so a new language in either map fails typecheck until it is named here.
@@ -133,6 +150,7 @@ const DISPLAY_NAMES: Record<Exclude<LanguageId, 'plaintext'>, string> = {
   julia: 'Julia',
   kotlin: 'Kotlin',
   less: 'Less',
+  log: 'Log',
   lua: 'Lua',
   markdown: 'Markdown',
   mdx: 'MDX',

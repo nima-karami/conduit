@@ -109,7 +109,9 @@ Required behavior:
    `readOnlyReason: 'invalid-utf8'`. The doc opens read-only with banner
    *"Not valid UTF-8 — read-only so saving can't change its bytes."*
 3. **Mixed line endings → read-only, golden files only.** Host counts CRLF / bare LF / bare CR in
-   the same pass; if more than one kind occurs and `isGoldenPath`, `readOnlyReason: 'mixed-eol'`,
+   the same pass; if more than one kind occurs, **or any bare CR occurs at all** (Monaco reads a
+   lone CR as a line break and rewrites it to the model's EOL, so even a pure-CR golden would not
+   round-trip — found in Lane A review), and `isGoldenPath`, `readOnlyReason: 'mixed-eol'`,
    banner *"Mixed line endings — read-only so this golden file stays byte-exact."* Non-golden
    mixed-EOL files keep today's VS Code-parity normalisation (decision D3).
 4. Read-only reasons reuse the truncated path's mechanics: `readOnly`, `writable:false` on

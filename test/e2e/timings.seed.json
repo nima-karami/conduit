@@ -64,6 +64,7 @@
     "hunk-staging": 58.2,
     "idle-fs-quiet": 19.8,
     "image-diff": 11.7,
+    "language-files": 60,
     "link-cwd": 9.1,
     "live-watch": 9.4,
     "logging": 8.6,

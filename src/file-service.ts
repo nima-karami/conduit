@@ -1,7 +1,8 @@
+import { isUtf8 } from 'node:buffer';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { isBinary } from './content-search';
-import { langFromPath } from './lang';
+import { isGoldenPath, langFromPath } from './lang';
 import { imageMime, mediaKindForPath, pdfKindForPath } from './media-kind';
 import {
   isInsideRoot,
@@ -106,13 +107,32 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
         pdf: { dataUrl, bytes },
       };
     }
-    const stat = await fs.promises.stat(absPath);
-    const buf = await fs.promises.readFile(absPath);
+    const { buf, truncated, tail } = await readBounded(absPath, cap, language === 'log');
     if (isBinary(buf))
       return { path: absPath, content: '', language, truncated: false, binary: true };
-    const truncated = stat.size > cap;
-    const content = (truncated ? buf.subarray(0, cap) : buf).toString('utf8');
-    return { path: absPath, content, language, truncated, binary: false };
+    if (truncated) {
+      return {
+        path: absPath,
+        content: buf.toString('utf8'),
+        language,
+        truncated: true,
+        binary: false,
+        ...(tail ? { window: 'tail' as const } : {}),
+      };
+    }
+    const readOnlyReason = !isUtf8(buf)
+      ? 'invalid-utf8'
+      : isGoldenPath(absPath) && rewritesEol(buf)
+        ? 'mixed-eol'
+        : undefined;
+    return {
+      path: absPath,
+      content: buf.toString('utf8'),
+      language,
+      truncated: false,
+      binary: false,
+      ...(readOnlyReason ? { readOnlyReason } : {}),
+    };
   } catch {
     return {
       path: absPath,
@@ -123,6 +143,61 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
       error: 'File could not be read.',
     };
   }
+}
+
+/**
+ * A text file's bytes, never more than `cap` of them kept and never more than `cap + 1` read: the
+ * size is decided by what the handle returns, not by an earlier stat a growing file has outrun.
+ * Over the cap, `tail` keeps the last `cap` bytes from the first whole line instead of the head.
+ * See spec 2026-10-08-language-support §2.5.
+ */
+async function readBounded(
+  absPath: string,
+  cap: number,
+  tail: boolean,
+): Promise<{ buf: Buffer; truncated: boolean; tail: boolean }> {
+  const fh = await fs.promises.open(absPath, 'r');
+  try {
+    const head = Buffer.alloc(cap + 1);
+    const { bytesRead } = await fh.read(head, 0, cap + 1, 0);
+    if (bytesRead <= cap)
+      return { buf: head.subarray(0, bytesRead), truncated: false, tail: false };
+    if (!tail) return { buf: head.subarray(0, cap), truncated: true, tail: false };
+    // One byte before the window says whether the window already starts on a whole line.
+    const { size } = await fh.stat();
+    const window = Buffer.alloc(cap + 1);
+    const got = (await fh.read(window, 0, cap + 1, Math.max(0, size - cap - 1))).bytesRead;
+    const read = window.subarray(0, got);
+    const body = read[0] === 0x0a ? read.subarray(1) : fromFirstWholeLine(read.subarray(1));
+    return { buf: body, truncated: true, tail: true };
+  } finally {
+    await fh.close();
+  }
+}
+
+/** The window starts mid-line: drop the partial line (a split CRLF or UTF-8 sequence with it).
+ *  With no newline at all, only a split character's continuation bytes go. */
+function fromFirstWholeLine(buf: Buffer): Buffer {
+  const nl = buf.indexOf(0x0a);
+  if (nl !== -1) return buf.subarray(nl + 1);
+  let i = 0;
+  while (i < 3 && i < buf.length && (buf[i] & 0xc0) === 0x80) i++;
+  return buf.subarray(i);
+}
+
+/** Whether Monaco's buffer would change this text's line endings on load: more than one kind of
+ *  EOL (it normalises to the majority) or any lone CR (always read as a line break). */
+function rewritesEol(buf: Uint8Array): boolean {
+  let crlf = false;
+  let lf = false;
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i] === 0x0d) {
+      if (buf[i + 1] !== 0x0a) return true;
+      crlf = true;
+      i++;
+    } else if (buf[i] === 0x0a) lf = true;
+  }
+  return crlf && lf;
 }
 
 /** Refusal when the target's current content isn't `expected`; null when it matches. Uncapped

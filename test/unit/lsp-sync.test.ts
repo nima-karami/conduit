@@ -244,3 +244,22 @@ describe('lsp-sync', () => {
     expect(h.created.size).toBe(0);
   });
 });
+
+describe('syncLanguageFor', () => {
+  const served = new Set(['go', 'csharp']);
+
+  it('syncs a file of a served language as that language', () => {
+    expect(sync.syncLanguageFor('/r/main.go', served)).toBe('go');
+    expect(sync.syncLanguageFor('/r/Program.cs', served)).toBe('csharp');
+  });
+
+  it('never syncs a file no server serves', () => {
+    expect(sync.syncLanguageFor('/r/app.py', served)).toBeNull();
+  });
+
+  // A golden is an expected-output fixture: colouring it as Go must not make gopls index it.
+  it('never syncs a golden file, whatever it wraps', () => {
+    expect(sync.syncLanguageFor('/r/testdata/out.go.golden', served)).toBeNull();
+    expect(sync.syncLanguageFor('/r/Expected.CS.GOLDEN', served)).toBeNull();
+  });
+});

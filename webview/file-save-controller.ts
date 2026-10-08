@@ -42,8 +42,10 @@ export interface FileSaveDeps {
 
 export interface AttachOpts {
   diskContent: string;
-  /** false for a truncated doc, which is never written; binary docs never attach. */
-  writable: boolean;
+  /** Why this doc is never written (it is a window of the file, or a save would change bytes the
+   *  user never touched) — the reason a refused save gives; null when writable. Binary docs never
+   *  attach. */
+  readOnly: string | null;
 }
 
 export interface FileSaveStatus {
@@ -84,7 +86,7 @@ interface Entry {
   sub: { dispose(): void } | null;
   unregister: () => void;
   baseline: string;
-  writable: boolean;
+  readOnly: string | null;
   state: AutoSaveState;
   timer: unknown;
   /** The single write chain in flight (E1); a trailing save joins it via `next`. */
@@ -214,7 +216,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
 
   function trigger(path: string, t: AutoSaveTrigger) {
     const e = entries.get(path);
-    if (!e?.writable || !deps.canWrite) return;
+    if (!e || e.readOnly !== null || !deps.canWrite) return;
     step(e, { type: 'trigger', trigger: t });
   }
 
@@ -227,13 +229,14 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
   const save = async (path: string, kind: SaveKind): Promise<boolean> => {
     const e = entries.get(path);
     if (!e) return true;
-    // A truncated buffer holds only the head of the file: writing it back would cut the file
-    // short on disk, whichever path asked for the save.
-    const refusal = !e.writable
-      ? AUTO_SAVE_COPY.partialFile
-      : !deps.canWrite
-        ? 'Saving is unavailable in the browser preview.'
-        : null;
+    // A read-only buffer is refused whichever path asked for the save: writing a truncated one
+    // back would cut the file short, and the others would change bytes the user never touched.
+    const refusal =
+      e.readOnly !== null
+        ? e.readOnly
+        : !deps.canWrite
+          ? 'Saving is unavailable in the browser preview.'
+          : null;
     if (refusal !== null) {
       if (e.model.getValue() === e.baseline) return true;
       if (kind === 'auto') return false;
@@ -286,7 +289,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
           sub: null,
           unregister: () => {},
           baseline: opts.diskContent,
-          writable: opts.writable,
+          readOnly: opts.readOnly,
           state: INITIAL_AUTO_SAVE_STATE,
           timer: null,
           chain: null,
@@ -312,7 +315,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
         }
       }
       entry.baseline = opts.diskContent;
-      entry.writable = opts.writable;
+      entry.readOnly = opts.readOnly;
       deps.setDirty(path, entry.baseline, model.getValue());
       step(entry, { type: 'seed', dirty: model.getValue() !== entry.baseline });
     },
@@ -403,6 +406,6 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
     setToastsSuppressed(on) {
       toastsSuppressed = on;
     },
-    isPartial: (path) => entries.get(path)?.writable === false,
+    isPartial: (path) => (entries.get(path)?.readOnly ?? null) !== null,
   };
 }

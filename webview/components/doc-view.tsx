@@ -1,4 +1,5 @@
 import { type ReactNode, useCallback, useRef, useSyncExternalStore } from 'react';
+import { isGoldenPath } from '../../src/lang';
 import { isHtmlDocPath } from '../../src/media-kind';
 import { planRootFromPath } from '../../src/plan-path';
 import type { FileContentDTO, FileDiffDTO } from '../../src/protocol';
@@ -71,6 +72,7 @@ export function DocView({
   // the same kind of thing, and re-inks the same way.
   const docPage =
     doc.kind === 'file' &&
+    !isGoldenPath(doc.path) &&
     (file?.language === 'markdown' || (isHtmlDocPath(doc.path) && htmlView === 'preview'));
   return (
     <div className={`docpanel${docPage ? ' docpage' : ''}`}>
@@ -250,8 +252,10 @@ function DocBody({
   if (file.error) return <div className="viewer__notice">{file.error}</div>;
   // Order: diff → image (handled inside CodeViewer) → pdf → html → markdown → code.
   if (file.pdf) return <PdfViewer doc={file} focusKey={stateKey} />;
+  // An expected-output fixture: its bytes are the point, never a rendering of them.
+  const rendered = !isGoldenPath(doc.path);
   // The EXTENSION, never `file.language`: src/lang.ts assigns 'html' to .vue and .svelte too.
-  if (isHtmlDocPath(doc.path))
+  if (rendered && isHtmlDocPath(doc.path))
     return (
       <HtmlViewer
         doc={file}
@@ -262,7 +266,7 @@ function DocBody({
         onSave={() => saveDocByPath(doc.path)}
       />
     );
-  if (file.language === 'markdown')
+  if (rendered && file.language === 'markdown')
     return <MarkdownViewer doc={file} viewStateId={stateKey} onOpenFile={onOpenFile} />;
   return (
     <CodeViewer

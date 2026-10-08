@@ -61,6 +61,8 @@ const FOREGROUNDS = [
   '--syn-literal',
   '--syn-meta',
   '--syn-tag',
+  '--syn-error',
+  '--syn-warn',
   '--code-line-number',
   '--code-cursor',
   '--diff-marker',
@@ -103,6 +105,17 @@ describe('theme token contrast on the code surface', () => {
       });
     }
   }
+
+  // Tuned per theme against that theme's own ink (spec 2026-10-08-language-support §11), so each
+  // block that states --syn-default states these too rather than inheriting :root's.
+  it('log level colours are stated in every block that states --syn-default', () => {
+    for (const sel of [':root', ':root[data-theme="aero"]', ':root[data-theme="neon"]']) {
+      const tokens = tokensFor(sel);
+      expect(tokens['--syn-default'], sel).toBeTruthy();
+      expect(tokens['--syn-error'], `${sel} --syn-error`).toBeTruthy();
+      expect(tokens['--syn-warn'], `${sel} --syn-warn`).toBeTruthy();
+    }
+  });
 
   // The contract publishes --syn-keyword's ratio "on the current-line row", not on the base
   // surface — so the row wash is part of the measured palette and gets pinned here too.

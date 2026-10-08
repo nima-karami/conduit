@@ -253,6 +253,10 @@
      (monaco-theme.ts). Per-theme - keyword follows each theme's accent family so the
      editor belongs to the theme rather than sitting inside it as a foreign object. */
   --syn-default: #e7e9f0;
+  /* Log severity (spec 2026-10-08-language-support §11): tuned on --code-base, not reusing
+     --danger/--warn, which are tuned for app surfaces and fail on ink under Aero. */
+  --syn-error: #f2837b;
+  --syn-warn: #e8c46a;
   --syn-comment: #6f748a;
   --syn-keyword: #a56be8;
   --syn-string: #7fd6a4;
@@ -344,6 +348,8 @@
 
   --code-base: #1b1e2b;
   --syn-default: #d3d7e4;
+  --syn-error: #f2837b;
+  --syn-warn: #e8c46a;
   --change-added: #6cc793;
   --change-modified: #e3a55f;
   --change-deleted: #e87066;
@@ -468,6 +474,8 @@
   --note-accent: #00d8ff;
 
   --syn-default: #c8c3e0;
+  --syn-error: #ff5577;
+  --syn-warn: #ffb547;
   --syn-comment: var(--text-faint);
   --syn-keyword: #ff2d9b;
   --syn-string: #b8ff5c;
