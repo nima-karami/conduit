@@ -5,7 +5,15 @@ Decisions: [goal.md](../runs/2026-10-08-language-coverage/goal.md) — D1 Python
 `--background-index -j=2`, D7 residency for every server incl. Go/C#; D2, D4, D5, D6, D8 spec defaults.
 
 **Tier: FULL** — three sub-features, new public seams (`langFromShebang`, `lsp:visible`, registry
-fields, shared watch pool), host + renderer + CI + 8 new e2e scenarios, parallel executors.
+fields, residency policy), host + renderer + CI + 9 new e2e scenarios, parallel executors.
+
+**Revision 2 (architecture review of 1d5f6aa, PROCEED_WITH_CHANGES).**
+- Lane W (shared root watch) is **deferred**: no measured force, and it adds a stale-handle bug class.
+- The launch/residency contract is rewritten: resolve and trust run outside the launch queue; one `requestLaunch` gate; `refreshResidency`; evictees are awaited to exit.
+- `ServerWeight` lives in `lsp-registry.ts`.
+- `initializationOptions` is an explicit field.
+- An ADR 0006 amendment slice is added.
+- Slice 0 is unchanged.
 
 ## Goal
 
@@ -23,18 +31,22 @@ running at the same time is file-disjoint:
    full §2.2 table, `langFromShebang` and the single content-aware resolver
    `langFromPathAndText`, plus its first caller, `src/file-service.ts`. Every later shebang
    consumer imports from here, so nothing downstream edits `lang.ts`.
-2. **Then four parallel lanes:** **A** owns renderer colouring (grammars, Monaco/hljs maps,
-   diff/Review/plan consumers). **B** owns servers end to end, including *every* LSP consumer of
-   the shebang language (sync, nav, trust palette, rename), CI installs and the B e2e scenarios.
-   **W** owns the shared root-watch pool (`lsp-watcher.ts` + `main.ts` wiring). **C1** is the pure
-   residency policy module.
-3. **Lane C2–C4 runs serially after B and W have both landed.** It holds residency integration,
-   which edits B's `lsp-manager.ts`, `lsp-protocol.ts`, `lsp-registry.ts`, `lsp-sync.ts`,
-   `app.tsx`, `e2e.yml` and `timings.seed.json`, plus W's `main.ts`. Disjointness is impossible
-   there, so it is serialized.
+2. **Then two parallel lanes:**
+   - **A** owns renderer colouring (grammars, Monaco/hljs maps, diff/Review/plan consumers).
+   - **B** owns servers end to end, including *every* LSP consumer of the shebang language (sync, nav, trust palette, rename), CI installs, the B e2e scenarios and the ADR 0006 amendment.
+3. **Lane C (C1–C4) runs serially after B has landed.** It holds residency: `ServerWeight` + `weight` in `lsp-registry.ts`, the pure policy, manager integration, `main.ts` minimize wiring, the renderer visible sender, and the e2e + CI.
+   - It edits B's `lsp-registry.ts`, `lsp-protocol.ts`, `lsp-server.ts`, `lsp-manager.ts`, `lsp-sync.ts`, `app.tsx`, `e2e.yml` and `timings.seed.json`.
+   - Disjointness is impossible there, so it is serialized.
+   - C1 is not run in parallel: `ServerWeight` lives in `lsp-registry.ts` (B's file during the parallel phase), and C1 is the slice that adds it beside its first consumer.
 
-The `weight` registry field moves from the spec's lane B to C2. Its only consumer is residency,
-and `ServerWeight` is owned by the residency module. This means B never waits on C1.
+The `weight` registry field moves from the spec's lane B to C1, where the policy that reads it is
+built.
+
+**Deferred: shared root watch (spec §2.6 "Shared watches", AC-C4).** There is no measured force:
+no event-storm or handle-count measurement shows per-server recursive watches cost anything.
+Ref-counted shared watches add a stale-handle bug class: one subscriber's `onGone` and re-arm
+racing another's close. Each server keeps its own `watchServerRoot`, unchanged. The spec records
+it as a follow-up.
 
 ## Data flow
 
@@ -53,12 +65,13 @@ and `ServerWeight` is owned by the residency module. This means B never waits on
                                   (keyed by path+language)                              DocEntry.languageId
                                   notSyncedCause(path) ◀── lsp-nav.probeLspNav            │ serverSpecFor(any id)
                                                                                           ▼
-   app.tsx visibleFilePaths ──lsp-sync.setLspVisible──lsp:visible{paths}──▶ visible union ─▶ residency
-   BrowserWindow minimize/restore ──main.ts──▶ LspManager.setWindowMinimized ─┘   planEvictions / isDormant
-                                                                                          │ launch / stopRecord
-                                                                                          ▼
-                     startLanguageServer(settings → initializationOptions + workspace/configuration)
-                     watchRoot ──▶ RootWatchPool (one OS watch per lexical root, per-subscriber filter)
+   app.tsx visibleFilePaths ──lsp-sync.setLspVisible──lsp:visible{paths}──▶ visible union ─▶ refreshResidency
+   BrowserWindow minimize/restore ──main.ts──▶ LspManager.setWindowMinimized ─┘        │
+                                                                                     ▼
+            requestLaunch(rec, reason) ─▶ launch: resolve+probe+trust (outside queue)
+                                          ─▶ launchQueue: planEvictions → evict(await exit ≤2 s) → re-check → spawn
+                     startLanguageServer(initializationOptions field; settings → workspace/configuration)
+                     watchRoot ──▶ watchServerRoot (unchanged, one per server)
 
  Renderer-only colouring:  langFromPath / langFromPathAndText ──▶ monaco-languages GRAMMARS (+ custom ids)
                            ──▶ syntax-highlight MONACO_TO_HLJS ──▶ Review hljs, diff-viewer, plan fences
@@ -74,15 +87,19 @@ and `ServerWeight` is owned by the residency module. This means B never waits on
 - D5 basedpyright settings `{typeCheckingMode:'off', diagnosticMode:'openFilesOnly'}`.
 - D6 alias grammars ship: `dotenv`→ini, `groovy`→java, `ocaml`→fsharp.
 - D8 `.m` stays plaintext. Objective-C (`.mm`) gets colour only.
-- Spec §2.2 table, §2.3 cut line and grammar rules, §2.4 shebang parse and map, §2.5 table, and §2.6 rule table are taken exactly as written. Exceptions are listed under Spec staleness.
+- Spec §2.2 table, §2.3 cut line and grammar rules, §2.4 shebang parse and map, §2.5 table, and §2.6 rule table are taken exactly as written. Exceptions are listed under Spec staleness and in the revision-2 decisions below.
+- (rev 2) **An eviction awaits the evictee's process EXIT** (`LspServerHandle.exited`), bounded by `EVICT_EXIT_WAIT_MS` = 2 000. On timeout the launch proceeds and logs once. AC-C1 reads "never more than 2 heavy pids alive".
+- (rev 2) **Shared root watch is deferred** (see Architecture). Spec §2.6 "Shared watches" and AC-C4 are follow-ups.
 
 ## Spec staleness
 
 | Spec claim | Measured | Plan proceeds |
 |---|---|---|
-| §2.6: a window whose `document.visibilityState` is `hidden` (minimized) sends `lsp:visible []` | Every e2e window is created with `show: process.env.CONDUIT_E2E !== '1'` (`electron/main.ts:987`), so `visibilityState` is `hidden` for the whole suite. Chromium also reports `hidden` for an occluded window. With the renderer rule, no server would launch from a shown tab under e2e, and covering Conduit with another window would put servers to sleep | **Host-side minimize.** `main.ts` wires `BrowserWindow` `minimize`/`restore` to `LspManager.setWindowMinimized(webContentsId, bool)`. A minimized client's visible set counts as empty. The renderer always sends its real visible paths. Logged in Decisions Needed |
+| §2.6: a window whose `document.visibilityState` is `hidden` (minimized) sends `lsp:visible []` | Every e2e window is created with `show: process.env.CONDUIT_E2E !== '1'` (`electron/main.ts:987`), so `visibilityState` is `hidden` for the whole suite. Chromium also reports `hidden` for an occluded window. With the renderer rule, no server would launch from a shown tab under e2e, and covering Conduit with another window would put servers to sleep | **Host-side minimize.** `main.ts` wires `BrowserWindow` `minimize`/`restore` to `LspManager.setWindowMinimized(webContentsId, bool)`, beside the `gitDemand.setSuspended` precedent at `electron/main.ts:4718-4719`, with the same suspended/drop semantics as `src/session-resource-demand.ts:45-59`. A minimized client's visible set counts as empty. The renderer always sends its real visible paths. Logged in Decisions Needed |
 | §2.4/§3 consumer list | Also reads `LspLanguageInfo.languageId` by equality: `webview/components/breadcrumb-bar.tsx:78`, `webview/lsp-status.ts:43,93,103`, `webview/ts-nav.ts:677,700` | All go to lane B. `lspLanguage()` becomes the single any-id lookup |
-| §14: lane A edits `src/file-service.ts`; B owns `weight` | Re-cut (see Architecture) | `file-service` → Slice 0. `weight` → C2 |
+| §14: lane A edits `src/file-service.ts`; B owns `weight` | Re-cut (see Architecture) | `file-service` → Slice 0. `weight` → C1 |
+| §2.5 change 3: `initializationOptions` = the first `settings` section's value | Architecture review: rust-analyzer wants options in initialize, while pyright reads only `workspace/configuration`. Coupling the two through "first section" is implicit | Explicit optional `initializationOptions?: unknown` field. `settings` only answers `workspace/configuration`. Spec updated |
+| ADR 0006 §Trust: binary is "`realpath`'d, and spawned by absolute path" (`docs/adr/0006-host-side-language-servers.md:101-103`) | Spawning the realpath breaks the rustup proxy's argv0 dispatch (spec §2.1), and `versionProbe` runs a binary before trust | Slice B6 amends the ADR |
 | AC-B7 "didOpen carries `c` for `.h` (host log)" | The host never logs didOpen (`electron/lsp-manager.ts:514-523` notifies only) | Asserted in `lsp-manager.test.ts`. The e2e asserts one clangd process for both docs |
 | AC-B8 "no didOpen … reaches the server (host log)" | Same as above | The e2e asserts `lsp:statusSnapshot` holds no python record while only the 3 MB file is open, plus the F12 copy |
 | A6 runner has LLVM and rustup | `actions/runner-images` Windows 2022 and 2025 readmes (2026-10-08) list LLVM 20.1.8, Rust 1.98.1, Rustup 1.29.1 (≥ 1.28, so A12's `RUSTUP_AUTO_INSTALL` holds) and Python 3.12.10 | CI pins these (Slice B5) |
@@ -105,7 +122,9 @@ and `ServerWeight` is owned by the residency module. This means B never waits on
 
 Spec §1 non-goals; diagnostics/formatting/completion; Java/Ruby/PHP/Kotlin/Swift/Lua/Bash/Zig
 servers; Haskell/Zig/Nix/Erlang/LaTeX/Astro/CSV grammars; `.vue`/`.svelte` template grammars;
-user file associations; any settings UI; memory-measured eviction (D2 alternative).
+user file associations; any settings UI; memory-measured eviction (D2 alternative); the shared
+root watch (spec §2.6 "Shared watches", AC-C4; deferred in rev 2). `electron/lsp-watcher.ts` is
+not touched.
 
 ## Contracts
 
@@ -181,7 +200,9 @@ export interface LanguageServerSpec {
   watchIgnoreDirs: readonly string[];
   installHint: string;
   runsTools: string;                              // one server's line
-  /** section → value. initializationOptions = first section's value; workspace/configuration by exact section. */
+  /** Sent as `initialize.initializationOptions` when set; omitted otherwise. */
+  initializationOptions?: unknown;
+  /** section → value; answers `workspace/configuration` items by exact `section`, else null. */
   settings?: Readonly<Record<string, unknown>>;
   /** Run at resolve with cwd tmpdir; non-zero exit / timeout → resolve null (absent). */
   versionProbe?: readonly string[];
@@ -209,7 +230,8 @@ export type LspNotSyncedCause = 'too-large' | 'encoding';
 // LspServerStatus.languageId stays the PRIMARY id (e2e csharp-fixture.mjs:132 and csharp-lsp-idle:60 read it).
 // src/lsp-root.ts
 resolveServerRoot(file, roots, spec: Pick<LanguageServerSpec, 'languageIds' | 'rootMarkers' | 'requiresMarker'>, probe, platform); // key uses primaryLanguageId
-// electron/lsp-server.ts — initializeParams(root: string, initializationOptions: unknown)
+// electron/lsp-server.ts — initializeParams(root: string, initializationOptions: unknown | undefined)
+//   (field omitted when spec.initializationOptions is undefined)
 // workspace/configuration: items.map(i => settings has own i.section ? settings[i.section] : null)
 // webview/lsp-status.ts
 export function lspLanguage(languageId: string): LspLanguageInfo | null;          // matches any of languageIds
@@ -232,38 +254,32 @@ export function notSyncedCause(path: string): LspNotSyncedCause | null;
 
 Manager invariants (B):
 - `DocEntry.languageId` is set from `msg.languageId`, and `notifyOpen` sends it.
+- `open` on an existing `DocEntry` whose `languageId` differs from `msg.languageId` is a close-and-reopen:
+  1. send didClose to the old record if it is live, then `armIdle` it;
+  2. delete the entry;
+  3. run the fresh-open path under the new id, with `serverSpecFor(msg.languageId)` and `keyFor`;
+  4. the new entry inherits the old entry's other-client refs.
 - `absentUntil`, `restartLanguage` and statuses key by `primaryLanguageId(spec)`. `restartLanguage(id)` resolves the spec through `serverSpecFor(id)`.
 - `private readonly resolved = new Map<string, ResolvedServer>()` is keyed by the primary id. `launch` uses the cached value, else `resolveBinary`. A null result deletes the entry, and `restartLanguage` deletes it.
 - `raisePrompt` sets `runsTools: this.deps.registry.map((s) => s.runsTools)`.
 
-### Lane W — shared watch
-
-```ts
-// electron/lsp-watcher.ts  (watchServerRoot is removed; its only caller is main.ts:4399)
-export interface RootWatchPool {
-  watch(root: string,
-        filter: { matches: (rel: string) => boolean; isMarker: (rel: string) => boolean },
-        onChanges: (c: WatchedChange[]) => void, onMarker: () => void, onGone: () => void): LspWatcherHandle;
-}
-export function createRootWatchPool(deps?: { watch?: WatchFn; stat?: (p: string) => Promise<boolean>;
-  log?: (m: string) => void; platform?: NodeJS.Platform }): RootWatchPool;
-// key = platform === 'win32' ? root.toLowerCase() : root  (lexical string, never realpath)
-// one watchDir per key; each subscriber: own filter, own 200 ms coalescing, own pending map, own callbacks;
-// OS watch vanish → every subscriber flushes then gets onGone, key dropped; last close() closes the OS watch.
-```
-`LspManagerDeps.watchRoot` keeps its signature. `main.ts` builds one pool and passes `pool.watch`.
-
 ### Lane C — residency
 
 ```ts
-// src/lsp-residency.ts (Node-free)
+// src/lsp-registry.ts (C1)
 export type ServerWeight = 'light' | 'heavy';
+// LanguageServerSpec gains `weight: ServerWeight` — Go light, Python light, C# heavy, Rust heavy, C/C++ heavy.
+// src/lsp-residency.ts (C1, Node-free; imports type ServerWeight from './lsp-registry')
 export const HEAVY_LIVE_MAX = 2;
 export const LIVE_MAX = 4;
 export const EVICT_MIN_HIDDEN_MS = 60_000;
 export const DORMANT_MS = 600_000;
+/** A derived snapshot the manager builds per decision — never stored. */
 export interface ResidencyServer {
   key: string; weight: ServerWeight; state: LspServerState;
+  /** Counts toward the budget: past resolve+trust and holding (or about to hold) a process —
+   *  `rec.handle !== null && !rec.stopping`. A record still resolving or `absent`/`restricted` never counts. */
+  live: boolean;
   visible: boolean;
   /** When it last stopped having a visible doc; record creation time if never visible. Ignored while visible. */
   hiddenSince: number;
@@ -271,7 +287,6 @@ export interface ResidencyServer {
   lastActivity: number;
   inFlight: number;
 }
-export function isLiveState(state: LspServerState): boolean; // starting | loading | ready | restarting
 export function isEvictable(s: ResidencyServer, now: number): boolean;
 //   live && !visible && inFlight === 0 && state ∉ {starting, loading} && now - hiddenSince >= EVICT_MIN_HIDDEN_MS
 /** Keys to stop (LRU by lastActivity first) so launching `incoming` keeps ≤ HEAVY_LIVE_MAX heavy and ≤ LIVE_MAX
@@ -280,25 +295,59 @@ export function planEvictions(incoming: { key: string; weight: ServerWeight }, s
   now: number): { evict: string[]; overBudget: boolean };
 export function isDormant(s: ResidencyServer, now: number): boolean;
 //   live && !visible && inFlight === 0 && state ∉ {starting, loading} && now - max(lastActivity, hiddenSince) >= DORMANT_MS
-// src/lsp-registry.ts (C2) — LanguageServerSpec gains `weight: ServerWeight` (import type from './lsp-residency');
-//   Go light, Python light, C# heavy, Rust heavy, C/C++ heavy.
-// src/lsp-protocol.ts (C2) — LspCalls['lsp:visible']: { req: { paths: string[] }; res: { ok: boolean } };
-//   parse: Array.isArray, length <= 64, every element absPath → copied array; else null.
+// src/lsp-protocol.ts (C2)
+export const LSP_VISIBLE_MAX = 64;
+// LspCalls['lsp:visible']: { req: { paths: string[] }; res: { ok: boolean } };
+//   parse: Array.isArray, length <= LSP_VISIBLE_MAX, every element absPath → copied array; else null.
+// electron/lsp-server.ts (C2) — LspServerHandle gains `readonly exited: Promise<void>` (resolves on child exit/error;
+//   the existing internal exitedP).
 // electron/lsp-manager.ts (C2)
-export const LSP_VISIBLE_MAX = 64; // in lsp-protocol.ts, used by the parser
+export const EVICT_EXIT_WAIT_MS = 2_000;
 setWindowMinimized(webContentsId: number, minimized: boolean): void; // public
+type LaunchReason = 'visible' | 'request' | 'trust';
+private requestLaunch(rec: ServerRecord, reason: LaunchReason): void;
+private refreshResidency(): void;
+private residencySnapshot(now: number): ResidencyServer[]; // derived from records + docs + visible union
 // webview/lsp-sync.ts (C3)
-export function setLspVisible(paths: readonly string[]): void; // sends lsp:visible only when the sorted set changed
+export function setLspVisible(paths: readonly string[]): void;
+//   sends lsp:visible when the sorted set differs from the last set the HOST ACCEPTED; the set is recorded only
+//   when lspInvoke resolves { ok: true } — a rejected/refused send leaves it unrecorded so the next call retries.
 ```
 
-Manager residency invariants (C2):
-1. `open` registers the doc and cancels a pending idle stop. It **wakes** (launch if `stopped` or `absent` has expired) only when the path is in the visible union. `lsp:visible` wakes the record of every newly visible path that has a doc, so the order of open and visible doesn't matter.
-2. `prepareRequest` still wakes (requests always wake).
-3. The visible union is built from every current client's set, skipping minimized webContents. `retireClient` deletes the client's set.
-4. The window from `planEvictions` through `startServer` runs on one `private launchQueue: Promise<void>` chain, so concurrent launches count each other. Each evictee is `await this.stopRecord(rec)`, which keeps its docs and leaves the record `stopped`. Only then does the server spawn.
-5. Nothing is evictable → launch anyway, and `log.info` once per manager (`softCapLogged`).
-6. Per-record `dormantTimer` is armed `DORMANT_MS` after a live record becomes hidden or sees activity while hidden. When it fires: if `isDormant`, run `stopRecord`, else re-arm for the remainder. `clearTimers` clears it.
-7. `lastActivity` is updated on change, request and becoming visible. `hiddenSince` is set when visible → hidden.
+Manager residency invariants (C2). A **visible doc** is a doc with refs whose path is in the
+visible union. The union is the union of every current client's set, skipping minimized
+webContents.
+
+1. **One gate, `requestLaunch(rec, reason)`.**
+   - It is the only path that starts a non-running record.
+   - Callers:
+     - `open` and `lsp:visible` call it with `'visible'`;
+     - `prepareRequest` and `waitLive`'s re-touch (today `lsp-manager.ts:876`) call it with `'request'`;
+     - `applyTrust` (today `:380-382`) calls it with `'trust'`.
+   - `'visible'` and `'trust'` proceed only if the record has a visible doc. `'request'` always proceeds.
+   - Proceeding means: if the state is `stopped`, or `absent` and expired (or `restricted`, for `'trust'`), go to `starting` and run `launch`.
+   - `touch` keeps only its idle-timer cancel (`hold(rec)`).
+   - The crash-restart timer (`onExit` → `launch`) is exempt: it calls `launch` directly.
+2. **`launch` order.**
+   - **Outside the queue, as today:** resolve binary (cache, then `resolveBinary` incl. `versionProbe`), absent handling, then the trust check (`restricted` + prompt). None of these spawn the server or count toward the budget.
+   - **Only when the next step is `startServer`,** enter `private launchQueue: Promise<void>`. In the queue:
+     1. `planEvictions(rec, residencySnapshot(now))`;
+     2. for each evictee, re-run `isEvictable` on a fresh snapshot; skip it if no longer evictable;
+     3. otherwise `evict(evictee)`;
+     4. re-check `!disposed && gen === rec.generation && !rec.stopping && (hasVisibleDoc(rec) || rec.waiters.size > 0 || inFlightCount(rec) > 0)`;
+     5. if true, `startServer`, which sets `rec.handle` inside the queue so the next queued launch counts it. Otherwise `setState(rec, 'stopped')` and leave.
+   - Watch arming, initialize and the didOpen replay stay after the queue.
+3. **`evict(rec)`.** Capture `h = rec.handle`, then `await this.stopRecord(rec)`, which keeps its docs and leaves it `stopped`. Then `await Promise.race([h.exited, delay(EVICT_EXIT_WAIT_MS)])`; on timeout, `log.warn` once per evictee.
+4. **End of every residency stop (eviction or dormancy).** If the record has a visible doc, call `requestLaunch(rec, 'visible')`. This covers a doc that became visible during the stop.
+5. **Nothing evictable:** launch anyway; `log.info` once per manager (`softCapLogged`).
+6. **`refreshResidency()`** is the single place that:
+   - derives each record's visibility from union × docs;
+   - sets `hiddenSince = now` on a visible→hidden edge;
+   - sets `lastActivity = now` on a hidden→visible edge and calls `requestLaunch(rec, 'visible')`;
+   - (re)arms `rec.dormantTimer` for a live hidden record (`DORMANT_MS` after `max(lastActivity, hiddenSince)`), and clears it otherwise. When the timer fires: if `isDormant`, run the residency stop; else call `refreshResidency()`.
+
+   It is called after `lsp:visible`, `open`, `close`/`afterRefsDropped`, `rehome`, `retireClient`, `dropWebContents` (which also deletes that webContents' minimized entry), `setWindowMinimized`, and `launch` reaching live. `clearTimers` clears `dormantTimer`.
+7. `lastActivity` is also set on `change` and on `prepareRequest`. An invisible `open` is not activity.
 
 ## Producer/consumer map
 
@@ -314,9 +363,11 @@ Manager residency invariants (C2):
 | trust tools list | registry `runsTools` → `raisePrompt` `string[]` (B) | `trust-prompt.tsx` (B) | both |
 | settings | registry `settings` (B) | `lsp-server` initialize + configuration (B) | both |
 | spawn path vs realpath | `findBinary` (B) | `resolveServerBinary` (spawn path), Go/C# `resolveToolDir` (realPath), Rust `resolveToolDir` (path) (B) | both |
-| watch events | `RootWatchPool` (W) | manager `forwardWatched`/`rehome` through the unchanged `watchRoot` dep | both. The dep signature is unchanged, so the manager is untouched by W |
-| visibility | app.tsx `visibleFilePaths` (`app.tsx:1678-1688`) → `setLspVisible` (C3); main.ts minimize (C2) | manager residency (C2) | both |
-| weight | registry (C2) | `planEvictions` (C1/C2) | both |
+| initializationOptions | registry `initializationOptions` (B) | `lsp-server` initialize (B) | both |
+| visibility | app.tsx `visibleFilePaths` (`app.tsx:1678-1688`) → `setLspVisible` (C3); main.ts minimize (C2) | manager `refreshResidency` (C2) | both |
+| weight | registry (C1) | `planEvictions` (C1), manager snapshot (C2) | both |
+| process exit | `LspServerHandle.exited` (C2, `lsp-server.ts`) | manager `evict` (C2) | both |
+| ADR 0006 §Trust | docs (B6) | readers of the trust model; `lsp-binary.ts` behaviour (B1) | both |
 | launch trigger change (D7) | manager (C2) | go-lsp / csharp-lsp / csharp-lsp-idle / mf-files raw `lsp:open` flows (C4 adapts) | both |
 
 ## File map
@@ -340,11 +391,12 @@ Manager residency invariants (C2):
 | `test/unit/{toml,diff,makefile,cmake,ignore}-grammar.test.ts`, `grammar-linear.test.ts`, `diff-folding.test.ts`, `plan-fence-language.test.ts` | create | A | units |
 | `test/unit/syntax-highlight.test.ts` | modify | A | every LanguageId has an entry |
 | `test/e2e/language-coverage.e2e.mjs` | create | A | AC-A1–A6 |
-| `src/lsp-registry.ts` | modify | B, then C2 | spec shape, 3 new servers (B); `weight` (C2) |
+| `src/lsp-registry.ts` | modify | B, then C1 | spec shape, 3 new servers (B); `ServerWeight` + `weight` (C1) |
+| `docs/adr/0006-host-side-language-servers.md` | modify | B | §Trust amendment (B6) |
 | `src/lsp-binary.ts` | modify | B | `FoundBinary`, altBinaries, versionProbe |
 | `src/lsp-root.ts` | modify | B | primary-id key |
 | `src/lsp-protocol.ts` | modify | B, then C2 | `languageIds`, `runsTools[]`, `LspNotSyncedCause` (B); `lsp:visible` (C2) |
-| `electron/lsp-server.ts` | modify | B | settings |
+| `electron/lsp-server.ts` | modify | B, then C2 | initializationOptions + settings (B); `exited` on the handle (C2) |
 | `electron/lsp-manager.ts` | modify | B, then C2 | any-id, DocEntry id, resolved cache, prompt list (B); residency (C2) |
 | `webview/lsp-status.ts` | modify | B | any-id lookups, `servedLanguageIds` |
 | `webview/lsp-sync.ts` | modify | B, then C3 | DTO language, skip causes, reconcile by language (B); `setLspVisible` (C3) |
@@ -362,28 +414,23 @@ Manager residency invariants (C2):
 | `test/e2e/core-smoke.json` | modify | B | + `lsp-missing-servers` |
 | `test/e2e/timings.seed.json` | modify | B, then C4 | seeds |
 | `.github/workflows/e2e.yml` | modify | B, then C4 | install steps |
-| `electron/lsp-watcher.ts` | modify | W | `createRootWatchPool` replaces `watchServerRoot` |
-| `electron/main.ts` | modify | W, then C2 | pool wiring (W); minimize/restore → manager (C2) |
-| `test/unit/lsp-watcher.test.ts` | modify | W | AC-C4 |
+| `electron/main.ts` | modify | C2 | minimize/restore → manager, beside `gitDemand` (:4718-4719) |
 | `src/lsp-residency.ts` | create | C1 | pure policy |
 | `test/unit/lsp-residency.test.ts` | create | C1 | policy units |
-| `test/e2e/lsp-residency.e2e.mjs`, `lsp-residency-launch.e2e.mjs` | create | C4 | AC-C1, C3, C5 |
+| `test/e2e/lsp-residency.e2e.mjs`, `lsp-residency-replay.e2e.mjs`, `lsp-residency-launch.e2e.mjs` | create | C4 | AC-C1, C3, C5 |
 | `test/e2e/go-lsp.e2e.mjs`, `mf-files.e2e.mjs` (if it uses raw `lsp:open`) | modify | C4 | wake via request after raw open |
 
 ### Lane file sets (disjointness proof)
 
 - **S0:** `src/lang.ts`, `src/file-service.ts`, `test/unit/lang.test.ts`, `test/unit/file-service.test.ts`.
 - **A:** `webview/monaco-languages.ts`, `webview/{toml,diff,makefile,cmake,ignore}-grammar.ts`, `webview/diff-folding.ts`, `webview/plan-fence-language.ts`, `webview/components/plan-code-block.tsx`, `webview/syntax-highlight.ts`, `webview/components/diff-viewer.tsx`, `webview/components/review-view.tsx`, `test/unit/grammar-runner.ts`, `test/unit/log-grammar.test.ts`, `test/unit/{toml,diff,makefile,cmake,ignore}-grammar.test.ts`, `test/unit/grammar-linear.test.ts`, `test/unit/diff-folding.test.ts`, `test/unit/plan-fence-language.test.ts`, `test/unit/syntax-highlight.test.ts`, `test/e2e/language-coverage.e2e.mjs`. **No** e2e.yml, timings, core-smoke edit: its seed is written by B5, and it needs no install.
-- **B:** `src/lsp-registry.ts`, `src/lsp-binary.ts`, `src/lsp-root.ts`, `src/lsp-protocol.ts`, `electron/lsp-server.ts`, `electron/lsp-manager.ts`, `webview/lsp-status.ts`, `webview/lsp-sync.ts`, `webview/lsp-nav.ts`, `webview/nav-outcome.ts`, `webview/ts-nav.ts`, `webview/components/breadcrumb-bar.tsx`, `webview/components/trust-prompt.tsx`, `webview/app.tsx`, the 11 unit tests listed above, `test/e2e/lsp-fixture.mjs`, `csharp-fixture.mjs`, `csharp-lsp.e2e.mjs`, `csharp-lsp-idle.e2e.mjs`, `python-fixture.mjs`, `rust-fixture.mjs`, `clangd-fixture.mjs`, the 5 new B scenarios, `core-smoke.json`, `timings.seed.json`, `.github/workflows/e2e.yml`.
-- **W:** `electron/lsp-watcher.ts`, `electron/main.ts`, `test/unit/lsp-watcher.test.ts`.
-- **C1:** `src/lsp-residency.ts`, `test/unit/lsp-residency.test.ts`.
-- **C2–C4 (after B and W):** `src/lsp-registry.ts`, `src/lsp-protocol.ts`, `electron/lsp-manager.ts`, `electron/main.ts`, `webview/lsp-sync.ts`, `webview/app.tsx`, `test/unit/lsp-{manager,protocol,registry,sync}.test.ts`, `test/e2e/lsp-residency.e2e.mjs`, `lsp-residency-launch.e2e.mjs`, `go-lsp.e2e.mjs`, `csharp-lsp.e2e.mjs`, `csharp-lsp-idle.e2e.mjs`, `mf-files.e2e.mjs` (conditional), `e2e.yml`, `timings.seed.json`.
+- **B:** `src/lsp-registry.ts`, `src/lsp-binary.ts`, `src/lsp-root.ts`, `src/lsp-protocol.ts`, `electron/lsp-server.ts`, `electron/lsp-manager.ts`, `webview/lsp-status.ts`, `webview/lsp-sync.ts`, `webview/lsp-nav.ts`, `webview/nav-outcome.ts`, `webview/ts-nav.ts`, `webview/components/breadcrumb-bar.tsx`, `webview/components/trust-prompt.tsx`, `webview/app.tsx`, the 11 unit tests listed above, `test/e2e/lsp-fixture.mjs`, `csharp-fixture.mjs`, `csharp-lsp.e2e.mjs`, `csharp-lsp-idle.e2e.mjs`, `python-fixture.mjs`, `rust-fixture.mjs`, `clangd-fixture.mjs`, the 5 new B scenarios, `core-smoke.json`, `timings.seed.json`, `.github/workflows/e2e.yml`, `docs/adr/0006-host-side-language-servers.md`.
+- **C (C1–C4, serial after B):** `src/lsp-registry.ts`, `src/lsp-residency.ts`, `src/lsp-protocol.ts`, `electron/lsp-server.ts`, `electron/lsp-manager.ts`, `electron/main.ts`, `webview/lsp-sync.ts`, `webview/app.tsx`, `test/unit/lsp-{residency,manager,protocol,registry,server,sync}.test.ts`, `test/e2e/lsp-residency.e2e.mjs`, `lsp-residency-replay.e2e.mjs`, `lsp-residency-launch.e2e.mjs`, `lsp-fixture.mjs`, `go-lsp.e2e.mjs`, `csharp-lsp.e2e.mjs`, `csharp-lsp-idle.e2e.mjs`, `mf-files.e2e.mjs` (conditional), `e2e.yml`, `timings.seed.json`.
 
-Pairwise intersections of A, B, W and C1 are empty, as the four sets above show: A is all colouring
-files, B is all `lsp-*`/nav/trust/app files, W is the watcher plus main, and C1 is a new file pair.
-A imports `lang.ts` read-only. B's `lsp-nav.ts` imports `ensureTokenizer` from A's
-`monaco-languages.ts` read-only, and its export signature is unchanged. C1 imports
-`LspServerState` from `lsp-protocol.ts` read-only, and B does not change that type.
+A ∩ B = ∅: A is all colouring files, and B is all `lsp-*`/nav/trust/app/CI/ADR files. A imports
+`lang.ts` read-only. B's `lsp-nav.ts` imports `ensureTokenizer` from A's `monaco-languages.ts`
+read-only, and its export signature is unchanged. Lane C overlaps B by design and runs after it.
+C does not touch any A file, so A may still be running when C starts.
 
 ## Scripts
 
@@ -558,13 +605,13 @@ Same block per grammar. **Files:** create `webview/<g>-grammar.ts` + `test/unit/
   - 'Go toolDir is dirname(realPath)'.
 - [ ] Run. FAIL. Implement.
 
-#### Task B1.3: `settings` in lsp-server
+#### Task B1.3: `initializationOptions` + `settings` in lsp-server
 
-**Files:** Modify `electron/lsp-server.ts` (`initializeParams` :33-60 gains `initializationOptions`; `workspace/configuration` handler :115-117), `src/lsp-registry.ts` (`settings?` field). Test `test/unit/lsp-server.test.ts`.
+**Files:** Modify `electron/lsp-server.ts` (`initializeParams` :33-60 gains `initializationOptions`; `workspace/configuration` handler :115-117), `src/lsp-registry.ts` (`initializationOptions?` and `settings?` fields). Test `test/unit/lsp-server.test.ts`.
 **Steps:**
 - [ ] Failing tests:
-  - 'initializationOptions is the first settings section value': spec settings `{'rust-analyzer': {checkOnSave:false}}` gives the initialize params' `initializationOptions` deep-equal `{checkOnSave:false}`. With no settings, the field is absent.
-  - 'workspace/configuration answers by exact section': items `[{section:'rust-analyzer'},{section:'other'},{}]` give `[{checkOnSave:false}, null, null]`.
+  - 'initializationOptions comes from the explicit field': spec `initializationOptions: {checkOnSave:false}` puts it deep-equal in the initialize params. With no field, the key is absent even when `settings` is set.
+  - 'workspace/configuration answers by exact section': settings `{'basedpyright.analysis': A, 'python.analysis': A}`, items `[{section:'python.analysis'},{section:'basedpyright.analysis'},{section:'other'},{}]` give `[A, A, null, null]`.
 - [ ] Run. FAIL. Implement.
 
 ### Slice B2: manager + protocol + trust prompt
@@ -578,6 +625,7 @@ Same block per grammar. **Files:** create `webview/<g>-grammar.ts` + `test/unit/
 **Steps:**
 - [ ] Failing tests:
   - 'didOpen carries the doc's language id': a registry with `['cpp','c']`. Opening `x.h` as `c` and `x.cpp` as `cpp` gives one server record, and its didOpens carry `languageId` `c` and `cpp` respectively (AC-B7 unit half).
+  - 'open with a different language id re-opens the doc': `p` as `shell` (served by a fake registry entry), then `p` as `python` gives didClose on the shell server and didOpen `python` on the python server. A second client's ref carries over (one later close of each client leaves no doc).
   - 'restart by a secondary id restarts the server'.
   - 'absent TTL is per server' (`.h` then `.cpp` while absent: one resolve).
   - 'resolve cached across stop/relaunch, cleared by restart and by a null resolve': count `resolveBinary` calls.
@@ -636,8 +684,8 @@ Same block per grammar. **Files:** create `webview/<g>-grammar.ts` + `test/unit/
 
 **Files:** Modify `src/lsp-registry.ts` (add `PYTHON_SERVER`, `RUST_SERVER`, `CLANGD_SERVER`, `LANGUAGE_SERVERS` :197). Test `test/unit/lsp-registry.test.ts`.
 **Interfaces:** Every value is from spec §2.5, verbatim, plus these:
-- Python: `languageIds ['python']`, `binary 'basedpyright-langserver'`, `altBinaries ['pyright-langserver']`, `args ['--stdio']`, `settings {'basedpyright.analysis': {typeCheckingMode:'off', diagnosticMode:'openFilesOnly'}}`, `extraSearchDirs` gives `[home/.local/bin]` when homedir, `resolveToolDir` gives `null`, `childEnv` is a copy of base.
-- Rust: `languageIds ['rust']`, `requiresMarker true`, `versionProbe ['--version']`, `settings {'rust-analyzer': {checkOnSave:false}}`.
+- Python: `languageIds ['python']`, `binary 'basedpyright-langserver'`, `altBinaries ['pyright-langserver']`, `args ['--stdio']`. With `const PY_ANALYSIS = {typeCheckingMode:'off', diagnosticMode:'openFilesOnly'}`: `settings {'basedpyright.analysis': PY_ANALYSIS, 'python.analysis': PY_ANALYSIS}`, so the pyright alt binary reads its own section. No `initializationOptions`. `extraSearchDirs` gives `[home/.local/bin]` when homedir, `resolveToolDir` gives `null`, `childEnv` is a copy of base.
+- Rust: `languageIds ['rust']`, `requiresMarker true`, `versionProbe ['--version']`, `initializationOptions {checkOnSave:false}`, `settings {'rust-analyzer': {checkOnSave:false}}`.
   - `resolveToolDir`: `findBinary('cargo', [...pathDirs, $CARGO_HOME/bin, ~/.cargo/bin])`, then `dirname(found.path)`. The path, NOT realPath, so a distro symlink to `rustup` keeps argv0.
   - `extraSearchDirs`: `[$CARGO_HOME/bin, ~/.cargo/bin]` (absolute only).
   - `childEnv`: prepend toolDir to PATH, then `setUnlessPresent(env,'RUSTUP_AUTO_INSTALL','0',platform)`.
@@ -652,7 +700,9 @@ Same block per grammar. **Files:** create `webview/<g>-grammar.ts` + `test/unit/
   - `serverSpecFor('c') === CLANGD_SERVER`;
   - Rust `childEnv` sets `RUSTUP_AUTO_INSTALL=0` only when unset (incl. a win32 `rustup_auto_install` case), never mutates base, and prepends toolDir;
   - clangd win32 search dir derives from `ProgramFiles` (`D:\\PF` → `D:\\PF\\LLVM\\bin`) and is absent when unset;
-  - Python `altBinaries` order.
+  - Python `altBinaries` order;
+  - Python `settings` answer both `basedpyright.analysis` and `python.analysis` with the same object;
+  - Rust `initializationOptions` deep-equals `{checkOnSave:false}`.
 - [ ] Run. FAIL. Implement.
 
 ### Slice B5: e2e + CI
@@ -696,86 +746,86 @@ Each must complete < 200 s. `lsp-missing-servers` is added to `core-smoke.json`.
 - Use the same `contains(format(' {0} ', matrix.names), ' name ')` shape as the existing steps.
 - Seeds (`medians`, seconds): `language-coverage: 60`, `lsp-missing-servers: 45`, `python-lsp: 90`, `rust-lsp: 120`, `clangd-lsp: 90`, `lsp-trust-multi: 60`. Extra seeds for scenarios on other lanes are harmless (`test/e2e/ci-state.mjs:34` only reads names that run).
 
-### Lane W — shared watch (parallel, after S0)
+### Slice B6: ADR 0006 §Trust amendment (docs-only)
 
-### Slice W1: root watch pool
+**Check:** the amended paragraph matches `src/lsp-binary.ts` as built in B1.2 (reviewer reads both); `npm run check` green.
 
-**Check:** `npx vitest run test/unit/lsp-watcher.test.ts test/unit/lsp-manager.test.ts` green; `npm run typecheck`; remote `npm run e2e:remote -- go-lsp csharp-lsp csharp-lsp-idle`.
-**Claims:** `electron/main.ts` (lane W, then C2).
+#### Task B6.1
 
-#### Task W1.1
-
-**Files:**
-- Modify `electron/lsp-watcher.ts`: replace `watchServerRoot` with `createRootWatchPool`. The per-subscriber body keeps today's coalescing/delivery/flush-then-gone logic.
-- Modify `electron/main.ts`: import :273; build the pool next to `lspSearch` (~:4323); `watchRoot` (:4397-4408) → `lspWatchPool.watch(root, {matches, isMarker}, onChanges, onMarker, onGone)`.
-- Test `test/unit/lsp-watcher.test.ts`.
-**Call sites:** `watchServerRoot`, only at `electron/main.ts:4399`.
+**Files:** Modify `docs/adr/0006-host-side-language-servers.md` §Trust (the bullet at :100-103 "No workspace-supplied configuration…", which says "`realpath`'d, and spawned by absolute path").
 **Steps:**
-- [ ] Failing tests (AC-C4), with a fake `watch` counting calls:
-  - two subscribers on one root give one OS watch, and each gets only its own filter's changes;
-  - a marker event reaches only the subscriber whose `isMarker` matches;
-  - closing one keeps the other's events;
-  - closing both closes the OS watch;
-  - win32 `C:\R` and `c:\r` share; `C:\J` (junction spelling) and `D:\T` don't;
-  - a vanish flushes each subscriber's pending batch then calls each `onGone`, and a later `watch` on that root opens a new OS watch.
-- [ ] Run. FAIL. Implement.
+- [ ] Replace the binary sentence and add one bullet, stating:
+  1. The binary is found by name on absolute `PATH` entries and the registry's fixed directory list, never the repo, and spawned by that **found absolute path** (not its realpath), so an argv0-dispatching proxy (rustup) works. The realpath is kept for `resolveToolDir` only (e.g. C#'s `DOTNET_ROOT`).
+  2. Before trust, the only execution allowed is a version/tool probe (`versionProbe`, `go env GOPATH`): run with `cwd` = the OS temp dir and the server's stripped child env, with a 5 s timeout. Nothing runs in the repo before trust.
+- [ ] Add a dated "Amended 2026-10-08 (language coverage)" line pointing to spec `docs/specs/2026-10-08-language-coverage.md` §2.5. Follow ADR 0003: amend in place, no new ADR.
 
-### Lane C — residency
+### Lane C — residency (serial, after B lands)
 
-### Slice C1: pure policy (parallel, after S0)
+### Slice C1: `ServerWeight` + pure policy
 
-**Check:** `npx vitest run test/unit/lsp-residency.test.ts` green.
+**Check:** `npx vitest run test/unit/lsp-residency.test.ts test/unit/lsp-registry.test.ts` green; `npm run typecheck`.
+**Claims:** `src/lsp-registry.ts`.
 
 #### Task C1.1
 
-**Files:** Create `src/lsp-residency.ts`, `test/unit/lsp-residency.test.ts`.
-**Interfaces:** Produces everything under "src/lsp-residency.ts" in Contracts. Its first caller is C2 on the same lane. This is the one deliberate producer-before-caller split, made so the policy is built while B runs. The contract is pinned above.
+**Files:**
+- Modify `src/lsp-registry.ts`: `export type ServerWeight`, `weight` field, and values on all five specs.
+- Create `src/lsp-residency.ts` and `test/unit/lsp-residency.test.ts`.
+- Modify `test/unit/lsp-registry.test.ts`.
+**Interfaces:** Produces `ServerWeight` and everything under "src/lsp-residency.ts" in Contracts. C2 consumes them.
 **Steps:**
 - [ ] Failing tests (AC-C2 policy half, `now` injected):
   - over heavy cap evicts the LRU evictable heavy;
-  - never evicts visible / inFlight > 0 / starting / loading / hidden < 60 s;
+  - never evicts visible / inFlight > 0 / starting / loading / hidden < 60 s / `live:false`;
   - total cap evicts the LRU of any weight after the heavy pass;
   - nothing evictable gives `{evict: [], overBudget: true}`;
   - `incoming` already in the list is ignored;
-  - non-live states never count;
-  - `isDormant` true at exactly `DORMANT_MS` after `max(lastActivity, hiddenSince)`, false while visible or in-flight.
+  - `live:false` records never count toward a cap;
+  - `isDormant` true at exactly `DORMANT_MS` after `max(lastActivity, hiddenSince)`, false while visible or in-flight;
+  - registry: every spec has a weight; Go/Python are `light` and C#/Rust/C++ are `heavy`.
 - [ ] Run. FAIL. Implement.
 
-### Slice C2: manager residency (serial — after B and W land)
+### Slice C2: manager residency
 
-**Check:** `npx vitest run test/unit/lsp-manager.test.ts test/unit/lsp-protocol.test.ts test/unit/lsp-registry.test.ts` green; `npm run typecheck`.
-**Claims:** `electron/lsp-manager.ts`, `src/lsp-protocol.ts`, `src/lsp-registry.ts`, `electron/main.ts`.
+**Check:** `npx vitest run test/unit/lsp-manager.test.ts test/unit/lsp-protocol.test.ts test/unit/lsp-server.test.ts` green; `npm run typecheck`.
+**Claims:** `electron/lsp-manager.ts`, `src/lsp-protocol.ts`, `electron/lsp-server.ts`, `electron/main.ts`.
 
-#### Task C2.1: `weight` + `lsp:visible` + minimize
+#### Task C2.1: `lsp:visible`, handle `exited`, minimize wiring
 
 **Files:**
-- Modify `src/lsp-registry.ts`: add the `weight` field and values.
 - Modify `src/lsp-protocol.ts`: `LspCalls['lsp:visible']`, `LSP_VISIBLE_MAX`, and a parse case.
-- Modify `electron/main.ts`: where each `BrowserWindow` is created (~:970), `win.on('minimize'|'restore', …)` → `lspManager.setWindowMinimized(win.webContents.id, …)`. The executor confirms `lspManager` is in scope at window creation. If it isn't, it stops and reports (deviation rule) rather than adding a global.
-- Tests `lsp-protocol.test.ts`, `lsp-registry.test.ts`.
+- Modify `electron/lsp-server.ts`: `exited` on `LspServerHandle`, exposing the internal `exitedP`.
+- Modify `electron/main.ts`: at :4718-4719, beside `gitDemand.setSuspended`, capture `const wcId = w.webContents.id`, then `w.on('minimize', …)` / `w.on('restore', …)` also call `lspManager.setWindowMinimized(wcId, true|false)`. Window close needs no new hook: the existing `destroyed` → `dropWebContents` (:4431-4432) clears the minimized entry (C2.2).
+- Tests: `lsp-protocol.test.ts`, `lsp-server.test.ts`.
 **Steps:**
-- [ ] Failing tests: `parseLspMessage({type:'lsp:visible', paths:[abs]})` copies the array; 65 paths → null; a relative path → null; `..` → null. Every registry spec has a weight; Go/Python are `light` and C#/Rust/C++ are `heavy`.
+- [ ] Failing tests:
+  - `parseLspMessage({type:'lsp:visible', paths:[abs]})` copies the array; 65 paths → null; a relative path → null; `..` → null.
+  - lsp-server: `exited` resolves after the fake child emits `exit` and after `error`, not before.
 - [ ] Run. FAIL. Implement.
 
 #### Task C2.2: manager integration
 
 **Files:** Modify `electron/lsp-manager.ts`. Test `test/unit/lsp-manager.test.ts` (fake clock already at :280).
 **Interfaces:**
-- Consumes `planEvictions`, `isDormant`, `isLiveState`, `DORMANT_MS`, `ServerWeight` (signatures in Contracts).
-- Produces `setWindowMinimized(webContentsId: number, minimized: boolean): void` and the `lsp:visible` dispatch case (`{ ok: true }`).
+- Consumes `planEvictions`, `isEvictable`, `isDormant`, `DORMANT_MS`, `ResidencyServer`, `ServerWeight`, `LspServerHandle.exited` (signatures in Contracts).
+- Produces `setWindowMinimized`, `EVICT_EXIT_WAIT_MS`, the `lsp:visible` dispatch case (`{ ok: true }`), private `requestLaunch` / `refreshResidency` / `residencySnapshot` / `evict`.
+**Call sites changed:** `touch` (:570-582) is reduced to the idle-timer cancel. Its launch callers move to `requestLaunch`: `open` :458, `rehome` :769, `prepareRequest` :842, `waitLive` :876. `applyTrust` :380-382 also moves to `requestLaunch`. The crash-restart timer (`onExit` :679-682) keeps calling `launch` directly.
 **Steps:**
 - [ ] Failing tests (AC-C2 manager half), with fake handles + fake clock:
-  - invisible open does not call `startServer`; a later `lsp:visible` with that path does;
-  - visible-then-open launches;
-  - a request on an invisible doc launches;
-  - third heavy launch awaits the LRU's `stop()` before `startServer` (assert call order), and the evictee keeps its docs: re-visible relaunches and replays didOpen with the latest text;
-  - hidden < 60 s is not evicted, so a soft-cap launch happens and is logged once;
+  - invisible open does not call `startServer`; a later `lsp:visible` with that path does; visible-then-open launches;
+  - a request on an invisible doc launches, including with a cached resolve;
+  - **absent binary and restricted (untrusted) launches evict nothing** (the budget is full of hidden evictable servers; `stop` is never called);
+  - **Trust with only hidden docs launches nothing**; showing a doc afterwards launches;
+  - **window dropped mid-launch → no spawn** (`resolveBinary` deferred; `dropWebContents` before it settles; `startServer` never called, the record ends `stopped`);
+  - third heavy launch: `stop()` of the LRU, then its `exited`, then `startServer` (assert order). With `exited` never resolving, the launch proceeds after `EVICT_EXIT_WAIT_MS` and logs once;
+  - **evictee re-checked**: it becomes visible between plan and stop, so it is not stopped and the launch goes over budget (soft cap);
+  - **evictee visible at the end of its stop → relaunched**: it becomes visible while `stop()` is pending, so a second `startServer` follows;
+  - the evictee keeps its docs: re-visible relaunches and replays didOpen with the latest unsaved text (AC-C3 unit half);
+  - hidden < 60 s is not evicted, so a soft-cap launch happens, logged once;
   - in-flight is not evicted;
-  - dormancy stops after `DORMANT_MS` hidden and idle, and activity re-arms it;
-  - union across two clients;
-  - `dropWebContents` drops that client's set (the server becomes evictable/dormant);
-  - minimized client counts as empty, restore re-wakes;
-  - two concurrent launches over the cap evict exactly one (launchQueue).
+  - dormancy stops after `DORMANT_MS` hidden and idle; `change` re-arms it; dormancy of a server whose doc becomes visible at the end of the stop relaunches it;
+  - union across two clients; `dropWebContents` drops that client's set and its minimized entry; a minimized client counts as empty; restore re-wakes;
+  - two concurrent launches over the cap evict exactly one (`launchQueue`).
 - [ ] Run. FAIL. Implement per "Manager residency invariants (C2)". Existing manager tests that open and expect a launch now send `lsp:visible` first. That follows D7 and is not a weakened test. Any test whose assertion changes meaning is called out in the slice report.
 
 ### Slice C3: renderer visibility
@@ -790,13 +840,15 @@ Each must complete < 200 s. `lsp-missing-servers` is added to `core-smoke.json`.
 - Modify `webview/app.tsx`: a `useEffect` on `visibleFilePaths` (:1678-1688) calls `setLspVisible([...visibleFilePaths])`. No `document.visibilityState` gating (see Spec staleness).
 - Test `test/unit/lsp-sync.test.ts`.
 **Steps:**
-- [ ] Failing test: 'setLspVisible sends only on change': `['/a','/b']` then `['/b','/a']` gives one `lsp:visible`; `[]` gives a second.
+- [ ] Failing tests:
+  - 'setLspVisible sends only on change': `['/a','/b']` then `['/b','/a']` gives one `lsp:visible`; `[]` gives a second.
+  - 'a refused send is retried': `lspInvoke` resolves `{ok:false}` (or rejects) for `['/a']`, so a second `setLspVisible(['/a'])` sends again.
 - [ ] Run. FAIL. Implement.
 
 ### Slice C4: residency e2e + CI + existing-scenario adaptation
 
 **Check:**
-- remote `npm run e2e:remote -- lsp-residency lsp-residency-launch go-lsp csharp-lsp csharp-lsp-idle mf-files python-lsp rust-lsp clangd-lsp lsp-trust-multi lsp-missing-servers` all PASS.
+- remote `npm run e2e:remote -- lsp-residency lsp-residency-replay lsp-residency-launch go-lsp csharp-lsp csharp-lsp-idle mf-files python-lsp rust-lsp clangd-lsp lsp-trust-multi lsp-missing-servers` all PASS.
 - Then `npm run verify`.
 **Claims:** `.github/workflows/e2e.yml`, `test/e2e/timings.seed.json`.
 
@@ -809,27 +861,26 @@ Each must complete < 200 s. `lsp-missing-servers` is added to `core-smoke.json`.
 
 | Scenario | ACs | Installs |
 |---|---|---|
-| `lsp-residency` | C1 + C3 in one timeline. Show `.rs` (t0). Show `.cpp` (t1; `.rs` hidden from t1). Wait to t1 + 61 s. Open `.cs` from the `.cpp` tab. Assert: `.rs` evicted (LRU, hidden 61 s); `.cpp` kept (hidden ~1 s, hysteresis); csharp-ls starts; and at every 250 ms sample, ≤ 2 heavy pids are alive (snapshot pids + `process.kill(pid, 0)`). Then edit the `.rs` tab unsaved (rename the called fn at the call and definition), show it, F12: rust-analyzer relaunches (evicting clangd) and lands on the edited target | rust, clangd, csharp |
+| `lsp-residency` | C1. Show `.rs` (t0). Show `.cpp` (t1; `.rs` hidden from t1). Wait to t1 + 61 s. Open `.cs` from the `.cpp` tab. Assert: `.rs` evicted (LRU, hidden 61 s); `.cpp` kept (hidden ~1 s, hysteresis); csharp-ls starts; and at every 250 ms sample from t0 to the end, **never more than 2 heavy server pids alive** (snapshot pids + `process.kill(pid, 0)` on each recorded heavy pid, so an evictee still exiting counts) | rust, clangd, csharp |
+| `lsp-residency-replay` | C3. The same three-step setup reaches the `.rs`-evicted state. Then edit the `.rs` tab unsaved (rename the called fn at the call and the definition), show it, and F12: rust-analyzer relaunches (evicting clangd, hidden > 60 s by then) and lands on the edited target | rust, clangd, csharp |
 | `lsp-residency-launch` | C5: session with `.py` + `.rs` tabs and the Terminal tab active. Relaunch the app: for 5 s the snapshot holds no live python/rust record. Click the `.py` tab: python reaches `starting` within 10 s | python, rust |
 
-Seeds: `lsp-residency: 170`, `lsp-residency-launch: 60`. Both under 200 s. If `lsp-residency` exceeds 180 s locally, move C3 into `lsp-residency-replay`. Do not shorten the 60 s hysteresis via any hook.
+Seeds: `lsp-residency: 130`, `lsp-residency-replay: 170`, `lsp-residency-launch: 60`. All under 200 s. The fixture/setup steps shared by the two residency scenarios live in `test/e2e/lsp-fixture.mjs` (C4 appends `reachRustEvicted(page, dirs, log)`). Do not shorten the 60 s hysteresis via any hook.
 
 #### Task C4.3: CI conditions
 
-**Files:** Modify `.github/workflows/e2e.yml`. Add `' lsp-residency '` to the rust, clangd, setup-dotnet and csharp-ls step conditions. Add `' lsp-residency-launch '` to the python and rust conditions. Add the seeds to `timings.seed.json`.
+**Files:** Modify `.github/workflows/e2e.yml`. Add `' lsp-residency '` and `' lsp-residency-replay '` to the rust, clangd, setup-dotnet and csharp-ls step conditions. Add `' lsp-residency-launch '` to the python and rust conditions. Add the seeds to `timings.seed.json`.
 
 ## Execution order
 
 ```
-S0 (one executor) ──▶ ┬─ Lane A  (A1→A2→A3→A4→A5)            ─┐
-                      ├─ Lane B  (B1→B2→B3→B4→B5)            ─┤
-                      ├─ Lane W  (W1)                         ─┤──▶ C2 → C3 → C4 (one executor) ──▶ conductor: verify + e2e:remote --full
-                      └─ Lane C1 (pure policy)                ─┘        (needs B, W, C1 merged; A may still be running)
+S0 (one executor) ──▶ ┬─ Lane A  (A1→A2→A3→A4→A5)          ───────────────────────────────┐
+                      └─ Lane B  (B1→B2→B3→B4→B5→B6) ──▶ Lane C (C1→C2→C3→C4, one executor) ┴─▶ conductor: verify + e2e:remote --full
 ```
 
-- Every lane branches from the S0 SHA. Every lane runs `npm run verify` before handback.
-- The conductor merges A, B, W and C1 in any order. The four lanes' file sets are disjoint, so no merge conflict is possible.
-- C2 branches from the tree with B, W and C1 merged.
+- A and B branch from the S0 SHA. Every lane runs `npm run verify` before handback.
+- The conductor merges A and B in either order; their file sets are disjoint.
+- C branches from the tree with B merged. A may still be running: C touches no A file.
 - Integration gate: `npm run verify` + `npm run e2e:remote -- --full`.
 
 ## Verification
@@ -853,6 +904,7 @@ skip.
 ## Decisions Needed
 
 - [normal] Minimized-window detection is host-side `BrowserWindow` `minimize`/`restore`, not the renderer's `document.visibilityState`. The latter is `hidden` for every e2e window (`show:false`, `electron/main.ts:987`) and for occluded windows. Default taken: host-side.
-- [normal] Scenario set differs from spec §7: added `lsp-trust-multi` (B2 + B9 need all three servers installed in one shard) and `lsp-residency-launch` (C5), keeping each under the 200 s deadline. Default taken: as planned.
+- [normal] Scenario set differs from spec §7: added `lsp-trust-multi` (B2 + B9 need all three servers installed in one shard), and split residency into `lsp-residency` (C1), `lsp-residency-replay` (C3) and `lsp-residency-launch` (C5), keeping each under the 200 s deadline. Default taken: as planned.
+- [resolved by conductor, rev 2] Eviction awaits the evictee's process exit (≤ 2 s, then proceed + log). The shared root watch is deferred.
 - [normal] AC-B7's didOpen-id half and AC-B8's "no didOpen" are asserted by unit and by snapshot, not by host log. The host logs no didOpen. Default taken: no new logging.
 - [normal] CI pins: basedpyright 1.40.2, Rust toolchain 1.98.1 + rust-analyzer component, clangd from the image's LLVM 20.1.8 with a `choco install llvm --version=20.1.8` fallback. Default taken: as listed. Bump only with a remote run.

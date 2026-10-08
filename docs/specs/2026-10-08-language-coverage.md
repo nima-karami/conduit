@@ -202,7 +202,7 @@ can install on `windows-latest` in < 2 min, and each installable as a real `.exe
 | `requiresMarker` | false (single scripts are common) | true (detached files give nothing) | false (clangd's fallback flags still navigate one TU) |
 | `watchGlobs` | `**/*.py **/*.pyi **/pyproject.toml **/pyrightconfig.json **/setup.cfg` | `**/*.rs **/Cargo.toml **/Cargo.lock **/rust-toolchain.toml` | one `**/*.<ext>` per `c h cc cpp cxx hpp hh hxx ipp inl cu cuh` (braces are no supported glob shape), `**/compile_commands.json **/compile_flags.txt **/.clangd` |
 | `watchIgnoreDirs` | `.venv venv __pycache__ .tox .mypy_cache .pytest_cache .ruff_cache` | `target` | `.cache` (already global), `CMakeFiles` |
-| `settings` (new; answers `workspace/configuration` by section, also sent as `initializationOptions`) | `basedpyright.analysis`: `{typeCheckingMode:'off', diagnosticMode:'openFilesOnly'}` — diagnostics are dropped, so type-checking is pure CPU | `rust-analyzer`: `{checkOnSave:false}` — no `cargo check` on every save for diagnostics nobody sees | none |
+| `settings` (new; answers `workspace/configuration` by section) / `initializationOptions` (new, explicit) | settings `basedpyright.analysis` and `python.analysis`: `{typeCheckingMode:'off', diagnosticMode:'openFilesOnly'}` — diagnostics are dropped, so type-checking is pure CPU | `initializationOptions` + settings `rust-analyzer`: `{checkOnSave:false}` — no `cargo check` on every save for diagnostics nobody sees | none |
 | `args` | `['--stdio']` | `[]` | `['--background-index', '-j=2', '--header-insertion=never']` (D3) |
 | `versionProbe` (new) | none | `['--version']` — the rustup proxy exists even when the component doesn't, exits non-zero → **absent**, not crashed | none |
 | toolDir / env | none (inherits PATH; basedpyright runs the project's `python` itself) | `cargo` on PATH / `$CARGO_HOME/bin` / `~/.cargo/bin`, prepended; `RUSTUP_AUTO_INSTALL=0` unless the user set it — a repo's `rust-toolchain.toml` must not make opening a file download and run a toolchain (the `GOTOOLCHAIN=local` rule; ASSUMED env name, rustup ≥ 1.28) | none |
@@ -222,10 +222,12 @@ can install on `windows-latest` in < 2 min, and each installable as a real `.exe
    is the union.
 2. `altBinaries?: readonly string[]` searched (in order) when `binary` is not found; messages name
    `binary`.
-3. `settings?: Readonly<Record<string, unknown>>` (section → value): `initializationOptions` =
-   the first section's value; `workspace/configuration` items answered by exact `section`, else
-   `null` (today's behaviour). A repo config (`pyrightconfig.json` strict mode) can still override
-   — accepted (A10).
+3. `settings?: Readonly<Record<string, unknown>>` (section → value): `workspace/configuration`
+   items answered by exact `section`, else `null` (today's behaviour). Python answers both
+   `basedpyright.analysis` and `python.analysis` (the pyright alt binary reads the latter). A
+   separate explicit `initializationOptions?: unknown` is sent in `initialize` when set
+   (rust-analyzer: `{checkOnSave:false}`); it is not derived from `settings` (plan rev 2). A repo
+   config (`pyrightconfig.json` strict mode) can still override — accepted (A10).
 4. `versionProbe?: readonly string[]`: run at resolve, `cwd: ctx.tmpdir` (resolve precedes the
    trust check — nothing may run in the repo), 5 s timeout; non-zero/timeout → `absent` + install
    toast. A successful resolve is cached per server for the app session (cleared by palette restart
@@ -263,14 +265,19 @@ Conduit's audience; each is a registry entry later once a `.cmd`-free install ex
 
 **Visibility** is a new renderer→host message `lsp:visible { paths }` per client (the files shown
 in either editor group of the active session), replaced on every change; the host takes the union
-across clients (two windows on two monitors both count; a window whose
-`document.visibilityState` is `hidden` — minimized — sends `[]`). A client's visible set is
-dropped in the same places its doc refs are (`retireClient`, webContents gone: close, reload,
-crash), so a dead window never pins a server.
+across clients (two windows on two monitors both count). A **minimized** window counts as `[]`:
+the host learns it from `BrowserWindow` `minimize`/`restore`, beside the `gitDemand` suspend
+precedent. It is not the renderer's `document.visibilityState`, which is `hidden` for every e2e
+window (`show:false`) and for occluded windows (plan rev 2). A client's visible set is dropped in
+the same places its doc refs are (`retireClient`, webContents gone: close, reload, crash), so a
+dead window never pins a server.
 Crash-restart budget, init deadline (90 s), absent TTL (30 s) and trust are unchanged and apply to
 woken servers as to fresh ones.
 
-**Shared watches:** one recursive watch per **lexical root string** (exact, case-normalised on
+**Shared watches — DEFERRED (follow-up, plan rev 2):** no measured force (no event-storm or
+handle-count evidence that per-server recursive watches cost anything), and ref-counted shared
+handles add a stale-handle bug class. Each server keeps its own watch. The design below is kept
+for when a measurement justifies it. One recursive watch per **lexical root string** (exact, case-normalised on
 win32), ref-counted across servers; each subscriber applies its own glob/ignore filter and gets its
 own `onMarker`/`onGone` callbacks. Keying by lexical root keeps every event's path in the spelling
 the server's didOpen URIs use (a real-root key would hand a junction-rooted server real-path URIs).
@@ -306,7 +313,7 @@ O(rules); a server starts only on first open of a served, trusted file.
 | doc text to server | `app.tsx` sync effect (skips truncated / invalid-utf8 / golden) | `lsp-manager` didOpen/didChange | yes |
 | visibility | `app.tsx` (`visibleFilePaths` of the active session) | `lsp-manager` residency | yes |
 | server settings | registry `settings` | `lsp-server` initialize + `workspace/configuration` | yes |
-| watch events | shared root watch | each server's filter → `didChangeWatchedFiles` | yes |
+| watch events | per-server root watch (unchanged; shared watch deferred) | each server's filter → `didChangeWatchedFiles` | n/a |
 | Review/diff colouring | `MONACO_TO_HLJS` | `highlightLine` | yes |
 
 ## 4. Edge cases & failure modes
@@ -366,7 +373,9 @@ O(rules); a server starts only on first open of a served, trusted file.
 - **MVP:** §2.2 mapping + aliases + Monaco grammars; TOML, diff, Makefile grammars; shebang;
   Python, Rust and C/C++ servers + all seven generic changes; `not-synced` guard; residency cap
   (needs `weight`) + visibility + invisible-open-doesn't-launch; CI installs.
-- **v1:** CMake + ignore grammars; dormancy; shared root watch.
+- **v1:** CMake + ignore grammars; dormancy.
+- **Follow-up (deferred, plan rev 2):** shared root watch (§2.6), only once a measurement shows
+  per-server watches cost something.
 - **Vision:** Java (own spec), Lua/Bash/Zig entries, user file associations, diagnostics.
 - **Out of scope:** §1 non-goals.
 
@@ -433,16 +442,17 @@ scenarios **fail, never skip** when the server is missing on CI (go-lsp preceden
   `choco install llvm` fallback.
 
 **Lane C — `lsp-residency` e2e (new; shard installs rust-analyzer, clangd, csharp-ls) + units**
-- **AC-C1** Open `.rs`, then `.cpp` (each shown, then hidden > 60 s), then `.cs`: at most 2 heavy
-  server processes alive at any 250 ms sample (launch awaits the evictee's exit); the evicted one is
-  the LRU. Re-showing within 60 s of hiding evicts nothing (hysteresis).
+- **AC-C1** Open `.rs`, then `.cpp`, then `.cs` (`.rs` hidden > 60 s, `.cpp` hidden < 60 s): never
+  more than 2 heavy server pids alive at any 250 ms sample. The launch awaits the evictee's process
+  exit, bounded at 2 s, then proceeds and logs. The evicted one is the LRU (`.rs`). The one hidden
+  < 60 s is kept (hysteresis).
 - **AC-C2** Unit (`lsp-manager.test.ts`, fake clock + fake handles): over-budget launch evicts LRU;
   never evicts in-flight / starting / loading / visible / hidden < 60 s; soft cap launches when
   nothing is evictable; invisible open does not launch; dormancy after `DORMANT_MS`; `lsp:visible`
   union across two clients and dropped on client retire / webContents gone.
 - **AC-C3** After eviction, an unsaved edit in the evicted `.rs` tab then F12 → server relaunches
   and lands on the edited target (replay carries the edit).
-- **AC-C4** Unit `lsp-watcher`: two servers on one lexical root share one OS watch, each gets only
+- **AC-C4 — DEFERRED with the shared watch (plan rev 2).** Unit `lsp-watcher`: two servers on one lexical root share one OS watch, each gets only
   its own filtered events and its own marker/gone callbacks; closing one keeps the other's events;
   closing both closes the watch; a junction spelling gets its own watch.
 - **AC-C5** App launch with a session holding `.py`/`.rs` tabs but the Terminal tab active starts
@@ -537,6 +547,14 @@ servers, residency) each needing its own measured current-behaviour rows and ACs
 three specs was weighed and rejected because lanes B and C share the registry/protocol contract.
 
 ## 14. Build lanes
+
+**Superseded by the plan** ([docs/plans/2026-10-08-language-coverage.plan.md](../plans/2026-10-08-language-coverage.plan.md)):
+- Slice 0 (`lang.ts` + `file-service.ts`) lands first.
+- Lanes A and B then run in parallel; lane C (incl. `weight`) runs after B.
+- The shared watch is deferred.
+- B also amends ADR 0006 §Trust: spawn uses the found absolute path, not its realpath, and pre-trust execution is limited to version/tool probes in the temp dir.
+
+The table below is the original proposal.
 
 | Lane | Files | Serialization |
 |---|---|---|
