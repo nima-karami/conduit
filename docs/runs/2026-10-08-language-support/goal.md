@@ -17,7 +17,7 @@ navigation for C# when a server is installed, and nothing new running for inacti
 - "Sleep when inactive" = existing LSP idle stop (60s after last tab closes) covers servers;
   spec audits that nothing new (grammar, worker) runs for an unopened language.
 
-## Spec decisions resolved by conductor (spec: docs/specs/2026-10-08-language-support.md, FULL)
+## Spec decisions resolved by conductor (spec: docs/specs/archive/2026-10-08-language-support.md, FULL)
 - D1: pin the latest stable `csharp-ls` that the windows-latest preinstalled .NET SDK runs; if it
   cannot run there, AC-B3/B4 go to remote-exclusions with the reason (B1/B2/B5/B6 still gate).
 - D2: invalid UTF-8 opens read-only for ALL files — accepted (prevents silent corruption).
@@ -59,3 +59,4 @@ navigation for C# when a server is installed, and nothing new running for inacti
   dirty assertion + T1 (muted timestamps) + T2 (level words only uppercase or level-shaped positions).
 - NOT_COVERED by QA: visible-window FOUC (hidden window paints ~2 fps — same for pre-existing JSON/C#),
   C# with csharp-ls installed locally (covered by remote e2e csharp-lsp/csharp-lsp-idle).
+- RELEASED v0.46.0 (d265a81, tag pushed). Report: report.md.

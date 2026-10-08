@@ -1,6 +1,6 @@
 /**
  * Shared by csharp-lsp and csharp-lsp-idle: the C# fixture, the "is csharp-ls installed" probe and
- * the host-side LSP waits (docs/specs/2026-10-08-language-support.md §7 Lane B).
+ * the host-side LSP waits (docs/specs/archive/2026-10-08-language-support.md §7 Lane B).
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';

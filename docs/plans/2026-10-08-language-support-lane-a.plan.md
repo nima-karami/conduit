@@ -1,6 +1,6 @@
 # Language support, Lane A (renderer + file service) — implementation plan
 
-**Spec:** `docs/specs/2026-10-08-language-support.md` (§2.1–2.5, §2.7, §3, AC-A1…A9)  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-10-08-language-support.md` (§2.1–2.5, §2.7, §3, AC-A1…A9)  **Tier:** FULL
 (spec is FULL; host + renderer + theme seams, new DTO fields)
 
 ## Goal

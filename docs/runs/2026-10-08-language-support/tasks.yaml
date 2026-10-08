@@ -1,10 +1,14 @@
 items:
   - id: A-log-golden
-    title: log grammar + golden-file language resolution (renderer only)
-    status: in_progress
+    title: log grammar + golden-file language resolution + bounded read + save fidelity
+    status: done
+    evidence: merged 8447d77 (lane SHA 3dfd18f), copy fix cd9938e; review APPROVE; QA r2 PASS
   - id: B-csharp-lsp
     title: csharp-ls in the LSP registry (pattern root markers)
-    status: in_progress
+    status: done
+    evidence: merged 5dbacf5 (lane SHA 8fb31ae); review APPROVE; remote e2e csharp-lsp/csharp-lsp-idle PASS
   - id: C-md-yaml-verify
-    title: runtime-verify Markdown + YAML (already supported)
-    status: in_progress
+    title: runtime-verify Markdown + YAML
+    status: done
+    evidence: QA r1/r2 PASS (rendered view, heading folding, YAML colours + folding)
+release: v0.46.0 @ d265a81

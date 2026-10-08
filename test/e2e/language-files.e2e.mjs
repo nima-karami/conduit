@@ -1,5 +1,5 @@
 /**
- * Lane A of docs/specs/2026-10-08-language-support.md §7 (AC-A1…A6b, A9): Markdown / YAML / log /
+ * Lane A of docs/specs/archive/2026-10-08-language-support.md §7 (AC-A1…A6b, A9): Markdown / YAML / log /
  * golden files in the built app — log colours in every theme, byte-exact saves, the read-only
  * reasons, the bounded head/tail read of a 40 MB file and the tail-window toast.
  *

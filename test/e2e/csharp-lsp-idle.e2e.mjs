@@ -1,5 +1,5 @@
 /**
- * B4 (docs/specs/2026-10-08-language-support.md §7): once the last .cs tab closes, csharp-ls and
+ * B4 (docs/specs/archive/2026-10-08-language-support.md §7): once the last .cs tab closes, csharp-ls and
  * every descendant (MSBuild build hosts) stop within IDLE_GRACE_MS + 10 s. Split from csharp-lsp
  * because the idle wait and the server load don't both fit one 200 s scenario deadline.
  *

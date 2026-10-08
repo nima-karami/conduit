@@ -147,7 +147,7 @@ export const CSHARP_SERVER: LanguageServerSpec = {
   binary: 'csharp-ls',
   args: [],
   rootMarkers: { workspace: ['*.sln', '*.slnx'], module: ['*.csproj'] },
-  // see docs/specs/2026-10-08-language-support.md §2.6 (requiresMarker)
+  // see docs/specs/archive/2026-10-08-language-support.md §2.6 (requiresMarker)
   requiresMarker: true,
   watchGlobs: [
     '**/*.cs',

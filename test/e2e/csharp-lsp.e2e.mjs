@@ -1,5 +1,5 @@
 /**
- * C# navigation through a host-owned csharp-ls (docs/specs/2026-10-08-language-support.md §7,
+ * C# navigation through a host-owned csharp-ls (docs/specs/archive/2026-10-08-language-support.md §7,
  * Lane B): B2 untrusted folder runs no csharp-ls/dotnet, B6 the palette's trust prompt names C#
  * and every served toolset, B1 the install hint with csharp-ls unreachable — all three need no
  * server, so they run before the install check — then B3 F12 / hover / breadcrumbs against the

@@ -1,6 +1,6 @@
 # Plan: language support — Lane B (C# via csharp-ls)
 
-Spec: [docs/specs/2026-10-08-language-support.md](../specs/2026-10-08-language-support.md) §2.6,
+Spec: [docs/specs/archive/2026-10-08-language-support.md](../specs/2026-10-08-language-support.md) §2.6,
 §7 Lane B. Decisions: [goal.md](../runs/2026-10-08-language-support/goal.md) (D1, D6).
 
 **Tier: FULL** — new public seam (`RootProbe.list`, marker grammar), two new generic registry
