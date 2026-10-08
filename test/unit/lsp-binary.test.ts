@@ -5,8 +5,14 @@ import {
   pathDirs,
   resolveServerBinary,
   type SearchContext,
+  VERSION_PROBE_TIMEOUT_MS,
 } from '../../src/lsp-binary';
-import { CSHARP_SERVER, GO_FIXED_DIRS, GO_SERVER } from '../../src/lsp-registry';
+import {
+  CSHARP_SERVER,
+  GO_FIXED_DIRS,
+  GO_SERVER,
+  type LanguageServerSpec,
+} from '../../src/lsp-registry';
 
 type ExecFile = SearchContext['execFile'];
 type Ctx = SearchContext & { execFile: ReturnType<typeof vi.fn<ExecFile>> };
@@ -48,13 +54,95 @@ describe('pathDirs', () => {
 describe('findBinary', () => {
   it('win32 candidate is name.exe only', async () => {
     const c = ctx({ files: ['C:\\a\\gopls.cmd', 'C:\\a\\gopls', 'C:\\b\\gopls.exe'] });
-    expect(await findBinary('gopls', ['C:\\a', 'C:\\b'], c)).toBe('real:C:\\b\\gopls.exe');
+    expect(await findBinary('gopls', ['C:\\a', 'C:\\b'], c)).toEqual({
+      path: 'C:\\b\\gopls.exe',
+      realPath: 'real:C:\\b\\gopls.exe',
+    });
   });
 
-  it("first regular file wins and is realpath'd", async () => {
+  it('first regular file wins, with its realpath alongside', async () => {
     const c = ctx({ platform: 'linux', files: ['/b/gopls', '/c/gopls'] });
-    expect(await findBinary('gopls', ['/a', '/b', '/c'], c)).toBe('real:/b/gopls');
+    expect(await findBinary('gopls', ['/a', '/b', '/c'], c)).toEqual({
+      path: '/b/gopls',
+      realPath: 'real:/b/gopls',
+    });
     expect(await findBinary('gopls', ['/a'], c)).toBeNull();
+  });
+});
+
+const probeSpec = (over: Partial<LanguageServerSpec> = {}): LanguageServerSpec => ({
+  ...CSHARP_SERVER,
+  languageIds: ['x'],
+  binary: 'xls',
+  resolveToolDir: async () => 'C:\\tool',
+  extraSearchDirs: async () => [],
+  childEnv: (base, toolDir) => ({ ...base, TOOL: toolDir ?? '' }),
+  ...over,
+});
+
+describe('resolveServerBinary — generic fields', () => {
+  it('spawn path is the non-realpath', async () => {
+    const c = ctx({ env: { Path: 'C:\\b' }, files: ['C:\\b\\xls.exe'] });
+    expect(await resolveServerBinary(probeSpec(), c)).toEqual({
+      binary: 'C:\\b\\xls.exe',
+      toolDir: 'C:\\tool',
+    });
+  });
+
+  it('altBinaries searched in order after binary', async () => {
+    const probed: string[] = [];
+    const c = ctx({ env: { Path: 'C:\\a;C:\\b' } });
+    c.isFile = async (p) => {
+      probed.push(p);
+      return p === 'C:\\b\\alt2.exe' || p === 'C:\\a\\alt3.exe';
+    };
+    const spec = probeSpec({ altBinaries: ['alt2', 'alt3'] });
+    expect((await resolveServerBinary(spec, c))?.binary).toBe('C:\\b\\alt2.exe');
+    expect(probed).toEqual([
+      'C:\\a\\xls.exe',
+      'C:\\b\\xls.exe',
+      'C:\\a\\alt2.exe',
+      'C:\\b\\alt2.exe',
+    ]);
+  });
+
+  it('versionProbe runs in tmpdir with the child env', async () => {
+    const c = ctx({ env: { Path: 'C:\\b' }, files: ['C:\\b\\xls.exe'] });
+    const spec = probeSpec({ versionProbe: ['--version'] });
+    expect((await resolveServerBinary(spec, c))?.binary).toBe('C:\\b\\xls.exe');
+    expect(c.execFile).toHaveBeenCalledWith('C:\\b\\xls.exe', ['--version'], {
+      cwd: 'C:\\Temp',
+      env: { Path: 'C:\\b', TOOL: 'C:\\tool' },
+      timeout: VERSION_PROBE_TIMEOUT_MS,
+    });
+    expect(VERSION_PROBE_TIMEOUT_MS).toBe(5_000);
+  });
+
+  it('versionProbe failure → null', async () => {
+    const c = ctx({
+      env: { Path: 'C:\\b' },
+      files: ['C:\\b\\xls.exe'],
+      execFile: async () => {
+        throw new Error('exit 1');
+      },
+    });
+    expect(await resolveServerBinary(probeSpec({ versionProbe: ['--version'] }), c)).toBeNull();
+  });
+
+  it('no versionProbe → no execFile', async () => {
+    const c = ctx({ env: { Path: 'C:\\b' }, files: ['C:\\b\\xls.exe'] });
+    await resolveServerBinary(probeSpec(), c);
+    expect(c.execFile).not.toHaveBeenCalled();
+  });
+
+  it('Go toolDir is dirname(realPath)', async () => {
+    const c = ctx({
+      platform: 'linux',
+      env: { PATH: '/usr/bin' },
+      files: ['/usr/bin/go'],
+      realpath: async (p) => (p === '/usr/bin/go' ? '/usr/lib/go/bin/go' : p),
+    });
+    expect(await GO_SERVER.resolveToolDir(c)).toBe('/usr/lib/go/bin');
   });
 });
 

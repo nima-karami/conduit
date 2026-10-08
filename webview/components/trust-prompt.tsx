@@ -1,7 +1,7 @@
 // The Workspace Trust question, in the editor area — non-modal, so editing carries on while it
 // waits. The host raised it and owns the answer; this only reports which button was pressed, by
 // the host's prompt id (docs/specs/2026-09-23-workspace-trust.md §3–§4).
-import { useEffect, useRef } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
 import type { LspTrustChoice } from '../../src/lsp-protocol';
 import { lspInvoke } from '../bridge';
 import { setTrustFocusTarget, useLspTrust, useTrustFocusTarget } from '../lsp-status';
@@ -37,7 +37,14 @@ export function TrustPrompt() {
         </h2>
         <p className="trust-prompt__folder">{prompt.folder}</p>
         <p className="trust-prompt__why">
-          {prompt.displayName} navigation runs tools from this project ({prompt.runsTools}).
+          {prompt.displayName} navigation runs tools from this project. Trusting it lets each of
+          these run:
+          {prompt.runsTools.map((tools) => (
+            <Fragment key={tools}>
+              <br />
+              <span className="trust-prompt__tool">{tools}</span>
+            </Fragment>
+          ))}
         </p>
       </div>
       <div className="trust-prompt__actions">

@@ -89,10 +89,11 @@ const SHUTDOWN_WAIT_MS = 2_000;
 const INITIALIZE_TIMEOUT_MS = 90_000;
 const SCOPE = 'lsp';
 
-function initializeParams(root: string) {
+function initializeParams(root: string, initializationOptions: unknown) {
   const uri = pathToFileUri(root);
   const nav = { dynamicRegistration: false, linkSupport: true };
   return {
+    ...(initializationOptions === undefined ? {} : { initializationOptions }),
     processId: process.pid,
     clientInfo: { name: 'Conduit' },
     rootUri: uri,
@@ -171,8 +172,14 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
     onChildGone(null, null);
   });
 
-  conn.onRequest('workspace/configuration', (p: { items?: unknown[] }) =>
-    (p?.items ?? []).map(() => null),
+  const settings = spec.settings ?? {};
+  conn.onRequest('workspace/configuration', (p: { items?: { section?: unknown }[] }) =>
+    (p?.items ?? []).map((item) => {
+      const section = item?.section;
+      return typeof section === 'string' && Object.hasOwn(settings, section)
+        ? settings[section]
+        : null;
+    }),
   );
   conn.onRequest('window/workDoneProgress/create', () => null);
   conn.onRequest('client/registerCapability', () => null);
@@ -205,7 +212,7 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        conn.sendRequest('initialize', initializeParams(root)),
+        conn.sendRequest('initialize', initializeParams(root, spec.initializationOptions)),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
             () => reject(new Error('initialize timed out')),

@@ -20,7 +20,7 @@ import {
 } from '../../electron/lsp-server';
 import type { TreeKillDeps } from '../../electron/process-tree';
 import type { HostPlatform } from '../../src/lsp-binary';
-import { GO_SERVER } from '../../src/lsp-registry';
+import { GO_SERVER, type LanguageServerSpec } from '../../src/lsp-registry';
 import { pathToFileUri } from '../../src/lsp-uri';
 
 interface Harness {
@@ -47,6 +47,7 @@ function start(
     hostEnv?: Record<string, string | undefined>;
     initialize?: (p: Record<string, unknown>) => unknown;
     configurePeer?: (peer: MessageConnection) => void;
+    spec?: LanguageServerSpec;
   } = {},
 ): Harness {
   const stdin = new PassThrough();
@@ -80,7 +81,7 @@ function start(
   };
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const handle = startLanguageServer({
-    spec: GO_SERVER,
+    spec: opts.spec ?? GO_SERVER,
     binary: '/abs/gopls',
     toolDir: '/usr/local/go/bin',
     root: opts.root ?? '/w/mod',
@@ -229,6 +230,34 @@ describe('startLanguageServer', () => {
     await expect(
       h.peer.sendRequest('client/registerCapability', { registrations: [] }),
     ).resolves.toBeNull();
+  });
+
+  it('initializationOptions comes from the explicit field', async () => {
+    const withOpts = start({
+      spec: { ...GO_SERVER, initializationOptions: { checkOnSave: false } },
+    });
+    expect((await withOpts.initParams).initializationOptions).toEqual({ checkOnSave: false });
+    const settingsOnly = start({ spec: { ...GO_SERVER, settings: { gopls: { a: 1 } } } });
+    expect(await settingsOnly.initParams).not.toHaveProperty('initializationOptions');
+  });
+
+  it('workspace/configuration answers by exact section', async () => {
+    const A = { typeCheckingMode: 'off' };
+    const h = start({
+      spec: { ...GO_SERVER, settings: { 'basedpyright.analysis': A, 'python.analysis': A } },
+    });
+    await h.handle.initialized;
+    await expect(
+      h.peer.sendRequest('workspace/configuration', {
+        items: [
+          { section: 'python.analysis' },
+          { section: 'basedpyright.analysis' },
+          { section: 'other' },
+          {},
+          { section: 'toString' },
+        ],
+      }),
+    ).resolves.toEqual([A, A, null, null, null]);
   });
 
   it('unknown server request gets MethodNotFound', async () => {

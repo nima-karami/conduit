@@ -29,6 +29,7 @@ import {
 import { folderKey } from '../src/folder-key';
 import { langFromPath } from '../src/lang';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
+import type { LspNotSyncedCause } from '../src/lsp-protocol';
 import { isHtmlDocPath } from '../src/media-kind';
 import type { ApplyResult } from '../src/nav-history';
 import { type NewSessionPrefill, projectForNewSession } from '../src/new-session-seed';
@@ -218,6 +219,7 @@ import {
 import { registerLspHoverProvider } from './lsp-nav';
 import {
   restartableLanguages,
+  servedLanguageIds,
   trustLanguageFor,
   useLspLanguages,
   useLspStatuses,
@@ -229,6 +231,7 @@ import {
   reconcileLspDocs,
   requestTrust,
   syncLanguageFor,
+  syncSkipCause,
 } from './lsp-sync';
 import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
@@ -1646,26 +1649,31 @@ export function App() {
   const lspTrust = useLspTrust();
   useEffect(() => initLspClient(), []);
   useEffect(() => {
-    const hover = registerLspHoverProvider(lspLanguages.map((l) => l.languageId));
+    const hover = registerLspHoverProvider([...servedLanguageIds(lspLanguages)]);
     return () => hover.dispose();
   }, [lspLanguages]);
   useEffect(() => {
-    const served = new Set(lspLanguages.map((l) => l.languageId));
+    const served = servedLanguageIds(lspLanguages);
     const inputs: LspDocInput[] = [];
+    const unsynced = new Map<string, LspNotSyncedCause>();
     const seen = new Set<string>();
     for (const d of docState.docs) {
       if (d.kind !== 'file' || seen.has(d.path)) continue;
       seen.add(d.path);
-      const languageId = syncLanguageFor(d.path, served);
+      const dto = files.get(d.path);
+      const languageId = syncLanguageFor(d.path, dto?.language ?? langFromPath(d.path), served);
       if (languageId === null) continue;
+      const cause = dto ? syncSkipCause(dto) : null;
+      if (cause) {
+        unsynced.set(d.path, cause);
+        continue;
+      }
       const model = monaco.editor.getModel(fileUri(d.path));
       const text =
-        model && dirtySet.has(d.path)
-          ? model.getValue()
-          : (files.get(d.path)?.content ?? model?.getValue());
+        model && dirtySet.has(d.path) ? model.getValue() : (dto?.content ?? model?.getValue());
       if (text !== undefined) inputs.push({ path: d.path, languageId, text });
     }
-    reconcileLspDocs(inputs);
+    reconcileLspDocs(inputs, unsynced);
   }, [docState.docs, files, lspLanguages, dirtySet]);
 
   // The path of the active editor/markdown tab (undefined when the active doc is the
@@ -1674,6 +1682,9 @@ export function App() {
     const d = docState.docs.find((x) => x.id === docState.activeId);
     return d?.kind === 'file' ? d.path : undefined;
   }, [docState.docs, docState.activeId]);
+  const activeFileLanguage = activeFilePath
+    ? (files.get(activeFilePath)?.language ?? langFromPath(activeFilePath))
+    : null;
   // The file each editor group shows. Drives the on-focus re-read below.
   const visibleFilePaths = useMemo(() => {
     const paths = new Set<string>();
@@ -3172,7 +3183,15 @@ export function App() {
         for (const m of moves) {
           const doc = next.get(m.from);
           next.delete(m.from);
-          if (doc) next.set(m.to, { ...doc, path: m.to, language: langFromPath(m.to) });
+          if (doc) {
+            // A rename to a name the path doesn't place keeps what the content said (a shebang).
+            const byPath = langFromPath(m.to);
+            next.set(m.to, {
+              ...doc,
+              path: m.to,
+              language: byPath === 'plaintext' ? doc.language : byPath,
+            });
+          }
         }
         return next;
       });
@@ -3979,10 +3998,7 @@ export function App() {
     }
     // Workspace Trust (docs/specs/2026-09-23-workspace-trust.md). "Trust" only asks the host to
     // raise its prompt — the host picks the folder and owns the decision.
-    const trustLanguage = trustLanguageFor(
-      activeFilePath ? langFromPath(activeFilePath) : null,
-      lspLanguages,
-    );
+    const trustLanguage = trustLanguageFor(activeFileLanguage, lspLanguages);
     const trustTarget = activeFilePath ?? active?.home;
     if (trustLanguage && trustTarget) {
       cmds.push({
@@ -4177,6 +4193,7 @@ export function App() {
     lspLanguages,
     lspTrust,
     activeFilePath,
+    activeFileLanguage,
     guardSessionRemoval,
   ]);
 

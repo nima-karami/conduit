@@ -33,7 +33,7 @@ const PROMPT: LspTrustPrompt = {
   parent: 'C:\\Users\\n\\code',
   languageId: 'go',
   displayName: 'Go',
-  runsTools: 'gopls, go list',
+  runsTools: ['gopls, go list', 'csharp-ls, dotnet / MSBuild (evaluates project files)'],
 };
 
 let root: Root | null = null;
@@ -68,11 +68,26 @@ describe('TrustPrompt', () => {
     const text = host.textContent ?? '';
     expect(text).toContain('Do you trust the authors of the files in this folder?');
     expect(text).toContain(PROMPT.folder);
-    expect(text).toContain('(gopls, go list)');
+    expect(host.querySelector('.trust-prompt__why')?.textContent).toMatch(
+      /^Go navigation runs tools from this project/,
+    );
     const parent = [...host.querySelectorAll('button')].find((b) =>
       b.textContent?.startsWith('Trust Parent Folder'),
     );
     expect(parent?.textContent).toBe('Trust Parent Folder: C:\\Users\\n\\code');
+  });
+
+  it('renders each server’s tools as its own line, whole', () => {
+    mount();
+    act(() => applyTrustState({ trusted: [], prompt: PROMPT }));
+    const lines = [...host.querySelectorAll('.trust-prompt__why .trust-prompt__tool')];
+    expect(lines.map((l) => l.textContent)).toEqual(PROMPT.runsTools);
+    // Inline text inside the why paragraph: it wraps with it, and nothing clips or ellipsizes it.
+    for (const l of lines) {
+      expect(l.tagName).toBe('SPAN');
+      expect(l.getAttribute('style')).toBeNull();
+      expect(l.previousSibling?.nodeName).toBe('BR');
+    }
   });
 
   it('offers no parent button when the host offered no parent', () => {

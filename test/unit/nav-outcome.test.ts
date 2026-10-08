@@ -590,6 +590,7 @@ describe('the opened-entry outcome (review D2)', () => {
 describe('language-server outcomes (spec 2026-09-22-language-server-go §3.3)', () => {
   const GO = {
     languageId: 'go',
+    languageIds: ['go'],
     displayName: 'Go',
     binary: 'gopls',
     installHint: 'go install golang.org/x/tools/gopls@latest',
@@ -597,6 +598,7 @@ describe('language-server outcomes (spec 2026-09-22-language-server-go §3.3)', 
   };
   const RUST = {
     languageId: 'rust',
+    languageIds: ['rust'],
     displayName: 'Rust',
     binary: 'rust-analyzer',
     installHint: 'rustup component add rust-analyzer',
@@ -605,6 +607,7 @@ describe('language-server outcomes (spec 2026-09-22-language-server-go §3.3)', 
   const lsp = (over: Partial<NonNullable<NavClassifyInput['lsp']>> = {}) => ({
     language: GO,
     unavailable: null,
+    notSynced: null,
     adHocRoot: false,
     cancelled: false,
     ...over,
@@ -612,6 +615,25 @@ describe('language-server outcomes (spec 2026-09-22-language-server-go §3.3)', 
   const ctx: NavMessageContext = { kind: 'definition', word: 'helper', index: null };
   const say = (input: Partial<NavClassifyInput>) =>
     navOutcomeMessage(at({ languageId: 'go', ...input }), ctx);
+
+  it('a doc kept from its server says why, and a cancel still wins', () => {
+    expect(at({ lsp: lsp({ notSynced: 'too-large', unavailable: 'missing' }) })).toEqual({
+      kind: 'lsp-not-synced',
+      language: GO,
+      cause: 'too-large',
+    });
+    expect(say({ lsp: lsp({ notSynced: 'too-large' }) })).toEqual({
+      text: 'File too large for code navigation',
+      channel: 'toast',
+      variant: 'info',
+    });
+    expect(say({ lsp: lsp({ notSynced: 'encoding' }) })?.text).toBe(
+      'Code navigation needs UTF-8 text',
+    );
+    expect(at({ lsp: lsp({ notSynced: 'encoding', cancelled: true }) })).toEqual({
+      kind: 'cancelled',
+    });
+  });
 
   it('each lsp reason renders its template from the language info', () => {
     expect(say({ lsp: lsp({ language: RUST, unavailable: 'missing' }) })).toEqual({

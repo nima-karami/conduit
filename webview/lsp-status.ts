@@ -39,8 +39,13 @@ export function lspStateForKey(serverKey: string | null): LspDocState | null {
   return servers.find((s) => s.serverKey === serverKey)?.state ?? null;
 }
 
+/** The server for a doc's language — any of its ids, so a `.h` (`c`) finds clangd. */
 export function lspLanguage(languageId: string): LspLanguageInfo | null {
-  return languages.find((l) => l.languageId === languageId) ?? null;
+  return languages.find((l) => l.languageIds.includes(languageId)) ?? null;
+}
+
+export function servedLanguageIds(langs: readonly LspLanguageInfo[]): Set<string> {
+  return new Set(langs.flatMap((l) => l.languageIds));
 }
 
 export function hasLanguageServer(languageId: string): boolean {
@@ -90,7 +95,7 @@ export function trustLanguageFor(
   languageId: string | null,
   langs: readonly LspLanguageInfo[],
 ): LspLanguageInfo | undefined {
-  return langs.find((l) => l.languageId === languageId) ?? langs[0];
+  return (languageId !== null && langs.find((l) => l.languageIds.includes(languageId))) || langs[0];
 }
 
 /** Languages with a server entry the host still holds — running, absent or crashed alike: the

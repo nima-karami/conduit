@@ -20,7 +20,12 @@ import {
   type LspTrustState,
   parseLspEnvelope,
 } from '../src/lsp-protocol';
-import { type LanguageServerSpec, languageInfo, serverSpecFor } from '../src/lsp-registry';
+import {
+  type LanguageServerSpec,
+  languageInfo,
+  primaryLanguageId,
+  serverSpecFor,
+} from '../src/lsp-registry';
 import { nextRestart } from '../src/lsp-restart-budget';
 import {
   isEscapedRoot,
@@ -89,6 +94,8 @@ type ClientKey = string;
 interface DocEntry {
   path: string;
   spec: LanguageServerSpec;
+  /** The doc's own id (`c` for a header clangd serves as `cpp`); didOpen carries it. */
+  languageId: string;
   text: string;
   lspVersion: number;
   serverKey: string | null;
@@ -169,7 +176,10 @@ export class LspManager {
   /** The server each in-flight request is bound to, so a revoke can answer them first. */
   private readonly inFlight = new Map<AbortController, string>();
   private readonly originLru = new Map<string, string>();
+  /** By primary language id. */
   private readonly absentUntil = new Map<string, number>();
+  /** By primary language id: a wake or relaunch doesn't re-probe (spec 2026-10-08-language-coverage §2.5). */
+  private readonly resolved = new Map<string, ResolvedServer>();
   /** Pending trust questions by folder, oldest first; the first is the one shown. */
   private readonly prompts = new Map<string, LspTrustPrompt>();
   /** Folders the user answered "Don't Trust" this app session. */
@@ -321,10 +331,10 @@ export class LspManager {
       id: randomUUID(),
       folder,
       parent: parentFolder(folder, this.deps.platform, this.deps.homeDir),
-      languageId: spec.languageId,
+      languageId: primaryLanguageId(spec),
       displayName: spec.displayName,
       // Trust is per folder, so granting it lets every registry server start there.
-      runsTools: this.deps.registry.map((s) => s.runsTools).join(' · '),
+      runsTools: this.deps.registry.map((s) => s.runsTools),
     };
     this.prompts.set(id, prompt);
     this.publishTrust();
@@ -420,6 +430,12 @@ export class LspManager {
     const spec = serverSpecFor(msg.languageId, this.deps.registry);
     if (!spec) return { serverKey: null, state: 'no-root' };
     let doc = this.docs.get(msg.path);
+    let inherited: DocEntry['clients'] | null = null;
+    if (doc && doc.languageId !== msg.languageId) {
+      inherited = this.closeForReopen(doc, client);
+      doc = undefined;
+    }
+    let created = false;
     if (!doc) {
       const { key, escapesWorkspace } = await this.keyFor(msg.path, spec, client);
       if (this.disposed || !this.isCurrentClient(client))
@@ -429,16 +445,19 @@ export class LspManager {
         doc = {
           path: msg.path,
           spec,
+          languageId: msg.languageId,
           text: msg.text,
           lspVersion: 1,
           serverKey: key,
           escapesWorkspace,
-          clients: new Map(),
+          clients: inherited ?? new Map(),
         };
         this.docs.set(msg.path, doc);
+        created = true;
       }
     }
-    const wasOpen = this.totalRefs(doc) > 0;
+    // A reopened doc arrives holding other windows' refs, but its server has never seen it.
+    const wasOpen = !created && this.totalRefs(doc) > 0;
     const entry = doc.clients.get(client);
     if (entry) {
       entry.refs++;
@@ -505,6 +524,22 @@ export class LspManager {
     this.armIdle(rec);
   }
 
+  /** The doc's language changed under it (a shebang edited, a rename): the old server lets it
+   *  go and the caller opens it fresh. Returns the other clients' refs for the new entry. */
+  private closeForReopen(doc: DocEntry, client: ClientKey): DocEntry['clients'] {
+    const rec = doc.serverKey ? this.servers.get(doc.serverKey) : undefined;
+    if (rec?.live) {
+      rec.handle?.notify('textDocument/didClose', {
+        textDocument: { uri: pathToFileUri(doc.path) },
+      });
+    }
+    this.docs.delete(doc.path);
+    if (rec) this.armIdle(rec);
+    const others = new Map(doc.clients);
+    others.delete(client);
+    return others;
+  }
+
   private totalRefs(doc: DocEntry): number {
     let n = 0;
     for (const c of doc.clients.values()) n += c.refs;
@@ -515,7 +550,7 @@ export class LspManager {
     rec.handle?.notify('textDocument/didOpen', {
       textDocument: {
         uri: pathToFileUri(doc.path),
-        languageId: doc.spec.languageId,
+        languageId: doc.languageId,
         version: doc.lspVersion,
         text: doc.text,
       },
@@ -574,7 +609,8 @@ export class LspManager {
     }
     if (this.disposed) return;
     const absentExpired =
-      rec.state === 'absent' && Date.now() >= (this.absentUntil.get(rec.spec.languageId) ?? 0);
+      rec.state === 'absent' &&
+      Date.now() >= (this.absentUntil.get(primaryLanguageId(rec.spec)) ?? 0);
     if (rec.state === 'stopped' || absentExpired) {
       this.setState(rec, 'starting');
       void this.launch(rec);
@@ -586,19 +622,22 @@ export class LspManager {
     const gen = ++rec.generation;
     rec.stopping = false;
     rec.live = false;
-    const languageId = rec.spec.languageId;
+    const languageId = primaryLanguageId(rec.spec);
     const resolved =
-      Date.now() < (this.absentUntil.get(languageId) ?? 0)
+      this.resolved.get(languageId) ??
+      (Date.now() < (this.absentUntil.get(languageId) ?? 0)
         ? null
-        : await this.deps.resolveBinary(rec.spec);
+        : await this.deps.resolveBinary(rec.spec));
     if (this.disposed || gen !== rec.generation || rec.stopping) return;
     if (!resolved) {
+      this.resolved.delete(languageId);
       if (Date.now() >= (this.absentUntil.get(languageId) ?? 0)) {
         this.absentUntil.set(languageId, Date.now() + ABSENT_TTL_MS);
       }
       this.setState(rec, 'absent');
       return;
     }
+    this.resolved.set(languageId, resolved);
     this.absentUntil.delete(languageId);
     // Checked after the binary: resolving it runs nothing from the repo, and a server that can't
     // start anyway is no trust question (spec 2026-09-23-workspace-trust §3).
@@ -727,9 +766,13 @@ export class LspManager {
   }
 
   private restartLanguage(languageId: string): void {
-    this.absentUntil.delete(languageId);
+    const spec = serverSpecFor(languageId, this.deps.registry);
+    if (!spec) return;
+    const primary = primaryLanguageId(spec);
+    this.absentUntil.delete(primary);
+    this.resolved.delete(primary);
     for (const rec of this.servers.values()) {
-      if (rec.spec.languageId !== languageId) continue;
+      if (primaryLanguageId(rec.spec) !== primary) continue;
       rec.restartHistory = [];
       if (rec.state !== 'stopped') void this.stopRecord(rec);
     }
@@ -788,7 +831,7 @@ export class LspManager {
   private statusOf(rec: ServerRecord): LspServerStatus {
     const s: LspServerStatus = {
       serverKey: rec.key,
-      languageId: rec.spec.languageId,
+      languageId: primaryLanguageId(rec.spec),
       root: rec.lexicalRoot,
       state: rec.state,
       pid: rec.handle?.pid ?? null,

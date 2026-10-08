@@ -2,7 +2,12 @@
 import { posix, win32 } from 'node:path';
 import { canonicalPath, hasDotSegment } from './canonical-path';
 import type { HostPlatform } from './lsp-binary';
-import { compileRootMarker, isPatternMarker, type LanguageServerSpec } from './lsp-registry';
+import {
+  compileRootMarker,
+  isPatternMarker,
+  type LanguageServerSpec,
+  primaryLanguageId,
+} from './lsp-registry';
 
 export interface RootProbe {
   exists(p: string): Promise<boolean>;
@@ -106,7 +111,7 @@ function onceListing(dir: string, probe: RootProbe): () => Promise<readonly stri
 export async function resolveServerRoot(
   filePath: string,
   workspaceRoots: readonly string[],
-  spec: Pick<LanguageServerSpec, 'languageId' | 'rootMarkers' | 'requiresMarker'>,
+  spec: Pick<LanguageServerSpec, 'languageIds' | 'rootMarkers' | 'requiresMarker'>,
   probe: RootProbe,
   platform: HostPlatform,
 ): Promise<RootResolution> {
@@ -157,7 +162,7 @@ export async function resolveServerRoot(
   }
   if (!isWithin(realRoot, realWorkspace, platform)) return { escapesWorkspace: true };
   return {
-    key: serverKeyFor(spec.languageId, realRoot),
+    key: serverKeyFor(primaryLanguageId(spec), realRoot),
     realRoot,
     root,
     workspaceRoot: workspace,
