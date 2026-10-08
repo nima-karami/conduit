@@ -468,17 +468,18 @@ export class LspManager {
     const spec = serverSpecFor(msg.languageId, this.deps.registry);
     if (!spec) return { serverKey: null, state: 'no-root' };
     let doc = this.docs.get(msg.path);
-    let inherited: DocEntry['clients'] | null = null;
-    if (doc && doc.languageId !== msg.languageId) {
-      inherited = this.closeForReopen(doc, client);
-      doc = undefined;
-    }
     let created = false;
-    if (!doc) {
+    if (!doc || doc.languageId !== msg.languageId) {
       const { key, escapesWorkspace } = await this.keyFor(msg.path, spec, client);
       if (this.disposed || !this.isCurrentClient(client))
         return { serverKey: null, state: 'no-root' };
       doc = this.docs.get(msg.path);
+      // Only once this open is sure to land: an early return above would drop the refs.
+      let inherited: DocEntry['clients'] | null = null;
+      if (doc && doc.languageId !== msg.languageId) {
+        inherited = this.closeForReopen(doc, client);
+        doc = undefined;
+      }
       if (!doc) {
         doc = {
           path: msg.path,

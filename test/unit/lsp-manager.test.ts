@@ -1668,6 +1668,35 @@ describe('LspManager — a server with several language ids', () => {
     expect(shell?.stop).toHaveBeenCalled();
   });
 
+  it("a re-open under a new id that dies mid-resolve keeps the other windows' refs", async () => {
+    const t = setup({ registry: [SHELL, PY] });
+    const P = '/w/m/tool';
+    await t.open(P, '#!/bin/sh', { wc: 1, epoch: 'a', languageId: 'shell' });
+    await t.open(P, '#!/bin/sh', { wc: 2, epoch: 'b', languageId: 'shell' });
+    await t.ready(0);
+    const root = await t.deps.resolveRoot(P, PY);
+    let release: () => void = () => {};
+    t.resolveRoot.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          release = () => r(root);
+        }),
+    );
+    const reopening = t.open(P, '#!/usr/bin/env python3', {
+      wc: 1,
+      epoch: 'a',
+      languageId: 'python',
+    });
+    await flush();
+    t.mgr.dropWebContents(1);
+    release();
+    expect(await reopening).toEqual({ serverKey: null, state: 'no-root' });
+    expect(
+      await t.send(2, 'b', { type: 'lsp:change', path: P, version: 2, text: '#!/bin/sh\n' }),
+    ).toEqual({ ok: true });
+    expect(didCloses(t.servers[0])).toEqual([]);
+  });
+
   it('restart by a secondary id restarts the server', async () => {
     const t = setup({ registry: [CFAM] });
     await t.open('/w/m/x.h', 'int f();', { languageId: 'c' });
