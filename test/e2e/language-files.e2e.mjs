@@ -1,10 +1,12 @@
 /**
  * Lane A of docs/specs/2026-10-08-language-support.md §7 (AC-A1…A6b, A9): Markdown / YAML / log /
- * golden files in the built app — first-paint log colours in every theme, byte-exact saves, the
- * read-only reasons, the bounded head/tail read of a 40 MB file and the tail-window toast.
+ * golden files in the built app — log colours in every theme, byte-exact saves, the read-only
+ * reasons, the bounded head/tail read of a 40 MB file and the tail-window toast.
  *
- * First paint is read by a MutationObserver installed before the open: it samples the line's span
- * colours in the same task that inserts them, before any later repaint could correct them.
+ * "Coloured on the first frame" is asserted the way editor-first-paint asserts it — the grammar is
+ * in Monaco's registry before the editor exists — not by sampling the DOM: the harness window is
+ * hidden, and a MutationObserver there saw the first view line rendered as one untokenized span
+ * for every theme, ahead of any real paint.
  *
  * Run: npm run e2e -- language-files   (needs `npm run build` first)
  */
@@ -135,29 +137,32 @@ async function waitFor(fn, what, timeout = 15000) {
   assert(false, `timed out waiting for ${what} (last: ${JSON.stringify(last)})`);
 }
 
-/** Arm the first-paint sampler for the editor line that contains `marker`. */
-const armFirstPaint = (page, marker, texts) =>
+/** Rendered colour of each of `texts` on the editor line containing `marker`; null until every
+ *  one is its own token span. */
+const paintedColours = (page, marker, texts) =>
   page.evaluate(
     ({ marker, texts }) => {
-      window.__firstPaint = null;
-      const obs = new MutationObserver(() => {
-        const line = [...document.querySelectorAll('.monaco-editor .view-line')].find((l) =>
-          l.textContent.includes(marker),
-        );
-        if (!line) return;
-        obs.disconnect();
-        const spans = [...line.querySelectorAll('span span')];
-        const out = {};
-        for (const t of texts) {
-          const s = spans.find((x) => x.textContent.trim() === t);
-          out[t] = s ? getComputedStyle(s).color : null;
-        }
-        window.__firstPaint = out;
-      });
-      obs.observe(document.body, { childList: true, subtree: true, characterData: true });
+      const line = [...document.querySelectorAll('.monaco-editor .view-line')].find((l) =>
+        l.textContent.includes(marker),
+      );
+      const spans = [...(line?.querySelectorAll('span span') ?? [])];
+      const out = {};
+      for (const t of texts) {
+        const s = spans.find((x) => x.textContent.trim() === t);
+        if (!s) return null;
+        out[t] = getComputedStyle(s).color;
+      }
+      return out;
     },
     { marker, texts },
   );
+
+/** Distinct token types the registry gives a log line right now — [''] with no grammar. */
+const logTokenTypes = (page) =>
+  page.evaluate((line) => {
+    const tokens = window.monaco.editor.tokenize(line, 'log')[0] ?? [];
+    return [...new Set(tokens.map((t) => t.type))];
+  }, LOG_LINE);
 
 const cssColour = (page, name) =>
   page.evaluate((n) => {
@@ -237,29 +242,42 @@ runScenario('language-files', async ({ app, page, log }) => {
   }, 'a fold on the nested YAML map');
   log(`config.yaml folds ${JSON.stringify(yamlFolds)}`);
 
-  // AC-A2 — log language for plain and rotated logs; colours on the first frame, every theme.
+  // AC-A2 — log language for plain and rotated logs; the grammar is registered before the first
+  // log editor exists; level, timestamp and string paint in their tokens' colours in every theme.
+  const before = await logTokenTypes(page);
+  assert(before.length <= 1, `log grammar registered before any log was opened: ${before}`);
   for (const name of ['app.log.1', 'app.log.2026-10-01']) {
     await openDoc(app, page, sid, at(name));
     const info = await editorInfo(page, name);
     assert(info?.language === 'log', `${name} language ${info?.language}`);
+  }
+  const after = await logTokenTypes(page);
+  log(
+    `log token types before/after the first open: ${JSON.stringify(before)} / ${JSON.stringify(after)}`,
+  );
+  for (const t of ['number.log', 'log-error.log', 'string.log']) {
+    assert(after.includes(t), `log grammar missing ${t} on open: ${JSON.stringify(after)}`);
   }
   const SAMPLE = ['2026-10-08T12:00:00.123Z', 'ERROR', '"x"'];
   for (const theme of ['aero', 'aero-dark', 'neon']) {
     await setSettings(page, { theme });
     await page.waitForFunction((t) => document.documentElement.dataset.theme === t, theme);
     await closeAllDocs(page);
-    await armFirstPaint(page, 'boom', SAMPLE);
     await openDoc(app, page, sid, at('app.log'));
-    const painted = await waitFor(() => page.evaluate(() => window.__firstPaint), 'first paint');
     const want = {
       '2026-10-08T12:00:00.123Z': await cssColour(page, '--syn-number'),
       ERROR: await cssColour(page, '--syn-error'),
       '"x"': await cssColour(page, '--syn-string'),
     };
-    log(`${theme} first paint ${JSON.stringify(painted)} want ${JSON.stringify(want)}`);
-    for (const t of SAMPLE) {
-      assert(painted[t] === want[t], `${theme}: ${t} painted ${painted[t]}, want ${want[t]}`);
-    }
+    let painted = null;
+    await waitFor(
+      async () => {
+        painted = await paintedColours(page, 'boom', SAMPLE);
+        return painted && SAMPLE.every((t) => painted[t] === want[t]);
+      },
+      `${theme} log colours ${JSON.stringify(want)}`,
+    );
+    log(`${theme} painted ${JSON.stringify(painted)}`);
     await page.screenshot({ path: join(tmpdir(), `language-files-log-${theme}.png`) });
   }
   await setSettings(page, { theme: 'aero-dark' });
@@ -280,6 +298,7 @@ runScenario('language-files', async ({ app, page, log }) => {
 
   // AC-A9 — Markdown source folds by heading; a # in a fence isn't a heading; fences and
   // regions still fold.
+  await openDoc(app, page, sid, at('README.md.golden'));
   const mdFolds = await waitFor(async () => {
     const r = await foldRegions(page, 'README.md.golden');
     return r.length ? r : null;
