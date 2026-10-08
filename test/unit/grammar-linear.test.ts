@@ -58,11 +58,7 @@ describe('grammar runner', () => {
 });
 
 describe('grammar linearity', () => {
-  // The absolute budget covers the grammars this spec added. gomod and log (spec
-  // 2026-10-08-language-support) are linear — the scaling check below holds them — but log's
-  // constant is ~26 ms per 20 000 punctuation chars alone and ~80 ms under the gate's parallel
-  // load, so a wall-clock budget on it measures the machine, not the grammar.
-  for (const [name, grammar] of Object.entries(NEW)) {
+  for (const [name, grammar] of Object.entries(ALL)) {
     // Retried because the gate runs every suite in parallel; each attempt must meet the budget.
     it(`${name} tokenizes adversarial 20 000-char lines in < 50 ms from every state`, {
       retry: 2,

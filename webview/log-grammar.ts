@@ -90,6 +90,10 @@ export const log: Grammar = {
         [/[A-Za-z_][\w$]*(?:[.'][\w$]+)*/, ''],
         [/\d[\w.]*/, ''],
         [/\s+/, 'white'],
+        // Punctuation no rule above can start with — and a `[` no bracketed level follows — taken
+        // as one run: one character per step costs every rule above per character, ~80 ms on a
+        // 20 000-char separator line under load (spec 2026-10-08-language-coverage §2.3).
+        [/(?:[^\w\s"'[]|\[(?![A-Za-z]))+/, ''],
         [/./, ''],
       ],
     },

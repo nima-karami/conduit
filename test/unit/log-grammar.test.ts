@@ -144,6 +144,15 @@ describe('log grammar', () => {
     ]);
   });
 
+  it('still finds levels, strings and numbers right after a run of punctuation', () => {
+    expect(tokenize('=====ERROR===== 5')).toEqual([
+      ['ERROR', 'log-error'],
+      ['5', 'number'],
+    ]);
+    expect(tokenOf('--::[[E] boom', '[E]')).toBe('log-error');
+    expect(tokenOf('>>>"quoted"', '"quoted"')).toBe('string');
+  });
+
   it('declares bracket pairs and no comment syntax', () => {
     expect(log.conf.comments).toBeUndefined();
     expect(log.conf.brackets).toEqual([
