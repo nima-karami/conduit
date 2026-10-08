@@ -68,8 +68,7 @@ export function breadcrumbWith(page, symbol) {
     .catch(() => null);
 }
 
-/** `pid` and every descendant, by ParentProcessId walk. */
-export function recordTree(pid) {
+function processList() {
   const json = execFileSync(
     'powershell',
     [
@@ -80,7 +79,11 @@ export function recordTree(pid) {
     ],
     { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
   );
-  const procs = JSON.parse(json);
+  return JSON.parse(json);
+}
+
+/** `pid` and every descendant, by ParentProcessId walk. */
+export function recordTree(pid, procs = processList()) {
   const tree = [{ pid, name: procs.find((p) => p.ProcessId === pid)?.Name ?? '?' }];
   for (let i = 0; i < tree.length; i++) {
     for (const p of procs) {
@@ -204,10 +207,14 @@ export async function liveServers(page, languageId) {
   return snap.servers.filter((s) => s.languageId === languageId && LIVE.has(s.state));
 }
 
-/** Every 250 ms: record each heavy server pid the host reports, and count how many recorded
- *  pids are still alive — so an evictee still exiting counts (AC-C1). */
+/** Every 250 ms: record each heavy server the host reports, and count how many are still alive —
+ *  a server being alive while ANY process of its tree is, so an evictee still exiting counts, and
+ *  so does the real rust-analyzer behind the rustup proxy the host spawned (AC-C1). Trees are
+ *  re-walked about once a second; a server whose whole tree is gone is dropped. */
 export function heavySampler(page, log) {
-  const seen = new Map();
+  /** server pid → { lang, pids } */
+  const servers = new Map();
+  const langs = new Set();
   let maxAlive = 0;
   let samples = 0;
   let stopped = false;
@@ -216,14 +223,26 @@ export function heavySampler(page, log) {
     while (!stopped) {
       const snap = await lsp(page, { type: 'lsp:statusSnapshot' }).catch(() => null);
       for (const s of snap?.servers ?? []) {
-        if (HEAVY.has(s.languageId) && s.pid !== null) seen.set(s.pid, s.languageId);
+        if (!HEAVY.has(s.languageId) || s.pid === null || servers.has(s.pid)) continue;
+        servers.set(s.pid, { lang: s.languageId, pids: new Set([s.pid]) });
+        langs.add(s.languageId);
       }
-      const living = [...seen].filter(([pid]) => alive(pid));
-      maxAlive = Math.max(maxAlive, living.length);
+      if (samples % 4 === 0 && servers.size > 0) {
+        const procs = processList();
+        for (const [root, srv] of servers) {
+          for (const p of recordTree(root, procs)) srv.pids.add(p.pid);
+        }
+      }
+      for (const [root, srv] of servers) {
+        if (![...srv.pids].some(alive)) servers.delete(root);
+      }
+      maxAlive = Math.max(maxAlive, servers.size);
       samples++;
-      const line = living.map(([pid, l]) => `${l}:${pid}`).join(' ');
+      const line = [...servers]
+        .map(([root, srv]) => `${srv.lang}:${root}(+${srv.pids.size - 1})`)
+        .join(' ');
       if (line !== lastLine) {
-        log(`heavy pids alive → [${line}]`);
+        log(`heavy servers alive → [${line}]`);
         lastLine = line;
       }
       await sleep(250);
@@ -233,7 +252,7 @@ export function heavySampler(page, log) {
     async stop() {
       stopped = true;
       await done;
-      return { maxAlive, samples, pids: [...seen] };
+      return { maxAlive, samples, langs: [...langs] };
     },
   };
 }

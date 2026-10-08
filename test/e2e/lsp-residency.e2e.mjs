@@ -41,13 +41,13 @@ runScenario('lsp-residency', async ({ app, page, log }) => {
     result = await sampler.stop();
   }
   log(
-    `heavy pids seen ${JSON.stringify(result.pids)}; max alive at once ${result.maxAlive} over ${result.samples} samples`,
+    `heavy servers seen ${JSON.stringify(result.langs)}; max alive at once ${result.maxAlive} over ${result.samples} samples`,
   );
   assert(result.samples > 100, `too few samples to mean anything: ${result.samples}`);
   assert(
-    new Set(result.pids.map(([, l]) => l)).size === 3,
-    `the sampler never saw all three heavy servers: ${JSON.stringify(result.pids)}`,
+    result.langs.length === 3,
+    `the sampler never saw all three heavy servers: ${JSON.stringify(result.langs)}`,
   );
-  assert(result.maxAlive <= 2, `${result.maxAlive} heavy server pids were alive at once`);
+  assert(result.maxAlive <= 2, `${result.maxAlive} heavy server process trees were alive at once`);
   log('AC-C1: LRU evicted, hysteresis kept clangd, never more than 2 heavy pids ✓');
 });

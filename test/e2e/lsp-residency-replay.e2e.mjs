@@ -1,13 +1,14 @@
 /**
  * AC-C3 (docs/specs/2026-10-08-language-coverage.md §2.6): with rust-analyzer evicted (the
- * lsp-residency setup), rename the called function in BOTH `.rs` tabs without saving, show the
- * caller and F12: rust-analyzer relaunches — evicting clangd, hidden > 60 s by then — and lands on
- * the edited definition, so the didOpen replay carried the unsaved text.
+ * lsp-residency setup), rename the called function in BOTH `.rs` tabs and move its definition
+ * down five lines, without saving; show the caller and F12: rust-analyzer relaunches — evicting
+ * clangd, hidden > 60 s by then — and the caret lands on the definition's EDITED line, which only
+ * a didOpen replay of the unsaved text can produce.
  *
  * Needs rust-analyzer, clangd and csharp-ls. Fails, never skips, when one is missing.
  * Run: node test/e2e/run-smoke.mjs lsp-residency-replay   (needs `npm run build` first)
  */
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { clangdInstalled, writeClangdFixture } from './clangd-fixture.mjs';
@@ -26,20 +27,31 @@ import {
 } from './lsp-fixture.mjs';
 import { writeRustFixture } from './rust-fixture.mjs';
 
-/** Edits the model of a tab that is open but not shown; no editor is mounted on it. */
-function editHiddenTab(page, absPath, from, to) {
+/** Edits the model of a tab that is open but not shown (no editor is mounted on it): `prepend`
+ *  first, then `from` → `to`. Returns the 1-based line `to` ends up on, or null with no model. */
+function editHiddenTab(page, absPath, { prepend = '', from, to }) {
   return page.evaluate(
-    ({ path, from, to }) => {
+    ({ path, prepend, from, to }) => {
       const model = window.monaco.editor
         .getModels()
         .find((m) => m.uri.path.toLowerCase() === `/${path.toLowerCase()}`);
-      if (!model) return false;
-      model.setValue(model.getValue().replace(from, to));
-      return true;
+      if (!model) return null;
+      model.setValue(prepend + model.getValue().replace(from, to));
+      return (
+        model
+          .getValue()
+          .split('\n')
+          .findIndex((l) => l.includes(to)) + 1
+      );
     },
-    { path: absPath.replace(/\\/g, '/'), from, to },
+    { path: absPath.replace(/\\/g, '/'), prepend, from, to },
   );
 }
+
+const lineOf = (file, needle) =>
+  readFileSync(file, 'utf8')
+    .split('\n')
+    .findIndex((l) => l.includes(needle)) + 1;
 
 runScenario('lsp-residency-replay', async ({ app, page, log }) => {
   assert(
@@ -56,15 +68,23 @@ runScenario('lsp-residency-replay', async ({ app, page, log }) => {
   await trustViaHost(page, fx.rs.main, 'rust', log);
   const { shownCs, cpp } = await reachRustEvicted(app, page, sid, fx, log);
 
+  // The edit MOVES the definition: a server answering from the disk text lands on the disk line,
+  // so only a replay of the unsaved buffers can put the caret on the edited one.
+  const diskLine = lineOf(fx.rs.lib, 'pub fn greet(');
+  const editedLine = await editHiddenTab(page, fx.rs.lib, {
+    prepend: '// moved\n'.repeat(5),
+    from: 'pub fn greet(',
+    to: 'pub fn greet2(',
+  });
+  assert(editedLine !== null, 'no lib.rs model');
   assert(
-    await editHiddenTab(page, fx.rs.lib, 'pub fn greet(', 'pub fn greet2('),
-    'no lib.rs model',
-  );
-  assert(
-    await editHiddenTab(page, fx.rs.main, 'util::greet(', 'util::greet2('),
+    (await editHiddenTab(page, fx.rs.main, { from: 'util::greet(', to: 'util::greet2(' })) !== null,
     'no main.rs model',
   );
-  log('renamed greet → greet2 in both .rs tabs, unsaved, while rust-analyzer is evicted');
+  assert(editedLine !== diskLine, `the edit did not move the definition (line ${diskLine})`);
+  log(
+    `unsaved, while rust-analyzer is evicted: greet → greet2 in both .rs tabs, definition moved from line ${diskLine} to ${editedLine}`,
+  );
   // clangd was hidden when .cs was shown; past the hysteresis it is the evictable heavy.
   await sleep(Math.max(0, shownCs + EVICT_MIN_HIDDEN_MS + 1_000 - Date.now()));
 
@@ -93,6 +113,9 @@ runScenario('lsp-residency-replay', async ({ app, page, log }) => {
   }
   log(`F12 greet2 → ${landed ? `${landed.path}:${landed.line} "${landed.lineText}"` : 'never'}`);
   assert(landed, 'F12 on greet2 never reached lib.rs');
-  assert(landed.lineText.includes('pub fn greet2'), `caret line is "${landed.lineText}"`);
+  assert(
+    landed.line === editedLine,
+    `F12 landed on line ${landed.line}; the edited definition is on ${editedLine}, the disk one on ${diskLine}`,
+  );
   log('AC-C3: relaunch replayed the unsaved edits; F12 landed on the edited definition ✓');
 });
