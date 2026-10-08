@@ -2,6 +2,7 @@
 // not on editor mounts: only the active tab's CodeViewer is mounted, but every open tab of a
 // server language is a synced doc (plan "Sync is keyed on the tab list").
 import * as monaco from 'monaco-editor';
+import { isGoldenPath, langFromPath } from '../src/lang';
 import type { LspOp, LspPosition, LspReply } from '../src/lsp-protocol';
 import { lspInvoke, subscribe } from './bridge';
 import { applyLspStatus, applyTrustState, seedLspState, setTrustFocusTarget } from './lsp-status';
@@ -106,6 +107,15 @@ function close(doc: SyncedDoc): void {
   detachModel(doc);
   docs.delete(doc.path);
   void lspInvoke({ type: 'lsp:close', path: doc.path });
+}
+
+/** The server language an open tab is synced as, or null when no server should see it. A golden
+ *  only borrows its wrapped language's colours; it is a fixture, not source a server should index
+ *  (spec 2026-10-08-language-support §2.3). */
+export function syncLanguageFor(path: string, served: ReadonlySet<string>): string | null {
+  if (isGoldenPath(path)) return null;
+  const languageId = langFromPath(path);
+  return served.has(languageId) ? languageId : null;
 }
 
 export function reconcileLspDocs(inputs: readonly LspDocInput[]): void {
