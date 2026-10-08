@@ -74,9 +74,15 @@ import * as vb from 'monaco-editor/esm/vs/basic-languages/vb/vb.js';
 import * as wgsl from 'monaco-editor/esm/vs/basic-languages/wgsl/wgsl.js';
 import * as xml from 'monaco-editor/esm/vs/basic-languages/xml/xml.js';
 import * as yaml from 'monaco-editor/esm/vs/basic-languages/yaml/yaml.js';
+import { cmake } from './cmake-grammar';
+import { diffFoldingRanges } from './diff-folding';
+import { diff } from './diff-grammar';
 import { type Grammar, gomod } from './gomod-grammar';
+import { ignore } from './ignore-grammar';
 import { log } from './log-grammar';
+import { makefile } from './makefile-grammar';
 import { markdownFoldingRanges } from './markdown-folding';
+import { toml } from './toml-grammar';
 
 /**
  * Keyed by the language ids `src/lang.ts` produces, so every extension the app maps to a
@@ -89,12 +95,14 @@ const GRAMMARS: Record<string, Grammar> = {
   bicep,
   c: cpp,
   clojure,
+  cmake,
   coffeescript: coffee,
   cpp,
   csharp,
   css,
   cypher,
   dart,
+  diff,
   dockerfile,
   dotenv: ini,
   elixir,
@@ -106,6 +114,7 @@ const GRAMMARS: Record<string, Grammar> = {
   handlebars,
   hcl,
   html,
+  ignore,
   ini,
   java,
   javascript: typescript,
@@ -115,6 +124,7 @@ const GRAMMARS: Record<string, Grammar> = {
   liquid,
   log,
   lua,
+  makefile,
   markdown,
   mdx,
   'objective-c': objectiveC,
@@ -143,6 +153,7 @@ const GRAMMARS: Record<string, Grammar> = {
   swift,
   systemverilog,
   tcl,
+  toml,
   twig,
   typescript,
   typespec,
@@ -155,9 +166,24 @@ const GRAMMARS: Record<string, Grammar> = {
 
 // Monaco refuses a tokenizer for an id it doesn't know, and unlike every id above no
 // contribution declares these.
-for (const id of ['gomod', 'log', 'dotenv', 'groovy', 'ocaml']) {
+for (const id of [
+  'gomod',
+  'log',
+  'dotenv',
+  'groovy',
+  'ocaml',
+  'toml',
+  'diff',
+  'makefile',
+  'cmake',
+  'ignore',
+]) {
   monaco.languages.register({ id });
 }
+
+monaco.languages.registerFoldingRangeProvider('diff', {
+  provideFoldingRanges: (model) => diffFoldingRanges(model.getLinesContent()),
+});
 
 monaco.languages.registerFoldingRangeProvider('markdown', {
   provideFoldingRanges: (model) =>
