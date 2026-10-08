@@ -109,15 +109,18 @@ Within a trusted folder the earlier mitigations still hold:
   with `cwd` = the OS temp dir and a 5 s timeout — a `versionProbe` under the server's own child
   environment (relative `PATH` entries stripped, `RUSTUP_AUTO_INSTALL=0`), `go env` under the
   host environment with `GOTOOLCHAIN=local`. Nothing runs in the repo before trust.
-
-*Amended 2026-10-08 (language coverage): the two bullets above — spawn path vs realpath, and the
-pre-trust probe — see [spec 2026-10-08-language-coverage §2.5](../specs/2026-10-08-language-coverage.md).*
 - **The rest of the host environment passes through unchanged.** Apart from the PATH strip and
-  the `GOTOOLCHAIN` default, gopls inherits Conduit's environment — including anything the user
-  set for Go themselves. That is deliberate (it is their toolchain configuration), but it means
-  the user's own settings widen what opening a file can do: `GOFLAGS=-mod=mod`, for example, lets
-  `go list` rewrite `go.mod`/`go.sum` and fetch modules, and `GOPROXY`/`GOPRIVATE`/`GONOSUMDB`
-  decide where from. Conduit does not override them.
+  each registry entry's defaults — `GOTOOLCHAIN=local` (Go), `RUSTUP_AUTO_INSTALL=0` (Rust),
+  `DOTNET_ROOT` and `DOTNET_CLI_TELEMETRY_OPTOUT=1` (C#), each only when the user hasn't set it — a
+  server inherits Conduit's environment, including anything the user set for that toolchain
+  themselves. That is deliberate (it is their toolchain configuration), but it means the user's own
+  settings widen what opening a file can do: `GOFLAGS=-mod=mod`, for example, lets `go list`
+  rewrite `go.mod`/`go.sum` and fetch modules, and `GOPROXY`/`GOPRIVATE`/`GONOSUMDB` decide where
+  from. Conduit does not override them.
+
+*Amended 2026-10-08 (language coverage): the spawn-path and pre-trust-probe bullets, and the
+per-entry environment defaults — see
+[spec 2026-10-08-language-coverage §2.5](../specs/2026-10-08-language-coverage.md).*
 
 **Rejected:** unconditional lazy auto-start (the first draft of this ADR) — it runs a fresh
 clone's `go list` without asking. A per-root yes/no with no inheritance — Workspace Trust's

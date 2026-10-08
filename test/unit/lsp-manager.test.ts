@@ -1688,4 +1688,27 @@ describe('LspManager — a server with several language ids', () => {
     t.servers[2]?.resolveInitialized();
     expect(await asked).toEqual({ kind: 'empty', adHocRoot: false });
   });
+
+  // A save is what starts rust-analyzer's `cargo check` (spec 2026-10-08-language-coverage AC-B4).
+  it('no doc lifecycle step ever sends a save notification', async () => {
+    const t = setup();
+    await t.open('/w/m/main.go', 'package main');
+    await t.ready();
+    await t.send(1, 'e1', {
+      type: 'lsp:change',
+      path: '/w/m/main.go',
+      version: 2,
+      text: 'package main // saved',
+    });
+    t.watchers[0]?.onChanges([{ path: '/w/m/main.go', type: 2 }]);
+    await t.send(1, 'e1', { type: 'lsp:close', path: '/w/m/main.go' });
+    await flush();
+    const methods = (t.servers[0]?.notifies ?? []).map((n) => n.method);
+    expect(methods).toEqual([
+      'textDocument/didOpen',
+      'textDocument/didChange',
+      'workspace/didChangeWatchedFiles',
+      'textDocument/didClose',
+    ]);
+  });
 });
