@@ -36,6 +36,9 @@ const env = {
   APPDATA: empty,
   CARGO_HOME: empty,
   ProgramFiles: empty,
+  // Windows rewrites a 64-bit child's ProgramFiles from ProgramW6432 at process creation, so
+  // overriding ProgramFiles alone reaches Electron as C:\Program Files again.
+  ProgramW6432: empty,
 };
 
 /** F12 twice inside one toast lifetime; exactly the one install toast may show. */
