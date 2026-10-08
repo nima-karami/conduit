@@ -5,6 +5,6 @@ items:
   - {id: A, title: grammars + Monaco/hljs maps + diff/Review/plan consumers, status: in_review, sha: 03a83c3, gate: verify 0, e2e: run 37856198763 5/5 PASS, bundle: +17..21 KB}
   - {id: B, title: registry fields + 3 servers + renderer LSP consumers + CI, status: done, sha: 92e70e9, merge: 527a8ba, review: REQUEST_CHANGES->fixed (AC-B4 untestable -> unit tests), e2e: 37855280884 + 37857506943}
   - {id: W, title: RootWatchPool shared watch, status: deferred, reason: architecture-critic — no measured force}
-  - {id: C1, title: pure residency policy, status: in_progress, branch: lane-cov-c, base: 5715920 (lane B SHA)}
+  - {id: C, title: residency C1-C4, status: in_review, sha: eb85672, gate: verify 0, e2e: 37858848615 + 37860059818 12/12 PASS}
   - {id: C2-C4, title: residency integration + e2e adaptation, status: todo, deps: [B, C1]}
   - {id: ARCH, title: architecture-critic on plan, status: done, verdict: PROCEED_WITH_CHANGES}

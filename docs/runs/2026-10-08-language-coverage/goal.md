@@ -27,3 +27,8 @@ memory and sleep when nothing visible needs them. Spec: docs/specs/2026-10-08-la
 - Lane B merged by SHA 92e70e9 → 527a8ba. Lane C told to merge 92e70e9.
 - Lane A review REQUEST_CHANGES (2 blockers: diff `@@` = literal `@` in Monarch; unterminated `$(`/`${` leaks to EOF).
   Root cause: hand-written Monarch runner diverged from Monaco — units must run on real monarchCompile/MonarchTokenizer.
+- Lane C built eb85672 (merged 92e70e9 clean; lane B nits 1+2 fixed). Accepted its design calls: trust with all docs hidden → stopped; request-woken launch dropped if request gives up before resolve (requests come from visible docs in practice). No RSS numbers (remote keeps logs only on failure; servers not installed locally).
+- Lane A fixed review (23486a6): real Monarch in units; log grammar perf sent back (not deferred).
+- Lane C review REQUEST_CHANGES: blocker AC-C3 replay e2e can't fail (in-place rename); lsp-sync A→B→A dedup race;
+  exec-bounded fan-out + orphan hang. Ratified unplanned files (exec-bounded.ts, bridge.ts line).
+  Conductor decision: every stop path keeps a record in the budget until its process exits.
