@@ -16,6 +16,14 @@ import {
   serverSpecFor,
 } from '../../src/lsp-registry';
 
+describe('server weight', () => {
+  it('indexers are heavy; Go and Python are light', () => {
+    expect(
+      Object.fromEntries(LANGUAGE_SERVERS.map((s) => [primaryLanguageId(s), s.weight])),
+    ).toEqual({ go: 'light', python: 'light', csharp: 'heavy', rust: 'heavy', cpp: 'heavy' });
+  });
+});
+
 describe('GO_SERVER.childEnv', () => {
   it('childEnv prepends toolDir and sets GOTOOLCHAIN=local', () => {
     const env = GO_SERVER.childEnv({ PATH: '/usr/bin', HOME: '/h' }, '/usr/local/go/bin', 'linux');

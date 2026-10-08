@@ -14,10 +14,14 @@ import {
 } from './lsp-binary';
 import type { LspLanguageInfo } from './lsp-protocol';
 
+/** Heavy servers index the whole project in memory; see spec 2026-10-08-language-coverage §2.6. */
+export type ServerWeight = 'light' | 'heavy';
+
 export interface LanguageServerSpec {
   /** `[0]` keys records, statuses, the absent TTL and restart; any id routes a doc here. */
   languageIds: readonly [string, ...string[]];
   displayName: string;
+  weight: ServerWeight;
   binary: string;
   /** Searched in order when `binary` is not found; user-facing copy still names `binary`. */
   altBinaries?: readonly string[];
@@ -103,6 +107,7 @@ function withLocalToolchain(
 export const GO_SERVER: LanguageServerSpec = {
   languageIds: ['go'],
   displayName: 'Go',
+  weight: 'light',
   binary: 'gopls',
   args: [],
   rootMarkers: { workspace: ['go.work'], module: ['go.mod'] },
@@ -164,6 +169,7 @@ const DOTNET_FIXED_DIRS: Readonly<Record<HostPlatform, readonly string[]>> = {
 export const CSHARP_SERVER: LanguageServerSpec = {
   languageIds: ['csharp'],
   displayName: 'C#',
+  weight: 'heavy',
   binary: 'csharp-ls',
   args: [],
   rootMarkers: { workspace: ['*.sln', '*.slnx'], module: ['*.csproj'] },
@@ -217,6 +223,7 @@ const PY_ANALYSIS = { typeCheckingMode: 'off', diagnosticMode: 'openFilesOnly' }
 export const PYTHON_SERVER: LanguageServerSpec = {
   languageIds: ['python'],
   displayName: 'Python',
+  weight: 'light',
   binary: 'basedpyright-langserver',
   altBinaries: ['pyright-langserver'],
   args: ['--stdio'],
@@ -267,6 +274,7 @@ const cargoBins = (ctx: SearchContext): string[] => {
 export const RUST_SERVER: LanguageServerSpec = {
   languageIds: ['rust'],
   displayName: 'Rust',
+  weight: 'heavy',
   binary: 'rust-analyzer',
   args: [],
   rootMarkers: { workspace: ['Cargo.lock'], module: ['Cargo.toml'] },
@@ -312,6 +320,7 @@ const LLVM_FIXED_DIRS: Readonly<Record<'darwin' | 'linux', readonly string[]>> =
 export const CLANGD_SERVER: LanguageServerSpec = {
   languageIds: ['cpp', 'c'],
   displayName: 'C/C++',
+  weight: 'heavy',
   binary: 'clangd',
   args: ['--background-index', '-j=2', '--header-insertion=never'],
   rootMarkers: {
