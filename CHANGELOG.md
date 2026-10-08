@@ -6,6 +6,33 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.46.0] — 2026-10-08
+
+### Added
+- **Log files are highlighted.** `.log` files and rotated logs (`app.log.1`, `app.log.2026-10-01`)
+  colour severity levels and exception lines, and mute stack frames and timestamps so a warning
+  stands out. IDs, IPs, URLs and strings are coloured too. Prose that merely contains "error" stays
+  plain.
+- **Large logs open at the end.** A log over 2 MB shows its last 2 MB, starting on a whole line,
+  read-only, and keeps following the file as it grows.
+- **Golden files open as their real language.** `name.json.golden` highlights as JSON (and so on),
+  always opens as source, and is never sent to a language server. A golden whose line endings the
+  editor would rewrite opens read-only, so its bytes cannot change.
+- **C# code navigation.** With `csharp-ls` installed (`dotnet tool install --global csharp-ls`),
+  `.cs` files in a folder with a `.sln` or `.csproj` get Go to Definition, hover, references and
+  breadcrumbs, behind Workspace Trust. The server stops 60 seconds after the last C# tab closes, and
+  `bin/` and `obj/` build output is ignored.
+- **Markdown source folds by heading**, as well as by fenced block and region.
+
+### Fixed
+- **Opening a huge file no longer reads all of it.** Files over 2 MB used to be read in full and
+  then cut to 2 MB; a 640 MB log briefly cost ~645 MB of memory. Reads are now bounded.
+- **Saving keeps a UTF-8 BOM.** Files that start with a BOM no longer open as modified or lose the
+  BOM when saved.
+- **Files that aren't valid UTF-8 open read-only** instead of being silently rewritten with
+  replacement characters on save.
+- **Trust Current Folder names the right language** when a folder has more than one language server.
+
 ## [0.45.6] — 2026-10-01
 
 ### Fixed
