@@ -1,0 +1,36 @@
+import { describe, expect, it } from 'vitest';
+import { diff } from '../../webview/diff-grammar';
+import { tokenizeLines } from './grammar-runner';
+
+const line = (text: string) => tokenizeLines(diff, [text])[0];
+
+describe('diff grammar', () => {
+  it('reads the file headers as keywords', () => {
+    for (const h of ['diff --git a/x b/x', 'index 83db48f..bf269f4 100644', '--- a/x', '+++ b/x']) {
+      expect(line(h), h).toEqual([[h, 'keyword']]);
+    }
+  });
+
+  it('reads the @@ range as type and leaves the trailing context plain', () => {
+    expect(line('@@ -1,2 +1,3 @@ ctx')).toEqual([['@@ -1,2 +1,3 @@', 'type']]);
+    expect(line('@@ -0,0 +1 @@')).toEqual([['@@ -0,0 +1 @@', 'type']]);
+  });
+
+  it('reads added, removed and no-newline lines whole', () => {
+    expect(line('+x = "a" // b')).toEqual([['+x = "a" // b', 'string']]);
+    expect(line('-x')).toEqual([['-x', 'log-error']]);
+    expect(line('\\ No newline at end of file')).toEqual([
+      ['\\ No newline at end of file', 'comment'],
+    ]);
+  });
+
+  it('leaves context and everything else plain', () => {
+    expect(line(' ctx')).toEqual([]);
+    expect(line('Some commit message')).toEqual([]);
+    expect(tokenizeLines(diff, ['', ' a', ''])).toEqual([[], [], []]);
+  });
+
+  it('matches only at column 0: a "+" or "@@" mid-line is not a marker', () => {
+    expect(line(' a + b @@ c')).toEqual([]);
+  });
+});

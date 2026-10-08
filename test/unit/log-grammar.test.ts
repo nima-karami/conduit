@@ -1,49 +1,10 @@
-/**
- * The log Monarch rules run the way Monarch runs them: first rule whose regex matches anchored at
- * the cursor wins, a rule written with a leading `^` only ever matches at column 0
- * (monarchCompile's `matchOnlyAtLineStart`), and an array action tokens the regex's groups in
- * order. The real tokenizer is covered by language-files.e2e.
- */
+/** The real tokenizer is covered by language-files.e2e. */
 
 import { describe, expect, it } from 'vitest';
 import { log } from '../../webview/log-grammar';
+import { tokenizeLines } from './grammar-runner';
 
-type Rule = [RegExp, string | string[]];
-
-const rules = (log.language as unknown as { tokenizer: { root: Rule[] } }).tokenizer.root.map(
-  ([re, action]) => {
-    const atStart = re.source.startsWith('^');
-    const body = atStart ? re.source.slice(1) : re.source;
-    return { re: new RegExp(`^(?:${body})`), atStart, action };
-  },
-);
-
-function tokenize(line: string): [string, string][] {
-  const out: [string, string][] = [];
-  let pos = 0;
-  while (pos < line.length) {
-    const rest = line.slice(pos);
-    let hit: [string, string][] | null = null;
-    for (const r of rules) {
-      if (r.atStart && pos > 0) continue;
-      const m = r.re.exec(rest);
-      if (!m || m[0] === '') continue;
-      if (typeof r.action === 'string') hit = [[m[0], r.action]];
-      else {
-        const groups = m.slice(1);
-        if (groups.join('') !== m[0]) throw new Error(`groups don't cover ${JSON.stringify(m[0])}`);
-        hit = groups.map((g, i) => [g, (r.action as string[])[i]] as [string, string]);
-      }
-      break;
-    }
-    if (!hit) throw new Error(`no rule matched at ${pos} in ${JSON.stringify(line)}`);
-    for (const [text, token] of hit) {
-      pos += text.length;
-      if (text !== '' && token !== 'white' && token !== '') out.push([text, token]);
-    }
-  }
-  return out;
-}
+const tokenize = (line: string) => tokenizeLines(log, [line])[0];
 
 const tokenOf = (line: string, text: string) => tokenize(line).find(([t]) => t === text)?.[1];
 
