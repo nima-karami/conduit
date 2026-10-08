@@ -209,8 +209,8 @@ export function CodeViewer({
     const uri = fileUri(doc.path);
     const existing = monaco.editor.getModel(uri);
     const { content } = docRef.current;
-    const refusal = readOnlyState(docRef.current)?.refusal ?? null;
-    const readOnly = refusal !== null;
+    const lock = readOnlyState(docRef.current);
+    const readOnly = lock !== null;
     const tail = docRef.current.window === 'tail';
     const model =
       existing ?? monaco.editor.createModel(doc.binary ? '' : content, doc.language, uri);
@@ -223,7 +223,7 @@ export function CodeViewer({
     // clean model (K3), so all of it outlives this editor. Attached before `create` so the
     // first paint already shows the disk content.
     if (!doc.binary) {
-      fileSaves.attach(doc.path, { diskContent: content, readOnly: refusal });
+      fileSaves.attach(doc.path, { diskContent: content, readOnly: lock });
     }
     const editor = monaco.editor.create(ref.current, {
       model,
@@ -541,6 +541,7 @@ export function CodeViewer({
   const readOnly = readOnlyState(doc);
   const notice = readOnly?.banner ?? null;
   const refusal = readOnly?.refusal ?? null;
+  const partial = readOnly?.partial ?? false;
   const tail = doc.window === 'tail';
   const tailRef = useRef(tail);
   tailRef.current = tail;
@@ -555,7 +556,10 @@ export function CodeViewer({
     const version = model?.getVersionId();
     const view = ed?.saveViewState();
     const atEnd = tail && !!ed && isScrolledToEnd(ed);
-    fileSaves.attach(doc.path, { diskContent: doc.content, readOnly: refusal });
+    fileSaves.attach(doc.path, {
+      diskContent: doc.content,
+      readOnly: refusal === null ? null : { refusal, partial },
+    });
     if (!ed || !model || model.getVersionId() === version) return;
     if (atEnd) revealEnd(ed);
     else if (view) ed.restoreViewState(view);
@@ -565,7 +569,7 @@ export function CodeViewer({
       if (p) ed.setPosition(p, NAV_REVEAL_SOURCE);
     }
     onReseedRef.current?.();
-  }, [doc.path, doc.content, refusal, tail, doc.binary]);
+  }, [doc.path, doc.content, refusal, partial, tail, doc.binary]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });

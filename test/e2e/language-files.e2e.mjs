@@ -27,7 +27,7 @@ import { assert, openSession, runScenario } from './harness.mjs';
 const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 const LOG_LINE = '2026-10-08T12:00:00.123Z ERROR boom "x"';
 const BIG_LINES = 1_000_000;
-const AUTO_SAVE_TAIL_LINE_5 = 'This log is shown from its last 2 MB — line 5 may be outside it.';
+const TAIL_TOAST_LINE_5 = 'This log is shown from its last 2 MB — line 5 may be outside it.';
 const bigLine = (i) => `line ${String(i).padStart(7, '0')} ${'.'.repeat(26)}\n`;
 
 function buildFixture() {
@@ -416,7 +416,7 @@ async function scenario({ app, page, log }, root) {
   await focusEditorOf(page, 'small.txt');
   await page.keyboard.press('Alt+ArrowLeft');
   const toast = await waitFor(
-    async () => (await toasts(page)).find((t) => t === AUTO_SAVE_TAIL_LINE_5),
+    async () => (await toasts(page)).find((t) => t === TAIL_TOAST_LINE_5),
     'the tail-window toast for line 5',
   );
   log(`AC-A6b toast: ${toast}`);

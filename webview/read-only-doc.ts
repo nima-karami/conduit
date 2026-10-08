@@ -1,11 +1,10 @@
 import type { FileContentDTO } from '../src/protocol';
 import { AUTO_SAVE_COPY } from './auto-save-copy';
+import type { ReadOnlyAttach } from './file-save-controller';
 
-export interface ReadOnlyState {
+export interface ReadOnlyState extends ReadOnlyAttach {
   /** The editor banner and its one-shot announcement. */
   banner: string;
-  /** Why a save is refused, for the save store's toast. */
-  refusal: string;
 }
 
 /** Why the editor won't take edits for this doc, or null when it is writable. One place, so the
@@ -17,12 +16,24 @@ export function readOnlyState(
   if (doc.binary) return null;
   if (doc.truncated) {
     return doc.window === 'tail'
-      ? { banner: AUTO_SAVE_COPY.tailBanner, refusal: AUTO_SAVE_COPY.tailFile }
-      : { banner: AUTO_SAVE_COPY.partialBanner, refusal: AUTO_SAVE_COPY.partialFile };
+      ? { banner: AUTO_SAVE_COPY.tailBanner, refusal: AUTO_SAVE_COPY.tailFile, partial: true }
+      : {
+          banner: AUTO_SAVE_COPY.partialBanner,
+          refusal: AUTO_SAVE_COPY.partialFile,
+          partial: true,
+        };
   }
   if (doc.readOnlyReason === 'invalid-utf8')
-    return { banner: AUTO_SAVE_COPY.invalidUtf8Banner, refusal: AUTO_SAVE_COPY.invalidUtf8Refusal };
+    return {
+      banner: AUTO_SAVE_COPY.invalidUtf8Banner,
+      refusal: AUTO_SAVE_COPY.invalidUtf8Refusal,
+      partial: false,
+    };
   if (doc.readOnlyReason === 'mixed-eol')
-    return { banner: AUTO_SAVE_COPY.mixedEolBanner, refusal: AUTO_SAVE_COPY.mixedEolRefusal };
+    return {
+      banner: AUTO_SAVE_COPY.mixedEolBanner,
+      refusal: AUTO_SAVE_COPY.mixedEolRefusal,
+      partial: false,
+    };
   return null;
 }

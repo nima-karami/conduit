@@ -13,10 +13,12 @@ describe('readOnlyState', () => {
     expect(readOnlyState({ ...doc, truncated: true })).toEqual({
       banner: 'Large file — showing the first 2 MB, read-only.',
       refusal: AUTO_SAVE_COPY.partialFile,
+      partial: true,
     });
     expect(readOnlyState({ ...doc, truncated: true, window: 'tail' })).toEqual({
       banner: 'Large log — showing the last 2 MB, read-only.',
       refusal: AUTO_SAVE_COPY.tailFile,
+      partial: true,
     });
   });
 
@@ -24,10 +26,12 @@ describe('readOnlyState', () => {
     expect(readOnlyState({ ...doc, readOnlyReason: 'invalid-utf8' })).toEqual({
       banner: "Not valid UTF-8 — read-only so saving can't change its bytes.",
       refusal: AUTO_SAVE_COPY.invalidUtf8Refusal,
+      partial: false,
     });
     expect(readOnlyState({ ...doc, readOnlyReason: 'mixed-eol' })).toEqual({
       banner: 'Mixed line endings — read-only so this golden file stays byte-exact.',
       refusal: AUTO_SAVE_COPY.mixedEolRefusal,
+      partial: false,
     });
   });
 
