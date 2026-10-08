@@ -56,6 +56,30 @@ describe('makefile grammar', () => {
     }
   });
 
+  it("doesn't leak an unterminated $( or ${ past its line", () => {
+    for (const open of ['$(', `\${`]) {
+      expect(tokenizeLines(makefile, [`X = ${open}foo bar`, 'all: dep'])[1], open).toEqual([
+        ['all:', 'type'],
+      ]);
+    }
+    expect(tokenizeLines(makefile, ['X = $(a $(b', 'all: dep'])[1]).toEqual([['all:', 'type']]);
+  });
+
+  it('carries $( over a backslash continuation', () => {
+    expect(tokenizeLines(makefile, ['X = $(foo \\', '  bar) y'])[1]).toEqual([
+      ['  bar)', 'number'],
+    ]);
+  });
+
+  it('survives nesting deeper than Monaco allows a stack', () => {
+    expect(() => tokenizeLines(makefile, ['$('.repeat(200), 'all: x'])).not.toThrow();
+  });
+
+  it('reads the variable of an export / override assignment as keyword', () => {
+    expect(tokenOf('export CC := gcc', 'CC :=')).toBe('keyword');
+    expect(tokenOf('override CFLAGS += -O2', 'CFLAGS +=')).toBe('keyword');
+  });
+
   it('reads a TAB-led recipe line as strings and $(…) only', () => {
     expect(line('\techo "hi" $(CC) x: y = z')).toEqual([
       ['"hi"', 'string'],

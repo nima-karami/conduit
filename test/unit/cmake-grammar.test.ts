@@ -65,6 +65,29 @@ describe('cmake grammar', () => {
     expect(tokenOf('set(ONLY 1)', 'ON')).toBeUndefined();
   });
 
+  it('reads booleans in any case', () => {
+    for (const b of ['on', 'Off', 'True', 'false', 'yes', 'No']) {
+      expect(tokenOf(`option(X "d" ${b})`, b), b).toBe('number');
+    }
+  });
+
+  it("doesn't leak an unterminated variable reference past its line", () => {
+    for (const open of [`\${`, `\${VAR`, `\${a\${b`, '$ENV{X']) {
+      expect(tokenizeLines(cmake, [`set(A ${open}`, 'set(B 1)'])[1], open).toEqual([
+        ['set', 'keyword'],
+        ['1', 'number'],
+      ]);
+    }
+  });
+
+  it('keeps a quoted argument open across lines after an unterminated reference in it', () => {
+    expect(tokenizeLines(cmake, [`set(A "x \${B`, 'y" C)'])[1]).toEqual([['y"', 'string']]);
+  });
+
+  it('survives nesting deeper than Monaco allows a stack', () => {
+    expect(() => tokenizeLines(cmake, [`\${`.repeat(200), 'set(x)'])).not.toThrow();
+  });
+
   it('declares # comments, bracket comments and folds by indentation', () => {
     expect(cmake.conf.comments?.lineComment).toBe('#');
     expect(cmake.conf.folding?.offSide).toBe(true);

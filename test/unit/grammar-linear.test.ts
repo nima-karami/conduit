@@ -1,6 +1,8 @@
 /**
  * AC-A8: every custom grammar tokenizes in linear time (spec 2026-10-08-language-coverage §2.3).
- * Monarch runs on the UI thread line by line, so one catastrophic regex freezes the editor.
+ * Monarch runs on the UI thread line by line, so one catastrophic regex freezes the editor. Timed
+ * on Monaco's own tokenizer, starting in every state, since a state's rules only run once an
+ * earlier rule has pushed it.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -11,44 +13,33 @@ import { ignore } from '../../webview/ignore-grammar';
 import { log } from '../../webview/log-grammar';
 import { makefile } from '../../webview/makefile-grammar';
 import { toml } from '../../webview/toml-grammar';
-import { grammarRegExps, grammarTokens, tokenizeLines } from './grammar-runner';
+import {
+  grammarRegExps,
+  grammarStates,
+  grammarTokens,
+  monarchTokenizer,
+  rawTokens,
+  tokenizeLines,
+} from './grammar-runner';
 
 const NEW: Record<string, Grammar> = { toml, diff, makefile, cmake, ignore };
 const ALL: Record<string, Grammar> = { ...NEW, gomod, log };
 
-const ADVERSARIAL = ['['.repeat(20000), `"${'a'.repeat(19999)}`, '$('.repeat(10000)];
+const ADVERSARIAL = [
+  '['.repeat(20000),
+  `"${'a'.repeat(19999)}`,
+  '$('.repeat(10000),
+  '${'.repeat(10000),
+  `${'1'.repeat(19999)}a`,
+  'a.'.repeat(10000),
+  ' '.repeat(20000),
+];
 
-/**
- * Walks one state's rules the way Monarch does (first anchored match wins, else one character),
- * ignoring actions — gomod's `cases` and `@brackets` are outside the runner's subset, and a
- * state is only reachable through the runner when an earlier rule pushes it.
- */
-function scanState(rules: readonly RegExp[], line: string): void {
-  const compiled = rules.map((re) => {
-    const atStart = re.source.startsWith('^');
-    return { re: new RegExp(atStart ? re.source.slice(1) : re.source, 'y'), atStart };
-  });
-  let pos = 0;
-  while (pos < line.length) {
-    let step = 1;
-    for (const r of compiled) {
-      if (r.atStart && pos > 0) continue;
-      r.re.lastIndex = pos;
-      const m = r.re.exec(line);
-      if (m && m[0] !== '') {
-        step = m[0].length;
-        break;
-      }
-    }
-    pos += step;
-  }
-}
-
-/** Best of three after a warm-up: a quadratic rule is slow every run, a GC pause only once. */
+/** Best of five after a warm-up: a quadratic rule is slow every run, a GC pause only once. */
 function elapsed(fn: () => void): number {
   fn();
   let best = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     const t = performance.now();
     fn();
     best = Math.min(best, performance.now() - t);
@@ -57,67 +48,59 @@ function elapsed(fn: () => void): number {
 }
 
 describe('grammar runner', () => {
-  it('pushes a state and pops back to root across lines', () => {
+  it("is Monaco's Monarch: `@@` in a rule is a literal single `@`", () => {
     const toy: Grammar = {
       conf: {},
-      language: {
-        tokenizer: {
-          root: [
-            [/\/\*/, { token: 'comment', next: '@block' }],
-            [/\w+/, 'keyword'],
-          ],
-          block: [
-            [/\*\//, { token: 'comment', next: '@pop' }],
-            [/[^*]+/, 'comment'],
-            [/\*/, 'comment'],
-          ],
-        },
-      },
+      language: { tokenPostfix: '.t', tokenizer: { root: [[/@@x/, 'keyword']] } },
     };
-    expect(tokenizeLines(toy, ['a /* b', 'c */ d', 'e'])).toEqual([
-      [
-        ['a', 'keyword'],
-        ['/* b', 'comment'],
-      ],
-      [
-        ['c */', 'comment'],
-        ['d', 'keyword'],
-      ],
-      [['e', 'keyword']],
-    ]);
-  });
-
-  it('throws on a rule shape outside its subset', () => {
-    const bad: Grammar = {
-      conf: {},
-      language: { tokenizer: { root: [[/x/, { cases: { '@default': 'keyword' } }]] } },
-    };
-    expect(() => tokenizeLines(bad, ['x'])).toThrow(/unsupported rule/);
+    expect(tokenizeLines(toy, ['@x'])).toEqual([[['@x', 'keyword']]]);
   });
 });
 
 describe('grammar linearity', () => {
-  for (const [name, grammar] of Object.entries(ALL)) {
-    it(`${name} scans adversarial 20 000-char lines in < 50 ms per state`, () => {
-      for (const rules of grammarRegExps(grammar)) {
+  // The absolute budget covers the grammars this spec added. gomod and log (spec
+  // 2026-10-08-language-support) are linear — the scaling check below holds them — but log's
+  // constant is ~26 ms per 20 000 punctuation chars alone and ~80 ms under the gate's parallel
+  // load, so a wall-clock budget on it measures the machine, not the grammar.
+  for (const [name, grammar] of Object.entries(NEW)) {
+    // Retried because the gate runs every suite in parallel; each attempt must meet the budget.
+    it(`${name} tokenizes adversarial 20 000-char lines in < 50 ms from every state`, {
+      retry: 2,
+    }, () => {
+      for (const state of grammarStates(grammar)) {
+        const tokenizer = monarchTokenizer(grammar, state);
         for (const line of ADVERSARIAL) {
-          const ms = elapsed(() => scanState(rules, line));
-          expect(ms, `${name} on ${JSON.stringify(line.slice(0, 6))}…`).toBeLessThan(50);
+          // Followed by a second line, so a grammar that reads the EOL sees it.
+          const ms = elapsed(() => rawTokens(tokenizer, [line, '']));
+          expect(ms, `${name}@${state} on ${JSON.stringify(line.slice(0, 6))}…`).toBeLessThan(50);
+        }
+      }
+    });
+  }
+
+  for (const [name, grammar] of Object.entries(ALL)) {
+    // Independent of machine speed: quadrupling a linear rule's input quadruples its time, a
+    // quadratic one's sixteen-fold. 8× sits far enough from both that load noise can't cross it.
+    it(`${name} scales linearly on adversarial lines from every state`, { retry: 2 }, () => {
+      for (const state of grammarStates(grammar)) {
+        const tokenizer = monarchTokenizer(grammar, state);
+        for (const line of ADVERSARIAL) {
+          const quarter = elapsed(() => rawTokens(tokenizer, [line.slice(0, line.length / 4), '']));
+          const full = elapsed(() => rawTokens(tokenizer, [line, '']));
+          // Below a few ms the ratio is timer noise, not growth.
+          if (full < 5) continue;
+          expect(
+            full / quarter,
+            `${name}@${state} on ${JSON.stringify(line.slice(0, 6))}…`,
+          ).toBeLessThan(8);
         }
       }
     });
   }
 
   for (const [name, grammar] of Object.entries(NEW)) {
-    it(`${name} tokenizes adversarial 20 000-char lines in < 50 ms`, () => {
-      for (const line of ADVERSARIAL) {
-        const ms = elapsed(() => tokenizeLines(grammar, [line]));
-        expect(ms, `${name} on ${JSON.stringify(line.slice(0, 6))}…`).toBeLessThan(50);
-      }
-    });
-
     it(`${name} has no nested quantifier in any rule`, () => {
-      for (const re of grammarRegExps(grammar).flat()) {
+      for (const re of grammarRegExps(grammar)) {
         expect(re.source, name).not.toMatch(/\((?:[^()\\]|\\.)*[+*}]\)[+*{]/);
       }
     });

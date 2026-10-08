@@ -92,9 +92,42 @@ describe('toml grammar', () => {
   });
 
   it('does not read an array of arrays inside a value as a table header', () => {
-    expect(tokenizeLines(toml, ['a = [', '  [1, 2],', ']'])[1]).toEqual([
+    const lines = tokenizeLines(toml, ['a = [', '  [1, 2],', '  [3, 4]', ']', '[next]']);
+    expect(lines[1]).toEqual([
       ['1', 'number'],
       ['2', 'number'],
+    ]);
+    expect(lines[2]).toEqual([
+      ['3', 'number'],
+      ['4', 'number'],
+    ]);
+    expect(lines[4]).toEqual([['[next]', 'type']]);
+  });
+
+  it('closes an unfinished array at a column-0 table header', () => {
+    expect(tokenizeLines(toml, ['a = [1,', '[tool]', 'x = 1']).slice(1)).toEqual([
+      [['[tool]', 'type']],
+      [
+        ['x', 'keyword'],
+        ['1', 'number'],
+      ],
+    ]);
+  });
+
+  it('survives arrays nested deeper than Monaco allows a stack', () => {
+    expect(() => tokenizeLines(toml, [`a = ${'['.repeat(200)}`, 'x = 1'])).not.toThrow();
+  });
+
+  it('reads keys and strings inside a multi-line array', () => {
+    expect(tokenizeLines(toml, ['a = [', '  "x", # c', '  { y = 1 },', ']']).slice(1, 3)).toEqual([
+      [
+        ['"x"', 'string'],
+        ['# c', 'comment'],
+      ],
+      [
+        ['y', 'keyword'],
+        ['1', 'number'],
+      ],
     ]);
   });
 

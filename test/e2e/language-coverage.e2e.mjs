@@ -185,6 +185,37 @@ const tokenTypes = (page, text, language) =>
     { t: text, l: language },
   );
 
+/** `{offset, type}` per line for the opened file's whole text, state carried line to line. */
+const fileTokens = (page, name) =>
+  page.evaluate((n) => {
+    const model = window.monaco.editor.getModels().find((m) => m.uri.path.endsWith(`/${n}`));
+    if (!model) return [];
+    return window.monaco.editor
+      .tokenize(model.getValue(), model.getLanguageId())
+      .map((line) => line.map(({ offset, type }) => ({ offset, type })));
+  }, name);
+
+/** Monaco's `StandardTokenType.Comment`. */
+const STANDARD_COMMENT = 1;
+
+/** The opened model's own tokens on `line`: text, class and standard token type. */
+const modelLineTokens = (page, name, line) =>
+  page.evaluate(
+    ({ n, l }) => {
+      const model = window.monaco.editor.getModels().find((m) => m.uri.path.endsWith(`/${n}`));
+      if (!model) return null;
+      model.tokenization.forceTokenization(l);
+      const tokens = model.tokenization.getLineTokens(l);
+      const text = model.getLineContent(l);
+      return Array.from({ length: tokens.getCount() }, (_, i) => ({
+        text: text.slice(tokens.getStartOffset(i), tokens.getEndOffset(i)),
+        cls: tokens.getClassName(i),
+        standard: tokens.getStandardTokenType(i),
+      }));
+    },
+    { n: name, l: line },
+  );
+
 /**
  * The classes `name`'s first non-blank line had inside `onDidCreateModel` — synchronously, before
  * a lazily-loaded grammar could resolve — so only a grammar registered up front colours here.
@@ -379,11 +410,18 @@ async function scenario({ app, page, log }, root) {
   // AC-A4 — a patch: + string, - log-error, @@ type; one fold per hunk.
   writeFileSync(at('x.patch'), PATCH);
   await open(app, page, sid, at('x.patch'), 'x.patch');
-  const patch = await tokenTypes(page, PATCH, 'diff');
+  const patch = await fileTokens(page, 'x.patch');
   log(`AC-A4 patch ${JSON.stringify(patch)}`);
-  assert(patch[3][0] === 'type.diff', `@@ header: ${JSON.stringify(patch[3])}`);
-  assert(patch[4][0] === 'log-error.diff', `- line: ${JSON.stringify(patch[4])}`);
-  assert(patch[5][0] === 'string.diff', `+ line: ${JSON.stringify(patch[5])}`);
+  const header = PATCH.split('\n')[3];
+  for (const i of [3, 7]) {
+    const inHeader = patch[i].filter((t) => t.offset < header.length);
+    assert(
+      inHeader.length === 1 && inHeader[0].offset === 0 && inHeader[0].type === 'type.diff',
+      `@@ header line ${i + 1} must be one type token: ${JSON.stringify(patch[i])}`,
+    );
+  }
+  assert(patch[4][0].type === 'log-error.diff', `- line: ${JSON.stringify(patch[4])}`);
+  assert(patch[5][0].type === 'string.diff', `+ line: ${JSON.stringify(patch[5])}`);
   const folds = await waitFor(async () => {
     const r = await foldRegions(page, 'x.patch');
     return r.length >= 3 ? r : null;
@@ -401,22 +439,29 @@ async function scenario({ app, page, log }, root) {
     );
   }
 
-  // AC-A6 — `//` in tsconfig.json / .babelrc is a comment; JSONL keys and strings colour.
+  // AC-A6 — the `//` line of the opened tsconfig.json / .babelrc is a comment in the model's own
+  // tokens; every line of the opened .jsonl colours its keys and string values.
   for (const name of ['tsconfig.json', '.babelrc']) {
     await open(app, page, sid, at(name), name);
-    const types = await waitFor(async () => {
-      const t = (await tokenTypes(page, '// c\n{}', 'json'))[0] ?? [];
-      return t.some((x) => x.startsWith('comment')) ? t : null;
-    }, `${name} comment token`);
-    log(`AC-A6 ${name} ${JSON.stringify(types)}`);
+    const std = await waitFor(async () => {
+      const t = await modelLineTokens(page, name, 1);
+      return t?.some((x) => x.standard === STANDARD_COMMENT && x.text.startsWith('//')) ? t : null;
+    }, `${name} line 1 comment token`);
+    log(`AC-A6 ${name} ${JSON.stringify(std)}`);
   }
-  const jsonl = (await tokenTypes(page, '{"k": "v"}', 'json'))[0] ?? [];
-  log(`AC-A6 jsonl ${JSON.stringify(jsonl)}`);
-  assert(
-    jsonl.some((t) => t.startsWith('string.key')) &&
-      jsonl.some((t) => t.startsWith('string.value')),
-    `jsonl keys and strings: ${JSON.stringify(jsonl)}`,
-  );
+  await open(app, page, sid, at('lines.jsonl'), 'lines.jsonl');
+  const jsonl = await waitFor(async () => {
+    const lines = await fileTokens(page, 'lines.jsonl');
+    const ok = lines
+      .slice(0, 2)
+      .every(
+        (l) =>
+          l.some((t) => t.type.startsWith('string.key')) &&
+          l.some((t) => t.type.startsWith('string.value')),
+      );
+    return ok ? lines : null;
+  }, 'lines.jsonl keys and values on lines 1 and 2');
+  log(`AC-A6 jsonl ${JSON.stringify(jsonl.slice(0, 2))}`);
 
   // The grammars use only existing themed tokens: TOML paints in each theme's own colours.
   for (const theme of ['aero', 'aero-dark', 'neon']) {

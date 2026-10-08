@@ -43,13 +43,38 @@ const SPECIAL_TARGETS = [
   'POSIX',
 ];
 
-const expansion = (open: string, close: string): monaco.languages.IMonarchLanguageRule[] => [
-  [new RegExp(`\\$\\${open}`), { token: 'number', next: '@push' }],
-  [new RegExp(`\\${open}`), { token: 'number', next: '@push' }],
-  [new RegExp(`\\${close}`), { token: 'number', next: '@pop' }],
-  [new RegExp(`[^$\\${open}\\${close}]+`), 'number'],
-  [/\$/, 'number'],
-];
+/**
+ * Nesting is counted by one state per depth rather than `@push`: Monaco throws past a stack of
+ * 100 (`maxStack`), and `$(` repeated is ordinary input. Past the last depth a bracket no longer
+ * counts, which can only mis-colour.
+ */
+const EXPANSION_DEPTH = 8;
+
+/** `{name}1` … `{name}N` for one bracket pair. The grammar is `includeLF`, so each state sees the
+ *  line's `\n`: a `\` before it continues the expansion, anything else unwinds it — an
+ *  unterminated `$(` must not colour the rest of the file. */
+function expansionStates(
+  name: string,
+  open: string,
+  close: string,
+): Record<string, monaco.languages.IMonarchLanguageRule[]> {
+  const states: Record<string, monaco.languages.IMonarchLanguageRule[]> = {};
+  for (let depth = 1; depth <= EXPANSION_DEPTH; depth++) {
+    const deeper: monaco.languages.IMonarchLanguageAction =
+      depth < EXPANSION_DEPTH ? { token: 'number', next: `@${name}${depth + 1}` } : 'number';
+    states[`${name}${depth}`] = [
+      [/\\\n/, 'number'],
+      [/(?=\n)/, { token: '', next: '@pop' }],
+      [new RegExp(`\\$?\\${open}`), deeper],
+      [new RegExp(`\\${close}`), { token: 'number', next: '@pop' }],
+      [new RegExp(`[^$\\\\\\n\\${open}\\${close}]+`), 'number'],
+      [/[$\\]/, 'number'],
+    ];
+  }
+  return states;
+}
+
+const ASSIGN = '[A-Za-z0-9_.-]+[ \\t]*(?::::=|::=|:=|\\?=|\\+=|!=|=)';
 
 export const makefile: Grammar = {
   conf: {
@@ -75,31 +100,40 @@ export const makefile: Grammar = {
   language: {
     defaultToken: '',
     tokenPostfix: '.makefile',
+    // Lines arrive with their `\n`, which is what lets a `\` continuation be told from a line end.
+    includeLF: true,
     tokenizer: {
       root: [
         // A recipe line: consuming the TAB leaves only the mid-line rules (strings, expansions,
         // comments) for the rest of it.
         [/^\t/, 'white'],
-        [/#.*\\$/, { token: 'comment', next: '@commentContinued' }],
-        [/#.*$/, 'comment'],
+        [/#.*\\\n/, { token: 'comment', next: '@commentContinued' }],
+        [/#.*/, 'comment'],
         [new RegExp(`^\\.(?:${SPECIAL_TARGETS.join('|')})(?![\\w.])`), 'keyword'],
+        [
+          new RegExp(`^([ ]*)(export|override|private)([ \\t]+)(${ASSIGN})`),
+          ['white', 'keyword', 'white', 'keyword'],
+        ],
         [new RegExp(`^\\s*(?:${DIRECTIVES.join('|')})(?![\\w.-])`), 'keyword'],
-        [/^[ ]*[A-Za-z0-9_.-]+[ \t]*(?::::=|::=|:=|\?=|\+=|!=|=)/, 'keyword'],
-        [/^[^\s:#=][^:#=]*?::?(?!=)/, 'type'],
-        [/\$\(/, { token: 'number', next: '@paren' }],
-        [/\$\{/, { token: 'number', next: '@brace' }],
+        [new RegExp(`^[ ]*${ASSIGN}`), 'keyword'],
+        [/^[^\s:#=][^:#=\n]*?::?(?!=)/, 'type'],
+        [/\$\(/, { token: 'number', next: '@paren1' }],
+        [/\$\{/, { token: 'number', next: '@brace1' }],
         [/\$[@<^*?%+|$A-Za-z0-9]/, 'number'],
-        [/"(?:[^"\\]|\\.)*"?/, 'string'],
-        [/'[^']*'?/, 'string'],
+        [/"(?:[^"\\\n]|\\.)*"?/, 'string'],
+        [/'[^'\n]*'?/, 'string'],
         [/[A-Za-z0-9_.-]+/, ''],
         [/\s+/, 'white'],
+        // A run of characters no rule above starts with, taken whole rather than one fallback
+        // character — and every rule tried — at a time.
+        [/[^\s\w#$"'.-]+/, ''],
       ],
       commentContinued: [
-        [/.*\\$/, 'comment'],
-        [/.*$/, { token: 'comment', next: '@pop' }],
+        [/.*\\\n/, 'comment'],
+        [/.*\n?/, { token: 'comment', next: '@pop' }],
       ],
-      paren: expansion('(', ')'),
-      brace: expansion('{', '}'),
+      ...expansionStates('paren', '(', ')'),
+      ...expansionStates('brace', '{', '}'),
     },
   },
 };

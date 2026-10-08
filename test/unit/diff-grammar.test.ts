@@ -33,4 +33,29 @@ describe('diff grammar', () => {
   it('matches only at column 0: a "+" or "@@" mid-line is not a marker', () => {
     expect(line(' a + b @@ c')).toEqual([]);
   });
+
+  it('reads a removed "-- x" and an added "++x" inside a hunk as lines, not headers', () => {
+    expect(tokenizeLines(diff, ['@@ -1,2 +1,2 @@', '--- sql comment', '+++x', ' ctx'])).toEqual([
+      [['@@ -1,2 +1,2 @@', 'type']],
+      [['--- sql comment', 'log-error']],
+      [['+++x', 'string']],
+      [],
+    ]);
+  });
+
+  it('leaves the hunk at the next file header', () => {
+    expect(
+      tokenizeLines(diff, ['@@ -1 +1 @@', '-a', 'diff --git a/y b/y', '--- a/y', '+++ b/y']).slice(
+        2,
+      ),
+    ).toEqual([
+      [['diff --git a/y b/y', 'keyword']],
+      [['--- a/y', 'keyword']],
+      [['+++ b/y', 'keyword']],
+    ]);
+  });
+
+  it('reads a combined-diff @@@ range as type', () => {
+    expect(line('@@@ -1,2 -1,2 +1,3 @@@ x')).toEqual([['@@@ -1,2 -1,2 +1,3 @@@', 'type']]);
+  });
 });
