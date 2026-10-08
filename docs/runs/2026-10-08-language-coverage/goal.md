@@ -24,3 +24,6 @@ memory and sleep when nothing visible needs them. Spec: docs/specs/2026-10-08-la
 - Planner amending the plan; S0 builder unaffected (plan forbids S0 contract changes).
 - Lane B deviation 2 accepted: clangd hint stays `winget install LLVM.LLVM` (only Windows is released). Lane C started from lane B SHA during B's review (merge B fixes into C if any).
 - Lane B review REQUEST_CHANGES: blocker = AC-B4 'save runs no cargo' cannot fail (no didSave exists). Sent to B (e2e/spec/ADR/comment only). Nits 1 (closeForReopen ordering) + 2 (probe execFile hang) routed to lane C, which owns lsp-manager.ts/main.ts now. Nit 3 (winget-only hint) accepted.
+- Lane B merged by SHA 92e70e9 → 527a8ba. Lane C told to merge 92e70e9.
+- Lane A review REQUEST_CHANGES (2 blockers: diff `@@` = literal `@` in Monarch; unterminated `$(`/`${` leaks to EOF).
+  Root cause: hand-written Monarch runner diverged from Monaco — units must run on real monarchCompile/MonarchTokenizer.
