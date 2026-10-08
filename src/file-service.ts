@@ -2,7 +2,7 @@ import { isUtf8 } from 'node:buffer';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { isBinary } from './content-search';
-import { isGoldenPath, langFromPath } from './lang';
+import { isGoldenPath, langFromPath, langFromPathAndText } from './lang';
 import { imageMime, mediaKindForPath, pdfKindForPath } from './media-kind';
 import {
   isInsideRoot,
@@ -110,11 +110,12 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
     const { buf, truncated, tail } = await readBounded(absPath, cap, language === 'log');
     if (isBinary(buf))
       return { path: absPath, content: '', language, truncated: false, binary: true };
+    const textLanguage = langFromPathAndText(absPath, buf.subarray(0, 1024).toString('utf8'));
     if (truncated) {
       return {
         path: absPath,
         content: buf.toString('utf8'),
-        language,
+        language: textLanguage,
         truncated: true,
         binary: false,
         ...(tail ? { window: 'tail' as const } : {}),
@@ -128,7 +129,7 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
     return {
       path: absPath,
       content: buf.toString('utf8'),
-      language,
+      language: textLanguage,
       truncated: false,
       binary: false,
       ...(readOnlyReason ? { readOnlyReason } : {}),

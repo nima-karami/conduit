@@ -25,7 +25,7 @@ describe('fileService helpers', () => {
     expect(langFromPath('a/b.ts')).toBe('typescript');
     expect(langFromPath('x.TSX')).toBe('typescript');
     expect(langFromPath('readme.md')).toBe('markdown');
-    expect(langFromPath('Makefile')).toBe('plaintext');
+    expect(langFromPath('Makefile')).toBe('makefile');
   });
 
   it('covers the broadened language set (matching registered Monaco ids)', () => {
@@ -155,6 +155,47 @@ describe('fileService readers', () => {
     const diff = await readDiff(f, async () => 'a\nb\nc\n');
     expect(diff.work).toBe('a\nB\nc\n');
     expect(diff.head).toBe('a\nb\nc\n');
+  });
+});
+
+describe('fileService readFile shebang (spec 2026-10-08-language-coverage §2.4)', () => {
+  it('extensionless shebang file reports python', async () => {
+    const f = path.join(tmp(), 'tool');
+    fs.writeFileSync(f, '#!/usr/bin/env python3\nprint(1)\n');
+    expect(await readFile(f)).toMatchObject({ language: 'python', binary: false });
+  });
+
+  it('truncated shebang head is sniffed', async () => {
+    const f = path.join(tmp(), 'tool');
+    fs.writeFileSync(f, `#!/usr/bin/env python3\n${'print(1)\n'.repeat(20)}`);
+    expect(await readFile(f, 64)).toMatchObject({ truncated: true, language: 'python' });
+  });
+
+  it('invalid-UTF-8 shebang file is sniffed', async () => {
+    const f = path.join(tmp(), 'tool');
+    fs.writeFileSync(
+      f,
+      Buffer.concat([Buffer.from('#!/bin/sh\necho '), Buffer.from([0xe9, 0x0a])]),
+    );
+    expect(await readFile(f)).toMatchObject({ readOnlyReason: 'invalid-utf8', language: 'shell' });
+  });
+
+  it('binary file is not sniffed', async () => {
+    const f = path.join(tmp(), 'tool');
+    fs.writeFileSync(f, Buffer.concat([Buffer.from('#!/bin/sh\n'), Buffer.from([0, 0, 1])]));
+    expect(await readFile(f)).toMatchObject({ binary: true, language: 'plaintext' });
+  });
+
+  it('go.sum stays plaintext', async () => {
+    const f = path.join(tmp(), 'go.sum');
+    fs.writeFileSync(f, '#!/usr/bin/env python3\n');
+    expect((await readFile(f)).language).toBe('plaintext');
+  });
+
+  it('a mapped extension wins over the shebang', async () => {
+    const f = path.join(tmp(), 'a.ts');
+    fs.writeFileSync(f, '#!/usr/bin/env python3\n');
+    expect((await readFile(f)).language).toBe('typescript');
   });
 });
 
