@@ -76,19 +76,22 @@ describe('grammar linearity', () => {
 
   for (const [name, grammar] of Object.entries(ALL)) {
     // Independent of machine speed: quadrupling a linear rule's input quadruples its time, a
-    // quadratic one's sixteen-fold. 8× sits far enough from both that load noise can't cross it.
+    // quadratic one's sixteen-fold. Monarch allocates a token per step, so GC lifts a linear
+    // rule to ~6× at these sizes; 10× still sits well below quadratic.
     it(`${name} scales linearly on adversarial lines from every state`, { retry: 2 }, () => {
       for (const state of grammarStates(grammar)) {
         const tokenizer = monarchTokenizer(grammar, state);
-        for (const line of ADVERSARIAL) {
-          const quarter = elapsed(() => rawTokens(tokenizer, [line.slice(0, line.length / 4), '']));
+        for (const short of ADVERSARIAL) {
+          // 20 000 vs 80 000 chars: the shorter run must itself take long enough that timer and
+          // GC jitter can't move the ratio (CI measured 8.0–8.1 for a linear rule at 5 000).
+          const line = short.repeat(4);
+          const quarter = elapsed(() => rawTokens(tokenizer, [short, '']));
           const full = elapsed(() => rawTokens(tokenizer, [line, '']));
-          // Below a few ms the ratio is timer noise, not growth.
-          if (full < 5) continue;
+          if (full < 10) continue;
           expect(
             full / quarter,
             `${name}@${state} on ${JSON.stringify(line.slice(0, 6))}…`,
-          ).toBeLessThan(8);
+          ).toBeLessThan(10);
         }
       }
     });

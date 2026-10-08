@@ -67,8 +67,9 @@ function expansionStates(
       [/(?=\n)/, { token: '', next: '@pop' }],
       [new RegExp(`\\$?\\${open}`), deeper],
       [new RegExp(`\\${close}`), { token: 'number', next: '@pop' }],
-      [new RegExp(`[^$\\\\\\n\\${open}\\${close}]+`), 'number'],
-      [/[$\\]/, 'number'],
+      // A `$` that doesn't open this pair joins the run, so `${${…` inside `$(` is one step.
+      [new RegExp(`(?:[^$\\\\\\n\\${open}\\${close}]|\\$(?!\\${open}))+`), 'number'],
+      [/\\/, 'number'],
     ];
   }
   return states;
