@@ -4715,9 +4715,10 @@ app.whenReady().then(() => {
         broadcastWinList?.();
       },
     });
-    // The webContents is destroyed with the window, so the id is captured now; its minimized
-    // entry is dropped by the LSP channel's `destroyed` → dropWebContents.
+    // The webContents is destroyed with the window, so the id is captured now. `closed` drops it
+    // even for a window that never spoke LSP, which the channel's `destroyed` hook never sees.
     const wcId = w.webContents.id;
+    w.once('closed', () => lspManager.dropWebContents(wcId));
     w.on('minimize', () => {
       gitDemand.setSuspended(w.id, true);
       lspManager.setWindowMinimized(wcId, true);
