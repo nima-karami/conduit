@@ -11,9 +11,11 @@
 // rename land. Each changed path is debounced so a burst of writes yields one refresh.
 
 import * as path from 'node:path';
+import { langFromPath } from '../src/lang';
 import { type DirWatch, watchDirWhilePresent } from './watch-dir';
 
 const DEFAULT_DEBOUNCE_MS = 150;
+const LOG_THROTTLE_MS = 1000;
 
 /**
  * Pure plan: group absolute file paths by their parent directory, mapping each dir to
@@ -91,15 +93,25 @@ export class OpenFileWatcher {
     }
   }
 
-  private schedule(filePath: string): void {
+  /** A change to `filePath` was observed. A log is throttled rather than debounced: an agent
+   *  appending to it never pauses long enough for a debounce to fire, and each re-read costs the
+   *  tail window (spec 2026-10-08-language-support §2.5 "Appends while open"). */
+  schedule(filePath: string): void {
     const existing = this.debounceTimers.get(filePath);
-    if (existing) clearTimeout(existing);
+    const throttled = langFromPath(filePath) === 'log';
+    if (existing) {
+      if (throttled) return;
+      clearTimeout(existing);
+    }
     this.debounceTimers.set(
       filePath,
-      setTimeout(() => {
-        this.debounceTimers.delete(filePath);
-        this.onChange(filePath);
-      }, this.debounceMs),
+      setTimeout(
+        () => {
+          this.debounceTimers.delete(filePath);
+          this.onChange(filePath);
+        },
+        throttled ? LOG_THROTTLE_MS : this.debounceMs,
+      ),
     );
   }
 

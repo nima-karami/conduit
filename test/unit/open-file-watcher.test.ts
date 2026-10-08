@@ -1,6 +1,36 @@
 import * as path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { planWatchDirs } from '../../electron/open-file-watcher';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OpenFileWatcher, planWatchDirs } from '../../electron/open-file-watcher';
+
+describe('OpenFileWatcher change cadence', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('debounces a source file: a burst of writes is one change, after the burst', () => {
+    const seen: string[] = [];
+    const w = new OpenFileWatcher((p) => seen.push(p), 150);
+    for (let i = 0; i < 10; i++) {
+      w.schedule('/r/a.ts');
+      vi.advanceTimersByTime(100);
+    }
+    expect(seen).toEqual([]);
+    vi.advanceTimersByTime(150);
+    expect(seen).toEqual(['/r/a.ts']);
+  });
+
+  // An agent appending to a log never pauses, so a debounce would never fire.
+  it('throttles a log to one trailing change per second while it keeps being written', () => {
+    const seen: number[] = [];
+    const w = new OpenFileWatcher(() => seen.push(Date.now()), 150);
+    const start = Date.now();
+    for (let i = 0; i < 30; i++) {
+      w.schedule('/r/app.log.1');
+      vi.advanceTimersByTime(100);
+    }
+    expect(seen.map((t) => t - start)).toEqual([1000, 2000, 3000]);
+    w.stop();
+  });
+});
 
 describe('planWatchDirs', () => {
   it('groups files under their parent directory', () => {
