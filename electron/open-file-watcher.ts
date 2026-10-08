@@ -96,7 +96,7 @@ export class OpenFileWatcher {
   /** A change to `filePath` was observed. A log is throttled rather than debounced: an agent
    *  appending to it never pauses long enough for a debounce to fire, and each re-read costs the
    *  tail window (spec 2026-10-08-language-support §2.5 "Appends while open"). */
-  schedule(filePath: string): void {
+  private schedule(filePath: string): void {
     const existing = this.debounceTimers.get(filePath);
     const throttled = langFromPath(filePath) === 'log';
     if (existing) {

@@ -11,7 +11,14 @@
  * Run: npm run e2e -- language-files   (needs `npm run build` first)
  */
 
-import { appendFileSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeAllDocs, openDoc } from './goto-matrix.mjs';
@@ -20,6 +27,7 @@ import { assert, openSession, runScenario } from './harness.mjs';
 const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 const LOG_LINE = '2026-10-08T12:00:00.123Z ERROR boom "x"';
 const BIG_LINES = 1_000_000;
+const AUTO_SAVE_TAIL_LINE_5 = 'This log is shown from its last 2 MB — line 5 may be outside it.';
 const bigLine = (i) => `line ${String(i).padStart(7, '0')} ${'.'.repeat(26)}\n`;
 
 function buildFixture() {
@@ -190,7 +198,21 @@ async function foldRegions(page, name) {
 }
 
 runScenario('language-files', async ({ app, page, log }) => {
+  // ~84 MB of fixture, never left behind in the runner's temp dir, pass or fail. Removed on exit:
+  // runScenario closes the app before it exits, and while the app runs the folder can't be
+  // deleted (its session shell holds it as the working directory).
   const root = buildFixture();
+  process.once('exit', () => {
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    } catch (e) {
+      console.error(`[language-files] fixture not removed: ${root}: ${e?.message ?? e}`);
+    }
+  });
+  await scenario({ app, page, log }, root);
+});
+
+async function scenario({ app, page, log }, root) {
   const at = (name) => join(root, name);
   const sid = await openSession(page, { path: root.replace(/\\/g, '/') });
   await page.evaluate(() => {
@@ -278,7 +300,6 @@ runScenario('language-files', async ({ app, page, log }) => {
       `${theme} log colours ${JSON.stringify(want)}`,
     );
     log(`${theme} painted ${JSON.stringify(painted)}`);
-    await page.screenshot({ path: join(tmpdir(), `language-files-log-${theme}.png`) });
   }
   await setSettings(page, { theme: 'aero-dark' });
 
@@ -380,25 +401,31 @@ runScenario('language-files', async ({ app, page, log }) => {
     tail.lastVisible >= tail.lineCount - 1,
     `big.log not opened at its end: ${JSON.stringify(tail.lastVisible)}`,
   );
-  await page.screenshot({ path: join(tmpdir(), 'language-files-big-log.png') });
-
-  // AC-A6b — a line-addressed navigation into the tail window toasts and shows the end.
+  // AC-A6b — a navigation addressed to line 5 of the tail window toasts and shows the END, never
+  // line 5. Content search skips files over 1 MB and terminal links are canvas-bound, so the line-5
+  // reveal is staged by nav history: leave big.log from line 5, then go Back. Back is the same
+  // setReveal → takeReveal route a search hit or a terminal link takes.
+  await focusEditorOf(page, 'big.log');
+  await page.keyboard.press('Control+Home');
+  for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowDown');
+  await waitFor(
+    async () => (await editorInfo(page, 'big.log'))?.cursorLine === 5,
+    'the cursor on line 5',
+  );
   await openDoc(app, page, sid, at('small.txt'));
   await focusEditorOf(page, 'small.txt');
   await page.keyboard.press('Alt+ArrowLeft');
   const toast = await waitFor(
-    async () =>
-      (await toasts(page)).find((t) =>
-        /^This log is shown from its last 2 MB — line \d+ may be outside it\.$/.test(t),
-      ),
-    'the tail-window toast',
+    async () => (await toasts(page)).find((t) => t === AUTO_SAVE_TAIL_LINE_5),
+    'the tail-window toast for line 5',
   );
   log(`AC-A6b toast: ${toast}`);
-  const back = await editorInfo(page, 'big.log');
-  assert(
-    back.cursorLine === back.lineCount,
-    `back-nav cursor ${back.cursorLine}/${back.lineCount}`,
-  );
+  const back = await waitFor(async () => {
+    const info = await editorInfo(page, 'big.log');
+    return info?.cursorLine === info?.lineCount ? info : null;
+  }, 'the cursor on the last line after the line-5 reveal');
+  assert(back.cursorLine !== 5, 'the tail window revealed line 5 as if it were the file line');
+  assert(back.lastVisible >= back.lineCount - 1, `end not in view: ${back.lastVisible}`);
 
   let appended = '';
   for (let i = 1; i <= 100; i++) appended += bigLine(BIG_LINES + i);
@@ -414,4 +441,4 @@ runScenario('language-files', async ({ app, page, log }) => {
     `after append the last line left the view: ${grown.lastVisible}/${grown.lineCount}`,
   );
   log('AC-A6b append kept the end in view');
-});
+}
