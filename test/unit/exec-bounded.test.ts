@@ -1,7 +1,12 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { type BoundedChild, type BoundedSpawn, execFileBounded } from '../../electron/exec-bounded';
+import {
+  type BoundedChild,
+  type BoundedSpawn,
+  EXIT_GRACE_MS,
+  execFileBounded,
+} from '../../electron/exec-bounded';
 import type { TreeKillDeps } from '../../electron/process-tree';
 
 function harness(platform: NodeJS.Platform = 'win32') {
@@ -79,6 +84,28 @@ describe('execFileBounded', () => {
       expect.anything(),
       expect.any(Function),
     );
+  });
+
+  it('exit 0 while an orphaned grandchild holds the pipe resolves the output after a grace', async () => {
+    const h = harness();
+    h.stdout.write('rust-analyzer 1.98.1\n');
+    await vi.advanceTimersByTimeAsync(0);
+    h.child.emit('exit', 0, null);
+    await vi.advanceTimersByTimeAsync(EXIT_GRACE_MS - 1);
+    expect(h.state()).toBe('pending');
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(h.run).resolves.toBe('rust-analyzer 1.98.1\n');
+    expect(h.stdout.destroyed).toBe(true);
+    expect(h.tree.execFile).not.toHaveBeenCalled();
+  });
+
+  it('once settled it stops reading: late output never kills the tree a second time', async () => {
+    const h = harness();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(h.state()).toBe('rejected');
+    expect(h.stdout.destroyed).toBe(true);
+    h.stdout.emit('data', 'x'.repeat(2 * 1024 * 1024));
+    expect(h.tree.execFile).toHaveBeenCalledTimes(1);
   });
 
   it('a spawn error rejects', async () => {
