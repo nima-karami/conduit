@@ -323,7 +323,8 @@ export class LspManager {
       parent: parentFolder(folder, this.deps.platform, this.deps.homeDir),
       languageId: spec.languageId,
       displayName: spec.displayName,
-      runsTools: spec.runsTools,
+      // Trust is per folder, so granting it lets every registry server start there.
+      runsTools: this.deps.registry.map((s) => s.runsTools).join(' · '),
     };
     this.prompts.set(id, prompt);
     this.publishTrust();

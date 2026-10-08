@@ -212,6 +212,17 @@ jobs:
         run: |
           go install golang.org/x/tools/gopls@v0.23.0
           Join-Path (go env GOPATH) bin >> $env:GITHUB_PATH
+      # csharp-ls 0.28.0 ships for net10.0 only; the SDK is pinned here rather than trusting
+      # whatever the image preinstalls.
+      - if: contains(format(' {0} ', matrix.names), ' csharp-lsp ') || contains(format(' {0} ', matrix.names), ' csharp-lsp-idle ')
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - if: contains(format(' {0} ', matrix.names), ' csharp-lsp ') || contains(format(' {0} ', matrix.names), ' csharp-lsp-idle ')
+        shell: pwsh
+        run: |
+          dotnet tool install --global csharp-ls --version 0.28.0
+          Join-Path $HOME '.dotnet' 'tools' >> $env:GITHUB_PATH
       # Scenarios build scratch repos and commit; a hosted runner has no git identity.
       - run: |
           git config --global user.name "conduit-e2e"

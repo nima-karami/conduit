@@ -19,6 +19,8 @@
     "commit-detail-resize": 33.3,
     "commit-review-bounds": 17.6,
     "context-menu-order": 23.2,
+    "csharp-lsp": 120,
+    "csharp-lsp-idle": 120,
     "cwd": 16.7,
     "dnd": 6.6,
     "durability": 12.9,

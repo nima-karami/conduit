@@ -3,7 +3,7 @@ import type * as fs from 'node:fs';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type WatchedChange, watchServerRoot } from '../../electron/lsp-watcher';
-import { compileWatchGlobs, GO_SERVER, isRootMarker } from '../../src/lsp-registry';
+import { compileRootMarkers, compileWatchGlobs, GO_SERVER } from '../../src/lsp-registry';
 
 const ROOT = path.join(path.sep, 'w', 'mod');
 const abs = (rel: string) => path.join(ROOT, rel);
@@ -26,7 +26,7 @@ function fakeWatch() {
 
 const goFilter = {
   matches: compileWatchGlobs(GO_SERVER.watchGlobs),
-  isMarker: (rel: string) => isRootMarker(GO_SERVER, rel),
+  isMarker: compileRootMarkers(GO_SERVER),
 };
 
 function setup(existing: string[] = [], filter = goFilter) {

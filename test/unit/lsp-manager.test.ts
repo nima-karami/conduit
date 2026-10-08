@@ -15,7 +15,7 @@ import {
 import { type LspLog, LspRequestError, type LspServerHandle } from '../../electron/lsp-server';
 import type { WatchedChange } from '../../electron/lsp-watcher';
 import type { LspMessage, LspReply, LspServerStatus, LspTrustPrompt } from '../../src/lsp-protocol';
-import { GO_SERVER } from '../../src/lsp-registry';
+import { CSHARP_SERVER, GO_SERVER, type LanguageServerSpec } from '../../src/lsp-registry';
 import { resolveServerRoot } from '../../src/lsp-root';
 import type { TrustStore } from '../../src/workspace-trust';
 
@@ -164,6 +164,7 @@ function setup(
     platform?: 'linux' | 'win32';
     /** Trusted folders; everything by default so the lifecycle tests never meet a prompt. */
     trusted?: string[];
+    registry?: LanguageServerSpec[];
   } = {},
 ): Setup {
   const trust = { store: { trusted: o.trusted ?? ['/'] } as TrustStore, saves: [] as TrustStore[] };
@@ -185,7 +186,11 @@ function setup(
       p,
       roots,
       GO_SERVER,
-      { exists: async (f) => files.has(f), realpath: async (f) => realpaths.get(f) ?? f },
+      {
+        exists: async (f) => files.has(f),
+        realpath: async (f) => realpaths.get(f) ?? f,
+        list: async () => [],
+      },
       platform,
     ),
   );
@@ -195,7 +200,7 @@ function setup(
     return s;
   });
   const deps: LspManagerDeps = {
-    registry: [GO_SERVER],
+    registry: o.registry ?? [GO_SERVER],
     platform,
     workspaceRoots: () => roots,
     resolveBinary,
@@ -347,7 +352,11 @@ describe('LspManager — sharing and validation', () => {
                 p,
                 ['/w'],
                 GO_SERVER,
-                { exists: async (f) => t.files.has(f), realpath: async (f) => f },
+                {
+                  exists: async (f) => t.files.has(f),
+                  realpath: async (f) => f,
+                  list: async () => [],
+                },
                 'linux',
               ),
             );
@@ -838,7 +847,11 @@ describe('LspManager — ordered stops and quit (#1)', () => {
                 p,
                 ['/w'],
                 GO_SERVER,
-                { exists: async (f) => t.files.has(f), realpath: async (f) => f },
+                {
+                  exists: async (f) => t.files.has(f),
+                  realpath: async (f) => f,
+                  list: async () => [],
+                },
                 'linux',
               ),
             );
@@ -1376,6 +1389,17 @@ describe('LspManager — Workspace Trust (spec 2026-09-23-workspace-trust)', () 
     expect(await t.send(1, 'e1', { type: 'lsp:trustState' })).toEqual({
       trusted: [],
       prompt: prompt(t),
+    });
+  });
+
+  it('the prompt names the requesting language and discloses every served toolset', async () => {
+    const t = setup({ trusted: [], registry: [GO_SERVER, CSHARP_SERVER] });
+    await t.open('/w/m/main.go');
+    await flush();
+    expect(prompt(t)).toMatchObject({
+      languageId: 'go',
+      displayName: 'Go',
+      runsTools: 'gopls, go list · csharp-ls, dotnet / MSBuild (evaluates project files)',
     });
   });
 
