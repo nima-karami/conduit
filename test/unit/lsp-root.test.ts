@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GO_SERVER } from '../../src/lsp-registry';
+import { CSHARP_SERVER, GO_SERVER } from '../../src/lsp-registry';
 import {
   isEscapedRoot,
   isWithin,
@@ -17,9 +17,24 @@ async function rootOf(...args: Parameters<typeof resolveServerRoot>): Promise<Se
   return r;
 }
 
-function probe(files: string[], real: Record<string, string> = {}): RootProbe {
+function probe(
+  files: string[],
+  real: Record<string, string> = {},
+): RootProbe & { listed: string[] } {
   const set = new Set(files);
-  return { exists: async (p) => set.has(p), realpath: async (p) => real[p] ?? p };
+  const listed: string[] = [];
+  return {
+    listed,
+    exists: async (p) => set.has(p),
+    realpath: async (p) => real[p] ?? p,
+    list: async (dir) => {
+      listed.push(dir);
+      const prefix = /[\\/]$/.test(dir) ? dir : `${dir}${dir.includes('\\') ? '\\' : '/'}`;
+      return files
+        .filter((f) => f.startsWith(prefix) && !/[\\/]/.test(f.slice(prefix.length)))
+        .map((f) => f.slice(prefix.length));
+    },
+  };
 }
 
 describe('resolveServerRoot', () => {
@@ -94,6 +109,49 @@ describe('resolveServerRoot', () => {
     expect(r?.key).toBe(serverKeyFor('go', 'G:\\real\\m'));
     expect(r?.root).toBe('S:\\m');
     expect(r?.realRoot).toBe('G:\\real\\m');
+  });
+});
+
+describe('pattern root markers (C#)', () => {
+  it('a .sln two levels up beats a nearer .csproj', async () => {
+    const r = await rootOf(
+      '/w/repo/src/App/Program.cs',
+      ['/w'],
+      CSHARP_SERVER,
+      probe(['/w/repo/App.sln', '/w/repo/src/App/App.csproj']),
+      'linux',
+    );
+    expect(r).toMatchObject({ root: '/w/repo', key: 'csharp:/w/repo', adHoc: false });
+  });
+
+  it('a .csproj alone roots at its dir (win32, any case)', async () => {
+    const r = await rootOf(
+      'C:\\w\\src\\App\\Sub\\Program.cs',
+      ['C:\\w'],
+      CSHARP_SERVER,
+      probe(['C:\\w\\src\\App\\App.CSPROJ']),
+      'win32',
+    );
+    expect(r).toMatchObject({ root: 'C:\\w\\src\\App', adHoc: false });
+  });
+
+  it('lists each ancestor at most once', async () => {
+    const p = probe(['/w/a/A.csproj']);
+    await rootOf('/w/a/b/c/X.cs', ['/w'], CSHARP_SERVER, p, 'linux');
+    expect(p.listed).toEqual(['/w/a/b/c', '/w/a/b', '/w/a', '/w']);
+  });
+
+  it('requiresMarker: no marker up to the workspace root → no server', async () => {
+    const p = probe(['/A.csproj', '/w/a/Thing.sln.bak']);
+    expect(await resolveServerRoot('/w/a/X.cs', ['/w'], CSHARP_SERVER, p, 'linux')).toBeNull();
+  });
+
+  it('a Go resolution makes zero list calls and stays ad-hoc without a marker', async () => {
+    const p = probe(['/w/a/go.mod']);
+    await rootOf('/w/a/b/main.go', ['/w'], GO_SERVER, p, 'linux');
+    const adHoc = probe([]);
+    expect((await rootOf('/w/a/main.go', ['/w'], GO_SERVER, adHoc, 'linux'))?.adHoc).toBe(true);
+    expect([...p.listed, ...adHoc.listed]).toEqual([]);
   });
 });
 

@@ -2,11 +2,13 @@
 import { posix, win32 } from 'node:path';
 import { canonicalPath, hasDotSegment } from './canonical-path';
 import type { HostPlatform } from './lsp-binary';
-import type { LanguageServerSpec } from './lsp-registry';
+import { compileRootMarker, isPatternMarker, type LanguageServerSpec } from './lsp-registry';
 
 export interface RootProbe {
   exists(p: string): Promise<boolean>;
   realpath(p: string): Promise<string>;
+  /** Entry names of `dir`; `[]` when it can't be read. */
+  list(dir: string): Promise<string[]>;
 }
 
 export interface ServerRoot {
@@ -65,20 +67,36 @@ export function toLexicalPath(
   return tail ? `${base}${sepFor(platform)}${tail}` : base;
 }
 
+/** Exact markers are probed by path; a directory is listed only for a pattern marker, and at most
+ *  once (`listing` is shared by one ancestor's workspace and module checks). */
 async function anyExists(
   dir: string,
-  names: readonly string[],
+  markers: readonly string[],
   platform: HostPlatform,
   probe: RootProbe,
+  listing: () => Promise<readonly string[]>,
 ) {
-  for (const n of names) if (await probe.exists(pathFor(platform).join(dir, n))) return true;
+  for (const m of markers) {
+    if (isPatternMarker(m)) {
+      const matches = compileRootMarker(m);
+      if ((await listing()).some(matches)) return true;
+    } else if (await probe.exists(pathFor(platform).join(dir, m))) return true;
+  }
   return false;
+}
+
+function onceListing(dir: string, probe: RootProbe): () => Promise<readonly string[]> {
+  let entries: Promise<readonly string[]> | null = null;
+  return () => {
+    entries ??= probe.list(dir);
+    return entries;
+  };
 }
 
 export async function resolveServerRoot(
   filePath: string,
   workspaceRoots: readonly string[],
-  spec: Pick<LanguageServerSpec, 'languageId' | 'rootMarkers'>,
+  spec: Pick<LanguageServerSpec, 'languageId' | 'rootMarkers' | 'requiresMarker'>,
   probe: RootProbe,
   platform: HostPlatform,
 ): Promise<RootResolution> {
@@ -96,10 +114,12 @@ export async function resolveServerRoot(
   let nearestModule: string | null = null;
   let dir = path.dirname(file);
   for (;;) {
-    if (await anyExists(dir, spec.rootMarkers.workspace, platform, probe)) highestWorkspace = dir;
+    const listing = onceListing(dir, probe);
+    if (await anyExists(dir, spec.rootMarkers.workspace, platform, probe, listing))
+      highestWorkspace = dir;
     if (
       nearestModule === null &&
-      (await anyExists(dir, spec.rootMarkers.module, platform, probe))
+      (await anyExists(dir, spec.rootMarkers.module, platform, probe, listing))
     ) {
       nearestModule = dir;
     }
@@ -108,6 +128,7 @@ export async function resolveServerRoot(
     if (up === dir) break;
     dir = up;
   }
+  if (spec.requiresMarker && highestWorkspace === null && nearestModule === null) return null;
   // The workspace root re-spelled from the file path itself, so the ad-hoc root keeps the doc's spelling.
   const lexicalWorkspace = file.slice(0, wsLen) || workspace;
   const root = highestWorkspace ?? nearestModule ?? lexicalWorkspace;

@@ -4379,6 +4379,7 @@ app.whenReady().then(() => {
               () => false,
             ),
           realpath: (f) => fs.promises.realpath(f),
+          list: (d) => fs.promises.readdir(d).catch(() => []),
         },
         hostPlatform,
       ),
@@ -4397,7 +4398,10 @@ app.whenReady().then(() => {
     watchRoot: (root, spec, onChanges, onMarker, onGone) =>
       watchServerRoot(
         root,
-        { matches: compileWatchGlobs(spec.watchGlobs), isMarker: (rel) => isRootMarker(spec, rel) },
+        {
+          matches: compileWatchGlobs(spec.watchGlobs, spec.watchIgnoreDirs),
+          isMarker: (rel) => isRootMarker(spec, rel),
+        },
         onChanges,
         onMarker,
         onGone,

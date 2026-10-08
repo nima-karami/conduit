@@ -6,7 +6,7 @@ import {
   resolveServerBinary,
   type SearchContext,
 } from '../../src/lsp-binary';
-import { GO_FIXED_DIRS, GO_SERVER } from '../../src/lsp-registry';
+import { CSHARP_SERVER, GO_FIXED_DIRS, GO_SERVER } from '../../src/lsp-registry';
 
 type ExecFile = SearchContext['execFile'];
 type Ctx = SearchContext & { execFile: ReturnType<typeof vi.fn<ExecFile>> };
@@ -125,5 +125,63 @@ describe('resolveServerBinary (Go)', () => {
     expect(await GO_SERVER.resolveToolDir(c)).toBe(GO_FIXED_DIRS.win32[0]);
     expect(GO_FIXED_DIRS.win32[0]).toBe('C:\\Program Files\\Go\\bin');
     expect(await GO_SERVER.resolveToolDir(ctx({ env: {}, files: [] }))).toBeNull();
+  });
+});
+
+describe('CSHARP_SERVER resolution', () => {
+  it('toolDir is the realpath dir of the PATH dotnet, so DOTNET_ROOT survives a symlink', async () => {
+    const c = ctx({
+      platform: 'linux',
+      homedir: '/home/n',
+      env: { PATH: '/usr/bin' },
+      files: ['/usr/bin/dotnet'],
+      realpath: async (p) => (p === '/usr/bin/dotnet' ? '/usr/lib/dotnet/dotnet' : p),
+    });
+    expect(await CSHARP_SERVER.resolveToolDir(c)).toBe('/usr/lib/dotnet');
+  });
+
+  it('falls back to the fixed dotnet dirs, then ~/.dotnet', async () => {
+    const fixed = ctx({
+      env: { Path: 'C:\\Windows' },
+      files: ['C:\\Program Files\\dotnet\\dotnet.exe'],
+      realpath: async (p) => p,
+    });
+    expect(await CSHARP_SERVER.resolveToolDir(fixed)).toBe('C:\\Program Files\\dotnet');
+    const home = ctx({
+      platform: 'darwin',
+      homedir: '/Users/n',
+      env: {},
+      files: ['/Users/n/.dotnet/dotnet'],
+      realpath: async (p) => p,
+    });
+    expect(await CSHARP_SERVER.resolveToolDir(home)).toBe('/Users/n/.dotnet');
+    expect(await CSHARP_SERVER.resolveToolDir(ctx({ env: {}, files: [] }))).toBeNull();
+  });
+
+  it('finds csharp-ls in ~/.dotnet/tools, or under DOTNET_CLI_HOME when set', async () => {
+    const c = ctx({
+      env: { Path: 'C:\\Windows' },
+      files: ['C:\\Users\\n\\.dotnet\\tools\\csharp-ls.exe'],
+      realpath: async (p) => p,
+    });
+    expect(await resolveServerBinary(CSHARP_SERVER, c)).toEqual({
+      binary: 'C:\\Users\\n\\.dotnet\\tools\\csharp-ls.exe',
+      toolDir: null,
+    });
+    expect(
+      await CSHARP_SERVER.extraSearchDirs(
+        ctx({ platform: 'linux', homedir: '/home/n', env: { DOTNET_CLI_HOME: '/cli' } }),
+        null,
+      ),
+    ).toEqual(['/cli/.dotnet/tools']);
+    expect(
+      await CSHARP_SERVER.extraSearchDirs(
+        ctx({ platform: 'linux', homedir: '/home/n', env: { DOTNET_CLI_HOME: 'rel' } }),
+        null,
+      ),
+    ).toEqual([]);
+    expect(
+      await CSHARP_SERVER.extraSearchDirs(ctx({ platform: 'linux', homedir: '/home/n' }), null),
+    ).toEqual(['/home/n/.dotnet/tools']);
   });
 });

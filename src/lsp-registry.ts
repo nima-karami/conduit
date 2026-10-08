@@ -19,8 +19,14 @@ export interface LanguageServerSpec {
   displayName: string;
   binary: string;
   args: readonly string[];
+  /** Each an exact basename or `*.<ext>` (see `compileRootMarker`). */
   rootMarkers: { workspace: readonly string[]; module: readonly string[] };
+  /** No marker from the file up to the workspace root → no server, instead of an ad-hoc root. */
+  requiresMarker: boolean;
   watchGlobs: readonly string[];
+  /** Dir names whose contents never reach the server's watched-files feed — build output the
+   *  server's own project load regenerates would otherwise loop reload → regenerate. */
+  watchIgnoreDirs: readonly string[];
   installHint: string;
   /** What starting it runs in the project, for the Workspace Trust prompt's one-line why. */
   runsTools: string;
@@ -49,14 +55,24 @@ const dirnameFor = (platform: HostPlatform, p: string): string =>
 
 const goExe = (platform: HostPlatform): string => (platform === 'win32' ? 'go.exe' : 'go');
 
+/** Keeps a value the user set, under whatever case Windows has it in. */
+function setUnlessPresent(
+  env: Record<string, string | undefined>,
+  name: string,
+  value: string,
+  platform: HostPlatform,
+): void {
+  const key = envKey(env, name, platform);
+  if (!env[key]) env[key] = value;
+}
+
 /** `GOTOOLCHAIN=local` unless the user set their own: a repo's `toolchain` directive must not
  *  make opening a file download and run a toolchain (ADR 0006 §Trust). */
 function withLocalToolchain(
   env: Record<string, string | undefined>,
   platform: HostPlatform,
 ): Record<string, string | undefined> {
-  const key = envKey(env, 'GOTOOLCHAIN', platform);
-  if (!env[key]) env[key] = 'local';
+  setUnlessPresent(env, 'GOTOOLCHAIN', 'local', platform);
   return env;
 }
 
@@ -66,7 +82,9 @@ export const GO_SERVER: LanguageServerSpec = {
   binary: 'gopls',
   args: [],
   rootMarkers: { workspace: ['go.work'], module: ['go.mod'] },
+  requiresMarker: false,
   watchGlobs: ['**/*.go', '**/go.mod', '**/go.sum', '**/go.work'],
+  watchIgnoreDirs: [],
   installHint: 'go install golang.org/x/tools/gopls@latest',
   runsTools: 'gopls, go list',
 
@@ -117,7 +135,66 @@ export const GO_SERVER: LanguageServerSpec = {
   },
 };
 
-export const LANGUAGE_SERVERS: readonly LanguageServerSpec[] = [GO_SERVER];
+const DOTNET_FIXED_DIRS: Readonly<Record<HostPlatform, readonly string[]>> = {
+  darwin: ['/usr/local/share/dotnet', '/opt/homebrew/bin'],
+  linux: ['/usr/share/dotnet', '/usr/lib/dotnet'],
+  win32: ['C:\\Program Files\\dotnet'],
+};
+
+export const CSHARP_SERVER: LanguageServerSpec = {
+  languageId: 'csharp',
+  displayName: 'C#',
+  binary: 'csharp-ls',
+  args: [],
+  rootMarkers: { workspace: ['*.sln', '*.slnx'], module: ['*.csproj'] },
+  // csharp-ls on a marker-less root scans the whole tree for projects — a monorepo cost.
+  requiresMarker: true,
+  watchGlobs: [
+    '**/*.cs',
+    '**/*.csproj',
+    '**/*.sln',
+    '**/*.slnx',
+    '**/*.props',
+    '**/*.targets',
+    '**/global.json',
+  ],
+  watchIgnoreDirs: ['bin', 'obj'],
+  installHint: 'dotnet tool install --global csharp-ls',
+  runsTools: 'csharp-ls, dotnet / MSBuild (evaluates project files)',
+
+  async resolveToolDir(ctx) {
+    const home = ctx.homedir ? [joinFor(ctx.platform, ctx.homedir, '.dotnet')] : [];
+    const dotnet = await findBinary(
+      'dotnet',
+      [...pathDirs(ctx), ...DOTNET_FIXED_DIRS[ctx.platform], ...home],
+      ctx,
+    );
+    // findBinary returns the realpath, so this is the real install dir even behind a PATH
+    // symlink (/usr/bin/dotnet, Homebrew) — which is what DOTNET_ROOT must name.
+    return dotnet ? dirnameFor(ctx.platform, dotnet) : null;
+  },
+
+  async extraSearchDirs(ctx) {
+    const { platform, env } = ctx;
+    const cliHome = env[envKey(env, 'DOTNET_CLI_HOME', platform)]?.trim() || ctx.homedir;
+    if (!cliHome) return [];
+    const tools = joinFor(platform, joinFor(platform, cliHome, '.dotnet'), 'tools');
+    return isAbsoluteFor(tools, platform) ? [tools] : [];
+  },
+
+  childEnv(base, toolDir, platform) {
+    const env: Record<string, string | undefined> = { ...base };
+    const key = envKey(env, 'PATH', platform);
+    const entries = pathDirs({ env: base, platform });
+    env[key] = (toolDir ? [toolDir, ...entries] : entries).join(pathDelimiter(platform));
+    // A global-tool apphost finds the runtime through DOTNET_ROOT when `dotnet` isn't on PATH.
+    if (toolDir) setUnlessPresent(env, 'DOTNET_ROOT', toolDir, platform);
+    setUnlessPresent(env, 'DOTNET_CLI_TELEMETRY_OPTOUT', '1', platform);
+    return env;
+  },
+};
+
+export const LANGUAGE_SERVERS: readonly LanguageServerSpec[] = [GO_SERVER, CSHARP_SERVER];
 
 export function serverSpecFor(
   languageId: string,
@@ -141,10 +218,15 @@ const basename = (rel: string): string =>
 
 const EXT_GLOB = /^\*\*\/\*\.([^*?/\\[\]{}]+)$/;
 const NAME_GLOB = /^\*\*\/([^*?/\\[\]{}]+)$/;
+const EXT_MARKER = /^\*\.([^*?/\\[\]{}]+)$/;
+const NAME_MARKER = /^[^*?/\\[\]{}]+$/;
 
 /** Supports exactly `**\/*.<ext>` and `**\/<basename>` — every registry glob is one of those, and a
  *  registry test compiles them all so an unsupported shape can't ship silently. */
-export function compileWatchGlobs(globs: readonly string[]): (relPath: string) => boolean {
+export function compileWatchGlobs(
+  globs: readonly string[],
+  ignoreDirs: readonly string[] = [],
+): (relPath: string) => boolean {
   const exts: string[] = [];
   const names = new Set<string>();
   for (const g of globs) {
@@ -154,16 +236,35 @@ export function compileWatchGlobs(globs: readonly string[]): (relPath: string) =
     else if (name) names.add(name[1] ?? '');
     else throw new Error(`unsupported watch glob: ${g}`);
   }
+  const ignored = new Set(ignoreDirs);
   return (relPath) => {
+    const dirs = relPath.split(/[\\/]/).slice(0, -1);
+    if (dirs.some((d) => ignored.has(d))) return false;
     const base = basename(relPath);
     return names.has(base) || exts.some((e) => base.endsWith(e) && base.length > e.length);
   };
 }
+
+/** A root marker is an exact basename (case-sensitive) or `*.<ext>` (case-insensitive, non-empty
+ *  stem); any other shape throws, and a registry test compiles every marker. */
+export function compileRootMarker(marker: string): (base: string) => boolean {
+  const ext = EXT_MARKER.exec(marker);
+  if (ext) {
+    const suffix = `.${ext[1]}`.toLowerCase();
+    return (base) => base.length > suffix.length && base.toLowerCase().endsWith(suffix);
+  }
+  if (NAME_MARKER.test(marker)) return (base) => base === marker;
+  throw new Error(`unsupported root marker: ${marker}`);
+}
+
+export const isPatternMarker = (marker: string): boolean => EXT_MARKER.test(marker);
 
 export function isRootMarker(
   spec: Pick<LanguageServerSpec, 'rootMarkers'>,
   relPath: string,
 ): boolean {
   const base = basename(relPath);
-  return spec.rootMarkers.workspace.includes(base) || spec.rootMarkers.module.includes(base);
+  return [...spec.rootMarkers.workspace, ...spec.rootMarkers.module].some((m) =>
+    compileRootMarker(m)(base),
+  );
 }

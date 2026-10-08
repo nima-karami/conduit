@@ -85,6 +85,14 @@ export function useTrustFocusTarget(): string | null {
   return useSyncExternalStore(subscribeLspStatus, () => focusTarget);
 }
 
+/** The language a "Trust Current Folder" prompt names: the active file's when it is served. */
+export function trustLanguageFor(
+  languageId: string | null,
+  langs: readonly LspLanguageInfo[],
+): LspLanguageInfo | undefined {
+  return langs.find((l) => l.languageId === languageId) ?? langs[0];
+}
+
 /** Languages with a server entry the host still holds — running, absent or crashed alike: the
  *  palette's restart is the way out of every one of those (spec §2.2 "Manual recovery"). */
 export function restartableLanguages(
