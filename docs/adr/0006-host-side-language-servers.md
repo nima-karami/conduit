@@ -99,8 +99,19 @@ Within a trusted folder the earlier mitigations still hold:
   governs the binary search itself.
 - **No workspace-supplied configuration of any kind**: no `.conduit/*`, `.vscode/*`, `go.work`
   or env file can name or alter the binary, its arguments or its environment. The binary is found
-  by name on `PATH` and a fixed list of well-known directories, `realpath`'d, and spawned by
-  absolute path with no shell. A repo influences gopls only as it influences `go`.
+  by name on absolute `PATH` entries and the registry's fixed directory list — never in the repo —
+  and spawned by that **found absolute path** (not its realpath) with no shell, so an
+  argv0-dispatching proxy such as rustup's still works. The realpath is kept only for
+  `resolveToolDir` (C#'s `DOTNET_ROOT` must name the real install). A repo influences gopls only
+  as it influences `go`.
+- **Before trust, the only execution allowed is a version or tool probe** (a registry
+  `versionProbe` such as `rust-analyzer --version`, or `go env GOPATH`): run by absolute path
+  with `cwd` = the OS temp dir and a 5 s timeout — a `versionProbe` under the server's own child
+  environment (relative `PATH` entries stripped, `RUSTUP_AUTO_INSTALL=0`), `go env` under the
+  host environment with `GOTOOLCHAIN=local`. Nothing runs in the repo before trust.
+
+*Amended 2026-10-08 (language coverage): the two bullets above — spawn path vs realpath, and the
+pre-trust probe — see [spec 2026-10-08-language-coverage §2.5](../specs/2026-10-08-language-coverage.md).*
 - **The rest of the host environment passes through unchanged.** Apart from the PATH strip and
   the `GOTOOLCHAIN` default, gopls inherits Conduit's environment — including anything the user
   set for Go themselves. That is deliberate (it is their toolchain configuration), but it means

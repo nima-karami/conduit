@@ -1,1 +1,1 @@
-["session-bootstrap", "cwd", "quit-guard", "auto-save-basics"]
+["session-bootstrap", "cwd", "quit-guard", "auto-save-basics", "lsp-missing-servers"]
