@@ -216,7 +216,13 @@ import {
   SessionGlyph,
 } from './icons';
 import { registerLspHoverProvider } from './lsp-nav';
-import { restartableLanguages, useLspLanguages, useLspStatuses, useLspTrust } from './lsp-status';
+import {
+  restartableLanguages,
+  trustLanguageFor,
+  useLspLanguages,
+  useLspStatuses,
+  useLspTrust,
+} from './lsp-status';
 import { initLspClient, type LspDocInput, reconcileLspDocs, requestTrust } from './lsp-sync';
 import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
@@ -3967,7 +3973,10 @@ export function App() {
     }
     // Workspace Trust (docs/specs/2026-09-23-workspace-trust.md). "Trust" only asks the host to
     // raise its prompt — the host picks the folder and owns the decision.
-    const trustLanguage = lspLanguages[0];
+    const trustLanguage = trustLanguageFor(
+      activeFilePath ? langFromPath(activeFilePath) : null,
+      lspLanguages,
+    );
     const trustTarget = activeFilePath ?? active?.home;
     if (trustLanguage && trustTarget) {
       cmds.push({

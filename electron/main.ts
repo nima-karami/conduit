@@ -99,7 +99,7 @@ import {
   TAIL_LINES,
 } from '../src/limit-notice';
 import { type HostPlatform, resolveServerBinary, type SearchContext } from '../src/lsp-binary';
-import { compileWatchGlobs, isRootMarker, LANGUAGE_SERVERS } from '../src/lsp-registry';
+import { compileRootMarkers, compileWatchGlobs, LANGUAGE_SERVERS } from '../src/lsp-registry';
 import { resolveServerRoot } from '../src/lsp-root';
 import {
   type CachedResolution,
@@ -4379,6 +4379,7 @@ app.whenReady().then(() => {
               () => false,
             ),
           realpath: (f) => fs.promises.realpath(f),
+          list: (d) => fs.promises.readdir(d).catch(() => []),
         },
         hostPlatform,
       ),
@@ -4397,7 +4398,10 @@ app.whenReady().then(() => {
     watchRoot: (root, spec, onChanges, onMarker, onGone) =>
       watchServerRoot(
         root,
-        { matches: compileWatchGlobs(spec.watchGlobs), isMarker: (rel) => isRootMarker(spec, rel) },
+        {
+          matches: compileWatchGlobs(spec.watchGlobs, spec.watchIgnoreDirs),
+          isMarker: compileRootMarkers(spec),
+        },
         onChanges,
         onMarker,
         onGone,

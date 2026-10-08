@@ -8,6 +8,7 @@ import {
   restartableLanguages,
   seedLspState,
   subscribeLspStatus,
+  trustLanguageFor,
 } from '../../webview/lsp-status';
 
 const GO: LspLanguageInfo = {
@@ -69,5 +70,25 @@ describe('lsp-status', () => {
     applyLspStatus(status());
     expect(lspStateForKey(null)).toBeNull();
     expect(lspStateForKey('go:/other')).toBeNull();
+  });
+});
+
+describe('trustLanguageFor', () => {
+  const CS: LspLanguageInfo = {
+    ...GO,
+    languageId: 'csharp',
+    displayName: 'C#',
+    binary: 'csharp-ls',
+  };
+
+  it("names the active file's language when it is served", () => {
+    expect(trustLanguageFor('csharp', [GO, CS])).toBe(CS);
+    expect(trustLanguageFor('go', [GO, CS])).toBe(GO);
+  });
+
+  it('falls back to the first served language', () => {
+    expect(trustLanguageFor('markdown', [CS, GO])).toBe(CS);
+    expect(trustLanguageFor(null, [GO, CS])).toBe(GO);
+    expect(trustLanguageFor('go', [])).toBeUndefined();
   });
 });
