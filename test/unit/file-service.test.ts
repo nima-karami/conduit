@@ -13,8 +13,14 @@ import {
   sortEntries,
   writeFile,
 } from '../../src/file-service';
+import { langFromPathAndText } from '../../src/lang';
 import type { DirEntryDTO } from '../../src/protocol';
 import { createGrantStore, hostCanonical } from '../../src/read-grants';
+
+vi.mock('../../src/lang', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/lang')>();
+  return { ...actual, langFromPathAndText: vi.fn(actual.langFromPathAndText) };
+});
 
 function tmp(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'fsvc-'));
@@ -196,6 +202,14 @@ describe('fileService readFile shebang (spec 2026-10-08-language-coverage §2.4)
     const f = path.join(tmp(), 'a.ts');
     fs.writeFileSync(f, '#!/usr/bin/env python3\n');
     expect((await readFile(f)).language).toBe('typescript');
+  });
+
+  it('never sniffs a file whose path already resolves a language', async () => {
+    const f = path.join(tmp(), 'a.ts');
+    fs.writeFileSync(f, '#!/usr/bin/env python3\n');
+    vi.mocked(langFromPathAndText).mockClear();
+    await readFile(f);
+    expect(langFromPathAndText).not.toHaveBeenCalled();
   });
 });
 

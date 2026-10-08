@@ -123,6 +123,7 @@ describe('langFromPath — spec 2026-10-08-language-coverage §2.2', () => {
     expect(langFromPath('.env.json')).toBe('json');
     expect(langFromPath('Dockerfile.dev')).toBe('dockerfile');
     expect(langFromPath('dev.Dockerfile')).toBe('dockerfile');
+    expect(langFromPath('dev.Containerfile')).toBe('dockerfile');
     expect(langFromPath('Containerfile.prod')).toBe('dockerfile');
     expect(langFromPath('dockerfile.json')).toBe('json');
     for (const p of ['.env', '.env.local', '.env.production', 'app/.env.example']) {
@@ -185,6 +186,11 @@ describe('langFromShebang — spec §2.4', () => {
       ['#!/usr/bin/env wish', 'tcl'],
       ['#!/usr/bin/pypy3', 'python'],
       ['#!/usr/bin/python2.7', 'python'],
+      ['#!/usr/local/bin/bash-5.2', 'shell'],
+      ['#!python.exe', 'python'],
+      ['#!C:\\nodejs\\NODE.EXE', 'javascript'],
+      ['#!/usr/bin/env -P /usr/local/bin python3', 'python'],
+      ['#!/usr/bin/env node-red', 'javascript'],
     ];
     for (const [line, want] of cases) expect(langFromShebang(line), line).toBe(want);
   });

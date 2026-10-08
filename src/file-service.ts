@@ -110,7 +110,10 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
     const { buf, truncated, tail } = await readBounded(absPath, cap, language === 'log');
     if (isBinary(buf))
       return { path: absPath, content: '', language, truncated: false, binary: true };
-    const textLanguage = langFromPathAndText(absPath, buf.subarray(0, 1024).toString('utf8'));
+    const textLanguage =
+      language === 'plaintext'
+        ? langFromPathAndText(absPath, buf.subarray(0, 1024).toString('utf8'))
+        : language;
     if (truncated) {
       return {
         path: absPath,

@@ -122,6 +122,7 @@ const LANG = {
   tf: 'hcl',
   tfvars: 'hcl',
   dockerfile: 'dockerfile',
+  containerfile: 'dockerfile',
   xml: 'xml',
   svg: 'xml',
   xaml: 'xml',
@@ -275,7 +276,7 @@ const INTERPRETERS: Readonly<Record<string, LanguageId>> = {
 
 const SHEBANG = /^#!\s*(\S+)(.*)$/;
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-const ENV_FLAGS_WITH_ARG = new Set(['-u', '-C', '--unset', '--chdir']);
+const ENV_FLAGS_WITH_ARG = new Set(['-u', '-C', '-P', '--unset', '--chdir']);
 
 const GOLDEN = '.golden';
 // `app.log.3`, `app.log.2026-10-01_13`; a further `.` (`app.log.1.gz`) is a compressed rotation.
@@ -322,7 +323,10 @@ function envCommand(args: readonly string[]): string | null {
 function interpreterLang(command: string): LanguageId | null {
   const name = (command.split(/[\\/]/).pop() ?? '').toLowerCase();
   if (Object.hasOwn(INTERPRETERS, name)) return INTERPRETERS[name];
-  const stem = name.replace(/-[a-z]+$/, '').replace(/[\d.]+$/, '');
+  const stem = name
+    .replace(/\.exe$/, '')
+    .replace(/-[a-z]+$/, '')
+    .replace(/[-.]?[\d.]+$/, '');
   return Object.hasOwn(INTERPRETERS, stem) ? INTERPRETERS[stem] : null;
 }
 
