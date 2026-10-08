@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -265,6 +265,7 @@ import {
   writeSpec,
 } from './conduit-fs';
 import { createDragOutHost } from './drag-out-host';
+import { execFileBounded } from './exec-bounded';
 import { createFolderPicker } from './folder-picker';
 import { LauncherHost } from './launcher-host';
 import { Logger } from './logger';
@@ -4332,10 +4333,9 @@ app.whenReady().then(() => {
       ),
     realpath: (p) => fs.promises.realpath(p),
     execFile: (file, args, o) =>
-      new Promise((resolve, reject) => {
-        execFile(file, [...args], { ...o, windowsHide: true }, (err, stdout) =>
-          err ? reject(err) : resolve(String(stdout)),
-        );
+      execFileBounded(file, args, o, {
+        spawn: (f, a, so) => spawn(f, a, so),
+        tree: defaultTreeKillDeps(),
       }),
   };
   // Workspace Trust lives in userData, never a repo (docs/specs/2026-09-23-workspace-trust.md).
