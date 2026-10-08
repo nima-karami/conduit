@@ -39,6 +39,7 @@ import {
 } from '../nav-editors';
 import { dropNavChords, formatMonacoHint, isNavOverridden, navMenuHints } from '../nav-keybindings';
 import { fileUri, publishCursor, subscribeReveal, takeReveal } from '../project-index';
+import { readOnlyNotice } from '../read-only-doc';
 import { relativeTime } from '../relative-time';
 import { setNoteTarget } from '../review-note-target';
 import { registerSelection } from '../selection-registry';
@@ -58,11 +59,34 @@ import { ImageViewer } from './image-viewer';
 /**
  * Monaco answers an edit attempt on a read-only editor with a popup above the cursor line, and
  * that popup is placed against the PAGE (it may overflow the editor), so on line 1 it lands on the
- * banner above the editor. The only read-only doc here is a truncated one, whose banner already
- * says so: one notice, not two stacked. Reached by id — the class isn't exported.
+ * banner above the editor. Every read-only doc here has a banner that already says so: one notice,
+ * not two stacked. Reached by id — the class isn't exported.
  */
 function silenceReadOnlyPopup(editor: monaco.editor.IStandaloneCodeEditor): void {
   editor.getContribution('editor.contrib.readOnlyMessageController')?.dispose();
+}
+
+/** Cursor and viewport on the last line. Tagged as a reveal so nav history doesn't record it. */
+function revealEnd(editor: monaco.editor.IStandaloneCodeEditor): void {
+  const model = editor.getModel();
+  if (!model) return;
+  const line = model.getLineCount();
+  editor.setPosition({ lineNumber: line, column: model.getLineMaxColumn(line) }, NAV_REVEAL_SOURCE);
+  editor.revealLine(line);
+}
+
+function isScrolledToEnd(editor: monaco.editor.IStandaloneCodeEditor): boolean {
+  const lineHeight = editor.getOption(monaco.editor.EditorOption.lineHeight);
+  return (
+    editor.getScrollTop() + editor.getLayoutInfo().height >= editor.getScrollHeight() - lineHeight
+  );
+}
+
+/** A tail window's line numbers are not the file's, so a line-addressed navigation can't be
+ *  mapped onto it: show the end and say so (spec 2026-10-08-language-support §2.5, D5). */
+function revealTail(editor: monaco.editor.IStandaloneCodeEditor, staged?: { line: number }): void {
+  if (staged) pushToast({ message: AUTO_SAVE_COPY.tailLine(staged.line), variant: 'info' });
+  revealEnd(editor);
 }
 
 const MENU_ICONS: Record<EditorMenuIconKey, ReactJSX.Element> = {
@@ -184,7 +208,9 @@ export function CodeViewer({
     // (enables go-to-definition, hover, peek). Reuse an existing model if present.
     const uri = fileUri(doc.path);
     const existing = monaco.editor.getModel(uri);
-    const { content, truncated } = docRef.current;
+    const { content } = docRef.current;
+    const readOnly = readOnlyNotice(docRef.current) !== null;
+    const tail = docRef.current.window === 'tail';
     const model =
       existing ?? monaco.editor.createModel(doc.binary ? '' : content, doc.language, uri);
     // Monaco creates a navigation target's model itself, hardcoding `typescript` as the
@@ -196,15 +222,15 @@ export function CodeViewer({
     // clean model (K3), so all of it outlives this editor. Attached before `create` so the
     // first paint already shows the disk content.
     if (!doc.binary) {
-      fileSaves.attach(doc.path, { diskContent: content, writable: !truncated });
+      fileSaves.attach(doc.path, { diskContent: content, writable: !readOnly });
     }
     const editor = monaco.editor.create(ref.current, {
       model,
       theme,
       // Binary files render a notice instead, so this never exposes a writable
-      // buffer for a non-text file. A truncated buffer is only the file's head, so it is never
+      // buffer for a non-text file. A window of the file, or text a save could alter, is never
       // editable either (the save store refuses it as well).
-      readOnly: truncated,
+      readOnly,
       automaticLayout: true,
       overflowWidgetsDomNode: monacoOverflowHost(),
       fixedOverflowWidgets: true,
@@ -232,7 +258,7 @@ export function CodeViewer({
       renderLineHighlight: 'all',
     });
     editorRef.current = editor;
-    if (truncated) silenceReadOnlyPopup(editor);
+    if (readOnly) silenceReadOnlyPopup(editor);
 
     const unregisterSelection = registerSelection(
       doc.path,
@@ -249,7 +275,11 @@ export function CodeViewer({
     // If we arrived via cross-file go-to-definition, reveal the target. An explicit reveal WINS
     // over saved-scroll restore (spec 2026-06-30 §3); only restore the saved view state otherwise.
     const pos = takeReveal(doc.path, group);
-    if (pos) {
+    if (tail) {
+      // A tail window is opened for its newest lines, and its content shifts on every append, so
+      // a saved scroll position is meaningless here.
+      revealTail(editor, pos);
+    } else if (pos) {
       revealInEditor(editor, pos);
     } else {
       const saved = getViewState(vsId);
@@ -510,17 +540,28 @@ export function CodeViewer({
   // A save or an external change arrives as new doc.content; the store reseeds a clean model in
   // place. Only a real reseed carries the view state across (so an agent's rewrite doesn't jump
   // the cursor): a save's own echo changes nothing, and restoring then would fight typing or IME.
+  const notice = readOnlyNotice(doc);
+  const tail = doc.window === 'tail';
+  const tailRef = useRef(tail);
+  tailRef.current = tail;
   useEffect(() => {
     if (doc.binary) return;
     const ed = editorRef.current;
     const model = ed?.getModel();
     const version = model?.getVersionId();
     const view = ed?.saveViewState();
-    fileSaves.attach(doc.path, { diskContent: doc.content, writable: !doc.truncated });
+    const atEnd = tail && !!ed && isScrolledToEnd(ed);
+    fileSaves.attach(doc.path, { diskContent: doc.content, writable: notice === null });
     if (!ed || !model || model.getVersionId() === version) return;
-    if (view) ed.restoreViewState(view);
+    if (atEnd) revealEnd(ed);
+    else if (view) ed.restoreViewState(view);
+    // The window's lines all moved under the old selection (spec 2026-10-08-language-support §2.5).
+    if (tail && !atEnd) {
+      const p = ed.getPosition();
+      if (p) ed.setPosition(p, NAV_REVEAL_SOURCE);
+    }
     onReseedRef.current?.();
-  }, [doc.path, doc.content, doc.truncated, doc.binary]);
+  }, [doc.path, doc.content, notice, tail, doc.binary]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });
@@ -528,9 +569,9 @@ export function CodeViewer({
 
   useEffect(() => {
     const ed = editorRef.current;
-    ed?.updateOptions({ readOnly: doc.truncated });
-    if (ed && doc.truncated) silenceReadOnlyPopup(ed);
-  }, [doc.truncated]);
+    ed?.updateOptions({ readOnly: notice !== null });
+    if (ed && notice !== null) silenceReadOnlyPopup(ed);
+  }, [notice]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({ fontSize: settings.editorFontSize });
@@ -634,7 +675,8 @@ export function CodeViewer({
       if (path !== canonicalPath(doc.path)) return;
       const pos = takeReveal(doc.path, group);
       if (!pos) return;
-      revealInEditor(ed, pos);
+      if (tailRef.current) revealTail(ed, pos);
+      else revealInEditor(ed, pos);
       ed.focus();
     });
   }, [doc.path, group]);
@@ -689,17 +731,17 @@ export function CodeViewer({
 
   // Announcements the peek makes ("Staged hunk"), kept apart from the marker hook's own live
   // region so a navigation announcement and an op announcement cannot overwrite each other. A
-  // truncated doc (no markers, no peek) also says here, once, why typing does nothing — Monaco's
-  // own read-only popup is gone for it (see silenceReadOnlyPopup).
+  // read-only doc also says here, once, why typing does nothing — Monaco's own read-only popup is
+  // gone for it (see silenceReadOnlyPopup).
   const [hunkAnnounce, setHunkAnnounce] = useState('');
   useEffect(() => {
-    if (!editor || !doc.truncated) return;
+    if (!editor || notice === null) return;
     const sub = editor.onDidAttemptReadOnlyEdit(() => {
       sub.dispose();
-      setHunkAnnounce(AUTO_SAVE_COPY.partialBanner);
+      setHunkAnnounce(notice);
     });
     return () => sub.dispose();
-  }, [editor, doc.truncated]);
+  }, [editor, notice]);
 
   const peek = usePeekZone({
     editor,
@@ -769,9 +811,9 @@ export function CodeViewer({
         }
       }}
     >
-      {doc.truncated && (
+      {notice !== null && (
         <div className="viewer__banner" role="note">
-          {AUTO_SAVE_COPY.partialBanner}
+          {notice}
         </div>
       )}
       {changes.state === 'degraded' && <div className="viewer__banner">{DEGRADED_HINT}</div>}
