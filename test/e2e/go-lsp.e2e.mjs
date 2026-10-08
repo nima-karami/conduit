@@ -151,13 +151,32 @@ async function trustViaHost(page, path, log) {
   log(`trusted ${state.prompt.folder} through the host prompt`);
 }
 
+/** A raw open with no tab is a doc nobody is looking at, which launches nothing (spec
+ *  2026-10-08-language-coverage §2.6) — the request that follows is what wakes the server. */
 async function openGoDoc(page, path) {
-  return lsp(page, {
+  const opened = await lsp(page, {
     type: 'lsp:open',
     path,
     languageId: 'go',
     version: 1,
     text: readFileSync(path, 'utf8'),
+  });
+  await wakeGoDoc(page, path);
+  return opened;
+}
+
+/** A navigation op on purpose: it keeps the launch wanted for the 90 s nav budget, where a
+ *  documentSymbol gives up after 3 s — a cold `go env` resolve on a runner can take longer, and
+ *  a launch nobody wants any more is dropped before it spawns. */
+function wakeGoDoc(page, path) {
+  return lsp(page, {
+    type: 'lsp:request',
+    requestId: `wake-${Date.now()}`,
+    path,
+    version: 1,
+    op: 'definition',
+    line: 0,
+    character: 0,
   });
 }
 
@@ -447,6 +466,8 @@ runScenario('go-lsp', async ({ app, page, log }) => {
   // ── T2: Trust from the prompt starts gopls (and F12 lands, in editorScenarios below) ──
   await promptBox.getByRole('button', { name: 'Trust', exact: true }).click();
   await promptBox.waitFor({ state: 'detached', timeout: 10_000 });
+  // Trust only launches for a shown doc; main.go is a raw, tab-less open here.
+  await wakeGoDoc(page, main);
   const server = await waitReady(page, log);
   const def = await lsp(page, {
     type: 'lsp:request',
