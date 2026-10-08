@@ -1,0 +1,10 @@
+plan: docs/plans/2026-10-08-language-coverage.plan.md @ 1d5f6aa
+order: S0 -> (A | B | W | C1) -> C2 -> C3 -> C4 -> integrate (full verify + full remote e2e) -> QA -> release
+items:
+  - {id: S0, title: lang.ts resolver + shebang + file-service, status: in_progress, branch: lane-cov-s0, tier: opus}
+  - {id: A, title: grammars + Monaco/hljs maps + diff/Review/plan consumers, status: todo}
+  - {id: B, title: registry fields + 3 servers + renderer LSP consumers + CI, status: todo}
+  - {id: W, title: RootWatchPool shared watch, status: deferred, reason: architecture-critic — no measured force}
+  - {id: C1, title: pure residency policy, status: todo}
+  - {id: C2-C4, title: residency integration + e2e adaptation, status: todo, deps: [B, C1]}
+  - {id: ARCH, title: architecture-critic on plan, status: done, verdict: PROCEED_WITH_CHANGES}

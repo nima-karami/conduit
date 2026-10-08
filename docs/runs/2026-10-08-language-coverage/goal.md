@@ -17,3 +17,8 @@ memory and sleep when nothing visible needs them. Spec: docs/specs/2026-10-08-la
 ## Process rule from the previous run
 - Builders commit on a NAMED branch; conductor integrates by the reviewed SHA and asserts ancestry.
 - File edits via the Edit tool only (PowerShell read-modify-write double-encodes UTF-8).
+
+## Architecture critic (plan 1d5f6aa): PROCEED_WITH_CHANGES — 9 required, all adopted
+- Conductor decisions: eviction awaits evictee EXIT (bounded ~2 s) so AC-C1's cap is real; lane W
+  (RootWatchPool) DEFERRED (no measured force, stale-handle bug class); optional suggestions adopted.
+- Planner amending the plan; S0 builder unaffected (plan forbids S0 contract changes).
