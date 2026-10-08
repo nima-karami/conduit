@@ -42,10 +42,16 @@ export interface FileSaveDeps {
 
 export interface AttachOpts {
   diskContent: string;
-  /** Why this doc is never written (it is a window of the file, or a save would change bytes the
-   *  user never touched) — the reason a refused save gives; null when writable. Binary docs never
-   *  attach. */
-  readOnly: string | null;
+  /** Set when this doc is never written; null when writable. Binary docs never attach. */
+  readOnly: ReadOnlyAttach | null;
+}
+
+export interface ReadOnlyAttach {
+  /** Why a save is refused: the buffer is a window of the file, or a save would change bytes the
+   *  user never touched. */
+  refusal: string;
+  /** The buffer is only part of the file (`isPartial`). */
+  partial: boolean;
 }
 
 export interface FileSaveStatus {
@@ -86,7 +92,7 @@ interface Entry {
   sub: { dispose(): void } | null;
   unregister: () => void;
   baseline: string;
-  readOnly: string | null;
+  readOnly: ReadOnlyAttach | null;
   state: AutoSaveState;
   timer: unknown;
   /** The single write chain in flight (E1); a trailing save joins it via `next`. */
@@ -233,7 +239,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
     // back would cut the file short, and the others would change bytes the user never touched.
     const refusal =
       e.readOnly !== null
-        ? e.readOnly
+        ? e.readOnly.refusal
         : !deps.canWrite
           ? 'Saving is unavailable in the browser preview.'
           : null;
@@ -316,6 +322,13 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
       }
       entry.baseline = opts.diskContent;
       entry.readOnly = opts.readOnly;
+      // Monaco may store a read-only doc differently from disk (EOL normalisation); that seed is
+      // not work, and a buffer that can never be saved must not hold up a close or a quit.
+      if (entry.readOnly !== null) {
+        deps.clearDirty(path);
+        step(entry, { type: 'seed', dirty: false });
+        return;
+      }
       deps.setDirty(path, entry.baseline, model.getValue());
       step(entry, { type: 'seed', dirty: model.getValue() !== entry.baseline });
     },
@@ -406,6 +419,6 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
     setToastsSuppressed(on) {
       toastsSuppressed = on;
     },
-    isPartial: (path) => (entries.get(path)?.readOnly ?? null) !== null,
+    isPartial: (path) => entries.get(path)?.readOnly?.partial === true,
   };
 }

@@ -66,12 +66,15 @@ Monarch, single `root` state, case-insensitive level words, rules in priority or
 | `log-warn.log` | `WARNING`, `WARN`, `WRN`, `[W]`, logcat `W/…` (same anchor) | `--syn-warn` |
 | `log-info.log` | `INFO`, `INF`, `NOTICE`, `[I]`, logcat `I/…` (same anchor) | existing `type` colour (`--syn-type`) |
 | `comment.log` | `DEBUG`, `DBG`, `TRACE`, `TRC`, `VERBOSE`, `[D]`/`[T]`/`[V]`; stack-frame lines (`^\s+at\s`, `^\s+File ".*", line \d+`, `^\s+\.\.\. \d+ more`) | `--syn-comment` |
-| `number.log` (timestamp) | ISO-8601 date/time with optional `T`, fraction, `Z`/offset; `HH:MM:SS(.fff)`; syslog `Mon dd HH:MM:SS` | `--syn-number` |
+| `log-time.log` (timestamp) | ISO-8601 date/time with optional `T`, fraction, `Z`/offset; `HH:MM:SS(.fff)`; syslog `Mon dd HH:MM:SS` | `--syn-comment`, upright (muted so the level stands out — runtime QA found WARN and timestamps near-identical in colour) |
 | `number.log` | GUIDs, IPv4 (+`:port`), `0x` hex, decimal numbers with optional unit (`12ms`, `3.4s`, `512KB`) | `--syn-number` |
 | `string.log` | `"…"` and `'…'` (single line; unterminated = to EOL), URLs `scheme://…` | `--syn-string` |
 | `log-error.log` | exception headlines: `^\S*(Exception|Error)(:|\b)` and `Traceback (most recent call last):` | `--syn-error` |
 
-Level words match on word boundaries only (`errors=0` and `terror` are not levels). Language
+Level words match on word boundaries only (`errors=0` and `terror` are not levels), and only
+UPPERCASE as a bare word; any case counts where a level stands — `[error]`, `level=error` /
+`"level":"error"`, or `error:` at the line start or right after its timestamp — so prose such as
+"I/O error count 0" stays plain (runtime QA decision). Language
 configuration: no comments, brackets `[] () {}`, indentation folding (Monaco default) so a stack
 trace under a line folds. The id `log` is registered at module load (`monaco.languages.register`,
 as `gomod` is) so diff and peek models tokenize too.
@@ -278,7 +281,7 @@ handle `go-files.e2e.mjs` uses for `gomod`.
   token class on line 1 and folding available on a nested map.
 - **AC-A2** `app.log`, `app.log.1`, `app.log.2026-10-01` → language `log`; a line
   `2026-10-08T12:00:00.123Z ERROR boom "x"` paints the level in `--syn-error`'s colour, the
-  timestamp in `--syn-number`'s, the string in `--syn-string`'s — checked on the FIRST frame after
+  timestamp in `--syn-comment`'s, the string in `--syn-string`'s — checked on the FIRST frame after
   open, under all three themes.
 - **AC-A3** `expected.json.golden` → `json`; `README.md.golden` opens in the **code editor**
   (language `markdown`, no rendered view); `plain.golden` → `plaintext`.

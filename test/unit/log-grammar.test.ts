@@ -1,19 +1,20 @@
 /**
  * The log Monarch rules run the way Monarch runs them: first rule whose regex matches anchored at
- * the cursor wins, and a rule written with a leading `^` only ever matches at column 0
- * (monarchCompile's `matchOnlyAtLineStart`). The real tokenizer is covered by language-files.e2e.
+ * the cursor wins, a rule written with a leading `^` only ever matches at column 0
+ * (monarchCompile's `matchOnlyAtLineStart`), and an array action tokens the regex's groups in
+ * order. The real tokenizer is covered by language-files.e2e.
  */
 
 import { describe, expect, it } from 'vitest';
 import { log } from '../../webview/log-grammar';
 
-type Rule = [RegExp, string];
+type Rule = [RegExp, string | string[]];
 
 const rules = (log.language as unknown as { tokenizer: { root: Rule[] } }).tokenizer.root.map(
-  ([re, token]) => {
+  ([re, action]) => {
     const atStart = re.source.startsWith('^');
     const body = atStart ? re.source.slice(1) : re.source;
-    return { re: new RegExp(`^(?:${body})`), atStart, token };
+    return { re: new RegExp(`^(?:${body})`), atStart, action };
   },
 );
 
@@ -22,17 +23,24 @@ function tokenize(line: string): [string, string][] {
   let pos = 0;
   while (pos < line.length) {
     const rest = line.slice(pos);
-    let hit: [string, string] | null = null;
+    let hit: [string, string][] | null = null;
     for (const r of rules) {
       if (r.atStart && pos > 0) continue;
       const m = r.re.exec(rest);
       if (!m || m[0] === '') continue;
-      hit = [m[0], r.token];
+      if (typeof r.action === 'string') hit = [[m[0], r.action]];
+      else {
+        const groups = m.slice(1);
+        if (groups.join('') !== m[0]) throw new Error(`groups don't cover ${JSON.stringify(m[0])}`);
+        hit = groups.map((g, i) => [g, (r.action as string[])[i]] as [string, string]);
+      }
       break;
     }
     if (!hit) throw new Error(`no rule matched at ${pos} in ${JSON.stringify(line)}`);
-    pos += hit[0].length;
-    if (hit[1] !== 'white' && hit[1] !== '') out.push(hit);
+    for (const [text, token] of hit) {
+      pos += text.length;
+      if (text !== '' && token !== 'white' && token !== '') out.push([text, token]);
+    }
   }
   return out;
 }
@@ -40,25 +48,25 @@ function tokenize(line: string): [string, string][] {
 const tokenOf = (line: string, text: string) => tokenize(line).find(([t]) => t === text)?.[1];
 
 describe('log grammar', () => {
-  it('paints the AC-A2 line: timestamp, level, string', () => {
+  it('paints the AC-A2 line: muted timestamp, level, string', () => {
     expect(tokenize('2026-10-08T12:00:00.123Z ERROR boom "x"')).toEqual([
-      ['2026-10-08T12:00:00.123Z', 'number'],
+      ['2026-10-08T12:00:00.123Z', 'log-time'],
       ['ERROR', 'log-error'],
       ['"x"', 'string'],
     ]);
   });
 
-  it('reads every error level word in any case, and bracketed / logcat error', () => {
+  it('reads every UPPERCASE error level word, and bracketed / logcat error', () => {
     for (const w of [
       'FATAL',
-      'critical',
-      'Crit',
+      'CRITICAL',
+      'CRIT',
       'ERROR',
-      'err',
+      'ERR',
       'EMERG',
-      'alert',
+      'ALERT',
       'PANIC',
-      'Severe',
+      'SEVERE',
     ]) {
       expect(tokenOf(`x ${w} y`, w), w).toBe('log-error');
     }
@@ -69,10 +77,10 @@ describe('log grammar', () => {
     ]);
   });
 
-  it('reads warn, info and debug tiers', () => {
-    for (const w of ['WARNING', 'warn', 'WRN']) expect(tokenOf(`a ${w} b`, w), w).toBe('log-warn');
-    for (const w of ['INFO', 'inf', 'Notice']) expect(tokenOf(`a ${w} b`, w), w).toBe('log-info');
-    for (const w of ['DEBUG', 'dbg', 'TRACE', 'TRC', 'Verbose']) {
+  it('reads UPPERCASE warn, info and debug tiers', () => {
+    for (const w of ['WARNING', 'WARN', 'WRN']) expect(tokenOf(`a ${w} b`, w), w).toBe('log-warn');
+    for (const w of ['INFO', 'INF', 'NOTICE']) expect(tokenOf(`a ${w} b`, w), w).toBe('log-info');
+    for (const w of ['DEBUG', 'DBG', 'TRACE', 'TRC', 'VERBOSE']) {
       expect(tokenOf(`a ${w} b`, w), w).toBe('comment');
     }
     expect(tokenOf('[W] x', '[W]')).toBe('log-warn');
@@ -82,15 +90,38 @@ describe('log grammar', () => {
     expect(tokenize('I/Tag(9): up')[0]).toEqual(['I/Tag(9):', 'log-info']);
   });
 
+  it('leaves level words in prose alone unless they are UPPERCASE', () => {
+    expect(tokenize('I/O error count 0')).toEqual([['0', 'number']]);
+    expect(tokenize('a warning about info, nothing critical')).toEqual([]);
+    expect(tokenize("don't panic at 5")).toEqual([['5', 'number']]);
+  });
+
+  it('reads a level in any case where a level stands: brackets, level=, a leading "x:"', () => {
+    expect(tokenOf('[error] boom', '[error]')).toBe('log-error');
+    expect(tokenOf('[Warning] slow', '[Warning]')).toBe('log-warn');
+    expect(tokenOf('[info] up', '[info]')).toBe('log-info');
+    expect(tokenOf('[debug] x', '[debug]')).toBe('comment');
+    expect(tokenOf('ts=1 level=error msg=x', 'error')).toBe('log-error');
+    expect(tokenOf('{"level":"warn","msg":"x"}', 'warn')).toBe('log-warn');
+    expect(tokenOf('level: Info', 'Info')).toBe('log-info');
+    expect(tokenize('error: disk full')[0]).toEqual(['error', 'log-error']);
+    expect(tokenize('warning: deprecated')[0]).toEqual(['warning', 'log-warn']);
+    expect(tokenize('2026-10-08 12:00:00 warn: slow')).toEqual([
+      ['2026-10-08 12:00:00', 'log-time'],
+      ['warn', 'log-warn'],
+    ]);
+  });
+
   it('matches level words on word boundaries only', () => {
-    expect(tokenize('errors=0 terror infos warned')).toEqual([['0', 'number']]);
+    expect(tokenize('ERRORS=0 TERROR INFOS WARNED')).toEqual([['0', 'number']]);
     expect(tokenOf('MY_ERROR happened', 'ERROR')).toBeUndefined();
     expect(tokenOf('ERR_CONNECTION_RESET', 'ERR')).toBeUndefined();
+    expect(tokenOf('xlevel=error', 'error')).toBeUndefined();
   });
 
   it('does not read prose shaped like a logcat tag as a level', () => {
-    expect(tokenize('I/O error on disk')).toEqual([['error', 'log-error']]);
     expect(tokenize('I/O failure')).toEqual([]);
+    expect(tokenize('I/O ERROR on disk')).toEqual([['ERROR', 'log-error']]);
   });
 
   it('greys stack frames whole', () => {
@@ -115,14 +146,14 @@ describe('log grammar', () => {
     expect(tokenOf('MyErrorHandler started', 'MyErrorHandler')).toBeUndefined();
   });
 
-  it('reads timestamps in their common shapes', () => {
-    expect(tokenize('2026-10-08 12:00:00,5 x')[0]).toEqual(['2026-10-08 12:00:00,5', 'number']);
+  it('mutes timestamps in their common shapes', () => {
+    expect(tokenize('2026-10-08 12:00:00,5 x')[0]).toEqual(['2026-10-08 12:00:00,5', 'log-time']);
     expect(tokenize('2026-10-08T12:00:00+02:00 x')[0]).toEqual([
       '2026-10-08T12:00:00+02:00',
-      'number',
+      'log-time',
     ]);
-    expect(tokenize('12:34:56.789 x')[0]).toEqual(['12:34:56.789', 'number']);
-    expect(tokenize('Oct  8 12:00:01 host sshd')[0]).toEqual(['Oct  8 12:00:01', 'number']);
+    expect(tokenize('12:34:56.789 x')[0]).toEqual(['12:34:56.789', 'log-time']);
+    expect(tokenize('Oct  8 12:00:01 host sshd')[0]).toEqual(['Oct  8 12:00:01', 'log-time']);
   });
 
   it('reads GUIDs, addresses, hex and numbers with units', () => {
@@ -146,8 +177,8 @@ describe('log grammar', () => {
   });
 
   it("keeps an apostrophe inside a word from opening a string (don't)", () => {
-    expect(tokenize("don't panic at 5")).toEqual([
-      ['panic', 'log-error'],
+    expect(tokenize("don't PANIC at 5")).toEqual([
+      ['PANIC', 'log-error'],
       ['5', 'number'],
     ]);
   });

@@ -27,7 +27,7 @@ import { assert, openSession, runScenario } from './harness.mjs';
 const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 const LOG_LINE = '2026-10-08T12:00:00.123Z ERROR boom "x"';
 const BIG_LINES = 1_000_000;
-const AUTO_SAVE_TAIL_LINE_5 = 'This log is shown from its last 2 MB — line 5 may be outside it.';
+const TAIL_TOAST_LINE_5 = 'This log is shown from its last 2 MB — line 5 may be outside it.';
 const bigLine = (i) => `line ${String(i).padStart(7, '0')} ${'.'.repeat(26)}\n`;
 
 function buildFixture() {
@@ -67,6 +67,8 @@ function buildFixture() {
   put('bom.txt', Buffer.concat([BOM, Buffer.from('alpha\nbeta\n')]));
   put('bom-idle.txt', Buffer.concat([BOM, Buffer.from('idle\r\nfile\r\n')]));
   put('mixed.txt.golden', 'a\r\nb\nc\r\n');
+  put('mixed.json.golden', '{\r\n  "a": 1,\n  "b": 2\r\n}\n');
+  put('cr.txt.golden', 'one\rtwo\r');
   put('latin1.txt', Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]));
   put('small.txt', 'small\n');
   const chunks = [];
@@ -114,6 +116,8 @@ const editorInfo = (page, name) =>
       readOnly: ed.getOption(window.monaco.editor.EditorOption.readOnly),
     };
   }, name);
+
+const hasDirtyTab = (page) => page.evaluate(() => !!document.querySelector('.tab__dirty'));
 
 const banners = (page) =>
   page.evaluate(() =>
@@ -277,7 +281,23 @@ async function scenario({ app, page, log }, root) {
   log(
     `log token types before/after the first open: ${JSON.stringify(before)} / ${JSON.stringify(after)}`,
   );
-  for (const t of ['number.log', 'log-error.log', 'string.log']) {
+  // The grouped level rules run through Monaco's own Monarch, not just the unit interpreter.
+  const types = (line) =>
+    page.evaluate(
+      (l) => (window.monaco.editor.tokenize(l, 'log')[0] ?? []).map((t) => t.type),
+      line,
+    );
+  for (const [line, want] of [
+    ['2026-10-08 12:00:00 warn: slow', 'log-warn.log'],
+    ['{"level":"error","msg":"x"}', 'log-error.log'],
+    ['[info] up', 'log-info.log'],
+  ]) {
+    const got = await types(line);
+    assert(got.includes(want), `${line} → ${JSON.stringify(got)}, want ${want}`);
+  }
+  const prose = await types('I/O error count 0');
+  assert(!prose.includes('log-error.log'), `prose "error" coloured as a level: ${prose}`);
+  for (const t of ['log-time.log', 'log-error.log', 'string.log']) {
     assert(after.includes(t), `log grammar missing ${t} on open: ${JSON.stringify(after)}`);
   }
   const SAMPLE = ['2026-10-08T12:00:00.123Z', 'ERROR', '"x"'];
@@ -287,7 +307,7 @@ async function scenario({ app, page, log }, root) {
     await closeAllDocs(page);
     await openDoc(app, page, sid, at('app.log'));
     const want = {
-      '2026-10-08T12:00:00.123Z': await cssColour(page, '--syn-number'),
+      '2026-10-08T12:00:00.123Z': await cssColour(page, '--syn-comment'),
       ERROR: await cssColour(page, '--syn-error'),
       '"x"': await cssColour(page, '--syn-string'),
     };
@@ -358,15 +378,23 @@ async function scenario({ app, page, log }, root) {
   }
   await setSettings(page, { autoSave: 'off' });
 
-  // AC-A5 — mixed-EOL golden and invalid UTF-8 are read-only with their banners.
+  // AC-A5 — mixed-EOL / bare-CR goldens and invalid UTF-8 are read-only with their banners, and
+  // never count as unsaved work: Monaco normalises a golden's EOLs on load, which once left the
+  // tab dirty and made closing it ask to save a file that can't be saved.
+  const MIXED = 'Mixed line endings — read-only so this golden file stays byte-exact.';
   for (const [name, banner] of [
-    ['mixed.txt.golden', 'Mixed line endings — read-only so this golden file stays byte-exact.'],
+    ['mixed.txt.golden', MIXED],
+    ['mixed.json.golden', MIXED],
+    ['cr.txt.golden', MIXED],
     ['latin1.txt', "Not valid UTF-8 — read-only so saving can't change its bytes."],
   ]) {
+    await closeAllDocs(page);
     const before = readFileSync(at(name));
     await openDoc(app, page, sid, at(name));
     const shown = await banners(page);
     assert(shown.includes(banner), `${name} banner: ${JSON.stringify(shown)}`);
+    await page.waitForTimeout(500);
+    assert(!(await hasDirtyTab(page)), `${name} opened dirty`);
     const valueBefore = (await editorInfo(page, name)).value;
     await focusEditorOf(page, name);
     await page.keyboard.type('zz');
@@ -376,6 +404,13 @@ async function scenario({ app, page, log }, root) {
     assert(info.readOnly === true, `${name} should be read-only`);
     assert(info.value === valueBefore, `${name} accepted typing`);
     assert(readFileSync(at(name)).equals(before), `${name} changed on disk`);
+    assert(!(await hasDirtyTab(page)), `${name} dirty after typing into a read-only doc`);
+    await page.evaluate(() => document.querySelector('.tabbar [role="tab"] .tab__close')?.click());
+    await page.waitForTimeout(400);
+    const prompt = await page.evaluate(
+      () => document.querySelector('[role="alertdialog"]')?.textContent ?? null,
+    );
+    assert(prompt === null, `closing ${name} prompted: ${prompt}`);
   }
 
   // AC-A6 — 40 MB: a log shows its tail from a whole line, a text file its head.
@@ -416,7 +451,7 @@ async function scenario({ app, page, log }, root) {
   await focusEditorOf(page, 'small.txt');
   await page.keyboard.press('Alt+ArrowLeft');
   const toast = await waitFor(
-    async () => (await toasts(page)).find((t) => t === AUTO_SAVE_TAIL_LINE_5),
+    async () => (await toasts(page)).find((t) => t === TAIL_TOAST_LINE_5),
     'the tail-window toast for line 5',
   );
   log(`AC-A6b toast: ${toast}`);

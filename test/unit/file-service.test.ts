@@ -219,6 +219,34 @@ describe('fileService readFile over the cap (spec 2026-10-08-language-support §
     expect(doc.content).toBe('');
   });
 
+  // Project indexing reads thousands of small files through here; a cap-sized buffer per read
+  // made each one cost a 2 MB zero-fill.
+  it('allocates for the file it reads, not for the cap', async () => {
+    const f = path.join(tmp(), 'small.ts');
+    fs.writeFileSync(f, 'x'.repeat(2048));
+    const unsafe = vi.spyOn(Buffer, 'allocUnsafe');
+    const zeroed = vi.spyOn(Buffer, 'alloc');
+    const doc = await readFile(f);
+    expect(doc.content.length).toBe(2048);
+    const sizes = [...unsafe.mock.calls, ...zeroed.mock.calls].map(([n]) => n as number);
+    expect(Math.max(0, ...sizes)).toBeLessThanOrEqual(2049);
+  });
+
+  it('still caps a file that grew past the size its stat reported', async () => {
+    const f = path.join(tmp(), 'grown.txt');
+    fs.writeFileSync(f, body);
+    const realOpen = fs.promises.open.bind(fs.promises);
+    vi.spyOn(fs.promises, 'open').mockImplementation(async (...args) => {
+      const fh = await realOpen(...(args as Parameters<typeof realOpen>));
+      const realStat = fh.stat.bind(fh);
+      // The stat a racing writer has already outrun: the file was 10 bytes then.
+      Object.assign(fh, { stat: async () => ({ ...(await realStat()), size: 10 }) });
+      return fh;
+    });
+    const doc = await readFile(f, CAP);
+    expect(doc).toMatchObject({ truncated: true, content: body.slice(0, CAP) });
+  });
+
   it('keeps the first line of a tail window that starts exactly on a line boundary', async () => {
     const f = path.join(tmp(), 'aligned.log');
     fs.writeFileSync(f, body);

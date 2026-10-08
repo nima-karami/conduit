@@ -5,11 +5,14 @@ import { AUTO_SAVE_COPY } from '../../webview/auto-save-copy';
 import {
   createFileSaves,
   type FileSaveDeps,
+  type ReadOnlyAttach,
   type SaveModel,
 } from '../../webview/file-save-controller';
 import type { SaveEntry } from '../../webview/save-registry';
 
-const PARTIAL = AUTO_SAVE_COPY.partialFile;
+const PARTIAL: ReadOnlyAttach = { refusal: AUTO_SAVE_COPY.partialFile, partial: true };
+const INVALID_UTF8: ReadOnlyAttach = { refusal: AUTO_SAVE_COPY.invalidUtf8Refusal, partial: false };
+const MIXED_EOL: ReadOnlyAttach = { refusal: AUTO_SAVE_COPY.mixedEolRefusal, partial: false };
 
 class FakeModel implements SaveModel {
   private listeners = new Set<() => void>();
@@ -96,7 +99,7 @@ function harness(opts: { canWrite?: boolean; mode?: AutoSaveMode; delayMs?: numb
   };
   const saves = createFileSaves(deps);
   saves.configure({ mode: opts.mode ?? 'off', delayMs: opts.delayMs ?? 1000 });
-  const open = (path: string, disk: string, readOnly: string | null = null) => {
+  const open = (path: string, disk: string, readOnly: ReadOnlyAttach | null = null) => {
     if (!models.has(path)) models.set(path, new FakeModel(disk));
     saves.attach(path, { diskContent: disk, readOnly });
     // biome-ignore lint/style/noNonNullAssertion: set on the line above
@@ -318,7 +321,7 @@ describe('createFileSaves', () => {
 
   it('a refused save names why the doc is read-only, not always the 2 MB cut', async () => {
     const h = harness();
-    const m = h.open('/latin1.txt', 'caf?', AUTO_SAVE_COPY.invalidUtf8Refusal);
+    const m = h.open('/latin1.txt', 'caf?', INVALID_UTF8);
     m.setValue('changed');
     expect(await h.saves.save('/latin1.txt', 'manual')).toBe(false);
     expect(h.toasts).toEqual([
@@ -655,6 +658,25 @@ describe('createFileSaves', () => {
     expect(h.saves.isPartial('/part.ts')).toBe(true);
     expect(h.saves.isPartial('/full.ts')).toBe(false);
     expect(h.saves.isPartial('/none.ts')).toBe(false);
+  });
+
+  // "Partly loaded, can't be saved" in the unsaved-files dialog is true of a window only.
+  it('isPartial is false for a whole file that is read-only for another reason', () => {
+    const h = harness();
+    h.open('/latin1.txt', 'caf?', INVALID_UTF8);
+    h.open('/mixed.txt.golden', 'a\r\nb\n', MIXED_EOL);
+    expect(h.saves.isPartial('/latin1.txt')).toBe(false);
+    expect(h.saves.isPartial('/mixed.txt.golden')).toBe(false);
+  });
+
+  // It can never be saved, so it must not hold up a close or a quit as unsaved work.
+  it('a read-only doc that differs from disk only by its load-time seed is not dirty', () => {
+    const h = harness({ mode: 'afterDelay' });
+    h.models.set('/mixed.txt.golden', new NormalizingModel('stale'));
+    h.saves.attach('/mixed.txt.golden', { diskContent: 'a\r\nb\n', readOnly: MIXED_EOL });
+    expect(h.models.get('/mixed.txt.golden')?.getValue()).toBe('a\nb\n');
+    expect(h.dirty.has('/mixed.txt.golden')).toBe(false);
+    expect(h.saves.getStatus('/mixed.txt.golden')?.phase).toBe('clean');
   });
 
   it('off mode still tracks edited/conflict/failed (A3)', async () => {
