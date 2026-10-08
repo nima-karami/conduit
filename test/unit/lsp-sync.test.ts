@@ -341,6 +341,29 @@ describe('setLspVisible', () => {
     expect(visibleSends()).toHaveLength(2);
   });
 
+  it('A then B then A again sends A again while B is still unanswered', async () => {
+    const { lspInvoke } = await import('../../webview/bridge');
+    sync.setLspVisible(['/w/a.go']);
+    await vi.runAllTimersAsync();
+    let answerB: (r: { ok: boolean }) => void = () => {};
+    vi.mocked(lspInvoke).mockImplementationOnce((msg) => {
+      h.sent.push(msg as LspMessage);
+      return new Promise((r) => {
+        answerB = r as typeof answerB;
+      }) as never;
+    });
+    sync.setLspVisible(['/w/b.go']);
+    sync.setLspVisible(['/w/a.go']);
+    await vi.runAllTimersAsync();
+    answerB({ ok: true });
+    await vi.runAllTimersAsync();
+    expect(visibleSends().map((m) => ('paths' in m ? m.paths : null))).toEqual([
+      ['/w/a.go'],
+      ['/w/b.go'],
+      ['/w/a.go'],
+    ]);
+  });
+
   it('a rejected send is retried by the next call', async () => {
     const { lspInvoke } = await import('../../webview/bridge');
     vi.mocked(lspInvoke).mockRejectedValueOnce(new Error('host gone'));
