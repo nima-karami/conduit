@@ -421,9 +421,12 @@ scenarios **fail, never skip** when the server is missing on CI (go-lsp preceden
   the enclosing symbol — Python (`main.py` → `lib/util.py`, and an extensionless `#!/usr/bin/env
   python3` script), Rust (`main.rs` → `lib.rs` in a 2-member workspace: one rust-analyzer, rooted
   at the workspace), C++ (`main.cpp` → `greet.hpp`/`greet.cpp` with `compile_commands.json`).
-- **AC-B4** Once rust-analyzer is `ready` and no cargo descendant has existed for 10 s (the
-  startup build-script pass, D4, is excluded), saving a `.rs` file spawns no `cargo` descendant
-  within 10 s.
+- **AC-B4** No `cargo check` is triggered by editing or saving: Conduit sends no
+  `textDocument/didSave` and advertises none, so rust-analyzer's flycheck has no trigger;
+  `checkOnSave:false` is defence in depth. Units: `lsp-server.test.ts` (no save capability
+  advertised) and `lsp-manager.test.ts` (no lifecycle step sends a save). Not an e2e — a save
+  that can't reach the server can't make one fail. (The startup build-script pass, D4, is
+  unaffected.)
 - **AC-B5** A `.py` with no marker gets an ad-hoc server; a `.rs` with no `Cargo.toml` gets the
   "not in a project" outcome.
 - **AC-B6** Unit `lsp-registry.test.ts`: every new glob/marker compiles; `languageIds` unique
@@ -501,7 +504,8 @@ themed in all three themes today.
 
 - A1 Ranking in §2.3 / tier choice in §2.5 is from public usage data, not Conduit telemetry.
 - A2 basedpyright honours `basedpyright.analysis.typeCheckingMode` and auto-detects a root `.venv`;
-  rust-analyzer honours `checkOnSave:false` via `initializationOptions` (AC-B4 measures).
+  rust-analyzer honours `checkOnSave:false` via `initializationOptions` (not measured: with no
+  didSave sent it never matters — AC-B4).
 - A3 OCaml through the F# grammar and Groovy/Gradle through Java are approximations users prefer
   over plain text.
 - A4 dotenv through INI: `KEY=value`, `#` comments colour; `export KEY=` does not key-colour.

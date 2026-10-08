@@ -241,6 +241,17 @@ describe('startLanguageServer', () => {
     expect(await settingsOnly.initParams).not.toHaveProperty('initializationOptions');
   });
 
+  // rust-analyzer's flycheck (`cargo check`) runs on didSave; with no didSave advertised or sent,
+  // nothing a user edits or saves can start it (spec 2026-10-08-language-coverage AC-B4).
+  it('the client advertises no save notifications', async () => {
+    const p = await start().initParams;
+    const sync = (p.capabilities as { textDocument: { synchronization: Record<string, unknown> } })
+      .textDocument.synchronization;
+    expect(sync).toEqual({ dynamicRegistration: false });
+    expect(sync).not.toHaveProperty('didSave');
+    expect(sync).not.toHaveProperty('willSave');
+  });
+
   it('workspace/configuration answers by exact section', async () => {
     const A = { typeCheckingMode: 'off' };
     const h = start({

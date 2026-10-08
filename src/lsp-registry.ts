@@ -244,7 +244,6 @@ export const PYTHON_SERVER: LanguageServerSpec = {
   ],
   installHint: 'pip install basedpyright',
   runsTools: "basedpyright, python (reads the interpreter's import paths)",
-  // The pyright alt binary reads `python.analysis`; basedpyright reads its own section.
   settings: { 'basedpyright.analysis': PY_ANALYSIS, 'python.analysis': PY_ANALYSIS },
 
   async resolveToolDir() {
@@ -283,16 +282,13 @@ export const RUST_SERVER: LanguageServerSpec = {
   watchIgnoreDirs: ['target'],
   installHint: 'rustup component add rust-analyzer',
   runsTools: 'rust-analyzer, cargo metadata, build scripts and proc-macros',
-  // No `cargo check` on every save for diagnostics nobody sees.
   initializationOptions: { checkOnSave: false },
   settings: { 'rust-analyzer': { checkOnSave: false } },
-  // The rustup proxy exists even when the component doesn't, and then exits non-zero.
   versionProbe: ['--version'],
 
   async resolveToolDir(ctx) {
     const cargo = await findBinary('cargo', [...pathDirs(ctx), ...cargoBins(ctx)], ctx);
-    // The found path, not the realpath: a distro's `cargo` symlinks to `rustup`, which dispatches
-    // on argv0 — the dir it lives in is the one whose proxies work.
+    // `.path`, not `.realPath`: rustup's argv0 dispatch (spec §2.5 toolDir row).
     return cargo ? dirnameFor(ctx.platform, cargo.path) : null;
   },
 
@@ -302,7 +298,6 @@ export const RUST_SERVER: LanguageServerSpec = {
 
   childEnv(base, toolDir, platform) {
     const env = serverEnv(base, toolDir, platform);
-    // A repo's rust-toolchain.toml must not make opening a file download and run a toolchain.
     setUnlessPresent(env, 'RUSTUP_AUTO_INSTALL', '0', platform);
     return env;
   },
