@@ -1,13 +1,13 @@
 /**
  * AC-C5 (docs/specs/2026-10-08-language-coverage.md §2.6): a session restored with `.py` and `.rs`
- * tabs but the Terminal tab active starts no language server; showing the `.py` tab starts
- * basedpyright. A request on the never-shown `.rs` then starts rust-analyzer, which proves the
- * restored tabs did reach the host — registered, just not launched.
+ * tabs but the Terminal tab active starts no language server, even once both hidden tabs are
+ * synced; showing the `.py` tab starts basedpyright. A request on the never-shown `.rs` then starts
+ * rust-analyzer, which proves its tab did reach the host — registered, just not launched.
  *
  * Needs basedpyright and rust-analyzer. Fails, never skips, when one is missing.
  * Run: node test/e2e/run-smoke.mjs lsp-residency-launch   (needs `npm run build` first)
  */
-import { mkdtempSync } from 'node:fs';
+import { appendFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { openDoc } from './goto-matrix.mjs';
@@ -69,6 +69,12 @@ runScenario('lsp-residency-launch', async ({ app, page, log }) => {
       { timeout: 10_000 },
     );
     log('restored session selected: .py + .rs tabs, Terminal active');
+    // A restored tab is not read until shown, so nothing would reach the host and the check below
+    // would hold with or without residency. A change on disk makes the app re-read both hidden
+    // tabs, which syncs them — the case that used to launch a server per tab.
+    appendFileSync(py.main, '\n# touched\n');
+    appendFileSync(rs.main, '\n// touched\n');
+    await sleep(2_000);
 
     const t0 = Date.now();
     while (Date.now() - t0 < 5_000) {
@@ -88,7 +94,7 @@ runScenario('lsp-residency-launch', async ({ app, page, log }) => {
     assert((await liveServers(p2, 'rust')).length === 0, 'showing .py started rust-analyzer');
 
     // Not awaited: a definition waits out the whole load; only the launch it causes matters.
-    void lsp(p2, {
+    const probe = lsp(p2, {
       type: 'lsp:request',
       requestId: 'wake-rs',
       path: rs.main,
@@ -96,9 +102,12 @@ runScenario('lsp-residency-launch', async ({ app, page, log }) => {
       op: 'definition',
       line: 0,
       character: 0,
-    }).catch(() => null);
+    }).catch((e) => String(e));
     const rs2 = await waitLive(p2, 'rust', 10_000);
-    log(`rust after a request on the hidden .rs tab → ${JSON.stringify(rs2)}`);
+    const reply = await Promise.race([probe, sleep(0).then(() => 'still waiting')]);
+    log(
+      `rust after a request on the hidden .rs tab → ${JSON.stringify(rs2)}; reply ${JSON.stringify(reply)}`,
+    );
     assert(rs2, 'the restored .rs tab never reached the host: the 5 s check proved nothing');
     log('AC-C5: no server until a served file is shown ✓');
   } finally {
