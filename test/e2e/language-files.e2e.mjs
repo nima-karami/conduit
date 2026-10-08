@@ -381,7 +381,8 @@ async function scenario({ app, page, log }, root) {
   // AC-A5 — mixed-EOL / bare-CR goldens and invalid UTF-8 are read-only with their banners, and
   // never count as unsaved work: Monaco normalises a golden's EOLs on load, which once left the
   // tab dirty and made closing it ask to save a file that can't be saved.
-  const MIXED = 'Mixed line endings — read-only so this golden file stays byte-exact.';
+  const MIXED =
+    'Line endings the editor would rewrite — read-only so this golden file stays byte-exact.';
   for (const [name, banner] of [
     ['mixed.txt.golden', MIXED],
     ['mixed.json.golden', MIXED],

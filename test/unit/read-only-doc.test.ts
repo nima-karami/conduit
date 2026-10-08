@@ -29,7 +29,8 @@ describe('readOnlyState', () => {
       partial: false,
     });
     expect(readOnlyState({ ...doc, readOnlyReason: 'mixed-eol' })).toEqual({
-      banner: 'Mixed line endings — read-only so this golden file stays byte-exact.',
+      banner:
+        'Line endings the editor would rewrite — read-only so this golden file stays byte-exact.',
       refusal: AUTO_SAVE_COPY.mixedEolRefusal,
       partial: false,
     });

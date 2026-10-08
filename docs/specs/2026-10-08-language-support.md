@@ -115,7 +115,7 @@ Required behavior:
    the same pass; if more than one kind occurs, **or any bare CR occurs at all** (Monaco reads a
    lone CR as a line break and rewrites it to the model's EOL, so even a pure-CR golden would not
    round-trip — found in Lane A review), and `isGoldenPath`, `readOnlyReason: 'mixed-eol'`,
-   banner *"Mixed line endings — read-only so this golden file stays byte-exact."* Non-golden
+   banner *"Line endings the editor would rewrite — read-only so this golden file stays byte-exact."* Non-golden
    mixed-EOL files keep today's VS Code-parity normalisation (decision D3).
 4. Read-only reasons reuse the truncated path's mechanics: `readOnly`, `writable:false` on
    `fileSaves.attach`, `silenceReadOnlyPopup`, the one-shot live-region announcement. Change
@@ -346,7 +346,7 @@ Scenario: a huge log opens at its end without loading the file
 | Editor banner | truncated head | "Large file — showing the first 2 MB, read-only." (unchanged) | none |
 | Editor banner | truncated tail (log) | "Large log — showing the last 2 MB, read-only." | none |
 | Editor banner | invalid-utf8 | "Not valid UTF-8 — read-only so saving can't change its bytes." | none |
-| Editor banner | mixed-eol golden | "Mixed line endings — read-only so this golden file stays byte-exact." | none |
+| Editor banner | mixed-eol golden | "Line endings the editor would rewrite — read-only so this golden file stays byte-exact." | none |
 | Toast | csharp-ls missing | generic install toast (once per session, existing rule) | copy command text |
 | Trust prompt | C# folder | "C# navigation runs tools from this project (csharp-ls, dotnet / MSBuild …)" | Trust / Not now (existing) |
 | Status/loading | csharp-ls loading | existing LSP loading status | none |

@@ -19,7 +19,8 @@ export const AUTO_SAVE_COPY = {
   partialBanner: 'Large file — showing the first 2 MB, read-only.',
   tailBanner: 'Large log — showing the last 2 MB, read-only.',
   invalidUtf8Banner: "Not valid UTF-8 — read-only so saving can't change its bytes.",
-  mixedEolBanner: 'Mixed line endings — read-only so this golden file stays byte-exact.',
+  mixedEolBanner:
+    'Line endings the editor would rewrite — read-only so this golden file stays byte-exact.',
   tailLine: (line: number) =>
     `This log is shown from its last 2 MB — line ${line} may be outside it.`,
   changedOnDisk: (name: string) => `${name} changed on disk. Auto-save is paused for this file.`,
