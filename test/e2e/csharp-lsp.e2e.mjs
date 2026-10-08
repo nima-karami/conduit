@@ -17,15 +17,14 @@ import {
   csharpLsInstalled,
   GREET_CALL,
   READY_CEILING_MS,
-  recordTree,
   restoreFixture,
-  survivorsAfter,
-  waitCsState,
-  waitDefinition,
   writeCsharpFixture,
 } from './csharp-fixture.mjs';
 import { clearTransients, observe, openDoc, placeCursor, pointOn } from './goto-matrix.mjs';
 import { assert, closeApp, launchApp, openSession, runScenario } from './harness.mjs';
+import { recordTree, survivorsAfter, waitDefinition, waitServerState } from './lsp-fixture.mjs';
+
+const waitCsState = (page, state, log, ms) => waitServerState(page, 'csharp', state, log, ms);
 
 const INSTALL_TOAST =
   'C# navigation needs csharp-ls — install with `dotnet tool install --global csharp-ls`';

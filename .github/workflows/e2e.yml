@@ -223,6 +223,33 @@ jobs:
         run: |
           dotnet tool install --global csharp-ls --version 0.28.0
           Join-Path $HOME '.dotnet' 'tools' >> $env:GITHUB_PATH
+      # basedpyright from PyPI ships a real .exe console script; npm's pyright is a .cmd the host
+      # cannot spawn (spec 2026-10-08-language-coverage §2.5). setup-python puts Scripts on PATH.
+      - if: contains(format(' {0} ', matrix.names), ' python-lsp ') || contains(format(' {0} ', matrix.names), ' lsp-trust-multi ')
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - if: contains(format(' {0} ', matrix.names), ' python-lsp ') || contains(format(' {0} ', matrix.names), ' lsp-trust-multi ')
+        shell: pwsh
+        run: |
+          python -m pip install basedpyright==1.40.2
+          basedpyright --version
+          (Get-Command basedpyright-langserver -CommandType Application).Source
+      - if: contains(format(' {0} ', matrix.names), ' rust-lsp ') || contains(format(' {0} ', matrix.names), ' lsp-trust-multi ')
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component rust-analyzer
+          rustup default 1.98.1
+          rust-analyzer --version
+          Join-Path $HOME '.cargo' 'bin' >> $env:GITHUB_PATH
+      # The image's LLVM, else choco's. Nothing goes on PATH: the host finds clangd through
+      # %ProgramFiles%\LLVM\bin itself, which is the lookup the scenario proves.
+      - if: contains(format(' {0} ', matrix.names), ' clangd-lsp ') || contains(format(' {0} ', matrix.names), ' lsp-trust-multi ')
+        shell: pwsh
+        run: |
+          $llvm = Join-Path $env:ProgramFiles 'LLVM\bin'
+          if (-not (Test-Path (Join-Path $llvm 'clangd.exe'))) { choco install llvm --version=20.1.8 -y --no-progress }
+          & (Join-Path $llvm 'clangd.exe') --version
       # Scenarios build scratch repos and commit; a hosted runner has no git identity.
       - run: |
           git config --global user.name "conduit-e2e"

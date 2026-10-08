@@ -38,6 +38,12 @@ function probe(
 }
 
 describe('resolveServerRoot', () => {
+  it('root key uses the primary id', async () => {
+    const cfam = { ...GO_SERVER, languageIds: ['cpp', 'c'] as const };
+    const r = await rootOf('/w/src/x.h', ['/w'], cfam, probe(['/w/go.mod']), 'linux');
+    expect(r?.key).toBe('cpp:/w');
+  });
+
   it('nearest go.mod wins', async () => {
     const r = await rootOf(
       'C:\\w\\a\\b\\main.go',

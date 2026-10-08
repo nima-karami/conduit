@@ -61,7 +61,10 @@ export interface LspServerStatus {
 }
 /** What the renderer may know about a registry entry — all user-facing copy is templated from it. */
 export interface LspLanguageInfo {
+  /** The primary id — what statuses, restart and the trust prompt carry. */
   languageId: string;
+  /** Every id the server serves; `languageId` is the first. */
+  languageIds: string[];
   displayName: string;
   binary: string;
   installHint: string;
@@ -75,10 +78,12 @@ export interface LspTrustPrompt {
   parent: string | null;
   languageId: string;
   displayName: string;
-  /** e.g. "gopls, go list" — the prompt's why line names them. */
-  runsTools: string;
+  /** One line per registry server, e.g. "gopls, go list" — trust lets every one of them run. */
+  runsTools: string[];
 }
 export type LspTrustChoice = 'trust' | 'trustParent' | 'deny';
+/** Why a served doc is kept from its server: a truncated head window, or a lossy decode. */
+export type LspNotSyncedCause = 'too-large' | 'encoding';
 export interface LspTrustState {
   trusted: string[];
   prompt: LspTrustPrompt | null;

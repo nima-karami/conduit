@@ -15,9 +15,12 @@ import {
 import type { LspLanguageInfo } from './lsp-protocol';
 
 export interface LanguageServerSpec {
-  languageId: string;
+  /** `[0]` keys records, statuses, the absent TTL and restart; any id routes a doc here. */
+  languageIds: readonly [string, ...string[]];
   displayName: string;
   binary: string;
+  /** Searched in order when `binary` is not found; user-facing copy still names `binary`. */
+  altBinaries?: readonly string[];
   args: readonly string[];
   /** Each an exact basename or `*.<ext>` (see `compileRootMarker`). */
   rootMarkers: { workspace: readonly string[]; module: readonly string[] };
@@ -30,6 +33,13 @@ export interface LanguageServerSpec {
   installHint: string;
   /** What starting it runs in the project, for the Workspace Trust prompt's one-line why. */
   runsTools: string;
+  /** Sent as `initialize.initializationOptions` when set. */
+  initializationOptions?: unknown;
+  /** Answers `workspace/configuration` items by exact `section`; anything else gets null. */
+  settings?: Readonly<Record<string, unknown>>;
+  /** Run at resolve (tmpdir cwd); a failure means the server is absent — a proxy binary can
+   *  exist without the tool behind it. */
+  versionProbe?: readonly string[];
   /** Directory of the toolchain the server needs on its PATH, or null. */
   resolveToolDir(ctx: SearchContext): Promise<string | null>;
   /** Dirs searched after PATH. */
@@ -66,6 +76,20 @@ function setUnlessPresent(
   if (!env[key]) env[key] = value;
 }
 
+/** A copy of `base` whose PATH holds only absolute entries, `toolDir` first. The server's cwd is
+ *  the repo, so a relative entry would let it run a repo-local tool (ADR 0006 §Trust). */
+function serverEnv(
+  base: Readonly<Record<string, string | undefined>>,
+  toolDir: string | null,
+  platform: HostPlatform,
+): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...base };
+  const key = envKey(env, 'PATH', platform);
+  const entries = pathDirs({ env: base, platform });
+  env[key] = (toolDir ? [toolDir, ...entries] : entries).join(pathDelimiter(platform));
+  return env;
+}
+
 /** `GOTOOLCHAIN=local` unless the user set their own: a repo's `toolchain` directive must not
  *  make opening a file download and run a toolchain (ADR 0006 §Trust). */
 function withLocalToolchain(
@@ -77,7 +101,7 @@ function withLocalToolchain(
 }
 
 export const GO_SERVER: LanguageServerSpec = {
-  languageId: 'go',
+  languageIds: ['go'],
   displayName: 'Go',
   binary: 'gopls',
   args: [],
@@ -90,7 +114,7 @@ export const GO_SERVER: LanguageServerSpec = {
 
   async resolveToolDir(ctx) {
     const go = await findBinary('go', [...pathDirs(ctx), ...GO_FIXED_DIRS[ctx.platform]], ctx);
-    return go ? dirnameFor(ctx.platform, go) : null;
+    return go ? dirnameFor(ctx.platform, go.realPath) : null;
   },
 
   async extraSearchDirs(ctx, toolDir) {
@@ -127,11 +151,7 @@ export const GO_SERVER: LanguageServerSpec = {
   },
 
   childEnv(base, toolDir, platform) {
-    const env: Record<string, string | undefined> = { ...base };
-    const key = envKey(env, 'PATH', platform);
-    const entries = pathDirs({ env: base, platform });
-    env[key] = (toolDir ? [toolDir, ...entries] : entries).join(pathDelimiter(platform));
-    return withLocalToolchain(env, platform);
+    return withLocalToolchain(serverEnv(base, toolDir, platform), platform);
   },
 };
 
@@ -142,7 +162,7 @@ const DOTNET_FIXED_DIRS: Readonly<Record<HostPlatform, readonly string[]>> = {
 };
 
 export const CSHARP_SERVER: LanguageServerSpec = {
-  languageId: 'csharp',
+  languageIds: ['csharp'],
   displayName: 'C#',
   binary: 'csharp-ls',
   args: [],
@@ -169,9 +189,9 @@ export const CSHARP_SERVER: LanguageServerSpec = {
       [...pathDirs(ctx), ...DOTNET_FIXED_DIRS[ctx.platform], ...home],
       ctx,
     );
-    // findBinary returns the realpath, so this is the real install dir even behind a PATH
-    // symlink (/usr/bin/dotnet, Homebrew) — which is what DOTNET_ROOT must name.
-    return dotnet ? dirnameFor(ctx.platform, dotnet) : null;
+    // The realpath's dir is the real install dir even behind a PATH symlink (/usr/bin/dotnet,
+    // Homebrew) — which is what DOTNET_ROOT must name.
+    return dotnet ? dirnameFor(ctx.platform, dotnet.realPath) : null;
   },
 
   async extraSearchDirs(ctx) {
@@ -183,10 +203,7 @@ export const CSHARP_SERVER: LanguageServerSpec = {
   },
 
   childEnv(base, toolDir, platform) {
-    const env: Record<string, string | undefined> = { ...base };
-    const key = envKey(env, 'PATH', platform);
-    const entries = pathDirs({ env: base, platform });
-    env[key] = (toolDir ? [toolDir, ...entries] : entries).join(pathDelimiter(platform));
+    const env = serverEnv(base, toolDir, platform);
     // A global-tool apphost finds the runtime through DOTNET_ROOT when `dotnet` isn't on PATH.
     if (toolDir) setUnlessPresent(env, 'DOTNET_ROOT', toolDir, platform);
     setUnlessPresent(env, 'DOTNET_CLI_TELEMETRY_OPTOUT', '1', platform);
@@ -194,18 +211,161 @@ export const CSHARP_SERVER: LanguageServerSpec = {
   },
 };
 
-export const LANGUAGE_SERVERS: readonly LanguageServerSpec[] = [GO_SERVER, CSHARP_SERVER];
+// see spec 2026-10-08-language-coverage §2.5 for every value below
+const PY_ANALYSIS = { typeCheckingMode: 'off', diagnosticMode: 'openFilesOnly' };
+
+export const PYTHON_SERVER: LanguageServerSpec = {
+  languageIds: ['python'],
+  displayName: 'Python',
+  binary: 'basedpyright-langserver',
+  altBinaries: ['pyright-langserver'],
+  args: ['--stdio'],
+  rootMarkers: {
+    workspace: ['pyrightconfig.json'],
+    module: ['pyproject.toml', 'setup.py', 'setup.cfg', 'requirements.txt', 'Pipfile'],
+  },
+  requiresMarker: false,
+  watchGlobs: ['**/*.py', '**/*.pyi', '**/pyproject.toml', '**/pyrightconfig.json', '**/setup.cfg'],
+  watchIgnoreDirs: [
+    '.venv',
+    'venv',
+    '__pycache__',
+    '.tox',
+    '.mypy_cache',
+    '.pytest_cache',
+    '.ruff_cache',
+  ],
+  installHint: 'pip install basedpyright',
+  runsTools: "basedpyright, python (reads the interpreter's import paths)",
+  settings: { 'basedpyright.analysis': PY_ANALYSIS, 'python.analysis': PY_ANALYSIS },
+
+  async resolveToolDir() {
+    return null;
+  },
+
+  async extraSearchDirs(ctx) {
+    if (!ctx.homedir) return [];
+    const local = joinFor(ctx.platform, joinFor(ctx.platform, ctx.homedir, '.local'), 'bin');
+    return isAbsoluteFor(local, ctx.platform) ? [local] : [];
+  },
+
+  childEnv(base, toolDir, platform) {
+    return serverEnv(base, toolDir, platform);
+  },
+};
+
+const cargoBins = (ctx: SearchContext): string[] => {
+  const { platform, env } = ctx;
+  const dirs: string[] = [];
+  const cargoHome = env[envKey(env, 'CARGO_HOME', platform)]?.trim();
+  if (cargoHome) dirs.push(joinFor(platform, cargoHome, 'bin'));
+  if (ctx.homedir) dirs.push(joinFor(platform, joinFor(platform, ctx.homedir, '.cargo'), 'bin'));
+  return [...new Set(dirs.filter((d) => isAbsoluteFor(d, platform)))];
+};
+
+export const RUST_SERVER: LanguageServerSpec = {
+  languageIds: ['rust'],
+  displayName: 'Rust',
+  binary: 'rust-analyzer',
+  args: [],
+  rootMarkers: { workspace: ['Cargo.lock'], module: ['Cargo.toml'] },
+  requiresMarker: true,
+  watchGlobs: ['**/*.rs', '**/Cargo.toml', '**/Cargo.lock', '**/rust-toolchain.toml'],
+  watchIgnoreDirs: ['target'],
+  installHint: 'rustup component add rust-analyzer',
+  runsTools: 'rust-analyzer, cargo metadata, build scripts and proc-macros',
+  initializationOptions: { checkOnSave: false },
+  settings: { 'rust-analyzer': { checkOnSave: false } },
+  versionProbe: ['--version'],
+
+  async resolveToolDir(ctx) {
+    const cargo = await findBinary('cargo', [...pathDirs(ctx), ...cargoBins(ctx)], ctx);
+    // `.path`, not `.realPath`: rustup's argv0 dispatch (spec §2.5 toolDir row).
+    return cargo ? dirnameFor(ctx.platform, cargo.path) : null;
+  },
+
+  async extraSearchDirs(ctx) {
+    return cargoBins(ctx);
+  },
+
+  childEnv(base, toolDir, platform) {
+    const env = serverEnv(base, toolDir, platform);
+    setUnlessPresent(env, 'RUSTUP_AUTO_INSTALL', '0', platform);
+    return env;
+  },
+};
+
+const LLVM_FIXED_DIRS: Readonly<Record<'darwin' | 'linux', readonly string[]>> = {
+  darwin: [
+    '/opt/homebrew/opt/llvm/bin',
+    '/usr/local/opt/llvm/bin',
+    '/Library/Developer/CommandLineTools/usr/bin',
+  ],
+  linux: [],
+};
+
+export const CLANGD_SERVER: LanguageServerSpec = {
+  languageIds: ['cpp', 'c'],
+  displayName: 'C/C++',
+  binary: 'clangd',
+  args: ['--background-index', '-j=2', '--header-insertion=never'],
+  rootMarkers: {
+    workspace: ['compile_commands.json', 'compile_flags.txt', '.clangd'],
+    module: ['CMakeLists.txt', 'meson.build', 'Makefile'],
+  },
+  requiresMarker: false,
+  watchGlobs: [
+    ...['c', 'h', 'cc', 'cpp', 'cxx', 'hpp', 'hh', 'hxx', 'ipp', 'inl', 'cu', 'cuh'].map(
+      (ext) => `**/*.${ext}`,
+    ),
+    '**/compile_commands.json',
+    '**/compile_flags.txt',
+    '**/.clangd',
+  ],
+  watchIgnoreDirs: ['CMakeFiles'],
+  installHint: 'winget install LLVM.LLVM',
+  runsTools: 'clangd (reads compile_commands.json; writes .cache/clangd)',
+
+  async resolveToolDir() {
+    return null;
+  },
+
+  async extraSearchDirs(ctx) {
+    const { platform, env } = ctx;
+    if (platform !== 'win32') return [...LLVM_FIXED_DIRS[platform]];
+    // From %ProgramFiles% rather than a literal C:\, so a non-C: install is found too.
+    const programFiles = env[envKey(env, 'PROGRAMFILES', platform)]?.trim();
+    if (!programFiles || !isAbsoluteFor(programFiles, platform)) return [];
+    return [joinFor(platform, programFiles, 'LLVM\\bin')];
+  },
+
+  childEnv(base, toolDir, platform) {
+    return serverEnv(base, toolDir, platform);
+  },
+};
+
+export const LANGUAGE_SERVERS: readonly LanguageServerSpec[] = [
+  GO_SERVER,
+  CSHARP_SERVER,
+  PYTHON_SERVER,
+  RUST_SERVER,
+  CLANGD_SERVER,
+];
+
+export const primaryLanguageId = (spec: Pick<LanguageServerSpec, 'languageIds'>): string =>
+  spec.languageIds[0];
 
 export function serverSpecFor(
   languageId: string,
   registry: readonly LanguageServerSpec[] = LANGUAGE_SERVERS,
 ): LanguageServerSpec | null {
-  return registry.find((s) => s.languageId === languageId) ?? null;
+  return registry.find((s) => s.languageIds.includes(languageId)) ?? null;
 }
 
 export function languageInfo(spec: LanguageServerSpec): LspLanguageInfo {
   return {
-    languageId: spec.languageId,
+    languageId: primaryLanguageId(spec),
+    languageIds: [...spec.languageIds],
     displayName: spec.displayName,
     binary: spec.binary,
     installHint: spec.installHint,

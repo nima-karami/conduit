@@ -1,8 +1,9 @@
 /**
- * Shared by csharp-lsp and csharp-lsp-idle: the C# fixture, the "is csharp-ls installed" probe and
- * the host-side LSP waits (docs/specs/archive/2026-10-08-language-support.md §7 Lane B).
+ * Shared by csharp-lsp and csharp-lsp-idle: the C# fixture and the "is csharp-ls installed" probe
+ * (docs/specs/archive/2026-10-08-language-support.md §7 Lane B). The generic host-side LSP waits
+ * live in lsp-fixture.mjs.
  */
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -77,114 +78,4 @@ export function restoreFixture(dir, log) {
 export function csharpLsInstalled() {
   if (spawnSync('where', ['csharp-ls'], { stdio: 'ignore' }).status === 0) return true;
   return existsSync(join(homedir(), '.dotnet', 'tools', 'csharp-ls.exe'));
-}
-
-/** `pid` and every descendant, by ParentProcessId walk. */
-export function recordTree(pid) {
-  const json = execFileSync(
-    'powershell',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Json -Compress',
-    ],
-    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
-  );
-  const procs = JSON.parse(json);
-  const tree = [{ pid, name: procs.find((p) => p.ProcessId === pid)?.Name ?? '?' }];
-  for (let i = 0; i < tree.length; i++) {
-    for (const p of procs) {
-      if (p.ParentProcessId === tree[i].pid) tree.push({ pid: p.ProcessId, name: p.Name });
-    }
-  }
-  return tree;
-}
-
-const alive = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-export async function survivorsAfter(tree, ms) {
-  const deadline = Date.now() + ms;
-  let left = tree;
-  while (Date.now() < deadline) {
-    left = tree.filter((p) => alive(p.pid));
-    if (left.length === 0) return [];
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  return left;
-}
-
-export const lsp = (page, msg) => page.evaluate((m) => window.agentDeck.lsp(m), msg);
-
-/** The C# server's status entry once it is in `state`, failing on absent/crashed on the way. */
-export async function waitCsState(page, state, log, ms = 30_000) {
-  const t0 = Date.now();
-  let snap = null;
-  while (Date.now() - t0 < ms) {
-    snap = await lsp(page, { type: 'lsp:statusSnapshot' });
-    const cs = snap.servers.filter((s) => s.languageId === 'csharp');
-    const hit = cs.find((s) => s.state === state);
-    if (hit) {
-      log(`csharp-ls ${state} in ${((Date.now() - t0) / 1000).toFixed(1)}s (pid ${hit.pid})`);
-      return hit;
-    }
-    if (state !== 'absent') {
-      const bad = cs.find((s) => s.state === 'absent' || s.state === 'crashed');
-      assert(!bad, `csharp-ls went ${bad?.state}: ${JSON.stringify(bad)}`);
-    }
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  assert(false, `csharp-ls never reached ${state} within ${ms / 1000}s: ${JSON.stringify(snap)}`);
-}
-
-/** Definition over the bridge until the server's project load answers it — `ready` means
- *  initialized, and the solution may still be evaluating. */
-export async function waitDefinition(page, path, line, character, log, ms) {
-  const t0 = Date.now();
-  let last = null;
-  let n = 0;
-  while (Date.now() - t0 < ms) {
-    last = await lsp(page, {
-      type: 'lsp:request',
-      requestId: `cs-def-${++n}`,
-      path,
-      version: 1,
-      op: 'definition',
-      line,
-      character,
-    });
-    if (last.kind === 'locations' && last.locations.length > 0) {
-      log(`definition answered after ${((Date.now() - t0) / 1000).toFixed(1)}s (${n} asks)`);
-      return last;
-    }
-    await new Promise((r) => setTimeout(r, 1_000));
-  }
-  assert(false, `no definition within ${ms / 1000}s: ${JSON.stringify(last)}`);
-}
-
-/** Trust through the host's own prompt flow — what the prompt's Trust button sends. */
-export async function trustViaHost(page, path, log) {
-  const asked = await lsp(page, { type: 'lsp:trustRequest', path, languageId: 'csharp' });
-  assert(asked.ok, `trust request refused for ${path}`);
-  const t0 = Date.now();
-  let state = await lsp(page, { type: 'lsp:trustState' });
-  while (!state.prompt && Date.now() - t0 < 10_000) {
-    await new Promise((r) => setTimeout(r, 100));
-    state = await lsp(page, { type: 'lsp:trustState' });
-  }
-  assert(state.prompt, 'the host raised no trust prompt');
-  const answered = await lsp(page, {
-    type: 'lsp:trustAnswer',
-    promptId: state.prompt.id,
-    choice: 'trust',
-  });
-  assert(answered.ok, 'the host refused the trust answer');
-  log(`trusted ${state.prompt.folder} through the host prompt`);
 }

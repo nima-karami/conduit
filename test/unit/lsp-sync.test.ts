@@ -219,6 +219,7 @@ describe('lsp-sync', () => {
   it('initLspClient seeds servers and languages from statusSnapshot and applies lsp:status pushes', async () => {
     const go = {
       languageId: 'go',
+      languageIds: ['go'],
       displayName: 'Go',
       binary: 'gopls',
       installHint: 'go install golang.org/x/tools/gopls@latest',
@@ -246,20 +247,62 @@ describe('lsp-sync', () => {
 });
 
 describe('syncLanguageFor', () => {
-  const served = new Set(['go', 'csharp']);
+  const served = new Set(['go', 'csharp', 'python']);
 
   it('syncs a file of a served language as that language', () => {
-    expect(sync.syncLanguageFor('/r/main.go', served)).toBe('go');
-    expect(sync.syncLanguageFor('/r/Program.cs', served)).toBe('csharp');
+    expect(sync.syncLanguageFor('/r/main.go', 'go', served)).toBe('go');
+    expect(sync.syncLanguageFor('/r/Program.cs', 'csharp', served)).toBe('csharp');
   });
 
   it('never syncs a file no server serves', () => {
-    expect(sync.syncLanguageFor('/r/app.py', served)).toBeNull();
+    expect(sync.syncLanguageFor('/r/app.rb', 'ruby', served)).toBeNull();
+  });
+
+  it('extensionless python is synced as python', () => {
+    expect(sync.syncLanguageFor('/r/bin/tool', 'python', served)).toBe('python');
+    expect(sync.syncLanguageFor('/r/bin/tool.golden', 'python', served)).toBeNull();
   });
 
   // A golden is an expected-output fixture: colouring it as Go must not make gopls index it.
   it('never syncs a golden file, whatever it wraps', () => {
-    expect(sync.syncLanguageFor('/r/testdata/out.go.golden', served)).toBeNull();
-    expect(sync.syncLanguageFor('/r/Expected.CS.GOLDEN', served)).toBeNull();
+    expect(sync.syncLanguageFor('/r/testdata/out.go.golden', 'go', served)).toBeNull();
+    expect(sync.syncLanguageFor('/r/Expected.CS.GOLDEN', 'csharp', served)).toBeNull();
+  });
+});
+
+describe('syncSkipCause', () => {
+  it('truncated → too-large, invalid-utf8 → encoding, mixed-eol → null', () => {
+    expect(sync.syncSkipCause({ truncated: true })).toBe('too-large');
+    expect(sync.syncSkipCause({ truncated: true, readOnlyReason: 'invalid-utf8' })).toBe(
+      'too-large',
+    );
+    expect(sync.syncSkipCause({ truncated: false, readOnlyReason: 'invalid-utf8' })).toBe(
+      'encoding',
+    );
+    expect(sync.syncSkipCause({ truncated: false, readOnlyReason: 'mixed-eol' })).toBeNull();
+    expect(sync.syncSkipCause({ truncated: false })).toBeNull();
+  });
+});
+
+describe('reconcile by language', () => {
+  it('language change closes and reopens', () => {
+    const tool = '/w/bin/tool';
+    sync.reconcileLspDocs([{ path: tool, languageId: 'python', text: '#!/usr/bin/env python3' }]);
+    expect(h.sent.at(-1)).toMatchObject({ type: 'lsp:open', path: tool, languageId: 'python' });
+    sync.reconcileLspDocs([{ path: tool, languageId: 'shell', text: '#!/bin/sh' }]);
+    expect(h.sent.slice(-2)).toEqual([
+      { type: 'lsp:close', path: tool },
+      { type: 'lsp:open', path: tool, languageId: 'shell', version: 1, text: '#!/bin/sh' },
+    ]);
+  });
+
+  it('notSyncedCause reflects the last reconcile', () => {
+    const big = '/w/big.py';
+    sync.reconcileLspDocs([doc('a')], new Map([[big, 'too-large']]));
+    expect(sync.notSyncedCause(big)).toBe('too-large');
+    expect(sync.notSyncedCause(P)).toBeNull();
+    expect(sync.isLspDocOpen(big)).toBe(false);
+    sync.reconcileLspDocs([doc('a')]);
+    expect(sync.notSyncedCause(big)).toBeNull();
   });
 });

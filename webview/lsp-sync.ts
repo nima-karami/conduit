@@ -2,8 +2,9 @@
 // not on editor mounts: only the active tab's CodeViewer is mounted, but every open tab of a
 // server language is a synced doc (plan "Sync is keyed on the tab list").
 import * as monaco from 'monaco-editor';
-import { isGoldenPath, langFromPath } from '../src/lang';
-import type { LspOp, LspPosition, LspReply } from '../src/lsp-protocol';
+import { isGoldenPath } from '../src/lang';
+import type { LspNotSyncedCause, LspOp, LspPosition, LspReply } from '../src/lsp-protocol';
+import type { FileContentDTO } from '../src/protocol';
 import { lspInvoke, subscribe } from './bridge';
 import { applyLspStatus, applyTrustState, seedLspState, setTrustFocusTarget } from './lsp-status';
 import { fileUri } from './project-index';
@@ -18,6 +19,7 @@ export const LSP_CHANGE_DEBOUNCE_MS = 150;
 
 interface SyncedDoc {
   path: string;
+  languageId: string;
   /** Last version SENT to the host, and the text it carried. */
   version: number;
   text: string;
@@ -79,6 +81,7 @@ function modelFor(path: string): monaco.editor.ITextModel | null {
 function open(input: LspDocInput): void {
   const doc: SyncedDoc = {
     path: input.path,
+    languageId: input.languageId,
     version: 1,
     text: input.text,
     serverKey: null,
@@ -109,23 +112,50 @@ function close(doc: SyncedDoc): void {
   void lspInvoke({ type: 'lsp:close', path: doc.path });
 }
 
-/** The server language an open tab is synced as, or null when no server should see it. A golden
- *  only borrows its wrapped language's colours; it is a fixture, not source a server should index
+/** The server language an open tab is synced as, or null when no server should see it. `language`
+ *  is the tab's resolved language (the DTO's, so a shebang counts). A golden only borrows its
+ *  wrapped language's colours; it is a fixture, not source a server should index
  *  (spec 2026-10-08-language-support §2.3). */
-export function syncLanguageFor(path: string, served: ReadonlySet<string>): string | null {
+export function syncLanguageFor(
+  path: string,
+  language: string,
+  served: ReadonlySet<string>,
+): string | null {
   if (isGoldenPath(path)) return null;
-  const languageId = langFromPath(path);
-  return served.has(languageId) ? languageId : null;
+  return served.has(language) ? language : null;
 }
 
-export function reconcileLspDocs(inputs: readonly LspDocInput[]): void {
+/** A head window or a lossy decode is not the file: a server indexing it would answer wrongly. */
+export function syncSkipCause(
+  dto: Pick<FileContentDTO, 'truncated' | 'readOnlyReason'>,
+): LspNotSyncedCause | null {
+  if (dto.truncated) return 'too-large';
+  if (dto.readOnlyReason === 'invalid-utf8') return 'encoding';
+  return null;
+}
+
+let unsyncedCauses: ReadonlyMap<string, LspNotSyncedCause> = new Map();
+
+export function reconcileLspDocs(
+  inputs: readonly LspDocInput[],
+  unsynced: ReadonlyMap<string, LspNotSyncedCause> = new Map(),
+): void {
+  unsyncedCauses = unsynced;
   const want = new Map(inputs.map((d) => [d.path, d]));
-  for (const doc of [...docs.values()]) if (!want.has(doc.path)) close(doc);
+  for (const doc of [...docs.values()]) {
+    const input = want.get(doc.path);
+    if (!input || input.languageId !== doc.languageId) close(doc);
+  }
   for (const input of want.values()) {
     const doc = docs.get(input.path);
     if (!doc) open(input);
     else if (!doc.timer && input.text !== doc.text) void sendText(doc, input.text);
   }
+}
+
+/** Why a served tab was kept from its server, as of the last reconcile. */
+export function notSyncedCause(path: string): LspNotSyncedCause | null {
+  return unsyncedCauses.get(path) ?? null;
 }
 
 export function isLspDocOpen(path: string): boolean {

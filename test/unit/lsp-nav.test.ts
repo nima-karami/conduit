@@ -21,7 +21,8 @@ const h = vi.hoisted(() => ({
   executeCommandWithArgs: vi.fn(async () => {}),
   getTypeScriptWorker: vi.fn(),
   models: new Map<string, unknown>(),
-  created: [] as { uri: string; text: string; disposed: boolean }[],
+  created: [] as { uri: string; text: string; lang: string; disposed: boolean }[],
+  notSynced: new Map<string, string>(),
   order: [] as string[],
   hovers: new Map<string, unknown>(),
   version: { current: 1 as number | null },
@@ -48,8 +49,8 @@ vi.mock('monaco-editor', async () => {
     },
     editor: {
       getModel: (uri: { toString(): string }) => h.models.get(uri.toString()) ?? null,
-      createModel: (text: string, _lang: string, uri: { toString(): string }) => {
-        const rec = { uri: uri.toString(), text, disposed: false };
+      createModel: (text: string, lang: string, uri: { toString(): string }) => {
+        const rec = { uri: uri.toString(), text, lang, disposed: false };
         h.created.push(rec);
         const model = {
           uri,
@@ -95,6 +96,7 @@ vi.mock('../../webview/lsp-sync', () => ({
   currentVersion: () => h.version.current,
   syncedText: (p: string) => (h.openDocs.has(p) ? `package main // synced ${p}` : null),
   requestTrust: (path: string, languageId: string) => h.trustRequests.push([path, languageId]),
+  notSyncedCause: (p: string) => h.notSynced.get(p) ?? null,
 }));
 vi.mock('../../webview/lsp-status', () => ({
   lspStateForKey: (k: string | null) => (k ? (h.states.get(k) ?? null) : null),
@@ -104,6 +106,7 @@ vi.mock('../../webview/lsp-status', () => ({
 
 const GO: LspLanguageInfo = {
   languageId: 'go',
+  languageIds: ['go'],
   displayName: 'Go',
   binary: 'gopls',
   installHint: 'go install golang.org/x/tools/gopls@latest',
@@ -209,6 +212,7 @@ beforeEach(() => {
   h.models.clear();
   h.created.length = 0;
   h.order.length = 0;
+  h.notSynced.clear();
   opened = [];
   setDefinitionOpener((p) => opened.push(p));
 });
@@ -305,6 +309,52 @@ describe('LSP navigation (E2)', () => {
     expect(h.lspRequest.mock.calls[0]?.[1]).toBe('definition');
     expect(outcome).toEqual({ kind: 'peeked' });
     expect(opened).toEqual([]);
+  });
+});
+
+describe('LSP navigation — docs kept from the server', () => {
+  const PY: LspLanguageInfo = {
+    ...GO,
+    languageId: 'python',
+    languageIds: ['python'],
+    displayName: 'Python',
+    binary: 'basedpyright-langserver',
+  };
+
+  it('not-synced doc returns without a request', async () => {
+    h.langs.set('python', PY);
+    h.notSynced.set('/w/big/huge.py', 'too-large');
+    const e = fakeEditor('/w/big/huge.py', 'python');
+    const outcome = await runNavCommand(e.editor, 'editor.action.revealDefinition');
+    expect(outcome).toEqual({ kind: 'lsp-not-synced', language: PY, cause: 'too-large' });
+    expect(h.lspRequest).not.toHaveBeenCalled();
+    expect(h.order).toEqual([]);
+    expect([...toasts(), ...e.inline]).toContain('File too large for code navigation');
+  });
+
+  it('a not-synced doc is reported to a pointer gesture too', async () => {
+    h.langs.set('python', PY);
+    h.notSynced.set('/w/big/latin.py', 'encoding');
+    const e = fakeEditor('/w/big/latin.py', 'python');
+    await runNavCommand(e.editor, 'editor.action.revealDefinition', { gesture: 'pointer' });
+    expect([...toasts(), ...e.inline]).toContain('Code navigation needs UTF-8 text');
+  });
+
+  it('target model for an extensionless shebang target is python', async () => {
+    h.langs.set('python', PY);
+    h.lspRequest.mockResolvedValue({
+      kind: 'locations',
+      locations: [{ path: '/w/bin/tool', range: R(3, 4, 9) }],
+      targets: [{ path: '/w/bin/tool', text: '#!/usr/bin/env python3\nimport x\n' }],
+      dropped: 0,
+    });
+    await runNavCommand(
+      fakeEditor('/w/main.py', 'python').editor,
+      'editor.action.revealDefinition',
+    );
+    expect(h.created.map((m) => [m.uri, m.lang])).toEqual([
+      [fileUri('/w/bin/tool').toString(), 'python'],
+    ]);
   });
 });
 

@@ -10,7 +10,7 @@
  */
 
 import { languageDisplayName } from '../src/lang';
-import type { LspLanguageInfo } from '../src/lsp-protocol';
+import type { LspLanguageInfo, LspNotSyncedCause } from '../src/lsp-protocol';
 import { INDEX_MAX_FILE_BYTES } from '../src/source-index';
 
 export type NavOutcome =
@@ -33,6 +33,8 @@ export type NavOutcome =
   | { kind: 'lsp-no-root'; language: LspLanguageInfo }
   | { kind: 'lsp-root-escapes'; language: LspLanguageInfo }
   | { kind: 'lsp-restricted'; language: LspLanguageInfo }
+  // The tab is a truncated head window or a lossy decode, so no server was ever shown it.
+  | { kind: 'lsp-not-synced'; language: LspLanguageInfo; cause: LspNotSyncedCause }
   // Superseded by the user (caret moved, another nav, tab switch) before it resolved: silent.
   | { kind: 'cancelled' };
 
@@ -86,6 +88,7 @@ export interface NavClassifyInput {
       | 'restricted'
       | 'loading-timeout'
       | null;
+    notSynced: LspNotSyncedCause | null;
     adHocRoot: boolean;
     cancelled: boolean;
   } | null;
@@ -95,6 +98,8 @@ export function classifyNavOutcome(input: NavClassifyInput): NavOutcome {
   if (!input.supported) return { kind: 'unsupported', languageId: input.languageId };
   const { lsp } = input;
   if (lsp?.cancelled) return { kind: 'cancelled' };
+  if (lsp?.notSynced)
+    return { kind: 'lsp-not-synced', language: lsp.language, cause: lsp.notSynced };
   if (lsp?.unavailable) return { kind: `lsp-${lsp.unavailable}`, language: lsp.language };
   if (input.timedOut) return { kind: 'timed-out' };
   const outcome = classifyResults(input);
@@ -233,6 +238,12 @@ function lspOutcomeMessage(o: NavOutcome): NavMessage | null {
       );
     case 'lsp-no-root':
       return toast(`${o.language.displayName} navigation works for files inside an open project.`);
+    case 'lsp-not-synced':
+      return toast(
+        o.cause === 'too-large'
+          ? 'File too large for code navigation'
+          : 'Code navigation needs UTF-8 text',
+      );
     default:
       return null;
   }

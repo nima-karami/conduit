@@ -23,7 +23,13 @@ import { post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
 import { useEditorGroup } from '../editor-group-context';
 import { IconChevron } from '../icons';
-import { lspStateForKey, subscribeLspStatus, useLspLanguages, useLspStatuses } from '../lsp-status';
+import {
+  lspLanguage,
+  lspStateForKey,
+  subscribeLspStatus,
+  useLspLanguages,
+  useLspStatuses,
+} from '../lsp-status';
 import {
   currentVersion,
   lspRequest,
@@ -74,8 +80,8 @@ export function BreadcrumbBar({
   const rootCwd = activeSession ? activeCwd(activeSession) : '';
   const pathSegments = breadcrumbPathSegments(filePath, rootCwd);
   const isTs = TS_LANGS.has(language);
-  const lspLanguages = useLspLanguages();
-  const serverInfo = lspLanguages.find((l) => l.languageId === language) ?? null;
+  useLspLanguages();
+  const serverInfo = lspLanguage(language);
   const isServer = serverInfo !== null;
   useLspStatuses();
   const restricted = isServer && lspStateForKey(serverKeyForDoc(filePath)) === 'restricted';

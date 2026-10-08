@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest';
+import type { SearchContext } from '../../src/lsp-binary';
 import {
+  CLANGD_SERVER,
   CSHARP_SERVER,
   compileRootMarker,
   compileRootMarkers,
   compileWatchGlobs,
   GO_SERVER,
   LANGUAGE_SERVERS,
+  type LanguageServerSpec,
   languageInfo,
+  PYTHON_SERVER,
+  primaryLanguageId,
+  RUST_SERVER,
   serverSpecFor,
 } from '../../src/lsp-registry';
 
@@ -45,9 +51,22 @@ describe('registry', () => {
     expect(serverSpecFor('go')).toBe(GO_SERVER);
   });
 
+  it('serverSpecFor matches any id', () => {
+    const cfam: LanguageServerSpec = { ...GO_SERVER, languageIds: ['cpp', 'c'] };
+    expect(serverSpecFor('c', [GO_SERVER, cfam])).toBe(cfam);
+    expect(serverSpecFor('cpp', [GO_SERVER, cfam])).toBe(cfam);
+    expect(primaryLanguageId(cfam)).toBe('cpp');
+  });
+
+  it('languageIds unique across LANGUAGE_SERVERS', () => {
+    const ids = LANGUAGE_SERVERS.flatMap((s) => s.languageIds);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it('languageInfo(GO_SERVER) has moduleMarker go.mod', () => {
     expect(languageInfo(GO_SERVER)).toEqual({
       languageId: 'go',
+      languageIds: ['go'],
       displayName: 'Go',
       binary: 'gopls',
       installHint: 'go install golang.org/x/tools/gopls@latest',
@@ -157,6 +176,145 @@ describe('root markers', () => {
   });
 });
 
+describe('Python, Rust and C/C++ (spec 2026-10-08-language-coverage §2.5)', () => {
+  const ctx = (over: Partial<SearchContext> = {}): SearchContext => ({
+    env: {},
+    platform: 'linux',
+    homedir: '/home/n',
+    tmpdir: '/tmp',
+    isFile: async () => false,
+    realpath: async (p) => p,
+    execFile: async () => '',
+    ...over,
+  });
+
+  it('every new watch glob and marker compiles', () => {
+    for (const spec of [PYTHON_SERVER, RUST_SERVER, CLANGD_SERVER]) {
+      expect(LANGUAGE_SERVERS).toContain(spec);
+      expect(() => compileWatchGlobs(spec.watchGlobs, spec.watchIgnoreDirs)).not.toThrow();
+      expect(() => compileRootMarkers(spec)).not.toThrow();
+    }
+    expect(compileWatchGlobs(CLANGD_SERVER.watchGlobs)('src/a.hpp')).toBe(true);
+    expect(
+      compileWatchGlobs(PYTHON_SERVER.watchGlobs, PYTHON_SERVER.watchIgnoreDirs)('.venv/x.py'),
+    ).toBe(false);
+  });
+
+  it('serverSpecFor routes every served id', () => {
+    expect(serverSpecFor('c')).toBe(CLANGD_SERVER);
+    expect(serverSpecFor('cpp')).toBe(CLANGD_SERVER);
+    expect(serverSpecFor('python')).toBe(PYTHON_SERVER);
+    expect(serverSpecFor('rust')).toBe(RUST_SERVER);
+    expect(primaryLanguageId(CLANGD_SERVER)).toBe('cpp');
+    expect(serverSpecFor('objective-c')).toBeNull();
+  });
+
+  it('the spec values are taken as written', () => {
+    expect(PYTHON_SERVER).toMatchObject({
+      binary: 'basedpyright-langserver',
+      altBinaries: ['pyright-langserver'],
+      args: ['--stdio'],
+      requiresMarker: false,
+    });
+    expect(PYTHON_SERVER.initializationOptions).toBeUndefined();
+    expect(RUST_SERVER).toMatchObject({
+      binary: 'rust-analyzer',
+      args: [],
+      requiresMarker: true,
+      versionProbe: ['--version'],
+      watchIgnoreDirs: ['target'],
+    });
+    expect(CLANGD_SERVER).toMatchObject({
+      displayName: 'C/C++',
+      binary: 'clangd',
+      args: ['--background-index', '-j=2', '--header-insertion=never'],
+      requiresMarker: false,
+      watchIgnoreDirs: ['CMakeFiles'],
+    });
+    expect(CLANGD_SERVER.versionProbe).toBeUndefined();
+  });
+
+  it('Python settings answer both sections with the same object', () => {
+    const a = PYTHON_SERVER.settings?.['basedpyright.analysis'];
+    expect(a).toEqual({ typeCheckingMode: 'off', diagnosticMode: 'openFilesOnly' });
+    expect(PYTHON_SERVER.settings?.['python.analysis']).toBe(a);
+  });
+
+  it('Python searches ~/.local/bin and runs with a copy of the host env', async () => {
+    expect(await PYTHON_SERVER.extraSearchDirs(ctx(), null)).toEqual(['/home/n/.local/bin']);
+    expect(await PYTHON_SERVER.extraSearchDirs(ctx({ homedir: '' }), null)).toEqual([]);
+    expect(await PYTHON_SERVER.resolveToolDir(ctx())).toBeNull();
+    const base = Object.freeze({ PATH: '/x', HOME: '/h' });
+    const env = PYTHON_SERVER.childEnv(base, null, 'linux');
+    expect(env).toEqual(base);
+    expect(env).not.toBe(base);
+    // basedpyright runs `python` from PATH with the repo as cwd.
+    expect(PYTHON_SERVER.childEnv({ PATH: '.:venv/bin:/x' }, null, 'linux').PATH).toBe('/x');
+    expect(CLANGD_SERVER.childEnv({ Path: '.;C:\\x' }, null, 'win32').Path).toBe('C:\\x');
+  });
+
+  it('Rust initializationOptions deep-equals {checkOnSave:false}, and settings agree', () => {
+    expect(RUST_SERVER.initializationOptions).toEqual({ checkOnSave: false });
+    expect(RUST_SERVER.settings?.['rust-analyzer']).toEqual({ checkOnSave: false });
+  });
+
+  it('Rust childEnv prepends toolDir and sets RUSTUP_AUTO_INSTALL=0 only when unset', () => {
+    const base = Object.freeze({ PATH: '/usr/bin' });
+    const env = RUST_SERVER.childEnv(base, '/home/n/.cargo/bin', 'linux');
+    expect(env.PATH).toBe('/home/n/.cargo/bin:/usr/bin');
+    expect(env.RUSTUP_AUTO_INSTALL).toBe('0');
+    expect(base).toEqual({ PATH: '/usr/bin' });
+    expect(
+      RUST_SERVER.childEnv({ RUSTUP_AUTO_INSTALL: '1' }, null, 'linux').RUSTUP_AUTO_INSTALL,
+    ).toBe('1');
+    const win = RUST_SERVER.childEnv({ Path: 'C:\\x', rustup_auto_install: '1' }, null, 'win32');
+    expect(win.rustup_auto_install).toBe('1');
+    expect(win.RUSTUP_AUTO_INSTALL).toBeUndefined();
+    expect(win.Path).toBe('C:\\x');
+  });
+
+  it('Rust searches CARGO_HOME/bin then ~/.cargo/bin, absolute only', async () => {
+    expect(await RUST_SERVER.extraSearchDirs(ctx({ env: { CARGO_HOME: '/c' } }), null)).toEqual([
+      '/c/bin',
+      '/home/n/.cargo/bin',
+    ]);
+    expect(await RUST_SERVER.extraSearchDirs(ctx({ env: { CARGO_HOME: 'rel' } }), null)).toEqual([
+      '/home/n/.cargo/bin',
+    ]);
+  });
+
+  it('Rust toolDir is the dir of cargo as found, not its realpath (argv0 dispatch)', async () => {
+    const c = ctx({
+      env: { PATH: '/usr/bin' },
+      isFile: async (p) => p === '/usr/bin/cargo',
+      realpath: async (p) => (p === '/usr/bin/cargo' ? '/usr/lib/rustup/bin/rustup' : p),
+    });
+    expect(await RUST_SERVER.resolveToolDir(c)).toBe('/usr/bin');
+    const home = ctx({ isFile: async (p) => p === '/home/n/.cargo/bin/cargo' });
+    expect(await RUST_SERVER.resolveToolDir(home)).toBe('/home/n/.cargo/bin');
+    expect(await RUST_SERVER.resolveToolDir(ctx())).toBeNull();
+  });
+
+  it('clangd win32 search dir derives from ProgramFiles and is absent when unset', async () => {
+    const win = (env: Record<string, string>) => ctx({ platform: 'win32', homedir: 'C:\\u', env });
+    expect(await CLANGD_SERVER.extraSearchDirs(win({ ProgramFiles: 'D:\\PF' }), null)).toEqual([
+      'D:\\PF\\LLVM\\bin',
+    ]);
+    expect(await CLANGD_SERVER.extraSearchDirs(win({ PROGRAMFILES: 'D:\\PF' }), null)).toEqual([
+      'D:\\PF\\LLVM\\bin',
+    ]);
+    expect(await CLANGD_SERVER.extraSearchDirs(win({}), null)).toEqual([]);
+    expect(await CLANGD_SERVER.extraSearchDirs(win({ ProgramFiles: 'rel' }), null)).toEqual([]);
+    expect(await CLANGD_SERVER.extraSearchDirs(ctx({ platform: 'darwin' }), null)).toEqual([
+      '/opt/homebrew/opt/llvm/bin',
+      '/usr/local/opt/llvm/bin',
+      '/Library/Developer/CommandLineTools/usr/bin',
+    ]);
+    expect(await CLANGD_SERVER.extraSearchDirs(ctx(), null)).toEqual([]);
+    expect(await CLANGD_SERVER.resolveToolDir(ctx())).toBeNull();
+  });
+});
+
 describe('CSHARP_SERVER', () => {
   it('is served as csharp with a project marker required', () => {
     expect(serverSpecFor('csharp')).toBe(CSHARP_SERVER);
@@ -165,6 +323,7 @@ describe('CSHARP_SERVER', () => {
     expect(GO_SERVER.watchIgnoreDirs).toEqual([]);
     expect(languageInfo(CSHARP_SERVER)).toEqual({
       languageId: 'csharp',
+      languageIds: ['csharp'],
       displayName: 'C#',
       binary: 'csharp-ls',
       installHint: 'dotnet tool install --global csharp-ls',

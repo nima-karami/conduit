@@ -57,20 +57,31 @@ export function joinFor(platform: HostPlatform, dir: string, name: string): stri
   return dir.endsWith('/') || dir.endsWith('\\') ? `${dir}${name}` : `${dir}${sep}${name}`;
 }
 
+/** `path` is what gets spawned — a rustup proxy symlinked to `rustup` dispatches on argv0, so
+ *  spawning the realpath would run rustup itself. `realPath` is for locating an install dir. */
+export interface FoundBinary {
+  path: string;
+  realPath: string;
+}
+
 /** Windows candidates are `.exe` only: Node refuses to spawn `.cmd`/`.bat` without a shell
  *  (CVE-2024-27980), and a shell is forbidden here. */
 export async function findBinary(
   name: string,
   dirs: readonly string[],
   ctx: SearchContext,
-): Promise<string | null> {
+): Promise<FoundBinary | null> {
   const file = ctx.platform === 'win32' ? `${name}.exe` : name;
   for (const dir of dirs) {
     const candidate = joinFor(ctx.platform, dir, file);
-    if (await ctx.isFile(candidate)) return ctx.realpath(candidate);
+    if (await ctx.isFile(candidate)) {
+      return { path: candidate, realPath: await ctx.realpath(candidate) };
+    }
   }
   return null;
 }
+
+export const VERSION_PROBE_TIMEOUT_MS = 5_000;
 
 export async function resolveServerBinary(
   spec: LanguageServerSpec,
@@ -78,6 +89,23 @@ export async function resolveServerBinary(
 ): Promise<ResolvedServer | null> {
   const toolDir = await spec.resolveToolDir(ctx);
   const dirs = [...pathDirs(ctx), ...(await spec.extraSearchDirs(ctx, toolDir))];
-  const binary = await findBinary(spec.binary, dirs, ctx);
-  return binary ? { binary, toolDir } : null;
+  let found: FoundBinary | null = null;
+  for (const name of [spec.binary, ...(spec.altBinaries ?? [])]) {
+    found = await findBinary(name, dirs, ctx);
+    if (found) break;
+  }
+  if (!found) return null;
+  if (spec.versionProbe) {
+    // Runs before the trust check, so never in the repo (ADR 0006 §Trust).
+    try {
+      await ctx.execFile(found.path, spec.versionProbe, {
+        cwd: ctx.tmpdir,
+        env: spec.childEnv(ctx.env, toolDir, ctx.platform),
+        timeout: VERSION_PROBE_TIMEOUT_MS,
+      });
+    } catch {
+      return null;
+    }
+  }
+  return { binary: found.path, toolDir };
 }

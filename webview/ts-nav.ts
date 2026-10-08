@@ -679,6 +679,7 @@ async function runLspNav(
       lsp: {
         language,
         unavailable: probe.unavailable,
+        notSynced: probe.notSynced,
         adHocRoot: probe.adHocRoot,
         cancelled: probe.cancelled || guard.cancelled,
       },

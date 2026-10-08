@@ -143,7 +143,7 @@ interface Setup {
   open: (
     path: string,
     text?: string,
-    o?: { wc?: number; epoch?: string; version?: number },
+    o?: { wc?: number; epoch?: string; version?: number; languageId?: string },
   ) => Promise<unknown>;
   req: (
     path: string,
@@ -181,11 +181,11 @@ function setup(
   const resolveBinary = vi.fn(async () =>
     binary.present ? { binary: '/bin/gopls', toolDir: null } : null,
   );
-  const resolveRoot = vi.fn((p: string) =>
+  const resolveRoot = vi.fn((p: string, spec: LanguageServerSpec = GO_SERVER) =>
     resolveServerRoot(
       p,
       roots,
-      GO_SERVER,
+      spec,
       {
         exists: async (f) => files.has(f),
         realpath: async (f) => realpaths.get(f) ?? f,
@@ -234,7 +234,7 @@ function setup(
     send(x.wc ?? 1, x.epoch ?? 'e1', {
       type: 'lsp:open',
       path,
-      languageId: 'go',
+      languageId: x.languageId ?? 'go',
       version: x.version ?? 1,
       text,
     });
@@ -1319,6 +1319,7 @@ describe('LspManager — replies, re-home and status', () => {
       languages: [
         {
           languageId: 'go',
+          languageIds: ['go'],
           displayName: 'Go',
           binary: 'gopls',
           installHint: 'go install golang.org/x/tools/gopls@latest',
@@ -1383,7 +1384,7 @@ describe('LspManager — Workspace Trust (spec 2026-09-23-workspace-trust)', () 
       parent: null,
       languageId: 'go',
       displayName: 'Go',
-      runsTools: 'gopls, go list',
+      runsTools: ['gopls, go list'],
     });
     expect(new Set(t.trustPushes.map((p) => p.prompt?.id).filter(Boolean)).size).toBe(1);
     expect(await t.send(1, 'e1', { type: 'lsp:trustState' })).toEqual({
@@ -1392,14 +1393,14 @@ describe('LspManager — Workspace Trust (spec 2026-09-23-workspace-trust)', () 
     });
   });
 
-  it('the prompt names the requesting language and discloses every served toolset', async () => {
+  it('trust prompt lists one runsTools line per registry server', async () => {
     const t = setup({ trusted: [], registry: [GO_SERVER, CSHARP_SERVER] });
     await t.open('/w/m/main.go');
     await flush();
     expect(prompt(t)).toMatchObject({
       languageId: 'go',
       displayName: 'Go',
-      runsTools: 'gopls, go list · csharp-ls, dotnet / MSBuild (evaluates project files)',
+      runsTools: ['gopls, go list', 'csharp-ls, dotnet / MSBuild (evaluates project files)'],
     });
   });
 
@@ -1579,5 +1580,135 @@ describe('LspManager — Workspace Trust (spec 2026-09-23-workspace-trust)', () 
       trusted: ['/a', '/b'],
       prompt: null,
     });
+  });
+});
+
+describe('LspManager — a server with several language ids', () => {
+  const CFAM: LanguageServerSpec = { ...GO_SERVER, languageIds: ['cpp', 'c'], binary: 'clangd' };
+  const SHELL: LanguageServerSpec = { ...GO_SERVER, languageIds: ['shell'], binary: 'shls' };
+  const PY: LanguageServerSpec = { ...GO_SERVER, languageIds: ['python'], binary: 'pyls' };
+  const didOpens = (s: FakeServer | undefined) =>
+    (s?.notifies ?? [])
+      .filter((n) => n.method === 'textDocument/didOpen')
+      .map((n) => {
+        const td = n.params.textDocument as { uri: string; languageId: string };
+        return [td.uri, td.languageId];
+      });
+  const didCloses = (s: FakeServer | undefined) =>
+    (s?.notifies ?? [])
+      .filter((n) => n.method === 'textDocument/didClose')
+      .map((n) => n.params.textDocument?.uri);
+
+  it("didOpen carries the doc's language id", async () => {
+    const t = setup({ registry: [CFAM] });
+    await t.open('/w/m/x.h', 'int f();', { languageId: 'c' });
+    await t.open('/w/m/x.cpp', 'int f() {}', { languageId: 'cpp' });
+    await t.ready();
+    expect(t.servers).toHaveLength(1);
+    expect(didOpens(t.servers[0])).toEqual([
+      ['file:///w/m/x.h', 'c'],
+      ['file:///w/m/x.cpp', 'cpp'],
+    ]);
+    await t.open('/w/m/y.h', 'int g();', { languageId: 'c' });
+    expect(didOpens(t.servers[0]).at(-1)).toEqual(['file:///w/m/y.h', 'c']);
+    expect(t.mgr.statuses().map((s) => [s.serverKey, s.languageId])).toEqual([['cpp:/w/m', 'cpp']]);
+  });
+
+  it('open with a different language id re-opens the doc', async () => {
+    const t = setup({ registry: [SHELL, PY] });
+    const P = '/w/m/tool';
+    await t.open(P, '#!/bin/sh', { wc: 1, epoch: 'a', languageId: 'shell' });
+    await t.open(P, '#!/bin/sh', { wc: 2, epoch: 'b', languageId: 'shell' });
+    await t.ready(0);
+    const shell = t.servers[0];
+    expect(didOpens(shell)).toEqual([['file:///w/m/tool', 'shell']]);
+    await t.send(1, 'a', { type: 'lsp:close', path: P });
+    await t.open(P, '#!/bin/sh', { wc: 1, epoch: 'a', languageId: 'python' });
+    expect(didCloses(shell)).toEqual(['file:///w/m/tool']);
+    await t.ready(1);
+    expect(didOpens(t.servers[1])).toEqual([['file:///w/m/tool', 'python']]);
+    // Window 2's ref came across: its close and window 1's each drop one, and only then is it gone.
+    await t.send(2, 'b', { type: 'lsp:close', path: P });
+    expect(didCloses(t.servers[1])).toEqual([]);
+    await t.send(1, 'a', { type: 'lsp:close', path: P });
+    expect(didCloses(t.servers[1])).toEqual(['file:///w/m/tool']);
+    await vi.advanceTimersByTimeAsync(IDLE_GRACE_MS);
+    expect(shell?.stop).toHaveBeenCalled();
+  });
+
+  it('restart by a secondary id restarts the server', async () => {
+    const t = setup({ registry: [CFAM] });
+    await t.open('/w/m/x.h', 'int f();', { languageId: 'c' });
+    await t.ready();
+    expect(await t.send(1, 'e1', { type: 'lsp:restart', languageId: 'c' })).toEqual({ ok: true });
+    await flush();
+    expect(t.servers[0]?.stop).toHaveBeenCalled();
+  });
+
+  it('absent TTL is per server', async () => {
+    const t = setup({ registry: [CFAM], files: ['/w/a/go.mod', '/w/b/go.mod'] });
+    t.binary.present = false;
+    await t.open('/w/a/x.h', '', { languageId: 'c' });
+    await flush();
+    await t.open('/w/b/x.cpp', '', { languageId: 'cpp' });
+    await flush();
+    expect(t.resolveBinary).toHaveBeenCalledTimes(1);
+    expect(t.mgr.statuses().map((s) => s.state)).toEqual(['absent', 'absent']);
+  });
+
+  it('resolve cached across stop/relaunch, cleared by restart and by a null resolve', async () => {
+    const t = setup();
+    await t.open('/w/m/main.go');
+    await t.ready(0);
+    expect(t.resolveBinary).toHaveBeenCalledTimes(1);
+    await t.send(1, 'e1', { type: 'lsp:close', path: '/w/m/main.go' });
+    await vi.advanceTimersByTimeAsync(IDLE_GRACE_MS);
+    expect(t.servers[0]?.stop).toHaveBeenCalled();
+    await t.open('/w/m/main.go');
+    await t.ready(1);
+    expect(t.startServer).toHaveBeenCalledTimes(2);
+    expect(t.resolveBinary).toHaveBeenCalledTimes(1);
+
+    t.binary.present = false;
+    await t.send(1, 'e1', { type: 'lsp:restart', languageId: 'go' });
+    await flush();
+    const missing = t.req('/w/m/main.go', 'definition');
+    await flush();
+    expect(await missing).toEqual({ kind: 'unavailable', reason: 'missing' });
+    expect(t.resolveBinary).toHaveBeenCalledTimes(2);
+    expect(t.mgr.statuses().map((s) => s.state)).toEqual(['absent']);
+
+    t.binary.present = true;
+    await vi.advanceTimersByTimeAsync(ABSENT_TTL_MS);
+    const asked = t.req('/w/m/main.go', 'hover');
+    await flush();
+    expect(t.resolveBinary).toHaveBeenCalledTimes(3);
+    expect(t.startServer).toHaveBeenCalledTimes(3);
+    t.servers[2]?.answers.set('textDocument/hover', () => null);
+    t.servers[2]?.resolveInitialized();
+    expect(await asked).toEqual({ kind: 'empty', adHocRoot: false });
+  });
+
+  // A save is what starts rust-analyzer's `cargo check` (spec 2026-10-08-language-coverage AC-B4).
+  it('no doc lifecycle step ever sends a save notification', async () => {
+    const t = setup();
+    await t.open('/w/m/main.go', 'package main');
+    await t.ready();
+    await t.send(1, 'e1', {
+      type: 'lsp:change',
+      path: '/w/m/main.go',
+      version: 2,
+      text: 'package main // saved',
+    });
+    t.watchers[0]?.onChanges([{ path: '/w/m/main.go', type: 2 }]);
+    await t.send(1, 'e1', { type: 'lsp:close', path: '/w/m/main.go' });
+    await flush();
+    const methods = (t.servers[0]?.notifies ?? []).map((n) => n.method);
+    expect(methods).toEqual([
+      'textDocument/didOpen',
+      'textDocument/didChange',
+      'workspace/didChangeWatchedFiles',
+      'textDocument/didClose',
+    ]);
   });
 });

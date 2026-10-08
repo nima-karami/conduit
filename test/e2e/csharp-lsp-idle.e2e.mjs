@@ -12,18 +12,20 @@ import { join } from 'node:path';
 import {
   csharpLsInstalled,
   GREET_CALL,
-  lsp,
   READY_CEILING_MS,
-  recordTree,
   restoreFixture,
-  survivorsAfter,
-  trustViaHost,
-  waitCsState,
-  waitDefinition,
   writeCsharpFixture,
 } from './csharp-fixture.mjs';
 import { closeAllDocs, openDoc } from './goto-matrix.mjs';
 import { assert, openSession, runScenario } from './harness.mjs';
+import {
+  lsp,
+  recordTree,
+  survivorsAfter,
+  trustViaHost,
+  waitDefinition,
+  waitServerState,
+} from './lsp-fixture.mjs';
 
 /** electron/lsp-manager.ts IDLE_GRACE_MS, plus the AC's 10 s. */
 const STOP_CEILING_MS = 60_000 + 10_000;
@@ -37,10 +39,10 @@ runScenario('csharp-lsp-idle', async ({ app, page, log }) => {
   const { program } = writeCsharpFixture(dir);
   restoreFixture(dir, log);
   const sid = await openSession(page, { path: dir });
-  await trustViaHost(page, program, log);
+  await trustViaHost(page, program, 'csharp', log);
 
   await openDoc(app, page, sid, program);
-  const live = await waitCsState(page, 'ready', log, READY_CEILING_MS);
+  const live = await waitServerState(page, 'csharp', 'ready', log, READY_CEILING_MS);
   // Only an answered definition proves the project is loaded — the point at which MSBuild build
   // hosts exist — so the tree is taken after it, and must hold more than csharp-ls itself.
   await waitDefinition(page, program, GREET_CALL.line, GREET_CALL.character, log, 90_000);

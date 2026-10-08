@@ -2,11 +2,18 @@
 // with a server, the guard that makes a late reply harmless, and the peek models its targets
 // need. Landing and peeking stay `runNavCommand`'s (spec 2026-09-22-language-server-go §2.1).
 import * as monaco from 'monaco-editor';
-import { langFromPath } from '../src/lang';
-import type { LspLanguageInfo, LspOp, LspRange } from '../src/lsp-protocol';
+import { langFromPathAndText } from '../src/lang';
+import type { LspLanguageInfo, LspNotSyncedCause, LspOp, LspRange } from '../src/lsp-protocol';
 import { lspInvoke } from './bridge';
 import { lspLanguage } from './lsp-status';
-import { currentVersion, flushPending, isLspDocOpen, lspRequest, syncedText } from './lsp-sync';
+import {
+  currentVersion,
+  flushPending,
+  isLspDocOpen,
+  lspRequest,
+  notSyncedCause,
+  syncedText,
+} from './lsp-sync';
 import { ensureTokenizer } from './monaco-languages';
 import { type NavCommandKind, type NavMessage, restrictedText } from './nav-outcome';
 import { fileUri, pathForUri } from './project-index';
@@ -22,6 +29,7 @@ export interface LspNavProbe {
     | 'restricted'
     | 'loading-timeout'
     | null;
+  notSynced: LspNotSyncedCause | null;
   adHocRoot: boolean;
   cancelled: boolean;
 }
@@ -36,6 +44,7 @@ const EMPTY_PROBE: LspNavProbe = {
   locations: [],
   timedOut: false,
   unavailable: null,
+  notSynced: null,
   adHocRoot: false,
   cancelled: false,
 };
@@ -110,7 +119,7 @@ function modelForTarget(path: string, text: string): monaco.editor.ITextModel {
   const uri = fileUri(path);
   const existing = monaco.editor.getModel(uri);
   if (existing) return existing;
-  const language = langFromPath(path);
+  const language = langFromPathAndText(path, text);
   ensureTokenizer(language);
   const model = monaco.editor.createModel(text, language, uri);
   peekModels.push(model);
@@ -124,6 +133,9 @@ export async function probeLspNav(
   guard: LspNavGuard,
 ): Promise<LspNavProbe> {
   const path = pathForUri(model.uri);
+  // The host never saw this doc, so a request would come back a silent `empty`.
+  const notSynced = notSyncedCause(path);
+  if (notSynced) return { ...EMPTY_PROBE, notSynced };
   await flushPending(path);
   if (guard.cancelled) return { ...EMPTY_PROBE, cancelled: true };
   const op: LspOp = kind === 'peek' ? 'definition' : kind;
