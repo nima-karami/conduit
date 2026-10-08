@@ -71,19 +71,29 @@ export function toLexicalPath(
  *  once (`listing` is shared by one ancestor's workspace and module checks). */
 async function anyExists(
   dir: string,
-  markers: readonly string[],
+  markers: readonly CompiledMarker[],
   platform: HostPlatform,
   probe: RootProbe,
   listing: () => Promise<readonly string[]>,
 ) {
   for (const m of markers) {
-    if (isPatternMarker(m)) {
-      const matches = compileRootMarker(m);
-      if ((await listing()).some(matches)) return true;
-    } else if (await probe.exists(pathFor(platform).join(dir, m))) return true;
+    if (m.pattern) {
+      if ((await listing()).some(m.pattern)) return true;
+    } else if (await probe.exists(pathFor(platform).join(dir, m.name))) return true;
   }
   return false;
 }
+
+interface CompiledMarker {
+  name: string;
+  pattern: ((base: string) => boolean) | null;
+}
+
+const compileMarkers = (markers: readonly string[]): CompiledMarker[] =>
+  markers.map((name) => ({
+    name,
+    pattern: isPatternMarker(name) ? compileRootMarker(name) : null,
+  }));
 
 function onceListing(dir: string, probe: RootProbe): () => Promise<readonly string[]> {
   let entries: Promise<readonly string[]> | null = null;
@@ -112,15 +122,13 @@ export async function resolveServerRoot(
 
   let highestWorkspace: string | null = null;
   let nearestModule: string | null = null;
+  const workspaceMarkers = compileMarkers(spec.rootMarkers.workspace);
+  const moduleMarkers = compileMarkers(spec.rootMarkers.module);
   let dir = path.dirname(file);
   for (;;) {
     const listing = onceListing(dir, probe);
-    if (await anyExists(dir, spec.rootMarkers.workspace, platform, probe, listing))
-      highestWorkspace = dir;
-    if (
-      nearestModule === null &&
-      (await anyExists(dir, spec.rootMarkers.module, platform, probe, listing))
-    ) {
+    if (await anyExists(dir, workspaceMarkers, platform, probe, listing)) highestWorkspace = dir;
+    if (nearestModule === null && (await anyExists(dir, moduleMarkers, platform, probe, listing))) {
       nearestModule = dir;
     }
     if (norm(dir, platform).length <= wsLen) break;

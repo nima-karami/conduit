@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   CSHARP_SERVER,
   compileRootMarker,
+  compileRootMarkers,
   compileWatchGlobs,
   GO_SERVER,
-  isRootMarker,
   LANGUAGE_SERVERS,
   languageInfo,
   serverSpecFor,
@@ -56,11 +56,11 @@ describe('registry', () => {
   });
 
   it('isRootMarker true for x/go.mod and go.work', () => {
-    expect(isRootMarker(GO_SERVER, 'x/go.mod')).toBe(true);
-    expect(isRootMarker(GO_SERVER, 'x\\go.mod')).toBe(true);
-    expect(isRootMarker(GO_SERVER, 'go.work')).toBe(true);
-    expect(isRootMarker(GO_SERVER, 'go.sum')).toBe(false);
-    expect(isRootMarker(GO_SERVER, 'x/main.go')).toBe(false);
+    expect(compileRootMarkers(GO_SERVER)('x/go.mod')).toBe(true);
+    expect(compileRootMarkers(GO_SERVER)('x\\go.mod')).toBe(true);
+    expect(compileRootMarkers(GO_SERVER)('go.work')).toBe(true);
+    expect(compileRootMarkers(GO_SERVER)('go.sum')).toBe(false);
+    expect(compileRootMarkers(GO_SERVER)('x/main.go')).toBe(false);
   });
 });
 
@@ -100,6 +100,20 @@ describe('compileWatchGlobs', () => {
     expect(m('src/objects/A.cs')).toBe(true);
     expect(m('obj.cs')).toBe(true);
   });
+
+  it('ignored dirs match in any case', () => {
+    const m = compileWatchGlobs(CSHARP_SERVER.watchGlobs, ['bin', 'obj']);
+    expect(m('src/App/OBJ/x.props')).toBe(false);
+    expect(m('Bin\\Debug\\App.csproj')).toBe(false);
+  });
+
+  it('extension globs match in any case, like pattern markers; basename globs stay exact', () => {
+    const m = compileWatchGlobs(CSHARP_SERVER.watchGlobs);
+    expect(m('src/Program.CS')).toBe(true);
+    expect(m('App.CsProj')).toBe(true);
+    expect(m('.CS')).toBe(false);
+    expect(compileWatchGlobs(GO_SERVER.watchGlobs)('GO.MOD')).toBe(false);
+  });
 });
 
 describe('root markers', () => {
@@ -128,12 +142,18 @@ describe('root markers', () => {
     expect(compileRootMarker('go.mod')('GO.MOD')).toBe(false);
   });
 
+  it('compileRootMarkers rejects a bad marker when compiled, not on the first event', () => {
+    expect(() =>
+      compileRootMarkers({ rootMarkers: { workspace: ['go.work'], module: ['**/go.mod'] } }),
+    ).toThrow(/unsupported root marker/);
+  });
+
   it('isRootMarker matches C# pattern markers', () => {
-    expect(isRootMarker(CSHARP_SERVER, 'Foo.sln')).toBe(true);
-    expect(isRootMarker(CSHARP_SERVER, 'src/App/App.csproj')).toBe(true);
-    expect(isRootMarker(CSHARP_SERVER, 'x\\All.slnx')).toBe(true);
-    expect(isRootMarker(CSHARP_SERVER, 'Foo.sln.bak')).toBe(false);
-    expect(isRootMarker(CSHARP_SERVER, 'Program.cs')).toBe(false);
+    expect(compileRootMarkers(CSHARP_SERVER)('Foo.sln')).toBe(true);
+    expect(compileRootMarkers(CSHARP_SERVER)('src/App/App.csproj')).toBe(true);
+    expect(compileRootMarkers(CSHARP_SERVER)('x\\All.slnx')).toBe(true);
+    expect(compileRootMarkers(CSHARP_SERVER)('Foo.sln.bak')).toBe(false);
+    expect(compileRootMarkers(CSHARP_SERVER)('Program.cs')).toBe(false);
   });
 });
 

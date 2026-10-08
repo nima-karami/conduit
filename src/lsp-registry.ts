@@ -147,7 +147,7 @@ export const CSHARP_SERVER: LanguageServerSpec = {
   binary: 'csharp-ls',
   args: [],
   rootMarkers: { workspace: ['*.sln', '*.slnx'], module: ['*.csproj'] },
-  // csharp-ls on a marker-less root scans the whole tree for projects — a monorepo cost.
+  // see docs/specs/2026-10-08-language-support.md §2.6 (requiresMarker)
   requiresMarker: true,
   watchGlobs: [
     '**/*.cs',
@@ -236,12 +236,14 @@ export function compileWatchGlobs(
     else if (name) names.add(name[1] ?? '');
     else throw new Error(`unsupported watch glob: ${g}`);
   }
-  const ignored = new Set(ignoreDirs);
+  const ignored = new Set(ignoreDirs.map((d) => d.toLowerCase()));
+  const lowerExts = exts.map((e) => e.toLowerCase());
   return (relPath) => {
     const dirs = relPath.split(/[\\/]/).slice(0, -1);
-    if (dirs.some((d) => ignored.has(d))) return false;
+    if (dirs.some((d) => ignored.has(d.toLowerCase()))) return false;
     const base = basename(relPath);
-    return names.has(base) || exts.some((e) => base.endsWith(e) && base.length > e.length);
+    const lower = base.toLowerCase();
+    return names.has(base) || lowerExts.some((e) => lower.endsWith(e) && base.length > e.length);
   };
 }
 
@@ -259,12 +261,15 @@ export function compileRootMarker(marker: string): (base: string) => boolean {
 
 export const isPatternMarker = (marker: string): boolean => EXT_MARKER.test(marker);
 
-export function isRootMarker(
+/** Whether a path names any of the spec's root markers. */
+export function compileRootMarkers(
   spec: Pick<LanguageServerSpec, 'rootMarkers'>,
-  relPath: string,
-): boolean {
-  const base = basename(relPath);
-  return [...spec.rootMarkers.workspace, ...spec.rootMarkers.module].some((m) =>
-    compileRootMarker(m)(base),
+): (relPath: string) => boolean {
+  const matchers = [...spec.rootMarkers.workspace, ...spec.rootMarkers.module].map(
+    compileRootMarker,
   );
+  return (relPath) => {
+    const base = basename(relPath);
+    return matchers.some((m) => m(base));
+  };
 }
