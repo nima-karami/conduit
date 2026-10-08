@@ -44,6 +44,7 @@ describe('isEvictable', () => {
     ['in flight', { inFlight: 1 }],
     ['starting', { state: 'starting' as const }],
     ['loading', { state: 'loading' as const }],
+    ['restarting after a crash', { state: 'restarting' as const }],
     ['hidden < 60 s', { hiddenSince: NOW - EVICT_MIN_HIDDEN_MS + 1 }],
     ['not live', { live: false }],
   ])('never evicts a server that is %s', (_label, o) => {
@@ -149,6 +150,7 @@ describe('isDormant', () => {
     ['in flight', { inFlight: 1 }],
     ['starting', { state: 'starting' as const }],
     ['loading', { state: 'loading' as const }],
+    ['restarting after a crash', { state: 'restarting' as const }],
     ['not live', { live: false }],
   ])('is false while %s', (_label, o) => {
     expect(isDormant(srv('a', { ...base, ...o }), NOW)).toBe(false);

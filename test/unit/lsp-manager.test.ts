@@ -1905,6 +1905,38 @@ describe('LspManager — residency (spec 2026-10-08-language-coverage §2.6)', (
     expect((await second).kind).toBe('locations');
   });
 
+  it('a request wake with a cached resolve launches once — never stopped as unwanted first', async () => {
+    const t = mk();
+    await bringUp(t, 'go');
+    await t.show([]);
+    await adv(DORMANT_MS);
+    expect(stateOf(t, 'go')).toBe('stopped');
+    const mark = t.statuses.length;
+    const asked = t.req(P.go, 'definition');
+    await flush();
+    expect(t.statuses.slice(mark).map((s) => s.state)).toEqual(['starting', 'starting']);
+    srv(t, 'go').answers.set('textDocument/definition', () => DEF);
+    srv(t, 'go').resolveInitialized();
+    expect((await asked).kind).toBe('locations');
+  });
+
+  it('a stopped server whose process has not exited still counts toward the caps', async () => {
+    const t = mk();
+    await bringUp(t, 'rust');
+    await t.show([]);
+    const rust = srv(t, 'rust');
+    rust.stop.mockImplementationOnce(async () => {});
+    await adv(DORMANT_MS);
+    expect(rust.stop).toHaveBeenCalledTimes(1);
+    expect(rust.gone).toBe(false);
+    await bringUp(t, 'cpp');
+    await showCs(t);
+    expect(started(t)).toEqual(['rust', 'cpp']);
+    rust.emitExit(0);
+    await flush();
+    expect(started(t)).toEqual(['rust', 'cpp', 'csharp']);
+  });
+
   it('absent and restricted launches evict nothing', async () => {
     const t = mk({ roots: ['/w', '/v'], files: ['/w/m/go.mod', '/v/go.mod'], trusted: ['/w'] });
     await rustHidden61s(t);

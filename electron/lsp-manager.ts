@@ -124,6 +124,8 @@ interface ServerRecord {
   state: LspServerState;
   progress: string | undefined;
   handle: LspServerHandle | null;
+  /** A stopped process that has not exited yet: it still counts toward the residency caps. */
+  lingering: LspServerHandle | null;
   /** `initialized` resolved AND the didOpen replay has been sent. */
   live: boolean;
   /** Set by every host-initiated stop so its exit is never read as a crash (spec §2.2). */
@@ -630,6 +632,7 @@ export class LspManager {
       state: 'stopped',
       progress: undefined,
       handle: null,
+      lingering: null,
       live: false,
       stopping: false,
       generation: 0,
@@ -701,7 +704,8 @@ export class LspManager {
       key: rec.key,
       weight: rec.spec.weight,
       state: rec.state,
-      live: rec.handle !== null && !rec.stopping,
+      // Until its process has exited, on every stop path — so the caps hold even transiently.
+      live: (rec.handle !== null && !rec.stopping) || rec.lingering !== null,
       visible: this.hasVisibleDoc(rec, union),
       hiddenSince: rec.hiddenSince,
       lastActivity: rec.lastActivity,
@@ -767,7 +771,8 @@ export class LspManager {
   }
 
   private async evict(rec: ServerRecord): Promise<void> {
-    const handle = rec.handle;
+    // An already-stopped record is evicted by waiting out the process it left behind.
+    const handle = rec.handle ?? rec.lingering;
     this.deps.log.info(SCOPE, `${rec.spec.binary} evicted`, { root: rec.lexicalRoot });
     await this.stopRecord(rec);
     if (handle) {
@@ -806,12 +811,12 @@ export class LspManager {
         this.residencySnapshot(),
         Date.now(),
       );
-      let overBudget = plan.overBudget;
+      let overBudget: string | null = plan.overBudget ? 'nothing evictable' : null;
       for (const key of plan.evict) {
         const victim = this.servers.get(key);
         if (!victim) continue;
         if (!isEvictable(this.residencyOf(victim, this.visibleUnion()), Date.now())) {
-          overBudget = true;
+          overBudget = `${key} was needed again before it could be evicted`;
           continue;
         }
         await this.evict(victim);
@@ -821,10 +826,11 @@ export class LspManager {
         this.setState(rec, 'stopped');
         return null;
       }
-      if (overBudget && !this.softCapLogged) {
+      if (overBudget !== null && !this.softCapLogged) {
         this.softCapLogged = true;
-        this.deps.log.info(SCOPE, 'language servers over budget: nothing evictable', {
+        this.deps.log.info(SCOPE, 'language servers over budget; launching anyway (soft cap)', {
           launching: rec.key,
+          reason: overBudget,
         });
       }
       const handle = this.deps.startServer({ spec: rec.spec, resolved, root: rec.lexicalRoot });
@@ -972,7 +978,13 @@ export class LspManager {
     // (taskkill returns first) and must not re-state the record — it overwrote 'restricted'.
     rec.generation++;
     this.wake(rec);
-    if (handle) await handle.stop();
+    if (handle) {
+      rec.lingering = handle;
+      void handle.exited.then(() => {
+        if (rec.lingering === handle) rec.lingering = null;
+      });
+      await handle.stop();
+    }
     if (rec.handle === handle) rec.handle = null;
     // A launch that began while the stop was in flight owns the record now.
     if (!rec.stopping) return;
@@ -1074,14 +1086,9 @@ export class LspManager {
     this.pending.set(pendingKey, ac);
     const startedAt = Date.now();
     try {
-      const prepared = await this.enqueue(msg.path, () => {
-        const p = this.prepareRequest(client, msg);
-        // Counted before the launch it may have started reaches the queue's "still wanted?".
-        return p;
-      });
+      const prepared = await this.enqueue(msg.path, () => this.prepareRequest(client, msg, ac));
       if ('kind' in prepared) return prepared;
       const { rec, doc } = prepared;
-      this.inFlight.set(ac, rec.key);
       const isNav = NAV_OPS.has(msg.op);
       const waitMs = isNav ? NAV_LOADING_TIMEOUT_MS : INIT_WAIT_SHORT_MS;
       const ready = await this.waitLive(rec, startedAt + waitMs, ac.signal);
@@ -1106,6 +1113,7 @@ export class LspManager {
   private prepareRequest(
     client: ClientKey,
     msg: LspMessage<'lsp:request'>,
+    ac: AbortController,
   ): LspReply | { rec: ServerRecord; doc: DocEntry } {
     const doc = this.docs.get(msg.path);
     const entry = doc?.clients.get(client);
@@ -1115,6 +1123,9 @@ export class LspManager {
     if (!rec) {
       return { kind: 'unavailable', reason: doc.escapesWorkspace ? 'root-escapes' : 'no-root' };
     }
+    // Before the launch: its queue step asks "still wanted?" and may run before this request
+    // reaches waitLive. `request`'s finally drops it on every path.
+    this.inFlight.set(ac, rec.key);
     this.hold(rec);
     this.markActive(rec);
     this.requestLaunch(rec, 'request');

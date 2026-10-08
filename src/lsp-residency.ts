@@ -24,8 +24,11 @@ export interface ResidencyServer {
   inFlight: number;
 }
 
+/** Mid-launch states — `restarting` is a crashed server re-initializing — are never cut short. */
+const BUSY: ReadonlySet<LspServerState> = new Set(['starting', 'loading', 'restarting']);
+
 const settled = (s: ResidencyServer): boolean =>
-  s.live && !s.visible && s.inFlight === 0 && s.state !== 'starting' && s.state !== 'loading';
+  s.live && !s.visible && s.inFlight === 0 && !BUSY.has(s.state);
 
 export function isEvictable(s: ResidencyServer, now: number): boolean {
   return settled(s) && now - s.hiddenSince >= EVICT_MIN_HIDDEN_MS;
