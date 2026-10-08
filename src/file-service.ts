@@ -158,14 +158,21 @@ async function readBounded(
 ): Promise<{ buf: Buffer; truncated: boolean; tail: boolean }> {
   const fh = await fs.promises.open(absPath, 'r');
   try {
-    const head = Buffer.alloc(cap + 1);
-    const { bytesRead } = await fh.read(head, 0, cap + 1, 0);
+    // Sized from the stat plus one sentinel byte: filling it means the file is longer than the
+    // stat said, so it is read again against the cap rather than trusted.
+    const hint = Math.min((await fh.stat()).size, cap) + 1;
+    let head = Buffer.allocUnsafe(hint);
+    let bytesRead = (await fh.read(head, 0, hint, 0)).bytesRead;
+    if (bytesRead === hint && hint <= cap) {
+      head = Buffer.allocUnsafe(cap + 1);
+      bytesRead = (await fh.read(head, 0, cap + 1, 0)).bytesRead;
+    }
     if (bytesRead <= cap)
       return { buf: head.subarray(0, bytesRead), truncated: false, tail: false };
     if (!tail) return { buf: head.subarray(0, cap), truncated: true, tail: false };
     // One byte before the window says whether the window already starts on a whole line.
     const { size } = await fh.stat();
-    const window = Buffer.alloc(cap + 1);
+    const window = Buffer.allocUnsafe(cap + 1);
     const got = (await fh.read(window, 0, cap + 1, Math.max(0, size - cap - 1))).bytesRead;
     const read = window.subarray(0, got);
     const body = read[0] === 0x0a ? read.subarray(1) : fromFirstWholeLine(read.subarray(1));
