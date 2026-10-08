@@ -125,11 +125,19 @@ describe('fileService readers', () => {
       fs.writeFileSync(f, name === 'cr.golden' ? 'a\rb\nc\n' : 'a\r\nb\nc\r\n');
       expect((await readFile(f)).readOnlyReason, name).toBe(want);
     }
-    for (const body of ['a\r\nb\r\n', 'a\nb\n', 'a\rb\r', 'no newline']) {
+    for (const body of ['a\r\nb\r\n', 'a\nb\n', 'no newline']) {
       const f = path.join(d, 'pure.txt.golden');
       fs.writeFileSync(f, body);
       expect((await readFile(f)).readOnlyReason, JSON.stringify(body)).toBeUndefined();
     }
+  });
+
+  // Monaco's buffer turns every lone CR into a line break of the model's EOL, so a save would
+  // rewrite it even when CR is the only line ending present.
+  it('readFile marks a golden with any bare CR read-only', async () => {
+    const f = path.join(tmp(), 'cr-only.txt.golden');
+    fs.writeFileSync(f, 'a\rb\r');
+    expect((await readFile(f)).readOnlyReason).toBe('mixed-eol');
   });
 
   it('readDiff combines working file + injected HEAD content', async () => {
@@ -211,10 +219,20 @@ describe('fileService readFile over the cap (spec 2026-10-08-language-support §
     expect(doc.content).toBe('');
   });
 
-  it('reads a file at the cap whole, in one read, with no window', async () => {
+  it('keeps the first line of a tail window that starts exactly on a line boundary', async () => {
+    const f = path.join(tmp(), 'aligned.log');
+    fs.writeFileSync(f, body);
+    // 60 bytes is exactly the last six 10-byte lines.
+    const doc = await readFile(f, 60);
+    expect(doc.content).toBe(lines(45, 50));
+  });
+
+  it('reads a file at the cap whole, through the bounded read, with no window', async () => {
     const f = path.join(tmp(), 'exact.log');
     fs.writeFileSync(f, body.slice(0, CAP));
+    const whole = vi.spyOn(fs.promises, 'readFile');
     const doc = await readFile(f, CAP);
+    expect(whole).not.toHaveBeenCalled();
     expect(doc).toMatchObject({ content: body.slice(0, CAP), truncated: false });
     expect(doc.window).toBeUndefined();
   });
