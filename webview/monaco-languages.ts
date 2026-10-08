@@ -59,6 +59,7 @@ import * as xml from 'monaco-editor/esm/vs/basic-languages/xml/xml.js';
 import * as yaml from 'monaco-editor/esm/vs/basic-languages/yaml/yaml.js';
 import { type Grammar, gomod } from './gomod-grammar';
 import { log } from './log-grammar';
+import { markdownFoldingRanges } from './markdown-folding';
 
 /**
  * Keyed by the language ids `src/lang.ts` produces, so every extension the app maps to a
@@ -117,6 +118,15 @@ const GRAMMARS: Record<string, Grammar> = {
 // contribution declares these.
 monaco.languages.register({ id: 'gomod' });
 monaco.languages.register({ id: 'log' });
+
+monaco.languages.registerFoldingRangeProvider('markdown', {
+  provideFoldingRanges: (model) =>
+    markdownFoldingRanges(model.getLinesContent()).map(({ start, end, kind }) =>
+      kind === 'region'
+        ? { start, end, kind: monaco.languages.FoldingRangeKind.Region }
+        : { start, end },
+    ),
+});
 
 const registered = new Set<string>();
 
