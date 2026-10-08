@@ -39,7 +39,7 @@ import {
 } from '../nav-editors';
 import { dropNavChords, formatMonacoHint, isNavOverridden, navMenuHints } from '../nav-keybindings';
 import { fileUri, publishCursor, subscribeReveal, takeReveal } from '../project-index';
-import { readOnlyNotice } from '../read-only-doc';
+import { readOnlyState } from '../read-only-doc';
 import { relativeTime } from '../relative-time';
 import { setNoteTarget } from '../review-note-target';
 import { registerSelection } from '../selection-registry';
@@ -209,7 +209,8 @@ export function CodeViewer({
     const uri = fileUri(doc.path);
     const existing = monaco.editor.getModel(uri);
     const { content } = docRef.current;
-    const readOnly = readOnlyNotice(docRef.current) !== null;
+    const refusal = readOnlyState(docRef.current)?.refusal ?? null;
+    const readOnly = refusal !== null;
     const tail = docRef.current.window === 'tail';
     const model =
       existing ?? monaco.editor.createModel(doc.binary ? '' : content, doc.language, uri);
@@ -222,7 +223,7 @@ export function CodeViewer({
     // clean model (K3), so all of it outlives this editor. Attached before `create` so the
     // first paint already shows the disk content.
     if (!doc.binary) {
-      fileSaves.attach(doc.path, { diskContent: content, writable: !readOnly });
+      fileSaves.attach(doc.path, { diskContent: content, readOnly: refusal });
     }
     const editor = monaco.editor.create(ref.current, {
       model,
@@ -537,7 +538,9 @@ export function CodeViewer({
     };
   }, [doc.path, doc.language, doc.binary, vsId, focusAs, group]);
 
-  const notice = readOnlyNotice(doc);
+  const readOnly = readOnlyState(doc);
+  const notice = readOnly?.banner ?? null;
+  const refusal = readOnly?.refusal ?? null;
   const tail = doc.window === 'tail';
   const tailRef = useRef(tail);
   tailRef.current = tail;
@@ -552,7 +555,7 @@ export function CodeViewer({
     const version = model?.getVersionId();
     const view = ed?.saveViewState();
     const atEnd = tail && !!ed && isScrolledToEnd(ed);
-    fileSaves.attach(doc.path, { diskContent: doc.content, writable: notice === null });
+    fileSaves.attach(doc.path, { diskContent: doc.content, readOnly: refusal });
     if (!ed || !model || model.getVersionId() === version) return;
     if (atEnd) revealEnd(ed);
     else if (view) ed.restoreViewState(view);
@@ -562,7 +565,7 @@ export function CodeViewer({
       if (p) ed.setPosition(p, NAV_REVEAL_SOURCE);
     }
     onReseedRef.current?.();
-  }, [doc.path, doc.content, notice, tail, doc.binary]);
+  }, [doc.path, doc.content, refusal, tail, doc.binary]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });

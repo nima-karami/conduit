@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WriteOptions, WriteResult } from '../../src/path-guard';
 import type { AutoSaveMode } from '../../src/settings';
+import { AUTO_SAVE_COPY } from '../../webview/auto-save-copy';
 import {
   createFileSaves,
   type FileSaveDeps,
   type SaveModel,
 } from '../../webview/file-save-controller';
 import type { SaveEntry } from '../../webview/save-registry';
+
+const PARTIAL = AUTO_SAVE_COPY.partialFile;
 
 class FakeModel implements SaveModel {
   private listeners = new Set<() => void>();
@@ -93,9 +96,9 @@ function harness(opts: { canWrite?: boolean; mode?: AutoSaveMode; delayMs?: numb
   };
   const saves = createFileSaves(deps);
   saves.configure({ mode: opts.mode ?? 'off', delayMs: opts.delayMs ?? 1000 });
-  const open = (path: string, disk: string, writable = true) => {
+  const open = (path: string, disk: string, readOnly: string | null = null) => {
     if (!models.has(path)) models.set(path, new FakeModel(disk));
-    saves.attach(path, { diskContent: disk, writable });
+    saves.attach(path, { diskContent: disk, readOnly });
     // biome-ignore lint/style/noNonNullAssertion: set on the line above
     return models.get(path)!;
   };
@@ -133,7 +136,7 @@ describe('createFileSaves', () => {
   it('attach reseeds a clean model without counting an edit', async () => {
     const h = harness({ mode: 'onFocusChange' });
     h.models.set('/a.ts', new FakeModel('x'));
-    h.saves.attach('/a.ts', { diskContent: 'y', writable: true });
+    h.saves.attach('/a.ts', { diskContent: 'y', readOnly: null });
     expect(h.models.get('/a.ts')?.getValue()).toBe('y');
     h.saves.trigger('/a.ts', 'viewLeave');
     await vi.runAllTimersAsync();
@@ -143,7 +146,7 @@ describe('createFileSaves', () => {
   it('a seed that normalises content is dirty but never auto-saved (C10)', async () => {
     const h = harness({ mode: 'onFocusChange' });
     h.models.set('/a.ts', new NormalizingModel('stale'));
-    h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', writable: true });
+    h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', readOnly: null });
     expect(h.models.get('/a.ts')?.getValue()).toBe('a\nb\n');
     expect(h.dirty.has('/a.ts')).toBe(true);
     h.saves.trigger('/a.ts', 'viewLeave');
@@ -154,7 +157,7 @@ describe('createFileSaves', () => {
   it('a seed-dirty buffer saves manually: one write, true only after it (B2)', async () => {
     const h = harness();
     h.models.set('/a.ts', new NormalizingModel('stale'));
-    h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', writable: true });
+    h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', readOnly: null });
     expect(h.saves.getStatus('/a.ts')?.phase).toBe('dirty');
     let settled = false;
     const p = h.saves.save('/a.ts', 'manual').then((ok) => {
@@ -173,7 +176,7 @@ describe('createFileSaves', () => {
   it('an auto save of an unedited seed-dirty buffer writes nothing', async () => {
     const h = harness({ mode: 'onFocusChange' });
     h.models.set('/a.ts', new NormalizingModel('stale'));
-    h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', writable: true });
+    h.saves.attach('/a.ts', { diskContent: 'a\r\nb\n', readOnly: null });
     const p = h.saves.save('/a.ts', 'auto');
     expect(h.writes).toHaveLength(0);
     expect(await p).toBe(false);
@@ -184,7 +187,7 @@ describe('createFileSaves', () => {
     const h = harness();
     const m = h.open('/a.ts', 'one');
     m.setValue('mine');
-    h.saves.attach('/a.ts', { diskContent: 'theirs', writable: true });
+    h.saves.attach('/a.ts', { diskContent: 'theirs', readOnly: null });
     expect(m.getValue()).toBe('mine');
   });
 
@@ -292,14 +295,14 @@ describe('createFileSaves', () => {
       conflict: null,
       error: null,
     });
-    h.saves.attach('/a.ts', { diskContent: 'theirs', writable: true });
+    h.saves.attach('/a.ts', { diskContent: 'theirs', readOnly: null });
     expect(m.getValue()).toBe('theirs');
     expect(h.dirty.has('/a.ts')).toBe(false);
   });
 
   it('a truncated entry is never written, however it is saved (E9)', async () => {
     const h = harness({ mode: 'afterDelay' });
-    const m = h.open('/big.txt', 'one', false);
+    const m = h.open('/big.txt', 'one', PARTIAL);
     m.setValue('two');
     await vi.advanceTimersByTimeAsync(5000);
     h.saves.trigger('/big.txt', 'viewLeave');
@@ -313,9 +316,20 @@ describe('createFileSaves', () => {
     expect(h.saves.getStatus('/big.txt')?.error).toMatch(/2 MB/);
   });
 
+  it('a refused save names why the doc is read-only, not always the 2 MB cut', async () => {
+    const h = harness();
+    const m = h.open('/latin1.txt', 'caf?', AUTO_SAVE_COPY.invalidUtf8Refusal);
+    m.setValue('changed');
+    expect(await h.saves.save('/latin1.txt', 'manual')).toBe(false);
+    expect(h.toasts).toEqual([
+      AUTO_SAVE_COPY.saveFailed('latin1.txt', AUTO_SAVE_COPY.invalidUtf8Refusal),
+    ]);
+    expect(h.toasts[0]).not.toMatch(/2 MB/);
+  });
+
   it('a clean truncated entry saves as a no-op, without a toast', async () => {
     const h = harness();
-    h.open('/big.txt', 'one', false);
+    h.open('/big.txt', 'one', PARTIAL);
     expect(await h.saves.save('/big.txt', 'manual')).toBe(true);
     expect(h.writes).toHaveLength(0);
     expect(h.toasts).toEqual([]);
@@ -323,7 +337,7 @@ describe('createFileSaves', () => {
 
   it('an auto save of a truncated entry writes nothing and leaves the phase (B3)', async () => {
     const h = harness({ mode: 'onFocusChange' });
-    const m = h.open('/big.txt', 'one', false);
+    const m = h.open('/big.txt', 'one', PARTIAL);
     m.setValue('two');
     const before = h.saves.getStatus('/big.txt');
     const p = h.saves.save('/big.txt', 'auto');
@@ -436,7 +450,7 @@ describe('createFileSaves', () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(h.writes).toHaveLength(0);
     h.saves.reload('/a.ts');
-    h.saves.attach('/a.ts', { diskContent: 'moved in', writable: true });
+    h.saves.attach('/a.ts', { diskContent: 'moved in', readOnly: null });
     expect(m.getValue()).toBe('moved in');
     expect(h.dirty.has('/a.ts')).toBe(false);
   });
@@ -636,7 +650,7 @@ describe('createFileSaves', () => {
 
   it('isPartial reflects autoEligible:false attach', () => {
     const h = harness();
-    h.open('/part.ts', 'head', false);
+    h.open('/part.ts', 'head', PARTIAL);
     h.open('/full.ts', 'all');
     expect(h.saves.isPartial('/part.ts')).toBe(true);
     expect(h.saves.isPartial('/full.ts')).toBe(false);
@@ -665,8 +679,8 @@ describe('createFileSaves', () => {
     const m = new FakeModel('one');
     h.models.set('/a.ts', m);
     const subscribe = vi.spyOn(m, 'onDidChangeContent');
-    h.saves.attach('/a.ts', { diskContent: 'one', writable: true });
-    h.saves.attach('/a.ts', { diskContent: 'one', writable: true });
+    h.saves.attach('/a.ts', { diskContent: 'one', readOnly: null });
+    h.saves.attach('/a.ts', { diskContent: 'one', readOnly: null });
     expect(h.registerCalls).toBe(1);
     expect(subscribe).toHaveBeenCalledTimes(1);
     expect(m.listenerCount).toBe(1);
