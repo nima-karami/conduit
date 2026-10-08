@@ -102,7 +102,7 @@ describe('fileService readers', () => {
     const f = path.join(tmp(), 'bom.txt');
     fs.writeFileSync(f, Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0x0a]));
     const doc = await readFile(f);
-    expect(doc.content).toBe('﻿a\n');
+    expect(doc.content).toBe(`${String.fromCharCode(0xfeff)}a\n`);
     expect(doc.readOnlyReason).toBeUndefined();
   });
 

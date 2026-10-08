@@ -537,13 +537,14 @@ export function CodeViewer({
     };
   }, [doc.path, doc.language, doc.binary, vsId, focusAs, group]);
 
-  // A save or an external change arrives as new doc.content; the store reseeds a clean model in
-  // place. Only a real reseed carries the view state across (so an agent's rewrite doesn't jump
-  // the cursor): a save's own echo changes nothing, and restoring then would fight typing or IME.
   const notice = readOnlyNotice(doc);
   const tail = doc.window === 'tail';
   const tailRef = useRef(tail);
   tailRef.current = tail;
+
+  // A save or an external change arrives as new doc.content; the store reseeds a clean model in
+  // place. Only a real reseed carries the view state across (so an agent's rewrite doesn't jump
+  // the cursor): a save's own echo changes nothing, and restoring then would fight typing or IME.
   useEffect(() => {
     if (doc.binary) return;
     const ed = editorRef.current;
