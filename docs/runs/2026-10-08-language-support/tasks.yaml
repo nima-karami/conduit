@@ -1,0 +1,10 @@
+items:
+  - id: A-log-golden
+    title: log grammar + golden-file language resolution (renderer only)
+    status: in_progress
+  - id: B-csharp-lsp
+    title: csharp-ls in the LSP registry (pattern root markers)
+    status: in_progress
+  - id: C-md-yaml-verify
+    title: runtime-verify Markdown + YAML (already supported)
+    status: in_progress
