@@ -1,9 +1,11 @@
 import hljs from 'highlight.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { LanguageId } from '../../src/lang';
 import {
   applyEmphasis,
   clearSyntaxCache,
   highlightLine,
+  hljsLanguageFor,
   monacoLangToHljs,
   type Seg,
   SYNTAX_CACHE_MAX,
@@ -90,65 +92,141 @@ describe('monacoLangToHljs', () => {
     expect(monacoLangToHljs('totally-unknown')).toBeNull();
   });
 
-  // Every Monaco id `src/lang.ts` `langFromPath` can emit. Kept in sync with lang.ts by hand
-  // (it doesn't export the set). The contract: each maps to null OR an id hljs has registered —
-  // never a dangling id (spec §"Per-file language" completeness check).
-  const MONACO_IDS = [
-    'typescript',
-    'javascript',
-    'json',
-    'markdown',
-    'mdx',
-    'css',
-    'scss',
-    'less',
-    'html',
-    'python',
-    'rust',
-    'go',
-    'shell',
-    'powershell',
-    'bat',
-    'yaml',
-    'ini',
-    'java',
-    'kotlin',
-    'scala',
-    'c',
-    'cpp',
-    'csharp',
-    'fsharp',
-    'vb',
-    'ruby',
-    'php',
-    'swift',
-    'dart',
-    'lua',
-    'perl',
-    'r',
-    'julia',
-    'clojure',
-    'elixir',
-    'sol',
-    'tcl',
-    'pascal',
-    'sql',
-    'graphql',
-    'proto',
-    'hcl',
-    'dockerfile',
-    'xml',
-    'log',
-    'plaintext',
-  ];
+  // A Record over LanguageId, so an id added to lang.ts fails typecheck here until it is listed.
+  const LISTED: Record<LanguageId, true> = {
+    bat: true,
+    bicep: true,
+    c: true,
+    clojure: true,
+    cmake: true,
+    coffeescript: true,
+    cpp: true,
+    csharp: true,
+    css: true,
+    cypher: true,
+    dart: true,
+    diff: true,
+    dockerfile: true,
+    dotenv: true,
+    elixir: true,
+    fsharp: true,
+    go: true,
+    gomod: true,
+    graphql: true,
+    groovy: true,
+    handlebars: true,
+    hcl: true,
+    html: true,
+    ignore: true,
+    ini: true,
+    java: true,
+    javascript: true,
+    json: true,
+    julia: true,
+    kotlin: true,
+    less: true,
+    liquid: true,
+    log: true,
+    lua: true,
+    makefile: true,
+    markdown: true,
+    mdx: true,
+    'objective-c': true,
+    ocaml: true,
+    pascal: true,
+    perl: true,
+    php: true,
+    plaintext: true,
+    powerquery: true,
+    powershell: true,
+    proto: true,
+    pug: true,
+    python: true,
+    qsharp: true,
+    r: true,
+    razor: true,
+    restructuredtext: true,
+    ruby: true,
+    rust: true,
+    scala: true,
+    scheme: true,
+    scss: true,
+    shell: true,
+    sol: true,
+    sparql: true,
+    sql: true,
+    swift: true,
+    systemverilog: true,
+    tcl: true,
+    toml: true,
+    twig: true,
+    typescript: true,
+    typespec: true,
+    vb: true,
+    verilog: true,
+    wgsl: true,
+    xml: true,
+    yaml: true,
+  };
+  const ALL_IDS = Object.keys(LISTED) as LanguageId[];
 
-  it('never points at an unregistered hljs grammar', () => {
-    for (const id of MONACO_IDS) {
+  it('every LanguageId has an hljs entry: a registered grammar, or null only where hljs has none', () => {
+    for (const id of ALL_IDS) {
+      if (id === 'plaintext') continue;
       const mapped = monacoLangToHljs(id);
       if (mapped !== null) {
         expect(hljs.getLanguage(mapped), `${id} → ${mapped} must be registered`).toBeTruthy();
+      } else {
+        expect(hljs.getLanguage(id), `${id} is in hljs, so it must not map to null`).toBeFalsy();
       }
     }
+  });
+
+  it('maps the language-coverage ids per spec §2.2', () => {
+    const expected: Record<string, string | null> = {
+      toml: 'ini',
+      dotenv: 'ini',
+      makefile: 'makefile',
+      cmake: 'cmake',
+      diff: 'diff',
+      ignore: null,
+      groovy: 'groovy',
+      ocaml: 'ocaml',
+      'objective-c': 'objectivec',
+      coffeescript: 'coffeescript',
+      handlebars: 'handlebars',
+      twig: 'twig',
+      scheme: 'scheme',
+      systemverilog: 'verilog',
+      verilog: 'verilog',
+      razor: null,
+      pug: null,
+      liquid: null,
+      bicep: null,
+      wgsl: null,
+      restructuredtext: null,
+      typespec: null,
+      cypher: null,
+      powerquery: null,
+      qsharp: null,
+      sparql: null,
+      gomod: null,
+      log: null,
+    };
+    for (const [id, hl] of Object.entries(expected)) expect(monacoLangToHljs(id), id).toBe(hl);
+  });
+});
+
+describe('hljsLanguageFor', () => {
+  it('sniffs a shebang only when given a first line', () => {
+    expect(hljsLanguageFor('bin/x', '#!/usr/bin/env python3')).toBe('python');
+    expect(hljsLanguageFor('bin/x', null)).toBeNull();
+  });
+
+  it('resolves by path, and a path language wins over the first line', () => {
+    expect(hljsLanguageFor('Makefile', null)).toBe('makefile');
+    expect(hljsLanguageFor('Cargo.toml', null)).toBe('ini');
+    expect(hljsLanguageFor('a.ts', '#!/usr/bin/env python3')).toBe('typescript');
   });
 });
 
