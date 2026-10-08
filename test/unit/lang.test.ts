@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { langFromPath, languageDisplayName } from '../../src/lang';
+import { isGoldenPath, langFromPath, languageDisplayName } from '../../src/lang';
 
 describe('langFromPath — Go module files', () => {
   it('maps go.mod and go.work to gomod, whatever the case or separator', () => {
@@ -83,7 +83,50 @@ describe('languageDisplayName', () => {
       'a.xml',
       'go.mod',
       '.bashrc',
+      'a.log',
     ];
     for (const s of samples) expect(languageDisplayName(langFromPath(s)), s).toBeTruthy();
+  });
+});
+
+describe('langFromPath — logs and golden files (spec 2026-10-08-language-support §2.1)', () => {
+  it('maps .log and rotated logs to log, whatever the case', () => {
+    for (const p of [
+      'app.log',
+      'UPPER.LOG',
+      'dir/app.log.1',
+      'App.Log.1',
+      'app.log.12',
+      'app.log.2026-10-01',
+      'app.log.2026-10-01_13',
+    ]) {
+      expect(langFromPath(p), p).toBe('log');
+    }
+    expect(languageDisplayName('log')).toBe('Log');
+  });
+
+  it('leaves compressed and non-numeric rotations alone', () => {
+    expect(langFromPath('app.log.1.gz')).toBe('plaintext');
+    expect(langFromPath('app.log.old')).toBe('plaintext');
+    expect(langFromPath('app.log.2026-10-01.gz')).toBe('plaintext');
+  });
+
+  it('colours a golden file as the language of what it wraps, stripping one suffix', () => {
+    expect(langFromPath('expected.json.golden')).toBe('json');
+    expect(langFromPath('testdata/README.md.golden')).toBe('markdown');
+    expect(langFromPath('OUT.TS.GOLDEN')).toBe('typescript');
+    expect(langFromPath('out.txt.golden')).toBe('plaintext');
+    expect(langFromPath('x.golden')).toBe('plaintext');
+    expect(langFromPath('a.golden.golden')).toBe('plaintext');
+    expect(langFromPath('go.mod.golden')).toBe('gomod');
+    expect(langFromPath('server.log.golden')).toBe('log');
+    expect(langFromPath('app.log.1.golden')).toBe('log');
+  });
+
+  it('recognises golden paths by name only', () => {
+    expect(isGoldenPath('a/expected.json.golden')).toBe(true);
+    expect(isGoldenPath('C:\\x\\plain.GOLDEN')).toBe(true);
+    expect(isGoldenPath('golden/app.json')).toBe(false);
+    expect(isGoldenPath('notgolden')).toBe(false);
   });
 });

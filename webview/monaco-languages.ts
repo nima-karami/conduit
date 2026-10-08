@@ -58,6 +58,7 @@ import * as vb from 'monaco-editor/esm/vs/basic-languages/vb/vb.js';
 import * as xml from 'monaco-editor/esm/vs/basic-languages/xml/xml.js';
 import * as yaml from 'monaco-editor/esm/vs/basic-languages/yaml/yaml.js';
 import { type Grammar, gomod } from './gomod-grammar';
+import { log } from './log-grammar';
 
 /**
  * Keyed by the language ids `src/lang.ts` produces, so every extension the app maps to a
@@ -86,6 +87,7 @@ const GRAMMARS: Record<string, Grammar> = {
   julia,
   kotlin,
   less,
+  log,
   lua,
   markdown,
   mdx,
@@ -112,8 +114,9 @@ const GRAMMARS: Record<string, Grammar> = {
 };
 
 // Monaco refuses a tokenizer for an id it doesn't know, and unlike every id above no
-// contribution declares this one.
+// contribution declares these.
 monaco.languages.register({ id: 'gomod' });
+monaco.languages.register({ id: 'log' });
 
 const registered = new Set<string>();
 

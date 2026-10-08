@@ -138,6 +138,7 @@ describe('monacoLangToHljs', () => {
     'hcl',
     'dockerfile',
     'xml',
+    'log',
     'plaintext',
   ];
 
