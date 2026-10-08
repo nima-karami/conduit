@@ -4,12 +4,12 @@ import type { EditorView } from '@milkdown/kit/prose/view';
 import { useNodeViewContext } from '@prosemirror-adapter/react';
 import * as monaco from 'monaco-editor';
 import { createContext, useContext, useEffect, useId, useRef } from 'react';
-import { langFromPath } from '../../src/lang';
 import { OVERVIEW_RULER_WIDTH } from '../change-decorations';
 import { ensureTokenizer } from '../monaco-languages';
 import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
 import { attachBlockDiagnostics, blockModelUri } from '../plan-diagnostics';
+import { planFenceLanguage } from '../plan-fence-language';
 import { useSettings } from '../settings';
 
 /** The plan a fence belongs to (the model URI needs root and slug) and whether it may be edited.
@@ -41,14 +41,6 @@ export function leaveBlock(
 
 /** Only these two get a file:// model and diagnostics — see the plan's Contracts block. */
 const TS_FENCE: Record<string, 'ts' | 'tsx'> = { ts: 'ts', tsx: 'tsx' };
-
-/** Reuses `src/lang.ts`'s extension table rather than a second copy of it; a fence token that
- *  is already a Monaco language id (`javascript`, `shell`) passes through untranslated. */
-function monacoLanguageFor(fence: string): string {
-  if (!fence) return 'plaintext';
-  const mapped = langFromPath(`block.${fence}`);
-  return mapped === 'plaintext' ? fence : mapped;
-}
 
 export function PlanCodeBlock() {
   const { node, view, getPos } = useNodeViewContext();
@@ -91,7 +83,7 @@ export function PlanCodeBlock() {
 
     const theme = ensureTheme();
     const tsLang = TS_FENCE[fence] ?? null;
-    const language = tsLang ? 'typescript' : monacoLanguageFor(fence);
+    const language = tsLang ? 'typescript' : planFenceLanguage(fence);
     // Before the model exists — see monaco-languages.ts on why the order matters.
     ensureTokenizer(language);
 

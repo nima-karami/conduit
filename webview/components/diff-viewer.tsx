@@ -1,6 +1,6 @@
 import * as monaco from 'monaco-editor';
 import { useEffect, useRef, useState } from 'react';
-import { langFromPath } from '../../src/lang';
+import { langFromPathAndText } from '../../src/lang';
 import type { FileDiffDTO } from '../../src/protocol';
 import { OVERVIEW_RULER_WIDTH } from '../change-decorations';
 import { nextChange, prevChange } from '../diff-nav';
@@ -109,7 +109,7 @@ function TextDiffViewer({
   useEffect(() => {
     if (!ref.current || doc.binary) return;
     const theme = ensureTheme();
-    const language = langFromPath(doc.path);
+    const language = langFromPathAndText(doc.path, workRef.current);
     ensureTokenizer(language);
     const editor = monaco.editor.createDiffEditor(ref.current, {
       theme,
