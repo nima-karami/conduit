@@ -1937,6 +1937,54 @@ describe('LspManager — residency (spec 2026-10-08-language-coverage §2.6)', (
     expect(started(t)).toEqual(['rust', 'cpp', 'csharp']);
   });
 
+  it('a record relaunched while its own old process lingers waits for that exit first', async () => {
+    const t = mk();
+    await bringUp(t, 'go');
+    await t.show([]);
+    const old = srv(t, 'go');
+    old.stop.mockImplementationOnce(async () => {});
+    await adv(DORMANT_MS);
+    expect(old.stop).toHaveBeenCalledTimes(1);
+    await t.show([P.go]);
+    await flush();
+    expect(started(t)).toEqual(['go']);
+    old.emitExit(0);
+    await flush();
+    expect(started(t)).toEqual(['go', 'go']);
+  });
+
+  it('a relaunch waits at most EVICT_EXIT_WAIT_MS for its own lingering process, then logs', async () => {
+    const t = mk();
+    await bringUp(t, 'go');
+    await t.show([]);
+    srv(t, 'go').stop.mockImplementationOnce(async () => {});
+    await adv(DORMANT_MS);
+    await t.show([P.go]);
+    await adv(EVICT_EXIT_WAIT_MS - 1);
+    expect(started(t)).toEqual(['go']);
+    await adv(1);
+    expect(started(t)).toEqual(['go', 'go']);
+    expect(logged(t, 'warn', 'still running')).toBe(1);
+  });
+
+  it("an idle-stopped record's process counts toward the caps until it exits, record gone or not", async () => {
+    const t = mk();
+    await bringUp(t, 'rust');
+    const rust = srv(t, 'rust');
+    rust.stop.mockImplementationOnce(async () => {});
+    await t.send(1, 'e1', { type: 'lsp:close', path: P.rust });
+    await adv(IDLE_GRACE_MS);
+    expect(rust.stop).toHaveBeenCalledTimes(1);
+    const internals = t.mgr as unknown as { servers: Map<string, unknown> };
+    expect(internals.servers.has('rust:/w/m')).toBe(false);
+    await bringUp(t, 'cpp');
+    await showCs(t);
+    expect(started(t)).toEqual(['rust', 'cpp']);
+    rust.emitExit(0);
+    await flush();
+    expect(started(t)).toEqual(['rust', 'cpp', 'csharp']);
+  });
+
   it('absent and restricted launches evict nothing', async () => {
     const t = mk({ roots: ['/w', '/v'], files: ['/w/m/go.mod', '/v/go.mod'], trusted: ['/w'] });
     await rustHidden61s(t);

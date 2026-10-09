@@ -24,6 +24,7 @@ import {
   type LanguageServerSpec,
   languageInfo,
   primaryLanguageId,
+  type ServerWeight,
   serverSpecFor,
 } from '../src/lsp-registry';
 import {
@@ -207,6 +208,8 @@ export class LspManager {
   private readonly minimized = new Set<number>();
   /** Every spawn passes through here one at a time, so each sees the last one's process. */
   private launchQueue: Promise<unknown> = Promise.resolve();
+  /** Stopped processes of pruned records, until they exit; keyed by handle. */
+  private readonly orphans = new Map<LspServerHandle, { key: string; weight: ServerWeight }>();
   private softCapLogged = false;
   private disposed = false;
 
@@ -715,7 +718,10 @@ export class LspManager {
 
   private residencySnapshot(): ResidencyServer[] {
     const union = this.visibleUnion();
-    return [...this.servers.values()].map((r) => this.residencyOf(r, union));
+    return [
+      ...[...this.servers.values()].map((r) => this.residencyOf(r, union)),
+      ...this.orphanEntries(),
+    ];
   }
 
   /** The single place visibility edges are taken: called after every event that can change
@@ -770,30 +776,46 @@ export class LspManager {
     if (this.servers.get(rec.key) === rec) this.requestLaunch(rec, 'visible');
   }
 
+  /** `stop()` returns when taskkill does, not when the tree is gone (AC-C1 counts pids): wait for
+   *  the exit, bounded, and proceed with a warning rather than hold a launch hostage. */
+  private async awaitExit(handle: LspServerHandle, binary: string, why: string): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const exited = await Promise.race([
+      handle.exited.then(() => true),
+      new Promise<boolean>((r) => {
+        timer = setTimeout(() => r(false), EVICT_EXIT_WAIT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (!exited) {
+      this.deps.log.warn(SCOPE, `${binary} still running ${EVICT_EXIT_WAIT_MS} ms after ${why}`, {
+        pid: handle.pid,
+      });
+    }
+  }
+
   private async evict(rec: ServerRecord): Promise<void> {
     // An already-stopped record is evicted by waiting out the process it left behind.
     const handle = rec.handle ?? rec.lingering;
     this.deps.log.info(SCOPE, `${rec.spec.binary} evicted`, { root: rec.lexicalRoot });
     await this.stopRecord(rec);
-    if (handle) {
-      // `stop()` returns when taskkill does, not when the tree is gone (AC-C1 counts pids).
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const exited = await Promise.race([
-        handle.exited.then(() => true),
-        new Promise<boolean>((r) => {
-          timer = setTimeout(() => r(false), EVICT_EXIT_WAIT_MS);
-        }),
-      ]);
-      clearTimeout(timer);
-      if (!exited) {
-        this.deps.log.warn(
-          SCOPE,
-          `${rec.spec.binary} still running ${EVICT_EXIT_WAIT_MS} ms after eviction`,
-          { root: rec.lexicalRoot, pid: handle.pid },
-        );
-      }
-    }
+    if (handle) await this.awaitExit(handle, rec.spec.binary, 'eviction');
     this.afterResidencyStop(rec);
+  }
+
+  /** A stopped process whose record was pruned still counts until it exits. */
+  private orphanEntries(): ResidencyServer[] {
+    return [...this.orphans.values()].map((o) => ({
+      key: o.key,
+      weight: o.weight,
+      state: 'stopped',
+      live: true,
+      visible: false,
+      // Already stopped: the first thing to wait out, never protected by the hysteresis.
+      hiddenSince: 0,
+      lastActivity: 0,
+      inFlight: 0,
+    }));
   }
 
   /** Makes room under the caps, then spawns — or doesn't, when nothing wants the server any
@@ -806,6 +828,9 @@ export class LspManager {
     const current = () => !this.disposed && gen === rec.generation && !rec.stopping;
     const step = async (): Promise<LspServerHandle | null> => {
       if (!current()) return null;
+      // Its own old process counts as this record, once; a second one beside it would not.
+      if (rec.lingering) await this.awaitExit(rec.lingering, rec.spec.binary, 'its stop');
+      if (!current()) return null;
       const plan = planEvictions(
         { key: rec.key, weight: rec.spec.weight },
         this.residencySnapshot(),
@@ -814,7 +839,11 @@ export class LspManager {
       let overBudget: string | null = plan.overBudget ? 'nothing evictable' : null;
       for (const key of plan.evict) {
         const victim = this.servers.get(key);
-        if (!victim) continue;
+        if (!victim) {
+          const orphan = [...this.orphans].find(([, o]) => o.key === key)?.[0];
+          if (orphan) await this.awaitExit(orphan, key, 'its record was dropped');
+          continue;
+        }
         if (!isEvictable(this.residencyOf(victim, this.visibleUnion()), Date.now())) {
           overBudget = `${key} was needed again before it could be evicted`;
           continue;
@@ -982,6 +1011,7 @@ export class LspManager {
       rec.lingering = handle;
       void handle.exited.then(() => {
         if (rec.lingering === handle) rec.lingering = null;
+        this.orphans.delete(handle);
       });
       await handle.stop();
     }
@@ -994,7 +1024,14 @@ export class LspManager {
     // A stopped record no doc points at is dead weight; the next open recreates it.
     if (!rec.stopping) return;
     if (this.hasDocs(rec)) return;
-    if (this.servers.get(rec.key) === rec) this.servers.delete(rec.key);
+    if (this.servers.get(rec.key) !== rec) return;
+    this.servers.delete(rec.key);
+    if (rec.lingering) {
+      this.orphans.set(rec.lingering, {
+        key: `${rec.key}#${rec.lingering.pid}`,
+        weight: rec.spec.weight,
+      });
+    }
   }
 
   private restartLanguage(languageId: string): void {
