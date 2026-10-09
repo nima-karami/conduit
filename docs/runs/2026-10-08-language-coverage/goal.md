@@ -32,3 +32,4 @@ memory and sleep when nothing visible needs them. Spec: docs/specs/2026-10-08-la
 - Lane C review REQUEST_CHANGES: blocker AC-C3 replay e2e can't fail (in-place rename); lsp-sync A→B→A dedup race;
   exec-bounded fan-out + orphan hang. Ratified unplanned files (exec-bounded.ts, bridge.ts line).
   Conductor decision: every stop path keeps a record in the budget until its process exits.
+- Lane C fixes 127867e (verify 0; remote 37861862146 + 37862759060). Lane A fixes 84c97e6 (log 25 ms→0.2 ms; remote 37862334081). Both in re-review.
