@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { decideHydrate, makeGate, onLocalEdit, onPostFired, settle } from '../../src/settings-sync';
+import {
+  decideHydrate,
+  jsonEqual,
+  makeGate,
+  onLocalEdit,
+  onPostFired,
+  settle,
+} from '../../src/settings-sync';
 
 // A tiny harness mirroring exactly how webview/settings.tsx drives the gate, so the
 // interleavings are tested against the same shape the provider uses: a gate ref plus a
@@ -135,5 +142,19 @@ describe('settings-sync gate (K1)', () => {
     expect(h.dirty).toBe(false);
     const applied = h.hydrate({ sidebarCollapsed: false });
     expect(applied).toBe(true);
+  });
+});
+
+describe('jsonEqual', () => {
+  it('compares structurally, ignoring key order', () => {
+    expect(jsonEqual({ a: 1, b: [1, { c: 'x' }] }, { b: [1, { c: 'x' }], a: 1 })).toBe(true);
+  });
+
+  it('sees nested, length, and shape differences', () => {
+    expect(jsonEqual({ a: [1, 2] }, { a: [1, 2, 3] })).toBe(false);
+    expect(jsonEqual({ a: { b: 1 } }, { a: { b: 2 } })).toBe(false);
+    expect(jsonEqual({ a: 1 }, { b: 1 })).toBe(false);
+    expect(jsonEqual([], {})).toBe(false);
+    expect(jsonEqual({ a: null }, { a: {} })).toBe(false);
   });
 });

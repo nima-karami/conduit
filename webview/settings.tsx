@@ -10,7 +10,7 @@ import {
 } from 'react';
 import type { AppSettings } from '../src/settings';
 import { DEFAULT_SETTINGS, FONT_SIZE_SCALE } from '../src/settings';
-import { decideHydrate, makeGate, onLocalEdit, onPostFired } from '../src/settings-sync';
+import { decideHydrate, jsonEqual, makeGate, onLocalEdit, onPostFired } from '../src/settings-sync';
 import { initialSettings, post } from './bridge';
 import { coupleThemeDefaults } from './themes';
 
@@ -30,28 +30,43 @@ interface SettingsCtx {
 
 const Ctx = createContext<SettingsCtx | null>(null);
 
-/** Apply settings to <html> data-* attributes so CSS can react to them. */
-function applyToDom(s: AppSettings) {
+/** What settings put on <html>: `data-*` attributes (camelCase dataset keys) and `--` vars. */
+function domValues(s: AppSettings): Record<string, string> {
+  return {
+    theme: s.theme,
+    fontUi: s.fontUi,
+    fontMono: s.fontMono,
+    density: s.density,
+    // Interface text only — multiplier composed with the density-derived base font size
+    // (see styles.css body font-size); Monaco keeps its own fontSize.
+    '--font-scale': String(FONT_SIZE_SCALE[s.fontSize]),
+    background: s.background,
+    reduceMotion: String(s.reduceMotion),
+    '--left-w': `${s.leftWidth}px`,
+    '--right-w': `${s.rightWidth}px`,
+    '--bg-blur': `${s.bgBlur}px`,
+    '--surface-alpha': String(s.surfaceOpacity),
+    // One shared surface drives BOTH code block and terminal (wishlist I1 + R4.3b) so
+    // they always match; --code-alpha (codeOpacity) drives both surfaces' translucency
+    // (terminal's --term-surface is color-mix(--term-bg, --code-alpha) in CSS).
+    '--code-bg': s.surfaceColor,
+    '--code-alpha': String(s.codeOpacity),
+    '--term-bg': s.surfaceColor,
+  };
+}
+
+/**
+ * Write only the values that changed since the last apply. Other code writes some of these
+ * live — a panel resize drag owns `--left-w`/`--right-w` until it commits on release — so
+ * re-writing an unchanged value would snap that drag back to the persisted width.
+ */
+function applyToDom(next: Record<string, string>, prev: Record<string, string> | null) {
   const el = document.documentElement;
-  el.dataset.theme = s.theme;
-  el.dataset.fontUi = s.fontUi;
-  el.dataset.fontMono = s.fontMono;
-  el.dataset.density = s.density;
-  // Interface text only — multiplier composed with the density-derived base font size
-  // (see styles.css body font-size); Monaco keeps its own fontSize.
-  el.style.setProperty('--font-scale', String(FONT_SIZE_SCALE[s.fontSize]));
-  el.dataset.background = s.background;
-  el.dataset.reduceMotion = String(s.reduceMotion);
-  el.style.setProperty('--left-w', `${s.leftWidth}px`);
-  el.style.setProperty('--right-w', `${s.rightWidth}px`);
-  el.style.setProperty('--bg-blur', `${s.bgBlur}px`);
-  el.style.setProperty('--surface-alpha', String(s.surfaceOpacity));
-  // One shared surface drives BOTH code block and terminal (wishlist I1 + R4.3b) so
-  // they always match; --code-alpha (codeOpacity) drives both surfaces' translucency
-  // (terminal's --term-surface is color-mix(--term-bg, --code-alpha) in CSS).
-  el.style.setProperty('--code-bg', s.surfaceColor);
-  el.style.setProperty('--code-alpha', String(s.codeOpacity));
-  el.style.setProperty('--term-bg', s.surfaceColor);
+  for (const [key, value] of Object.entries(next)) {
+    if (prev?.[key] === value) continue;
+    if (key.startsWith('--')) el.style.setProperty(key, value);
+    else el.dataset[key] = value;
+  }
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
@@ -73,7 +88,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   // Layout, not passive: a passive effect runs AFTER the browser paints, so the first frame of
   // every launch showed the stylesheet's bare `:root` (Aero Dark) whatever the settings said.
-  useLayoutEffect(() => applyToDom(settings), [settings]);
+  const applied = useRef<Record<string, string> | null>(null);
+  useLayoutEffect(() => {
+    const next = domValues(settings);
+    applyToDom(next, applied.current);
+    applied.current = next;
+  }, [settings]);
 
   // Flush the pending debounced persist synchronously. Returns true if it posted.
   const flush = useCallback((): boolean => {
@@ -123,7 +143,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       postedEpoch: posted.current.epoch,
       incomingMatchesPosted: JSON.stringify(s) === posted.current.json,
     });
-    if (apply) setSettings(s);
+    // The host echoes settings on every `state` broadcast; keeping the old object when nothing
+    // changed spares every settings consumer a re-render per broadcast.
+    if (apply) setSettings((prev) => (jsonEqual(prev, s) ? prev : s));
   }, []);
 
   const resetAll = useCallback(() => {

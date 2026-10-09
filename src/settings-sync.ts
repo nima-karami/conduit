@@ -82,6 +82,22 @@ export function decideHydrate(
   return { apply: false };
 }
 
+/**
+ * Structural equality for JSON-shaped values. Key-order-insensitive, unlike comparing
+ * `JSON.stringify` output: the host's coerced copy need not share the renderer's key order.
+ */
+export function jsonEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  const ra = a as Record<string, unknown>;
+  const rb = b as Record<string, unknown>;
+  return ka.every((k) => Object.hasOwn(rb, k) && jsonEqual(ra[k], rb[k]));
+}
+
 /** Clear the dirty flag (e.g. provider proved no stale echo can remain). */
 export function settle(gate: SyncGate): void {
   gate.dirty = false;
