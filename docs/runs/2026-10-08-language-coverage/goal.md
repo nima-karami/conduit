@@ -42,3 +42,4 @@ memory and sleep when nothing visible needs them. Spec: docs/specs/2026-10-08-la
   243 ms, 5 MB TOML 184 ms, 20k-line Makefile). Fix lane fix-cov-qa: real Groovy grammar; Makefile define bodies;
   bracket colorization off for diff (conductor taste call); install toasts showing literal backticks.
   Not fixed (recorded): Razor C# colouring (Monaco's own grammar); trust prompt lists all 5 toolsets (spec).
+- e2e regressions root-caused (no product bug): go-files + goto-matrix-feedback assumed Python unserved (D1 changed it) → Ruby; lsp-residency flake = sampler pid reuse → pid+creation time. Merged 1480f68 (remote 37866063564 PASS).
