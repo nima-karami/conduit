@@ -21,12 +21,15 @@ export interface ToastAction {
 export interface Toast {
   id: string;
   message: string;
+  /** A command shown after the message as code. */
+  code?: string;
   variant: ToastVariant;
   action?: ToastAction;
 }
 
 export interface PushToastInput {
   message: string;
+  code?: string;
   variant: ToastVariant;
   /** Auto-dismiss delay in ms. Default ~5s. Pass 0 to disable the auto-dismiss timer. */
   durationMs?: number;
@@ -56,6 +59,7 @@ export function pushToast(input: PushToastInput): string {
     {
       id,
       message: input.message,
+      ...(input.code ? { code: input.code } : {}),
       variant: input.variant,
       ...(input.action ? { action: input.action } : {}),
     },

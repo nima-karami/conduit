@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { cmake } from '../../webview/cmake-grammar';
 import { diff } from '../../webview/diff-grammar';
 import { type Grammar, gomod } from '../../webview/gomod-grammar';
+import { groovy } from '../../webview/groovy-grammar';
 import { ignore } from '../../webview/ignore-grammar';
 import { log } from '../../webview/log-grammar';
 import { makefile } from '../../webview/makefile-grammar';
@@ -23,13 +24,15 @@ import {
 } from './grammar-runner';
 
 const NEW: Record<string, Grammar> = { toml, diff, makefile, cmake, ignore };
-const ALL: Record<string, Grammar> = { ...NEW, gomod, log };
+const ALL: Record<string, Grammar> = { ...NEW, groovy, gomod, log };
 
 /** Adversarial lines of `n` chars. Generators, so a longer line is one longer run — a rule that is
  *  quadratic in a single run's length shows it, which repeating a short line would hide. */
 const ADVERSARIAL: ((n: number) => string)[] = [
   (n) => '['.repeat(n),
   (n) => `"${'a'.repeat(n - 1)}`,
+  (n) => `'${'a'.repeat(n - 1)}`,
+  (n) => '\\'.repeat(n),
   (n) => '$('.repeat(n / 2),
   (n) => '${'.repeat(n / 2),
   (n) => `${'1'.repeat(n - 1)}a`,
@@ -106,13 +109,16 @@ describe('grammar linearity', () => {
     });
   }
 
-  for (const [name, grammar] of Object.entries(NEW)) {
+  for (const [name, grammar] of Object.entries({ ...NEW, groovy })) {
     it(`${name} has no nested quantifier in any rule`, () => {
       for (const re of grammarRegExps(grammar)) {
         expect(re.source, name).not.toMatch(/\((?:[^()\\]|\\.)*[+*}]\)[+*{]/);
       }
     });
+  }
 
+  // Groovy reuses Java's token names, which Monaco's base theme colours.
+  for (const [name, grammar] of Object.entries(NEW)) {
     it(`${name} emits only already-themed tokens`, () => {
       const allowed = new Set([
         'comment',

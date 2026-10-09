@@ -26,8 +26,9 @@ import { recordTree, survivorsAfter, waitDefinition, waitServerState } from './l
 
 const waitCsState = (page, state, log, ms) => waitServerState(page, 'csharp', state, log, ms);
 
-const INSTALL_TOAST =
-  'C# navigation needs csharp-ls — install with `dotnet tool install --global csharp-ls`';
+const INSTALL_CODE = 'dotnet tool install --global csharp-ls';
+/** The `.toast__msg` text: the message, then the command's `.toast__code` element. */
+const INSTALL_TOAST = `C# navigation needs csharp-ls — install with ${INSTALL_CODE}`;
 
 const endsWith = (p, suffix) => (p ?? '').toLowerCase().endsWith(suffix.toLowerCase());
 
@@ -126,6 +127,11 @@ async function missingScenario(dir, program, log) {
       `expected exactly one install toast, got ${JSON.stringify(r.toasts)}`,
     );
     assert(r.toasts.length === 1, `unexpected extra toasts: ${JSON.stringify(r.toasts)}`);
+    assert(
+      r.toastCodes.length === 1 && r.toastCodes[0] === INSTALL_CODE,
+      `expected the command as code, got ${JSON.stringify(r.toastCodes)}`,
+    );
+    assert(!r.toasts[0].includes('`'), `literal backticks in ${JSON.stringify(r.toasts[0])}`);
     assert(errors.length === 0, `error toasts: ${JSON.stringify(errors)}`);
     await placeCursor(page, program, 'namespace');
     await page.keyboard.type('x');

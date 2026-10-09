@@ -78,6 +78,7 @@ import { cmake } from './cmake-grammar';
 import { diffFoldingRanges } from './diff-folding';
 import { diff } from './diff-grammar';
 import { type Grammar, gomod } from './gomod-grammar';
+import { groovy } from './groovy-grammar';
 import { ignore } from './ignore-grammar';
 import { log } from './log-grammar';
 import { makefile } from './makefile-grammar';
@@ -110,7 +111,7 @@ const GRAMMARS: Record<string, Grammar> = {
   go,
   gomod,
   graphql,
-  groovy: java,
+  groovy,
   handlebars,
   hcl,
   html,
