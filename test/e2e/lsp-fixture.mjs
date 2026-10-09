@@ -4,7 +4,7 @@
  * (docs/plans/2026-10-08-language-coverage.plan.md Task B5.1).
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { observe, pointOn } from './goto-matrix.mjs';
+import { observe, openDoc, pointOn } from './goto-matrix.mjs';
 import { assert } from './harness.mjs';
 
 export const lsp = (page, msg) => page.evaluate((m) => window.agentDeck.lsp(m), msg);
@@ -68,8 +68,7 @@ export function breadcrumbWith(page, symbol) {
     .catch(() => null);
 }
 
-/** `pid` and every descendant, by ParentProcessId walk. */
-export function recordTree(pid) {
+function processList() {
   const json = execFileSync(
     'powershell',
     [
@@ -80,7 +79,11 @@ export function recordTree(pid) {
     ],
     { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
   );
-  const procs = JSON.parse(json);
+  return JSON.parse(json);
+}
+
+/** `pid` and every descendant, by ParentProcessId walk. */
+export function recordTree(pid, procs = processList()) {
   const tree = [{ pid, name: procs.find((p) => p.ProcessId === pid)?.Name ?? '?' }];
   for (let i = 0; i < tree.length; i++) {
     for (const p of procs) {
@@ -187,4 +190,125 @@ export async function trustViaHost(page, path, languageId, log) {
 export function serverInstalled(binary, args) {
   const r = spawnSync(binary, args, { stdio: 'ignore', timeout: 30_000, windowsHide: true });
   return r.status === 0;
+}
+
+// ── Residency (docs/plans/2026-10-08-language-coverage.plan.md Task C4.2) ──
+
+/** src/lsp-residency.ts EVICT_MIN_HIDDEN_MS — never shortened by a hook (plan C4.2). */
+export const EVICT_MIN_HIDDEN_MS = 60_000;
+const HEAVY = new Set(['rust', 'cpp', 'csharp']);
+const LIVE = new Set(['starting', 'loading', 'ready', 'restarting']);
+
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Live server statuses (the snapshot drops stopped ones) for `languageId`. */
+export async function liveServers(page, languageId) {
+  const snap = await lsp(page, { type: 'lsp:statusSnapshot' });
+  return snap.servers.filter((s) => s.languageId === languageId && LIVE.has(s.state));
+}
+
+/** Every 250 ms: record each heavy server the host reports, and count how many are still alive —
+ *  a server being alive while ANY process of its tree is, so an evictee still exiting counts, and
+ *  so does the real rust-analyzer behind the rustup proxy the host spawned (AC-C1). Trees are
+ *  re-walked about once a second; a server whose whole tree is gone is dropped. */
+export function heavySampler(page, log) {
+  /** server pid → { lang, pids } */
+  const servers = new Map();
+  const langs = new Set();
+  let maxAlive = 0;
+  let samples = 0;
+  let stopped = false;
+  let lastLine = '';
+  const done = (async () => {
+    while (!stopped) {
+      const snap = await lsp(page, { type: 'lsp:statusSnapshot' }).catch(() => null);
+      for (const s of snap?.servers ?? []) {
+        if (!HEAVY.has(s.languageId) || s.pid === null || servers.has(s.pid)) continue;
+        servers.set(s.pid, { lang: s.languageId, pids: new Set([s.pid]) });
+        langs.add(s.languageId);
+      }
+      if (samples % 4 === 0 && servers.size > 0) {
+        const procs = processList();
+        for (const [root, srv] of servers) {
+          for (const p of recordTree(root, procs)) srv.pids.add(p.pid);
+        }
+      }
+      for (const [root, srv] of servers) {
+        if (![...srv.pids].some(alive)) servers.delete(root);
+      }
+      maxAlive = Math.max(maxAlive, servers.size);
+      samples++;
+      const line = [...servers]
+        .map(([root, srv]) => `${srv.lang}:${root}(+${srv.pids.size - 1})`)
+        .join(' ');
+      if (line !== lastLine) {
+        log(`heavy servers alive → [${line}]`);
+        lastLine = line;
+      }
+      await sleep(250);
+    }
+  })();
+  return {
+    async stop() {
+      stopped = true;
+      await done;
+      return { maxAlive, samples, langs: [...langs] };
+    },
+  };
+}
+
+/** Working set (MB) of each pid, for the run's measured numbers. */
+export function workingSetsMb(pids) {
+  if (pids.length === 0) return {};
+  const out = execFileSync(
+    'powershell',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `Get-Process -Id ${pids.join(',')} -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id) $([math]::Round($_.WorkingSet64 / 1MB))" }`,
+    ],
+    { encoding: 'utf8' },
+  );
+  return Object.fromEntries(
+    out
+      .trim()
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((l) => l.split(' ').map(Number)),
+  );
+}
+
+/** AC-C1's setup: `.rs` shown (t0), `.cpp` shown (t1), then — once `.rs` has been hidden 61 s —
+ *  `.cs` opened from the `.cpp` tab. Asserts rust-analyzer was evicted (the LRU), clangd kept
+ *  (hidden ~0 s, hysteresis) and csharp-ls started. `fx` holds the three fixtures' paths. */
+export async function reachRustEvicted(app, page, sid, fx, log) {
+  await openDoc(app, page, sid, fx.rs.lib);
+  await openDoc(app, page, sid, fx.rs.main);
+  const rust = await waitServerState(page, 'rust', 'ready', log, 90_000);
+  await openDoc(app, page, sid, fx.cpp.main);
+  const t1 = Date.now();
+  const cpp = await waitServerState(page, 'cpp', 'ready', log, 60_000);
+  log(`working sets (MB) rust+cpp → ${JSON.stringify(workingSetsMb([rust.pid, cpp.pid]))}`);
+  await sleep(Math.max(0, t1 + EVICT_MIN_HIDDEN_MS + 1_000 - Date.now()));
+  await openDoc(app, page, sid, fx.cs.program);
+  const shownCs = Date.now();
+  let cs = [];
+  let rustLeft = [rust];
+  while (Date.now() - shownCs < 20_000) {
+    cs = (await liveServers(page, 'csharp')).filter((s) => s.pid !== null);
+    rustLeft = await liveServers(page, 'rust');
+    if (cs.length > 0 && rustLeft.length === 0) break;
+    await sleep(250);
+  }
+  log(`after .cs: rust ${JSON.stringify(rustLeft)} csharp ${JSON.stringify(cs)}`);
+  assert(rustLeft.length === 0, `rust-analyzer (LRU, hidden 61 s) was not evicted`);
+  assert(cs.length === 1, 'csharp-ls did not start');
+  const cppNow = await liveServers(page, 'cpp');
+  assert(
+    cppNow.length === 1 && cppNow[0].pid === cpp.pid,
+    `clangd (hidden < 60 s) was not kept: ${JSON.stringify(cppNow)}`,
+  );
+  log(`working sets (MB) cpp+cs → ${JSON.stringify(workingSetsMb([cpp.pid, cs[0].pid]))}`);
+  return { shownCs, cpp: cpp.pid, cs: cs[0].pid };
 }

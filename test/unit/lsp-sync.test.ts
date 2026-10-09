@@ -306,3 +306,71 @@ describe('reconcile by language', () => {
     expect(sync.notSyncedCause(big)).toBeNull();
   });
 });
+
+describe('setLspVisible', () => {
+  const visibleSends = () => h.sent.filter((m) => m.type === 'lsp:visible');
+  afterEach(async () => {
+    h.replies = {};
+    sync.setLspVisible([]);
+    await vi.runAllTimersAsync();
+  });
+
+  it('sends only when the set changes, in any order', async () => {
+    sync.setLspVisible(['/w/a.go', '/w/b.go']);
+    await vi.runAllTimersAsync();
+    sync.setLspVisible(['/w/b.go', '/w/a.go']);
+    await vi.runAllTimersAsync();
+    expect(visibleSends()).toEqual([{ type: 'lsp:visible', paths: ['/w/a.go', '/w/b.go'] }]);
+    sync.setLspVisible([]);
+    await vi.runAllTimersAsync();
+    expect(visibleSends()).toEqual([
+      { type: 'lsp:visible', paths: ['/w/a.go', '/w/b.go'] },
+      { type: 'lsp:visible', paths: [] },
+    ]);
+  });
+
+  it('a refused send is retried by the next call', async () => {
+    h.replies['lsp:visible'] = { ok: false };
+    sync.setLspVisible(['/w/c.go']);
+    await vi.runAllTimersAsync();
+    h.replies = {};
+    sync.setLspVisible(['/w/c.go']);
+    await vi.runAllTimersAsync();
+    sync.setLspVisible(['/w/c.go']);
+    await vi.runAllTimersAsync();
+    expect(visibleSends()).toHaveLength(2);
+  });
+
+  it('A then B then A again sends A again while B is still unanswered', async () => {
+    const { lspInvoke } = await import('../../webview/bridge');
+    sync.setLspVisible(['/w/a.go']);
+    await vi.runAllTimersAsync();
+    let answerB: (r: { ok: boolean }) => void = () => {};
+    vi.mocked(lspInvoke).mockImplementationOnce((msg) => {
+      h.sent.push(msg as LspMessage);
+      return new Promise((r) => {
+        answerB = r as typeof answerB;
+      }) as never;
+    });
+    sync.setLspVisible(['/w/b.go']);
+    sync.setLspVisible(['/w/a.go']);
+    await vi.runAllTimersAsync();
+    answerB({ ok: true });
+    await vi.runAllTimersAsync();
+    expect(visibleSends().map((m) => ('paths' in m ? m.paths : null))).toEqual([
+      ['/w/a.go'],
+      ['/w/b.go'],
+      ['/w/a.go'],
+    ]);
+  });
+
+  it('a rejected send is retried by the next call', async () => {
+    const { lspInvoke } = await import('../../webview/bridge');
+    vi.mocked(lspInvoke).mockRejectedValueOnce(new Error('host gone'));
+    sync.setLspVisible(['/w/d.go']);
+    await vi.runAllTimersAsync();
+    sync.setLspVisible(['/w/d.go']);
+    await vi.runAllTimersAsync();
+    expect(visibleSends().filter((m) => 'paths' in m && m.paths[0] === '/w/d.go')).toHaveLength(1);
+  });
+});

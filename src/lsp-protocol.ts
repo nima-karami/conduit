@@ -121,6 +121,8 @@ export interface LspCalls {
   };
   'lsp:trustAnswer': { req: { promptId: string; choice: LspTrustChoice }; res: { ok: boolean } };
   'lsp:trustRevoke': { req: { path: string }; res: { ok: boolean } };
+  /** The files this window shows right now; replaces its previous set. */
+  'lsp:visible': { req: { paths: string[] }; res: { ok: boolean } };
 }
 export type LspCallType = keyof LspCalls;
 export type LspMessage<K extends LspCallType = LspCallType> = K extends LspCallType
@@ -141,6 +143,8 @@ const OPS: ReadonlySet<string> = new Set<LspOp>([
   'hover',
   'documentSymbol',
 ]);
+/** Two editor groups show two files; the bound only stops a renderer flooding the host. */
+export const LSP_VISIBLE_MAX = 64;
 const CHOICES: ReadonlySet<string> = new Set<LspTrustChoice>(['trust', 'trustParent', 'deny']);
 const ABSOLUTE = /^(\/|[a-zA-Z]:[\\/]|\\\\)/;
 
@@ -207,6 +211,10 @@ export function parseLspMessage(raw: unknown): LspMessage | null {
         : null;
     case 'lsp:trustRevoke':
       return absPath(r.path) ? { type: r.type, path: r.path } : null;
+    case 'lsp:visible':
+      return Array.isArray(r.paths) && r.paths.length <= LSP_VISIBLE_MAX && r.paths.every(absPath)
+        ? { type: r.type, paths: [...r.paths] }
+        : null;
     default:
       return null;
   }

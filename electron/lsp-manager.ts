@@ -24,8 +24,16 @@ import {
   type LanguageServerSpec,
   languageInfo,
   primaryLanguageId,
+  type ServerWeight,
   serverSpecFor,
 } from '../src/lsp-registry';
+import {
+  DORMANT_MS,
+  isDormant,
+  isEvictable,
+  planEvictions,
+  type ResidencyServer,
+} from '../src/lsp-residency';
 import { nextRestart } from '../src/lsp-restart-budget';
 import {
   isEscapedRoot,
@@ -85,6 +93,8 @@ export const SYMBOLS_TIMEOUT_MS = 5_000;
 export const INIT_WAIT_SHORT_MS = 3_000;
 export const ORIGIN_LRU_MAX = 2_000;
 export const TARGETS_MAX = 200;
+/** How long a launch waits for an evicted server's process to be gone before spawning anyway. */
+export const EVICT_EXIT_WAIT_MS = 2_000;
 const TARGET_BYTES_MAX = 16 * 1024 * 1024;
 
 const SCOPE = 'lsp';
@@ -115,6 +125,8 @@ interface ServerRecord {
   state: LspServerState;
   progress: string | undefined;
   handle: LspServerHandle | null;
+  /** A stopped process that has not exited yet: it still counts toward the residency caps. */
+  lingering: LspServerHandle | null;
   /** `initialized` resolved AND the didOpen replay has been sent. */
   live: boolean;
   /** Set by every host-initiated stop so its exit is never read as a crash (spec §2.2). */
@@ -126,7 +138,14 @@ interface ServerRecord {
   idleTimer: ReturnType<typeof setTimeout> | null;
   watcher: LspWatcherHandle | null;
   waiters: Set<() => void>;
+  /** Residency bookkeeping (spec 2026-10-08-language-coverage §2.6), kept by refreshResidency. */
+  visible: boolean;
+  hiddenSince: number;
+  lastActivity: number;
+  dormantTimer: ReturnType<typeof setTimeout> | null;
 }
+
+type LaunchReason = 'visible' | 'request' | 'trust';
 
 const NAV_OPS: ReadonlySet<LspOp> = new Set([
   'definition',
@@ -184,6 +203,14 @@ export class LspManager {
   private readonly prompts = new Map<string, LspTrustPrompt>();
   /** Folders the user answered "Don't Trust" this app session. */
   private readonly denied = new Set<string>();
+  /** The paths each client shows; a minimized window's count as none. */
+  private readonly visibleByClient = new Map<ClientKey, ReadonlySet<string>>();
+  private readonly minimized = new Set<number>();
+  /** Every spawn passes through here one at a time, so each sees the last one's process. */
+  private launchQueue: Promise<unknown> = Promise.resolve();
+  /** Stopped processes of pruned records, until they exit; keyed by handle. */
+  private readonly orphans = new Map<LspServerHandle, { key: string; weight: ServerWeight }>();
+  private softCapLogged = false;
   private disposed = false;
 
   constructor(private readonly deps: LspManagerDeps) {}
@@ -200,11 +227,20 @@ export class LspManager {
   dropWebContents(webContentsId: number): void {
     const epoch = this.currentEpoch.get(webContentsId);
     this.currentEpoch.delete(webContentsId);
+    this.minimized.delete(webContentsId);
     if (epoch !== undefined) this.retireClient(`${webContentsId}:${epoch}`);
     // One entry per destroyed webContents replaces every retired epoch it accumulated.
     this.gone.add(webContentsId);
     const prefix = `${webContentsId}:`;
     for (const c of this.retired) if (c.startsWith(prefix)) this.retired.delete(c);
+  }
+
+  /** From the host window's minimize/restore — the renderer's own visibilityState is `hidden`
+   *  for occluded and e2e windows too (plan 2026-10-08-language-coverage, Spec staleness). */
+  setWindowMinimized(webContentsId: number, minimized: boolean): void {
+    if (minimized) this.minimized.add(webContentsId);
+    else this.minimized.delete(webContentsId);
+    this.refreshResidency();
   }
 
   statuses(): LspServerStatus[] {
@@ -243,6 +279,8 @@ export class LspManager {
 
   private retireClient(client: ClientKey): void {
     this.retired.add(client);
+    this.visibleByClient.delete(client);
+    this.refreshResidency();
     for (const [k, ac] of this.pending) if (k.startsWith(`${client}:`)) ac.abort();
     for (const doc of this.docs.values()) {
       if (!doc.clients.has(client)) continue;
@@ -294,6 +332,10 @@ export class LspManager {
         return Promise.resolve({ ok: this.answerTrust(msg.promptId, msg.choice) });
       case 'lsp:trustRevoke':
         this.revokeTrust(msg.path);
+        return Promise.resolve({ ok: true });
+      case 'lsp:visible':
+        this.visibleByClient.set(client, new Set(msg.paths));
+        this.refreshResidency();
         return Promise.resolve({ ok: true });
     }
   }
@@ -388,8 +430,9 @@ export class LspManager {
     for (const rec of [...this.servers.values()]) {
       const trusted = this.isRootTrusted(rec);
       if (trusted && rec.state === 'restricted' && this.hasDocs(rec)) {
-        this.setState(rec, 'starting');
-        void this.launch(rec);
+        this.requestLaunch(rec, 'trust');
+        // Trusted with nothing shown: no longer blocked, just not wanted yet.
+        if (rec.state === 'restricted') this.setState(rec, 'stopped');
       } else if (!trusted && rec.state !== 'restricted' && rec.state !== 'absent') {
         // Revoked under a running server: Restricted now, and no automatic re-prompt.
         this.denied.add(this.folderId(rec.workspaceRoot));
@@ -430,17 +473,18 @@ export class LspManager {
     const spec = serverSpecFor(msg.languageId, this.deps.registry);
     if (!spec) return { serverKey: null, state: 'no-root' };
     let doc = this.docs.get(msg.path);
-    let inherited: DocEntry['clients'] | null = null;
-    if (doc && doc.languageId !== msg.languageId) {
-      inherited = this.closeForReopen(doc, client);
-      doc = undefined;
-    }
     let created = false;
-    if (!doc) {
+    if (!doc || doc.languageId !== msg.languageId) {
       const { key, escapesWorkspace } = await this.keyFor(msg.path, spec, client);
       if (this.disposed || !this.isCurrentClient(client))
         return { serverKey: null, state: 'no-root' };
       doc = this.docs.get(msg.path);
+      // Only once this open is sure to land: an early return above would drop the refs.
+      let inherited: DocEntry['clients'] | null = null;
+      if (doc && doc.languageId !== msg.languageId) {
+        inherited = this.closeForReopen(doc, client);
+        doc = undefined;
+      }
       if (!doc) {
         doc = {
           path: msg.path,
@@ -474,7 +518,9 @@ export class LspManager {
       this.acceptText(doc, msg.text, rec);
     }
     if (!rec) return { serverKey: null, state: 'no-root' };
-    this.touch(rec);
+    this.hold(rec);
+    this.requestLaunch(rec, 'visible');
+    this.refreshResidency();
     return { serverKey: rec.key, state: rec.state };
   }
 
@@ -484,9 +530,9 @@ export class LspManager {
     if (!doc || !entry) return { ok: false };
     entry.version = msg.version;
     entry.text = msg.text;
-    if (msg.text !== doc.text) {
-      this.acceptText(doc, msg.text, doc.serverKey ? this.servers.get(doc.serverKey) : undefined);
-    }
+    const rec = doc.serverKey ? this.servers.get(doc.serverKey) : undefined;
+    if (msg.text !== doc.text) this.acceptText(doc, msg.text, rec);
+    if (rec) this.markActive(rec);
     return { ok: true };
   }
 
@@ -522,6 +568,7 @@ export class LspManager {
       });
     }
     this.armIdle(rec);
+    this.refreshResidency();
   }
 
   /** The doc's language changed under it (a shebang edited, a rename): the old server lets it
@@ -588,6 +635,7 @@ export class LspManager {
       state: 'stopped',
       progress: undefined,
       handle: null,
+      lingering: null,
       live: false,
       stopping: false,
       generation: 0,
@@ -596,25 +644,231 @@ export class LspManager {
       idleTimer: null,
       watcher: null,
       waiters: new Set(),
+      visible: false,
+      hiddenSince: Date.now(),
+      lastActivity: 0,
+      dormantTimer: null,
     };
     this.servers.set(root.key, rec);
     return rec;
   }
 
-  /** Any open or request for the key: cancel the idle stop and (re)start what isn't running. */
-  private touch(rec: ServerRecord): void {
+  /** Any open or request for the key: cancel the idle stop. */
+  private hold(rec: ServerRecord): void {
     if (rec.idleTimer) {
       clearTimeout(rec.idleTimer);
       rec.idleTimer = null;
     }
+  }
+
+  /** The one gate that starts a non-running record; only the crash-restart timer bypasses it.
+   *  A doc nobody is looking at never starts a server — a request does (D7). */
+  private requestLaunch(rec: ServerRecord, reason: LaunchReason): void {
     if (this.disposed) return;
+    if (reason !== 'request' && !this.hasVisibleDoc(rec)) return;
     const absentExpired =
       rec.state === 'absent' &&
       Date.now() >= (this.absentUntil.get(primaryLanguageId(rec.spec)) ?? 0);
-    if (rec.state === 'stopped' || absentExpired) {
-      this.setState(rec, 'starting');
-      void this.launch(rec);
+    const startable =
+      rec.state === 'stopped' ||
+      absentExpired ||
+      (reason === 'trust' && rec.state === 'restricted');
+    if (!startable) return;
+    this.setState(rec, 'starting');
+    void this.launch(rec);
+  }
+
+  // ---------- residency (spec 2026-10-08-language-coverage §2.6) ----------
+
+  private visibleUnion(): Set<string> {
+    const union = new Set<string>();
+    for (const [client, paths] of this.visibleByClient) {
+      if (this.minimized.has(Number(client.slice(0, client.indexOf(':'))))) continue;
+      for (const p of paths) union.add(p);
     }
+    return union;
+  }
+
+  private hasVisibleDoc(rec: ServerRecord, union = this.visibleUnion()): boolean {
+    for (const d of this.docs.values()) {
+      if (d.serverKey === rec.key && union.has(d.path) && this.totalRefs(d) > 0) return true;
+    }
+    return false;
+  }
+
+  private inFlightCount(rec: ServerRecord): number {
+    let n = 0;
+    for (const key of this.inFlight.values()) if (key === rec.key) n++;
+    return n;
+  }
+
+  private residencyOf(rec: ServerRecord, union: Set<string>): ResidencyServer {
+    return {
+      key: rec.key,
+      weight: rec.spec.weight,
+      state: rec.state,
+      // Until its process has exited, on every stop path — so the caps hold even transiently.
+      live: (rec.handle !== null && !rec.stopping) || rec.lingering !== null,
+      visible: this.hasVisibleDoc(rec, union),
+      hiddenSince: rec.hiddenSince,
+      lastActivity: rec.lastActivity,
+      inFlight: this.inFlightCount(rec),
+    };
+  }
+
+  private residencySnapshot(): ResidencyServer[] {
+    const union = this.visibleUnion();
+    return [
+      ...[...this.servers.values()].map((r) => this.residencyOf(r, union)),
+      ...this.orphanEntries(),
+    ];
+  }
+
+  /** The single place visibility edges are taken: called after every event that can change
+   *  what is shown or which docs a record holds. */
+  private refreshResidency(): void {
+    if (this.disposed) return;
+    const union = this.visibleUnion();
+    const now = Date.now();
+    for (const rec of [...this.servers.values()]) {
+      const visible = this.hasVisibleDoc(rec, union);
+      if (visible !== rec.visible) {
+        rec.visible = visible;
+        if (visible) {
+          rec.lastActivity = now;
+          this.requestLaunch(rec, 'visible');
+        } else {
+          rec.hiddenSince = now;
+        }
+      }
+      this.armDormant(rec);
+    }
+  }
+
+  private markActive(rec: ServerRecord): void {
+    rec.lastActivity = Date.now();
+    this.armDormant(rec);
+  }
+
+  private armDormant(rec: ServerRecord): void {
+    if (rec.dormantTimer) clearTimeout(rec.dormantTimer);
+    rec.dormantTimer = null;
+    if (this.disposed || rec.visible || rec.handle === null || rec.stopping) return;
+    const now = Date.now();
+    const due = Math.max(rec.lastActivity, rec.hiddenSince) + DORMANT_MS;
+    // Overdue but busy (a request, a load): the request's end or the state change re-arms.
+    if (due <= now && !isDormant(this.residencyOf(rec, this.visibleUnion()), now)) return;
+    rec.dormantTimer = setTimeout(() => {
+      rec.dormantTimer = null;
+      if (isDormant(this.residencyOf(rec, this.visibleUnion()), Date.now())) {
+        this.deps.log.info(SCOPE, `${rec.spec.binary} stopping: dormant`, {
+          root: rec.lexicalRoot,
+        });
+        void this.stopRecord(rec).then(() => this.afterResidencyStop(rec));
+      } else {
+        this.armDormant(rec);
+      }
+    }, due - now);
+  }
+
+  /** A doc shown while the stop ran wants the server straight back. */
+  private afterResidencyStop(rec: ServerRecord): void {
+    if (this.servers.get(rec.key) === rec) this.requestLaunch(rec, 'visible');
+  }
+
+  /** `stop()` returns when taskkill does, not when the tree is gone (AC-C1 counts pids): wait for
+   *  the exit, bounded, and proceed with a warning rather than hold a launch hostage. */
+  private async awaitExit(handle: LspServerHandle, binary: string, why: string): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const exited = await Promise.race([
+      handle.exited.then(() => true),
+      new Promise<boolean>((r) => {
+        timer = setTimeout(() => r(false), EVICT_EXIT_WAIT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (!exited) {
+      this.deps.log.warn(SCOPE, `${binary} still running ${EVICT_EXIT_WAIT_MS} ms after ${why}`, {
+        pid: handle.pid,
+      });
+    }
+  }
+
+  private async evict(rec: ServerRecord): Promise<void> {
+    // An already-stopped record is evicted by waiting out the process it left behind.
+    const handle = rec.handle ?? rec.lingering;
+    this.deps.log.info(SCOPE, `${rec.spec.binary} evicted`, { root: rec.lexicalRoot });
+    await this.stopRecord(rec);
+    if (handle) await this.awaitExit(handle, rec.spec.binary, 'eviction');
+    this.afterResidencyStop(rec);
+  }
+
+  /** A stopped process whose record was pruned still counts until it exits. */
+  private orphanEntries(): ResidencyServer[] {
+    return [...this.orphans.values()].map((o) => ({
+      key: o.key,
+      weight: o.weight,
+      state: 'stopped',
+      live: true,
+      visible: false,
+      // Already stopped: the first thing to wait out, never protected by the hysteresis.
+      hiddenSince: 0,
+      lastActivity: 0,
+      inFlight: 0,
+    }));
+  }
+
+  /** Makes room under the caps, then spawns — or doesn't, when nothing wants the server any
+   *  more. Returns the new handle, or null. */
+  private spawnWithinBudget(
+    rec: ServerRecord,
+    gen: number,
+    resolved: ResolvedServer,
+  ): Promise<LspServerHandle | null> {
+    const current = () => !this.disposed && gen === rec.generation && !rec.stopping;
+    const step = async (): Promise<LspServerHandle | null> => {
+      if (!current()) return null;
+      // Its own old process counts as this record, once; a second one beside it would not.
+      if (rec.lingering) await this.awaitExit(rec.lingering, rec.spec.binary, 'its stop');
+      if (!current()) return null;
+      const plan = planEvictions(
+        { key: rec.key, weight: rec.spec.weight },
+        this.residencySnapshot(),
+        Date.now(),
+      );
+      let overBudget: string | null = plan.overBudget ? 'nothing evictable' : null;
+      for (const key of plan.evict) {
+        const victim = this.servers.get(key);
+        if (!victim) {
+          const orphan = [...this.orphans].find(([, o]) => o.key === key)?.[0];
+          if (orphan) await this.awaitExit(orphan, key, 'its record was dropped');
+          continue;
+        }
+        if (!isEvictable(this.residencyOf(victim, this.visibleUnion()), Date.now())) {
+          overBudget = `${key} was needed again before it could be evicted`;
+          continue;
+        }
+        await this.evict(victim);
+      }
+      if (!current()) return null;
+      if (!this.hasVisibleDoc(rec) && rec.waiters.size === 0 && this.inFlightCount(rec) === 0) {
+        this.setState(rec, 'stopped');
+        return null;
+      }
+      if (overBudget !== null && !this.softCapLogged) {
+        this.softCapLogged = true;
+        this.deps.log.info(SCOPE, 'language servers over budget; launching anyway (soft cap)', {
+          launching: rec.key,
+          reason: overBudget,
+        });
+      }
+      const handle = this.deps.startServer({ spec: rec.spec, resolved, root: rec.lexicalRoot });
+      rec.handle = handle;
+      return handle;
+    };
+    const run = this.launchQueue.then(step);
+    this.launchQueue = run.catch(() => {});
+    return run;
   }
 
   private async launch(rec: ServerRecord): Promise<void> {
@@ -646,8 +900,8 @@ export class LspManager {
       this.raisePrompt(rec.workspaceRoot, rec.spec, false);
       return;
     }
-    const handle = this.deps.startServer({ spec: rec.spec, resolved, root: rec.lexicalRoot });
-    rec.handle = handle;
+    const handle = await this.spawnWithinBudget(rec, gen, resolved);
+    if (!handle) return;
     this.setState(rec, rec.state === 'restarting' ? 'restarting' : 'starting');
     handle.onExit((e) => this.onExit(rec, gen, e));
     handle.onProgress((loading, title) => {
@@ -683,6 +937,7 @@ export class LspManager {
     }
     rec.live = true;
     this.setState(rec, handle.loading ? 'loading' : 'ready');
+    this.refreshResidency();
   }
 
   private onExit(
@@ -752,7 +1007,14 @@ export class LspManager {
     // (taskkill returns first) and must not re-state the record — it overwrote 'restricted'.
     rec.generation++;
     this.wake(rec);
-    if (handle) await handle.stop();
+    if (handle) {
+      rec.lingering = handle;
+      void handle.exited.then(() => {
+        if (rec.lingering === handle) rec.lingering = null;
+        this.orphans.delete(handle);
+      });
+      await handle.stop();
+    }
     if (rec.handle === handle) rec.handle = null;
     // A launch that began while the stop was in flight owns the record now.
     if (!rec.stopping) return;
@@ -762,7 +1024,14 @@ export class LspManager {
     // A stopped record no doc points at is dead weight; the next open recreates it.
     if (!rec.stopping) return;
     if (this.hasDocs(rec)) return;
-    if (this.servers.get(rec.key) === rec) this.servers.delete(rec.key);
+    if (this.servers.get(rec.key) !== rec) return;
+    this.servers.delete(rec.key);
+    if (rec.lingering) {
+      this.orphans.set(rec.lingering, {
+        key: `${rec.key}#${rec.lingering.pid}`,
+        weight: rec.spec.weight,
+      });
+    }
   }
 
   private restartLanguage(languageId: string): void {
@@ -781,8 +1050,10 @@ export class LspManager {
   private clearTimers(rec: ServerRecord): void {
     if (rec.idleTimer) clearTimeout(rec.idleTimer);
     if (rec.restartTimer) clearTimeout(rec.restartTimer);
+    if (rec.dormantTimer) clearTimeout(rec.dormantTimer);
     rec.idleTimer = null;
     rec.restartTimer = null;
+    rec.dormantTimer = null;
   }
 
   private forwardWatched(rec: ServerRecord, changes: WatchedChange[]): void {
@@ -809,8 +1080,10 @@ export class LspManager {
         const next = this.ensureRecord(root, doc.spec);
         doc.serverKey = next.key;
         if (next.live) this.notifyOpen(next, doc);
-        this.touch(next);
+        this.hold(next);
+        this.requestLaunch(next, 'visible');
         if (old) this.armIdle(old);
+        this.refreshResidency();
       });
     }
   }
@@ -819,6 +1092,8 @@ export class LspManager {
     rec.state = state;
     rec.progress = progress;
     this.wake(rec);
+    // Leaving `loading` can be what unblocks a dormancy that came due mid-load.
+    this.armDormant(rec);
     this.deps.broadcastStatus(this.statusOf(rec));
   }
 
@@ -848,10 +1123,9 @@ export class LspManager {
     this.pending.set(pendingKey, ac);
     const startedAt = Date.now();
     try {
-      const prepared = await this.enqueue(msg.path, () => this.prepareRequest(client, msg));
+      const prepared = await this.enqueue(msg.path, () => this.prepareRequest(client, msg, ac));
       if ('kind' in prepared) return prepared;
       const { rec, doc } = prepared;
-      this.inFlight.set(ac, rec.key);
       const isNav = NAV_OPS.has(msg.op);
       const waitMs = isNav ? NAV_LOADING_TIMEOUT_MS : INIT_WAIT_SHORT_MS;
       const ready = await this.waitLive(rec, startedAt + waitMs, ac.signal);
@@ -866,13 +1140,17 @@ export class LspManager {
       return ac.signal.aborted ? abortedReply(ac.signal) : reply;
     } finally {
       this.pending.delete(pendingKey);
+      const key = this.inFlight.get(ac);
       this.inFlight.delete(ac);
+      const rec = key === undefined ? undefined : this.servers.get(key);
+      if (rec) this.armDormant(rec);
     }
   }
 
   private prepareRequest(
     client: ClientKey,
     msg: LspMessage<'lsp:request'>,
+    ac: AbortController,
   ): LspReply | { rec: ServerRecord; doc: DocEntry } {
     const doc = this.docs.get(msg.path);
     const entry = doc?.clients.get(client);
@@ -882,7 +1160,12 @@ export class LspManager {
     if (!rec) {
       return { kind: 'unavailable', reason: doc.escapesWorkspace ? 'root-escapes' : 'no-root' };
     }
-    this.touch(rec);
+    // Before the launch: its queue step asks "still wanted?" and may run before this request
+    // reaches waitLive. `request`'s finally drops it on every path.
+    this.inFlight.set(ac, rec.key);
+    this.hold(rec);
+    this.markActive(rec);
+    this.requestLaunch(rec, 'request');
     if (rec.state === 'crashed') return { kind: 'unavailable', reason: 'crashed' };
     if (rec.state === 'absent') return { kind: 'unavailable', reason: 'missing' };
     if (rec.state === 'restricted') return { kind: 'unavailable', reason: 'restricted' };
@@ -916,7 +1199,8 @@ export class LspManager {
           // An ordered stop finished under this request: it still wants an answer, so it starts
           // the server again rather than waiting out its whole budget on one that is gone.
           rec.waiters.add(check);
-          this.touch(rec);
+          this.hold(rec);
+          this.requestLaunch(rec, 'request');
           return;
         }
         rec.waiters.add(check);

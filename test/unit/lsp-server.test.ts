@@ -367,6 +367,22 @@ describe('startLanguageServer', () => {
     expect(exits[0]?.stderrTail[0]).toBe('line 11');
   });
 
+  it.each([
+    ['exit', (c: EventEmitter) => c.emit('exit', 0, null)],
+    ['error', (c: EventEmitter) => c.emit('error', new Error('spawn EACCES'))],
+  ])('exited resolves on the child %s, not before', async (_label, end) => {
+    const h = start();
+    let done = false;
+    void h.handle.exited.then(() => {
+      done = true;
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(done).toBe(false);
+    end(h.child);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(done).toBe(true);
+  });
+
   it('stop sends shutdown, then killTree on reply — no exit notification is ever sent', async () => {
     let shutdowns = 0;
     const h = start({

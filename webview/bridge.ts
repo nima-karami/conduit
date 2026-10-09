@@ -204,6 +204,7 @@ const LSP_PREVIEW: { [K in LspCallType]: LspResult<K> } = {
   'lsp:trustRequest': { ok: false, promptId: null },
   'lsp:trustAnswer': { ok: false },
   'lsp:trustRevoke': { ok: true },
+  'lsp:visible': { ok: true },
 };
 
 /** Language-server channel (spec docs/specs/2026-09-22-language-server-go.md §3.2). */

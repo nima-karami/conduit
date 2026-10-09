@@ -230,6 +230,7 @@ import {
   type LspDocInput,
   reconcileLspDocs,
   requestTrust,
+  setLspVisible,
   syncLanguageFor,
   syncSkipCause,
 } from './lsp-sync';
@@ -1705,6 +1706,9 @@ export function App() {
     }
     visibleFilePathsRef.current = visibleFilePaths;
   }, [visibleFilePaths]);
+  // Not gated on document.visibilityState: the host learns minimize itself (plan
+  // 2026-10-08-language-coverage, Spec staleness).
+  useEffect(() => setLspVisible(visibleFilePaths), [visibleFilePaths]);
 
   // Ask the host for git changes + file tree whenever the active cwd changes.
   // activeCwd(active) prefers the live cd-tracked dir (cwd) over home.

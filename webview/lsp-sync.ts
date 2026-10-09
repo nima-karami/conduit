@@ -206,6 +206,26 @@ export function lspRequest(
   });
 }
 
+/** The visible set last SENT, as a sorted key — compared against the last send, not the last
+ *  answer, or A→B→A with B unanswered would skip the second A. A refused send clears it so the
+ *  next call retries. */
+let sentVisible: string | null = null;
+
+/** Tells the host which files this window shows — what keeps their servers resident
+ *  (spec 2026-10-08-language-coverage §2.6). */
+export function setLspVisible(paths: readonly string[]): void {
+  const sorted = [...new Set(paths)].sort();
+  const key = JSON.stringify(sorted);
+  if (key === sentVisible) return;
+  sentVisible = key;
+  const refused = () => {
+    if (sentVisible === key) sentVisible = null;
+  };
+  lspInvoke({ type: 'lsp:visible', paths: sorted }).then((r) => {
+    if (!r.ok) refused();
+  }, refused);
+}
+
 /** Ask the host to raise its Workspace Trust prompt for the folder holding `path`. The host picks
  *  the folder and owns the answer (docs/specs/2026-09-23-workspace-trust.md §4). Every caller is
  *  the user asking, so the prompt takes focus — the keyboard route out of the editor. */

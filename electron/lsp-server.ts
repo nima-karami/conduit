@@ -79,6 +79,9 @@ export interface LspServerHandle {
     params: unknown,
     opts: { timeoutMs: number; signal: AbortSignal },
   ): Promise<R>;
+  /** Resolves once the process is gone (exit or spawn error). `stop()` resolving does not mean
+   *  this has: taskkill returns before the tree is dead. */
+  readonly exited: Promise<void>;
   /** `shutdown` → (reply | 2 s) → tree kill. No `exit` notification: see spec §2.4. */
   stop(): Promise<void>;
   killSync(): void;
@@ -282,6 +285,7 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
   return {
     pid,
     initialized,
+    exited: exitedP,
     get loading() {
       return openTokens.size > 0;
     },
