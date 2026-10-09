@@ -23,8 +23,8 @@ import { delimiter, join } from 'node:path';
 import { clearTransients, observe, openDoc, placeCursor, trigger } from './goto-matrix.mjs';
 import { assert, openSession, runScenario } from './harness.mjs';
 
-const INSTALL_TOAST =
-  'Go navigation needs gopls — install with `go install golang.org/x/tools/gopls@latest`';
+const INSTALL_CODE = 'go install golang.org/x/tools/gopls@latest';
+const INSTALL_TOAST = `Go navigation needs gopls — install with ${INSTALL_CODE}`;
 
 /**
  * Env for the launched app with gopls hidden. GOPATH, GOBIN and the home dir point at an empty
@@ -140,7 +140,7 @@ async function waitForDistinctClasses(page, scope, texts, log, label) {
   );
 }
 
-async function expectToast(app, page, sid, abs, token, want, log) {
+async function expectToast(app, page, sid, abs, token, want, log, wantCode) {
   await clearTransients(page);
   await openDoc(app, page, sid, abs);
   await placeCursor(page, abs, token);
@@ -152,6 +152,13 @@ async function expectToast(app, page, sid, abs, token, want, log) {
     `expected toast "${want}", saw ${JSON.stringify(after)}`,
   );
   assert(!/JS\/TS/.test(all), 'the old JS/TS-only copy must be gone');
+  assert(!all.includes('`'), `literal backticks in ${JSON.stringify(all)}`);
+  if (wantCode) {
+    assert(
+      after.toastCodes.includes(wantCode),
+      `expected the command as code, got ${JSON.stringify(after.toastCodes)}`,
+    );
+  }
 }
 
 runScenario(
@@ -254,7 +261,16 @@ runScenario(
       path: join(process.env.GO_FILES_SHOTS ?? tmpdir(), 'go-files-editor.png'),
     });
 
-    await expectToast(app, page, sid, join(root, 'main.go'), 'helper', INSTALL_TOAST, log);
+    await expectToast(
+      app,
+      page,
+      sid,
+      join(root, 'main.go'),
+      'helper',
+      INSTALL_TOAST,
+      log,
+      INSTALL_CODE,
+    );
     await expectToast(
       app,
       page,

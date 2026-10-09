@@ -43,3 +43,4 @@ memory and sleep when nothing visible needs them. Spec: docs/specs/2026-10-08-la
   bracket colorization off for diff (conductor taste call); install toasts showing literal backticks.
   Not fixed (recorded): Razor C# colouring (Monaco's own grammar); trust prompt lists all 5 toolsets (spec).
 - e2e regressions root-caused (no product bug): go-files + goto-matrix-feedback assumed Python unserved (D1 changed it) → Ruby; lsp-residency flake = sampler pid reuse → pid+creation time. Merged 1480f68 (remote 37866063564 PASS).
+- fix-cov-qa: Groovy grammar, Makefile define, diff bracket colours off, install-hint code element (4aeb351). Builder's `git merge 774ee8aa` into its worktree was DENIED by the permission classifier — not re-run on its behalf; conductor reviews the lane SHA and integrates via the normal merge into feat, updating go-files expectation there.
