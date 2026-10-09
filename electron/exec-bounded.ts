@@ -25,7 +25,7 @@ export type BoundedSpawn = (
 ) => BoundedChild;
 
 const STDOUT_MAX = 1024 * 1024;
-/** After a clean exit, how long stdout may still drain before the output is taken as complete. */
+/** After a clean exit, how long stdout must stay quiet before the output is taken as complete. */
 export const EXIT_GRACE_MS = 200;
 
 export function execFileBounded(
@@ -62,17 +62,28 @@ export function execFileBounded(
       finish(() => reject(new Error(`${file} ${why}`)));
     };
     const timer = setTimeout(() => killAndFail(`timed out after ${opts.timeout} ms`), opts.timeout);
+    let exitedClean = false;
+    // A quiet period, restarted by every chunk: a stalled event loop delivers the tail of the
+    // output late, and a fixed deadline from the exit would cut it off.
+    const armGrace = () => {
+      clearTimeout(grace);
+      grace = setTimeout(() => finish(() => resolve(out)), EXIT_GRACE_MS);
+    };
     child.stdout?.on('data', (d: Buffer | string) => {
       out += String(d);
       if (out.length > STDOUT_MAX) killAndFail('wrote too much output');
+      else if (exitedClean) armGrace();
     });
     child.on('error', (err: Error) => finish(() => reject(err)));
     // A failure is known at exit. A success normally ends at 'close', once stdout is drained —
     // but a grandchild that outlived the child holds the pipe open, so 'close' never comes, and
-    // no tree kill reaches it once its parent is gone. So exit 0 settles after a drain grace.
+    // no tree kill reaches it once its parent is gone. So exit 0 settles once stdout goes quiet.
     child.on('exit', (code: number | null, signal: string | null) => {
       if (code !== 0) finish(() => reject(new Error(`${file} exited ${code ?? signal}`)));
-      else grace = setTimeout(() => finish(() => resolve(out)), EXIT_GRACE_MS);
+      else {
+        exitedClean = true;
+        armGrace();
+      }
     });
     child.on('close', (code: number | null, signal: string | null) =>
       finish(() =>

@@ -99,6 +99,19 @@ describe('execFileBounded', () => {
     expect(h.tree.execFile).not.toHaveBeenCalled();
   });
 
+  it('the exit grace is a quiet period: output still draining after exit is kept', async () => {
+    const h = harness();
+    h.child.emit('exit', 0, null);
+    for (const chunk of ['GOROOT=a\n', 'GOPATH=b\n', 'GOBIN=c\n']) {
+      await vi.advanceTimersByTimeAsync(EXIT_GRACE_MS - 50);
+      h.stdout.write(chunk);
+    }
+    await vi.advanceTimersByTimeAsync(EXIT_GRACE_MS - 1);
+    expect(h.state()).toBe('pending');
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(h.run).resolves.toBe('GOROOT=a\nGOPATH=b\nGOBIN=c\n');
+  });
+
   it('once settled it stops reading: late output never kills the tree a second time', async () => {
     const h = harness();
     await vi.advanceTimersByTimeAsync(5_000);
