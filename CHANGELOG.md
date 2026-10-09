@@ -6,6 +6,39 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.47.0] — 2026-10-08
+
+### Added
+- **Python, Rust and C/C++ code navigation.** With basedpyright (`pip install basedpyright`),
+  rust-analyzer (`rustup component add rust-analyzer`) or clangd (`winget install LLVM.LLVM`)
+  installed, Go to Definition, hover, references and breadcrumbs work like Go and C#, behind
+  Workspace Trust. Python type checking and Rust's check-on-save stay off, so a server only spends
+  CPU on navigation; clangd indexes the project in the background with two threads (it writes
+  `.cache/clangd/`).
+- **Many more files are recognised and coloured.** About 100 new names and extensions — Makefile,
+  CMakeLists.txt, Gemfile, Rakefile, Jenkinsfile, `.gitignore`, `.env*`, `Dockerfile.*`, `.pyi`,
+  `.json5`, `.jsonl`, `.csproj`, `.patch`, `tsconfig*.json` and more — plus Razor, Pug, Handlebars,
+  Twig, Objective-C (`.mm`), Bicep, WGSL and other grammars Monaco ships.
+- **New grammars for TOML, Groovy/Gradle, diff/patch, Makefile, CMake and ignore files.** TOML no
+  longer borrows INI colouring; Gradle and Jenkinsfile strings, `${…}` interpolation and
+  multi-line strings colour correctly.
+- **Scripts without an extension are recognised by their `#!` line** (python, node, bash, ruby,
+  perl, pwsh, deno and more).
+- **Install hints show the command as code** instead of literal backticks.
+
+### Changed
+- **Language servers are bounded.** At most two heavy servers (rust-analyzer, clangd, csharp-ls)
+  and four in total run at once; the least recently used one stops first, and a server sleeps after
+  10 minutes with nothing of its language visible. A tab in a background session no longer starts a
+  server — showing it, or navigating from it, does. Unsaved edits are restored when a server comes
+  back.
+- **Files over 2 MB and files that aren't valid UTF-8 are never sent to a language server;** F12 on
+  them says why.
+
+### Fixed
+- **Typing an unclosed `$(` in a Makefile or CMake file no longer mis-colours the rest of the file.**
+- **Log files with long separator lines colour faster** (the worst line went from ~25 ms to under 1 ms).
+
 ## [0.46.0] — 2026-10-08
 
 ### Added
