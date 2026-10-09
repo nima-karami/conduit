@@ -1,5 +1,5 @@
 /**
- * Python navigation through a host-owned basedpyright (docs/specs/2026-10-08-language-coverage.md
+ * Python navigation through a host-owned basedpyright (docs/specs/archive/2026-10-08-language-coverage.md
  * §7): B8 a 3 MB `.py` is never synced and F12 says why, as does an invalid-UTF-8 one — checked
  * first, while no other Python doc exists; then B3 F12 / hover / breadcrumbs in a marked project,
  * F12 from an extensionless `#!/usr/bin/env python3` script, and B5 an ad-hoc server for a `.py`

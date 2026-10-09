@@ -1,5 +1,5 @@
 /**
- * AC-B1 (docs/specs/2026-10-08-language-coverage.md §7): with no Python, Rust or C/C++ server
+ * AC-B1 (docs/specs/archive/2026-10-08-language-coverage.md §7): with no Python, Rust or C/C++ server
  * anywhere the host looks, F12 in each shows exactly one install toast naming the server and its
  * hint, no error toast, and the files stay editable. A `.h` beside the `.cpp` is the same clangd
  * server, so it adds no second toast.

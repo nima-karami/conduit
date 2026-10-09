@@ -1,6 +1,6 @@
 # Plan: language coverage — recognition, grammars, Python/Rust/C++ servers, server residency
 
-Spec: [docs/specs/2026-10-08-language-coverage.md](../specs/2026-10-08-language-coverage.md) (FULL).
+Spec: [docs/specs/archive/2026-10-08-language-coverage.md](../specs/archive/2026-10-08-language-coverage.md) (FULL).
 Decisions: [goal.md](../runs/2026-10-08-language-coverage/goal.md) — D1 Python/Rust/C++, D3 clangd
 `--background-index -j=2`, D7 residency for every server incl. Go/C#; D2, D4, D5, D6, D8 spec defaults.
 
@@ -757,7 +757,7 @@ Each must complete < 200 s. `lsp-missing-servers` is added to `core-smoke.json`.
 - [ ] Replace the binary sentence and add one bullet, stating:
   1. The binary is found by name on absolute `PATH` entries and the registry's fixed directory list, never the repo, and spawned by that **found absolute path** (not its realpath), so an argv0-dispatching proxy (rustup) works. The realpath is kept for `resolveToolDir` only (e.g. C#'s `DOTNET_ROOT`).
   2. Before trust, the only execution allowed is a version/tool probe (`versionProbe`, `go env GOPATH`): run with `cwd` = the OS temp dir and the server's stripped child env, with a 5 s timeout. Nothing runs in the repo before trust.
-- [ ] Add a dated "Amended 2026-10-08 (language coverage)" line pointing to spec `docs/specs/2026-10-08-language-coverage.md` §2.5. Follow ADR 0003: amend in place, no new ADR.
+- [ ] Add a dated "Amended 2026-10-08 (language coverage)" line pointing to spec `docs/specs/archive/2026-10-08-language-coverage.md` §2.5. Follow ADR 0003: amend in place, no new ADR.
 
 ### Lane C — residency (serial, after B lands)
 

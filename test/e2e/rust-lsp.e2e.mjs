@@ -1,5 +1,5 @@
 /**
- * Rust navigation through a host-owned rust-analyzer (docs/specs/2026-10-08-language-coverage.md
+ * Rust navigation through a host-owned rust-analyzer (docs/specs/archive/2026-10-08-language-coverage.md
  * §7): B3 F12 / hover / breadcrumbs across a two-member workspace served by ONE rust-analyzer
  * rooted at the workspace; B5 a `.rs` under no Cargo.toml gets the "not in a project" outcome.
  *

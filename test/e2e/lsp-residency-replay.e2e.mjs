@@ -1,5 +1,5 @@
 /**
- * AC-C3 (docs/specs/2026-10-08-language-coverage.md §2.6): with rust-analyzer evicted (the
+ * AC-C3 (docs/specs/archive/2026-10-08-language-coverage.md §2.6): with rust-analyzer evicted (the
  * lsp-residency setup), rename the called function in BOTH `.rs` tabs and move its definition
  * down five lines, without saving; show the caller and F12: rust-analyzer relaunches — evicting
  * clangd, hidden > 60 s by then — and the caret lands on the definition's EDITED line, which only

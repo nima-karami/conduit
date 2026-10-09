@@ -2,7 +2,7 @@
 
 **Outcome:** the well-known languages and config formats are recognised and coloured (incl. by filename
 and shebang); Python, Rust and C/C++ get Go-parity navigation; language servers are bounded in count and
-memory and sleep when nothing visible needs them. Spec: docs/specs/2026-10-08-language-coverage.md (FULL).
+memory and sleep when nothing visible needs them. Spec: docs/specs/archive/2026-10-08-language-coverage.md (FULL).
 
 **Gate:** `npm run verify` on the integrated tree; `npm run e2e:remote -- --full` before release.
 **Conductor tier:** Opus 5.5. Builders/reviewers/QA: Opus. Mechanical: Sonnet.
@@ -45,3 +45,4 @@ memory and sleep when nothing visible needs them. Spec: docs/specs/2026-10-08-la
 - e2e regressions root-caused (no product bug): go-files + goto-matrix-feedback assumed Python unserved (D1 changed it) → Ruby; lsp-residency flake = sampler pid reuse → pid+creation time. Merged 1480f68 (remote 37866063564 PASS).
 - fix-cov-qa: Groovy grammar, Makefile define, diff bracket colours off, install-hint code element (4aeb351). Builder's `git merge 774ee8aa` into its worktree was DENIED by the permission classifier — not re-run on its behalf; conductor reviews the lane SHA and integrates via the normal merge into feat, updating go-files expectation there.
 - QA r2 on 91eceec: PASS (Groovy, define, install-hint code element, toasts; diff 'rainbow brackets' was a pre-tokenization screenshot, not real). Taste: .toast__code on its own line.
+- RELEASE v0.47.0: release commit 53a17e8 verify 0; full remote e2e 186/0 on 91eceec. Report: report.md.

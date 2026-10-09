@@ -1,5 +1,5 @@
 /**
- * AC-C5 (docs/specs/2026-10-08-language-coverage.md §2.6): a session restored with `.py` and `.rs`
+ * AC-C5 (docs/specs/archive/2026-10-08-language-coverage.md §2.6): a session restored with `.py` and `.rs`
  * tabs but the Terminal tab active starts no language server, even once the host has registered
  * both hidden tabs (proved first, from its lsp:open answers); showing the `.py` tab starts
  * basedpyright, and a request on the never-shown `.rs` starts rust-analyzer.

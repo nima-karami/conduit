@@ -1,5 +1,5 @@
 /**
- * Lane A of docs/specs/2026-10-08-language-coverage.md §7 (AC-A1…A6): every §2.2 row opens with
+ * Lane A of docs/specs/archive/2026-10-08-language-coverage.md §7 (AC-A1…A6): every §2.2 row opens with
  * its language and paints, shebang files resolve by content, the TOML / diff grammars run through
  * Monaco's own Monarch, and Review colours a changed Makefile and Cargo.toml.
  *

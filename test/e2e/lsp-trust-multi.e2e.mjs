@@ -1,5 +1,5 @@
 /**
- * Workspace Trust across three installed servers (docs/specs/2026-10-08-language-coverage.md §7):
+ * Workspace Trust across three installed servers (docs/specs/archive/2026-10-08-language-coverage.md §7):
  * B2 an untrusted folder with `.py` + `.rs` + `.cpp` open starts no server process and raises ONE
  * prompt listing every server's tools, one line each; B9 with an extensionless Python script
  * active, the palette's "Trust Current Folder" names Python.

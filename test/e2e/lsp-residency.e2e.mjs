@@ -1,5 +1,5 @@
 /**
- * AC-C1 (docs/specs/2026-10-08-language-coverage.md §2.6): show `.rs` (t0), show `.cpp` (t1), and
+ * AC-C1 (docs/specs/archive/2026-10-08-language-coverage.md §2.6): show `.rs` (t0), show `.cpp` (t1), and
  * once `.rs` has been hidden 61 s open `.cs` from the `.cpp` tab. rust-analyzer — the LRU, hidden
  * past the 60 s hysteresis — is evicted; clangd, hidden ~0 s, is kept; csharp-ls starts. At every
  * 250 ms sample from t0 on, never more than 2 heavy server pids are alive (an evictee still

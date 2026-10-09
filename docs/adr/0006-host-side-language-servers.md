@@ -120,7 +120,7 @@ Within a trusted folder the earlier mitigations still hold:
 
 *Amended 2026-10-08 (language coverage): the spawn-path and pre-trust-probe bullets, and the
 per-entry environment defaults — see
-[spec 2026-10-08-language-coverage §2.5](../specs/2026-10-08-language-coverage.md).*
+[spec 2026-10-08-language-coverage §2.5](../specs/archive/2026-10-08-language-coverage.md).*
 
 **Rejected:** unconditional lazy auto-start (the first draft of this ADR) — it runs a fresh
 clone's `go list` without asking. A per-root yes/no with no inheritance — Workspace Trust's

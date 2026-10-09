@@ -637,7 +637,7 @@ function writeFeedback(root) {
   );
 
   // 41 — a file nothing navigates: not the TS worker, and no language server (Python has one
-  // since docs/specs/2026-10-08-language-coverage.md D1; Ruby is deferred there).
+  // since docs/specs/archive/2026-10-08-language-coverage.md D1; Ruby is deferred there).
   write(root, 'src/feedback/thing.rb', 'def marker_r41_ruby\n  41\nend\n');
 }
 

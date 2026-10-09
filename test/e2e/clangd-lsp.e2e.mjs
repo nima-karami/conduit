@@ -1,5 +1,5 @@
 /**
- * C/C++ navigation through a host-owned clangd (docs/specs/2026-10-08-language-coverage.md §7):
+ * C/C++ navigation through a host-owned clangd (docs/specs/archive/2026-10-08-language-coverage.md §7):
  * B3 F12 / hover / breadcrumbs from `main.cpp` into `greet.hpp`/`greet.cpp` with a
  * compile_commands.json; B7 a `.h` (language `c`) beside them is served by the SAME clangd —
  * one record, one pid. That didOpen carries `c` for the `.h` is lsp-manager.test.ts's half.

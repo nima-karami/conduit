@@ -6,7 +6,7 @@
  * Go itself has a language server now (docs/specs/2026-09-22-language-server-go.md), so this
  * scenario runs with gopls hidden — as go-lsp's missing-gopls case does — and main.go gets that
  * outcome's install message. It must not depend on what the machine has installed.
- * Python has one too (docs/specs/2026-10-08-language-coverage.md D1), so the unserved language is
+ * Python has one too (docs/specs/archive/2026-10-08-language-coverage.md D1), so the unserved language is
  * Ruby, which D1 defers.
  *
  * Token colour is read as `mtk*` classes, not pixels. Tokenize-before-open mirrors
