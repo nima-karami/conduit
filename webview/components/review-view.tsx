@@ -20,7 +20,6 @@ import { folderKey } from '../../src/folder-key';
 import type { HunkOp } from '../../src/git-actions';
 import { endpointLabel } from '../../src/git-range';
 import { hunkRange } from '../../src/hunk-patch';
-import { langFromPath } from '../../src/lang';
 import { type Rect, triggerMenu } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { plural } from '../../src/plural';
@@ -176,7 +175,7 @@ import {
   reviewListItems,
 } from '../review-window';
 import { useSettings } from '../settings';
-import { applyEmphasis, highlightLine, monacoLangToHljs } from '../syntax-highlight';
+import { applyEmphasis, highlightLine, hljsLanguageFor } from '../syntax-highlight';
 import {
   getTerminalBusVersion,
   hasLiveTerminal,
@@ -2644,7 +2643,17 @@ const ReviewFileCard = memo(function ReviewFileCard({
   );
 
   // Resolve the language once per file (not per row); null ⇒ plain rows (spec §"Per-file language").
-  const hljsLang = useMemo(() => monacoLangToHljs(langFromPath(change.path)), [change.path]);
+  // The shebang is sniffed only when the first hunk shows line 1 — see spec
+  // 2026-10-08-language-coverage §2.4.
+  const firstHunk = review?.hunks[0];
+  const shebangLine =
+    firstHunk?.startNewLine === 1
+      ? (firstHunk.lines.find((l) => l.newLine === 1)?.text ?? null)
+      : null;
+  const hljsLang = useMemo(
+    () => hljsLanguageFor(change.path, shebangLine),
+    [change.path, shebangLine],
+  );
 
   // Fetch this card's diff on mount (entering the window). The dedupe set in the parent makes
   // a re-entry a no-op; a diff already present needs no fetch.

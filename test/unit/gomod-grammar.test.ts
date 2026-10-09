@@ -1,46 +1,10 @@
-/**
- * The go.mod Monarch rules, run the way Monarch runs them: first rule whose regex matches
- * anchored at the cursor wins. Monaco can't load in the node env, so this is a minimal
- * interpreter over the exported definition; the real tokenizer is covered by go-files.e2e.
- */
+/** The real tokenizer in the editor is covered by go-files.e2e. */
 
 import { describe, expect, it } from 'vitest';
 import { gomod } from '../../webview/gomod-grammar';
+import { tokenizeLines } from './grammar-runner';
 
-type Action = string | { cases: Record<string, string> };
-type Rule = [RegExp, Action];
-
-const lang = gomod.language as unknown as {
-  keywords: string[];
-  tokenizer: { root: Rule[] };
-};
-
-function tokenize(line: string): [string, string][] {
-  const rules = lang.tokenizer.root.map(
-    ([re, action]) => [new RegExp(`^(?:${re.source})`), action] as const,
-  );
-  const out: [string, string][] = [];
-  let pos = 0;
-  while (pos < line.length) {
-    const rest = line.slice(pos);
-    let hit: [string, string] | null = null;
-    for (const [re, action] of rules) {
-      const m = re.exec(rest);
-      if (!m || m[0] === '') continue;
-      const text = m[0];
-      let type: string;
-      if (typeof action === 'string') type = action === '@brackets' ? 'bracket' : action;
-      else
-        type = lang.keywords.includes(text) ? action.cases['@keywords'] : action.cases['@default'];
-      hit = [text, type];
-      break;
-    }
-    if (!hit) hit = [line[pos], 'default'];
-    pos += hit[0].length;
-    if (hit[1] !== 'white') out.push(hit);
-  }
-  return out;
-}
+const tokenize = (line: string) => tokenizeLines(gomod, [line])[0];
 
 describe('gomod grammar', () => {
   it('reads a module line as keyword + identifier', () => {
@@ -88,11 +52,11 @@ describe('gomod grammar', () => {
   it('reads retract ranges as brackets around versions', () => {
     expect(tokenize('retract [v1.0.0, v1.9.9]')).toEqual([
       ['retract', 'keyword'],
-      ['[', 'bracket'],
+      ['[', 'delimiter.square'],
       ['v1.0.0', 'number'],
       [',', 'delimiter'],
       ['v1.9.9', 'number'],
-      [']', 'bracket'],
+      [']', 'delimiter.square'],
     ]);
   });
 

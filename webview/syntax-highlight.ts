@@ -1,4 +1,5 @@
 import hljs from 'highlight.js';
+import { type LanguageId, langFromPath, langFromPathAndText } from '../src/lang';
 import type { WordSpan } from '../src/review-hunks';
 
 /**
@@ -83,10 +84,18 @@ export function clearSyntaxCache(): void {
  * `hcl`) — see the completeness unit test.
  */
 export function monacoLangToHljs(monacoId: string): string | null {
-  return MONACO_TO_HLJS[monacoId] ?? null;
+  return HLJS_BY_ID[monacoId] ?? null;
 }
 
-const MONACO_TO_HLJS: Record<string, string | null> = {
+/** `firstNewLine` is the file's first line when the caller has it, so an extensionless script's
+ *  shebang can colour it; null means "path only". */
+export function hljsLanguageFor(path: string, firstNewLine: string | null): string | null {
+  return monacoLangToHljs(
+    firstNewLine === null ? langFromPath(path) : langFromPathAndText(path, firstNewLine),
+  );
+}
+
+const MONACO_TO_HLJS: Record<Exclude<LanguageId, 'plaintext'>, string | null> = {
   typescript: 'typescript',
   javascript: 'javascript',
   json: 'json',
@@ -129,11 +138,40 @@ const MONACO_TO_HLJS: Record<string, string | null> = {
   xml: 'xml',
   tcl: 'tcl',
   pascal: 'pascal',
+  toml: 'ini',
+  dotenv: 'ini',
+  makefile: 'makefile',
+  cmake: 'cmake',
+  diff: 'diff',
+  groovy: 'groovy',
+  ocaml: 'ocaml',
+  'objective-c': 'objectivec',
+  coffeescript: 'coffeescript',
+  handlebars: 'handlebars',
+  twig: 'twig',
+  scheme: 'scheme',
+  systemverilog: 'verilog',
+  verilog: 'verilog',
   // No grammar in the shipped default build → plain fallback.
   sol: null,
   hcl: null,
-  plaintext: null,
+  gomod: null,
+  log: null,
+  ignore: null,
+  razor: null,
+  pug: null,
+  liquid: null,
+  bicep: null,
+  wgsl: null,
+  restructuredtext: null,
+  typespec: null,
+  cypher: null,
+  powerquery: null,
+  qsharp: null,
+  sparql: null,
 };
+
+const HLJS_BY_ID: Readonly<Record<string, string | null>> = MONACO_TO_HLJS;
 
 /**
  * Tokenize one diff line into class-tagged segments. Returns a single plain segment (never an
