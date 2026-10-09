@@ -6,6 +6,8 @@
  * Go itself has a language server now (docs/specs/2026-09-22-language-server-go.md), so this
  * scenario runs with gopls hidden — as go-lsp's missing-gopls case does — and main.go gets that
  * outcome's install message. It must not depend on what the machine has installed.
+ * Python has one too (docs/specs/2026-10-08-language-coverage.md D1), so the unserved language is
+ * Ruby, which D1 defers.
  *
  * Token colour is read as `mtk*` classes, not pixels. Tokenize-before-open mirrors
  * editor-first-paint: `tokenize` consults the registry synchronously, so it answers "was the
@@ -81,7 +83,7 @@ function buildRepo() {
   writeFileSync(join(root, 'go.work'), 'go 1.22\n\nuse ./svc\n');
   writeFileSync(join(root, 'go.work.sum'), 'golang.org/x/text v0.3.0 h1:def=\n');
   writeFileSync(join(root, 'main.go'), 'package main\n\nfunc main() { helper() }\n');
-  writeFileSync(join(root, 'main.py'), 'def helper():\n    return 1\n\nhelper()\n');
+  writeFileSync(join(root, 'main.rb'), 'def helper\n  1\nend\n\nhelper\n');
   writeFileSync(join(root, 'notes.txt'), 'helper notes\n');
   git('add', '.');
   git('commit', '-qm', 'seed');
@@ -257,9 +259,9 @@ runScenario(
       app,
       page,
       sid,
-      join(root, 'main.py'),
+      join(root, 'main.rb'),
       'helper',
-      'Code navigation isn’t available for Python files.',
+      'Code navigation isn’t available for Ruby files.',
       log,
     );
     await expectToast(
