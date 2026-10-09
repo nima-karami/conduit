@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['test/unit/**/*.test.ts'],
+    include: ['test/unit/**/*.test.{ts,tsx}'],
     environment: 'node',
     // Six suites (file-service-scope, git-actions-integration, git-info, hunk-patch-integration,
     // …) build scratch repos and shell out to REAL git — dozens of process spawns each. Vitest

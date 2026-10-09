@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, type ComponentProps, createElement } from 'react';
+import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PanelFrame } from '../../webview/components/panel-frame';
@@ -31,19 +31,19 @@ const dock = {
 async function render(onWidthCommit: (w: number) => void) {
   const r = root ?? createRoot(host);
   root = r;
-  // A props object rather than createElement's children argument: PanelFrame's props type
-  // requires `children`, which createElement's typing only accepts inside the props.
-  const props: ComponentProps<typeof PanelFrame> = {
-    region: 'explorer',
-    title: 'Explorer',
-    widthVar: '--right-w',
-    edge: 'left',
-    onWidthCommit,
-    dock,
-    children: null,
-  };
   await act(async () => {
-    r.render(createElement(PanelFrame, props));
+    r.render(
+      <PanelFrame
+        region="explorer"
+        title="Explorer"
+        widthVar="--right-w"
+        edge="left"
+        onWidthCommit={onWidthCommit}
+        dock={dock}
+      >
+        <div />
+      </PanelFrame>,
+    );
   });
 }
 
