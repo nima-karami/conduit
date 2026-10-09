@@ -1,6 +1,6 @@
 # Run report — language coverage (2026-10-08)
 
-**Shipped: v0.47.0.** Spec: [archive/2026-10-08-language-coverage.md](../../specs/archive/2026-10-08-language-coverage.md);
+**Shipped: v0.47.1** (v0.47.0 tagged, unpublished — its release gate caught a panel-resize race, fixed in 0.47.1). Spec: [archive/2026-10-08-language-coverage.md](../../specs/archive/2026-10-08-language-coverage.md);
 plan: [2026-10-08-language-coverage.plan.md](../../plans/2026-10-08-language-coverage.plan.md) (rev 2).
 
 ## What shipped

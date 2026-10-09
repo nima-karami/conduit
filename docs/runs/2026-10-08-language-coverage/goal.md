@@ -52,3 +52,4 @@ memory and sleep when nothing visible needs them. Spec: docs/specs/archive/2026-
   91eceec pass (37872727103, 37872750858). Conductor decision: do not re-run the gate to green; fix the source
   (fix-hydrate) and release v0.47.1; v0.47.0 tag stays unpublished.
 - v0.47.1: hydrate fix da147e7/2223445/3e8caea (review APPROVE; verify 0; remote 37873945580 + 37875208163). ff main. Not covered: review-mode-pane, split-editor-focus-keep (remote-excluded, need OS focus — not run locally to avoid visible windows); no e2e drags the resize handle (units only).
+- RELEASED v0.47.1 (4f930e9, release run 37876053125). v0.47.0 tag unpublished.
