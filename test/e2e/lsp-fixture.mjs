@@ -75,7 +75,7 @@ function processList() {
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Json -Compress',
+      "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,@{n='Created';e={if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('o') }}} | ConvertTo-Json -Compress",
     ],
     { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
   );
@@ -210,36 +210,80 @@ export async function liveServers(page, languageId) {
 /** Every 250 ms: record each heavy server the host reports, and count how many are still alive —
  *  a server being alive while ANY process of its tree is, so an evictee still exiting counts, and
  *  so does the real rust-analyzer behind the rustup proxy the host spawned (AC-C1). Trees are
- *  re-walked about once a second; a server whose whole tree is gone is dropped. */
+ *  re-walked about once a second; a server whose whole tree is gone is dropped.
+ *
+ *  A process is its pid AND its creation time. Windows hands a freed pid to a new process within
+ *  seconds on a runner, so a short-lived child of rust-analyzer's startup (cargo, rustc) whose pid
+ *  is reused can keep the evicted rust tree "alive" for the rest of a run. So a pid seen dead is
+ *  dropped for good, every walk checks the creation time, a child must be younger than its parent
+ *  (ParentProcessId outlives the parent), and a count over the cap is re-walked before it counts. */
 export function heavySampler(page, log) {
-  /** server pid → { lang, pids } */
+  /** server pid → { lang, procs: pid → { name, created } } (`created` null until first walk) */
   const servers = new Map();
   const langs = new Set();
   let maxAlive = 0;
   let samples = 0;
   let stopped = false;
   let lastLine = '';
+  let lastOver = '';
+  const walk = () => {
+    const byPid = new Map(processList().map((p) => [p.ProcessId, p]));
+    for (const srv of servers.values()) {
+      for (const [pid, rec] of srv.procs) {
+        const now = byPid.get(pid);
+        if (now && rec.created === null)
+          Object.assign(rec, { name: now.Name, created: now.Created });
+        if (!now || now.Created !== rec.created) {
+          if (now) log(`pid ${pid} (was ${rec.name}) is now ${now.Name}: not this server's`);
+          srv.procs.delete(pid);
+        }
+      }
+      const queue = [...srv.procs.keys()];
+      while (queue.length > 0) {
+        const parent = srv.procs.get(queue.shift());
+        for (const p of byPid.values()) {
+          if (srv.procs.has(p.ProcessId) || p.ParentProcessId !== parent.pid) continue;
+          if (p.Created < parent.created) continue;
+          srv.procs.set(p.ProcessId, { pid: p.ProcessId, name: p.Name, created: p.Created });
+          queue.push(p.ProcessId);
+        }
+      }
+    }
+  };
+  const prune = () => {
+    for (const [root, srv] of servers) {
+      for (const pid of srv.procs.keys()) if (!alive(pid)) srv.procs.delete(pid);
+      if (srv.procs.size === 0) servers.delete(root);
+    }
+  };
   const done = (async () => {
     while (!stopped) {
       const snap = await lsp(page, { type: 'lsp:statusSnapshot' }).catch(() => null);
       for (const s of snap?.servers ?? []) {
         if (!HEAVY.has(s.languageId) || s.pid === null || servers.has(s.pid)) continue;
-        servers.set(s.pid, { lang: s.languageId, pids: new Set([s.pid]) });
+        const procs = new Map([[s.pid, { pid: s.pid, name: s.languageId, created: null }]]);
+        servers.set(s.pid, { lang: s.languageId, procs });
         langs.add(s.languageId);
       }
-      if (samples % 4 === 0 && servers.size > 0) {
-        const procs = processList();
-        for (const [root, srv] of servers) {
-          for (const p of recordTree(root, procs)) srv.pids.add(p.pid);
-        }
+      prune();
+      if (servers.size > 0 && (samples % 4 === 0 || servers.size > 2)) {
+        walk();
+        prune();
       }
-      for (const [root, srv] of servers) {
-        if (![...srv.pids].some(alive)) servers.delete(root);
-      }
+      const over =
+        servers.size > 2
+          ? [...servers.values()]
+              .map(
+                (srv) => `${srv.lang}: ${[...srv.procs.values()].map((p) => `${p.name}#${p.pid}`)}`,
+              )
+              .join(' | ')
+          : '';
+      if (over && over !== lastOver) log(`over the cap → ${over}`);
+      lastOver = over;
       maxAlive = Math.max(maxAlive, servers.size);
       samples++;
       const line = [...servers]
-        .map(([root, srv]) => `${srv.lang}:${root}(+${srv.pids.size - 1})`)
+        .map(([root, srv]) => `${srv.lang}:${root}(+${srv.procs.size - 1})`)
         .join(' ');
       if (line !== lastLine) {
         log(`heavy servers alive → [${line}]`);

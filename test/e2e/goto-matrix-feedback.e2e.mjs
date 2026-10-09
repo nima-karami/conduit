@@ -131,11 +131,11 @@ runScenario('goto-matrix-feedback', async ({ app, page, log }) => {
 
   await m.row(
     '41',
-    { flow: 'non-TS file (.py)', trigger: 'menu', current: '✅', target: '✅' },
+    { flow: 'unserved file (.rb)', trigger: 'menu', current: '✅', target: '✅' },
     async () => {
       await clearTransients(page);
-      await openDoc(app, page, sid, f('src/feedback/thing.py'));
-      await placeCursor(page, f('src/feedback/thing.py'), 'marker_r41_python', 0);
+      await openDoc(app, page, sid, f('src/feedback/thing.rb'));
+      await placeCursor(page, f('src/feedback/thing.rb'), 'marker_r41_ruby', 0);
       const menu = await readNavMenu(page);
       const navRows = menu.rows.filter((r) => /^(Go to|Peek|Find All)/.test(r.label));
       const allDisabled = navRows.length > 0 && navRows.every((r) => r.disabled);

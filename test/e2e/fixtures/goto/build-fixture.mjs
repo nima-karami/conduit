@@ -636,8 +636,9 @@ function writeFeedback(root) {
     ['const plainString = "just a string literal";', 'export { plainString };', ''].join('\n'),
   );
 
-  // 41 — a file the TS worker has no business answering for.
-  write(root, 'src/feedback/thing.py', 'def marker_r41_python():\n    return 41\n');
+  // 41 — a file nothing navigates: not the TS worker, and no language server (Python has one
+  // since docs/specs/2026-10-08-language-coverage.md D1; Ruby is deferred there).
+  write(root, 'src/feedback/thing.rb', 'def marker_r41_ruby\n  41\nend\n');
 }
 
 /** Row 34: enough filler to push the alphabetically-last target past `INDEX_FILE_CAP`. */
