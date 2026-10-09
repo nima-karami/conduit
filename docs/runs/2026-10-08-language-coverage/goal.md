@@ -46,3 +46,9 @@ memory and sleep when nothing visible needs them. Spec: docs/specs/archive/2026-
 - fix-cov-qa: Groovy grammar, Makefile define, diff bracket colours off, install-hint code element (4aeb351). Builder's `git merge 774ee8aa` into its worktree was DENIED by the permission classifier — not re-run on its behalf; conductor reviews the lane SHA and integrates via the normal merge into feat, updating go-files expectation there.
 - QA r2 on 91eceec: PASS (Groovy, define, install-hint code element, toasts; diff 'rainbow brackets' was a pre-tokenization screenshot, not real). Taste: .toast__code on its own line.
 - RELEASE v0.47.0: release commit 53a17e8 verify 0; full remote e2e 186/0 on 91eceec. Report: report.md.
+- v0.47.0 release workflow 37871312170 FAILED gate: tree-chevrons-neon AC7 'narrow Files tag clipped' both attempts (passed on 91eceec). Release NOT published. Root-cause diagnosis dispatched (branch fix-chevrons).
+- tree-chevrons-neon diagnosed: FLAKE caused by a real product bug — every host `state` broadcast re-hydrates
+  settings with a new object → applyToDom rewrites `--right-w` (panel snaps back mid-drag). Re-runs at 4b561b2a and
+  91eceec pass (37872727103, 37872750858). Conductor decision: do not re-run the gate to green; fix the source
+  (fix-hydrate) and release v0.47.1; v0.47.0 tag stays unpublished.
+- v0.47.1: hydrate fix da147e7/2223445/3e8caea (review APPROVE; verify 0; remote 37873945580 + 37875208163). ff main. Not covered: review-mode-pane, split-editor-focus-keep (remote-excluded, need OS focus — not run locally to avoid visible windows); no e2e drags the resize handle (units only).

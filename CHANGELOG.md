@@ -6,6 +6,17 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.47.1] — 2026-10-08
+
+### Fixed
+- **Resizing a side panel no longer snaps back mid-drag.** Background updates (session activity,
+  terminal output, repository changes) re-applied every setting to the page and reset the panel to
+  its saved width. Settings now apply only when they change, and only the values that changed. A drag
+  that ends unusually — the window loses focus, the button is released outside the window, or the
+  panel closes mid-drag — now keeps the width you saw.
+
+0.47.0 was not published; its changes ship in this release.
+
 ## [0.47.0] — 2026-10-08
 
 ### Added
