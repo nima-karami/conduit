@@ -144,6 +144,18 @@ describe('log grammar', () => {
     ]);
   });
 
+  it('ends a URL at a log field separator', () => {
+    expect(tokenize('https://e.com|2024-01-02 ERROR')).toEqual([
+      ['https://e.com', 'string'],
+      ['2024-01-02', 'log-time'],
+      ['ERROR', 'log-error'],
+    ]);
+    // A quote after it opens a string, which Monarch merges into the URL's span — same colour.
+    for (const sep of ['<', '>', ' ']) {
+      expect(tokenOf(`go https://e.com/a${sep}x`, 'https://e.com/a'), sep).toBe('string');
+    }
+  });
+
   it('still finds levels, strings and numbers right after a run of punctuation', () => {
     expect(tokenize('=====ERROR===== 5')).toEqual([
       ['ERROR', 'log-error'],

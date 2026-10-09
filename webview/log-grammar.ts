@@ -82,7 +82,7 @@ export const log: Grammar = {
         [/\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?(?![\w.])/, 'number'],
         [/0[xX][0-9a-fA-F]+(?![\w])/, 'number'],
         [new RegExp(`\\d+(?:\\.\\d+)?(?:${UNIT})?(?![\\w.])`), 'number'],
-        [/[a-zA-Z][\w+.-]*:\/\/[^\s"'<>]+/, 'string'],
+        [/[a-zA-Z][\w+.-]*:\/\/[^\s"'<>|]+/, 'string'],
         [/"[^"]*"?/, 'string'],
         [/'[^']*'?/, 'string'],
         // Whole words — contractions and dotted names included — so a level word or a quote is

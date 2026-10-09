@@ -25,21 +25,23 @@ import {
 const NEW: Record<string, Grammar> = { toml, diff, makefile, cmake, ignore };
 const ALL: Record<string, Grammar> = { ...NEW, gomod, log };
 
-const ADVERSARIAL = [
-  '['.repeat(20000),
-  `"${'a'.repeat(19999)}`,
-  '$('.repeat(10000),
-  '${'.repeat(10000),
-  `${'1'.repeat(19999)}a`,
-  'a.'.repeat(10000),
-  ' '.repeat(20000),
+/** Adversarial lines of `n` chars. Generators, so a longer line is one longer run — a rule that is
+ *  quadratic in a single run's length shows it, which repeating a short line would hide. */
+const ADVERSARIAL: ((n: number) => string)[] = [
+  (n) => '['.repeat(n),
+  (n) => `"${'a'.repeat(n - 1)}`,
+  (n) => '$('.repeat(n / 2),
+  (n) => '${'.repeat(n / 2),
+  (n) => `${'1'.repeat(n - 1)}a`,
+  (n) => 'a.'.repeat(n / 2),
+  (n) => ' '.repeat(n),
 ];
 
-/** Best of five after a warm-up: a quadratic rule is slow every run, a GC pause only once. */
-function elapsed(fn: () => void): number {
+/** Best of `runs` after a warm-up: a quadratic rule is slow every run, a GC pause only once. */
+function elapsed(fn: () => void, runs = 5): number {
   fn();
   let best = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < runs; i++) {
     const t = performance.now();
     fn();
     best = Math.min(best, performance.now() - t);
@@ -65,7 +67,8 @@ describe('grammar linearity', () => {
     }, () => {
       for (const state of grammarStates(grammar)) {
         const tokenizer = monarchTokenizer(grammar, state);
-        for (const line of ADVERSARIAL) {
+        for (const make of ADVERSARIAL) {
+          const line = make(20000);
           // Followed by a second line, so a grammar that reads the EOL sees it.
           const ms = elapsed(() => rawTokens(tokenizer, [line, '']));
           expect(ms, `${name}@${state} on ${JSON.stringify(line.slice(0, 6))}…`).toBeLessThan(50);
@@ -78,15 +81,21 @@ describe('grammar linearity', () => {
     // Independent of machine speed: quadrupling a linear rule's input quadruples its time, a
     // quadratic one's sixteen-fold. Monarch allocates a token per step, so GC lifts a linear
     // rule to ~6× at these sizes; 10× still sits well below quadratic.
-    it(`${name} scales linearly on adversarial lines from every state`, { retry: 2 }, () => {
+    // The timeout leaves room for a quadratic rule to finish and fail the ratio, not time out.
+    it(`${name} scales linearly on adversarial lines from every state`, {
+      retry: 2,
+      timeout: 120_000,
+    }, () => {
       for (const state of grammarStates(grammar)) {
         const tokenizer = monarchTokenizer(grammar, state);
-        for (const short of ADVERSARIAL) {
+        for (const make of ADVERSARIAL) {
           // 20 000 vs 80 000 chars: the shorter run must itself take long enough that timer and
           // GC jitter can't move the ratio (CI measured 8.0–8.1 for a linear rule at 5 000).
-          const line = short.repeat(4);
+          const short = make(20000);
+          const line = make(80000);
           const quarter = elapsed(() => rawTokens(tokenizer, [short, '']));
-          const full = elapsed(() => rawTokens(tokenizer, [line, '']));
+          // Already over budget at 20 000: one timed run at 80 000 is enough to read the growth.
+          const full = elapsed(() => rawTokens(tokenizer, [line, '']), quarter > 50 ? 1 : 5);
           if (full < 10) continue;
           expect(
             full / quarter,
