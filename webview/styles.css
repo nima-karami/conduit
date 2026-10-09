@@ -6763,6 +6763,11 @@ body.gh-resizing {
   background: color-mix(in srgb, currentColor 12%, transparent);
   border-radius: 3px;
   padding: 0 4px;
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
 }
 /* The toast's one affordance (Undo an auto-arm, Renew a miss). A quiet text button, not a
    second primary: the toast is a notification with a way out, not a dialog. */
