@@ -48,30 +48,44 @@ export function PanelFrame({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const resizing = useRef(false);
+  // Callers pass a fresh closure each render; as an effect dep it would re-run the effect, and
+  // so end the drag, on every render that lands mid-drag.
+  const commitRef = useRef(onWidthCommit);
+  commitRef.current = onWidthCommit;
 
+  // Every drag must end in a commit: the settings provider only re-writes a width var when the
+  // setting changes, so a live width left uncommitted stays out of sync with settings for good.
   useEffect(() => {
     const root = document.documentElement;
+    const end = () => {
+      if (!resizing.current) return;
+      resizing.current = false;
+      document.body.classList.remove('resizing');
+      const px = parseInt(getComputedStyle(root).getPropertyValue(widthVar), 10);
+      if (!Number.isNaN(px)) commitRef.current(px);
+    };
     const onMove = (e: MouseEvent) => {
       if (!resizing.current || !ref.current) return;
+      // No button held: the mouseup was released outside the window and never reached us.
+      if (e.buttons === 0) {
+        end();
+        return;
+      }
       e.preventDefault();
       const r = ref.current.getBoundingClientRect();
       const w = edge === 'right' ? e.clientX - r.left : r.right - e.clientX;
       root.style.setProperty(widthVar, `${clamp(w)}px`);
     };
-    const onUp = () => {
-      if (!resizing.current) return;
-      resizing.current = false;
-      document.body.classList.remove('resizing');
-      const px = parseInt(getComputedStyle(root).getPropertyValue(widthVar), 10);
-      if (!Number.isNaN(px)) onWidthCommit(px);
-    };
     window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('mouseup', end);
+    window.addEventListener('blur', end);
     return () => {
+      end();
       window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('mouseup', end);
+      window.removeEventListener('blur', end);
     };
-  }, [edge, widthVar, onWidthCommit]);
+  }, [edge, widthVar]);
 
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();

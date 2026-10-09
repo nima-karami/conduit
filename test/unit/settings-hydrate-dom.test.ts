@@ -17,7 +17,9 @@ afterEach(async () => {
   root = null;
   if (r) await act(async () => r.unmount());
   host?.remove();
-  document.documentElement.removeAttribute('style');
+  const el = document.documentElement;
+  el.removeAttribute('style');
+  for (const key of Object.keys(el.dataset)) delete el.dataset[key];
 });
 
 async function mount() {

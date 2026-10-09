@@ -83,8 +83,8 @@ export function decideHydrate(
 }
 
 /**
- * Structural equality for JSON-shaped values. Key-order-insensitive, unlike comparing
- * `JSON.stringify` output: the host's coerced copy need not share the renderer's key order.
+ * Structural equality for JSON-shaped values. Key-order-insensitive on purpose: the host's
+ * copy matches the renderer's key order today, but nothing in the protocol promises it.
  */
 export function jsonEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;

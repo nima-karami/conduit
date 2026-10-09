@@ -80,7 +80,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const gate = useRef(makeGate());
   // The value we last posted, and the epoch at which we posted it, so an incoming
   // hydrate can be recognised as OUR change confirming (vs a stale broadcast).
-  const posted = useRef<{ json: string; epoch: number }>({ json: '', epoch: -1 });
+  const posted = useRef<{ value: AppSettings | null; epoch: number }>({ value: null, epoch: -1 });
   // Live mirror of `settings` so the unload flush reads the latest without a stale
   // closure (the flush listener is registered once).
   const latest = useRef(settings);
@@ -103,7 +103,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
     if (!gate.current.dirty) return false;
     const epoch = onPostFired(gate.current);
-    posted.current = { json: JSON.stringify(latest.current), epoch };
+    posted.current = { value: latest.current, epoch };
     post({ type: 'updateSettings', settings: latest.current });
     return true;
   }, []);
@@ -128,7 +128,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       const epoch = onPostFired(gate.current);
-      posted.current = { json: JSON.stringify(settings), epoch };
+      posted.current = { value: settings, epoch };
       post({ type: 'updateSettings', settings });
     }, 250);
   }, [settings]);
@@ -141,7 +141,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const hydrate = useCallback((s: AppSettings) => {
     const { apply } = decideHydrate(gate.current, {
       postedEpoch: posted.current.epoch,
-      incomingMatchesPosted: JSON.stringify(s) === posted.current.json,
+      incomingMatchesPosted: jsonEqual(s, posted.current.value),
     });
     // The host echoes settings on every `state` broadcast; keeping the old object when nothing
     // changed spares every settings consumer a re-render per broadcast.
