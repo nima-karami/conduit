@@ -55,10 +55,6 @@ describe('diff grammar', () => {
     ]);
   });
 
-  it('opts out of bracket-pair colorization, whose nesting +/- lines would fake', () => {
-    expect(diff.conf.colorizedBracketPairs).toEqual([]);
-  });
-
   it('reads a combined-diff @@@ range as type', () => {
     expect(line('@@@ -1,2 -1,2 +1,3 @@@ x')).toEqual([['@@@ -1,2 -1,2 +1,3 @@@', 'type']]);
   });

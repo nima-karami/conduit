@@ -72,7 +72,54 @@ describe('groovy grammar', () => {
     expect(tokenOf('x = 1.5', '1.5')).toBe('number');
   });
 
-  it('survives interpolation nested deeper than Monaco allows a stack', () => {
-    expect(() => lines(`"${'${'.repeat(200)}"`, 'def x')).not.toThrow();
+  it('survives interpolation nested deeper than Monaco allows a stack, and the next line recovers', () => {
+    expect(lines(`"${'${'.repeat(200)}"`, 'def x')[1]).toEqual([
+      ['def', 'keyword'],
+      ['x', 'identifier'],
+    ]);
+  });
+
+  it("doesn't leak an unterminated double-quoted string past its line, whatever it holds", () => {
+    const next = [
+      ['def', 'keyword'],
+      ['y', 'identifier'],
+    ];
+    expect(lines(`def s = "abc ${ref('m["k"]')} def`, 'def y')[1]).toEqual(next);
+    expect(lines(`def s = "abc ${ref('m')} 'q`, 'def y')[1]).toEqual(next);
+    expect(lines(`def s = "abc ${ref('m(')}`, 'def y')[1]).toEqual(next);
+    expect(lines(`def s = 'a\\'b`, 'def y')[1]).toEqual(next);
+  });
+
+  it('continues a one-line string over a trailing backslash', () => {
+    expect(lines('x = "a \\', 'def"', 'def')).toEqual([
+      [
+        ['x', 'identifier'],
+        ['=', 'delimiter'],
+        ['"a \\', 'string'],
+      ],
+      [['def"', 'string']],
+      [['def', 'keyword']],
+    ]);
+    expect(lines("x = 'a \\", "def'", 'def')[1]).toEqual([["def'", 'string']]);
+  });
+
+  it('keeps // comments, which a line ending must not break', () => {
+    expect(lines('x = 1 // c', 'def')).toEqual([
+      [
+        ['x', 'identifier'],
+        ['=', 'delimiter'],
+        ['1', 'number'],
+        ['// c', 'comment'],
+      ],
+      [['def', 'keyword']],
+    ]);
+  });
+
+  it('lets a """ GString interpolation span lines', () => {
+    expect(lines(`x = """a ${'${'}m.`, 'n} b', 'def"""')[1]).toEqual([
+      ['n', 'identifier'],
+      ['}', 'delimiter'],
+      [' b', 'string'],
+    ]);
   });
 });

@@ -20,6 +20,8 @@ const punctuation: Rule[] = [
 ];
 
 const code: Rule[] = [
+  // Java's `//.*$` never matches once the line carries its `\n` (`$` is end of input).
+  [/\/\/.*/, 'comment'],
   ...java.language.tokenizer.root,
   // A run of characters no Java rule starts with (`\`, `#`, `` ` ``…), taken whole: Monarch's
   // fallback otherwise tries every rule per character.
@@ -29,16 +31,19 @@ const code: Rule[] = [
 /** Inside `${…}` a quote is a one-line string with no interpolation of its own, so the stack is
  *  bounded by INTERP_DEPTH whatever the input. */
 const interpStrings: Rule[] = [
-  [/"(?:[^"\\]|\\.)*"?/, 'string'],
-  [/'(?:[^'\\]|\\.)*'?/, 'string'],
+  [/"(?:[^"\\\n]|\\.)*"?/, 'string'],
+  [/'(?:[^'\\\n]|\\.)*'?/, 'string'],
 ];
 
-function interpStates(): Record<string, Rule[]> {
+/** `{prefix}1…N`. A `"…"` can't span lines, so its interpolation unwinds to root at the line
+ *  end (`root → double → interp…` is the only way in); a `"""…"""`'s may span lines. */
+function interpStates(prefix: string, oneLine: boolean): Record<string, Rule[]> {
   const states: Record<string, Rule[]> = {};
   for (let depth = 1; depth <= INTERP_DEPTH; depth++) {
     const open =
-      depth < INTERP_DEPTH ? { token: 'delimiter.bracket', next: `@interp${depth + 1}` } : '';
-    states[`interp${depth}`] = [
+      depth < INTERP_DEPTH ? { token: 'delimiter.bracket', next: `@${prefix}${depth + 1}` } : '';
+    states[`${prefix}${depth}`] = [
+      ...(oneLine ? [[/\n/, { token: '', next: '@popall' }] as Rule] : []),
       [/\{/, open],
       [/\}/, { token: 'delimiter.bracket', next: '@pop' }],
       ...punctuation,
@@ -49,31 +54,29 @@ function interpStates(): Record<string, Rule[]> {
   return states;
 }
 
-/** A lone `\` is a line continuation, which keeps the string open. */
+/** A `\` before the line end continues the string onto the next line. */
 const escapes: Rule[] = [
   [/@escapes/, 'string.escape'],
   [/\\./, 'string.escape.invalid'],
-  [/\\/, 'string'],
+  [/\\\n?/, 'string'],
 ];
 
-/** A GString body; `close` is its closing quote run. */
-function gstring(close: RegExp): Rule[] {
-  return [
-    [/[^\\"$]+/, 'string'],
-    ...escapes,
-    [/\$\{/, { token: 'delimiter.bracket', next: '@interp1' }],
-    [/\$[A-Za-z_]\w*/, 'identifier'],
-    [/\$/, 'string'],
-    [close, { token: 'string', next: '@pop' }],
-    [/"/, 'string'],
-  ];
-}
+const gstringParts = (interp: string): Rule[] => [
+  ...escapes,
+  [/\$\{/, { token: 'delimiter.bracket', next: interp }],
+  [/\$[A-Za-z_]\w*/, 'identifier'],
+  [/\$/, 'string'],
+];
+
+const endOfLine: Rule = [/\n/, { token: '', next: '@pop' }];
 
 export const groovy: Grammar = {
   conf: java.conf,
   language: {
     ...java.language,
     tokenPostfix: '.groovy',
+    // Lines arrive with their `\n`, which is what lets a one-line string end at the line end.
+    includeLF: true,
     keywords: [...(java.language.keywords as string[]), 'def', 'in', 'as', 'trait', 'null', 'var'],
     escapes: /\\(?:[bfnrts\\"'$]|u[0-9A-Fa-f]{4})/,
     tokenizer: {
@@ -83,24 +86,40 @@ export const groovy: Grammar = {
         ...punctuation,
         [/'''/, { token: 'string', next: '@tripleSingle' }],
         [/"""/, { token: 'string', next: '@tripleDouble' }],
-        // Unterminated on its line: Groovy's `'…'`/`"…"` can't span lines, so it mustn't colour
-        // the rest of the file. A trailing `\` fails this match and continues the string.
-        [/'(?:[^'\\]|\\.)*$/, 'string.invalid'],
-        [/"(?:[^"\\]|\\.)*$/, 'string.invalid'],
+        // Unterminated with nothing inside to stop it: taken whole. A trailing `\` fails this
+        // (`.` doesn't match `\n`) and continues the string.
+        [/'(?:[^'\\\n]|\\.)*\n?$/, 'string.invalid'],
+        [/"(?:[^"\\\n]|\\.)*\n?$/, 'string.invalid'],
         [/'/, { token: 'string', next: '@single' }],
         [/"/, { token: 'string', next: '@double' }],
         ...code,
       ],
-      single: [[/[^\\']+/, 'string'], ...escapes, [/'/, { token: 'string', next: '@pop' }]],
+      single: [
+        [/[^\\'\n]+/, 'string'],
+        ...escapes,
+        [/'/, { token: 'string', next: '@pop' }],
+        endOfLine,
+      ],
       tripleSingle: [
         [/[^\\']+/, 'string'],
         ...escapes,
         [/'''/, { token: 'string', next: '@pop' }],
         [/'/, 'string'],
       ],
-      double: gstring(/"/),
-      tripleDouble: gstring(/"""/),
-      ...interpStates(),
+      double: [
+        [/[^\\"$\n]+/, 'string'],
+        ...gstringParts('@interp1'),
+        [/"/, { token: 'string', next: '@pop' }],
+        endOfLine,
+      ],
+      tripleDouble: [
+        [/[^\\"$]+/, 'string'],
+        ...gstringParts('@tripleInterp1'),
+        [/"""/, { token: 'string', next: '@pop' }],
+        [/"/, 'string'],
+      ],
+      ...interpStates('interp', true),
+      ...interpStates('tripleInterp', false),
     },
   },
 };

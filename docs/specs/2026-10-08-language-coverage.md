@@ -36,6 +36,9 @@ Workspace Trust) and the [resource audit](../runs/2026-10-01-resource-audit/repo
   Java, Ruby, PHP, Kotlin, Swift, Lua, Bash, Zig, Haskell, Elixir, Dart, Scala (§2.5 says why each);
   grammars for Haskell, Zig, Nix, Erlang, LaTeX, Astro, CSV, Svelte/Vue template syntax (§2.3 cut
   line); Emacs/vim modelines; user-configurable file associations; a settings UI for any of this.
+  **Known grammar gaps (accepted):** Groovy slashy (`/…/`) and dollar-slashy (`$/…/$`) strings
+  colour as code — telling `/` from division needs context Monarch lacks; a Makefile `define`
+  nested inside another ends at the first `endef`.
 
 ## 2. Behavior & states
 
@@ -98,7 +101,7 @@ Order, first match wins (golden stripping and rotated logs unchanged from the ar
 | `diff` (new grammar) | `diff patch rej` | — |
 | `ignore` (new grammar) | — | `.gitignore .dockerignore .npmignore .prettierignore .eslintignore .gcloudignore .vscodeignore` |
 | `dotenv` → ini grammar alias | `env` | (prefix rule) |
-| `groovy` → java grammar alias | `groovy gradle gvy` | `jenkinsfile` |
+| `groovy` (own grammar, derived from Java — D6 deviation) | `groovy gradle gvy` | `jenkinsfile` |
 | Monaco grammars newly mapped | `coffee`→`coffeescript`, `hbs handlebars`→`handlebars`, `twig`, `pug jade`→`pug`, `liquid`, `bicep`, `wgsl`, `scm ss rkt`→`scheme`, `rst`→`restructuredtext`, `sv svh`→`systemverilog`, `v vh`→`verilog`, `tsp`→`typespec`, `cypher cyp`→`cypher`, `pq pqm`→`powerquery`, `qs`→`qsharp`, `rq`→`sparql`, `dart` (already) | — |
 
 Every new id is named in `DISPLAY_NAMES` (typecheck enforces it) and in `MONACO_TO_HLJS`
@@ -108,9 +111,15 @@ Every new id is named in `DISPLAY_NAMES` (typecheck enforces it) and in `MONACO_
 `MONACO_TO_HLJS` becomes typed by `LanguageId` the same way so a new id fails typecheck until
 mapped. **Every newly mapped Monaco grammar is statically imported into `GRAMMARS`** — otherwise
 `ensureTokenizer` takes the async `colorize` warm-up and the first frame is unstyled. Aliases
-(`dotenv`→ini, `groovy`→java, `ocaml`→fsharp) are `GRAMMARS` entries pointing at an existing module
+(`dotenv`→ini, `ocaml`→fsharp) are `GRAMMARS` entries pointing at an existing module
 (zero bytes) **and** are `monaco.languages.register`ed at load like `gomod`/`log` — the `c: cpp`
 precedent only works because Monaco registers `c` itself. Colouring is approximate (A3/A4).
+**Deviation (runtime QA):** `groovy`→java shipped first and was dropped — Java reads `'…'`, the
+normal Groovy string, as an invalid char literal, so `'3.2.0'` fragmented and `'true'` coloured
+as a keyword. `webview/groovy-grammar.ts` extends Monaco's Java grammar with Groovy's strings
+(`'…'`, `'''…'''`, `"""…"""`, GString `${…}`/`$name`) and keywords (`def in as trait`); it is in the
+linearity gate (AC-A8) and costs ~4.6 KB of bundle (source size; whole QA-fix branch +5.1 KB on
+`out/webview.js`).
 `plan-code-block.tsx:49` resolves fences as `block.<fence>`; it gains a fence-name table
 (`makefile make cmake toml diff patch dotenv env gitignore groovy ocaml`) checked first, so
 ```` ```makefile ```` colours.
@@ -364,7 +373,8 @@ O(rules); a server starts only on first open of a served, trusted file.
 | Python server | basedpyright, alt pyright | no | `.exe` install on Windows; `.venv` aware |
 | Server budget | 2 heavy / 4 total / 10 min dormancy | no (constants) | memory-bounded without user tuning; revisit with telemetry |
 | Shebang sniff | on, plaintext-only | no | can't mis-colour a file the path already resolved |
-| Aliased grammars (ocaml, groovy, dotenv) | on | no | better than plain; zero bytes |
+| Aliased grammars (ocaml, dotenv) | on | no | better than plain; zero bytes |
+| Groovy grammar (Java-derived, §2.2 deviation) | on | no | the Java alias mis-coloured every `'…'`; ~4.6 KB |
 | clangd background index | on, `-j=2` | no | cross-file references need it (D3) |
 | rust-analyzer build scripts / proc-macros | on (r-a default) | no | macro-heavy crates navigate nothing without them; trust-gated (D4) |
 
@@ -488,7 +498,9 @@ No new controls. Existing F12 / Ctrl+click / Shift+F12 / hover / breadcrumbs / p
 
 ## 10. Accessibility & i18n (UI)
 
-- New nav-outcome copy goes through the existing live-region announcement; toasts unchanged.
+- New nav-outcome copy goes through the existing live-region announcement. Install toasts carry
+  the command as a separate `code` field and render it in a `<code>` element after the message,
+  not as literal markdown backticks (runtime QA).
 - Diff colouring is not colour-only: `+`/`-`/`@@` markers stay in the text.
 - Trust prompt tools list wraps (no truncation of a security disclosure); covered by the text-fit
   sweep (`npm run text-fit`) at 5 servers.
@@ -506,8 +518,8 @@ themed in all three themes today.
 - A2 basedpyright honours `basedpyright.analysis.typeCheckingMode` and auto-detects a root `.venv`;
   rust-analyzer honours `checkOnSave:false` via `initializationOptions` (not measured: with no
   didSave sent it never matters — AC-B4).
-- A3 OCaml through the F# grammar and Groovy/Gradle through Java are approximations users prefer
-  over plain text.
+- A3 OCaml through the F# grammar is an approximation users prefer over plain text. (Groovy/Gradle
+  through Java was too — runtime QA disproved it; see §2.2's deviation.)
 - A4 dotenv through INI: `KEY=value`, `#` comments colour; `export KEY=` does not key-colour.
 - A5 `.v` → Verilog (Monaco's own mapping).
 - A6 `windows-latest` ships LLVM with clangd and rustup with a stable toolchain (CI step verifies,
@@ -538,8 +550,9 @@ themed in all three themes today.
 - **[normal] D4 rust-analyzer runs build scripts + proc-macros** (r-a default, trust-gated).
   Alternative: disable both via `settings` — safer, but macro-generated items don't navigate.
 - **[normal] D5 Python server = basedpyright (alt pyright)**. Alternative: pyright only, or pylsp.
-- **[normal] D6 Aliased grammars ship** (ocaml→fsharp, groovy→java, dotenv→ini). Alternative:
-  leave those plain until real grammars exist.
+- **[normal] D6 Aliased grammars ship** (ocaml→fsharp, dotenv→ini). Alternative:
+  leave those plain until real grammars exist. **Deviation:** groovy→java was dropped after
+  runtime QA for a Java-derived Groovy grammar (§2.2).
 - **[normal] D7 Dormancy + invisible-open-doesn't-launch** change Go/C# behaviour too (a hidden
   session's gopls no longer starts at launch and sleeps after 10 min). Alternative: cap-only
   eviction, today's launch-on-open.
