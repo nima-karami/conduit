@@ -34,3 +34,6 @@ memory and sleep when nothing visible needs them. Spec: docs/specs/2026-10-08-la
   Conductor decision: every stop path keeps a record in the budget until its process exits.
 - Lane C fixes 127867e (verify 0; remote 37861862146 + 37862759060). Lane A fixes 84c97e6 (log 25 ms→0.2 ms; remote 37862334081). Both in re-review.
 - All lanes merged by SHA (S0 e85177c+6fce54f, B 92e70e9, C 9d19d22, A d62a142) → ded8fcc. Full verify exit 0.
+- Full remote e2e on ded8fcc (run 37863920675): 183 PASS / 8 EXCLUDED / 2 FAIL (go-files, goto-matrix-feedback,
+  both attempts) / 1 FLAKY (lsp-residency); verify job success. Neither failing scenario was in a lane's remote
+  list — likely D7 fallout. Root-cause diagnosis dispatched (branch fix-cov-e2e). Release blocked.

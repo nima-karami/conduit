@@ -9,3 +9,6 @@
 - [build-and-verify] Three "nothing/replay happened" e2es in one run (AC-B4, AC-C5, AC-C3) passed against broken
   code. Every negative or replay assertion needs (a) proof its trigger fired and (b) a position/content change
   the stale path can't satisfy.
+- [autonomous-build-loop] A behaviour change with app-wide reach (D7: unseen opens no longer launch servers) needs
+  the --affected/coverage-map set, not a hand-picked scenario list per lane; two Go scenarios only failed at the
+  integration-wide full run.
