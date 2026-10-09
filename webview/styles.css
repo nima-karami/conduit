@@ -6754,6 +6754,16 @@ body.gh-resizing {
   flex: 1 1 auto;
   word-break: break-word;
 }
+/* Tinted from the toast's own text colour, so the chip reads on every theme's toast surface and
+   on the error toast's danger mix alike. */
+.toast__code {
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-scale));
+  color: inherit;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 3px;
+  padding: 0 4px;
+}
 /* The toast's one affordance (Undo an auto-arm, Renew a miss). A quiet text button, not a
    second primary: the toast is a notification with a way out, not a dialog. */
 .toast__action {

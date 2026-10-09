@@ -435,9 +435,8 @@ describe('LSP navigation — messages', () => {
     });
     expect(toasts()).toEqual([]);
     await runNavCommand(fakeEditor().editor, 'editor.action.revealDefinition');
-    expect(toasts()).toEqual([
-      'Go navigation needs gopls — install with `go install golang.org/x/tools/gopls@latest`',
-    ]);
+    expect(toasts()).toEqual(['Go navigation needs gopls — install with']);
+    expect(getToastsSnapshot()[0]?.code).toBe('go install golang.org/x/tools/gopls@latest');
   });
 
   it('restricted → Restricted Mode toast whose action asks the host for the trust prompt; pointer → silent', async () => {

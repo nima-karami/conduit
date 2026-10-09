@@ -39,7 +39,10 @@ export function showNavMessage(editor: monaco.editor.ICodeEditor, message: NavMe
       const position = editor.getPosition();
       const controller = editor.getContribution<MessageController>(MESSAGE_CONTROLLER_ID);
       if (position && controller && typeof controller.showMessage === 'function') {
-        controller.showMessage(message.text, position);
+        controller.showMessage(
+          message.code ? `${message.text} ${message.code}` : message.text,
+          position,
+        );
         return;
       }
     } catch {
@@ -50,9 +53,12 @@ export function showNavMessage(editor: monaco.editor.ICodeEditor, message: NavMe
   }
   // Repeated F12 on a language whose server is missing must not stack identical toasts (spec
   // 2026-09-22-language-server-go §3.3).
-  if (getToastsSnapshot().some((t) => t.message === message.text)) return;
+  if (getToastsSnapshot().some((t) => t.message === message.text && t.code === message.code)) {
+    return;
+  }
   pushToast({
     message: message.text,
+    ...(message.code ? { code: message.code } : {}),
     variant: message.variant,
     ...(message.action ? { action: message.action } : {}),
   });

@@ -28,8 +28,9 @@ import {
 import { assert, closeApp, launchApp, openSession, runScenario } from './harness.mjs';
 
 const READY_CEILING_MS = 120_000;
-const INSTALL_TOAST =
-  'Go navigation needs gopls — install with `go install golang.org/x/tools/gopls@latest`';
+const INSTALL_CODE = 'go install golang.org/x/tools/gopls@latest';
+/** The `.toast__msg` text: the message, then the command's `.toast__code` element. */
+const INSTALL_TOAST = `Go navigation needs gopls — install with ${INSTALL_CODE}`;
 
 function writeGoFixture(dir) {
   mkdirSync(join(dir, 'pkg', 'util'), { recursive: true });
@@ -403,6 +404,11 @@ async function missingScenario(dir, log) {
       `expected exactly one install toast, got ${JSON.stringify(r.toasts)}`,
     );
     assert(r.toasts.length === 1, `unexpected extra toasts: ${JSON.stringify(r.toasts)}`);
+    assert(
+      r.toastCodes.length === 1 && r.toastCodes[0] === INSTALL_CODE,
+      `expected the command as code, got ${JSON.stringify(r.toastCodes)}`,
+    );
+    assert(!r.toasts[0].includes('`'), `literal backticks in ${JSON.stringify(r.toasts[0])}`);
     await placeCursor(page, main, 'package');
     await page.keyboard.type('x');
     const edited = await page.evaluate(() =>

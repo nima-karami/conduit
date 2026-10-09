@@ -134,6 +134,8 @@ export interface NavMessage {
   /** `inline` = at the cursor (Monaco's MessageController); `toast` = the global stack. */
   channel: 'inline' | 'toast';
   variant: 'info' | 'error';
+  /** A command to run, rendered after `text` as code rather than as markdown in the text. */
+  code?: string;
   /** A way out, shown on the toast (e.g. "Trust Folder…" for Restricted Mode). */
   action?: { label: string; run: () => void };
 }
@@ -218,7 +220,10 @@ function lspOutcomeMessage(o: NavOutcome): NavMessage | null {
   switch (o.kind) {
     case 'lsp-missing': {
       const { displayName, binary, installHint } = o.language;
-      return toast(`${displayName} navigation needs ${binary} — install with \`${installHint}\``);
+      return {
+        ...toast(`${displayName} navigation needs ${binary} — install with`),
+        code: installHint,
+      };
     }
     case 'lsp-crashed': {
       const name = o.language.displayName;

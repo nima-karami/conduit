@@ -289,6 +289,9 @@ export function observe(page) {
       toasts: Array.from(document.querySelectorAll('.toast__msg')).map((e) =>
         (e.textContent ?? '').trim(),
       ),
+      toastCodes: Array.from(document.querySelectorAll('.toast__msg .toast__code')).map(
+        (e) => e.textContent ?? '',
+      ),
     };
   });
 }

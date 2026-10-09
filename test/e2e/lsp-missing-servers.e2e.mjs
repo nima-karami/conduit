@@ -18,12 +18,20 @@ import { errorToasts, lsp, waitObserved, waitServerState } from './lsp-fixture.m
 import { writePythonFixture } from './python-fixture.mjs';
 import { writeRustFixture } from './rust-fixture.mjs';
 
+/** `text` is the message, `code` the command its `.toast__code` element shows after it. */
 const TOASTS = {
-  python:
-    'Python navigation needs basedpyright-langserver — install with `pip install basedpyright`',
-  rust: 'Rust navigation needs rust-analyzer — install with `rustup component add rust-analyzer`',
-  cpp: 'C/C++ navigation needs clangd — install with `winget install LLVM.LLVM`',
+  python: {
+    text: 'Python navigation needs basedpyright-langserver — install with',
+    code: 'pip install basedpyright',
+  },
+  rust: {
+    text: 'Rust navigation needs rust-analyzer — install with',
+    code: 'rustup component add rust-analyzer',
+  },
+  cpp: { text: 'C/C++ navigation needs clangd — install with', code: 'winget install LLVM.LLVM' },
 };
+/** The toast's whole `.toast__msg` text: message, then the code element. */
+const shown = ({ text, code }) => `${text} ${code}`;
 
 const empty = mkdtempSync(join(tmpdir(), 'conduit-noservers-'));
 const sys = process.env.SystemRoot ?? 'C:\\Windows';
@@ -45,16 +53,21 @@ const env = {
 async function f12Toast(page, file, token, want, log) {
   await placeCursor(page, file, token);
   await page.keyboard.press('F12');
-  await waitObserved(page, (o) => o.toasts.includes(want), 8_000);
+  await waitObserved(page, (o) => o.toasts.includes(shown(want)), 8_000);
   await page.keyboard.press('F12');
   await page.waitForTimeout(1_000);
-  const { toasts } = await observe(page);
+  const { toasts, toastCodes } = await observe(page);
   const errors = await errorToasts(page);
   log(`F12 in ${file} → toasts ${JSON.stringify(toasts)} errors ${JSON.stringify(errors)}`);
   assert(
-    toasts.length === 1 && toasts[0] === want,
-    `expected exactly one install toast ${JSON.stringify(want)}, got ${JSON.stringify(toasts)}`,
+    toasts.length === 1 && toasts[0] === shown(want),
+    `expected exactly one install toast ${JSON.stringify(shown(want))}, got ${JSON.stringify(toasts)}`,
   );
+  assert(
+    toastCodes.length === 1 && toastCodes[0] === want.code,
+    `expected the command ${JSON.stringify(want.code)} as code, got ${JSON.stringify(toastCodes)}`,
+  );
+  assert(!toasts[0].includes('`'), `literal backticks in ${JSON.stringify(toasts[0])}`);
   assert(errors.length === 0, `error toasts: ${JSON.stringify(errors)}`);
 }
 
@@ -101,7 +114,7 @@ runScenario(
     await waitServerState(page, 'cpp', 'absent', log, 20_000);
     await placeCursor(page, cpp.main, 'greet(');
     await page.keyboard.press('F12');
-    await waitObserved(page, (o) => o.toasts.includes(TOASTS.cpp), 8_000);
+    await waitObserved(page, (o) => o.toasts.includes(shown(TOASTS.cpp)), 8_000);
     await openDoc(app, page, sid, cpp.header);
     await f12Toast(page, cpp.header, 'twice', TOASTS.cpp, log);
     const snap = await lsp(page, { type: 'lsp:statusSnapshot' });

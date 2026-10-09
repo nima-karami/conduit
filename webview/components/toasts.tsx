@@ -18,7 +18,15 @@ export function Toasts() {
           className={`toast toast--${t.variant}`}
           role={t.variant === 'error' ? 'alert' : 'status'}
         >
-          <span className="toast__msg">{t.message}</span>
+          <span className="toast__msg">
+            {t.message}
+            {t.code && (
+              <>
+                {' '}
+                <code className="toast__code">{t.code}</code>
+              </>
+            )}
+          </span>
           {t.action && (
             <button
               type="button"

@@ -637,7 +637,8 @@ describe('language-server outcomes (spec 2026-09-22-language-server-go §3.3)', 
 
   it('each lsp reason renders its template from the language info', () => {
     expect(say({ lsp: lsp({ language: RUST, unavailable: 'missing' }) })).toEqual({
-      text: 'Rust navigation needs rust-analyzer — install with `rustup component add rust-analyzer`',
+      text: 'Rust navigation needs rust-analyzer — install with',
+      code: 'rustup component add rust-analyzer',
       channel: 'toast',
       variant: 'info',
     });
@@ -647,9 +648,10 @@ describe('language-server outcomes (spec 2026-09-22-language-server-go §3.3)', 
   });
 
   it("the Go info renders the spec's exact Go strings", () => {
-    expect(say({ lsp: lsp({ unavailable: 'missing' }) })?.text).toBe(
-      'Go navigation needs gopls — install with `go install golang.org/x/tools/gopls@latest`',
-    );
+    expect(say({ lsp: lsp({ unavailable: 'missing' }) })).toMatchObject({
+      text: 'Go navigation needs gopls — install with',
+      code: 'go install golang.org/x/tools/gopls@latest',
+    });
     expect(say({ lsp: lsp({ unavailable: 'crashed' }) })).toEqual({
       text: 'The Go language server stopped. Run “Restart Go language server” from the command palette.',
       channel: 'toast',
@@ -729,6 +731,22 @@ describe('showNavMessage toast dedupe', () => {
     showNavMessage(editor, msg);
     expect(toasts.getToastsSnapshot()).toHaveLength(1);
     showNavMessage(editor, { ...msg, text: 'something else' });
+    expect(toasts.getToastsSnapshot()).toHaveLength(2);
+    toasts.__resetToastsForTest();
+  });
+
+  it('carries the command to the toast, and dedupes on text and command together', async () => {
+    const { showNavMessage } = await import('../../webview/monaco-message');
+    const toasts = await import('../../webview/toast-store');
+    toasts.__resetToastsForTest();
+    const editor = { getPosition: () => null, getContribution: () => null } as never;
+    const msg = { text: 'needs x — install with', channel: 'toast', variant: 'info' } as const;
+    showNavMessage(editor, { ...msg, code: 'get x' });
+    showNavMessage(editor, { ...msg, code: 'get x' });
+    expect(toasts.getToastsSnapshot().map((t) => [t.message, t.code])).toEqual([
+      [msg.text, 'get x'],
+    ]);
+    showNavMessage(editor, { ...msg, code: 'get y' });
     expect(toasts.getToastsSnapshot()).toHaveLength(2);
     toasts.__resetToastsForTest();
   });
