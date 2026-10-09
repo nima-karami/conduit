@@ -112,6 +112,10 @@ export const makefile: Grammar = {
         [/#.*/, 'comment'],
         [new RegExp(`^\\.(?:${SPECIAL_TARGETS.join('|')})(?![\\w.])`), 'keyword'],
         [
+          /^\s*(?:(?:export|override|private)[ \t]+)?define(?![\w.-])/,
+          { token: 'keyword', next: '@define' },
+        ],
+        [
           new RegExp(`^([ ]*)(export|override|private)([ \\t]+)(${ASSIGN})`),
           ['white', 'keyword', 'white', 'keyword'],
         ],
@@ -128,6 +132,16 @@ export const makefile: Grammar = {
         // A run of characters no rule above starts with, taken whole rather than one fallback
         // character — and every rule tried — at a time.
         [/[^\s\w#$"'.-]+/, ''],
+      ],
+      // A define body is a variable's value, not makefile syntax: `Usage: make` in it isn't a target.
+      define: [
+        [/^\s*endef(?![\w.-])/, { token: 'keyword', next: '@pop' }],
+        [/\$\(/, { token: 'number', next: '@paren1' }],
+        [/\$\{/, { token: 'number', next: '@brace1' }],
+        [/\$[@<^*?%+|$A-Za-z0-9]/, 'number'],
+        [/[^$\n]+/, ''],
+        [/\$/, ''],
+        [/\n/, ''],
       ],
       commentContinued: [
         [/.*\\\n/, 'comment'],

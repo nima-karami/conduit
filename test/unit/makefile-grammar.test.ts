@@ -87,6 +87,29 @@ describe('makefile grammar', () => {
     ]);
   });
 
+  it('reads a define body as text with expansions, up to endef', () => {
+    expect(
+      tokenizeLines(makefile, [
+        'define HELP',
+        'Usage: make [target]',
+        '  CC = $(CC)',
+        'endef',
+        'all: x',
+      ]),
+    ).toEqual([
+      [['define', 'keyword']],
+      [],
+      [['$(CC)', 'number']],
+      [['endef', 'keyword']],
+      [['all:', 'type']],
+    ]);
+    expect(tokenizeLines(makefile, ['override define X', 'a: b', 'endef'])).toEqual([
+      [['override define', 'keyword']],
+      [],
+      [['endef', 'keyword']],
+    ]);
+  });
+
   it('declares # comments and folds by indentation', () => {
     expect(makefile.conf.comments?.lineComment).toBe('#');
     expect(makefile.conf.folding?.offSide).toBe(true);

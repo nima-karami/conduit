@@ -13,7 +13,8 @@ const lineRules: monaco.languages.IMonarchLanguageRule[] = [
 ];
 
 export const diff: Grammar = {
-  conf: {},
+  // Explicitly empty, not absent: absent falls back to every configured bracket pair.
+  conf: { colorizedBracketPairs: [] },
   language: {
     defaultToken: '',
     tokenPostfix: '.diff',
