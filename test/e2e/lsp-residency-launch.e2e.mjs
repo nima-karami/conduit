@@ -28,6 +28,23 @@ async function waitLive(page, languageId, ms) {
   return null;
 }
 
+let probes = 0;
+/** Whether the host holds `path` as this window's doc, without waking anything: a request at a
+ *  version the doc can't have is answered `stale` only for a held doc (`empty` otherwise), and
+ *  the host checks that before it would start a server. */
+async function hostHolds(page, path) {
+  const reply = await lsp(page, {
+    type: 'lsp:request',
+    requestId: `held-${++probes}`,
+    path,
+    version: 999_999,
+    op: 'documentSymbol',
+    line: 0,
+    character: 0,
+  });
+  return reply.kind;
+}
+
 runScenario('lsp-residency-launch', async ({ app, page, log }) => {
   assert(
     serverInstalled('where', ['basedpyright-langserver']) &&
@@ -69,43 +86,23 @@ runScenario('lsp-residency-launch', async ({ app, page, log }) => {
       { timeout: 10_000 },
     );
     log('restored session selected: .py + .rs tabs, Terminal active');
-    // Records every lsp:open the renderer sends and the host's answer — the host's own word that
-    // it registered the doc under a server.
-    const tapped = await p2.evaluate(() => {
-      window.__lspOpens = [];
-      const send = window.agentDeck.lsp;
-      window.agentDeck.lsp = (m) => {
-        const reply = send(m);
-        if (m?.type === 'lsp:open') {
-          reply.then((r) => window.__lspOpens.push({ path: m.path, serverKey: r.serverKey }));
-        }
-        return reply;
-      };
-      return window.agentDeck.lsp !== send;
-    });
-    assert(tapped, 'could not observe the renderer→host lsp channel');
     // A restored tab is not read until shown, so nothing would reach the host and the check below
     // would hold with or without residency. A change on disk makes the app re-read both hidden
     // tabs, which syncs them — the case that used to launch a server per tab.
     appendFileSync(py.main, '\n# touched\n');
     appendFileSync(rs.main, '\n// touched\n');
-    const want = [py.main, rs.main].map((p) => p.replace(/\\/g, '/').toLowerCase());
-    const registered = await p2
-      .waitForFunction(
-        (paths) => {
-          const keyed = (window.__lspOpens ?? [])
-            .filter((o) => o.serverKey !== null)
-            .map((o) => o.path.replace(/\\/g, '/').toLowerCase());
-          return paths.every((p) => keyed.includes(p)) ? window.__lspOpens : null;
-        },
-        want,
-        { timeout: 15_000 },
-      )
-      .then((h) => h.jsonValue())
-      .catch(() => null);
-    log(`host registered the hidden tabs → ${JSON.stringify(registered)}`);
+    const t1 = Date.now();
+    let held = [];
+    while (held.length < 2 && Date.now() - t1 < 15_000) {
+      held = [];
+      for (const path of [py.main, rs.main]) {
+        if ((await hostHolds(p2, path)) === 'stale') held.push(path);
+      }
+      if (held.length < 2) await sleep(250);
+    }
+    log(`host holds the hidden tabs → ${JSON.stringify(held)}`);
     assert(
-      registered,
+      held.length === 2,
       'the hidden .py/.rs tabs never reached the host; the check below would prove nothing',
     );
 
