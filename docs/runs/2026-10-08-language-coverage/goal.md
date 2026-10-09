@@ -37,3 +37,8 @@ memory and sleep when nothing visible needs them. Spec: docs/specs/2026-10-08-la
 - Full remote e2e on ded8fcc (run 37863920675): 183 PASS / 8 EXCLUDED / 2 FAIL (go-files, goto-matrix-feedback,
   both attempts) / 1 FLAKY (lsp-residency); verify job success. Neither failing scenario was in a lane's remote
   list — likely D7 fallout. Root-cause diagnosis dispatched (branch fix-cov-e2e). Release blocked.
+- Runtime QA on 6439f41: FAIL on D1 — groovy→java alias paints '…' strings as invalid char literals. All other
+  checks PASS (recognition, edge cases, unterminated `$(` typed, missing-server UX, Go background tab, 40 MB log
+  243 ms, 5 MB TOML 184 ms, 20k-line Makefile). Fix lane fix-cov-qa: real Groovy grammar; Makefile define bodies;
+  bracket colorization off for diff (conductor taste call); install toasts showing literal backticks.
+  Not fixed (recorded): Razor C# colouring (Monaco's own grammar); trust prompt lists all 5 toolsets (spec).
