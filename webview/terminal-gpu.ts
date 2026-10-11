@@ -18,7 +18,8 @@ export const GPU_REATTACH_DELAY_MS = 1000;
 // limit Chromium evicts the oldest context, which would read here as a GPU reset.
 export const MAX_WEBGL_TERMINALS = 12;
 // Chromium refuses new WebGL contexts for the page for a while after a repeat GPU reset (we keep
-// that guard; see electron/main.ts). Terminals it refuses stay on DOM and retry on this schedule.
+// that guard; see electron/main.ts). Terminals it refuses stay on DOM and retry on this schedule,
+// which starts over once every terminal is back on WebGL.
 // A refused attach is not a loss, so it never counts toward the loss cap.
 export const GPU_UNAVAILABLE_RETRY_MS: readonly number[] = [30_000, 120_000, 300_000];
 
@@ -63,12 +64,14 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
   };
 
   const fill = () => {
+    if (entries.size === 0) return;
     failed.clear();
     for (const [term, handle] of entries) {
       if (live >= MAX_WEBGL_TERMINALS) break;
       if (!handle) attach(term);
     }
     if (live >= Math.min(entries.size, MAX_WEBGL_TERMINALS)) {
+      retriesUsed = 0;
       deps.log('reattach', { terminals: entries.size, attached: live });
       return;
     }

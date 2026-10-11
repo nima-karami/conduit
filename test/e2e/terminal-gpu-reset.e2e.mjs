@@ -34,13 +34,19 @@ const RECOVERY_MS = 8000;
 const CAPTURES = 6;
 
 const LOGS_DIR = join(tmpdir(), 'conduit-e2e-logs');
-const hostLog = () => {
-  const newest = readdirSync(LOGS_DIR)
+// Every log file, filtered by record time: the active file can rotate or roll over at midnight.
+const webglRecordsSince = (since) =>
+  readdirSync(LOGS_DIR)
     .filter((f) => f.startsWith('conduit-') && f.endsWith('.log'))
-    .sort()
-    .at(-1);
-  return newest ? readFileSync(join(LOGS_DIR, newest), 'utf8') : '';
-};
+    .flatMap((f) => readFileSync(join(LOGS_DIR, f), 'utf8').split('\n'))
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    })
+    .filter((r) => r.ts >= since && typeof r.msg === 'string' && r.msg.startsWith('webgl '));
 
 // A point in the window gutter, outside every panel.
 const GUTTER = { x: 2, y: 440 };
@@ -196,7 +202,7 @@ await runScenario('terminal-gpu-reset', async ({ app, page, log }) => {
   }
   assert(shaderResumed, 'the shader background did not resume after the reset');
 
-  const logBefore = hostLog().length;
+  const secondKillAt = Date.now();
   const secondPid = await killGpu(app);
   log(`killed GPU process ${secondPid} (second reset)`);
   const gutter = [];
@@ -207,11 +213,8 @@ await runScenario('terminal-gpu-reset', async ({ app, page, log }) => {
   }
   await assertGpuRestarted(app, secondPid);
   log(`gutter after second reset: ${JSON.stringify(gutter)}`);
-  const webglLines = hostLog()
-    .slice(logBefore)
-    .split('\n')
-    .filter((l) => l.includes('"msg":"webgl '));
-  log(`renderer log after second reset: ${webglLines.join(' ')}`);
+  const webglRecords = webglRecordsSince(secondKillAt);
+  log(`renderer log after second reset: ${JSON.stringify(webglRecords)}`);
   for (const sid of sids) {
     await activate(page, sid);
     await page.waitForTimeout(500);
@@ -225,7 +228,7 @@ await runScenario('terminal-gpu-reset', async ({ app, page, log }) => {
     `the window painted white after the second reset: ${JSON.stringify(white)}`,
   );
   assert(
-    webglLines.some((l) => l.includes('webgl reattach') || l.includes('webgl unavailable')),
+    webglRecords.some((r) => r.msg === 'webgl reattach' || r.msg === 'webgl unavailable'),
     'no re-attach or WebGL-unavailable record after the second reset',
   );
 });

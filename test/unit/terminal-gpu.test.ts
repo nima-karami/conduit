@@ -337,5 +337,51 @@ describe('terminal GPU coordinator', () => {
       advance(GPU_UNAVAILABLE_RETRY_MS[0] / 2);
       expect(count(attempts, 'a')).toBe(afterSecondReattach);
     });
+
+    it('a full recovery restores the retry budget for the next episode', () => {
+      const failAttach = new Set(['a']);
+      const { gpu, advance, attempts } = harness({ failAttach });
+      gpu.register('a');
+      gpu.reportLoss('a');
+      advance(GPU_REATTACH_DELAY_MS);
+      for (const ms of GPU_UNAVAILABLE_RETRY_MS) advance(ms);
+      failAttach.delete('a');
+      gpu.register('b');
+      gpu.reportLoss('b');
+      advance(GPU_REATTACH_DELAY_MS);
+      failAttach.add('a');
+      gpu.reportLoss('b');
+      advance(GPU_REATTACH_DELAY_MS);
+      const before = count(attempts, 'a');
+      advance(GPU_UNAVAILABLE_RETRY_MS[0]);
+      expect(count(attempts, 'a')).toBe(before + 1);
+    });
+
+    it('a retry attaches only the refused terminals', () => {
+      const failAttach = new Set(['a']);
+      const { gpu, handles, live, advance } = harness({ failAttach });
+      gpu.register('a');
+      gpu.register('b');
+      gpu.reportLoss('a');
+      advance(GPU_REATTACH_DELAY_MS);
+      failAttach.delete('a');
+      advance(GPU_UNAVAILABLE_RETRY_MS[0]);
+      expect(live().map((h) => h.term)).toEqual(['b', 'a']);
+      const created = (t: string) => handles.filter((h) => h.term === t).length;
+      expect(created('b')).toBe(2);
+      expect(created('a')).toBe(1);
+    });
+
+    it('a retry with no terminals left does nothing', () => {
+      const failAttach = new Set(['a']);
+      const { gpu, advance, events } = harness({ failAttach });
+      const off = gpu.register('a');
+      gpu.reportLoss('a');
+      advance(GPU_REATTACH_DELAY_MS);
+      off();
+      const logged = events.length;
+      advance(GPU_UNAVAILABLE_RETRY_MS[0]);
+      expect(events).toHaveLength(logged);
+    });
   });
 });
