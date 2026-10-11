@@ -13,10 +13,15 @@
  *      during the reset after activating it. Both must draw text again, on WebGL again.
  *   4. The shader background (switched on first) must have rebuilt its program on the restored
  *      context — before the fix it stopped its loop on the loss and never came back.
- *   5. Kill the GPU process a second time. Chromium blocks WebGL for the page after a repeat reset
- *      unless the host opts out, so every pane must again be back on WebGL and the shader rebuilt.
+ *   5. Kill the GPU process a second time. Chromium may now refuse WebGL for the page (we keep that
+ *      guard; see electron/main.ts), so WebGL is not asserted: every pane must still show its text,
+ *      the window must never paint white (a canvas whose context failed to create does), and the
+ *      log must show the terminals either re-attached or reported WebGL unavailable.
  */
 
+import { readdirSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { assert, openSession, REPO, runScenario } from './harness.mjs';
 
 const SESSIONS = 3;
@@ -27,6 +32,35 @@ const RECOVERY_MS = 8000;
 // reset), so a pane scores its best of several captures. The broken atlas stays dark however long
 // it is sampled, so this cannot hide the defect.
 const CAPTURES = 6;
+
+const LOGS_DIR = join(tmpdir(), 'conduit-e2e-logs');
+const hostLog = () => {
+  const newest = readdirSync(LOGS_DIR)
+    .filter((f) => f.startsWith('conduit-') && f.endsWith('.log'))
+    .sort()
+    .at(-1);
+  return newest ? readFileSync(join(LOGS_DIR, newest), 'utf8') : '';
+};
+
+// A point in the window gutter, outside every panel.
+const GUTTER = { x: 2, y: 440 };
+const gutterRgb = (app) =>
+  app.evaluate(
+    async ({ BrowserWindow }, { p, tries }) => {
+      const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+      for (let i = 0; i < tries; i++) {
+        // While the GPU process is restarting there is no compositor to capture from.
+        const b = await win.webContents
+          .capturePage({ ...p, width: 1, height: 1 })
+          .then((img) => img.toBitmap())
+          .catch(() => null);
+        if (b && b.length >= 4 && b[3] > 0) return [b[2], b[1], b[0]];
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      return null;
+    },
+    { p: GUTTER, tries: CAPTURES },
+  );
 
 const killGpu = async (app) => {
   const pid = await app.evaluate(({ app: a }) => {
@@ -162,23 +196,36 @@ await runScenario('terminal-gpu-reset', async ({ app, page, log }) => {
   }
   assert(shaderResumed, 'the shader background did not resume after the reset');
 
+  const logBefore = hostLog().length;
   const secondPid = await killGpu(app);
   log(`killed GPU process ${secondPid} (second reset)`);
-  await page.waitForTimeout(RECOVERY_MS);
+  const gutter = [];
+  const sampleUntil = Date.now() + RECOVERY_MS;
+  while (Date.now() < sampleUntil) {
+    gutter.push(await gutterRgb(app));
+    await page.waitForTimeout(1000);
+  }
   await assertGpuRestarted(app, secondPid);
-  const shaderResumedAgain = await page.evaluate(shaderLive);
-  log(`shader background rebuilt after second reset: ${shaderResumedAgain}`);
-  const webglAfterSecond = [];
-  for (const sid of sids) webglAfterSecond.push(await onWebgl(page, sid));
-  log(
-    `panes on WebGL after second reset: ${webglAfterSecond.filter(Boolean).length}/${sids.length}`,
-  );
-  const afterSecond = await glyphPixels(app, page, hidden);
-  log(`after second reset, active pane: ${afterSecond} glyph px`);
-  assert(shaderResumedAgain, 'the shader background did not resume after the second reset');
+  log(`gutter after second reset: ${JSON.stringify(gutter)}`);
+  const webglLines = hostLog()
+    .slice(logBefore)
+    .split('\n')
+    .filter((l) => l.includes('"msg":"webgl '));
+  log(`renderer log after second reset: ${webglLines.join(' ')}`);
+  for (const sid of sids) {
+    await activate(page, sid);
+    await page.waitForTimeout(500);
+    const px = await glyphPixels(app, page, sid);
+    log(`after second reset, session ${sid}: ${px} glyph px (webgl: ${await onWebgl(page, sid)})`);
+    assert(px >= MIN_GLYPH_PX, `session ${sid} went dark after the second reset (${px} px)`);
+  }
+  const white = gutter.filter((c) => c?.every((v) => v >= 240));
   assert(
-    webglAfterSecond.every(Boolean),
-    `only ${webglAfterSecond.filter(Boolean).length}/${sids.length} panes returned to WebGL after the second reset`,
+    white.length === 0,
+    `the window painted white after the second reset: ${JSON.stringify(white)}`,
   );
-  assert(afterSecond >= MIN_GLYPH_PX, `pane went dark after the second reset (${afterSecond} px)`);
+  assert(
+    webglLines.some((l) => l.includes('webgl reattach') || l.includes('webgl unavailable')),
+    'no re-attach or WebGL-unavailable record after the second reset',
+  );
 });

@@ -3,6 +3,7 @@ import { GPU_GIVE_UP_LOSSES, GPU_LOSS_WINDOW_MS } from '../../webview/gpu-loss-p
 import {
   createGpuCoordinator,
   GPU_REATTACH_DELAY_MS,
+  GPU_UNAVAILABLE_RETRY_MS,
   MAX_WEBGL_TERMINALS,
 } from '../../webview/terminal-gpu';
 
@@ -255,6 +256,86 @@ describe('terminal GPU coordinator', () => {
       gpu.reportLoss('t2');
       advance(GPU_REATTACH_DELAY_MS);
       expect(attempts.filter((t) => t === 'bad')).toHaveLength(2);
+    });
+  });
+
+  // After a repeat GPU reset Chromium can refuse every new WebGL context for the page for a while.
+  describe('WebGL unavailable after a re-attach', () => {
+    const count = (attempts: string[], term: string) => attempts.filter((t) => t === term).length;
+
+    it('leaves the terminals it could not attach on the DOM renderer and says so', () => {
+      const failAttach = new Set<string>();
+      const { gpu, live, advance, events } = harness({ failAttach });
+      gpu.register('a');
+      gpu.register('b');
+      gpu.reportLoss('a');
+      failAttach.add('b');
+      advance(GPU_REATTACH_DELAY_MS);
+      expect(live().map((h) => h.term)).toEqual(['a']);
+      expect(events).toEqual(['context-lost', 'unavailable']);
+    });
+
+    it('retries on the backoff schedule and regains WebGL once contexts are allowed again', () => {
+      const failAttach = new Set(['a']);
+      const { gpu, live, advance, attempts, events } = harness({ failAttach });
+      gpu.register('a');
+      gpu.reportLoss('a');
+      advance(GPU_REATTACH_DELAY_MS);
+      expect(live()).toEqual([]);
+      const before = count(attempts, 'a');
+      advance(GPU_UNAVAILABLE_RETRY_MS[0] - 1);
+      expect(count(attempts, 'a')).toBe(before);
+      failAttach.delete('a');
+      advance(1);
+      expect(live().map((h) => h.term)).toEqual(['a']);
+      expect(events.at(-1)).toBe('reattach');
+    });
+
+    it(`gives up on WebGL after ${GPU_UNAVAILABLE_RETRY_MS.length} failed retries`, () => {
+      const failAttach = new Set(['a']);
+      const { gpu, live, advance, attempts } = harness({ failAttach });
+      gpu.register('a');
+      gpu.reportLoss('a');
+      advance(GPU_REATTACH_DELAY_MS);
+      const afterReattach = count(attempts, 'a');
+      for (const [i, ms] of GPU_UNAVAILABLE_RETRY_MS.entries()) {
+        advance(ms);
+        expect(count(attempts, 'a')).toBe(afterReattach + i + 1);
+      }
+      advance(GPU_UNAVAILABLE_RETRY_MS.reduce((x, y) => x + y) * 10);
+      expect(count(attempts, 'a')).toBe(afterReattach + GPU_UNAVAILABLE_RETRY_MS.length);
+      expect(live()).toEqual([]);
+    });
+
+    it('a failed attach is not a loss: the loss cap still allows the next reset', () => {
+      const failAttach = new Set(['a']);
+      const { gpu, live, advance, events } = harness({ failAttach });
+      gpu.register('a');
+      gpu.reportLoss('a');
+      advance(GPU_REATTACH_DELAY_MS);
+      for (const ms of GPU_UNAVAILABLE_RETRY_MS) advance(ms);
+      failAttach.delete('a');
+      gpu.register('b');
+      gpu.reportLoss('b');
+      advance(GPU_REATTACH_DELAY_MS);
+      expect(events).not.toContain('give-up');
+      expect(live().map((h) => h.term)).toEqual(['a', 'b']);
+    });
+
+    it('a loss during the retry wait cancels the stale retry', () => {
+      const failAttach = new Set(['a']);
+      const { gpu, live, advance, attempts } = harness({ failAttach });
+      gpu.register('a');
+      gpu.register('b');
+      gpu.reportLoss('a');
+      advance(GPU_REATTACH_DELAY_MS);
+      advance(GPU_UNAVAILABLE_RETRY_MS[0] / 2);
+      gpu.reportLoss('b');
+      advance(GPU_REATTACH_DELAY_MS);
+      expect(live().map((h) => h.term)).toEqual(['b']);
+      const afterSecondReattach = count(attempts, 'a');
+      advance(GPU_UNAVAILABLE_RETRY_MS[0] / 2);
+      expect(count(attempts, 'a')).toBe(afterSecondReattach);
     });
   });
 });

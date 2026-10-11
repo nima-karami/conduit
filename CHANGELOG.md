@@ -11,10 +11,11 @@ All notable user-facing changes to Conduit. Format follows
   (a driver reset, or Windows recovering the display adapter), every terminal in the window kept only
   its cursor until the window was torn out or Conduit restarted. Terminals now switch to plain
   rendering for about a second and come back with their text intact; if resets keep happening, they
-  stay on plain rendering for the rest of the window's life. This holds for a second or third reset
-  too, where Chromium used to block WebGL for the window. The Shader background also resumes after a
-  reset instead of staying frozen, and never turns the window white while it waits. Conduit's log
-  now records each GPU process restart.
+  stay on plain rendering for the rest of the window's life. After a second reset close behind the
+  first, terminals stay readable on plain rendering and try to get faster rendering back over the next
+  few minutes. The Shader background also resumes after a reset instead of staying frozen, and never
+  turns the window white; if it can't come back, it switches to the simpler Flow background. Conduit's
+  log now records each GPU process restart.
 - **The Shader background no longer jumps back to its starting frame.** It restarted whenever the app
   refreshed its state, for example on session activity; it now restarts only when you change its
   settings.

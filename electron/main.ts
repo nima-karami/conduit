@@ -344,9 +344,9 @@ const aboutInfo: AboutInfo = readAboutInfo();
 // fallback. Must run before app 'ready'.
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
-// Chromium blocks WebGL for the whole page after a second GPU-process reset, so terminals and the
-// shader could never come back; they recover and cap their own retries (webview/gpu-loss-policy.ts).
-app.disableDomainBlockingFor3DAPIs();
+// Deliberately NOT app.disableDomainBlockingFor3DAPIs(): it is app-global, so it would also lift
+// Chromium's 3D guard for web-tab guests, letting a page crash the GPU in a loop until Chromium
+// kills the whole app. After a repeat reset terminals stay on DOM instead (webview/terminal-gpu.ts).
 
 // Also before app 'ready' — Electron throws if a scheme is privileged afterwards.
 registerPreviewScheme();

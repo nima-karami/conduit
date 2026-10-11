@@ -83,7 +83,11 @@ describe('ShaderBg across a GPU reset', () => {
     await fire('webglcontextrestored');
     expect(res.builds).toBe(2);
     expect(visible()).toBe(true);
+    await act(async () => {
+      vi.advanceTimersByTime(SHADER_RESTORE_TIMEOUT_MS);
+    });
     expect(onUnsupported).not.toHaveBeenCalled();
+    expect(visible()).toBe(true);
   });
 
   it('gives up when no restore arrives in time', async () => {

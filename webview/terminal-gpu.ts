@@ -17,6 +17,10 @@ export const GPU_REATTACH_DELAY_MS = 1000;
 // Under Chromium's ~16 live contexts per page, leaving room for the shader background: past the
 // limit Chromium evicts the oldest context, which would read here as a GPU reset.
 export const MAX_WEBGL_TERMINALS = 12;
+// Chromium refuses new WebGL contexts for the page for a while after a repeat GPU reset (we keep
+// that guard; see electron/main.ts). Terminals it refuses stay on DOM and retry on this schedule.
+// A refused attach is not a loss, so it never counts toward the loss cap.
+export const GPU_UNAVAILABLE_RETRY_MS: readonly number[] = [30_000, 120_000, 300_000];
 
 export interface WebglHandle {
   dispose(): void;
@@ -27,7 +31,10 @@ export interface GpuCoordinatorDeps<T> {
   setTimer(fn: () => void, ms: number): void;
   /** Load a fresh WebGL renderer onto `term`; null leaves it on the DOM renderer. */
   attach(term: T): WebglHandle | null;
-  log(event: 'context-lost' | 'reattach' | 'give-up', data: Record<string, unknown>): void;
+  log(
+    event: 'context-lost' | 'reattach' | 'unavailable' | 'give-up',
+    data: Record<string, unknown>,
+  ): void;
 }
 
 export interface GpuCoordinator<T> {
@@ -43,6 +50,9 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
   let live = 0;
   // Terminals whose attach failed wait for the next re-attach rather than retrying on every promotion.
   const failed = new Set<T>();
+  let retriesUsed = 0;
+  // Bumped by every loss, so a retry scheduled before it does nothing.
+  let generation = 0;
 
   const attach = (term: T): boolean => {
     const handle = deps.attach(term);
@@ -52,14 +62,29 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
     return !!handle;
   };
 
+  const fill = () => {
+    failed.clear();
+    for (const [term, handle] of entries) {
+      if (live >= MAX_WEBGL_TERMINALS) break;
+      if (!handle) attach(term);
+    }
+    if (live >= Math.min(entries.size, MAX_WEBGL_TERMINALS)) {
+      deps.log('reattach', { terminals: entries.size, attached: live });
+      return;
+    }
+    const retryMs = GPU_UNAVAILABLE_RETRY_MS[retriesUsed];
+    deps.log('unavailable', { terminals: entries.size, attached: live, retryMs: retryMs ?? null });
+    if (retryMs === undefined) return;
+    retriesUsed++;
+    const scheduled = generation;
+    deps.setTimer(() => {
+      if (mode === 'webgl' && generation === scheduled) fill();
+    }, retryMs);
+  };
+
   const reattach = () => {
     mode = 'webgl';
-    failed.clear();
-    for (const term of entries.keys()) {
-      if (live >= MAX_WEBGL_TERMINALS) break;
-      attach(term);
-    }
-    deps.log('reattach', { terminals: entries.size, attached: live });
+    fill();
   };
 
   const promoteOldestWaiting = () => {
@@ -87,6 +112,7 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
     reportLoss(term) {
       // Every context in the document is lost together, so the rest of the burst lands here.
       if (mode !== 'webgl' || !entries.has(term)) return;
+      generation++;
       const noted = noteGpuLoss(losses, deps.now());
       losses = noted.losses;
       for (const [t, handle] of entries) {
