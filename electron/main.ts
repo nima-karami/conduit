@@ -1812,7 +1812,7 @@ app.whenReady().then(() => {
   // The only record of a GPU-process restart, which blanks WebGL terminals (webview/terminal-gpu.ts)
   // and is the leading suspect for the unexplained green flash.
   app.on('child-process-gone', (_e, details) => {
-    log.warn('process', `child process gone (${details.type}: ${details.reason})`, {
+    log.warn('process', 'child process gone', {
       type: details.type,
       reason: details.reason,
       exitCode: details.exitCode,

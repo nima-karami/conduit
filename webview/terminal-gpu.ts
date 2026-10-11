@@ -4,6 +4,8 @@
 // only its cursor. The contexts come back inside xterm's own 3 s window, so `onContextLoss` never
 // fires. The cache entry is only dropped once its LAST owner disposes, so recovering one terminal
 // alone reacquires the blank atlas: every addon has to go, then all come back fresh.
+// Losses arrive through terminal-pane's capture-phase `webglcontextlost` listener, which disposes
+// the addon before xterm's own timer can fire, so the addon's `onContextLoss` is not subscribed.
 
 import { WebglAddon } from '@xterm/addon-webgl';
 import type { Terminal } from '@xterm/xterm';
@@ -40,16 +42,20 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
   let mode: 'webgl' | 'fallback' | 'dom' = 'webgl';
   let losses: number[] = [];
   let live = 0;
+  // Terminals whose attach failed wait for the next re-attach rather than retrying on every promotion.
+  const failed = new Set<T>();
 
   const attach = (term: T): boolean => {
     const handle = deps.attach(term);
     entries.set(term, handle);
     if (handle) live++;
+    else failed.add(term);
     return !!handle;
   };
 
   const reattach = () => {
     mode = 'webgl';
+    failed.clear();
     for (const term of entries.keys()) {
       if (live >= MAX_WEBGL_TERMINALS) break;
       attach(term);
@@ -59,7 +65,7 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
 
   const promoteOldestWaiting = () => {
     for (const [term, handle] of entries) {
-      if (!handle && attach(term)) return;
+      if (!handle && !failed.has(term) && attach(term)) return;
     }
   };
 
@@ -71,6 +77,7 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
         if (!entries.has(term)) return;
         const handle = entries.get(term);
         entries.delete(term);
+        failed.delete(term);
         if (!handle) return;
         handle.dispose();
         live--;
@@ -109,9 +116,6 @@ export const terminalGpu: GpuCoordinator<Terminal> = createGpuCoordinator<Termin
     let addon: WebglAddon | null = null;
     try {
       addon = new WebglAddon();
-      // Fires only when a context stays lost past xterm's 3 s window (e.g. evicted by the
-      // per-page context cap); a GPU restart reaches reportLoss through `webglcontextlost`.
-      addon.onContextLoss(() => terminalGpu.reportLoss(term));
       term.loadAddon(addon);
       const loaded = addon;
       return { dispose: () => safeDispose(loaded, 'xterm webgl addon') };

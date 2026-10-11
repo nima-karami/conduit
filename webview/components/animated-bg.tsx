@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { runRenderLoop } from '../render-loop';
 import { useSettings } from '../settings';
 import { ShaderBg } from './shader-bg';
@@ -82,6 +82,8 @@ function Backdrop() {
   const { settings } = useSettings();
   const { background, bgIntensity, reduceMotion, theme } = settings;
   const [shaderFailed, setShaderFailed] = useState(false);
+  // ShaderBg rebuilds its GL scene whenever this changes, so it must not change per render.
+  const onShaderUnsupported = useCallback(() => setShaderFailed(true), []);
   // Reset the unsupported flag on mode/shader change so a fixed shader gets retried.
   useEffect(() => {
     setShaderFailed(false);
@@ -97,7 +99,7 @@ function Backdrop() {
         intensity={bgIntensity}
         theme={theme}
         source={source}
-        onUnsupported={() => setShaderFailed(true)}
+        onUnsupported={onShaderUnsupported}
       />
     );
   }

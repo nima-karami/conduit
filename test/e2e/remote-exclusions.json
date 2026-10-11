@@ -7,5 +7,5 @@
   "shortcut-precedence": "opts out of hidden mode; the runner is 7-11x slower on a non-hidden window, which pushes it into the 200 s watchdog (TIMEOUT fails the run), not merely flaky",
   "review-mode-pane": "hovering a navigator row leaves its Stage action at opacity 0 on the runner, also with CDP focus emulation (runs 36667070538, 36667732842); cause not isolated",
   "terminal-exit-focus": "the runner window has no OS focus: every Terminal-exit chord also sends xterm focus reports (ESC[I/ESC[O) to the shell (run 36667732842, both attempts); added after Slice 0 measured the suite",
-  "terminal-gpu-reset": "needs a hardware GPU: the hosted runner renders WebGL through SwiftShader, so killing its GPU process may not wipe the shared glyph atlas the scenario guards; red-before/green-after was proven locally (black-pane, 2026-10-11), not on the runner"
+  "terminal-gpu-reset": "never run on the runner: it has no hardware GPU, so WebGL runs on SwiftShader and killing its GPU process may not wipe the glyph atlas this scenario guards; a pass there would prove nothing. Red before the fix and green after were measured locally on a real GPU (black-pane, 2026-10-11)"
 }

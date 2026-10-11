@@ -13,6 +13,9 @@ All notable user-facing changes to Conduit. Format follows
   rendering for about a second and come back with their text intact; if resets keep happening, they
   stay on plain rendering for the rest of the window's life. The animated background also resumes
   after a reset instead of staying frozen. Conduit's log now records each GPU process restart.
+- **The Shader background no longer jumps back to its starting frame.** It restarted whenever the app
+  refreshed its state, for example on session activity; it now restarts only when you change its
+  settings.
 
 ## [0.47.1] — 2026-10-08
 

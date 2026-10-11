@@ -235,8 +235,6 @@ export function TerminalPane({
       term.element?.addEventListener('mousedown', suppressLinkMiddleDown, true);
       // `webglcontextlost` doesn't bubble out of xterm's canvas; capture still sees it.
       term.element?.addEventListener('webglcontextlost', reportGpuLoss, true);
-      // WebGL renderer draws box/block glyphs to fill the cell (crisper).
-      unregisterGpu = terminalGpu.register(term);
       // Restore wheel scrollback scrolling when a TUI enables mouse tracking (NOT Claude
       // Code — it never does; see terminal-scroll.ts): xterm then forwards the wheel to the
       // app and stops scrolling history,
@@ -264,6 +262,9 @@ export function TerminalPane({
         if (lines !== 0) term.scrollLines(lines);
         return false;
       });
+      // Last in the try: a throw before it would return from the effect with no cleanup, leaking
+      // the terminal's WebGL slot. The renderer draws box/block glyphs to fill the cell (crisper).
+      unregisterGpu = terminalGpu.register(term);
     } catch (e) {
       logToHost(`xterm init failed: ${e instanceof Error ? e.message : String(e)}`);
       return;

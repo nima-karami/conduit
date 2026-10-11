@@ -18,12 +18,14 @@ function harness({ failAttach = new Set<string>() } = {}) {
   let timers: { at: number; fn: () => void; live: boolean }[] = [];
   const handles: Handle[] = [];
   const events: string[] = [];
+  const attempts: string[] = [];
   const gpu = createGpuCoordinator<string>({
     now: () => now,
     setTimer: (fn, ms) => {
       timers.push({ at: now + ms, fn, live: true });
     },
     attach: (term) => {
+      attempts.push(term);
       if (failAttach.has(term)) return null;
       const h: Handle = {
         term,
@@ -51,7 +53,7 @@ function harness({ failAttach = new Set<string>() } = {}) {
   };
   const live = (term?: string) =>
     handles.filter((h) => !h.disposed && (term === undefined || h.term === term));
-  return { gpu, handles, events, advance, live };
+  return { gpu, handles, events, attempts, advance, live };
 }
 
 describe('terminal GPU coordinator', () => {
@@ -239,6 +241,21 @@ describe('terminal GPU coordinator', () => {
       }
       offs[2]();
       expect(live()).toEqual([]);
+    });
+
+    it('a terminal whose attach failed is not retried until the next re-attach', () => {
+      const failAttach = new Set(['bad']);
+      const { gpu, live, attempts, advance } = harness({ failAttach });
+      const offs = names(MAX_WEBGL_TERMINALS).map((t) => gpu.register(t));
+      gpu.register('bad');
+      gpu.register('w0');
+      offs[0]();
+      expect(live('w0')).toHaveLength(1);
+      offs[1]();
+      expect(attempts.filter((t) => t === 'bad')).toHaveLength(1);
+      gpu.reportLoss('t2');
+      advance(GPU_REATTACH_DELAY_MS);
+      expect(attempts.filter((t) => t === 'bad')).toHaveLength(2);
     });
   });
 });
