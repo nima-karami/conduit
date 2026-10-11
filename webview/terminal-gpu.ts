@@ -13,6 +13,9 @@ import { log } from './log';
 export const GPU_REATTACH_DELAY_MS = 1000;
 export const GPU_LOSS_WINDOW_MS = 60_000;
 export const GPU_GIVE_UP_LOSSES = 3;
+// Under Chromium's ~16 live contexts per page, leaving room for the shader background: past the
+// limit Chromium evicts the oldest context, which would read here as a GPU reset.
+export const MAX_WEBGL_TERMINALS = 12;
 
 export interface WebglHandle {
   dispose(): void;
@@ -36,25 +39,43 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
   const entries = new Map<T, WebglHandle | null>();
   let mode: 'webgl' | 'fallback' | 'dom' = 'webgl';
   let losses: number[] = [];
+  let live = 0;
+
+  const attach = (term: T): boolean => {
+    const handle = deps.attach(term);
+    entries.set(term, handle);
+    if (handle) live++;
+    return !!handle;
+  };
 
   const reattach = () => {
     mode = 'webgl';
-    let attached = 0;
     for (const term of entries.keys()) {
-      const handle = deps.attach(term);
-      entries.set(term, handle);
-      if (handle) attached++;
+      if (live >= MAX_WEBGL_TERMINALS) break;
+      attach(term);
     }
-    deps.log('reattach', { terminals: entries.size, attached });
+    deps.log('reattach', { terminals: entries.size, attached: live });
+  };
+
+  const promoteOldestWaiting = () => {
+    for (const [term, handle] of entries) {
+      if (!handle && attach(term)) return;
+    }
   };
 
   return {
     register(term) {
-      entries.set(term, mode === 'webgl' ? deps.attach(term) : null);
+      entries.set(term, null);
+      if (mode === 'webgl' && live < MAX_WEBGL_TERMINALS) attach(term);
       return () => {
         if (!entries.has(term)) return;
-        entries.get(term)?.dispose();
+        const handle = entries.get(term);
         entries.delete(term);
+        if (!handle) return;
+        handle.dispose();
+        live--;
+        // Only a WebGL terminal frees a slot, and none exist outside webgl mode.
+        promoteOldestWaiting();
       };
     },
     reportLoss(term) {
@@ -66,6 +87,7 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
         handle?.dispose();
         entries.set(t, null);
       }
+      live = 0;
       if (losses.length > GPU_GIVE_UP_LOSSES) {
         mode = 'dom';
         deps.log('give-up', { losses: losses.length, windowMs: GPU_LOSS_WINDOW_MS });

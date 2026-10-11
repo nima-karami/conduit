@@ -4,6 +4,7 @@ import {
   GPU_GIVE_UP_LOSSES,
   GPU_LOSS_WINDOW_MS,
   GPU_REATTACH_DELAY_MS,
+  MAX_WEBGL_TERMINALS,
 } from '../../webview/terminal-gpu';
 
 interface Handle {
@@ -176,5 +177,68 @@ describe('terminal GPU coordinator', () => {
     gpu.reportLoss('a');
     advance(GPU_REATTACH_DELAY_MS);
     expect(events).toEqual(['context-lost', 'reattach']);
+  });
+
+  describe('live WebGL cap', () => {
+    const names = (n: number, prefix = 't') => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
+
+    it(`attaches at most ${MAX_WEBGL_TERMINALS} terminals; the rest register on the DOM renderer`, () => {
+      const { gpu, live } = harness();
+      for (const t of names(MAX_WEBGL_TERMINALS + 3)) gpu.register(t);
+      expect(live().map((h) => h.term)).toEqual(names(MAX_WEBGL_TERMINALS));
+    });
+
+    it('promotes the oldest waiting terminal when a WebGL terminal unregisters', () => {
+      const { gpu, live } = harness();
+      const offs = names(MAX_WEBGL_TERMINALS).map((t) => gpu.register(t));
+      gpu.register('wait0');
+      gpu.register('wait1');
+      offs[3]();
+      expect(live('wait0')).toHaveLength(1);
+      expect(live('wait1')).toHaveLength(0);
+      expect(live()).toHaveLength(MAX_WEBGL_TERMINALS);
+    });
+
+    it('unregistering a waiting DOM terminal promotes nobody', () => {
+      const { gpu, live } = harness();
+      for (const t of names(MAX_WEBGL_TERMINALS)) gpu.register(t);
+      const offWait = gpu.register('wait0');
+      gpu.register('wait1');
+      offWait();
+      expect(live('wait1')).toHaveLength(0);
+      expect(live()).toHaveLength(MAX_WEBGL_TERMINALS);
+    });
+
+    it('the re-attach after a loss honours the cap, oldest first', () => {
+      const { gpu, live, advance } = harness();
+      for (const t of names(MAX_WEBGL_TERMINALS + 2)) gpu.register(t);
+      gpu.reportLoss('t0');
+      advance(GPU_REATTACH_DELAY_MS);
+      expect(live().map((h) => h.term)).toEqual(names(MAX_WEBGL_TERMINALS));
+    });
+
+    it('promotes nobody while in the fallback window', () => {
+      const { gpu, live, advance } = harness();
+      const offs = names(MAX_WEBGL_TERMINALS).map((t) => gpu.register(t));
+      gpu.register('wait0');
+      gpu.reportLoss('t0');
+      offs[1]();
+      expect(live()).toEqual([]);
+      advance(GPU_REATTACH_DELAY_MS);
+      expect(live()).toHaveLength(MAX_WEBGL_TERMINALS);
+      expect(live('wait0')).toHaveLength(1);
+    });
+
+    it('promotes nobody after giving up', () => {
+      const { gpu, live, advance } = harness();
+      const offs = names(MAX_WEBGL_TERMINALS).map((t) => gpu.register(t));
+      gpu.register('wait0');
+      for (let i = 0; i <= GPU_GIVE_UP_LOSSES; i++) {
+        gpu.reportLoss('t0');
+        advance(GPU_REATTACH_DELAY_MS);
+      }
+      offs[2]();
+      expect(live()).toEqual([]);
+    });
   });
 });
