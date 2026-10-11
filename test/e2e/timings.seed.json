@@ -170,6 +170,7 @@
     "terminal-drop": 10.7,
     "terminal-focus": 10.1,
     "terminal-follow": 54.7,
+    "terminal-gpu-reset": 36,
     "terminal-links": 6.8,
     "terminal-osc8-link": 9.6,
     "terminal-path-links": 6.8,

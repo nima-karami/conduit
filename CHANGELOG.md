@@ -6,6 +6,14 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Terminals no longer go black after a graphics driver hiccup.** When the GPU process restarted
+  (a driver reset, or Windows recovering the display adapter), every terminal in the window kept only
+  its cursor until the window was torn out or Conduit restarted. Terminals now switch to plain
+  rendering for about a second and come back with their text intact; if resets keep happening, they
+  stay on plain rendering for the rest of the window's life. The animated background also resumes
+  after a reset instead of staying frozen. Conduit's log now records each GPU process restart.
+
 ## [0.47.1] — 2026-10-08
 
 ### Fixed

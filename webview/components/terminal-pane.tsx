@@ -1,6 +1,5 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
-import { WebglAddon } from '@xterm/addon-webgl';
 import { type ILinkProvider, Terminal } from '@xterm/xterm';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
@@ -17,6 +16,7 @@ import { initialTermSearchState, termSearchReducer } from '../term-search';
 import { notifyTerminalBus, registerTerminal } from '../terminal-bus';
 import { terminalClipboardAction } from '../terminal-clipboard';
 import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
+import { terminalGpu } from '../terminal-gpu';
 import {
   detectCommitTokens,
   detectPathTokens,
@@ -172,7 +172,8 @@ export function TerminalPane({
     let term: Terminal;
     let fit: FitAddon;
     let search: SearchAddon;
-    let webgl: WebglAddon | null = null;
+    let unregisterGpu: (() => void) | null = null;
+    const reportGpuLoss = () => terminalGpu.reportLoss(term);
     try {
       term = new Terminal({
         fontFamily: monoStack(fontMonoRef.current),
@@ -232,18 +233,10 @@ export function TerminalPane({
       term.loadAddon(search);
       term.open(ref.current);
       term.element?.addEventListener('mousedown', suppressLinkMiddleDown, true);
+      // `webglcontextlost` doesn't bubble out of xterm's canvas; capture still sees it.
+      term.element?.addEventListener('webglcontextlost', reportGpuLoss, true);
       // WebGL renderer draws box/block glyphs to fill the cell (crisper).
-      try {
-        webgl = new WebglAddon();
-        // Tear down through the guarded path on context loss so a throw can't escape
-        // (it falls back to the DOM renderer).
-        const lost = webgl;
-        webgl.onContextLoss(() => disposeTerminal(null, [lost]));
-        term.loadAddon(webgl);
-      } catch {
-        webgl = null;
-        /* fall back to the DOM renderer */
-      }
+      unregisterGpu = terminalGpu.register(term);
       // Restore wheel scrollback scrolling when a TUI enables mouse tracking (NOT Claude
       // Code — it never does; see terminal-scroll.ts): xterm then forwards the wheel to the
       // app and stops scrolling history,
@@ -566,6 +559,7 @@ export function TerminalPane({
       try {
         onData.dispose();
         term.element?.removeEventListener('mousedown', suppressLinkMiddleDown, true);
+        term.element?.removeEventListener('webglcontextlost', reportGpuLoss, true);
       } catch {
         /* listener may already be gone */
       }
@@ -604,7 +598,8 @@ export function TerminalPane({
       ro.disconnect();
       disposeLinkCaches();
       if (started) post({ type: 'term:dispose', sessionId });
-      disposeTerminal(term, [webgl, fit, search]);
+      unregisterGpu?.();
+      disposeTerminal(term, [fit, search]);
       {
         const terms = (window as unknown as { __terms?: Record<string, Terminal> }).__terms;
         if (terms) delete terms[sessionId];

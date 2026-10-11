@@ -73,74 +73,99 @@ export function ShaderBg({
       return;
     }
 
-    const resources = createShaderResources(gl, VERT, source || FRAG);
-    if (!resources) {
+    const giveUp = () => {
       setDead(true);
       onUnsupported();
+    };
+    const scene = () => startScene(canvas, gl, source || FRAG, ALPHA[intensity] ?? 0.22);
+    let stopScene = scene();
+    if (!stopScene) {
+      giveUp();
       return;
     }
-    const { program: prog, buffer: buf } = resources;
-    // biome-ignore lint/correctness/useHookAtTopLevel: gl.useProgram is a WebGL API, not a React hook
-    gl.useProgram(prog);
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    const loc = gl.getAttribLocation(prog, 'p');
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-    const cs = getComputedStyle(document.documentElement);
-    const c1 = rgb01(cs.getPropertyValue('--accent'), [0.85, 0.47, 0.36]);
-    const c2 = rgb01(cs.getPropertyValue('--blue'), [0.37, 0.61, 0.84]);
-    const c3 = rgb01(cs.getPropertyValue('--violet'), [0.61, 0.55, 0.94]);
-    const alpha = ALPHA[intensity] ?? 0.22;
-
-    const u = {
-      res: gl.getUniformLocation(prog, 'u_res'),
-      time: gl.getUniformLocation(prog, 'u_time'),
-      c1: gl.getUniformLocation(prog, 'u_c1'),
-      c2: gl.getUniformLocation(prog, 'u_c2'),
-      c3: gl.getUniformLocation(prog, 'u_c3'),
-      alpha: gl.getUniformLocation(prog, 'u_alpha'),
-    };
-    gl.uniform3fv(u.c1, c1);
-    gl.uniform3fv(u.c2, c2);
-    gl.uniform3fv(u.c3, c3);
-    gl.uniform1f(u.alpha, alpha);
-
-    const resize = () => {
-      const w = canvas.clientWidth,
-        h = canvas.clientHeight;
-      canvas.width = w;
-      canvas.height = h;
-      gl.viewport(0, 0, w, h);
-      gl.uniform2f(u.res, w, h);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const start = performance.now();
-    const draw = () => {
-      gl.uniform1f(u.time, (performance.now() - start) / 1000);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-    };
-    const stop = runRenderLoop(draw);
     const onLost = (e: Event) => {
       e.preventDefault();
-      stop();
+      stopScene?.();
+      stopScene = null;
+    };
+    // A GPU-process restart hands the same canvas back with every GL resource gone.
+    const onRestored = () => {
+      stopScene = scene();
+      if (!stopScene) giveUp();
     };
     canvas.addEventListener('webglcontextlost', onLost);
+    canvas.addEventListener('webglcontextrestored', onRestored);
 
     return () => {
-      stop();
-      window.removeEventListener('resize', resize);
+      stopScene?.();
       canvas.removeEventListener('webglcontextlost', onLost);
-      resources.dispose();
+      canvas.removeEventListener('webglcontextrestored', onRestored);
     };
   }, [attempt, intensity, source, dead, onUnsupported]);
 
   if (dead) return null;
   return <canvas key={attempt} className="bgfx bgfx--shader" ref={ref} aria-hidden="true" />;
+}
+
+/** Builds the GL resources and starts the render loop; returns its teardown, or null on failure. */
+function startScene(
+  canvas: HTMLCanvasElement,
+  gl: WebGLRenderingContext,
+  fragment: string,
+  alpha: number,
+): (() => void) | null {
+  const resources = createShaderResources(gl, VERT, fragment);
+  if (!resources) return null;
+  const { program: prog, buffer: buf } = resources;
+  // biome-ignore lint/correctness/useHookAtTopLevel: gl.useProgram is a WebGL API, not a React hook
+  gl.useProgram(prog);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'p');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  const cs = getComputedStyle(document.documentElement);
+  const c1 = rgb01(cs.getPropertyValue('--accent'), [0.85, 0.47, 0.36]);
+  const c2 = rgb01(cs.getPropertyValue('--blue'), [0.37, 0.61, 0.84]);
+  const c3 = rgb01(cs.getPropertyValue('--violet'), [0.61, 0.55, 0.94]);
+
+  const u = {
+    res: gl.getUniformLocation(prog, 'u_res'),
+    time: gl.getUniformLocation(prog, 'u_time'),
+    c1: gl.getUniformLocation(prog, 'u_c1'),
+    c2: gl.getUniformLocation(prog, 'u_c2'),
+    c3: gl.getUniformLocation(prog, 'u_c3'),
+    alpha: gl.getUniformLocation(prog, 'u_alpha'),
+  };
+  gl.uniform3fv(u.c1, c1);
+  gl.uniform3fv(u.c2, c2);
+  gl.uniform3fv(u.c3, c3);
+  gl.uniform1f(u.alpha, alpha);
+
+  const resize = () => {
+    const w = canvas.clientWidth,
+      h = canvas.clientHeight;
+    canvas.width = w;
+    canvas.height = h;
+    gl.viewport(0, 0, w, h);
+    gl.uniform2f(u.res, w, h);
+  };
+  resize();
+  window.addEventListener('resize', resize);
+
+  const start = performance.now();
+  const draw = () => {
+    gl.uniform1f(u.time, (performance.now() - start) / 1000);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  };
+  const stop = runRenderLoop(draw);
+  return () => {
+    stop();
+    window.removeEventListener('resize', resize);
+    resources.dispose();
+  };
 }
