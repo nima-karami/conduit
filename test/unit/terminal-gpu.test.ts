@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { GPU_GIVE_UP_LOSSES, GPU_LOSS_WINDOW_MS } from '../../webview/gpu-loss-policy';
 import {
   createGpuCoordinator,
-  GPU_GIVE_UP_LOSSES,
-  GPU_LOSS_WINDOW_MS,
   GPU_REATTACH_DELAY_MS,
   MAX_WEBGL_TERMINALS,
 } from '../../webview/terminal-gpu';

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { noteGpuLoss } from '../gpu-loss-policy';
 import { runRenderLoop } from '../render-loop';
 import { createShaderResources } from '../shader-resources';
 
@@ -32,6 +33,10 @@ void main(){
 }`;
 
 const MAX_ATTEMPTS = 8;
+export const SHADER_RESTORE_TIMEOUT_MS = 5000;
+// Chromium paints a canvas whose WebGL context failed to (re)create as opaque white — measured
+// after a blocked restore — so the canvas stays hidden whenever no scene is running on it.
+const HIDDEN = { visibility: 'hidden' } as const;
 
 /**
  * WebGL plasma background. A fresh canvas can hand back an already-lost context
@@ -51,6 +56,8 @@ export function ShaderBg({
   const ref = useRef<HTMLCanvasElement>(null);
   const [attempt, setAttempt] = useState(0);
   const [dead, setDead] = useState(false);
+  const [live, setLive] = useState(false);
+  const losses = useRef<number[]>([]);
 
   useEffect(() => {
     setDead(false);
@@ -83,20 +90,33 @@ export function ShaderBg({
       giveUp();
       return;
     }
+    setLive(true);
+    let restoreTimer: ReturnType<typeof setTimeout> | undefined;
     const onLost = (e: Event) => {
-      e.preventDefault();
       stopScene?.();
       stopScene = null;
+      setLive(false);
+      const noted = noteGpuLoss(losses.current, Date.now());
+      losses.current = noted.losses;
+      if (noted.exhausted) {
+        giveUp();
+        return;
+      }
+      e.preventDefault();
+      restoreTimer = setTimeout(giveUp, SHADER_RESTORE_TIMEOUT_MS);
     };
     // A GPU-process restart hands the same canvas back with every GL resource gone.
     const onRestored = () => {
+      clearTimeout(restoreTimer);
       stopScene = scene();
-      if (!stopScene) giveUp();
+      if (stopScene) setLive(true);
+      else giveUp();
     };
     canvas.addEventListener('webglcontextlost', onLost);
     canvas.addEventListener('webglcontextrestored', onRestored);
 
     return () => {
+      clearTimeout(restoreTimer);
       stopScene?.();
       canvas.removeEventListener('webglcontextlost', onLost);
       canvas.removeEventListener('webglcontextrestored', onRestored);
@@ -104,7 +124,15 @@ export function ShaderBg({
   }, [attempt, intensity, source, dead, onUnsupported]);
 
   if (dead) return null;
-  return <canvas key={attempt} className="bgfx bgfx--shader" ref={ref} aria-hidden="true" />;
+  return (
+    <canvas
+      key={attempt}
+      className="bgfx bgfx--shader"
+      ref={ref}
+      style={live ? undefined : HIDDEN}
+      aria-hidden="true"
+    />
+  );
 }
 
 /** Builds the GL resources and starts the render loop; returns its teardown, or null on failure. */

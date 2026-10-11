@@ -13,6 +13,8 @@
  *      during the reset after activating it. Both must draw text again, on WebGL again.
  *   4. The shader background (switched on first) must have rebuilt its program on the restored
  *      context — before the fix it stopped its loop on the loss and never came back.
+ *   5. Kill the GPU process a second time. Chromium blocks WebGL for the page after a repeat reset
+ *      unless the host opts out, so every pane must again be back on WebGL and the shader rebuilt.
  */
 
 import { assert, openSession, REPO, runScenario } from './harness.mjs';
@@ -25,6 +27,24 @@ const RECOVERY_MS = 8000;
 // reset), so a pane scores its best of several captures. The broken atlas stays dark however long
 // it is sampled, so this cannot hide the defect.
 const CAPTURES = 6;
+
+const killGpu = async (app) => {
+  const pid = await app.evaluate(({ app: a }) => {
+    const gpu = a.getAppMetrics().find((m) => m.type === 'GPU');
+    if (!gpu) return null;
+    process.kill(gpu.pid);
+    return gpu.pid;
+  });
+  assert(pid, 'this app reports no GPU process');
+  return pid;
+};
+
+const assertGpuRestarted = async (app, killed) => {
+  const pid = await app.evaluate(
+    ({ app: a }) => a.getAppMetrics().find((m) => m.type === 'GPU')?.pid ?? null,
+  );
+  assert(pid && pid !== killed, `the GPU process did not restart (pid ${pid})`);
+};
 
 const glyphPixels = async (app, page, sid) => {
   const rect = await page.evaluate((id) => {
@@ -119,20 +139,11 @@ await runScenario('terminal-gpu-reset', async ({ app, page, log }) => {
   log(`before reset: ${before} glyph px`);
   assert(before >= MIN_GLYPH_PX, `baseline too dark to measure (${before} px)`);
 
-  const gpuPid = await app.evaluate(({ app: a }) => {
-    const gpu = a.getAppMetrics().find((m) => m.type === 'GPU');
-    if (!gpu) return null;
-    process.kill(gpu.pid);
-    return gpu.pid;
-  });
-  assert(gpuPid, 'this app reports no GPU process');
+  const gpuPid = await killGpu(app);
   log(`killed GPU process ${gpuPid}`);
   await page.waitForTimeout(RECOVERY_MS);
 
-  const newGpu = await app.evaluate(
-    ({ app: a }) => a.getAppMetrics().find((m) => m.type === 'GPU')?.pid ?? null,
-  );
-  assert(newGpu && newGpu !== gpuPid, `the GPU process did not restart (pid ${newGpu})`);
+  await assertGpuRestarted(app, gpuPid);
   const shaderResumed = await page.evaluate(shaderLive);
   log(`shader background rebuilt after reset: ${shaderResumed}`);
 
@@ -150,4 +161,24 @@ await runScenario('terminal-gpu-reset', async ({ app, page, log }) => {
     assert(await onWebgl(page, sid), `session ${sid} did not return to WebGL after the reset`);
   }
   assert(shaderResumed, 'the shader background did not resume after the reset');
+
+  const secondPid = await killGpu(app);
+  log(`killed GPU process ${secondPid} (second reset)`);
+  await page.waitForTimeout(RECOVERY_MS);
+  await assertGpuRestarted(app, secondPid);
+  const shaderResumedAgain = await page.evaluate(shaderLive);
+  log(`shader background rebuilt after second reset: ${shaderResumedAgain}`);
+  const webglAfterSecond = [];
+  for (const sid of sids) webglAfterSecond.push(await onWebgl(page, sid));
+  log(
+    `panes on WebGL after second reset: ${webglAfterSecond.filter(Boolean).length}/${sids.length}`,
+  );
+  const afterSecond = await glyphPixels(app, page, hidden);
+  log(`after second reset, active pane: ${afterSecond} glyph px`);
+  assert(shaderResumedAgain, 'the shader background did not resume after the second reset');
+  assert(
+    webglAfterSecond.every(Boolean),
+    `only ${webglAfterSecond.filter(Boolean).length}/${sids.length} panes returned to WebGL after the second reset`,
+  );
+  assert(afterSecond >= MIN_GLYPH_PX, `pane went dark after the second reset (${afterSecond} px)`);
 });

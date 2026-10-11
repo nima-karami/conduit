@@ -10,11 +10,10 @@
 import { WebglAddon } from '@xterm/addon-webgl';
 import type { Terminal } from '@xterm/xterm';
 import { safeDispose } from './components/safe-dispose';
+import { GPU_LOSS_WINDOW_MS, noteGpuLoss } from './gpu-loss-policy';
 import { log } from './log';
 
 export const GPU_REATTACH_DELAY_MS = 1000;
-export const GPU_LOSS_WINDOW_MS = 60_000;
-export const GPU_GIVE_UP_LOSSES = 3;
 // Under Chromium's ~16 live contexts per page, leaving room for the shader background: past the
 // limit Chromium evicts the oldest context, which would read here as a GPU reset.
 export const MAX_WEBGL_TERMINALS = 12;
@@ -88,14 +87,14 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
     reportLoss(term) {
       // Every context in the document is lost together, so the rest of the burst lands here.
       if (mode !== 'webgl' || !entries.has(term)) return;
-      const now = deps.now();
-      losses = [...losses.filter((t) => now - t < GPU_LOSS_WINDOW_MS), now];
+      const noted = noteGpuLoss(losses, deps.now());
+      losses = noted.losses;
       for (const [t, handle] of entries) {
         handle?.dispose();
         entries.set(t, null);
       }
       live = 0;
-      if (losses.length > GPU_GIVE_UP_LOSSES) {
+      if (noted.exhausted) {
         mode = 'dom';
         deps.log('give-up', { losses: losses.length, windowMs: GPU_LOSS_WINDOW_MS });
         return;
