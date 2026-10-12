@@ -35,7 +35,15 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assert, finishScenario, launchApp, makeLog, openSession, tapBridge } from './harness.mjs';
+import {
+  assert,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+  tapBridge,
+  writeToTerminal,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[plan-editor] SKIP — suite is Windows-only');
@@ -351,10 +359,7 @@ try {
   // Both terminals accept a bracketed paste, so the Send control is live wherever the tab is
   // bound — the assertion below is about WHICH terminal receives it, not whether one can.
   for (const sid of [sessionA, sessionB]) {
-    await page.evaluate(
-      ([s, seq]) => new Promise((r) => window.__terms[s]?.write(seq, r)),
-      [sid, '\u001b[?2004h'],
-    );
+    await writeToTerminal(page, sid, '\u001b[?2004h');
   }
 
   // Send counts human-changed blocks, and a freshly loaded plan has none.

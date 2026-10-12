@@ -44,6 +44,7 @@ import {
   openSession,
   profileDir,
   tapBridge,
+  writeToTerminal,
 } from './harness.mjs';
 
 if (process.platform !== 'win32') {
@@ -165,10 +166,7 @@ const noteBodies = (page, file) =>
 
 /** Turn bracketed paste on/off from the program side, as an agent TUI starting or exiting does. */
 const setBracketedPaste = (page, sid, on) =>
-  page.evaluate(
-    ([s, seq]) => new Promise((r) => window.__terms[s].write(seq, r)),
-    [sid, on ? '\u001b[?2004h' : '\u001b[?2004l'],
-  );
+  writeToTerminal(page, sid, on ? '\u001b[?2004h' : '\u001b[?2004l');
 
 const sendLabel = (page) =>
   page.evaluate(() => document.querySelector('.review__send')?.textContent ?? '');

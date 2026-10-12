@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, runScenario, writeToTerminal } from './harness.mjs';
 
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
@@ -84,13 +84,7 @@ runScenario('terminal-commit-link', async ({ page, log }) => {
   // terminal-path-links.e2e.mjs avoids it for the same reason, and the spec sanctions invoking
   // the same link the click uses). This still exercises the whole renderer path: detect →
   // host validateCommits → path-precedence filter → link.activate → onOpenCommitReview.
-  await page.evaluate(
-    ({ s, sha }) =>
-      new Promise((resolve) => {
-        window.__terms[s].write(`\r\nCommitted as ${sha}\r\n`, resolve);
-      }),
-    { s: sid, sha: full },
-  );
+  await writeToTerminal(page, sid, `\r\nCommitted as ${full}\r\n`);
 
   // Poll until the rendered sha is in the buffer (terminal output is async).
   const found = await page

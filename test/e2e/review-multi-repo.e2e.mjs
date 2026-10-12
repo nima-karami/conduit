@@ -22,7 +22,14 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openReview, openSession, runScenario, tapBridge } from './harness.mjs';
+import {
+  assert,
+  openReview,
+  openSession,
+  runScenario,
+  tapBridge,
+  writeToTerminal,
+} from './harness.mjs';
 
 // --no-optional-locks: this scenario polls git while the app runs its own; a status that takes
 // index.lock makes the app's git reset / restore fail, and Discard all stops at its first step.
@@ -277,10 +284,7 @@ async function addNote(page, sel, line, body) {
 }
 
 const setBracketedPaste = (page, sid, on) =>
-  page.evaluate(
-    ([s, seq]) => new Promise((r) => window.__terms[s].write(seq, r)),
-    [sid, on ? '\u001b[?2004h' : '\u001b[?2004l'],
-  );
+  writeToTerminal(page, sid, on ? '\u001b[?2004h' : '\u001b[?2004l');
 
 const waitForSendLabel = (page, re) =>
   waitFor(
@@ -871,10 +875,7 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
     validated.commit === fx.extSha && key(validated.root ?? '') === k.ext,
     `ext's sha must validate against ext; got ${JSON.stringify(validated)}`,
   );
-  await page.evaluate(
-    ({ s, sha }) => new Promise((r) => window.__terms[s].write(`\r\nBuilt ${sha}\r\n`, r)),
-    { s: sid, sha: fx.extSha },
-  );
+  await writeToTerminal(page, sid, `\r\nBuilt ${fx.extSha}\r\n`);
   let routed = { error: 'not attempted' };
   for (let attempt = 0; attempt < 6; attempt++) {
     routed = await page.evaluate(

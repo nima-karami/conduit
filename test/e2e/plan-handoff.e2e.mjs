@@ -25,7 +25,15 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assert, finishScenario, launchApp, makeLog, openSession, tapBridge } from './harness.mjs';
+import {
+  assert,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+  tapBridge,
+  writeToTerminal,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[plan-handoff] SKIP — suite is Windows-only');
@@ -193,10 +201,7 @@ try {
   // A bare cmd.exe has not set DECSET 2004, so the control refuses a multi-line paste until an
   // agent TUI turns bracketed paste on.
   await waitForSend(/Copy as markdown/);
-  await page.evaluate(
-    ([s, seq]) => new Promise((r) => window.__terms[s].write(seq, r)),
-    [sessionId, '\u001b[?2004h'],
-  );
+  await writeToTerminal(page, sessionId, '\u001b[?2004h');
   await waitForSend(/Send to agent \(2\)/);
   assert(
     (await sendText()).includes('Send to agent (2)'),

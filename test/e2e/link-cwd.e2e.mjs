@@ -21,7 +21,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, runScenario, writeToTerminal } from './harness.mjs';
 
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
@@ -185,10 +185,7 @@ runScenario('link-cwd', async ({ page, log }) => {
 
   // 3) Compounding fix: clicking repo-a's commit opens Review scoped to repo-a (shows a-only.txt),
   //    even though repo-b is pinned.
-  await page.evaluate(
-    ({ s, sha }) => new Promise((r) => window.__terms[s].write(`\r\nBuilt ${sha}\r\n`, r)),
-    { s: sid, sha: alpha },
-  );
+  await writeToTerminal(page, sid, `\r\nBuilt ${alpha}\r\n`);
   const probe = alpha.slice(0, 12);
   await page.waitForFunction(
     ({ s, p }) => {

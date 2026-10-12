@@ -1003,6 +1003,26 @@ export function waitForOutput(page, sessionId, text, occurrences = 2) {
 }
 
 /**
+ * Write `data` straight into a session's xterm, as program output, and resolve once it is parsed.
+ * The promise stays referenced from `window` until a task after it settles: a resolved promise
+ * nothing else holds can be collected before CDP's awaitPromise reaction runs, which fails the
+ * evaluate with "Resulting promise was garbage collected" (review-multi-repo on the runner).
+ */
+export function writeToTerminal(page, sessionId, data) {
+  return page.evaluate(
+    ([s, d]) => {
+      const p = new Promise((r) => window.__terms[s].write(d, r));
+      window.__termWrites ??= new Set();
+      const held = window.__termWrites;
+      held.add(p);
+      p.then(() => setTimeout(() => held.delete(p)));
+      return p;
+    },
+    [sessionId, data],
+  );
+}
+
+/**
  * Ask the shell (cmd.exe) for the PTY's size with `mode con`, tagged by `probe`, and measure the
  * xterm against its pane in the same tick. `pty` and `xterm` are both `<cols>x<rows>`.
  */
