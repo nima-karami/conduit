@@ -2,7 +2,7 @@ import type { WriteConflict } from '../src/path-guard';
 import type { AutoSaveMode } from '../src/settings';
 
 /**
- * The per-file auto-save state machine (docs/specs/2026-09-28-auto-save.md §2.3) as a pure
+ * The per-file auto-save state machine (docs/specs/archive/2026-09-28-auto-save.md §2.3) as a pure
  * reducer. Timers, writes and toasts are effects the caller runs; the transition table lives in
  * docs/plans/2026-09-28-auto-save.plan.md (Contracts → Policy).
  */

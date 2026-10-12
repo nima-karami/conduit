@@ -1,4 +1,4 @@
-// Crash-restart budget. See docs/specs/2026-09-22-language-server-go.md §2.2.
+// Crash-restart budget. See docs/specs/archive/2026-09-22-language-server-go.md §2.2.
 export const RESTART_DELAYS_MS = [1000, 4000, 16000] as const;
 export const RESTART_WINDOW_MS = 300_000;
 

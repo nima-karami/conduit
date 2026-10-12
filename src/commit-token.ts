@@ -2,7 +2,7 @@
  * Pure host-side helpers for terminal commit-hash validation. The renderer detects
  * candidate hex tokens (webview/terminal-links.ts); the host re-asserts the hex class and
  * confirms each is a real commit object before linking. See
- * docs/specs/2026-06-29-terminal-commit-link.md §3.2.
+ * docs/specs/archive/2026-06-29-terminal-commit-link.md §3.2.
  */
 
 const COMMIT_HEX_RE = /^[0-9a-f]{7,40}$/;

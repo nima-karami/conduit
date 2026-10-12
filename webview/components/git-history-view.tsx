@@ -193,7 +193,7 @@ export function GitHistoryView({
   // Seed from the persisted height so a remount (tab close/reopen, restart) keeps the user's
   // size; kept as local state for smooth dragging. splitRef is null at mount so only the lower
   // bound applies here — the render/window-resize clamp enforces the upper bound.
-  // See docs/specs/2026-06-29-commit-detail-resize-persistence.md.
+  // See docs/specs/archive/2026-06-29-commit-detail-resize-persistence.md.
   const { settings, update } = useSettings();
   const [detailH, setDetailH] = useState(() =>
     Math.max(DETAIL_MIN_H, settings.historyDetailHeight),

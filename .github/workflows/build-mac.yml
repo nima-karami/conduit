@@ -5,7 +5,7 @@ name: Build macOS (unsigned)
 # targets on Windows/Linux. Uploaded as a workflow artifact ONLY — never a Release asset
 # and no latest-mac.yml — so no client ever treats it as an updatable install (Squirrel.Mac
 # needs signing, which this build deliberately skips). See docs/MACOS-TESTING.md and
-# docs/specs/2026-06-17-macos-test-build.md.
+# docs/specs/archive/2026-06-17-macos-test-build.md.
 
 on:
   workflow_dispatch:

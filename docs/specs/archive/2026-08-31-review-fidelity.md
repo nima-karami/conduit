@@ -1,5 +1,5 @@
 ---
-status: active
+status: implemented
 date: 2026-08-31
 supersedes: 2026-08-27-review-supercharge.md (§3 ignore-whitespace invariant only)
 ---

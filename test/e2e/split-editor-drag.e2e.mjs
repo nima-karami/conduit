@@ -1,5 +1,5 @@
 /**
- * split-editor-drag — v1 tab drags between editor groups (docs/specs/2026-09-28-split-editor.md
+ * split-editor-drag — v1 tab drags between editor groups (docs/specs/archive/2026-09-28-split-editor.md
  * §2.4 flows 3/4, §4 drag rows, §8 drop overlays). Every drag is a real page.mouse press → moves →
  * release, which drives the tab's native HTML5 drag (the board-sessions precedent).
  *   ED  one group: a tab dropped on the right third of the body creates group 2 and moves the tab

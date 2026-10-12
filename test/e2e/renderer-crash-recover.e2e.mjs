@@ -9,7 +9,7 @@
  * a genuine `render-process-gone`) and asserts the recovery is complete: the window comes back
  * on its own, the session pane re-attaches with NO clicking, the pre-crash scrollback is
  * replayed, and freshly typed input still round-trips through the SAME live shell.
- * See docs/specs/2026-08-20-renderer-crash-recovery.md.
+ * See docs/specs/archive/2026-08-20-renderer-crash-recovery.md.
  *
  * Everything after the crash is driven through the MAIN process
  * (`webContents.executeJavaScript`) rather than the Playwright page: a crashed target leaves

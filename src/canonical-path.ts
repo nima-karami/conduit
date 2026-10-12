@@ -10,7 +10,7 @@ const WIN_DRIVE = /^\/?([a-zA-Z]):(?=[\\/])/;
  * key. Everything else (POSIX, UNC `\\server\…`, extended `\\?\…`) is left exactly as given:
  * those are already unambiguous, and rewriting separators inside them would break them.
  *
- * See docs/specs/2026-08-21-goto-definition-flows.md contract 4.
+ * See docs/specs/archive/2026-08-21-goto-definition-flows.md contract 4.
  */
 export function canonicalPath(path: string): string {
   const m = WIN_DRIVE.exec(path);

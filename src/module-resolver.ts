@@ -6,7 +6,7 @@
  * root is either, and a specifier that misses currently resolves to its own import clause. Pure
  * (fs injected) so every package shape is unit-tested against an in-memory tree.
  *
- * See docs/specs/2026-08-21-goto-definition-flows.md §1, rows 19/20/25-36.
+ * See docs/specs/archive/2026-08-21-goto-definition-flows.md §1, rows 19/20/25-36.
  */
 
 import { dirOf, type FsShim, nodeModulesDirs, splitPackageSpecifier } from './module-paths';

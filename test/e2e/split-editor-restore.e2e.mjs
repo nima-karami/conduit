@@ -1,6 +1,6 @@
 /**
  * split-editor-restore — restoring both groups, and closing a group
- * (docs/specs/2026-09-28-split-editor.md §7). Starts from split-editor-tabs' end state, replayed as
+ * (docs/specs/archive/2026-09-28-split-editor.md §7). Starts from split-editor-tabs' end state, replayed as
  * setup in one launch (`replaySplitToE6` + `replayMoves` + `replayTabs`):
  *   E9  a restart (launch 2) restores each group's tabs, order and shown tab.
  *   CG  Close Editor Group from the right strip prompts for a dirty tab: Cancel keeps the group,

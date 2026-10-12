@@ -1,9 +1,9 @@
 /**
- * Go module files and the language-generic nav message (docs/specs/2026-09-22-go-files-basics.md
+ * Go module files and the language-generic nav message (docs/specs/archive/2026-09-22-go-files-basics.md
  * §6): go.mod paints with the `gomod` grammar on open and in a diff, the four module files wear
  * the Go-blue icon in the coloured pack, and F12 outside JS/TS names the file's language.
  *
- * Go itself has a language server now (docs/specs/2026-09-22-language-server-go.md), so this
+ * Go itself has a language server now (docs/specs/archive/2026-09-22-language-server-go.md), so this
  * scenario runs with gopls hidden — as go-lsp's missing-gopls case does — and main.go gets that
  * outcome's install message. It must not depend on what the machine has installed.
  * Python has one too (docs/specs/archive/2026-10-08-language-coverage.md D1), so the unserved language is

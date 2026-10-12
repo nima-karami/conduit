@@ -12,7 +12,7 @@ import { post, subscribe } from './bridge';
  * entry settles in one message. Mirrors {@link useRangeFiles}'s error channel: a read failure
  * arrives as `{ error }` (distinct from a commit with no file changes) and `requestId`
  * (monotonic, latest-wins) lets Retry re-issue without a stale reply clobbering it — see
- * docs/specs/2026-08-20-commit-review-memory-bounds.md §4.
+ * docs/specs/archive/2026-08-20-commit-review-memory-bounds.md §4.
  */
 
 export type CommitFilesStatus = 'loading' | 'ready' | 'error';

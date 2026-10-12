@@ -1,4 +1,4 @@
-// Host side of the skill installer (spec docs/specs/2026-07-06-skill-installer.md): enumerate the
+// Host side of the skill installer (spec docs/specs/archive/2026-07-06-skill-installer.md): enumerate the
 // skills bundled with the app and copy one into a project's or the user's `.claude/skills`. Pure
 // frontmatter/version/status logic lives in ../src/skills; this file is the I/O + electron glue.
 

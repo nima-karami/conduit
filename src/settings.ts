@@ -40,7 +40,7 @@ export type SessionSort = 'manual' | 'name' | 'recent' | 'active' | 'status' | '
 export type RightPaneTab = 'changes' | 'files';
 /** Which side of an `.html`/`.htm` document a tab opens on. */
 export type HtmlDefaultView = 'preview' | 'source';
-/** VS Code `files.autoSave` modes (docs/specs/2026-09-28-auto-save.md §2.2). */
+/** VS Code `files.autoSave` modes (docs/specs/archive/2026-09-28-auto-save.md §2.2). */
 export type AutoSaveMode = 'off' | 'afterDelay' | 'onFocusChange' | 'onWindowChange';
 export const AUTO_SAVE_MODES: AutoSaveMode[] = [
   'off',
@@ -96,7 +96,7 @@ export interface AppSettings {
   rightWidth: number; // explorer panel width, px
   // History tab's commit-detail pane height, px. Persisted so a dragged size survives the
   // tab closing/reopening and restart; the runtime clamp (clampDetailH) enforces the true
-  // per-render upper bound. See docs/specs/2026-06-29-commit-detail-resize-persistence.md.
+  // per-render upper bound. See docs/specs/archive/2026-06-29-commit-detail-resize-persistence.md.
   historyDetailHeight: number;
   editorSplitRatio: number; // left editor group's share of the center width, 0.15..0.85
   layout: string; // comma-joined region order (see src/layout.ts)

@@ -1,5 +1,5 @@
 /**
- * The navigation-outcome classifier and its copy — docs/specs/2026-08-21-goto-definition-flows.md
+ * The navigation-outcome classifier and its copy — docs/specs/archive/2026-08-21-goto-definition-flows.md
  * contract 3 (rows 12, 13, 37, 38, 39, 40, 45).
  */
 

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Enforcement for docs/specs/2026-08-01-interaction-state-vocabulary.md.
+ * Enforcement for docs/specs/archive/2026-08-01-interaction-state-vocabulary.md.
  *
  * The sheet reached 27 distinct hover fills and 8 disabled treatments because nothing
  * stopped the next component from inventing its own. These assertions are that stop —

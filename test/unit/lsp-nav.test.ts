@@ -1,5 +1,5 @@
 /**
- * The language-server branch of `runNavCommand` (spec docs/specs/2026-09-22-language-server-go.md
+ * The language-server branch of `runNavCommand` (spec docs/specs/archive/2026-09-22-language-server-go.md
  * §2.1, §3.3). The real ts-nav, nav-outcome, monaco-message, toast-store and project-index run;
  * only the host channel (lsp-sync / lsp-status / bridge) and monaco's internals are stubbed.
  */

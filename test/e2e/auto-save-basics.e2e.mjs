@@ -1,5 +1,5 @@
 /**
- * Auto-save basics (docs/specs/2026-09-28-auto-save.md §7) against the real built app: the
+ * Auto-save basics (docs/specs/archive/2026-09-28-auto-save.md §7) against the real built app: the
  * setting and its persistence, `off` behaving as before, and background tabs being saveable or
  * released. The mode-driven saves and conflicts are in auto-save.e2e.mjs.
  *

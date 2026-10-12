@@ -7,7 +7,7 @@
  * `extends` through `node_modules`, and the resolver has to consult config discovery for
  * aliases. Owning the shared half here is what keeps that from being an import cycle.
  *
- * See docs/specs/2026-08-21-goto-definition-flows.md §1.
+ * See docs/specs/archive/2026-08-21-goto-definition-flows.md §1.
  */
 
 import { normalizePosix } from './tsconfig-map';

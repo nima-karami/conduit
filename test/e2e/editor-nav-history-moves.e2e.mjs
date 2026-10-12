@@ -1,5 +1,5 @@
 /**
- * Editor navigation history, cursor-move flows (docs/specs/2026-09-22-editor-nav-history.md §7):
+ * Editor navigation history, cursor-move flows (docs/specs/archive/2026-09-22-editor-nav-history.md §7):
  * AC2 a same-file big jump is an entry, AC5 small moves coalesce, AC6 arrow keys never record,
  * AC12 rapid presses apply one at a time, a burst of Backs lands exactly, and a file's (Index) and
  * (Working Tree) diff tabs are separate stops. Each case uses its own files so an earlier case's

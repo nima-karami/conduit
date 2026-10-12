@@ -1,6 +1,6 @@
 /**
  * split-editor-split — making, sizing and collapsing two editor groups
- * (docs/specs/2026-09-28-split-editor.md §7), in one profile reused across a restart:
+ * (docs/specs/archive/2026-09-28-split-editor.md §7), in one profile reused across a restart:
  *   E12 the Terminal tab can't be split: Ctrl+\ off-terminal changes nothing, the menu item is
  *       disabled, and Ctrl+\ inside xterm stays the terminal's key.
  *   E1  Ctrl+\ on a file tab → two groups, the right one active and holding the file.

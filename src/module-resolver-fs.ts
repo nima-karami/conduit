@@ -6,7 +6,7 @@
  * Split from `src/module-resolver.ts` the same way `src/content-search-fs.ts` is split from
  * `src/content-search.ts` — the core stays pure and unit-testable, only this file touches disk.
  *
- * See docs/specs/2026-08-21-goto-definition-flows.md §1.
+ * See docs/specs/archive/2026-08-21-goto-definition-flows.md §1.
  */
 
 import * as fsSync from 'node:fs';

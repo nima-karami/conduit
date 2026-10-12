@@ -1,7 +1,7 @@
 # ADR 0006 — Host-side language servers
 
 **Status:** accepted · **Date:** 2026-09-22 (Workspace Trust: 2026-09-23)
-**Spec:** `docs/specs/2026-09-22-language-server-go.md`, `docs/specs/2026-09-23-workspace-trust.md` · **Plan:** `docs/plans/2026-09-22-language-server-go.plan.md`
+**Spec:** `docs/specs/archive/2026-09-22-language-server-go.md`, `docs/specs/archive/2026-09-23-workspace-trust.md` · **Plan:** `docs/plans/2026-09-22-language-server-go.plan.md`
 
 ## Context
 
@@ -56,7 +56,7 @@ them. Nothing is ever killed by image name.
 Opening a Go file in a clone starts gopls, and gopls runs `go list` — which honours a repo's
 `toolchain` directive and cgo's `pkg-config`. The user's decision ("how does VSCode handle this?
 DO THAT!") is **VS Code's Workspace Trust, adapted** — spec
-`docs/specs/2026-09-23-workspace-trust.md`:
+`docs/specs/archive/2026-09-23-workspace-trust.md`:
 
 - **Per-folder trust, stored in userData** (`workspace-trust.json`), never in a repo, keyed by
   canonical path (case-insensitive on Windows). Trusting a folder trusts everything under it, so

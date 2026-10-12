@@ -1,6 +1,6 @@
 /**
  * Go to Definition flow matrix — first-party resolution + path identity
- * (docs/specs/2026-08-21-goto-definition-flows.md rows 1–17, 42–44).
+ * (docs/specs/archive/2026-08-21-goto-definition-flows.md rows 1–17, 42–44).
  *
  * Asserts the spec's TARGET behaviour, so the pre-fix build is expected to fail the ❌/🔇/⚠️
  * rows. Every row is collected and printed; the scenario fails at the END, once.

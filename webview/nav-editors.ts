@@ -1,6 +1,6 @@
 // Registry of the CodeViewer main editors, keyed by doc path, so navigation history can read a
 // file's live cursor, reveal a stop without it counting as a jump, and focus the landed editor.
-// See docs/specs/2026-09-22-editor-nav-history.md §2.2 ("one record per move") and §2.3.
+// See docs/specs/archive/2026-09-22-editor-nav-history.md §2.2 ("one record per move") and §2.3.
 import type * as monaco from 'monaco-editor';
 import { canonicalPath } from '../src/canonical-path';
 import type { GroupIndex } from './doc-groups';

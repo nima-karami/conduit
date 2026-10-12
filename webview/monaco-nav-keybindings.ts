@@ -1,6 +1,6 @@
 /**
  * The one owner of Monaco's window-global keybinding rules for the code-navigation rows
- * (docs/specs/2026-09-28-nav-keybindings.md §2.2). The rule set is built by the pure
+ * (docs/specs/archive/2026-09-28-nav-keybindings.md §2.2). The rule set is built by the pure
  * `buildNavRules`; this module only hands it to Monaco and routes the dispatch commands.
  */
 

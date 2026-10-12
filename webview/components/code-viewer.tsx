@@ -299,7 +299,7 @@ export function CodeViewer({
     // Every navigation entry point — this action list, F12, and the context menu — goes
     // through `runNavCommand`, which owns the outcome AND its message (including the non-TS
     // notice this used to raise itself). See
-    // docs/specs/2026-08-21-goto-definition-flows.md contract 3.
+    // docs/specs/archive/2026-08-21-goto-definition-flows.md contract 3.
     const navigate = (actionId: string) => {
       void runNavCommand(editor, actionId);
     };
@@ -481,7 +481,7 @@ export function CodeViewer({
     const unregisterNav = registerNavEditor(doc.path, editor, group);
     const unregisterCodeViewer = registerCodeViewerEditor(editor);
     const unregisterFocus = registerFocusTarget(focusAs, editor);
-    // R3 (docs/specs/2026-09-22-editor-nav-history.md §2.2): judged per cursor event against the
+    // R3 (docs/specs/archive/2026-09-22-editor-nav-history.md §2.2): judged per cursor event against the
     // previous one. Seeded after the reveal/restore above so that landing is never a jump.
     const seedPos = editor.getPosition();
     let lastPos = { line: seedPos?.lineNumber ?? 1, column: seedPos?.column ?? 1 };

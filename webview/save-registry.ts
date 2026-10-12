@@ -15,7 +15,7 @@ import type { SaveKind } from './auto-save-policy';
 export interface SaveEntry {
   /** Persist the current buffer to disk. Idempotent + self-guarded (clean → no-op).
    * Resolves true on success (or when already clean), false on failure. Omitting `kind` means
-   * 'manual'; 'auto' carries the on-disk precondition (docs/specs/2026-09-28-auto-save.md §3). */
+   * 'manual'; 'auto' carries the on-disk precondition (docs/specs/archive/2026-09-28-auto-save.md §3). */
   save(opts?: { kind?: SaveKind }): Promise<boolean>;
   /** Restore the on-disk baseline into the model, clearing dirty state.
    * Optional — not all doc types support revert (e.g. diff tabs). */

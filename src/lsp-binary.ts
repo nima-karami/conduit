@@ -1,6 +1,6 @@
 // Language-server binary resolution. Pure: every file-system and process touch is injected, and
 // the platform is a parameter, so the Windows rules unit-test on the Linux CI runner.
-// See docs/specs/2026-09-22-language-server-go.md §3.4.
+// See docs/specs/archive/2026-09-22-language-server-go.md §3.4.
 import type { LanguageServerSpec } from './lsp-registry';
 
 export type HostPlatform = 'win32' | 'darwin' | 'linux';

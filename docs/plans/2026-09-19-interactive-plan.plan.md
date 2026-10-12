@@ -1,6 +1,6 @@
 # Interactive plan documents — implementation plan
 
-**Spec:** `docs/specs/2026-09-19-interactive-plan.md`  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-09-19-interactive-plan.md`  **Tier:** FULL
 
 ## Goal
 
@@ -576,7 +576,7 @@ None. No edit repeats across more than two files; fixtures are one hand-written 
 
 #### Task 7.3: ship
 
-**Files:** `git mv docs/specs/2026-09-19-interactive-plan.md docs/specs/archive/`; Modify `docs/specs/INDEX.md` (move the row to Archived); update the spec's `status:` to `shipped`
+**Files:** `git mv docs/specs/archive/2026-09-19-interactive-plan.md docs/specs/archive/`; Modify `docs/specs/INDEX.md` (move the row to Archived); update the spec's `status:` to `shipped`
 **Steps:**
 - [ ] Run the Slice 7 check in full; `git status` shows only intended files; commit; merge `feat/interactive-plan` to `main` with `--no-ff`.
 

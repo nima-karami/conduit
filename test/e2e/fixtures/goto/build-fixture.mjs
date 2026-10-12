@@ -1,6 +1,6 @@
 /**
  * Generator for the Go to Definition flow-map fixture workspace
- * (docs/specs/2026-08-21-goto-definition-flows.md § Verification).
+ * (docs/specs/archive/2026-08-21-goto-definition-flows.md § Verification).
  *
  * The workspace is WRITTEN, never checked in: it carries a `node_modules` tree and a junction,
  * both of which a committed fixture would push through .gitignore, biome and gitleaks. Callers

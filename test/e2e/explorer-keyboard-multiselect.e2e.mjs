@@ -2,7 +2,7 @@
  * Explorer keyboard multi-select (real-app smoke).
  *
  * Drives the Files tree with REAL keystrokes against a throwaway project of flat files and
- * asserts the gesture table of docs/specs/2026-08-17-explorer-keyboard-multiselect.md §2:
+ * asserts the gesture table of docs/specs/archive/2026-08-17-explorer-keyboard-multiselect.md §2:
  *   Shift+ArrowDown ×2 → 3 selected; Shift+ArrowUp → 2 (the run SHRINKS, it does not invert);
  *   Ctrl+A → every row; Ctrl+ArrowDown → still every row but the roving focus moved;
  *   Ctrl+Space → the focused row toggles out.

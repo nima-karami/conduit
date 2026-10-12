@@ -1,6 +1,6 @@
 /**
  * middle-click-web — a middle-click inside an in-app web tab's guest opens a background web tab
- * (docs/specs/2026-09-22-middle-click-new-tab.md S14, AC-17).
+ * (docs/specs/archive/2026-09-22-middle-click-new-tab.md S14, AC-17).
  *
  * Input is sent to the guest webContents from the main process (`sendInputEvent`), so the click
  * reaches Chromium's own link handling and the host `setWindowOpenHandler` sees the real

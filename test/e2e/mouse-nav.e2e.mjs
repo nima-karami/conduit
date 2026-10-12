@@ -6,7 +6,7 @@
  *   - Alt+Left / Alt+Right traverse the existing nav history across opened docs
  *   - middle-click an explorer FILE row opens a pinned background tab
  *
- * See docs/specs/2026-06-30-mouse-nav-buttons.md §7 (acceptance).
+ * See docs/specs/archive/2026-06-30-mouse-nav-buttons.md §7 (acceptance).
  *
  * Run after a fresh build: `npm run build` then `node test/e2e/run-smoke.mjs mouse-nav`.
  *

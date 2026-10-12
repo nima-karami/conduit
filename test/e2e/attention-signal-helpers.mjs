@@ -1,6 +1,6 @@
 /**
  * Shared driver for the attention-signal scenarios — the behavioural acceptance matrix of
- * docs/specs/2026-08-21-attention-signal-quality.md, driven against the real app with
+ * docs/specs/archive/2026-08-21-attention-signal-quality.md, driven against the real app with
  * scripted PTY children.
  *
  * Runs HIDDEN (the runner's CONDUIT_E2E=1): every row asserted here reads the

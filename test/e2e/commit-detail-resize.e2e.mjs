@@ -13,7 +13,7 @@
  *
  * Without the feature (component-local useState(300)), launch 2 shows 300 → this fails.
  *
- * See docs/specs/2026-06-29-commit-detail-resize-persistence.md.
+ * See docs/specs/archive/2026-06-29-commit-detail-resize-persistence.md.
  */
 
 import { execFileSync } from 'node:child_process';

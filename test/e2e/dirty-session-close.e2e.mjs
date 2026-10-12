@@ -1,5 +1,5 @@
 /**
- * Dirty-editor guard on session close and session move (docs/specs/2026-09-28-dirty-quit-guard.md
+ * Dirty-editor guard on session close and session move (docs/specs/archive/2026-09-28-dirty-quit-guard.md
  * §5). Runs with confirmCloseRunning off: unsaved files must ask regardless (A9).
  * `DIRTY_QUIT_PHASE=<phase>` runs one phase.
  */

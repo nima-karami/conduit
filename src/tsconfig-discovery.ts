@@ -8,7 +8,7 @@
  * host-side replacement, pure (fs injected) so every config shape is unit-tested against an
  * in-memory tree.
  *
- * See docs/specs/2026-08-21-goto-definition-flows.md §1, rows 19/21/22/23.
+ * See docs/specs/archive/2026-08-21-goto-definition-flows.md §1, rows 19/21/22/23.
  */
 
 import { dirOf, type FsShim, nodeModulesDirs, splitPackageSpecifier } from './module-paths';

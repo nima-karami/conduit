@@ -1,6 +1,6 @@
 /**
  * Review-tab commit picker (real-app smoke). The Review header's source control is a searchable
- * commit picker (docs/specs/2026-06-29-review-commit-picker.md): it loads recent commits over
+ * commit picker (docs/specs/archive/2026-06-29-review-commit-picker.md): it loads recent commits over
  * the host `git:history` IPC, filters them, and re-scopes the Review page to the picked commit
  * (or back to the working tree). A pasted SHA crosses the host boundary too.
  *

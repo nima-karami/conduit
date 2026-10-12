@@ -5,7 +5,7 @@
  * replace it in place (tab count stays 1), and a double-click must promote it to a
  * permanent (non-italic) tab so the next single-click opens a fresh preview beside it.
  *
- * See docs/specs/2026-06-27-editor-tab-behavior.md §6 (MVP) / §7 (acceptance).
+ * See docs/specs/archive/2026-06-27-editor-tab-behavior.md §6 (MVP) / §7 (acceptance).
  */
 
 import { mkdtempSync, writeFileSync } from 'node:fs';

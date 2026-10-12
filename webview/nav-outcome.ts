@@ -5,7 +5,7 @@
  * and the copy are unit-testable in the node env, and so `webview/ts-nav.ts` is left with
  * nothing but the editor plumbing.
  *
- * See docs/specs/2026-08-21-goto-definition-flows.md contract 3 (and contract 5 for the
+ * See docs/specs/archive/2026-08-21-goto-definition-flows.md contract 3 (and contract 5 for the
  * cap/skip facts the message admits to).
  */
 

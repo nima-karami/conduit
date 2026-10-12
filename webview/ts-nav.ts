@@ -8,7 +8,7 @@
  * `webview/ts.worker.ts`.
  *
  * See docs/specs/archive/2026-08-07-editor-navigation-parity.md §3d–§3e and
- * docs/specs/2026-08-21-goto-definition-flows.md contract 3.
+ * docs/specs/archive/2026-08-21-goto-definition-flows.md contract 3.
  */
 
 import * as monaco from 'monaco-editor';
@@ -415,7 +415,7 @@ function openLocation(editor: monaco.editor.ICodeEditor, loc: monaco.languages.L
   }
   // Our own opener path — the same one registerEditorOpener drives (webview/monaco-opener.ts).
   // Going through it directly makes a single-result navigation immune to the built-in
-  // command's silent early returns; see docs/specs/2026-08-21-goto-definition-flows.md §3.
+  // command's silent early returns; see docs/specs/archive/2026-08-21-goto-definition-flows.md §3.
   const abs = pathForUri(loc.uri);
   openDefinitionFile(
     abs,
@@ -504,7 +504,7 @@ export function setUnresolvedResolver(fn: UnresolvedResolver | null): void {
  * The wrapper asks the TS worker itself instead of dispatching a provider-gated built-in and
  * inferring success from "did the editor move" — that heuristic read a caret landing on the
  * import clause of an unresolved module as a success, which is the silent wrong jump the
- * spec's baseline recorded. See docs/specs/2026-08-21-goto-definition-flows.md contract 3.
+ * spec's baseline recorded. See docs/specs/archive/2026-08-21-goto-definition-flows.md contract 3.
  */
 export async function runNavCommand(
   editor: monaco.editor.ICodeEditor,
@@ -586,7 +586,7 @@ export async function runNavCommand(
       // an alias declared in a config the worker's GLOBAL options don't carry, or a workspace
       // package whose realpath is nowhere near the `node_modules` link TypeScript probes. The
       // file is the answer we have, so open it rather than report a dead end. See
-      // docs/specs/2026-08-21-goto-definition-flows.md §1 (rows 19/23/24/31/32).
+      // docs/specs/archive/2026-08-21-goto-definition-flows.md §1 (rows 19/23/24/31/32).
       outcome = await landOnResolvedEntry(
         editor,
         model,

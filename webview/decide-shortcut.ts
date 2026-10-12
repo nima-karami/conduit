@@ -1,5 +1,5 @@
 // Pure precedence decision for the app shortcut dispatcher — app shortcuts are a fallback
-// behind the terminal and editor. See docs/specs/2026-07-03-shortcut-precedence-and-editable-nav.md §1.
+// behind the terminal and editor. See docs/specs/archive/2026-07-03-shortcut-precedence-and-editable-nav.md §1.
 
 import { isComboAllowedWhileTyping } from './typing-guard';
 

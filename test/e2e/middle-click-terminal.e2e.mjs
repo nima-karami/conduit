@@ -1,5 +1,5 @@
 /**
- * Middle-click on terminal links (docs/specs/2026-09-22-middle-click-new-tab.md §3 "Terminal
+ * Middle-click on terminal links (docs/specs/archive/2026-09-22-middle-click-new-tab.md §3 "Terminal
  * path", §9 S13; AC-4, AC-7b). xterm calls a link's `activate` on mouseup with the real event, so
  * the scenario drives the pane's own link provider (`window.__termLinkProviders`) and hands
  * `activate` a `MouseEvent` carrying the button — clicking xterm's canvas in the hidden harness is

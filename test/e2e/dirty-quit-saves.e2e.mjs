@@ -1,6 +1,6 @@
 /**
  * Dirty-editor quit guard: auto-save clears the way, a failed save keeps the dialog, a conflict is
- * force-written only from its tagged row (docs/specs/2026-09-28-dirty-quit-guard.md).
+ * force-written only from its tagged row (docs/specs/archive/2026-09-28-dirty-quit-guard.md).
  * `DIRTY_QUIT_PHASE=<phase>` runs one phase.
  */
 

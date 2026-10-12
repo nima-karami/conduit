@@ -1,6 +1,6 @@
 /**
  * Go to Definition flow matrix — feedback and outcome honesty
- * (docs/specs/2026-08-21-goto-definition-flows.md rows 37–41).
+ * (docs/specs/archive/2026-08-21-goto-definition-flows.md rows 37–41).
  *
  * The wrapper infers success from "did the editor move" and says nothing once the index is
  * complete, so Monaco's own message is the only thing the user sees — and for anything that

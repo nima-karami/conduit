@@ -1,6 +1,6 @@
 /**
  * Shared fixture + read helpers for the middle-click scenarios
- * (docs/specs/2026-09-22-middle-click-new-tab.md §7). NOT a scenario — the runner only picks up
+ * (docs/specs/archive/2026-09-22-middle-click-new-tab.md §7). NOT a scenario — the runner only picks up
  * `*.e2e.mjs`.
  */
 

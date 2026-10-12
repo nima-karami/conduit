@@ -1,5 +1,5 @@
 ---
-status: active
+status: implemented
 date: 2026-07-06
 tier: FULL
 type: UI

@@ -1,6 +1,6 @@
 /**
  * split-editor-focus-keep — keyboard focus the user put somewhere stays there
- * (docs/specs/2026-09-28-split-editor.md §10):
+ * (docs/specs/archive/2026-09-28-split-editor.md §10):
  *   TK  the tab-navigation chords leave the Terminal (VS Code's commandsToSkipShell): Ctrl+Tab
  *       cycles on out of xterm, and Ctrl+2 and Ctrl+PageDown leave it, sending nothing to the
  *       shell; Ctrl+9 with fewer than 9 docs is still the app's (a no-op that never reaches xterm)

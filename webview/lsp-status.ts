@@ -1,6 +1,6 @@
 // What the renderer knows about language servers: the host's server statuses and which languages
 // the host's registry serves. Nothing here names a language — "does X have a server" is always
-// answered from the host's list (spec docs/specs/2026-09-22-language-server-go.md §3.1).
+// answered from the host's list (spec docs/specs/archive/2026-09-22-language-server-go.md §3.1).
 import { useSyncExternalStore } from 'react';
 import type {
   LspDocState,
@@ -77,7 +77,7 @@ export function useLspTrust(): LspTrustState {
 
 /** The keyboard route to the prompt: the id of the prompt the user just asked for. The prompt takes
  *  focus only when THAT prompt is the one showing — never another folder's, whose Trust a
- *  reflexive Enter would press (docs/specs/2026-09-23-workspace-trust.md §3). */
+ *  reflexive Enter would press (docs/specs/archive/2026-09-23-workspace-trust.md §3). */
 let focusTarget: string | null = null;
 
 export function setTrustFocusTarget(promptId: string | null): void {

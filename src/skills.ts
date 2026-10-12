@@ -1,6 +1,6 @@
 // Pure helpers for the skill installer. No I/O — the host (electron/skills-service.ts) reads the
 // bundled + installed SKILL.md files and feeds their text here. See
-// docs/specs/2026-07-06-skill-installer.md.
+// docs/specs/archive/2026-07-06-skill-installer.md.
 
 export interface SkillFrontmatter {
   name: string;

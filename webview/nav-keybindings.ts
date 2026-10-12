@@ -1,5 +1,5 @@
 /**
- * Pure model of the configurable code-navigation chords (docs/specs/2026-09-28-nav-keybindings.md):
+ * Pure model of the configurable code-navigation chords (docs/specs/archive/2026-09-28-nav-keybindings.md):
  * which rows exist, when one counts as overridden, and the Monaco rule set that follows. No monaco
  * import — the Monaco side lives in `monaco-nav-keybindings.ts`.
  */

@@ -2,7 +2,7 @@
  * The OS-standard right-click scoping rule for surfaces that have both a multi-selection and a
  * context menu, plus the count↔noun helpers its labels need. Pure, DOM-free and React-free so
  * every such surface inherits one rule instead of re-deriving it (see
- * docs/specs/2026-08-16-selection-aware-context-menus.md §2, §3.1).
+ * docs/specs/archive/2026-08-16-selection-aware-context-menus.md §2, §3.1).
  */
 
 export interface MenuTargets<T> {

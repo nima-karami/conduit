@@ -1,6 +1,6 @@
 /**
  * Go to Definition flow matrix — configuration discovery
- * (docs/specs/2026-08-21-goto-definition-flows.md rows 18–24).
+ * (docs/specs/archive/2026-08-21-goto-definition-flows.md rows 18–24).
  *
  * Each row gets a knob of its own, because `paths` is a whole-key override in TS and so can
  * only live in one config of a chain:

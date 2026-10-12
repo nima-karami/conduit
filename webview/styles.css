@@ -42,7 +42,7 @@
   --focus-ring-on-fill: var(--focus-ring);
   /* Forced colours force every box-shadow to none, so the ring above cannot paint there at all.
      The same one ring, restated in the one property forced colours keeps — carried as a token so
-     it stays a single treatment (docs/specs/2026-08-01-interaction-state-vocabulary.md) rather
+     it stays a single treatment (docs/specs/archive/2026-08-01-interaction-state-vocabulary.md) rather
      than a bespoke outline per control, which is what that spec removed. */
   --focus-outline: none;
 
@@ -3187,7 +3187,7 @@ body.resizing .panel__resize::after {
   cursor: default;
 }
 
-/* ---------- review-tab commit picker (docs/specs/2026-06-29-review-commit-picker.md) ---------- */
+/* ---------- review-tab commit picker (docs/specs/archive/2026-06-29-review-commit-picker.md) ---------- */
 /* Reuses .ctxmenu/.git-branch-menu (shell, filter, rows, active/checked); only the commit-row
    layout (mono sha + ellipsis subject + dim date) and the status/error rows are added here. */
 /* Grows with the window: at a fixed 340px a wide face (Neon's uppercase) left a subject two
@@ -3878,7 +3878,7 @@ body.gh-resizing {
   color: var(--green);
 }
 /* Commit-detail "Review changes" — icon-only, floated right, matching the old git-band Review
-   icon. See docs/specs/2026-06-29-review-commit-picker.md (item 1). */
+   icon. See docs/specs/archive/2026-06-29-review-commit-picker.md (item 1). */
 .gh__review-commit {
   flex: 0 0 auto;
   margin-left: auto;
@@ -5642,7 +5642,7 @@ body.gh-resizing {
 
 /* ---------- tree head (Files folder bar + Changes repo head) ----------
    The chevron button leads so its glyph shares a column with depth-0 row chevrons; see
-   docs/specs/2026-09-28-tree-chevrons.md §2 row 6. */
+   docs/specs/archive/2026-09-28-tree-chevrons.md §2 row 6. */
 .treehead {
   --treehead-lead: 24px;
   --treehead-gap: 4px;
@@ -6042,7 +6042,7 @@ body.gh-resizing {
   color: var(--text);
   border-bottom-color: var(--danger, #e5484d);
 }
-/* Auto-save conflict (docs/specs/2026-09-28-auto-save.md §8): the file changed or vanished on disk
+/* Auto-save conflict (docs/specs/archive/2026-09-28-auto-save.md §8): the file changed or vanished on disk
    under a dirty buffer. Text + icon carry it, not colour alone. */
 .viewer__banner--warn {
   display: flex;
@@ -6057,7 +6057,7 @@ body.gh-resizing {
   gap: 8px;
   margin-left: auto;
 }
-/* Workspace Trust question (docs/specs/2026-09-23-workspace-trust.md): in the editor area's flow
+/* Workspace Trust question (docs/specs/archive/2026-09-23-workspace-trust.md): in the editor area's flow
    under the tab row, never an overlay — the editor below stays usable while it waits. */
 .trust-prompt {
   display: flex;
@@ -13151,7 +13151,7 @@ button.toggle--on .toggle__knob {
   text-transform: var(--label-case);
 }
 
-/* ── plan document (docs/specs/2026-09-19-interactive-plan.md §8) ───────────── */
+/* ── plan document (docs/specs/archive/2026-09-19-interactive-plan.md §8) ───────────── */
 .plan {
   container: plan / inline-size;
   position: relative;
@@ -13768,7 +13768,7 @@ button.toggle--on .toggle__knob {
 }
 
 /* ═════════ interaction state vocabulary ══════════════════════════════════════
-   docs/specs/2026-08-01-interaction-state-vocabulary.md. Read it before touching
+   docs/specs/archive/2026-08-01-interaction-state-vocabulary.md. Read it before touching
    a value here; test/unit/state-vocabulary.test.ts holds the line.
 
    Three roles — quiet / field / solid — each with one ladder. The specificity

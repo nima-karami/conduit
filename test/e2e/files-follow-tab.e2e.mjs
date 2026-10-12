@@ -1,7 +1,7 @@
 /**
  * files-follow-tab — the Files tree follows the focused editor tab: it highlights that file,
  * expands its collapsed ancestors and scrolls it into view, without switching the right pane or
- * moving focus/selection (docs/specs/2026-09-28-changes-active-highlight.md §14; plan Slice 2
+ * moving focus/selection (docs/specs/archive/2026-09-28-changes-active-highlight.md §14; plan Slice 2
  * AC-F1…F10). Real-app: the tree is windowed over one shared scroller and loaded by readDir.
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';

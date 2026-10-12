@@ -1,5 +1,5 @@
 /**
- * split-editor-focus-views — the focus landing (docs/specs/2026-09-28-split-editor.md §10) for the
+ * split-editor-focus-views — the focus landing (docs/specs/archive/2026-09-28-split-editor.md §10) for the
  * views split-editor-focus does not open, and the close paths outside the strip's ×:
  *   VF  Ctrl+Tab onto Review, History and a commit-diff lands in that view: Review's scroller
  *       (its keymap is scoped to it), History's selected row (where its keymap lives), the

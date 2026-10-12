@@ -1,4 +1,4 @@
-/** Auto-save copy in one place (docs/specs/2026-09-28-auto-save.md §10). */
+/** Auto-save copy in one place (docs/specs/archive/2026-09-28-auto-save.md §10). */
 export const AUTO_SAVE_COPY = {
   settingLabel: 'Auto save',
   settingDesc: 'Save edited files automatically',

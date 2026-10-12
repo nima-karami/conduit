@@ -383,7 +383,7 @@ let schedulePersistLayout: (() => void) | null = null;
 let hostLog: Logger | null = null;
 
 // Per-window reload budget for renderer-crash recovery, keyed by the window itself so a closed
-// window’s history is collected with it. See docs/specs/2026-08-20-renderer-crash-recovery.md.
+// window’s history is collected with it. See docs/specs/archive/2026-08-20-renderer-crash-recovery.md.
 const crashReloads = new WeakMap<BrowserWindow, number[]>();
 
 const windowFor = (sessionId: string): BrowserWindow | undefined =>
@@ -521,7 +521,7 @@ const INDEX_CHUNK_SIZE = 200;
 const projectIndexState = new Map<string, { sent: Set<string>; nextSeq: number }>();
 
 /** On-demand module resolutions, keyed by root so a whole project's entries can be dropped in
- *  one pass — see docs/specs/2026-08-21-goto-definition-flows.md §1. A failure is cached too:
+ *  one pass — see docs/specs/archive/2026-08-21-goto-definition-flows.md §1. A failure is cached too:
  *  a specifier that resolves nowhere would otherwise pay a full walk on every retry. */
 const moduleResolveCache = new Map<string, CachedResolution>();
 
@@ -998,7 +998,7 @@ function createWindow(opts: {
     // real hardware, not computed from that alone. Compact density (~47px bar),
     // fullscreen (lights hidden), and the neon theme (--win-pad: 0, bar sits 12px
     // higher) are all knowingly imperfect here — see
-    // docs/specs/2026-08-08-mac-topbar-layout.md Edge cases. No-op off-darwin.
+    // docs/specs/archive/2026-08-08-mac-topbar-layout.md Edge cases. No-op off-darwin.
     ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 28, y: 33 } } : {}),
     autoHideMenuBar: true,
     webPreferences: {
@@ -1044,7 +1044,7 @@ function createWindow(opts: {
   // Windows surfaces the mouse thumb buttons as the per-window `app-command` event, not as
   // DOM button 3/4. Forward them to THIS window's renderer (app-command is per-window, so
   // never broadcast) to drive the existing Back/Forward. preventDefault stops Chromium's
-  // own (no-op here) history nav. See docs/specs/2026-06-30-mouse-nav-buttons.md §3.2.
+  // own (no-op here) history nav. See docs/specs/archive/2026-06-30-mouse-nav-buttons.md §3.2.
   w.on('app-command', (e, command) => {
     if (command !== 'browser-backward' && command !== 'browser-forward') return;
     e.preventDefault();
@@ -1084,7 +1084,7 @@ function createWindow(opts: {
   // A dead renderer leaves a permanently black window while the main process — sessions and
   // their PTY children — is untouched, so quitting to escape it would kill live shells. Reload
   // in place instead: the renderer boots like a fresh start and term:start takes the attach path.
-  // See docs/specs/2026-08-20-renderer-crash-recovery.md.
+  // See docs/specs/archive/2026-08-20-renderer-crash-recovery.md.
   w.webContents.on('render-process-gone', (_ev, details) => {
     opts.onGone(w.id);
     const decision = decideCrashRecovery(details.reason, crashReloads.get(w) ?? [], Date.now());
@@ -3054,7 +3054,7 @@ app.whenReady().then(() => {
         case 'git:commitDiff': {
           const session = mgr.get(m.sessionId);
           // A silent break here stranded the Review pane on "Loading commit changes…" forever —
-          // see docs/specs/2026-08-20-commit-review-memory-bounds.md §4.
+          // see docs/specs/archive/2026-08-20-commit-review-memory-bounds.md §4.
           if (!session) {
             replyHere({
               type: 'git:commitDiffResult',
@@ -4351,7 +4351,7 @@ app.whenReady().then(() => {
         tree: defaultTreeKillDeps(),
       }),
   };
-  // Workspace Trust lives in userData, never a repo (docs/specs/2026-09-23-workspace-trust.md).
+  // Workspace Trust lives in userData, never a repo (docs/specs/archive/2026-09-23-workspace-trust.md).
   const trustFile = path.join(userData(), 'workspace-trust.json');
   let trustRaw = '';
   try {

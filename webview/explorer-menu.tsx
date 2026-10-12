@@ -2,7 +2,7 @@
  * Pure builder for the Explorer file-tree row menu. Mirrors editor-menu.ts / term-menu.ts:
  * decides WHICH items appear, what they act on and their enabled state from already-resolved
  * context, with no React state or tree lookups of its own — so the selection-scoping rules are
- * unit-testable as arrays. See docs/specs/2026-08-16-selection-aware-context-menus.md §4.1-§4.2.
+ * unit-testable as arrays. See docs/specs/archive/2026-08-16-selection-aware-context-menus.md §4.1-§4.2.
  */
 
 import { topLevelPaths } from '../src/drop-intent';

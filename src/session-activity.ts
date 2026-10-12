@@ -6,7 +6,7 @@ import type { Session } from './types';
  * Three derived flags per session, layered on top of the lifecycle `status`:
  * - `busy`: produced output within the rolling busy window.
  * - `needsAttention`: the session has evidence it is waiting for the user and nobody
- *   has looked at it since. See docs/specs/2026-08-21-attention-signal-quality.md for
+ *   has looked at it since. See docs/specs/archive/2026-08-21-attention-signal-quality.md for
  *   the contract — the short version is that "output stopped" alone is not evidence.
  * - `completedRun`: has finished at least one busy -> idle cycle. Unlike the other two
  *   it is a latch, not a state: it answers "did something actually run here?", which is

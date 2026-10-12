@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { countLabel, countNoun, resolveMenuTargets } from '../../src/menu-selection';
 
 // The OS-standard right-click scoping rule — see
-// docs/specs/2026-08-16-selection-aware-context-menus.md §2, §3.1, §14 A.
+// docs/specs/archive/2026-08-16-selection-aware-context-menus.md §2, §3.1, §14 A.
 describe('resolveMenuTargets', () => {
   it('preserves the whole selection when the target is in it', () => {
     const r = resolveMenuTargets(['a', 'b', 'c'], 'b');

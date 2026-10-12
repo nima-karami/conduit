@@ -1,6 +1,6 @@
 # Configurable code-navigation shortcuts — implementation plan
 
-**Spec:** `docs/specs/2026-09-28-nav-keybindings.md`  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-09-28-nav-keybindings.md`  **Tier:** FULL
 
 Triage: FULL — a new global seam (a per-window Monaco keybinding rule owner plus dispatch
 commands), two keybinding systems, and three editor surfaces; the spec is FULL.

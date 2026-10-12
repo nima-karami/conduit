@@ -2,7 +2,7 @@
  * Shared driver for the tree-chevrons scenarios, one theme each: the Files folder bar and the
  * Changes repo head lead with the same left-hand chevron on one column with the depth-0 tree
  * rows, Changes rows take the Files row metrics, and a collapsed Changes repo survives a tab
- * switch. docs/specs/2026-09-28-tree-chevrons.md §7 AC1–AC10, AC12 (geometry), AC13 — geometry
+ * switch. docs/specs/archive/2026-09-28-tree-chevrons.md §7 AC1–AC10, AC12 (geometry), AC13 — geometry
  * is layout, so only the running app can prove it.
  */
 

@@ -34,7 +34,7 @@ const FLASH_POLL_TIMEOUT_MS = 20000;
 const SPAWN_GRACE_WAIT_MS = 6500;
 // A run that QUALIFIES as evidence (>= MIN_RUN_BYTES in one burst). A bare `echo` no
 // longer arms attention — that trivial signal is what the 2026-08-21 spec set out to
-// kill; see docs/specs/2026-08-21-attention-signal-quality.md.
+// kill; see docs/specs/archive/2026-08-21-attention-signal-quality.md.
 const BUSY_PAYLOAD = `node -e "process.stdout.write('conduit-busy'+'-test'+'x'.repeat(4000)+String.fromCharCode(10))"\r`;
 
 let launched;

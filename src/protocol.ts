@@ -55,7 +55,7 @@ export interface WindowsPtyInfo {
  * its URL without prior page state; no scroll/cursor/view-state is restored (deferred — see
  * docs/plans/2026-06-30-tab-scroll-state-memory.plan.md). `active` marks the owning session's
  * remembered active doc; `preview` restores the VS Code-style preview tab as a preview.
- * See docs/specs/2026-06-27-editor-tab-behavior.md §3.2.
+ * See docs/specs/archive/2026-06-27-editor-tab-behavior.md §3.2.
  */
 export interface PersistedDoc {
   kind: 'file' | 'diff' | 'commit-diff' | 'review' | 'git-history' | 'web';
@@ -208,11 +208,11 @@ export interface FileDiffDTO {
   };
   /** Present when a text side exceeds the 2 MB diff cap: the content is NOT read/shipped
    *  (`head`/`work` stay empty). The renderer shows a placeholder + "Open file", never a
-   *  partial/misleading diff. See docs/specs/2026-07-07-git-host-robustness.md. */
+   *  partial/misleading diff. See docs/specs/archive/2026-07-07-git-host-robustness.md. */
   oversize?: { bytes: number };
   /** Host-computed per-file line counts (`diff-tree --numstat`); absent for binary/
    *  image records. Lets the renderer badge files without diffing them — see
-   *  docs/specs/2026-08-20-commit-review-memory-bounds.md. */
+   *  docs/specs/archive/2026-08-20-commit-review-memory-bounds.md. */
   counts?: { added: number; removed: number };
   /** The path is UNMERGED (a conflict): it has no stage-0 index blob, so neither narrowed
    *  scope has a side to diff against. `head`/`work` stay empty and the renderer shows a
@@ -625,7 +625,7 @@ export type HostToWebview =
     }
   // Reply to `resolveModule`: the module's entry file plus its bounded relative closure, in
   // the same `{ path, content, language }` shape `projectFiles` uses so the renderer feeds it
-  // through one extraLib path. See docs/specs/2026-08-21-goto-definition-flows.md §1.
+  // through one extraLib path. See docs/specs/archive/2026-08-21-goto-definition-flows.md §1.
   | {
       type: 'resolveModuleResult';
       requestId: number;
@@ -643,7 +643,7 @@ export type HostToWebview =
   // sessions are restored so the renderer can re-seed `docState` attached to its (stale)
   // sessions. Only sent when `restoreSessions` is on; absent/older docs.json ⇒ no message ⇒ no
   // tabs. The renderer consumes it once (orphan docs whose session is unknown are dropped). See
-  // docs/specs/2026-06-27-editor-tab-behavior.md §3.3 (D5).
+  // docs/specs/archive/2026-06-27-editor-tab-behavior.md §3.3 (D5).
   | { type: 'restoreDocs'; docs: PersistedDoc[] }
   // Host routes an OS "Open with Conduit" file launch: open `path` as a doc in `sessionId`
   // (the host already created/reused the owning session). The renderer opens it via the
@@ -772,7 +772,7 @@ export type HostToWebview =
   // (browser-backward/forward), not as DOM button 3/4. The host forwards them here so the
   // renderer drives the existing goBack/goForward. On Windows this is the authoritative
   // source (the DOM thumb-button path is gated off) → one press, one navigation. See
-  // docs/specs/2026-06-30-mouse-nav-buttons.md §3.2-3.3.
+  // docs/specs/archive/2026-06-30-mouse-nav-buttons.md §3.2-3.3.
   | { type: 'appCommand'; command: 'back' | 'forward' }
   // Reply to `md:image` — the local image's bytes as a ready-to-use `<img src>` data URL,
   // or `error` (missing / not an image / over the size cap). `requestId` lets the requesting
@@ -797,10 +797,10 @@ export type HostToWebview =
   // Keys the host renderer can never see for itself: once focus is inside the guest page,
   // `<webview>` exposes no DOM keydown, so these ride `before-input-event` instead.
   | { type: 'html:guestKey'; guestId: number; key: 'Escape' | 'Find' }
-  // Every language-server state transition (docs/specs/2026-09-22-language-server-go.md §3.2).
+  // Every language-server state transition (docs/specs/archive/2026-09-22-language-server-go.md §3.2).
   | { type: 'lsp:status'; status: LspServerStatus }
   // Every Workspace Trust change: the trusted folders and the prompt to show, if any
-  // (docs/specs/2026-09-23-workspace-trust.md).
+  // (docs/specs/archive/2026-09-23-workspace-trust.md).
   | ({ type: 'lsp:trust' } & LspTrustState)
   // A web-view guest's link open that a real gesture earned an in-app web tab: middle-click →
   // background, left-click/Enter → foreground. The host decides what qualifies; routed to the
@@ -904,7 +904,7 @@ export type WebviewToHost =
   // scopes the diff to a specific repo (a terminal-originated review passes its cwd repo); when
   // omitted the host uses the session's pinned repo.
   // `requestId` (monotonic, latest-wins) lets a Retry re-issue without a stale earlier reply
-  // clobbering it — see docs/specs/2026-08-20-commit-review-memory-bounds.md §4.
+  // clobbering it — see docs/specs/archive/2026-08-20-commit-review-memory-bounds.md §4.
   | {
       type: 'git:commitDiff';
       sessionId: string;
@@ -984,7 +984,7 @@ export type WebviewToHost =
   | { type: 'reorderSessions'; order: string[] } // new global session id order
   // Sessions this window currently has on screen (active + split). The host exempts them
   // from "needs you" and treats seeing one as acknowledgment; the sets are per sender
-  // window. See docs/specs/2026-08-21-attention-signal-quality.md §4.
+  // window. See docs/specs/archive/2026-08-21-attention-signal-quality.md §4.
   | { type: 'visible'; ids: string[] }
   | { type: 'updateSettings'; settings: AppSettings }
   | { type: 'searchFiles'; root: string; query: string } // recursive file search under root
@@ -1110,7 +1110,7 @@ export type WebviewToHost =
   | { type: 'md:image'; requestId: number; path: string }
   // Resolve one module specifier the way Node/TS would, from the file that imports it, and
   // index what it finds on demand. Sent only when a navigation MISSED — see
-  // docs/specs/2026-08-21-goto-definition-flows.md §1-2.
+  // docs/specs/archive/2026-08-21-goto-definition-flows.md §1-2.
   | {
       type: 'resolveModule';
       requestId: number;

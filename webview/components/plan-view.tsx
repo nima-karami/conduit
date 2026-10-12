@@ -52,7 +52,7 @@ import { PlanEditor, type PlanEditorHandle } from './plan-editor';
 
 /**
  * The document tab for `<root>/.conduit/plans/<slug>.md`: binds the plan store to the editor and
- * renders the states of spec docs/specs/2026-09-19-interactive-plan.md §8. Routed by PATH from
+ * renders the states of spec docs/specs/archive/2026-09-19-interactive-plan.md §8. Routed by PATH from
  * `DocBody`, so there is no `DocKind` for it.
  *
  * The editor speaks in bodies; the file is frontmatter + body, so every write recomposes the two.

@@ -1,6 +1,6 @@
 /**
  * Shared fixture + read helpers for the editor-nav-history scenarios
- * (docs/specs/2026-09-22-editor-nav-history.md §7). NOT a scenario — the runner only picks up
+ * (docs/specs/archive/2026-09-22-editor-nav-history.md §7). NOT a scenario — the runner only picks up
  * `*.e2e.mjs`. The ACs are split across three scenario files because several need a fresh
  * history and one launch driving all of them runs past the runner's per-scenario guard.
  */

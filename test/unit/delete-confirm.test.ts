@@ -6,7 +6,7 @@ import {
 } from '../../src/delete-confirm';
 
 // Copy for the bulk-delete flow — see
-// docs/specs/2026-08-16-selection-aware-context-menus.md §4.3.
+// docs/specs/archive/2026-08-16-selection-aware-context-menus.md §4.3.
 
 describe('trashConfirmMessage', () => {
   it('names the single file exactly as it always has', () => {

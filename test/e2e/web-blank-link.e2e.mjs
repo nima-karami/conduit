@@ -1,7 +1,7 @@
 /**
  * web-blank-link — a real left-click (or Enter) on a `target=_blank` link inside an in-app web tab
  * opens a new FOREGROUND web tab; page script alone opens nothing
- * (docs/specs/2026-09-23-web-blank-link.md AC1, AC4, AC5).
+ * (docs/specs/archive/2026-09-23-web-blank-link.md AC1, AC4, AC5).
  *
  * Input goes to the guest webContents via `sendInputEvent`, so it reaches Chromium's link handling
  * and the host's `input-event` gesture record exactly as a real hand does. Never replace it with a

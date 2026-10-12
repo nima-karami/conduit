@@ -47,7 +47,7 @@ describe('selectIndexHits', () => {
   });
 
   // The old rule dropped ANY dot-directory, which is the row-15 bug: these hold first-party
-  // TypeScript. See docs/specs/2026-08-21-goto-definition-flows.md contract 5.
+  // TypeScript. See docs/specs/archive/2026-08-21-goto-definition-flows.md contract 5.
   it('keeps dot-directories that are NOT tool state', () => {
     const out = selectIndexHits([
       hit('.storybook/types.ts'),

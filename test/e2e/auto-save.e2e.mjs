@@ -1,5 +1,5 @@
 /**
- * Auto-save modes and conflicts (docs/specs/2026-09-28-auto-save.md §7) against the real built
+ * Auto-save modes and conflicts (docs/specs/archive/2026-09-28-auto-save.md §7) against the real built
  * app. Disk is asserted with fs in this process; keystrokes are real keyboard input into Monaco.
  * The setting, `off` and session teardown are in auto-save-basics.e2e.mjs.
  *

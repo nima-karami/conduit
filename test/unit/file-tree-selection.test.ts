@@ -200,7 +200,7 @@ describe('selectAll', () => {
 
 // The keyboard gestures compose the existing model with nextVisiblePath exactly as the tree's
 // key handler does; these pin the composition (the range/anchor semantics), not the handler.
-// See docs/specs/2026-08-17-explorer-keyboard-multiselect.md §2.
+// See docs/specs/archive/2026-08-17-explorer-keyboard-multiselect.md §2.
 describe('keyboard range gestures', () => {
   const shiftArrow = (s: SelectionState, focus: string, dir: 'up' | 'down' | 'first' | 'last') => {
     const next = nextVisiblePath(ORDER, focus, dir);

@@ -8,7 +8,7 @@
  *   2. Relaunch on the SAME user-data dir. Assert the session restored AND its tabs restored:
  *      a.txt permanent (not .tab--preview), b.txt present as .tab--preview and active.
  *
- * See docs/specs/2026-06-27-editor-tab-behavior.md §3.2/§3.3 (D2/D3/D5).
+ * See docs/specs/archive/2026-06-27-editor-tab-behavior.md §3.2/§3.3 (D2/D3/D5).
  */
 
 import { execFileSync } from 'node:child_process';

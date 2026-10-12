@@ -1,6 +1,6 @@
 # Language servers in the host (Go via gopls): implementation plan
 
-**Spec:** `docs/specs/2026-09-22-language-server-go.md`  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-09-22-language-server-go.md`  **Tier:** FULL
 **Revision 2:** folds in the 14 design-review findings (3 blockers). See "Review findings → where
 fixed" at the end.
 

@@ -1,5 +1,5 @@
 // LSP result shapes → what the renderer is sent. Host only: the renderer never sees a server URI
-// (docs/specs/2026-09-22-language-server-go.md §3.2).
+// (docs/specs/archive/2026-09-22-language-server-go.md §3.2).
 import {
   type DocumentSymbol,
   type Hover,

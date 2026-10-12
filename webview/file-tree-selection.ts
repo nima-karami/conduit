@@ -1,7 +1,7 @@
 // Pure multi-select model for the Explorer Files tree. Kept out of the React component so the
 // gesture rules (toggle / range / reconcile) have a single unit-tested source of truth, like the
 // tree-shape logic in file-tree.ts. Mirrors VS Code's selection semantics — see
-// docs/specs/2026-06-27-explorer-multiselect.md §3 for the contract and invariants.
+// docs/specs/archive/2026-06-27-explorer-multiselect.md §3 for the contract and invariants.
 
 export interface SelectionState {
   selected: ReadonlySet<string>;

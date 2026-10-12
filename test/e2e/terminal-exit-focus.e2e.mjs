@@ -1,6 +1,6 @@
 /**
  * terminal-exit-focus — leaving the Terminal by a tab-navigation chord lands keyboard focus in the
- * doc it shows, every time (docs/specs/2026-09-28-split-editor.md §10):
+ * doc it shows, every time (docs/specs/archive/2026-09-28-split-editor.md §10):
  *   EX  Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+PageDown / Ctrl+PageUp cycle a.ts, b.ts and the Terminal;
  *       every exit from the Terminal must put focus in the landed doc's editor, not on <body>.
  *       The loss was a race — a passive effect of an earlier commit, flushed at the start of the

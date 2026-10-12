@@ -1,6 +1,6 @@
 /**
  * Dirty-editor quit guard: Save All / Don't Save / Cancel on quit
- * (docs/specs/2026-09-28-dirty-quit-guard.md). `DIRTY_QUIT_PHASE=<phase>` runs one phase.
+ * (docs/specs/archive/2026-09-28-dirty-quit-guard.md). `DIRTY_QUIT_PHASE=<phase>` runs one phase.
  */
 
 import { existsSync, readFileSync } from 'node:fs';

@@ -1,6 +1,6 @@
 /**
  * nav-keybindings-settings — the Settings → Shortcuts flows for the Code navigation rows
- * (docs/specs/2026-09-28-nav-keybindings.md §7): defaults shown, a recorded chord navigates at
+ * (docs/specs/archive/2026-09-28-nav-keybindings.md §7): defaults shown, a recorded chord navigates at
  * once without a reload, refusal, reset, persistence across a relaunch on the same profile.
  * The surfaces themselves are nav-keybindings-surfaces.
  *

@@ -1,5 +1,5 @@
 /**
- * overlay-modals (spec docs/specs/2026-09-07-overlay-layers.md, plan
+ * overlay-modals (spec docs/specs/archive/2026-09-07-overlay-layers.md, plan
  * docs/plans/2026-09-07-overlay-layers.plan.md T2.0) — real-app proof that every modal backdrop
  * portals to `document.body` through `ModalLayer` and that the single overlay stack (T1.3)
  * actually governs z-order, Escape, and popover displacement across the nine migrated dialogs.

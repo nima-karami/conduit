@@ -1,6 +1,6 @@
 // The Workspace Trust store: which folders the user trusts to run their own tools (language
 // servers). Pure — the host persists it in userData, never in a repo.
-// See docs/specs/2026-09-23-workspace-trust.md §2.
+// See docs/specs/archive/2026-09-23-workspace-trust.md §2.
 import { posix, win32 } from 'node:path';
 import { canonicalPath, hasDotSegment } from './canonical-path';
 import { type HostPlatform, isAbsoluteFor } from './lsp-binary';

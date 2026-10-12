@@ -23,7 +23,7 @@ export function attentionChipLabel(count: number): string | null {
 /**
  * The sessions one window has on screen — its active session plus a split pane, deduped,
  * with empty slots dropped. What the host exempts from "needs you" and treats as
- * acknowledgment; see docs/specs/2026-08-21-attention-signal-quality.md §4.
+ * acknowledgment; see docs/specs/archive/2026-08-21-attention-signal-quality.md §4.
  */
 export function visibleSessionIds(
   activeId: string | null | undefined,

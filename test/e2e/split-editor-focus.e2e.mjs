@@ -1,6 +1,6 @@
 /**
  * split-editor-focus — where keyboard focus lands after a user activation
- * (docs/specs/2026-09-28-split-editor.md §10 focus management). Each step asserts
+ * (docs/specs/archive/2026-09-28-split-editor.md §10 focus management). Each step asserts
  * `document.activeElement`, not just which tab is active, and a Ctrl+Tab landing proves a typed
  * character reaches the editor:
  *   CT  Ctrl+Tab file → file (and the typed character lands), file → diff (the modified editor),

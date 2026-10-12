@@ -1,6 +1,6 @@
 // The editor's navigation-history entry model: what a Back/Forward stop is, when two stops are
 // "the same place" (R4), and how a stop is announced. Pure — no React, no runtime monaco.
-// See docs/specs/2026-09-22-editor-nav-history.md §2.1–§2.2.
+// See docs/specs/archive/2026-09-22-editor-nav-history.md §2.1–§2.2.
 import type { NavOps } from '../src/nav-history';
 import type { DiffTabScope } from '../src/protocol';
 import type { DocKind, OpenDoc } from './docs';

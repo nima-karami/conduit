@@ -1,6 +1,6 @@
 /**
  * A navigation is never silent, even when the machinery under it fails — spec contract 3,
- * docs/specs/2026-08-21-goto-definition-flows.md.
+ * docs/specs/archive/2026-08-21-goto-definition-flows.md.
  *
  * `runNavCommand`'s callers all `void` its promise, so an escaping rejection reaches nobody.
  * The reachable ones are real: monaco's TS mode rejects with a bare STRING ("TypeScript not

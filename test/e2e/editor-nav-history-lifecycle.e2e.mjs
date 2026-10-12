@@ -1,5 +1,5 @@
 /**
- * Editor navigation history, session/tab lifecycle (docs/specs/2026-09-22-editor-nav-history.md
+ * Editor navigation history, session/tab lifecycle (docs/specs/archive/2026-09-22-editor-nav-history.md
  * §7): AC3 session switches are not entries, AC4 the Terminal tab is not an entry, Back from the
  * Terminal tab lands on the doc that was open, AC8 a deleted file is skipped, AC14 Back from the
  * Board shows the editor; on a second app AC9 a cross-session entry (announced with its line) and

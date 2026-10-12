@@ -39,7 +39,8 @@ A `prepare: husky` script installs the hook on `npm install`. CI still runs the 
 gate — the hook is the fast local edge, bypassable with `--no-verify`.
 
 **3. Minor polish.** Added `npm run test:e2e` (was a bare `node test/e2e/paste.e2e.mjs`)
-so the real-Electron harness is discoverable. Added one non-negotiable line to
+so the real-Electron harness is discoverable (since replaced by `npm run e2e -- <name>` locally
+and `npm run e2e:remote`; see `test/e2e/README.md`). Added one non-negotiable line to
 `CLAUDE.md`: the verify gate's checks must never be disabled/downgraded to make
 progress.
 

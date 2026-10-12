@@ -1,5 +1,5 @@
 // PID-scoped tree kill. Never by image name: the user's own editors run the same binaries
-// (docs/specs/2026-09-22-language-server-go.md §2.4).
+// (docs/specs/archive/2026-09-22-language-server-go.md §2.4).
 import * as childProcess from 'node:child_process';
 import * as path from 'node:path';
 

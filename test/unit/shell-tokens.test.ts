@@ -150,7 +150,7 @@ describe('the active view-switch segment stays legible on hover', () => {
   // Neon fills the active segment with the accent and picks its label against that fill; a
   // hover rule that recoloured the label to the accent put accent on accent and it vanished.
   // The per-component :not() that used to carry this is now one entry in the shared hover
-  // ladder (docs/specs/2026-08-01-interaction-state-vocabulary.md) — same guarantee.
+  // ladder (docs/specs/archive/2026-08-01-interaction-state-vocabulary.md) — same guarantee.
   it('keeps the active segment out of the hover ladder', () => {
     const start = CSS.indexOf('--- quiet:');
     const ladder = CSS.slice(start, CSS.indexOf('):hover', start));

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * The Workspace Trust prompt (docs/specs/2026-09-23-workspace-trust.md §3): its copy, the bounded
+ * The Workspace Trust prompt (docs/specs/archive/2026-09-23-workspace-trust.md §3): its copy, the bounded
  * parent button, and the keyboard route — asking for trust moves focus onto the prompt, while a
  * prompt the host raises on its own never steals focus from the editor.
  */

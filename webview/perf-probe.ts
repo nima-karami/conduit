@@ -1,7 +1,7 @@
 // Responsiveness probe for the stress/load lane. Exposes `window.__conduitPerf` so an e2e
 // scenario can measure how the UI holds up under load, between start() and stop(). Mirrors the
 // window.__conduit*Perf observation seams (review-view, right-pane); attached unconditionally but
-// idle until start(). See docs/specs/2026-07-07-stress-load-testing.md.
+// idle until start(). See docs/specs/archive/2026-07-07-stress-load-testing.md.
 //
 // The headline metric is MAIN-THREAD LAG: a fixed-interval timer whose drift measures how long the
 // main thread was blocked. Unlike requestAnimationFrame (throttled to ~1 fps for a hidden window),

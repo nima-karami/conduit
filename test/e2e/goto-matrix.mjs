@@ -1,6 +1,6 @@
 /**
  * Shared driver for the Go to Definition flow-map matrix
- * (docs/specs/2026-08-21-goto-definition-flows.md).
+ * (docs/specs/archive/2026-08-21-goto-definition-flows.md).
  *
  * NOT a scenario — the runner only picks up `*.e2e.mjs`. The matrix is split across several
  * scenarios (first-party / config / packages / feedback / cap) because one app launch driving

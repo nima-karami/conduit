@@ -1,6 +1,6 @@
 /**
  * split-editor-surfaces — split-editor scenarios that need their own profile or a special surface
- * (docs/specs/2026-09-28-split-editor.md §7). One launch, with `autoSave: 'onFocusChange'` seeded:
+ * (docs/specs/archive/2026-09-28-split-editor.md §7). One launch, with `autoSave: 'onFocusChange'` seeded:
  *   CM  a click on line 20 that never scrolled, then Move to Other Group: the moved editor's
  *       cursor is on line 20 (the source viewer's unmount capture follows the tab, I10).
  *   P9  leaving b.ts in the right group saves it (viewLeave), while the left group still shows it

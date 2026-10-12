@@ -80,7 +80,7 @@ class ConduitTypeScriptWorker extends TypeScriptWorker {
    * `allowJs ? JS : TS` — and `allowJs` is on by default (src/tsconfig-map.ts), so a
    * `.d.mts` declaration file was being PARSED AS JAVASCRIPT. `export declare const x: number`
    * is not valid JS, so the file contributed nothing and every dual-format (tsup/rollup)
-   * package's barrel resolved to an empty leaf. See docs/specs/2026-08-21-goto-definition-flows.md
+   * package's barrel resolved to an empty leaf. See docs/specs/archive/2026-08-21-goto-definition-flows.md
    * §1 and matrix row 30c.
    */
   override getScriptKind(fileName: string): number {

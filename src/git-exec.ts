@@ -1,5 +1,5 @@
 // One bounded, cancellable git runner. Every git spawn in the app routes through here so timeouts,
-// output caps, and cancellation are uniform. See docs/specs/2026-07-07-git-host-robustness.md.
+// output caps, and cancellation are uniform. See docs/specs/archive/2026-07-07-git-host-robustness.md.
 import { execFile } from 'node:child_process';
 
 // Default per-call deadlines by operation weight (ms). Callers pass one of these or their own.

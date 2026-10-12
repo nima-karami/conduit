@@ -1,7 +1,7 @@
 /**
  * Decide what to do when a window's renderer process dies.
  *
- * See docs/specs/2026-08-20-renderer-crash-recovery.md.
+ * See docs/specs/archive/2026-08-20-renderer-crash-recovery.md.
  */
 
 /** Reasons Electron reports that are ordinary teardown, not a crash. */

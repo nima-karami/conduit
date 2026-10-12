@@ -1,5 +1,5 @@
 /**
- * Editor navigation history, code-jump flows (docs/specs/2026-09-22-editor-nav-history.md §7):
+ * Editor navigation history, code-jump flows (docs/specs/archive/2026-09-22-editor-nav-history.md §7):
  * AC1 cross-file goto round trip, AC11 applying never records, AC13 every Back input, AC15 focus +
  * announcement, AC7 a closed file reopens as a preview tab.
  *

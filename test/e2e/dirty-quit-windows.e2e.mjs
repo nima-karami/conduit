@@ -1,6 +1,6 @@
 /**
  * Dirty-editor quit guard across windows and on update relaunch
- * (docs/specs/2026-09-28-dirty-quit-guard.md): a non-last dirty window, two windows where the
+ * (docs/specs/archive/2026-09-28-dirty-quit-guard.md): a non-last dirty window, two windows where the
  * second cancels, two windows closed back to back (S4), and the update relaunch.
  * `DIRTY_QUIT_PHASE=<phase>` runs one phase.
  */

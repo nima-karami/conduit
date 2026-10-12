@@ -1,5 +1,5 @@
 /**
- * One path identity — spec docs/specs/2026-08-21-goto-definition-flows.md contract 4.
+ * One path identity — spec docs/specs/archive/2026-08-21-goto-definition-flows.md contract 4.
  *
  * Two invariants are load-bearing and neither is obvious from reading either side alone:
  *   1. the tab store keys by the path STRING, so the tree's spelling and the one the

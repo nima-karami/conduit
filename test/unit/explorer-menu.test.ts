@@ -6,7 +6,7 @@ import {
 } from '../../webview/explorer-menu';
 
 // Menu-array coverage for the Explorer row menu — see
-// docs/specs/2026-08-16-selection-aware-context-menus.md §4.2 and §14 B.
+// docs/specs/archive/2026-08-16-selection-aware-context-menus.md §4.2 and §14 B.
 
 const FILE = { path: '/p/a.txt', kind: 'file' as const };
 const DIR = { path: '/p/sub', kind: 'dir' as const };

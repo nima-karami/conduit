@@ -1,6 +1,6 @@
 /**
  * Go navigation through a host-owned gopls, end to end against the real binary
- * (docs/specs/2026-09-22-language-server-go.md §7.2).
+ * (docs/specs/archive/2026-09-22-language-server-go.md §7.2).
  *
  * Host level: definition over the bridge, and no gopls (or descendant) outlives the app — after a
  * normal quit AND after only the Electron main process is force-killed. The force-kill case is

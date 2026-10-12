@@ -40,7 +40,7 @@ docs/
   specs/      YYYY-MM-DD-slug.md   feature design docs, currently active
     INDEX.md                       the canonical manifest (active + archived)
     archive/                       implemented/superseded specs (kept, out of the default path)
-  plans/      YYYY-MM-DD-slug.plan.md   implementation/backlog plans (time-bound)
+  plans/      YYYY-MM-DD-slug.plan.md   implementation plans (time-bound; deleted once shipped)
   runs/       YYYY-MM-DD-<name>/   one folder per build run: report.md, audit.md, retro.md together
 CHANGELOG.md                       user-facing changes (Keep a Changelog), at the repo root
 ```
@@ -59,8 +59,13 @@ Conventions:
   optional `supersedes:`) and a row in `docs/specs/INDEX.md`. Status lives in
   frontmatter, never the filename.
 - **On ship, a spec moves to `docs/specs/archive/`** (via `git mv`, preserving
-  history) and its INDEX row moves to the Archived table. The active `docs/specs/`
+  history) and its INDEX row moves to the Archived table, and every citation of its
+  path (`git grep <filename>`) is retargeted to `archive/`. The active `docs/specs/`
   root stays small.
+- **On ship (or abandonment), a plan is deleted** (`git rm`; git history keeps it). Plans are
+  steps, not records — the spec, the run report and the code carry what lasts. The exception
+  is a plan that code, `CLAUDE.md`, an ADR or an active spec still cites; it stays until that
+  pointer is retargeted.
 - **`CLAUDE.md` points at the index; it never inlines "read all the specs"** — that
   would recreate the context-sprawl failure the research warns about.
 

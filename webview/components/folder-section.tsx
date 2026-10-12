@@ -204,7 +204,7 @@ export function FolderSection({
   // The single active inline draft (create or rename), or null.
   const [draft, setDraft] = useState<Draft | null>(null);
   // Multi-select state (ctrl/cmd toggle + shift range). The anchor (`activePath`) drives the
-  // create-target. See docs/specs/2026-06-27-explorer-multiselect.md. Per section (spec §2.2).
+  // create-target. See docs/specs/archive/2026-06-27-explorer-multiselect.md. Per section (spec §2.2).
   const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
   // In a ref so the focus-refresh handler reads the current expansion state without
   // re-subscribing as the tree grows.
@@ -739,7 +739,7 @@ export function FolderSection({
       return;
     }
     const order = visibleOrder(roots);
-    // Keyboard multi-select (docs/specs/2026-08-17-explorer-keyboard-multiselect.md §2). Handled
+    // Keyboard multi-select (docs/specs/archive/2026-08-17-explorer-keyboard-multiselect.md §2). Handled
     // ABOVE the guard below, and every branch preventDefaults so the app's window-level shortcut
     // handler — which bails on defaultPrevented — doesn't fire the same keystroke twice.
     const modOnly = mod && !e.shiftKey && !e.altKey;

@@ -235,7 +235,7 @@ store never holds an id twice; `getOverlays()` returns the same array reference 
 | `test/e2e/overlay-popovers.e2e.mjs` | create | findings 2, 4 |
 | `test/e2e/review-compact-header.e2e.mjs` | create | F1 + bar menu above |
 | `CHANGELOG.md` | modify | `[Unreleased]` Fixed / Changed |
-| `docs/specs/2026-09-07-overlay-layers.md` → `docs/specs/archive/` | move (`git mv`) | on ship; `docs/specs/INDEX.md` row moves to Archived |
+| `docs/specs/archive/2026-09-07-overlay-layers.md` → `docs/specs/archive/` | move (`git mv`) | on ship; `docs/specs/INDEX.md` row moves to Archived |
 
 ## Scripts
 
@@ -449,7 +449,7 @@ the AC-0 baseline evidence, saved to the run's evidence dir) and green after.
 
 #### Task 5.1: changelog, spec archive, index
 
-**Files:** Modify `CHANGELOG.md` (`[Unreleased]` — Fixed: the nine surfaces in user words; Changed: Review header compacts below 480px, scope in the `…` menu, native selects replaced); `git mv docs/specs/2026-09-07-overlay-layers.md docs/specs/archive/`; Modify `docs/specs/INDEX.md` (row moves to Archived with `(FULL)`).
+**Files:** Modify `CHANGELOG.md` (`[Unreleased]` — Fixed: the nine surfaces in user words; Changed: Review header compacts below 480px, scope in the `…` menu, native selects replaced); `git mv docs/specs/archive/2026-09-07-overlay-layers.md docs/specs/archive/`; Modify `docs/specs/INDEX.md` (row moves to Archived with `(FULL)`).
 
 ## Verification
 

@@ -1,6 +1,6 @@
 /**
  * changes-active-highlight — the Changes list marks the row of the file the focused editor tab
- * shows (docs/specs/2026-09-28-changes-active-highlight.md §7 Gherkin, plus "closing the active
+ * shows (docs/specs/archive/2026-09-28-changes-active-highlight.md §7 Gherkin, plus "closing the active
  * tab moves the highlight" and D2). Real-app: the target is derived from the docs reducer's
  * active tab and the host's git status, and scroll-into-view is layout.
  */

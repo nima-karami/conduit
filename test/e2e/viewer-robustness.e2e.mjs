@@ -1,5 +1,5 @@
 /**
- * Viewer robustness (spec docs/specs/2026-08-08-viewer-robustness.md §5) — real-app proof
+ * Viewer robustness (spec docs/specs/archive/2026-08-08-viewer-robustness.md §5) — real-app proof
  * for the three viewer lanes: the shared pan/zoom core, the mermaid inline + overlay sizing,
  * and the pdf.js worker/fit work.
  *

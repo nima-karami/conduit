@@ -7,7 +7,7 @@
  *   Shift-click across a range → the contiguous count, plain click → back to 1.
  *
  * Counts are read from BOTH `.filerow--selected` and `[aria-selected="true"]` so the visual
- * class and the a11y state are verified together. See docs/specs/2026-06-27-explorer-multiselect.md.
+ * class and the a11y state are verified together. See docs/specs/archive/2026-06-27-explorer-multiselect.md.
  */
 
 import { mkdtempSync, writeFileSync } from 'node:fs';

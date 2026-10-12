@@ -1,6 +1,6 @@
 // Responsiveness statistics for the stress/load lane. Pure + unit-tested so the
 // measurement math is trustworthy independent of the renderer probe that feeds it
-// (webview/perf-probe.ts). See docs/specs/2026-07-07-stress-load-testing.md.
+// (webview/perf-probe.ts). See docs/specs/archive/2026-07-07-stress-load-testing.md.
 //
 // HIDDEN-WINDOW NOTE: the lane runs the app hidden (CONDUIT_E2E), and Chromium throttles
 // requestAnimationFrame to ~1 fps for a non-visible page. So FRAME gaps are only a coarse

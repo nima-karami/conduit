@@ -34,7 +34,9 @@ width 100).
   justified inline `biome-ignore`s remain (a `gl.useProgram` WebGL false positive;
   a static per-character key) plus seven CSS `noDescendingSpecificity` ignores
   (reordering risked visual regressions with no test coverage).
-- **Fallow is partially blocking.** Its **dead-code and duplication** checks are
+- **Fallow is partially blocking.** *(Later: only dead-code, including unlisted
+  dependencies, still fails `fallow:check`; duplication is reported but no longer flips
+  the exit code.)* Its **dead-code and duplication** checks are
   gate-blocking (`npm run fallow:check` = `fallow --skip health`), now that both are
   clean: `fallow fix` dropped redundant `export` keywords (a no-cross-module-consumer
   export becomes a local, not deleted), the last unused type export was de-exported,

@@ -1,7 +1,7 @@
 /**
  * Copy for the Explorer's delete flow: the Recycle-Bin confirm, the aggregated permanent-delete
  * fallback, and the live-region outcome. Pure so the wording (and the plural forms) are pinned by
- * unit tests. See docs/specs/2026-08-16-selection-aware-context-menus.md §4.3.
+ * unit tests. See docs/specs/archive/2026-08-16-selection-aware-context-menus.md §4.3.
  *
  * The single-target strings are the ones that shipped before bulk delete existed and must stay
  * verbatim, so both builders branch on N === 1 rather than degrading the bulk form.

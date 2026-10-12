@@ -10,7 +10,7 @@
  * service, directly.
  *
  * See docs/specs/archive/2026-08-07-editor-navigation-parity.md §3d and
- * docs/specs/2026-08-21-goto-definition-flows.md contract 3.
+ * docs/specs/archive/2026-08-21-goto-definition-flows.md contract 3.
  */
 
 import { StandaloneServices } from 'monaco-editor/esm/vs/editor/standalone/browser/standaloneServices.js';

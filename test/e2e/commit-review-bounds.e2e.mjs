@@ -1,6 +1,6 @@
 /**
  * Review tab — commit memory bounds (real-app smoke, spec
- * docs/specs/2026-08-20-commit-review-memory-bounds.md). A user OOM'd the renderer by opening a
+ * docs/specs/archive/2026-08-20-commit-review-memory-bounds.md). A user OOM'd the renderer by opening a
  * huge monorepo commit in Review: the old code diffed EVERY file in the commit on arrival, with a
  * dense (n+1)x(m+1) LCS table per file. Only the real app proves the fix — the host `--numstat`
  * badge counts and the 10 s `diff-tree` timeout live across the IPC boundary a mock can't run.

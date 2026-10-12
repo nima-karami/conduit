@@ -16,7 +16,7 @@ export const INDEX_FILE_CAP = 5000;
  * Files larger than this are skipped by the index instead of being pushed truncated.
  * Matches `file-service.ts`'s `MAX_BYTES`, which is where the truncation used to happen: a
  * half-file in extraLibs makes the worker confidently report that a symbol past the cut does
- * not exist. See docs/specs/2026-08-21-goto-definition-flows.md contract 5 (row 17).
+ * not exist. See docs/specs/archive/2026-08-21-goto-definition-flows.md contract 5 (row 17).
  */
 export const INDEX_MAX_FILE_BYTES = 2 * 1024 * 1024;
 
@@ -34,7 +34,7 @@ export function isOversizedForIndex(bytes: number): boolean {
  *
  * The list is EXPLICIT because "any dot-directory" was too wide: `.storybook`, `.config`,
  * `.github/scripts` and `.vscode` all hold real first-party TypeScript, and dropping them is
- * the row-15 bug. See docs/specs/2026-08-21-goto-definition-flows.md contract 5.
+ * the row-15 bug. See docs/specs/archive/2026-08-21-goto-definition-flows.md contract 5.
  */
 export const TOOL_STATE_DIRS: ReadonlySet<string> = new Set([
   '.git',

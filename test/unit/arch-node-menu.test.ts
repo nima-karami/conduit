@@ -7,7 +7,7 @@ import {
 } from '../../webview/components/architecture-view';
 
 // Menu-array coverage for the architecture node menu — see
-// docs/specs/2026-08-16-selection-aware-context-menus.md §5 and §14 B/D.
+// docs/specs/archive/2026-08-16-selection-aware-context-menus.md §5 and §14 B/D.
 
 const LEAF: ArchNode = { id: 'n1', title: 'Gateway', kind: 'gateway', x: 100, y: 40 };
 const PARENT: ArchNode = { ...LEAF, id: 'n2', title: 'Billing', childGraph: 'g2' };

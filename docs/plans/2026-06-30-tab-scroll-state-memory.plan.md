@@ -1,6 +1,6 @@
 # Plan: Per-tab scroll & view-state memory
 
-Spec: docs/specs/2026-06-30-tab-scroll-state-memory.md (MVP scope).
+Spec: docs/specs/archive/2026-06-30-tab-scroll-state-memory.md (MVP scope).
 Anti-duplication: no existing view-state/scroll-memory store. Only adjacent
 seam is Review's per-instance `measuredRef` + `sourceKey` scroll-reset, and
 `project-index.ts` reveal seam (reuse, don't duplicate).

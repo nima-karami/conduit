@@ -17,7 +17,8 @@ Signing also reduces antivirus false-positives on the NSIS stub.
 
 ## How to enable (one step)
 
-1. Obtain a code-signing certificate as a **PFX** (OV/EV) — or set up **Azure Trusted Signing**.
+1. Obtain a code-signing certificate as a **PFX** (OV/EV). Azure Trusted Signing is not wired:
+   it needs `win.azureSignOptions` in `package.json` and its own secrets instead of the two below.
 2. Add repo **secrets**:
    - `CSC_LINK` — the PFX as a base64 string (or an https URL to it).
    - `CSC_KEY_PASSWORD` — the PFX password.

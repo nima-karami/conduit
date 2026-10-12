@@ -1,6 +1,6 @@
 // The Workspace Trust question, in the editor area — non-modal, so editing carries on while it
 // waits. The host raised it and owns the answer; this only reports which button was pressed, by
-// the host's prompt id (docs/specs/2026-09-23-workspace-trust.md §3–§4).
+// the host's prompt id (docs/specs/archive/2026-09-23-workspace-trust.md §3–§4).
 import { Fragment, useEffect, useRef } from 'react';
 import type { LspTrustChoice } from '../../src/lsp-protocol';
 import { lspInvoke } from '../bridge';

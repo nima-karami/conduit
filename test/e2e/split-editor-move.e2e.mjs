@@ -1,6 +1,6 @@
 /**
  * split-editor-move — moving tabs between editor groups and group-scoped navigation
- * (docs/specs/2026-09-28-split-editor.md §7). Starts from split-editor-split's end state, replayed
+ * (docs/specs/archive/2026-09-28-split-editor.md §7). Starts from split-editor-split's end state, replayed
  * as setup in one launch (`replaySplitToE6`). These steps run in that session, not after a restart
  * as in the unsplit original, so they no longer exercise a restored layout:
  *   M1  with one group, Move to Other Group is enabled and Mod+Alt+ArrowRight creates the right

@@ -34,7 +34,7 @@ export type DocKind = 'file' | 'diff' | 'review' | 'web' | 'git-history' | 'comm
 // What the singleton Review tab is scoped to: the live working tree (default), one commit's
 // diff (vs. its first parent), or a comparison of two refs (base...head — spec
 // 2026-06-29-review-changes-polish item 4). Rides the review doc so the tab stays a singleton —
-// nothing is encoded in the doc id. See docs/specs/2026-06-29-review-commit-source.md §3.1.
+// nothing is encoded in the doc id. See docs/specs/archive/2026-06-29-review-commit-source.md §3.1.
 export type { RefEndpoint } from '../src/git-range';
 export type ReviewSource =
   // `repoRoot` pins the review to a SPECIFIC repo; what its absence means per kind is

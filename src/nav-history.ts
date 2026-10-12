@@ -1,7 +1,7 @@
 // Back/Forward history stack, generic over the entry type so the editor (and, later, the arch
 // canvas drill levels) supply their own "same place" and coalescing rules. Pure + unit-tested;
 // the editor model is webview/editor-nav.ts, the React glue webview/use-nav-history.ts.
-// See docs/specs/2026-09-22-editor-nav-history.md §3.
+// See docs/specs/archive/2026-09-22-editor-nav-history.md §3.
 
 export interface NavState<E> {
   readonly stack: readonly E[];

@@ -1,4 +1,4 @@
-// Pure helpers for the Review tab's COMMIT source (docs/specs/2026-06-29-review-commit-source.md).
+// Pure helpers for the Review tab's COMMIT source (docs/specs/archive/2026-06-29-review-commit-source.md).
 // A commit's per-file diffs (git show, via useCommitFiles) carry no added/removed/kind, so the
 // derivation that feeds the existing review card renderer lives here — DOM-free and unit-testable.
 
@@ -28,7 +28,7 @@ function kindOf(f: FileDiffDTO): ChangeKind {
  * for a commit (false). Binary/image files contribute no line counts. Host `--numstat`
  * counts, when present, are preferred over the local compute so arriving at a commit
  * costs no whole-changeset parse — see
- * docs/specs/2026-08-20-commit-review-memory-bounds.md §3.
+ * docs/specs/archive/2026-08-20-commit-review-memory-bounds.md §3.
  */
 export function commitChangesFromFiles(files: FileDiffDTO[]): ChangeDTO[] {
   return files.map((f) => {
@@ -69,7 +69,7 @@ export function reviewSourceLabel(source: ReviewSource | undefined): string {
 
 /**
  * Concise label for the picker trigger — kept minimal/clean per the user's ask
- * (docs/specs/2026-06-29-review-commit-picker.md §11). "Working tree" | "<sha7> <subject>" |
+ * (docs/specs/archive/2026-06-29-review-commit-picker.md §11). "Working tree" | "<sha7> <subject>" |
  * "<sha7>" when no subject. The subject is truncated by CSS, not here. The verbose
  * {@link reviewSourceLabel} is reserved for aria/title/announce.
  */
@@ -90,7 +90,7 @@ export function reviewModeStatusLabel(source: ReviewSource | undefined): string 
 }
 
 /**
- * Filter the picker's commit list (docs/specs/2026-06-29-review-commit-picker.md §3, D5):
+ * Filter the picker's commit list (docs/specs/archive/2026-06-29-review-commit-picker.md §3, D5):
  * case-insensitive match on sha PREFIX OR subject substring OR author substring. An empty
  * (trimmed) query matches everything. Pure — mirrors the History search fields minus date.
  */
@@ -106,7 +106,7 @@ export function filterCommitsForPicker(commits: CommitNode[], query: string): Co
 }
 
 /**
- * Pasted-SHA detection (docs/specs/2026-06-29-review-commit-picker.md §3): returns the
+ * Pasted-SHA detection (docs/specs/archive/2026-06-29-review-commit-picker.md §3): returns the
  * lowercased sha iff the trimmed query is a 7–40-char hex string, else null. 7 is git's
  * conventional abbreviated-sha floor; 40 is a full sha. Pure.
  */

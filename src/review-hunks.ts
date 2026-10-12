@@ -62,7 +62,7 @@ export interface FileReview {
   removed: number;
   /** Set when the changed core exceeded the LCS cell budget and was emitted as a
    *  whole-core replacement instead of being line-matched — see
-   *  docs/specs/2026-08-20-commit-review-memory-bounds.md. */
+   *  docs/specs/archive/2026-08-20-commit-review-memory-bounds.md. */
   approx?: true;
 }
 
@@ -85,7 +85,7 @@ function splitLines(s: string): string[] {
 
 /** Default dense-LCS cell budget (16 MB of Int32 cells). Past it `diffLines` degrades to a
  *  whole-core replacement rather than allocating a multi-GB table — see
- *  docs/specs/2026-08-20-commit-review-memory-bounds.md §1. */
+ *  docs/specs/archive/2026-08-20-commit-review-memory-bounds.md §1. */
 export const MAX_LCS_CELLS = 4_000_000;
 
 /** Options that change what counts as a CHANGE (as opposed to how much of one we can afford). */
@@ -448,7 +448,7 @@ export function computeReplacementEmphasis(lines: ReviewLine[]): Map<number, Wor
   const map = new Map<number, WordSpan[]>();
   // A degenerate (approx) core is one giant del-run/add-run; pairing it word-by-word is
   // seconds of main-thread work for zero signal — see
-  // docs/specs/2026-08-20-commit-review-memory-bounds.md §2.
+  // docs/specs/archive/2026-08-20-commit-review-memory-bounds.md §2.
   if (lines.length > EMPHASIS_MAX_LINES) return map;
   let k = 0;
   while (k < lines.length) {

@@ -1,6 +1,6 @@
 // Pure derivations for the pipeline queue summary (N3). Lives in `src/` so both the host
 // and renderer can compute the same view from the raw queue entries. No side-effects; fully
-// unit-tested. See docs/specs/2026-06-12-n3-orchestration-status.md.
+// unit-tested.
 
 import type { PipelineQueueEntry } from './pipeline';
 

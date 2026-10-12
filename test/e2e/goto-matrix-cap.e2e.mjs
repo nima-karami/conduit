@@ -1,6 +1,6 @@
 /**
  * Go to Definition flow matrix — the index cap and the indexing window
- * (docs/specs/2026-08-21-goto-definition-flows.md rows 34 and 45).
+ * (docs/specs/archive/2026-08-21-goto-definition-flows.md rows 34 and 45).
  *
  * Isolated from the rest of the matrix on purpose: the only way to exercise the 5000-file cap
  * is to build a project that exceeds it, and the alphabetical truncation would then push every

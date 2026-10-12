@@ -260,7 +260,7 @@ export function parseWriteOptions(raw: unknown): WriteOptions | null {
  *
  * `opts.expected` (auto-save) adds a compare-before-write that runs only AFTER the target is
  * confined, so a rejected path answers exactly as it would without it. See
- * docs/specs/2026-09-28-auto-save.md §3.
+ * docs/specs/archive/2026-09-28-auto-save.md §3.
  */
 export async function writeFile(
   absPath: string,

@@ -94,7 +94,7 @@ export interface BellScan {
  * Count the BELs in a chunk that are real bells — i.e. not the terminator of an escape
  * string, and not a payload byte inside one. A bare BEL is the terminal ecosystem's
  * explicit "I want the user" signal (Claude Code rings it on a permission prompt), so it
- * arms attention with no quiet wait; see docs/specs/2026-08-21-attention-signal-quality.md
+ * arms attention with no quiet wait; see docs/specs/archive/2026-08-21-attention-signal-quality.md
  * contract 2, which also names `includes('\x07')` as the failure mode — every OSC title
  * update a TUI emits ends in one.
  *

@@ -395,7 +395,7 @@ export function createFileSaves(deps: FileSaveDeps): FileSaves {
     reload(path) {
       const e = entries.get(path);
       if (!e) return;
-      // see docs/specs/2026-09-28-auto-save.md §2.3: clear first, then read.
+      // see docs/specs/archive/2026-09-28-auto-save.md §2.3: clear first, then read.
       deps.clearDirty(path);
       e.error = null;
       step(e, { type: 'reset' });

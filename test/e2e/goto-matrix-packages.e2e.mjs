@@ -1,6 +1,6 @@
 /**
  * Go to Definition flow matrix — everything beyond the index
- * (docs/specs/2026-08-21-goto-definition-flows.md rows 25–33, 36).
+ * (docs/specs/archive/2026-08-21-goto-definition-flows.md rows 25–33, 36).
  *
  * These are the user's headline: `node_modules` is never indexed, nothing above the session
  * root is either, and there is no fallback resolver — so every row here is expected to fail

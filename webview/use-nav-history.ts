@@ -41,7 +41,7 @@ export function canNavigate(s: NavState<NavEntry>, deps: NavHistoryDeps, dir: -1
 }
 
 /**
- * Editor Back/Forward (docs/specs/2026-09-22-editor-nav-history.md). Recording is imperative —
+ * Editor Back/Forward (docs/specs/archive/2026-09-22-editor-nav-history.md). Recording is imperative —
  * producers call recordNav/recordJump at the user-intent site — and every record and apply runs
  * through one serial queue, so an apply's own landing can never interleave with another op.
  */

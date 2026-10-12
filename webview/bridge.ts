@@ -211,7 +211,7 @@ const LSP_PREVIEW: { [K in LspCallType]: LspResult<K> } = {
   'lsp:visible': { ok: true },
 };
 
-/** Language-server channel (spec docs/specs/2026-09-22-language-server-go.md §3.2). */
+/** Language-server channel (spec docs/specs/archive/2026-09-22-language-server-go.md §3.2). */
 export function lspInvoke<K extends LspCallType>(msg: LspMessage<K>): Promise<LspResult<K>> {
   // The host's reply is typed for the whole channel; the message type picked its shape.
   if (host) return host.lsp(msg) as Promise<LspResult<K>>;

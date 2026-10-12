@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { countBareBells, stripAnsi } from '../../src/last-line';
 
-// Contract 2 of docs/specs/2026-08-21-attention-signal-quality.md: a BEL only means
+// Contract 2 of docs/specs/archive/2026-08-21-attention-signal-quality.md: a BEL only means
 // "the app wants you" when it is NOT terminating an escape string. `includes('\x07')`
 // is the named failure mode — every OSC title update ends in one.
 const bells = (chunk: string) => countBareBells(chunk).bells;

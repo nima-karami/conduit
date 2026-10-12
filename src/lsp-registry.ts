@@ -1,6 +1,6 @@
 // The code-defined language-server registry. Never read from a workspace: no repo file can name
 // a binary, args or env (ADR 0006 §Trust). Nothing downstream of this file special-cases a
-// language — see docs/specs/2026-09-22-language-server-go.md §3.1.
+// language — see docs/specs/archive/2026-09-22-language-server-go.md §3.1.
 import { posix, win32 } from 'node:path';
 import {
   envKey,

@@ -1,7 +1,7 @@
 /**
  * Show one navigation outcome where the user is already looking.
  *
- * See docs/specs/2026-08-21-goto-definition-flows.md contract 3.
+ * See docs/specs/archive/2026-08-21-goto-definition-flows.md contract 3.
  */
 
 import type * as monaco from 'monaco-editor';

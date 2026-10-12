@@ -1,5 +1,5 @@
 /**
- * Middle-click opens in a background tab, per surface (docs/specs/2026-09-22-middle-click-new-tab.md
+ * Middle-click opens in a background tab, per surface (docs/specs/archive/2026-09-22-middle-click-new-tab.md
  * §7 AC-5): Changes row (S2), search match (S3) and name-only head (S4), plus a match in the active
  * file and a non-name-only head doing nothing. Every open asserts the spec's "unchanged" snapshot.
  * The other surfaces are in middle-click-surfaces-links and -sessions.

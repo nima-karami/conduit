@@ -1,7 +1,7 @@
 // Pure/reusable export helpers for a rendered mermaid SVG. Kept out of the overlay so the
 // blob/filename logic is unit-testable; the DOM-bound helpers (PNG raster, download) run
 // only in the renderer and are covered by test/e2e/mermaid-export.e2e.mjs. See
-// docs/specs/2026-07-01-mermaid-export.md.
+// docs/specs/archive/2026-07-01-mermaid-export.md.
 
 import { svgViewBoxSize } from './svg-viewbox';
 

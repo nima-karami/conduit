@@ -1,7 +1,9 @@
 # ADR 0002 — The `.conduit/` artifact format
 
 Date: 2026-06-11
-Status: Accepted — proposal mechanism shipped 2026-06-12 (N1; see §3)
+Status: Accepted — proposal mechanism shipped 2026-06-12 (N1; see §3). The root `board.json`
+and its overnight-agent surface were removed the same day (04f10a8e), which settles G0 below: the
+host reads only `<projectRoot>/.conduit/board.json`.
 
 ## Context
 

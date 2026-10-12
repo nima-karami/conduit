@@ -49,7 +49,7 @@ interface MultiFileDiff {
   files: FileDiffDTO[];
   truncated?: DiffTruncation;
   /** A read failure, as distinct from a legitimately empty result — see
-   *  docs/specs/2026-08-20-commit-review-memory-bounds.md §4. */
+   *  docs/specs/archive/2026-08-20-commit-review-memory-bounds.md §4. */
   error?: string;
 }
 
@@ -422,7 +422,7 @@ export function parseNameStatusZ(stdout: string): ChangedFile[] {
  *  CURRENT path so it joins against {@link parseNameStatusZ}'s `rel`. -z emits
  *  `ADDED\tREMOVED\tPATH\0` for plain entries and `ADDED\tREMOVED\t\0OLD\0NEW\0` for a
  *  rename. Binary sides report `-` counts and are skipped — absent counts, not zero
- *  counts. See docs/specs/2026-08-20-commit-review-memory-bounds.md §3. */
+ *  counts. See docs/specs/archive/2026-08-20-commit-review-memory-bounds.md §3. */
 export function parseNumstatZ(stdout: string): Map<string, { added: number; removed: number }> {
   const counts = new Map<string, { added: number; removed: number }>();
   const parts = stdout.split('\0');
@@ -501,7 +501,7 @@ export async function getCommitDiff(
   const changed = parseNameStatusZ(nameStatus.stdout);
 
   // Badge counts from git, so the renderer never has to diff every file in the commit just
-  // to show `+N −N` — see docs/specs/2026-08-20-commit-review-memory-bounds.md §3.
+  // to show `+N −N` — see docs/specs/archive/2026-08-20-commit-review-memory-bounds.md §3.
   const numstat = await runGit(
     gitBin,
     ['diff-tree', '-M', '-r', '--no-commit-id', '--numstat', '-z', base, sha],

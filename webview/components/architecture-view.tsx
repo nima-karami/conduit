@@ -1206,7 +1206,7 @@ function InterfacesPanel({
  * The shared right-click scoping rule, narrowed to nodes the current graph still holds — a drill
  * leaves `selectedIds` pointing at another level and a stale id would inflate the count. Node ids
  * only; a selected edge is not a target. See
- * docs/specs/2026-08-16-selection-aware-context-menus.md §5, §6.
+ * docs/specs/archive/2026-08-16-selection-aware-context-menus.md §5, §6.
  */
 /** Only real components are selectable for group/encapsulate — never boundary pins or group boxes. */
 function isComponentId(id: string): boolean {
@@ -1247,8 +1247,8 @@ export interface ArchNodeMenuContext {
 /**
  * Pure builder for the component-body menu, so the selection scoping is unit-testable as an array
  * (mirrors webview/explorer-menu.tsx). Canonical order comes from
- * docs/specs/2026-07-06-arch-context-menus.md §2.1; scoping and disabled state from
- * docs/specs/2026-08-16-selection-aware-context-menus.md §5.
+ * docs/specs/archive/2026-07-06-arch-context-menus.md §2.1; scoping and disabled state from
+ * docs/specs/archive/2026-08-16-selection-aware-context-menus.md §5.
  */
 export function buildArchNodeMenuItems(ctx: ArchNodeMenuContext): MenuItem[] {
   const { model, targets } = ctx;
@@ -1452,7 +1452,7 @@ function Canvas({
   // Escape steps UP one level (to the parent graph); only closes the canvas at the root (spec B).
   // Yields to inline editors (their own Esc). Any open overlay (palette/menu/modal/popover) is
   // handled upstream: the overlay stack's window-capture Escape listener stops the event before
-  // it reaches this bubble-phase listener (docs/specs/2026-09-07-overlay-layers.md §2.3).
+  // it reaches this bubble-phase listener (docs/specs/archive/2026-09-07-overlay-layers.md §2.3).
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;

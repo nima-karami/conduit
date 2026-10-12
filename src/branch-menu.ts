@@ -4,7 +4,7 @@
  *
  * That rule: the branch you are ON is *current*, not unavailable. It is non-actionable
  * (switching to it is a no-op), but "non-actionable" and "disabled" are different states in
- * the interaction vocabulary (docs/specs/2026-08-01-interaction-state-vocabulary.md) and the
+ * the interaction vocabulary (docs/specs/archive/2026-08-01-interaction-state-vocabulary.md) and the
  * menu shipped conflating them — the current branch rendered `disabled`, so the row the menu
  * exists to confirm was the faintest thing in it.
  */

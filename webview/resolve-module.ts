@@ -6,7 +6,7 @@
  * down in a `finally`, and a timeout so a host that never answers cannot wedge the navigation
  * inside `ts-nav`'s own deadline.
  *
- * See docs/specs/2026-08-21-goto-definition-flows.md §1-2.
+ * See docs/specs/archive/2026-08-21-goto-definition-flows.md §1-2.
  */
 
 import { withTimeout } from '../src/with-timeout';

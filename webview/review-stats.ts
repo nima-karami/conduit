@@ -1,4 +1,4 @@
-// Pure diffstat roll-up for the Review tab (docs/specs/2026-07-02-review-changes-first-class.md
+// Pure diffstat roll-up for the Review tab (docs/specs/archive/2026-07-02-review-changes-first-class.md
 // §"Data — the diffstat"). A DOM-free fold over the SAME per-file change list the cards read
 // (working = ChangeDTO from git status; commit/range = commitChangesFromFiles output), so the
 // summary header and the file navigator share one source of truth and it is unit-testable.

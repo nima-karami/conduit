@@ -1,6 +1,6 @@
 // Every language server, every synced doc, every client, and the lifecycle between them.
 // Process-facing collaborators are injected so the whole state machine unit-tests with a fake
-// server and a fake clock. Rules: docs/specs/2026-09-22-language-server-go.md §2–§3,
+// server and a fake clock. Rules: docs/specs/archive/2026-09-22-language-server-go.md §2–§3,
 // docs/plans/2026-09-22-language-server-go.plan.md "lsp-manager" invariants, ADR 0006.
 import { randomUUID } from 'node:crypto';
 import { posix, win32 } from 'node:path';
@@ -340,7 +340,7 @@ export class LspManager {
     }
   }
 
-  // ---------- Workspace Trust (docs/specs/2026-09-23-workspace-trust.md) ----------
+  // ---------- Workspace Trust (docs/specs/archive/2026-09-23-workspace-trust.md) ----------
 
   private isRootTrusted(rec: ServerRecord): boolean {
     return isTrusted(this.deps.trustStore.get(), rec.lexicalRoot, this.deps.platform);

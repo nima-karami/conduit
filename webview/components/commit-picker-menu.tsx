@@ -1,5 +1,5 @@
 /**
- * Review-tab source picker (docs/specs/2026-06-29-review-commit-picker.md). A searchable, portaled
+ * Review-tab source picker (docs/specs/archive/2026-06-29-review-commit-picker.md). A searchable, portaled
  * dropdown — opened from the git-band source trigger — for scoping the Review page to the working
  * tree, any recent commit, or a pasted SHA. The picker's final row, Compare refs…, opens the
  * two-ref compare dialog (spec 2026-09-05-review-mode.md §2.2). Commits load via `git:history`

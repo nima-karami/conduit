@@ -1,5 +1,5 @@
 /**
- * Middle-click opens in a background tab, per surface (docs/specs/2026-09-22-middle-click-new-tab.md
+ * Middle-click opens in a background tab, per surface (docs/specs/archive/2026-09-22-middle-click-new-tab.md
  * §7 AC-7/10): markdown links (S10), breadcrumb dropdown (S11) and palette file row (S12). Starts
  * with a.ts pinned and b.ts opened in the background (replayed from
  * middle-click-surfaces-search). Every open asserts the spec's "unchanged" snapshot.

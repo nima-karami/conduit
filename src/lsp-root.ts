@@ -1,4 +1,4 @@
-// Which server a file belongs to. See docs/specs/2026-09-22-language-server-go.md §2.3.
+// Which server a file belongs to. See docs/specs/archive/2026-09-22-language-server-go.md §2.3.
 import { posix, win32 } from 'node:path';
 import { canonicalPath, hasDotSegment } from './canonical-path';
 import type { HostPlatform } from './lsp-binary';

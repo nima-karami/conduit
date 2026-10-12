@@ -905,7 +905,7 @@ export function App() {
   // Open/activate the singleton Review tab scoped to a COMMIT (source = that commit). Switches
   // the active session first when a target is given (like openFile), so a later terminal
   // commit-link can route to the clicked terminal's session. See
-  // docs/specs/2026-06-29-review-commit-source.md §3.1.
+  // docs/specs/archive/2026-06-29-review-commit-source.md §3.1.
   // `repoRoot` scopes the review to a SPECIFIC repo — passed for a terminal commit click so the
   // review reads the commit from that terminal's cwd repo, not the pinned active repo (feat-link-cwd).
   const openReviewForCommit = useCallback(
@@ -1045,7 +1045,7 @@ export function App() {
   );
 
   // A tab click / Ctrl+Tab / Mod+digit is an R1 producer; the Terminal stop never records
-  // (docs/specs/2026-09-22-editor-nav-history.md §2.2).
+  // (docs/specs/archive/2026-09-22-editor-nav-history.md §2.2).
   const activateDocByUser = useCallback(
     (id: string | null, sessionId: string, group?: GroupIndex, focus = true) => {
       const doc = id === null ? undefined : docStateRef.current.docs.find((d) => d.id === id);
@@ -3440,7 +3440,7 @@ export function App() {
     });
   };
 
-  // Navigation history (docs/specs/2026-09-22-editor-nav-history.md §2.3–§2.4). Reads refs, not
+  // Navigation history (docs/specs/archive/2026-09-22-editor-nav-history.md §2.3–§2.4). Reads refs, not
   // state: an apply awaits the existence probe, and whatever it reads after that must be current.
   const currentNavEntry = useCallback((): NavEntry | null => {
     const state = docStateRef.current;
@@ -4000,7 +4000,7 @@ export function App() {
         run: () => void lspInvoke({ type: 'lsp:restart', languageId: l.languageId }),
       });
     }
-    // Workspace Trust (docs/specs/2026-09-23-workspace-trust.md). "Trust" only asks the host to
+    // Workspace Trust (docs/specs/archive/2026-09-23-workspace-trust.md). "Trust" only asks the host to
     // raise its prompt — the host picks the folder and owns the decision.
     const trustLanguage = trustLanguageFor(activeFileLanguage, lspLanguages);
     const trustTarget = activeFilePath ?? active?.home;

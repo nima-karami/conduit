@@ -227,7 +227,7 @@ export function setLspVisible(paths: readonly string[]): void {
 }
 
 /** Ask the host to raise its Workspace Trust prompt for the folder holding `path`. The host picks
- *  the folder and owns the answer (docs/specs/2026-09-23-workspace-trust.md §4). Every caller is
+ *  the folder and owns the answer (docs/specs/archive/2026-09-23-workspace-trust.md §4). Every caller is
  *  the user asking, so the prompt takes focus — the keyboard route out of the editor. */
 export function requestTrust(path: string, languageId: string): Promise<void> {
   setTrustFocusTarget(null);

@@ -1,5 +1,5 @@
 // Renderer ↔ host language-server channel. Renderer-safe: no `vscode-*` import may land here
-// (plan "Global constraints"). See docs/specs/2026-09-22-language-server-go.md §3.2.
+// (plan "Global constraints"). See docs/specs/archive/2026-09-22-language-server-go.md §3.2.
 import type { NavTreeNode } from './breadcrumbs';
 import { hasDotSegment } from './canonical-path';
 
@@ -11,7 +11,7 @@ export type LspServerState =
   | 'restarting'
   | 'crashed'
   | 'stopped'
-  // The folder is not trusted: no server may start (docs/specs/2026-09-23-workspace-trust.md).
+  // The folder is not trusted: no server may start (docs/specs/archive/2026-09-23-workspace-trust.md).
   | 'restricted';
 export type LspDocState = LspServerState | 'no-root';
 export type LspOp =
@@ -71,7 +71,7 @@ export interface LspLanguageInfo {
   moduleMarker: string;
 }
 /** A host-raised Workspace Trust question. Answered by `id` only — the renderer never names the
- *  folder it trusts (docs/specs/2026-09-23-workspace-trust.md §4). */
+ *  folder it trusts (docs/specs/archive/2026-09-23-workspace-trust.md §4). */
 export interface LspTrustPrompt {
   id: string;
   folder: string;

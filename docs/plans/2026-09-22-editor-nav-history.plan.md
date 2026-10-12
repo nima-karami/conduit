@@ -1,6 +1,6 @@
 # Editor navigation history — implementation plan
 
-**Spec:** `docs/specs/2026-09-22-editor-nav-history.md`  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-09-22-editor-nav-history.md`  **Tier:** FULL
 
 ## Goal
 
@@ -112,7 +112,7 @@ the existing read-only `pathExists` → `pathExistsResult`.
 - File names are kebab-case (Biome-enforced). Types are `PascalCase`, functions `camelCase`, constants
   `SCREAMING_SNAKE`.
 - **Comments: WHY only.** No restating code, no section labels. When the why lives in the spec, write
-  a one-line pointer (`// see docs/specs/2026-09-22-editor-nav-history.md §2.2`). This is a hard rule.
+  a one-line pointer (`// see docs/specs/archive/2026-09-22-editor-nav-history.md §2.2`). This is a hard rule.
 - Fix root causes. No `as any`, `@ts-ignore`, `!important`, timing windows (`setTimeout` suppression),
   or swallowed errors. The only timeout is the spec's 2 s probe deadline.
 - Unit tests run under vitest in a `node` environment (`vitest.config.*`: `include: test/unit/**/*.test.ts`),

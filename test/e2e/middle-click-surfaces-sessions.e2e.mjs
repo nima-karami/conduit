@@ -1,5 +1,5 @@
 /**
- * Middle-click opens in a background tab (docs/specs/2026-09-22-middle-click-new-tab.md §7
+ * Middle-click opens in a background tab (docs/specs/archive/2026-09-22-middle-click-new-tab.md §7
  * AC-4/13): the oversize diff notice (S9), a palette file owned by another session (D2), and a
  * background search-match tab opening at its line when later activated. Starts with a.ts pinned
  * and b.ts opened in the background (replayed from middle-click-surfaces-search).
