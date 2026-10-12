@@ -112,6 +112,14 @@ try {
   }, sid);
   log(`tall pane: ${tallRows} rows, ${pxPerRow.toFixed(1)}px a row`);
   assert(tallRows > SHORT_ROWS + 10, `Tall pane has only ${tallRows} rows — nothing to grow into`);
+  // Playwright launches Electron with --inspect, which once made the host report winpty while
+  // node-pty still spawned ConPTY: this scenario then exercised an xterm no user has.
+  const windowsPty = await page.evaluate((s) => window.__terms[s].options.windowsPty, sid);
+  log(`xterm windowsPty: ${JSON.stringify(windowsPty)}`);
+  assert(
+    windowsPty?.backend === 'conpty' && windowsPty.buildNumber > 0,
+    `xterm is not told it runs on ConPTY: windowsPty ${JSON.stringify(windowsPty)}`,
+  );
 
   await typeLine(page, sid, 'for /L %i in (1,1,40) do @echo RUN1-%i');
   await typeLine(page, sid, 'echo RUN1-END');

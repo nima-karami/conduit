@@ -40,7 +40,7 @@ export interface ReplayRun {
 
 /** The Windows pseudoconsole this host spawns its PTYs on; absent off Windows. */
 export interface WindowsPtyInfo {
-  backend: 'conpty' | 'winpty';
+  backend: 'conpty';
   buildNumber: number;
 }
 

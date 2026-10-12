@@ -194,9 +194,7 @@ describe('windowsPtyOptions', () => {
     expect(windowsPtyOptions({ backend: 'conpty', buildNumber: 22621 })).toEqual({
       windowsPty: { backend: 'conpty', buildNumber: 22621 },
     });
-    expect(windowsPtyOptions({ backend: 'winpty', buildNumber: 19045 })).toEqual({
-      windowsPty: { backend: 'winpty', buildNumber: 19045 },
-    });
+    expect(windowsPtyOptions(OLD_CONPTY)).toEqual({ windowsPty: OLD_CONPTY });
   });
 
   it('sets nothing off Windows or without a host', () => {

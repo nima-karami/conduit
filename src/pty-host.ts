@@ -1,4 +1,3 @@
-import * as inspector from 'node:inspector';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as pty from '@lydell/node-pty';
@@ -9,36 +8,20 @@ import { appendScrollback } from './scrollback-persistence';
 import type { SpawnSpec } from './types';
 
 /**
- * True when a Node inspector/debugger is attached (e.g. launched via F5).
- * node-pty's ConPTY backend hangs/crashes `spawn` under the debugger on Windows
- * (microsoft/node-pty#640), so we fall back to winpty in that case.
+ * @lydell/node-pty ships ConPTY only (no winpty agent) and ignores `useConpty`, so every Windows
+ * PTY is ConPTY, a debugger attached or not. The renderer's xterm must be told the same; preload
+ * reads it once per renderer load.
  */
-function isDebuggerAttached(): boolean {
-  try {
-    return !!inspector.url();
-  } catch {
-    return false;
-  }
-}
-
 export function windowsPtyInfo(
   platform: NodeJS.Platform,
   release: string,
-  debuggerAttached: boolean,
 ): WindowsPtyInfo | undefined {
   if (platform !== 'win32') return undefined;
-  return {
-    backend: debuggerAttached ? 'winpty' : 'conpty',
-    buildNumber: Number(release.split('.')[2]),
-  };
+  return { backend: 'conpty', buildNumber: Number(release.split('.')[2]) };
 }
 
-/**
- * What `PtyHost.start` spawns on right now; the renderer's xterm must be told the same. Preload
- * reads it once per renderer load.
- */
 export function currentWindowsPty(): WindowsPtyInfo | undefined {
-  return windowsPtyInfo(process.platform, os.release(), isDebuggerAttached());
+  return windowsPtyInfo(process.platform, os.release());
 }
 
 // Prefixes that identify editor-injected environment variables.
@@ -121,21 +104,16 @@ export class PtyHost {
     this.tails.delete(sessionId);
     this.lastLines.delete(sessionId);
     const cwd = spec.cwd || os.homedir();
-    const windowsPty = currentWindowsPty();
-    this.log(
-      `spawn "${spec.command}" ${JSON.stringify(spec.args)} in ${cwd} (${cols}x${rows}) pty=${windowsPty?.backend ?? 'unix'}`,
-    );
+    this.log(`spawn "${spec.command}" ${JSON.stringify(spec.args)} in ${cwd} (${cols}x${rows})`);
     let proc: pty.IPty;
     const size: TermGeometry = { cols: cols || 80, rows: rows || 24 };
     try {
-      const opts: Record<string, unknown> = {
+      proc = pty.spawn(spec.command, spec.args, {
         name: 'xterm-color',
         ...size,
         cwd,
         env: { ...sanitizeChildEnv(process.env), ...spec.env },
-      };
-      if (windowsPty) opts.useConpty = windowsPty.backend === 'conpty';
-      proc = pty.spawn(spec.command, spec.args, opts as pty.IPtyForkOptions);
+      });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.log(`spawn FAILED: ${message}`);
