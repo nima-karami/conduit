@@ -26,6 +26,7 @@ vi.mock('@xterm/xterm', () => ({
     element: HTMLElement | undefined;
     options: Record<string, unknown> = {};
     modes = { bracketedPasteMode: false };
+    unicode = { activeVersion: '6' };
     loadAddon() {}
     open(parent: HTMLElement) {
       this.element = document.createElement('div');
