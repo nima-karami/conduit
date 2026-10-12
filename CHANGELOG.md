@@ -19,6 +19,23 @@ All notable user-facing changes to Conduit. Format follows
 - **The Shader background no longer jumps back to its starting frame.** It restarted whenever the app
   refreshed its state, for example on session activity; it now restarts only when you change its
   settings.
+- **Relaunching a session keeps what was on its screen.** The "— session relaunched —" line used to
+  land near the top of the old output, writing over it, and the new shell then wiped the last
+  screenful of the old session. The old output now stays intact above the marker, including after
+  several relaunches in a row, and its last line is no longer cut off when the pane is narrower.
+  Relaunching or restarting a session without quitting Conduit now shows its earlier output too,
+  instead of an empty terminal.
+- **Restored history saved by this version keeps its layout when the terminal size changes.**
+  Conduit now records the terminal size for each stretch of saved output, across resizes and
+  relaunches, and replays each stretch at that size before fitting it to the pane, including when
+  the window reloads or recovers from a crash. History saved by older versions has no recorded size
+  and still replays at the pane's current size.
+- **What you type stays visible after the window reloads.** After a reload or crash recovery the
+  terminal could end up a few rows taller than its pane, with the prompt hidden below the visible
+  area until `clear`; the shell could also be told a different size than the terminal showed. The
+  terminal now always matches its pane, and the shell always gets the size the terminal really has.
+- **Lines with emoji or wide characters no longer drift a row out of place.** The terminal now
+  measures emoji the way Windows does (two cells), so programs that redraw the screen line up.
 
 ## [0.47.1] — 2026-10-08
 

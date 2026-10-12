@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import * as pty from '@lydell/node-pty';
 import type { AgentRegistry } from './agent-registry';
 import { lastNonEmptyLine, lastNonEmptyLines } from './last-line';
-import type { HostToWebview } from './protocol';
+import type { HostToWebview, TermGeometry } from './protocol';
 import { appendScrollback } from './scrollback-persistence';
 import type { SpawnSpec } from './types';
 
@@ -73,7 +73,7 @@ const TAIL_BYTES = 4096;
  * webview. This is the only place that touches node-pty.
  */
 export class PtyHost {
-  private readonly procs = new Map<string, { proc: pty.IPty; gen: number }>();
+  private readonly procs = new Map<string, { proc: pty.IPty; gen: number; size: TermGeometry }>();
   // Killed by a restart but not exited yet: still ours to kill on quit, no longer "alive", and
   // its exit is silent — see mf-live-edits spec §2.4 R1.
   private readonly retired = new Set<pty.IPty>();
@@ -107,11 +107,11 @@ export class PtyHost {
       `spawn "${spec.command}" ${JSON.stringify(spec.args)} in ${cwd} (${cols}x${rows}) useConpty=${useConpty}`,
     );
     let proc: pty.IPty;
+    const size: TermGeometry = { cols: cols || 80, rows: rows || 24 };
     try {
       const opts: Record<string, unknown> = {
         name: 'xterm-color',
-        cols: cols || 80,
-        rows: rows || 24,
+        ...size,
         cwd,
         env: { ...sanitizeChildEnv(process.env), ...spec.env },
       };
@@ -154,7 +154,7 @@ export class PtyHost {
       this.log(`session ${sessionId} exited (${exitCode})`);
       this.send({ type: 'term:exit', sessionId, code: exitCode });
     });
-    this.procs.set(sessionId, { proc, gen });
+    this.procs.set(sessionId, { proc, gen, size });
   }
 
   /**
@@ -220,11 +220,20 @@ export class PtyHost {
   }
 
   resize(sessionId: string, cols: number, rows: number) {
+    const entry = this.procs.get(sessionId);
+    if (!entry) return;
+    const size = { cols: Math.max(cols, 1), rows: Math.max(rows, 1) };
     try {
-      this.procs.get(sessionId)?.proc.resize(Math.max(cols, 1), Math.max(rows, 1));
+      entry.proc.resize(size.cols, size.rows);
+      entry.size = size;
     } catch {
       /* resize can throw if the process is gone — ignore */
     }
+  }
+
+  /** The live PTY's size — what the output it is sending now is addressed at. */
+  size(sessionId: string): TermGeometry | undefined {
+    return this.procs.get(sessionId)?.size;
   }
 
   dispose(sessionId: string) {

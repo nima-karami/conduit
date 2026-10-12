@@ -27,6 +27,17 @@ export type { RepoInfo } from './repo-scan';
 
 export type OsClipboardFailure = DragOutRefusal | 'unsupported' | 'failed';
 
+export interface TermGeometry {
+  cols: number;
+  rows: number;
+}
+
+/** The next `length` chars of a replay's data, and the size to write them at (absent: the pane's). */
+export interface ReplayRun {
+  length: number;
+  geometry?: TermGeometry;
+}
+
 /**
  * A persisted editor tab, round-tripped renderer → host → docs.json → renderer to restore the
  * open tabs across a restart (gated by the `restoreSessions` setting). Every deterministically-
@@ -394,8 +405,10 @@ export type HostToWebview =
       requestId: number;
     }
   | { type: 'error'; message: string }
-  // Terminal output streamed from the PTY in the extension host.
-  | { type: 'term:data'; sessionId: string; data: string }
+  // Terminal output streamed from the PTY in the extension host. `replay` is set only on a cold
+  // replay of persisted history: ConPTY addresses the screen absolutely, so each run of `data` is
+  // written at the size it was recorded at, then the terminal is fit back to its pane.
+  | { type: 'term:data'; sessionId: string; data: string; replay?: ReplayRun[] }
   | { type: 'term:exit'; sessionId: string; code: number }
   | { type: 'dirEntries'; path: string; entries: DirEntryDTO[] }
   | { type: 'fileContent'; doc: FileContentDTO }

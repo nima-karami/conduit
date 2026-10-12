@@ -6,7 +6,7 @@
  * history's last word on mouse mode is "on" — and the replay re-armed it against the FRESH
  * shell spawned underneath. Every pointer move then typed a mouse report at the prompt
  * (`35;57;21M35;59;21M…`, a real user report). See
- * docs/specs/2026-08-20-scrollback-replay-neutralizer.md.
+ * docs/specs/archive/2026-08-20-scrollback-replay-neutralizer.md.
  *
  * Seeds sessions.json + scrollback-<id>.json directly (deterministic — no live TUI to race),
  * relaunches the way the UI does, then asserts on the REAL xterm instance: mouse tracking is

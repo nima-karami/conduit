@@ -912,6 +912,52 @@ export function assert(cond, msg) {
 }
 
 /**
+ * Delays the page's Google Fonts files, so a reload settles its layout late (the timing behind
+ * the terminal-size scenarios). Returns the hold; `assertFontsHeldBack` proves it was exercised —
+ * with fonts.googleapis.com unreachable no face is registered and those scenarios pass vacuously.
+ */
+export async function holdBackWebFonts(page, delayMs) {
+  const hold = { requests: 0 };
+  await page.route(/fonts.gstatic.com/, async (route) => {
+    hold.requests++;
+    await new Promise((r) => setTimeout(r, delayMs));
+    await route.continue();
+  });
+  return hold;
+}
+
+/** At mount: the terminal font's faces are registered and none of them has loaded yet. */
+export async function assertFontsPending(page, label) {
+  const registered = await page
+    .waitForFunction(() => [...document.fonts].some((f) => /JetBrains Mono/.test(f.family)), null, {
+      timeout: 15000,
+    })
+    .then(() => true)
+    .catch(() => false);
+  assert(
+    registered,
+    `font hold-back not exercised (${label}): no JetBrains Mono face registered — is fonts.googleapis.com reachable?`,
+  );
+  const loaded = await page.evaluate(
+    () =>
+      [...document.fonts].filter((f) => /JetBrains Mono/.test(f.family) && f.status === 'loaded')
+        .length,
+  );
+  assert(
+    loaded === 0,
+    `font hold-back not exercised (${label}): ${loaded} JetBrains Mono faces already loaded`,
+  );
+}
+
+/** After the run: the hold actually delayed at least one font file. */
+export function assertFontsHeldBack(hold, label) {
+  assert(
+    hold.requests > 0,
+    `font hold-back not exercised (${label}): no fonts.gstatic.com request was held`,
+  );
+}
+
+/**
  * Delete a folder the app has just picked up. Windows refuses the delete while any process has
  * the folder as its cwd — one of the app's ~50 ms one-shot git children, say — and `rmSync`'s
  * `maxRetries` does not retry a directory's EPERM, so this retries for up to `budgetMs` and then

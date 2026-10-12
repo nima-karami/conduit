@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { neutralizeReplay, REPLAY_MODE_NEUTRALIZER } from '../../src/scrollback-persistence';
+import { coldReplay, REPLAY_MODE_NEUTRALIZER } from '../../src/scrollback-persistence';
 
 const ESC = '\x1b';
 // Split rather than match: a regex literal carrying ESC trips lint/suspicious/noControlCharactersInRegex.
@@ -35,21 +35,32 @@ describe('REPLAY_MODE_NEUTRALIZER', () => {
     expect(altOff).toBeLessThan(REPLAY_MODE_NEUTRALIZER.indexOf(`${ESC}[m`));
   });
 
-  it('contains only CSI sequences (nothing that could print)', () => {
+  it('contains only CSI sequences inside a DECSC/DECRC frame (nothing that could print)', () => {
     expect(parts[0]).toBe('');
-    expect(parts.slice(1).every((p) => /^\[\??[\d;]*[a-zA-Z]$/.test(p))).toBe(true);
+    expect(parts[1]).toBe('7');
+    const restore = parts.indexOf('8');
+    expect(restore).toBeGreaterThan(1);
+    const csi = [...parts.slice(2, restore), ...parts.slice(restore + 1)];
+    expect(csi.every((p) => /^\[\??[\d;]*[a-zA-Z]$/.test(p))).toBe(true);
+  });
+
+  it('restores the cursor after every cursor-moving reset, and resets SGR after the restore', () => {
+    const restore = REPLAY_MODE_NEUTRALIZER.indexOf(`${ESC}8`);
+    expect(restore).toBeGreaterThan(REPLAY_MODE_NEUTRALIZER.indexOf(`${ESC}[?1049l`));
+    expect(restore).toBeGreaterThan(REPLAY_MODE_NEUTRALIZER.indexOf(`${ESC}[r`));
+    expect(REPLAY_MODE_NEUTRALIZER.endsWith(`${ESC}8${ESC}[m`)).toBe(true);
   });
 });
 
-describe('neutralizeReplay', () => {
-  it('appends the neutralizer so it wins over the replayed history', () => {
-    const history = `${ESC}[?1003h${ESC}[?1006hsome output\r\n`;
-    const out = neutralizeReplay(history);
-    expect(out.startsWith(history)).toBe(true);
-    expect(out).toBe(history + REPLAY_MODE_NEUTRALIZER);
+describe('coldReplay applies the neutralizer', () => {
+  it('after the replayed history, so it wins over it, then ends on a fresh line', () => {
+    const history = `${ESC}[?1003h${ESC}[?1006hsome output`;
+    const { data, tail } = coldReplay([{ data: history }]);
+    expect(data).toBe(`${history + REPLAY_MODE_NEUTRALIZER}\r\n`);
+    expect(tail).toEqual({ data: `${REPLAY_MODE_NEUTRALIZER}\r\n` });
   });
 
-  it('is a no-op for empty history (nothing was replayed, nothing to cancel)', () => {
-    expect(neutralizeReplay('')).toBe('');
+  it('not at all for empty history (nothing was replayed, nothing to cancel)', () => {
+    expect(coldReplay([])).toEqual({ data: '', runs: [] });
   });
 });

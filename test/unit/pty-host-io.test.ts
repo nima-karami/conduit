@@ -137,3 +137,37 @@ describe('PtyHost.tailLines', () => {
     expect(host.lastLine('s1')).toBe('');
   });
 });
+
+// The size a scrollback segment is stamped with when the child's output arrives.
+describe('PtyHost.size', () => {
+  beforeEach(() => {
+    onExitCb = null;
+  });
+
+  it('is undefined for a session that never started', () => {
+    expect(new PtyHost(() => {}).size('ghost')).toBeUndefined();
+  });
+
+  it('follows start and resize, and is gone once the child exits', () => {
+    const host = new PtyHost(() => {});
+    host.start('s1', 120, 40, spec);
+    expect(host.size('s1')).toEqual({ cols: 120, rows: 40 });
+    host.resize('s1', 90, 30);
+    expect(host.size('s1')).toEqual({ cols: 90, rows: 30 });
+    onExitCb?.({ exitCode: 0 });
+    expect(host.size('s1')).toBeUndefined();
+  });
+
+  it('records the size the child was actually spawned at', () => {
+    const host = new PtyHost(() => {});
+    host.start('s1', 0, 0, spec);
+    expect(host.size('s1')).toEqual({ cols: 80, rows: 24 });
+  });
+
+  it('is dropped on dispose', () => {
+    const host = new PtyHost(() => {});
+    host.start('s1', 120, 40, spec);
+    host.dispose('s1');
+    expect(host.size('s1')).toBeUndefined();
+  });
+});

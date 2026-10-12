@@ -4,6 +4,7 @@ import { type ILinkProvider, Terminal } from '@xterm/xterm';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
 import type { PathCandidate } from '../../src/path-resolve';
+import type { TermGeometry } from '../../src/protocol';
 import { withTimeout } from '../../src/with-timeout';
 import { logToHost, openExternal, pathForDroppedFile, post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
@@ -15,6 +16,7 @@ import { buildTerminalMenuItems, type TerminalMenuAction } from '../term-menu';
 import { initialTermSearchState, termSearchReducer } from '../term-search';
 import { notifyTerminalBus, registerTerminal } from '../terminal-bus';
 import { terminalClipboardAction } from '../terminal-clipboard';
+import { matchConhostCellWidths, sizeDiffers, writeReplay } from '../terminal-conpty';
 import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
 import { terminalGpu } from '../terminal-gpu';
 import {
@@ -52,6 +54,22 @@ const IS_WINDOWS = typeof navigator !== 'undefined' && /Win/i.test(navigator.pla
 const LINK_RESOLVE_TIMEOUT_MS = 10_000;
 const LINK_CACHE_CAPACITY = 2048;
 
+interface ReplayState {
+  active: boolean;
+  resyncDue: boolean;
+}
+
+function tellHostSize(sent: { current: TermGeometry | null }, sessionId: string, term: Terminal) {
+  sent.current = { cols: term.cols, rows: term.rows };
+  post({ type: 'term:resize', sessionId, cols: term.cols, rows: term.rows });
+}
+
+/** True while a cold replay is queued: the fit is skipped and owed to the replay's end. */
+function deferWhileReplaying(r: ReplayState): boolean {
+  if (r.active) r.resyncDue = true;
+  return r.active;
+}
+
 export function TerminalPane({
   sessionId,
   agentId,
@@ -88,6 +106,12 @@ export function TerminalPane({
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  // While a cold replay is queued its runs own the terminal's size: a fit landing between a run's
+  // resize and its bytes would write them at the wrong width. Deferred fits rerun when it ends.
+  const replayRef = useRef<ReplayState>({ active: false, resyncDue: false });
+  // The size the host's PTY was last given. Any fit that leaves the xterm at another size must
+  // tell the host, or the PTY addresses rows the xterm doesn't have (cursor below the prompt).
+  const sentSizeRef = useRef<TermGeometry | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const { settings, update } = useSettings();
 
@@ -227,6 +251,7 @@ export function TerminalPane({
       fit = new FitAddon();
       fitRef.current = fit;
       term.loadAddon(fit);
+      matchConhostCellWidths(term);
       // Find-in-terminal (L4). Registered before open so its decorations attach.
       search = new SearchAddon();
       searchRef.current = search;
@@ -522,7 +547,21 @@ export function TerminalPane({
     };
     const unsub = subscribe((msg) => {
       if (msg.type === 'term:data' && msg.sessionId === sessionId) {
-        writeAndStick(msg.data);
+        if (msg.replay) {
+          replayRef.current.active = true;
+          writeReplay(term, msg.data, msg.replay, fitIfVisible, () => {
+            const r = replayRef.current;
+            r.active = false;
+            // A hidden pane fails both fits; the ResizeObserver's sync fits it once it shows.
+            if (r.resyncDue) {
+              r.resyncDue = false;
+              sync();
+            } else if (fitIfVisible() && sizeDiffers(sentSizeRef.current, term)) {
+              tellHostSize(sentSizeRef, sessionId, term);
+            }
+            term.scrollToBottom();
+          });
+        } else writeAndStick(msg.data);
       } else if (msg.type === 'term:exit' && msg.sessionId === sessionId) {
         writeAndStick(`\r\n\x1b[2m[process exited with code ${msg.code}]\x1b[0m\r\n`);
       }
@@ -531,9 +570,11 @@ export function TerminalPane({
     // Start the PTY on first real visibility (so it launches at the correct size);
     // resize on every subsequent layout change.
     const sync = () => {
+      if (deferWhileReplaying(replayRef.current)) return;
       if (!fitIfVisible()) return;
       if (!started) {
         started = true;
+        sentSizeRef.current = { cols: term.cols, rows: term.rows };
         post({
           type: 'term:start',
           sessionId,
@@ -544,7 +585,7 @@ export function TerminalPane({
         });
         term.focus();
       } else {
-        post({ type: 'term:resize', sessionId, cols: term.cols, rows: term.rows });
+        tellHostSize(sentSizeRef, sessionId, term);
       }
     };
 
@@ -623,9 +664,10 @@ export function TerminalPane({
     const term = termRef.current;
     const el = ref.current;
     if (!term || !el || el.offsetWidth === 0 || el.offsetHeight === 0) return;
+    if (deferWhileReplaying(replayRef.current)) return;
     try {
       fitRef.current?.fit();
-      post({ type: 'term:resize', sessionId, cols: term.cols, rows: term.rows });
+      tellHostSize(sentSizeRef, sessionId, term);
     } catch {
       /* not visible yet */
     }

@@ -140,6 +140,7 @@ import type {
   LimitOffer,
   PersistedDoc,
   RepoDTO,
+  TermGeometry,
   WebviewToHost,
 } from '../src/protocol';
 import { PtyHost } from '../src/pty-host';
@@ -172,14 +173,8 @@ import {
 } from '../src/review-marks';
 import { applyNotePatch, notesFingerprint, type ReviewNotesData } from '../src/review-notes';
 import { orphanScrollbackFiles, scrollbackFileName } from '../src/scrollback-files';
-import {
-  appendScrollback,
-  neutralizeReplay,
-  restoreScrollback,
-  SCROLLBACK_CAP_BYTES,
-  scrollbackReplayPadding,
-  serializeScrollback,
-} from '../src/scrollback-persistence';
+import { restoreScrollback, spawnPrelude } from '../src/scrollback-persistence';
+import { ScrollbackStore } from '../src/scrollback-store';
 import { SessionActivity } from '../src/session-activity';
 import { presentRoots, sessionContains } from '../src/session-folders';
 import { SessionManager } from '../src/session-manager';
@@ -1544,11 +1539,7 @@ app.whenReady().then(() => {
         // debounce a write to disk. This callback only fires for genuine PTY output;
         // replayed history is sent via sendToOwner() in term:start and never re-enters here.
         if (settings.scrollbackPersistence) {
-          scrollbacks.set(
-            msg.sessionId,
-            appendScrollback(scrollbacks.get(msg.sessionId) ?? '', msg.data, SCROLLBACK_CAP_BYTES),
-          );
-          scheduleScrollbackPersist(msg.sessionId);
+          scrollbacks.append(msg.sessionId, msg.data, pty.size(msg.sessionId));
         }
 
         // CWD tracking (E2a): when trackCwd is enabled, scan terminal output for
@@ -1589,31 +1580,18 @@ app.whenReady().then(() => {
     (m) => log.debug('pty', m),
   );
 
-  // Per-terminal-session scrollback ring (T2): the recent output bytes, capped to a
-  // trailing 256 KiB window in memory and debounced to scrollback-<id>.json. Fed from the
-  // PtyHost output callback (term:data).
-  const scrollbacks = new Map<string, string>();
-  const scrollbackPersistTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const flushScrollback = (sessionId: string) => {
-    const data = scrollbacks.get(sessionId);
-    if (data === undefined) return;
-    log.debug('scrollback', 'persist', { sessionId, bytes: data.length });
-    persistFile(
-      scrollbackFile(sessionId),
-      serializeScrollback({ version: 1, sessionId, data }),
-      `scrollback-${sessionId}.json`,
-    );
-  };
-  const scheduleScrollbackPersist = (sessionId: string) => {
-    if (scrollbackPersistTimers.has(sessionId)) return;
-    scrollbackPersistTimers.set(
-      sessionId,
-      setTimeout(() => {
-        scrollbackPersistTimers.delete(sessionId);
-        flushScrollback(sessionId);
-      }, 250),
-    );
-  };
+  // Per-terminal-session scrollback ring (T2): the recent output, capped to a trailing 256 KiB
+  // window in memory and debounced to scrollback-<id>.json. Fed from the PtyHost output callback.
+  const scrollbacks = new ScrollbackStore(
+    (sessionId, blob) => {
+      log.debug('scrollback', 'persist', { sessionId, bytes: blob.length });
+      persistFile(scrollbackFile(sessionId), blob, `scrollback-${sessionId}.json`);
+    },
+    {
+      send: (sessionId, data) => sendToOwner(sessionId, { type: 'term:data', sessionId, data }),
+      recording: () => settings.scrollbackPersistence,
+    },
+  );
   // Per-child teardown, shared by a real exit and a restart's retire (mf-live-edits §2.4).
   const endProcessEpisode = (sessionId: string) => {
     // A dead child is not waiting for anyone (spec contract 6) — drop its evidence
@@ -1630,12 +1608,17 @@ app.whenReady().then(() => {
     teardownGitRefresh(sessionId);
     // T2: flush the last screenful now (the process ended); keep the file so the
     // user can still see the final output until the session is killed.
-    if (settings.scrollbackPersistence) flushScrollback(sessionId);
+    if (settings.scrollbackPersistence) scrollbacks.flush(sessionId);
   };
 
-  // Sessions whose persisted scrollback has already been replayed this app-run. Guards
-  // against a TerminalPane remount (within one run) re-injecting the whole history again.
-  const replayedScrollback = new Set<string>();
+  // Cold starts that have sent their replay but not yet spawned (term:start awaits the folder
+  // health check in between). A second term:start racing that await must not replay — and record
+  // — the history again; it attaches once the first one has spawned.
+  const coldStartsInFlight = new Set<string>();
+  // The pane's size reported while a cold start awaits its spawn (term:start → pty.start spans the
+  // health-check await). pty.resize drops it — there's no child yet — so the spawn takes it instead
+  // of term:start's older measurement, or the PTY is born a different size than the xterm.
+  const preSpawnSizes = new Map<string, TermGeometry>();
 
   // ── Timed messages (spec 2026-08-28-timed-messages) ────────────────────────
   // Host-owned schedules and ONE timer. Declared up here because flushStateSync reads the dirty
@@ -2628,13 +2611,9 @@ app.whenReady().then(() => {
     repoScanner.forget(id);
     // T2: the session is gone — drop its scrollback ring/timer and delete the file so
     // userData doesn't accumulate orphans. Best-effort, ENOENT-tolerant.
-    scrollbacks.delete(id);
-    const sbTimer = scrollbackPersistTimers.get(id);
-    if (sbTimer) {
-      clearTimeout(sbTimer);
-      scrollbackPersistTimers.delete(id);
-    }
-    replayedScrollback.delete(id);
+    scrollbacks.drop(id);
+    coldStartsInFlight.delete(id);
+    preSpawnSizes.delete(id);
     // Drop the git torn-down latch so it doesn't accumulate across killed sessions
     // (term:exit from the dispose above already closed any live watcher).
     gitTornDown.delete(id);
@@ -3958,21 +3937,33 @@ app.whenReady().then(() => {
           // is a window mounting a pane for a session that just moved here — NOT a cold start.
           // pty.start is idempotent (it would no-op), but we must replay the scrollback ring to
           // THIS attaching window (e.sender) so its terminal shows history, then fit the PTY to
-          // the new window's size. We deliberately do NOT touch `replayedScrollback` — that
-          // guards the one-time cold-start file restore; the attach replay is per-window and
-          // intentionally separate. Skipping the spawn path avoids re-running the relaunch
+          // the new window's size. Skipping the spawn path avoids re-running the relaunch
           // marker / padding logic.
           const attach = () => {
-            const ring = scrollbacks.get(m.sessionId);
-            if (settings.scrollbackPersistence && ring) {
+            const replay = scrollbacks.attachReplay(m.sessionId);
+            if (settings.scrollbackPersistence && replay.data) {
+              // Not recorded: it heads this window's fresh pane, before the ring; the session's
+              // own stream has no break here, so later replays must not show one.
               reply(e, {
                 type: 'term:data',
                 sessionId: m.sessionId,
                 data: '\r\n\x1b[2m— attached —\x1b[0m\r\n',
               });
-              reply(e, { type: 'term:data', sessionId: m.sessionId, data: ring });
+              // Run by run at each segment's size, like a cold replay: the ring spans every size
+              // the session had, and a pane that came back at another size garbles it otherwise.
+              reply(e, {
+                type: 'term:data',
+                sessionId: m.sessionId,
+                data: replay.data,
+                replay: replay.runs,
+              });
             }
-            pty.resize(m.sessionId, m.cols, m.rows);
+            // A resize to the size the PTY already has: ConPTY repaints the live screen. Not the
+            // pane's measurement — on a reload that comes in taller than where layout settles, and a
+            // real resize there loses live lines and records a size the xterm never had. The pane's
+            // settled size reaches the PTY through its own term:resize.
+            const current = pty.size(m.sessionId);
+            if (current) pty.resize(m.sessionId, current.cols, current.rows);
             mgr.touch(m.sessionId);
             log.info('pty', 'attach', { sessionId: m.sessionId, windowId: senderId });
           };
@@ -3980,140 +3971,147 @@ app.whenReady().then(() => {
             attach();
             break;
           }
-          // T2: replay persisted scrollback BEFORE pty.start, so restored history precedes
-          // any live output and the (later) `— session relaunched —` banner. Once-per-run
-          // guard so a pane remount within this run doesn't re-inject the whole history.
-          let didReplay = false;
-          if (settings.scrollbackPersistence && !replayedScrollback.has(m.sessionId)) {
-            replayedScrollback.add(m.sessionId);
-            const restored = restoreScrollback(readBlob(scrollbackFile(m.sessionId)));
-            if (restored?.data) {
-              didReplay = true;
-              log.debug('scrollback', 'restore', {
-                sessionId: m.sessionId,
-                bytes: restored.data.length,
-              });
-              scrollbacks.set(m.sessionId, restored.data);
-              sendToOwner(m.sessionId, {
-                type: 'term:data',
-                sessionId: m.sessionId,
-                data: '\r\n\x1b[2m— restored —\x1b[0m\r\n',
-              });
+          // T2: replay the history BEFORE pty.start, so it precedes any live output and the
+          // (later) `— session relaunched —` banner. Every cold start replays — this is always a
+          // fresh pane (each TerminalPane mount builds a new xterm and sends one term:start), and
+          // a remount over a live PTY took the attach path above.
+          preSpawnSizes.delete(m.sessionId);
+          const ownsColdStart =
+            settings.scrollbackPersistence && !coldStartsInFlight.has(m.sessionId);
+          if (ownsColdStart) coldStartsInFlight.add(m.sessionId);
+          // Released on every way out, a throw included (a rejected health check, a launch spec
+          // that can't be built), or the session would never replay again this app run.
+          try {
+            let didReplay = false;
+            let recordedRows: number | undefined;
+            if (ownsColdStart) {
               // Neutralized because the child below this history is a NEW process: modes a
               // dead TUI left set (mouse tracking above all) would otherwise apply to it.
-              // The ring keeps the raw bytes — the attach path replays a live child's real
-              // state. See docs/specs/2026-08-20-scrollback-replay-neutralizer.md.
-              sendToOwner(m.sessionId, {
-                type: 'term:data',
-                sessionId: m.sessionId,
-                data: neutralizeReplay(restored.data),
-              });
+              // It joins the ring with the replay, after which the live child's own mode sets
+              // follow. See docs/specs/archive/2026-08-20-scrollback-replay-neutralizer.md.
+              const replay = scrollbacks.replayForColdStart(
+                m.sessionId,
+                () => restoreScrollback(readBlob(scrollbackFile(m.sessionId)))?.segments,
+              );
+              if (replay?.data) {
+                didReplay = true;
+                recordedRows = replay.runs.findLast((r) => r.geometry)?.geometry?.rows;
+                log.debug('scrollback', 'restore', {
+                  sessionId: m.sessionId,
+                  bytes: replay.data.length,
+                  runs: replay.runs.length,
+                });
+                sendToOwner(m.sessionId, {
+                  type: 'term:data',
+                  sessionId: m.sessionId,
+                  data: replay.data,
+                  replay: replay.runs,
+                });
+              }
             }
-          }
-          // A restored session's first health check may still be marking missing folders; a
-          // launch built before it lands could pass a missing root (mf-model spec §2.5).
-          const healthPending = folders.pending(m.sessionId);
-          if (healthPending) await healthPending;
-          const s = mgr.get(m.sessionId);
-          if (!s) break;
-          if (pty.isAlive(m.sessionId)) {
-            attach();
-            break;
-          }
-          const plan = buildLaunchSpec({
-            registry,
-            agentId: m.agentId,
-            cwd: m.cwd,
-            home: s.home,
-            homeMissing: !!s.homeMissing,
-            roots: presentRoots(s),
-            exists: fs.existsSync,
-            resolveCommand: (c) => resolveCommand(c, hostPlatform),
-            platform: hostPlatform,
-          });
-          if (!plan.ok) {
-            const why =
-              plan.reason === 'unresolvable'
-                ? `${plan.command} not found`
-                : `home folder ${s.home} is missing`;
-            sendToOwner(m.sessionId, {
-              type: 'term:data',
-              sessionId: m.sessionId,
-              data: `\r\n\x1b[2m— can't start: ${why} —\x1b[0m\r\n`,
-            });
-            log.warn('pty', 'refused', {
-              sessionId: m.sessionId,
-              reason: plan.reason,
+            // A restored session's first health check may still be marking missing folders; a
+            // launch built before it lands could pass a missing root (mf-model spec §2.5).
+            const healthPending = folders.pending(m.sessionId);
+            if (healthPending) await healthPending;
+            const s = mgr.get(m.sessionId);
+            if (!s) break;
+            if (pty.isAlive(m.sessionId)) {
+              attach();
+              break;
+            }
+            const plan = buildLaunchSpec({
+              registry,
+              agentId: m.agentId,
+              cwd: m.cwd,
               home: s.home,
+              homeMissing: !!s.homeMissing,
+              roots: presentRoots(s),
+              exists: fs.existsSync,
+              resolveCommand: (c) => resolveCommand(c, hostPlatform),
+              platform: hostPlatform,
             });
-            // Re-checks the folders, so a home that has come back clears and the next start works.
-            if (plan.reason === 'home-missing') folders.created(m.sessionId);
-            else startRefusals.set(m.sessionId, { reason: plan.reason, command: plan.command });
-            // Nothing runs, so the session must not read as running; 'stale', never 'exited' —
-            // app.tsx's exit effect auto-closes an exited shell (mf-live-edits plan §Host).
-            pendingRelaunchMarker.delete(m.sessionId);
-            mgr.setStatus(m.sessionId, 'stale');
-            break;
-          }
-          const spec = plan.spec;
-          for (const root of plan.skippedAddDirRoots) {
-            log.warn('pty', 'add-dir skipped', { sessionId: m.sessionId, root });
-          }
-          // E2b: inject a prompt-preserving cwd-emit hook for recognized shells when
-          // trackCwd is enabled. The augmentation is purely ADDITIVE — it only appends
-          // args and/or shallow-merges env; it never removes or reorders anything.
-          // A shell whose id is not recognized (or trackCwd is off) launches exactly
-          // as before (fail-safe: null augmentation → no change).
-          if (settings.trackCwd) {
-            const aug = cwdReportingAugmentation(m.agentId, spec.args);
-            if (aug) {
-              if (aug.args) spec.args = [...spec.args, ...aug.args];
-              if (aug.env) spec.env = { ...spec.env, ...aug.env };
+            if (!plan.ok) {
+              const why =
+                plan.reason === 'unresolvable'
+                  ? `${plan.command} not found`
+                  : `home folder ${s.home} is missing`;
+              scrollbacks.show(m.sessionId, `\r\n\x1b[2m— can't start: ${why} —\x1b[0m\r\n`, {
+                cols: m.cols,
+                rows: m.rows,
+              });
+              log.warn('pty', 'refused', {
+                sessionId: m.sessionId,
+                reason: plan.reason,
+                home: s.home,
+              });
+              // Re-checks the folders, so a home that has come back clears and the next start works.
+              if (plan.reason === 'home-missing') folders.created(m.sessionId);
+              else startRefusals.set(m.sessionId, { reason: plan.reason, command: plan.command });
+              // Nothing runs, so the session must not read as running; 'stale', never 'exited' —
+              // app.tsx's exit effect auto-closes an exited shell (mf-live-edits plan §Host).
+              pendingRelaunchMarker.delete(m.sessionId);
+              mgr.setStatus(m.sessionId, 'stale');
+              break;
             }
-          }
-          log.info('pty', 'spawn', {
-            sessionId: m.sessionId,
-            agentId: m.agentId,
-            command: spec.command,
-            cwd: spec.cwd,
-          });
-          pty.start(m.sessionId, m.cols, m.rows, spec);
-          startRefusals.delete(m.sessionId);
-          // Claude's visible scope is read off the FINAL args, so a user's own --add-dir counts
-          // (mf-live-edits spec §2.1; no session field, L12 S7).
-          if (plan.addDir && pty.isAlive(m.sessionId)) {
-            scopes.captured(m.sessionId, scopeFromSpawnArgs(spec.cwd, spec.args, path.resolve, s));
-          }
-          // Opens the spawn grace: shell banners, the relaunch marker's follow-on repaint
-          // and autoRelaunchStale's startup bursts are not evidence (spec contract 5).
-          activity.recordSpawn(m.sessionId, Date.now());
-          // A new child starts mid-nothing: never resume the dead one's escape-walk.
-          bellScanState.delete(m.sessionId);
-          mgr.touch(m.sessionId); // session became active
-          // Anything waiting on this session delivers PTY_SETTLE_MS from now: a message written
-          // into a shell that has not printed its prompt is lost (§2 "Lifecycle"). The ATTACH
-          // branch above deliberately does not call this — that PTY has been alive all along,
-          // so nothing can be waiting on it.
-          timers.onPtyStart(m.sessionId);
-          // Git indicator (Slice A): interrogate the session's cwd on start so the bar
-          // appears before the first `cd`. Establishes the HEAD watch too.
-          scheduleGitRefresh(m.sessionId);
-          // Write a brief system line the first time a relaunched session's terminal
-          // starts so the user can see it is a fresh process, not the original run.
-          if (pendingRelaunchMarker.delete(m.sessionId)) {
-            sendToOwner(m.sessionId, {
-              type: 'term:data',
+            const spec = plan.spec;
+            for (const root of plan.skippedAddDirRoots) {
+              log.warn('pty', 'add-dir skipped', { sessionId: m.sessionId, root });
+            }
+            // E2b: inject a prompt-preserving cwd-emit hook for recognized shells when
+            // trackCwd is enabled. The augmentation is purely ADDITIVE — it only appends
+            // args and/or shallow-merges env; it never removes or reorders anything.
+            // A shell whose id is not recognized (or trackCwd is off) launches exactly
+            // as before (fail-safe: null augmentation → no change).
+            if (settings.trackCwd) {
+              const aug = cwdReportingAugmentation(m.agentId, spec.args);
+              if (aug) {
+                if (aug.args) spec.args = [...spec.args, ...aug.args];
+                if (aug.env) spec.env = { ...spec.env, ...aug.env };
+              }
+            }
+            log.info('pty', 'spawn', {
               sessionId: m.sessionId,
-              data: '\r\n\x1b[2m— session relaunched —\x1b[0m\r\n',
+              agentId: m.agentId,
+              command: spec.command,
+              cwd: spec.cwd,
             });
-          }
-          // Must be the LAST thing sent before ConPTY's spawn output arrives (next tick):
-          // scroll the restored history above the viewport so ConPTY's ESC[2J/repaint
-          // can't erase it. See scrollbackReplayPadding for the full rationale.
-          if (didReplay) {
-            const pad = scrollbackReplayPadding(process.platform, m.rows);
-            if (pad)
-              sendToOwner(m.sessionId, { type: 'term:data', sessionId: m.sessionId, data: pad });
+            const size = preSpawnSizes.get(m.sessionId) ?? { cols: m.cols, rows: m.rows };
+            preSpawnSizes.delete(m.sessionId);
+            pty.start(m.sessionId, size.cols, size.rows, spec);
+            startRefusals.delete(m.sessionId);
+            // Claude's visible scope is read off the FINAL args, so a user's own --add-dir counts
+            // (mf-live-edits spec §2.1; no session field, L12 S7).
+            if (plan.addDir && pty.isAlive(m.sessionId)) {
+              scopes.captured(
+                m.sessionId,
+                scopeFromSpawnArgs(spec.cwd, spec.args, path.resolve, s),
+              );
+            }
+            // Opens the spawn grace: shell banners, the relaunch marker's follow-on repaint
+            // and autoRelaunchStale's startup bursts are not evidence (spec contract 5).
+            activity.recordSpawn(m.sessionId, Date.now());
+            // A new child starts mid-nothing: never resume the dead one's escape-walk.
+            bellScanState.delete(m.sessionId);
+            mgr.touch(m.sessionId); // session became active
+            // Anything waiting on this session delivers PTY_SETTLE_MS from now: a message written
+            // into a shell that has not printed its prompt is lost (§2 "Lifecycle"). The ATTACH
+            // branch above deliberately does not call this — that PTY has been alive all along,
+            // so nothing can be waiting on it.
+            timers.onPtyStart(m.sessionId);
+            // Git indicator (Slice A): interrogate the session's cwd on start so the bar
+            // appears before the first `cd`. Establishes the HEAD watch too.
+            scheduleGitRefresh(m.sessionId);
+            // Must be the LAST thing sent before ConPTY's spawn output arrives (next tick).
+            const prelude = spawnPrelude(process.platform, size.rows, {
+              relaunched: pendingRelaunchMarker.delete(m.sessionId),
+              replayed: didReplay,
+              recordedRows,
+            });
+            if (prelude) {
+              scrollbacks.show(m.sessionId, prelude, pty.size(m.sessionId) ?? size);
+            }
+          } finally {
+            if (ownsColdStart) coldStartsInFlight.delete(m.sessionId);
           }
           break;
         }
@@ -4169,7 +4167,8 @@ app.whenReady().then(() => {
           break;
         case 'term:resize':
           log.debug('pty', 'resize', { sessionId: m.sessionId, cols: m.cols, rows: m.rows });
-          pty.resize(m.sessionId, m.cols, m.rows);
+          if (pty.isAlive(m.sessionId)) pty.resize(m.sessionId, m.cols, m.rows);
+          else preSpawnSizes.set(m.sessionId, { cols: m.cols, rows: m.rows });
           break;
         case 'term:dispose':
           // Slice B: a session mid-move keeps its live PTY — the dispose comes from the source
@@ -4682,7 +4681,7 @@ app.whenReady().then(() => {
     stopUpdater();
     // T2: flush any pending scrollback so the last screenful survives a clean shutdown
     // (the debounce timer may not have fired yet).
-    for (const sessionId of scrollbackPersistTimers.keys()) flushScrollback(sessionId);
+    scrollbacks.flushPending();
     // Git indicator (Slice A): close every HEAD watcher + cancel pending refreshes so
     // no fs.watch handle keeps the main process alive past quit.
     gitDemand.stop();

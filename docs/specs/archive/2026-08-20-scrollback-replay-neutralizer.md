@@ -27,7 +27,8 @@ cursor-key mode, scroll regions, pending SGR. Mouse tracking is just the one tha
 ## Contract
 
 `REPLAY_MODE_NEUTRALIZER` (`src/scrollback-persistence.ts`) is a fixed DECRST/reset string,
-applied by `neutralizeReplay(data)` as a **suffix**:
+applied as a **suffix** to the replayed history (originally by `neutralizeReplay(data)`; now by
+`coldReplay(ring)`, see the Superseded note below):
 
 - Suffix, not prefix — it must win over whatever the replayed history set. A prefix would be
   overwritten by the very sequences it is meant to cancel.
@@ -40,6 +41,11 @@ applied by `neutralizeReplay(data)` as a **suffix**:
 - `?7h` is the only *set* in the sequence: autowrap is on by default, so restoring it is a
   reset in spirit.
 - Empty in → empty out. Nothing was replayed, so there is no history state to cancel.
+- **Amended 2026-10-11:** the resets are framed in `ESC7 … ESC8` (DECSC/DECRC), with the SGR
+  reset moved after the `ESC8`. xterm runs DECRC for `?1049l` even outside the alternate screen
+  and `ESC[r` homes the cursor, so unframed they sent the cursor to row 1: the relaunch marker
+  overwrote old history and ConPTY's spawn `ESC[2J` erased the dead session's last screen.
+  Pinned behaviourally by `test/unit/cold-replay-prelude.test.ts` (real headless xterm).
 
 ## Where it applies — cold path only
 
@@ -58,11 +64,24 @@ only where a fresh child is spawned underneath replayed history.
 The neutralizer is appended to the outbound `term:data` only; the in-memory ring keeps the raw
 restored bytes, so a later attach replay is unaffected.
 
+**Superseded 2026-10-11:** the ring now records the neutralizer (followed by a newline), the
+relaunch marker and the padding, at the point where the terminal was shown them. A ring that left
+them out replayed the next run's ConPTY spawn clear straight after the previous run, which erased
+that run's last screen one relaunch later. An attach replay still sees the dead child's modes
+cancelled at the point they were cancelled live, followed by the live child's own.
+Also as of that date: the neutralizer is followed by a newline, so the fit back to the pane never
+lands on a row holding history (xterm doesn't reflow the cursor's row); the `— restored —`
+marker is gone, because every ring segment opens with ConPTY's spawn clear, which erased it; the
+relaunch marker is written after every replay, marking each boundary between children; and every
+cold start replays (the in-memory ring within one app run, the file across runs), not just the
+first in an app run. The attach path now also replays run by run at each segment's size
+(`attachReplay`) — still with no neutralizer, newline, marker or pad.
+
 ## Tests
 
 - `test/unit/scrollback-neutralizer.test.ts` — the sequence carries a DECRST for every mouse
   protocol and encoding plus `1004/1049/2004/?1`, contains no private-mode *set* other than
-  `?7h`, orders `?1049l` before `ESC[r`/`ESC[m`, and `neutralizeReplay` appends rather than
+  `?7h`, orders `?1049l` before `ESC[r`/`ESC[m`, and the replay (originally `neutralizeReplay`, now `coldReplay`) appends rather than
   prepends.
 - `test/e2e/scrollback-mode-neutralize.e2e.mjs` — the runtime proof. Seeds a scrollback file
   containing `ESC[?1003h ESC[?1006h`, relaunches the session, then asserts against the real
