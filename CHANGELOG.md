@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.47.2] — 2026-10-11
+
 ### Fixed
 - **Making a terminal shorter and then taller no longer erases its history.** Shrinking a terminal
   (a smaller window, a taller panel beside it) and growing it back used to wipe out most of the
