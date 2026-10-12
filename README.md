@@ -6,9 +6,8 @@
 
 **An agent-agnostic, multi-agent terminal dashboard.**
 
-Launch, group, and control multiple CLI-agent sessions — Claude Code, Aider, or any
-command-line agent — in **real embedded terminals**, with a live git panel and
-per-project context at a glance.
+Run several CLI agents — Claude Code, Codex, Gemini, Aider, or any command-line tool — side by
+side in **real embedded terminals**, grouped by project, with git, review and an editor built in.
 
 <p>
   <a href="https://github.com/nima-karami/conduit/actions/workflows/verify.yml"><img alt="CI" src="https://github.com/nima-karami/conduit/actions/workflows/verify.yml/badge.svg" /></a>
@@ -20,148 +19,104 @@ per-project context at a glance.
 
 </div>
 
-> **Status:** early but functional, Windows-only for now (`v0.47.2`). **Conduit is also an
-> experiment in autonomous AI development — see [How this project is built](#how-this-project-is-built).**
+> **Status:** early but functional, Windows-only releases for now (`v0.47.2`). Conduit is also an
+> experiment in autonomous AI development — see [How this project is built](#how-this-project-is-built).
 
 ## Why
 
-Most agent tooling assumes one agent in one window. Conduit is built for the
-opposite: running several CLI agents at once, each in a **real terminal**, using
-**your own auth**, grouped by the project they belong to. There's no billing
-middleman and no chat-pane abstraction sitting on top of the terminal — just the
-actual agent CLIs, side by side, with the git status and `.claude` configuration
-for each project visible at a glance.
-
-## How this project is built
-
-Conduit is an experiment in **loop engineering**: the code is written, tested, and
-reviewed by AI agents running in autonomous build loops, not by a human. The human
-role here is direction, not implementation — filing bugs, making product calls,
-and approving releases. **The code itself is not human-reviewed.**
-
-What stands in for human review is process:
-
-- Every change passes a single gate (`npm run verify`): ~2,800 unit tests, lint,
-  typecheck, dead-code and duplication checks, dependency audit, SAST, and secret
-  scanning — in CI and in pre-commit.
-- Features and fixes are verified against the **real built app** (hidden
-  Playwright-Electron scenarios), and regression tests must fail against the
-  pre-fix build before they count.
-- Larger changes get an adversarial code review by an independent agent before merge.
-- The paper trail is public: specs in [`docs/specs/`](./docs/specs), decisions in
-  [`docs/adr/`](./docs/adr), and a per-run report in [`docs/runs/`](./docs/runs).
-
-Treat it accordingly: it's a working daily-driver app and an ongoing experiment at
-the same time. Bug reports are welcome — they are literally what the next loop
-run is fed.
+Most agent tooling assumes one agent in one window. Conduit runs the actual agent CLIs, each in a
+real terminal, using **your own auth** — no billing middleman, no chat pane on top of the terminal.
 
 ## Features
 
-- **Three-pane shell** — sessions sidebar + customization counts · center real
-  terminals · right-hand git **Changes / Search / Files**.
-- **Real embedded terminals** (xterm.js ↔ node-pty) running the actual agent CLI, with a
-  10k-line scrollback and a **Jump to latest** control that resumes following the newest
-  output when you have scrolled up to read.
-- **Multiple concurrent sessions**, kept mounted so switching never kills them.
-  Typing `exit` in a plain shell closes its session (warning first if it has open tabs).
-- **Multiple windows** — tear a session out into its own window and move live sessions
-  between windows with no PTY restart.
-- **Grouped by project folder**, with **launch / rename / kill / relaunch**.
-- **Agent registry** — define any CLI agent once, then launch it from a picker.
-- **Git, end to end** — live `Changes` panel (`git status` + `--numstat`), an in-app
-  **branch switcher**, a **commit-history graph**, and a stacked **review-all-changes**
-  view — plus **customization counts** (`.claude` agents / skills / instructions /
-  hooks / MCP) for the active project.
-- **Editor** — embedded Monaco with syntax highlighting for ~70 file types,
-  cross-file go-to-definition, breadcrumbs, a global find-in-files search, and clickable
-  terminal **path links** (including abbreviated `.../foo.ts` paths from agent output).
-- **Rich file viewers** — Markdown (math, Mermaid, alerts, TOC), images (zoom + diff),
-  PDFs, and a built-in web view.
-- **Explorer** — lazy file tree that shows build/dependency dirs, dims git-ignored
-  entries, and offers selectable file-icon packs (none / minimal / colored).
-- **Appearance** — themes, animated backgrounds, font + density controls, and
-  per-surface zoom.
-- **Status badges** — `running` / `exited` / `stale`. Sessions persist across
-  restarts (restored as `stale` with a one-click relaunch), with optional scrollback replay.
+- **Sessions** — many concurrent terminals (xterm.js ↔ node-pty), kept alive while you switch,
+  grouped by project, with a status pill (Busy / Idle / Review / Needs you / Stale). Sessions
+  persist across restarts with scrollback replay and one-click relaunch.
+- **Launchers** — `claude`, `codex`, `cursor-agent`, `gemini`, `aider` and `opencode` are found on
+  your PATH automatically, alongside the detected shells; save any command line as a custom launcher.
+- **Multi-folder sessions** — attach extra folders to a session (passed to claude as `--add-dir`);
+  Files, Search, Changes and Review cover all of them.
+- **Multiple windows** — tear a session out into its own window and move live sessions between
+  windows without restarting them.
+- **Git** — per-repo Changes panel, branch switcher, commit-history graph.
+- **Review** — every change in one stacked view: stage/unstage/discard per hunk, compare refs,
+  ignore whitespace, line notes you **Send to agent**.
+- **Editor** — Monaco with split view, auto save, quick open, find in files, breadcrumbs, and
+  clickable file paths in terminal output.
+- **Code navigation** — Go to Definition / Implementations / References for TypeScript/JavaScript
+  built in; Go, Python, Rust, C/C++ and C# via their language servers (see below).
+- **Viewers** — Markdown (math, Mermaid), HTML preview, images, PDFs, and an in-app web view.
+- **Interactive plans** — `.conduit/plans/*.md` opens as an editable document with live `ts` blocks
+  and Mermaid diagrams; comment on blocks and send them back to the agent.
+- **Timed messages** — send a message to a session on a timer, and optionally auto-resume after a
+  usage limit resets.
+- **Appearance** — three themes, animated backgrounds, font, density and file-icon-pack settings.
 
-## Getting started
+## Install
 
-Requires **Node 22 (≥22.22.2), 24 (≥24.15) or 26+**. `.tool-versions` pins the version for asdf/mise;
-an older Node fails the install in ways that don't name the cause.
+Download the Windows installer from [GitHub Releases](https://github.com/nima-karami/conduit/releases).
+The app updates itself from new releases.
 
-The git features need **git 2.25 or newer** on your PATH: Review's Stage all / Unstage all pass
-their file list with `--pathspec-from-file`, which older git doesn't have.
+Git features need **git 2.25+** on your PATH.
 
-```bash
-npm install
-npm start            # builds (main + preload + renderer) and launches the app
-```
+### Language servers (optional)
 
-The window opens to a start screen — click **New session** to pick one of the
-terminals detected on your machine; it spawns in your home directory.
+Install a server to enable code navigation for that language. Servers run project tools, so each
+folder asks for **Workspace Trust** first.
 
-### Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `npm start` | Build, then launch the Electron app |
-| `npm run build` | Bundle main, preload, and renderer via esbuild → `out/` |
-| `npm run watch` | Rebuild on change |
-| `npm run verify` | Full gate: format + lint + typecheck + tests + dup/dead-code + audit + SAST |
-| `npm run test:unit` | Vitest unit tests (pure logic) |
-| `npm run typecheck` | Type-check host + renderer (two tsconfigs) |
-| `npm run rebuild` | Rebuild `node-pty` against Electron's ABI (fallback; see below) |
-
-### Previewing the UI without launching the app
-
-```bash
-npm run build
-node tools/render-webview.mjs        # writes out/preview.html with mock data
-node tools/preview-server.mjs 5174   # serves out/ at http://127.0.0.1:5174/preview.html
-```
-
-The renderer falls back to a small fake shell when the host bridge is absent, so the
-full UI is visible in a plain browser.
+| Language | Install |
+|----------|---------|
+| Go | `go install golang.org/x/tools/gopls@latest` |
+| Python | `pip install basedpyright` |
+| Rust | `rustup component add rust-analyzer` |
+| C/C++ | `winget install LLVM.LLVM` (clangd) |
+| C# | `dotnet tool install --global csharp-ls` |
 
 ## Configuration
 
-The **New** menu lists the terminals/shells auto-detected on your machine
-(PowerShell, Git Bash, cmd, and WSL). New sessions open in your home directory.
+User config lives in `%APPDATA%\Conduit` (`%APPDATA%\Conduit (dev)` for `npm start` builds):
 
-Custom **agents** (Claude Code, Aider, …) are opt-in: add an `agents.json` — an array
-of agent definitions — in the app's user-data directory (`app.getPath('userData')`),
-and they'll appear in the New menu alongside the shells. Sessions persist to
-`sessions.json` in the same place.
+- `agents.json` — optional array of agent definitions; an entry that runs a detected CLI replaces
+  its auto-detected launcher.
+- `sessions.json` — persisted sessions.
 
 ```jsonc
 [
   { "id": "claude", "label": "Claude Code", "command": "claude", "args": [],
-    "icon": "sparkle", "color": "magenta", "cwdStrategy": "workspaceFolder" },
-  { "id": "aider", "label": "Aider", "command": "aider", "args": [],
-    "icon": "sparkle", "color": "cyan", "cwdStrategy": "workspaceFolder" }
+    "icon": "sparkle", "color": "magenta", "cwdStrategy": "workspaceFolder" }
 ]
 ```
 
-(Or simply type `claude` / `aider` inside any shell session.)
+## Development
 
-## Architecture
+Requires **Node 22 (≥22.22.2), 24 (≥24.15) or 26+** (`.tool-versions` pins it for asdf/mise).
 
-The **Electron main process** (`electron/main.ts`) owns all state through small,
-unit-tested modules (`AgentRegistry`, `SessionManager`, `Persistence`, `projectInfo`)
-plus `PtyHost`, which manages the node-pty processes keyed by session id. A **React
-renderer** (`webview/`) draws the dashboard and mirrors host state over a typed IPC
-protocol (exposed by `electron/preload.ts` via `contextBridge`); it holds no source of
-truth of its own.
+```bash
+npm install
+npm start               # build (esbuild → out/) and launch
+npm run watch           # rebuild on change
+npm run verify          # the gate: format, lint, dead code, typecheck, tests, security scans
+npm run e2e:remote      # Playwright-Electron scenarios on GitHub-hosted Windows runners
+```
 
-Durable decisions live in [`docs/adr/`](./docs/adr); the layout and lifecycle of the
-docs tree is itself a contract (see [`docs/adr/0003-docs-layout-and-lifecycle.md`](./docs/adr/0003-docs-layout-and-lifecycle.md)).
+The Electron main process owns all state; the React renderer (`webview/`) mirrors it over IPC and
+holds no source of truth. `node-pty` comes from `@lydell/node-pty` prebuilt binaries; `npm run
+rebuild` rebuilds it from source (needs Python + VS Build Tools).
 
-### Native module note
+## How this project is built
 
-`node-pty` is a native addon and must match Electron's ABI. To avoid requiring a C++
-toolchain, Conduit depends on **`@lydell/node-pty`** — a maintained fork that ships
-prebuilt binaries (including Electron ABIs). If you ever need to rebuild from source,
-install Python + VS Build Tools and run `npm run rebuild`.
+Conduit is an experiment in **loop engineering**: the code is written, tested and reviewed by AI
+agents in autonomous build loops. The human role is direction — filing bugs, making product calls,
+approving releases. **The code itself is not human-reviewed.** What stands in for review:
+
+- One gate (`npm run verify`) in pre-commit and CI: thousands of unit tests, lint, typecheck,
+  dead-code and duplication checks, dependency audit, SAST and secret scanning.
+- Changes are verified against the **real built app** with Playwright-Electron scenarios.
+- Larger changes get an adversarial review by an independent agent before merge.
+- The paper trail is public: specs in [`docs/specs/`](./docs/specs), decisions in
+  [`docs/adr/`](./docs/adr), per-run reports in [`docs/runs/`](./docs/runs).
+
+Bug reports are welcome — they are what the next loop run is fed.
 
 ## License
 
