@@ -23,6 +23,7 @@ import {
   assert,
   finishScenario,
   launchElectron,
+  logicalLines,
   makeLog,
   openSession,
   profileDir,
@@ -71,16 +72,6 @@ const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 
 const userDataDir = profileDir('sb');
-
-const readLines = (page, id) =>
-  page.evaluate((sessionId) => {
-    const t = window.__terms?.[sessionId];
-    if (!t) return null;
-    const b = t.buffer.active;
-    const lines = [];
-    for (let i = 0; i < b.length; i++) lines.push(b.getLine(i)?.translateToString(true) ?? '');
-    return lines;
-  }, id);
 
 let firstApp;
 let secondApp;
@@ -225,7 +216,7 @@ try {
     { timeout: 20000 },
   );
   await page2.waitForTimeout(1500);
-  const rendered = await readLines(page2, sid);
+  const rendered = await logicalLines(page2, sid);
   assert(rendered, 'Relaunched terminal was not exposed on window.__terms');
   log(
     `rendered buffer (last 60 lines):\n${rendered
@@ -270,7 +261,7 @@ try {
   );
   // The replay carries earlier banners too; give the new child time to print its own.
   await page2.waitForTimeout(3000);
-  const inRun = await readLines(page2, sid);
+  const inRun = await logicalLines(page2, sid);
   assert(inRun, 'Restarted terminal was not exposed on window.__terms');
   log(
     `in-run restart buffer (last 40 lines):\n${inRun
@@ -333,7 +324,7 @@ try {
     { timeout: 30000 },
   );
   await page3.waitForTimeout(1500);
-  const third = await readLines(page3, sid);
+  const third = await logicalLines(page3, sid);
   assert(third, 'Third-run terminal was not exposed on window.__terms');
   log(
     `third run buffer (last 80 lines):\n${third

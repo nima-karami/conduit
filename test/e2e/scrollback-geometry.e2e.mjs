@@ -18,6 +18,7 @@ import {
   assert,
   finishScenario,
   launchElectron,
+  logicalLines,
   makeLog,
   profileDir,
   REPO,
@@ -110,20 +111,9 @@ try {
   });
   await page.waitForTimeout(1500);
 
-  const buf = await page.evaluate((id) => {
-    const t = window.__terms?.[id];
-    if (!t) return null;
-    const b = t.buffer.active;
-    const lines = [];
-    for (let i = 0; i < b.length; i++) {
-      const line = b.getLine(i);
-      if (!line) continue;
-      const text = line.translateToString(true);
-      if (line.isWrapped && lines.length) lines[lines.length - 1] += text;
-      else lines.push(text);
-    }
-    return { cols: t.cols, lines };
-  }, SID);
+  const lines = await logicalLines(page, SID);
+  const cols = await page.evaluate((id) => window.__terms?.[id]?.cols, SID);
+  const buf = lines && { cols, lines };
 
   assert(buf, 'Relaunched terminal was not exposed on window.__terms');
   log(`pane is ${buf.cols} cols; recorded segments ${A.cols} and ${B.cols} cols`);

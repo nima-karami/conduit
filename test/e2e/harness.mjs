@@ -957,6 +957,80 @@ export function assertFontsHeldBack(hold, label) {
   );
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Terminal helpers — read the rendered xterm (`window.__terms`, opted into by the scenario)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The session's rendered buffer as logical lines: each soft-wrapped row joined back onto the row
+ * it continues, trailing blanks trimmed. Null when the scenario never exposed that terminal.
+ */
+export function logicalLines(page, sessionId) {
+  return page.evaluate((id) => {
+    const t = window.__terms?.[id];
+    if (!t) return null;
+    const b = t.buffer.active;
+    const out = [];
+    for (let i = 0; i < b.length; i++) {
+      const line = b.getLine(i);
+      if (!line) continue;
+      const text = line.translateToString(true);
+      if (line.isWrapped && out.length) out[out.length - 1] += text;
+      else out.push(text);
+    }
+    return out;
+  }, sessionId);
+}
+
+/** Type `text` and Enter into the session's PTY. */
+export function typeLine(page, sessionId, text) {
+  return page.evaluate(
+    ({ s, d }) => window.agentDeck.post({ type: 'term:input', sessionId: s, data: `${d}\r` }),
+    { s: sessionId, d: text },
+  );
+}
+
+/**
+ * Wait until `text` has streamed from the session more than `occurrences` times — 2 by default:
+ * a typed command echoes it, then the shell prints it. Needs `tapBridge`.
+ */
+export function waitForOutput(page, sessionId, text, occurrences = 2) {
+  return page.waitForFunction(
+    ({ s, t, n }) => (window.__capBy?.[s] ?? '').split(t).length > n,
+    { s: sessionId, t: text, n: occurrences },
+    { timeout: 30000 },
+  );
+}
+
+/**
+ * Ask the shell (cmd.exe) for the PTY's size with `mode con`, tagged by `probe`, and measure the
+ * xterm against its pane in the same tick. `pty` and `xterm` are both `<cols>x<rows>`.
+ */
+export async function probeTerminalSize(page, sessionId, probe) {
+  await typeLine(page, sessionId, `echo ${probe} & mode con | findstr "Lines Columns"`);
+  await waitForOutput(page, sessionId, probe);
+  await page.waitForFunction(
+    ({ s, p }) => /Columns:\s*\d+/.test((window.__capBy?.[s] ?? '').split(p).at(-1) ?? ''),
+    { s: sessionId, p: probe },
+    { timeout: 20000 },
+  );
+  return page.evaluate(
+    ({ s, p }) => {
+      const t = window.__terms?.[s];
+      const after = (window.__capBy?.[s] ?? '').split(p).at(-1) ?? '';
+      const screenH = t?.element?.querySelector('.xterm-screen')?.getBoundingClientRect().height;
+      return {
+        xterm: t ? `${t.cols}x${t.rows}` : 'none',
+        pty: `${/Columns:\s*(\d+)/.exec(after)?.[1]}x${/Lines:\s*(\d+)/.exec(after)?.[1]}`,
+        screenH: Math.round(screenH ?? -1),
+        paneH: Math.round(t?.element?.closest('.termpane')?.clientHeight ?? -1),
+        cellH: Math.round(((screenH ?? 0) / (t?.rows || 1)) * 100) / 100,
+      };
+    },
+    { s: sessionId, p: probe },
+  );
+}
+
 /**
  * Delete a folder the app has just picked up. Windows refuses the delete while any process has
  * the folder as its cwd — one of the app's ~50 ms one-shot git children, say — and `rmSync`'s

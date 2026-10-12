@@ -21,6 +21,7 @@ import {
   launchElectron,
   makeLog,
   openSession,
+  probeTerminalSize,
   profileDir,
   REPO,
   shutdownApp,
@@ -37,12 +38,6 @@ const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 const userDataDir = profileDir('tlf');
 const FONT_DELAY_MS = 3000;
-
-const typeLine = (page, id, data) =>
-  page.evaluate(
-    ({ s, d }) => window.agentDeck.post({ type: 'term:input', sessionId: s, data: `${d}\r` }),
-    { s: id, d: data },
-  );
 
 async function waitForFont(page) {
   await page.waitForTimeout(1000);
@@ -62,33 +57,7 @@ async function waitForFont(page) {
   await page.waitForTimeout(1500);
 }
 
-/** The xterm's grid and screen against its pane, and the PTY's size as the shell reports it. */
-async function measure(page, id, label) {
-  const probe = `FONT-PROBE-${label}`;
-  await typeLine(page, id, `echo ${probe} & mode con | findstr "Lines Columns"`);
-  await page.waitForFunction(
-    ({ s, p }) => /Columns:\s*\d+/.test((window.__capBy?.[s] ?? '').split(p).at(-1) ?? ''),
-    { s: id, p: probe },
-    { timeout: 20000 },
-  );
-  return page.evaluate(
-    ({ s, p }) => {
-      const t = window.__terms?.[s];
-      const after = (window.__capBy?.[s] ?? '').split(p).at(-1) ?? '';
-      const screen = t?.element?.querySelector('.xterm-screen');
-      const pane = t?.element?.closest('.termpane');
-      return {
-        xterm: t ? `${t.cols}x${t.rows}` : 'none',
-        pty: `${/Columns:\s*(\d+)/.exec(after)?.[1]}x${/Lines:\s*(\d+)/.exec(after)?.[1]}`,
-        screenH: Math.round(screen?.getBoundingClientRect().height ?? -1),
-        paneH: Math.round(pane?.clientHeight ?? -1),
-        cellH:
-          Math.round(((screen?.getBoundingClientRect().height ?? 0) / (t?.rows || 1)) * 100) / 100,
-      };
-    },
-    { s: id, p: probe },
-  );
-}
+const measure = (page, id, label) => probeTerminalSize(page, id, `FONT-PROBE-${label}`);
 
 let app;
 let page;

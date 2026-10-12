@@ -12,12 +12,15 @@ import {
   assert,
   finishScenario,
   launchElectron,
+  logicalLines,
   makeLog,
   openSession,
   profileDir,
   REPO,
   shutdownApp,
   tapBridge,
+  typeLine,
+  waitForOutput,
 } from './harness.mjs';
 
 if (process.platform !== 'win32') {
@@ -37,37 +40,7 @@ const RUN1 = Array.from({ length: 40 }, (_, i) => `RUN1-${i + 1}`);
 const RUN2 = Array.from({ length: 16 }, (_, i) => `RUN2-${i + 1}`);
 const EXPECTED = [...RUN1, ...RUN2];
 
-const logicalLines = (page, id) =>
-  page.evaluate((sessionId) => {
-    const t = window.__terms?.[sessionId];
-    if (!t) return null;
-    const b = t.buffer.active;
-    const out = [];
-    for (let i = 0; i < b.length; i++) {
-      const line = b.getLine(i);
-      if (!line) continue;
-      const text = line.translateToString(true);
-      if (line.isWrapped && out.length) out[out.length - 1] += text;
-      else out.push(text);
-    }
-    return out;
-  }, id);
-
 const rowsOf = (page, id) => page.evaluate((s) => window.__terms?.[s]?.rows ?? 0, id);
-
-const typeLine = (page, id, data) =>
-  page.evaluate(
-    ({ s, d }) => window.agentDeck.post({ type: 'term:input', sessionId: s, data: `${d}\r` }),
-    { s: id, d: data },
-  );
-
-// Twice: the typed command echoes the marker, then cmd prints it.
-const waitForOutput = (page, id, text, occurrences = 2) =>
-  page.waitForFunction(
-    ({ s, t, n }) => (window.__capBy?.[s] ?? '').split(t).length > n,
-    { s: id, t: text, n: occurrences },
-    { timeout: 30000 },
-  );
 
 const setContentHeight = (app, h) =>
   app.evaluate(
@@ -97,9 +70,7 @@ async function resizeToRows(app, page, id, rows, pxPerRow) {
 }
 
 const notOnce = (lines) =>
-  EXPECTED.map((l) => [l, (lines ?? []).filter((x) => x.trimEnd() === l).length]).filter(
-    ([, n]) => n !== 1,
-  );
+  EXPECTED.map((l) => [l, (lines ?? []).filter((x) => x === l).length]).filter(([, n]) => n !== 1);
 
 const dump = (label, lines) => log(`${label}:\n${lines.map((l) => `  | ${l}`).join('\n')}`);
 

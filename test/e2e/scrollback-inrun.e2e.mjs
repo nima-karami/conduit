@@ -22,12 +22,16 @@ import {
   finishScenario,
   holdBackWebFonts,
   launchElectron,
+  logicalLines,
   makeLog,
   openSession,
+  probeTerminalSize,
   profileDir,
   REPO,
   shutdownApp,
   tapBridge,
+  typeLine,
+  waitForOutput,
 } from './harness.mjs';
 
 if (process.platform !== 'win32') {
@@ -61,36 +65,6 @@ writeFileSync(
     },
   ]),
 );
-
-/** Buffer rows with soft-wrapped continuations joined back on. */
-const logicalLines = (page, id) =>
-  page.evaluate((sessionId) => {
-    const t = window.__terms?.[sessionId];
-    if (!t) return null;
-    const b = t.buffer.active;
-    const out = [];
-    for (let i = 0; i < b.length; i++) {
-      const line = b.getLine(i);
-      if (!line) continue;
-      const text = line.translateToString(true);
-      if (line.isWrapped && out.length) out[out.length - 1] += text;
-      else out.push(text);
-    }
-    return out;
-  }, id);
-
-const typeLine = (page, id, data) =>
-  page.evaluate(
-    ({ s, d }) => window.agentDeck.post({ type: 'term:input', sessionId: s, data: `${d}\r` }),
-    { s: id, d: data },
-  );
-
-const waitForOutput = (page, id, text, occurrences = 2) =>
-  page.waitForFunction(
-    ({ s, t, n }) => (window.__capBy?.[s] ?? '').split(t).length > n,
-    { s: id, t: text, n: occurrences },
-    { timeout: 30000 },
-  );
 
 const setContentSize = (app, w, h) =>
   app.evaluate(
@@ -269,28 +243,7 @@ try {
       `Reload ${round} changed the live screen with no resize: lost ${JSON.stringify(lost.slice(0, 8))}, gained ${JSON.stringify(added.slice(0, 8))}`,
     );
     const probe = `SIZE-PROBE-${round}`;
-    await typeLine(page, sid, `echo ${probe} & mode con | findstr "Lines Columns"`);
-    await waitForOutput(page, sid, probe);
-    await page.waitForFunction(
-      ({ s, p }) => /Columns:\s*\d+/.test((window.__capBy?.[s] ?? '').split(p).at(-1) ?? ''),
-      { s: sid, p: probe },
-      { timeout: 15000 },
-    );
-    const sizes = await page.evaluate(
-      ({ s, p }) => {
-        const after = (window.__capBy?.[s] ?? '').split(p).at(-1) ?? '';
-        const t = window.__terms?.[s];
-        return {
-          xterm: t ? `${t.cols}x${t.rows}` : 'none',
-          pty: `${/Columns:\s*(\d+)/.exec(after)?.[1]}x${/Lines:\s*(\d+)/.exec(after)?.[1]}`,
-          screenH: Math.round(
-            t?.element?.querySelector('.xterm-screen')?.getBoundingClientRect().height ?? -1,
-          ),
-          paneH: Math.round(t?.element?.closest('.termpane')?.clientHeight ?? -1),
-        };
-      },
-      { s: sid, p: probe },
-    );
+    const sizes = await probeTerminalSize(page, sid, probe);
     log(
       `reload ${round}: xterm ${sizes.xterm} (screen ${sizes.screenH}px in a ${sizes.paneH}px pane), PTY ${sizes.pty}`,
     );
