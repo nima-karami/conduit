@@ -33,7 +33,10 @@ export function windowsPtyInfo(
   };
 }
 
-/** What `PtyHost.start` spawns on right now; the renderer's xterm must be told the same. */
+/**
+ * What `PtyHost.start` spawns on right now; the renderer's xterm must be told the same. Preload
+ * reads it once per renderer load.
+ */
 export function currentWindowsPty(): WindowsPtyInfo | undefined {
   return windowsPtyInfo(process.platform, os.release(), isDebuggerAttached());
 }

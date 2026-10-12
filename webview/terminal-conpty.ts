@@ -17,7 +17,11 @@ export function windowsPtyOptions(
 interface ReplayTarget {
   resize(cols: number, rows: number): void;
   write(data: string, callback?: () => void): void;
+  options: Pick<ITerminalOptions, 'windowsPty'>;
 }
+
+/** The first ConPTY that leaves reflow to the terminal; xterm reflows only from it on. */
+const XTERM_REFLOW_BUILD = 21376;
 
 /**
  * Write a cold replay run by run, each at the size it was recorded at (a run without one at the
@@ -26,6 +30,11 @@ interface ReplayTarget {
  * it lands as recorded and xterm reflows it on the way back. Every size change rides the write
  * queue: xterm runs a write's callback before parsing the next write, so output queued before the
  * replay never sees a recorded size, and output queued after it sees only what `done` leaves.
+ *
+ * On an older ConPTY xterm leaves reflow to conhost, which takes no part in a replay, so the
+ * replay raises the build to one xterm reflows for and puts the real one back after `done`'s fit.
+ * The backend stays: without it a taller recorded run would pull history under ConPTY's repaint.
+ * xterm reads the option at each resize (Buffer.ts `_isReflowEnabled`, the rows-grow branch).
  */
 export function writeReplay(
   term: ReplayTarget,
@@ -34,6 +43,16 @@ export function writeReplay(
   fitToPane: () => void,
   done: () => void,
 ): void {
+  const real = term.options.windowsPty;
+  const raised =
+    real?.buildNumber !== undefined && real.buildNumber < XTERM_REFLOW_BUILD
+      ? { ...real, buildNumber: XTERM_REFLOW_BUILD }
+      : undefined;
+  if (raised) {
+    term.write('', () => {
+      term.options.windowsPty = raised;
+    });
+  }
   let at = 0;
   for (const run of runs) {
     const g = run.geometry;
@@ -41,7 +60,13 @@ export function writeReplay(
     term.write(data.slice(at, at + run.length));
     at += run.length;
   }
-  term.write(data.slice(at), done);
+  term.write(data.slice(at), () => {
+    try {
+      done();
+    } finally {
+      if (raised) term.options.windowsPty = real;
+    }
+  });
 }
 
 /** Whether the terminal now differs from the size last given to the host (none given counts). */

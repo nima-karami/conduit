@@ -49,6 +49,17 @@ const runs: ReplayRun[] = [
   { length: frameB.data.length, geometry: B },
 ];
 
+// Measured on cmd.exe over inbox ConPTY 22621: after a 30→12→30-row resize it repainted its
+// 12-row viewport from the home position and erased below, never scrolling history back down.
+const conptyGrowRepaint = (screen: string[]) =>
+  `\x1b[H${screen.map((l) => `${l}\x1b[K`).join('\r\n')}\x1b[J`;
+
+const LINES = Array.from({ length: 40 }, (_, i) => `RUN1-${i + 1}`);
+const notOnce = (lines: string[]) => LINES.filter((l) => lines.filter((x) => x === l).length !== 1);
+
+/** Win10 19045's ConPTY reflows the live screen itself, so xterm turns its own reflow off. */
+const OLD_CONPTY: WindowsPtyInfo = { backend: 'conpty', buildNumber: 19045 };
+
 function replay(term: Terminal, onFitToPane = () => {}): Promise<void> {
   return new Promise((resolve) =>
     writeReplay(term, replayData, runs, onFitToPane, () => {
@@ -110,6 +121,52 @@ describe('writeReplay', () => {
   });
 });
 
+describe('writeReplay on a ConPTY that reflows by itself', () => {
+  const oldConptyTerm = (g: TermGeometry) =>
+    new Terminal({ ...g, allowProposedApi: true, ...windowsPtyOptions(OLD_CONPTY) });
+
+  it('still keeps every row of a wider recording intact after the fit', async () => {
+    const term = oldConptyTerm(PANE);
+    await replay(term);
+    const lines = logicalLines(term);
+    for (const row of [...frameA.rows, ...frameB.rows]) expect(lines).toContain(row);
+    term.dispose();
+  });
+
+  it('puts the real windowsPty back once the replay has been fit', async () => {
+    const term = oldConptyTerm(PANE);
+    const real = term.options.windowsPty;
+    await replay(term);
+    expect(term.options.windowsPty).toBe(real);
+    term.dispose();
+  });
+
+  it('keeps ConPTY grow semantics for a taller recorded run', async () => {
+    const SHORT = { cols: 40, rows: 12 };
+    const TALL = { cols: 40, rows: 30 };
+    const history = `${LINES.join('\r\n')}\r\n`;
+    const repaint = conptyGrowRepaint([...LINES.slice(-11), '']);
+    const term = oldConptyTerm(SHORT);
+    await new Promise<void>((resolve) =>
+      writeReplay(
+        term,
+        history + repaint,
+        [
+          { length: history.length, geometry: SHORT },
+          { length: repaint.length, geometry: TALL },
+        ],
+        () => {},
+        () => {
+          term.resize(TALL.cols, TALL.rows);
+          resolve();
+        },
+      ),
+    );
+    expect(notOnce(logicalLines(term))).toEqual([]);
+    term.dispose();
+  });
+});
+
 describe('matchConhostCellWidths', () => {
   it.each([
     ['a check-mark emoji', '✅'],
@@ -145,17 +202,6 @@ describe('windowsPtyOptions', () => {
   it('sets nothing off Windows or without a host', () => {
     expect(windowsPtyOptions(undefined)).toEqual({});
   });
-
-  /**
-   * ConPTY keeps its viewport anchored at the top when the console grows and repaints it from
-   * the home position, the new rows below left blank. Measured on cmd.exe, ConPTY 22621.
-   */
-  const conptyGrowRepaint = (screen: string[]) =>
-    `\x1b[H${screen.map((l) => `${l}\x1b[K`).join('\r\n')}\x1b[J`;
-
-  const LINES = Array.from({ length: 40 }, (_, i) => `RUN1-${i + 1}`);
-  const notOnce = (lines: string[]) =>
-    LINES.filter((l) => lines.filter((x) => x === l).length !== 1);
 
   async function shrinkGrow(info: WindowsPtyInfo | undefined): Promise<string[]> {
     const term = new Terminal({
