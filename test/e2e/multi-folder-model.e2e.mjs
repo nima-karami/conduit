@@ -901,9 +901,12 @@ const PHASES = [
             `launch: the dim refusal line arrives (got ${JSON.stringify(await output(page, sid))})`,
           );
           await page.waitForTimeout(1500);
+          // A cold start replays the session's earlier output (which holds the first run's
+          // CLAUDE-ARGS) ahead of the refusal, so only what follows the refusal can be a spawn.
           const after = await output(page, sid);
           assert(
-            !after.includes('CLAUDE-ARGS'),
+            !after.slice(after.indexOf(line)).includes('CLAUDE-ARGS') &&
+              sessionIn(await state(), sid)?.status !== 'running',
             `launch: nothing spawned for a missing home (got ${JSON.stringify(after)})`,
           );
           log('launch: missing home → no spawn, refusal line');
