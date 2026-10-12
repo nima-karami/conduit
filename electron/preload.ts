@@ -5,7 +5,7 @@ import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { LspCallType, LspMessage, LspResult } from '../src/lsp-protocol';
 import type { WriteOptions, WriteResult } from '../src/path-guard';
-import type { HostToWebview, WebviewToHost } from '../src/protocol';
+import type { HostToWebview, WebviewToHost, WindowsPtyInfo } from '../src/protocol';
 import type { AppSettings } from '../src/settings';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 
@@ -20,6 +20,8 @@ const api = {
    * the wrong theme reaches the screen (see test/e2e/theme-first-paint.e2e.mjs).
    */
   initialSettings: ipcRenderer.sendSync('settings:initial') as AppSettings | undefined,
+  /** Synchronous for the same reason: a terminal is built with it, before its first byte. */
+  windowsPty: ipcRenderer.sendSync('pty:windowsPty') as WindowsPtyInfo | undefined,
   post(msg: WebviewToHost): void {
     ipcRenderer.send('to-host', msg);
   },

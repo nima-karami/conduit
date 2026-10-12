@@ -7,6 +7,10 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Fixed
+- **Making a terminal shorter and then taller no longer erases its history.** Shrinking a terminal
+  (a smaller window, a taller panel beside it) and growing it back used to wipe out most of the
+  output above the prompt — a 40-line run could lose 30 or more lines — and the gap came back the
+  same way after a restart. Every line now stays put, live and when the history is restored.
 - **Terminals no longer go black after a graphics driver hiccup.** When the GPU process restarted
   (a driver reset, or Windows recovering the display adapter), every terminal in the window kept only
   its cursor until the window was torn out or Conduit restarted. Terminals now switch to plain

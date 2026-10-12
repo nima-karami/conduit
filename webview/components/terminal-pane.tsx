@@ -6,7 +6,14 @@ import '@xterm/xterm/css/xterm.css';
 import type { PathCandidate } from '../../src/path-resolve';
 import type { TermGeometry } from '../../src/protocol';
 import { withTimeout } from '../../src/with-timeout';
-import { logToHost, openExternal, pathForDroppedFile, post, subscribe } from '../bridge';
+import {
+  logToHost,
+  openExternal,
+  pathForDroppedFile,
+  post,
+  subscribe,
+  windowsPty,
+} from '../bridge';
 import type { OpenMode } from '../docs';
 import { fontZoomTarget } from '../font-zoom';
 import { IconCopy, IconDoc, IconEraser, IconFolder, IconPaste, IconSearch } from '../icons';
@@ -16,7 +23,12 @@ import { buildTerminalMenuItems, type TerminalMenuAction } from '../term-menu';
 import { initialTermSearchState, termSearchReducer } from '../term-search';
 import { notifyTerminalBus, registerTerminal } from '../terminal-bus';
 import { terminalClipboardAction } from '../terminal-clipboard';
-import { matchConhostCellWidths, sizeDiffers, writeReplay } from '../terminal-conpty';
+import {
+  matchConhostCellWidths,
+  sizeDiffers,
+  windowsPtyOptions,
+  writeReplay,
+} from '../terminal-conpty';
 import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
 import { terminalGpu } from '../terminal-gpu';
 import {
@@ -217,6 +229,7 @@ export function TerminalPane({
         // re-applies foreground/ANSI colours on app-theme/font changes.
         theme: buildXtermTheme(),
         allowProposedApi: true,
+        ...windowsPtyOptions(windowsPty),
         // Transparent so the container surface and animated app backdrop show through.
         allowTransparency: true,
         // OSC 8 hyperlinks — what Claude Code and most modern CLIs emit — are matched by

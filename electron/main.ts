@@ -143,7 +143,7 @@ import type {
   TermGeometry,
   WebviewToHost,
 } from '../src/protocol';
-import { PtyHost } from '../src/pty-host';
+import { currentWindowsPty, PtyHost } from '../src/pty-host';
 import { summarizeQueue } from '../src/queue-summary';
 import { busySessions, runningSessions } from '../src/quit-guard';
 import { resolveRangePreset } from '../src/range-preset';
@@ -4636,6 +4636,9 @@ app.whenReady().then(() => {
   // no preload can ever outrun it.
   ipcMain.on('settings:initial', (e) => {
     e.returnValue = settings;
+  });
+  ipcMain.on('pty:windowsPty', (e) => {
+    e.returnValue = currentWindowsPty();
   });
 
   // before-quit fires again for every app.quit() inside one quit (window-all-closed re-quits);

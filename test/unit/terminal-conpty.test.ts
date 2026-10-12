@@ -1,7 +1,12 @@
 import { Terminal } from '@xterm/headless';
 import { describe, expect, it } from 'vitest';
-import type { ReplayRun, TermGeometry } from '../../src/protocol';
-import { matchConhostCellWidths, sizeDiffers, writeReplay } from '../../webview/terminal-conpty';
+import type { ReplayRun, TermGeometry, WindowsPtyInfo } from '../../src/protocol';
+import {
+  matchConhostCellWidths,
+  sizeDiffers,
+  windowsPtyOptions,
+  writeReplay,
+} from '../../webview/terminal-conpty';
 
 const write = (term: Terminal, data: string) =>
   new Promise<void>((resolve) => term.write(data, resolve));
@@ -124,5 +129,55 @@ describe('sizeDiffers', () => {
     expect(sizeDiffers({ cols: 46, rows: 36 }, { cols: 46, rows: 32 })).toBe(true);
     expect(sizeDiffers({ cols: 45, rows: 32 }, { cols: 46, rows: 32 })).toBe(true);
     expect(sizeDiffers({ cols: 46, rows: 32 }, { cols: 46, rows: 32 })).toBe(false);
+  });
+});
+
+describe('windowsPtyOptions', () => {
+  it("passes the host's pseudoconsole through as xterm's windowsPty", () => {
+    expect(windowsPtyOptions({ backend: 'conpty', buildNumber: 22621 })).toEqual({
+      windowsPty: { backend: 'conpty', buildNumber: 22621 },
+    });
+    expect(windowsPtyOptions({ backend: 'winpty', buildNumber: 19045 })).toEqual({
+      windowsPty: { backend: 'winpty', buildNumber: 19045 },
+    });
+  });
+
+  it('sets nothing off Windows or without a host', () => {
+    expect(windowsPtyOptions(undefined)).toEqual({});
+  });
+
+  /**
+   * ConPTY keeps its viewport anchored at the top when the console grows and repaints it from
+   * the home position, the new rows below left blank. Measured on cmd.exe, ConPTY 22621.
+   */
+  const conptyGrowRepaint = (screen: string[]) =>
+    `\x1b[H${screen.map((l) => `${l}\x1b[K`).join('\r\n')}\x1b[J`;
+
+  const LINES = Array.from({ length: 40 }, (_, i) => `RUN1-${i + 1}`);
+  const notOnce = (lines: string[]) =>
+    LINES.filter((l) => lines.filter((x) => x === l).length !== 1);
+
+  async function shrinkGrow(info: WindowsPtyInfo | undefined): Promise<string[]> {
+    const term = new Terminal({
+      cols: 40,
+      rows: 30,
+      allowProposedApi: true,
+      ...windowsPtyOptions(info),
+    });
+    await write(term, `${LINES.join('\r\n')}\r\n`);
+    term.resize(40, 12);
+    term.resize(40, 30);
+    await write(term, conptyGrowRepaint([...LINES.slice(-11), '']));
+    const lines = logicalLines(term);
+    term.dispose();
+    return lines;
+  }
+
+  it('keeps every line exactly once across a ConPTY shrink and grow', async () => {
+    expect(notOnce(await shrinkGrow({ backend: 'conpty', buildNumber: 22621 }))).toEqual([]);
+  });
+
+  it('is needed: without it the grow pulls history under the repaint', async () => {
+    expect(notOnce(await shrinkGrow(undefined))).not.toEqual([]);
   });
 });

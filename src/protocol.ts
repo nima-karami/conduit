@@ -38,6 +38,12 @@ export interface ReplayRun {
   geometry?: TermGeometry;
 }
 
+/** The Windows pseudoconsole this host spawns its PTYs on; absent off Windows. */
+export interface WindowsPtyInfo {
+  backend: 'conpty' | 'winpty';
+  buildNumber: number;
+}
+
 /**
  * A persisted editor tab, round-tripped renderer → host → docs.json → renderer to restore the
  * open tabs across a restart (gated by the `restoreSessions` setting). Every deterministically-

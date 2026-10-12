@@ -17,7 +17,7 @@ import {
   type PipelineConfig,
   type PipelineQueue,
 } from '../src/pipeline';
-import type { DirEntryDTO, HostToWebview, WebviewToHost } from '../src/protocol';
+import type { DirEntryDTO, HostToWebview, WebviewToHost, WindowsPtyInfo } from '../src/protocol';
 import { summarizeQueue } from '../src/queue-summary';
 import { repoBaseName } from '../src/repo-display';
 import { applyNotePatch, type ReviewNote } from '../src/review-notes';
@@ -56,6 +56,7 @@ export interface WinControls {
 interface HostBridge {
   /** Persisted settings, available synchronously at boot (see electron/preload.ts). */
   initialSettings?: AppSettings;
+  windowsPty?: WindowsPtyInfo;
   post(msg: WebviewToHost): void;
   subscribe(cb: (msg: HostToWebview) => void): () => void;
   win: WinControls;
@@ -118,6 +119,9 @@ export const win: WinControls | undefined = host?.win;
  * host to ask, so it starts on the defaults — the same set its mock state reports.
  */
 export const initialSettings: AppSettings = host?.initialSettings ?? DEFAULT_SETTINGS;
+
+/** The host's Windows pseudoconsole; the preview's fake shell has none. */
+export const windowsPty: WindowsPtyInfo | undefined = host?.windowsPty;
 
 if (host) host.subscribe((msg) => emit(msg));
 

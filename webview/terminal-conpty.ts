@@ -1,5 +1,17 @@
 import { Unicode11Addon } from '@xterm/addon-unicode11';
-import type { ReplayRun, TermGeometry } from '../src/protocol';
+import type { ITerminalOptions } from '@xterm/xterm';
+import type { ReplayRun, TermGeometry, WindowsPtyInfo } from '../src/protocol';
+
+/**
+ * xterm's buffer follows the pseudoconsole's resize semantics only when told which one it is:
+ * otherwise a taller pane pulls history into the viewport, and ConPTY's top-anchored repaint
+ * overwrites it. Construction-time, because a cold replay resizes before any live output.
+ */
+export function windowsPtyOptions(
+  info: WindowsPtyInfo | undefined,
+): Pick<ITerminalOptions, 'windowsPty'> {
+  return info ? { windowsPty: { backend: info.backend, buildNumber: info.buildNumber } } : {};
+}
 
 // Structural, so the real terminal and the headless one in tests both fit.
 interface ReplayTarget {

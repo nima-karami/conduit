@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import * as pty from '@lydell/node-pty';
 import type { AgentRegistry } from './agent-registry';
 import { lastNonEmptyLine, lastNonEmptyLines } from './last-line';
-import type { HostToWebview, TermGeometry } from './protocol';
+import type { HostToWebview, TermGeometry, WindowsPtyInfo } from './protocol';
 import { appendScrollback } from './scrollback-persistence';
 import type { SpawnSpec } from './types';
 
@@ -19,6 +19,23 @@ function isDebuggerAttached(): boolean {
   } catch {
     return false;
   }
+}
+
+export function windowsPtyInfo(
+  platform: NodeJS.Platform,
+  release: string,
+  debuggerAttached: boolean,
+): WindowsPtyInfo | undefined {
+  if (platform !== 'win32') return undefined;
+  return {
+    backend: debuggerAttached ? 'winpty' : 'conpty',
+    buildNumber: Number(release.split('.')[2]),
+  };
+}
+
+/** What `PtyHost.start` spawns on right now; the renderer's xterm must be told the same. */
+export function currentWindowsPty(): WindowsPtyInfo | undefined {
+  return windowsPtyInfo(process.platform, os.release(), isDebuggerAttached());
 }
 
 // Prefixes that identify editor-injected environment variables.
@@ -101,10 +118,9 @@ export class PtyHost {
     this.tails.delete(sessionId);
     this.lastLines.delete(sessionId);
     const cwd = spec.cwd || os.homedir();
-    // ConPTY hangs under the debugger on Windows (node-pty#640) — use winpty then.
-    const useConpty = !(process.platform === 'win32' && isDebuggerAttached());
+    const windowsPty = currentWindowsPty();
     this.log(
-      `spawn "${spec.command}" ${JSON.stringify(spec.args)} in ${cwd} (${cols}x${rows}) useConpty=${useConpty}`,
+      `spawn "${spec.command}" ${JSON.stringify(spec.args)} in ${cwd} (${cols}x${rows}) pty=${windowsPty?.backend ?? 'unix'}`,
     );
     let proc: pty.IPty;
     const size: TermGeometry = { cols: cols || 80, rows: rows || 24 };
@@ -115,7 +131,7 @@ export class PtyHost {
         cwd,
         env: { ...sanitizeChildEnv(process.env), ...spec.env },
       };
-      if (process.platform === 'win32') opts.useConpty = useConpty;
+      if (windowsPty) opts.useConpty = windowsPty.backend === 'conpty';
       proc = pty.spawn(spec.command, spec.args, opts as pty.IPtyForkOptions);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
