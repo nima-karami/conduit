@@ -84,7 +84,7 @@ Three ideas, layered. Each stands alone; together they are the recommendation.
    **host-wide** cap of 4, results fan out to every subscribing session. For each tracked linked
    worktree the host watches its git-dir `index` + `HEAD` and the main repo's `refs/heads` (one
    shared watch per main `.git`, no 16 cap).
-   **Per-repo cooldown:** while writes keep arriving, a repo refreshes at most once per 1 s, with
+   **Per-repo cooldown:** while writes keep arriving, a repo refreshes at most once per 800 ms (§13), with
    a guaranteed trailing refresh after its last write — so continuous agent writes cost
    O(active repos), not O(bursts). **Background subscribers:** every snapshot lands in the
    tracker's cache for all sessions containing that repo, visible or not; a background session
@@ -191,7 +191,7 @@ any repo → `missing` (folder vanished) → `detected` on reappearance; refresh
 | Decision | Default | Configurable? | Rationale |
 |---|---|---|---|
 | Engine (dirty-repo refresh, shared tracker) | on | no | Pure efficiency, no behaviour to prefer |
-| Per-repo refresh cooldown under continuous writes | 1 s + trailing refresh | no | Bounds git to active repos; < 1 s staleness |
+| Per-repo refresh cooldown under continuous writes | 800 ms + trailing refresh | no | Bounds git to active repos; p95 staleness < 1 s (a 1 s cooldown measured 1,040 ms, §13) |
 | Snapshots for background sessions | cached, no git of their own | no | Instant, correct view on switch |
 | Repo count limit | **keep `REPO_SCAN_CAP` = 200** and depth 4 as today | no | User, 2026-10-16: don't raise it until a stress test proves the engine performs at 200; the S0/S-final stress lane includes a 200-repo scenario |
 | Worktree git-dir watching | on for tracked worktrees | no | Fixes stale ticket sessions |
@@ -333,7 +333,10 @@ themes (Default, Paper, Neon) checked via `npm run shots`.
 - **Decided (user, 2026-10-16):** shared engine first; tracked set parked pending S0 after MVP.
   The two former `high` items (what happens past the threshold; auto-resume on activity) are
   parked with it.
-- **[normal]** Cooldown length: 1 s (spec) vs 0.5 s (fresher, ~2× git) vs 2 s (cheaper).
+- **Decided (conductor, 2026-10-16, after S2 stress):** cooldown 800 ms, not 1 s. Under
+  continuous writes lag ≈ U(0, cooldown) + status time, so a 1 s cooldown puts p95 at
+  ~1,040 ms (measured 1,039 / 1,047) and can never meet the §7 1 s AC. Lowering the cooldown
+  keeps the AC; the cost is ~25 % more status on *written* repos only (unwritten repos cost 0).
 - **[normal]** Parent sessions and ticket folders: show worktrees inside a folder that is another
   session's home as normal repos (spec MVP) vs collapse them into a ticket group (vision).
 - **[normal]** Search default in a non-git root: Tracked repos (spec) vs Everything.
