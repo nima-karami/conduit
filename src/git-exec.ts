@@ -19,6 +19,16 @@ export interface GitResult {
   truncated: boolean; // output exceeded maxBuffer
 }
 
+export type GitFailure = 'timeout' | 'not-found' | 'failed';
+
+/** undefined when r.ok. */
+export function gitFailureOf(r: GitResult): GitFailure | undefined {
+  if (r.ok) return undefined;
+  if (r.timedOut) return 'timeout';
+  if (r.notFound) return 'not-found';
+  return 'failed';
+}
+
 export interface GitOpts {
   cwd: string;
   timeoutMs?: number;

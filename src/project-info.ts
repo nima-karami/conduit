@@ -1,7 +1,14 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { GIT_TIMEOUT, mapWithConcurrency, runGit } from './git-exec';
+import {
+  GIT_TIMEOUT,
+  type GitFailure,
+  type GitResult,
+  gitFailureOf,
+  mapWithConcurrency,
+  runGit,
+} from './git-exec';
 import { parseNumstatZ } from './git-history';
 import { IGNORED_DIRS } from './ignore-dirs';
 import type { ChangeDTO, ChangeKind, CustomizationCount, FileNodeDTO } from './protocol';
@@ -19,7 +26,7 @@ async function deletedFileLines(cwd: string, file: string): Promise<number> {
   if (activeHeadReads < HEAD_CONCURRENCY) activeHeadReads++;
   else await new Promise<void>((resolve) => waitingHeadReads.push(resolve));
   try {
-    return countLines(await run('git', ['show', `HEAD:${file}`], cwd));
+    return countLines((await run('git', ['show', `HEAD:${file}`], cwd)).stdout);
   } finally {
     const next = waitingHeadReads.shift();
     if (next) next();
@@ -28,11 +35,9 @@ async function deletedFileLines(cwd: string, file: string): Promise<number> {
 }
 
 // All callers pass 'git'; the arg array is what matters. Bounded via the shared runner so a wedged
-// git (index.lock, stalled FS) yields '' like any other failure instead of hanging the Changes load.
-function run(_cmd: string, args: string[], cwd: string): Promise<string> {
-  return runGit(args, { cwd, timeoutMs: GIT_TIMEOUT.diff, maxBuffer: 8 * 1024 * 1024 }).then(
-    (r) => r.stdout,
-  );
+// git (index.lock, stalled FS) fails like any other failure instead of hanging the Changes load.
+function run(_cmd: string, args: string[], cwd: string): Promise<GitResult> {
+  return runGit(args, { cwd, timeoutMs: GIT_TIMEOUT.diff, maxBuffer: 8 * 1024 * 1024 });
 }
 
 /** Map a single porcelain status code (one side, X or Y) to a ChangeKind. */
@@ -149,11 +154,28 @@ export function resolveLineCounts(
   }
 }
 
+export type RepoRead =
+  | { ok: true; changes: ChangeDTO[]; trackedDirty: boolean }
+  | { ok: false; reason: GitFailure };
+
+/** Today's tolerant shape for the callers that predate {@link readRepoChanges}. */
 export async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
+  const r = await readRepoChanges(cwd, { lines: true });
+  return r.ok ? r.changes : [];
+}
+
+/** One `status --porcelain -z --untracked-files=all`; with `lines:false` it is the only git
+ *  process and added/removed stay 0. See docs/specs/2026-10-16-multi-repo-tracking.md §3. */
+export async function readRepoChanges(cwd: string, opts: { lines: boolean }): Promise<RepoRead> {
   // --untracked-files=all expands a new untracked directory into its individual files;
   // the default collapses them to a single `dir/` entry (only the folder shows up).
-  const status = await run('git', ['status', '--porcelain', '-z', '--untracked-files=all'], cwd);
-  if (!status) return [];
+  const statusRun = await run('git', ['status', '--porcelain', '-z', '--untracked-files=all'], cwd);
+  const failure = gitFailureOf(statusRun);
+  if (failure) return { ok: false, reason: failure };
+  const rawEntries = parseStatusZ(statusRun.stdout);
+  // Same meaning as GitInfo.dirty (non-empty porcelain with --untracked-files=no).
+  const trackedDirty = rawEntries.some(({ x, y }) => !(x === '?' && y === '?'));
+  if (!opts.lines) return { ok: true, changes: changesFrom(rawEntries), trackedDirty };
 
   // Two numstat passes: staged side (index vs HEAD, --cached) and unstaged side
   // (worktree vs index). Newly-added staged files, deleted files, and untracked
@@ -163,10 +185,8 @@ export async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
     run('git', ['diff', '--numstat', '-z', '--cached'], cwd),
     run('git', ['diff', '--numstat', '-z'], cwd),
   ]);
-  const stagedStats = parseNumstatZ(stagedOut);
-  const unstagedStats = parseNumstatZ(unstagedOut);
-
-  const rawEntries = parseStatusZ(status);
+  const stagedStats = parseNumstatZ(stagedOut.stdout);
+  const unstagedStats = parseNumstatZ(unstagedOut.stdout);
 
   // Identify files that need HEAD content (deleted) or working-tree content
   // (added staged or untracked). Batch all fetches in parallel.
@@ -194,20 +214,22 @@ export async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
   // bounded blob-read fallback.
   const deletedStats = needsHead.size
     ? parseNumstatZ(
-        await run(
-          'git',
-          [
-            'diff',
-            '--numstat',
-            '-z',
-            '--no-renames',
-            '--no-ext-diff',
-            '--no-textconv',
-            '--diff-filter=D',
-            'HEAD',
-          ],
-          cwd,
-        ),
+        (
+          await run(
+            'git',
+            [
+              'diff',
+              '--numstat',
+              '-z',
+              '--no-renames',
+              '--no-ext-diff',
+              '--no-textconv',
+              '--diff-filter=D',
+              'HEAD',
+            ],
+            cwd,
+          )
+        ).stdout,
       )
     : new Map<string, { added: number; removed: number }>();
   const headLineCounts = new Map<string, number>();
@@ -226,10 +248,42 @@ export async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
     fileLineCounts.set(p, counts[i].lines);
   });
 
-  /** Porcelain marks a conflict with `U` on either side, or with `AA` / `DD`. */
-  const isConflicted = (x: string, y: string): boolean =>
-    x === 'U' || y === 'U' || (x === 'A' && y === 'A') || (x === 'D' && y === 'D');
+  return {
+    ok: true,
+    changes: changesFrom(rawEntries, {
+      stagedStats,
+      unstagedStats,
+      headLineCounts,
+      fileLineCounts,
+    }),
+    trackedDirty,
+  };
+}
 
+type LineStats = Map<string, { added: number; removed: number }>;
+
+interface LineSources {
+  stagedStats: LineStats;
+  unstagedStats: LineStats;
+  headLineCounts: Map<string, number>;
+  fileLineCounts: Map<string, number>;
+}
+
+const NO_LINES: LineSources = {
+  stagedStats: new Map(),
+  unstagedStats: new Map(),
+  headLineCounts: new Map(),
+  fileLineCounts: new Map(),
+};
+
+/** Porcelain marks a conflict with `U` on either side, or with `AA` / `DD`. */
+const isConflicted = (x: string, y: string): boolean =>
+  x === 'U' || y === 'U' || (x === 'A' && y === 'A') || (x === 'D' && y === 'D');
+
+function changesFrom(
+  rawEntries: StatusEntry[],
+  { stagedStats, unstagedStats, headLineCounts, fileLineCounts }: LineSources = NO_LINES,
+): ChangeDTO[] {
   const changes: ChangeDTO[] = [];
   // Emit one ChangeDTO for a single side (staged or unstaged) of an entry, when
   // its status code is a real change. Shared by both sides to avoid duplication.

@@ -2,10 +2,12 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { runGitBin } from '../../src/git-exec';
 import {
   __resetGitAvailableForTest,
   getGitInfo,
+  interrogateGit,
   isDirty,
   listBranches,
   listRefs,
@@ -13,6 +15,11 @@ import {
   parseRemoteList,
   switchBranch,
 } from '../../src/git-info';
+
+vi.mock('../../src/git-exec', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/git-exec')>();
+  return { ...original, runGitBin: vi.fn(original.runGitBin) };
+});
 
 /**
  * Host integration test for getGitInfo. Each case seeds a throwaway git repo in the
@@ -159,6 +166,36 @@ d(
       expect(info.branch).toBe('feature');
       expect(info.isWorktree).toBe(true);
       expect(info.worktreeName).toBe(path.basename(wt));
+    });
+
+    it('linked worktree interrogation returns its own gitDir and the main commonDir', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      git(root, ['branch', 'feature']);
+      const wt = path.join(root, '..', `wt-${path.basename(root)}-dirs`);
+      git(root, ['worktree', 'add', wt, 'feature']);
+      tmps.push(wt);
+      const r = await interrogateGit(wt);
+      expect(r.gitDir?.endsWith(`/.git/worktrees/${path.basename(wt)}`)).toBe(true);
+      expect(r.commonDir?.endsWith('/.git')).toBe(true);
+      expect(r.gitDir).not.toContain('\\');
+      expect(r.commonDir).not.toContain('\\');
+      const main = await interrogateGit(root);
+      expect(main.gitDir).toBe(main.commonDir);
+      expect(main.commonDir).toBe(r.commonDir);
+    });
+
+    it('skipDirty omits the dirty status call', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      fs.writeFileSync(path.join(root, 'a.txt'), 'changed\n');
+      vi.mocked(runGitBin).mockClear();
+      const r = await interrogateGit(root, { skipDirty: true });
+      expect(r.info.kind).toBe('branch');
+      expect(r.info.dirty).toBeUndefined();
+      expect(vi.mocked(runGitBin).mock.calls.some(([, args]) => args[0] === 'status')).toBe(false);
     });
 
     it('does not flag the main working tree as a worktree', async () => {

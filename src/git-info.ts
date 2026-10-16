@@ -23,6 +23,8 @@ import type { GitInfo, GitOperation } from './types';
 const DEFAULT_TIMEOUT_MS = 1500;
 const MAX_BUFFER = 1024 * 1024;
 
+const slash = (p: string): string => p.replace(/\\/g, '/');
+
 /** Process-level latch: once git is confirmed missing, stop trying to spawn it. */
 let gitAvailable = true;
 
@@ -38,6 +40,9 @@ interface GitInfoOptions {
   gitBin?: string;
   /** Host log sink for swallowed errors (defaults to console.error). */
   log?: (msg: string) => void;
+  /** The repo tracker derives dirty from its own status run; see
+   *  docs/plans/2026-10-16-multi-repo-tracking.plan.md (Contracts, git-info). */
+  skipDirty?: boolean;
 }
 
 type RunResult = { ok: true; stdout: string } | { ok: false; notFound: boolean };
@@ -135,6 +140,9 @@ export interface GitInterrogation {
    * when cwd is not a repo / git is unavailable. Watched for an external checkout that
    * doesn't move cwd. */
   headPath?: string;
+  /** Absolute, forward-slashed. Present when rev-parse answered. */
+  gitDir?: string;
+  commonDir?: string;
 }
 
 /**
@@ -188,8 +196,12 @@ export async function interrogateGit(
   // HEAD lives in the per-worktree git-dir (not the shared common dir), so a linked
   // worktree watches its own HEAD.
   const headPath = gitDir ? path.join(gitDir, 'HEAD') : undefined;
+  const dirs = {
+    ...(gitDir ? { gitDir: slash(gitDir) } : {}),
+    ...(gitCommon ? { commonDir: slash(gitCommon) } : {}),
+  };
 
-  if (isBare === 'true') return { info: makeGitInfo({ kind: 'bare' }), headPath };
+  if (isBare === 'true') return { info: makeGitInfo({ kind: 'bare' }), headPath, ...dirs };
 
   // Work-tree top-level (for the worktree label) — safe now that bare is ruled out.
   const top = await runGit(gitBin, ['rev-parse', '--show-toplevel'], cwd, timeoutMs);
@@ -219,7 +231,7 @@ export async function interrogateGit(
       unborn = true;
     } else {
       log(`[git-info] HEAD unresolved and no unborn symref for ${cwd}`);
-      return { info: { kind: 'none' }, headPath };
+      return { info: { kind: 'none' }, headPath, ...dirs };
     }
   } else {
     const name = abbrev.stdout.trim();
@@ -236,7 +248,7 @@ export async function interrogateGit(
   // Dirty is the single optionally-slow call and the first thing dropped under the
   // timeout. An unborn HEAD has no index baseline; skip it (dot hidden) to stay cheap.
   let dirty: boolean | undefined;
-  if (!unborn) {
+  if (!unborn && !opts.skipDirty) {
     const status = await runGit(
       gitBin,
       ['status', '--porcelain', '--untracked-files=no', '-z'],
@@ -260,6 +272,7 @@ export async function interrogateGit(
       operation,
     }),
     headPath,
+    ...dirs,
   };
 }
 

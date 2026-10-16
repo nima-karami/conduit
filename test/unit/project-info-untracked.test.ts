@@ -2,8 +2,14 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { getProjectInfo, gitChanges } from '../../src/project-info';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { runGit } from '../../src/git-exec';
+import { getProjectInfo, gitChanges, readRepoChanges } from '../../src/project-info';
+
+vi.mock('../../src/git-exec', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/git-exec')>();
+  return { ...original, runGit: vi.fn(original.runGit) };
+});
 
 // Regression: a brand-new untracked folder must surface each file inside it as its
 // own change, not collapse to a single `folder/` entry (git's default porcelain
@@ -82,4 +88,71 @@ it('preserves HEAD deletion counts after staged edits and staged deletions with 
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
+});
+
+describe('readRepoChanges', () => {
+  let repo: string;
+  const git = (...args: string[]) =>
+    execFileSync('git', args, {
+      cwd: repo,
+      windowsHide: true,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+    });
+
+  beforeEach(() => {
+    repo = fs.mkdtempSync(path.join(os.tmpdir(), 'conduit-readrepo-'));
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    git('config', 'core.autocrlf', 'false');
+    fs.writeFileSync(path.join(repo, 'seed.txt'), 'seed\n');
+    git('add', '.');
+    git('commit', '-qm', 'seed');
+    return () => fs.rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('lines:false runs exactly one git process and leaves added/removed 0', async () => {
+    fs.writeFileSync(path.join(repo, 'new.txt'), 'a\nb\nc\n');
+    fs.writeFileSync(path.join(repo, 'seed.txt'), 'seed\nmore\n');
+    vi.mocked(runGit).mockClear();
+    const r = await readRepoChanges(repo, { lines: false });
+    expect(vi.mocked(runGit)).toHaveBeenCalledTimes(1);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.changes.map((c) => [c.path, c.kind]).sort()).toEqual([
+      ['new.txt', 'U'],
+      ['seed.txt', 'M'],
+    ]);
+    expect(r.changes.every((c) => c.added === 0 && c.removed === 0)).toBe(true);
+  });
+
+  it('lines:true keeps the line counts', async () => {
+    fs.writeFileSync(path.join(repo, 'new.txt'), 'a\nb\nc\n');
+    const r = await readRepoChanges(repo, { lines: true });
+    expect(r.ok && r.changes.find((c) => c.path === 'new.txt')?.added).toBe(3);
+  });
+
+  it('status failure surfaces a reason', async () => {
+    const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'conduit-norepo-'));
+    // Stops discovery from finding a repo above the OS temp dir.
+    process.env.GIT_CEILING_DIRECTORIES = path.dirname(plain);
+    try {
+      expect(await readRepoChanges(plain, { lines: false })).toEqual({
+        ok: false,
+        reason: 'failed',
+      });
+    } finally {
+      delete process.env.GIT_CEILING_DIRECTORIES;
+      fs.rmSync(plain, { recursive: true, force: true });
+    }
+  });
+
+  it('trackedDirty ignores untracked-only', async () => {
+    fs.writeFileSync(path.join(repo, 'new.txt'), 'x\n');
+    const untrackedOnly = await readRepoChanges(repo, { lines: false });
+    expect(untrackedOnly.ok && untrackedOnly.trackedDirty).toBe(false);
+    fs.writeFileSync(path.join(repo, 'seed.txt'), 'changed\n');
+    const modified = await readRepoChanges(repo, { lines: false });
+    expect(modified.ok && modified.trackedDirty).toBe(true);
+  });
 });

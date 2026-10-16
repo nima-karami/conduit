@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { GIT_TIMEOUT, mapWithConcurrency, runGitBin } from '../../src/git-exec';
+import {
+  GIT_TIMEOUT,
+  type GitResult,
+  gitFailureOf,
+  mapWithConcurrency,
+  runGitBin,
+} from '../../src/git-exec';
 
 // Use node itself as a deterministic fake "git" binary so these tests need no real git and can
 // script hangs, oversize output, and exit codes precisely.
@@ -102,5 +108,28 @@ describe('mapWithConcurrency', () => {
 
   it('returns [] for an empty list', async () => {
     expect(await mapWithConcurrency([], 4, async (x) => x)).toEqual([]);
+  });
+});
+
+describe('gitFailureOf', () => {
+  const result = (over: Partial<GitResult>): GitResult => ({
+    ok: false,
+    stdout: '',
+    stdoutBuffer: Buffer.alloc(0),
+    stderr: '',
+    code: 1,
+    notFound: false,
+    timedOut: false,
+    aborted: false,
+    truncated: false,
+    ...over,
+  });
+
+  it('maps timedOut, notFound and any other failure; ok has none', () => {
+    expect(gitFailureOf(result({ timedOut: true, code: null }))).toBe('timeout');
+    expect(gitFailureOf(result({ notFound: true, code: null }))).toBe('not-found');
+    expect(gitFailureOf(result({}))).toBe('failed');
+    expect(gitFailureOf(result({ truncated: true }))).toBe('failed');
+    expect(gitFailureOf(result({ ok: true, code: 0 }))).toBeUndefined();
   });
 });
