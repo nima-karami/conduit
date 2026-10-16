@@ -6,7 +6,7 @@
 
 const PROBE_CAP = 200000;
 
-/** @param {import('playwright').ElectronApplication} app */
+/** @param app Playwright ElectronApplication (the harness resolves playwright by path, never by bare import) */
 export async function installGitProbe(app) {
   await app.evaluate((_electron, cap) => {
     if (globalThis.__gitProbe) return;
@@ -33,7 +33,7 @@ export async function installGitProbe(app) {
   }, PROBE_CAP);
 }
 
-/** @param {import('playwright').ElectronApplication} app */
+/** @param app Playwright ElectronApplication (the harness resolves playwright by path, never by bare import) */
 export async function resetGitProbe(app) {
   await app.evaluate(() => {
     if (globalThis.__gitProbe) globalThis.__gitProbe.calls = [];
@@ -41,7 +41,7 @@ export async function resetGitProbe(app) {
 }
 
 /**
- * @param {import('playwright').ElectronApplication} app
+ * @param app Playwright ElectronApplication (the harness resolves playwright by path, never by bare import)
  * @returns {Promise<Array<{at:number; cwd:string; sub:string; args:string[]}>>}
  */
 export async function readGitProbe(app) {
