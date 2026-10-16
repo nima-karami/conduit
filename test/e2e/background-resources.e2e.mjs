@@ -27,9 +27,13 @@ runScenario('background-resources', async ({ app, page, log }) => {
       const watch = fs.watch;
       const exec = cp.execFile;
       globalThis.__resources = { handles: 0, calls: 0, commands: [] };
+      // Every watch on the repo or inside its git dir. The folder's recursive watch already covers
+      // .git, so the tracker opens no git-dir watch of its own (multi-repo-tracking plan, Contracts).
+      const key = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
       fs.watch = function (file, ...args) {
         const watcher = watch.call(this, file, ...args);
-        if (String(file).replace(/\\/g, '/') === `${target}/.git/HEAD`) {
+        const k = key(file);
+        if (k === key(target) || k.startsWith(`${key(target)}/.git`)) {
           globalThis.__resources.handles++;
           watcher.once('close', () => globalThis.__resources.handles--);
         }
@@ -55,7 +59,7 @@ runScenario('background-resources', async ({ app, page, log }) => {
     await app.evaluate(() => new Promise((resolve) => setTimeout(resolve, 1000)));
     assert(
       (await app.evaluate(() => globalThis.__resources.handles)) === 1,
-      'one shared HEAD watcher for eight sessions',
+      'one shared watch for eight sessions, and no git-dir watch beside it',
     );
     await app.evaluate(() => {
       globalThis.__resources.calls = 0;
@@ -117,7 +121,7 @@ runScenario('background-resources', async ({ app, page, log }) => {
       'packaged regex worker returns file matches',
     );
     log(
-      `eight sessions, one watcher, ${calls} Git commands for shared split demand; background output and wake verified`,
+      `eight sessions, one watch, ${calls} Git commands for shared split demand; background output and wake verified`,
     );
   } finally {
     await closeApp(app, page);
