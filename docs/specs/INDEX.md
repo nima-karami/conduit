@@ -10,6 +10,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 | Date | Spec |
 |------|------|
+| 2026-10-16 | [multi-repo-tracking](2026-10-16-multi-repo-tracking.md) — a parent session over ~20 repos plus nested ticket folders of worktrees re-runs git on **every** repo in every visible session per save (measured on a synthetic 36-repo copy: 3.2 s vs 0.31 s for the one dirty repo; fsmonitor no gain). MVP: a host-wide `RepoTracker` that refreshes only dirty repos once and shares results, worktree `index`/`refs` watching, detail only on demand. v1: detected ≠ tracked (auto-track 8, banner, Pause/Track, remembered per folder), hot/warm tiers, tracked-scoped search. Proposed; S0 measures in the real app first. (FULL) |
 | 2026-09-30 | [interactive-plan-v2](2026-09-30-interactive-plan-v2.md) — the plan as an agent-agnostic whiteboard: persisted node layout, span-preserving diagram edits, element-level comments, a full-window diagram workspace. In progress on `feat/plan-v2-*`. (FULL) |
 
 The 2026-06-23 Agent-SDK chat UI was **rejected**: the SDK needs a billed API key and cannot use a
