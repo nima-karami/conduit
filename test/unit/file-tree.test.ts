@@ -525,13 +525,13 @@ describe('buildRowChangeMap', () => {
     name: root.split('/').pop() ?? root,
     tag: 'home',
     changes,
+    lines: true,
+    refreshedAt: 1,
   });
 
   it('repoChanges keyed by folded absolute path, ancestors up to repo root', () => {
     const m = buildRowChangeMap({
       repoChanges: [repo('/w/rmb', [ch('src/deep/index.ts'), ch('a.txt', 'A')])],
-      changes: [],
-      changesRoot: undefined,
     });
     expect(m.get('/w/rmb/src/deep/index.ts')).toBe('M');
     expect(m.get('/w/rmb/src/deep')).toBe('M');
@@ -544,39 +544,18 @@ describe('buildRowChangeMap', () => {
   it('attached src/index.ts gets no dot from a home-repo change at src/index.ts', () => {
     const m = buildRowChangeMap({
       repoChanges: [repo('/w/rmb', [ch('src/index.ts')])],
-      changes: [ch('src/index.ts')],
-      changesRoot: '/w/rmb',
     });
     expect(m.has('/w/ci-image/src/index.ts')).toBe(false);
     expect(m.has('/w/ci-image/src')).toBe(false);
     expect(m.get('/w/rmb/src/index.ts')).toBe('M');
   });
 
-  it('no repoChanges → changes resolved against changesRoot', () => {
-    const m = buildRowChangeMap({
-      repoChanges: undefined,
-      changes: [ch('lib\\u.ts', 'D')],
-      changesRoot: '/w/r',
-    });
-    expect(m.get('/w/r/lib/u.ts')).toBe('D');
-    expect(m.get('/w/r/lib')).toBe('D');
-  });
-
-  it('changesRoot undefined and no repoChanges → empty', () => {
-    const m = buildRowChangeMap({
-      repoChanges: undefined,
-      changes: [ch('x.ts')],
-      changesRoot: undefined,
-    });
-    expect(m.size).toBe(0);
+  it('repoChanges undefined → empty', () => {
+    expect(buildRowChangeMap({ repoChanges: undefined }).size).toBe(0);
   });
 
   it('C:\\R vs c:/r key equality', () => {
-    const m = buildRowChangeMap({
-      repoChanges: [repo('C:\\R', [ch('Src\\X.ts')])],
-      changes: [],
-      changesRoot: undefined,
-    });
+    const m = buildRowChangeMap({ repoChanges: [repo('C:\\R', [ch('Src\\X.ts')])] });
     expect(m.get('c:/r/src/x.ts')).toBe('M');
     expect(m.get('c:/r/src')).toBe('M');
   });

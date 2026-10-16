@@ -1,40 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
-  acceptRepoChanges,
+  applyRepoDelta,
   changesModel,
   createProjectReplyOrder,
+  repoChangesOf,
+  type SessionSnapshots,
 } from '../../src/changes-view-model';
-import type { ChangeDTO, RepoChanges } from '../../src/protocol';
+import type { ChangeDTO, HostToWebview, RepoChanges } from '../../src/protocol';
 import type { RepoInfo } from '../../src/repo-scan';
-
-const repo = (root: string): RepoInfo => ({ root, name: root, folder: root, tag: 'attached' });
-const rc = (root: string): RepoChanges => ({ root, name: root, tag: 'attached', changes: [] });
-
-describe('acceptRepoChanges', () => {
-  const prev = [rc('/a')];
-
-  it('matching set adopted', () => {
-    const incoming = [rc('/b'), rc('C:/A')];
-    expect(acceptRepoChanges(prev, incoming, [repo('c:/a/'), repo('/b')])).toBe(incoming);
-  });
-
-  it('stale set (repo added since request) keeps prev', () => {
-    expect(acceptRepoChanges(prev, [rc('/a')], [repo('/a'), repo('/b')])).toBe(prev);
-  });
-
-  it('undefined incoming keeps prev', () => {
-    expect(acceptRepoChanges(prev, undefined, [repo('/a')])).toBe(prev);
-  });
-
-  it('repos undefined keeps prev', () => {
-    expect(acceptRepoChanges(prev, [], undefined)).toBe(prev);
-  });
-
-  it('an empty set is adopted when no repos were found', () => {
-    const incoming: RepoChanges[] = [];
-    expect(acceptRepoChanges(prev, incoming, [])).toBe(incoming);
-  });
-});
+import type { RepoSnapshot } from '../../src/repo-tracker';
 
 describe('createProjectReplyOrder', () => {
   it('an older reply landing after a newer one is dropped (N-3)', () => {
@@ -80,6 +54,8 @@ const entry = (r: RepoInfo, changes: ChangeDTO[]): RepoChanges => ({
   name: r.name,
   tag: r.tag,
   changes,
+  lines: true,
+  refreshedAt: 1,
 });
 
 describe('changesModel', () => {
@@ -165,7 +141,16 @@ describe('changesModel', () => {
   it('lookup is by folder key', () => {
     const m = changesModel({
       session: { repos: [info('C:/w/a', 'home')], roots: [] },
-      repoChanges: [{ root: 'c:/w/a', name: 'a', tag: 'home', changes: [ch('x', false)] }],
+      repoChanges: [
+        {
+          root: 'c:/w/a',
+          name: 'a',
+          tag: 'home',
+          changes: [ch('x', false)],
+          lines: true,
+          refreshedAt: 1,
+        },
+      ],
       view: 'all',
     });
     if (m.kind !== 'ready') throw new Error(m.kind);
@@ -190,5 +175,145 @@ describe('changesModel', () => {
     expect(r.unstaged.map((c) => c.path)).toEqual(['c.txt']);
     expect(m.heads[0].staged).toEqual([]);
     expect(m.heads[0].unstaged.map((c) => c.path)).toEqual(['a.txt']);
+  });
+});
+
+const snap = (changes: ChangeDTO[] = [], extra: Partial<RepoSnapshot> = {}): RepoSnapshot => ({
+  changes,
+  lines: true,
+  refreshedAt: 5,
+  ...extra,
+});
+const delta = (
+  sessionId: string,
+  full: boolean,
+  repos: Record<string, RepoSnapshot | { removed: true }>,
+): Extract<HostToWebview, { type: 'repoDelta' }> => ({ type: 'repoDelta', sessionId, full, repos });
+
+describe('applyRepoDelta', () => {
+  it('full replaces, incremental merges, removed deletes, hidden sessions dropped', () => {
+    const a = snap([ch('a', false)]);
+    const b = snap([ch('b', false)]);
+    const c = snap([ch('c', false)]);
+    const prev: SessionSnapshots = { s1: { '/a': a, '/b': b }, s2: { '/z': snap() } };
+
+    const full = applyRepoDelta(prev, delta('s1', true, { '/c': c, '/gone': { removed: true } }), [
+      's1',
+      's2',
+    ]);
+    expect(full.s1).toEqual({ '/c': c });
+    expect(full.s2).toBe(prev.s2);
+
+    const merged = applyRepoDelta(prev, delta('s1', false, { '/b': c }), ['s1', 's2']);
+    expect(merged.s1).toEqual({ '/a': a, '/b': c });
+
+    const removed = applyRepoDelta(prev, delta('s1', false, { '/a': { removed: true } }), ['s1']);
+    expect(removed.s1).toEqual({ '/b': b });
+
+    const hidden = applyRepoDelta(prev, delta('s1', false, { '/b': c }), ['s1']);
+    expect(Object.keys(hidden)).toEqual(['s1']);
+    const hiddenMsg = applyRepoDelta(prev, delta('s3', true, { '/q': c }), ['s1', 's2']);
+    expect(Object.keys(hiddenMsg)).toEqual(['s1', 's2']);
+
+    expect(prev.s1).toEqual({ '/a': a, '/b': b });
+  });
+
+  it('an incremental delta creates the session map when absent', () => {
+    const a = snap();
+    expect(applyRepoDelta({}, delta('s1', false, { '/a': a }), ['s1'])).toEqual({
+      s1: { '/a': a },
+    });
+  });
+});
+
+describe('repoChangesOf', () => {
+  const r1 = info('C:/w/a', 'home');
+  const r2 = info('/w/b', 'nested', '/w');
+
+  it('undefined repos → undefined', () => {
+    expect(repoChangesOf(undefined, { x: snap() })).toBeUndefined();
+  });
+
+  it('yields only repos with snapshots so missing ones read as loading', () => {
+    const out = repoChangesOf([r1, r2], { '/w/b': snap([ch('x', false)]) });
+    expect(out?.map((e) => e.root)).toEqual(['/w/b']);
+    expect(out?.[0]).toEqual({
+      root: '/w/b',
+      name: 'b',
+      tag: 'nested',
+      sub: expect.any(String),
+      changes: [ch('x', false)],
+      lines: true,
+      refreshedAt: 5,
+    });
+    expect(repoChangesOf([r1], undefined)).toEqual([]);
+    expect(repoChangesOf([], {})).toEqual([]);
+  });
+
+  it('keeps repo order and matches by folder key when spelling differs', () => {
+    const out = repoChangesOf([r2, r1], { 'c:/w/a/': snap(), '/w/b': snap() });
+    expect(out?.map((e) => e.root)).toEqual(['/w/b', 'C:/w/a']);
+  });
+
+  it('carries stale, error and refreshedAt 0 through', () => {
+    const error = { kind: 'timeout' } as unknown as NonNullable<RepoSnapshot['error']>;
+    const out = repoChangesOf([r1], { 'C:/w/a': snap([], { stale: true, refreshedAt: 0, error }) });
+    expect(out?.[0]).toMatchObject({ stale: true, refreshedAt: 0, error, changes: [] });
+  });
+});
+
+describe('changesModel snapshot fields', () => {
+  const r = info('/w/a', 'home');
+  const session = { repos: [r], roots: [] };
+
+  it('linesPending when any loaded head has lines:false', () => {
+    const pending = changesModel({
+      session,
+      repoChanges: [{ ...entry(r, [ch('a', false)]), lines: false }],
+      view: 'all',
+    });
+    if (pending.kind !== 'ready') throw new Error(pending.kind);
+    expect(pending.linesPending).toBe(true);
+    const done = changesModel({ session, repoChanges: [entry(r, [ch('a', false)])], view: 'all' });
+    if (done.kind !== 'ready') throw new Error(done.kind);
+    expect(done.linesPending).toBe(false);
+    const notLoaded = changesModel({ session, repoChanges: [], view: 'all' });
+    if (notLoaded.kind !== 'ready') throw new Error(notLoaded.kind);
+    expect(notLoaded.linesPending).toBe(false);
+  });
+
+  it('repoChangesOf carries stale and refreshedAt through to the head model', () => {
+    const repoChanges = repoChangesOf([r], {
+      '/w/a': snap([ch('a', false)], { stale: true, refreshedAt: 42 }),
+    });
+    const m = changesModel({ session, repoChanges, view: 'all' });
+    if (m.kind !== 'ready') throw new Error(m.kind);
+    expect(m.heads[0]).toMatchObject({ stale: true, refreshedAt: 42, lines: true });
+  });
+});
+
+describe('changesModel never-read repo', () => {
+  it('a failed first read (refreshedAt 0) stays loading and carries the error', () => {
+    const repo = { root: '/w/a', name: 'a', folder: '/w/a', tag: 'home' as const };
+    const model = changesModel({
+      session: { repos: [repo], roots: [], activeRepoRoot: '/w/a' },
+      repoChanges: [
+        {
+          root: '/w/a',
+          name: 'a',
+          tag: 'home',
+          changes: [],
+          lines: false,
+          refreshedAt: 0,
+          error: 'timeout',
+        },
+      ],
+      view: 'all',
+    });
+    if (model.kind !== 'ready') throw new Error(model.kind);
+    expect(model.heads[0].changes).toBeUndefined();
+    expect(model.heads[0].error).toBe('timeout');
+    expect(model.loading).toBe(true);
+    expect(model.allClean).toBe(false);
   });
 });

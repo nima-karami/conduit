@@ -29,6 +29,9 @@ export class ProjectWatcher {
   private readonly log?: (m: string) => void;
   private readonly onSuspect?: (folders: string[]) => void;
   private readonly watchFn?: WatchFn;
+  private readonly onPath?: (absKey: string) => void;
+  private readonly onLost?: (folders: readonly string[]) => void;
+  private readonly onLive?: (roots: readonly string[]) => void;
 
   constructor(
     private readonly onFire: (fire: FsFire) => void,
@@ -37,12 +40,18 @@ export class ProjectWatcher {
       log?: (m: string) => void;
       onSuspect?: (folders: string[]) => void;
       watch?: WatchFn;
+      onPath?: (absKey: string) => void;
+      onLost?: (folders: readonly string[]) => void;
+      onLive?: (roots: readonly string[]) => void;
     } = {},
   ) {
     this.debounceMs = opts.debounceMs ?? 300;
     this.log = opts.log;
     this.onSuspect = opts.onSuspect;
     this.watchFn = opts.watch;
+    this.onPath = opts.onPath;
+    this.onLost = opts.onLost;
+    this.onLive = opts.onLive;
   }
 
   setFolders(folders: readonly string[]): void {
@@ -66,6 +75,7 @@ export class ProjectWatcher {
     for (const k of roots) {
       if (!this.watches.has(k)) this.open(k, nextFolders[nextKeys.indexOf(k)]);
     }
+    this.onLive?.([...this.watches.keys()]);
   }
 
   stop(): void {
@@ -77,6 +87,7 @@ export class ProjectWatcher {
     this.folders = [];
     this.keys = [];
     this.touched.clear();
+    this.onLive?.([...this.watches.keys()]);
   }
 
   private open(key: string, dir: string): void {
@@ -88,14 +99,19 @@ export class ProjectWatcher {
         (err) => {
           this.log?.(err ? `watch error on ${dir}: ${err}` : `watched folder vanished: ${dir}`);
           this.watches.delete(key);
-          this.onSuspect?.(this.foldersUnder(key).map((i) => this.folders[i]));
+          const lost = this.foldersUnder(key).map((i) => this.folders[i]);
+          this.onSuspect?.(lost);
+          this.onLost?.(lost);
+          this.onLive?.([...this.watches.keys()]);
         },
       );
       this.watches.set(key, watch);
     } catch (e) {
       // Recursive watch can fail (e.g. an unsupported FS); degrade to focus-only refresh.
       this.log?.(`failed to watch ${dir}: ${e}`);
-      this.onSuspect?.(this.foldersUnder(key).map((i) => this.folders[i]));
+      const lost = this.foldersUnder(key).map((i) => this.folders[i]);
+      this.onSuspect?.(lost);
+      this.onLost?.(lost);
     }
   }
 
@@ -111,7 +127,9 @@ export class ProjectWatcher {
   private onEvent(watchKey: string, filename: string): void {
     if (!filename) {
       const hit = this.foldersUnder(watchKey);
-      this.onSuspect?.(hit.map((i) => this.folders[i]));
+      const lost = hit.map((i) => this.folders[i]);
+      this.onSuspect?.(lost);
+      this.onLost?.(lost);
       this.mark(hit);
       return;
     }
@@ -124,6 +142,7 @@ export class ProjectWatcher {
     // user's spelling.
     const depth = this.keys[deepest].split('/').length - watchKey.split('/').length;
     if (shouldIgnoreWatchPath(segs.slice(depth).join('/'))) return;
+    this.onPath?.(absKey);
     this.mark(hit);
   }
 

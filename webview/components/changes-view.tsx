@@ -1,6 +1,7 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 import type { ChangesModel, RepoHeadModel } from '../../src/changes-view-model';
 import { folderKey } from '../../src/folder-key';
+import type { GitFailure } from '../../src/git-exec';
 import { triggerMenu } from '../../src/menu-position';
 import { countNoun } from '../../src/menu-selection';
 import { menuToggleIntent } from '../../src/menu-toggle';
@@ -40,7 +41,16 @@ const STR = {
   noReposHint: "None of this session's folders is a git repository.",
   cleanOne: 'The working tree is clean.',
   cleanMany: (n: number) => `All ${n} repos are clean.`,
+  countingLines: 'Counting lines…',
+  gitError: (r: GitFailure) =>
+    r === 'timeout' ? "Couldn't read git status — timed out" : "Couldn't read git status",
+  retry: 'Retry',
+  asOf: (time: string) => `as of ${time}`,
 } as const;
+
+function LinesPending() {
+  return <span className="diffstat--pending" role="img" aria-label={STR.countingLines} />;
+}
 
 export interface ChangesViewProps {
   model: Exclude<ChangesModel, { kind: 'no-session' }>;
@@ -52,6 +62,7 @@ export interface ChangesViewProps {
   reviewTitle: string;
   onReview: () => void;
   onRefresh: () => void;
+  onRetryRepo: (root: string) => void;
   onSetView: (view: ChangesViewMode) => void;
   onOpenDiff: (
     repoRoot: string,
@@ -70,6 +81,7 @@ export interface ChangesViewProps {
 function ChangeRow({
   change,
   repoRoot,
+  lines,
   active,
   onOpenDiff,
   onAction,
@@ -78,6 +90,7 @@ function ChangeRow({
 }: {
   change: ChangeDTO;
   repoRoot: string;
+  lines: boolean;
   active: boolean;
   onOpenDiff: ChangesViewProps['onOpenDiff'];
   onAction: ChangesViewProps['onAction'];
@@ -117,8 +130,9 @@ function ChangeRow({
         <span className="change__file">{file}</span>
       </span>
       <span className="change__stat">
-        {change.added > 0 && <span className="diffstat--add">+{change.added}</span>}
-        {change.removed > 0 && <span className="diffstat--del"> -{change.removed}</span>}
+        {!lines && <LinesPending />}
+        {lines && change.added > 0 && <span className="diffstat--add">+{change.added}</span>}
+        {lines && change.removed > 0 && <span className="diffstat--del"> -{change.removed}</span>}
       </span>
       <span className="change__row-actions">
         {actions.map((a) => (
@@ -167,6 +181,7 @@ function HeaderSummary({ model }: { model: ChangesViewProps['model'] }) {
     <span className="changes__header-summary" title={stat ? `${count} ${stat}` : count}>
       <span className="changes__header-count">{count}</span>
       <span className="diffstat">
+        {model.linesPending && <LinesPending />}
         {model.added > 0 && <span className="diffstat--add">+{model.added}</span>}
         {model.added > 0 && model.removed > 0 && ' '}
         {model.removed > 0 && <span className="diffstat--del">-{model.removed}</span>}
@@ -182,6 +197,7 @@ export function ChangesView({
   reviewTitle,
   onReview,
   onRefresh,
+  onRetryRepo,
   onSetView,
   onOpenDiff,
   onAction,
@@ -306,16 +322,43 @@ export function ChangesView({
 
   const rowsOf = (head: RepoHeadModel): React.ReactNode[] => {
     const root = head.repo.root;
+    const notices = [
+      ...(head.error
+        ? [
+            <div key="error" className="repo-head__error" role="alert">
+              <span>{STR.gitError(head.error)}</span>
+              <button type="button" className="btn btn--sm" onClick={() => onRetryRepo(root)}>
+                {STR.retry}
+              </button>
+            </div>,
+          ]
+        : []),
+      // A parked-dirty snapshot must not read as current (spec §3).
+      ...(head.stale && head.refreshedAt
+        ? [
+            <div key="asof" className="repo-head__asof">
+              {STR.asOf(
+                new Date(head.refreshedAt).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                }),
+              )}
+            </div>,
+          ]
+        : []),
+    ];
     if (head.changes === undefined)
       return [
         <div key="loading" className="repo-head__empty">
           {STR.loading}
         </div>,
+        ...notices,
       ];
     if (head.changes.length === 0)
       return model.allClean
-        ? []
+        ? notices
         : [
+            ...notices,
             <div key="clean" className="repo-head__empty">
               {STR.noChanges}
             </div>,
@@ -325,6 +368,7 @@ export function ChangesView({
         key={`${side}:${c.path}`}
         change={c}
         repoRoot={root}
+        lines={head.lines}
         active={
           hl !== null &&
           hl.root === root &&
@@ -338,6 +382,7 @@ export function ChangesView({
       />
     );
     return [
+      ...notices,
       ...(head.staged.length > 0
         ? [
             <div key="staged" className="changes__section">

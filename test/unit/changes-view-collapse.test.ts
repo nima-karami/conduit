@@ -40,6 +40,8 @@ async function render(view: ChangesViewMode, cache: Set<string>) {
       name: r.name,
       tag: r.tag,
       changes: [change(`src/${r.name}.ts`)],
+      lines: true,
+      refreshedAt: 1,
     })),
     view,
   });
@@ -56,6 +58,7 @@ async function render(view: ChangesViewMode, cache: Set<string>) {
         reviewTitle: 'Review',
         onReview: noop,
         onRefresh: noop,
+        onRetryRepo: noop,
         onSetView: noop,
         onOpenDiff: noop,
         onAction: async () => {},

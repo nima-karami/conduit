@@ -8,12 +8,19 @@ import {
   type GitActionRequest,
   type GitActionResult,
 } from '../../src/git-actions';
-import { gitChanges, parseStatusZ } from '../../src/project-info';
+import { parseStatusZ, readRepoChanges } from '../../src/project-info';
+import type { ChangeDTO } from '../../src/protocol';
 import { discardAllPlan, runDiscardAll } from '../../webview/changes-actions';
 import { reviewBulkTargets } from '../../webview/review-repos';
 
 // Real git on a scratch repo: with the default core.quotePath, a non-ASCII (or `"` / `\`) name
 // used to reach every ChangeDTO C-quoted, so each op that fed the path back into git missed it.
+
+async function readOk(root: string): Promise<ChangeDTO[]> {
+  const r = await readRepoChanges(root, { lines: true });
+  expect(r.ok).toBe(true);
+  return r.ok ? r.changes : [];
+}
 
 const cp = (...points: number[]) => String.fromCodePoint(...points);
 const BACKSLASH = String.fromCharCode(92);
@@ -111,7 +118,7 @@ d('non-ASCII and special filenames through status and the git actions', () => {
 
   it('status reports the real names, with numstat line counts keyed by them', async () => {
     modifyAll();
-    const changes = await gitChanges(root);
+    const changes = await readOk(root);
     for (const n of NAMES) {
       expect(changes).toContainEqual({ path: n, added: 1, removed: 0, kind: 'M', staged: false });
     }
@@ -119,7 +126,7 @@ d('non-ASCII and special filenames through status and the git actions', () => {
 
   it('status carries a staged rename as its new path plus its source', async () => {
     git('mv', 'old.txt', CAFE.replace('.txt', '-moved.txt'));
-    const changes = await gitChanges(root);
+    const changes = await readOk(root);
     expect(changes).toEqual([
       expect.objectContaining({
         path: CAFE.replace('.txt', '-moved.txt'),
@@ -132,7 +139,7 @@ d('non-ASCII and special filenames through status and the git actions', () => {
   it('a staged rename is kind R, and an edit on top of it stays M on the unstaged side', async () => {
     git('mv', 'old.txt', 'new.txt');
     write(root, 'new.txt', 'a\nb\nc\n');
-    const changes = await gitChanges(root);
+    const changes = await readOk(root);
     expect(changes.map((c) => [c.path, c.staged, c.kind])).toEqual([
       ['new.txt', true, 'R'],
       ['new.txt', false, 'M'],
@@ -143,7 +150,7 @@ d('non-ASCII and special filenames through status and the git actions', () => {
     modifyAll();
     write(root, GLOB, 'g\n');
     write(root, GLOB_SIBLING, 's\n');
-    for (const c of await gitChanges(root)) {
+    for (const c of await readOk(root)) {
       if (c.path === 'plain.txt' || c.path === GLOB_SIBLING) continue;
       expect(await executeGitAction({ root, op: 'stageFile', path: c.path })).toEqual({ ok: true });
     }
@@ -156,7 +163,14 @@ d('non-ASCII and special filenames through status and the git actions', () => {
 
   it('Stage all over the exact listed paths stages every file', async () => {
     modifyAll();
-    const repo = { root, name: 'r', tag: 'home' as const, changes: await gitChanges(root) };
+    const repo = {
+      root,
+      name: 'r',
+      tag: 'home' as const,
+      changes: await readOk(root),
+      lines: true,
+      refreshedAt: 1,
+    };
     const [target] = reviewBulkTargets([repo], false);
     expect(await executeGitAction({ root, op: 'stageAll', paths: target.paths })).toEqual({
       ok: true,
@@ -169,7 +183,14 @@ d('non-ASCII and special filenames through status and the git actions', () => {
     modifyAll();
     git('add', '-A');
     git('mv', 'old.txt', 'new.txt');
-    const repo = { root, name: 'r', tag: 'home' as const, changes: await gitChanges(root) };
+    const repo = {
+      root,
+      name: 'r',
+      tag: 'home' as const,
+      changes: await readOk(root),
+      lines: true,
+      refreshedAt: 1,
+    };
     const [target] = reviewBulkTargets([repo], true);
     expect(await executeGitAction({ root, op: 'unstageAll', paths: target.paths })).toEqual({
       ok: true,
@@ -183,8 +204,7 @@ d('non-ASCII and special filenames through status and the git actions', () => {
   const discardAll = async (
     paths?: string[],
     exec: (req: GitActionRequest) => Promise<GitActionResult> = executeGitAction,
-  ) =>
-    runDiscardAll(discardAllPlan(await gitChanges(root), paths), (step) => exec({ root, ...step }));
+  ) => runDiscardAll(discardAllPlan(await readOk(root), paths), (step) => exec({ root, ...step }));
 
   // Another git (a shell prompt's `git status`, an editor) holding the index lock is what made
   // the unstage fail intermittently in QA; a held lock file reproduces it every time.
@@ -193,7 +213,14 @@ d('non-ASCII and special filenames through status and the git actions', () => {
   const seedRename = async () => {
     git('mv', 'old.txt', 'new.txt');
     write(root, 'plain.txt', 'p\nq\n');
-    const repo = { root, name: 'r', tag: 'home' as const, changes: await gitChanges(root) };
+    const repo = {
+      root,
+      name: 'r',
+      tag: 'home' as const,
+      changes: await readOk(root),
+      lines: true,
+      refreshedAt: 1,
+    };
     return reviewBulkTargets([repo])[0].paths;
   };
 
@@ -231,7 +258,14 @@ d('non-ASCII and special filenames through status and the git actions', () => {
 
   it('Discard all over the exact listed paths returns the repo to HEAD', async () => {
     seedDiscard();
-    const repo = { root, name: 'r', tag: 'home' as const, changes: await gitChanges(root) };
+    const repo = {
+      root,
+      name: 'r',
+      tag: 'home' as const,
+      changes: await readOk(root),
+      lines: true,
+      refreshedAt: 1,
+    };
     const [target] = reviewBulkTargets([repo]);
     expect(await discardAll(target.paths)).toEqual({ ok: true });
     expect(status(root).size).toBe(0);

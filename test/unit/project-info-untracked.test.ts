@@ -4,17 +4,24 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runGit } from '../../src/git-exec';
-import { getProjectInfo, gitChanges, readRepoChanges } from '../../src/project-info';
+import { readRepoChanges } from '../../src/project-info';
+import type { ChangeDTO } from '../../src/protocol';
 
 vi.mock('../../src/git-exec', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/git-exec')>();
   return { ...original, runGit: vi.fn(original.runGit) };
 });
 
+async function readOk(root: string): Promise<ChangeDTO[]> {
+  const r = await readRepoChanges(root, { lines: true });
+  expect(r.ok).toBe(true);
+  return r.ok ? r.changes : [];
+}
+
 // Regression: a brand-new untracked folder must surface each file inside it as its
 // own change, not collapse to a single `folder/` entry (git's default porcelain
 // behavior). Drives the real `git` binary against a throwaway repo.
-describe('getProjectInfo — untracked folder expansion', () => {
+describe('readRepoChanges — untracked folder expansion', () => {
   let repo: string;
 
   beforeAll(() => {
@@ -38,7 +45,7 @@ describe('getProjectInfo — untracked folder expansion', () => {
   });
 
   it('lists each file inside a new untracked folder, not just the folder', async () => {
-    const { changes } = await getProjectInfo(repo);
+    const changes = await readOk(repo);
     const untracked = changes
       .filter((c) => c.kind === 'U')
       .map((c) => c.path)
@@ -78,7 +85,7 @@ it('preserves HEAD deletion counts after staged edits and staged deletions with 
     for (const name of Object.keys(originals)) fs.unlinkSync(path.join(repo, name));
     git('add', 'staged deletion.txt');
     fs.writeFileSync(path.join(repo, 'staged deletion.txt'), 'untracked replacement\n');
-    const deleted = (await gitChanges(repo)).filter((change) => change.kind === 'D');
+    const deleted = (await readOk(repo)).filter((change) => change.kind === 'D');
     expect(deleted.map((change) => [change.path, change.removed]).sort()).toEqual([
       ['empty.txt', 0],
       ['staged deletion.txt', 3],

@@ -77,3 +77,14 @@ it('unions visible windows and drops closed or forgotten consumers', async () =>
   expect(run).toHaveBeenCalledExactlyOnceWith(['c']);
   demand.stop();
 });
+
+it('visibleIds unions non-suspended windows', () => {
+  const demand = createSessionResourceDemand(vi.fn());
+  expect(demand.visibleIds()).toEqual([]);
+  demand.setVisible(1, ['a', 'b']);
+  demand.setVisible(2, ['b', 'c']);
+  demand.setVisible(3, ['d']);
+  demand.setSuspended(3, true);
+  expect(demand.visibleIds()).toEqual(['a', 'b', 'c']);
+  demand.stop();
+});

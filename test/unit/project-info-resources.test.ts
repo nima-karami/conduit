@@ -1,7 +1,14 @@
 import * as fs from 'node:fs';
 import { afterEach, expect, it, vi } from 'vitest';
 import { runGit } from '../../src/git-exec';
-import { getProjectInfo, gitChanges } from '../../src/project-info';
+import { getProjectInfo, readRepoChanges } from '../../src/project-info';
+import type { ChangeDTO } from '../../src/protocol';
+
+async function readOk(root: string): Promise<ChangeDTO[]> {
+  const r = await readRepoChanges(root, { lines: true });
+  expect(r.ok).toBe(true);
+  return r.ok ? r.changes : [];
+}
 
 const mock = vi.hoisted(() => ({ active: 0, peak: 0, summarize: false }));
 vi.mock('node:fs', async (importOriginal) => {
@@ -41,7 +48,7 @@ afterEach(() => {
 
 it('counts large deletion sets from one HEAD diff rather than one process per file', async () => {
   mock.summarize = true;
-  const changes = await gitChanges('/repo');
+  const changes = await readOk('/repo');
   expect(changes).toHaveLength(30);
   expect(changes.every((change) => change.removed === 2)).toBe(true);
   expect(vi.mocked(runGit).mock.calls.filter(([args]) => args[0] === 'show')).toHaveLength(0);
@@ -50,7 +57,7 @@ it('counts large deletion sets from one HEAD diff rather than one process per fi
 
 it('bounds deleted-file subprocesses across simultaneous project refreshes', async () => {
   mock.peak = mock.active = 0;
-  const results = await Promise.all([gitChanges('/one'), gitChanges('/two')]);
+  const results = await Promise.all([readOk('/one'), readOk('/two')]);
   expect(results.map((r) => r.length)).toEqual([30, 30]);
   expect(results.flat().every((r) => r.removed === 2)).toBe(true);
   expect(mock.peak).toBeLessThanOrEqual(4);
@@ -67,7 +74,7 @@ it('does not synchronously traverse a project tree and stops at the output budge
         isFile: () => true,
       })) as never,
   );
-  const result = await getProjectInfo('/tree', '');
+  const result = await getProjectInfo('/tree');
   expect(result.files).toHaveLength(400);
   expect(read).toHaveBeenCalledTimes(1);
   expect(sync.mock.calls.some(([p]) => p === '/tree')).toBe(false);

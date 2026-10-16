@@ -118,6 +118,19 @@ runScenario(NAME, async ({ page, log }) => {
   };
   const { longRoot, shortRoot } = makeFixture();
   log('alias', { short: shortRoot, long: longRoot });
+  // Before the open: the host pushes each repo's snapshot as the session shows, then only deltas.
+  await bridge(page, () => {
+    window.__deltas = {};
+    window.agentDeck.subscribe((m) => {
+      if (m.type !== 'repoDelta') return;
+      const next = m.full ? {} : { ...(window.__deltas[m.sessionId] ?? {}) };
+      for (const [r, snap] of Object.entries(m.repos)) {
+        if (snap.removed) delete next[r];
+        else next[r] = snap;
+      }
+      window.__deltas[m.sessionId] = next;
+    });
+  });
   const sid = await openSession(page, { path: shortRoot });
 
   const session = await page
@@ -199,30 +212,37 @@ runScenario(NAME, async ({ page, log }) => {
   check(repoGit, `no git state keyed by the session's repo root ${repoRoot}`);
 
   writeFileSync(join(longRoot, 'sub', 'b.txt'), 'b edited outside Conduit\n');
-  const project = await bridge(
-    page,
-    ({ p, r, id }) =>
-      new Promise((resolve) => {
-        setTimeout(() => resolve(null), 10000);
-        const requestId = Math.floor(Math.random() * 1e9);
-        const off = window.agentDeck.subscribe((m) => {
-          if (m.type === 'project' && m.requestId === requestId) {
-            off?.();
-            resolve(m.repoChanges ?? null);
-          }
-        });
-        window.agentDeck.post({
-          type: 'requestProject',
-          path: p,
-          changesRoot: r,
-          sessionId: id,
-          requestId,
-        });
-      }),
-    { p: home, r: repoRoot, id: sid },
-  );
-  log('repoChanges', JSON.stringify(project));
-  const changed = (project ?? []).flatMap((rc) => rc.changes.map((c) => c.path));
+  // The saved a.txt and the outside edit must both reach the session's pushed snapshot, which is
+  // keyed by the repo root the session stores (the long path).
+  const changedPaths = (id) =>
+    bridge(
+      page,
+      (sessionId) =>
+        Object.values(window.__deltas[sessionId] ?? {}).flatMap((snap) =>
+          snap.changes.map((c) => c.path),
+        ),
+      id,
+    );
+  const bothSeen = await page
+    .waitForFunction(
+      (id) => {
+        const paths = Object.values(window.__deltas[id] ?? {}).flatMap((snap) =>
+          snap.changes.map((c) => c.path),
+        );
+        return paths.some((p) => /a\.txt$/.test(p)) && paths.some((p) => /b\.txt$/.test(p));
+      },
+      sid,
+      { timeout: 10000 },
+    )
+    .then(
+      () => true,
+      (e) => {
+        if (e?.name !== 'TimeoutError') throw e;
+        return false;
+      },
+    );
+  const changed = await changedPaths(sid);
+  log('repoDelta paths', JSON.stringify(changed), 'both seen', bothSeen);
   check(
     changed.some((p) => /a\.txt$/.test(p)),
     `the saved a.txt is missing from the repo's changes: ${JSON.stringify(changed)}`,

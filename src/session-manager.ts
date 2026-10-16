@@ -326,6 +326,20 @@ export class SessionManager {
     this.emit();
   }
 
+  /** One emit for the whole batch; skips unchanged entries (sameRepoGit per root). */
+  mergeRepoGit(patches: ReadonlyArray<{ sessionId: string; root: string; info: GitInfo }>): void {
+    let changed = false;
+    for (const { sessionId, root, info } of patches) {
+      const s = this.sessions.get(sessionId);
+      if (!s) continue;
+      const next = { ...s.repoGit, [root]: info };
+      if (sameRepoGit(s.repoGit, next)) continue;
+      s.repoGit = next;
+      changed = true;
+    }
+    if (changed) this.emit();
+  }
+
   /** Recompute derived active-repo fields from repos+pin+auto. Returns whether they changed. */
   private recomputeActiveRepo(s: Session): boolean {
     const next = resolveActiveRepo({
@@ -363,8 +377,17 @@ export class SessionManager {
         return o?.root === r.root && o.tag === r.tag && o.folder === r.folder;
       });
     s.repos = repos;
+    let pruned = false;
+    if (s.repoGit) {
+      const roots = new Set(repos.map((r) => r.root));
+      const kept = Object.entries(s.repoGit).filter(([root]) => roots.has(root));
+      if (kept.length !== Object.keys(s.repoGit).length) {
+        s.repoGit = Object.fromEntries(kept);
+        pruned = true;
+      }
+    }
     const derivedChanged = this.recomputeActiveRepo(s);
-    if (sameList && !derivedChanged) return false;
+    if (sameList && !derivedChanged && !pruned) return false;
     this.emit();
     return true;
   }

@@ -28,7 +28,14 @@ async function render(
   opts: { repoChanges?: RepoChanges[]; repoRoot?: string } = {},
 ) {
   const repoChanges = opts.repoChanges ?? [
-    { root: cwdRepo, name: 'cwd-repo', tag: 'home', changes: [change] },
+    {
+      root: cwdRepo,
+      name: 'cwd-repo',
+      tag: 'home',
+      changes: [change],
+      lines: true,
+      refreshedAt: 1,
+    },
   ];
   const repoRoot = opts.repoRoot ?? cwdRepo;
   host = document.createElement('div');
@@ -77,6 +84,7 @@ async function render(
           reviewTitle: 'Review changes',
           onReview: noop,
           onRefresh: noop,
+          onRetryRepo: noop,
           onSetView: noop,
           onOpenDiff: noop,
           onAction: async (i) => onAction(i),
@@ -132,6 +140,8 @@ const repoOf = (root: string, changes: ChangeDTO[]): RepoChanges => ({
   name: root.split('/').pop() ?? root,
   tag: 'home',
   changes,
+  lines: true,
+  refreshedAt: 1,
 });
 
 async function stageAllFromKebab(): Promise<void> {

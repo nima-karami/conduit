@@ -160,14 +160,10 @@ export function reviewBulkTargets(
 export function reviewRepoChangesFor(
   repos: readonly RepoInfo[] | undefined,
   repoChanges: readonly RepoChanges[] | undefined,
-  changes: readonly ChangeDTO[],
-  fallbackRoot: string | undefined,
 ): RepoChanges[] | undefined {
-  if (repos && repos.length > 0) return repoChanges && [...repoChanges];
-  if (fallbackRoot === undefined) return [];
-  return [
-    { root: fallbackRoot, name: repoBaseName(fallbackRoot), tag: 'home', changes: [...changes] },
-  ];
+  if (repos === undefined) return undefined;
+  if (repos.length === 0) return [];
+  return repoChanges && [...repoChanges];
 }
 
 export interface RepoChipRow {

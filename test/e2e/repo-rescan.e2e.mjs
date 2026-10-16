@@ -40,6 +40,21 @@ runScenario('repo-rescan', async ({ page, log }) => {
   makeRepo(join(root, 'repo-b'));
   const openedPath = root.replace(/\\/g, '/');
 
+  // Snapshots are pushed per session; a session hidden while its repo set changes is re-sent in
+  // full when it is shown again, so the tap must outlive the second session.
+  await page.evaluate(() => {
+    window.__deltas = {};
+    window.agentDeck.subscribe((m) => {
+      if (m.type !== 'repoDelta') return;
+      const next = m.full ? {} : { ...(window.__deltas[m.sessionId] ?? {}) };
+      for (const [r, snap] of Object.entries(m.repos)) {
+        if (snap.removed) delete next[r];
+        else next[r] = snap;
+      }
+      window.__deltas[m.sessionId] = next;
+    });
+  });
+
   const sid1 = await openSession(page, { path: openedPath });
   await page.waitForFunction(
     (id) => ((window.__sessions || []).find((x) => x.id === id)?.repos?.length ?? 0) >= 2,
@@ -80,28 +95,37 @@ runScenario('repo-rescan', async ({ page, log }) => {
   );
   log('repo-c picked up after a project refresh (no restart) ✓');
 
-  await page.evaluate((p) => {
-    window.__rescanProj = null;
-    window.agentDeck.subscribe((m) => {
-      if (m.type === 'project' && m.path === p && m.repoChanges) window.__rescanProj = m;
-    });
-  }, openedPath);
-  await page.evaluate(
-    ({ p, id }) =>
-      window.agentDeck.post({ type: 'requestProject', path: p, sessionId: id, requestId: 0 }),
-    { p: openedPath, id: sid1 },
-  );
-  await page.waitForFunction((p) => window.__rescanProj?.path === p, openedPath, {
-    timeout: 15000,
-  });
-  const replyNames = await page.evaluate(() => window.__rescanProj.repoChanges.map((r) => r.name));
-  assert(
-    JSON.stringify(replyNames) === '["repo-a","repo-b","repo-c"]',
-    `the next project reply's repoChanges includes repo-c: ${JSON.stringify(replyNames)}`,
-  );
-  log('next project reply lists repo-a, repo-b, repo-c ✓');
-
+  // Showing the first session again pushes its snapshots; repo-c's must arrive with the others.
   await page.locator(`.session[data-sessionid="${sid1}"] .session__name`).first().click();
+  const snapshotNames = () =>
+    page.evaluate(
+      (id) =>
+        ((window.__sessions || []).find((x) => x.id === id)?.repos ?? [])
+          .filter((r) => window.__deltas[id]?.[r.root] !== undefined)
+          .map((r) => r.name),
+      sid1,
+    );
+  await page
+    .waitForFunction(
+      (id) => {
+        const repos = (window.__sessions || []).find((x) => x.id === id)?.repos ?? [];
+        return (
+          repos.length === 3 && repos.every((r) => window.__deltas[id]?.[r.root] !== undefined)
+        );
+      },
+      sid1,
+      { timeout: 15000 },
+    )
+    .catch(async (e) => {
+      if (e?.name !== 'TimeoutError') throw e;
+      assert(false, `repoDelta never covered repo-c: ${JSON.stringify(await snapshotNames())}`);
+    });
+  assert(
+    JSON.stringify(await snapshotNames()) === '["repo-a","repo-b","repo-c"]',
+    `the session's repoDelta snapshots include repo-c: ${JSON.stringify(await snapshotNames())}`,
+  );
+  log('repoDelta snapshots cover repo-a, repo-b, repo-c ✓');
+
   await openChangesTab(page);
   await page
     .waitForFunction(

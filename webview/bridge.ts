@@ -19,7 +19,6 @@ import {
 } from '../src/pipeline';
 import type { DirEntryDTO, HostToWebview, WebviewToHost, WindowsPtyInfo } from '../src/protocol';
 import { summarizeQueue } from '../src/queue-summary';
-import { repoBaseName } from '../src/repo-display';
 import { applyNotePatch, type ReviewNote } from '../src/review-notes';
 import { type AppSettings, DEFAULT_SETTINGS } from '../src/settings';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
@@ -893,6 +892,31 @@ function mockHost(msg: WebviewToHost) {
     );
     return;
   }
+  if (msg.type === 'visible') {
+    // The host answers every `visible` with a full repoDelta per id; the first repo carries the
+    // mock change list.
+    for (const id of msg.ids) {
+      const session = allMockSessions.find((s) => s.id === id);
+      if (!session) continue;
+      const repos = session.repos?.length ? session.repos.map((r) => r.root) : [session.home];
+      setTimeout(
+        () =>
+          emit({
+            type: 'repoDelta',
+            sessionId: id,
+            full: true,
+            repos: Object.fromEntries(
+              repos.map((root, i) => [
+                root,
+                { changes: i === 0 ? mockChanges : [], lines: true, refreshedAt: Date.now() },
+              ]),
+            ),
+          }),
+        20,
+      );
+    }
+    return;
+  }
   if (msg.type === 'reorderSessions') {
     const known = msg.order.filter((id) => mockOrder.includes(id));
     mockOrder = [...known, ...mockOrder.filter((id) => !known.includes(id))];
@@ -905,22 +929,9 @@ function mockHost(msg: WebviewToHost) {
         emit({
           type: 'project',
           path: msg.path,
-          changes: mockChanges,
           files: mockFiles,
           customizations: mockCust.map((c) => ({ id: c.id, count: c.count ?? 0 })),
           requestId: msg.requestId,
-          ...(msg.sessionId
-            ? {
-                repoChanges: [
-                  {
-                    root: msg.path,
-                    name: repoBaseName(msg.path),
-                    tag: 'home' as const,
-                    changes: mockChanges,
-                  },
-                ],
-              }
-            : {}),
         }),
       20,
     );

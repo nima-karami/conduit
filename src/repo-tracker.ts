@@ -102,6 +102,8 @@ interface Repo {
   covered: boolean;
   /** Mirrors the scheduler's pending kinds: set by a mark, cleared when a run takes them. */
   pending: boolean;
+  /** The `lines` of the read in flight; undefined while none is. */
+  readingLines?: boolean;
 }
 
 const FIRST_FILL_TAGS: ReadonlySet<RepoTag> = new Set(['home', 'attached']);
@@ -198,7 +200,10 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
         reconcileWatches();
       }
       const lines = wantsLinesFor(repo);
-      const read = await deps.readChanges(repo.root, { lines });
+      repo.readingLines = lines;
+      const read = await deps.readChanges(repo.root, { lines }).finally(() => {
+        repo.readingLines = undefined;
+      });
       if (repos.get(key) !== repo || stopped) return;
       if (read.ok) {
         repo.lastRefreshAt = deps.now();
@@ -351,8 +356,10 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
       scheduler.reconsider();
     },
     linesDemandChanged() {
-      for (const repo of repos.values())
-        if (!repo.snapshot?.lines && wantsLinesFor(repo)) mark(repo, ['tree'], { immediate: true });
+      for (const repo of repos.values()) {
+        const hasLines = repo.readingLines ?? repo.snapshot?.lines === true;
+        if (!hasLines && wantsLinesFor(repo)) mark(repo, ['tree'], { immediate: true });
+      }
     },
     windowFocused() {
       const now = deps.now();

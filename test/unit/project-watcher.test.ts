@@ -21,11 +21,17 @@ function setup(opts: { throwOn?: string[] } = {}) {
   const fires: FsFire[] = [];
   const suspects: string[][] = [];
   const logs: string[] = [];
+  const paths: string[] = [];
+  const lost: (readonly string[])[] = [];
+  const live: (readonly string[])[] = [];
   const pw = new ProjectWatcher((f) => fires.push(f), {
     debounceMs: 300,
     watch,
     log: (m) => logs.push(m),
     onSuspect: (folders) => suspects.push(folders),
+    onPath: (p) => paths.push(p),
+    onLost: (folders) => lost.push(folders),
+    onLive: (roots) => live.push(roots),
   });
   const open = () => watches.filter((x) => !x.closed);
   const emit = (dir: string, filename: string | null) => {
@@ -33,7 +39,7 @@ function setup(opts: { throwOn?: string[] } = {}) {
     if (!x) throw new Error(`no open watch on ${dir}`);
     x.cb('change', filename);
   };
-  return { pw, watches, closed, fires, suspects, logs, open, emit };
+  return { pw, watches, closed, fires, suspects, logs, paths, lost, live, open, emit };
 }
 
 beforeEach(() => {
@@ -142,6 +148,51 @@ describe('ProjectWatcher', () => {
     expect(h.suspects).toEqual([['/w/home/sub', '/w/home']]);
     vi.advanceTimersByTime(300);
     expect(h.fires).toEqual([{ root: '/w/home/sub', folders: ['/w/home/sub', '/w/home'] }]);
+  });
+
+  it('onPath receives each non-ignored event path synchronously and nothing is retained', () => {
+    const h = setup();
+    h.pw.setFolders(['/w/home', '/x/R']);
+    h.emit('/w/home', 'node_modules/x');
+    expect(h.paths).toEqual([]);
+    h.emit('/w/home', 'src\\a.ts');
+    expect(h.paths).toEqual(['/w/home/src/a.ts']);
+    for (let i = 0; i < 1000; i++) h.emit('/x/R', `f${i}.ts`);
+    expect(h.paths).toHaveLength(1001);
+    const retained = Object.values(h.pw).filter(
+      (v) => (v instanceof Set || v instanceof Map || Array.isArray(v)) && collectionSize(v) > 2,
+    );
+    expect(retained).toEqual([]);
+    vi.advanceTimersByTime(300);
+    expect(h.fires).toEqual([{ root: '/w/home', folders: ['/w/home', '/x/R'] }]);
+  });
+
+  it('a no-filename event calls onLost with every folder under the watch', () => {
+    const h = setup();
+    h.pw.setFolders(['/w/home/sub', '/x/R', '/w/home']);
+    h.emit('/w/home', null);
+    expect(h.lost).toEqual([['/w/home/sub', '/w/home']]);
+    expect(h.suspects).toEqual([['/w/home/sub', '/w/home']]);
+  });
+
+  it('a vanished watch and a throwing open both call onLost, and the root drops out of onLive', () => {
+    const h = setup({ throwOn: ['/gone'] });
+    h.pw.setFolders(['/w/home', '/x/R', '/gone']);
+    expect(h.lost).toEqual([['/gone']]);
+    expect(h.live.at(-1)).toEqual(['/w/home', '/x/R']);
+    h.watches[1].w.emit('error', new Error('EPERM'));
+    expect(h.lost).toEqual([['/gone'], ['/x/R']]);
+    expect(h.live.at(-1)).toEqual(['/w/home']);
+  });
+
+  it('onLive reports only successfully opened watch roots, not the requested set', () => {
+    const h = setup({ throwOn: ['/gone'] });
+    h.pw.setFolders(['/w/home/sub', '/w/home', '/gone']);
+    expect(h.live).toEqual([['/w/home']]);
+    h.pw.setFolders(['/w/home']);
+    expect(h.live.at(-1)).toEqual(['/w/home']);
+    h.pw.stop();
+    expect(h.live.at(-1)).toEqual([]);
   });
 
   it('watch error → onSuspect(its folders), watch dropped', () => {

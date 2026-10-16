@@ -53,8 +53,10 @@ function harness() {
   let fire: (f: FsFire) => void = () => {};
   let suspect: (folders: string[]) => void = () => {};
   let onBroadcast: (f: FsFire) => void = () => {};
+  let visible: readonly string[] = [];
   const rt = new SessionFolderRuntime({
     mgr,
+    visibleSessionIds: () => visible,
     createHealth: (a) => {
       apply = a;
       return {
@@ -122,6 +124,9 @@ function harness() {
       onBroadcast = cb;
     },
     suspect: (f: string[]) => suspect(f),
+    setVisible: (ids: readonly string[]) => {
+      visible = ids;
+    },
   };
 }
 
@@ -197,6 +202,24 @@ describe('SessionFolderRuntime (watcher)', () => {
     await h.report('a', '/w/a', { '/x/R': 'missing' });
     expect(h.armed.at(-1)).toEqual(['/w/a', '/w/b']);
   });
+  it('arm unions visible sessions with window projects', () => {
+    const h = harness();
+    h.add(session('c', '/w/c'));
+    h.sessions[0].roots = ['/x/R'];
+    h.setVisible(['b', 'nope', 'c']);
+    h.rt.requestProject('/w/a', 'a', 1);
+    expect(h.armed.at(-1)).toEqual(['/w/a', '/x/R', '/w/b', '/w/c']);
+  });
+
+  it('visibilityChanged re-arms', () => {
+    const h = harness();
+    h.rt.requestProject('/w/a', 'a', 1);
+    expect(h.armed.at(-1)).toEqual(['/w/a']);
+    h.setVisible(['b']);
+    h.rt.visibilityChanged();
+    expect(h.armed.at(-1)).toEqual(['/w/a', '/w/b']);
+  });
+
   it('requestProject arms watchFoldersFor(p, session)', () => {
     const h = harness();
     h.sessions[0].roots = ['/x/R', '/x/gone'];

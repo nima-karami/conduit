@@ -247,6 +247,58 @@ describe('SessionManager repo state', () => {
     m.setRepoGit('s1', undefined);
     expect(calls).toBe(5);
   });
+
+  it('mergeRepoGit patches several sessions with a single emit and skips unchanged', () => {
+    const m = new SessionManager(
+      new AgentRegistry([claude]),
+      (() => {
+        let n = 0;
+        return () => `s${++n}`;
+      })(),
+      () => 0,
+    );
+    m.create('claude', '/work/A');
+    m.create('claude', '/work/B');
+    const clean = { kind: 'branch', branch: 'main', dirty: false } as const;
+    m.setRepoGit('s1', { '/work/A': clean, '/work/X': clean });
+    let calls = 0;
+    m.onChange(() => calls++);
+    const before = m.get('s1')?.repoGit;
+
+    m.mergeRepoGit([
+      { sessionId: 's1', root: '/work/A', info: { ...clean, dirty: true } },
+      { sessionId: 's2', root: '/work/B', info: clean },
+      { sessionId: 'nope', root: '/work/Z', info: clean },
+    ]);
+    expect(calls).toBe(1);
+    expect(m.get('s1')?.repoGit).not.toBe(before);
+    expect(m.get('s1')?.repoGit?.['/work/A']?.dirty).toBe(true);
+    expect(m.get('s1')?.repoGit?.['/work/X']).toEqual(clean);
+    expect(m.get('s2')?.repoGit).toEqual({ '/work/B': clean });
+
+    const after = m.get('s1')?.repoGit;
+    m.mergeRepoGit([
+      { sessionId: 's1', root: '/work/A', info: { ...clean, dirty: true } },
+      { sessionId: 's2', root: '/work/B', info: { ...clean } },
+    ]);
+    expect(calls).toBe(1);
+    expect(m.get('s1')?.repoGit).toBe(after);
+  });
+
+  it('setRepos drops repoGit entries for repos that left the session', () => {
+    const m = mgrWith();
+    const clean = { kind: 'branch', branch: 'main', dirty: false } as const;
+    m.setRepos('s1', repos);
+    m.setRepoGit('s1', { '/work/A': clean, '/work/B': clean, '/work/gone': clean });
+    let calls = 0;
+    m.onChange(() => calls++);
+    expect(m.setRepos('s1', [...repos])).toBe(true);
+    expect(calls).toBe(1);
+    expect(Object.keys(m.get('s1')?.repoGit ?? {}).sort()).toEqual(['/work/A', '/work/B']);
+    expect(m.setRepos('s1', [...repos])).toBe(false);
+    expect(m.setRepos('s1', [repos[0]])).toBe(true);
+    expect(Object.keys(m.get('s1')?.repoGit ?? {})).toEqual(['/work/A']);
+  });
 });
 
 describe('SessionManager folders and projects', () => {

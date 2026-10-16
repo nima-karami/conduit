@@ -6,6 +6,18 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **Changes stay current across many repos and parallel sessions.** Conduit now re-reads only the
+  repos that actually changed, once, and every open session that contains one sees the same result,
+  so a workspace with dozens of repos and several agents writing at once stays responsive. Switching
+  to a background session shows its changes right away instead of re-reading them. A commit or a
+  branch switch made inside a worktree whose main repo lives elsewhere now shows up on its own,
+  without clicking anything. Line counts (`+3 −1`) are read only while the Changes tab or Review is
+  open; until they arrive, a small placeholder stands in for them.
+- **A repo whose git status can't be read now says so.** The Changes tab shows "Couldn't read git
+  status" under that repo with a Retry button, instead of quietly showing no changes. A list that
+  is waiting to be refreshed shows the time it was last read.
+
 ## [0.47.2] — 2026-10-11
 
 ### Fixed

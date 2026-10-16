@@ -1,3 +1,5 @@
+export type SessionResourceDemand = ReturnType<typeof createSessionResourceDemand>;
+
 export function createSessionResourceDemand(
   run: (ids: string[]) => void,
   onHidden: (ids: string[]) => void = () => {},
@@ -9,7 +11,7 @@ export function createSessionResourceDemand(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const visible = (id: string) =>
     !reported || [...windows].some(([windowId, ids]) => !suspended.has(windowId) && ids.has(id));
-  const visibleIds = () =>
+  const visibleSet = () =>
     new Set([...windows.values()].flatMap((ids) => [...ids]).filter(visible));
   const hidden = (before: Set<string>) => onHidden([...before].filter((id) => !visible(id)));
   const arm = () => {
@@ -27,6 +29,8 @@ export function createSessionResourceDemand(
   };
   return {
     isVisible: visible,
+    /** Union of the non-suspended windows' sets, in insertion order. */
+    visibleIds: (): string[] => [...visibleSet()],
     isVisibleInWindow(windowId: number, id: string) {
       return !reported || (!suspended.has(windowId) && windows.get(windowId)?.has(id) === true);
     },
@@ -35,7 +39,7 @@ export function createSessionResourceDemand(
       if (visible(id)) arm();
     },
     setVisible(windowId: number, ids: readonly string[]) {
-      const before = visibleIds();
+      const before = visibleSet();
       const newlyVisible = ids.filter((id) => !visible(id) || !reported);
       reported = true;
       windows.set(windowId, new Set(ids));
@@ -43,7 +47,7 @@ export function createSessionResourceDemand(
       wake(newlyVisible);
     },
     setSuspended(windowId: number, value: boolean) {
-      const before = visibleIds();
+      const before = visibleSet();
       if (value) suspended.add(windowId);
       else {
         suspended.delete(windowId);
@@ -52,7 +56,7 @@ export function createSessionResourceDemand(
       hidden(before);
     },
     dropWindow(windowId: number) {
-      const before = visibleIds();
+      const before = visibleSet();
       windows.delete(windowId);
       suspended.delete(windowId);
       hidden(before);

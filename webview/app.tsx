@@ -16,9 +16,11 @@ import type { BoardCard } from '../src/board';
 import { cardSessionPrefill } from '../src/board-linkage';
 import { canonicalPath, pathBelow, renamedPath } from '../src/canonical-path';
 import {
-  acceptRepoChanges,
+  applyRepoDelta,
   changesModel,
   createProjectReplyOrder,
+  repoChangesOf,
+  type SessionSnapshots,
 } from '../src/changes-view-model';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
 import {
@@ -43,7 +45,6 @@ import type {
   FileDiffDTO,
   HostToWebview,
   PersistedDoc,
-  RepoChanges,
 } from '../src/protocol';
 import {
   acceptSearchResults,
@@ -298,7 +299,6 @@ import { useSnooze } from './use-snooze';
 import { fileViewStateIds, renameViewState } from './view-state-store';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
-type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
 type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'skills' | 'about';
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
@@ -420,8 +420,9 @@ function moveFileTab(from: string, to: string): boolean {
 export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
   const [activeId, setActiveId] = useState<string | undefined>();
-  const [project, setProject] = useState<ProjectMsg | null>(null);
-  const [repoChanges, setRepoChanges] = useState<RepoChanges[] | undefined>();
+  const [snapshots, setSnapshots] = useState<SessionSnapshots>({});
+  // Read by the once-registered subscribe below; assigned where `visible` is posted.
+  const visibleIdsRef = useRef<string[]>([]);
   // The new-session flow. `null` = closed; the prefill shape is the public contract other
   // callers pass (mf-new-session spec §3.1).
   const [newSession, setNewSession] = useState<NewSessionPrefill | null>(null);
@@ -648,12 +649,8 @@ export function App() {
         setState(msg);
         hydrate(msg.settings);
       } else if (msg.type === 'win:list') setWinList(msg.windows);
-      else if (msg.type === 'project') {
-        if (!projectReplies.current.accept(msg.requestId)) return;
-        setProject(msg);
-        setRepoChanges((prev) =>
-          acceptRepoChanges(prev, msg.repoChanges, activeRef.current?.repos),
-        );
+      else if (msg.type === 'repoDelta') {
+        setSnapshots((prev) => applyRepoDelta(prev, msg, visibleIdsRef.current));
       } else if (msg.type === 'fileContent') {
         // K3 dirty-buffer protection: a fresh disk read must NOT replace the map entry
         // for a path whose Monaco buffer is dirty — CodeViewer's seed effect is keyed on
@@ -1516,10 +1513,16 @@ export function App() {
   // closed/killed session stops being reported as visible. No-op in the browser
   // preview (the mock ignores it).
   useEffect(() => {
-    post({ type: 'visible', ids: visibleSessionIds(activeId, splitId) });
+    const ids = visibleSessionIds(activeId, splitId);
+    visibleIdsRef.current = ids;
+    post({ type: 'visible', ids });
   }, [activeId, splitId]);
 
   const active = sessions.find((s) => s.id === activeId);
+  const repoChanges = useMemo(
+    () => repoChangesOf(active?.repos, activeId ? snapshots[activeId] : undefined),
+    [active?.repos, activeId, snapshots],
+  );
   // Review's repo set — the repo chip's choices, in display order (spec 2026-09-23-mf-review §2.1).
   const reviewRepos = useMemo(
     () => orderRepos(active?.repos ?? [], active?.roots ?? []),
@@ -1591,6 +1594,10 @@ export function App() {
       groupActive(docState, activeId ?? '', 2) === REVIEW_DOC_ID);
   const reviewDocOpen = docState.docs.some((d) => d.kind === 'review');
   const [paneTab, setPaneTab] = useState<RightPaneTab>(settings.rightPaneTab);
+  const wantsLines = reviewDocOpen || (paneTab === 'changes' && !settings.explorerCollapsed);
+  useEffect(() => {
+    post({ type: 'changes:subscribe', sessionIds: activeId && wantsLines ? [activeId] : [] });
+  }, [activeId, wantsLines]);
   // A frame late on purpose: the pane may be mounting in this very render (auto-open, or the
   // header toggle opening it), and the ref is null until it has.
   const showChangesInPane = useCallback(() => {
@@ -1722,7 +1729,6 @@ export function App() {
         auto: true,
         requestId: projectReplies.current.next(),
         path: activeCwd(active),
-        changesRoot: active.activeRepoRoot,
         sessionId: active.id,
       });
   }, [
@@ -1734,11 +1740,6 @@ export function App() {
     active?.repos === undefined,
   ]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new session starts with no reply
-  useEffect(() => {
-    setRepoChanges(undefined);
-  }, [active?.id]);
-
   // Multi-repo auto-follow: when the focused editor doc changes, tell the host so the active repo
   // follows the file you're reading (host maps it to the containing sub-repo; ignored while pinned).
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on focus change (activeId) only
@@ -1748,8 +1749,7 @@ export function App() {
       post({ type: 'repo:context', sessionId: d.sessionId, path: d.path });
   }, [docState.activeId]);
 
-  // Re-read the working-tree change list (R5.3). Used both by the manual refresh button
-  // in the Changes tab and by the focus/visibility auto-refresh below.
+  // Re-read the file tree (R5.3); change lists are pushed by the host as `repoDelta`.
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + home only)
   const refreshChanges = useCallback(
     (auto = false) => {
@@ -1759,7 +1759,6 @@ export function App() {
           auto: auto === true,
           requestId: projectReplies.current.next(),
           path: activeCwd(active),
-          changesRoot: active.activeRepoRoot,
           sessionId: active.id,
         });
     },
@@ -1772,6 +1771,18 @@ export function App() {
       active?.repos === undefined,
     ],
   );
+
+  // The explicit Refresh/Retry re-read git now; the rest of the time the host pushes changes.
+  const retryRepo = useCallback(
+    (root: string) => {
+      if (activeId) post({ type: 'repo:refresh', sessionId: activeId, root });
+    },
+    [activeId],
+  );
+  const refreshRepos = useCallback(() => {
+    for (const r of active?.repos ?? []) retryRepo(r.root);
+    refreshChanges();
+  }, [active?.repos, retryRepo, refreshChanges]);
 
   // ---- FS undo/redo: record, execute, and refresh ----
 
@@ -1828,7 +1839,6 @@ export function App() {
         type: 'requestProject',
         requestId: projectReplies.current.next(),
         path: activeCwd(cur),
-        changesRoot: cur.activeRepoRoot,
         sessionId: cur.id,
       });
   }, []);
@@ -1913,6 +1923,15 @@ export function App() {
       rereadOpenDiffs((d) => msg.folders.some((f) => isUnderRoot(f, d.path)));
     });
   }, [refreshChanges, rereadOpenDiffs]);
+  // A commit moves HEAD without touching a watched working-tree file, so no `fsChanged` comes;
+  // the pushed change list is the signal that open diffs may be stale.
+  useEffect(() => {
+    return subscribe((msg) => {
+      if (msg.type !== 'repoDelta' || msg.full) return;
+      const roots = Object.keys(msg.repos);
+      rereadOpenDiffs((d) => roots.some((root) => isUnderRoot(root, d.path)));
+    });
+  }, [rereadOpenDiffs]);
   // fsChanged only covers the active project, so a session's diff tabs catch up when it
   // becomes active.
   useEffect(() => {
@@ -1951,16 +1970,9 @@ export function App() {
     }
   }, [splitId, activeId, sessions]);
 
-  const projectData = project && active && project.path === activeCwd(active) ? project : null;
   const reviewRepoChanges = useMemo(
-    () =>
-      reviewRepoChangesFor(
-        active?.repos,
-        repoChanges,
-        projectData?.changes ?? [],
-        reviewFallbackRoot,
-      ),
-    [active?.repos, repoChanges, projectData?.changes, reviewFallbackRoot],
+    () => reviewRepoChangesFor(active?.repos, repoChanges),
+    [active?.repos, repoChanges],
   );
   // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
   const sections = useMemo(
@@ -1984,16 +1996,7 @@ export function App() {
   );
   const hintProjectName = state?.projects.find((p) => p.id === hintProjectId)?.name;
   const openAsSessionHint = hintProjectName !== undefined ? `in ${hintProjectName}` : undefined;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
-  const rowChanges = useMemo(
-    () =>
-      buildRowChangeMap({
-        repoChanges,
-        changes: projectData?.changes ?? [],
-        changesRoot: active ? gitRootForSession(active) : undefined,
-      }),
-    [repoChanges, projectData?.changes, active?.activeRepoRoot, active?.cwd, active?.home],
-  );
+  const rowChanges = useMemo(() => buildRowChangeMap({ repoChanges }), [repoChanges]);
 
   // Hunk-level stage/unstage/discard reach app-level capabilities through a module store rather
   // than props — the editor's change peek is four prop hops away, and the ops must be awaited.
@@ -2001,9 +2004,7 @@ export function App() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
   useEffect(() => {
     const fallbackRoot = active ? gitRootForSession(active) : '';
-    const perRepo = repoChanges ?? [
-      { root: fallbackRoot, changes: fallbackRoot ? (projectData?.changes ?? []) : [] },
-    ];
+    const perRepo = repoChanges ?? [];
     const absKeys = (keep: (c: ChangeDTO) => boolean) =>
       new Set(
         perRepo.flatMap((r) =>
@@ -2043,7 +2044,6 @@ export function App() {
     active?.cwd,
     active?.activeRepoRoot,
     active?.repos,
-    projectData?.changes,
     repoChanges,
     refreshChanges,
     rereadOpenDiffs,
@@ -3212,13 +3212,14 @@ export function App() {
       icon: it.danger ? <IconTrash size={14} /> : <IconBranch size={14} />,
     }));
 
-  // No repoRoot = the active repo's list, the one `project.changes` carries.
+  // No repoRoot = the active repo's list.
   const changesOfRepo = useCallback(
-    (repoRoot: string | undefined): ChangeDTO[] =>
-      repoRoot === undefined
-        ? (projectData?.changes ?? [])
-        : (repoChanges?.find((r) => folderKey(r.root) === folderKey(repoRoot))?.changes ?? []),
-    [projectData?.changes, repoChanges],
+    (repoRoot: string | undefined): ChangeDTO[] => {
+      const root = repoRoot ?? active?.activeRepoRoot;
+      if (root === undefined) return [];
+      return repoChanges?.find((r) => folderKey(r.root) === folderKey(root))?.changes ?? [];
+    },
+    [active?.activeRepoRoot, repoChanges],
   );
 
   const repoBulkItems = (repoRoot: string): MenuItem[] => {
@@ -4406,7 +4407,8 @@ export function App() {
           changesModel={changesViewModel}
           reviewTitle={reviewTitle}
           onReview={openReviewTab}
-          onRefresh={refreshChanges}
+          onRefresh={refreshRepos}
+          onRetryRepo={retryRepo}
           onSetView={onSetChangesView}
           onAction={onGitAction}
           onRepoHeadContextMenu={onRepoHeadContextMenu}

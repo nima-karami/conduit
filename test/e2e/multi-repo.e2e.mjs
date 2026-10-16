@@ -7,8 +7,8 @@
  *  - under changesView 'active' the one repo head's picker lists both
  *    (docs/specs/archive/2026-09-23-mf-changes.md §7.4);
  *  - picking a repo pins it and re-scopes the host's active repo (asserted via bridge state);
- *  - **Changes follow the active repo** — the renderer re-requests the project scoped to the
- *    pinned repo, so the change list shows that repo's dirty file and not the other's;
+ *  - **Changes follow the active repo** — under the Active repo view the change list shows the
+ *    pinned repo's dirty file and not the other's;
  *  - **History follows the active repo** — git:history resolves against the pinned repo, so
  *    its commit subjects appear and the other repo's don't;
  *  - a pin survives an auto-follow trigger (a `repo:context` for another repo is ignored).
@@ -39,16 +39,20 @@ runScenario('multi-repo', async ({ page, log }) => {
   makeRepo(join(root, 'repo-a'), 'a.txt', 'a1\n', 'a2\n', 'alpha-commit');
   makeRepo(join(root, 'repo-b'), 'b.txt', 'b1\n', 'b2\n', 'beta-commit');
 
-  // Capture the latest project (Changes) + history results for assertions. Subscribe BEFORE the
-  // session opens: auto-follow already makes repo-a active on open, so pinning it changes no
-  // scope and requests nothing new — the repo-a project is the one that arrives during the open.
-  // (This passed only while an idle repo's fsChanged loop kept re-sending the project; 763cd6c.)
+  // Subscribe BEFORE the session opens: the host pushes each repo's snapshot as a repoDelta once
+  // and does not repeat it, so a late subscriber would never see the fill.
   await page.evaluate(() => {
-    window.__proj = null;
     window.__hist = null;
+    window.__deltas = {};
     window.agentDeck.subscribe((m) => {
-      if (m.type === 'project') window.__proj = m;
       if (m.type === 'git:historyResult') window.__hist = m;
+      if (m.type !== 'repoDelta') return;
+      const next = m.full ? {} : { ...(window.__deltas[m.sessionId] ?? {}) };
+      for (const [r, snap] of Object.entries(m.repos)) {
+        if (snap.removed) delete next[r];
+        else next[r] = snap;
+      }
+      window.__deltas[m.sessionId] = next;
     });
   });
 
@@ -62,32 +66,36 @@ runScenario('multi-repo', async ({ page, log }) => {
   );
   log('two sub-repos detected ✓');
 
-  // The reply to the re-request the repo set triggers carries every repo, in display order, each
-  // listing only its own dirty file.
-  await page.waitForFunction(() => (window.__proj?.repoChanges?.length ?? 0) === 2, null, {
+  // The pushed snapshots cover every repo; read in the session's display order, each lists only
+  // its own dirty file.
+  await page.waitForFunction((id) => Object.keys(window.__deltas[id] ?? {}).length === 2, sid, {
     timeout: 20000,
   });
-  const perRepo = await page.evaluate(() =>
-    window.__proj.repoChanges.map((r) => ({
-      root: r.root.replace(/\\/g, '/'),
-      name: r.name,
-      paths: r.changes.map((c) => c.path),
-    })),
+  const perRepo = await page.evaluate(
+    (id) =>
+      ((window.__sessions || []).find((x) => x.id === id)?.repos ?? []).map((r) => ({
+        root: r.root.replace(/\\/g, '/'),
+        name: r.name,
+        paths: (window.__deltas[id]?.[r.root]?.changes ?? []).map((c) => c.path),
+      })),
+    sid,
   );
   assert(
-    perRepo[0].root.endsWith('/repo-a') && perRepo[1].root.endsWith('/repo-b'),
-    `repoChanges in display order (repo-a, repo-b): ${JSON.stringify(perRepo)}`,
+    perRepo.length === 2 &&
+      perRepo[0].root.endsWith('/repo-a') &&
+      perRepo[1].root.endsWith('/repo-b'),
+    `repoDelta snapshots in display order (repo-a, repo-b): ${JSON.stringify(perRepo)}`,
   );
   assert(
     perRepo[0].name === 'repo-a' && perRepo[1].name === 'repo-b',
-    `repoChanges names are the repo basenames: ${JSON.stringify(perRepo)}`,
+    `repo names are the repo basenames: ${JSON.stringify(perRepo)}`,
   );
   assert(
     JSON.stringify(perRepo[0].paths) === '["a.txt"]' &&
       JSON.stringify(perRepo[1].paths) === '["b.txt"]',
     `each repo lists only its own file: ${JSON.stringify(perRepo)}`,
   );
-  log('project.repoChanges lists repo-a (a.txt) then repo-b (b.txt) ✓');
+  log('repoDelta lists repo-a (a.txt) then repo-b (b.txt) ✓');
 
   // The All view (the default): one head per repo in display order, each list holding only its
   // own repo's file (docs/specs/archive/2026-09-23-mf-changes.md §2.2).
@@ -248,11 +256,11 @@ runScenario('multi-repo', async ({ page, log }) => {
       { timeout: 10000 },
     );
 
-    // 2) Changes follow: the renderer auto-re-requests the project scoped to the pinned repo.
+    // 2) Changes follow: the Active-repo list shows the pinned repo's file and not the other's.
     await page.waitForFunction(
       ({ f, of }) => {
-        const paths = (window.__proj?.changes || []).map((c) => c.path);
-        return paths.includes(f) && !paths.includes(of);
+        const shown = Array.from(document.querySelectorAll('.change__file'), (e) => e.textContent);
+        return shown.includes(f) && !shown.includes(of);
       },
       { f: file, of: otherFile },
       { timeout: 10000 },
@@ -288,8 +296,15 @@ runScenario('multi-repo', async ({ page, log }) => {
   await changeRow.hover();
   await changeRow.getByRole('button', { name: 'Stage' }).click();
   await page.waitForFunction(
-    () => (window.__proj?.changes || []).some((c) => c.path === 'a.txt' && c.staged === true),
-    null,
+    (id) => {
+      const repoA = (window.__sessions || [])
+        .find((x) => x.id === id)
+        ?.repos?.find((r) => r.name === 'repo-a');
+      return (window.__deltas[id]?.[repoA?.root]?.changes ?? []).some(
+        (c) => c.path === 'a.txt' && c.staged === true,
+      );
+    },
+    sid,
     { timeout: 10000 },
   );
   log('staged a.txt via the Changes UI → action ran in repo-a, refresh stayed scoped ✓');
@@ -297,22 +312,24 @@ runScenario('multi-repo', async ({ page, log }) => {
   await expectActiveRepo('repo-b', 'b.txt', 'a.txt', 'beta-commit', 'alpha-commit');
   log('repo-b active → Changes + History flipped to repo-b ✓');
 
-  // The active list and repo-b's entry in the same reply are one computation, so they match.
+  // The drawn active list is repo-b's pushed snapshot, and pinning dropped no other repo's.
   await page.waitForFunction(
-    () => {
-      const p = window.__proj;
-      const b = p?.repoChanges?.find((r) => r.root.replace(/\\/g, '/').endsWith('/repo-b'));
+    (id) => {
+      const repos = (window.__sessions || []).find((x) => x.id === id)?.repos ?? [];
+      const b = repos.find((r) => r.name === 'repo-b');
+      const snaps = window.__deltas[id] ?? {};
+      const shown = Array.from(document.querySelectorAll('.change__file'), (e) => e.textContent);
+      const want = (snaps[b?.root]?.changes ?? []).map((c) => c.path);
       return (
-        !!b &&
-        p.repoChanges.length === 2 &&
-        JSON.stringify(p.changes) === JSON.stringify(b.changes) &&
-        p.changes.some((c) => c.path === 'b.txt')
+        Object.keys(snaps).length === 2 &&
+        want.includes('b.txt') &&
+        JSON.stringify(shown) === JSON.stringify(want)
       );
     },
-    null,
+    sid,
     { timeout: 10000 },
   );
-  log('pinned repo-b: project.changes equals its repoChanges entry ✓');
+  log('pinned repo-b: the drawn list equals its repoDelta snapshot ✓');
 
   // A pin survives an auto-follow trigger: a repo:context for repo-a must be ignored while pinned.
   await page.evaluate(

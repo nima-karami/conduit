@@ -18,6 +18,7 @@ function head(root: string, staged: string[], unstaged: string[]): RepoHeadModel
   return {
     repo: { root, name: '.', folder: root, tag: 'home' },
     label: root,
+    lines: true,
     changes: [...s, ...u],
     staged: s,
     unstaged: u,

@@ -12,6 +12,7 @@ import type { FsFire, ProjectWatcher } from './project-watcher';
 
 export interface SessionFolderRuntimeDeps {
   mgr: Pick<SessionManager, 'get' | 'list' | 'setFolderHealth'>;
+  visibleSessionIds: () => readonly string[];
   scheduleRepoScan: (sessionId: string, force?: boolean) => void;
   reconcilePlans: (homes: string[]) => void;
   broadcastFsChanged: (fire: FsFire) => void;
@@ -101,6 +102,10 @@ export class SessionFolderRuntime {
     this.arm();
   }
 
+  visibilityChanged(): void {
+    this.arm();
+  }
+
   focused(): void {
     if (this.watched?.sessionId) this.check(this.watched.sessionId);
   }
@@ -117,12 +122,17 @@ export class SessionFolderRuntime {
   }
 
   private arm() {
+    const visible = this.deps.visibleSessionIds().flatMap((id) => {
+      const s = this.deps.mgr.get(id);
+      return s ? watchFoldersFor(s.home, s) : [];
+    });
     this.watcher.setFolders([
-      ...new Set(
-        [...this.projectsByWindow.values()].flatMap(({ p, sessionId }) =>
+      ...new Set([
+        ...[...this.projectsByWindow.values()].flatMap(({ p, sessionId }) =>
           watchFoldersFor(p, sessionId ? this.deps.mgr.get(sessionId) : undefined),
         ),
-      ),
+        ...visible,
+      ]),
     ]);
   }
 

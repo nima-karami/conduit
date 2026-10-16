@@ -26,4 +26,14 @@ describe('repo-git readers', () => {
     expect(repoGitFingerprint(main)).not.toBe(repoGitFingerprint({ ...main, operation: 'rebase' }));
     expect(repoGitFingerprint(main)).toBe(repoGitFingerprint({ ...main }));
   });
+
+  it('fingerprint differs when only unborn, isWorktree or worktreeName differ', () => {
+    const base = repoGitFingerprint(main);
+    expect(repoGitFingerprint({ ...main, unborn: true })).not.toBe(base);
+    expect(repoGitFingerprint({ ...main, isWorktree: true })).not.toBe(base);
+    expect(repoGitFingerprint({ ...main, worktreeName: 'wt' })).not.toBe(base);
+    expect(repoGitFingerprint({ ...main, worktreeName: 'a' })).not.toBe(
+      repoGitFingerprint({ ...main, worktreeName: 'b' }),
+    );
+  });
 });

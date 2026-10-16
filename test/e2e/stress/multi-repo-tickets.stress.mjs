@@ -217,8 +217,14 @@ runScenario(NAME, async ({ app, page, log }) => {
       `${msgsAfterCommit} change messages after the commit`,
   );
 
+  // Spec §7 lag AC: gated only on an idle machine; a loaded one fails PTY-bound timing the way a
+  // regression does (plan T2.9).
+  const lagGate = idle.idle ? 'gated' : 'skipped-loaded';
+  if (!idle.idle) log(`lag gate SKIPPED: machine busy ${Math.round(idle.busy * 100)}%`);
+
   emitReport(NAME, perf, {
     idle,
+    lagGate,
     buildMs,
     parentRepos,
     firstFillMs,
@@ -240,4 +246,32 @@ runScenario(NAME, async ({ app, page, log }) => {
     idleGitAfter2 <= phaseB.idleGitAfter,
     `git kept growing after the writers stopped: ${phaseB.idleGitAfter} then ${idleGitAfter2} calls per ${IDLE_WINDOW_MS}ms`,
   );
+  // Engine invariants (docs/plans/2026-10-16-multi-repo-tracking.plan.md T2.9).
+  const perRepoCap = Math.ceil(WRITE_MS / 1000) + 2;
+  for (const [label, p] of [
+    ['A', phaseA],
+    ['B', phaseB],
+  ]) {
+    assertInvariant(
+      p.statusOutsideWritten === 0,
+      `phase ${label}: ${p.statusOutsideWritten} status runs in ${p.statusOutsideWrittenCwds} repos nobody wrote`,
+    );
+    assertInvariant(
+      p.statusPerRepoMax <= perRepoCap,
+      `phase ${label}: a written repo ran status ${p.statusPerRepoMax} times in ${WRITE_MS}ms (cap ${perRepoCap})`,
+    );
+  }
+  assertInvariant(
+    phaseB.statusPerRepoMax <= phaseA.statusPerRepoMax + 1,
+    `a second visible session added git: status per repo ${phaseA.statusPerRepoMax} → ${phaseB.statusPerRepoMax}`,
+  );
+  assertInvariant(
+    commitSeen !== null,
+    `ticket 0 did not see its commit within ${COMMIT_SEEN_MS}ms`,
+  );
+  if (lagGate === 'gated')
+    assertInvariant(
+      phaseA.refreshLag.n > 0 && phaseA.refreshLag.p95 <= 1000,
+      `spec §7 lag: refreshLag p95 ${phaseA.refreshLag.p95}ms (n=${phaseA.refreshLag.n}) is not ≤ 1000ms for the parent`,
+    );
 });

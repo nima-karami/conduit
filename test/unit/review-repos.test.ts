@@ -34,7 +34,15 @@ const repoChanges = (
   changes: ChangeDTO[],
   tag: RepoTag = 'home',
   over: Partial<RepoChanges> = {},
-): RepoChanges => ({ root, name: root.split('/').pop() ?? root, tag, changes, ...over });
+): RepoChanges => ({
+  root,
+  name: root.split('/').pop() ?? root,
+  tag,
+  changes,
+  lines: true,
+  refreshedAt: 1,
+  ...over,
+});
 
 const info = (root: string, tag: RepoTag = 'home', folder = root): RepoInfo => ({
   root,
@@ -307,19 +315,15 @@ describe('the action bar single-repo set', () => {
 });
 
 describe('reviewRepoChangesFor', () => {
-  it('repos [] + fallback → one synthesized home entry holding changes', () => {
-    const changes = [change('a.ts')];
-    expect(reviewRepoChangesFor([], undefined, changes, 'C:/w/rmb')).toEqual([
-      { root: 'C:/w/rmb', name: 'rmb', tag: 'home', changes },
-    ]);
-    expect(reviewRepoChangesFor(undefined, undefined, changes, 'C:/w/rmb')).toHaveLength(1);
-    expect(reviewRepoChangesFor([], undefined, changes, undefined)).toEqual([]);
-  });
-
-  it('repos non-empty, repoChanges undefined → undefined', () => {
-    expect(reviewRepoChangesFor([info('C:/w/rmb')], undefined, [], 'C:/w/rmb')).toBeUndefined();
+  it('reviewRepoChangesFor without fallback', () => {
+    expect(reviewRepoChangesFor(undefined, undefined)).toBeUndefined();
+    expect(reviewRepoChangesFor([], undefined)).toEqual([]);
+    expect(reviewRepoChangesFor([], [repoChanges('C:/w/rmb', [change('a.ts')])])).toEqual([]);
+    expect(reviewRepoChangesFor([info('C:/w/rmb')], undefined)).toBeUndefined();
     const rc = [repoChanges('C:/w/rmb', [change('a.ts')])];
-    expect(reviewRepoChangesFor([info('C:/w/rmb')], rc, [], 'C:/w/rmb')).toEqual(rc);
+    const out = reviewRepoChangesFor([info('C:/w/rmb')], rc);
+    expect(out).toEqual(rc);
+    expect(out).not.toBe(rc);
   });
 });
 

@@ -16,7 +16,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assert, closeApp, launchApp, makeLog } from '../harness.mjs';
+import { assert, closeApp, finishScenario, launchApp, makeLog } from '../harness.mjs';
 import { makeArchCorpus } from './arch-corpus.mjs';
 
 /** Init a throwaway git repo (quiet, no signing) and return its dir. */
@@ -67,30 +67,33 @@ export async function runStress(name, fn) {
   }
   const log = makeLog(name);
   let launched = null;
+  let code = 0;
   try {
     launched = await launchApp();
     await fn({ app: launched.app, page: launched.page, log });
     log('PASS ✓');
-    process.exit(0);
   } catch (e) {
     if (e?.name === 'AssertionError') {
       log('FAIL ✗', e.message);
-      process.exit(1);
-    }
-    console.error(`[${name}] ERROR:`, e?.stack || e?.message || e);
-    process.exit(2);
-  } finally {
-    try {
-      if (launched) await closeApp(launched.app, launched.page);
-    } catch {
-      /* best-effort */
-    }
-    try {
-      await launched?.cleanup();
-    } catch {
-      /* ignore */
+      code = 1;
+    } else {
+      console.error(`[${name}] ERROR:`, e?.stack || e?.message || e);
+      code = 2;
     }
   }
+  // The app has to be closed before exit: a live app holds the fixture dirs open, so their
+  // removal fails with EPERM.
+  try {
+    if (launched) await closeApp(launched.app, launched.page);
+  } catch (e) {
+    console.error(`[${name}] closeApp failed:`, e?.message || e);
+  }
+  try {
+    await launched?.cleanup();
+  } catch (e) {
+    console.error(`[${name}] cleanup failed:`, e?.message || e);
+  }
+  await finishScenario(code);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

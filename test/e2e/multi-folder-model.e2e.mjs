@@ -500,6 +500,19 @@ const PHASES = [
         );
         log('repos: home + attached tagged');
 
+        // Before the open: the host pushes the enclosing repo's snapshot once, as the session shows.
+        await page.evaluate(() => {
+          window.__mfmDeltas = {};
+          window.agentDeck.subscribe((m) => {
+            if (m.type !== 'repoDelta') return;
+            const next = m.full ? {} : { ...(window.__mfmDeltas[m.sessionId] ?? {}) };
+            for (const [r, snap] of Object.entries(m.repos)) {
+              if (snap.removed) delete next[r];
+              else next[r] = snap;
+            }
+            window.__mfmDeltas[m.sessionId] = next;
+          });
+        });
         const inner = await post(
           { type: 'openRepo', path: foo, agentId: 'shell:cmd', requestId: 13 },
           ['openRepo:result'],
@@ -521,24 +534,19 @@ const PHASES = [
           key(s.activeRepoRoot ?? '') === key(repoG),
           `G is the active repo (got ${s.activeRepoRoot})`,
         );
-        const project = await page.evaluate(
-          ({ path, changesRoot }) =>
-            new Promise((resolve, reject) => {
-              const timer = setTimeout(() => reject(new Error('no project reply')), 15000);
-              const off = window.agentDeck.subscribe((m) => {
-                if (m.type !== 'project' || m.path !== path) return;
-                clearTimeout(timer);
-                off();
-                resolve(m);
-              });
-              // 0 never overrides a reply the app has shown; the reply is read right here.
-              window.agentDeck.post({ type: 'requestProject', path, changesRoot, requestId: 0 });
-            }),
-          { path: s.home, changesRoot: s.activeRepoRoot },
-        );
+        const listed = () =>
+          page.evaluate(
+            ({ id, root }) => {
+              const norm = (p) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+              const snaps = window.__mfmDeltas[id] ?? {};
+              const hit = Object.entries(snaps).find(([r]) => norm(r) === root);
+              return hit ? hit[1].changes.map((c) => c.path) : null;
+            },
+            { id: inner.sessionId, root: key(s.activeRepoRoot) },
+          );
         assert(
-          project.changes.some((c) => c.path === 'x.txt'),
-          `home = subfolder of a repo still lists that repo's changes (got ${JSON.stringify(project.changes)})`,
+          await until(async () => (await listed())?.includes('x.txt') === true, 15000),
+          `home = subfolder of a repo still lists that repo's changes (got ${JSON.stringify(await listed())})`,
         );
         log('repos: home inside G lists G tagged home and its x.txt change');
       });

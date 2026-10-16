@@ -158,12 +158,6 @@ export type RepoRead =
   | { ok: true; changes: ChangeDTO[]; trackedDirty: boolean }
   | { ok: false; reason: GitFailure };
 
-/** Today's tolerant shape for the callers that predate {@link readRepoChanges}. */
-export async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
-  const r = await readRepoChanges(cwd, { lines: true });
-  return r.ok ? r.changes : [];
-}
-
 /** One `status --porcelain -z --untracked-files=all`; with `lines:false` it is the only git
  *  process and added/removed stay 0. See docs/specs/2026-10-16-multi-repo-tracking.md §3. */
 export async function readRepoChanges(cwd: string, opts: { lines: boolean }): Promise<RepoRead> {
@@ -426,30 +420,11 @@ function getCustomizations(cwd: string): CustomizationCount[] {
   ];
 }
 
-/**
- * Build the project view. The file tree comes from `cwd` (the opened root — the explorer
- * browses the whole tree), while git `changes` are scoped to `changesRoot` (the session's
- * active repo, for multi-repo workspaces). They coincide for a single-repo project.
- */
+/** The file tree and customizations; change lists come only from the repo tracker
+ *  (docs/plans/2026-10-16-multi-repo-tracking.plan.md, T2.6). */
 export async function getProjectInfo(
   cwd: string,
-  changesRoot: string = cwd,
-): Promise<{ changes: ChangeDTO[]; files: FileNodeDTO[]; customizations: CustomizationCount[] }> {
-  if (!cwd || !fs.existsSync(cwd)) return { changes: [], files: [], customizations: [] };
-  const [changes, files] = await Promise.all([
-    changesRoot && fs.existsSync(changesRoot)
-      ? gitChanges(changesRoot)
-      : Promise.resolve<ChangeDTO[]>([]),
-    fileTree(cwd),
-  ]);
-  // Tag file nodes with git status by matching path suffix.
-  const statusByName = new Map<string, ChangeKind>();
-  for (const c of changes) {
-    const name = c.path.split('/').pop();
-    if (name) statusByName.set(name, c.kind);
-  }
-  for (const f of files) {
-    if (f.kind === 'file' && statusByName.has(f.name)) f.status = statusByName.get(f.name);
-  }
-  return { changes, files, customizations: getCustomizations(cwd) };
+): Promise<{ files: FileNodeDTO[]; customizations: CustomizationCount[] }> {
+  if (!cwd || !fs.existsSync(cwd)) return { files: [], customizations: [] };
+  return { files: await fileTree(cwd), customizations: getCustomizations(cwd) };
 }

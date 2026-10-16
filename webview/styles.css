@@ -2517,6 +2517,21 @@ body.resizing .panel__resize::after {
 .diffstat--del {
   color: var(--red);
 }
+/* Line counts not read yet (docs/plans/2026-10-16-multi-repo-tracking.plan.md T2.7): a placeholder,
+   never a guessed number. */
+.diffstat--pending {
+  display: inline-block;
+  width: 2.4em;
+  height: 0.75em;
+  border-radius: 2px;
+  vertical-align: middle;
+  background: color-mix(in srgb, var(--text-faint) 35%, transparent);
+}
+@media (forced-colors: active) {
+  .diffstat--pending {
+    border: 1px solid currentColor;
+  }
+}
 
 /* customizations */
 .cust {
@@ -5763,6 +5778,19 @@ body.gh-resizing {
   padding: 5px 8px 3px calc(var(--tree-pad) + var(--tree-chev) + var(--tree-gap));
   font-size: calc(11.5px * var(--font-scale));
   color: var(--text-faint);
+}
+.repo-head__error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 3px calc(var(--tree-pad) + var(--tree-chev) + var(--tree-gap));
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--danger);
+}
+.repo-head__asof {
+  padding: 3px 8px 1px calc(var(--tree-pad) + var(--tree-chev) + var(--tree-gap));
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-dim);
 }
 @media (forced-colors: active) {
   .repo-head__tag {

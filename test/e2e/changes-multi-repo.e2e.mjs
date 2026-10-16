@@ -2,7 +2,7 @@
  * Changes tab per repo (real-app smoke): a home repo plus an attached reference repo in one
  * session. docs/specs/archive/2026-09-23-mf-changes.md §7.3 Gherkin step for step, then AC2, AC3 (incl.
  * a relaunch on the same userData), AC4, AC8, AC9 and locked L11. Repo detection, per-repo GitInfo
- * and the `repoChanges` fan-out are host-side, so only the real app can prove any of it.
+ * and the pushed `repoDelta` fan-out are host-side, so only the real app can prove any of it.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -260,6 +260,18 @@ async function runFirstLaunch(page) {
   );
   log('heads: home · Home · main, ref · Attached · main, each listing only its own file ✓');
 
+  // Line counts arrive after the names (only once Changes is on screen), so the stat settles later.
+  await page
+    .waitForFunction(
+      () =>
+        document.querySelector('.changes__header-summary')?.getAttribute('title') ===
+        '2 changes · 2 repos +2 -1',
+      null,
+      { timeout: 5000 },
+    )
+    .catch((e) => {
+      if (e?.name !== 'TimeoutError') throw e;
+    });
   const header = await page.evaluate(() => ({
     title: document.querySelector('.changes__header-summary')?.getAttribute('title'),
     count: document.querySelector('.changes__header-count')?.textContent,

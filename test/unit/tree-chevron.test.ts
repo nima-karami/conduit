@@ -65,6 +65,7 @@ const section: FolderSectionModel = {
 const head: RepoHeadModel = {
   repo: { root: '/w/home', name: 'home', folder: '/w/home', tag: 'home' },
   label: 'home',
+  lines: true,
   changes: [],
   staged: [],
   unstaged: [],

@@ -83,7 +83,10 @@ for (const { name, path } of scenarios) {
   }
 
   let status;
-  if (result.status === 0) {
+  // spawnSync kills a child that overflows its output buffer; that is not a timeout.
+  if (result.error?.code === 'ENOBUFS') {
+    status = 'ENOBUFS';
+  } else if (result.status === 0) {
     status = /\bSKIP\b/.test(combined) ? 'SKIP' : 'PASS';
   } else if (result.status === 1) {
     status = 'FAIL';
@@ -105,6 +108,10 @@ for (const { name, path } of scenarios) {
       if (/^\[[^\]]+\]/.test(line) && !line.startsWith('##PERF##')) console.log(`      ${line}`);
     }
   } else {
+    if (status === 'ENOBUFS')
+      console.log(
+        '      output exceeded the spawnSync buffer; the scenario was killed, not timed out',
+      );
     if (result.stdout) process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
   }

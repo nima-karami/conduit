@@ -13,5 +13,5 @@ export function anyRepoDirty(s: Pick<Session, 'repoGit'>): boolean {
 
 export function repoGitFingerprint(g: GitInfo | undefined): string {
   if (!g) return '';
-  return `${g.kind}|${g.branch ?? ''}|${g.sha ?? ''}|${g.dirty ? 'd' : ''}|${g.operation ?? ''}`;
+  return `${g.kind}|${g.branch ?? ''}|${g.sha ?? ''}|${g.dirty ? 'd' : ''}|${g.operation ?? ''}|${g.unborn ? 'u' : ''}|${g.isWorktree ? 'w' : ''}|${g.worktreeName ?? ''}`;
 }

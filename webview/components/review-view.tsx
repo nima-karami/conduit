@@ -258,6 +258,7 @@ const NOTE_CAP_MESSAGE =
 const STR = {
   discardPerRepo: 'Pick one repo to discard its changes',
   stageNothing: 'Nothing left to stage in any repo',
+  countingLines: 'Counting lines…',
 } as const;
 
 /** A card's DOM address: `data-path` stays repo-relative (e2e selectors read it), so two repos'
@@ -560,6 +561,10 @@ export function ReviewView({
     );
     return workingReviewFiles(scoped, resolved);
   }, [preloaded, preloadedFiles, sourceRoot, repoChanges, scope, resolved]);
+  const linesPendingRoots = useMemo(
+    () => new Set((repoChanges ?? []).filter((r) => !r.lines).map((r) => folderKey(r.root))),
+    [repoChanges],
+  );
 
   // The navigator's path filter narrows the list EVERYTHING downstream is derived from —
   // navigator rows, cards, the windower, the cursor and the search corpus — so there is one
@@ -2315,6 +2320,7 @@ export function ReviewView({
                   key={`${viewKey}\u0000${key}`}
                   change={c}
                   abs={key}
+                  linesPending={linesPendingRoots.has(folderKey(c.repoRoot))}
                   diff={diff}
                   uiCache={uiCacheRef.current}
                   onUiChange={setCardUi}
@@ -2501,6 +2507,7 @@ const emptyUi = (collapsed = false): CardUiState => ({
 const ReviewFileCard = memo(function ReviewFileCard({
   change,
   abs,
+  linesPending,
   diff,
   uiCache,
   onUiChange,
@@ -2539,6 +2546,8 @@ const ReviewFileCard = memo(function ReviewFileCard({
   change: ReviewFile;
   /** The file's absolute path — also its key everywhere in Review (K1). */
   abs: string;
+  /** Its repo's line counts are not read yet. */
+  linesPending: boolean;
   diff: FileDiffDTO | undefined;
   uiCache: Map<string, CardUiState>;
   onUiChange: (key: string, next: CardUiState) => void;
@@ -2759,8 +2768,15 @@ const ReviewFileCard = memo(function ReviewFileCard({
             <span className="rcard__file">{file}</span>
           </span>
           <span className="rcard__stat">
-            {change.added > 0 && <span className="diffstat--add">+{change.added}</span>}
-            {change.removed > 0 && <span className="diffstat--del"> -{change.removed}</span>}
+            {linesPending && (
+              <span className="diffstat--pending" role="img" aria-label={STR.countingLines} />
+            )}
+            {!linesPending && change.added > 0 && (
+              <span className="diffstat--add">+{change.added}</span>
+            )}
+            {!linesPending && change.removed > 0 && (
+              <span className="diffstat--del"> -{change.removed}</span>
+            )}
           </span>
         </button>
         <button

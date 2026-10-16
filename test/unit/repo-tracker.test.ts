@@ -238,6 +238,36 @@ describe('createRepoTracker', () => {
     expect(h.reads).toEqual([]);
   });
 
+  it('a demand rise during a run already reading lines adds no second run', async () => {
+    const h = harness();
+    h.visible.add('s1');
+    h.wants.add('s1');
+    const release = h.gateReads();
+    h.tracker.setSessionRepos('s1', [info('/w/A', 'home')]);
+    await flush(0);
+    expect(h.reads).toEqual([{ root: '/w/A', lines: true }]);
+    h.tracker.linesDemandChanged();
+    release();
+    await settleAll();
+    expect(h.reads).toEqual([{ root: '/w/A', lines: true }]);
+  });
+
+  it('a demand rise during a run reading names only re-reads with lines', async () => {
+    const h = harness();
+    h.visible.add('s1');
+    const release = h.gateReads();
+    h.tracker.setSessionRepos('s1', [info('/w/A', 'home')]);
+    await flush(0);
+    h.wants.add('s1');
+    h.tracker.linesDemandChanged();
+    release();
+    await settleAll();
+    expect(h.reads).toEqual([
+      { root: '/w/A', lines: false },
+      { root: '/w/A', lines: true },
+    ]);
+  });
+
   it('removing a repo forgets it and reports removal with the sessions that dropped it', async () => {
     const h = harness();
     h.visible.add('s1');

@@ -3,6 +3,7 @@ import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
 import type { SearchFileResult, SearchQuery } from './content-search';
 import type { DroppedRoot, SessionOpReason } from './folder-validation';
+import type { GitFailure } from './git-exec';
 import type { RefEndpoint } from './git-range';
 import type { LauncherDTO } from './launchers';
 import type { LogLevel } from './logging';
@@ -15,6 +16,7 @@ import type { PreviewReason } from './preview-url';
 import type { QueueSummary } from './queue-summary';
 import type { RangePreset } from './range-preset';
 import type { RepoTag } from './repo-scan';
+import type { RepoSnapshot } from './repo-tracker';
 import type { ReviewMark, ReviewMarksRepo } from './review-marks';
 import type { ReviewNote, ReviewNotePatch } from './review-notes';
 import type { AppSettings } from './settings';
@@ -106,6 +108,12 @@ export interface RepoChanges {
   tag: RepoTag;
   sub?: string;
   changes: ChangeDTO[];
+  /** added/removed are populated; false = line counts not read yet. */
+  lines: boolean;
+  /** 0 = never read successfully (docs/plans/2026-10-16-multi-repo-tracking.plan.md, Contracts). */
+  refreshedAt: number;
+  stale?: true;
+  error?: GitFailure;
 }
 
 /** Which blob each side of a diff is read from. `base:'head'` + `side:'worktree'` (the
@@ -403,12 +411,17 @@ export type HostToWebview =
   | {
       type: 'project';
       path: string;
-      changes: ChangeDTO[];
       files: FileNodeDTO[];
       customizations: CustomizationCount[];
-      /** Present iff the request carried a sessionId whose repos are scanned; display order. */
-      repoChanges?: RepoChanges[];
       requestId: number;
+    }
+  | {
+      type: 'repoDelta';
+      sessionId: string;
+      /** true replaces the session's whole map. */
+      full: boolean;
+      /** Keyed by RepoInfo.root. */
+      repos: Record<string, RepoSnapshot | { removed: true }>;
     }
   | { type: 'error'; message: string }
   // Terminal output streamed from the PTY in the extension host. `replay` is set only on a cold
@@ -843,12 +856,11 @@ export type WebviewToHost =
   // Sent at a DownloadURL dragstart; the host's will-download admits only an armed file.
   | { type: 'fs:armDragDownload'; path: string }
   | { type: 'launch:preview'; requestId: number; agentId: string; home: string; roots: string[] }
-  // Ask host for git changes (scoped to `changesRoot`, the active repo) + file tree (from `path`).
+  // Ask host for the file tree (from `path`); change lists arrive as `repoDelta`.
   | {
       type: 'requestProject';
       path: string;
       auto?: boolean;
-      changesRoot?: string;
       sessionId?: string;
       /** Echoed on the `project` reply so the renderer can drop an out-of-order one. Required:
        *  an untagged post would bypass that ordering (review N-3). */
@@ -986,6 +998,10 @@ export type WebviewToHost =
   // from "needs you" and treats seeing one as acknowledgment; the sets are per sender
   // window. See docs/specs/archive/2026-08-21-attention-signal-quality.md §4.
   | { type: 'visible'; ids: string[] }
+  // This window's line-count demand set; replaces the previous one. Ids are validated host-side.
+  | { type: 'changes:subscribe'; sessionIds: string[] }
+  // Explicit Retry of one repo's read; the host checks `root` against the session's repos.
+  | { type: 'repo:refresh'; sessionId: string; root: string }
   | { type: 'updateSettings'; settings: AppSettings }
   | { type: 'searchFiles'; root: string; query: string } // recursive file search under root
   // Project-wide content search (find-in-files, L5). `requestId` monotonically increases

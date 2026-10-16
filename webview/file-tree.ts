@@ -386,14 +386,9 @@ export function buildChangeMap(changes: ChangeDTO[]): Map<string, ChangeKind> {
  *  data gets no dot, never a lookup relative to another folder's root. */
 export function buildRowChangeMap(input: {
   repoChanges: readonly RepoChanges[] | undefined;
-  changes: readonly ChangeDTO[];
-  changesRoot: string | undefined;
 }): Map<string, ChangeKind> {
-  const repos =
-    input.repoChanges ??
-    (input.changesRoot !== undefined ? [{ root: input.changesRoot, changes: input.changes }] : []);
   const out = new Map<string, ChangeKind>();
-  for (const r of repos) {
+  for (const r of input.repoChanges ?? []) {
     for (const [rel, kind] of buildChangeMap([...r.changes])) {
       out.set(folderKey(`${r.root}/${rel}`), kind);
     }
