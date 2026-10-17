@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.48.0] — 2026-10-17
+
 ### Added
 - **Terminal paths link in more shapes, and an ambiguous one asks which repo.** A path an agent
   prints now links in a tool header (`Update(src/index.ts)`), in backticks or a markdown link,

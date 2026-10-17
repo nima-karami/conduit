@@ -19,7 +19,7 @@ side in **real embedded terminals**, grouped by project, with git, review and an
 
 </div>
 
-> **Status:** early but functional, Windows-only releases for now (`v0.47.2`). Conduit is also an
+> **Status:** early but functional, Windows-only releases for now (`v0.48.0`). Conduit is also an
 > experiment in autonomous AI development — see [How this project is built](#how-this-project-is-built).
 
 ## Why
