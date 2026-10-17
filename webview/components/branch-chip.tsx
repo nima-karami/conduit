@@ -143,18 +143,21 @@ export function BranchChip({
       >
         {ready ? (
           <>
-            {worktree && (
-              <>
-                <span className="branch-chip__worktree">
-                  <IconWorktree size={12} className="branch-chip__glyph" />
+            {/* The glyph alone stays the worktree cue when the name segment is dropped (QA4). */}
+            {ready.worktree !== undefined && (
+              <span className="branch-chip__worktree">
+                <IconWorktree size={12} className="branch-chip__glyph" />
+                {worktree && (
                   <span className="branch-chip__label" dir="ltr">
                     {worktree}
                   </span>
-                </span>
-                <span className="branch-chip__sep" aria-hidden>
-                  /
-                </span>
-              </>
+                )}
+              </span>
+            )}
+            {worktree && (
+              <span className="branch-chip__sep" aria-hidden>
+                /
+              </span>
             )}
             {ready.opLabel && <span className="branch-chip__op">{ready.opLabel}</span>}
             <IconBranch size={12} className="branch-chip__glyph" />

@@ -124,7 +124,9 @@ const readChipOnce = (page) =>
       label: chip.querySelector(':scope > .branch-chip__label')?.textContent ?? null,
       tag: chip.querySelector('.branch-chip__tag')?.textContent ?? null,
       op: chip.querySelector('.branch-chip__op')?.textContent ?? null,
-      worktree: chip.querySelector('.branch-chip__worktree')?.textContent ?? null,
+      worktree:
+        chip.querySelector('.branch-chip__worktree .branch-chip__label')?.textContent ?? null,
+      worktreeGlyph: !!chip.querySelector('.branch-chip__worktree .branch-chip__glyph'),
       dirty: !!chip.querySelector('.branch-chip__dirty'),
       text: chip.textContent,
       name: chip.getAttribute('aria-label'),
@@ -172,7 +174,10 @@ try {
   assert(chipMain.heads === 1, `expected one repo head, got ${chipMain.heads}`);
   assert(chipMain.label === 'main', `expected branch label 'main', got '${chipMain.label}'`);
   assert(
-    chipMain.op === null && chipMain.worktree === null && !chipMain.dirty,
+    chipMain.op === null &&
+      chipMain.worktree === null &&
+      !chipMain.worktreeGlyph &&
+      !chipMain.dirty,
     `a clean main chip carries extra state: ${JSON.stringify(chipMain)}`,
   );
   assert(
@@ -290,9 +295,10 @@ try {
   const chipWt = await readChip(page, (v) => v.op === 'REBASING');
   log('AC11 chip:', JSON.stringify(chipWt));
   assert(chipWt.text.includes('REBASING'), `chip text lacks REBASING: ${chipWt.text}`);
-  // The head already reads the worktree's name, so the chip shows no segment repeating it; the
-  // accessible name below still says "worktree" (engine runtime QA4).
+  // The head already reads the worktree's name, so the chip shows no segment repeating it, only the
+  // worktree glyph; the accessible name below still says "worktree" (engine runtime QA4).
   assert(chipWt.worktree === null, `chip repeats the head name ${wtName}: ${chipWt.text}`);
+  assert(chipWt.worktreeGlyph, `chip lost its worktree glyph: ${chipWt.text}`);
   assert(chipWt.dirty, 'chip lacks .branch-chip__dirty');
   for (const part of ['REBASING', `worktree ${wtName}`, 'uncommitted changes']) {
     assert(chipWt.name?.includes(part), `chip aria-label lacks "${part}": ${chipWt.name}`);
