@@ -86,6 +86,7 @@ export function CenterPane({
   onOpenFileAt,
   onRevealFolder,
   onOpenCommitReview,
+  onSearchAllFiles,
   reviewRepos,
   reviewRepoChanges,
   reviewRepoGit,
@@ -155,6 +156,8 @@ export function CenterPane({
   /** terminal-commit-link: open Review scoped to a host-confirmed commit clicked in a terminal.
    * `repoRoot` is the terminal's cwd repo so Review reads the commit from there, not the pinned repo. */
   onOpenCommitReview?: (sha: string, sessionId: string, repoRoot?: string) => void;
+  /** A terminal path picker's "Search all files…": quick open prefilled with the token. */
+  onSearchAllFiles?: (query: string) => void;
   // Review tab (R5.5): the singleton Review-changes doc renders ReviewView in the doc
   // area instead of DocView. See ReviewView's props for these four.
   reviewRepos: readonly RepoInfo[];
@@ -350,6 +353,7 @@ export function CenterPane({
                 onRevealFolder={onRevealFolder}
                 onOpenCommitReview={onOpenCommitReview}
                 onOpenTimedMessages={onOpenTimedMessages}
+                onSearchAllFiles={onSearchAllFiles}
               />
             </div>
           </div>

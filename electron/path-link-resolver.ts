@@ -43,6 +43,9 @@ export interface PathLinkReply {
 export interface PathLinkResolver {
   /** Never rejects on bad input: an unknown session gives one 'session-gone' result per entry. */
   resolve(sessionId: string, tokens: unknown): Promise<PathLinkReply>;
+  /** Click-time existence probe behind `pathExists`; a UNC-like path counts as null past the
+   *  budget. */
+  probe(abs: string): Promise<'file' | 'dir' | null>;
 }
 
 export const STAT_CONCURRENCY = 16;
@@ -183,6 +186,9 @@ export function createPathLinkResolver(deps: PathLinkResolverDeps): PathLinkReso
         return { ...resolved[next++], key: e.key };
       });
       return { cwd, rootsSig, roots, results };
+    },
+    probe(abs) {
+      return raceUnc(abs, deps.stat).catch(() => null);
     },
   };
 }

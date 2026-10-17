@@ -4,6 +4,9 @@ import { type ILinkProvider, Terminal } from '@xterm/xterm';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
 import { FILE_INDEX_TTL_MS } from '../../src/file-index-ttl';
+import { folderKey } from '../../src/folder-key';
+import { isAncestorOf } from '../../src/owning-session';
+import type { ResolveRoot } from '../../src/path-link-roots';
 import type { PathCandidate, TokenResolution } from '../../src/path-resolve';
 import type { TermGeometry } from '../../src/protocol';
 import { withTimeout } from '../../src/with-timeout';
@@ -17,9 +20,12 @@ import {
 } from '../bridge';
 import type { OpenMode } from '../docs';
 import { fontZoomTarget } from '../font-zoom';
-import { IconCopy, IconDoc, IconEraser, IconFolder, IconPaste, IconSearch } from '../icons';
+import { IconCopy, IconEraser, IconPaste, IconSearch } from '../icons';
 import { isMiddleButton, terminalLinkMiddleAction } from '../middle-click';
+import { chooseClickAction, rankCandidates } from '../path-candidate-rank';
+import { probePathKind } from '../path-probe';
 import { useSettings } from '../settings';
+import { TERM_LINK_STR } from '../term-link-strings';
 import { buildTerminalMenuItems, type TerminalMenuAction } from '../term-menu';
 import { initialTermSearchState, termSearchReducer } from '../term-search';
 import { notifyTerminalBus, registerTerminal } from '../terminal-bus';
@@ -32,6 +38,7 @@ import {
 } from '../terminal-conpty';
 import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
 import { terminalGpu } from '../terminal-gpu';
+import { lastPick, notePick } from '../terminal-link-picks';
 import {
   detectCommitTokens,
   detectPathTokens,
@@ -45,6 +52,8 @@ import { createTerminalTokenCache } from '../terminal-token-cache';
 import { pushToast } from '../toast-store';
 import { buildXtermTheme, monoStack } from '../xterm-theme';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
+import { PathCandidatePicker } from './path-candidate-picker';
+import { type PickerRow, pickerRows } from './path-candidate-picker-model';
 import { disposeTerminal } from './safe-dispose';
 import { TermSearchBar } from './term-search-bar';
 import { TimerChip } from './timer-chip';
@@ -69,6 +78,29 @@ const LINK_RESOLVE_TIMEOUT_MS = 10_000;
 const LINK_CACHE_CAPACITY = 2048;
 // Spec 2026-10-16-terminal-path-links §5: a found path stays linked this long without a re-ask.
 const PATH_LINK_TTL_MS = 30_000;
+
+/** A cached resolution with the roots its candidates' rootIdx index into. */
+interface LinkResolution {
+  res: TokenResolution;
+  roots: ResolveRoot[];
+}
+
+/** What a clicked path link needs to open a candidate: its cache entry and position. */
+interface LinkTarget {
+  key: string;
+  scope: string;
+  line?: number;
+  col?: number;
+}
+
+interface PickerState {
+  at: { x: number; y: number };
+  token: string;
+  rows: PickerRow[];
+  total: number;
+  truncated: boolean;
+  link: LinkTarget;
+}
 
 interface ReplayState {
   active: boolean;
@@ -96,6 +128,7 @@ export function TerminalPane({
   onRevealFolder,
   onOpenCommitReview,
   onOpenTimedMessages,
+  onSearchAllFiles,
 }: {
   sessionId: string;
   agentId?: string;
@@ -122,6 +155,8 @@ export function TerminalPane({
   onOpenCommitReview?: (sha: string, sessionId: string, repoRoot?: string) => void;
   /** Open the timed-message dialog for this session — from the chip (§2 "Entry points"). */
   onOpenTimedMessages?: (sessionId: string) => void;
+  /** The path picker's "Search all files…": quick open prefilled with the token. */
+  onSearchAllFiles?: (query: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -171,44 +206,55 @@ export function TerminalPane({
   // suppressed only over a link (no autoscroll), never over plain terminal text.
   const linkHoveredRef = useRef(false);
 
-  // path-links v1: when a clicked link resolved to >1 candidate, show a disambiguation
-  // dropdown (reuses the terminal's ContextMenu). Stored in a ref so the imperative xterm
-  // link provider (created once in the init effect) can call the latest version.
-  const openPathMenu = useCallback(
-    (
-      event: MouseEvent,
-      candidates: PathCandidate[],
-      truncated: boolean,
-      line?: number,
-      col?: number,
-    ) => {
-      const items: MenuItem[] = candidates.map((c) => ({
-        label: c.relToRoot || c.absPath,
-        icon: c.isDir ? <IconFolder size={14} /> : <IconDoc size={14} />,
-        onClick: () =>
-          c.isDir
-            ? onRevealFolderRef.current?.(c.absPath)
-            : onOpenFileRef.current?.(c.absPath, line, col, sessionId),
-        ...(c.isDir
-          ? {}
-          : {
-              onMiddleClick: () =>
-                onOpenFileRef.current?.(c.absPath, line, col, sessionId, 'background'),
-            }),
-      }));
-      if (truncated) {
-        items.push({
-          label: `Showing first ${candidates.length} matches…`,
-          onClick: () => {},
-          disabled: true,
+  // The ranked picker of an ambiguous path link (spec 2026-10-16-terminal-path-links §8). One
+  // at a time: a second click replaces it.
+  const [picker, setPicker] = useState<PickerState | null>(null);
+  // Set by the init effect, which owns the path cache: a stale target's entry is evicted.
+  const evictPathRef = useRef<(key: string, scope: string) => void>(() => {});
+
+  /** Re-checks existence before opening (spec row 55): a stale target toasts, drops its cache
+   *  entry and opens nothing. The probed kind, not `cand.isDir`, decides file vs folder — a UNC
+   *  candidate's isDir is only a guess for the icon. */
+  const openCandidate = useCallback(
+    async (cand: PathCandidate, link: LinkTarget, mode?: OpenMode) => {
+      const kind = await probePathKind(cand.absPath);
+      if (kind === null) {
+        pushToast({
+          message: TERM_LINK_STR.noLongerExists(cand.absPath.split('/').pop() ?? cand.absPath),
+          variant: 'info',
         });
+        evictPathRef.current(link.key, link.scope);
+        return null;
       }
-      setMenu({ x: event.clientX, y: event.clientY, items });
+      if (kind === 'dir') onRevealFolderRef.current?.(cand.absPath);
+      else onOpenFileRef.current?.(cand.absPath, link.line, link.col, sessionId, mode);
+      return kind;
     },
     [sessionId],
   );
-  const openPathMenuRef = useRef(openPathMenu);
-  openPathMenuRef.current = openPathMenu;
+  const openCandidateRef = useRef(openCandidate);
+  openCandidateRef.current = openCandidate;
+
+  const closePicker = useCallback(() => {
+    setPicker(null);
+    termRef.current?.focus();
+  }, []);
+
+  const pickRow = async (row: PickerRow, how: 'foreground' | 'background', link: LinkTarget) => {
+    setPicker(null);
+    const kind = await openCandidate(
+      row.cand,
+      link,
+      how === 'background' ? 'background' : undefined,
+    );
+    if (kind !== null) notePick(sessionId, row.cand.repoRoot);
+    // An opened file takes focus in its editor; anything else hands it back to the terminal.
+    if (kind !== 'file' || how === 'background') termRef.current?.focus();
+  };
+
+  useEffect(() => {
+    if (!visible) setPicker(null);
+  }, [visible]);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -331,6 +377,9 @@ export function TerminalPane({
       setFollowing(atBottom);
     };
     const onScrollFollow = term.onScroll(syncFollow);
+    // The picker is anchored to a buffer cell: any terminal scroll leaves it pointing elsewhere.
+    // (A wheel scroll never fires onScroll; the viewport's scroll event closes it via Popover.)
+    const onScrollPicker = term.onScroll(() => setPicker(null));
     // TEMPORARY (scroll-lock investigation): records every user scroll attempt and each
     // hidden/shown transition to the host log. Remove with terminal-scroll-diagnostics.ts.
     const detachScrollDiag = ref.current
@@ -351,7 +400,7 @@ export function TerminalPane({
     let unsubValidate: (() => void) | null = null;
     let disposeLinkCaches = () => {};
     if (window.agentDeck) {
-      const resolveCache = createTerminalTokenCache<TokenResolution>(
+      const resolveCache = createTerminalTokenCache<LinkResolution>(
         // A path token is its alts joined by NUL; no path char is NUL, so the split is exact.
         (batch) =>
           post({
@@ -365,7 +414,7 @@ export function TerminalPane({
           timeoutMs: LINK_RESOLVE_TIMEOUT_MS,
           ttlMs: PATH_LINK_TTL_MS,
           // A miss is at most as stale as the host's file index (plan Decisions "cache scope").
-          negative: { is: (r) => r.candidates.length === 0, ttlMs: FILE_INDEX_TTL_MS },
+          negative: { is: (r) => r.res.candidates.length === 0, ttlMs: FILE_INDEX_TTL_MS },
         },
       );
       const commitCache = createTerminalTokenCache<string | null>(
@@ -377,12 +426,27 @@ export function TerminalPane({
         resolveCache.dispose();
         commitCache.dispose();
       };
+      evictPathRef.current = (key, scope) => resolveCache.evict(key, scope);
+      // Folder keys of the roots the last reply resolved against: an fsChanged under one of them
+      // may have created a file an earlier miss said was not there.
+      let rootKeys: string[] = [];
       unsubResolve = subscribe((msg) => {
+        if (msg.type === 'fsChanged') {
+          const touched = msg.folders.map(folderKey);
+          const covers = touched.some((f) =>
+            rootKeys.some((r) => isAncestorOf(r, f) || isAncestorOf(f, r)),
+          );
+          // Only misses go: a found target that was deleted is caught by the click probe.
+          if (covers) resolveCache.evictWhere((v) => v.res.candidates.length === 0);
+          return;
+        }
         if (msg.type !== 'resolvePathTokenResult' || msg.sessionId !== sessionId) return;
         if (msg.requestId < 0) return;
-        // An errored entry is not cached; settle still releases its waiter as a miss.
-        const values = new Map<string, TokenResolution>();
-        for (const r of msg.results) if (!r.error) values.set(r.key, r);
+        rootKeys = msg.roots.map((r) => folderKey(r.abs));
+        // An errored entry is not cached; settle still releases its waiter as a miss. Each value
+        // carries the roots its rootIdx values index.
+        const values = new Map<string, LinkResolution>();
+        for (const r of msg.results) if (!r.error) values.set(r.key, { res: r, roots: msg.roots });
         resolveCache.settle(msg.requestId, `${msg.cwd}\0${msg.rootsSig}`, values);
       });
       unsubValidate = subscribe((msg) => {
@@ -462,14 +526,14 @@ export function TerminalPane({
             Promise.all([
               tokens.length > 0
                 ? resolveCache.get(tokens.map(keyOf), scope)
-                : Promise.resolve(new Map<string, TokenResolution>()),
+                : Promise.resolve(new Map<string, LinkResolution>()),
               commitTokens.length > 0
                 ? commitCache.get(commitTokens.map((t) => t.raw))
                 : Promise.resolve(new Map<string, string | null>()),
             ]),
             LINK_RESOLVE_TIMEOUT_MS,
-            [new Map<string, TokenResolution>(), new Map<string, string | null>()] as [
-              Map<string, TokenResolution>,
+            [new Map<string, LinkResolution>(), new Map<string, string | null>()] as [
+              Map<string, LinkResolution>,
               Map<string, string | null>,
             ],
           )
@@ -480,8 +544,10 @@ export function TerminalPane({
               // against URLs upstream via overlapsUrl.)
               const pathSpans: Array<{ start: number; end: number }> = [];
               for (const tok of tokens) {
-                const res = resMap.get(keyOf(tok));
-                if (!res || res.candidates.length === 0) continue; // 0 candidates → plain text
+                const key = keyOf(tok);
+                const found = resMap.get(key);
+                if (!found || found.res.candidates.length === 0) continue; // 0 candidates → plain text
+                const { res } = found;
                 pathSpans.push({ start: tok.start, end: tok.end });
                 links.push({
                   range: rangeOf(tok),
@@ -490,26 +556,28 @@ export function TerminalPane({
                   activate(event: MouseEvent, _text: string) {
                     const action = terminalLinkMiddleAction(event.button, navigator.platform);
                     if (action === 'ignore') return;
-                    if (res.candidates.length === 1) {
-                      const c = res.candidates[0];
-                      if (c.isDir) onRevealFolderRef.current?.(c.absPath);
-                      else
-                        onOpenFileRef.current?.(
-                          c.absPath,
-                          tok.line,
-                          tok.col,
-                          sessionId,
-                          action === 'background' ? 'background' : undefined,
-                        );
-                    } else {
-                      // >1 match → disambiguation dropdown anchored at the click.
-                      openPathMenuRef.current(
-                        event,
-                        res.candidates,
-                        res.truncated,
-                        tok.line,
-                        tok.col,
+                    // Ranked here, after the cache, so the last pick is always current.
+                    const ranked = rankCandidates(res.candidates, {
+                      roots: found.roots,
+                      lastPickRepoRoot: lastPick(sessionId),
+                    });
+                    const click = chooseClickAction(ranked);
+                    const link: LinkTarget = { key, scope, line: tok.line, col: tok.col };
+                    if (click.kind === 'open') {
+                      void openCandidateRef.current(
+                        click.cand,
+                        link,
+                        action === 'background' ? 'background' : undefined,
                       );
+                    } else if (click.kind === 'pick') {
+                      setPicker({
+                        at: { x: event.clientX, y: event.clientY },
+                        token: tok.raw,
+                        rows: pickerRows(ranked, found.roots),
+                        total: res.total,
+                        truncated: res.truncated,
+                        link,
+                      });
                     }
                   },
                   hover(_event: MouseEvent, _text: string) {
@@ -655,6 +723,7 @@ export function TerminalPane({
       }
       try {
         onScrollFollow.dispose();
+        onScrollPicker.dispose();
         detachScrollDiag();
         viewportEl?.removeEventListener('scroll', syncFollow);
       } catch {
@@ -994,6 +1063,22 @@ export function TerminalPane({
         />
       )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+      {picker && (
+        <PathCandidatePicker
+          at={picker.at}
+          token={picker.token}
+          rows={picker.rows}
+          total={picker.total}
+          truncated={picker.truncated}
+          mode={{ kind: 'open' }}
+          onPick={(row, how) => void pickRow(row, how, picker.link)}
+          onSearchAll={(query) => {
+            setPicker(null);
+            onSearchAllFiles?.(query);
+          }}
+          onClose={closePicker}
+        />
+      )}
     </div>
   );
 }

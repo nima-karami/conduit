@@ -8,7 +8,12 @@ vi.mock('monaco-editor', () => ({
   typescript: {},
 }));
 
-import { PROBE_TIMEOUT_MS, type ProbeTransport, probePathExists } from '../../webview/path-probe';
+import {
+  PROBE_TIMEOUT_MS,
+  type ProbeTransport,
+  probePathExists,
+  probePathKind,
+} from '../../webview/path-probe';
 
 type Reply = Extract<HostToWebview, { type: 'pathExistsResult' }>;
 
@@ -109,5 +114,31 @@ describe('probePathExists', () => {
       if (msg.type === 'pathExists') emit(reply(msg.path, true));
     });
     await expect(probePathExists('/w/a.ts', t.transport)).resolves.toBe(true);
+  });
+});
+
+// Plan 2026-10-16-terminal-path-links T4.4: the click-time probe of a terminal path link.
+describe('probePathKind', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('dir → "dir", file → "file", miss → null', async () => {
+    for (const [exists, isDir, want] of [
+      [true, true, 'dir'],
+      [true, false, 'file'],
+      [false, false, null],
+    ] as const) {
+      const t = fakeTransport();
+      const p = probePathKind('/w/x', t.transport);
+      t.emit(reply('/w/x', exists, isDir));
+      await expect(p).resolves.toBe(want);
+    }
+  });
+
+  it('timeout → null', async () => {
+    const t = fakeTransport();
+    const p = probePathKind('/w/x', t.transport);
+    await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS);
+    await expect(p).resolves.toBeNull();
   });
 });

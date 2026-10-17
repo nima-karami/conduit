@@ -5809,6 +5809,12 @@ body.gh-resizing {
   color: var(--text-dim);
   background: rgba(var(--overlay), 0.06);
 }
+/* Terminal path picker only: RepoTag stays the scan's type (plan 2026-10-16-terminal-path-links
+   Decisions "The worktree tag is picker-local"). */
+.repo-head__tag--worktree {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 14%, transparent);
+}
 /* On a narrow head the repo name wins over its tag, as on the Files bars. The group's aria-label
    already names the tag. The tag shows only while the name keeps 80px (~14 characters) beside the
    widest pill and the widest chip floor (engine review r5): 24 chevron + 13 glyph + 4 × 4 gaps +
@@ -7891,6 +7897,58 @@ body.gh-resizing {
 .popover {
   position: fixed;
   z-index: var(--layer-popover);
+}
+
+/* ---------- terminal path picker (spec 2026-10-16-terminal-path-links §8) ---------- */
+.pathpick {
+  min-width: 280px;
+  max-width: min(640px, calc(100vw - 16px));
+}
+.pathpick__filter {
+  margin: 0 0 4px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-badge);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: calc(12.5px * var(--font-scale));
+}
+.pathpick__list:focus-visible {
+  outline: none;
+}
+.pathpick__row {
+  min-width: 0;
+  gap: 8px;
+}
+.pathpick__row--active {
+  background: var(--accent-soft);
+}
+/* The repo is what tells the rows apart, so it never ellipsizes; the path gives way. */
+.pathpick__repo {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+.pathpick__branch,
+.pathpick__here {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+}
+.pathpick__rel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--font-scale));
+}
+.pathpick__foot {
+  padding: 4px 10px 2px;
+  color: var(--text-faint);
+  font-size: calc(11px * var(--font-scale));
 }
 
 /* ---------- context menu ---------- */

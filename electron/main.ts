@@ -4184,17 +4184,15 @@ app.whenReady().then(() => {
           // no workspace-containment guard — this is read-only (no write surface), and
           // the renderer can already open any path via readFile, which is also unguarded
           // by workspace roots. Only `exists` and `isDir` are returned; no file content.
-          const p = m.path;
-          let exists = false;
-          let isDir = false;
-          try {
-            const stat = fs.statSync(p);
-            exists = true;
-            isDir = stat.isDirectory();
-          } catch {
-            /* path does not exist or is inaccessible */
-          }
-          replyHere({ type: 'pathExistsResult', path: p, exists, isDir });
+          // Async and UNC-budgeted (plan 2026-10-16-terminal-path-links T4.1): a click on a share
+          // must not block the main thread. The reply is correlated by the echoed path.
+          const kind = await pathLinks.probe(m.path);
+          replyHere({
+            type: 'pathExistsResult',
+            path: m.path,
+            exists: kind !== null,
+            isDir: kind === 'dir',
+          });
           break;
         }
         case 'resolvePathToken': {

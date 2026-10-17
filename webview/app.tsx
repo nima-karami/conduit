@@ -4330,6 +4330,7 @@ export function App() {
             onCloseSplit={() => setSplitId(null)}
             onOpenFile={(p, mode) => openFile(p, undefined, mode)}
             onOpenFileAt={openTerminalFileLink}
+            onSearchAllFiles={(q) => setPalette({ initialQuery: q })}
             onOpenWeb={openWeb}
             flashTab={backgroundFeedback.flashTab}
             onRevealFolder={(path) => post({ type: 'revealInExplorer', path })}

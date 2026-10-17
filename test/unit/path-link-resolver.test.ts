@@ -247,3 +247,48 @@ describe('createPathLinkResolver', () => {
     expect(reply.rootsSig).toMatch(/^[0-9a-f]{8}$/);
   });
 });
+
+// Plan T4.1: the click-time probe behind the async `pathExists` handler.
+describe('PathLinkResolver.probe', () => {
+  const withStat = (stat: PathLinkResolverDeps['stat']) => make({ sessions: {}, stat }).resolver;
+
+  it('probe → file / dir / null', async () => {
+    const r = withStat(async (abs) => (abs === '/f' ? 'file' : abs === '/d' ? 'dir' : null));
+    expect(await r.probe('/f')).toBe('file');
+    expect(await r.probe('/d')).toBe('dir');
+    expect(await r.probe('/x')).toBeNull();
+  });
+
+  it('a stat that throws → null', async () => {
+    const r = withStat(async () => {
+      throw new Error('EPERM');
+    });
+    expect(await r.probe('/f')).toBeNull();
+  });
+
+  it('a UNC-like path whose stat never settles → null after UNC_PROBE_BUDGET_MS', async () => {
+    vi.useFakeTimers();
+    const r = withStat(() => new Promise(() => {}));
+    let out: string | null | undefined;
+    void r.probe('//srv/share/x').then((k) => {
+      out = k;
+    });
+    await vi.advanceTimersByTimeAsync(UNC_PROBE_BUDGET_MS - 1);
+    expect(out).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(out).toBeNull();
+  });
+
+  it('a non-UNC path is not raced: a slow local stat still answers', async () => {
+    vi.useFakeTimers();
+    const r = withStat(
+      () => new Promise((res) => setTimeout(() => res('file'), UNC_PROBE_BUDGET_MS * 4)),
+    );
+    let out: string | null | undefined;
+    void r.probe('/slow').then((k) => {
+      out = k;
+    });
+    await vi.advanceTimersByTimeAsync(UNC_PROBE_BUDGET_MS * 4);
+    expect(out).toBe('file');
+  });
+});
