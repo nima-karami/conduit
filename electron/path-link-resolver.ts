@@ -37,9 +37,9 @@ export interface PathLinkResolverDeps {
   stat(abs: string): Promise<'file' | 'dir' | null>;
   /** repoTopLevel. */
   topLevel(dir: string): Promise<string>;
-  /** Forward-slashed realPathLeaf (src/path-link-confine.ts slashedRealPathLeaf): sync, so it runs
-   *  only for a uri target that passed the decode and lexical checks, once per click. */
-  realPathLeaf(t: string): string;
+  /** src/path-link-confine.ts hostRealPathLeaf: forward-slashed, null when refused. Runs only
+   *  for a uri target that passed the decode and lexical checks, once per click. */
+  realPathLeaf(t: string): Promise<string | null>;
   homeDir: string;
   platform: PathPlatform;
   caseSensitive: boolean;
@@ -352,10 +352,12 @@ export function createPathLinkResolver(deps: PathLinkResolverDeps): PathLinkReso
     };
     const target = decodeFileUri(e.alts[0], deps.platform);
     if (!target) return refused('undecodable');
-    const confined = confineToRoots(target.path, userRootsOf(session, opts), {
-      realPathLeaf: deps.realPathLeaf,
-      ...opts,
-    });
+    const confined = await lease.io(() =>
+      confineToRoots(target.path, userRootsOf(session, opts), {
+        realPathLeaf: deps.realPathLeaf,
+        ...opts,
+      }),
+    );
     if (!confined) return refused('outside-roots');
     const pos = {
       ...(target.line !== undefined ? { line: target.line } : {}),

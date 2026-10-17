@@ -77,7 +77,7 @@ function make(f: Fake) {
         statCalls.push(abs);
         return fs.has(abs) ? 'file' : dirs.has(abs) ? 'dir' : null;
       }),
-    realPathLeaf: (t) => {
+    realPathLeaf: async (t) => {
       realCalls.push(t);
       return f.real?.[t] ?? t;
     },
