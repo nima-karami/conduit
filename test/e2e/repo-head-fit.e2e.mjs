@@ -354,14 +354,16 @@ runScenario('repo-head-fit', async ({ page, log }) => {
 
   // The widest pill and the worktree segment: the floor, the band where a threshold taken from
   // the narrower "Nested" pill showed "Attached" over a name cut below 80px, and the default pane.
-  let attachedPill = false;
+  // Widths are border boxes; the query sees the content box (8px less), so the threshold
+  // (262px content at scale 1) falls between 270 and 272: hidden up to 268, shown from 272.
   for (const width of [220, 262, 264, 266, 268, 272, 330]) {
     const m = await checkHead(page, log, ATTACHED, width);
     assert(
       m.textBoxes.some((t) => t.cls.includes('branch-chip__sep')),
       `${ATTACHED}: the chip keeps its worktree segment: ${JSON.stringify(m.textBoxes)}`,
     );
-    if (m.tag) attachedPill = true;
+    if (width >= 272) {
+      assert(m.tag, `${ATTACHED}@${width}px: the Attached pill shows above the threshold`);
+    }
   }
-  assert(attachedPill, `${ATTACHED}: the Attached pill shows at some measured width`);
 });
