@@ -9,6 +9,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { acceptsRepoResult } from '../../src/branch-chip';
 import { branchRow, orderBranches } from '../../src/branch-menu';
 import { post, subscribe } from '../bridge';
+import { useHoverGate } from '../hover-gate';
 import { IconCheck } from '../icons';
 
 const STR = {
@@ -67,6 +68,9 @@ function SwitchableList({
   const [pending, setPending] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const baseId = useId();
+  // Rows land or re-filter under a pointer that may not move: each restarts the gate, so Enter
+  // still takes the top match rather than whatever row slid under the cursor.
+  const hover = useHoverGate(`${refs.loaded}:${filter}`);
 
   useEffect(() => {
     post({ type: 'git:refs', sessionId, repoRoot });
@@ -114,7 +118,11 @@ function SwitchableList({
   const emptyCopy = refs.error || filter.trim() ? STR.noMatch : STR.noOther;
 
   return (
-    <div className="git-branch-menu" aria-busy={switching || !refs.loaded}>
+    <div
+      className="git-branch-menu"
+      aria-busy={switching || !refs.loaded}
+      data-pointer={hover.pointer}
+    >
       <input
         ref={inputRef}
         type="text"
@@ -156,8 +164,8 @@ function SwitchableList({
                 isActive ? ' ctxmenu__item--active' : ''
               }`}
               disabled={row.disabled}
-              onMouseEnter={() => {
-                if (!row.current) setActiveIndex(idx);
+              onPointerMove={(e) => {
+                if (hover.moved(e) && !row.current) setActiveIndex(idx);
               }}
               onClick={() => {
                 if (row.actionable) pick(b);

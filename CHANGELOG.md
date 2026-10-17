@@ -50,6 +50,11 @@ All notable user-facing changes to Conduit. Format follows
   highlighted, so Enter or the arrow keys started from it. Now nothing is highlighted until you
   move the mouse, and the arrow keys and Enter in a menu opened from the terminal no longer also
   reach the shell.
+- **Typing a filter in the branch or review-source menu and pressing Enter picks the top match.**
+  If the list narrowed under a mouse that wasn't moving, the row that slid under it took the
+  highlight, so Enter could switch to a different branch than the one at the top. Now the highlight
+  stays on the top match until you move the mouse. The repo menu also no longer highlights the row
+  under a mouse that hasn't moved.
 - **Go to Definition follows your tsconfig in every window.** A second window open on the same
   folder, or a window after a reload, used TypeScript's default settings instead of the project's
   `tsconfig.json` (so `paths` aliases didn't resolve), and could miss files another window had

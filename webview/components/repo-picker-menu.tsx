@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { clampMenuPosition } from '../../src/menu-position';
 import type { RepoTag } from '../../src/repo-scan';
+import { useHoverGate } from '../hover-gate';
 import { IconCheck } from '../icons';
 import { useOverlayEntry } from '../use-overlay-entry';
 
@@ -70,6 +71,9 @@ export function RepoPickerMenu({
     );
     return i >= 0 ? i : 0;
   });
+
+  // A repo scan can re-list the rows under a pointer that has not moved: that restarts the gate.
+  const hover = useHoverGate(JSON.stringify(rows.map((r) => r.root)));
 
   useOverlayEntry('popover', onClose);
 
@@ -149,6 +153,7 @@ export function RepoPickerMenu({
       }}
       role="menu"
       aria-label={ariaLabel}
+      data-pointer={hover.pointer}
       onKeyDown={onKeyDown}
       tabIndex={-1}
     >
@@ -161,7 +166,9 @@ export function RepoPickerMenu({
               type="button"
               role="menuitem"
               className={itemClass(i)}
-              onMouseEnter={() => setActiveIndex(i)}
+              onPointerMove={(ev) => {
+                if (hover.moved(ev)) setActiveIndex(i);
+              }}
               onClick={() => pickEntry(e)}
             >
               {check(false)}
@@ -176,7 +183,9 @@ export function RepoPickerMenu({
             role="menuitemradio"
             aria-checked={checked}
             className={itemClass(i)}
-            onMouseEnter={() => setActiveIndex(i)}
+            onPointerMove={(ev) => {
+              if (hover.moved(ev)) setActiveIndex(i);
+            }}
             onClick={() => pickEntry(e)}
           >
             {check(checked)}

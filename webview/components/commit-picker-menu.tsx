@@ -14,6 +14,7 @@ import type { CommitNode } from '../../src/protocol';
 import type { ResolvedRange } from '../../src/range-preset';
 import { post, subscribe } from '../bridge';
 import type { ReviewSource } from '../docs';
+import { useHoverGate } from '../hover-gate';
 import { IconCheck, IconCompare, IconReview } from '../icons';
 import { relativeTime } from '../relative-time';
 import { filterCommitsForPicker, isPastedSha } from '../review-commit';
@@ -89,6 +90,9 @@ export function CommitPickerMenu({
   }>({ unpushed: null, branchPoint: null });
   const [filter, setFilter] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
+  // Rows land or re-filter under a pointer that may not move: each restarts the gate, so Enter
+  // still takes the top match rather than whatever row slid under the cursor.
+  const hover = useHoverGate(`${phase}:${filter}`);
   const menuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const baseId = useId();
@@ -412,6 +416,7 @@ export function CommitPickerMenu({
       role="menu"
       aria-label={STR.label}
       aria-busy={phase === 'loading'}
+      data-pointer={hover.pointer}
       onKeyDown={onKeyDown}
     >
       <input
@@ -441,7 +446,9 @@ export function CommitPickerMenu({
               role={row.kind === 'action' ? 'menuitem' : 'menuitemradio'}
               aria-checked={row.kind === 'source' ? row.checked : undefined}
               className={`ctxmenu__item commit-picker__row${i === clampedActive ? ' ctxmenu__item--active' : ''}`}
-              onMouseEnter={() => setActiveIndex(i)}
+              onPointerMove={(e) => {
+                if (hover.moved(e)) setActiveIndex(i);
+              }}
               onClick={() => selectSource(row)}
             >
               <span className="ctxmenu__icon">
