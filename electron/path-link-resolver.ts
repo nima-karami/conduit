@@ -166,6 +166,10 @@ export function createPathLinkResolver(deps: PathLinkResolverDeps): PathLinkReso
       );
       const indexes = valid.length > 0 ? await indexesFor(roots, cwdGitRoot || cwd) : [];
       const limit = withConcurrency(STAT_CONCURRENCY);
+      const knownRepoKeys = new Set([
+        ...(session.repos ?? []).map((r) => key(r.root)),
+        ...(cwdGitRoot !== cwd ? [key(cwdGitRoot)] : []),
+      ]);
       const resolved = await resolveTokens(
         valid.map((e) => ({ alts: e.alts })),
         {
@@ -177,7 +181,13 @@ export function createPathLinkResolver(deps: PathLinkResolverDeps): PathLinkReso
           homeDir: deps.homeDir,
           platform: deps.platform,
         },
-        { stat: (abs) => limit(() => raceUnc(abs, deps.stat)), topLevel: deps.topLevel },
+        {
+          stat: (abs) => limit(() => raceUnc(abs, deps.stat)),
+          // A repo the session's scan registered, or the cwd's git root, is its own toplevel:
+          // asking git once per root put 200 spawns on every 200-repo resolve (Slice 6 profile).
+          topLevel: (dir) =>
+            knownRepoKeys.has(key(dir)) ? Promise.resolve(dir) : deps.topLevel(dir),
+        },
       );
       let next = 0;
       const results = entries.map((e) => {

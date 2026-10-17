@@ -20,7 +20,7 @@ import {
   type WebContents,
   webContents,
 } from 'electron';
-import { sessionGitRoot } from '../src/active-cwd';
+import { activeCwd, sessionGitRoot } from '../src/active-cwd';
 import { repoForPath, requestGitRoot, resolveRequestRepoRoot } from '../src/active-repo';
 import { type AgentScopeReason, runAddDir } from '../src/add-dir-delivery';
 import { AgentRegistry } from '../src/agent-registry';
@@ -1313,7 +1313,12 @@ app.whenReady().then(() => {
   });
   const pathLinks = createPathLinkResolver({
     getSession: (id) => mgr.get(id),
-    gitRoot: (s) => sessionGitRoot(s, git),
+    // sessionGitRoot's semantics through the memoised toplevel: a git spawn per resolve was the
+    // largest share of a warm resolve (plan 2026-10-16-terminal-path-links Slice 6 profile).
+    gitRoot: async (s) => {
+      const cwd = activeCwd(s).replace(/\\/g, '/');
+      return (await repoTopLevel(cwd)) || cwd;
+    },
     fileIndex: async (root) => {
       const meta = await projectFileIndexMeta(root);
       return { files: meta.files, coveredRoots: meta.covered };

@@ -44,6 +44,7 @@ function make(f: Fake) {
   const fs = new Set(f.files ?? []);
   const statCalls: string[] = [];
   const indexCalls: string[] = [];
+  const topLevelCalls: string[] = [];
   const deps: PathLinkResolverDeps = {
     getSession: (id) => f.sessions[id],
     gitRoot: async (s) => f.gitRoot ?? s.cwd ?? s.home,
@@ -59,12 +60,15 @@ function make(f: Fake) {
         statCalls.push(abs);
         return fs.has(abs) ? 'file' : null;
       }),
-    topLevel: async () => '',
+    topLevel: async (dir) => {
+      topLevelCalls.push(dir);
+      return '';
+    },
     homeDir: '/home/u',
     platform: 'posix',
     caseSensitive: true,
   };
-  return { resolver: createPathLinkResolver(deps), statCalls, indexCalls };
+  return { resolver: createPathLinkResolver(deps), statCalls, indexCalls, topLevelCalls };
 }
 
 const W_FILES = ['/w/repoA/src/index.ts', '/w/repoB/src/index.ts'];
@@ -236,6 +240,17 @@ describe('createPathLinkResolver', () => {
     expect(statCalls).toEqual(
       expect.arrayContaining(['/w/repoA/src/index.ts', '/w/repoB/src/index.ts']),
     );
+  });
+
+  it('a registered repo root is its own toplevel: no git asked for it (Slice 6 budget)', async () => {
+    const { resolver, topLevelCalls } = make({
+      sessions: { s1: wSession },
+      files: W_FILES,
+      index: wIndex,
+    });
+    const { results } = await resolver.resolve('s1', [{ alts: ['src/index.ts'] }]);
+    expect(results[0].candidates.map((c) => c.repoRoot)).toEqual(['/w/repoA', '/w/repoB']);
+    expect(topLevelCalls).toEqual([]);
   });
 
   it('the reply carries the live cwd used, the roots and the rootsSig', async () => {

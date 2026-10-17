@@ -124,6 +124,7 @@ interface Found {
 class Resolution {
   readonly fold: (s: string) => string;
   readonly rootKeys: string[];
+  private readonly rootIdxByKey: Map<string, number>;
   private readonly topMemo = new Map<string, Promise<string>>();
 
   constructor(
@@ -132,6 +133,10 @@ class Resolution {
   ) {
     this.fold = foldWith(ctx.caseSensitive);
     this.rootKeys = ctx.roots.map((r) => this.keyOf(r.abs));
+    this.rootIdxByKey = new Map();
+    this.rootKeys.forEach((k, i) => {
+      if (!this.rootIdxByKey.has(k)) this.rootIdxByKey.set(k, i);
+    });
   }
 
   keyOf(p: string): string {
@@ -144,14 +149,18 @@ class Resolution {
     return key.startsWith(rootKey.endsWith('/') ? rootKey : `${rootKey}/`);
   }
 
+  /** Walks the path's ancestors against a key map: a scan of every root per candidate made a
+   *  200-root resolve quadratic (plan Slice 6 profile). */
   deepestRoot(absPath: string): number {
-    const k = this.keyOf(absPath);
-    let best = -1;
-    for (let i = 0; i < this.rootKeys.length; i++) {
-      if (!Resolution.under(this.rootKeys[i], k)) continue;
-      if (best < 0 || this.rootKeys[i].length > this.rootKeys[best].length) best = i;
+    let cur = this.keyOf(absPath);
+    for (;;) {
+      const idx = this.rootIdxByKey.get(cur);
+      if (idx !== undefined) return idx;
+      if (cur === '/' || cur.endsWith(':/') || !cur.includes('/')) return -1;
+      const cut = cur.lastIndexOf('/');
+      const parent = cut === 0 ? '/' : cur.slice(0, cut);
+      cur = /^[a-z]:$/i.test(parent) ? `${parent}/` : parent;
     }
-    return best;
   }
 
   /** A UNC path may only be touched under a user-chosen UNC root (plan: resolver rule 2). */
