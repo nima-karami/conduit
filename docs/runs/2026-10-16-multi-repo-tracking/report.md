@@ -65,3 +65,52 @@ First attempt, same build: 814 git / 768 status / 200 repos / lag p95 6,731 ms /
 - Work scales with repos in the session, not repos written: at 200 repos one 10 s burst costs ~800 git processes, lag is 4–7 s, and 8 % of writes never showed.
 - 36-repo lag p95 is 2–7 s against the §7 target of ≤ 1 s.
 - The host thread stays responsive (p95 ≤ 20 ms): the cost is git process churn and latency, not main-thread blocking.
+
+## After engine — Slice 2 (`55180787`, 1 s cooldown)
+
+Same lane, same fixtures, machine idle (busy 0.08 cap / 0.18 then 0.06 tickets). Lane EXIT=1 on the §7 lag AC only; every other invariant passes. Values: lane run (rerun).
+
+| Metric | Before (Phase A) | After (Phase A) | After (Phase B) |
+|---|---|---|---|
+| git processes (15 s) | 382 | **69 (69)** | 70 (71) |
+| `status -uall` calls | 288 | 55 (55) | 55 (55) |
+| `diff --numstat` calls | 80 | 0 (line counts on demand) | 0 |
+| Repos given a `status` | 36 of 36 | **5 of 36** (the written ones) | 5 of 36 |
+| `statusOutsideWritten` | 248 / 31 | **0 / 0** | 0 / 0 |
+| First fill | 2,198 ms | 865 ms (727) | — |
+| Arrival lag p95 | 2,733 ms | 1,050 ms (1,063) | 998 ms (1,027) |
+| §7 refresh lag p95 / max | n/a | **1,039 / 1,126 ms (1,047 / 1,127) — FAIL vs ≤ 1,000** | 971 / 1,034 ms |
+| Split session saw own files | 0 of 50 | — | **50 of 50** |
+| Commit seen by ticket session | not seen in 5 s | **372 ms (370)** | |
+| Host main-thread lag p95 | 13 ms | 13 ms | 13 ms |
+
+| 200-repo cap | Before | After |
+|---|---|---|
+| git processes (15 s) | 819 | **58** |
+| `status` calls / repos | 773 / 200 | **44 / 4** |
+| `statusOutsideWritten` | 757 / 196 | **0 / 0** |
+| Lag p95 | 6,649 ms | 943 ms (§7: 938) |
+| Writes seen | 184 / 200 | **200 / 200** |
+| First fill | 14,026 ms | 12,311 ms |
+| Settle tail (git in next 3 s) | 27 (still draining) | 0 |
+
+**The lag miss is the cooldown, not load.** Under continuous writes the next run starts at `lastStart + cooldown`, so lag ≈ U(0, cooldown) + status time → p95 ≈ 0.95 s + 40–90 ms. Decided: cooldown 800 ms (spec §13); re-measured below.
+
+## After engine — Slice 2b (`775bbc7a`, 800 ms cooldown)
+
+Lane EXIT=0, both scenarios PASS with the §7 lag gate active (machine busy 0.036 cap / 0.068 tickets).
+
+| Metric | Tickets A | Tickets B | Cap (200) |
+|---|---|---|---|
+| git / status / numstat (15 s) | 79 / 65 / 0 | 80 / 65 / 0 | 66 / 52 / 0 |
+| Repos given a `status` | 5 | 5 | 4 |
+| `status` per written repo (max; cap ⌈10 s / 0.8 s⌉ + 2 = 15) | 13 | 13 | 13 |
+| `statusOutsideWritten` | 0 | 0 | 0 |
+| Arrival lag p95 / max | 916 / 974 ms | 851 / 877 ms | 846 / 864 ms |
+| **§7 refresh lag p95** | **900 ms** | **819 ms** | **827 ms** |
+| Writes seen | 250/250 | 250/250; split session 50/50 | 200/200 |
+| Commit seen by ticket session | 481 ms | | |
+| Host main-thread lag p95 | 14 ms | 13 ms | 13 ms |
+| Settle tail | 0 | 0 | 0 |
+
+The 800 ms cooldown costs +10 status per 15 s across 5 written repos (55 → 65) and buys p95 1,039 → 900 ms. A background session receives no deltas (it renders from the tracker's cache on switch-in, spec §2), so ticket 0's 0/50 in Phase A is by design. Spec §6 revival trigger (p95 > 1 s or git busy > 70 %): **not met** — the tracked set and tiers stay parked.
