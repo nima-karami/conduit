@@ -306,6 +306,22 @@ it('windowShown and line demand ignore sessions the calling window does not own'
   h.host.stop();
 });
 
+it("a window that reports another window's session as visible gets none of its deltas", async () => {
+  const h = harness();
+  h.addSession('s1', [repo('/w/a')], 1);
+  expect(h.host.ownedIds(2, ['s1', 'ghost'])).toEqual([]);
+  expect(h.host.ownedIds(1, ['s1', 'ghost'])).toEqual(['s1']);
+  // The demand set as an unfiltered `visible` would have left it.
+  h.shown.set(1, new Set(['s1']));
+  h.shown.set(2, new Set(['s1']));
+  await vi.advanceTimersByTimeAsync(10);
+  h.host.tracker.onWatchedPath('/w/a/a.txt');
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(h.deltas(1).length).toBeGreaterThan(0);
+  expect(h.deltas(2)).toEqual([]);
+  h.host.stop();
+});
+
 it('a malformed changes:subscribe or repo:refresh payload is logged and ignored', async () => {
   const h = harness();
   h.shown.set(1, new Set(['s1']));

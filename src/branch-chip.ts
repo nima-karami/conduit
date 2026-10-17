@@ -78,6 +78,16 @@ export function branchChipModel(g: GitInfo | undefined): BranchChipModel {
   };
 }
 
+/** The worktree segment the chip shows. A ticket worktree is named after its repo, so beside a head
+ *  that already reads that name it only repeats it (engine runtime QA4); the accessible name keeps
+ *  it either way. */
+export function chipWorktreeSegment(
+  worktree: string | undefined,
+  headName: string | undefined,
+): string | undefined {
+  return worktree === undefined || worktree === headName ? undefined : worktree;
+}
+
 export type SwitchOutcome = { announce: string } | { toast: string; variant: 'info' | 'error' };
 
 export function switchOutcome(

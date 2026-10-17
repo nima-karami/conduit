@@ -73,7 +73,7 @@ export class SessionFolderRuntime {
   foldersChanged(sessionId: string, change: { homeChanged: boolean }): void {
     this.deps.scheduleRepoScan(sessionId);
     if (change.homeChanged) this.reconcilePlans();
-    if ([...this.projectsByWindow.values()].some((p) => p.sessionId === sessionId)) this.arm();
+    if (this.armsFor(sessionId)) this.arm();
     this.emit(sessionId);
     this.check(sessionId);
   }
@@ -124,6 +124,14 @@ export class SessionFolderRuntime {
     this.watcher.stop();
     this.health.dispose();
     this.listeners = [];
+  }
+
+  /** Whether the session's folders are in the armed set: shown in a window, or tracking repos. */
+  private armsFor(sessionId: string): boolean {
+    return (
+      !!this.deps.mgr.get(sessionId)?.repos?.length ||
+      [...this.projectsByWindow.values()].some((p) => p.sessionId === sessionId)
+    );
   }
 
   private arm() {
@@ -217,7 +225,7 @@ export class SessionFolderRuntime {
     const cur = this.deps.mgr.get(r.sessionId);
     if (!cur || !this.deps.mgr.setFolderHealth(cur.id, applyHealthReport(cur, r, rejected))) return;
     this.deps.scheduleRepoScan(cur.id);
-    if ([...this.projectsByWindow.values()].some((p) => p.sessionId === cur.id)) this.arm();
+    if (this.armsFor(cur.id)) this.arm();
     this.emit(cur.id);
   }
 

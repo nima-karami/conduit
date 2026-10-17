@@ -75,6 +75,8 @@ export class ProjectWatcher {
     for (const [k, watcher] of this.watches) {
       if (!roots.includes(k)) this.close(k, watcher);
     }
+    // A root that leaves the set and comes back is a new request, so its failure is news again.
+    for (const k of this.lostKeys) if (!roots.includes(k)) this.lostKeys.delete(k);
     for (const k of roots) {
       if (!this.watches.has(k)) this.open(k, nextFolders[nextKeys.indexOf(k)]);
     }

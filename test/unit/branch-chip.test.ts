@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { acceptsRepoResult, branchChipModel, switchOutcome } from '../../src/branch-chip';
+import {
+  acceptsRepoResult,
+  branchChipModel,
+  chipWorktreeSegment,
+  switchOutcome,
+} from '../../src/branch-chip';
 
 describe('branchChipModel', () => {
   it('undefined → unknown', () => {
@@ -110,5 +115,19 @@ describe('acceptsRepoResult', () => {
     expect(acceptsRepoResult({ sessionId: 's1', repoRoot: '/r/b' }, 's1', '/r/a')).toBe(false);
     expect(acceptsRepoResult({ sessionId: 's2', repoRoot: '/r/a' }, 's1', '/r/a')).toBe(false);
     expect(acceptsRepoResult({ sessionId: 's1' }, 's1', '/r/a')).toBe(false);
+  });
+});
+
+describe('chipWorktreeSegment', () => {
+  it('drops the worktree segment that repeats the head name', () => {
+    expect(chipWorktreeSegment('repo-000', 'repo-000')).toBeUndefined();
+  });
+
+  it('keeps a worktree segment that differs from the head name', () => {
+    expect(chipWorktreeSegment('wt', 'repo-000')).toBe('wt');
+  });
+
+  it('has no segment when the repo is not a worktree', () => {
+    expect(chipWorktreeSegment(undefined, 'repo-000')).toBeUndefined();
   });
 });

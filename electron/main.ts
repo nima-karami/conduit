@@ -3395,10 +3395,14 @@ app.whenReady().then(() => {
           // it and exempts it from arming; the sets are per window, so another window's
           // active session is not silenced. See the attention-signal-quality spec §4.
           if (activity.setVisible(senderId, m.ids)) scheduleActivityBroadcast();
-          gitDemand.setVisible(senderId, m.ids);
-          // Unconditional, even for an unchanged set: a reloaded renderer re-posts the same ids
-          // and has to re-hydrate from the cache.
-          repoTrackerHost.windowShown(senderId, m.ids);
+          {
+            // gitDemand's set decides which windows get a session's repo deltas.
+            const ownIds = repoTrackerHost.ownedIds(senderId, m.ids);
+            gitDemand.setVisible(senderId, ownIds);
+            // Unconditional, even for an unchanged set: a reloaded renderer re-posts the same
+            // ids and has to re-hydrate from the cache.
+            repoTrackerHost.windowShown(senderId, ownIds);
+          }
           folders.visibilityChanged();
           for (const id of m.ids) if (deferredRepoScans.has(id)) scheduleRepoScan(id);
           break;

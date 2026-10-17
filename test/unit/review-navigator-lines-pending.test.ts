@@ -109,3 +109,22 @@ describe('ReviewNavigator line-count placeholder', () => {
     expect(host.querySelector('.diffstat--pending')).toBeNull();
   });
 });
+
+describe('ReviewNavigator header total while a repo is counting (engine runtime QA2)', () => {
+  it('shows the placeholder alone, not beside a partial total', async () => {
+    const other = '/work/other';
+    const nav: ReviewNavModel = {
+      ...model(0, { kind: 'working' }),
+      files: [
+        { ...change, added: 0, repoRoot },
+        { ...change, path: 'b.txt', added: 3, repoRoot: other },
+      ],
+    };
+    await render(nav, [repo(false), { ...repo(true, 3), root: other, name: 'other' }]);
+    expect(header()?.querySelector('.diffstat--pending')).not.toBeNull();
+    expect(header()?.textContent).toBe('');
+    expect(host.querySelector('.changes__header-summary')?.getAttribute('title')).not.toContain(
+      '+3',
+    );
+  });
+});

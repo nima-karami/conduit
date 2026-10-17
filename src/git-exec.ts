@@ -1,6 +1,7 @@
 // One bounded, cancellable git runner. Every git spawn in the app routes through here so timeouts,
 // output caps, and cancellation are uniform. See docs/specs/archive/2026-07-07-git-host-robustness.md.
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
 // Default per-call deadlines by operation weight (ms). Callers pass one of these or their own.
 export const GIT_TIMEOUT = { metadata: 2000, diff: 10000, history: 5000, blame: 10000 } as const;
@@ -13,7 +14,8 @@ export interface GitResult {
   stdoutBuffer: Buffer; // raw bytes (empty unless ok) — for binary-safe blob reads
   stderr: string; // utf8 stderr (for surfacing git action failure messages)
   code: number | null; // exit code; null when killed by timeout/abort
-  notFound: boolean; // ENOENT — the binary isn't on PATH
+  notFound: boolean; // ENOENT with the cwd present — the binary isn't on PATH
+  cwdMissing?: boolean; // ENOENT because the cwd is gone (e.g. a removed worktree), not the binary
   timedOut: boolean; // killed by our timeout
   aborted: boolean; // killed by the caller's AbortSignal
   truncated: boolean; // output exceeded maxBuffer
@@ -77,7 +79,11 @@ export function runGitBin(gitBin: string, args: string[], opts: GitOpts): Promis
           return;
         }
         const aborted = opts.signal?.aborted === true || e.name === 'AbortError';
-        const notFound = e.code === 'ENOENT';
+        // spawn reports a missing cwd as ENOENT too; reading that as "no git" latches every later
+        // interrogation off (multi-repo-tracking engine review r2).
+        const enoent = e.code === 'ENOENT';
+        const cwdMissing = enoent && !existsSync(opts.cwd);
+        const notFound = enoent && !cwdMissing;
         const truncated =
           e.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || /maxBuffer/i.test(e.message ?? '');
         // execFile's own timeout kills with SIGTERM and sets `killed`; distinguish it from an abort.
@@ -89,6 +95,7 @@ export function runGitBin(gitBin: string, args: string[], opts: GitOpts): Promis
           stderr: errText,
           code: typeof e.code === 'number' ? e.code : null,
           notFound,
+          ...(cwdMissing ? { cwdMissing } : {}),
           timedOut,
           aborted,
           truncated,

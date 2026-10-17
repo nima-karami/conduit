@@ -5,7 +5,10 @@
  * that dir itself.
  *
  * Layout: <root>/main (repo, outside home) and <root>/ticket (home, not a repo) holding
- * <root>/ticket/main-wt, a linked worktree of main on branch `feat`.
+ * <root>/ticket/main-wt, a linked worktree of main on branch `feat`, and <root>/ticket/gone-wt on
+ * `gone`. gone-wt is removed with `git worktree remove` before the commit: interrogating its
+ * vanished folder once read as "git is not installed" and froze every branch chip for the rest
+ * of the process (engine review r2).
  */
 
 import { execFileSync } from 'node:child_process';
@@ -54,6 +57,7 @@ runScenario('worktree-commit-seen', async ({ app, page, log }) => {
   const main = join(root, 'main');
   const ticket = join(root, 'ticket');
   const wt = join(ticket, 'main-wt');
+  const gone = join(ticket, 'gone-wt');
   try {
     mkdirSync(main);
     git(main, 'init', '-q', '-b', 'main');
@@ -66,26 +70,33 @@ runScenario('worktree-commit-seen', async ({ app, page, log }) => {
     git(main, 'commit', '-qm', 'seed');
     mkdirSync(ticket);
     git(main, 'worktree', 'add', '-q', '-b', 'feat', wt);
+    git(main, 'worktree', 'add', '-q', '-b', 'gone', gone);
     writeFileSync(join(wt, FILE), 'one\n');
 
     const sid = await openSession(page, { path: slash(ticket) });
     await page.waitForFunction(
-      (id) => ((window.__sessions || []).find((s) => s.id === id)?.repos?.length ?? 0) === 1,
+      (id) => ((window.__sessions || []).find((s) => s.id === id)?.repos?.length ?? 0) === 2,
       sid,
       { timeout: 20000 },
     );
     await openChangesTab(page);
+    // main-wt's head: its chip's last label is the branch; a worktree name, when shown, is first.
     const listsOnly = ({ file, branch }) => {
-      const labels = document.querySelectorAll('.repo-head .branch-chip__label');
+      const head = Array.from(document.querySelectorAll('.repo-head')).find(
+        (h) => h.querySelector('.repo-head__name')?.textContent === 'main-wt',
+      );
+      const labels = head?.querySelectorAll('.branch-chip__label') ?? [];
       return (
         document.querySelectorAll('.change').length === 1 &&
         document.querySelector('.change__file')?.textContent === file &&
         labels[labels.length - 1]?.textContent === branch
       );
     };
-    // The branch chip's last label is the branch; a worktree name, when shown, is the first.
     const onBranch = (branch) => {
-      const labels = document.querySelectorAll('.repo-head .branch-chip__label');
+      const head = Array.from(document.querySelectorAll('.repo-head')).find(
+        (h) => h.querySelector('.repo-head__name')?.textContent === 'main-wt',
+      );
+      const labels = head?.querySelectorAll('.branch-chip__label') ?? [];
       return labels[labels.length - 1]?.textContent === branch;
     };
     await waitOrFail(
@@ -96,6 +107,27 @@ runScenario('worktree-commit-seen', async ({ app, page, log }) => {
       `Changes never listed the one untracked ${FILE} on branch feat`,
     );
     log(`Changes lists ${FILE} on feat`);
+
+    // Removed while another session is in front: the parked meta mark then interrogates the
+    // vanished folder on switch-back, before the deferred rescan drops it.
+    const other = join(root, 'other');
+    mkdirSync(other);
+    await openSession(page, { path: slash(other) });
+    git(main, 'worktree', 'remove', gone);
+    await page.waitForTimeout(1500);
+    await page.locator(`.session[data-sessionid="${sid}"] .session__name`).first().click();
+    await openChangesTab(page);
+    await waitOrFail(
+      page,
+      () =>
+        !Array.from(document.querySelectorAll('.repo-head__name')).some(
+          (n) => n.textContent === 'gone-wt',
+        ),
+      null,
+      20000,
+      'the removed worktree gone-wt kept its repo head',
+    );
+    log('gone-wt removed with git worktree remove; its head is gone');
 
     git(wt, 'add', '-A');
     git(wt, 'commit', '-qm', 'add new.txt');

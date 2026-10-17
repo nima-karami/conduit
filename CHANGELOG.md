@@ -16,7 +16,8 @@ All notable user-facing changes to Conduit. Format follows
   open; until they arrive, a small placeholder stands in for them, in Review's file list too.
 - **A repo whose git status can't be read now says so.** The Changes tab shows "Couldn't read git
   status" under that repo with a Retry button, instead of quietly showing no changes. A list that
-  is waiting to be refreshed shows the time it was last read.
+  is waiting to be refreshed says "Updating…", and how long ago it was last read once that is a
+  minute or more.
 
 ### Fixed
 - **A minimized window is up to date when you restore it.** Changes made while a window was
@@ -28,6 +29,14 @@ All notable user-facing changes to Conduit. Format follows
 - **A slow git no longer drops a repo's branch.** When git took too long to answer, the repo lost
   its branch label and stopped noticing commits until something else refreshed it. It now keeps
   what it last knew and tries again on the next change.
+- **Removing a worktree no longer freezes every branch label.** After `git worktree remove` on a
+  worktree Conduit was showing, branch labels in every repo could stop updating until a restart.
+- **A worktree's repo name is no longer cut down to "r…".** In a repo heading, the name now keeps
+  its room and the branch label shrinks first. The label also stops repeating the worktree's name
+  when it is the same as the repo's.
+- **The Changes and Review totals no longer show a partial count.** While some repos are still
+  counting lines, the header shows only the placeholder instead of a placeholder next to a number
+  that leaves those repos out.
 
 ## [0.47.2] — 2026-10-11
 

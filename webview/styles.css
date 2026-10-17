@@ -3041,6 +3041,9 @@ body.resizing .panel__resize::after {
   max-width: 240px;
   min-width: 0;
   flex: 0 1 auto;
+  /* Past its ellipsized labels, a squeezed chip clips its glyphs rather than painting past its
+     edge. */
+  overflow: hidden;
   cursor: pointer;
 }
 .branch-chip--muted {
@@ -5689,12 +5692,12 @@ body.gh-resizing {
   flex: 0 0 auto;
   color: var(--accent);
 }
-/* A zero basis keeps a long name from wrapping the chip onto the sub-path line: the name shrinks
-   first (docs/specs/archive/2026-09-23-mf-changes.md §10), and max-content stops it pushing the tag away. */
+/* The name keeps its width and the branch chip takes what is left (engine runtime QA4, which
+   reverses mf-changes §10's name-shrinks-first): the chip's zero basis below means it never wraps
+   and never squeezes the name; the name shrinks only once the chip has nothing left. */
 .repo-head__name,
 .repo-head__picker {
-  flex: 1 1 0;
-  max-width: max-content;
+  flex: 0 1 auto;
 }
 .repo-head__name {
   min-width: 0;
@@ -5753,11 +5756,12 @@ body.gh-resizing {
     display: none;
   }
 }
-/* Shrinks once it has wrapped onto a line of its own, so the branch chip's label ellipsizes at
-   the pane edge instead of the chip running past it. */
+/* Gets only the room the name leaves, up to its own width; the branch chip's labels ellipsize
+   inside it. */
 .repo-head__chip {
   display: inline-flex;
-  flex: 0 1 auto;
+  flex: 1 1 0;
+  max-width: max-content;
   min-width: 0;
   align-self: stretch;
   margin-inline-start: auto;
@@ -5787,7 +5791,7 @@ body.gh-resizing {
   font-size: calc(11.5px * var(--font-scale));
   color: var(--danger);
 }
-.repo-head__asof {
+.repo-head__stale {
   padding: 3px 8px 1px calc(var(--tree-pad) + var(--tree-chev) + var(--tree-gap));
   font-size: calc(10.5px * var(--font-scale));
   color: var(--text-dim);

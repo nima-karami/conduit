@@ -687,6 +687,29 @@ where it is; history is not rewritten.
 | `test/unit/repo-tracker.test.ts`, `repo-tracker-host.test.ts`, `repo-path-map.test.ts`, `project-watcher.test.ts`, `session-folder-runtime.test.ts`, `session-resource-demand.test.ts`, `git-info.test.ts`, `changes-view-model.test.ts`, `project-info-resources.test.ts` | modify | r1 cases; removed cases for deleted code |
 | `CHANGELOG.md` | modify | Restore and switch-back fixes |
 
+**Engine review r2 + runtime QA fix**
+
+| Path | Action | Responsibility |
+|---|---|---|
+| `src/git-exec.ts` | modify | ENOENT with a missing cwd is `cwdMissing`, not `notFound` (the git-missing latch) |
+| `src/git-info.ts` | modify | Missing cwd → not a repo (no failure); `--show-toplevel` / `--short` that never answered → failure |
+| `electron/repo-tracker-host.ts` | modify | `ownedIds`; deltas also gated on `owns` |
+| `electron/main.ts` | modify | `visible` ids filtered through `ownedIds` before `gitDemand` / `windowShown` |
+| `electron/session-folder-runtime.ts` | modify | `foldersChanged` / health re-arm whenever the session holds repos |
+| `electron/project-watcher.ts` | modify | `lostKeys` pruned when a root leaves the set |
+| `src/branch-chip.ts`, `webview/components/branch-chip.tsx`, `webview/app.tsx` | modify | Worktree segment dropped when it equals the head name (`headName` prop) |
+| `webview/components/changes-view.tsx` | modify | Stale row "Updating…" (+ "last read …" from 60 s), `renderChip(repo, headName)`, header total via `HeaderDiffstat` |
+| `webview/components/lines-pending.tsx`, `webview/components/review-navigator.tsx` | modify | Header shows the placeholder alone while any repo in scope is counting |
+| `webview/styles.css` | modify | Repo name keeps its width, chip shrinks first and clips; `.repo-head__asof` → `.repo-head__stale` |
+| `src/protocol.ts` | modify | `stale` doc comment |
+| `test/unit/git-exec.test.ts`, `git-info.test.ts`, `repo-tracker-host.test.ts`, `session-folder-runtime.test.ts`, `project-watcher.test.ts`, `branch-chip.test.ts`, `review-navigator-lines-pending.test.ts` | modify | r2 + QA cases |
+| `test/unit/changes-header-stat.test.ts` | create | Header total and stale-row copy |
+| `test/e2e/worktree-commit-seen.e2e.mjs` | modify | `git worktree remove` of a registered worktree, then the remaining one still updates |
+| `test/e2e/repo-rescan.e2e.mjs` | modify | Rebased on a session with no registered repos; `requestId` dropped |
+| `test/e2e/repo-tracker-fanout.e2e.mjs` | modify | Stale-row class rename |
+| `test/e2e/git-indicator.e2e.mjs` | modify | AC11: no worktree segment beside a head of the same name; accessible name still says worktree |
+| `CHANGELOG.md` | modify | Worktree-remove freeze, stale copy, name priority, partial total |
+
 ## Scripts
 
 **None.** The only repeated routine is building git fixtures, and that is runtime test code

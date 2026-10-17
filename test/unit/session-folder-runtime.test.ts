@@ -285,6 +285,22 @@ describe('SessionFolderRuntime (watcher)', () => {
     h.rt.foldersChanged('b', { homeChanged: false });
     expect(h.armed).toHaveLength(1);
   });
+
+  it('a session in no window still re-arms on foldersChanged and health while it holds repos', async () => {
+    const h = harness();
+    h.rt.requestProject('/w/a', 'a', 1);
+    h.sessions[1].repos = [{ root: '/w/b', name: 'b', folder: '/w/b', tag: 'home' }];
+    h.armed.length = 0;
+    h.sessions[1].roots = ['/x/S'];
+    h.rt.foldersChanged('b', { homeChanged: false });
+    expect(h.armed).toEqual([['/w/a', '/w/b', '/x/S']]);
+    await h.report('b', '/w/b', { '/w/b': 'present', '/x/S': 'missing' });
+    expect(h.sessions[1].missingRoots).toEqual(['/x/S']);
+    expect(h.armed).toEqual([
+      ['/w/a', '/w/b', '/x/S'],
+      ['/w/a', '/w/b'],
+    ]);
+  });
 });
 
 describe('SessionFolderRuntime (health)', () => {

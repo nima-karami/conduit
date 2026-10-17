@@ -19,9 +19,10 @@ import { joinPath } from '../file-tree';
 import type { GitActionIntent } from '../git-intent';
 import { IconCheck, IconMore, IconRefresh } from '../icons';
 import { middleClickProps } from '../middle-click';
+import { relativeTime } from '../relative-time';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
-import { LinesPending } from './lines-pending';
+import { HeaderDiffstat, headerStat, headerStatText, LinesPending } from './lines-pending';
 import { RepoHead } from './repo-head';
 import { TreeChevronSpacer } from './tree-chevron';
 
@@ -45,8 +46,17 @@ const STR = {
   gitError: (r: GitFailure) =>
     r === 'timeout' ? "Couldn't read git status — timed out" : "Couldn't read git status",
   retry: 'Retry',
-  asOf: (time: string) => `as of ${time}`,
+  updating: 'Updating…',
+  lastRead: (ago: string) => `last read ${ago}`,
 } as const;
+
+/** A parked snapshot is being re-read; its age is worth saying only once it is no longer fresh
+ *  (engine runtime QA1). */
+export function staleRowText(refreshedAt: number, now: number): string {
+  return now - refreshedAt >= 60_000
+    ? `${STR.updating} · ${STR.lastRead(relativeTime(refreshedAt, now))}`
+    : STR.updating;
+}
 
 export interface ChangesViewProps {
   model: Exclude<ChangesModel, { kind: 'no-session' }>;
@@ -71,7 +81,7 @@ export interface ChangesViewProps {
   onRepoHeadContextMenu: (e: React.MouseEvent | React.KeyboardEvent, repoRoot: string) => void;
   onRepoContext: (repoRoot: string) => void;
   onPickActiveRepo: (root: string | null) => void;
-  renderChip: (repo: RepoInfo) => React.ReactNode;
+  renderChip: (repo: RepoInfo, headName: string) => React.ReactNode;
 }
 
 function ChangeRow({
@@ -167,21 +177,12 @@ function HeaderSummary({ model }: { model: ChangesViewProps['model'] }) {
   const repoPart =
     model.view === 'all' && model.repos.length >= 2 ? ` · ${STR.repos(model.repos.length)}` : '';
   const count = `${STR.changes(model.count)}${repoPart}`;
-  const stat = [
-    model.added > 0 ? `+${model.added}` : '',
-    model.removed > 0 ? `-${model.removed}` : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const stat = headerStat(model.linesPending, model.added, model.removed);
+  const statText = headerStatText(stat);
   return (
-    <span className="changes__header-summary" title={stat ? `${count} ${stat}` : count}>
+    <span className="changes__header-summary" title={statText ? `${count} ${statText}` : count}>
       <span className="changes__header-count">{count}</span>
-      <span className="diffstat">
-        {model.linesPending && <LinesPending />}
-        {model.added > 0 && <span className="diffstat--add">+{model.added}</span>}
-        {model.added > 0 && model.removed > 0 && ' '}
-        {model.removed > 0 && <span className="diffstat--del">-{model.removed}</span>}
-      </span>
+      <HeaderDiffstat stat={stat} />
     </span>
   );
 }
@@ -332,13 +333,8 @@ export function ChangesView({
       // A parked-dirty snapshot must not read as current (spec §3).
       ...(head.stale && head.refreshedAt
         ? [
-            <div key="asof" className="repo-head__asof">
-              {STR.asOf(
-                new Date(head.refreshedAt).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                }),
-              )}
+            <div key="stale" className="repo-head__stale">
+              {staleRowText(head.refreshedAt, Date.now())}
             </div>,
           ]
         : []),
@@ -462,7 +458,7 @@ export function ChangesView({
                     }
                   : undefined
               }
-              chip={renderChip(head.repo)}
+              chip={renderChip(head.repo, head.label)}
               onActivate={() => onRepoContext(root)}
               onContextMenu={(e) => onRepoHeadContextMenu(e, root)}
             />,

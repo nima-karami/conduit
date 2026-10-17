@@ -127,7 +127,7 @@ export interface RepoSnapshot {
   /** Last run failed; `changes` are the last good ones. */
   error?: GitFailure;
   /** Set only on snapshots sent from cache while the repo has pending (parked or queued) dirt:
-   *  the renderer renders "as of <refreshedAt>" instead of presenting it as current (spec §3). */
+   *  the renderer shows "Updating…" instead of presenting it as current (spec §3). */
   stale?: true;
 }
 

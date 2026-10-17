@@ -6,10 +6,11 @@
  * while another session is focused (or, in the bug report, as a sibling of the cwd) was never
  * seen, leaving the repo picker stale until restart.
  *
- * Isolation: a SECOND session is opened so it becomes active — the live fs-watch follows it,
- * NOT the first session's folder. repo-c is then created under the first session's root while
- * unwatched, so the fs-watch never fires for it. Only the focus/cwd `requestProject` re-scan
- * (the fix) can recover it. Without the fix this scenario fails (repo-c never lands on state).
+ * Isolation: the first session's root holds no repo, so it is not armed for repo tracking (a
+ * hidden session stays watched only while it has registered repos). A SECOND session is then
+ * opened so it becomes active and the window's watch follows it. repo-c is created under the
+ * first session's root while that root is outside every watched folder, so no fs event can
+ * report it. Only the focus/cwd `requestProject` re-scan can recover it.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -36,8 +37,7 @@ const repoNames = (page, id) =>
 
 runScenario('repo-rescan', async ({ page, log }) => {
   const root = mkdtempSync(join(tmpdir(), 'conduit-rescan-'));
-  makeRepo(join(root, 'repo-a'));
-  makeRepo(join(root, 'repo-b'));
+  writeFileSync(join(root, 'notes.txt'), 'not a repo\n');
   const openedPath = root.replace(/\\/g, '/');
 
   // Snapshots are pushed per session; a session hidden while its repo set changes is re-sent in
@@ -57,12 +57,15 @@ runScenario('repo-rescan', async ({ page, log }) => {
 
   const sid1 = await openSession(page, { path: openedPath });
   await page.waitForFunction(
-    (id) => ((window.__sessions || []).find((x) => x.id === id)?.repos?.length ?? 0) >= 2,
+    (id) => (window.__sessions || []).find((x) => x.id === id)?.repos !== undefined,
     sid1,
     { timeout: 20000 },
   );
-  assert((await repoNames(page, sid1)).length === 2, 'starts with exactly the two seeded repos');
-  log('two repos detected on open ✓');
+  // No repo to wait on, so give the open scan of a one-file folder time to finish; repo-c must
+  // not exist yet when it runs.
+  await page.waitForTimeout(800);
+  assert((await repoNames(page, sid1)).length === 0, 'starts with no registered repo');
+  log('no repo detected on open ✓');
 
   // Open a SECOND session elsewhere — it becomes active, so the single live fs-watch follows
   // it, not `root`. (sibling temp dir: neither contains the other.)
@@ -70,16 +73,14 @@ runScenario('repo-rescan', async ({ page, log }) => {
   await openSession(page, { path: other.replace(/\\/g, '/') });
   await page.waitForTimeout(600); // let the watch re-point to the second session
 
-  // Create a third repo under the FIRST session's root while it is unwatched.
+  // Create a repo under the FIRST session's root while it is outside every watched folder.
   makeRepo(join(root, 'repo-c'));
   await page.waitForTimeout(800); // a stray fs-watch event would land here (there should be none)
 
   // Fire the refresh the renderer posts for the first session on focus/cwd-change. The fix
   // re-scans sub-repos for the session whose home contains this path → recovers repo-c.
-  // requestId 0 is never newer than a reply the app has shown, so it cannot override the
-  // renderer's own view; this test reads the host's effect, not the rendered list.
   await page.evaluate(
-    (p) => window.agentDeck.post({ type: 'requestProject', path: p, requestId: 0 }),
+    (p) => window.agentDeck.post({ type: 'requestProject', path: p }),
     openedPath,
   );
 
@@ -88,7 +89,7 @@ runScenario('repo-rescan', async ({ page, log }) => {
       const names = ((window.__sessions || []).find((x) => x.id === id)?.repos ?? []).map(
         (r) => r.name,
       );
-      return names.includes('repo-c') && names.length >= 3;
+      return names.includes('repo-c');
     },
     sid1,
     { timeout: 15000 },
@@ -110,7 +111,7 @@ runScenario('repo-rescan', async ({ page, log }) => {
       (id) => {
         const repos = (window.__sessions || []).find((x) => x.id === id)?.repos ?? [];
         return (
-          repos.length === 3 && repos.every((r) => window.__deltas[id]?.[r.root] !== undefined)
+          repos.length === 1 && repos.every((r) => window.__deltas[id]?.[r.root] !== undefined)
         );
       },
       sid1,
@@ -121,10 +122,10 @@ runScenario('repo-rescan', async ({ page, log }) => {
       assert(false, `repoDelta never covered repo-c: ${JSON.stringify(await snapshotNames())}`);
     });
   assert(
-    JSON.stringify(await snapshotNames()) === '["repo-a","repo-b","repo-c"]',
+    JSON.stringify(await snapshotNames()) === '["repo-c"]',
     `the session's repoDelta snapshots include repo-c: ${JSON.stringify(await snapshotNames())}`,
   );
-  log('repoDelta snapshots cover repo-a, repo-b, repo-c ✓');
+  log('repoDelta snapshot covers repo-c ✓');
 
   await openChangesTab(page);
   await page
@@ -133,7 +134,7 @@ runScenario('repo-rescan', async ({ page, log }) => {
         Array.from(
           document.querySelectorAll('.repo-head .repo-head__name'),
           (n) => n.textContent,
-        ).join(',') === 'repo-a,repo-b,repo-c',
+        ).join(',') === 'repo-c',
       null,
       { timeout: 15000 },
     )

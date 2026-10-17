@@ -37,6 +37,8 @@ export interface RepoTrackerHost {
   onWatchedPath(absKey: string): void;
   lostFolders(folders: readonly string[]): void;
   setLiveRoots(roots: readonly string[]): void;
+  /** The renderer-reported ids that are live sessions this window owns. */
+  ownedIds(windowId: number, ids: readonly string[]): string[];
   /** On EVERY `visible` message: a reloaded renderer in the same window re-posts the same ids. */
   windowShown(windowId: number, ids: readonly string[]): void;
   /** Un-minimize: the renderer posts no `visible` for it, so its sessions are re-sent here. */
@@ -76,7 +78,7 @@ export function createRepoTrackerHost(deps: RepoTrackerHostDeps): RepoTrackerHos
     const root = rootFor(sessionId, key, fallbackRoot);
     for (const w of deps.windows()) {
       // Minimized windows too: restore re-sends in full, but a delta must not be lost meanwhile.
-      if (!demand.isShownInWindow(w.id, sessionId)) continue;
+      if (!deps.owns(w.id, sessionId) || !demand.isShownInWindow(w.id, sessionId)) continue;
       w.send({ type: 'repoDelta', sessionId, full: false, repos: { [root]: entry } });
     }
   };
@@ -158,6 +160,7 @@ export function createRepoTrackerHost(deps: RepoTrackerHostDeps): RepoTrackerHos
     onWatchedPath: (absKey) => tracker.onWatchedPath(absKey),
     lostFolders: (folders) => tracker.lostFolders(folders),
     setLiveRoots: (roots) => tracker.setLiveRoots(roots),
+    ownedIds: owned,
     windowShown(windowId, ids) {
       sendFull(windowId, ids);
       tracker.visibilityChanged();

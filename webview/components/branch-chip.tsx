@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { acceptsRepoResult, branchChipModel, switchOutcome } from '../../src/branch-chip';
+import {
+  acceptsRepoResult,
+  branchChipModel,
+  chipWorktreeSegment,
+  switchOutcome,
+} from '../../src/branch-chip';
 import type { Rect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import type { RepoInfo } from '../../src/repo-scan';
@@ -24,6 +29,8 @@ const STR = {
 export interface BranchChipProps {
   sessionId: string;
   repo: RepoInfo;
+  /** The label of the repo head the chip sits in. */
+  headName: string;
   git: GitInfo | undefined;
   onViewHistory: (root: string) => void;
   onSwitched: () => void;
@@ -33,6 +40,7 @@ export interface BranchChipProps {
 export function BranchChip({
   sessionId,
   repo,
+  headName,
   git,
   onViewHistory,
   onSwitched,
@@ -107,6 +115,7 @@ export function BranchChip({
     menuRef.current?.querySelector<HTMLInputElement>('.git-branch-menu__filter')?.focus();
 
   const ready = model.state === 'ready' ? model : null;
+  const worktree = chipWorktreeSegment(ready?.worktree, headName);
   const name =
     model.state === 'ready'
       ? model.accessibleName
@@ -134,12 +143,12 @@ export function BranchChip({
       >
         {ready ? (
           <>
-            {ready.worktree && (
+            {worktree && (
               <>
                 <span className="branch-chip__worktree">
                   <IconWorktree size={12} className="branch-chip__glyph" />
                   <span className="branch-chip__label" dir="ltr">
-                    {ready.worktree}
+                    {worktree}
                   </span>
                 </span>
                 <span className="branch-chip__sep" aria-hidden>

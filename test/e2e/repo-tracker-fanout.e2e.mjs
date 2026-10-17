@@ -235,7 +235,9 @@ runScenario('repo-tracker-fanout', async ({ app, page, log }) => {
         files: Array.from(document.querySelectorAll('.change__file'), (el) => el.textContent),
       }),
     );
-    const asOf = await page.evaluate(() => document.querySelectorAll('.repo-head__asof').length);
+    const staleNotices = await page.evaluate(
+      () => document.querySelectorAll('.repo-head__stale').length,
+    );
     await pause(SWITCH_BACK_WINDOW_MS);
     const back = statusCalls(await readGitProbe(app))
       .slice(statusBeforeBack)
@@ -245,8 +247,11 @@ runScenario('repo-tracker-fanout', async ({ app, page, log }) => {
       back.length === 0,
       `switching back to the parent ran catch-up git status (repoA ${backAt(repoA)}, repoB ${backAt(repoB)}, worktree ${backAt(wt)})`,
     );
-    assert(asOf === 0, `switching back showed ${asOf} "as of" stale notices with nothing written`);
-    log('ticket → parent → list from cache, 0 status per fixture repo, no "as of"');
+    assert(
+      staleNotices === 0,
+      `switching back showed ${staleNotices} stale notices with nothing written`,
+    );
+    log('ticket → parent → list from cache, 0 status per fixture repo, no stale notice');
 
     // A reloaded renderer activates the first session in the list, so the ticket goes first: the
     // same session comes back on screen and only the host's cache can refill its list.

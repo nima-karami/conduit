@@ -19,7 +19,7 @@ import {
 import type { ReviewScope } from '../review-scope';
 import { ContextMenu, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
-import { LinesPending } from './lines-pending';
+import { HeaderDiffstat, headerStat, headerStatText } from './lines-pending';
 import { type NavBlock, type NavSection, ReviewFileNav } from './review-file-nav';
 
 const STR = {
@@ -137,22 +137,14 @@ export function ReviewNavigator({
         : working
           ? plural(files.length, 'change')
           : plural(files.length, 'file');
-  const stat = [totalAdd > 0 ? `+${totalAdd}` : '', totalDel > 0 ? `-${totalDel}` : '']
-    .filter(Boolean)
-    .join(' ');
+  const stat = headerStat(linesPending, totalAdd, totalDel);
+  const statText = headerStatText(stat);
 
   const header = (
     <div className="changes__header">
-      <span className="changes__header-summary" title={stat ? `${count} ${stat}` : count}>
+      <span className="changes__header-summary" title={statText ? `${count} ${statText}` : count}>
         <span className="changes__header-count">{count}</span>
-        {model !== null && (
-          <span className="diffstat">
-            {linesPending && <LinesPending />}
-            {totalAdd > 0 && <span className="diffstat--add">+{totalAdd}</span>}
-            {totalAdd > 0 && totalDel > 0 && ' '}
-            {totalDel > 0 && <span className="diffstat--del">-{totalDel}</span>}
-          </span>
-        )}
+        {model !== null && <HeaderDiffstat stat={stat} />}
       </span>
       {model !== null && working && onRefresh && (
         <button

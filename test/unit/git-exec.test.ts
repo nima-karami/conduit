@@ -76,6 +76,14 @@ describe('runGitBin (node as a fake binary)', () => {
   it('flags notFound for a missing binary', async () => {
     const r = await runGitBin('definitely-not-a-real-binary-xyz', ['--version'], { cwd });
     expect(r.notFound).toBe(true);
+    expect(r.cwdMissing).toBeUndefined();
+  });
+
+  it('a missing cwd is cwdMissing, not a missing binary', async () => {
+    const r = await runGitBin(node, ['-e', '0'], { cwd: `${cwd}/no-such-dir-xyz` });
+    expect(r.ok).toBe(false);
+    expect(r.notFound).toBe(false);
+    expect(r.cwdMissing).toBe(true);
   });
 
   it('feeds stdin when provided', async () => {

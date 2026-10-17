@@ -290,7 +290,9 @@ try {
   const chipWt = await readChip(page, (v) => v.op === 'REBASING');
   log('AC11 chip:', JSON.stringify(chipWt));
   assert(chipWt.text.includes('REBASING'), `chip text lacks REBASING: ${chipWt.text}`);
-  assert(chipWt.worktree?.includes(wtName), `chip lacks worktree ${wtName}: ${chipWt.text}`);
+  // The head already reads the worktree's name, so the chip shows no segment repeating it; the
+  // accessible name below still says "worktree" (engine runtime QA4).
+  assert(chipWt.worktree === null, `chip repeats the head name ${wtName}: ${chipWt.text}`);
   assert(chipWt.dirty, 'chip lacks .branch-chip__dirty');
   for (const part of ['REBASING', `worktree ${wtName}`, 'uncommitted changes']) {
     assert(chipWt.name?.includes(part), `chip aria-label lacks "${part}": ${chipWt.name}`);

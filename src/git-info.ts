@@ -59,8 +59,9 @@ function runGit(
   return runGitBin(gitBin, args, { cwd, timeoutMs, maxBuffer: MAX_BUFFER }).then((r) => {
     if (r.ok) return { ok: true, stdout: r.stdout };
     // An exit code is git's own answer ("not a git repository", in any locale); none means it
-    // never answered (killed by the timeout, or never spawned).
-    const failure = r.code === null ? (gitFailureOf(r) ?? 'failed') : undefined;
+    // never answered (killed by the timeout, or never spawned). A vanished cwd is a plain "not a
+    // repo": the rescan drops it, so there is no last-good answer worth keeping.
+    const failure = r.code === null && !r.cwdMissing ? (gitFailureOf(r) ?? 'failed') : undefined;
     return { ok: false, notFound: r.notFound, ...(failure ? { failure } : {}) };
   });
 }
@@ -204,6 +205,7 @@ export async function interrogateGit(
 
   // Work-tree top-level (for the worktree label) — safe now that bare is ruled out.
   const top = await runGit(gitBin, ['rev-parse', '--show-toplevel'], cwd, timeoutMs);
+  if (!top.ok && top.failure) return { info: { kind: 'none' }, failure: top.failure, ...dirs };
   const topLevel = top.ok ? top.stdout.trim() : '';
 
   // Linked worktree: its private git-dir differs from the shared common dir.
@@ -238,6 +240,8 @@ export async function interrogateGit(
     const name = abbrev.stdout.trim();
     if (name === 'HEAD') {
       const short = await runGit(gitBin, ['rev-parse', '--short=7', 'HEAD'], cwd, timeoutMs);
+      if (!short.ok && short.failure)
+        return { info: { kind: 'none' }, failure: short.failure, ...dirs };
       kind = 'detached';
       sha = short.ok ? short.stdout.trim().slice(0, 7) : '';
     } else {

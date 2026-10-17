@@ -172,6 +172,67 @@ d(
       expect(await interrogateGit(root)).toEqual({ info: { kind: 'none' }, failure: 'timeout' });
     });
 
+    it('a missing cwd is "not a repo" and does not latch git as missing', async () => {
+      const gone = path.join(mkTmp(), 'removed-worktree');
+      expect(await interrogateGit(gone)).toEqual({ info: { kind: 'none' } });
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      expect((await interrogateGit(root)).info).toMatchObject({ kind: 'branch', branch: 'main' });
+    });
+
+    const neverAnswered = {
+      ok: false,
+      stdout: '',
+      stdoutBuffer: Buffer.alloc(0),
+      stderr: '',
+      code: null,
+      notFound: false,
+      timedOut: true,
+      aborted: false,
+      truncated: false,
+    } as const;
+
+    it('a --show-toplevel killed by the timeout is a failure', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      const original = vi.mocked(runGitBin).getMockImplementation();
+      vi.mocked(runGitBin).mockImplementation((bin, args, opts) =>
+        args.includes('--show-toplevel')
+          ? Promise.resolve({ ...neverAnswered })
+          : (original as typeof runGitBin)(bin, args, opts),
+      );
+      try {
+        const r = await interrogateGit(root);
+        expect(r.failure).toBe('timeout');
+        expect(r.info).toEqual({ kind: 'none' });
+        expect(r.gitDir).toBeDefined();
+      } finally {
+        vi.mocked(runGitBin).mockImplementation(original as typeof runGitBin);
+      }
+    });
+
+    it('a detached --short HEAD killed by the timeout is a failure', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      git(root, ['checkout', '--detach', git(root, ['rev-parse', 'HEAD'])]);
+      const original = vi.mocked(runGitBin).getMockImplementation();
+      vi.mocked(runGitBin).mockImplementation((bin, args, opts) =>
+        args.includes('--short=7')
+          ? Promise.resolve({ ...neverAnswered })
+          : (original as typeof runGitBin)(bin, args, opts),
+      );
+      try {
+        const r = await interrogateGit(root);
+        expect(r.failure).toBe('timeout');
+        expect(r.info).toEqual({ kind: 'none' });
+      } finally {
+        vi.mocked(runGitBin).mockImplementation(original as typeof runGitBin);
+      }
+    });
+
     it('detects a linked worktree and labels it by basename', async () => {
       const root = mkTmp();
       gitInit(root, 'main');

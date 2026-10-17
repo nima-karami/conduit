@@ -4408,11 +4408,12 @@ export function App() {
           onRepoHeadContextMenu={onRepoHeadContextMenu}
           onRepoContext={onRepoContext}
           onPickActiveRepo={onPickActiveRepo}
-          renderChip={(repo) =>
+          renderChip={(repo, headName) =>
             active ? (
               <BranchChip
                 sessionId={active.id}
                 repo={repo}
+                headName={headName}
                 git={gitOf(active, repo.root)}
                 onViewHistory={openGitHistoryTab}
                 onSwitched={refreshChanges}

@@ -185,15 +185,17 @@ describe('ProjectWatcher', () => {
     expect(h.live.at(-1)).toEqual(['/w/home']);
   });
 
-  it('a root that keeps failing to open is marked lost once, until it opens again', () => {
+  it('a root that keeps failing to open is marked lost once, until it opens again or leaves the set', () => {
     const throwOn = ['/gone'];
     const h = setup({ throwOn });
     h.pw.setFolders(['/w/home', '/gone']);
-    h.pw.setFolders(['/w/home']);
-    h.pw.setFolders(['/w/home', '/gone']);
     h.pw.setFolders(['/w/home', '/gone', '/x/R']);
     expect(h.lost).toEqual([['/gone']]);
-    expect(h.suspects).toEqual([['/gone']]);
+    h.pw.setFolders(['/w/home']);
+    h.pw.setFolders(['/w/home', '/gone']);
+    h.pw.setFolders(['/w/home', '/gone']);
+    expect(h.lost).toEqual([['/gone'], ['/gone']]);
+    expect(h.suspects).toEqual([['/gone'], ['/gone']]);
     throwOn.length = 0;
     h.pw.setFolders(['/w/home', '/gone']);
     expect(h.open().map((w) => w.dir)).toEqual(['/w/home', '/gone']);
@@ -203,7 +205,7 @@ describe('ProjectWatcher', () => {
     throwOn.push('/gone');
     h.pw.setFolders(['/w/home', '/gone']);
     h.pw.setFolders(['/w/home', '/gone']);
-    expect(h.lost).toEqual([['/gone'], ['/gone']]);
+    expect(h.lost).toEqual([['/gone'], ['/gone'], ['/gone']]);
   });
 
   it('onLive reports only successfully opened watch roots, not the requested set', () => {
