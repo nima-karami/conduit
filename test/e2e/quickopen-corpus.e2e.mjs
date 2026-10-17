@@ -37,18 +37,18 @@ function seedRepo() {
 runScenario('quickopen-corpus', async ({ page, log }) => {
   const root = seedRepo();
   log(`seeded ${FILE_COUNT} files + a git-ignored vendor tree at`, root);
-  await openSession(page, { path: root });
+  const sid = await openSession(page, { path: root });
   await tapBridge(page);
 
   const res = await page.evaluate(
-    (r) =>
+    ([r, sessionId]) =>
       new Promise((resolve) => {
         window.agentDeck.subscribe((m) => {
           if (m.type === 'searchResults' && m.root === r) resolve(m);
         });
-        window.agentDeck.post({ type: 'searchFiles', root: r, query: '' });
+        window.agentDeck.post({ type: 'searchFiles', sessionId, root: r, query: '' });
       }),
-    root.replace(/\\/g, '/'),
+    [root.replace(/\\/g, '/'), sid],
   );
 
   const rels = res.results.map((h) => h.rel);

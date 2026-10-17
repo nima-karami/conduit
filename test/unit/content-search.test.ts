@@ -451,6 +451,7 @@ describe('searchContentAsync', () => {
       timeBudgetMs: 1,
     });
     expect(res.truncated).toBe(true);
+    expect(res.truncatedBy).toBe('time');
   });
 });
 
@@ -544,6 +545,7 @@ describe('searchContentAsync — candidate file list (gitignore-driven)', () => 
       { perFileCap: 1000, totalCap: 10, timeBudgetMs: 100000 },
     );
     expect(res.truncated).toBe(true);
+    expect(res.truncatedBy).toBe('limit');
     const total = res.files.reduce((n, f) => n + f.matches.length, 0);
     expect(total).toBe(10);
   });

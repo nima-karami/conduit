@@ -10,7 +10,7 @@ import {
 const repo = (root: string) => ({ key: folderKey(root), root });
 
 function harness(
-  listings: Record<string, string[]>,
+  listings: Record<string, string[] | null>,
   tree: { loose: string[]; dirs: string[] } = { loose: [], dirs: [] },
 ) {
   const listCalls: string[] = [];
@@ -21,7 +21,8 @@ function harness(
     async listRepo(root) {
       listCalls.push(root);
       if (listGate) await listGate;
-      return [...(listings[root] ?? [])];
+      const rels = listings[root];
+      return rels === null ? null : [...(rels ?? [])];
     },
     async walkLoose(root, prune, cap) {
       const pruned = tree.dirs.filter((d) => prune(`${root}/${d}`));
@@ -31,8 +32,15 @@ function harness(
         .map((rel): SearchHit => ({ rel, abs: `${root}/${rel}` }));
     },
   };
+  const raw = createRepoFileIndex(deps);
+  const index = {
+    ...raw,
+    build: async (root: string, repos: readonly { key: string; root: string }[]) =>
+      (await raw.build(root, repos)).files,
+  };
   return {
-    index: createRepoFileIndex(deps),
+    index,
+    raw,
     listings,
     tree,
     listCalls,
@@ -86,7 +94,9 @@ describe('createRepoFileIndex', () => {
       listRepo: async () => [],
       walkLoose: async () => [{ rel: 'docs/n.md', abs: 'C:\\w\\docs\\n.md' }],
     });
-    expect(await index.build('C:\\w', [])).toEqual([{ rel: 'docs/n.md', abs: 'C:/w/docs/n.md' }]);
+    expect((await index.build('C:\\w', [])).files).toEqual([
+      { rel: 'docs/n.md', abs: 'C:/w/docs/n.md' },
+    ]);
   });
 
   it('a repo is re-listed only after invalidateRepo(key)', async () => {
@@ -159,12 +169,95 @@ describe('createRepoFileIndex', () => {
     expect(h.walks).toEqual([]);
   });
 
-  it('an empty listing is not cached (git may not have answered)', async () => {
-    const h = harness({});
+  it('an empty listing is an empty repo, cached like any other answer', async () => {
+    const h = harness({ '/w/repoA': [] });
+    expect(await h.raw.build('/w', [repo('/w/repoA')])).toEqual({ files: [], degraded: false });
     await h.index.build('/w', [repo('/w/repoA')]);
-    h.listings['/w/repoA'] = ['a.ts'];
-    expect(rels(await h.index.build('/w', [repo('/w/repoA')]))).toEqual(['repoA/a.ts']);
-    expect(h.listCalls).toEqual(['/w/repoA', '/w/repoA']);
+    expect(h.listCalls).toEqual(['/w/repoA']);
+  });
+
+  it('a failed re-list keeps the last good listing and asks git again next build', async () => {
+    const h = harness({ '/w/repoA': ['a.ts'] }, { loose: ['notes.md'], dirs: ['repoA'] });
+    const repos = [repo('/w/repoA')];
+    await h.index.build('/w', repos);
+    h.index.invalidateRepo(folderKey('/w/repoA'));
+    h.listings['/w/repoA'] = null;
+    const failed = await h.raw.build('/w', repos);
+    expect(rels(failed.files)).toEqual(['notes.md', 'repoA/a.ts']);
+    expect(failed.degraded).toBe(true);
+    // Still pruned from the loose walk: its last good listing stands in for it.
+    expect(h.walks.every((w) => w.pruned.includes('repoA'))).toBe(true);
+    h.listings['/w/repoA'] = ['a.ts', 'b.ts'];
+    const retried = await h.raw.build('/w', repos);
+    expect(rels(retried.files)).toEqual(['notes.md', 'repoA/a.ts', 'repoA/b.ts']);
+    expect(retried.degraded).toBe(false);
+    expect(h.listCalls).toEqual(['/w/repoA', '/w/repoA', '/w/repoA']);
+  });
+
+  it('a repo git never listed is walked, skipping the listed repos inside it', async () => {
+    const calls: Array<{ root: string; pruned: boolean }> = [];
+    const index = createRepoFileIndex({
+      listRepo: async (root) => (root === '/w/A/inner' ? ['i.ts'] : null),
+      async walkLoose(root, prune) {
+        calls.push({ root, pruned: prune('/w/A/inner') });
+        if (root === '/w/A') return [{ rel: 'a.ts', abs: '/w/A/a.ts' }];
+        return [{ rel: 'notes.md', abs: '/w/notes.md' }];
+      },
+    });
+    const built = await index.build('/w', [repo('/w/A'), repo('/w/A/inner')]);
+    expect(rels(built.files)).toEqual(['A/a.ts', 'A/inner/i.ts', 'notes.md']);
+    expect(built.degraded).toBe(true);
+    expect(calls).toEqual([
+      { root: '/w', pruned: true },
+      { root: '/w/A', pruned: true },
+    ]);
+  });
+
+  it('a root that is itself a repo whose listing fails is walked', async () => {
+    const h = harness({ '/w': null }, { loose: ['x.ts', 'gen/y.ts'], dirs: [] });
+    const built = await h.raw.build('/w', [repo('/w')]);
+    expect(rels(built.files)).toEqual(['gen/y.ts', 'x.ts']);
+    expect(built.degraded).toBe(true);
+  });
+
+  it('builds asking for the same repo at the same version share one ls-files', async () => {
+    const h = harness({ '/w/repoA': ['a.ts'] });
+    const release = h.gateList();
+    const both = Promise.all([
+      h.index.build('/w', [repo('/w/repoA')]),
+      h.index.build('/w', [repo('/w/repoA')]),
+    ]);
+    release();
+    const [one, two] = await both;
+    expect(rels(one)).toEqual(['repoA/a.ts']);
+    expect(rels(two)).toEqual(['repoA/a.ts']);
+    expect(h.listCalls).toEqual(['/w/repoA']);
+  });
+
+  it('an unchanged build reuses the union; a re-list or re-walk rebuilds it', async () => {
+    const h = harness({ '/w/repoA': ['a.ts'] }, { loose: ['notes.md'], dirs: ['repoA'] });
+    const repos = [repo('/w/repoA')];
+    const first = await h.index.build('/w', repos);
+    expect(await h.index.build('/w', repos)).toBe(first);
+    h.index.invalidateLoose();
+    const rewalked = await h.index.build('/w', repos);
+    expect(rewalked).not.toBe(first);
+    h.index.invalidateRepo(folderKey('/w/repoA'));
+    expect(await h.index.build('/w', repos)).not.toBe(rewalked);
+  });
+
+  it('retain forgets roots and repos no longer in use', async () => {
+    const h = harness({ '/w/repoA': ['a.ts'] }, { loose: ['notes.md'], dirs: ['repoA'] });
+    const repos = [repo('/w/repoA')];
+    await h.index.build('/w', repos);
+    h.index.retain(new Set([folderKey('/w')]), new Set([folderKey('/w/repoA')]));
+    await h.index.build('/w', repos);
+    expect(h.listCalls).toHaveLength(1);
+    expect(h.walks).toHaveLength(1);
+    h.index.retain(new Set(), new Set());
+    await h.index.build('/w', repos);
+    expect(h.listCalls).toHaveLength(2);
+    expect(h.walks).toHaveLength(2);
   });
 
   it('a file listed by two nested repos appears once', async () => {

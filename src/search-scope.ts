@@ -1,6 +1,7 @@
 import { folderKey } from './folder-key';
 import { isAncestorOf } from './owning-session';
 import type { IndexScope } from './protocol';
+import { sessionHasFolderKey } from './session-folders';
 import type { Session } from './types';
 
 // Content-search scope in a folder of repos: docs/specs/2026-10-16-multi-repo-tracking.md §2
@@ -40,4 +41,34 @@ export function searchTargets(
     root,
     scope: scope === 'everything' && chip.has(folderKey(root)) ? 'everything' : 'tracked',
   }));
+}
+
+/** The IPC edge's check of `contentSearch`/`searchFiles` `scope`: absent, or a known kind. */
+export function isIndexScope(v: unknown): v is IndexScope | undefined {
+  return v === undefined || v === 'tracked' || v === 'everything';
+}
+
+/** A search root the renderer may name: one of the session's folders, or one of its registered
+ *  repos ("This repo", which can sit below a folder). */
+export function searchRootAllowed(
+  session: Pick<Session, 'home' | 'roots' | 'repos'>,
+  root: unknown,
+): root is string {
+  if (typeof root !== 'string' || root === '') return false;
+  const key = folderKey(root);
+  return (
+    sessionHasFolderKey(session, key) ||
+    (session.repos ?? []).some((r) => folderKey(r.root) === key)
+  );
+}
+
+/** The renderer's per-session scopes without sessions that are gone; the same object when none
+ *  is, so the state update is a no-op. */
+export function retainSessionScopes(
+  scopes: Readonly<Record<string, SearchScope>>,
+  liveIds: ReadonlySet<string>,
+): Readonly<Record<string, SearchScope>> {
+  const ids = Object.keys(scopes);
+  if (ids.every((id) => liveIds.has(id))) return scopes;
+  return Object.fromEntries(ids.filter((id) => liveIds.has(id)).map((id) => [id, scopes[id]]));
 }

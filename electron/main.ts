@@ -32,6 +32,7 @@ import { fingerprint } from '../src/board-watch';
 import { createCloseGuard, createQuitGrant, GRANT_TTL_MS, openWindowIds } from '../src/close-guard';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
 import { loadAgents, readBlob, readFileState } from '../src/config';
+import type { TruncatedBy } from '../src/content-search';
 import { searchContentFs } from '../src/content-search-fs';
 import { decideCrashRecovery } from '../src/crash-recovery';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
@@ -80,6 +81,7 @@ import { decideSwitch, isKnownRef } from '../src/git-switch';
 import { type HeadBlobShow, readHeadBlob } from '../src/head-blob';
 import { IgnoreCache } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
+import { indexRemovals, staleIndexRoots } from '../src/index-resync';
 import { type BellScanState, countBareBells } from '../src/last-line';
 import { previewLaunch } from '../src/launch-preview';
 import { buildLaunchSpec } from '../src/launch-spec';
@@ -165,6 +167,7 @@ import { applyNotePatch, notesFingerprint, type ReviewNotesData } from '../src/r
 import { orphanScrollbackFiles, scrollbackFileName } from '../src/scrollback-files';
 import { restoreScrollback, spawnPrelude } from '../src/scrollback-persistence';
 import { ScrollbackStore } from '../src/scrollback-store';
+import { isIndexScope, searchRootAllowed } from '../src/search-scope';
 import { SessionActivity } from '../src/session-activity';
 import { presentRoots, sessionContains } from '../src/session-folders';
 import { SessionManager } from '../src/session-manager';
@@ -439,14 +442,17 @@ function git(args: string[], cwd: string): Promise<string> {
 // for the same root must abort the in-flight one. Each request claims a monotonic
 // generation; `isCancelled` for a walk is "some later request took over this root".
 let contentSearchSeq = 0;
+const STR_SEARCH_REFUSED = 'Search refused: not a folder or repo of this session.';
 const contentSearchGen = new Map<string, number>();
 
 // path-links v1: per-project file index for token suffix-search, cached briefly so files
 // created after the cache was built still become linkable without a manual refresh.
 const FILE_INDEX_TTL_MS = 5000;
+/** The watcher already debounces 300 ms; this rides on top so a burst costs one refresh. */
+const FILE_INDEX_SIGNAL_MS = 250;
 const fileIndexCache = new ExpiringCache<
   string,
-  { files: IndexedFile[]; at: number; fromGit: boolean }
+  { files: IndexedFile[]; at: number; capped: boolean; repoSet: string | null }
 >({
   ttlMs: FILE_INDEX_TTL_MS,
   maxEntries: 64,
@@ -456,9 +462,15 @@ const fileIndexCache = new ExpiringCache<
 });
 
 const repoFileIndex = createRepoFileIndex({
-  listRepo: gitListedFiles,
+  listRepo: async (root) => {
+    const listing = await gitListedFiles(root);
+    return listing.kind === 'listed' ? listing.rels : null;
+  },
   walkLoose: (root, prune, cap) => walkFilesAsync(root, cap, prune),
 });
+
+/** The repos a non-git root's index was built from, as a comparable string. */
+const repoSetOf = (repos: readonly { key: string }[]) => repos.map((r) => r.key).join('\n');
 
 // Set by the app-ready closure, which owns the repo tracker; until then a non-git root has no
 // registered repos and its index is the loose walk alone.
@@ -475,39 +487,44 @@ const statKind = (absPath: string): 'file' | 'dir' | null => {
 /** Build (or reuse, within the TTL) the project file index for `root`: `git ls-files` (fast,
  *  respects .gitignore, includes untracked-but-not-ignored) for a git root; for a non-git root,
  *  its registered repos' listings plus the loose files outside them (src/repo-file-index.ts),
- *  or with scope 'everything' the capped walk that ignores .gitignore. `fromGit` = the files
- *  are authoritative candidates for content search, not a walk it should redo itself. */
+ *  with scope 'everything', or when git did not answer for a git root, the capped walk that
+ *  ignores .gitignore (`capped` = that walk hit its cap). `repoSet` = the repos a non-git
+ *  root's index was built from (null otherwise), so the TS index can tell when it is out of
+ *  date. */
 async function projectFileIndexMeta(
   root: string,
   opts: { fresh?: boolean; scope?: IndexScope } = {},
-): Promise<{ files: IndexedFile[]; fromGit: boolean }> {
+): Promise<{ files: IndexedFile[]; capped: boolean; repoSet: string | null }> {
   const cacheKey = `${root}\0${opts.scope ?? 'tracked'}`;
   const cached = fileIndexCache.get(cacheKey);
   // An incremental index is triggered BY a filesystem change, so serving it the TTL cache
   // would hand back exactly the pre-change listing it was called to notice. It still WRITES
   // the cache, so the refresh is shared with whatever asks next.
-  if (!opts.fresh && cached && Date.now() - cached.at < FILE_INDEX_TTL_MS)
-    return { files: cached.files, fromGit: cached.fromGit };
-  let files: IndexedFile[];
-  let fromGit: boolean;
-  const listed = await gitListedFiles(root);
-  if (listed.length > 0) {
-    fromGit = true;
-    files = listed.map((rel) => ({ rel, abs: `${root}/${rel}` }));
-  } else if (opts.scope === 'everything') {
-    fromGit = false;
+  if (!opts.fresh && cached && Date.now() - cached.at < FILE_INDEX_TTL_MS) return cached;
+  const listing = await gitListedFiles(root);
+  if (listing.kind === 'listed') {
+    const files = listing.rels.map((rel) => ({ rel, abs: `${root}/${rel}` }));
+    fileIndexCache.set(cacheKey, { files, at: Date.now(), capped: false, repoSet: null });
+    return { files, capped: false, repoSet: null };
+  }
+  if (listing.kind === 'failed' || opts.scope === 'everything') {
     // The cap is generous because this walk used to back the TS source index too, and the
-    // search-sized default truncated deep source directories out of it.
-    files = (await walkFilesAsync(root, LOOSE_FILE_CAP)).map((h) => ({
+    // search-sized default truncated deep source directories out of it. A failed listing is
+    // not cached: the next ask tries git again.
+    const files = (await walkFilesAsync(root, LOOSE_FILE_CAP)).map((h) => ({
       rel: h.rel,
       abs: h.abs.replace(/\\/g, '/'),
     }));
-  } else {
-    fromGit = true;
-    files = await repoFileIndex.build(root, trackedReposUnder?.(folderKey(root)) ?? []);
+    const capped = files.length >= LOOSE_FILE_CAP;
+    if (listing.kind !== 'failed')
+      fileIndexCache.set(cacheKey, { files, at: Date.now(), capped, repoSet: null });
+    return { files, capped, repoSet: null };
   }
-  fileIndexCache.set(cacheKey, { files, at: Date.now(), fromGit });
-  return { files, fromGit };
+  const repos = trackedReposUnder?.(folderKey(root)) ?? [];
+  const built = await repoFileIndex.build(root, repos);
+  const entry = { files: built.files, capped: false, repoSet: repoSetOf(repos) };
+  if (!built.degraded) fileIndexCache.set(cacheKey, { ...entry, at: Date.now() });
+  return entry;
 }
 
 async function projectFileIndex(root: string, scope?: IndexScope): Promise<IndexedFile[]> {
@@ -521,8 +538,23 @@ const INDEX_CHUNK_SIZE = 200;
 /** What the source index has already streamed per root, so a `fsChanged` top-up sends only
  *  the files that appeared since — the whole point of the incremental path (spec contract 5).
  *  `nextSeq` keeps chunk ordinals monotonic per root: a top-up must never be `seq === 0`,
- *  which is the chunk that owns the compiler options. */
-const projectIndexState = new Map<string, { sent: Set<string>; nextSeq: number }>();
+ *  which is the chunk that owns the compiler options. `resolved` = what on-demand module
+ *  resolutions added to `sent`; `repoSet` = what the last pass's file index was built from
+ *  (src/index-resync.ts); `reply` = where the host-started re-sync streams. */
+const projectIndexState = new Map<
+  string,
+  {
+    sent: Set<string>;
+    nextSeq: number;
+    resolved: Set<string>;
+    repoSet: string | null;
+    reply: (msg: HostToWebview) => void;
+  }
+>();
+
+/** full: chunk 0 onward. incremental: files that appeared since. resync: incremental, plus the
+ *  files that left the selection go out as `removed`. */
+type IndexMode = 'full' | 'incremental' | 'resync';
 
 /** On-demand module resolutions, keyed by root so a whole project's entries can be dropped in
  *  one pass — see docs/specs/archive/2026-08-21-goto-definition-flows.md §1. A failure is cached too:
@@ -531,7 +563,10 @@ const moduleResolveCache = new Map<string, CachedResolution>();
 
 /** In-flight index work per root: the run to chain behind, and whether a top-up is already
  *  waiting for it. */
-const indexRuns = new Map<string, { tail: Promise<void>; incrementalQueued: boolean }>();
+const indexRuns = new Map<
+  string,
+  { tail: Promise<void>; queued: { incremental: boolean; resync: boolean } }
+>();
 
 /**
  * Run at most ONE index per root at a time, with at most one top-up queued behind it.
@@ -547,18 +582,21 @@ function queueProjectIndex(
   seeds: string[],
   reply: (msg: HostToWebview) => void,
   log: Logger,
-  incremental: boolean,
+  mode: IndexMode,
 ): Promise<void> {
-  const run = indexRuns.get(root) ?? { tail: Promise.resolve(), incrementalQueued: false };
+  const run = indexRuns.get(root) ?? {
+    tail: Promise.resolve(),
+    queued: { incremental: false, resync: false },
+  };
   indexRuns.set(root, run);
-  if (incremental && run.incrementalQueued) return run.tail;
-  if (incremental) run.incrementalQueued = true;
+  if (mode !== 'full' && run.queued[mode]) return run.tail;
+  if (mode !== 'full') run.queued[mode] = true;
   run.tail = run.tail.then(async () => {
-    if (incremental) run.incrementalQueued = false;
+    if (mode !== 'full') run.queued[mode] = false;
     try {
-      await indexProjectSources(root, seeds, reply, log, { incremental });
+      await indexProjectSources(root, seeds, reply, log, mode);
     } catch (e) {
-      log.warn('index', 'project-index-failed', { root, incremental, error: String(e) });
+      log.warn('index', 'project-index-failed', { root, mode, error: String(e) });
     }
   });
   return run.tail;
@@ -603,19 +641,22 @@ async function indexProjectSources(
   seeds: string[],
   reply: (msg: HostToWebview) => void,
   log: Logger,
-  opts: { incremental?: boolean } = {},
+  requested: IndexMode,
 ): Promise<void> {
   const prior = projectIndexState.get(root);
   // An incremental request for a root this process never indexed (a reloaded renderer) is a
   // full index, not a no-op — otherwise the root would never be indexed at all.
-  const incremental = !!opts.incremental && prior !== undefined;
+  const incremental = requested !== 'full' && prior !== undefined;
   // A re-index means the tree was re-read; a resolution cached against the old one may name a
   // file that has since moved.
   dropResolutionsForRoot(moduleResolveCache, root);
 
-  const index = (await projectFileIndexMeta(root, { fresh: incremental })).files;
+  const meta = await projectFileIndexMeta(root, { fresh: incremental });
+  // A top-up that finds the repo set changed under it re-syncs too: a top-up only adds, and the
+  // files a newly registered repo ignores must leave (src/index-resync.ts).
+  const resync = incremental && (requested === 'resync' || prior?.repoSet !== meta.repoSet);
   const selected = selectIndexCandidates(
-    index.map((f) => ({ rel: f.rel, abs: f.abs.replace(/\\/g, '/') })),
+    meta.files.map((f) => ({ rel: f.rel, abs: f.abs.replace(/\\/g, '/') })),
   );
   const withinCap = selected.slice(0, INDEX_FILE_CAP);
   const capped = selected.length - withinCap.length;
@@ -642,17 +683,34 @@ async function indexProjectSources(
     return value;
   };
 
-  const state = prior ?? { sent: new Set<string>(), nextSeq: 0 };
+  const state = prior ?? {
+    sent: new Set<string>(),
+    nextSeq: 0,
+    resolved: new Set<string>(),
+    repoSet: meta.repoSet,
+    reply,
+  };
+  state.reply = reply;
   projectIndexState.set(root, state);
 
   let ordered: string[];
   let priorityCount = 0;
+  let removed: string[] = [];
   if (incremental) {
     ordered = newIndexPaths(
       hits.map((h) => h.abs),
       state.sent,
     );
-    if (!ordered.length) {
+    if (resync) {
+      removed = indexRemovals(
+        state.sent,
+        state.resolved,
+        hits.map((h) => h.abs),
+      );
+      for (const p of removed) state.sent.delete(p);
+      state.repoSet = meta.repoSet;
+    }
+    if (!ordered.length && !removed.length) {
       log.info('index', 'project-index-unchanged', { root });
       return;
     }
@@ -667,12 +725,16 @@ async function indexProjectSources(
     priorityCount = priority.length;
     ordered = [...priority, ...hits.map((h) => h.abs).filter((p) => !prioritySet.has(p))];
     state.sent = new Set<string>();
+    state.resolved = new Set<string>();
+    state.repoSet = meta.repoSet;
   }
 
   const total = ordered.length;
   const tsconfig = incremental ? undefined : readProjectTsconfig(root, log);
   let seq = state.nextSeq;
-  for (let i = 0; i < total || seq === 0; i += INDEX_CHUNK_SIZE) {
+  // Chunk 0 always goes (it owns the compiler options), and so does a re-sync that only removes.
+  const sendEmpty = seq === 0 || removed.length > 0;
+  for (let i = 0; i < total || (i === 0 && sendEmpty); i += INDEX_CHUNK_SIZE) {
     const slice = ordered.slice(i, i + INDEX_CHUNK_SIZE);
     const files: { path: string; content: string; language: string }[] = [];
     for (const abs of slice) {
@@ -691,6 +753,7 @@ async function indexProjectSources(
       skipped,
       capped,
       ...(incremental ? { supplemental: true as const } : {}),
+      ...(i === 0 && removed.length ? { removed } : {}),
       ...(seq === 0 && tsconfig ? { tsconfig } : {}),
     });
     seq += 1;
@@ -700,6 +763,7 @@ async function indexProjectSources(
   log.info('index', incremental ? 'project-index-topup' : 'project-indexed', {
     root,
     total,
+    ...(resync ? { removed: removed.length } : {}),
     priority: priorityCount,
     skipped,
     capped,
@@ -1340,10 +1404,44 @@ app.whenReady().then(() => {
     },
   });
 
-  repoTrackerHost.tracker.onDirty((key) =>
-    key === null ? repoFileIndex.invalidateLoose() : repoFileIndex.invalidateRepo(key),
-  );
+  // Quick-open's corpus refresh (fileIndexChanged), trailing: a build or a checkout dirties a
+  // repo many times a second, and every window re-requests on each signal.
+  let fileIndexSignal: ReturnType<typeof setTimeout> | null = null;
+  const signalFileIndexChanged = () => {
+    if (fileIndexSignal) return;
+    fileIndexSignal = setTimeout(() => {
+      fileIndexSignal = null;
+      for (const w of windows.values())
+        w.webContents.send('to-webview', { type: 'fileIndexChanged' } satisfies HostToWebview);
+    }, FILE_INDEX_SIGNAL_MS);
+  };
+  repoTrackerHost.tracker.onDirty((key) => {
+    if (key === null) repoFileIndex.invalidateLoose();
+    else repoFileIndex.invalidateRepo(key);
+    signalFileIndexChanged();
+  });
   trackedReposUnder = (rootKey) => repoTrackerHost.tracker.reposUnder(rootKey);
+
+  const pruneFileIndexes = () => {
+    const sessions = mgr.list();
+    repoFileIndex.retain(
+      new Set(sessions.flatMap((s) => [s.home, ...s.roots]).map(folderKey)),
+      new Set(sessions.flatMap((s) => s.repos ?? []).map((r) => folderKey(r.root))),
+    );
+  };
+  /** A session gained or lost repos, or went away. `log` is read only when this runs, after the
+   *  closure has created it. */
+  const afterReposChanged = () => {
+    folders.reposChanged();
+    pruneFileIndexes();
+    const currentRepoSet = (root: string) =>
+      repoSetOf(repoTrackerHost.tracker.reposUnder(folderKey(root)));
+    for (const root of staleIndexRoots(projectIndexState, currentRepoSet)) {
+      const state = projectIndexState.get(root);
+      if (state) void queueProjectIndex(root, [], state.reply, log, 'resync');
+    }
+    signalFileIndexChanged();
+  };
 
   // Multi-repo: debounced sub-repo scan per session (re-detect on open + project changes).
   const detectShared = asyncSingleFlight(detectRepos, folderKey);
@@ -1356,7 +1454,7 @@ app.whenReady().then(() => {
     apply: (sessionId, repos) => {
       if (!mgr.setRepos(sessionId, repos)) return;
       repoTrackerHost.tracker.setSessionRepos(sessionId, repos);
-      folders.reposChanged();
+      afterReposChanged();
     },
     onError: (sessionId, e) => log.error('repo', `scan failed for ${sessionId}: ${String(e)}`),
   });
@@ -2172,6 +2270,7 @@ app.whenReady().then(() => {
     onChange: () => postState(),
   });
   folders.onFoldersChanged((id) => scopes.recompute(id));
+  folders.onFoldersChanged(() => pruneFileIndexes());
   // Runtime-only (never persisted): keys the terminal pane so a restart remounts it (R2).
   const restartSeq = new Map<string, number>();
   // Runtime-only: why the last term:start refused, so the centre can say it (review B1).
@@ -2481,7 +2580,7 @@ app.whenReady().then(() => {
     coldStartsInFlight.delete(id);
     preSpawnSizes.delete(id);
     repoTrackerHost.tracker.dropSession(id);
-    folders.reposChanged();
+    afterReposChanged();
     removeOwner(sessionOwner, id);
     fs.unlink(scrollbackFile(id), () => {});
   };
@@ -3501,11 +3600,23 @@ app.whenReady().then(() => {
               root: m.root,
               windowId: senderId,
               run: () =>
-                void queueProjectIndex(m.root, m.seeds ?? [], replyHere, log, !!m.incremental),
+                void queueProjectIndex(
+                  m.root,
+                  m.seeds ?? [],
+                  replyHere,
+                  log,
+                  m.incremental ? 'incremental' : 'full',
+                ),
             });
             break;
           }
-          await queueProjectIndex(m.root, m.seeds ?? [], replyHere, log, !!m.incremental);
+          await queueProjectIndex(
+            m.root,
+            m.seeds ?? [],
+            replyHere,
+            log,
+            m.incremental ? 'incremental' : 'full',
+          );
           break;
         }
         case 'resolveModule': {
@@ -3543,7 +3654,11 @@ app.whenReady().then(() => {
           // set has to learn about them or the next `fsChanged` top-up re-streams them and
           // inflates the progress counters the status line reports.
           const state = projectIndexState.get(root);
-          if (state) for (const f of value.files) state.sent.add(f.path);
+          if (state)
+            for (const f of value.files) {
+              state.sent.add(f.path);
+              state.resolved.add(f.path);
+            }
           if (fresh) {
             log.info('index', 'resolve-hit', {
               specifier: m.specifier,
@@ -3741,44 +3856,71 @@ app.whenReady().then(() => {
           // gitignore-respecting, uncapped) so files past walkFiles' BFS cap surface and
           // ignored trees (vendor/, target/, .venv/, …) don't. A non-git root gets its repos'
           // listings plus loose files the same way (projectFileIndexMeta).
-          const indexed = await projectFileIndex(m.root, m.scope);
+          const session = mgr.get(m.sessionId);
+          if (!session || !searchRootAllowed(session, m.root) || !isIndexScope(m.scope)) {
+            log.warn('search', 'files-refused', { sessionId: m.sessionId, root: m.root });
+            break;
+          }
+          const { files } = await projectFileIndexMeta(m.root, {
+            scope: m.scope,
+            fresh: m.fresh === true,
+          });
           replyHere({
             type: 'searchResults',
             root: m.root,
-            results: indexToSearchHits(indexed, m.root),
+            results: indexToSearchHits(files, m.root),
           });
           break;
         }
         case 'contentSearch': {
-          // Project-wide find-in-files (L5). For a git root, drive the search from the
-          // gitignore-respecting file set (shared `projectFileIndex` — git ls-files) so
-          // vendored/build/gitignored trees (vendor/, target/, .venv/, …) don't surface; a
-          // non-git root searched with scope 'everything' falls back to the core's bounded BFS
-          // walk. Either way the result
-          // caps, time budget, and binary/large-file skips still apply. `requestId` is
-          // echoed back so a newer query supersedes this (stale) reply in the renderer.
-          // Wrapped so a throw (e.g. a vanished root) surfaces as an inline error.
+          // Project-wide find-in-files (L5), driven from the shared file index: a git root's
+          // listing, a non-git root's repo listings plus loose files, or the capped walk
+          // (scope 'everything', or git did not answer). The index's own walk is reused rather
+          // than walked again inside the time budget. Result caps, the time budget and the
+          // binary/large-file skips still apply. `requestId` is echoed back so a newer query
+          // supersedes this (stale) reply in the renderer. Wrapped so a throw (e.g. a vanished
+          // root) surfaces as an inline error.
+          const session = mgr.get(m.sessionId);
+          if (!session || !searchRootAllowed(session, m.root) || !isIndexScope(m.scope)) {
+            log.warn('search', 'content-refused', { sessionId: m.sessionId, root: m.root });
+            replyHere({
+              type: 'contentSearchResults',
+              requestId: m.requestId,
+              root: m.root,
+              results: [],
+              truncated: false,
+              error: STR_SEARCH_REFUSED,
+            });
+            break;
+          }
           let res: {
             results: Awaited<ReturnType<typeof searchContentFs>>['files'];
             truncated: boolean;
+            truncatedBy?: TruncatedBy;
             error?: string;
           };
           const gen = ++contentSearchSeq;
           contentSearchGen.set(m.root, gen);
           const isCancelled = () => contentSearchGen.get(m.root) !== gen;
           try {
-            const { files: indexed, fromGit } = await projectFileIndexMeta(m.root, {
+            const { files: indexed, capped } = await projectFileIndexMeta(m.root, {
               scope: m.scope,
             });
-            const candidates = fromGit
-              ? indexed.map((f) => ({ rel: f.rel, abs: f.abs.replace(/\\/g, '/') }))
-              : undefined;
+            const candidates = indexed.map((f) => ({ rel: f.rel, abs: f.abs.replace(/\\/g, '/') }));
             const r = await searchContentFs(m.root, m.query, isCancelled, candidates);
-            res = { results: r.files, truncated: r.truncated, error: r.error };
+            // A walk that hit its cap never offered the rest of the tree.
+            const truncatedBy = r.truncatedBy ?? (capped ? 'limit' : undefined);
+            res = {
+              results: r.files,
+              truncated: r.truncated || capped,
+              ...(truncatedBy ? { truncatedBy } : {}),
+              error: r.error,
+            };
             log.debug('search', 'content', {
               root: m.root,
               matches: r.files.length,
-              truncated: r.truncated,
+              truncated: res.truncated,
+              truncatedBy,
             });
           } catch (e: unknown) {
             res = {
@@ -3793,6 +3935,7 @@ app.whenReady().then(() => {
             root: m.root,
             results: res.results,
             truncated: res.truncated,
+            ...(res.truncatedBy ? { truncatedBy: res.truncatedBy } : {}),
             error: res.error,
           });
           break;

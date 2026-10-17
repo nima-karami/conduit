@@ -757,6 +757,29 @@ where it is; history is not rewritten.
 | `webview/styles.css` | modify | `.search__scope` row and `.search__scopechip` (shrinks and ellipsizes inside the pane) |
 | `CHANGELOG.md` | modify | Search entry; the engine and line-count entries were already written in Slice 2 |
 
+**Search-scope review r1 + runtime QA fix**
+
+| Path | Action | Responsibility |
+|---|---|---|
+| `src/git-listing.ts` | modify | `gitListedFiles` returns `listed` / `not-repo` / `failed`; one `ls-files -t` spawn, `R` (deleted, unstaged) records subtracted (`parseTaggedListing`) |
+| `src/repo-file-index.ts` | modify | `listRepo` null = git did not answer: last good listing kept and re-asked next build, a never-listed repo walked instead of pruned, `degraded` builds not cached; union memoized per (listing serials, repo set, loose serial); single-flight `ls-files` per repo + version; `retain(rootKeys, repoKeys)` |
+| `src/index-resync.ts` | create | `staleIndexRoots`, `indexRemovals`: a non-git root's TS index re-syncs when its repo set changes |
+| `src/search-scope.ts` | modify | `isIndexScope`, `searchRootAllowed` (IPC edge), `retainSessionScopes` |
+| `src/protocol.ts` | modify | `sessionId` on `searchFiles`/`contentSearch`, `searchFiles.fresh`, `fileIndexChanged`, `projectFiles.removed`, `contentSearchResults.truncatedBy` |
+| `src/content-search.ts`, `src/folder-search.ts` | modify | `truncatedBy` ('time' / 'limit') and the partial label that names it |
+| `src/quick-open-folders.ts` | modify | `foldersToRequest` takes the stale set |
+| `src/file-service.ts` | modify | ENOENT/ENOTDIR read → `FILE_GONE` |
+| `electron/main.ts` | modify | Failed git listing → old walk, uncached; content search always reuses the index's files (no second walk); scope + root checked at the IPC edge; coalesced `fileIndexChanged`; TS index `resync` mode, `removed` chunk; `afterReposChanged` / `pruneFileIndexes` |
+| `webview/app.tsx` | modify | Quick-open corpus marked stale on `fileIndexChanged`, re-asked fresh; `projectFiles.removed` leaves the TS project; scopes of gone sessions pruned |
+| `webview/components/context-menu.tsx` | modify | `MenuItem.detail` (dim, case kept, ellipsizes) and `maxWidth` |
+| `webview/components/search-scope-chip.tsx`, `search-pane.tsx`, `files-view.tsx` | modify | Check column on every row, "This repo" + repo name as detail, menu capped to the pane; chip on trimmed query; `sessionId` threaded |
+| `webview/styles.css` | modify | `.ctxmenu__label` / `.ctxmenu__detail`, `.gh__reffilter-icon` |
+| `docs/specs/2026-10-16-multi-repo-tracking.md` | modify | §5 scope lifetime; §7 search AC on `gen/` and "All repos" |
+| `test/e2e/quickopen-fresh.e2e.mjs`, `test/e2e/index-repo-set.e2e.mjs` | create | F1 + F4; the index-before-scan race, forced |
+| `test/e2e/nonrepo-index.e2e.mjs`, `quickopen-corpus.e2e.mjs`, `large-folder-tree.e2e.mjs`, `background-resources.e2e.mjs` | modify | `sessionId` on direct posts; nonrepo-index tells the listing apart by `-t` (the probe keeps four args) |
+| `test/unit/index-resync.test.ts` | create | Ordering forced: index before the scan, then the re-sync's removals |
+| `test/unit/git-listing.test.ts`, `repo-file-index.test.ts`, `search-scope.test.ts`, `folder-search.test.ts`, `content-search.test.ts`, `quick-open-folders.test.ts`, `file-service.test.ts`, `search-head-drag.test.ts` | modify | One test per behaviour above |
+
 ## Scripts
 
 **None.** The only repeated routine is building git fixtures, and that is runtime test code
@@ -1628,7 +1651,7 @@ that keeps the locked decision.
   before Slice 2 is reported done.
 - **[normal]** Cooldown was 1 s, as spec'd; lowered to 800 ms after the S2 stress (spec §13).
 - **[normal]** Search scope is remembered per session **in renderer memory**. It resets to
-  Tracked repos on restart.
+  All repos on restart (decided at search-scope runtime QA, F9; spec §5).
 - **[normal]** Quick-open always uses the default (tracked) index; the chip applies to content
   search only.
   - In a non-git root, gitignored files leave Mod+P. That matches git-root behaviour today.

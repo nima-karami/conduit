@@ -18,6 +18,11 @@ describe('quick-open corpus', () => {
     expect(foldersToRequest(['C:\\C'], { 'c:/c': [] })).toEqual([]);
   });
 
+  it('foldersToRequest: a cached folder marked stale (fileIndexChanged) is asked for again', () => {
+    const corpus: FolderCorpus = { '/w/a': [], '/w/b': [] };
+    expect(foldersToRequest(['/w/a', '/w/b'], corpus, new Set(['/w/b']))).toEqual(['/w/b']);
+  });
+
   it('accept keyed by folderKey; root not in folders ignored', () => {
     const c0: FolderCorpus = {};
     const c1 = acceptSearchResults(c0, { root: 'C:\\W\\A', results: [hit('C:/W/A', 'x.ts')] }, [

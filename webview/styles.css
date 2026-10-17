@@ -3640,6 +3640,9 @@ body.resizing .panel__resize::after {
   flex: 0 0 auto;
   opacity: 0.7;
 }
+.gh__reffilter-icon {
+  flex: 0 0 auto;
+}
 /* Reserve the check column so labels align whether or not a row is the active ref. */
 .gh__reffilter-checkpad {
   display: inline-block;
@@ -7989,6 +7992,21 @@ body.gh-resizing {
   letter-spacing: normal;
   text-transform: none;
   white-space: nowrap;
+}
+/* Secondary text after the label (a repo name): a name keeps its case under an uppercasing
+   theme, and it is what gives way when the menu is capped narrower than the row. */
+.ctxmenu__label:has(+ .ctxmenu__detail) {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.ctxmenu__detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  letter-spacing: normal;
+  text-transform: none;
 }
 .ctxmenu__item:disabled .ctxmenu__hint,
 .ctxmenu__item[aria-disabled="true"] .ctxmenu__hint {

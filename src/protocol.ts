@@ -1,7 +1,7 @@
 import type { AgentScopeReason } from './add-dir-delivery';
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
-import type { SearchFileResult, SearchQuery } from './content-search';
+import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-search';
 import type { DroppedRoot, SessionOpReason } from './folder-validation';
 import type { GitFailure } from './git-exec';
 import type { RefEndpoint } from './git-range';
@@ -122,7 +122,6 @@ export type IndexScope = 'tracked' | 'everything';
 
 /** One repo's entry in a `repoDelta`, as the host-wide repo tracker caches it
  *  (docs/plans/2026-10-16-multi-repo-tracking.plan.md, Contracts). */
-
 export interface RepoSnapshot {
   /** Status-derived, always present once read. */
   changes: ChangeDTO[];
@@ -579,8 +578,13 @@ export type HostToWebview =
       root: string;
       results: SearchFileResult[];
       truncated: boolean;
+      truncatedBy?: TruncatedBy;
       error?: string;
     }
+  // Some folder's file list may have changed (a repo's tree, or files outside every repo);
+  // coalesced, and carries no roots: quick-open marks its whole corpus stale and re-requests
+  // only while the palette is open.
+  | { type: 'fileIndexChanged' }
   | { type: 'board'; path: string; board: BoardData }
   // A card's spec markdown (G3). `exists` distinguishes a real saved spec from an absent
   // one (content empty), so the renderer can seed a heading + label it as new.
@@ -635,6 +639,10 @@ export type HostToWebview =
        *  (the `fsChanged` path). Never `seq === 0`: chunk 0 owns the compiler options, and
        *  re-applying them restarts the worker and drops everything already pushed. */
       supplemental?: true;
+      /** On a `supplemental` chunk: files this root's index sent before that have left its
+       *  selection (the repo set under a non-git root changed, so a repo's gitignored files are
+       *  out). The renderer takes them out of the TS project. */
+      removed?: string[];
       /** Present on `seq === 0` only; absent when the project has no readable tsconfig. */
       tsconfig?: TsconfigDTO;
     }
@@ -1003,11 +1011,23 @@ export type WebviewToHost =
   // Explicit Retry of one repo's read; the host checks `root` against the session's repos.
   | { type: 'repo:refresh'; sessionId: string; root: string }
   | { type: 'updateSettings'; settings: AppSettings }
-  | { type: 'searchFiles'; root: string; query: string; scope?: IndexScope } // recursive file search under root
+  // Quick-open corpus: every file under root. `root` must be one of the session's folders or
+  // registered repos (host-checked). `fresh` skips the host's short-lived index cache: the
+  // renderer sends it after a `fileIndexChanged`, when that cache may predate the change.
+  | {
+      type: 'searchFiles';
+      sessionId: string;
+      root: string;
+      query: string;
+      scope?: IndexScope;
+      fresh?: true;
+    }
   // Project-wide content search (find-in-files, L5). `requestId` monotonically increases
   // per renderer query so the host can echo it back and the renderer can drop stale replies.
+  // `root` is checked as for `searchFiles`.
   | {
       type: 'contentSearch';
+      sessionId: string;
       requestId: number;
       root: string;
       query: SearchQuery;

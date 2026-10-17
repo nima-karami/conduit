@@ -12,58 +12,102 @@ export const LOOSE_FILE_CAP = 20000;
 const LIST_CONCURRENCY = 4;
 
 export interface RepoFileIndexDeps {
-  /** gitListedFiles: repo-relative, forward-slash; [] when git gave nothing. */
-  listRepo(root: string): Promise<string[]>;
+  /** gitListedFiles' rels (repo-relative, forward-slash); null when git did not answer, which
+   *  is never an empty repo. */
+  listRepo(root: string): Promise<string[] | null>;
   /** walkFilesAsync */
   walkLoose(root: string, prune: (absDir: string) => boolean, cap: number): Promise<SearchHit[]>;
 }
 
+export interface RepoFileIndexBuild {
+  /** Forward-slash rel (root-relative) and abs. */
+  files: IndexedFile[];
+  /** Some repo's listing is a last good one, or a walk, because git did not answer: the result
+   *  is not worth caching, and the next build asks git for that repo again. */
+  degraded: boolean;
+}
+
 export interface RepoFileIndex {
   /** Union of each repo's listing (re-listed only after invalidateRepo) + loose files outside
-   *  repos (re-walked only after invalidateLoose, or when the repo set under root changes).
-   *  Forward-slash rel (root-relative) and abs. */
-  build(root: string, repos: readonly { key: string; root: string }[]): Promise<IndexedFile[]>;
+   *  repos (re-walked only after invalidateLoose, or when the repo set under root changes). */
+  build(root: string, repos: readonly { key: string; root: string }[]): Promise<RepoFileIndexBuild>;
   invalidateRepo(key: string): void;
   /** Every root's loose part. */
   invalidateLoose(): void;
+  /** Forget every root and repo outside these folderKey'd sets (a closed session or folder, an
+   *  unregistered repo). */
+  retain(rootKeys: ReadonlySet<string>, repoKeys: ReadonlySet<string>): void;
 }
 
 const toSlash = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
 
+/** `serial` names one stored listing or walk, so a union built from the same ones is reused. */
+interface Listing {
+  rels: string[];
+  serial: number;
+  /** False: git did not answer this time and these are the last good rels. */
+  fresh: boolean;
+}
+
 export function createRepoFileIndex(deps: RepoFileIndexDeps): RepoFileIndex {
-  const listings = new Map<string, { version: number; rels: string[] }>();
+  let serial = 0;
+  const listings = new Map<string, { version: number; rels: string[]; serial: number }>();
+  const inflight = new Map<string, { version: number; promise: Promise<Listing | null> }>();
   const repoVersions = new Map<string, number>();
   let looseVersion = 0;
-  const loose = new Map<string, { version: number; repoSet: string; files: IndexedFile[] }>();
+  const loose = new Map<
+    string,
+    { version: number; repoSet: string; files: IndexedFile[]; serial: number }
+  >();
+  const unions = new Map<string, { sig: string; files: IndexedFile[] }>();
   /** Repo keys each root's last build used: a listing no root uses any more is dropped. */
   const usedBy = new Map<string, ReadonlySet<string>>();
 
   // The version is read before the await, so an invalidation that lands mid-listing leaves the
-  // stored entry already out of date and the next build lists again.
-  const listingOf = async (repo: { key: string; root: string }): Promise<string[]> => {
+  // stored entry already out of date and the next build lists again. Builds asking for the same
+  // repo at the same version share one `ls-files`.
+  const listingOf = (repo: { key: string; root: string }): Promise<Listing | null> => {
     const version = repoVersions.get(repo.key) ?? 0;
     const cached = listings.get(repo.key);
-    if (cached && cached.version === version) return cached.rels;
-    const rels = await deps.listRepo(repo.root);
-    // An empty answer is also what a timed-out git gives; never pin it.
-    if (rels.length > 0) listings.set(repo.key, { version, rels });
-    return rels;
+    if (cached?.version === version)
+      return Promise.resolve({ rels: cached.rels, serial: cached.serial, fresh: true });
+    const pending = inflight.get(repo.key);
+    if (pending?.version === version) return pending.promise;
+    const promise: Promise<Listing | null> = (async () => {
+      const rels = await deps.listRepo(repo.root);
+      if (inflight.get(repo.key)?.version === version) inflight.delete(repo.key);
+      if (rels !== null) {
+        const entry = { version, rels, serial: ++serial };
+        if ((listings.get(repo.key)?.version ?? -1) <= version) listings.set(repo.key, entry);
+        return { rels, serial: entry.serial, fresh: true };
+      }
+      // Its stored version stays behind, so the next build asks git again.
+      const last = listings.get(repo.key);
+      return last ? { rels: last.rels, serial: last.serial, fresh: false } : null;
+    })();
+    inflight.set(repo.key, { version, promise });
+    return promise;
   };
 
   const looseOf = async (
     root: string,
     rootKey: string,
     repoKeys: readonly string[],
-  ): Promise<IndexedFile[]> => {
+  ): Promise<{ files: IndexedFile[]; serial: number }> => {
     const version = looseVersion;
     const repoSet = repoKeys.join('\n');
     const cached = loose.get(rootKey);
-    if (cached && cached.version === version && cached.repoSet === repoSet) return cached.files;
+    if (cached && cached.version === version && cached.repoSet === repoSet) return cached;
     const prunable = new Set(repoKeys);
     const hits = await deps.walkLoose(root, (abs) => prunable.has(folderKey(abs)), LOOSE_FILE_CAP);
-    const files = hits.map((h) => ({ rel: h.rel, abs: toSlash(h.abs) }));
-    loose.set(rootKey, { version, repoSet, files });
-    return files;
+    const entry = {
+      version,
+      repoSet,
+      files: hits.map((h) => ({ rel: h.rel, abs: toSlash(h.abs) })),
+      serial: ++serial,
+    };
+    loose.set(rootKey, entry);
+    return entry;
   };
 
   const evictUnused = () => {
@@ -83,28 +127,55 @@ export function createRepoFileIndex(deps: RepoFileIndexDeps): RepoFileIndex {
       const [listed, looseFiles] = await Promise.all([
         mapWithConcurrency(under, LIST_CONCURRENCY, listingOf),
         rootIsRepo
-          ? Promise.resolve([])
+          ? Promise.resolve(null)
           : looseOf(
               root,
               rootKey,
               under.map((r) => r.key),
             ),
       ]);
+      const degraded = listed.some((l) => l === null || !l.fresh);
+      const parts = under.map((r, i) => `${r.key}@${listed[i]?.serial}`);
+      const sig = degraded ? null : `${parts.join('\n')}\n#${looseFiles?.serial ?? ''}`;
+      const memo = unions.get(rootKey);
+      if (sig !== null && memo?.sig === sig) return { files: memo.files, degraded };
+
+      // A repo git never listed is walked instead (the loose walk pruned it), skipping the
+      // listed repos inside it.
+      const listedKeys = new Set(under.filter((_, i) => listed[i] !== null).map((r) => r.key));
+      const walked = await Promise.all(
+        under.map((repo, i) =>
+          listed[i] === null
+            ? deps.walkLoose(repo.root, (abs) => listedKeys.has(folderKey(abs)), LOOSE_FILE_CAP)
+            : Promise.resolve(null),
+        ),
+      );
       const byRel = new Map<string, IndexedFile>();
       under.forEach((repo, i) => {
         const repoSlash = toSlash(repo.root);
         const prefix = repo.key === rootKey ? '' : `${repoSlash.slice(rootSlash.length + 1)}/`;
-        for (const rel of listed[i])
+        const rels = listed[i]?.rels ?? walked[i]?.map((h) => h.rel) ?? [];
+        for (const rel of rels)
           byRel.set(`${prefix}${rel}`, { rel: `${prefix}${rel}`, abs: `${repoSlash}/${rel}` });
       });
-      for (const f of looseFiles) if (!byRel.has(f.rel)) byRel.set(f.rel, f);
-      return [...byRel.values()];
+      for (const f of looseFiles?.files ?? []) if (!byRel.has(f.rel)) byRel.set(f.rel, f);
+      const files = [...byRel.values()];
+      if (sig === null) unions.delete(rootKey);
+      else unions.set(rootKey, { sig, files });
+      return { files, degraded };
     },
     invalidateRepo(key) {
       repoVersions.set(key, (repoVersions.get(key) ?? 0) + 1);
     },
     invalidateLoose() {
       looseVersion += 1;
+    },
+    retain(rootKeys, repoKeys) {
+      for (const map of [usedBy, loose, unions])
+        for (const key of [...map.keys()]) if (!rootKeys.has(key)) map.delete(key);
+      for (const map of [repoVersions, listings, inflight])
+        for (const key of [...map.keys()]) if (!repoKeys.has(key)) map.delete(key);
+      evictUnused();
     },
   };
 }

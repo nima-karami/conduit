@@ -36,13 +36,16 @@ runScenario('large-folder-tree', async ({ app, page, log }) => {
       id,
       { timeout: 30000 },
     );
-    await page.evaluate((p) => {
-      window.__treeSearch = undefined;
-      window.agentDeck.subscribe((m) => {
-        if (m.type === 'searchResults' && m.root === p) window.__treeSearch = m.results;
-      });
-      window.agentDeck.post({ type: 'searchFiles', root: p });
-    }, folder);
+    await page.evaluate(
+      ([p, sessionId]) => {
+        window.__treeSearch = undefined;
+        window.agentDeck.subscribe((m) => {
+          if (m.type === 'searchResults' && m.root === p) window.__treeSearch = m.results;
+        });
+        window.agentDeck.post({ type: 'searchFiles', sessionId, root: p, query: '' });
+      },
+      [folder, id],
+    );
     await page.waitForFunction(() => window.__treeSearch?.length === 24, null, {
       timeout: 30000,
     });

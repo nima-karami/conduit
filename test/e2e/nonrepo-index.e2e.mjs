@@ -47,7 +47,9 @@ function initRepo(dir, files) {
   git(dir, 'commit', '-qm', 'seed');
 }
 
-const lsFiles = (calls) => calls.filter((c) => c.sub === 'ls-files' && c.args.includes('--others'));
+// The file index's listing (src/git-listing.ts). The probe keeps four args, so it is told apart by
+// its `-t`, not by `--others` further along.
+const lsFiles = (calls) => calls.filter((c) => c.sub === 'ls-files' && c.args.includes('-t'));
 
 async function waitOrFail(page, fn, arg, timeout, what, observe) {
   try {
@@ -91,16 +93,16 @@ runScenario('nonrepo-index', async ({ app, page, log }) => {
 
     await tapBridge(page);
     const corpus = await page.evaluate(
-      (r) =>
+      ([r, sessionId]) =>
         new Promise((resolve) => {
           const off = window.agentDeck.subscribe((m) => {
             if (m.type !== 'searchResults' || m.root !== r) return;
             off?.();
             resolve(m.results.map((h) => h.rel));
           });
-          window.agentDeck.post({ type: 'searchFiles', root: r, query: '' });
+          window.agentDeck.post({ type: 'searchFiles', sessionId, root: r, query: '' });
         }),
-      slash(ws),
+      [slash(ws), sid],
     );
     log(`quick-open corpus: ${JSON.stringify([...corpus].sort())}`);
     for (const want of ['repoA/src/a.ts', 'repoB/src/b.ts', 'notes.md'])

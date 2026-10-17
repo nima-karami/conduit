@@ -137,17 +137,23 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
       binary: false,
       ...(readOnlyReason ? { readOnlyReason } : {}),
     };
-  } catch {
+  } catch (e) {
+    // A file gone since it was listed (a quick-open pick off a stale list) says so, rather than
+    // reading as a permissions or I/O failure.
+    const code = (e as NodeJS.ErrnoException).code;
+    const gone = code === 'ENOENT' || code === 'ENOTDIR';
     return {
       path: absPath,
       content: '',
       language,
       truncated: false,
       binary: false,
-      error: 'File could not be read.',
+      error: gone ? FILE_GONE : 'File could not be read.',
     };
   }
 }
+
+export const FILE_GONE = 'This file no longer exists. It was moved or deleted.';
 
 /**
  * A text file's bytes, never more than `cap` of them kept and never more than `cap + 1` read: the

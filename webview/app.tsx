@@ -63,7 +63,7 @@ import {
 import { gitOf } from '../src/repo-git';
 import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
-import { type SearchScope, scopeChipFolders } from '../src/search-scope';
+import { retainSessionScopes, type SearchScope, scopeChipFolders } from '../src/search-scope';
 import { resolveSessionIcon } from '../src/session-icon';
 import { sessionNameFromPath } from '../src/session-name';
 import {
@@ -668,6 +668,10 @@ export function App() {
       } else if (msg.type === 'projectFiles') {
         // Content to the language worker as extraLibs — NOT a Monaco model per project file
         // (that loop was what made opening a file janky). See webview/ts-project.ts.
+        for (const path of msg.removed ?? [])
+          forgetIndexedPath(path, (p) =>
+            docStateRef.current.docs.some((d) => d.kind === 'file' && pathBelow(d.path, p) === ''),
+          );
         applyProjectFiles(msg);
       } else if (msg.type === 'error') {
         // A host-side failure (e.g. a failed `.conduit/` save) must be VISIBLE, not
@@ -1938,19 +1942,44 @@ export function App() {
   // not cached yet, once per palette session; a folder that leaves the session is dropped.
   const presentKeys = presentFolders(active).map(folderKey).join('\n');
   const requestedCorpus = useRef(new Set<string>());
-  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via presentKeys, as everywhere else in this file
+  // A cached list goes stale on the host's fileIndexChanged: it is asked for again (past the
+  // host's short-lived cache) at once while the palette is open, else on its next open.
+  const staleCorpus = useRef(new Set<string>());
+  const corpusRef = useRef(corpus);
+  corpusRef.current = corpus;
+  const [corpusEpoch, setCorpusEpoch] = useState(0);
+  useEffect(
+    () =>
+      subscribe((msg) => {
+        if (msg.type !== 'fileIndexChanged') return;
+        for (const k of Object.keys(corpusRef.current)) {
+          staleCorpus.current.add(k);
+          requestedCorpus.current.delete(k);
+        }
+        setCorpusEpoch((n) => n + 1);
+      }),
+    [],
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via presentKeys, as everywhere else in this file; corpusEpoch is the trigger
   useEffect(() => {
-    if (!palette) {
+    if (!palette || !active) {
       requestedCorpus.current.clear();
       return;
     }
-    for (const root of foldersToRequest(presentFolders(active), corpus)) {
+    for (const root of foldersToRequest(presentFolders(active), corpus, staleCorpus.current)) {
       const k = folderKey(root);
       if (requestedCorpus.current.has(k)) continue;
       requestedCorpus.current.add(k);
-      post({ type: 'searchFiles', root, query: '' });
+      const fresh = staleCorpus.current.delete(k);
+      post({
+        type: 'searchFiles',
+        sessionId: active.id,
+        root,
+        query: '',
+        ...(fresh ? { fresh: true as const } : {}),
+      });
     }
-  }, [palette, presentKeys, corpus]);
+  }, [palette, presentKeys, corpus, corpusEpoch, active?.id]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via presentKeys, as everywhere else in this file
   useEffect(() => {
     setCorpus((c) => pruneCorpus(c, presentFolders(active)));
@@ -1977,6 +2006,13 @@ export function App() {
   );
   // In memory per session: it resets to All repos on restart (plan, Decisions Needed).
   const [searchScopeBySession, setSearchScopeBySession] = useState<Record<string, SearchScope>>({});
+  const sessionIdsKey = sessions.map((s) => s.id).join('\n');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionIdsKey is the trigger
+  useEffect(() => {
+    setSearchScopeBySession((prev) =>
+      retainSessionScopes(prev, new Set(sessions.map((s) => s.id))),
+    );
+  }, [sessionIdsKey]);
   const onSearchScope = useCallback(
     (scope: SearchScope) => {
       if (activeId) setSearchScopeBySession((prev) => ({ ...prev, [activeId]: scope }));

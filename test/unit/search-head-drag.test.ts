@@ -31,6 +31,7 @@ async function renderWithResult() {
   await act(async () => {
     root?.render(
       createElement(SearchPane, {
+        sessionId: 's1',
         folders: [
           {
             path: HOME,

@@ -14,6 +14,9 @@ const MENU_MIN_W = 184;
 
 export interface MenuItem {
   label: string;
+  /** Dim secondary text after the label (a repo name): kept in its own case under an
+   *  uppercasing theme, and the part that ellipsizes when the menu is narrower than the row. */
+  detail?: string;
   /** Row identity when labels can repeat (two folders of the same name). Defaults to the label. */
   key?: string;
   icon?: ReactNode;
@@ -66,6 +69,7 @@ export function ContextMenu({
   onClose,
   triggerRef,
   minWidth,
+  maxWidth,
 }: {
   menu: MenuState;
   onClose: () => void;
@@ -73,6 +77,8 @@ export function ContextMenu({
   /** Floor for the menu's width. A select's menu matches its field so it reads as the field
    *  expanding rather than as a popup that happens to be nearby. */
   minWidth?: number;
+  /** Ceiling for the menu's width, below the viewport's (a menu kept inside its pane). */
+  maxWidth?: number;
 }) {
   // Keyboard-highlighted item; -1 = none (pointer mode). The ref mirror lets the keydown
   // handler read the current index without re-binding.
@@ -177,7 +183,8 @@ export function ContextMenu({
             )}
           >
             {it.icon && <span className="ctxmenu__icon">{it.icon}</span>}
-            <span>{it.label}</span>
+            <span className="ctxmenu__label">{it.label}</span>
+            {it.detail !== undefined && <span className="ctxmenu__detail">{it.detail}</span>}
             {it.hint && <span className="ctxmenu__hint">{it.hint}</span>}
           </button>
         </div>
@@ -196,6 +203,7 @@ export function ContextMenu({
       className="ctxmenu"
       role="menu"
       aria-activedescendant={activeId}
+      style={{ maxWidth }}
     >
       {content}
     </Popover>
@@ -207,7 +215,7 @@ export function ContextMenu({
       className="ctxmenu"
       role="menu"
       aria-activedescendant={activeId}
-      style={{ minWidth }}
+      style={{ minWidth, maxWidth }}
     >
       {content}
     </Popover>

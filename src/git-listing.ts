@@ -1,16 +1,39 @@
 import { GIT_TIMEOUT, runGit } from './git-exec';
 import { isAuthoritative } from './ignore-cache';
 
-/** Every path git would list for `root` — tracked plus untracked-but-not-ignored — or [] when
- *  git gave nothing (not a repo, or a failure). `-z` because without it git C-quotes any
- *  non-ASCII name, and the quoted form names no file. */
-export async function gitListedFiles(root: string): Promise<string[]> {
-  const r = await runGit(['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
-    cwd: root,
-    timeoutMs: GIT_TIMEOUT.diff,
-    maxBuffer: 8 * 1024 * 1024,
-  });
-  return r.stdout.split('\0').filter(Boolean);
+export type GitListing =
+  | { kind: 'listed'; rels: string[] }
+  /** git answered: `root` is in no repo. */
+  | { kind: 'not-repo' }
+  /** git never answered (timeout, maxBuffer, missing binary, vanished cwd): nothing is known. */
+  | { kind: 'failed' };
+
+/** Every path git would list for `root`: tracked plus untracked-but-not-ignored, minus tracked
+ *  files deleted from the worktree but not staged. `-z` because without it git C-quotes any
+ *  non-ASCII name, and the quoted form names no file. `-t` tags each record, so the deleted ones
+ *  (`R`, which `--cached` lists as well) come out of the same spawn. */
+export async function gitListedFiles(root: string): Promise<GitListing> {
+  const r = await runGit(
+    ['ls-files', '-z', '-t', '--cached', '--deleted', '--others', '--exclude-standard'],
+    { cwd: root, timeoutMs: GIT_TIMEOUT.diff, maxBuffer: 8 * 1024 * 1024 },
+  );
+  if (r.ok) return { kind: 'listed', rels: parseTaggedListing(r.stdout) };
+  const answered = r.code === 128 && !r.timedOut && !r.truncated && !r.cwdMissing;
+  return answered ? { kind: 'not-repo' } : { kind: 'failed' };
+}
+
+/** `ls-files -z -t` records ("<tag> <path>") to paths, each once, leaving out the `R` (deleted)
+ *  ones. An unmerged path has a record per stage, hence the dedupe. */
+export function parseTaggedListing(stdout: string): string[] {
+  const deleted = new Set<string>();
+  const listed = new Set<string>();
+  for (const rec of stdout.split('\0')) {
+    if (rec.length < 3) continue;
+    const rel = rec.slice(2);
+    if (rec[0] === 'R') deleted.add(rel);
+    else listed.add(rel);
+  }
+  return [...listed].filter((rel) => !deleted.has(rel));
 }
 
 /**

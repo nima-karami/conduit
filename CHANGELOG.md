@@ -21,13 +21,20 @@ All notable user-facing changes to Conduit. Format follows
   its own repo's list. A scope chip under the search box picks **All repos**, just the active repo, or
   **Everything (may be slow)**, which walks the folder the old way, gitignored files included (but
   still not `node_modules`, `dist` or other generated folders). The choice is kept per session until
-  Conduit restarts.
+  Conduit restarts. The scope menu stays inside the search pane, its rows line up, and "This repo"
+  shows the repo's name after it, shortened to fit. A search cut short says why: "partial (time
+  limit)" or "partial (limit reached)".
 - **A repo whose git status can't be read now says so.** The Changes tab shows "Couldn't read git
   status" under that repo with a Retry button, instead of quietly showing no changes. A list that
   is waiting to be refreshed says "Updating…", and how long ago it was last read once that is a
   minute or more.
 
 ### Fixed
+- **Quick open's file list keeps up with the disk.** Files created after you first opened quick open
+  (Ctrl+P) now show up, and deleted ones disappear, without restarting Conduit. Picking a file that
+  was deleted in the meantime says it no longer exists instead of "File could not be read."
+- **Deleted files no longer show in quick open or search.** A file deleted from disk but not yet
+  staged in git (`git rm` not run) was still listed, and picking it opened an error.
 - **A minimized window is up to date when you restore it.** Changes made while a window was
   minimized used to stay missing from its Changes list after restoring it, until something else
   refreshed it.

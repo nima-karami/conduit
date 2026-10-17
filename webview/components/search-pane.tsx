@@ -12,6 +12,7 @@ import {
   isSearching,
   type MultiSearchState,
   multiSearchSummary,
+  partialSummary,
   retainFolders,
   type SearchFolderGroup,
   searchableFolders,
@@ -234,6 +235,7 @@ function FolderGroups({
  * switch between the file tree and the results. Read-only navigation v1 (no replace).
  */
 export function SearchPane({
+  sessionId,
   folders,
   onOpenMatch,
   paneRef,
@@ -241,6 +243,8 @@ export function SearchPane({
   hideResultsWhenEmpty,
   scope,
 }: {
+  /** The host checks every searched root against this session's folders and repos. */
+  sessionId: string;
   /** The session's folders; only the present ones are searched (L9). */
   folders: readonly FolderSectionModel[];
   onOpenMatch: (abs: string, line: number, column: number, mode?: OpenMode) => void;
@@ -406,6 +410,7 @@ export function SearchPane({
       for (const t of sent)
         post({
           type: 'contentSearch',
+          sessionId,
           requestId,
           root: t.root,
           query,
@@ -418,7 +423,7 @@ export function SearchPane({
       }, SEARCH_TIMEOUT_MS);
     }, DEBOUNCE_MS);
     return () => clearTimeout(id);
-  }, [targetSig, text, matchCase, wholeWord, regex, include, exclude]);
+  }, [targetSig, text, matchCase, wholeWord, regex, include, exclude, sessionId]);
 
   const busy = pending || isSearching(search);
   const groups = searchFolderGroups(search);
@@ -429,6 +434,7 @@ export function SearchPane({
     ? (only?.results ?? [])
     : groups.flatMap((g) => g.results);
   const truncated = single ? (only?.truncated ?? false) : false;
+  const truncatedBy = single ? only?.truncatedBy : undefined;
   const error = single
     ? (only?.error ?? (search.timedOut && !only ? TIMED_OUT : undefined))
     : undefined;
@@ -499,7 +505,7 @@ export function SearchPane({
           <IconChevronDown size={13} />
         </button>
       </div>
-      {chip && effectiveScope && (!hideResultsWhenEmpty || text !== '') && (
+      {chip && effectiveScope && (!hideResultsWhenEmpty || text.trim() !== '') && (
         <div className="search__scope">
           <SearchScopeChip
             scope={effectiveScope}
@@ -544,7 +550,7 @@ export function SearchPane({
           <div className="search__summary">
             {totalMatches} {totalMatches === 1 ? 'result' : 'results'} in {results.length}{' '}
             {results.length === 1 ? 'file' : 'files'}
-            {truncated && <span className="search__truncated"> · partial (limit reached)</span>}
+            {truncated && <span className="search__truncated">{partialSummary(truncatedBy)}</span>}
           </div>
           <div className="rightpane__scroll search__results">
             {results.map((r) => (

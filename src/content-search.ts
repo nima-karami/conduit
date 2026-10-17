@@ -118,10 +118,15 @@ export interface SearchFileResult {
   nameMatch?: boolean;
 }
 
+/** What cut a search short: the wall-clock budget, or a match cap. */
+export type TruncatedBy = 'time' | 'limit';
+
 export interface ContentSearchResponse {
   files: SearchFileResult[];
   /** True when a cap/budget cut the search short (results are partial). */
   truncated: boolean;
+  /** Set with `truncated` by the host's async search; the preview's sync search leaves it out. */
+  truncatedBy?: TruncatedBy;
   /** Set (with no files) when the user's regex was invalid. */
   error?: string;
 }
@@ -487,15 +492,20 @@ export async function searchContentAsync(
   const files: SearchFileResult[] = [];
   let total = 0;
   let truncated = false;
+  let truncatedBy: TruncatedBy | undefined;
   let stop = false;
   const start = now();
   let sinceYield = 0;
+  const cut = (by: TruncatedBy) => {
+    truncated = true;
+    truncatedBy ??= by;
+  };
 
   // Process one candidate file; mutates `files`/`total`/`truncated`, and sets `stop` on a
   // cap/budget/cancellation cut-off. Shared by the candidate-list and BFS-walk sources.
   const visit = async (abs: string, rel: string): Promise<void> => {
     if (now() - start > caps.timeBudgetMs) {
-      truncated = true;
+      cut('time');
       stop = true;
       return;
     }
@@ -520,7 +530,7 @@ export async function searchContentAsync(
           const scan = scanText(buf.toString('utf8'), match, total, caps, multiline);
           matches = scan.matches;
           total = scan.totalAfter;
-          if (scan.fileTruncated) truncated = true;
+          if (scan.fileTruncated) cut('limit');
         }
       }
     } catch {
@@ -529,10 +539,15 @@ export async function searchContentAsync(
 
     total = pushFileResult(files, rel, abs, matches, nameMatch, total);
     if (total >= caps.totalCap) {
-      truncated = true;
+      cut('limit');
       stop = true;
     }
   };
+  const response = (): ContentSearchResponse => ({
+    files,
+    truncated,
+    ...(truncatedBy ? { truncatedBy } : {}),
+  });
 
   if (deps.files) {
     for (const f of deps.files) {
@@ -543,7 +558,7 @@ export async function searchContentAsync(
       await visit(f.abs, f.rel);
       if (stop) break;
     }
-    return { files, truncated };
+    return response();
   }
 
   const base = root.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -575,7 +590,7 @@ export async function searchContentAsync(
     }
   }
 
-  return { files, truncated };
+  return response();
 }
 
 /**

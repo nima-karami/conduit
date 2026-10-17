@@ -5,6 +5,7 @@ import {
   IDLE_SEARCH,
   isSearching,
   multiSearchSummary,
+  partialSummary,
   retainFolders,
   searchableFolders,
   searchFolderGroups,
@@ -106,6 +107,24 @@ describe('multi-folder search reducer', () => {
       ['/w/a', 'Partial (limit reached)'],
       ['/w/b', 'Invalid regular expression'],
     ]);
+  });
+
+  it('a partial note names its cause: the time limit or a match cap', () => {
+    let s = startMultiSearch(8, ['/w/a', '/w/b']);
+    s = acceptFolderReply(s, {
+      ...reply(8, '/w/a', [file('x.ts', 1)], { truncated: true }),
+      truncatedBy: 'time',
+    });
+    s = acceptFolderReply(s, {
+      ...reply(8, '/w/b', [file('y.ts', 1)], { truncated: true }),
+      truncatedBy: 'limit',
+    });
+    expect(searchFolderGroups(s).map((g) => [g.key, g.note])).toEqual([
+      ['/w/a', 'Partial (time limit)'],
+      ['/w/b', 'Partial (limit reached)'],
+    ]);
+    expect(partialSummary('time')).toBe(' · partial (time limit)');
+    expect(partialSummary(undefined)).toBe(' · partial (limit reached)');
   });
 
   it('groups in expected order; empty folders omitted unless noted', () => {

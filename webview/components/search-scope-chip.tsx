@@ -9,7 +9,7 @@ import { anchorPopover } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import type { SearchScope } from '../../src/search-scope';
 import { IconCheck, IconChevronDown, IconFolder } from '../icons';
-import { ContextMenu, type MenuState } from './context-menu';
+import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 
 // Spec docs/specs/2026-10-16-multi-repo-tracking.md §8–§9. No tracked set exists (parked, §6),
 // so the default scope is every repo the session found — named for what it is.
@@ -17,9 +17,8 @@ const STR = {
   tracked: 'All repos',
   trackedTitle:
     "Each repo's files as git lists them, plus files outside any repo. Gitignored files are left out.",
-  repo: (name: string) => name,
+  repo: 'This repo',
   repoTitle: 'Only the active repo',
-  noRepo: 'This repo',
   noRepoTitle: 'No active repo in this session',
   everything: 'Everything (may be slow)',
   everythingTitle:
@@ -35,7 +34,7 @@ export interface SearchScopeChipProps {
 }
 
 function labelOf(scope: SearchScope, repoLabel: string | undefined): string {
-  if (scope === 'repo') return repoLabel === undefined ? STR.noRepo : STR.repo(repoLabel);
+  if (scope === 'repo') return repoLabel ?? STR.repo;
   return scope === 'everything' ? STR.everything : STR.tracked;
 }
 
@@ -46,11 +45,16 @@ function titleOf(scope: SearchScope): string {
 
 export function SearchScopeChip({ scope, repoLabel, onPick }: SearchScopeChipProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [maxWidth, setMaxWidth] = useState<number | undefined>(undefined);
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const wasOpenRef = useRef(false);
 
   const open = useCallback(
-    (anchor: DOMRect, keyboard: boolean) => {
+    (trigger: HTMLElement, keyboard: boolean) => {
+      const anchor = trigger.getBoundingClientRect();
+      // Kept inside the search pane: from the chip's start to the pane's trailing edge.
+      const pane = trigger.closest('.search')?.getBoundingClientRect();
+      setMaxWidth(pane ? pane.right - anchor.left : undefined);
       const at = anchorPopover(
         anchor,
         { width: 0, height: 0 },
@@ -60,14 +64,22 @@ export function SearchScopeChip({ scope, repoLabel, onPick }: SearchScopeChipPro
           gap: 4,
         },
       );
-      const item = (value: SearchScope, label: string, title: string, disabled = false) => ({
+      // Every row reserves the check column, so labels line up whichever row is checked.
+      const item = (
+        value: SearchScope,
+        label: string,
+        title: string,
+        opts: { detail?: string; disabled?: boolean } = {},
+      ): MenuItem => ({
         label,
+        ...(opts.detail !== undefined ? { detail: opts.detail } : {}),
         key: value,
         radio: true,
         checked: scope === value,
-        icon: scope === value ? <IconCheck size={13} /> : undefined,
+        icon:
+          scope === value ? <IconCheck size={13} /> : <span className="gh__reffilter-checkpad" />,
         title,
-        disabled,
+        disabled: opts.disabled ?? false,
         onClick: () => onPick(value),
       });
       setMenu({
@@ -77,8 +89,8 @@ export function SearchScopeChip({ scope, repoLabel, onPick }: SearchScopeChipPro
         items: [
           item('tracked', STR.tracked, STR.trackedTitle),
           repoLabel === undefined
-            ? item('repo', STR.noRepo, STR.noRepoTitle, true)
-            : item('repo', STR.repo(repoLabel), STR.repoTitle),
+            ? item('repo', STR.repo, STR.noRepoTitle, { disabled: true })
+            : item('repo', STR.repo, STR.repoTitle, { detail: repoLabel }),
           item('everything', STR.everything, STR.everythingTitle),
         ],
       });
@@ -95,7 +107,7 @@ export function SearchScopeChip({ scope, repoLabel, onPick }: SearchScopeChipPro
         setMenu(null);
         return;
       }
-      open(e.currentTarget.getBoundingClientRect(), e.detail === 0);
+      open(e.currentTarget, e.detail === 0);
     },
     [open],
   );
@@ -104,7 +116,7 @@ export function SearchScopeChip({ scope, repoLabel, onPick }: SearchScopeChipPro
     (e: ReactKeyboardEvent<HTMLButtonElement>) => {
       if (e.key !== 'ArrowDown' || menu) return;
       e.preventDefault();
-      open(e.currentTarget.getBoundingClientRect(), true);
+      open(e.currentTarget, true);
     },
     [open, menu],
   );
@@ -131,11 +143,13 @@ export function SearchScopeChip({ scope, repoLabel, onPick }: SearchScopeChipPro
         onClick={onClick}
         onKeyDown={onKeyDown}
       >
-        <IconFolder size={13} />
+        <IconFolder size={13} className="gh__reffilter-icon" />
         <span className="gh__reffilter-label">{label}</span>
         <IconChevronDown size={13} className="gh__reffilter-caret" />
       </button>
-      {menu && <ContextMenu menu={menu} onClose={closeMenu} triggerRef={chipRef} />}
+      {menu && (
+        <ContextMenu menu={menu} onClose={closeMenu} triggerRef={chipRef} maxWidth={maxWidth} />
+      )}
     </>
   );
 }

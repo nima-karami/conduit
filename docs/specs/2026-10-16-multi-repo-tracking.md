@@ -198,7 +198,7 @@ any repo → `missing` (folder vanished) → `detected` on reappearance; refresh
 | Warm-tier cadence | 5 s | no (v1) | Keeps cold repos honest without per-burst cost |
 | Hot window | 10 min since last change | no | Matches an agent's working stretch |
 | Detail gating when Changes hidden | on | no | Line counts nobody looks at are pure waste |
-| Search scope in non-git root | Tracked repos | per-search chip, remembered per session | Fast and gitignore-aware |
+| Search scope in non-git root | All repos (every repo the session found; the tracked set is parked, §6) | per-search chip, kept per session in memory for the app's lifetime: it survives session switches and is back to All repos after a relaunch | Fast and gitignore-aware |
 | fsmonitor | off | out of scope v1 | Measured no gain at this size |
 
 ## 6. Scope slicing
@@ -245,9 +245,10 @@ EARS:
   commands for it, except one run per explicit *Refresh once*.
 - If a paused repo receives file changes, then the Changes tab shall mark it with an activity
   indicator and offer Track, without resuming it.
-- Where the root is not a git repo, quick-open and content search shall use the tracked repos'
-  git listings by default and honour `.gitignore` (fixture: a repo whose `.gitignore`d `dist/`
-  holds a matching string returns no `dist/` hit under Tracked repos, and one under Everything).
+- Where the root is not a git repo, quick-open and content search shall use the repos' git
+  listings by default and honour `.gitignore` (fixture: a repo whose `.gitignore`d `gen/` holds a
+  matching string returns no `gen/` hit under All repos, and one under Everything; `gen/` because
+  Everything is the old walk, which skips `dist/`, `build/`, `out/` and `node_modules/` itself).
 
 ```gherkin
 Feature: Ticket work stays fast

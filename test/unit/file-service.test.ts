@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildImageDiff,
+  FILE_GONE,
   isBinary,
   langFromPath,
   parseWriteOptions,
@@ -80,6 +81,12 @@ describe('fileService readers', () => {
     fs.writeFileSync(path.join(d, 'a.ts'), 'x');
     const entries = await readDir(d);
     expect(entries.map((e) => e.name)).toEqual(['dist', 'node_modules', 'src', 'a.ts']);
+  });
+
+  it('readFile of a file deleted since it was listed says it is gone, not unreadable', async () => {
+    const d = tmp();
+    expect((await readFile(path.join(d, 'gone.ts'))).error).toBe(FILE_GONE);
+    expect((await readFile(path.join(d, 'gone.png'))).error).toBe(FILE_GONE);
   });
 
   it('readFile returns content + language', async () => {

@@ -677,6 +677,7 @@ export function FilesView({
     <>
       {/* hideResultsWhenEmpty keeps the search bar compact while the tree shows below. */}
       <SearchPane
+        sessionId={sessionId}
         folders={sections}
         onOpenMatch={onOpenMatch}
         paneRef={searchPaneRef}

@@ -100,18 +100,23 @@ runScenario('background-resources', async ({ app, page, log }) => {
       (await app.evaluate(() => globalThis.__resources.calls)) > 0,
       'returning to a hidden session refreshes Git',
     );
-    await page.evaluate((root) => {
-      window.__resourceSearch = undefined;
-      window.agentDeck.subscribe((m) => {
-        if (m.type === 'contentSearchResults' && m.requestId === 98765) window.__resourceSearch = m;
-      });
-      window.agentDeck.post({
-        type: 'contentSearch',
-        root,
-        requestId: 98765,
-        query: { text: 'se+d', regex: true, caseSensitive: false, wholeWord: false },
-      });
-    }, folder);
+    await page.evaluate(
+      ([root, sessionId]) => {
+        window.__resourceSearch = undefined;
+        window.agentDeck.subscribe((m) => {
+          if (m.type === 'contentSearchResults' && m.requestId === 98765)
+            window.__resourceSearch = m;
+        });
+        window.agentDeck.post({
+          type: 'contentSearch',
+          sessionId,
+          root,
+          requestId: 98765,
+          query: { text: 'se+d', regex: true, caseSensitive: false, wholeWord: false },
+        });
+      },
+      [folder, ids[0]],
+    );
     await page.waitForFunction(() => window.__resourceSearch !== undefined, null, {
       timeout: 10000,
     });

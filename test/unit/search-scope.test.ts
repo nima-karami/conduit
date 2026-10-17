@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { RepoInfo } from '../../src/repo-scan';
-import { scopeChipFolders, searchTargets } from '../../src/search-scope';
+import {
+  isIndexScope,
+  retainSessionScopes,
+  scopeChipFolders,
+  searchRootAllowed,
+  searchTargets,
+} from '../../src/search-scope';
 
 const repo = (root: string, tag: RepoInfo['tag'] = 'nested'): RepoInfo => ({
   root,
@@ -91,5 +97,35 @@ describe('searchTargets', () => {
 
   it('no active repo: repo scope yields no targets', () => {
     expect(searchTargets(folders, 'repo', undefined, chip)).toEqual([]);
+  });
+});
+
+describe('IPC edge: isIndexScope / searchRootAllowed', () => {
+  it('scope is absent or a known kind', () => {
+    expect(isIndexScope(undefined)).toBe(true);
+    expect(isIndexScope('tracked')).toBe(true);
+    expect(isIndexScope('everything')).toBe(true);
+    for (const bad of ['repo', 'Everything', '', null, 1, {}])
+      expect(isIndexScope(bad)).toBe(false);
+  });
+
+  it("a root is one of the session's folders or registered repos, by folder key", () => {
+    const s = { home: '/w', roots: ['/x'], repos: [repo('/w/tickets/T-1/repoA')] };
+    expect(searchRootAllowed(s, '/w')).toBe(true);
+    expect(searchRootAllowed(s, '/x/')).toBe(true);
+    expect(searchRootAllowed(s, '/w/tickets/T-1/repoA')).toBe(true);
+    expect(searchRootAllowed(s, '/w/tickets')).toBe(false);
+    expect(searchRootAllowed(s, '/elsewhere')).toBe(false);
+    expect(searchRootAllowed(s, '')).toBe(false);
+    expect(searchRootAllowed(s, 42)).toBe(false);
+    expect(searchRootAllowed({ home: '/w', roots: [] }, '/w/tickets/T-1/repoA')).toBe(false);
+  });
+});
+
+describe('retainSessionScopes', () => {
+  it('drops scopes of sessions that are gone; same object when none is', () => {
+    const scopes = { a: 'everything', b: 'repo' } as const;
+    expect(retainSessionScopes(scopes, new Set(['a', 'b', 'c']))).toBe(scopes);
+    expect(retainSessionScopes(scopes, new Set(['b']))).toEqual({ b: 'repo' });
   });
 });

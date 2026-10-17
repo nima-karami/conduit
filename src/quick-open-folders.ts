@@ -5,9 +5,14 @@ import type { FolderSectionModel } from './session-sections';
 /** folderKey → that folder's `searchFiles` hits (spec §2.10). */
 export type FolderCorpus = Readonly<Record<string, SearchHit[]>>;
 
-/** Present folders with no corpus entry yet — what the palette asks the host for. */
-export function foldersToRequest(folders: readonly string[], corpus: FolderCorpus): string[] {
-  return folders.filter((f) => !(folderKey(f) in corpus));
+/** Present folders with no corpus entry yet, or whose entry predates a `fileIndexChanged`
+ *  (`stale`, folderKeys) — what the palette asks the host for. */
+export function foldersToRequest(
+  folders: readonly string[],
+  corpus: FolderCorpus,
+  stale: ReadonlySet<string> = new Set(),
+): string[] {
+  return folders.filter((f) => !(folderKey(f) in corpus) || stale.has(folderKey(f)));
 }
 
 /** A reply for a root no longer in the session leaves the corpus unchanged (same object). */

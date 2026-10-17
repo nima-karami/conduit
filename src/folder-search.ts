@@ -1,4 +1,4 @@
-import { isStaleResponse, type SearchFileResult } from './content-search';
+import { isStaleResponse, type SearchFileResult, type TruncatedBy } from './content-search';
 import { folderKey } from './folder-key';
 import { countNoun } from './menu-selection';
 import type { FolderSectionModel } from './session-sections';
@@ -6,11 +6,25 @@ import type { FolderSectionModel } from './session-sections';
 const STR = {
   timedOut: 'Search timed out. Try again.',
   partial: 'Partial (limit reached)',
+  partialTime: 'Partial (time limit)',
+  summaryPartial: ' · partial (limit reached)',
+  summaryPartialTime: ' · partial (time limit)',
 };
+
+/** A partial result names its cause: a slow, cold tree reads differently from a match cap. */
+function partialNote(truncatedBy: TruncatedBy | undefined): string {
+  return truncatedBy === 'time' ? STR.partialTime : STR.partial;
+}
+
+/** The single-folder summary's suffix for a partial result. */
+export function partialSummary(truncatedBy: TruncatedBy | undefined): string {
+  return truncatedBy === 'time' ? STR.summaryPartialTime : STR.summaryPartial;
+}
 
 export interface FolderReply {
   results: SearchFileResult[];
   truncated: boolean;
+  truncatedBy?: TruncatedBy;
   error?: string;
 }
 
@@ -50,6 +64,7 @@ export function acceptFolderReply(
     root: string;
     results: SearchFileResult[];
     truncated: boolean;
+    truncatedBy?: TruncatedBy;
     error?: string;
   },
 ): MultiSearchState {
@@ -58,6 +73,7 @@ export function acceptFolderReply(
   const reply: FolderReply = {
     results: msg.results,
     truncated: msg.truncated,
+    ...(msg.truncatedBy !== undefined ? { truncatedBy: msg.truncatedBy } : {}),
     ...(msg.error !== undefined ? { error: msg.error } : {}),
   };
   return { ...s, replies: { ...s.replies, [key]: reply } };
@@ -96,7 +112,7 @@ export function searchFolderGroups(s: MultiSearchState): SearchFolderGroup[] {
   return s.expected.flatMap((key) => {
     const r = s.replies[key];
     const note = r
-      ? (r.error ?? (r.truncated ? STR.partial : undefined))
+      ? (r.error ?? (r.truncated ? partialNote(r.truncatedBy) : undefined))
       : s.timedOut
         ? STR.timedOut
         : undefined;
