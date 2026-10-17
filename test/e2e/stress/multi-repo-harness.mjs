@@ -13,6 +13,16 @@ import { gitCommitAll, initGitRepo } from './harness-stress.mjs';
 
 const AGENT_FILE = /^agent-\d+-\d+\.txt$/;
 
+/** Mirrors src/repo-refresh-scheduler.ts (the stress lane can't import TS); unit-guarded. */
+export const REFRESH_COOLDOWN_MS = 800;
+
+/**
+ * Status runs one written repo may make while writers run for `writeMs`: the settled first run,
+ * at most one per cooldown after it, and the trailing run — ceil(writeMs / cooldown) + 2.
+ * At 10 s and 800 ms: ceil(12.5) + 2 = 15 (was 12 at 1 s).
+ */
+export const statusPerRepoCap = (writeMs) => Math.ceil(writeMs / REFRESH_COOLDOWN_MS) + 2;
+
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, windowsHide: true, stdio: 'pipe' });
 
 function seedRepo(dir, filesPerRepo) {
@@ -108,6 +118,9 @@ export async function installChangeObserver(page) {
     window.__firstSeen = {};
     window.__refreshedAt = {};
     window.__changeMsgs = {};
+    // Per session, per repo key: the agent names in that repo's latest snapshot. A delta carries
+    // only the repos that changed, so "what the session shows" is this merge, not the last message.
+    window.__repoNames = {};
     const record = (sid, paths, refreshedAt) => {
       const now = Date.now();
       window.__firstSeen[sid] ??= {};
@@ -140,6 +153,15 @@ export async function installChangeObserver(page) {
           undefined,
         );
       } else if (m.type === 'repoDelta') {
+        const merged = m.full ? {} : { ...(window.__repoNames[m.sessionId] ?? {}) };
+        for (const [repoRoot, snap] of Object.entries(m.repos ?? {})) {
+          if (snap?.removed) delete merged[norm(repoRoot)];
+          else
+            merged[norm(repoRoot)] = (snap?.changes ?? [])
+              .map((c) => base(c.path))
+              .filter((n) => agent.test(n));
+        }
+        window.__repoNames[m.sessionId] = merged;
         for (const snap of Object.values(m.repos ?? {})) {
           record(
             m.sessionId,

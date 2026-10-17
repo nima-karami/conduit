@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { folderKey } from '../../src/folder-key';
 import { triggerMenu } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { plural } from '../../src/plural';
@@ -18,6 +19,7 @@ import {
 import type { ReviewScope } from '../review-scope';
 import { ContextMenu, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
+import { LinesPending } from './lines-pending';
 import { type NavBlock, type NavSection, ReviewFileNav } from './review-file-nav';
 
 const STR = {
@@ -109,6 +111,11 @@ export function ReviewNavigator({
   const files = model?.files ?? [];
   const totalAdd = files.reduce((a, c) => a + c.added, 0);
   const totalDel = files.reduce((a, c) => a + c.removed, 0);
+  // A commit source's counts come with its diff; only the working tree's arrive lines:false first.
+  const linesPendingRoots = new Set(
+    working ? (repoChanges ?? []).filter((r) => !r.lines).map((r) => folderKey(r.root)) : [],
+  );
+  const linesPending = files.some((f) => linesPendingRoots.has(folderKey(f.repoRoot)));
 
   const openBulkMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (menuToggleIntent(wasOpenRef.current) === 'close') {
@@ -140,6 +147,7 @@ export function ReviewNavigator({
         <span className="changes__header-count">{count}</span>
         {model !== null && (
           <span className="diffstat">
+            {linesPending && <LinesPending />}
             {totalAdd > 0 && <span className="diffstat--add">+{totalAdd}</span>}
             {totalAdd > 0 && totalDel > 0 && ' '}
             {totalDel > 0 && <span className="diffstat--del">-{totalDel}</span>}
@@ -234,6 +242,7 @@ export function ReviewNavigator({
                   onReviewScope(scope, source?.kind === 'working' ? source.repoRoot : undefined)
               : undefined
           }
+          linesPendingRoots={linesPendingRoots}
         />
       )}
       {bulkMenu && (

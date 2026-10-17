@@ -246,8 +246,9 @@ runScenario('nested-repo-resources', async ({ app, page, log }) => {
       const deleted = await measure(`${count} repos x 20 deleted`, deleting);
       // Contract: a burst shorter than the cooldown costs one run, plus one trailing run when an
       // event of the burst (Windows reports the folder's own change late) lands after that run
-      // started. Changes is shown, so each run counts lines: two numstat passes plus the one HEAD
-      // deletion pass.
+      // started. A third run needs an event past settle + cooldown = 300 + 800 = 1100 ms after
+      // the first; the 200 unlinks take tens of ms. Changes is shown, so each run counts lines:
+      // two numstat passes plus the one HEAD deletion pass.
       assert(
         deleted.statusRepos <= count && deleted.statusPerRepoMax <= 2,
         `deleted burst: at most one run plus its trailing run per repo (repos ${deleted.statusRepos}, max ${deleted.statusPerRepoMax})`,

@@ -6,6 +6,7 @@ import { IconReview } from '../icons';
 import { type ReviewFile, reviewFileKey } from '../review-repos';
 import type { ReviewScope } from '../review-scope';
 import { computeWindow } from '../review-window';
+import { LinesPending } from './lines-pending';
 
 /** Seed height for a file-list row before the first one is measured. Every row is identical,
  *  so one measurement corrects the whole column at any density or font scale. */
@@ -57,6 +58,7 @@ export function ReviewFileNav({
   rowActions,
   onAction,
   onSectionReview,
+  linesPendingRoots,
 }: {
   blocks: readonly NavBlock[];
   activeKey: string | null;
@@ -67,6 +69,8 @@ export function ReviewFileNav({
   rowActions?: (file: ReviewFile) => RowAction[];
   onAction?: (intent: GitActionIntent) => Promise<void> | void;
   onSectionReview?: (scope: ReviewScope) => void;
+  /** folderKey(root) of repos whose line counts have not been read yet. */
+  linesPendingRoots?: ReadonlySet<string>;
 }) {
   const scrollerRef = useRef<HTMLElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -204,6 +208,7 @@ export function ReviewFileNav({
                 focusedKeyRef.current = key;
               }}
               onMeasure={i === firstFile ? setRowH : undefined}
+              linesPending={linesPendingRoots?.has(folderKey(it.file.repoRoot)) ?? false}
             />
           ),
         )}
@@ -224,6 +229,7 @@ function ReviewFileRow({
   onAction,
   onFocusRow,
   onMeasure,
+  linesPending,
 }: {
   change: ReviewFile;
   active: boolean;
@@ -236,6 +242,7 @@ function ReviewFileRow({
   onFocusRow: (key: string) => void;
   /** Set on the first mounted row only — calibrates the window's uniform row height. */
   onMeasure?: (h: number) => void;
+  linesPending: boolean;
 }) {
   const parts = c.path.split('/');
   const name = parts.pop() ?? c.path;
@@ -283,7 +290,9 @@ function ReviewFileRow({
           {dir && <span className="review__navdir">{dir}</span>}
         </span>
         <span className="review__navstat">
-          {noLines ? (
+          {linesPending ? (
+            <LinesPending />
+          ) : noLines ? (
             <span className="review__navdash">—</span>
           ) : (
             <>

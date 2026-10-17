@@ -5,7 +5,8 @@ import type { DirtyKind } from './repo-path-map';
 // (Contracts, repo-refresh-scheduler); the tuning is locked by docs/specs/2026-10-16-multi-repo-tracking.md §3.
 
 export const REFRESH_SETTLE_MS = 300;
-export const REFRESH_COOLDOWN_MS = 1000;
+// Not 1000: lag under continuous writes is ~U(0, cooldown) + status time (spec §13).
+export const REFRESH_COOLDOWN_MS = 800;
 export const REFRESH_CONCURRENCY = 4;
 
 export interface PendingKinds {

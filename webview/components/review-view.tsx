@@ -203,6 +203,7 @@ import { ConfirmDialog, type ConfirmState } from './confirm-dialog';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
 import { ImageDiff } from './image-diff';
+import { LinesPending } from './lines-pending';
 import { DetachedNotes, NoteComposer, NoteThread } from './note-thread';
 import { RepoTagPill } from './repo-picker-menu';
 import { ReviewFindBar } from './review-find-bar';
@@ -258,7 +259,6 @@ const NOTE_CAP_MESSAGE =
 const STR = {
   discardPerRepo: 'Pick one repo to discard its changes',
   stageNothing: 'Nothing left to stage in any repo',
-  countingLines: 'Counting lines…',
 } as const;
 
 /** A card's DOM address: `data-path` stays repo-relative (e2e selectors read it), so two repos'
@@ -2768,9 +2768,7 @@ const ReviewFileCard = memo(function ReviewFileCard({
             <span className="rcard__file">{file}</span>
           </span>
           <span className="rcard__stat">
-            {linesPending && (
-              <span className="diffstat--pending" role="img" aria-label={STR.countingLines} />
-            )}
+            {linesPending && <LinesPending />}
             {!linesPending && change.added > 0 && (
               <span className="diffstat--add">+{change.added}</span>
             )}

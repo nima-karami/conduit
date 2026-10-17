@@ -21,6 +21,7 @@ import { IconCheck, IconMore, IconRefresh } from '../icons';
 import { middleClickProps } from '../middle-click';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
+import { LinesPending } from './lines-pending';
 import { RepoHead } from './repo-head';
 import { TreeChevronSpacer } from './tree-chevron';
 
@@ -41,16 +42,11 @@ const STR = {
   noReposHint: "None of this session's folders is a git repository.",
   cleanOne: 'The working tree is clean.',
   cleanMany: (n: number) => `All ${n} repos are clean.`,
-  countingLines: 'Counting lines…',
   gitError: (r: GitFailure) =>
     r === 'timeout' ? "Couldn't read git status — timed out" : "Couldn't read git status",
   retry: 'Retry',
   asOf: (time: string) => `as of ${time}`,
 } as const;
-
-function LinesPending() {
-  return <span className="diffstat--pending" role="img" aria-label={STR.countingLines} />;
-}
 
 export interface ChangesViewProps {
   model: Exclude<ChangesModel, { kind: 'no-session' }>;

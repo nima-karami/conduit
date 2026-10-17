@@ -54,7 +54,7 @@ No sketches were made. Every new seam copies a sibling shape that already exists
  RepoTracker.setLiveRoots(roots)   ─► coverage (uncovered→covered: tree) + open/close own commonDir watches
  RepoTracker.windowFocused()       ─► visible repos: never-interrogated → meta+tree; lastRefresh > 30 s → tree (low priority)
         ▼
- RefreshScheduler.mark(key, kind)  ── settle 300 ms, cooldown 1 s from last start, trailing run guaranteed,
+ RefreshScheduler.mark(key, kind)  ── settle 300 ms, cooldown 800 ms from last start, trailing run guaranteed,
         │                             single-flight per key, host-wide cap 4, eligible(key) = some VISIBLE session contains key
         ▼  run(key, {meta, tree})
  RepoTracker job:  meta → interrogateGit(root, {skipDirty:true})  (gitDir/commonDir/branch → re-arm git-dir watch, refresh path map)
@@ -84,7 +84,7 @@ State ownership:
   in a session is tracked**. The union rule reduces to: a repo runs git iff some visible session
   contains it.
 - `REPO_SCAN_CAP = 200` and `MAX_REPO_SCAN_DEPTH = 4` stay (`src/repo-scan.ts:21-22`).
-- Per-repo cooldown is 1 s with a guaranteed trailing refresh. The host-wide git cap is 4.
+- Per-repo cooldown is 800 ms (spec §13; was 1 s) with a guaranteed trailing refresh. The host-wide git cap is 4.
 - `changesView` stays a pure view filter (spec §3).
 - `fsmonitor`, autofetch, nested-in-repo detection and a custom watcher are out of scope.
 - The watcher change reverses L12 S4 ("folders never paths") in bounded form. Events are mapped
@@ -251,7 +251,7 @@ Lookups walk the path's ancestors through a `Map` (O(depth)), never a scan over 
 
 ```ts
 export const REFRESH_SETTLE_MS = 300;
-export const REFRESH_COOLDOWN_MS = 1000;
+export const REFRESH_COOLDOWN_MS = 800;
 export const REFRESH_CONCURRENCY = 4;
 export interface PendingKinds { meta: boolean; tree: boolean }
 export interface RefreshSchedulerDeps {
@@ -1512,7 +1512,7 @@ that keeps the locked decision.
 - **[normal]** The §7 lag AC gates in T2.9 only on an idle machine (CPU pre-check). Under load
   it reports SKIPPED rather than failing or loosening the threshold, and it must be re-run idle
   before Slice 2 is reported done.
-- **[normal]** Cooldown is 1 s, as spec'd. 0.5 s and 2 s were the alternatives.
+- **[normal]** Cooldown was 1 s, as spec'd; lowered to 800 ms after the S2 stress (spec §13).
 - **[normal]** Search scope is remembered per session **in renderer memory**. It resets to
   Tracked repos on restart.
 - **[normal]** Quick-open always uses the default (tracked) index; the chip applies to content

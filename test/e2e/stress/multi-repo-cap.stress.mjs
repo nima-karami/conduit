@@ -30,6 +30,7 @@ import {
   refreshLagStats,
   startHostLag,
   startWriters,
+  statusPerRepoCap,
   waitForFirstFill,
 } from './multi-repo-harness.mjs';
 
@@ -132,7 +133,7 @@ runScenario(NAME, async ({ app, page, log }) => {
     `git kept growing after the writers stopped: ${stats.idleGitAfter} then ${idleGitAfter2} calls per ${IDLE_WINDOW_MS}ms`,
   );
   // Engine invariants (docs/plans/2026-10-16-multi-repo-tracking.plan.md T2.9).
-  const perRepoCap = Math.ceil(WRITE_MS / 1000) + 2;
+  const perRepoCap = statusPerRepoCap(WRITE_MS);
   assertInvariant(
     stats.statusOutsideWritten === 0,
     `${stats.statusOutsideWritten} status runs in ${stats.statusOutsideWrittenCwds} repos nobody wrote`,

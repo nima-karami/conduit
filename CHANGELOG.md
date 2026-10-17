@@ -13,7 +13,7 @@ All notable user-facing changes to Conduit. Format follows
   to a background session shows its changes right away instead of re-reading them. A commit or a
   branch switch made inside a worktree whose main repo lives elsewhere now shows up on its own,
   without clicking anything. Line counts (`+3 −1`) are read only while the Changes tab or Review is
-  open; until they arrive, a small placeholder stands in for them.
+  open; until they arrive, a small placeholder stands in for them, in Review's file list too.
 - **A repo whose git status can't be read now says so.** The Changes tab shows "Couldn't read git
   status" under that repo with a Retry button, instead of quietly showing no changes. A list that
   is waiting to be refreshed shows the time it was last read.

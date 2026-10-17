@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createRefreshScheduler,
@@ -68,7 +70,15 @@ afterEach(() => {
 
 describe('createRefreshScheduler', () => {
   it('pins the locked tuning', () => {
-    expect([REFRESH_SETTLE_MS, REFRESH_COOLDOWN_MS, REFRESH_CONCURRENCY]).toEqual([300, 1000, 4]);
+    expect([REFRESH_SETTLE_MS, REFRESH_COOLDOWN_MS, REFRESH_CONCURRENCY]).toEqual([300, 800, 4]);
+  });
+
+  it('the stress lane mirrors the cooldown its status caps derive from', () => {
+    const harness = readFileSync(
+      join(__dirname, '..', 'e2e', 'stress', 'multi-repo-harness.mjs'),
+      'utf8',
+    );
+    expect(harness).toContain(`export const REFRESH_COOLDOWN_MS = ${REFRESH_COOLDOWN_MS};`);
   });
 
   it('a burst of marks runs once after settle', async () => {
@@ -96,14 +106,17 @@ describe('createRefreshScheduler', () => {
     const { s, runs } = harness({ autoMs: 50 });
     const t0 = Date.now();
     let lastMark = 0;
-    for (let t = 0; t <= 3000; t += 100) {
+    const markMs = 3000;
+    for (let t = 0; t <= markMs; t += 100) {
       s.mark('a', 'tree');
       lastMark = Date.now() - t0;
       await settle(100);
     }
     await settle(5000);
     const starts = runs.map((r) => r.at - t0);
-    expect(starts.length).toBeLessThanOrEqual(4);
+    // First run at settle, one per cooldown while marks last, then the trailing run.
+    const maxRuns = Math.ceil((markMs - REFRESH_SETTLE_MS) / REFRESH_COOLDOWN_MS) + 1;
+    expect(starts.length).toBeLessThanOrEqual(maxRuns);
     for (let i = 1; i < starts.length; i++)
       expect(starts[i] - starts[i - 1]).toBeGreaterThanOrEqual(REFRESH_COOLDOWN_MS);
     expect(starts[starts.length - 1]).toBeGreaterThan(lastMark);
