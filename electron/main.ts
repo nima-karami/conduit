@@ -123,6 +123,7 @@ import {
 } from '../src/outgoing-paths';
 import { resolveOwningSession } from '../src/owning-session';
 import { isInsideAnyRoot, isInsideRoot, realPathLeaf } from '../src/path-guard';
+import { slashedRealPathLeaf } from '../src/path-link-confine';
 import { userRootsOf } from '../src/path-link-roots';
 import type { IndexedFile } from '../src/path-resolve';
 import {
@@ -1327,7 +1328,11 @@ app.whenReady().then(() => {
     topLevel: repoTopLevel,
     homeDir: os.homedir().replace(/\\/g, '/'),
     // `log` is created further down this function; resolves only run after it exists.
-    log: { warn: (scope, msg, data) => log.warn(scope, msg, data) },
+    realPathLeaf: slashedRealPathLeaf,
+    log: {
+      warn: (scope, msg, data) => log.warn(scope, msg, data),
+      debug: (scope, msg, data) => log.debug(scope, msg, data),
+    },
     ...PATH_LINK_OPTS,
   });
 

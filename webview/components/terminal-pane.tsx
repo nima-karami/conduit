@@ -5,10 +5,11 @@ import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } 
 import '@xterm/xterm/css/xterm.css';
 import { FILE_INDEX_TTL_MS } from '../../src/file-index-ttl';
 import { folderKey } from '../../src/folder-key';
+import { classifyLinkUri } from '../../src/link-target';
 import { isAncestorOf } from '../../src/owning-session';
 import type { ResolveRoot } from '../../src/path-link-roots';
 import type { PathCandidate, TokenResolution } from '../../src/path-resolve';
-import type { TermGeometry } from '../../src/protocol';
+import type { HostToWebview, TermGeometry } from '../../src/protocol';
 import { withTimeout } from '../../src/with-timeout';
 import {
   logToHost,
@@ -111,6 +112,8 @@ interface LinkTarget {
   line?: number;
   col?: number;
 }
+
+type PathLinkReply = Extract<HostToWebview, { type: 'resolvePathTokenResult' }>;
 
 interface PickerState {
   at: { x: number; y: number };
@@ -260,6 +263,9 @@ export function TerminalPane({
   const [picker, setPicker] = useState<PickerState | null>(null);
   // Set by the init effect, which owns the path cache: a stale target's entry is evicted.
   const evictPathRef = useRef<(key: string, scope: string) => void>(() => {});
+  // Set by the init effect, which owns the reply subscription: one uncached host resolve of a
+  // link URI (plan T8.3). Null without the bridge or on a timeout.
+  const requestOnceRef = useRef<(uri: string) => Promise<PathLinkReply | null>>(async () => null);
 
   /** Re-checks existence before opening (spec row 55): a stale target toasts, drops its cache
    *  entry and opens nothing. The probed kind, not `cand.isDir`, decides file vs folder — a UNC
@@ -283,6 +289,23 @@ export function TerminalPane({
   );
   const openCandidateRef = useRef(openCandidate);
   openCandidateRef.current = openCandidate;
+
+  /** A file-class link URI opens only what the host decoded, confined and found — its
+   *  realpath — never a path the renderer derived from the URI (plan T8.3). A refused target
+   *  opens nothing. */
+  const openUriTarget = async (uri: string, mode?: OpenMode): Promise<void> => {
+    const reply = await requestOnceRef.current(uri);
+    const res = reply?.results[0];
+    const cand = res?.candidates[0];
+    if (!res || !cand) return;
+    await openCandidateRef.current(
+      cand,
+      { key: res.key, scope: '', line: res.line, col: res.col },
+      mode,
+    );
+  };
+  const openUriTargetRef = useRef(openUriTarget);
+  openUriTargetRef.current = openUriTarget;
 
   /** The root the lines above a link point at (spec §3.3 context root), read at click time so
    *  output printed since the link was provided counts. */
@@ -543,9 +566,32 @@ export function TerminalPane({
         { capacity: LINK_CACHE_CAPACITY, timeoutMs: LINK_RESOLVE_TIMEOUT_MS },
       );
       let commitRepoRoot: string | undefined;
+      // Ids count down from -2: the cache's batches count up from 1 and -1 is the host's echo of
+      // an unreadable id, so a uri reply can never settle (and be stored by) the path cache.
+      let nextOnceId = -2;
+      const pendingOnce = new Map<number, (reply: PathLinkReply | null) => void>();
+      requestOnceRef.current = (uri) =>
+        new Promise((resolve) => {
+          const requestId = nextOnceId--;
+          const done = (reply: PathLinkReply | null) => {
+            clearTimeout(timer);
+            pendingOnce.delete(requestId);
+            resolve(reply);
+          };
+          const timer = setTimeout(() => done(null), LINK_RESOLVE_TIMEOUT_MS);
+          pendingOnce.set(requestId, done);
+          post({
+            type: 'resolvePathToken',
+            sessionId,
+            requestId,
+            tokens: [{ alts: [uri], target: 'uri' }],
+          });
+        });
       disposeLinkCaches = () => {
         resolveCache.dispose();
         commitCache.dispose();
+        for (const done of [...pendingOnce.values()]) done(null);
+        requestOnceRef.current = async () => null;
       };
       evictPathRef.current = (key, scope) => resolveCache.evict(key, scope);
       // Folder keys of the roots the last reply resolved against: an fsChanged under one of them
@@ -562,6 +608,11 @@ export function TerminalPane({
           return;
         }
         if (msg.type !== 'resolvePathTokenResult' || msg.sessionId !== sessionId) return;
+        const once = pendingOnce.get(msg.requestId);
+        if (once) {
+          once(msg);
+          return;
+        }
         if (msg.requestId < 0) return;
         rootKeys = msg.roots.map((r) => folderKey(r.abs));
         // An errored entry is not cached; settle still releases its waiter as a miss. Each value
@@ -615,7 +666,18 @@ export function TerminalPane({
             text: text.slice(tok.start, tok.end),
             decorations: { pointerCursor: true, underline: false },
             activate(event: MouseEvent, _text: string) {
-              if (terminalLinkMiddleAction(event.button, navigator.platform) === 'ignore') return;
+              const action = terminalLinkMiddleAction(event.button, navigator.platform);
+              if (action === 'ignore') return;
+              const kind = classifyLinkUri(tok.raw);
+              if (kind === 'file') {
+                // Confined like an OSC 8 target, even though it is visible (plan Decisions).
+                void openUriTargetRef.current(
+                  tok.raw,
+                  action === 'background' ? 'background' : undefined,
+                );
+                return;
+              }
+              if (kind !== 'external') return;
               if (!openExternal(tok.raw)) window.open(tok.raw, '_blank', 'noopener,noreferrer');
             },
             hover(_event: MouseEvent, _text: string) {

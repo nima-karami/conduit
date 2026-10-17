@@ -6,15 +6,24 @@
  */
 import { activeCwd } from '../src/active-cwd';
 import { folderKey } from '../src/folder-key';
-import { buildResolveRoots, type ResolveRoot, rootsSigOf } from '../src/path-link-roots';
+import { decodeFileUri } from '../src/link-target';
+import { isAncestorOf } from '../src/owning-session';
+import { confineToRoots } from '../src/path-link-confine';
+import {
+  buildResolveRoots,
+  type ResolveRoot,
+  rootsSigOf,
+  userRootsOf,
+} from '../src/path-link-roots';
 import {
   type IndexedFile,
   MAX_ALTS,
+  type PathCandidate,
   type ResolveIndex,
   resolveTokens,
   type TokenResolution,
 } from '../src/path-resolve';
-import { isUncLike, type PathPlatform } from '../src/path-token-normalize';
+import { isUncLike, normalizeAbs, type PathPlatform } from '../src/path-token-normalize';
 import type { Session } from '../src/types';
 
 export interface PathLinkResolverDeps {
@@ -27,10 +36,16 @@ export interface PathLinkResolverDeps {
   stat(abs: string): Promise<'file' | 'dir' | null>;
   /** repoTopLevel. */
   topLevel(dir: string): Promise<string>;
+  /** Forward-slashed realPathLeaf (src/path-link-confine.ts slashedRealPathLeaf): sync, so it runs
+   *  only for a uri target that passed the decode and lexical checks, once per click. */
+  realPathLeaf(t: string): string;
   homeDir: string;
   platform: PathPlatform;
   caseSensitive: boolean;
-  log: { warn(scope: string, msg: string, data?: Record<string, unknown>): void };
+  log: {
+    warn(scope: string, msg: string, data?: Record<string, unknown>): void;
+    debug(scope: string, msg: string, data?: Record<string, unknown>): void;
+  };
 }
 
 export interface PathLinkReply {
@@ -64,30 +79,43 @@ const MAX_ALT_LENGTH = 1024;
 
 const slash = (p: string) => p.replace(/\\/g, '/');
 
-type Entry = { kind: 'valid'; key: string; alts: string[] } | { kind: 'invalid'; key: string };
+/** `uri`: an OSC 8 / file:// target, resolved by decode + confinement only (plan Contracts
+ *  "v1 OSC 8 / file://"), never by the path rules. */
+type Entry =
+  | { kind: 'valid'; key: string; alts: string[]; uri: boolean }
+  | { kind: 'invalid'; key: string };
 
 /** Per-token validation at the renderer→host trust boundary (plan Decisions, blocker 3). */
 function validate(tokens: unknown): Entry[] {
   if (!Array.isArray(tokens)) return [];
   return tokens.slice(0, MAX_TOKENS).map((t): Entry => {
-    const alts: unknown =
-      typeof t === 'object' && t !== null ? (t as { alts?: unknown }).alts : undefined;
+    const obj =
+      typeof t === 'object' && t !== null ? (t as { alts?: unknown; target?: unknown }) : {};
+    const alts: unknown = obj.alts;
     if (!Array.isArray(alts) || alts.length === 0 || !alts.every((a) => typeof a === 'string')) {
       return { kind: 'invalid', key: '' };
     }
     const key = alts.join('\0');
     const kept = alts.slice(0, MAX_ALTS).filter((a) => a.length > 0 && a.length <= MAX_ALT_LENGTH);
-    return kept.length > 0 ? { kind: 'valid', key, alts: kept } : { kind: 'invalid', key };
+    return kept.length > 0
+      ? { kind: 'valid', key, alts: kept, uri: obj.target === 'uri' }
+      : { kind: 'invalid', key };
   });
 }
 
-const empty = (key: string, error: TokenResolution['error']): TokenResolution => ({
+const empty = (key: string, error?: TokenResolution['error']): TokenResolution => ({
   key,
   candidates: [],
   truncated: false,
   total: 0,
-  error,
+  ...(error ? { error } : {}),
 });
+
+/** `abs` relative to `base`, which the caller has checked contains it ('' for base itself). */
+const relUnder = (base: string, abs: string): string => {
+  const b = base.replace(/\/$/, '');
+  return abs.length > b.length ? abs.slice(b.length + 1) : '';
+};
 
 interface Semaphore {
   acquire(): Promise<void>;
@@ -241,7 +269,12 @@ export function createPathLinkResolver(deps: PathLinkResolverDeps): PathLinkReso
     const cwdGitRoot = slash(await lease.io(() => deps.gitRoot(session)).catch(() => cwd));
     const roots = buildResolveRoots(session, cwdGitRoot, opts);
     const rootsSig = rootsSigOf(session);
-    const valid = entries.filter((e): e is Extract<Entry, { kind: 'valid' }> => e.kind === 'valid');
+    const valid = entries.filter(
+      (e): e is Extract<Entry, { kind: 'valid' }> => e.kind === 'valid' && !e.uri,
+    );
+    const uris = entries.filter(
+      (e): e is Extract<Entry, { kind: 'valid' }> => e.kind === 'valid' && e.uri,
+    );
     const indexes =
       valid.length > 0 ? await lease.io(() => indexesFor(roots, cwdGitRoot || cwd)) : [];
     const limit = withConcurrency(STAT_CONCURRENCY);
@@ -270,13 +303,75 @@ export function createPathLinkResolver(deps: PathLinkResolverDeps): PathLinkReso
           knownRepoKeys.has(key(dir)) ? Promise.resolve(dir) : lease.io(() => deps.topLevel(dir)),
       },
     );
+    const uriResults = new Map<Entry, TokenResolution>();
+    for (const e of uris) {
+      uriResults.set(e, await resolveUri(session, e, roots, lease, knownRepoKeys));
+    }
     let next = 0;
     const results = entries.map((e) => {
       if (e.kind === 'invalid') return empty(e.key, 'invalid');
+      const u = uriResults.get(e);
+      if (u) return u;
       // The trimmed alts resolved; the renderer's pending token is the original join.
       return { ...resolved[next++], key: e.key };
     });
     return { cwd, rootsSig, roots, results };
+  };
+
+  /** Terminal output chose this target (an OSC 8 label can hide it), so it opens only when it
+   *  decodes, confines to a user-chosen root and exists — never through the path rules, whose
+   *  elision and suffix search would reach past the confinement. */
+  const resolveUri = async (
+    session: Session,
+    e: Extract<Entry, { kind: 'valid' }>,
+    roots: ResolveRoot[],
+    lease: ReturnType<typeof slotLease>,
+    knownRepoKeys: Set<string>,
+  ): Promise<TokenResolution> => {
+    const refused = (reason: 'undecodable' | 'outside-roots') => {
+      deps.log.debug('links', 'uri-refused', { reason });
+      return empty(e.key);
+    };
+    const target = decodeFileUri(e.alts[0], deps.platform);
+    if (!target) return refused('undecodable');
+    const confined = confineToRoots(target.path, userRootsOf(session, opts), {
+      realPathLeaf: deps.realPathLeaf,
+      ...opts,
+    });
+    if (!confined) return refused('outside-roots');
+    const pos = {
+      ...(target.line !== undefined ? { line: target.line } : {}),
+      ...(target.col !== undefined ? { col: target.col } : {}),
+    };
+    const real = confined.real;
+    const kind = await lease.io(() => raceUnc(real, deps.stat)).catch(() => null);
+    if (!kind) return { ...empty(e.key), ...pos };
+
+    const realKey = key(real);
+    let rootIdx = -1;
+    roots.forEach((r, i) => {
+      if (
+        isAncestorOf(key(r.abs), realKey) &&
+        (rootIdx < 0 || r.abs.length > roots[rootIdx].abs.length)
+      )
+        rootIdx = i;
+    });
+    const folder =
+      kind === 'dir' ? real : real.slice(0, Math.max(real.lastIndexOf('/'), 0)) || real;
+    const top = knownRepoKeys.has(key(folder))
+      ? folder
+      : await lease.io(() => deps.topLevel(folder)).catch(() => '');
+    const repoRoot = top ? normalizeAbs(slash(top), deps.platform) : folder;
+    const cand: PathCandidate = {
+      absPath: real,
+      rootIdx,
+      relToRoot: rootIdx >= 0 ? relUnder(roots[rootIdx].abs, real) : real,
+      repoRoot,
+      relToRepo: isAncestorOf(key(repoRoot), realKey) ? relUnder(repoRoot, real) : real,
+      isDir: kind === 'dir',
+      strength: 'exact-cwd',
+    };
+    return { key: e.key, candidates: [cand], truncated: false, total: 1, ...pos };
   };
 
   const resolveNow = async (sessionId: string, tokens: unknown): Promise<PathLinkReply> => {

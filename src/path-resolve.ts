@@ -47,6 +47,9 @@ export interface TokenResolution {
   total: number;
   /** 'invalid' = this entry failed host validation. */
   error?: 'timeout' | 'session-gone' | 'invalid';
+  /** A uri target's `#L` / `:l:c` position, decoded host-side (the renderer never parses it). */
+  line?: number;
+  col?: number;
 }
 
 export type StatKind = (absPath: string) => Promise<'file' | 'dir' | null>;

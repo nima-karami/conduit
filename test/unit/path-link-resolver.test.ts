@@ -44,6 +44,11 @@ interface Fake {
   gitRoot?: string | ((s: Session) => Promise<string>);
   fileIndex?: PathLinkResolverDeps['fileIndex'];
   stat?: PathLinkResolverDeps['stat'];
+  /** realPathLeaf mapping; identity otherwise. */
+  real?: Record<string, string>;
+  dirs?: string[];
+  platform?: PathLinkResolverDeps['platform'];
+  caseSensitive?: boolean;
 }
 
 function make(f: Fake) {
@@ -52,6 +57,9 @@ function make(f: Fake) {
   const indexCalls: string[] = [];
   const topLevelCalls: string[] = [];
   const warns: Array<{ scope: string; msg: string; data?: Record<string, unknown> }> = [];
+  const debugs: Array<{ scope: string; msg: string; data?: Record<string, unknown> }> = [];
+  const realCalls: string[] = [];
+  const dirs = new Set(f.dirs ?? []);
   const deps: PathLinkResolverDeps = {
     getSession: (id) => f.sessions[id],
     gitRoot: async (s) =>
@@ -67,18 +75,33 @@ function make(f: Fake) {
       f.stat ??
       (async (abs) => {
         statCalls.push(abs);
-        return fs.has(abs) ? 'file' : null;
+        return fs.has(abs) ? 'file' : dirs.has(abs) ? 'dir' : null;
       }),
+    realPathLeaf: (t) => {
+      realCalls.push(t);
+      return f.real?.[t] ?? t;
+    },
     topLevel: async (dir) => {
       topLevelCalls.push(dir);
       return '';
     },
     homeDir: '/home/u',
-    platform: 'posix',
-    caseSensitive: true,
-    log: { warn: (scope, msg, data) => warns.push({ scope, msg, data }) },
+    platform: f.platform ?? 'posix',
+    caseSensitive: f.caseSensitive ?? true,
+    log: {
+      warn: (scope, msg, data) => warns.push({ scope, msg, data }),
+      debug: (scope, msg, data) => debugs.push({ scope, msg, data }),
+    },
   };
-  return { resolver: createPathLinkResolver(deps), statCalls, indexCalls, topLevelCalls, warns };
+  return {
+    resolver: createPathLinkResolver(deps),
+    statCalls,
+    indexCalls,
+    topLevelCalls,
+    warns,
+    debugs,
+    realCalls,
+  };
 }
 
 const W_FILES = ['/w/repoA/src/index.ts', '/w/repoB/src/index.ts'];
@@ -462,6 +485,206 @@ describe('createPathLinkResolver', () => {
     expect(reply.cwd).toBe('/w/repoA');
     expect(reply.roots.map((r) => r.abs)).toEqual(['/w', '/w/repoA']);
     expect(reply.rootsSig).toMatch(/^[0-9a-f]{8}$/);
+  });
+});
+
+// Plan T8.3: OSC 8 / file:// targets, decoded and confined host-side to the user-chosen roots.
+describe("createPathLinkResolver target:'uri'", () => {
+  const uri = (u: string) => ({ alts: [u], target: 'uri' as const });
+
+  it('uri inside home → one exact-cwd candidate whose absPath is the realpath, with line', async () => {
+    const { resolver } = make({
+      sessions: { s1: session({ home: '/w' }) },
+      files: ['/w/real/a.ts'],
+      real: { '/w/link/a.ts': '/w/real/a.ts' },
+    });
+    const { results } = await resolver.resolve('s1', [uri('file:///w/link/a.ts#L3')]);
+    expect(results[0].candidates).toHaveLength(1);
+    expect(results[0].candidates[0]).toMatchObject({
+      absPath: '/w/real/a.ts',
+      strength: 'exact-cwd',
+      rootIdx: 0,
+      relToRoot: 'real/a.ts',
+      isDir: false,
+    });
+    expect(results[0].line).toBe(3);
+    expect(results[0].key).toBe('file:///w/link/a.ts#L3');
+  });
+
+  it('a dir target is a dir candidate', async () => {
+    const { resolver } = make({ sessions: { s1: session() }, dirs: ['/w/src'] });
+    const { results } = await resolver.resolve('s1', [uri('/w/src')]);
+    expect(results[0].candidates[0]).toMatchObject({ absPath: '/w/src', isDir: true });
+  });
+
+  it('a confined target that does not exist → zero, not refused', async () => {
+    const { resolver, debugs } = make({ sessions: { s1: session() } });
+    const { results } = await resolver.resolve('s1', [uri('file:///w/nope.ts')]);
+    expect(results[0].candidates).toEqual([]);
+    expect(debugs).toEqual([]);
+  });
+
+  it('uri outside every root → zero; stat and realPathLeaf never called; logged once', async () => {
+    const { resolver, statCalls, realCalls, debugs } = make({
+      sessions: { s1: session() },
+      files: ['/etc/passwd'],
+    });
+    const { results } = await resolver.resolve('s1', [uri('file:///etc/passwd')]);
+    expect(results[0].candidates).toEqual([]);
+    expect(statCalls).toEqual([]);
+    expect(realCalls).toEqual([]);
+    expect(debugs).toEqual([
+      { scope: 'links', msg: 'uri-refused', data: { reason: 'outside-roots' } },
+    ]);
+  });
+
+  it('an encoded .. out of home → zero; no fs', async () => {
+    const { resolver, statCalls, realCalls } = make({
+      sessions: { s1: session() },
+      files: ['/etc/passwd'],
+    });
+    const { results } = await resolver.resolve('s1', [uri('file:///w/%2e%2e/etc/passwd')]);
+    expect(results[0].candidates).toEqual([]);
+    expect([...statCalls, ...realCalls]).toEqual([]);
+  });
+
+  it.each([
+    'file:////h/s/x',
+    'file://h/s/x',
+    'file:///%5C%5Ch%5Cs%5Cx',
+    String.raw`\\h\s\x`,
+    '//h/s/x',
+  ])('UNC-form uri %j → zero; stat and realPathLeaf never called', async (u) => {
+    // Even with the share itself as home: a uri never reaches a UNC path.
+    const { resolver, statCalls, realCalls, debugs } = make({
+      sessions: { s1: session({ home: '//h/s' }) },
+      files: ['//h/s/x'],
+    });
+    const { results } = await resolver.resolve('s1', [uri(u)]);
+    expect(results[0].candidates).toEqual([]);
+    expect([...statCalls, ...realCalls]).toEqual([]);
+    expect(debugs.map((d) => d.data?.reason)).toEqual(['undecodable']);
+  });
+
+  it.each(['javascript:alert(1)', 'https://x/a.ts', 'src/a.ts', 'data:text/html,x'])(
+    'a non-file uri %j → zero, no fs',
+    async (u) => {
+      const { resolver, statCalls, realCalls } = make({ sessions: { s1: session() } });
+      const { results } = await resolver.resolve('s1', [uri(u)]);
+      expect(results[0].candidates).toEqual([]);
+      expect([...statCalls, ...realCalls]).toEqual([]);
+    },
+  );
+
+  it('realpath escape into a sibling root → zero, never stat’ed', async () => {
+    const { resolver, statCalls } = make({
+      sessions: { s1: session({ home: '/w', roots: ['/other'] }) },
+      files: ['/other/x.ts'],
+      real: { '/w/link/x.ts': '/other/x.ts' },
+    });
+    const { results } = await resolver.resolve('s1', [uri('file:///w/link/x.ts')]);
+    expect(results[0].candidates).toEqual([]);
+    expect(statCalls).toEqual([]);
+  });
+
+  it('a uri under a nested repo is confined to that repo, the deepest user root', async () => {
+    const { resolver, realCalls } = make({
+      sessions: { s1: session({ home: '/w', repos: [repo('/w/repoA')] }) },
+      files: ['/w/repoA/a.ts'],
+    });
+    const { results } = await resolver.resolve('s1', [uri('file:///w/repoA/a.ts')]);
+    expect(results[0].candidates.map((c) => c.absPath)).toEqual(['/w/repoA/a.ts']);
+    expect(realCalls).toContain('/w/repoA');
+  });
+
+  it('cwd moved outside every user root → its repo is a display root, never a confinement root', async () => {
+    const { resolver, statCalls, realCalls } = make({
+      sessions: { s1: session({ home: '/w', cwd: '/elsewhere/repoX' }) },
+      gitRoot: '/elsewhere/repoX',
+      files: ['/elsewhere/repoX/a.ts'],
+    });
+    const { results, roots } = await resolver.resolve('s1', [uri('file:///elsewhere/repoX/a.ts')]);
+    expect(roots.map((r) => r.abs)).toContain('/elsewhere/repoX');
+    expect(results[0].candidates).toEqual([]);
+    expect([...statCalls, ...realCalls]).toEqual([]);
+  });
+
+  it('cwd moved to a foreign share → neither the token nor the uri reaches the fs', async () => {
+    const { resolver, statCalls, realCalls } = make({
+      sessions: { s1: session({ home: '//srv/share', cwd: '//evil/share/repo' }) },
+      gitRoot: '//evil/share/repo',
+      files: ['//evil/share/repo/a.ts'],
+    });
+    const { results } = await resolver.resolve('s1', [
+      { alts: ['//evil/share/repo/a.ts'] },
+      uri('file:////evil/share/repo/a.ts'),
+      uri('//evil/share/repo/a.ts'),
+    ]);
+    expect(results.map((r) => r.candidates.length)).toEqual([0, 0, 0]);
+    expect([...statCalls, ...realCalls]).toEqual([]);
+  });
+
+  it('a uri entry in a mixed batch does not affect the other entries', async () => {
+    const { resolver } = make({
+      sessions: { s1: session({ cwd: '/w/repoA', repos: [repo('/w/repoA')] }) },
+      files: ['/w/repoA/src/index.ts', '/w/a.ts'],
+    });
+    const { results } = await resolver.resolve('s1', [
+      { alts: ['src/index.ts'] },
+      uri('file:///etc/passwd'),
+      'junk',
+      uri('file:///w/a.ts:7:2'),
+    ]);
+    expect(results.map((r) => r.key)).toEqual([
+      'src/index.ts',
+      'file:///etc/passwd',
+      '',
+      'file:///w/a.ts:7:2',
+    ]);
+    expect(results[0].candidates.map((c) => c.absPath)).toEqual(['/w/repoA/src/index.ts']);
+    expect(results[0].line).toBeUndefined();
+    expect(results[1].candidates).toEqual([]);
+    expect(results[2].error).toBe('invalid');
+    expect(results[3]).toMatchObject({ line: 7, col: 2 });
+    expect(results[3].candidates.map((c) => c.absPath)).toEqual(['/w/a.ts']);
+  });
+
+  it('a target other than exactly "uri" is a path token', async () => {
+    const { resolver, realCalls } = make({ sessions: { s1: session() }, files: ['/w/a.ts'] });
+    const { results } = await resolver.resolve('s1', [{ alts: ['/w/a.ts'], target: 'URI' }]);
+    expect(results[0].candidates.map((c) => c.absPath)).toEqual(['/w/a.ts']);
+    expect(realCalls).toEqual([]);
+  });
+
+  it('a uri only uses its first alt', async () => {
+    const { resolver, statCalls } = make({ sessions: { s1: session() }, files: ['/w/b.ts'] });
+    const { results } = await resolver.resolve('s1', [
+      { alts: ['file:///etc/x', '/w/b.ts'], target: 'uri' },
+    ]);
+    expect(results[0].candidates).toEqual([]);
+    expect(statCalls).toEqual([]);
+  });
+
+  it('an elision-shaped realpath is opened as itself, never suffix-searched', async () => {
+    const { resolver, indexCalls } = make({
+      sessions: { s1: session() },
+      index: wIndex,
+      files: ['/w/…/src/index.ts'],
+    });
+    const { results } = await resolver.resolve('s1', [uri('/w/…/src/index.ts')]);
+    expect(results[0].candidates.map((c) => c.absPath)).toEqual(['/w/…/src/index.ts']);
+    expect(indexCalls).toEqual([]);
+  });
+
+  it('win32: another drive-letter / folder case is confined case-folded', async () => {
+    const { resolver } = make({
+      sessions: { s1: session({ home: 'G:/w' }) },
+      platform: 'win32',
+      caseSensitive: false,
+      files: ['G:/W/a.ts'],
+    });
+    const { results } = await resolver.resolve('s1', [uri('file:///g:/W/a.ts')]);
+    expect(results[0].candidates.map((c) => c.absPath)).toEqual(['G:/W/a.ts']);
   });
 });
 

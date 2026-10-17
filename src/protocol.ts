@@ -1118,7 +1118,9 @@ export type WebviewToHost =
       type: 'resolvePathToken';
       sessionId: string;
       requestId: number;
-      tokens: Array<{ alts: string[] }>;
+      /** target 'uri': an OSC 8 / file:// target (alts[0]), decoded and confined host-side to the
+       *  session's user-chosen roots; sent at click time, never cached (plan T8.3). */
+      tokens: Array<{ alts: string[]; target?: 'uri' }>;
     }
   // terminal-commit-link: validate terminal commit-hash candidates (batched per rendered line)
   // as real commit objects in the session's active repo. Host replies with
