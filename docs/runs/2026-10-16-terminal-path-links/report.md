@@ -52,3 +52,18 @@ Bar (plan Decisions): ≥ 30 ambiguous samples AND ≥ 80 % top-1 AND better tha
 ## v1 build (Slices 7–10, `f2937874..7f8ec088`)
 
 Verify EXIT=0 (508 files, 7590 tests); `e2e:remote --full` EXIT=0 (205 pass); stress S6 p95 12 ms at 30 roots / 55 ms at 200 roots (budget 150), readFile ratio 1.37. 45 mutant runs, all red. UNC is unit-covered only (no SMB-free fixture). The OSC 8 wiring is isolated in `28b9dd6d` so it can be reverted alone.
+
+## v1 review/QA rounds and final state (`f6f71edf`)
+
+| Round | Verdict | What it caught |
+|---|---|---|
+| Security r1 (T8.4) | APPROVE | Hardening: OSC 8 mailto, symlink-to-UNC lstat walk, sync realpath on main |
+| Review r1 / QA r1 | APPROVE / FAIL | Dead `context` rank key; rule rows glued by the Ink join; Open Detected Link dropped the newest links |
+| Review r2 / QA r2 | REVISE / PASS | **Blocker:** the new walk's missing-component branch let a planted `a -> nope/../evil` escape the root (regression from r1's hardening); picker count/placeholder polish |
+| Review r3 | APPROVE | 15 escape attempts (fake posix/win32 fs + real junctions) all refused; fail-closed lstat, drive-relative targets |
+
+Integration: `npm run verify` EXIT=0 at `f6f71edf` (7655 tests); `e2e:remote --full` EXIT=0, 205 pass (run 39058688660). `feat/path-links` contains `feat/repo-engine` and fast-forwards `main` (61 commits).
+
+**Accepted debt:** refused OSC 8 links still look live (xterm 6 has no per-URI decoration hook); a file reached through a junction can open in two tabs (plain path vs realpath); Explorer shows junctions with file icons; Shift+F10 uses the text cursor; UNC paths unit-covered only.
+
+**Queued for the user:** info toast for a visible `file://` link outside the roots; quarantine of the flaky `multi-repo` e2e.
