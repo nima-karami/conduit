@@ -12,6 +12,8 @@
  *   5. `● Update(src/index.ts)` → only the path cells are a link; a click on `U` opens nothing.
  *   6. `…/repoB/src/index.ts` → a single candidate, opened directly.
  *   7. repoA's file deleted on disk, then picked → "no longer exists" toast, no tab opens.
+ *   7b. After `Bash(cd <parent>/repoA && npm test)`, `src/ctx.ts:9` → the repoA row says
+ *      "working here" while the last pick (repoB) keeps row 0 (context is a tie-breaker, T7.2).
  *   8. Printed on the bottom row, the link is right-clicked and never moved off: its menu and then
  *      the Copy path picker are clamped up over the resting pointer, which neither highlights nor
  *      takes a row. ArrowDown starts on the menu's first item; Enter copies the top-ranked
@@ -41,6 +43,7 @@ function makeRepo(dir, tag) {
   git(['config', 'user.name', 't'], dir);
   git(['config', 'commit.gpgsign', 'false'], dir);
   writeFileSync(join(dir, 'src', 'index.ts'), body(tag));
+  writeFileSync(join(dir, 'src', 'ctx.ts'), body(`${tag}ctx`));
   git(['add', '-A'], dir);
   git(['commit', '-qm', tag], dir);
 }
@@ -50,6 +53,8 @@ const norm = (p) => (p ?? '').replace(/\\/g, '/').toLowerCase();
 const LINE_AMBIG = 'src/index.ts:42';
 const LINE_TOOL = '● Update(src/index.ts)';
 const LINE_ELIDED = '…/repoB/src/index.ts';
+// Its own file: src/index.ts's cache entry is what step 7 relies on, and step 7 deletes repoA's.
+const LINE_CTX = 'src/ctx.ts:9';
 // Long, so the picker is wide enough to be clamped left of the pointer that opened it.
 const DEEP_DIR = 'src/a-deliberately-long-folder-name-so-the-picker-is-wide/deep';
 const LINE_BOTTOM = `${DEEP_DIR}/index.ts:7`;
@@ -345,6 +350,30 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   await page.waitForTimeout(500);
   assert((await tabInfo(page)).length === tabs7, 'a stale pick must open no tab');
   log('step 7: stale pick toasts and opens nothing ✓');
+
+  // ── 7b. context root (v1, T7.3): the agent was working in repoA ────────────────────
+  // One command, so no prompt line (itself a path under home) lands between the two lines, as in
+  // agent output. cmd's `^` keeps `(`, `)` and `&&` literal inside the echo.
+  await typeLine(page, sid, `(echo Bash^(cd ${parent}/repoA ^&^& npm test^) & echo ${LINE_CTX})`);
+  await waitForOutput(page, sid, LINE_CTX);
+  await waitQuiet();
+  await clickAt(LINE_CTX, 3);
+  await page.waitForSelector('.pathpick', { state: 'visible', timeout: 10000 });
+  const rowsCtx = await pickerRowsText();
+  log('context rows:', JSON.stringify(rowsCtx));
+  // T7.2 made context a tie-breaker, so the last pick (repoB) keeps row 0 and only the label moves.
+  assert(
+    /^repoB(?!-)/.test(rowsCtx[0] ?? ''),
+    `the last pick should keep row 0 over the context root, got ${JSON.stringify(rowsCtx)}`,
+  );
+  const here = rowsCtx.filter((t) => t.includes('working here'));
+  assert(
+    here.length === 1 && /^repoA(?!-)/.test(here[0]),
+    `exactly the repoA row should say "working here", got ${JSON.stringify(rowsCtx)}`,
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.pathpick', { state: 'detached', timeout: 5000 });
+  log('step 7b: the context root labels the repoA row "working here" ✓');
 
   // ── 8. a resting pointer under the clamped menu and picker takes neither ───────────
   for (const dir of ['repoA', 'repoB', 'T-123/repoA-wt']) {

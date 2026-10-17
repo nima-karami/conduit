@@ -9,20 +9,21 @@ import type { CandidateStrength, PathCandidate } from '../src/path-resolve';
 
 export interface RankInputs {
   roots: readonly ResolveRoot[];
-  /** Slice 7; undefined in the MVP. */
+  /** inferContextRoot over the lines above the token (Slice 7). */
   contextRootIdx?: number;
   lastPickRepoRoot?: string;
 }
 
 export type RankKey = 'strength' | 'context' | 'lastPick' | 'rootGroup' | 'rootOrder' | 'shorter';
 
-/** Slice 7 may move 'context' to just before 'shorter' (tie-breaker); nothing else reorders. */
+/** 'context' is a tie-breaker: the T7.2 measurement failed the plan's bar (see
+ *  docs/runs/2026-10-16-terminal-path-links/report.md "Context-root measurement (T7.2)"). */
 export const RANK_KEYS: readonly RankKey[] = [
   'strength',
-  'context',
   'lastPick',
   'rootGroup',
   'rootOrder',
+  'context',
   'shorter',
 ];
 

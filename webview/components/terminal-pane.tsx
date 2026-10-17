@@ -49,6 +49,7 @@ import {
   windowsPtyOptions,
   writeReplay,
 } from '../terminal-conpty';
+import { CONTEXT_WINDOW_LINES, inferContextRoot } from '../terminal-context-root';
 import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
 import { terminalGpu } from '../terminal-gpu';
 import { lastPick, notePick } from '../terminal-link-picks';
@@ -82,6 +83,11 @@ const MENU_ICONS = {
 // copies only when a selection exists. Drives terminalClipboardAction.
 const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
 const IS_WINDOWS = typeof navigator !== 'undefined' && /Win/i.test(navigator.platform);
+// Mirrors PATH_LINK_OPTS in electron/main.ts: the host folds case everywhere but Linux.
+const CONTEXT_PATH_OPTS = {
+  platform: IS_WINDOWS ? ('win32' as const) : ('posix' as const),
+  caseSensitive: !IS_WINDOWS && !IS_MAC,
+};
 
 // Upper bound on a path/commit link round-trip to the host. Only guards the case where
 // the reply never arrives (session disposed mid-flight) — kept generous so a merely slow
@@ -120,7 +126,7 @@ interface PickerState {
  *  private): a middle press is suppressed over any link, and a right-click on a path link adds
  *  its actions. */
 type HoveredLink =
-  | { kind: 'path'; token: string; found: LinkResolution; link: LinkTarget }
+  | { kind: 'path'; token: string; found: LinkResolution; link: LinkTarget; firstRow: number }
   | { kind: 'url' | 'commit' };
 
 // Explorer's icons for the same actions (webview/explorer-menu.tsx).
@@ -277,6 +283,28 @@ export function TerminalPane({
   );
   const openCandidateRef = useRef(openCandidate);
   openCandidateRef.current = openCandidate;
+
+  /** The root the lines above a link point at (spec §3.3 context root), read at click time so
+   *  output printed since the link was provided counts. */
+  const contextRootFor = (firstRow: number, roots: readonly ResolveRoot[]): number | undefined => {
+    const term = termRef.current;
+    if (!term) return undefined;
+    const above: string[] = [];
+    let y = firstRow - 1;
+    while (y >= 0 && above.length < CONTEXT_WINDOW_LINES) {
+      const ll = buildLogicalLine(term.buffer.active, y, term.cols);
+      if (!ll) {
+        y--;
+        continue;
+      }
+      above.push(ll.text);
+      y = ll.firstRow - 1;
+    }
+    const cwd = (cwdRef.current ?? '').replace(/\\/g, '/');
+    return inferContextRoot(above, roots, { cwd, ...CONTEXT_PATH_OPTS });
+  };
+  const contextRootForRef = useRef(contextRootFor);
+  contextRootForRef.current = contextRootFor;
 
   const closePicker = useCallback(() => {
     setPicker(null);
@@ -650,9 +678,11 @@ export function TerminalPane({
                   activate(event: MouseEvent, _text: string) {
                     const action = terminalLinkMiddleAction(event.button, navigator.platform);
                     if (action === 'ignore') return;
-                    // Ranked here, after the cache, so the last pick is always current.
+                    // Ranked here, after the cache, so the last pick and context are current.
+                    const contextRootIdx = contextRootForRef.current(ll.firstRow, found.roots);
                     const ranked = rankCandidates(res.candidates, {
                       roots: found.roots,
+                      contextRootIdx,
                       lastPickRepoRoot: lastPick(sessionId),
                     });
                     const click = chooseClickAction(ranked);
@@ -666,7 +696,7 @@ export function TerminalPane({
                       setPicker({
                         at: { x: event.clientX, y: event.clientY },
                         token: tok.raw,
-                        rows: pickerRows(ranked, found.roots),
+                        rows: pickerRows(ranked, found.roots, contextRootIdx),
                         total: res.total,
                         truncated: res.truncated,
                         link,
@@ -675,7 +705,13 @@ export function TerminalPane({
                     }
                   },
                   hover(_event: MouseEvent, _text: string) {
-                    hoveredLinkRef.current = { kind: 'path', token: tok.raw, found, link };
+                    hoveredLinkRef.current = {
+                      kind: 'path',
+                      token: tok.raw,
+                      found,
+                      link,
+                      firstRow: ll.firstRow,
+                    };
                     this.decorations = { pointerCursor: true, underline: true };
                   },
                   leave(_event: MouseEvent, _text: string) {
@@ -1066,8 +1102,10 @@ export function TerminalPane({
     }
     // A path link: its actions lead, then the terminal's own (spec §3.4).
     const { found, link, token } = hovered;
+    const contextRootIdx = contextRootFor(hovered.firstRow, found.roots);
     const ranked = rankCandidates(found.res.candidates, {
       roots: found.roots,
+      contextRootIdx,
       lastPickRepoRoot: lastPick(sessionId),
     });
     const click = chooseClickAction(ranked);
@@ -1077,7 +1115,7 @@ export function TerminalPane({
       setPicker({
         at,
         token,
-        rows: pickerRows(ranked, found.roots),
+        rows: pickerRows(ranked, found.roots, contextRootIdx),
         total: found.res.total,
         truncated: found.res.truncated,
         link,

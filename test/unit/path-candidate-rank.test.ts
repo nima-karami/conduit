@@ -90,19 +90,29 @@ describe('rankCandidates', () => {
     expect(names(rankCandidates(cs, { roots: ROOTS }))).toEqual(['repoB', '-']);
   });
 
-  it('context ranks second, above lastPick; undefined has no effect', () => {
-    expect(RANK_KEYS.slice(0, 3)).toEqual(['strength', 'context', 'lastPick']);
+  // T7.2 failed the bar (23 ambiguous samples < 30, and no better than the baseline), so context
+  // is a tie-breaker: see docs/runs/2026-10-16-terminal-path-links/report.md "Context-root
+  // measurement (T7.2)".
+  it('context is the tie-breaker just before shorter: lastPick and root order win over it', () => {
+    expect(RANK_KEYS).toEqual([
+      'strength',
+      'lastPick',
+      'rootGroup',
+      'rootOrder',
+      'context',
+      'shorter',
+    ]);
     const cs = [cand(1, 'x.ts'), cand(2, 'x.ts'), cand(3, 'x.ts')];
     const both = { roots: ROOTS, lastPickRepoRoot: '/w/repoB' };
     expect(names(rankCandidates(cs, { ...both, contextRootIdx: 2 }))).toEqual([
-      'repoA-wt',
       'repoB',
       'repoA',
+      'repoA-wt',
     ]);
-    expect(names(rankCandidates(cs, { ...both, contextRootIdx: undefined }))).toEqual([
-      'repoB',
+    expect(names(rankCandidates(cs, { roots: ROOTS, contextRootIdx: 3 }))).toEqual([
       'repoA',
       'repoA-wt',
+      'repoB',
     ]);
   });
 
