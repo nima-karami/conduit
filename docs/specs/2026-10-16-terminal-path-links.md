@@ -215,13 +215,17 @@ interface RootedFile { file: IndexedFile; rootIdx: number }   // wraps, never mu
   can lag by ≤ 5 s.
 
 ### 3.3 Ranking (pure `rankCandidates`, renderer)
-Keys in order: (1) `exact-cwd` > `exact-root` > `suffix`; (2) **context root** (v1): the root containing the
-nearest absolute path or `cd <dir>` printed above the token within the last 200 logical lines of this
-terminal (≈ one agent turn of output; tunable constant); (3) the root of this session's **last picked
-candidate** (renderer state per session, runtime-only); (4) home; (5) attached in add order; (6) nested and
-worktrees by name (engine git-index mtime when available); (7) shorter `relToRoot`, then `localeCompare`.
+Keys in order (`RANK_KEYS` in `webview/path-candidate-rank.ts`): (1) `exact-cwd` > `exact-root` > `suffix`;
+(2) the root of this session's **last picked candidate** (renderer state per session, runtime-only); (3) root
+group: home and the cwd's repo, then attached, then nested and worktrees; (4) root order within the group
+(attached in add order, nested and worktrees by name); (5) shorter `relToRoot`, then `localeCompare`.
+The **context root** (v1) — the root containing the nearest absolute path or `cd <dir>` printed above the
+token within the last 200 logical lines of this terminal (≈ one agent turn of output; tunable constant) — is
+**not** a rank key: the T7.2 measurement failed the plan's bar
+(`docs/runs/2026-10-16-terminal-path-links/report.md` "Context-root measurement (T7.2)"), so it only labels
+that root's picker row "working here", and is read only when a picker opens.
 `activeRepoRoot` is deliberately **not** a key: auto-follow moves it on file focus, so opening a pick would
-feed back into the ranking key (3) already covers, and `sessionGitRoot` documents that terminal resolution
+feed back into the ranking key (2) already covers, and `sessionGitRoot` documents that terminal resolution
 ignores the pin.
 
 ### 3.4 Link context menu (`webview/term-menu.ts` builder)
@@ -250,8 +254,9 @@ Reference, `explorer-menu.tsx:174`):
 - Show in Files is out of scope (vision): `revealInTree` targets the active session's tree only.
 
 ### 3.5 OSC 8 + `file://`
-- Set `allowNonHttpProtocols: true`; `linkHandler.activate` dispatches: `http(s)`/`mailto` → `openExternal`
-  (unchanged, `window.open` fallback kept for the bridge-less preview only); `file:` → decode → path (line
+- Set `allowNonHttpProtocols: true`; `linkHandler.activate` dispatches: `http(s)` → `openExternal`
+  (unchanged, `window.open` fallback kept for the bridge-less preview only; an OSC 8 `mailto:` is ignored
+  because its label can hide it, a printed one still opens — T8.4 security r1 H1); `file:` → decode → path (line
   from `#L42` / `:l:c` suffix if present) → same open path as an absolute token, incl. the `pathExists`
   re-check (xterm underlines OSC 8 unconditionally, so a missing target ends in the stale toast); scheme-less
   absolute path → same; anything else → ignored. Never `shell.openExternal`/`shell.openPath` on a file

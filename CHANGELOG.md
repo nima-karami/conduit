@@ -23,7 +23,8 @@ All notable user-facing changes to Conduit. Format follows
   printed `file:///…` URL now open the file in an editor tab at its `#L42` line, or reveal a
   folder, instead of doing nothing. Conduit opens the target only when it lies inside one of the
   session's own folders, following symlinks and junctions to check; anything else, including a
-  network-share or device path and every `javascript:` or `data:` link, opens nothing. Right-click
+  network-share or device path, a symlink or junction pointing at one, and every `javascript:`,
+  `data:` or hidden `mailto:` link, opens nothing. Right-click
   such a link for the same actions as a path.
 - **More path shapes link.** An unquoted absolute path with spaces (`C:/Program Files/app/x.ts`), a
   path cut short at its end (`src/util/a…`, when only a few files match), a path Claude Code
@@ -31,7 +32,7 @@ All notable user-facing changes to Conduit. Format follows
   session. When the lines above a path show the agent working in one repo (`cd` into it, or a file
   path inside it), the picker marks that repo's row "working here".
 - **Terminal links from the keyboard.** The command palette's **Terminal: Open Detected Link…**
-  lists the path links on screen and opens the one you pick; Shift+F10 or the Menu key opens the
+  lists the path links on screen, newest first, and opens the one you pick; Shift+F10 or the Menu key opens the
   link menu for the link under the cursor, or the terminal's own menu.
 - A cwd reported by terminal output that points at a network share outside the session's folders
   is ignored, so printing `\\server\share` no longer freezes the app while Windows tries to reach it.
