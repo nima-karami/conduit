@@ -22,6 +22,9 @@ export class ProjectWatcher {
   private folders: string[] = [];
   private keys: string[] = [];
   private readonly watches = new Map<string, DirWatch>();
+  // Roots whose watch failed or vanished, until one opens again: an unwatchable root is retried
+  // on every setFolders, and re-marking its repos each time re-ran their git on every switch.
+  private readonly lostKeys = new Set<string>();
   // Folder indexes, never paths, so a 10k-event burst costs nothing to hold (L12 S4).
   private touched = new Set<number>();
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -99,20 +102,25 @@ export class ProjectWatcher {
         (err) => {
           this.log?.(err ? `watch error on ${dir}: ${err}` : `watched folder vanished: ${dir}`);
           this.watches.delete(key);
-          const lost = this.foldersUnder(key).map((i) => this.folders[i]);
-          this.onSuspect?.(lost);
-          this.onLost?.(lost);
+          this.lost(key);
           this.onLive?.([...this.watches.keys()]);
         },
       );
       this.watches.set(key, watch);
+      this.lostKeys.delete(key);
     } catch (e) {
       // Recursive watch can fail (e.g. an unsupported FS); degrade to focus-only refresh.
+      if (this.lostKeys.has(key)) return;
       this.log?.(`failed to watch ${dir}: ${e}`);
-      const lost = this.foldersUnder(key).map((i) => this.folders[i]);
-      this.onSuspect?.(lost);
-      this.onLost?.(lost);
+      this.lost(key);
     }
+  }
+
+  private lost(key: string): void {
+    this.lostKeys.add(key);
+    const lost = this.foldersUnder(key).map((i) => this.folders[i]);
+    this.onSuspect?.(lost);
+    this.onLost?.(lost);
   }
 
   private close(key: string, watch: DirWatch): void {

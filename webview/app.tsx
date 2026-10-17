@@ -18,7 +18,6 @@ import { canonicalPath, pathBelow, renamedPath } from '../src/canonical-path';
 import {
   applyRepoDelta,
   changesModel,
-  createProjectReplyOrder,
   repoChangesOf,
   type SessionSnapshots,
 } from '../src/changes-view-model';
@@ -640,8 +639,6 @@ export function App() {
     (panel: HideablePanel) => (panel === 'sessions' ? toggleSidebar() : toggleExplorer()),
     [toggleSidebar, toggleExplorer],
   );
-
-  const projectReplies = useRef(createProjectReplyOrder());
 
   useEffect(() => {
     return subscribe((msg) => {
@@ -1717,7 +1714,7 @@ export function App() {
   // 2026-10-08-language-coverage, Spec staleness).
   useEffect(() => setLspVisible(visibleFilePaths), [visibleFilePaths]);
 
-  // Ask the host for git changes + file tree whenever the active cwd changes.
+  // Tell the host the active cwd moved (it arms the watch and rescans repos).
   // activeCwd(active) prefers the live cd-tracked dir (cwd) over home.
   // Depend on home + cwd (not the whole session object) so a rename or
   // icon change does NOT retrigger a potentially-expensive project reload.
@@ -1727,7 +1724,6 @@ export function App() {
       post({
         type: 'requestProject',
         auto: true,
-        requestId: projectReplies.current.next(),
         path: activeCwd(active),
         sessionId: active.id,
       });
@@ -1757,7 +1753,6 @@ export function App() {
         post({
           type: 'requestProject',
           auto: auto === true,
-          requestId: projectReplies.current.next(),
           path: activeCwd(active),
           sessionId: active.id,
         });
@@ -1837,7 +1832,6 @@ export function App() {
     if (cur)
       post({
         type: 'requestProject',
-        requestId: projectReplies.current.next(),
         path: activeCwd(cur),
         sessionId: cur.id,
       });

@@ -1,7 +1,7 @@
 import type { DiffScope, DirEntryDTO, RepoDTO, SearchHit } from '../src/protocol';
 import type { SkillInfo } from '../src/skills';
 import type { AgentDefinition, Project, Session } from '../src/types';
-import type { VMChange, VMCustomization, VMFileNode } from './view-model';
+import type { VMChange } from './view-model';
 
 /** Preview catalog for the Skills panel (no host): the bundled skills, all not-installed. */
 export function mockSkills(): SkillInfo[] {
@@ -233,14 +233,6 @@ export const mockSessions: Session[] = [
   },
 ];
 
-export const customizations: VMCustomization[] = [
-  { id: 'agents', label: 'Agents', icon: 'agent', count: 3 },
-  { id: 'skills', label: 'Skills', icon: 'skill', count: 21 },
-  { id: 'instructions', label: 'Instructions', icon: 'doc', count: 2 },
-  { id: 'hooks', label: 'Hooks', icon: 'hook' },
-  { id: 'mcp', label: 'MCP Servers', icon: 'server', count: 1 },
-];
-
 export const changes: VMChange[] = [
   // Staged (index) side.
   { path: 'app/page.tsx', added: 142, removed: 38, kind: 'M', staged: true },
@@ -254,20 +246,6 @@ export const changes: VMChange[] = [
   { path: '.env.example', added: 13, removed: 6, kind: 'M', staged: false },
   { path: 'next.config.ts', added: 28, removed: 19, kind: 'M', staged: false },
   { path: 'README.md', added: 74, removed: 22, kind: 'M', staged: false },
-];
-
-export const files: VMFileNode[] = [
-  { name: 'nextjs-portfolio', kind: 'dir', depth: 0, expanded: true },
-  { name: 'app', kind: 'dir', depth: 1, expanded: true },
-  { name: 'page.tsx', kind: 'file', status: 'M', depth: 2 },
-  { name: 'layout.tsx', kind: 'file', status: 'M', depth: 2 },
-  { name: 'components', kind: 'dir', depth: 1, expanded: true },
-  { name: 'Hero.tsx', kind: 'file', status: 'A', depth: 2 },
-  { name: 'Nav.tsx', kind: 'file', status: 'M', depth: 2 },
-  { name: 'lib', kind: 'dir', depth: 1 },
-  { name: 'public', kind: 'dir', depth: 1 },
-  { name: '.env.example', kind: 'file', status: 'M', depth: 1 },
-  { name: 'README.md', kind: 'file', status: 'M', depth: 1 },
 ];
 
 export const mockDir: DirEntryDTO[] = [

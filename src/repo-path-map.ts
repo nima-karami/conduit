@@ -53,20 +53,25 @@ export class RepoPathMap {
   private readonly commonDirs = new Set<string>();
   /** `<commonDir>/refs/heads/<branch>` and `<commonDir>/packed-refs`, folderKey'd → repo keys. */
   private readonly refs = new Map<string, string[]>();
+  /** `<commonDir>/reftable`, folderKey'd → repo keys: a reftable repo writes every ref update
+   *  there, so no single branch file names the repo it moved. */
+  private readonly reftables = new Map<string, string[]>();
 
   constructor(repos: readonly RepoPaths[]) {
-    const addRef = (refKey: string, key: string) => {
-      const keys = this.refs.get(refKey);
+    const add = (into: Map<string, string[]>, at: string, key: string) => {
+      const keys = into.get(at);
       if (keys) keys.push(key);
-      else this.refs.set(refKey, [key]);
+      else into.set(at, [key]);
     };
     for (const r of repos) {
       this.byRoot.set(r.key, r.key);
       if (r.gitDir) this.byGitDir.set(r.gitDir, r.key);
       if (!r.commonDir) continue;
       this.commonDirs.add(r.commonDir);
-      addRef(folderKey(`${r.commonDir}/packed-refs`), r.key);
-      if (r.branch !== undefined) addRef(folderKey(`${r.commonDir}/refs/heads/${r.branch}`), r.key);
+      add(this.refs, folderKey(`${r.commonDir}/packed-refs`), r.key);
+      add(this.reftables, folderKey(`${r.commonDir}/reftable`), r.key);
+      if (r.branch !== undefined)
+        add(this.refs, folderKey(`${r.commonDir}/refs/heads/${r.branch}`), r.key);
     }
   }
 
@@ -75,6 +80,8 @@ export class RepoPathMap {
     const refKeys = this.refs.get(absKey);
     if (refKeys) return refKeys.map((key) => ({ key, kind: 'meta' }));
     for (const dir of ancestorsOf(absKey)) {
+      const reftableKeys = this.reftables.get(dir);
+      if (reftableKeys) return reftableKeys.map((key) => ({ key, kind: 'meta' }));
       const gitDirOwner = this.byGitDir.get(dir);
       if (gitDirOwner !== undefined) {
         if (dir === absKey) return [];

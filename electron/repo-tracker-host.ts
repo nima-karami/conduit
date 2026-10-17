@@ -3,10 +3,9 @@ import * as path from 'node:path';
 import { folderKey } from '../src/folder-key';
 import { interrogateGit } from '../src/git-info';
 import { readRepoChanges } from '../src/project-info';
-import type { HostToWebview } from '../src/protocol';
+import type { HostToWebview, RepoSnapshot } from '../src/protocol';
 import {
   createRepoTracker,
-  type RepoSnapshot,
   type RepoTracker,
   type RepoTrackerDeps,
   type TrackerUpdate,
@@ -22,7 +21,9 @@ import { watchDirWhilePresent } from './watch-dir';
 
 export interface RepoTrackerHostDeps {
   mgr: Pick<SessionManager, 'get' | 'list' | 'mergeRepoGit'>;
-  demand: Pick<SessionResourceDemand, 'isVisible' | 'isVisibleInWindow'>;
+  demand: Pick<SessionResourceDemand, 'isVisible' | 'isShownInWindow' | 'shownIn'>;
+  /** Whether the window owns the session (main's sessionOwner). */
+  owns: (windowId: number, sessionId: string) => boolean;
   windows: () => Iterable<{ id: number; send(msg: HostToWebview): void }>;
   log: Pick<Logger, 'debug' | 'warn'>;
   /** Tests only; the real deps are built here. */
@@ -38,10 +39,13 @@ export interface RepoTrackerHost {
   setLiveRoots(roots: readonly string[]): void;
   /** On EVERY `visible` message: a reloaded renderer in the same window re-posts the same ids. */
   windowShown(windowId: number, ids: readonly string[]): void;
-  setLinesDemand(windowId: number, sessionIds: readonly string[]): void;
+  /** Un-minimize: the renderer posts no `visible` for it, so its sessions are re-sent here. */
+  windowRestored(windowId: number): void;
+  /** Raw IPC payloads: shape-checked here. */
+  setLinesDemand(windowId: number, sessionIds: unknown): void;
   dropWindow(windowId: number): void;
   windowFocused(): void;
-  refresh(sessionId: string, root: string): void;
+  refresh(sessionId: unknown, root: unknown): void;
   stop(): void;
 }
 
@@ -71,7 +75,8 @@ export function createRepoTrackerHost(deps: RepoTrackerHostDeps): RepoTrackerHos
   ) => {
     const root = rootFor(sessionId, key, fallbackRoot);
     for (const w of deps.windows()) {
-      if (!demand.isVisibleInWindow(w.id, sessionId)) continue;
+      // Minimized windows too: restore re-sends in full, but a delta must not be lost meanwhile.
+      if (!demand.isShownInWindow(w.id, sessionId)) continue;
       w.send({ type: 'repoDelta', sessionId, full: false, repos: { [root]: entry } });
     }
   };
@@ -133,7 +138,20 @@ export function createRepoTrackerHost(deps: RepoTrackerHostDeps): RepoTrackerHos
     ...deps.trackerDeps,
   });
 
-  const known = (ids: readonly string[]) => ids.filter((id) => mgr.get(id) !== undefined);
+  const owned = (windowId: number, ids: readonly string[]) =>
+    ids.filter((id) => mgr.get(id) !== undefined && deps.owns(windowId, id));
+
+  const sendFull = (windowId: number, ids: readonly string[]) => {
+    const target = [...deps.windows()].find((w) => w.id === windowId);
+    if (target)
+      for (const sessionId of owned(windowId, ids))
+        target.send({
+          type: 'repoDelta',
+          sessionId,
+          full: true,
+          repos: tracker.snapshotsFor(sessionId),
+        });
+  };
 
   return {
     tracker,
@@ -141,19 +159,20 @@ export function createRepoTrackerHost(deps: RepoTrackerHostDeps): RepoTrackerHos
     lostFolders: (folders) => tracker.lostFolders(folders),
     setLiveRoots: (roots) => tracker.setLiveRoots(roots),
     windowShown(windowId, ids) {
-      const target = [...deps.windows()].find((w) => w.id === windowId);
-      if (target)
-        for (const sessionId of known(ids))
-          target.send({
-            type: 'repoDelta',
-            sessionId,
-            full: true,
-            repos: tracker.snapshotsFor(sessionId),
-          });
+      sendFull(windowId, ids);
       tracker.visibilityChanged();
     },
+    windowRestored(windowId) {
+      sendFull(windowId, demand.shownIn(windowId));
+    },
     setLinesDemand(windowId, sessionIds) {
-      linesDemand.set(windowId, new Set(known(sessionIds)));
+      if (!Array.isArray(sessionIds) || !sessionIds.every((id) => typeof id === 'string')) {
+        log.warn('repo-tracker', 'changes:subscribe ignored: sessionIds is not a string array', {
+          windowId,
+        });
+        return;
+      }
+      linesDemand.set(windowId, new Set(owned(windowId, sessionIds)));
       tracker.linesDemandChanged();
     },
     dropWindow(windowId) {
@@ -161,6 +180,12 @@ export function createRepoTrackerHost(deps: RepoTrackerHostDeps): RepoTrackerHos
     },
     windowFocused: () => tracker.windowFocused(),
     refresh(sessionId, root) {
+      if (typeof sessionId !== 'string' || typeof root !== 'string') {
+        log.warn('repo-tracker', 'repo:refresh ignored: sessionId and root must be strings', {
+          sessionId: String(sessionId),
+        });
+        return;
+      }
       const key = folderKey(root);
       if (!mgr.get(sessionId)?.repos?.some((r) => folderKey(r.root) === key)) {
         log.warn('repo-tracker', 'refresh rejected: root is not a repo of the session', {

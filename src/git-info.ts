@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { runGitBin } from './git-exec';
+import { type GitFailure, gitFailureOf, runGitBin } from './git-exec';
 import type { GitInfo, GitOperation } from './types';
 
 /**
@@ -45,7 +45,9 @@ interface GitInfoOptions {
   skipDirty?: boolean;
 }
 
-type RunResult = { ok: true; stdout: string } | { ok: false; notFound: boolean };
+type RunResult =
+  | { ok: true; stdout: string }
+  | { ok: false; notFound: boolean; failure?: GitFailure };
 
 /** Run git with an arg array, bounded by a deadline. Never rejects. */
 function runGit(
@@ -54,9 +56,13 @@ function runGit(
   cwd: string,
   timeoutMs: number,
 ): Promise<RunResult> {
-  return runGitBin(gitBin, args, { cwd, timeoutMs, maxBuffer: MAX_BUFFER }).then((r) =>
-    r.ok ? { ok: true, stdout: r.stdout } : { ok: false, notFound: r.notFound },
-  );
+  return runGitBin(gitBin, args, { cwd, timeoutMs, maxBuffer: MAX_BUFFER }).then((r) => {
+    if (r.ok) return { ok: true, stdout: r.stdout };
+    // An exit code is git's own answer ("not a git repository", in any locale); none means it
+    // never answered (killed by the timeout, or never spawned).
+    const failure = r.code === null ? (gitFailureOf(r) ?? 'failed') : undefined;
+    return { ok: false, notFound: r.notFound, ...(failure ? { failure } : {}) };
+  });
 }
 
 /** Map a gitdir marker file/dir to the operation it signals. First match wins. */
@@ -133,16 +139,15 @@ function makeGitInfo(facts: {
   return info;
 }
 
-/** A git interrogation result plus the HEAD file to watch for refresh (when in a repo). */
 export interface GitInterrogation {
   info: GitInfo;
-  /** Absolute path to the `HEAD` to watch (the per-worktree git-dir's HEAD); undefined
-   * when cwd is not a repo / git is unavailable. Watched for an external checkout that
-   * doesn't move cwd. */
-  headPath?: string;
   /** Absolute, forward-slashed. Present when rev-parse answered. */
   gitDir?: string;
   commonDir?: string;
+  /** Git never answered (timeout, spawn failure), so `info` says nothing about the repo and a
+   *  caller holding an earlier answer keeps it (multi-repo-tracking spec §3 Errors). Absent for
+   *  a real "not a repo". */
+  failure?: GitFailure;
 }
 
 /**
@@ -153,11 +158,8 @@ export async function getGitInfo(cwd: string, opts: GitInfoOptions = {}): Promis
   return (await interrogateGit(cwd, opts)).info;
 }
 
-/**
- * Like `getGitInfo` but also returns the HEAD path to watch, resolved from the same
- * `rev-parse` this already runs — so the host's refresh seam gets both from one
- * interrogation instead of spawning a second `rev-parse --git-dir` just for the watch.
- */
+/** Like `getGitInfo` but also returns the git dirs from the same `rev-parse`, and whether git
+ *  failed to answer at all. */
 export async function interrogateGit(
   cwd: string,
   opts: GitInfoOptions = {},
@@ -166,7 +168,7 @@ export async function interrogateGit(
   const gitBin = opts.gitBin ?? 'git';
   const log = opts.log ?? ((m: string) => console.error(m));
 
-  if (!gitAvailable) return { info: { kind: 'none' } };
+  if (!gitAvailable) return { info: { kind: 'none' }, failure: 'not-found' };
   if (!cwd) return { info: { kind: 'none' } };
 
   // Bare-ness + the gitdirs first. `--show-toplevel` errors in a bare repo, so it can't
@@ -183,8 +185,8 @@ export async function interrogateGit(
       gitAvailable = false;
       log('[git-info] git not found on PATH — disabling git interrogation for this process');
     }
-    // Non-zero exit here means "not a git repo" (or timeout) — both → none, no log spam.
-    return { info: { kind: 'none' } };
+    // A non-zero exit means "not a git repo": none, no log spam.
+    return { info: { kind: 'none' }, ...(base.failure ? { failure: base.failure } : {}) };
   }
 
   const baseLines = base.stdout.split('\n').map((l) => l.trim());
@@ -193,15 +195,12 @@ export async function interrogateGit(
   // Resolve the gitdir to an absolute path (rev-parse may return it relative to cwd).
   const gitDir = gitDirRaw ? path.resolve(cwd, gitDirRaw) : '';
   const gitCommon = gitCommonRaw ? path.resolve(cwd, gitCommonRaw) : '';
-  // HEAD lives in the per-worktree git-dir (not the shared common dir), so a linked
-  // worktree watches its own HEAD.
-  const headPath = gitDir ? path.join(gitDir, 'HEAD') : undefined;
   const dirs = {
     ...(gitDir ? { gitDir: slash(gitDir) } : {}),
     ...(gitCommon ? { commonDir: slash(gitCommon) } : {}),
   };
 
-  if (isBare === 'true') return { info: makeGitInfo({ kind: 'bare' }), headPath, ...dirs };
+  if (isBare === 'true') return { info: makeGitInfo({ kind: 'bare' }), ...dirs };
 
   // Work-tree top-level (for the worktree label) — safe now that bare is ruled out.
   const top = await runGit(gitBin, ['rev-parse', '--show-toplevel'], cwd, timeoutMs);
@@ -221,6 +220,8 @@ export async function interrogateGit(
   let unborn = false;
   let sha: string | undefined;
 
+  if (!abbrev.ok && abbrev.failure)
+    return { info: { kind: 'none' }, failure: abbrev.failure, ...dirs };
   if (!abbrev.ok) {
     // rev-parse HEAD fails on an unborn HEAD (fresh init, zero commits). Distinguish it
     // from a real error by reading the symref name out of HEAD directly.
@@ -231,7 +232,7 @@ export async function interrogateGit(
       unborn = true;
     } else {
       log(`[git-info] HEAD unresolved and no unborn symref for ${cwd}`);
-      return { info: { kind: 'none' }, headPath, ...dirs };
+      return { info: { kind: 'none' }, ...dirs };
     }
   } else {
     const name = abbrev.stdout.trim();
@@ -271,7 +272,6 @@ export async function interrogateGit(
       dirty,
       operation,
     }),
-    headPath,
     ...dirs,
   };
 }

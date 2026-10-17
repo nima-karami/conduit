@@ -141,18 +141,7 @@ export async function installChangeObserver(page) {
       if (log.length > 50) log.shift();
     };
     window.agentDeck.subscribe((m) => {
-      if (m.type === 'project' && Array.isArray(m.repoChanges)) {
-        const at = norm(m.path);
-        const owner = (window.__sessions || []).find(
-          (s) => norm(s.cwd) === at || norm(s.home) === at,
-        );
-        if (!owner) return;
-        record(
-          owner.id,
-          m.repoChanges.flatMap((r) => r.changes.map((c) => c.path)),
-          undefined,
-        );
-      } else if (m.type === 'repoDelta') {
+      if (m.type === 'repoDelta') {
         const merged = m.full ? {} : { ...(window.__repoNames[m.sessionId] ?? {}) };
         for (const [repoRoot, snap] of Object.entries(m.repos ?? {})) {
           if (snap?.removed) delete merged[norm(repoRoot)];

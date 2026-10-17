@@ -211,6 +211,22 @@ describe('SessionFolderRuntime (watcher)', () => {
     expect(h.armed.at(-1)).toEqual(['/w/a', '/x/R', '/w/b', '/w/c']);
   });
 
+  it('a hidden session stays armed while it holds registered repos; reposChanged re-arms', () => {
+    const h = harness();
+    h.add(session('c', '/w/c'));
+    const repo = (root: string) => ({ root, name: root, folder: root, tag: 'home' as const });
+    h.sessions[1].repos = [repo('/w/b')];
+    h.sessions[2].repos = [];
+    h.rt.requestProject('/w/a', 'a', 1);
+    expect(h.armed.at(-1)).toEqual(['/w/a', '/w/b']);
+    h.sessions[2].repos = [repo('/w/c')];
+    h.rt.reposChanged();
+    expect(h.armed.at(-1)).toEqual(['/w/a', '/w/b', '/w/c']);
+    h.sessions[1].repos = undefined;
+    h.rt.reposChanged();
+    expect(h.armed.at(-1)).toEqual(['/w/a', '/w/c']);
+  });
+
   it('visibilityChanged re-arms', () => {
     const h = harness();
     h.rt.requestProject('/w/a', 'a', 1);

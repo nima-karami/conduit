@@ -16,7 +16,6 @@ import type { PreviewReason } from './preview-url';
 import type { QueueSummary } from './queue-summary';
 import type { RangePreset } from './range-preset';
 import type { RepoTag } from './repo-scan';
-import type { RepoSnapshot } from './repo-tracker';
 import type { ReviewMark, ReviewMarksRepo } from './review-marks';
 import type { ReviewNote, ReviewNotePatch } from './review-notes';
 import type { AppSettings } from './settings';
@@ -116,6 +115,22 @@ export interface RepoChanges {
   error?: GitFailure;
 }
 
+/** One repo's entry in a `repoDelta`, as the host-wide repo tracker caches it
+ *  (docs/plans/2026-10-16-multi-repo-tracking.plan.md, Contracts). */
+export interface RepoSnapshot {
+  /** Status-derived, always present once read. */
+  changes: ChangeDTO[];
+  /** added/removed populated. */
+  lines: boolean;
+  /** Host Date.now() when the run's status completed. */
+  refreshedAt: number;
+  /** Last run failed; `changes` are the last good ones. */
+  error?: GitFailure;
+  /** Set only on snapshots sent from cache while the repo has pending (parked or queued) dirt:
+   *  the renderer renders "as of <refreshedAt>" instead of presenting it as current (spec §3). */
+  stale?: true;
+}
+
 /** Which blob each side of a diff is read from. `base:'head'` + `side:'worktree'` (the
  *  defaults) is the whole-working-tree diff Review has always shown; the other two pairs are
  *  Review's Staged / Unstaged scopes. See spec 2026-08-27-review-supercharge §2 Lane D. */
@@ -125,18 +140,6 @@ export type DiffSide = 'index' | 'worktree';
 export interface DiffScope {
   base?: DiffBase;
   side?: DiffSide;
-}
-
-export interface FileNodeDTO {
-  name: string;
-  kind: 'dir' | 'file';
-  status?: ChangeKind;
-  depth: number;
-}
-
-export interface CustomizationCount {
-  id: string;
-  count: number;
 }
 
 /** New session dialog folder probe (mf-new-session spec §3.2): one `folder:probe` carries at most this many. */
@@ -407,13 +410,6 @@ export type HostToWebview =
       // The id of the window receiving this state (multi-window Slice B). The renderer
       // uses it to exclude itself from the "Move to window…" picker (win:list).
       windowId: number;
-    }
-  | {
-      type: 'project';
-      path: string;
-      files: FileNodeDTO[];
-      customizations: CustomizationCount[];
-      requestId: number;
     }
   | {
       type: 'repoDelta';
@@ -856,15 +852,13 @@ export type WebviewToHost =
   // Sent at a DownloadURL dragstart; the host's will-download admits only an armed file.
   | { type: 'fs:armDragDownload'; path: string }
   | { type: 'launch:preview'; requestId: number; agentId: string; home: string; roots: string[] }
-  // Ask host for the file tree (from `path`); change lists arrive as `repoDelta`.
+  // The session's view moved to `path`: the host arms its watch, rescans repos and checks folder
+  // health. No reply; change lists arrive as `repoDelta`.
   | {
       type: 'requestProject';
       path: string;
       auto?: boolean;
       sessionId?: string;
-      /** Echoed on the `project` reply so the renderer can drop an out-of-order one. Required:
-       *  an untagged post would bypass that ordering (review N-3). */
-      requestId: number;
     }
   // Folder and project ops (mf-model spec §3.2). A `requestId` asks for a reply; the next
   // `state` is authoritative either way.

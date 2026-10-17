@@ -2,39 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   applyRepoDelta,
   changesModel,
-  createProjectReplyOrder,
   repoChangesOf,
   type SessionSnapshots,
 } from '../../src/changes-view-model';
-import type { ChangeDTO, HostToWebview, RepoChanges } from '../../src/protocol';
+import type { ChangeDTO, HostToWebview, RepoChanges, RepoSnapshot } from '../../src/protocol';
 import type { RepoInfo } from '../../src/repo-scan';
-import type { RepoSnapshot } from '../../src/repo-tracker';
-
-describe('createProjectReplyOrder', () => {
-  it('an older reply landing after a newer one is dropped (N-3)', () => {
-    const order = createProjectReplyOrder();
-    const first = order.next();
-    const second = order.next();
-    expect(order.accept(second)).toBe(true);
-    expect(order.accept(first)).toBe(false);
-  });
-
-  it('a reply is shown even when newer requests are already in flight', () => {
-    const order = createProjectReplyOrder();
-    const first = order.next();
-    order.next();
-    order.next();
-    expect(order.accept(first)).toBe(true);
-  });
-
-  it('ids are increasing, and id 0 never overrides a shown reply', () => {
-    const order = createProjectReplyOrder();
-    const a = order.next();
-    expect(order.next()).toBeGreaterThan(a);
-    expect(order.accept(2)).toBe(true);
-    expect(order.accept(0)).toBe(false);
-  });
-});
 
 const ch = (path: string, staged: boolean, added = 1, removed = 0): ChangeDTO => ({
   path,

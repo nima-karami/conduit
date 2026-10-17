@@ -151,6 +151,25 @@ d(
       const root = mkTmp();
       const info = await getGitInfo(root);
       expect(info.kind).toBe('none');
+      expect((await interrogateGit(root)).failure).toBeUndefined();
+    });
+
+    it('a rev-parse killed by the timeout is a failure, not "not a repo"', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      vi.mocked(runGitBin).mockResolvedValueOnce({
+        ok: false,
+        stdout: '',
+        stdoutBuffer: Buffer.alloc(0),
+        stderr: '',
+        code: null,
+        notFound: false,
+        timedOut: true,
+        aborted: false,
+        truncated: false,
+      });
+      expect(await interrogateGit(root)).toEqual({ info: { kind: 'none' }, failure: 'timeout' });
     });
 
     it('detects a linked worktree and labels it by basename', async () => {

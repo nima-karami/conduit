@@ -21,13 +21,6 @@ export interface VMProject {
   sessions: VMSession[];
 }
 
-export interface VMCustomization {
-  id: string;
-  label: string;
-  icon: string;
-  count?: number;
-}
-
 export type ChangeKind = 'M' | 'A' | 'D' | 'R' | 'U';
 
 export interface VMChange {
@@ -36,14 +29,6 @@ export interface VMChange {
   removed: number;
   kind: ChangeKind;
   staged: boolean;
-}
-
-export interface VMFileNode {
-  name: string;
-  kind: 'dir' | 'file';
-  status?: ChangeKind;
-  depth: number;
-  expanded?: boolean;
 }
 
 export type Block =

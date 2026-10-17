@@ -88,3 +88,15 @@ it('visibleIds unions non-suspended windows', () => {
   expect(demand.visibleIds()).toEqual(['a', 'b', 'c']);
   demand.stop();
 });
+
+it('a minimized window keeps its own set: shown, though not visible', () => {
+  const demand = createSessionResourceDemand(vi.fn());
+  demand.setVisible(1, ['a', 'b']);
+  demand.setSuspended(1, true);
+  expect(demand.isVisibleInWindow(1, 'a')).toBe(false);
+  expect(demand.isShownInWindow(1, 'a')).toBe(true);
+  expect(demand.isShownInWindow(2, 'a')).toBe(false);
+  expect(demand.shownIn(1)).toEqual(['a', 'b']);
+  expect(demand.shownIn(2)).toEqual([]);
+  demand.stop();
+});

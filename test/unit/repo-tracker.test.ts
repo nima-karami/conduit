@@ -268,6 +268,32 @@ describe('createRepoTracker', () => {
     ]);
   });
 
+  it('a failed run that was reading lines re-marks the repo for lines once', async () => {
+    const h = harness();
+    h.visible.add('s1');
+    h.tracker.setSessionRepos('s1', [info('/w/A', 'home')]);
+    await settleAll();
+    h.clear();
+    const release = h.gateReads();
+    h.wants.add('s1');
+    h.tracker.linesDemandChanged();
+    await flush(0);
+    h.tracker.linesDemandChanged();
+    h.readResult.set('/w/A', { ok: false, reason: 'timeout' });
+    release();
+    await settleAll();
+    expect(h.reads).toEqual([
+      { root: '/w/A', lines: true },
+      { root: '/w/A', lines: true },
+    ]);
+    await flush(60_000);
+    expect(h.reads).toHaveLength(2);
+    h.readResult.set('/w/A', { ok: true, changes: [], trackedDirty: false });
+    h.tracker.onWatchedPath(edit('/w/A/a.ts'));
+    await settleAll();
+    expect(h.tracker.snapshotsFor('s1')['/w/A'].lines).toBe(true);
+  });
+
   it('removing a repo forgets it and reports removal with the sessions that dropped it', async () => {
     const h = harness();
     h.visible.add('s1');
@@ -363,6 +389,35 @@ describe('createRepoTracker', () => {
     w.onPath(edit('/w/A/.git/refs/heads/t1'));
     await settleAll();
     expect(h.interrogations).toEqual(['/t/1/A']);
+  });
+
+  it('a timed-out interrogation keeps the last good git dirs, branch, info and watch; the next fire retries it', async () => {
+    const h = harness();
+    h.visible.add('s1');
+    const good: GitInterrogation = {
+      info: { kind: 'branch', branch: 't1', isWorktree: true, worktreeName: 'A' },
+      gitDir: '/w/A/.git/worktrees/A',
+      commonDir: '/w/A/.git',
+    };
+    h.git.set('/t/1/A', good);
+    h.tracker.setSessionRepos('s1', [info('/t/1/A', 'home')]);
+    await settleAll();
+    const [w] = h.watches;
+    h.clear();
+    h.git.set('/t/1/A', { info: { kind: 'none' }, failure: 'timeout' });
+    w.onPath(edit('/w/A/.git/refs/heads/t1'));
+    await settleAll();
+    expect(h.interrogations).toEqual(['/t/1/A']);
+    expect(h.openWatches()).toEqual([folderKey('/w/A/.git')]);
+    expect(h.updates.some((u) => u.git !== undefined)).toBe(false);
+    expect(h.logs.some((l) => l.level === 'warn')).toBe(true);
+    h.clear();
+    h.git.set('/t/1/A', good);
+    w.onPath(edit('/w/A/.git/worktrees/A/index'));
+    await settleAll();
+    expect(h.reads.map((r) => r.root)).toEqual(['/t/1/A']);
+    expect(h.interrogations).toEqual(['/t/1/A']);
+    expect(h.updates.some((u) => u.git !== undefined)).toBe(false);
   });
 
   it('lostFolders marks every repo under the folder (and every repo whose commonDir is under it) tree+meta', async () => {

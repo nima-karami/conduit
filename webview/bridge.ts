@@ -27,10 +27,8 @@ import { createMessageBus } from './message-bus';
 import {
   mockAgents,
   changes as mockChanges,
-  customizations as mockCust,
   mockDiffFor,
   mockDir,
-  files as mockFiles,
   mockFileText,
   mockMarkdown,
   mockProjects,
@@ -921,20 +919,6 @@ function mockHost(msg: WebviewToHost) {
     const known = msg.order.filter((id) => mockOrder.includes(id));
     mockOrder = [...known, ...mockOrder.filter((id) => !known.includes(id))];
     setTimeout(() => emit(mockState()), 10);
-    return;
-  }
-  if (msg.type === 'requestProject') {
-    setTimeout(
-      () =>
-        emit({
-          type: 'project',
-          path: msg.path,
-          files: mockFiles,
-          customizations: mockCust.map((c) => ({ id: c.id, count: c.count ?? 0 })),
-          requestId: msg.requestId,
-        }),
-      20,
-    );
     return;
   }
   if (msg.type === 'readDir') {

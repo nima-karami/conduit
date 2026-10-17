@@ -55,6 +55,15 @@ describe('RepoPathMap', () => {
     expect(map.isGitMetadata(folderKey('/w/repoA/.git/refs/heads/nobody'))).toBe(true);
   });
 
+  it('reftable/** maps to every repo of the common dir as meta', () => {
+    const keys = [main.key, wt1.key, wt2.key].map((key) => ({ key, kind: 'meta' }));
+    expect(at('/w/repoA/.git/reftable/tables.list')).toEqual(keys);
+    expect(at('/w/repoA/.git/reftable/0x000000000001-0x000000000002-a1b2c3d4.ref')).toEqual(keys);
+    expect(at('/w/repoA/sub/repoB/.git/reftable/tables.list')).toEqual([
+      { key: nested.key, kind: 'meta' },
+    ]);
+  });
+
   it('packed-refs maps to every repo of the common dir', () => {
     const keys = at('/w/repoA/.git/packed-refs');
     expect(keys.every((h) => h.kind === 'meta')).toBe(true);

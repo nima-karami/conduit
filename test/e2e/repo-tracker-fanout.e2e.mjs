@@ -7,6 +7,10 @@
  * of repoA). The ticket session (home = ticket) is opened first and stays in the background; the
  * parent session (home = ws) is opened last, so it is the active one with Changes shown. Both
  * contain the worktree, so a single status of it must reach both.
+ *
+ * Switching parent → ticket → parent with no write in between runs no git for the parent's repos:
+ * the hidden parent's root stays watched, so it opens no git-dir watch of its own either
+ * (spec §2 "no catch-up git"; engine review r1 SF1/SF2).
  */
 
 import { execFileSync } from 'node:child_process';
@@ -26,6 +30,8 @@ import {
 const WRITE_WINDOW_MS = 3000;
 const CARD_RENDER_MS = 1000;
 const RELOAD_RENDER_MS = 3000;
+/** Long enough for any catch-up run (settle + cooldown) a switch back would start. */
+const SWITCH_BACK_WINDOW_MS = 3000;
 const FILE = 'agent-1.txt';
 
 const slash = (p) => p.replace(/\\/g, '/');
@@ -67,6 +73,27 @@ async function waitOrFail(page, fn, arg, timeout, what, observe) {
 const shownFiles = () =>
   Array.from(document.querySelectorAll('.change__file'), (el) => el.textContent);
 
+/** Counts the main process's open fs.watch handles inside each given repo's `.git`. */
+async function installGitDirWatchProbe(app, repos) {
+  await app.evaluate((_electron, dirs) => {
+    const fs = process.getBuiltinModule('fs');
+    const watch = fs.watch;
+    const key = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    const open = Object.fromEntries(dirs.map((d) => [key(d), 0]));
+    globalThis.__gitDirWatches = open;
+    fs.watch = function (file, ...args) {
+      const watcher = watch.call(this, file, ...args);
+      const k = key(file);
+      const repo = Object.keys(open).find((d) => k === `${d}/.git` || k.startsWith(`${d}/.git/`));
+      if (repo) {
+        open[repo]++;
+        watcher.once('close', () => open[repo]--);
+      }
+      return watcher;
+    };
+  }, repos);
+}
+
 /** Block until the host has spawned no git for `quietMs`, so a probe reset starts from silence. */
 async function gitQuiet(app, quietMs, budgetMs) {
   const deadline = Date.now() + budgetMs;
@@ -93,6 +120,7 @@ runScenario('repo-tracker-fanout', async ({ app, page, log }) => {
     git(repoA, 'worktree', 'add', '-q', '-b', 'ticket-1', wt);
 
     await installGitProbe(app);
+    await installGitDirWatchProbe(app, [repoA, repoB]);
     const ticketId = await openSession(page, { path: slash(ticket) });
     const parentId = await openSession(page, { path: slash(ws) });
     await openChangesTab(page);
@@ -183,6 +211,43 @@ runScenario('repo-tracker-fanout', async ({ app, page, log }) => {
     );
     log('ticket card → list from cache, 0 new status');
 
+    const ownWatches = await app.evaluate(() => globalThis.__gitDirWatches);
+    assert(
+      Object.values(ownWatches).every((n) => n === 0),
+      `with the parent hidden, its repos got git-dir watches of their own (${JSON.stringify(ownWatches)})`,
+    );
+    log('parent hidden → no own git-dir watch for repoA/repoB');
+
+    // Back to the parent with nothing written meanwhile: its list renders from the cache, current.
+    const fixture = new Set([wt, repoA, repoB].map(key));
+    const statusBeforeBack = statusCalls(await readGitProbe(app)).length;
+    await page.click(`.session[data-sessionid="${parentId}"] .session__name`);
+    await waitOrFail(
+      page,
+      (name) =>
+        document.querySelectorAll('.repo-head').length === 3 &&
+        Array.from(document.querySelectorAll('.change__file')).some((e) => e.textContent === name),
+      FILE,
+      CARD_RENDER_MS,
+      `switching back to the parent did not show its list within ${CARD_RENDER_MS} ms`,
+      () => ({
+        heads: document.querySelectorAll('.repo-head').length,
+        files: Array.from(document.querySelectorAll('.change__file'), (el) => el.textContent),
+      }),
+    );
+    const asOf = await page.evaluate(() => document.querySelectorAll('.repo-head__asof').length);
+    await pause(SWITCH_BACK_WINDOW_MS);
+    const back = statusCalls(await readGitProbe(app))
+      .slice(statusBeforeBack)
+      .filter((c) => fixture.has(c.cwd));
+    const backAt = (dir) => back.filter((c) => c.cwd === key(dir)).length;
+    assert(
+      back.length === 0,
+      `switching back to the parent ran catch-up git status (repoA ${backAt(repoA)}, repoB ${backAt(repoB)}, worktree ${backAt(wt)})`,
+    );
+    assert(asOf === 0, `switching back showed ${asOf} "as of" stale notices with nothing written`);
+    log('ticket → parent → list from cache, 0 status per fixture repo, no "as of"');
+
     // A reloaded renderer activates the first session in the list, so the ticket goes first: the
     // same session comes back on screen and only the host's cache can refill its list.
     await page.evaluate(
@@ -207,7 +272,6 @@ runScenario('repo-tracker-fanout', async ({ app, page, log }) => {
     );
     // Only the fixture's repos count: the profile's other sessions may become visible after the
     // reload and get their own first read.
-    const fixture = new Set([wt, repoA, repoB].map(key));
     const afterReload = statusCalls(await readGitProbe(app))
       .slice(statusBeforeClick)
       .filter((c) => fixture.has(c.cwd));

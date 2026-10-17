@@ -1,5 +1,4 @@
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   GIT_TIMEOUT,
@@ -10,10 +9,8 @@ import {
   runGit,
 } from './git-exec';
 import { parseNumstatZ } from './git-history';
-import { IGNORED_DIRS } from './ignore-dirs';
-import type { ChangeDTO, ChangeKind, CustomizationCount, FileNodeDTO } from './protocol';
+import type { ChangeDTO, ChangeKind } from './protocol';
 
-const MAX_DEPTH = 2;
 // Per-file cap for the Changes line-count reads (mirrors file-service's 2 MB diff cap). An
 // untracked file over this is counted via a bounded stream and never fully buffered.
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -322,109 +319,4 @@ function changesFrom(
     pushSide(p, y, unstagedStats, false, conflicted); // unstaged side (worktree vs index)
   }
   return changes;
-}
-
-async function fileTree(root: string): Promise<FileNodeDTO[]> {
-  const out: FileNodeDTO[] = [];
-  const walk = async (dir: string, depth: number): Promise<void> => {
-    if (depth > MAX_DEPTH || out.length >= 400) return;
-    let entries: fs.Dirent[];
-    try {
-      entries = await fs.promises.readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    const sorted = entries
-      .filter((e) => !IGNORED_DIRS.has(e.name))
-      .sort((a, b) => {
-        if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
-    for (const e of sorted) {
-      if (out.length >= 400) break;
-      out.push({ name: e.name, kind: e.isDirectory() ? 'dir' : 'file', depth });
-      if (e.isDirectory()) await walk(path.join(dir, e.name), depth + 1);
-    }
-  };
-  await walk(root, 0);
-  return out;
-}
-
-function countEntries(dir: string, predicate: (e: fs.Dirent) => boolean): number {
-  try {
-    return fs.readdirSync(dir, { withFileTypes: true }).filter(predicate).length;
-  } catch {
-    return 0;
-  }
-}
-
-function readJson(file: string): Record<string, unknown> | undefined {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    return undefined;
-  }
-}
-
-function countHooks(hooks: unknown): number {
-  if (!hooks || typeof hooks !== 'object') return 0;
-  let n = 0;
-  for (const arr of Object.values(hooks as Record<string, unknown>)) {
-    if (Array.isArray(arr)) n += arr.length;
-  }
-  return n;
-}
-
-/** Count Claude Code customizations across the project and the user's ~/.claude. */
-function getCustomizations(cwd: string): CustomizationCount[] {
-  const roots = [path.join(cwd, '.claude'), path.join(os.homedir(), '.claude')];
-  const sum = (fn: (root: string) => number) => roots.reduce((a, r) => a + fn(r), 0);
-
-  const agents = sum((r) =>
-    countEntries(path.join(r, 'agents'), (e) => e.isFile() && e.name.endsWith('.md')),
-  );
-  const skills = sum((r) => countEntries(path.join(r, 'skills'), (e) => e.isDirectory()));
-
-  let instructions = 0;
-  for (const f of [
-    path.join(cwd, 'CLAUDE.md'),
-    path.join(cwd, 'AGENTS.md'),
-    path.join(os.homedir(), '.claude', 'CLAUDE.md'),
-  ]) {
-    if (fs.existsSync(f)) instructions++;
-  }
-
-  let hooks = 0;
-  let mcp = 0;
-  for (const r of roots) {
-    for (const sf of ['settings.json', 'settings.local.json']) {
-      const s = readJson(path.join(r, sf));
-      if (s) {
-        hooks += countHooks(s.hooks);
-        if (s.mcpServers && typeof s.mcpServers === 'object')
-          mcp += Object.keys(s.mcpServers).length;
-      }
-    }
-  }
-  const mcpJson = readJson(path.join(cwd, '.mcp.json'));
-  if (mcpJson?.mcpServers && typeof mcpJson.mcpServers === 'object') {
-    mcp += Object.keys(mcpJson.mcpServers as object).length;
-  }
-
-  return [
-    { id: 'agents', count: agents },
-    { id: 'skills', count: skills },
-    { id: 'instructions', count: instructions },
-    { id: 'hooks', count: hooks },
-    { id: 'mcp', count: mcp },
-  ];
-}
-
-/** The file tree and customizations; change lists come only from the repo tracker
- *  (docs/plans/2026-10-16-multi-repo-tracking.plan.md, T2.6). */
-export async function getProjectInfo(
-  cwd: string,
-): Promise<{ files: FileNodeDTO[]; customizations: CustomizationCount[] }> {
-  if (!cwd || !fs.existsSync(cwd)) return { files: [], customizations: [] };
-  return { files: await fileTree(cwd), customizations: getCustomizations(cwd) };
 }

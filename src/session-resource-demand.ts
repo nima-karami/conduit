@@ -34,6 +34,12 @@ export function createSessionResourceDemand(
     isVisibleInWindow(windowId: number, id: string) {
       return !reported || (!suspended.has(windowId) && windows.get(windowId)?.has(id) === true);
     },
+    /** Like isVisibleInWindow, but a minimized window still counts its own sessions. */
+    isShownInWindow(windowId: number, id: string) {
+      return !reported || windows.get(windowId)?.has(id) === true;
+    },
+    /** The window's own last-reported set, minimized or not. */
+    shownIn: (windowId: number): string[] => [...(windows.get(windowId) ?? [])],
     schedule(id: string) {
       dirty.add(id);
       if (visible(id)) arm();

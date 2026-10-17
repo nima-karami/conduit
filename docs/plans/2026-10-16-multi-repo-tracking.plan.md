@@ -643,6 +643,50 @@ export function searchTargets(folders: readonly string[], scope: SearchScope, ac
 | `test/e2e/search-scope.e2e.mjs` | create | AC fixture: `dist/` hit only under Everything |
 | `CHANGELOG.md` | modify | User-facing entry (last) |
 
+### File map amendments (as built)
+
+Engine review round 1 (B3) found the map behind the code. Rows below record what Slices 2/2b and
+the r1 fix actually touched beyond the table above. The spec edit bundled into `050156c0` stays
+where it is; history is not rewritten.
+
+**Slices 2 / 2b**
+
+| Path | Action | Responsibility |
+|---|---|---|
+| `webview/styles.css` | modify | `.diffstat--pending` placeholder (incl. forced-colors), `.repo-head__error`, `.repo-head__asof` |
+| `src/repo-git.ts` | modify | `repoGitFingerprint` also covers `unborn`, `isWorktree`, `worktreeName` |
+| `webview/components/lines-pending.tsx` | create | Shared "Counting lines…" placeholder (2b) |
+| `webview/components/review-navigator.tsx`, `webview/components/review-file-nav.tsx` | modify | Placeholder while a repo is `lines:false` (2b) |
+| `test/e2e/stress/harness-stress.mjs`, `test/e2e/stress/run-stress.mjs` | modify | App closed before exit; ENOBUFS reported distinctly |
+| `test/e2e/stress/multi-repo-harness.mjs` | modify | Observer reads `repoDelta` and merged per-repo state |
+| `test/e2e/background-resources.e2e.mjs` | modify | Counts the tracker's git-dir watches |
+| `test/e2e/changes-multi-repo.e2e.mjs`, `multi-folder-model.e2e.mjs`, `multi-repo.e2e.mjs`, `nested-repo-resources.e2e.mjs`, `repo-rescan.e2e.mjs`, `review-multi-repo.e2e.mjs`, `short-path-root.e2e.mjs` | modify | Read `repoDelta` instead of the `project` reply's change lists |
+| `test/unit/repo-git.test.ts` | modify | Fingerprint widening |
+| `test/unit/review-navigator-lines-pending.test.ts` | create | 2b placeholder |
+| `test/unit/change-highlight.test.ts`, `change-row-drag.test.ts`, `changes-view-collapse.test.ts`, `tree-chevron.test.ts`, `right-pane-review-kebab.test.ts` | modify | Fixture-only: `RepoChanges` gained `lines`/`refreshedAt` |
+| `webview/components/right-pane.tsx` | untouched | Planned for T2.7 to thread `onRetryRepo`, but `ChangesView` is rendered from `app.tsx` directly, so there was nothing to thread. Its Slice 4 row (scope props) stands |
+
+**Engine review r1 fix**
+
+| Path | Action | Responsibility |
+|---|---|---|
+| `src/git-info.ts` | modify | `GitInterrogation.failure` (git never answered vs "not a repo"); `headPath` removed (no consumer) |
+| `src/repo-tracker.ts` | modify | Failed interrogation keeps last good dirs/branch/info/watch, owed meta retried on next mark; failed lines read re-marked once; `RepoSnapshot` moved out |
+| `src/protocol.ts` | modify | Owns `RepoSnapshot`; `project` reply, `FileNodeDTO`, `CustomizationCount` and `requestProject.requestId` removed |
+| `src/repo-path-map.ts` | modify | `<commonDir>/reftable/**` → meta for every repo of the common dir |
+| `src/session-resource-demand.ts` | modify | `isShownInWindow`, `shownIn` (a minimized window's own set) |
+| `electron/repo-tracker-host.ts` | modify | Deltas gated on the window's own set; `windowRestored` full re-send; ownership + payload shape checks |
+| `electron/session-folder-runtime.ts` | modify | Arms every open session holding registered repos; `reposChanged` |
+| `electron/project-watcher.ts` | modify | Marks lost only on the transition to lost |
+| `electron/main.ts` | modify | `owns`, restore → `windowRestored`, `reposChanged` on repo set change / dispose; `requestProject` no longer replies |
+| `src/project-info.ts` | modify | `getProjectInfo` / file tree / customization counts removed |
+| `src/coalesced-refresh.ts`, `test/unit/coalesced-refresh.test.ts` | delete | Only served the `project` reply |
+| `src/changes-view-model.ts` | modify | `createProjectReplyOrder` removed |
+| `webview/app.tsx`, `webview/bridge.ts`, `webview/mock.ts`, `webview/view-model.ts` | modify | Reply ordering, fake `project` reply and its mock data/types removed |
+| `test/e2e/repo-tracker-fanout.e2e.mjs` | modify | parent → ticket → parent: 0 catch-up status, no "as of", no own git-dir watch while hidden |
+| `test/unit/repo-tracker.test.ts`, `repo-tracker-host.test.ts`, `repo-path-map.test.ts`, `project-watcher.test.ts`, `session-folder-runtime.test.ts`, `session-resource-demand.test.ts`, `git-info.test.ts`, `changes-view-model.test.ts`, `project-info-resources.test.ts` | modify | r1 cases; removed cases for deleted code |
+| `CHANGELOG.md` | modify | Restore and switch-back fixes |
+
 ## Scripts
 
 **None.** The only repeated routine is building git fixtures, and that is runtime test code

@@ -25,6 +25,9 @@ interface FakeWatch {
 function harness(opts: { git?: Record<string, GitInterrogation> } = {}) {
   const sessions = new Map<string, Session>();
   const shown = new Map<number, Set<string>>();
+  const suspended = new Set<number>();
+  const owner = new Map<string, number>();
+  const warn = vi.fn();
   const sent = new Map<number, HostToWebview[]>();
   const reads: Array<{ root: string; lines: boolean }> = [];
   const merges: Array<{ sessionId: string; root: string; info: GitInfo }> = [];
@@ -49,15 +52,17 @@ function harness(opts: { git?: Record<string, GitInterrogation> } = {}) {
       mergeRepoGit: (patches) => merges.push(...patches),
     },
     demand: {
-      isVisible: (id) => [...shown.values()].some((ids) => ids.has(id)),
-      isVisibleInWindow: (w, id) => shown.get(w)?.has(id) === true,
+      isVisible: (id) => [...shown].some(([w, ids]) => !suspended.has(w) && ids.has(id)),
+      isShownInWindow: (w, id) => shown.get(w)?.has(id) === true,
+      shownIn: (w) => [...(shown.get(w) ?? [])],
     },
+    owns: (w, id) => owner.get(id) === w,
     windows: () =>
       [1, 2].map((id) => ({
         id,
         send: (msg: HostToWebview) => sent.set(id, [...(sent.get(id) ?? []), msg]),
       })),
-    log: { debug: vi.fn(), warn: vi.fn() },
+    log: { debug: vi.fn(), warn },
     watchDirWhilePresent: fakeWatch,
     trackerDeps: {
       async readChanges(root, o) {
@@ -80,7 +85,8 @@ function harness(opts: { git?: Record<string, GitInterrogation> } = {}) {
       indexMtime: async () => 0,
     },
   });
-  const addSession = (id: string, repos: RepoInfo[]) => {
+  const addSession = (id: string, repos: RepoInfo[], ownerWindow = 1) => {
+    owner.set(id, ownerWindow);
     sessions.set(id, {
       id,
       name: id,
@@ -96,7 +102,19 @@ function harness(opts: { git?: Record<string, GitInterrogation> } = {}) {
   };
   const deltas = (windowId: number) =>
     (sent.get(windowId) ?? []).filter((m): m is Delta => m.type === 'repoDelta');
-  return { host, sessions, shown, sent, reads, merges, watches, addSession, deltas };
+  return {
+    host,
+    sessions,
+    shown,
+    suspended,
+    warn,
+    sent,
+    reads,
+    merges,
+    watches,
+    addSession,
+    deltas,
+  };
 }
 
 beforeEach(() => vi.useFakeTimers());
@@ -125,7 +143,7 @@ it('windowShown sends a full repoDelta from cache with no git', async () => {
   const h = harness();
   h.shown.set(1, new Set(['s1']));
   h.addSession('s1', [repo('/w/a')]);
-  h.addSession('s2', [repo('/w/a')]);
+  h.addSession('s2', [repo('/w/a')], 2);
   await vi.advanceTimersByTimeAsync(10);
   const before = h.reads.length;
   h.shown.set(2, new Set(['s2']));
@@ -247,5 +265,60 @@ it('removed sends a removed entry to the visible session that dropped the repo',
     full: false,
     repos: { '/w/a': { removed: true } },
   });
+  h.host.stop();
+});
+
+it('a minimized window still gets deltas for its own sessions, and restore re-sends them in full', async () => {
+  const h = harness();
+  h.shown.set(1, new Set(['s1']));
+  h.shown.set(2, new Set(['s2']));
+  h.addSession('s1', [repo('/w/a')], 1);
+  h.addSession('s2', [repo('/w/a')], 2);
+  await vi.advanceTimersByTimeAsync(10);
+  h.suspended.add(1);
+  h.sent.clear();
+  h.host.tracker.onWatchedPath('/w/a/a.txt');
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(h.deltas(1).map((d) => [d.sessionId, d.full])).toEqual([['s1', false]]);
+  h.suspended.delete(1);
+  h.sent.clear();
+  const reads = h.reads.length;
+  h.host.windowRestored(1);
+  expect(h.deltas(1).map((d) => [d.sessionId, d.full, Object.keys(d.repos)])).toEqual([
+    ['s1', true, ['/w/a']],
+  ]);
+  expect(h.reads).toHaveLength(reads);
+  h.host.stop();
+});
+
+it('windowShown and line demand ignore sessions the calling window does not own', async () => {
+  const h = harness();
+  h.shown.set(1, new Set(['s1']));
+  h.addSession('s1', [repo('/w/a')], 1);
+  await vi.advanceTimersByTimeAsync(10);
+  h.host.windowShown(2, ['s1']);
+  expect(h.deltas(2)).toEqual([]);
+  h.host.setLinesDemand(2, ['s1']);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(h.reads.every((r) => !r.lines)).toBe(true);
+  h.host.windowRestored(2);
+  expect(h.deltas(2)).toEqual([]);
+  h.host.stop();
+});
+
+it('a malformed changes:subscribe or repo:refresh payload is logged and ignored', async () => {
+  const h = harness();
+  h.shown.set(1, new Set(['s1']));
+  h.addSession('s1', [repo('/w/a')], 1);
+  await vi.advanceTimersByTimeAsync(2000);
+  const reads = h.reads.length;
+  for (const bad of ['s1', [1], null, undefined, { 0: 's1' }])
+    expect(() => h.host.setLinesDemand(1, bad)).not.toThrow();
+  for (const bad of [42, null, undefined, ['/w/a']])
+    expect(() => h.host.refresh('s1', bad)).not.toThrow();
+  expect(() => h.host.refresh(7, '/w/a')).not.toThrow();
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(h.reads).toHaveLength(reads);
+  expect(h.warn).toHaveBeenCalledTimes(10);
   h.host.stop();
 });

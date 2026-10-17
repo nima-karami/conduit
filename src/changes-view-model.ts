@@ -1,9 +1,8 @@
 import { folderKey } from './folder-key';
 import type { GitFailure } from './git-exec';
-import type { ChangeDTO, HostToWebview, RepoChanges } from './protocol';
+import type { ChangeDTO, HostToWebview, RepoChanges, RepoSnapshot } from './protocol';
 import { orderRepos, repoBaseName, repoLabel, repoSub } from './repo-display';
 import type { RepoInfo } from './repo-scan';
-import type { RepoSnapshot } from './repo-tracker';
 import type { ChangesViewMode } from './settings';
 import type { Session } from './types';
 
@@ -54,25 +53,6 @@ export function repoChangesOf(
       },
     ];
   });
-}
-
-/** Orders one window's requestProject replies, which can land out of order (review N-3). */
-export function createProjectReplyOrder(): {
-  next(): number;
-  accept(requestId: number): boolean;
-} {
-  let sent = 0;
-  let shown = 0;
-  return {
-    next: () => ++sent,
-    // Older than the last SHOWN reply, not "not the latest sent": every fsChanged re-requests,
-    // so waiting for the newest would freeze the view for as long as an agent keeps writing.
-    accept: (requestId) => {
-      if (requestId < shown) return false;
-      shown = requestId;
-      return true;
-    },
-  };
 }
 
 export interface RepoHeadModel {

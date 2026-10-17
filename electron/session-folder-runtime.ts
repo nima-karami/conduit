@@ -106,6 +106,11 @@ export class SessionFolderRuntime {
     this.arm();
   }
 
+  /** A session gained or lost registered repos, or was disposed. */
+  reposChanged(): void {
+    this.arm();
+  }
+
   focused(): void {
     if (this.watched?.sessionId) this.check(this.watched.sessionId);
   }
@@ -126,12 +131,19 @@ export class SessionFolderRuntime {
       const s = this.deps.mgr.get(id);
       return s ? watchFoldersFor(s.home, s) : [];
     });
+    // Hidden too: a write then marks only its repo, and switching back runs git for that repo
+    // alone (multi-repo-tracking spec §2 "no catch-up git"). Bounded by open sessions; the
+    // watcher folds nested roots into their ancestor's watch.
+    const tracking = this.deps.mgr
+      .list()
+      .flatMap((s) => (s.repos?.length ? watchFoldersFor(s.home, s) : []));
     this.watcher.setFolders([
       ...new Set([
         ...[...this.projectsByWindow.values()].flatMap(({ p, sessionId }) =>
           watchFoldersFor(p, sessionId ? this.deps.mgr.get(sessionId) : undefined),
         ),
         ...visible,
+        ...tracking,
       ]),
     ]);
   }

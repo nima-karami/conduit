@@ -18,6 +18,17 @@ All notable user-facing changes to Conduit. Format follows
   status" under that repo with a Retry button, instead of quietly showing no changes. A list that
   is waiting to be refreshed shows the time it was last read.
 
+### Fixed
+- **A minimized window is up to date when you restore it.** Changes made while a window was
+  minimized used to stay missing from its Changes list after restoring it, until something else
+  refreshed it.
+- **Switching back to a session no longer re-reads all of its repos.** Going from one session to
+  another and back used to re-run git for every repo of the first one and flash "as of" notices.
+  Now only the repos written to in the meantime are read again.
+- **A slow git no longer drops a repo's branch.** When git took too long to answer, the repo lost
+  its branch label and stopped noticing commits until something else refreshed it. It now keeps
+  what it last knew and tries again on the next change.
+
 ## [0.47.2] — 2026-10-11
 
 ### Fixed

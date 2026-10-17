@@ -1,9 +1,8 @@
 import { folderKey } from './folder-key';
-import type { GitFailure } from './git-exec';
 import type { GitInterrogation } from './git-info';
 import { isAncestorOf } from './owning-session';
 import type { RepoRead } from './project-info';
-import type { ChangeDTO } from './protocol';
+import type { RepoSnapshot } from './protocol';
 import { repoGitFingerprint } from './repo-git';
 import { type DirtyKind, RepoPathMap } from './repo-path-map';
 import {
@@ -16,20 +15,6 @@ import type { GitInfo } from './types';
 
 // Host-wide repo tracker core: every rule below is specified in
 // docs/plans/2026-10-16-multi-repo-tracking.plan.md (Contracts, repo-tracker).
-
-export interface RepoSnapshot {
-  /** Status-derived, always present once read. */
-  changes: ChangeDTO[];
-  /** added/removed populated. */
-  lines: boolean;
-  /** Host Date.now() when the run's status completed. */
-  refreshedAt: number;
-  /** Last run failed; `changes` are the last good ones. */
-  error?: GitFailure;
-  /** Set only on snapshots sent from cache while the repo has pending (parked or queued) dirt:
-   *  the renderer renders "as of <refreshedAt>" instead of presenting it as current (spec §3). */
-  stale?: true;
-}
 
 export const FOCUS_STALE_MS = 30_000;
 /** Behind first fill and live edits. */
@@ -104,6 +89,10 @@ interface Repo {
   pending: boolean;
   /** The `lines` of the read in flight; undefined while none is. */
   readingLines?: boolean;
+  /** The last interrogation got no answer from git: the next mark of any kind re-runs it. */
+  metaOwed?: boolean;
+  /** A failed lines read already re-marked once; cleared by the next good read. */
+  linesRetried?: boolean;
 }
 
 const FIRST_FILL_TAGS: ReadonlySet<RepoTag> = new Set(['home', 'attached']);
@@ -137,6 +126,7 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
     if (stopped) return;
     repo.pending = true;
     for (const kind of kinds) scheduler.mark(repo.key, kind, opts);
+    if (repo.metaOwed && !kinds.includes('meta')) scheduler.mark(repo.key, 'meta', opts);
   };
 
   const isCovered = (key: string) => liveRoots.some((r) => isAncestorOf(r, key));
@@ -192,12 +182,21 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
       if (kinds.meta) {
         const it = await deps.interrogate(repo.root);
         if (repos.get(key) !== repo || stopped) return;
-        repo.gitDir = it.gitDir === undefined ? undefined : folderKey(it.gitDir);
-        repo.commonDir = it.commonDir === undefined ? undefined : folderKey(it.commonDir);
-        repo.branch = it.info.kind === 'branch' ? it.info.branch : undefined;
-        info = repo.info?.dirty === undefined ? it.info : withDirty(it.info, repo.info.dirty);
-        rebuildPathMap();
-        reconcileWatches();
+        repo.metaOwed = it.failure !== undefined;
+        // Wiping the dirs on a timeout would unmap the git dir and close its watch (spec §3 Errors).
+        if (it.failure)
+          deps.log('warn', '[repo-tracker] interrogation failed; last good kept', {
+            root: repo.root,
+            failure: it.failure,
+          });
+        else {
+          repo.gitDir = it.gitDir === undefined ? undefined : folderKey(it.gitDir);
+          repo.commonDir = it.commonDir === undefined ? undefined : folderKey(it.commonDir);
+          repo.branch = it.info.kind === 'branch' ? it.info.branch : undefined;
+          info = repo.info?.dirty === undefined ? it.info : withDirty(it.info, repo.info.dirty);
+          rebuildPathMap();
+          reconcileWatches();
+        }
       }
       const lines = wantsLinesFor(repo);
       repo.readingLines = lines;
@@ -206,6 +205,7 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
       });
       if (repos.get(key) !== repo || stopped) return;
       if (read.ok) {
+        repo.linesRetried = false;
         repo.lastRefreshAt = deps.now();
         repo.snapshot = {
           changes: read.changes,
@@ -228,6 +228,12 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
         snapshot: repo.snapshot,
         ...(info && gitChanged ? { git: info } : {}),
       });
+      // The failed read may have absorbed a demand rise, which would leave "Counting lines…" up
+      // until some unrelated fire; once only, so a repo that keeps failing doesn't spin.
+      if (!read.ok && lines && !repo.snapshot.lines && !repo.linesRetried) {
+        repo.linesRetried = true;
+        mark(repo, ['tree']);
+      }
     } catch (error) {
       deps.log('warn', '[repo-tracker] refresh failed', { root: repo.root, error: String(error) });
     }

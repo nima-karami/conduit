@@ -30,7 +30,6 @@ import { asyncSingleFlight } from '../src/async-singleflight';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
 import { createCloseGuard, createQuitGrant, GRANT_TTL_MS, openWindowIds } from '../src/close-guard';
-import { coalescedRefresh } from '../src/coalesced-refresh';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
 import { loadAgents, readBlob, readFileState } from '../src/config';
 import { searchContentFs } from '../src/content-search-fs';
@@ -124,7 +123,6 @@ import {
 import { buildQueueEntry } from '../src/pipeline';
 import { applyPlanCommentPatch, commentsFingerprint } from '../src/plan-comments';
 import { buildPreviewUrl, isPreviewUrl } from '../src/preview-url';
-import { getProjectInfo } from '../src/project-info';
 import { ProjectStore, parseProjects, serializeProjects } from '../src/project-store';
 import type {
   AboutInfo,
@@ -1314,6 +1312,7 @@ app.whenReady().then(() => {
   const repoTrackerHost = createRepoTrackerHost({
     mgr,
     demand: gitDemand,
+    owns: (windowId, sessionId) => sessionOwner.get(sessionId) === windowId,
     windows: () =>
       [...windows.values()].map((w) => ({
         id: w.id,
@@ -1335,7 +1334,9 @@ app.whenReady().then(() => {
       return s ? scanSessionRepos(s, { detect: detectShared, enclosing: enclosingShared }) : [];
     },
     apply: (sessionId, repos) => {
-      if (mgr.setRepos(sessionId, repos)) repoTrackerHost.tracker.setSessionRepos(sessionId, repos);
+      if (!mgr.setRepos(sessionId, repos)) return;
+      repoTrackerHost.tracker.setSessionRepos(sessionId, repos);
+      folders.reposChanged();
     },
     onError: (sessionId, e) => log.error('repo', `scan failed for ${sessionId}: ${String(e)}`),
   });
@@ -2405,36 +2406,23 @@ app.whenReady().then(() => {
     proposalWatcher.watch(p, (kind) => sendProposal(broadcast, p, kind));
   }
 
-  // The tree only: change lists are pushed by the repo tracker (multi-repo-tracking plan, T2.6).
-  const refreshProject = coalescedRefresh(
-    (p: string) => getProjectInfo(p),
-    (p) => folderKey(p),
-  );
-
-  async function sendProject(
-    dispatch: Dispatch,
+  // Arms the watcher, rescans repos and checks folder health; nothing is replied: change lists
+  // arrive as repoDelta and the tree through readDir (engine review r1 SF3).
+  function requestProject(
     windowId: number,
     p: string,
     sessionId: string | undefined,
-    requestId: number,
-    auto = false,
+    auto: boolean,
   ) {
     deferredProjectRequests.delete(windowId);
     if (auto && sessionId && !gitDemand.isVisible(sessionId)) {
       deferredProjectRequests.set(windowId, {
         sessionId,
-        run: () => void sendProject(dispatch, windowId, p, sessionId, requestId, true),
+        run: () => requestProject(windowId, p, sessionId, true),
       });
       return;
     }
     folders.requestProject(p, sessionId, windowId, !auto);
-    try {
-      const info = await refreshProject(p);
-      dispatch({ type: 'project', path: p, ...info, requestId });
-    } catch (err) {
-      log.warn('project', 'project read failed', { path: p, error: String(err) });
-      dispatch({ type: 'project', path: p, files: [], customizations: [], requestId });
-    }
   }
 
   // Fully tear down a session: kill its PTY, drop it from the model + every per-session
@@ -2473,6 +2461,7 @@ app.whenReady().then(() => {
     coldStartsInFlight.delete(id);
     preSpawnSizes.delete(id);
     repoTrackerHost.tracker.dropSession(id);
+    folders.reposChanged();
     removeOwner(sessionOwner, id);
     fs.unlink(scrollbackFile(id), () => {});
   };
@@ -2749,7 +2738,7 @@ app.whenReady().then(() => {
           });
           break;
         case 'requestProject':
-          await sendProject(replyHere, senderId, m.path, m.sessionId, m.requestId, m.auto === true);
+          requestProject(senderId, m.path, m.sessionId, m.auto === true);
           break;
         case 'readDir': {
           const entries = await readDir(m.path);
@@ -4593,6 +4582,7 @@ app.whenReady().then(() => {
     });
     w.on('restore', () => {
       gitDemand.setSuspended(w.id, false);
+      repoTrackerHost.windowRestored(w.id);
       lspManager.setWindowMinimized(wcId, false);
     });
     log.info('window', 'create', { windowId: w.id });
