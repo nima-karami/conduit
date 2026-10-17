@@ -256,11 +256,17 @@ Reference, `explorer-menu.tsx:174`):
 ### 3.5 OSC 8 + `file://`
 - Set `allowNonHttpProtocols: true`; `linkHandler.activate` dispatches: `http(s)` → `openExternal`
   (unchanged, `window.open` fallback kept for the bridge-less preview only; an OSC 8 `mailto:` is ignored
-  because its label can hide it, a printed one still opens — T8.4 security r1 H1); `file:` → decode → path (line
+  because its label can hide it — T8.4 security r1 H1; a printed `mailto:` is not linkified, as on `main`); `file:` → decode → path (line
   from `#L42` / `:l:c` suffix if present) → same open path as an absolute token, incl. the `pathExists`
   re-check (xterm underlines OSC 8 unconditionally, so a missing target ends in the stale toast); scheme-less
   absolute path → same; anything else → ignored. Never `shell.openExternal`/`shell.openPath` on a file
   target. Regex-detected `file://` URLs take the same path. Label ≠ target: the target wins (OSC 8 semantics).
+- **Confinement** (`src/path-link-confine.ts`): every decoded target is confined host-side to the session's
+  user-chosen roots — lexically, then by realpath against the same root's realpath. Each component is
+  lstat'ed and each link read before it is followed; a UNC-like link target is refused before any SMB
+  connect. A missing component ends the walk, and a link-supplied `..` after it is refused (the tail is only
+  joined lexically). A planted link to an already-mapped drive letter is still lstat'ed — at most one connect
+  to a server the user mapped — which is accepted.
 
 ### 3.6 Producers / consumers
 

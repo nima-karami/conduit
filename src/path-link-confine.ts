@@ -101,7 +101,9 @@ export async function safeRealPathLeaf(
     try {
       isLink = (await fs.lstat(next)).isSymbolicLink();
     } catch {
-      // Missing (or unreadable): only the existing part is realpath'ed, once.
+      // Missing (or unreadable): only the existing part is realpath'ed, once. The tail is joined
+      // lexically, so a `..` in it would climb back into folders whose links were never read.
+      if (pending.includes('..')) return null;
       const real = await realOf(resolved);
       if (real === null) return null;
       return normalizeAbs([seg, ...pending].reduce(join, real), platform);
@@ -119,6 +121,8 @@ export async function safeRealPathLeaf(
     }
     if (isUncLike(to)) return null;
     const toRoot = rootOf(to, platform, resolved);
+    // A planted link to an already-mapped drive letter is still lstat'ed: one connect to a server
+    // the user mapped, accepted (spec 2026-10-16-terminal-path-links §3.5 Confinement).
     if (toRoot) {
       root = toRoot;
       resolved = toRoot;

@@ -196,6 +196,35 @@ describe('safeRealPathLeaf (injected fs)', () => {
     expect(await safeRealPathLeaf('/w/l/new.ts', fsx, 'posix')).toBe('/out/new.ts');
   });
 
+  // v1 review r2 B1: the virtual tail is collapsed lexically, so a `..` in it would step back
+  // out of a missing folder into a real one whose links were never read.
+  it('a link through a missing folder and back out with `..` → null (posix)', async () => {
+    const { fsx } = fakeFs(['/root', '/root/evil', '/etc'], {
+      '/root/a': 'nope/../evil',
+      '/root/evil': '/etc',
+    });
+    const deps = {
+      realPathLeaf: (t: string) => safeRealPathLeaf(t, fsx, 'posix'),
+      platform: 'posix' as const,
+      caseSensitive: true,
+    };
+    expect(await confineToRoots('/root/a/passwd', ['/root'], deps)).toBeNull();
+  });
+
+  it('a link through a missing folder and back out with `..` → null (win32)', async () => {
+    const { fsx } = fakeFs(['G:/root', 'G:/root/evil', 'G:/etc'], {
+      'G:/root/a': 'nope\\..\\evil',
+      'G:/root/evil': 'G:\\etc',
+    });
+    expect(
+      await confineToRoots(
+        'G:\\root\\a\\passwd',
+        ['G:/root'],
+        WIN((t) => safeRealPathLeaf(t, fsx, 'win32')),
+      ),
+    ).toBeNull();
+  });
+
   it(`a link loop → null after ${MAX_LINK_HOPS} hops`, async () => {
     const { fsx, calls } = fakeFs(['/w'], { '/w/a': '/w/b', '/w/b': '/w/a' });
     expect(await safeRealPathLeaf('/w/a/x', fsx, 'posix')).toBeNull();
