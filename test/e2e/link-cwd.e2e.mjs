@@ -9,7 +9,10 @@
  * Asserts, against the real renderer + host:
  *   - validateCommits resolves repo-a's commit (cwd) and returns null for repo-b's commit (pinned) —
  *     proving it roots off cwd, not the pin — and its `root` reply ends with repo-a.
- *   - resolvePathToken finds a-only.txt (in cwd repo) and NOT b-only.txt (only in the pinned repo).
+ *   - resolvePathToken finds a-only.txt in the cwd repo as `exact-cwd`. b-only.txt (only in the
+ *     pinned repo) has NO `exact-cwd` candidate: resolution tries every present session root
+ *     (spec 2026-10-16-terminal-path-links §7 EARS), so it may still be found as `exact-root`, but
+ *     the cwd — never the pin — decides what opens directly.
  *   - clicking the rendered repo-a commit opens Review scoped to repo-a (its file a-only.txt shows),
  *     even though repo-b is pinned — the compounding openReviewForCommit fix.
  *
@@ -162,24 +165,41 @@ runScenario('link-cwd', async ({ page, log }) => {
     page.evaluate(
       ({ s, toks }) =>
         new Promise((resolve) => {
+          const requestId = 900002;
           window.agentDeck.subscribe((m) => {
-            if (m.type === 'resolvePathTokenResult' && m.sessionId === s) resolve(m.results);
+            if (
+              m.type === 'resolvePathTokenResult' &&
+              m.sessionId === s &&
+              m.requestId === requestId
+            )
+              resolve(m.results);
           });
-          window.agentDeck.post({ type: 'resolvePathToken', sessionId: s, tokens: toks });
+          window.agentDeck.post({
+            type: 'resolvePathToken',
+            sessionId: s,
+            requestId,
+            tokens: toks.map((t) => ({ alts: [t] })),
+          });
           setTimeout(() => resolve([]), 3000);
         }),
       { s: sid, toks: tokens },
     );
   const pathRes = await resolvePaths(['a-only.txt', 'b-only.txt']);
-  const cand = Object.fromEntries(pathRes.map((r) => [r.token, r.candidates.length]));
+  const byKey = Object.fromEntries(pathRes.map((r) => [r.key, r.candidates]));
   log('resolvePathToken', JSON.stringify(pathRes));
+  const aCands = byKey['a-only.txt'] ?? [];
+  const bCands = byKey['b-only.txt'] ?? [];
   assert(
-    (cand['a-only.txt'] ?? 0) >= 1,
-    `a-only.txt (cwd repo) should resolve, got ${cand['a-only.txt']}`,
+    aCands.some((c) => c.strength === 'exact-cwd' && endsWith(c.absPath, 'repo-a/a-only.txt')),
+    `a-only.txt (cwd repo) should resolve as exact-cwd, got ${JSON.stringify(aCands)}`,
   );
   assert(
-    (cand['b-only.txt'] ?? 0) === 0,
-    `b-only.txt (pinned repo only) must NOT resolve, got ${cand['b-only.txt']}`,
+    bCands.every((c) => c.strength !== 'exact-cwd'),
+    `b-only.txt (pinned repo only) must have no exact-cwd candidate, got ${JSON.stringify(bCands)}`,
+  );
+  assert(
+    bCands.some((c) => c.strength === 'exact-root' && endsWith(c.absPath, 'repo-b/b-only.txt')),
+    `b-only.txt should be reachable as exact-root in repo-b, got ${JSON.stringify(bCands)}`,
   );
   log('resolvePathToken keys off cwd repo ✓');
 

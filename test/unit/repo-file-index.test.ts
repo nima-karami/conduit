@@ -171,7 +171,10 @@ describe('createRepoFileIndex', () => {
 
   it('an empty listing is an empty repo, cached like any other answer', async () => {
     const h = harness({ '/w/repoA': [] });
-    expect(await h.raw.build('/w', [repo('/w/repoA')])).toEqual({ files: [] });
+    expect(await h.raw.build('/w', [repo('/w/repoA')])).toEqual({
+      files: [],
+      coveredRepos: ['/w/repoA'],
+    });
     await h.index.build('/w', [repo('/w/repoA')]);
     expect(h.listCalls).toEqual(['/w/repoA']);
   });
@@ -276,5 +279,40 @@ describe('createRepoFileIndex', () => {
     const h = harness({ '/w/A': ['sub/x.ts', 'a.ts'], '/w/A/sub': ['x.ts'] });
     const files = await h.index.build('/w', [repo('/w/A'), repo('/w/A/sub')]);
     expect(rels(files)).toEqual(['A/a.ts', 'A/sub/x.ts']);
+  });
+});
+
+// Plan 2026-10-16-terminal-path-links T3.4: a repo is covered only when its own listing answered,
+// is from this build, and was not walked — path links answer "not there" from covered repos only.
+describe('createRepoFileIndex: coveredRepos', () => {
+  it('composite: repo A listed, B not-repo, C failed (walked) → coveredRepos [A]', async () => {
+    const index = createRepoFileIndex({
+      listRepo: async (root) =>
+        root === '\\w\\A' ? ['a.ts'] : root === '/w/B' ? 'not-repo' : null,
+      walkLoose: async () => [],
+    });
+    const built = await index.build('/w', [repo('\\w\\A'), repo('/w/B'), repo('/w/C')]);
+    expect(built.coveredRepos).toEqual(['/w/A']);
+  });
+
+  it('memo hit keeps coveredRepos', async () => {
+    const h = harness({ '/w/repoA': ['a.ts'], '/w/repoB': ['b.ts'] });
+    const repos = [repo('/w/repoA'), repo('/w/repoB')];
+    const first = await h.raw.build('/w', repos);
+    const second = await h.raw.build('/w', repos);
+    expect(second.files).toBe(first.files);
+    expect(first.coveredRepos).toEqual(['/w/repoA', '/w/repoB']);
+    expect(second.coveredRepos).toEqual(first.coveredRepos);
+  });
+
+  it('a stale last-good listing is not covered, while its files are still present', async () => {
+    const h = harness({ '/w/repoA': ['a.ts'] });
+    const repos = [repo('/w/repoA')];
+    await h.raw.build('/w', repos);
+    h.raw.invalidateRepo(folderKey('/w/repoA'));
+    h.listings['/w/repoA'] = null;
+    const stale = await h.raw.build('/w', repos);
+    expect(rels(stale.files)).toEqual(['repoA/a.ts']);
+    expect(stale.coveredRepos).toEqual([]);
   });
 });

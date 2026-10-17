@@ -1,4 +1,5 @@
 import { ExpiringCache } from './expiring-cache';
+import { FILE_INDEX_TTL_MS } from './file-index-ttl';
 import { folderKey } from './folder-key';
 import type { GitListing } from './git-listing';
 import type { IndexedFile } from './path-resolve';
@@ -8,7 +9,7 @@ import { LOOSE_FILE_CAP, type RepoFileIndex } from './repo-file-index';
 // The project file index behind quick open, find in files, path links and the TS source index.
 // See docs/specs/2026-10-16-multi-repo-tracking.md §2 (Search) and the plan's Contracts.
 
-export const FILE_INDEX_TTL_MS = 5000;
+export { FILE_INDEX_TTL_MS };
 
 export interface ProjectFileIndexMeta {
   files: IndexedFile[];
@@ -17,6 +18,11 @@ export interface ProjectFileIndexMeta {
   /** The repos a non-git root's index was built from (repoSetOf), null otherwise, so the TS
    *  index can tell when it is out of date. */
   repoSet: string | null;
+  /** Forward-slashed roots this index lists completely: a git root whose `ls-files` answered,
+   *  or each repo of a non-git root's build that did (RepoFileIndexBuild.coveredRepos). A walk
+   *  never counts. Path links answer "not there" from these alone (plan
+   *  2026-10-16-terminal-path-links T3.4). */
+  covered: string[];
 }
 
 export interface ProjectFileIndexDeps {
@@ -68,7 +74,12 @@ export function createProjectFileIndex(deps: ProjectFileIndexDeps): ProjectFileI
     const listing = await deps.listGit(root);
     if (listing.kind === 'listed') {
       const files = listing.rels.map((rel) => ({ rel, abs: `${root}/${rel}` }));
-      return keep(cacheKey, { files, capped: false, repoSet: null });
+      return keep(cacheKey, {
+        files,
+        capped: false,
+        repoSet: null,
+        covered: [root.replace(/\\/g, '/')],
+      });
     }
     if (listing.kind === 'truncated' && !reportedTruncated.has(root)) {
       reportedTruncated.add(root);
@@ -84,10 +95,20 @@ export function createProjectFileIndex(deps: ProjectFileIndexDeps): ProjectFileI
         rel: h.rel,
         abs: h.abs.replace(/\\/g, '/'),
       }));
-      return keep(cacheKey, { files, capped: files.length >= LOOSE_FILE_CAP, repoSet: null });
+      return keep(cacheKey, {
+        files,
+        capped: files.length >= LOOSE_FILE_CAP,
+        repoSet: null,
+        covered: [],
+      });
     }
     const repos = deps.reposUnder(folderKey(root));
     const built = await deps.repoIndex.build(root, repos);
-    return keep(cacheKey, { files: built.files, capped: false, repoSet: repoSetOf(repos) });
+    return keep(cacheKey, {
+      files: built.files,
+      capped: false,
+      repoSet: repoSetOf(repos),
+      covered: built.coveredRepos,
+    });
   };
 }

@@ -9,7 +9,8 @@ import type { LauncherDTO } from './launchers';
 import type { LogLevel } from './logging';
 import type { LspServerStatus, LspTrustState } from './lsp-protocol';
 import type { DragOutRefusal } from './outgoing-paths';
-import type { LegacyTokenResolution as TokenResolution } from './path-resolve';
+import type { ResolveRoot } from './path-link-roots';
+import type { TokenResolution } from './path-resolve';
 import type { PipelineConfig } from './pipeline';
 import type { PlanCommentPatch, PlanCommentsData } from './plan-comments';
 import type { PreviewReason } from './preview-url';
@@ -746,10 +747,19 @@ export type HostToWebview =
   // D11: reply to `pathExists` — tells the renderer whether a terminal-printed path token
   // points at a real entry, and whether it is a directory (affects the click action).
   | { type: 'pathExistsResult'; path: string; exists: boolean; isDir: boolean }
-  // path-links v1: reply to `resolvePathToken` — per-token candidate files (0 = plain text,
-  // 1 = open directly, >1 = disambiguation dropdown). `sessionId` lets a pane ignore replies
-  // for other sessions. An unknown session / failure replies with empty `results`.
-  | { type: 'resolvePathTokenResult'; sessionId: string; results: TokenResolution[] }
+  // Reply to `resolvePathToken`, always exactly one per request (plan 2026-10-16-terminal-path-links
+  // Contracts): `requestId` echoes the batch so the pane settles every pending token of it, `cwd`
+  // and `rootsSig` are what the host resolved against (the pane's store scope). A requestId the
+  // host could not read is -1. A thrown error replies with `results: []`.
+  | {
+      type: 'resolvePathTokenResult';
+      sessionId: string;
+      requestId: number;
+      cwd: string;
+      rootsSig: string;
+      roots: ResolveRoot[];
+      results: TokenResolution[];
+    }
   // terminal-commit-link: reply to `validateCommits` — per candidate token its resolved full
   // 40-char sha when it names a real commit in the repo the terminal's cwd sits in, else null.
   // Renderer links only the resolved ones. `root` is that cwd repo (absent on an unknown/failed
@@ -1101,10 +1111,15 @@ export type WebviewToHost =
   // fs.existsSync without workspace-containment validation because the renderer can
   // already open any path via readFile (which is unguarded by workspace roots).
   | { type: 'pathExists'; path: string }
-  // path-links v1: resolve terminal path tokens (batched per rendered line) to candidate
-  // files against the session's cwd/project-root + file index. Host replies with
-  // `resolvePathTokenResult`. Read-only, like `pathExists`.
-  | { type: 'resolvePathToken'; sessionId: string; tokens: string[] }
+  // Resolve terminal path tokens (batched per logical line) against every session root. Each
+  // token is its ordered alternative raws. Host replies with `resolvePathTokenResult`.
+  // Read-only, like `pathExists`.
+  | {
+      type: 'resolvePathToken';
+      sessionId: string;
+      requestId: number;
+      tokens: Array<{ alts: string[] }>;
+    }
   // terminal-commit-link: validate terminal commit-hash candidates (batched per rendered line)
   // as real commit objects in the session's active repo. Host replies with
   // `validateCommitsResult`. Read-only (cat-file/rev-parse), like `resolvePathToken`. Spec §3.2.

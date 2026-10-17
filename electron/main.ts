@@ -20,7 +20,7 @@ import {
   type WebContents,
   webContents,
 } from 'electron';
-import { activeCwd, sessionGitRoot } from '../src/active-cwd';
+import { sessionGitRoot } from '../src/active-cwd';
 import { repoForPath, requestGitRoot, resolveRequestRepoRoot } from '../src/active-repo';
 import { type AgentScopeReason, runAddDir } from '../src/add-dir-delivery';
 import { AgentRegistry } from '../src/agent-registry';
@@ -124,11 +124,7 @@ import {
 import { resolveOwningSession } from '../src/owning-session';
 import { isInsideAnyRoot, isInsideRoot, realPathLeaf } from '../src/path-guard';
 import { userRootsOf } from '../src/path-link-roots';
-import {
-  type IndexedFile,
-  resolveToken,
-  type LegacyTokenResolution as TokenResolution,
-} from '../src/path-resolve';
+import type { IndexedFile } from '../src/path-resolve';
 import {
   parseDocs,
   parseSessions,
@@ -145,7 +141,6 @@ import type {
   AboutInfo,
   DiffBase,
   HostToWebview,
-  IndexScope,
   LimitOffer,
   PersistedDoc,
   RepoDTO,
@@ -273,6 +268,7 @@ import { watchServerRoot } from './lsp-watcher';
 import { NotesWatcher } from './notes-watcher';
 import { OpenFileWatcher } from './open-file-watcher';
 import { createOsFileClipboard, spawnPowerShell } from './os-file-clipboard';
+import { createPathLinkResolver } from './path-link-resolver';
 import { PlanWatcher } from './plan-watcher';
 import {
   PREVIEW_PARTITION,
@@ -471,14 +467,6 @@ const repoFileIndex = createRepoFileIndex({
 // registered repos and its index is the loose walk alone.
 let trackedReposUnder: ((rootKey: string) => Array<{ key: string; root: string }>) | null = null;
 
-const statKind = (absPath: string): 'file' | 'dir' | null => {
-  try {
-    return fs.statSync(absPath).isDirectory() ? 'dir' : 'file';
-  } catch {
-    return null;
-  }
-};
-
 /** Async existence + kind; null on a miss (ENOENT, EPERM — the caller only asks "is it there"). */
 const statKindAsync = (absPath: string): Promise<'file' | 'dir' | null> =>
   fs.promises.stat(absPath).then(
@@ -502,10 +490,6 @@ const projectFileIndexMeta = createProjectFileIndex({
   onTruncated: (root) =>
     hostLog?.warn('index', 'git-listing-truncated', { root, maxBytes: LISTING_MAX_BUFFER }),
 });
-
-async function projectFileIndex(root: string, scope?: IndexScope): Promise<IndexedFile[]> {
-  return (await projectFileIndexMeta(root, { scope })).files;
-}
 
 /** Files per `projectFiles` chunk — small enough that building one can't cost the renderer
  *  a frame, large enough that a 5000-file project is ~25 messages, not 5000. */
@@ -740,21 +724,6 @@ async function indexProjectSources(
       capped,
     });
   }
-}
-
-/** Resolve a batch of raw path tokens to candidate files for the terminal link provider.
- *  `root` is the session's cwd git root (see {@link sessionGitRoot}); tokens still resolve
- *  relative to `rawCwd` (the live cwd), which can be a subdir of `root`. */
-async function resolvePathTokens(
-  rawCwd: string,
-  root: string,
-  tokens: string[],
-): Promise<TokenResolution[]> {
-  const cwd = rawCwd.replace(/\\/g, '/');
-  const files = await projectFileIndex(root);
-  // Case-insensitive on Windows/macOS, sensitive on Linux — mirror the host filesystem.
-  const caseSensitive = process.platform === 'linux';
-  return tokens.map((t) => resolveToken(t, { cwd, root, files, caseSensitive }, statKind));
 }
 
 // terminal-commit-link: a commit oid is immutable, so collapse repeat validations across
@@ -1340,6 +1309,18 @@ app.whenReady().then(() => {
       // while pinned).
       mgr.setAutoRepo(id, repoForPath(s.repos ?? [], cwd));
     },
+    ...PATH_LINK_OPTS,
+  });
+  const pathLinks = createPathLinkResolver({
+    getSession: (id) => mgr.get(id),
+    gitRoot: (s) => sessionGitRoot(s, git),
+    fileIndex: async (root) => {
+      const meta = await projectFileIndexMeta(root);
+      return { files: meta.files, coveredRoots: meta.covered };
+    },
+    stat: statKindAsync,
+    topLevel: repoTopLevel,
+    homeDir: os.homedir().replace(/\\/g, '/'),
     ...PATH_LINK_OPTS,
   });
 
@@ -4217,21 +4198,30 @@ app.whenReady().then(() => {
           break;
         }
         case 'resolvePathToken': {
-          // path-links v1: resolve a line's path tokens against the session's cwd git root +
-          // file index. Roots off the LIVE cwd, NOT the pinned active repo (sessionGitRoot),
-          // so a terminal always links files in the repo it is sitting in. Unknown session /
-          // failure → empty results (renderer renders plain).
-          const session = mgr.get(m.sessionId);
-          let results: TokenResolution[] = [];
-          if (session) {
-            try {
-              const root = await sessionGitRoot(session, git);
-              results = await resolvePathTokens(activeCwd(session), root, m.tokens);
-            } catch {
-              results = [];
-            }
+          // Roots off the LIVE cwd (sessionGitRoot), never the pinned active repo, and tries
+          // every other session root too (plan 2026-10-16-terminal-path-links Contracts).
+          const requestId = typeof m.requestId === 'number' ? m.requestId : -1;
+          try {
+            const reply = await pathLinks.resolve(m.sessionId, m.tokens);
+            replyHere({
+              type: 'resolvePathTokenResult',
+              sessionId: m.sessionId,
+              requestId,
+              ...reply,
+            });
+          } catch (err) {
+            // Exactly one reply per request: the pane settles every pending token of the batch.
+            log.warn('links', 'resolve-failed', { error: String(err) });
+            replyHere({
+              type: 'resolvePathTokenResult',
+              sessionId: m.sessionId,
+              requestId,
+              cwd: '',
+              rootsSig: '',
+              roots: [],
+              results: [],
+            });
           }
-          replyHere({ type: 'resolvePathTokenResult', sessionId: m.sessionId, results });
           break;
         }
         case 'validateCommits': {

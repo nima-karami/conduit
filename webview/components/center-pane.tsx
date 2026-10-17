@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { rootsSigOf } from '../../src/path-link-roots';
 import type { FileContentDTO, FileDiffDTO, RepoChanges, RepoDTO } from '../../src/protocol';
 import { historyRepoFor, orderRepos } from '../../src/repo-display';
 import type { RepoInfo } from '../../src/repo-scan';
@@ -343,6 +344,7 @@ export function CenterPane({
                 sessionId={s.id}
                 agentId={s.agentId}
                 cwd={s.cwd ?? s.home}
+                rootsSig={rootsSigOf(s)}
                 visible={visible && groupOne.activeDocId === null}
                 onOpenFile={onOpenFileAt}
                 onRevealFolder={onRevealFolder}

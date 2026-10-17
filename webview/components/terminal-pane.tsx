@@ -3,7 +3,8 @@ import { SearchAddon } from '@xterm/addon-search';
 import { type ILinkProvider, Terminal } from '@xterm/xterm';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
-import type { LegacyPathCandidate as PathCandidate } from '../../src/path-resolve';
+import { FILE_INDEX_TTL_MS } from '../../src/file-index-ttl';
+import type { PathCandidate, TokenResolution } from '../../src/path-resolve';
 import type { TermGeometry } from '../../src/protocol';
 import { withTimeout } from '../../src/with-timeout';
 import {
@@ -37,6 +38,7 @@ import {
   detectUrlTokens,
   filterCommitTokensByPathSpans,
 } from '../terminal-links';
+import { buildLogicalLine, toBufferRange } from '../terminal-logical-line';
 import { isViewportAtBottom, shouldHandleWheelLocally, wheelScrollLines } from '../terminal-scroll';
 import { attachScrollDiagnostics } from '../terminal-scroll-diagnostics';
 import { createTerminalTokenCache } from '../terminal-token-cache';
@@ -65,6 +67,8 @@ const IS_WINDOWS = typeof navigator !== 'undefined' && /Win/i.test(navigator.pla
 // plain text; on the rare real timeout, the next repaint re-runs against the cache.
 const LINK_RESOLVE_TIMEOUT_MS = 10_000;
 const LINK_CACHE_CAPACITY = 2048;
+// Spec 2026-10-16-terminal-path-links §5: a found path stays linked this long without a re-ask.
+const PATH_LINK_TTL_MS = 30_000;
 
 interface ReplayState {
   active: boolean;
@@ -86,6 +90,7 @@ export function TerminalPane({
   sessionId,
   agentId,
   cwd,
+  rootsSig,
   visible,
   onOpenFile,
   onRevealFolder,
@@ -95,6 +100,9 @@ export function TerminalPane({
   sessionId: string;
   agentId?: string;
   cwd?: string;
+  /** rootsSigOf(session): part of the path-link cache scope, so an attach, detach or repo
+   *  discovery misses at once. Mirrored into a ref, never an effect dep. */
+  rootsSig: string;
   visible: boolean;
   /** Called when a file path link is clicked: absolute path + optional position +
    * this pane's session id, so the doc opens in the session whose terminal was clicked
@@ -149,6 +157,8 @@ export function TerminalPane({
   // The terminal/PTY lifecycle is therefore keyed on sessionId alone.
   const cwdRef = useRef(cwd);
   cwdRef.current = cwd;
+  const rootsSigRef = useRef(rootsSig);
+  rootsSigRef.current = rootsSig;
   const agentIdRef = useRef(agentId);
   agentIdRef.current = agentId;
   const onOpenFileRef = useRef(onOpenFile);
@@ -173,7 +183,7 @@ export function TerminalPane({
       col?: number,
     ) => {
       const items: MenuItem[] = candidates.map((c) => ({
-        label: c.relPath,
+        label: c.relToRoot || c.absPath,
         icon: c.isDir ? <IconFolder size={14} /> : <IconDoc size={14} />,
         onClick: () =>
           c.isDir
@@ -341,15 +351,26 @@ export function TerminalPane({
     let unsubValidate: (() => void) | null = null;
     let disposeLinkCaches = () => {};
     if (window.agentDeck) {
-      type Resolution = { candidates: PathCandidate[]; truncated: boolean };
-      const cacheOptions = { capacity: LINK_CACHE_CAPACITY, timeoutMs: LINK_RESOLVE_TIMEOUT_MS };
-      const resolveCache = createTerminalTokenCache<Resolution>(
-        (tokens) => post({ type: 'resolvePathToken', sessionId, tokens }),
-        cacheOptions,
+      const resolveCache = createTerminalTokenCache<TokenResolution>(
+        // A path token is its alts joined by NUL; no path char is NUL, so the split is exact.
+        (batch) =>
+          post({
+            type: 'resolvePathToken',
+            sessionId,
+            requestId: batch.id,
+            tokens: batch.tokens.map((token) => ({ alts: token.split('\0') })),
+          }),
+        {
+          capacity: LINK_CACHE_CAPACITY,
+          timeoutMs: LINK_RESOLVE_TIMEOUT_MS,
+          ttlMs: PATH_LINK_TTL_MS,
+          // A miss is at most as stale as the host's file index (plan Decisions "cache scope").
+          negative: { is: (r) => r.candidates.length === 0, ttlMs: FILE_INDEX_TTL_MS },
+        },
       );
       const commitCache = createTerminalTokenCache<string | null>(
-        (tokens) => post({ type: 'validateCommits', sessionId, tokens }),
-        cacheOptions,
+        (batch) => post({ type: 'validateCommits', sessionId, tokens: batch.tokens }),
+        { capacity: LINK_CACHE_CAPACITY, timeoutMs: LINK_RESOLVE_TIMEOUT_MS },
       );
       let commitRepoRoot: string | undefined;
       disposeLinkCaches = () => {
@@ -358,9 +379,11 @@ export function TerminalPane({
       };
       unsubResolve = subscribe((msg) => {
         if (msg.type !== 'resolvePathTokenResult' || msg.sessionId !== sessionId) return;
-        for (const r of msg.results) {
-          resolveCache.resolve(r.token, { candidates: r.candidates, truncated: r.truncated });
-        }
+        if (msg.requestId < 0) return;
+        // An errored entry is not cached; settle still releases its waiter as a miss.
+        const values = new Map<string, TokenResolution>();
+        for (const r of msg.results) if (!r.error) values.set(r.key, r);
+        resolveCache.settle(msg.requestId, `${msg.cwd}\0${msg.rootsSig}`, values);
       });
       unsubValidate = subscribe((msg) => {
         if (msg.type !== 'validateCommitsResult' || msg.sessionId !== sessionId) return;
@@ -370,19 +393,31 @@ export function TerminalPane({
 
       const linkProvider: ILinkProvider = {
         provideLinks(bufferLineNumber, callback) {
-          const line = term.buffer.active.getLine(bufferLineNumber - 1);
-          if (!line) {
+          // Detection runs on the soft-wrapped logical line, so a path split at the wrap is one
+          // link; xterm asks per row, and only links touching that row are returned.
+          const ll = buildLogicalLine(term.buffer.active, bufferLineNumber - 1, term.cols);
+          if (!ll) {
             callback(undefined);
             return;
           }
-          const text = line.translateToString(true);
+          const text = ll.text;
+          const rangeOf = (s: { start: number; end: number }) => toBufferRange(ll, s.start, s.end);
+          const onThisRow = (s: { start: number; end: number }) => {
+            const r = rangeOf(s);
+            return r.start.y <= bufferLineNumber && bufferLineNumber <= r.end.y;
+          };
           // URLs are detected first and given precedence: a path/commit span that overlaps a URL
           // span is dropped (a `file://`/`http(s)` token is a URL, not a path/hash). §precedence.
-          const urlTokens = detectUrlTokens(text);
+          const allUrls = detectUrlTokens(text);
           const overlapsUrl = (s: { start: number; end: number }) =>
-            urlTokens.some((u) => s.start < u.end && u.start < s.end);
-          const tokens = detectPathTokens(text, cwdRef.current).filter((t) => !overlapsUrl(t));
-          const commitTokens = detectCommitTokens(text).filter((t) => !overlapsUrl(t));
+            allUrls.some((u) => s.start < u.end && u.start < s.end);
+          const urlTokens = allUrls.filter(onThisRow);
+          const tokens = detectPathTokens(text, cwdRef.current).filter(
+            (t) => !overlapsUrl(t) && onThisRow(t),
+          );
+          const commitTokens = detectCommitTokens(text).filter(
+            (t) => !overlapsUrl(t) && onThisRow(t),
+          );
           if (tokens.length === 0 && commitTokens.length === 0 && urlTokens.length === 0) {
             callback(undefined);
             return;
@@ -391,10 +426,7 @@ export function TerminalPane({
           // URL links need no filesystem check, so build them synchronously and never gate them
           // behind the resolve/validate round-trip (or its timeout/error fallback).
           const urlLinks = urlTokens.map((tok) => ({
-            range: {
-              start: { x: tok.start + 1, y: bufferLineNumber },
-              end: { x: tok.end, y: bufferLineNumber },
-            },
+            range: rangeOf(tok),
             text: text.slice(tok.start, tok.end),
             decorations: { pointerCursor: true, underline: false },
             activate(event: MouseEvent, _text: string) {
@@ -411,12 +443,16 @@ export function TerminalPane({
             },
           }));
 
-          // Only URLs on this line → no host round-trip needed; deliver immediately.
+          // Only URLs on this row → no host round-trip needed; deliver immediately.
           if (tokens.length === 0 && commitTokens.length === 0) {
             callback(urlLinks.length > 0 ? urlLinks : undefined);
             return;
           }
 
+          const keyOf = (tok: { alts: string[] }) => tok.alts.join('\0');
+          // The host stores under the cwd and roots it resolved against; a lookup under a stale
+          // pair simply misses (plan Contracts "Cache").
+          const scope = `${(cwdRef.current ?? '').replace(/\\/g, '/')}\0${rootsSigRef.current}`;
           // A host reply may never arrive (session disposed mid-flight); without a
           // bound the link callback would never fire and xterm would leave that line's
           // resolution pending forever. Fall back to "no links" on timeout — a later
@@ -425,15 +461,15 @@ export function TerminalPane({
           void withTimeout(
             Promise.all([
               tokens.length > 0
-                ? resolveCache.get(tokens.map((t) => t.raw))
-                : Promise.resolve(new Map<string, Resolution>()),
+                ? resolveCache.get(tokens.map(keyOf), scope)
+                : Promise.resolve(new Map<string, TokenResolution>()),
               commitTokens.length > 0
                 ? commitCache.get(commitTokens.map((t) => t.raw))
                 : Promise.resolve(new Map<string, string | null>()),
             ]),
             LINK_RESOLVE_TIMEOUT_MS,
-            [new Map<string, Resolution>(), new Map<string, string | null>()] as [
-              Map<string, Resolution>,
+            [new Map<string, TokenResolution>(), new Map<string, string | null>()] as [
+              Map<string, TokenResolution>,
               Map<string, string | null>,
             ],
           )
@@ -444,14 +480,11 @@ export function TerminalPane({
               // against URLs upstream via overlapsUrl.)
               const pathSpans: Array<{ start: number; end: number }> = [];
               for (const tok of tokens) {
-                const res = resMap.get(tok.raw);
+                const res = resMap.get(keyOf(tok));
                 if (!res || res.candidates.length === 0) continue; // 0 candidates → plain text
                 pathSpans.push({ start: tok.start, end: tok.end });
                 links.push({
-                  range: {
-                    start: { x: tok.start + 1, y: bufferLineNumber },
-                    end: { x: tok.end, y: bufferLineNumber },
-                  },
+                  range: rangeOf(tok),
                   text: text.slice(tok.start, tok.end),
                   decorations: { pointerCursor: true, underline: false },
                   activate(event: MouseEvent, _text: string) {
@@ -495,10 +528,7 @@ export function TerminalPane({
                 const full = commitMap.get(tok.raw);
                 if (!full) continue;
                 links.push({
-                  range: {
-                    start: { x: tok.start + 1, y: bufferLineNumber },
-                    end: { x: tok.end, y: bufferLineNumber },
-                  },
+                  range: rangeOf(tok),
                   text: text.slice(tok.start, tok.end),
                   decorations: { pointerCursor: true, underline: false },
                   activate(event: MouseEvent, _text: string) {

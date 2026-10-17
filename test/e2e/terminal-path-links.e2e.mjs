@@ -16,14 +16,26 @@ import { assert, openSession, REPO, runScenario } from './harness.mjs';
 runScenario('terminal-path-links', async ({ page, log }) => {
   const sid = await openSession(page, { path: REPO });
 
+  // The reply is matched by requestId: the pane's own resolves share the session.
   const resolve = (tokens) =>
     page.evaluate(
       ({ s, toks }) =>
         new Promise((resolve) => {
+          const requestId = 900001;
           window.agentDeck.subscribe((m) => {
-            if (m.type === 'resolvePathTokenResult' && m.sessionId === s) resolve(m.results);
+            if (
+              m.type === 'resolvePathTokenResult' &&
+              m.sessionId === s &&
+              m.requestId === requestId
+            )
+              resolve(m.results);
           });
-          window.agentDeck.post({ type: 'resolvePathToken', sessionId: s, tokens: toks });
+          window.agentDeck.post({
+            type: 'resolvePathToken',
+            sessionId: s,
+            requestId,
+            tokens: toks.map((t) => ({ alts: [t] })),
+          });
         }),
       { s: sid, toks: tokens },
     );
@@ -35,11 +47,11 @@ runScenario('terminal-path-links', async ({ page, log }) => {
     'zzz-does-not-exist.ts',
   ]);
   log('exact:', JSON.stringify(exact));
-  log('suffix:', JSON.stringify(suffix.candidates.map((c) => c.relPath)));
+  log('suffix:', JSON.stringify(suffix.candidates.map((c) => c.relToRoot)));
   log(
     'ambiguous count:',
     ambiguous.candidates.length,
-    JSON.stringify(ambiguous.candidates.slice(0, 3).map((c) => c.relPath)),
+    JSON.stringify(ambiguous.candidates.slice(0, 3).map((c) => c.relToRoot)),
   );
   log('bogus:', JSON.stringify(bogus));
 
@@ -49,7 +61,9 @@ runScenario('terminal-path-links', async ({ page, log }) => {
     `webview/app.tsx → 1 candidate, got ${exact.candidates.length}`,
   );
   assert(
-    exact.candidates[0].relPath === 'webview/app.tsx' && exact.candidates[0].isDir === false,
+    exact.candidates[0].relToRoot === 'webview/app.tsx' &&
+      exact.candidates[0].isDir === false &&
+      exact.candidates[0].strength === 'exact-cwd',
     `exact candidate should be webview/app.tsx (file), got ${JSON.stringify(exact.candidates[0])}`,
   );
 
@@ -60,9 +74,9 @@ runScenario('terminal-path-links', async ({ page, log }) => {
   );
   assert(
     suffix.candidates.every(
-      (c) => c.relPath === 'protocol.ts' || c.relPath.endsWith('/protocol.ts'),
+      (c) => c.relToRoot === 'protocol.ts' || c.relToRoot.endsWith('/protocol.ts'),
     ),
-    `every suffix candidate should end with protocol.ts, got ${JSON.stringify(suffix.candidates.map((c) => c.relPath))}`,
+    `every suffix candidate should end with protocol.ts, got ${JSON.stringify(suffix.candidates.map((c) => c.relToRoot))}`,
   );
 
   // rule 2 — the disambiguation case: a duplicated basename returns MANY candidates (the
@@ -72,10 +86,10 @@ runScenario('terminal-path-links', async ({ page, log }) => {
     `report.md should resolve to >1 candidate (dropdown case), got ${ambiguous.candidates.length}`,
   );
   assert(
-    ambiguous.candidates.every((c) => c.relPath.endsWith('report.md')),
-    `every ambiguous candidate should end with report.md, got ${JSON.stringify(ambiguous.candidates.map((c) => c.relPath))}`,
+    ambiguous.candidates.every((c) => c.relToRoot.endsWith('report.md')),
+    `every ambiguous candidate should end with report.md, got ${JSON.stringify(ambiguous.candidates.map((c) => c.relToRoot))}`,
   );
-  const lens = ambiguous.candidates.map((c) => c.relPath.length);
+  const lens = ambiguous.candidates.map((c) => c.relToRoot.length);
   assert(
     lens.every((l, i) => i === 0 || lens[i - 1] <= l),
     `ambiguous candidates should be sorted shortest-path-first, got ${JSON.stringify(lens)}`,

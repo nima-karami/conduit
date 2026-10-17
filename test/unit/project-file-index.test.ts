@@ -18,7 +18,7 @@ function harness(listing: GitListing) {
     repoIndex: {
       async build(root) {
         calls.build += 1;
-        return { files: [{ rel: 'r/x.ts', abs: `${root}/r/x.ts` }] };
+        return { files: [{ rel: 'r/x.ts', abs: `${root}/r/x.ts` }], coveredRepos: ['/w/r'] };
       },
     },
     reposUnder: () => [{ key: '/w/r', root: '/w/r' }],
@@ -80,6 +80,25 @@ describe('createProjectFileIndex: a listing git could not give', () => {
     const h = harness({ kind: 'failed' });
     await h.meta('/w');
     expect(h.truncated).toEqual([]);
+  });
+
+  // Plan 2026-10-16-terminal-path-links T3.4.
+  it('covered: a listed git root is [root]', async () => {
+    const h = harness({ kind: 'listed', rels: ['x.ts'] });
+    expect((await h.meta('/w')).covered).toEqual(['/w']);
+  });
+
+  it('covered: a git listing that failed or was truncated falls back to the walk → []', async () => {
+    for (const kind of ['failed', 'truncated'] as const) {
+      expect((await harness({ kind }).meta('/w')).covered).toEqual([]);
+    }
+  });
+
+  it('covered: a non-git root reports its build’s coveredRepos; scope everything → []', async () => {
+    const h = harness({ kind: 'not-repo' });
+    expect((await h.meta('/w')).covered).toEqual(['/w/r']);
+    expect((await h.meta('/w')).covered).toEqual(['/w/r']);
+    expect((await h.meta('/w', { scope: 'everything' })).covered).toEqual([]);
   });
 
   it('each scope has its own entry', async () => {

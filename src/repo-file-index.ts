@@ -23,6 +23,9 @@ export interface RepoFileIndexDeps {
 export interface RepoFileIndexBuild {
   /** Forward-slash rel (root-relative) and abs. */
   files: IndexedFile[];
+  /** Forward-slashed roots of the repos whose files came from their own listing in this build:
+   *  not walked, not a stale last-good listing (plan 2026-10-16-terminal-path-links T3.4). */
+  coveredRepos: string[];
 }
 
 export interface RepoFileIndex {
@@ -60,7 +63,7 @@ export function createRepoFileIndex(deps: RepoFileIndexDeps): RepoFileIndex {
     string,
     { version: number; repoSet: string; files: IndexedFile[]; serial: number }
   >();
-  const unions = new Map<string, { sig: string; files: IndexedFile[] }>();
+  const unions = new Map<string, { sig: string; files: IndexedFile[]; coveredRepos: string[] }>();
   /** Repo keys each root's last build used: a listing no root uses any more is dropped. */
   const usedBy = new Map<string, ReadonlySet<string>>();
 
@@ -145,7 +148,11 @@ export function createRepoFileIndex(deps: RepoFileIndexDeps): RepoFileIndex {
           ? null
           : `${parts.join('\n')}\n#${looseFiles?.serial ?? ''}`;
       const memo = unions.get(rootKey);
-      if (sig !== null && memo?.sig === sig) return { files: memo.files };
+      if (sig !== null && memo?.sig === sig)
+        return { files: memo.files, coveredRepos: memo.coveredRepos };
+      const coveredRepos = under
+        .filter((_, i) => lists[i]?.fresh === true)
+        .map((r) => toSlash(r.root));
 
       // A repo git never listed is walked instead (the loose walk pruned it), skipping the
       // listed repos inside it.
@@ -168,8 +175,8 @@ export function createRepoFileIndex(deps: RepoFileIndexDeps): RepoFileIndex {
       for (const f of looseFiles?.files ?? []) if (!byRel.has(f.rel)) byRel.set(f.rel, f);
       const files = [...byRel.values()];
       if (sig === null) unions.delete(rootKey);
-      else unions.set(rootKey, { sig, files });
-      return { files };
+      else unions.set(rootKey, { sig, files, coveredRepos });
+      return { files, coveredRepos };
     },
     invalidateRepo(key) {
       repoVersions.set(key, (repoVersions.get(key) ?? 0) + 1);

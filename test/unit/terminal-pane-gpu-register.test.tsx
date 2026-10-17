@@ -66,7 +66,7 @@ describe('TerminalPane GPU registration', () => {
     document.body.appendChild(host);
     const r = createRoot(host);
     root = r;
-    await act(async () => r.render(<TerminalPane sessionId="s1" visible />));
+    await act(async () => r.render(<TerminalPane sessionId="s1" rootsSig="" visible />));
     await act(async () => r.unmount());
     root = null;
     expect(gpu.state.initThrew).toBe(true);
