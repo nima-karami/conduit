@@ -87,6 +87,8 @@ export function CenterPane({
   onRevealFolder,
   onOpenCommitReview,
   onSearchAllFiles,
+  onOpenAsSessionFromTerminal,
+  openAsSessionHintFor,
   reviewRepos,
   reviewRepoChanges,
   reviewRepoGit,
@@ -158,6 +160,14 @@ export function CenterPane({
   onOpenCommitReview?: (sha: string, sessionId: string, repoRoot?: string) => void;
   /** A terminal path picker's "Search all files…": quick open prefilled with the token. */
   onSearchAllFiles?: (query: string) => void;
+  /** A terminal path link's "Open as new session" (prefill only; focus returns to `returnFocus`). */
+  onOpenAsSessionFromTerminal?: (
+    home: string,
+    originSessionId: string,
+    returnFocus: HTMLElement | null,
+  ) => void;
+  /** "in <project>" for a session's terminal link menu. */
+  openAsSessionHintFor?: (sessionId: string) => string | undefined;
   // Review tab (R5.5): the singleton Review-changes doc renders ReviewView in the doc
   // area instead of DocView. See ReviewView's props for these four.
   reviewRepos: readonly RepoInfo[];
@@ -354,6 +364,8 @@ export function CenterPane({
                 onOpenCommitReview={onOpenCommitReview}
                 onOpenTimedMessages={onOpenTimedMessages}
                 onSearchAllFiles={onSearchAllFiles}
+                onOpenAsSession={onOpenAsSessionFromTerminal}
+                openAsSessionHint={openAsSessionHintFor?.(s.id)}
               />
             </div>
           </div>

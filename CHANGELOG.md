@@ -6,6 +6,20 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Terminal paths link in more shapes, and an ambiguous one asks which repo.** A path an agent
+  prints now links in a tool header (`Update(src/index.ts)`), in backticks or a markdown link,
+  with a `(42,7)`, `#L42` or `line 42` position, truncated with `…`, wrapped across rows, relative
+  with backslashes, as a folder with a trailing `/`, or as a file like `Makefile` or `.env`. A
+  relative path is tried against every folder of the session, not just the one the terminal is
+  in. When it exists in several repos or worktrees, clicking it opens a picker that names each
+  one, with the repo you picked last at the top; a match in the terminal's own folder still opens
+  straight away. Right-click a path for Open, Copy path, Copy relative path, Reveal in Explorer and
+  **Open as new session**, which fills in the New session dialog with that folder (or the file's
+  repo) and the session's project. A file deleted since it was printed says so instead of opening.
+- A cwd reported by terminal output that points at a network share outside the session's folders
+  is ignored, so printing `\\server\share` no longer freezes the app while Windows tries to reach it.
+
 ### Changed
 - **Changes stay current across many repos and parallel sessions.** Conduit now re-reads only the
   repos that actually changed, once, and every open session that contains one sees the same result,

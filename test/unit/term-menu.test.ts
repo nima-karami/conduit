@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildTerminalMenuItems } from '../../webview/term-menu';
+import { pickerHeading } from '../../webview/components/path-candidate-picker-model';
+import { buildLinkMenuItems, buildTerminalMenuItems } from '../../webview/term-menu';
 import { expectCopyEnabledOnlyWithSelection, separatorBeforeOf } from '../helpers/menu';
 
 const ids = (ctx: Parameters<typeof buildTerminalMenuItems>[0]) =>
@@ -52,5 +53,67 @@ describe('buildTerminalMenuItems', () => {
   it('is deterministic for a given context', () => {
     const ctx = { hasSelection: true, canPaste: false };
     expect(buildTerminalMenuItems(ctx)).toEqual(buildTerminalMenuItems(ctx));
+  });
+});
+
+// Plan 2026-10-16-terminal-path-links T5.1: the link actions prepended on a path link.
+describe('buildLinkMenuItems', () => {
+  const shape = (ctx: Parameters<typeof buildLinkMenuItems>[0]) =>
+    buildLinkMenuItems(ctx).map((i) => [i.id, i.separatorBefore === true, i.hint ?? null]);
+
+  it('file link', () => {
+    expect(shape({ target: 'file', matchCount: 1, openAsSessionHint: 'in Proj' })).toEqual([
+      ['open', false, null],
+      ['copyPath', true, null],
+      ['copyRelativePath', false, null],
+      ['reveal', false, null],
+      ['openAsSession', true, 'in Proj'],
+    ]);
+  });
+
+  it('file link with 3 matches adds Show all matches', () => {
+    expect(buildLinkMenuItems({ target: 'file', matchCount: 3 }).map((i) => i.id)).toEqual([
+      'open',
+      'showAll',
+      'copyPath',
+      'copyRelativePath',
+      'reveal',
+      'openAsSession',
+    ]);
+  });
+
+  it('dir link single: no primary, no separator before Copy path', () => {
+    expect(shape({ target: 'dir', matchCount: 1 })).toEqual([
+      ['copyPath', false, null],
+      ['copyRelativePath', false, null],
+      ['reveal', false, null],
+      ['openAsSession', true, null],
+    ]);
+  });
+
+  it('ambiguous: Show all matches, then every action hinted with the count', () => {
+    expect(shape({ target: null, matchCount: 3, openAsSessionHint: 'in Proj' })).toEqual([
+      ['showAll', false, null],
+      ['copyPath', true, '3 matches'],
+      ['copyRelativePath', false, '3 matches'],
+      ['reveal', false, '3 matches'],
+      ['openAsSession', true, '3 matches'],
+    ]);
+  });
+
+  it('labels come from the shared strings', () => {
+    const labels = buildLinkMenuItems({ target: 'file', matchCount: 2 }).map((i) => i.label);
+    expect(labels).toEqual([
+      'Open',
+      'Show all matches',
+      'Copy path',
+      'Copy relative path',
+      'Reveal in Explorer',
+      'Open as new session',
+    ]);
+  });
+
+  it('an action picker heading names the action', () => {
+    expect(pickerHeading('x', 3, 'copyPath')).toBe('Copy path — pick a match');
   });
 });

@@ -82,7 +82,7 @@ describe('pickerHeading and strings', () => {
   });
 
   it('an action heading asks to pick a match', () => {
-    expect(pickerHeading('x', 3, TERM_LINK_STR.copyPath)).toBe('Copy path — pick a match');
+    expect(pickerHeading('x', 3, 'copyPath')).toBe('Copy path — pick a match');
   });
 
   it(`a ${FILTER_THRESHOLD}-row picker still announces its count through the heading`, () => {

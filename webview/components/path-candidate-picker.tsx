@@ -8,6 +8,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { IconDoc, IconFolder, IconSearch } from '../icons';
 import { isMiddleButton } from '../middle-click';
 import { TERM_LINK_STR } from '../term-link-strings';
+import type { LinkMenuAction } from '../term-menu';
 import {
   FILTER_THRESHOLD,
   filterRows,
@@ -17,7 +18,7 @@ import {
 import { Popover } from './popover';
 import { RepoTagPill } from './repo-picker-menu';
 
-export type PickerMode = { kind: 'open' } | { kind: 'action'; actionLabel: string };
+export type PickerMode = { kind: 'open' } | { kind: 'action'; action: LinkMenuAction };
 
 export interface PathCandidatePickerProps {
   at: { x: number; y: number };
@@ -55,11 +56,7 @@ export function PathCandidatePicker({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const withFilter = rows.length >= FILTER_THRESHOLD;
-  const heading = pickerHeading(
-    token,
-    total,
-    mode.kind === 'action' ? mode.actionLabel : undefined,
-  );
+  const heading = pickerHeading(token, total, mode.kind === 'action' ? mode.action : undefined);
 
   const visible = useMemo(() => filterRows(rows, query), [rows, query]);
   const items: Item[] = useMemo(

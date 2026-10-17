@@ -10,6 +10,8 @@
  *   / no permission); when enabled, a failed read surfaces an error toast.
  */
 
+import { TERM_LINK_STR } from './term-link-strings';
+
 export interface TerminalMenuContext {
   /** A non-empty terminal selection exists — gates Copy's enabled state. */
   hasSelection: boolean;
@@ -64,6 +66,67 @@ export function buildTerminalMenuItems(ctx: TerminalMenuContext): TerminalMenuIt
       label: 'Clear',
       action: 'clear',
       iconKey: 'clear',
+    },
+  ];
+}
+
+/** Link actions a terminal path link adds to the menu (spec 2026-10-16-terminal-path-links §3.4). */
+export type LinkMenuAction =
+  | 'open'
+  | 'showAll'
+  | 'copyPath'
+  | 'copyRelativePath'
+  | 'reveal'
+  | 'openAsSession';
+
+export interface LinkMenuContext {
+  /** null = ambiguous (chooseClickAction → pick): every action goes through the picker. */
+  target: 'file' | 'dir' | null;
+  /** All matches (the resolution's total). */
+  matchCount: number;
+  /** "in <project>". */
+  openAsSessionHint?: string;
+}
+
+export interface LinkMenuItemSpec {
+  id: LinkMenuAction;
+  label: string;
+  hint?: string;
+  separatorBefore?: boolean;
+}
+
+/** Primary (open / show all) → reference (copy, reveal) → session; the terminal's own items
+ *  follow. */
+export function buildLinkMenuItems(ctx: LinkMenuContext): LinkMenuItemSpec[] {
+  const ambiguous = ctx.target === null;
+  const countHint = ambiguous ? { hint: TERM_LINK_STR.matches(ctx.matchCount) } : {};
+  const primary: LinkMenuItemSpec[] = [];
+  if (ctx.target === 'file') primary.push({ id: 'open', label: TERM_LINK_STR.open });
+  if (ambiguous || ctx.matchCount > 1)
+    primary.push({ id: 'showAll', label: TERM_LINK_STR.showAll });
+  const reference: LinkMenuItemSpec[] = [
+    {
+      id: 'copyPath',
+      label: TERM_LINK_STR.copyPath,
+      ...countHint,
+      ...(primary.length > 0 ? { separatorBefore: true } : {}),
+    },
+    { id: 'copyRelativePath', label: TERM_LINK_STR.copyRelativePath, ...countHint },
+    { id: 'reveal', label: TERM_LINK_STR.reveal, ...countHint },
+  ];
+  const sessionHint = ambiguous
+    ? countHint
+    : ctx.openAsSessionHint
+      ? { hint: ctx.openAsSessionHint }
+      : {};
+  return [
+    ...primary,
+    ...reference,
+    {
+      id: 'openAsSession',
+      label: TERM_LINK_STR.openAsSession,
+      separatorBefore: true,
+      ...sessionHint,
     },
   ];
 }

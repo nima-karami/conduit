@@ -3,6 +3,7 @@
 import type { ResolveRoot } from '../../src/path-link-roots';
 import type { PathCandidate } from '../../src/path-resolve';
 import { TERM_LINK_STR } from '../term-link-strings';
+import type { LinkMenuAction } from '../term-menu';
 
 /** At or above this many rows the picker shows a filter (spec §5). */
 export const FILTER_THRESHOLD = 9;
@@ -48,6 +49,8 @@ export function filterRows(rows: readonly PickerRow[], query: string): PickerRow
 }
 
 /** The focused element's accessible name, so the count is announced on open. */
-export function pickerHeading(token: string, total: number, actionLabel?: string): string {
-  return actionLabel ? TERM_LINK_STR.pickFor(actionLabel) : TERM_LINK_STR.heading(token, total);
+export function pickerHeading(token: string, total: number, action?: LinkMenuAction): string {
+  return action
+    ? TERM_LINK_STR.pickFor(TERM_LINK_STR[action])
+    : TERM_LINK_STR.heading(token, total);
 }

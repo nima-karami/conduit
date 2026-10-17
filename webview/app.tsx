@@ -2052,6 +2052,27 @@ export function App() {
   );
   const hintProjectName = state?.projects.find((p) => p.id === hintProjectId)?.name;
   const openAsSessionHint = hintProjectName !== undefined ? `in ${hintProjectName}` : undefined;
+  // A terminal path link's "Open as new session": prefilled into the clicked session's project,
+  // never launched; Escape returns focus to that terminal (spec 2026-10-16-terminal-path-links
+  // §3.4).
+  const openAsSessionFromTerminal = useCallback(
+    (home: string, originSessionId: string, returnFocus: HTMLElement | null) => {
+      newSessionReturnFocus.current = returnFocus;
+      setNewSession({
+        home,
+        projectId: sessions.find((s) => s.id === originSessionId)?.projectId ?? null,
+      });
+    },
+    [sessions],
+  );
+  const openAsSessionHintFor = useCallback(
+    (sessionId: string) => {
+      const projectId = sessions.find((s) => s.id === sessionId)?.projectId;
+      const name = state?.projects.find((p) => p.id === projectId)?.name;
+      return name !== undefined ? `in ${name}` : undefined;
+    },
+    [sessions, state?.projects],
+  );
   const rowChanges = useMemo(() => buildRowChangeMap({ repoChanges }), [repoChanges]);
 
   // Hunk-level stage/unstage/discard reach app-level capabilities through a module store rather
@@ -4331,6 +4352,8 @@ export function App() {
             onOpenFile={(p, mode) => openFile(p, undefined, mode)}
             onOpenFileAt={openTerminalFileLink}
             onSearchAllFiles={(q) => setPalette({ initialQuery: q })}
+            onOpenAsSessionFromTerminal={openAsSessionFromTerminal}
+            openAsSessionHintFor={openAsSessionHintFor}
             onOpenWeb={openWeb}
             flashTab={backgroundFeedback.flashTab}
             onRevealFolder={(path) => post({ type: 'revealInExplorer', path })}

@@ -1,7 +1,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { type ILinkProvider, Terminal } from '@xterm/xterm';
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
 import { FILE_INDEX_TTL_MS } from '../../src/file-index-ttl';
 import { folderKey } from '../../src/folder-key';
@@ -20,13 +20,26 @@ import {
 } from '../bridge';
 import type { OpenMode } from '../docs';
 import { fontZoomTarget } from '../font-zoom';
-import { IconCopy, IconEraser, IconPaste, IconSearch } from '../icons';
+import {
+  IconCopy,
+  IconDoc,
+  IconEraser,
+  IconExternal,
+  IconPaste,
+  IconSearch,
+  IconTerminal,
+} from '../icons';
 import { isMiddleButton, terminalLinkMiddleAction } from '../middle-click';
 import { chooseClickAction, rankCandidates } from '../path-candidate-rank';
 import { probePathKind } from '../path-probe';
 import { useSettings } from '../settings';
 import { TERM_LINK_STR } from '../term-link-strings';
-import { buildTerminalMenuItems, type TerminalMenuAction } from '../term-menu';
+import {
+  buildLinkMenuItems,
+  buildTerminalMenuItems,
+  type LinkMenuAction,
+  type TerminalMenuAction,
+} from '../term-menu';
 import { initialTermSearchState, termSearchReducer } from '../term-search';
 import { notifyTerminalBus, registerTerminal } from '../terminal-bus';
 import { terminalClipboardAction } from '../terminal-clipboard';
@@ -52,7 +65,7 @@ import { createTerminalTokenCache } from '../terminal-token-cache';
 import { pushToast } from '../toast-store';
 import { buildXtermTheme, monoStack } from '../xterm-theme';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
-import { PathCandidatePicker } from './path-candidate-picker';
+import { PathCandidatePicker, type PickerMode } from './path-candidate-picker';
 import { type PickerRow, pickerRows } from './path-candidate-picker-model';
 import { disposeTerminal } from './safe-dispose';
 import { TermSearchBar } from './term-search-bar';
@@ -100,7 +113,25 @@ interface PickerState {
   total: number;
   truncated: boolean;
   link: LinkTarget;
+  mode: PickerMode;
 }
+
+/** The link under the pointer, tracked by the links' own hover/leave (xterm's current link is
+ *  private): a middle press is suppressed over any link, and a right-click on a path link adds
+ *  its actions. */
+type HoveredLink =
+  | { kind: 'path'; token: string; found: LinkResolution; link: LinkTarget }
+  | { kind: 'url' | 'commit' };
+
+// Explorer's icons for the same actions (webview/explorer-menu.tsx).
+const LINK_MENU_ICONS: Record<LinkMenuAction, ReactNode> = {
+  open: <IconDoc size={14} />,
+  showAll: <IconSearch size={14} />,
+  copyPath: <IconCopy size={14} />,
+  copyRelativePath: <IconCopy size={14} />,
+  reveal: <IconExternal size={14} />,
+  openAsSession: <IconTerminal size={14} />,
+};
 
 interface ReplayState {
   active: boolean;
@@ -129,6 +160,8 @@ export function TerminalPane({
   onOpenCommitReview,
   onOpenTimedMessages,
   onSearchAllFiles,
+  onOpenAsSession,
+  openAsSessionHint,
 }: {
   sessionId: string;
   agentId?: string;
@@ -157,6 +190,14 @@ export function TerminalPane({
   onOpenTimedMessages?: (sessionId: string) => void;
   /** The path picker's "Search all files…": quick open prefilled with the token. */
   onSearchAllFiles?: (query: string) => void;
+  /** A path link's "Open as new session": prefills the New session dialog, never launches. */
+  onOpenAsSession?: (
+    home: string,
+    originSessionId: string,
+    returnFocus: HTMLElement | null,
+  ) => void;
+  /** "in <project>", shown beside "Open as new session". */
+  openAsSessionHint?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -202,9 +243,11 @@ export function TerminalPane({
   onRevealFolderRef.current = onRevealFolder;
   const onOpenCommitReviewRef = useRef(onOpenCommitReview);
   onOpenCommitReviewRef.current = onOpenCommitReview;
-  // xterm's current link is private, so the links' own hover/leave track it: a middle press is
-  // suppressed only over a link (no autoscroll), never over plain terminal text.
-  const linkHoveredRef = useRef(false);
+  const onOpenAsSessionRef = useRef(onOpenAsSession);
+  onOpenAsSessionRef.current = onOpenAsSession;
+  const openAsSessionHintRef = useRef(openAsSessionHint);
+  openAsSessionHintRef.current = openAsSessionHint;
+  const hoveredLinkRef = useRef<HoveredLink | null>(null);
 
   // The ranked picker of an ambiguous path link (spec 2026-10-16-terminal-path-links §8). One
   // at a time: a second click replaces it.
@@ -240,8 +283,58 @@ export function TerminalPane({
     termRef.current?.focus();
   }, []);
 
-  const pickRow = async (row: PickerRow, how: 'foreground' | 'background', link: LinkTarget) => {
+  /** One link action on one candidate (spec 2026-10-16-terminal-path-links §3.4). Open and Open
+   *  as new session re-check existence first, as a click does. */
+  const runLinkAction = async (
+    action: LinkMenuAction,
+    cand: PathCandidate,
+    link: LinkTarget,
+  ): Promise<void> => {
+    const term = termRef.current;
+    if (action === 'copyPath') {
+      void navigator.clipboard?.writeText(cand.absPath);
+    } else if (action === 'copyRelativePath') {
+      void navigator.clipboard?.writeText(cand.relToRepo);
+    } else if (action === 'reveal') {
+      onRevealFolderRef.current?.(cand.absPath);
+    } else if (action === 'open' || action === 'showAll') {
+      const kind = await openCandidate(cand, link);
+      if (kind !== 'file') term?.focus();
+      return;
+    } else if (action === 'openAsSession') {
+      const kind = await probePathKind(cand.absPath);
+      if (kind === null) {
+        pushToast({
+          message: TERM_LINK_STR.noLongerExists(cand.absPath.split('/').pop() ?? cand.absPath),
+          variant: 'info',
+        });
+        evictPathRef.current(link.key, link.scope);
+        term?.focus();
+        return;
+      }
+      // A folder opens itself; a file opens its repo (spec Decisions "File → Open as new session").
+      onOpenAsSessionRef.current?.(
+        kind === 'dir' ? cand.absPath : cand.repoRoot,
+        sessionId,
+        term?.textarea ?? null,
+      );
+      return;
+    }
+    term?.focus();
+  };
+
+  const pickRow = async (
+    row: PickerRow,
+    how: 'foreground' | 'background',
+    link: LinkTarget,
+    mode: PickerMode,
+  ) => {
     setPicker(null);
+    if (mode.kind === 'action') {
+      notePick(sessionId, row.cand.repoRoot);
+      await runLinkAction(mode.action, row.cand, link);
+      return;
+    }
     const kind = await openCandidate(
       row.cand,
       link,
@@ -259,7 +352,7 @@ export function TerminalPane({
   useEffect(() => {
     if (!ref.current) return;
     const suppressLinkMiddleDown = (e: MouseEvent) => {
-      if (isMiddleButton(e) && linkHoveredRef.current) e.preventDefault();
+      if (isMiddleButton(e) && hoveredLinkRef.current !== null) e.preventDefault();
     };
     let term: Terminal;
     let fit: FitAddon;
@@ -300,10 +393,10 @@ export function TerminalPane({
             if (!openExternal(uri)) window.open(uri, '_blank', 'noopener,noreferrer');
           },
           hover: () => {
-            linkHoveredRef.current = true;
+            hoveredLinkRef.current = { kind: 'url' };
           },
           leave: () => {
-            linkHoveredRef.current = false;
+            hoveredLinkRef.current = null;
           },
         },
       });
@@ -498,11 +591,11 @@ export function TerminalPane({
               if (!openExternal(tok.raw)) window.open(tok.raw, '_blank', 'noopener,noreferrer');
             },
             hover(_event: MouseEvent, _text: string) {
-              linkHoveredRef.current = true;
+              hoveredLinkRef.current = { kind: 'url' };
               this.decorations = { pointerCursor: true, underline: true };
             },
             leave(_event: MouseEvent, _text: string) {
-              linkHoveredRef.current = false;
+              hoveredLinkRef.current = null;
               this.decorations = { pointerCursor: true, underline: false };
             },
           }));
@@ -549,6 +642,7 @@ export function TerminalPane({
                 if (!found || found.res.candidates.length === 0) continue; // 0 candidates → plain text
                 const { res } = found;
                 pathSpans.push({ start: tok.start, end: tok.end });
+                const link: LinkTarget = { key, scope, line: tok.line, col: tok.col };
                 links.push({
                   range: rangeOf(tok),
                   text: text.slice(tok.start, tok.end),
@@ -562,7 +656,6 @@ export function TerminalPane({
                       lastPickRepoRoot: lastPick(sessionId),
                     });
                     const click = chooseClickAction(ranked);
-                    const link: LinkTarget = { key, scope, line: tok.line, col: tok.col };
                     if (click.kind === 'open') {
                       void openCandidateRef.current(
                         click.cand,
@@ -577,15 +670,16 @@ export function TerminalPane({
                         total: res.total,
                         truncated: res.truncated,
                         link,
+                        mode: { kind: 'open' },
                       });
                     }
                   },
                   hover(_event: MouseEvent, _text: string) {
-                    linkHoveredRef.current = true;
+                    hoveredLinkRef.current = { kind: 'path', token: tok.raw, found, link };
                     this.decorations = { pointerCursor: true, underline: true };
                   },
                   leave(_event: MouseEvent, _text: string) {
-                    linkHoveredRef.current = false;
+                    hoveredLinkRef.current = null;
                     this.decorations = { pointerCursor: true, underline: false };
                   },
                 });
@@ -605,11 +699,11 @@ export function TerminalPane({
                     onOpenCommitReviewRef.current?.(full, sessionId, commitRepoRoot);
                   },
                   hover(_event: MouseEvent, _text: string) {
-                    linkHoveredRef.current = true;
+                    hoveredLinkRef.current = { kind: 'commit' };
                     this.decorations = { pointerCursor: true, underline: true };
                   },
                   leave(_event: MouseEvent, _text: string) {
-                    linkHoveredRef.current = false;
+                    hoveredLinkRef.current = null;
                     this.decorations = { pointerCursor: true, underline: false };
                   },
                 });
@@ -958,14 +1052,61 @@ export function TerminalPane({
     e.preventDefault();
     const canPaste = typeof navigator.clipboard?.readText === 'function';
     const specs = buildTerminalMenuItems({ hasSelection: term.hasSelection(), canPaste });
-    const items: MenuItem[] = specs.map((s) => ({
+    const termItems: MenuItem[] = specs.map((s) => ({
       label: s.label,
       icon: MENU_ICONS[s.iconKey],
       disabled: s.disabled,
       separatorBefore: s.separatorBefore,
       onClick: () => runMenuAction(s.action),
     }));
-    setMenu({ x: e.clientX, y: e.clientY, items });
+    const hovered = hoveredLinkRef.current;
+    if (hovered?.kind !== 'path') {
+      setMenu({ x: e.clientX, y: e.clientY, items: termItems });
+      return;
+    }
+    // A path link: its actions lead, then the terminal's own (spec §3.4).
+    const { found, link, token } = hovered;
+    const ranked = rankCandidates(found.res.candidates, {
+      roots: found.roots,
+      lastPickRepoRoot: lastPick(sessionId),
+    });
+    const click = chooseClickAction(ranked);
+    const single = click.kind === 'open' ? click.cand : null;
+    const at = { x: e.clientX, y: e.clientY };
+    const openPicker = (mode: PickerMode) =>
+      setPicker({
+        at,
+        token,
+        rows: pickerRows(ranked, found.roots),
+        total: found.res.total,
+        truncated: found.res.truncated,
+        link,
+        mode,
+      });
+    const linkItems: MenuItem[] = buildLinkMenuItems({
+      target: single ? (single.isDir ? 'dir' : 'file') : null,
+      matchCount: found.res.total,
+      openAsSessionHint: openAsSessionHintRef.current,
+    }).map((spec) => ({
+      label: spec.label,
+      icon: LINK_MENU_ICONS[spec.id],
+      separatorBefore: spec.separatorBefore,
+      ...(spec.hint !== undefined ? { hint: spec.hint } : {}),
+      onClick: () => {
+        if (spec.id === 'showAll') openPicker({ kind: 'open' });
+        else if (single) void runLinkAction(spec.id, single, link);
+        else openPicker({ kind: 'action', action: spec.id });
+      },
+    }));
+    const [firstTerm, ...restTerm] = termItems;
+    setMenu({
+      ...at,
+      items: [
+        ...linkItems,
+        ...(firstTerm ? [{ ...firstTerm, separatorBefore: true }] : []),
+        ...restTerm,
+      ],
+    });
   };
 
   return (
@@ -1070,8 +1211,8 @@ export function TerminalPane({
           rows={picker.rows}
           total={picker.total}
           truncated={picker.truncated}
-          mode={{ kind: 'open' }}
-          onPick={(row, how) => void pickRow(row, how, picker.link)}
+          mode={picker.mode}
+          onPick={(row, how) => void pickRow(row, how, picker.link, picker.mode)}
           onSearchAll={(query) => {
             setPicker(null);
             onSearchAllFiles?.(query);
