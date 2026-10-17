@@ -50,9 +50,13 @@ export interface PathLinkResolver {
 }
 
 export const STAT_CONCURRENCY = 16;
-/** Resolves running at once; the rest queue. A burst of 50 left the main thread no gap for a
- *  readFile round trip (review r1 PERF: p95 38 ms idle vs 1,073 ms under the burst). */
+/** Resolves running their CPU slices at once; the rest queue. A burst of 50 left the main thread
+ *  no gap for a readFile round trip (review r1 PERF: p95 38 ms idle vs 1,073 ms under the burst).
+ *  A resolve parked on I/O gives its slot up (review r2: one offline drive starved every session). */
 export const RESOLVE_CONCURRENCY = 2;
+/** An I/O await longer than this gives up the resolve's slot: well past a local stat or a warm
+ *  index, well short of an offline drive or a cold index build. */
+export const PARKED_IO_MS = 50;
 export const MAX_TOKENS = 10;
 export const UNC_PROBE_BUDGET_MS = 500;
 // Mirrors MAX_TOKEN_LENGTH in webview/terminal-links.ts; the renderer is never trusted for it.
@@ -85,22 +89,77 @@ const empty = (key: string, error: TokenResolution['error']): TokenResolution =>
   error,
 });
 
-/** One limiter per resolve call: every stat of the call shares its slots. */
-function withConcurrency(limit: number) {
+interface Semaphore {
+  acquire(): Promise<void>;
+  release(): void;
+}
+
+function semaphore(limit: number): Semaphore {
   let active = 0;
   const queue: Array<() => void> = [];
-  const release = () => {
-    active -= 1;
-    queue.shift()?.();
+  return {
+    acquire() {
+      if (active < limit) {
+        active += 1;
+        return Promise.resolve();
+      }
+      return new Promise<void>((r) => queue.push(r));
+    },
+    release() {
+      // Handed straight to the next waiter, so a newcomer can never slip in between.
+      const next = queue.shift();
+      if (next) next();
+      else active -= 1;
+    },
   };
+}
+
+/** One limiter per resolve call: every stat of the call shares its slots. */
+function withConcurrency(limit: number) {
+  const sem = semaphore(limit);
   return async <T>(task: () => Promise<T>): Promise<T> => {
-    if (active >= limit) await new Promise<void>((r) => queue.push(r));
-    active += 1;
+    await sem.acquire();
     try {
       return await task();
     } finally {
-      release();
+      sem.release();
     }
+  };
+}
+
+/** One resolve's hold on a host-wide slot. An I/O await that outlasts PARKED_IO_MS drops the
+ *  hold (from a timer, when no continuation can be mid-slice), and every branch takes it back
+ *  before resuming. Dropping on every await let a 50-resolve burst run at once: readFile p95
+ *  under the burst went 1.5× → 4.5× idle (review r2 stress). */
+function slotLease(slots: Semaphore) {
+  let held = false;
+  let retaking: Promise<void> | null = null;
+  const take = (): Promise<void> => {
+    if (held) return Promise.resolve();
+    retaking ??= slots.acquire().then(() => {
+      held = true;
+      retaking = null;
+    });
+    return retaking;
+  };
+  const drop = () => {
+    if (!held) return;
+    held = false;
+    slots.release();
+  };
+  return {
+    take,
+    end: drop,
+    /** Runs I/O, dropping the slot if it is slow; resolves only once the slot is held again. */
+    async io<T>(task: () => Promise<T>): Promise<T> {
+      const timer = setTimeout(drop, PARKED_IO_MS);
+      try {
+        return await task();
+      } finally {
+        clearTimeout(timer);
+        await take();
+      }
+    },
   };
 }
 
@@ -162,30 +221,28 @@ export function createPathLinkResolver(deps: PathLinkResolverDeps): PathLinkReso
     return built.filter((ix): ix is ResolveIndex => ix !== null);
   };
 
-  const resolveSlot = withConcurrency(RESOLVE_CONCURRENCY);
+  const resolveSlots = semaphore(RESOLVE_CONCURRENCY);
 
-  const resolveNow = async (sessionId: string, tokens: unknown): Promise<PathLinkReply> => {
-    const entries = validate(tokens);
-    const session = deps.getSession(sessionId);
-    if (!session) {
-      return {
-        cwd: '',
-        rootsSig: '',
-        roots: [],
-        results: entries.map((e) => empty(e.key, 'session-gone')),
-      };
-    }
+  const resolveLeased = async (
+    session: Session,
+    entries: Entry[],
+    lease: ReturnType<typeof slotLease>,
+  ): Promise<PathLinkReply> => {
     const cwd = slash(activeCwd(session));
-    const cwdGitRoot = slash(await deps.gitRoot(session).catch(() => cwd));
+    // Warm, the toplevel and the indexes are memo lookups: CPU that the cap is for. Cold, they
+    // are a git spawn and an index build, which the lease lets go of once they run long.
+    const cwdGitRoot = slash(await lease.io(() => deps.gitRoot(session)).catch(() => cwd));
     const roots = buildResolveRoots(session, cwdGitRoot, opts);
     const rootsSig = rootsSigOf(session);
     const valid = entries.filter((e): e is Extract<Entry, { kind: 'valid' }> => e.kind === 'valid');
-    const indexes = valid.length > 0 ? await indexesFor(roots, cwdGitRoot || cwd) : [];
+    const indexes =
+      valid.length > 0 ? await lease.io(() => indexesFor(roots, cwdGitRoot || cwd)) : [];
     const limit = withConcurrency(STAT_CONCURRENCY);
     const knownRepoKeys = new Set([
       ...(session.repos ?? []).map((r) => key(r.root)),
       ...(cwdGitRoot !== cwd ? [key(cwdGitRoot)] : []),
     ]);
+    const turn = turnTaker();
     const resolved = await resolveTokens(
       valid.map((e) => ({ alts: e.alts })),
       {
@@ -198,12 +255,12 @@ export function createPathLinkResolver(deps: PathLinkResolverDeps): PathLinkReso
         platform: deps.platform,
       },
       {
-        stat: (abs) => limit(() => raceUnc(abs, deps.stat)),
-        yieldTurn: turnTaker(),
+        stat: (abs) => lease.io(() => limit(() => raceUnc(abs, deps.stat))),
+        yieldTurn: () => turn().then(lease.take),
         // A repo the session's scan registered, or the cwd's git root, is its own toplevel:
         // asking git once per root put 200 spawns on every 200-repo resolve (Slice 6 profile).
         topLevel: (dir) =>
-          knownRepoKeys.has(key(dir)) ? Promise.resolve(dir) : deps.topLevel(dir),
+          knownRepoKeys.has(key(dir)) ? Promise.resolve(dir) : lease.io(() => deps.topLevel(dir)),
       },
     );
     let next = 0;
@@ -215,8 +272,28 @@ export function createPathLinkResolver(deps: PathLinkResolverDeps): PathLinkReso
     return { cwd, rootsSig, roots, results };
   };
 
+  const resolveNow = async (sessionId: string, tokens: unknown): Promise<PathLinkReply> => {
+    const entries = validate(tokens);
+    const session = deps.getSession(sessionId);
+    if (!session) {
+      return {
+        cwd: '',
+        rootsSig: '',
+        roots: [],
+        results: entries.map((e) => empty(e.key, 'session-gone')),
+      };
+    }
+    const lease = slotLease(resolveSlots);
+    await lease.take();
+    try {
+      return await resolveLeased(session, entries, lease);
+    } finally {
+      lease.end();
+    }
+  };
+
   return {
-    resolve: (sessionId, tokens) => resolveSlot(() => resolveNow(sessionId, tokens)),
+    resolve: resolveNow,
     probe(abs) {
       return raceUnc(abs, deps.stat).catch(() => null);
     },

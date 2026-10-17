@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createPathLinkResolver,
   MAX_TOKENS,
+  PARKED_IO_MS,
   type PathLinkResolverDeps,
   RESOLVE_CONCURRENCY,
   STAT_CONCURRENCY,
@@ -37,7 +38,8 @@ interface Fake {
   sessions: Record<string, Session>;
   files?: string[];
   index?: Record<string, { files: IndexedFile[]; coveredRoots: string[] } | 'reject'>;
-  gitRoot?: string | (() => Promise<string>);
+  gitRoot?: string | ((s: Session) => Promise<string>);
+  fileIndex?: PathLinkResolverDeps['fileIndex'];
   stat?: PathLinkResolverDeps['stat'];
 }
 
@@ -50,9 +52,10 @@ function make(f: Fake) {
   const deps: PathLinkResolverDeps = {
     getSession: (id) => f.sessions[id],
     gitRoot: async (s) =>
-      typeof f.gitRoot === 'function' ? f.gitRoot() : (f.gitRoot ?? s.cwd ?? s.home),
+      typeof f.gitRoot === 'function' ? f.gitRoot(s) : (f.gitRoot ?? s.cwd ?? s.home),
     fileIndex: async (root) => {
       indexCalls.push(root);
+      if (f.fileIndex) return f.fileIndex(root);
       const ix = f.index?.[root];
       if (ix === 'reject') throw new Error('index failed');
       return ix ?? { files: [], coveredRoots: [] };
@@ -263,28 +266,91 @@ describe('createPathLinkResolver', () => {
     expect(events).toEqual(['stat /a.ts', 'tick', 'stat /b.ts']);
   });
 
-  it(`never more than ${RESOLVE_CONCURRENCY} resolves in flight; the rest queue and all answer`, async () => {
+  it(`never more than ${RESOLVE_CONCURRENCY} resolves mid-slice; the rest queue and all answer`, async () => {
+    // From a resolve's first token to its second spans the yielded turn between them: only a
+    // resolve holding a slot can be inside that span. A local stat takes a few ms, short of
+    // PARKED_IO_MS, so it must not hand the slot on (review r2 stress).
     let inFlight = 0;
     let peak = 0;
     const { resolver } = make({
       sessions: { s1: wSession },
-      gitRoot: async () => {
-        inFlight++;
+      stat: async (abs) => {
+        if (abs.endsWith('/a.ts')) inFlight++;
+        if (abs.endsWith('/b.ts')) inFlight--;
         peak = Math.max(peak, inFlight);
-        await new Promise((r) => setTimeout(r, 2));
-        return '/w';
-      },
-      stat: async () => {
-        await new Promise((r) => setTimeout(r, 1));
-        inFlight--;
+        await new Promise((r) => setTimeout(r, 3));
         return null;
       },
     });
     const replies = await Promise.all(
-      Array.from({ length: 6 }, () => resolver.resolve('s1', [{ alts: ['/abs/only.ts'] }])),
+      Array.from({ length: 6 }, (_, i) =>
+        resolver.resolve('s1', [{ alts: [`/r${i}/a.ts`] }, { alts: [`/r${i}/b.ts`] }]),
+      ),
     );
     expect(replies).toHaveLength(6);
     expect(peak).toBe(RESOLVE_CONCURRENCY);
+  });
+
+  it(`resolves that let the slot go on slow I/O take it back: still ${RESOLVE_CONCURRENCY} mid-slice`, async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const { resolver } = make({
+      sessions: { s1: wSession },
+      gitRoot: () => new Promise((r) => setTimeout(() => r('/w'), PARKED_IO_MS + 30)),
+      stat: async (abs) => {
+        if (abs.endsWith('/a.ts')) inFlight++;
+        if (abs.endsWith('/b.ts')) inFlight--;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 3));
+        return null;
+      },
+    });
+    await Promise.all(
+      Array.from({ length: 6 }, (_, i) =>
+        resolver.resolve('s1', [{ alts: [`/r${i}/a.ts`] }, { alts: [`/r${i}/b.ts`] }]),
+      ),
+    );
+    expect(peak).toBe(RESOLVE_CONCURRENCY);
+  });
+
+  // Review r2: the host-wide cap is for CPU slices; a resolve parked on I/O must not hold it.
+  it.each([
+    ['the git toplevel spawn', 'gitRoot'],
+    ['a cold file-index build', 'fileIndex'],
+    ['a stat on an offline mapped drive', 'stat'],
+  ] as const)('a resolve blocked on %s does not delay another session', async (_label, where) => {
+    const parked: Array<() => void> = [];
+    const park = <T>(value: T) => new Promise<T>((r) => parked.push(() => r(value)));
+    const slow = (s: Session) => s.id !== 'fast';
+    const sessions: Record<string, Session> = { fast: session({ id: 'fast', cwd: '/f' }) };
+    for (let i = 0; i < RESOLVE_CONCURRENCY; i++)
+      sessions[`slow${i}`] = session({ id: `slow${i}`, cwd: 'H:/share' });
+    const { resolver } = make({
+      sessions,
+      gitRoot: (s) =>
+        where === 'gitRoot' && slow(s) ? park(s.cwd ?? '') : Promise.resolve(s.cwd ?? ''),
+      fileIndex: (root) =>
+        where === 'fileIndex' && root.startsWith('H:')
+          ? park({ files: [], coveredRoots: [] })
+          : Promise.resolve({ files: [], coveredRoots: [] }),
+      stat: (abs) =>
+        where === 'stat' && abs.startsWith('H:')
+          ? park(null)
+          : Promise.resolve(abs === '/f/a.ts' ? 'file' : null),
+    });
+    const slowReplies = Object.keys(sessions)
+      .filter((id) => id !== 'fast')
+      .map((id) => resolver.resolve(id, [{ alts: ['a.ts'] }]));
+    await new Promise((r) => setTimeout(r, 5));
+    const fast = await Promise.race([
+      resolver.resolve('fast', [{ alts: ['a.ts'] }]),
+      new Promise<'starved'>((r) => setTimeout(() => r('starved'), 200)),
+    ]);
+    expect(fast === 'starved' ? fast : fast.results[0].candidates.map((c) => c.absPath)).toEqual([
+      '/f/a.ts',
+    ]);
+    for (const release of parked) release();
+    await Promise.all(slowReplies);
   });
 
   it('a registered repo root is its own toplevel: no git asked for it (Slice 6 budget)', async () => {

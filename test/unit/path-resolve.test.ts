@@ -293,6 +293,12 @@ describe('resolveTokens — v2 matrix', () => {
       expect(statCalls).toEqual(['/w/ignored.ts']);
     });
 
+    it('a token with a . or .. segment never reaches the fallback stat (review r2)', async () => {
+      const { deps, statCalls } = wFs(['/w/repoA/../shared/x.ts']);
+      expect((await one('../shared/x.ts', wCtx(), deps)).candidates).toHaveLength(0);
+      expect(statCalls).toHaveLength(1);
+    });
+
     it('a membership hit anywhere skips the fallback', async () => {
       const { deps, statCalls } = wFs(['/w/repoB/src/index.ts']);
       await one('src/index.ts', wCtx(), deps);

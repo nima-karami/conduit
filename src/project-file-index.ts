@@ -62,13 +62,11 @@ export function createProjectFileIndex(deps: ProjectFileIndexDeps): ProjectFileI
     return meta;
   };
 
-  return async (root, opts = {}) => {
-    const cacheKey = `${root}\0${opts.scope ?? 'tracked'}`;
-    const cached = cache.get(cacheKey);
-    // An incremental index is triggered BY a filesystem change, so serving it the TTL cache
-    // would hand back exactly the pre-change listing it was called to notice. It still WRITES
-    // the cache, so the refresh is shared with whatever asks next.
-    if (!opts.fresh && cached && clock() - cached.at < FILE_INDEX_TTL_MS) return cached;
+  const build = async (
+    root: string,
+    opts: { fresh?: boolean; scope?: IndexScope },
+    cacheKey: string,
+  ): Promise<ProjectFileIndexMeta> => {
     const listing = await deps.listGit(root);
     if (listing.kind === 'listed') {
       const files = listing.rels.map((rel) => ({ rel, abs: `${root}/${rel}` }));
@@ -108,5 +106,30 @@ export function createProjectFileIndex(deps: ProjectFileIndexDeps): ProjectFileI
       repoSet: repoSetOf(repos),
       covered: built.coveredRepos,
     });
+  };
+
+  // A burst of asks after the TTL lapsed would otherwise build once per ask, all at once (review
+  // r2 stress: a 50-resolve path-link burst).
+  const inFlight = new Map<string, Promise<ProjectFileIndexMeta>>();
+
+  return async (root, opts = {}) => {
+    const cacheKey = `${root}\0${opts.scope ?? 'tracked'}`;
+    const cached = cache.get(cacheKey);
+    // An incremental index is triggered BY a filesystem change, so serving it the TTL cache — or
+    // a build that started before the change — would hand back exactly the pre-change listing it
+    // was called to notice. It still WRITES the cache, so the refresh is shared with whatever
+    // asks next.
+    if (!opts.fresh) {
+      if (cached && clock() - cached.at < FILE_INDEX_TTL_MS) return cached;
+      const pending = inFlight.get(cacheKey);
+      if (pending) return pending;
+    }
+    const p = build(root, opts, cacheKey);
+    inFlight.set(cacheKey, p);
+    const forget = () => {
+      if (inFlight.get(cacheKey) === p) inFlight.delete(cacheKey);
+    };
+    p.then(forget, forget);
+    return p;
   };
 }

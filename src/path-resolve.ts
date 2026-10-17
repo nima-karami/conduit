@@ -272,7 +272,6 @@ function mayBeIgnoredFile(t: string): boolean {
   return t.startsWith('.') && t !== '.' && t !== '..';
 }
 
-/** Stats the token in each covered root whose membership missed, a batch at a time. */
 async function ignoredFallback(t: string, roots: number[], r: Resolution): Promise<Found[]> {
   const { ctx } = r;
   const out: Found[] = [];
@@ -349,6 +348,10 @@ async function resolveAlt(alt: string, r: Resolution): Promise<Found[]> {
   for (const hit of rootHits) if (hit) found.push(hit);
   if (found.length > 0 || isDirTok) return found;
 
+  // A dot segment would have the fallback stat outside the root it joins to.
+  const needle = t.replace(/^(?:\.\/)+/, '');
+  if (needle.split('/').some((s) => s === '..' || s === '.')) return [];
+
   if (mayBeIgnoredFile(t)) {
     const missed = ctx.roots.flatMap((root, i) =>
       !joinedKeys.has(r.rootKeys[i]) && r.indexCovering(i) && !isUncLike(root.abs) ? [i] : [],
@@ -357,8 +360,6 @@ async function resolveAlt(alt: string, r: Resolution): Promise<Found[]> {
     if (ignored.length > 0) return ignored;
   }
 
-  const needle = t.replace(/^(?:\.\/)+/, '');
-  if (needle.split('/').some((s) => s === '..' || s === '.')) return [];
   return r.suffixSearch(needle, false);
 }
 

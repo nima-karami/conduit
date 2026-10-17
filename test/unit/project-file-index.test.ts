@@ -110,3 +110,40 @@ describe('createProjectFileIndex: a listing git could not give', () => {
     expect(h.calls).toEqual({ list: 2, walk: 1, build: 1 });
   });
 });
+
+// Review r2 stress: a burst of path-link resolves after the TTL lapsed built the index once per
+// resolve, all at once.
+describe('createProjectFileIndex: concurrent asks', () => {
+  const listed: GitListing = { kind: 'listed', rels: ['a.ts'] };
+
+  it('concurrent asks on a miss share one build', async () => {
+    const h = harness(listed);
+    const [a, b] = await Promise.all([h.meta('/w'), h.meta('/w')]);
+    expect(h.calls.list).toBe(1);
+    expect(b).toBe(a);
+  });
+
+  it('a fresh ask never joins a build already in flight', async () => {
+    const h = harness(listed);
+    await Promise.all([h.meta('/w'), h.meta('/w', { fresh: true })]);
+    expect(h.calls.list).toBe(2);
+  });
+
+  it('a failed build is not shared with the next ask', async () => {
+    let fail = true;
+    const meta = createProjectFileIndex({
+      async listGit() {
+        if (fail) throw new Error('spawn failed');
+        return listed;
+      },
+      async walk() {
+        return [];
+      },
+      repoIndex: { build: async () => ({ files: [], coveredRepos: [] }) },
+      reposUnder: () => [],
+    });
+    await expect(meta('/w')).rejects.toThrow('spawn failed');
+    fail = false;
+    expect((await meta('/w')).files.map((f) => f.rel)).toEqual(['a.ts']);
+  });
+});

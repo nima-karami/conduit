@@ -135,7 +135,7 @@ describe('ContextMenu under a resting pointer (path-links QA r1 Q3)', () => {
   const frame = () => document.querySelector('.ctxmenu') as HTMLElement;
 
   /** What Chromium sends a row that lands under a stationary cursor: boundary events plus a
-   *  pointermove at the same point. */
+   *  pointermove at the same point (terminal-path-links-v2 step 8 drives the real one). */
   async function pointAt(el: Element, x: number, y: number) {
     await act(async () => {
       el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: x, clientY: y }));

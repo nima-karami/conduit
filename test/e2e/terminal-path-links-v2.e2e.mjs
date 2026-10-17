@@ -412,8 +412,9 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
       },
       { ...c8, frameSel, rowSel },
     );
-  /** Chromium sends a stationary pointer a mousemove at the same point after layout, but on its
-   *  own schedule; sending it here makes the hover state deterministic without moving at all. */
+  /** Chromium sends a row that lands under a stationary pointer a pointermove at the same point,
+   *  but on its own schedule; sending it here makes the hover state deterministic without moving
+   *  at all, so an ungated pointermove handler fails this step (the unit test models the same). */
   const settleRestingPointer = async () => {
     await page.mouse.move(c8.x, c8.y);
     await page.waitForTimeout(600);

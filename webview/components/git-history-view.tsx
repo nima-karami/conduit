@@ -36,7 +36,6 @@ import { registerFocusTarget } from '../focus-targets';
 import { acceptHistoryResult, historyReducer, initialHistoryState } from '../git-history-state';
 import {
   IconBranch,
-  IconCheck,
   IconChevronDown,
   IconClose,
   IconFolder,
@@ -54,8 +53,8 @@ import {
   VIEW_STATE_DEBOUNCE_MS,
 } from '../view-state-store';
 import { CommitView } from './commit-view';
-import { ContextMenu, type MenuItem } from './context-menu';
 import { EmptyState } from './empty-state';
+import { RefFilterDropdown } from './ref-filter-dropdown';
 import { type RepoMenuRow, RepoPickerMenu } from './repo-picker-menu';
 
 /**
@@ -95,8 +94,6 @@ const STR = {
   searchPlaceholder: 'Search sha, message, author…',
   searchLabel: 'Search commits',
   clearSearch: 'Clear search',
-  allRefs: 'All branches',
-  filterLabel: 'Filter by ref',
   noMatch: 'No commits match',
   noMatchHint: 'Try a different search or clear the filter.',
   // Search runs over the loaded window only, so when older history remains, offer to widen it.
@@ -1030,74 +1027,6 @@ function GhFilterBar({
         />
       )}
     </div>
-  );
-}
-
-/**
- * Ref filter as the app's own themed dropdown (not a native <select>, which renders an
- * OS popup that clashes with the rest of the chrome). A trigger button shows the current
- * selection; clicking opens the shared ContextMenu (portal + keyboard nav + dismiss) with
- * "All branches" plus one row per ref, the active one check-marked. Same semantics as the
- * old select: picking a row calls onRefFilter(name | null).
- */
-function RefFilterDropdown({
-  refFilter,
-  refOptions,
-  onRefFilter,
-}: {
-  refFilter: string | null;
-  refOptions: GitRef[];
-  onRefFilter: (r: string | null) => void;
-}) {
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
-
-  // A ref that's no longer in the list (e.g. after a refresh) falls back to "All branches",
-  // matching the native select's behaviour when its value wasn't among the options.
-  const active = refFilter && refOptions.some((r) => r.name === refFilter) ? refFilter : null;
-
-  const mark = (on: boolean) =>
-    on ? <IconCheck size={13} /> : <span className="gh__reffilter-checkpad" />;
-  const items: MenuItem[] = [
-    { label: STR.allRefs, icon: mark(active === null), onClick: () => onRefFilter(null) },
-    ...refOptions.map((ref) => ({
-      label: ref.name,
-      icon: mark(active === ref.name),
-      onClick: () => onRefFilter(ref.name),
-    })),
-  ];
-
-  const toggle = () => {
-    if (menuPos) {
-      setMenuPos(null);
-      return;
-    }
-    const r = triggerRef.current?.getBoundingClientRect();
-    if (r) setMenuPos({ x: r.left, y: r.bottom + 2 });
-  };
-
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="gh__reffilter"
-        aria-haspopup="menu"
-        aria-expanded={menuPos !== null}
-        aria-label={STR.filterLabel}
-        onClick={toggle}
-      >
-        <span className="gh__reffilter-label">{active ?? STR.allRefs}</span>
-        <IconChevronDown size={13} className="gh__reffilter-caret" />
-      </button>
-      {menuPos && (
-        <ContextMenu
-          menu={{ ...menuPos, items }}
-          onClose={() => setMenuPos(null)}
-          triggerRef={triggerRef}
-        />
-      )}
-    </>
   );
 }
 
