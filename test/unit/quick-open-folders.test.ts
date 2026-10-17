@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SearchHit } from '../../src/protocol';
 import {
   acceptSearchResults,
+  CorpusRequests,
   type FolderCorpus,
   foldersToRequest,
   pruneCorpus,
@@ -72,5 +73,40 @@ describe('quick-open corpus', () => {
       '/w/b/z',
       '/w/b/y',
     ]);
+  });
+});
+
+describe('CorpusRequests (search-scope review r2 SF2)', () => {
+  const folders = ['/w/a'];
+  const cached: FolderCorpus = { '/w/a': [hit('/w/a', 'x.ts')] };
+
+  it('N signals during one in-flight ask produce exactly one follow-up ask', () => {
+    const r = new CorpusRequests();
+    expect(r.next(folders, {})).toEqual([{ root: '/w/a', fresh: false }]);
+    for (let i = 0; i < 5; i++) {
+      r.invalidate(Object.keys(cached));
+      expect(r.next(folders, cached)).toEqual([]);
+    }
+    r.settle('/w/a');
+    expect(r.next(folders, cached)).toEqual([{ root: '/w/a', fresh: true }]);
+    r.settle('/w/a');
+    expect(r.next(folders, cached)).toEqual([]);
+  });
+
+  it('a signal with nothing in flight asks again at once, past the host cache', () => {
+    const r = new CorpusRequests();
+    r.next(folders, {});
+    r.settle('/w/a');
+    expect(r.next(folders, cached)).toEqual([]);
+    r.invalidate(Object.keys(cached));
+    expect(r.next(folders, cached)).toEqual([{ root: '/w/a', fresh: true }]);
+  });
+
+  it('closing the palette forgets in-flight asks; a stale folder is asked fresh on reopen', () => {
+    const r = new CorpusRequests();
+    r.next(folders, {});
+    r.invalidate(Object.keys(cached));
+    r.close();
+    expect(r.next(folders, cached)).toEqual([{ root: '/w/a', fresh: true }]);
   });
 });

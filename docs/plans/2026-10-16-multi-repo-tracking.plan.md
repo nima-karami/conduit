@@ -780,6 +780,22 @@ where it is; history is not rewritten.
 | `test/unit/index-resync.test.ts` | create | Ordering forced: index before the scan, then the re-sync's removals |
 | `test/unit/git-listing.test.ts`, `repo-file-index.test.ts`, `search-scope.test.ts`, `folder-search.test.ts`, `content-search.test.ts`, `quick-open-folders.test.ts`, `file-service.test.ts`, `search-head-drag.test.ts` | modify | One test per behaviour above |
 
+**Search-scope review r2 fix**
+
+| Path | Action | Responsibility |
+|---|---|---|
+| `src/project-file-index.ts` | create | `createProjectFileIndex` (moved out of `electron/main.ts` so it is unit-testable) + `repoSetOf`: a listing git could not give (`failed`, `truncated`) is walked and cached for the TTL; a non-git root's degraded build is cached for the TTL too (SF3) |
+| `src/git-listing.ts` | modify | `truncated` outcome of its own; `LISTING_MAX_BUFFER` 8 → 32 MB, still bounded; `maxBuffer` parameter (SF3) |
+| `src/repo-file-index.ts` | modify | `listRepo` may return `'not-repo'`: walked, build not degraded, union not memoized over the walk (nit b) |
+| `src/content-search.ts` | modify | The cut that ends the walk names `truncatedBy` (nit a) |
+| `src/quick-open-folders.ts` | modify | `CorpusRequests`: one `searchFiles` in flight per folder, a dirty bit for signals that land meanwhile (SF2) |
+| `webview/app.tsx` | modify | Palette asks go through `CorpusRequests`; `searchResults` settles them |
+| `electron/main.ts` | modify | `projectFileIndexMeta` from `src/project-file-index.ts`; the first build re-checks the repo set once its state exists and queues a `resync` (SF1); index state names window ids (`sendToWindow`), top-ups and re-syncs stream to every indexing window, state pruned on window close and when no session holds the root (nit c); smoke-only `__conduitHold` points `index` / `scan` / `topup` |
+| `test/e2e/index-repo-inflight.e2e.mjs` | create | SF1 with the build, the scan and renderer top-ups parked; red with the re-check removed |
+| `test/e2e/search-refusal.e2e.mjs` | create | SF4: outside root, no/unknown `sessionId`, bad scope refused for `contentSearch` (inline error) and `searchFiles` (no reply); red with either guard removed |
+| `test/unit/project-file-index.test.ts` | create | SF3 caching |
+| `test/unit/git-listing.test.ts`, `repo-file-index.test.ts`, `content-search.test.ts`, `quick-open-folders.test.ts` | modify | One test per behaviour above |
+
 ## Scripts
 
 **None.** The only repeated routine is building git fixtures, and that is runtime test code

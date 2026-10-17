@@ -13,8 +13,9 @@ const LIST_CONCURRENCY = 4;
 
 export interface RepoFileIndexDeps {
   /** gitListedFiles' rels (repo-relative, forward-slash); null when git did not answer, which
-   *  is never an empty repo. */
-  listRepo(root: string): Promise<string[] | null>;
+   *  is never an empty repo; 'not-repo' when git answered that the folder is in no repo (a
+   *  registered repo whose .git went away), which is walked without degrading the build. */
+  listRepo(root: string): Promise<string[] | 'not-repo' | null>;
   /** walkFilesAsync */
   walkLoose(root: string, prune: (absDir: string) => boolean, cap: number): Promise<SearchHit[]>;
 }
@@ -22,8 +23,8 @@ export interface RepoFileIndexDeps {
 export interface RepoFileIndexBuild {
   /** Forward-slash rel (root-relative) and abs. */
   files: IndexedFile[];
-  /** Some repo's listing is a last good one, or a walk, because git did not answer: the result
-   *  is not worth caching, and the next build asks git for that repo again. */
+  /** Some repo's listing is a last good one, or a walk, because git did not answer: the next
+   *  build asks git for that repo again. */
   degraded: boolean;
 }
 
@@ -52,7 +53,10 @@ interface Listing {
 export function createRepoFileIndex(deps: RepoFileIndexDeps): RepoFileIndex {
   let serial = 0;
   const listings = new Map<string, { version: number; rels: string[]; serial: number }>();
-  const inflight = new Map<string, { version: number; promise: Promise<Listing | null> }>();
+  const inflight = new Map<
+    string,
+    { version: number; promise: Promise<Listing | 'not-repo' | null> }
+  >();
   const repoVersions = new Map<string, number>();
   let looseVersion = 0;
   const loose = new Map<
@@ -66,16 +70,17 @@ export function createRepoFileIndex(deps: RepoFileIndexDeps): RepoFileIndex {
   // The version is read before the await, so an invalidation that lands mid-listing leaves the
   // stored entry already out of date and the next build lists again. Builds asking for the same
   // repo at the same version share one `ls-files`.
-  const listingOf = (repo: { key: string; root: string }): Promise<Listing | null> => {
+  const listingOf = (repo: { key: string; root: string }): Promise<Listing | 'not-repo' | null> => {
     const version = repoVersions.get(repo.key) ?? 0;
     const cached = listings.get(repo.key);
     if (cached?.version === version)
       return Promise.resolve({ rels: cached.rels, serial: cached.serial, fresh: true });
     const pending = inflight.get(repo.key);
     if (pending?.version === version) return pending.promise;
-    const promise: Promise<Listing | null> = (async () => {
+    const promise: Promise<Listing | 'not-repo' | null> = (async () => {
       const rels = await deps.listRepo(repo.root);
       if (inflight.get(repo.key)?.version === version) inflight.delete(repo.key);
+      if (rels === 'not-repo') return rels;
       if (rels !== null) {
         const entry = { version, rels, serial: ++serial };
         if ((listings.get(repo.key)?.version ?? -1) <= version) listings.set(repo.key, entry);
@@ -134,18 +139,23 @@ export function createRepoFileIndex(deps: RepoFileIndexDeps): RepoFileIndex {
               under.map((r) => r.key),
             ),
       ]);
-      const degraded = listed.some((l) => l === null || !l.fresh);
-      const parts = under.map((r, i) => `${r.key}@${listed[i]?.serial}`);
-      const sig = degraded ? null : `${parts.join('\n')}\n#${looseFiles?.serial ?? ''}`;
+      const lists = listed.map((l) => (l === 'not-repo' ? null : l));
+      const degraded = listed.some((l) => l === null || (l !== 'not-repo' && !l.fresh));
+      const parts = under.map((r, i) => `${r.key}@${lists[i]?.serial}`);
+      // A walked repo has no serial to tell a changed walk from the last one, so no memo.
+      const sig =
+        degraded || lists.includes(null)
+          ? null
+          : `${parts.join('\n')}\n#${looseFiles?.serial ?? ''}`;
       const memo = unions.get(rootKey);
       if (sig !== null && memo?.sig === sig) return { files: memo.files, degraded };
 
       // A repo git never listed is walked instead (the loose walk pruned it), skipping the
       // listed repos inside it.
-      const listedKeys = new Set(under.filter((_, i) => listed[i] !== null).map((r) => r.key));
+      const listedKeys = new Set(under.filter((_, i) => lists[i] !== null).map((r) => r.key));
       const walked = await Promise.all(
         under.map((repo, i) =>
-          listed[i] === null
+          lists[i] === null
             ? deps.walkLoose(repo.root, (abs) => listedKeys.has(folderKey(abs)), LOOSE_FILE_CAP)
             : Promise.resolve(null),
         ),
@@ -154,7 +164,7 @@ export function createRepoFileIndex(deps: RepoFileIndexDeps): RepoFileIndex {
       under.forEach((repo, i) => {
         const repoSlash = toSlash(repo.root);
         const prefix = repo.key === rootKey ? '' : `${repoSlash.slice(rootSlash.length + 1)}/`;
-        const rels = listed[i]?.rels ?? walked[i]?.map((h) => h.rel) ?? [];
+        const rels = lists[i]?.rels ?? walked[i]?.map((h) => h.rel) ?? [];
         for (const rel of rels)
           byRel.set(`${prefix}${rel}`, { rel: `${prefix}${rel}`, abs: `${repoSlash}/${rel}` });
       });

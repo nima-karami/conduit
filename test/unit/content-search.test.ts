@@ -550,6 +550,30 @@ describe('searchContentAsync — candidate file list (gitignore-driven)', () => 
     expect(total).toBe(10);
   });
 
+  it('a search that runs out of time after a per-file clip reads as time, not limit', async () => {
+    const list = [
+      { abs: '/p/a.txt', rel: 'a.txt' },
+      { abs: '/p/b.txt', rel: 'b.txt' },
+    ];
+    const memTree: MemTree = {
+      '/p': {
+        'a.txt': { content: Array.from({ length: 50 }, () => 'find me').join('\n') },
+        'b.txt': { content: 'find me\n' },
+      },
+    };
+    // start, then a.txt's budget check, are inside the budget; b.txt's is past it.
+    const clock = [0, 0];
+    const { deps } = memDepsAsync(memTree, { now: () => clock.shift() ?? 1e9 });
+    const res = await searchContentAsync(
+      '/p',
+      { text: 'find me' },
+      { ...deps, files: list },
+      { perFileCap: 5, totalCap: 1000, timeBudgetMs: 10 },
+    );
+    expect(res.files.map((f) => f.rel)).toEqual(['a.txt']);
+    expect(res.truncatedBy).toBe('time');
+  });
+
   it('aborts the candidate list cooperatively when isCancelled flips', async () => {
     const { deps, reads } = memDepsAsync(tree, { isCancelled: () => true });
     const res = await searchContentAsync(

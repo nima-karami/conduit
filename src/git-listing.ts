@@ -5,20 +5,29 @@ export type GitListing =
   | { kind: 'listed'; rels: string[] }
   /** git answered: `root` is in no repo. */
   | { kind: 'not-repo' }
-  /** git never answered (timeout, maxBuffer, missing binary, vanished cwd): nothing is known. */
+  /** The listing outgrew the buffer: unlike `failed`, asking again gives the same answer. */
+  | { kind: 'truncated' }
+  /** git never answered (timeout, missing binary, vanished cwd): nothing is known. */
   | { kind: 'failed' };
+
+/** Bounded because the whole listing is buffered in the main process: ~400k typical paths. */
+const LISTING_MAX_BUFFER = 32 * 1024 * 1024;
 
 /** Every path git would list for `root`: tracked plus untracked-but-not-ignored, minus tracked
  *  files deleted from the worktree but not staged. `-z` because without it git C-quotes any
  *  non-ASCII name, and the quoted form names no file. `-t` tags each record, so the deleted ones
  *  (`R`, which `--cached` lists as well) come out of the same spawn. */
-export async function gitListedFiles(root: string): Promise<GitListing> {
+export async function gitListedFiles(
+  root: string,
+  maxBuffer = LISTING_MAX_BUFFER,
+): Promise<GitListing> {
   const r = await runGit(
     ['ls-files', '-z', '-t', '--cached', '--deleted', '--others', '--exclude-standard'],
-    { cwd: root, timeoutMs: GIT_TIMEOUT.diff, maxBuffer: 8 * 1024 * 1024 },
+    { cwd: root, timeoutMs: GIT_TIMEOUT.diff, maxBuffer },
   );
   if (r.ok) return { kind: 'listed', rels: parseTaggedListing(r.stdout) };
-  const answered = r.code === 128 && !r.timedOut && !r.truncated && !r.cwdMissing;
+  if (r.truncated) return { kind: 'truncated' };
+  const answered = r.code === 128 && !r.timedOut && !r.cwdMissing;
   return answered ? { kind: 'not-repo' } : { kind: 'failed' };
 }
 

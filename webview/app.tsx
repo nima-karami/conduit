@@ -47,8 +47,8 @@ import type {
 } from '../src/protocol';
 import {
   acceptSearchResults,
+  CorpusRequests,
   type FolderCorpus,
-  foldersToRequest,
   pruneCorpus,
   quickOpenFileRows,
 } from '../src/quick-open-folders';
@@ -1941,21 +1941,18 @@ export function App() {
   // Quick open covers every present folder (spec §2.10): on palette open, ask for each folder
   // not cached yet, once per palette session; a folder that leaves the session is dropped.
   const presentKeys = presentFolders(active).map(folderKey).join('\n');
-  const requestedCorpus = useRef(new Set<string>());
   // A cached list goes stale on the host's fileIndexChanged: it is asked for again (past the
   // host's short-lived cache) at once while the palette is open, else on its next open.
-  const staleCorpus = useRef(new Set<string>());
+  const corpusRequests = useRef(new CorpusRequests());
   const corpusRef = useRef(corpus);
   corpusRef.current = corpus;
   const [corpusEpoch, setCorpusEpoch] = useState(0);
   useEffect(
     () =>
       subscribe((msg) => {
+        if (msg.type === 'searchResults') corpusRequests.current.settle(msg.root);
         if (msg.type !== 'fileIndexChanged') return;
-        for (const k of Object.keys(corpusRef.current)) {
-          staleCorpus.current.add(k);
-          requestedCorpus.current.delete(k);
-        }
+        corpusRequests.current.invalidate(Object.keys(corpusRef.current));
         setCorpusEpoch((n) => n + 1);
       }),
     [],
@@ -1963,14 +1960,10 @@ export function App() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via presentKeys, as everywhere else in this file; corpusEpoch is the trigger
   useEffect(() => {
     if (!palette || !active) {
-      requestedCorpus.current.clear();
+      corpusRequests.current.close();
       return;
     }
-    for (const root of foldersToRequest(presentFolders(active), corpus, staleCorpus.current)) {
-      const k = folderKey(root);
-      if (requestedCorpus.current.has(k)) continue;
-      requestedCorpus.current.add(k);
-      const fresh = staleCorpus.current.delete(k);
+    for (const { root, fresh } of corpusRequests.current.next(presentFolders(active), corpus)) {
       post({
         type: 'searchFiles',
         sessionId: active.id,

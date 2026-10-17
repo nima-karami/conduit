@@ -125,6 +125,7 @@ import {
 import { buildQueueEntry } from '../src/pipeline';
 import { applyPlanCommentPatch, commentsFingerprint } from '../src/plan-comments';
 import { buildPreviewUrl, isPreviewUrl } from '../src/preview-url';
+import { createProjectFileIndex, repoSetOf } from '../src/project-file-index';
 import { ProjectStore, parseProjects, serializeProjects } from '../src/project-store';
 import type {
   AboutInfo,
@@ -142,7 +143,7 @@ import { summarizeQueue } from '../src/queue-summary';
 import { busySessions, runningSessions } from '../src/quit-guard';
 import { resolveRangePreset } from '../src/range-preset';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
-import { createRepoFileIndex, LOOSE_FILE_CAP } from '../src/repo-file-index';
+import { createRepoFileIndex } from '../src/repo-file-index';
 import {
   filterExistingRepos,
   restoreRepos,
@@ -445,32 +446,17 @@ let contentSearchSeq = 0;
 const STR_SEARCH_REFUSED = 'Search refused: not a folder or repo of this session.';
 const contentSearchGen = new Map<string, number>();
 
-// path-links v1: per-project file index for token suffix-search, cached briefly so files
-// created after the cache was built still become linkable without a manual refresh.
-const FILE_INDEX_TTL_MS = 5000;
 /** The watcher already debounces 300 ms; this rides on top so a burst costs one refresh. */
 const FILE_INDEX_SIGNAL_MS = 250;
-const fileIndexCache = new ExpiringCache<
-  string,
-  { files: IndexedFile[]; at: number; capped: boolean; repoSet: string | null }
->({
-  ttlMs: FILE_INDEX_TTL_MS,
-  maxEntries: 64,
-  maxBytes: 32 * 1024 * 1024,
-  sizeOf: (entry) =>
-    entry.files.reduce((bytes, file) => bytes + (file.rel.length + file.abs.length) * 2 + 96, 0),
-});
 
 const repoFileIndex = createRepoFileIndex({
   listRepo: async (root) => {
     const listing = await gitListedFiles(root);
-    return listing.kind === 'listed' ? listing.rels : null;
+    if (listing.kind === 'listed') return listing.rels;
+    return listing.kind === 'not-repo' ? 'not-repo' : null;
   },
   walkLoose: (root, prune, cap) => walkFilesAsync(root, cap, prune),
 });
-
-/** The repos a non-git root's index was built from, as a comparable string. */
-const repoSetOf = (repos: readonly { key: string }[]) => repos.map((r) => r.key).join('\n');
 
 // Set by the app-ready closure, which owns the repo tracker; until then a non-git root has no
 // registered repos and its index is the loose walk alone.
@@ -484,48 +470,14 @@ const statKind = (absPath: string): 'file' | 'dir' | null => {
   }
 };
 
-/** Build (or reuse, within the TTL) the project file index for `root`: `git ls-files` (fast,
- *  respects .gitignore, includes untracked-but-not-ignored) for a git root; for a non-git root,
- *  its registered repos' listings plus the loose files outside them (src/repo-file-index.ts),
- *  with scope 'everything', or when git did not answer for a git root, the capped walk that
- *  ignores .gitignore (`capped` = that walk hit its cap). `repoSet` = the repos a non-git
- *  root's index was built from (null otherwise), so the TS index can tell when it is out of
- *  date. */
-async function projectFileIndexMeta(
-  root: string,
-  opts: { fresh?: boolean; scope?: IndexScope } = {},
-): Promise<{ files: IndexedFile[]; capped: boolean; repoSet: string | null }> {
-  const cacheKey = `${root}\0${opts.scope ?? 'tracked'}`;
-  const cached = fileIndexCache.get(cacheKey);
-  // An incremental index is triggered BY a filesystem change, so serving it the TTL cache
-  // would hand back exactly the pre-change listing it was called to notice. It still WRITES
-  // the cache, so the refresh is shared with whatever asks next.
-  if (!opts.fresh && cached && Date.now() - cached.at < FILE_INDEX_TTL_MS) return cached;
-  const listing = await gitListedFiles(root);
-  if (listing.kind === 'listed') {
-    const files = listing.rels.map((rel) => ({ rel, abs: `${root}/${rel}` }));
-    fileIndexCache.set(cacheKey, { files, at: Date.now(), capped: false, repoSet: null });
-    return { files, capped: false, repoSet: null };
-  }
-  if (listing.kind === 'failed' || opts.scope === 'everything') {
-    // The cap is generous because this walk used to back the TS source index too, and the
-    // search-sized default truncated deep source directories out of it. A failed listing is
-    // not cached: the next ask tries git again.
-    const files = (await walkFilesAsync(root, LOOSE_FILE_CAP)).map((h) => ({
-      rel: h.rel,
-      abs: h.abs.replace(/\\/g, '/'),
-    }));
-    const capped = files.length >= LOOSE_FILE_CAP;
-    if (listing.kind !== 'failed')
-      fileIndexCache.set(cacheKey, { files, at: Date.now(), capped, repoSet: null });
-    return { files, capped, repoSet: null };
-  }
-  const repos = trackedReposUnder?.(folderKey(root)) ?? [];
-  const built = await repoFileIndex.build(root, repos);
-  const entry = { files: built.files, capped: false, repoSet: repoSetOf(repos) };
-  if (!built.degraded) fileIndexCache.set(cacheKey, { ...entry, at: Date.now() });
-  return entry;
-}
+// path-links v1: cached briefly so files created after the cache was built still become
+// linkable without a manual refresh.
+const projectFileIndexMeta = createProjectFileIndex({
+  listGit: (root) => gitListedFiles(root),
+  walk: (root, cap) => walkFilesAsync(root, cap),
+  repoIndex: repoFileIndex,
+  reposUnder: (rootKey) => trackedReposUnder?.(rootKey) ?? [],
+});
 
 async function projectFileIndex(root: string, scope?: IndexScope): Promise<IndexedFile[]> {
   return (await projectFileIndexMeta(root, { scope })).files;
@@ -540,7 +492,8 @@ const INDEX_CHUNK_SIZE = 200;
  *  `nextSeq` keeps chunk ordinals monotonic per root: a top-up must never be `seq === 0`,
  *  which is the chunk that owns the compiler options. `resolved` = what on-demand module
  *  resolutions added to `sent`; `repoSet` = what the last pass's file index was built from
- *  (src/index-resync.ts); `reply` = where the host-started re-sync streams. */
+ *  (src/index-resync.ts); `windows` = the windows indexing the root. Each holds its own TS
+ *  project while all share `sent`, so a top-up or re-sync streams to every one of them. */
 const projectIndexState = new Map<
   string,
   {
@@ -548,9 +501,23 @@ const projectIndexState = new Map<
     nextSeq: number;
     resolved: Set<string>;
     repoSet: string | null;
-    reply: (msg: HostToWebview) => void;
+    windows: Set<number>;
   }
 >();
+
+/** Window ids, not IPC events, so a closed window's sender is never kept alive or posted to. */
+function sendToWindow(windowId: number, msg: HostToWebview) {
+  const w = windows.get(windowId);
+  if (w && !w.isDestroyed() && !w.webContents.isDestroyed()) w.webContents.send('to-webview', msg);
+}
+
+type E2eHoldPoint = 'index' | 'scan' | 'topup';
+/** Smoke-only (installed under CONDUIT_E2E): parks an index build between reading the repo set
+ *  and recording the root's state ('index'), a repo scan before it runs ('scan'), or a
+ *  renderer's top-up request before it is queued ('topup'), so a scenario can order a build
+ *  against a registration by hand. 'topup' exists because reading a tree on Windows fires
+ *  directory change events, and the top-up they cause re-syncs on its own and hides the race. */
+let e2eHold: ((at: E2eHoldPoint) => Promise<void>) | null = null;
 
 /** full: chunk 0 onward. incremental: files that appeared since. resync: incremental, plus the
  *  files that left the selection go out as `removed`. */
@@ -580,7 +547,7 @@ const indexRuns = new Map<
 function queueProjectIndex(
   root: string,
   seeds: string[],
-  reply: (msg: HostToWebview) => void,
+  windowId: number | null,
   log: Logger,
   mode: IndexMode,
 ): Promise<void> {
@@ -594,7 +561,7 @@ function queueProjectIndex(
   run.tail = run.tail.then(async () => {
     if (mode !== 'full') run.queued[mode] = false;
     try {
-      await indexProjectSources(root, seeds, reply, log, mode);
+      await indexProjectSources(root, seeds, windowId, log, mode);
     } catch (e) {
       log.warn('index', 'project-index-failed', { root, mode, error: String(e) });
     }
@@ -639,11 +606,13 @@ function readProjectTsconfig(root: string, log: Logger): TsconfigDTO | undefined
 async function indexProjectSources(
   root: string,
   seeds: string[],
-  reply: (msg: HostToWebview) => void,
+  windowId: number | null,
   log: Logger,
   requested: IndexMode,
 ): Promise<void> {
   const prior = projectIndexState.get(root);
+  // A host-started re-sync for a root every window has since stopped indexing.
+  if (windowId === null && !prior) return;
   // An incremental request for a root this process never indexed (a reloaded renderer) is a
   // full index, not a no-op — otherwise the root would never be indexed at all.
   const incremental = requested !== 'full' && prior !== undefined;
@@ -652,6 +621,7 @@ async function indexProjectSources(
   dropResolutionsForRoot(moduleResolveCache, root);
 
   const meta = await projectFileIndexMeta(root, { fresh: incremental });
+  await e2eHold?.('index');
   // A top-up that finds the repo set changed under it re-syncs too: a top-up only adds, and the
   // files a newly registered repo ignores must leave (src/index-resync.ts).
   const resync = incremental && (requested === 'resync' || prior?.repoSet !== meta.repoSet);
@@ -688,10 +658,21 @@ async function indexProjectSources(
     nextSeq: 0,
     resolved: new Set<string>(),
     repoSet: meta.repoSet,
-    reply,
+    windows: new Set<number>(),
   };
-  state.reply = reply;
+  if (windowId !== null) state.windows.add(windowId);
   projectIndexState.set(root, state);
+  // A repo registered while the listing above was built found no state here to re-sync, so
+  // this run catches it (search-scope review r2 SF1).
+  if (
+    meta.repoSet !== null &&
+    meta.repoSet !== repoSetOf(trackedReposUnder?.(folderKey(root)) ?? [])
+  )
+    void queueProjectIndex(root, [], null, log, 'resync');
+  const send = (msg: HostToWebview) => {
+    if (incremental || windowId === null) for (const id of state.windows) sendToWindow(id, msg);
+    else sendToWindow(windowId, msg);
+  };
 
   let ordered: string[];
   let priorityCount = 0;
@@ -743,7 +724,7 @@ async function indexProjectSources(
       state.sent.add(abs);
     }
     const done = i + INDEX_CHUNK_SIZE >= total;
-    reply({
+    send({
       type: 'projectFiles',
       root,
       files,
@@ -1215,6 +1196,25 @@ app.whenReady().then(() => {
     }
   };
 
+  if (process.env.CONDUIT_E2E === '1') {
+    const holding = new Set<E2eHoldPoint>();
+    const parked: Record<E2eHoldPoint, Array<() => void>> = { index: [], scan: [], topup: [] };
+    e2eHold = (at) =>
+      holding.has(at)
+        ? new Promise<void>((resolve) => parked[at].push(resolve))
+        : Promise.resolve();
+    (global as Record<string, unknown>).__conduitHold = {
+      hold: (at: E2eHoldPoint) => {
+        holding.add(at);
+      },
+      heldCount: (at: E2eHoldPoint) => parked[at].length,
+      release: (at: E2eHoldPoint) => {
+        holding.delete(at);
+        for (const resolve of parked[at].splice(0)) resolve();
+      },
+    };
+  }
+
   // Smoke-only seam: the renderer is always loaded by the time a scenario runs, so the harness
   // can't reproduce true cold-launch timing on its own. Expose the readiness gate + queue depth
   // so a scenario can flip readiness off, fire a `second-instance` open, assert it was buffered
@@ -1428,6 +1428,8 @@ app.whenReady().then(() => {
       new Set(sessions.flatMap((s) => [s.home, ...s.roots]).map(folderKey)),
       new Set(sessions.flatMap((s) => s.repos ?? []).map((r) => folderKey(r.root))),
     );
+    for (const root of projectIndexState.keys())
+      if (!sessions.some((s) => sessionContains(s, root))) projectIndexState.delete(root);
   };
   /** A session gained or lost repos, or went away. `log` is read only when this runs, after the
    *  closure has created it. */
@@ -1436,10 +1438,8 @@ app.whenReady().then(() => {
     pruneFileIndexes();
     const currentRepoSet = (root: string) =>
       repoSetOf(repoTrackerHost.tracker.reposUnder(folderKey(root)));
-    for (const root of staleIndexRoots(projectIndexState, currentRepoSet)) {
-      const state = projectIndexState.get(root);
-      if (state) void queueProjectIndex(root, [], state.reply, log, 'resync');
-    }
+    for (const root of staleIndexRoots(projectIndexState, currentRepoSet))
+      void queueProjectIndex(root, [], null, log, 'resync');
     signalFileIndexChanged();
   };
 
@@ -1448,6 +1448,7 @@ app.whenReady().then(() => {
   const enclosingShared = asyncSingleFlight(repoTopLevel, folderKey);
   const repoScanner = createRepoScanScheduler({
     scan: async (sessionId) => {
+      await e2eHold?.('scan');
       const s = mgr.get(sessionId);
       return s ? scanSessionRepos(s, { detect: detectShared, enclosing: enclosingShared }) : [];
     },
@@ -3593,6 +3594,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'indexProject': {
+          if (m.incremental) await e2eHold?.('topup');
           const owners = mgr.list().filter((s) => sessionContains(s, m.root));
           if (owners.length && !owners.some((s) => gitDemand.isVisible(s.id))) {
             const key = `${senderId}\0${folderKey(m.root)}`;
@@ -3603,7 +3605,7 @@ app.whenReady().then(() => {
                 void queueProjectIndex(
                   m.root,
                   m.seeds ?? [],
-                  replyHere,
+                  senderId,
                   log,
                   m.incremental ? 'incremental' : 'full',
                 ),
@@ -3613,7 +3615,7 @@ app.whenReady().then(() => {
           await queueProjectIndex(
             m.root,
             m.seeds ?? [],
-            replyHere,
+            senderId,
             log,
             m.incremental ? 'incremental' : 'full',
           );
@@ -4736,6 +4738,10 @@ app.whenReady().then(() => {
         pendingFsByWindow.delete(windowId);
         for (const [key, request] of deferredIndexes)
           if (request.windowId === windowId) deferredIndexes.delete(key);
+        for (const [root, state] of projectIndexState) {
+          state.windows.delete(windowId);
+          if (!state.windows.size) projectIndexState.delete(root);
+        }
         folders.windowClosed(windowId);
         log.info('window', 'closed', { windowId });
         // A closed window drops out of the move picker (Slice B).

@@ -496,17 +496,21 @@ export async function searchContentAsync(
   let stop = false;
   const start = now();
   let sinceYield = 0;
-  const cut = (by: TruncatedBy) => {
+  // The cause that ended the walk names the cut: a file clipped at the per-file cap earlier
+  // does not make a search that then ran out of time read as "limit".
+  const cut = (by: TruncatedBy, ends = false) => {
     truncated = true;
-    truncatedBy ??= by;
+    if (ends) {
+      truncatedBy = by;
+      stop = true;
+    } else truncatedBy ??= by;
   };
 
   // Process one candidate file; mutates `files`/`total`/`truncated`, and sets `stop` on a
   // cap/budget/cancellation cut-off. Shared by the candidate-list and BFS-walk sources.
   const visit = async (abs: string, rel: string): Promise<void> => {
     if (now() - start > caps.timeBudgetMs) {
-      cut('time');
-      stop = true;
+      cut('time', true);
       return;
     }
     if (isCancelled?.()) {
@@ -538,10 +542,7 @@ export async function searchContentAsync(
     }
 
     total = pushFileResult(files, rel, abs, matches, nameMatch, total);
-    if (total >= caps.totalCap) {
-      cut('limit');
-      stop = true;
-    }
+    if (total >= caps.totalCap) cut('limit', true);
   };
   const response = (): ContentSearchResponse => ({
     files,

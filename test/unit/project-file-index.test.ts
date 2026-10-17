@@ -1,0 +1,72 @@
+import { describe, expect, it } from 'vitest';
+import type { GitListing } from '../../src/git-listing';
+import { createProjectFileIndex, FILE_INDEX_TTL_MS } from '../../src/project-file-index';
+
+function harness(listing: GitListing, degraded = false) {
+  let t = 1000;
+  const calls = { list: 0, walk: 0, build: 0 };
+  const meta = createProjectFileIndex({
+    async listGit() {
+      calls.list += 1;
+      return listing;
+    },
+    async walk(root) {
+      calls.walk += 1;
+      return [{ rel: 'a.ts', abs: `${root}/a.ts` }];
+    },
+    repoIndex: {
+      async build(root) {
+        calls.build += 1;
+        return { files: [{ rel: 'r/x.ts', abs: `${root}/r/x.ts` }], degraded };
+      },
+    },
+    reposUnder: () => [{ key: '/w/r', root: '/w/r' }],
+    clock: () => t,
+  });
+  return {
+    meta,
+    calls,
+    advance(ms: number) {
+      t += ms;
+    },
+  };
+}
+
+describe('createProjectFileIndex: a listing git could not give', () => {
+  for (const kind of ['truncated', 'failed'] as const) {
+    it(`a ${kind} listing falls back to the walk, cached for the TTL, then asks git again`, async () => {
+      const h = harness({ kind });
+      const first = await h.meta('/w');
+      expect(first.files.map((f) => f.rel)).toEqual(['a.ts']);
+      await h.meta('/w');
+      await h.meta('/w');
+      expect(h.calls).toEqual({ list: 1, walk: 1, build: 0 });
+      h.advance(FILE_INDEX_TTL_MS + 1);
+      await h.meta('/w');
+      expect(h.calls).toEqual({ list: 2, walk: 2, build: 0 });
+    });
+  }
+
+  it('a fresh ask still goes to git past the cached degraded result', async () => {
+    const h = harness({ kind: 'truncated' });
+    await h.meta('/w');
+    await h.meta('/w', { fresh: true });
+    expect(h.calls.list).toBe(2);
+  });
+
+  it("a non-git root's degraded build is cached for the TTL too", async () => {
+    const h = harness({ kind: 'not-repo' }, true);
+    const first = await h.meta('/w');
+    expect(first).toMatchObject({ capped: false, repoSet: '/w/r' });
+    await h.meta('/w');
+    expect(h.calls).toEqual({ list: 1, walk: 0, build: 1 });
+  });
+
+  it('each scope has its own entry', async () => {
+    const h = harness({ kind: 'not-repo' });
+    await h.meta('/w');
+    const everything = await h.meta('/w', { scope: 'everything' });
+    expect(everything.files.map((f) => f.rel)).toEqual(['a.ts']);
+    expect(h.calls).toEqual({ list: 2, walk: 1, build: 1 });
+  });
+});

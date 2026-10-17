@@ -82,6 +82,10 @@ describe('gitListedFiles: what a listing leaves out, and when git did not answer
     }
     expect(await gitListedFiles(path.join(root, 'no-such-dir'))).toEqual({ kind: 'failed' });
   });
+
+  it('a listing past the buffer is truncated, not a failure', async () => {
+    expect(await gitListedFiles(root, 4)).toEqual({ kind: 'truncated' });
+  });
 });
 
 describe('parseTaggedListing', () => {

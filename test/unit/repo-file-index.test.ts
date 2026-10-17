@@ -213,6 +213,23 @@ describe('createRepoFileIndex', () => {
     ]);
   });
 
+  it('a registered repo git calls not-a-repo is walked without degrading the build', async () => {
+    const walked: string[] = [];
+    const index = createRepoFileIndex({
+      listRepo: async (root) => (root === '/w/A' ? 'not-repo' : ['b.ts']),
+      async walkLoose(root) {
+        walked.push(root);
+        return root === '/w/A' ? [{ rel: 'a.ts', abs: '/w/A/a.ts' }] : [];
+      },
+    });
+    const built = await index.build('/w', [repo('/w/A'), repo('/w/B')]);
+    expect(rels(built.files)).toEqual(['A/a.ts', 'B/b.ts']);
+    expect(built.degraded).toBe(false);
+    // Walked again next build: a walk has no serial, so the union is never memoized over it.
+    await index.build('/w', [repo('/w/A'), repo('/w/B')]);
+    expect(walked.filter((r) => r === '/w/A')).toHaveLength(2);
+  });
+
   it('a root that is itself a repo whose listing fails is walked', async () => {
     const h = harness({ '/w': null }, { loose: ['x.ts', 'gen/y.ts'], dirs: [] });
     const built = await h.raw.build('/w', [repo('/w')]);
