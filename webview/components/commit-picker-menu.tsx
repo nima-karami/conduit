@@ -90,9 +90,6 @@ export function CommitPickerMenu({
   }>({ unpushed: null, branchPoint: null });
   const [filter, setFilter] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
-  // Rows land or re-filter under a pointer that may not move: each restarts the gate, so Enter
-  // still takes the top match rather than whatever row slid under the cursor.
-  const hover = useHoverGate(`${phase}:${filter}`);
   const menuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const baseId = useId();
@@ -334,6 +331,11 @@ export function CommitPickerMenu({
     presets,
     onOpenCompare,
   ]);
+
+  // Rows land, re-list (a preset resolving late) or re-filter under a pointer that may not move:
+  // each restarts the gate, so Enter still takes the top match rather than whatever row slid
+  // under the cursor.
+  const hover = useHoverGate(JSON.stringify([phase, filter, rows.map((r) => r.id)]));
 
   const clampedActive = Math.min(activeIndex, Math.max(rows.length - 1, 0));
 

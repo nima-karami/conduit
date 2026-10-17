@@ -230,3 +230,82 @@ describe('RepoPickerMenu under a resting pointer (review r2)', () => {
     expect(activeText()).toContain('two');
   });
 });
+
+// Review r3: rows can re-list without a keystroke (a second refs reply, a preset resolving late).
+describe('picker rows re-listed under a resting pointer (review r3)', () => {
+  const refsReply = (branches: string[]): HostToWebview => ({
+    type: 'git:refsResult',
+    sessionId: 's',
+    repoRoot: '/r',
+    branches,
+    current: 'main',
+    remotes: [],
+    tags: [],
+  });
+
+  it('a second refs reply restarts the branch switcher gate', async () => {
+    await mount(
+      createElement(BranchSwitcherList, {
+        sessionId: 's',
+        repoRoot: '/r',
+        switchable: true,
+        switching: false,
+        onSelect: () => {},
+        onArrowUpFromFilter: () => {},
+      }),
+    );
+    await emit(refsReply(['main', 'feat-a', 'feat-b']));
+    await pointerMove(rowByText('.git-branch-menu__row', 'feat-b'), 40, 90);
+    await pointerMove(rowByText('.git-branch-menu__row', 'feat-b'), 41, 90);
+    const frame = () => document.querySelector('.git-branch-menu') as HTMLElement;
+    expect(frame().dataset.pointer).toBe('armed');
+    await emit(refsReply(['main', 'feat-0', 'feat-a', 'feat-b']));
+    expect(frame().dataset.pointer).toBe('resting');
+  });
+
+  it('a preset row resolving late restarts the commit picker gate', async () => {
+    const triggerRef = createRef<HTMLButtonElement>();
+    await mount(
+      createElement(CommitPickerMenu, {
+        sessionId: 's',
+        repoRoot: '/r',
+        triggerRef,
+        onSelect: () => {},
+        onClose: () => {},
+        onOpenCompare: () => {},
+      }),
+    );
+    await emit({
+      type: 'git:historyResult',
+      sessionId: 's',
+      repoRoot: '/r',
+      commits: [
+        { sha: 'a'.repeat(40), parents: [], refs: [], author: 'a', date: 0, subject: 'one' },
+      ],
+      layout: { rows: [], edges: [], laneCount: 0 },
+      hasMore: false,
+      state: 'ok',
+    });
+    await pointerMove(rowByText('.commit-picker__row', 'one'), 40, 90);
+    await pointerMove(rowByText('.commit-picker__row', 'one'), 41, 90);
+    const frame = () => document.querySelector('.commit-picker') as HTMLElement;
+    expect(frame().dataset.pointer).toBe('armed');
+    const ask = bus.posted.find(
+      (m): m is Extract<WebviewToHost, { type: 'git:resolveRange' }> =>
+        (m as WebviewToHost).type === 'git:resolveRange' &&
+        (m as Extract<WebviewToHost, { type: 'git:resolveRange' }>).preset === 'unpushed',
+    );
+    expect(ask).toBeDefined();
+    await emit({
+      type: 'git:resolveRangeResult',
+      sessionId: 's',
+      repoRoot: '/r',
+      preset: 'unpushed',
+      requestId: ask?.requestId ?? -1,
+      base: { kind: 'branch', ref: 'origin/main', remote: true },
+      head: { kind: 'working' },
+    });
+    expect(rowByText('.commit-picker__row', 'Unpushed')).toBeDefined();
+    expect(frame().dataset.pointer).toBe('resting');
+  });
+});

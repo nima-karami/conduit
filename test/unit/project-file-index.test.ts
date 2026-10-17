@@ -147,3 +147,42 @@ describe('createProjectFileIndex: concurrent asks', () => {
     expect((await meta('/w')).files.map((f) => f.rel)).toEqual(['a.ts']);
   });
 });
+
+describe('createProjectFileIndex: overlapping builds (review r3)', () => {
+  const deps = (listGit: () => Promise<GitListing>) =>
+    createProjectFileIndex({
+      listGit,
+      async walk() {
+        return [];
+      },
+      repoIndex: { build: async () => ({ files: [], coveredRepos: [] }) },
+      reposUnder: () => [],
+    });
+
+  it('a stale build finishing after a fresh one does not overwrite its listing', async () => {
+    let releaseStale: (l: GitListing) => void = () => {};
+    let calls = 0;
+    const meta = deps(() => {
+      calls += 1;
+      if (calls === 1) return new Promise<GitListing>((r) => (releaseStale = r));
+      return Promise.resolve({ kind: 'listed', rels: ['new.ts'] });
+    });
+    const stale = meta('/w');
+    await meta('/w', { fresh: true });
+    releaseStale({ kind: 'listed', rels: ['old.ts'] });
+    await stale;
+    expect((await meta('/w')).files.map((f) => f.rel)).toEqual(['new.ts']);
+    expect(calls).toBe(2);
+  });
+
+  it('concurrent asks on a failing listing both reject, and git is asked once', async () => {
+    let calls = 0;
+    const meta = deps(async () => {
+      calls += 1;
+      throw new Error('spawn failed');
+    });
+    const results = await Promise.allSettled([meta('/w'), meta('/w')]);
+    expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected']);
+    expect(calls).toBe(1);
+  });
+});

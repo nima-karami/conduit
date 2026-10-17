@@ -68,9 +68,6 @@ function SwitchableList({
   const [pending, setPending] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const baseId = useId();
-  // Rows land or re-filter under a pointer that may not move: each restarts the gate, so Enter
-  // still takes the top match rather than whatever row slid under the cursor.
-  const hover = useHoverGate(`${refs.loaded}:${filter}`);
 
   useEffect(() => {
     post({ type: 'git:refs', sessionId, repoRoot });
@@ -94,6 +91,10 @@ function SwitchableList({
     return ordered.filter((b) => b.toLowerCase().includes(q));
   }, [ordered, filter]);
   const selectable = useMemo(() => filtered.filter((b) => b !== refs.current), [filtered, refs]);
+  // Rows land, re-list (a later refs reply) or re-filter under a pointer that may not move: each
+  // restarts the gate, so Enter still takes the top match rather than whatever row slid under the
+  // cursor.
+  const hover = useHoverGate(JSON.stringify([refs.loaded, refs.current, filter, filtered]));
 
   const pick = (ref: string) => {
     setPending(ref);

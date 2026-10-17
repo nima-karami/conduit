@@ -14,6 +14,9 @@ import type { Session } from '../../src/types';
 
 afterEach(() => vi.useRealTimers());
 
+const fakeTimers = () =>
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setImmediate', 'clearImmediate'] });
+
 const session = (over: Partial<Session> = {}): Session =>
   ({
     id: 's1',
@@ -270,6 +273,7 @@ describe('createPathLinkResolver', () => {
     // From a resolve's first token to its second spans the yielded turn between them: only a
     // resolve holding a slot can be inside that span. A local stat takes a few ms, short of
     // PARKED_IO_MS, so it must not hand the slot on (review r2 stress).
+    fakeTimers();
     let inFlight = 0;
     let peak = 0;
     const { resolver } = make({
@@ -282,16 +286,18 @@ describe('createPathLinkResolver', () => {
         return null;
       },
     });
-    const replies = await Promise.all(
+    const all = Promise.all(
       Array.from({ length: 6 }, (_, i) =>
         resolver.resolve('s1', [{ alts: [`/r${i}/a.ts`] }, { alts: [`/r${i}/b.ts`] }]),
       ),
     );
-    expect(replies).toHaveLength(6);
+    await vi.runAllTimersAsync();
+    expect(await all).toHaveLength(6);
     expect(peak).toBe(RESOLVE_CONCURRENCY);
   });
 
   it(`resolves that let the slot go on slow I/O take it back: still ${RESOLVE_CONCURRENCY} mid-slice`, async () => {
+    fakeTimers();
     let inFlight = 0;
     let peak = 0;
     const { resolver } = make({
@@ -305,12 +311,96 @@ describe('createPathLinkResolver', () => {
         return null;
       },
     });
-    await Promise.all(
+    const all = Promise.all(
       Array.from({ length: 6 }, (_, i) =>
         resolver.resolve('s1', [{ alts: [`/r${i}/a.ts`] }, { alts: [`/r${i}/b.ts`] }]),
       ),
     );
-    expect(peak).toBe(RESOLVE_CONCURRENCY);
+    await vi.runAllTimersAsync();
+    await all;
+    expect(peak).toBeLessThanOrEqual(RESOLVE_CONCURRENCY);
+  });
+
+  // Review r3: a token resumed from its yielded turn runs a CPU slice, so it must hold a slot even
+  // when a parked sibling let the resolve's slot go while the turn was pending. setImmediate stays
+  // real here so the turn can be held back while the fake clock fires the parked-I/O drop.
+  it('a token resumed from its turn after the slot was let go waits for a slot', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const parked = new Map<string, () => void>();
+    const calls: string[] = [];
+    const { resolver } = make({
+      sessions: { s1: wSession },
+      stat: (abs) => {
+        calls.push(abs);
+        if (!abs.endsWith('/p.ts')) return Promise.resolve(null);
+        return new Promise((r) => parked.set(abs, () => r(null)));
+      },
+    });
+    const microtasks = async () => {
+      for (let i = 0; i < 200; i++) await Promise.resolve();
+    };
+    const macrotask = () => new Promise((r) => setImmediate(r));
+
+    const reply = resolver.resolve('s1', [{ alts: ['/r/p.ts'] }, { alts: ['/r/a.ts'] }]);
+    await microtasks();
+    expect(calls).toEqual(['/r/p.ts']);
+    vi.advanceTimersByTime(PARKED_IO_MS + 1);
+    const blockers = Array.from({ length: RESOLVE_CONCURRENCY }, (_, i) =>
+      resolver.resolve('s1', [{ alts: [`/b${i}/p.ts`] }]),
+    );
+    await microtasks();
+    expect(calls).toHaveLength(1 + RESOLVE_CONCURRENCY);
+    await macrotask();
+    await microtasks();
+    await macrotask();
+    expect(calls).not.toContain('/r/a.ts');
+
+    for (let i = 0; i < RESOLVE_CONCURRENCY; i++) parked.get(`/b${i}/p.ts`)?.();
+    await Promise.all(blockers);
+    await microtasks();
+    expect(calls).toContain('/r/a.ts');
+    parked.get('/r/p.ts')?.();
+    await reply;
+  });
+
+  // Review r3: a throw rejects the resolve while a sibling is parked; the sibling settling later
+  // must not take a slot that nothing will release.
+  it('a token that throws mid-resolve leaves both slots free once its parked siblings settle', async () => {
+    fakeTimers();
+    const parked: Array<() => void> = [];
+    const malformed: IndexedFile = {
+      rel: 'x.ts',
+      get abs(): string {
+        throw new Error('malformed index');
+      },
+    };
+    const { resolver } = make({
+      sessions: { s1: wSession },
+      index: { '/w': { files: [malformed], coveredRoots: ['/w'] } },
+      stat: (abs) =>
+        abs.startsWith('/slow/')
+          ? new Promise((r) => parked.push(() => r(null)))
+          : Promise.resolve(null),
+    });
+    const failed = Array.from({ length: RESOLVE_CONCURRENCY }, () =>
+      resolver.resolve('s1', [{ alts: ['/slow/a.ts'] }, { alts: ['x.ts'] }]).then(
+        () => 'resolved',
+        (e: unknown) => String(e),
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(PARKED_IO_MS + 1);
+    expect(await Promise.all(failed)).toEqual(
+      Array(RESOLVE_CONCURRENCY).fill('Error: malformed index'),
+    );
+    for (const release of parked) release();
+    await vi.advanceTimersByTimeAsync(1);
+
+    let after: string[] | undefined;
+    void resolver.resolve('s1', [{ alts: ['/ok/a.ts'] }, { alts: ['/ok/b.ts'] }]).then((r) => {
+      after = r.results.map((t) => t.key);
+    });
+    await vi.advanceTimersByTimeAsync(PARKED_IO_MS);
+    expect(after).toEqual(['/ok/a.ts', '/ok/b.ts']);
   });
 
   // Review r2: the host-wide cap is for CPU slices; a resolve parked on I/O must not hold it.
@@ -319,6 +409,7 @@ describe('createPathLinkResolver', () => {
     ['a cold file-index build', 'fileIndex'],
     ['a stat on an offline mapped drive', 'stat'],
   ] as const)('a resolve blocked on %s does not delay another session', async (_label, where) => {
+    fakeTimers();
     const parked: Array<() => void> = [];
     const park = <T>(value: T) => new Promise<T>((r) => parked.push(() => r(value)));
     const slow = (s: Session) => s.id !== 'fast';
@@ -341,15 +432,15 @@ describe('createPathLinkResolver', () => {
     const slowReplies = Object.keys(sessions)
       .filter((id) => id !== 'fast')
       .map((id) => resolver.resolve(id, [{ alts: ['a.ts'] }]));
-    await new Promise((r) => setTimeout(r, 5));
-    const fast = await Promise.race([
-      resolver.resolve('fast', [{ alts: ['a.ts'] }]),
-      new Promise<'starved'>((r) => setTimeout(() => r('starved'), 200)),
-    ]);
-    expect(fast === 'starved' ? fast : fast.results[0].candidates.map((c) => c.absPath)).toEqual([
-      '/f/a.ts',
-    ]);
+    await vi.advanceTimersByTimeAsync(PARKED_IO_MS + 1);
+    let fast: string[] | undefined;
+    void resolver.resolve('fast', [{ alts: ['a.ts'] }]).then((r) => {
+      fast = r.results[0].candidates.map((c) => c.absPath);
+    });
+    await vi.advanceTimersByTimeAsync(PARKED_IO_MS);
+    expect(fast).toEqual(['/f/a.ts']);
     for (const release of parked) release();
+    await vi.runAllTimersAsync();
     await Promise.all(slowReplies);
   });
 

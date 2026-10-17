@@ -57,7 +57,13 @@ export function createProjectFileIndex(deps: ProjectFileIndexDeps): ProjectFileI
     clock,
   });
   const reportedTruncated = new Set<string>();
-  const keep = (key: string, meta: ProjectFileIndexMeta): ProjectFileIndexMeta => {
+  // A non-fresh build that started before a fresh one can finish after it; writing then would put
+  // the pre-change listing back over the fresh one for a whole TTL (review r3).
+  let builds = 0;
+  const writtenGen = new Map<string, number>();
+  const keep = (key: string, gen: number, meta: ProjectFileIndexMeta): ProjectFileIndexMeta => {
+    if ((writtenGen.get(key) ?? 0) > gen) return meta;
+    writtenGen.set(key, gen);
     cache.set(key, { ...meta, at: clock() });
     return meta;
   };
@@ -67,10 +73,12 @@ export function createProjectFileIndex(deps: ProjectFileIndexDeps): ProjectFileI
     opts: { fresh?: boolean; scope?: IndexScope },
     cacheKey: string,
   ): Promise<ProjectFileIndexMeta> => {
+    builds += 1;
+    const gen = builds;
     const listing = await deps.listGit(root);
     if (listing.kind === 'listed') {
       const files = listing.rels.map((rel) => ({ rel, abs: `${root}/${rel}` }));
-      return keep(cacheKey, {
+      return keep(cacheKey, gen, {
         files,
         capped: false,
         repoSet: null,
@@ -91,7 +99,7 @@ export function createProjectFileIndex(deps: ProjectFileIndexDeps): ProjectFileI
         rel: h.rel,
         abs: h.abs.replace(/\\/g, '/'),
       }));
-      return keep(cacheKey, {
+      return keep(cacheKey, gen, {
         files,
         capped: files.length >= LOOSE_FILE_CAP,
         repoSet: null,
@@ -100,7 +108,7 @@ export function createProjectFileIndex(deps: ProjectFileIndexDeps): ProjectFileI
     }
     const repos = deps.reposUnder(folderKey(root));
     const built = await deps.repoIndex.build(root, repos);
-    return keep(cacheKey, {
+    return keep(cacheKey, gen, {
       files: built.files,
       capped: false,
       repoSet: repoSetOf(repos),

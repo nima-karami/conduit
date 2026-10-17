@@ -133,12 +133,16 @@ function withConcurrency(limit: number) {
  *  under the burst went 1.5× → 4.5× idle (review r2 stress). */
 function slotLease(slots: Semaphore) {
   let held = false;
+  // A throw rejects the resolve while sibling branches are still parked; each would otherwise
+  // take a slot on settling that nothing releases, and two such leaks stop every path link.
+  let ended = false;
   let retaking: Promise<void> | null = null;
   const take = (): Promise<void> => {
-    if (held) return Promise.resolve();
+    if (held || ended) return Promise.resolve();
     retaking ??= slots.acquire().then(() => {
-      held = true;
       retaking = null;
+      if (ended) slots.release();
+      else held = true;
     });
     return retaking;
   };
@@ -149,7 +153,10 @@ function slotLease(slots: Semaphore) {
   };
   return {
     take,
-    end: drop,
+    end() {
+      ended = true;
+      drop();
+    },
     /** Runs I/O, dropping the slot if it is slow; resolves only once the slot is held again. */
     async io<T>(task: () => Promise<T>): Promise<T> {
       const timer = setTimeout(drop, PARKED_IO_MS);
