@@ -4,6 +4,7 @@
  * docs/specs/2026-10-16-terminal-path-links.md §3.1; resolution is host-side (src/path-resolve.ts).
  */
 import { langFromPath } from '../src/lang';
+import { MAX_ALTS } from '../src/path-resolve';
 
 export interface PathToken {
   /** === alts[0]. */
@@ -11,6 +12,9 @@ export interface PathToken {
   /** Forward-slashed raws the host tries in order, first hit wins (e.g. a route group's whole
    *  token, then its post-paren tail). 1..MAX_ALTS entries. */
   alts: string[];
+  /** Row 40: where each alt ends (alts[i] spans start..altEnds[i]). Absent when every alt is the
+   *  same printed text, start..end. */
+  altEnds?: number[];
   /** 1-based, from a `:l`, `(l,c)`, `#Ll` or ` line l` suffix. */
   line?: number;
   col?: number;
@@ -32,6 +36,13 @@ const TRAILING_ALWAYS = new Set(['.', ',', ';', "'", '"', '`', '}', ']']);
 // angle brackets, pipes, glob chars (? *), ANSI bracket/escape chars ([\x1b).
 // Backslash is allowed for Windows paths.
 const PC = `[^\\s"'<>|?*:[\\]\\x00-\\x1f]`;
+
+const PC_RE = new RegExp(`^${PC}$`);
+
+/** Whether one character can sit inside a path segment (the PC class). */
+export function isPathChar(ch: string): boolean {
+  return PC_RE.test(ch);
+}
 
 // Like PC but ALSO excludes the separators `/` and `\` — a single path SEGMENT. Used to
 // build the bare-relative alternate so "≥1 separator" is enforced structurally rather than
@@ -138,14 +149,19 @@ function isFileLikeName(name: string): boolean {
 // Group indices: 1=whole-path  2=line  3=col
 const PATH_RE = new RegExp(
   `(` +
+    // A device path (`\\?\…`, `\\.\…`, `//?/…`, `//./…`), matched whole so that no fragment of it
+    // is detected, then dropped (row 18: device forms are never links).
+    `[\\\\/][\\\\/][?.][\\\\/][^\\s"'<>|*]*` +
     // POSIX absolute — not preceded by a digit, colon, or slash. This blocks:
     //   - `//` (double-slash as in `https://`)
     //   - `:path` (port-followed paths like `3000/api`)
     // It does NOT block letter-preceded paths, which covers ANSI-terminated
     // sequences like `\x1b[31m/src/main.ts` where the `m` precedes the path.
-    `(?<![0-9:/])/${PC}+(?:[/\\\\]${PC}*)*` +
+    `|(?<![0-9:/])/${PC}+(?:[/\\\\]${PC}*)*` +
     // Windows absolute — not preceded by alphanumeric
     `|(?<![A-Za-z0-9])[A-Za-z]:[/\\\\]${PC}*(?:[/\\\\]${PC}*)*` +
+    // UNC `\\host\share\…` (row 18), never the `\\.\` device namespace (`\\?\` fails on PC).
+    `|(?<![\\w\\\\/])\\\\\\\\(?!\\.[\\\\/])${SEG}+(?:[/\\\\]${SEG}+)+` +
     // Relative: ../ or ./
     `|\\.\\.\\/(?:${PC}+(?:[/]${PC}*)*)?` +
     `|\\./${PC}+(?:[/]${PC}*)*` +
@@ -232,6 +248,55 @@ function isLinkable(p: string, activeCwd: string | undefined): boolean {
   return isAbsoluteOrHome(p) || Boolean(activeCwd);
 }
 
+// The extension words, the token itself being the last alt.
+const MAX_EXTENSION_WORDS = MAX_ALTS - 1;
+const WORD_RE = new RegExp(` (${PC}+)`, 'y');
+const LINE_COL_AFTER_RE = /^:(\d+)(?::(\d+))?/;
+// The device namespaces (`//./`, `//?/`) and a bare `//`: never a link (row 18).
+const DEVICE_RE = /^\/\/(?:[?.](?:\/|$)|$)/;
+
+/** Row 40: an unquoted absolute path with spaces (`C:/Program Files/x/y.ts`) prints as a token
+ *  cut at the first space. When that token's last segment has no extension — it reads as cut
+ *  off — the next ≤ 3 space-separated words become longer alts, longest first; the host stops at
+ *  the first that exists. A token that already ends in a file name is left alone, so prose after
+ *  a path costs no stats. */
+function extendOverSpaces(
+  line: string,
+  from: number,
+  p: string,
+): { alts: string[]; ends: number[]; line?: number; col?: number } | null {
+  if (!(p.startsWith('/') || /^[A-Za-z]:\//.test(p)) || p.startsWith('//')) return null;
+  const last = p.slice(p.lastIndexOf('/') + 1);
+  if (last === '' || last.includes('.')) return null;
+  const joined: string[] = [];
+  const ends: number[] = [];
+  let text = p;
+  let at = from;
+  let cut = false;
+  while (joined.length < MAX_EXTENSION_WORDS && !cut) {
+    WORD_RE.lastIndex = at;
+    const w = WORD_RE.exec(line);
+    if (!w) break;
+    const word = trimTrailing(w[1]);
+    if (!word) break;
+    cut = word.length < w[1].length;
+    text = `${text} ${word.replace(/\\/g, '/')}`;
+    at += 1 + word.length;
+    if (text.length > MAX_TOKEN_LENGTH) break;
+    joined.push(text);
+    ends.push(at);
+  }
+  if (joined.length === 0) return null;
+  const lc = cut ? null : LINE_COL_AFTER_RE.exec(line.slice(at));
+  if (lc) ends[ends.length - 1] += lc[0].length;
+  return {
+    alts: joined.reverse(),
+    ends: ends.reverse(),
+    ...(lc ? { line: Number(lc[1]) } : {}),
+    ...(lc?.[2] !== undefined ? { col: Number(lc[2]) } : {}),
+  };
+}
+
 function quotedTokens(line: string, activeCwd: string | undefined): PathToken[] {
   const out: PathToken[] = [];
   QUOTED_RE.lastIndex = 0;
@@ -298,18 +363,41 @@ export function detectPathTokens(line: string, activeCwd: string | undefined): P
       start += 2;
       if (lineNum === undefined) end = start + p.length;
     }
+    if (DEVICE_RE.test(p)) continue;
     if (!isLinkable(p, activeCwd)) continue;
     if (quoted.some((q) => start < q.end && q.start < end)) continue;
 
     const alts = [p];
-    // A route group (`app/(group)/page.tsx`) may also be a printed suffix of a longer path.
-    const close = p.lastIndexOf(')/');
-    if (close >= 0 && p.lastIndexOf('(', close) >= 0) {
-      const tail = p.slice(close + 2);
-      if (tail && isLinkable(tail, activeCwd)) alts.push(tail);
+    let altEnds: number[] | undefined;
+    const untrimmed = text.length === m[1].length - lead;
+    const ext =
+      untrimmed && lineNum === undefined && pathText === text
+        ? extendOverSpaces(line, end, p)
+        : null;
+    if (ext) {
+      alts.unshift(...ext.alts);
+      altEnds = [...ext.ends, end];
+      end = ext.ends[0];
+      lineNum = ext.line;
+      colNum = ext.col;
+    } else {
+      // A route group (`app/(group)/page.tsx`) may also be a printed suffix of a longer path.
+      const close = p.lastIndexOf(')/');
+      if (close >= 0 && p.lastIndexOf('(', close) >= 0) {
+        const tail = p.slice(close + 2);
+        if (tail && isLinkable(tail, activeCwd)) alts.push(tail);
+      }
     }
 
-    tokens.push({ raw: p, alts, line: lineNum, col: colNum, start, end });
+    tokens.push({
+      raw: alts[0],
+      alts,
+      ...(altEnds ? { altEnds } : {}),
+      line: lineNum,
+      col: colNum,
+      start,
+      end,
+    });
   }
 
   tokens.sort((a, b) => a.start - b.start);

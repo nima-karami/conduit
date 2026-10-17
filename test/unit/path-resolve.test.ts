@@ -11,6 +11,7 @@ import {
   type ResolveDeps,
   type ResolveIndex,
   resolveTokens,
+  TRAILING_ELISION_MAX,
 } from '../../src/path-resolve';
 
 /** A fake async fs: `stat` answers from a set of files and dirs and logs every call. */
@@ -690,5 +691,73 @@ describe('resolveTokens — v2 matrix', () => {
     expect(abs.candidates).toHaveLength(0);
     expect(rel.candidates).toHaveLength(3);
     expect(rel.candidates[0].repoRoot).toBe('/w/repoA/src');
+  });
+});
+
+// Plan T9.1 (v1 rows 37, 40).
+describe('resolveTokens — v1 rows', () => {
+  const UTIL = [
+    '/w/repoA/src/util/alpha.ts',
+    '/w/repoA/src/util/able.ts',
+    '/w/repoA/src/other/a.ts',
+  ];
+  const utilCtx = (extra: string[] = []) =>
+    wCtx({
+      indexes: [{ root: '/w', files: wIndexFiles([...UTIL, ...extra]), coveredRootIdx: [1, 2, 3] }],
+    });
+
+  it('row 37: a trailing … prefix-matches the last segment over the indexes', async () => {
+    const { deps, statCalls } = wFs(UTIL);
+    const r = await one('src/util/a…', utilCtx(), deps);
+    expect(r.candidates.map((c) => c.absPath).sort()).toEqual([
+      '/w/repoA/src/util/able.ts',
+      '/w/repoA/src/util/alpha.ts',
+    ]);
+    expect(r.candidates.every((c) => c.strength === 'suffix')).toBe(true);
+    expect(statCalls).toEqual([]);
+  });
+
+  it('row 37: the directory part must match whole segments', async () => {
+    const { deps } = wFs(['/w/repoA/xsrc/util/abc.ts']);
+    const r = await one('src/util/a…', utilCtx(['/w/repoA/xsrc/util/abc.ts']), deps);
+    expect(r.candidates.map((c) => c.absPath)).not.toContain('/w/repoA/xsrc/util/abc.ts');
+  });
+
+  it('row 37: an absolute head keeps only files directly in that folder', async () => {
+    const { deps } = wFs(UTIL);
+    const r = await one('/w/repoA/src/util/al…', utilCtx(), deps);
+    expect(r.candidates.map((c) => c.absPath)).toEqual(['/w/repoA/src/util/alpha.ts']);
+  });
+
+  it('row 37: more than TRAILING_ELISION_MAX matches → none', async () => {
+    const many = Array.from(
+      { length: TRAILING_ELISION_MAX + 1 },
+      (_, i) => `/w/repoA/src/util/a${i}.ts`,
+    );
+    const { deps } = wFs(many);
+    const r = await one(
+      'src/util/a…',
+      wCtx({ indexes: [{ root: '/w', files: wIndexFiles(many), coveredRootIdx: [1] }] }),
+      deps,
+    );
+    expect(r.candidates).toEqual([]);
+    const exact = many.slice(0, TRAILING_ELISION_MAX);
+    const r10 = await one(
+      'src/util/a…',
+      wCtx({ indexes: [{ root: '/w', files: wIndexFiles(exact), coveredRootIdx: [1] }] }),
+      deps,
+    );
+    expect(r10.candidates).toHaveLength(TRAILING_ELISION_MAX);
+  });
+
+  it('row 40: the first existing alt wins, ≤ 4 stats, and the reply names which alt', async () => {
+    const { deps, statCalls } = wFs(['/w/my dir/x.ts'], ['/w/my dir']);
+    const alts = ['/w/my dir/x.ts and', '/w/my dir/x.ts', '/w/my'];
+    const [r] = await resolveTokens([{ alts }], wCtx(), deps);
+    expect(r.candidates.map((c) => c.absPath)).toEqual(['/w/my dir/x.ts']);
+    expect(r.alt).toBe(1);
+    expect(statCalls).toEqual(['/w/my dir/x.ts and', '/w/my dir/x.ts']);
+    const [first] = await resolveTokens([{ alts: ['/w/my dir/x.ts'] }], wCtx(), deps);
+    expect(first.alt).toBeUndefined();
   });
 });

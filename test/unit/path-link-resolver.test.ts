@@ -488,6 +488,26 @@ describe('createPathLinkResolver', () => {
   });
 });
 
+// Plan T9.1 row 18: a UNC path links only under a UNC user root, with no stat at resolve time; the
+// click-time probe budget is T4.1's `probe` test below.
+describe('createPathLinkResolver — UNC tokens (row 18)', () => {
+  it('under an attached //server/share root → one candidate, 0 stats', async () => {
+    const { resolver, statCalls } = make({
+      sessions: { s1: session({ roots: ['//server/share'] }) },
+    });
+    const { results } = await resolver.resolve('s1', [{ alts: ['//server/share/x.ts'] }]);
+    expect(results[0].candidates.map((c) => c.absPath)).toEqual(['//server/share/x.ts']);
+    expect(statCalls).toEqual([]);
+  });
+
+  it('without a UNC root → not linked, 0 stats', async () => {
+    const { resolver, statCalls } = make({ sessions: { s1: session() } });
+    const { results } = await resolver.resolve('s1', [{ alts: ['//server/share/x.ts'] }]);
+    expect(results[0].candidates).toEqual([]);
+    expect(statCalls).toEqual([]);
+  });
+});
+
 // Plan T8.3: OSC 8 / file:// targets, decoded and confined host-side to the user-chosen roots.
 describe("createPathLinkResolver target:'uri'", () => {
   const uri = (u: string) => ({ alts: [u], target: 'uri' as const });

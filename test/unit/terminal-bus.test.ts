@@ -5,6 +5,7 @@ import {
   hasLiveTerminal,
   hasRegisteredTerminal,
   notifyTerminalBus,
+  openDetectedLinkIn,
   pasteToTerminal,
   registerTerminal,
   requestTerminalFocus,
@@ -40,12 +41,14 @@ describe('terminal registry', () => {
       paste: vi.fn(),
       bracketedPaste: () => true,
       getSelection: () => '',
+      openDetectedLink: vi.fn(),
     };
     const b = {
       focus: vi.fn(),
       paste: vi.fn(),
       bracketedPaste: () => true,
       getSelection: () => '',
+      openDetectedLink: vi.fn(),
     };
     const offA = registerTerminal('s1', a);
     const offB = registerTerminal('s2', b);
@@ -68,6 +71,7 @@ describe('terminal registry', () => {
       paste: vi.fn(),
       bracketedPaste: () => true,
       getSelection: () => '',
+      openDetectedLink: vi.fn(),
     };
     const off = registerTerminal('s1', first);
     expect(hasLiveTerminal('s1')).toBe(true);
@@ -78,6 +82,7 @@ describe('terminal registry', () => {
       paste: vi.fn(),
       bracketedPaste: () => true,
       getSelection: () => '',
+      openDetectedLink: vi.fn(),
     };
     const off2 = registerTerminal('s1', second);
     off(); // the stale cleanup
@@ -102,6 +107,7 @@ describe('terminal registry', () => {
       paste: vi.fn(),
       bracketedPaste: () => true,
       getSelection: () => '',
+      openDetectedLink: vi.fn(),
     });
     stop();
     expect(seen).toHaveLength(2);
@@ -115,6 +121,7 @@ describe('terminal registry', () => {
       paste: vi.fn(),
       bracketedPaste: () => true,
       getSelection: () => '',
+      openDetectedLink: vi.fn(),
     };
     const off = registerTerminal('s1', first);
     const off2 = registerTerminal('s1', {
@@ -122,6 +129,7 @@ describe('terminal registry', () => {
       paste: vi.fn(),
       bracketedPaste: () => true,
       getSelection: () => '',
+      openDetectedLink: vi.fn(),
     });
     const before = getTerminalBusVersion();
     off();
@@ -138,6 +146,7 @@ describe('terminal registry', () => {
       paste: vi.fn(),
       bracketedPaste: () => false,
       getSelection: () => '',
+      openDetectedLink: vi.fn(),
     };
     const off = registerTerminal('s1', bare);
     expect(hasLiveTerminal('s1')).toBe(false);
@@ -153,6 +162,7 @@ describe('terminal registry', () => {
       paste: vi.fn(),
       bracketedPaste: () => bracketed,
       getSelection: () => '',
+      openDetectedLink: vi.fn(),
     };
     const off = registerTerminal('s1', api);
     expect(hasLiveTerminal('s1')).toBe(true);
@@ -171,6 +181,7 @@ describe('terminal registry', () => {
       paste: vi.fn(),
       bracketedPaste: () => false,
       getSelection: () => '',
+      openDetectedLink: vi.fn(),
     });
     pasteToTerminal('s1', 'payload');
     pasteToTerminal('unknown-session', 'payload');
@@ -197,6 +208,7 @@ describe('terminal registry', () => {
       paste: vi.fn(),
       bracketedPaste: () => true,
       getSelection: () => '',
+      openDetectedLink: vi.fn(),
     });
     pasteToTerminal('s1', 'payload');
     expect(spy).toEqual([{ sessionId: 's1', text: 'payload' }]);
@@ -246,6 +258,7 @@ describe('effect wiring (predicate -> bus)', () => {
       paste: vi.fn(),
       bracketedPaste: () => true,
       getSelection: () => '',
+      openDetectedLink: vi.fn(),
     };
     const off = registerTerminal('s2', api);
     focusOnSwitch('s2', null, null);
@@ -259,6 +272,7 @@ describe('effect wiring (predicate -> bus)', () => {
       paste: vi.fn(),
       bracketedPaste: () => true,
       getSelection: () => '',
+      openDetectedLink: vi.fn(),
     };
     const off = registerTerminal('s2', api);
     focusOnSwitch('s2', 'review:@review', null);
@@ -273,6 +287,7 @@ describe('hasRegisteredTerminal', () => {
     paste: () => {},
     bracketedPaste: () => bracketed,
     getSelection: () => '',
+    openDetectedLink: vi.fn(),
   });
 
   it('is false for a session with no registered terminal', () => {
@@ -305,6 +320,7 @@ describe('selectionInTerminal', () => {
       // The guard against reusing terminal-pane's copySelection, which clears after reading:
       // a reader that cleared would leave the second call empty.
       getSelection: () => selection,
+      openDetectedLink: vi.fn(),
     });
     expect(selectionInTerminal('s1')).toBe('ENOENT: no such file');
     expect(selectionInTerminal('s1')).toBe('ENOENT: no such file');
@@ -315,5 +331,28 @@ describe('selectionInTerminal', () => {
 
   it('is empty for a session with no registered terminal', () => {
     expect(selectionInTerminal('nobody')).toBe('');
+  });
+});
+
+// Plan T9.3 (row 60): the palette's "Terminal: Open Detected Link…".
+describe('openDetectedLinkIn', () => {
+  it('calls the registered terminal only, and is false when there is none', () => {
+    const a = {
+      focus: vi.fn(),
+      paste: vi.fn(),
+      bracketedPaste: () => false,
+      getSelection: () => '',
+      openDetectedLink: vi.fn(),
+    };
+    const b = { ...a, openDetectedLink: vi.fn() };
+    const offA = registerTerminal('d1', a);
+    const offB = registerTerminal('d2', b);
+    expect(openDetectedLinkIn('d2')).toBe(true);
+    expect(b.openDetectedLink).toHaveBeenCalledTimes(1);
+    expect(a.openDetectedLink).not.toHaveBeenCalled();
+    offA();
+    offB();
+    expect(openDetectedLinkIn('d2')).toBe(false);
+    expect(openDetectedLinkIn('never')).toBe(false);
   });
 });

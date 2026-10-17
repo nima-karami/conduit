@@ -657,3 +657,77 @@ describe('detectPathTokens — v2 matrix', () => {
     for (const t of tokens) expect(t.raw).toBe(t.alts[0]);
   });
 });
+
+// Plan T9.1 (v1 rows 18, 37, 40).
+describe('detectPathTokens — v1 rows', () => {
+  const CWD = '/w';
+  const first = (line: string, cwd: string | undefined = CWD) => {
+    const t = detectPathTokens(line, cwd)[0];
+    return { ...t, span: line.slice(t.start, t.end) };
+  };
+
+  it('row 40: an extensionless absolute token extends over the next space-separated word', () => {
+    const line = 'C:/Program Files/x/y.ts';
+    expect(first(line)).toMatchObject({
+      raw: 'C:/Program Files/x/y.ts',
+      alts: ['C:/Program Files/x/y.ts', 'C:/Program'],
+      altEnds: [23, 10],
+      start: 0,
+      span: line,
+    });
+  });
+
+  it('row 40: up to 3 words, longest first (4 alts = MAX_ALTS)', () => {
+    expect(first('/w/a b c d e/x.ts').alts).toEqual(['/w/a b c d', '/w/a b c', '/w/a b', '/w/a']);
+  });
+
+  it('row 40: backslashes fold; a :l suffix after the last word is the line', () => {
+    expect(first('at C:\\Program Files\\x\\y.ts now').alts).toEqual([
+      'C:/Program Files/x/y.ts now',
+      'C:/Program Files/x/y.ts',
+      'C:/Program',
+    ]);
+    const t = first('C:/Program Files/x/y.ts:12');
+    expect(t).toMatchObject({ line: 12, span: 'C:/Program Files/x/y.ts:12' });
+    expect(t.altEnds).toEqual([26, 10]);
+  });
+
+  it('row 40: sentence punctuation ends the extension', () => {
+    expect(first('see /w/my dir, then more')).toMatchObject({
+      alts: ['/w/my dir', '/w/my'],
+      altEnds: [13, 9],
+    });
+  });
+
+  it('row 40: a token whose last segment has an extension is not extended', () => {
+    const t = first('error in /src/main.ts at line 3');
+    expect(t.alts).toEqual(['/src/main.ts']);
+    expect(t.altEnds).toBeUndefined();
+    expect(first('/w/repoA/ next').alts).toEqual(['/w/repoA/']);
+  });
+
+  it('row 40: the following words stay their own tokens (the pane drops the overlap)', () => {
+    expect(detectPathTokens('C:/Program Files/x/y.ts', CWD).map((t) => t.raw)).toEqual([
+      'C:/Program Files/x/y.ts',
+      'Files/x/y.ts',
+    ]);
+  });
+
+  it('row 18: a backslash UNC path is detected, forward-slashed', () => {
+    expect(first('open \\\\server\\share\\x.ts now', undefined)).toMatchObject({
+      raw: '//server/share/x.ts',
+      alts: ['//server/share/x.ts'],
+      span: '\\\\server\\share\\x.ts',
+    });
+  });
+
+  it('row 18: device forms are never detected', () => {
+    for (const line of ['\\\\?\\C:\\x\\y.ts', '\\\\.\\pipe\\x', '//./pipe/x', '//?/C:/x/y.ts']) {
+      expect(detectPathTokens(line, undefined)).toEqual([]);
+    }
+  });
+
+  it('row 37: a tail-truncated last segment is one token', () => {
+    expect(first('see src/util/a… for')).toMatchObject({ raw: 'src/util/a…', span: 'src/util/a…' });
+  });
+});

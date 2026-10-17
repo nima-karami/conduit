@@ -275,9 +275,12 @@ import { closeTabSelection } from './tab-close-selection';
 import { endTabDrag } from './tab-drag';
 import { carryTabState, dropTabState, pinTabStateForMove } from './tab-view-state';
 import {
+  hasRegisteredTerminal,
+  openDetectedLinkIn,
   requestTerminalFocus,
   selectionInTerminal,
   shouldFocusActiveTerminal,
+  subscribeTerminalBus,
 } from './terminal-bus';
 import { THEMES } from './themes';
 import { cancelTimedMessage, renewTimedMessage, subscribeTimerEvents } from './timer-store';
@@ -3721,6 +3724,10 @@ export function App() {
   }, [recentsBySession, activeId, openDiff, openFile]);
 
   // Command set (accessed via the `>` prefix).
+  // A terminal registers on mount, outside React state: the registry is read through the bus.
+  const activeHasTerminal = useSyncExternalStore(subscribeTerminalBus, () =>
+    activeId ? hasRegisteredTerminal(activeId) : false,
+  );
   const commandItems: PaletteEntry[] = useMemo(() => {
     // Show each command's bound key combo for discoverability, resolved through the same
     // (rebindable) registry the global handler uses. Absent for commands with no binding.
@@ -3915,6 +3922,18 @@ export function App() {
             ),
         },
       );
+      if (activeHasTerminal) {
+        cmds.push({
+          id: 'cmd:terminal-open-link',
+          title: 'Terminal: Open Detected Link…',
+          keywords: ['path', 'file link', 'keyboard'],
+          group: 'Commands',
+          icon: <IconDoc size={14} />,
+          run: () => {
+            openDetectedLinkIn(active.id);
+          },
+        });
+      }
       if (canRelaunch(active))
         cmds.push({
           id: 'cmd:relaunch',
@@ -4245,6 +4264,7 @@ export function App() {
     joinEditorGroups,
     focusGroupByCommand,
     active,
+    activeHasTerminal,
     sessions,
     agents,
     settings,

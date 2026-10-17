@@ -24,6 +24,9 @@ export interface TerminalApi {
   /** The text selected in this terminal RIGHT NOW; '' when nothing is selected. Must NOT clear
    *  the selection — seeding search from it has to leave what the user highlighted on screen. */
   getSelection(): string;
+  /** The keyboard path to this terminal's path links: a picker over the ones on screen (spec
+   *  2026-10-16-terminal-path-links row 60). */
+  openDetectedLink(): void;
 }
 
 const terminals = new Map<string, TerminalApi>();
@@ -95,6 +98,14 @@ export function hasRegisteredTerminal(sessionId: string): boolean {
 /** A session's terminal selection, or '' when it has no terminal registered. */
 export function selectionInTerminal(sessionId: string): string {
   return terminals.get(sessionId)?.getSelection() ?? '';
+}
+
+/** The palette's "Terminal: Open Detected Link…". False when the session has no terminal. */
+export function openDetectedLinkIn(sessionId: string): boolean {
+  const api = terminals.get(sessionId);
+  if (!api) return false;
+  api.openDetectedLink();
+  return true;
 }
 
 /** Hand focus to a session's terminal. Name unchanged from the focus bus — see the callers. */

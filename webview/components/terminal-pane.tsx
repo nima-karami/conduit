@@ -59,6 +59,8 @@ import {
   detectPathTokens,
   detectUrlTokens,
   filterCommitTokensByPathSpans,
+  MAX_PATH_TOKENS,
+  type PathToken,
 } from '../terminal-links';
 import { buildLogicalLine, toBufferRange } from '../terminal-logical-line';
 import { isViewportAtBottom, shouldHandleWheelLocally, wheelScrollLines } from '../terminal-scroll';
@@ -115,6 +117,15 @@ interface LinkTarget {
 
 type PathLinkReply = Extract<HostToWebview, { type: 'resolvePathTokenResult' }>;
 
+/** A resolved path link: what a click, a right-click or the keyboard path acts on. */
+interface PathLinkEntry {
+  token: string;
+  found: LinkResolution;
+  link: LinkTarget;
+  /** 0-based buffer row its logical line starts on (the context root reads above it). */
+  firstRow: number;
+}
+
 interface PickerState {
   at: { x: number; y: number };
   token: string;
@@ -123,13 +134,31 @@ interface PickerState {
   truncated: boolean;
   link: LinkTarget;
   mode: PickerMode;
+  /** The keyboard path's list (row 60): one row per link, picking runs that link's click. */
+  entries?: PathLinkEntry[];
+}
+
+/** The text a path token's link covers and what it opens. Row 40: the link covers the alt that
+ *  resolved, and the `:l` printed after the longest alt is only that alt's. */
+function linkTargetOf(
+  tok: PathToken,
+  res: TokenResolution,
+  key: string,
+  scope: string,
+): { span: { start: number; end: number }; link: LinkTarget } {
+  const altIdx = res.alt ?? 0;
+  const own = !tok.altEnds || altIdx === 0;
+  return {
+    span: { start: tok.start, end: tok.altEnds?.[altIdx] ?? tok.end },
+    link: { key, scope, line: own ? tok.line : undefined, col: own ? tok.col : undefined },
+  };
 }
 
 /** The link under the pointer, tracked by the links' own hover/leave (xterm's current link is
  *  private): a middle press is suppressed over any link, and a right-click on a path link adds
  *  its actions. */
 type HoveredLink =
-  | { kind: 'path'; token: string; found: LinkResolution; link: LinkTarget; firstRow: number }
+  | ({ kind: 'path' } & PathLinkEntry)
   | { kind: 'osc8-file'; uri: string }
   | { kind: 'url' | 'commit' };
 
@@ -275,6 +304,11 @@ export function TerminalPane({
   const [picker, setPicker] = useState<PickerState | null>(null);
   // Set by the init effect, which owns the path cache: a stale target's entry is evicted.
   const evictPathRef = useRef<(key: string, scope: string) => void>(() => {});
+  // Set by the init effect, which owns the path cache: the resolved path links on the given
+  // buffer rows, or the one under `cell` on that row (row 60's keyboard path).
+  const pathLinksAtRef = useRef<
+    (rows: readonly number[], cell?: { col: number }) => Promise<PathLinkEntry[]>
+  >(async () => []);
   // Set by the init effect, which owns the reply subscription: one uncached host resolve of a
   // link URI (plan T8.3). Null without the bridge or on a timeout.
   const requestOnceRef = useRef<(uri: string) => Promise<PathLinkReply | null>>(async () => null);
@@ -318,6 +352,38 @@ export function TerminalPane({
   };
   const openUriTargetRef = useRef(openUriTarget);
   openUriTargetRef.current = openUriTarget;
+
+  /** A path link's click (spec §2.3 step 5), ranked now so the last pick and context are
+   *  current: one target opens, an ambiguous one opens the picker at `at`. */
+  const activatePathLink = (
+    entry: PathLinkEntry,
+    at: { x: number; y: number },
+    mode?: OpenMode,
+  ) => {
+    const { found, link, token } = entry;
+    const contextRootIdx = contextRootFor(entry.firstRow, found.roots);
+    const ranked = rankCandidates(found.res.candidates, {
+      roots: found.roots,
+      contextRootIdx,
+      lastPickRepoRoot: lastPick(sessionId),
+    });
+    const click = chooseClickAction(ranked);
+    if (click.kind === 'open') {
+      void openCandidateRef.current(click.cand, link, mode);
+    } else if (click.kind === 'pick') {
+      setPicker({
+        at,
+        token,
+        rows: pickerRows(ranked, found.roots, contextRootIdx),
+        total: found.res.total,
+        truncated: found.res.truncated,
+        link,
+        mode: { kind: 'open' },
+      });
+    }
+  };
+  const activatePathLinkRef = useRef(activatePathLink);
+  activatePathLinkRef.current = activatePathLink;
 
   /** The root the lines above a link point at (spec §3.3 context root), read at click time so
    *  output printed since the link was provided counts. */
@@ -386,13 +452,14 @@ export function TerminalPane({
     term?.focus();
   };
 
-  const pickRow = async (
-    row: PickerRow,
-    how: 'foreground' | 'background',
-    link: LinkTarget,
-    mode: PickerMode,
-  ) => {
+  const pickRow = async (row: PickerRow, how: 'foreground' | 'background', from: PickerState) => {
+    const { link, mode, entries } = from;
     setPicker(null);
+    if (entries) {
+      const entry = entries[from.rows.indexOf(row)];
+      if (entry) activatePathLink(entry, from.at, how === 'background' ? 'background' : undefined);
+      return;
+    }
     if (mode.kind === 'action') {
       notePick(sessionId, row.cand.repoRoot);
       await runLinkAction(mode.action, row.cand, link);
@@ -569,6 +636,10 @@ export function TerminalPane({
     let unsubValidate: (() => void) | null = null;
     let disposeLinkCaches = () => {};
     if (window.agentDeck) {
+      // The host stores under the cwd and roots it resolved against; a lookup under a stale pair
+      // simply misses (plan Contracts "Cache").
+      const scopeNow = () =>
+        `${(cwdRef.current ?? '').replace(/\\/g, '/')}\0${rootsSigRef.current}`;
       const resolveCache = createTerminalTokenCache<LinkResolution>(
         // A path token is its alts joined by NUL; no path char is NUL, so the split is exact.
         (batch) =>
@@ -617,6 +688,7 @@ export function TerminalPane({
         commitCache.dispose();
         for (const done of [...pendingOnce.values()]) done(null);
         requestOnceRef.current = async () => null;
+        pathLinksAtRef.current = async () => [];
       };
       evictPathRef.current = (key, scope) => resolveCache.evict(key, scope);
       // Folder keys of the roots the last reply resolved against: an fsChanged under one of them
@@ -722,9 +794,7 @@ export function TerminalPane({
           }
 
           const keyOf = (tok: { alts: string[] }) => tok.alts.join('\0');
-          // The host stores under the cwd and roots it resolved against; a lookup under a stale
-          // pair simply misses (plan Contracts "Cache").
-          const scope = `${(cwdRef.current ?? '').replace(/\\/g, '/')}\0${rootsSigRef.current}`;
+          const scope = scopeNow();
           // A host reply may never arrive (session disposed mid-flight); without a
           // bound the link callback would never fire and xterm would leave that line's
           // resolution pending forever. Fall back to "no links" on timeout — a later
@@ -755,50 +825,26 @@ export function TerminalPane({
                 const key = keyOf(tok);
                 const found = resMap.get(key);
                 if (!found || found.res.candidates.length === 0) continue; // 0 candidates → plain text
-                const { res } = found;
-                pathSpans.push({ start: tok.start, end: tok.end });
-                const link: LinkTarget = { key, scope, line: tok.line, col: tok.col };
+                const { span, link } = linkTargetOf(tok, found.res, key, scope);
+                // A word a longer path already took is its own token too; the earlier link wins.
+                if (pathSpans.some((p) => span.start < p.end && p.start < span.end)) continue;
+                pathSpans.push(span);
+                const entry: PathLinkEntry = { token: tok.raw, found, link, firstRow: ll.firstRow };
                 links.push({
-                  range: rangeOf(tok),
-                  text: text.slice(tok.start, tok.end),
+                  range: rangeOf(span),
+                  text: text.slice(span.start, span.end),
                   decorations: { pointerCursor: true, underline: false },
                   activate(event: MouseEvent, _text: string) {
                     const action = terminalLinkMiddleAction(event.button, navigator.platform);
                     if (action === 'ignore') return;
-                    // Ranked here, after the cache, so the last pick and context are current.
-                    const contextRootIdx = contextRootForRef.current(ll.firstRow, found.roots);
-                    const ranked = rankCandidates(res.candidates, {
-                      roots: found.roots,
-                      contextRootIdx,
-                      lastPickRepoRoot: lastPick(sessionId),
-                    });
-                    const click = chooseClickAction(ranked);
-                    if (click.kind === 'open') {
-                      void openCandidateRef.current(
-                        click.cand,
-                        link,
-                        action === 'background' ? 'background' : undefined,
-                      );
-                    } else if (click.kind === 'pick') {
-                      setPicker({
-                        at: { x: event.clientX, y: event.clientY },
-                        token: tok.raw,
-                        rows: pickerRows(ranked, found.roots, contextRootIdx),
-                        total: res.total,
-                        truncated: res.truncated,
-                        link,
-                        mode: { kind: 'open' },
-                      });
-                    }
+                    activatePathLinkRef.current(
+                      entry,
+                      { x: event.clientX, y: event.clientY },
+                      action === 'background' ? 'background' : undefined,
+                    );
                   },
                   hover(_event: MouseEvent, _text: string) {
-                    hoveredLinkRef.current = {
-                      kind: 'path',
-                      token: tok.raw,
-                      found,
-                      link,
-                      firstRow: ll.firstRow,
-                    };
+                    hoveredLinkRef.current = { kind: 'path', ...entry };
                     this.decorations = { pointerCursor: true, underline: true };
                   },
                   leave(_event: MouseEvent, _text: string) {
@@ -837,6 +883,42 @@ export function TerminalPane({
         },
       };
       linkProviderDisposable = term.registerLinkProvider(linkProvider);
+      // The keyboard path (row 60): the same detection and cache as the provider, over chosen rows
+      // (or the one token under a cell) instead of the row xterm asks for.
+      pathLinksAtRef.current = async (rows, cell) => {
+        const buf = term.buffer.active;
+        const scope = scopeNow();
+        const picked = new Map<string, { tok: PathToken; firstRow: number }>();
+        for (const y of rows) {
+          const ll = buildLogicalLine(buf, y, term.cols);
+          if (!ll) continue;
+          const urls = detectUrlTokens(ll.text);
+          const rowIdx = y - ll.firstRow;
+          const at = cell ? ll.rowStarts[rowIdx] + cell.col - (ll.rowIndents?.[rowIdx] ?? 0) : -1;
+          for (const tok of detectPathTokens(ll.text, cwdRef.current)) {
+            if (urls.some((u) => tok.start < u.end && u.start < tok.end)) continue;
+            if (cell && !(tok.start <= at && at < tok.end)) continue;
+            const key = tok.alts.join('\0');
+            if (!picked.has(key) && picked.size < MAX_PATH_TOKENS) {
+              picked.set(key, { tok, firstRow: ll.firstRow });
+            }
+          }
+        }
+        if (picked.size === 0) return [];
+        const resMap = await withTimeout(
+          resolveCache.get([...picked.keys()], scope),
+          LINK_RESOLVE_TIMEOUT_MS,
+          new Map<string, LinkResolution>(),
+        );
+        const out: PathLinkEntry[] = [];
+        for (const [key, { tok, firstRow }] of picked) {
+          const found = resMap.get(key);
+          if (!found || found.res.candidates.length === 0) continue;
+          const { link } = linkTargetOf(tok, found.res, key, scope);
+          out.push({ token: tok.raw, found, link, firstRow });
+        }
+        return out;
+      };
       // Test observability (opt-in, mirrors window.__terms): expose the live link provider so
       // e2e can invoke provideLinks/activate directly — clicking xterm's canvas links in the
       // hidden smoke harness is unreliable. No-op in production (the object is never created).
@@ -1054,6 +1136,7 @@ export function TerminalPane({
         // Deliberately not copySelection: that clears the selection after reading it, which
         // would make the user's highlight vanish the moment they searched it.
         getSelection: () => termRef.current?.getSelection() ?? '',
+        openDetectedLink: () => void openDetectedLinkRef.current(),
       }),
     [sessionId],
   );
@@ -1167,21 +1250,101 @@ export function TerminalPane({
     }
   };
 
-  const openContextMenu = (e: React.MouseEvent) => {
-    const term = termRef.current;
-    if (!term) return;
-    // On Windows the right button can extend xterm's selection; preventDefault stops the
-    // OS menu and xterm's default so only our menu opens.
-    e.preventDefault();
+  const terminalMenuItems = (term: Terminal): MenuItem[] => {
     const canPaste = typeof navigator.clipboard?.readText === 'function';
-    const specs = buildTerminalMenuItems({ hasSelection: term.hasSelection(), canPaste });
-    const termItems: MenuItem[] = specs.map((s) => ({
+    return buildTerminalMenuItems({ hasSelection: term.hasSelection(), canPaste }).map((s) => ({
       label: s.label,
       icon: MENU_ICONS[s.iconKey],
       disabled: s.disabled,
       separatorBefore: s.separatorBefore,
       onClick: () => runMenuAction(s.action),
     }));
+  };
+
+  /** Viewport point under the bottom-left of a cell of the visible screen. */
+  const cellPoint = (term: Terminal, col: number, viewRow: number) => {
+    const r = term.element?.querySelector('.xterm-screen')?.getBoundingClientRect();
+    if (!r || term.cols === 0 || term.rows === 0) return { x: 0, y: 0 };
+    return {
+      x: r.left + (col * r.width) / term.cols,
+      y: r.top + ((viewRow + 1) * r.height) / term.rows,
+    };
+  };
+
+  /** The cursor cell: the keyboard's stand-in for the pointer. */
+  const cursorCell = (term: Terminal) => {
+    const buf = term.buffer.active;
+    const row = buf.baseY + buf.cursorY;
+    return { row, col: buf.cursorX, at: cellPoint(term, buf.cursorX, row - buf.viewportY) };
+  };
+
+  /** "Terminal: Open Detected Link…" (row 60): a picker over the path links on screen, one row
+   *  per link; picking one runs its click. */
+  const openDetectedLink = async () => {
+    const term = termRef.current;
+    if (!term) return;
+    const buf = term.buffer.active;
+    const rows = Array.from({ length: term.rows }, (_, i) => buf.viewportY + i);
+    const entries = await pathLinksAtRef.current(rows);
+    if (entries.length === 0) {
+      pushToast({ message: TERM_LINK_STR.noLinksOnScreen, variant: 'info' });
+      return;
+    }
+    const pickerEntries = entries.map((entry) => {
+      const [top] = rankCandidates(entry.found.res.candidates, {
+        roots: entry.found.roots,
+        lastPickRepoRoot: lastPick(sessionId),
+      });
+      const row: PickerRow = {
+        cand: top,
+        repoName: entry.token,
+        tag: null,
+        accessibleName: entry.token,
+        workingHere: false,
+      };
+      return { row, entry };
+    });
+    setPicker({
+      at: cursorCell(term).at,
+      token: TERM_LINK_STR.linksOnScreen,
+      rows: pickerEntries.map((p) => p.row),
+      total: entries.length,
+      truncated: false,
+      link: entries[0].link,
+      mode: { kind: 'open' },
+      entries: pickerEntries.map((p) => p.entry),
+    });
+  };
+  const openDetectedLinkRef = useRef(openDetectedLink);
+  openDetectedLinkRef.current = openDetectedLink;
+
+  /** Shift+F10 / the ContextMenu key: the link menu for the link under the cursor cell, else the
+   *  terminal's own, keyboard-highlighted. */
+  const openKeyboardMenu = async () => {
+    const term = termRef.current;
+    if (!term) return;
+    const cell = cursorCell(term);
+    const termItems = terminalMenuItems(term);
+    const [entry] = await pathLinksAtRef.current([cell.row], { col: cell.col });
+    if (!entry) {
+      setMenu({ ...cell.at, items: termItems, keyboard: true });
+      return;
+    }
+    showLinkMenu(
+      cell.at,
+      termItems,
+      { ...entry, contextRootIdx: contextRootFor(entry.firstRow, entry.found.roots) },
+      true,
+    );
+  };
+
+  const openContextMenu = (e: React.MouseEvent) => {
+    const term = termRef.current;
+    if (!term) return;
+    // On Windows the right button can extend xterm's selection; preventDefault stops the
+    // OS menu and xterm's default so only our menu opens.
+    e.preventDefault();
+    const termItems = terminalMenuItems(term);
     const at = { x: e.clientX, y: e.clientY };
     const hovered = hoveredLinkRef.current;
     if (hovered?.kind === 'osc8-file') {
@@ -1225,6 +1388,7 @@ export function TerminalPane({
       token,
       contextRootIdx,
     }: { found: LinkResolution; link: LinkTarget; token: string; contextRootIdx?: number },
+    keyboard = false,
   ) => {
     const ranked = rankCandidates(found.res.candidates, {
       roots: found.roots,
@@ -1261,6 +1425,7 @@ export function TerminalPane({
     const [firstTerm, ...restTerm] = termItems;
     setMenu({
       ...at,
+      keyboard,
       items: [
         ...linkItems,
         ...(firstTerm ? [{ ...firstTerm, separatorBefore: true }] : []),
@@ -1308,6 +1473,12 @@ export function TerminalPane({
             e.preventDefault();
             e.stopPropagation();
             pasteFromClipboard();
+            return;
+          }
+          if (e.key === 'ContextMenu' || (e.shiftKey && !mod && !e.altKey && e.key === 'F10')) {
+            e.preventDefault();
+            e.stopPropagation();
+            void openKeyboardMenu();
             return;
           }
           // Shift excluded for the same reason as review-keymap: Mod+Shift+F is the app's
@@ -1372,7 +1543,7 @@ export function TerminalPane({
           total={picker.total}
           truncated={picker.truncated}
           mode={picker.mode}
-          onPick={(row, how) => void pickRow(row, how, picker.link, picker.mode)}
+          onPick={(row, how) => void pickRow(row, how, picker)}
           onSearchAll={(query) => {
             setPicker(null);
             onSearchAllFiles?.(query);

@@ -47,6 +47,8 @@ export interface TokenResolution {
   total: number;
   /** 'invalid' = this entry failed host validation. */
   error?: 'timeout' | 'session-gone' | 'invalid';
+  /** Which alt resolved, when it was not the first (row 40: the pane links that alt's text). */
+  alt?: number;
   /** A uri target's `#L` / `:l:c` position, decoded host-side (the renderer never parses it). */
   line?: number;
   col?: number;
@@ -87,6 +89,9 @@ export const MAX_ALTS = 4;
 /** Covered roots stat'ed at once by the ignored-file fallback: libuv's default pool size, so a
  *  fallback never queues more fs work than the pool runs at once. */
 export const IGNORED_FALLBACK_BATCH = 4;
+/** A tail-truncated last segment (`src/util/a…`, row 37) links only while its prefix stays this
+ *  specific; more matches are noise, not a link. */
+export const TRAILING_ELISION_MAX = 10;
 
 export interface IndexMemo {
   foldedRels: string[];
@@ -218,6 +223,36 @@ class Resolution {
     return this.coveringByRoot.get(rootIdx);
   }
 
+  /** Row 37: files named `prefix…` directly in `dir` (an absolute folder, or one matched as
+   *  whole trailing segments of each index's rel). Deduped, so the cap counts files. */
+  prefixSearch(dir: string, prefix: string): Found[] {
+    const absDir = dir && isAbsoluteToken(dir, this.ctx.platform) ? this.keyOf(dir) : null;
+    const relDir = absDir === null ? this.fold(dir.replace(/^(?:\.\/)+/, '')) : '';
+    const p = this.fold(prefix);
+    const seen = new Set<string>();
+    const out: Found[] = [];
+    for (const ix of this.ctx.indexes) {
+      const { foldedRels } = memoFor(ix.files, this.ctx.caseSensitive);
+      for (let i = 0; i < foldedRels.length; i++) {
+        const rel = foldedRels[i];
+        const cut = rel.lastIndexOf('/');
+        if (!rel.slice(cut + 1).startsWith(p)) continue;
+        const absPath = normalizeAbs(ix.files[i].abs, this.ctx.platform);
+        const k = this.keyOf(absPath);
+        if (absDir !== null) {
+          if (k.slice(0, k.lastIndexOf('/')) !== absDir) continue;
+        } else if (relDir) {
+          const fdir = cut < 0 ? '' : rel.slice(0, cut);
+          if (fdir !== relDir && !fdir.endsWith(`/${relDir}`)) continue;
+        }
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push({ absPath, isDir: false, strength: 'suffix' });
+      }
+    }
+    return out;
+  }
+
   suffixSearch(needle: string, partialFirst: boolean): Found[] {
     const n = this.fold(needle);
     const out: Found[] = [];
@@ -236,6 +271,14 @@ class Resolution {
     }
     return out;
   }
+}
+
+/** Row 37: `dir/pre…` → the folder part and the last segment's prefix; null otherwise. */
+function trailingElision(t: string): { dir: string; prefix: string } | null {
+  const cut = t.lastIndexOf('/');
+  const last = t.slice(cut + 1);
+  if (last.length < 2 || !last.endsWith('…')) return null;
+  return { dir: cut < 0 ? '' : t.slice(0, cut), prefix: last.slice(0, -1) };
 }
 
 /** Rule 6: the head before the first elision and the tail after the last one. */
@@ -305,6 +348,12 @@ async function resolveAlt(alt: string, r: Resolution): Promise<Found[]> {
       found = found.filter((f) => Resolution.under(headKey, r.keyOf(f.absPath)));
     }
     return found;
+  }
+
+  const trailing = trailingElision(t);
+  if (trailing) {
+    const found = r.prefixSearch(trailing.dir, trailing.prefix);
+    return found.length <= TRAILING_ELISION_MAX ? found : [];
   }
 
   if (isUncLike(t)) {
@@ -432,9 +481,11 @@ export async function resolveTokens(
     tokens.map(async ({ alts }, i) => {
       if (i > 0) await r.yieldTurn();
       const key = alts.join('\0');
-      for (const alt of alts) {
-        const found = await resolveAlt(alt, r);
-        if (found.length > 0) return finalize(key, found, r);
+      for (let a = 0; a < alts.length; a++) {
+        const found = await resolveAlt(alts[a], r);
+        if (found.length === 0) continue;
+        const res = await finalize(key, found, r);
+        return a > 0 ? { ...res, alt: a } : res;
       }
       return { key, candidates: [], truncated: false, total: 0 };
     }),

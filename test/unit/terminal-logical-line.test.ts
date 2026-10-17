@@ -99,3 +99,64 @@ describe('buildLogicalLine', () => {
     expect(buildLogicalLine(buf, 99, cols)).toBeNull();
   });
 });
+
+// Plan T9.2 (row 52): Claude Code's Ink UI hard-wraps — a full row, no isWrapped.
+describe('buildLogicalLine — Ink hard-wrap heuristic', () => {
+  const cols = 10;
+
+  it('a full row ending in a path char joins a next row that starts (after ≤ 2 spaces) with one', () => {
+    const buf = fakeBuffer([{ text: 'G:/work/re' }, { text: '  po/x.ts' }, { text: 'next' }], cols);
+    const ll = buildLogicalLine(buf, 0, cols);
+    expect(ll?.text).toBe('G:/work/repo/x.ts');
+    expect(ll?.rowStarts).toEqual([0, 10]);
+    expect(ll?.rowIndents).toEqual([0, 2]);
+    expect(buildLogicalLine(buf, 1, cols)).toEqual(ll);
+    // The joined token's range starts past the indent on the second row.
+    expect(toBufferRange(ll as NonNullable<typeof ll>, 0, 17)).toEqual({
+      start: { x: 1, y: 1 },
+      end: { x: 9, y: 2 },
+    });
+    expect(toBufferRange(ll as NonNullable<typeof ll>, 13, 17)).toEqual({
+      start: { x: 6, y: 2 },
+      end: { x: 9, y: 2 },
+    });
+  });
+
+  it('a row shorter than cols never joins', () => {
+    const buf = fakeBuffer([{ text: 'G:/work/r' }, { text: 'epoA/x.ts' }], cols);
+    expect(buildLogicalLine(buf, 0, cols)?.text).toBe('G:/work/r');
+    // …and a full row ending in a TUI frame char never joins either.
+    const framed = fakeBuffer([{ text: '│ G:/w/re│' }, { text: '│ next   │' }], cols);
+    expect(buildLogicalLine(framed, 0, cols)?.text).toBe('│ G:/w/re│');
+  });
+
+  it('a full row ending in a non-path char never joins', () => {
+    const buf = fakeBuffer([{ text: 'G:/work/r:' }, { text: 'epoA/x.ts' }], cols);
+    expect(buildLogicalLine(buf, 0, cols)?.text).toBe('G:/work/r:');
+  });
+
+  it('a next row that does not start with a path char (or is indented > 2) never joins', () => {
+    expect(
+      buildLogicalLine(fakeBuffer([{ text: 'G:/work/re' }, { text: '"poA/x.ts' }], cols), 0, cols)
+        ?.text,
+    ).toBe('G:/work/re');
+    expect(
+      buildLogicalLine(fakeBuffer([{ text: 'G:/work/re' }, { text: '   poA/x.ts' }], cols), 0, cols)
+        ?.text,
+    ).toBe('G:/work/re');
+    expect(
+      buildLogicalLine(fakeBuffer([{ text: 'G:/work/re' }, { text: '' }], cols), 0, cols)?.text,
+    ).toBe('G:/work/re');
+  });
+
+  it('chains over several hard-wrapped rows, still under MAX_LOGICAL_LINE', () => {
+    const rows = [{ text: 'G:/aaaaaaa' }, { text: 'bbbbbbbbbb' }, { text: 'cc/x.ts' }];
+    expect(buildLogicalLine(fakeBuffer(rows, cols), 2, cols)?.text).toBe(
+      'G:/aaaaaaabbbbbbbbbbcc/x.ts',
+    );
+    const long = Array.from({ length: MAX_LOGICAL_LINE / cols + 2 }, () => ({
+      text: 'aaaaaaaaaa',
+    }));
+    expect(buildLogicalLine(fakeBuffer(long, cols), 0, cols)).toBeNull();
+  });
+});

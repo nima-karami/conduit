@@ -12,6 +12,8 @@
  *   5. `● Update(src/index.ts)` → only the path cells are a link; a click on `U` opens nothing.
  *   6. `…/repoB/src/index.ts` → a single candidate, opened directly.
  *   7. repoA's file deleted on disk, then picked → "no longer exists" toast, no tab opens.
+ *   9. Keyboard (row 60): the palette's "Terminal: Open Detected Link…" lists the links on screen;
+ *      picking …/repoB/src/index.ts opens it. 9b: Shift+F10 opens the highlighted terminal menu.
  *   7b. After `Bash(cd <parent>/repoA && npm test)`, `src/ctx.ts:9` → the repoA row says
  *      "working here" while the last pick (repoB) keeps row 0 (context is a tie-breaker, T7.2).
  *   8. Printed on the bottom row, the link is right-clicked and never moved off: its menu and then
@@ -30,6 +32,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, openSession, runScenario, typeLine, waitForOutput } from './harness.mjs';
 import { tabInfo } from './middle-click-fixture.mjs';
+import { openPalette, paletteRow } from './middle-click-surfaces-helpers.mjs';
 import { waitCursor } from './nav-history-fixture.mjs';
 
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -512,4 +515,57 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   const copied8 = norm((await page.evaluate(() => window.__copied))[0]);
   assert(copied8.endsWith(topRepo), `Enter should copy the top-ranked ${topRepo}, got ${copied8}`);
   log('step 8: a resting pointer takes neither the menu item nor the picker row ✓');
+
+  // ── 9. keyboard path (v1 row 60): the palette's "Open Detected Link…" ──────────────
+  await backToTerminal();
+  await typeLine(page, sid, 'cls');
+  await typeLine(page, sid, `echo ${LINE_ELIDED}`);
+  await waitForOutput(page, sid, LINE_ELIDED, 4);
+  await waitQuiet();
+  const tabs9 = (await tabInfo(page)).length;
+  await openPalette(page, '>Terminal: Open Detected Link');
+  await paletteRow(page, 'Terminal: Open Detected Link…').waitFor({ timeout: 5000 });
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.pathpick', { state: 'visible', timeout: 10000 });
+  const rows9 = await pickerRowsText();
+  log('detected links:', JSON.stringify(rows9));
+  const elidedIdx = rows9.findIndex((t) => t.startsWith(LINE_ELIDED));
+  assert(elidedIdx >= 0, `the picker should list ${LINE_ELIDED}, got ${JSON.stringify(rows9)}`);
+  for (let i = 0; i < elidedIdx; i++) await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.pathpick', { state: 'detached', timeout: 5000 });
+  // The terminal tab was active; the pick makes repoB's index.ts the active tab.
+  let active9 = null;
+  for (let i = 0; i < 60 && active9?.title !== 'index.ts'; i++) {
+    await page.waitForTimeout(250);
+    active9 = (await tabInfo(page)).find((t) => t.active) ?? null;
+  }
+  assert(
+    active9?.title === 'index.ts',
+    `index.ts should be the active tab, got ${JSON.stringify(active9)}`,
+  );
+  assert(
+    norm(await activeDocPath()).endsWith('/repob/src/index.ts'),
+    `repoB's index.ts should be the active doc, got ${await activeDocPath()}`,
+  );
+  assert((await tabInfo(page)).length >= tabs9, 'the picked link should open in a tab');
+  log('step 9: Open Detected Link → picker → Enter opened repoB/src/index.ts ✓');
+
+  // ── 9b. Shift+F10 with the cursor on no link → the terminal menu, keyboard-highlighted ─
+  await backToTerminal();
+  await page.evaluate((id) => window.__terms[id].focus(), sid);
+  await page.keyboard.press('Shift+F10');
+  await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 5000 });
+  const kb = await page.evaluate(() => ({
+    active: document.querySelector('.ctxmenu .ctxmenu__item--active .ctxmenu__label')?.textContent,
+    labels: Array.from(document.querySelectorAll('.ctxmenu .ctxmenu__label')).map(
+      (el) => el.textContent,
+    ),
+  }));
+  assert(
+    kb.labels.includes('Find') && !kb.labels.includes('Copy path') && !!kb.active,
+    `Shift+F10 should open the terminal menu with a highlighted item, got ${JSON.stringify(kb)}`,
+  );
+  await page.keyboard.press('Escape');
+  log('step 9b: Shift+F10 opens the keyboard-highlighted terminal menu ✓');
 });
