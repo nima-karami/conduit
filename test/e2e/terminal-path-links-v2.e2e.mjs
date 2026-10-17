@@ -354,9 +354,16 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   // The explorer would keep the terminal's right edge too far from the window's for the menu to
   // be clamped left over the pointer. Out of the terminal first: it keeps this chord for the shell.
   if (await page.isVisible('.rightpane')) {
+    const colsBefore = await page.evaluate((id) => window.__terms[id].cols, sid);
     await page.evaluate(() => document.activeElement?.blur());
     await page.keyboard.press('Control+Shift+E');
     await page.waitForSelector('.rightpane', { state: 'hidden', timeout: 8000 });
+    // The right-aligned line below is padded to the terminal's width, so wait for the refit.
+    await page.waitForFunction(
+      ({ id, before }) => window.__terms[id].cols > before,
+      { id: sid, before: colsBefore },
+      { timeout: 8000 },
+    );
     await page.waitForTimeout(500);
   }
   await typeLine(page, sid, 'cls');
@@ -405,8 +412,13 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
       },
       { ...c8, frameSel, rowSel },
     );
-  // Long enough for the hover update a stationary pointer gets after layout.
-  await page.waitForTimeout(600);
+  /** Chromium sends a stationary pointer a mousemove at the same point after layout, but on its
+   *  own schedule; sending it here makes the hover state deterministic without moving at all. */
+  const settleRestingPointer = async () => {
+    await page.mouse.move(c8.x, c8.y);
+    await page.waitForTimeout(600);
+  };
+  await settleRestingPointer();
   const menu8 = await restingOn('.ctxmenu[role="menu"]', '.ctxmenu__item');
   log('step 8 menu: pointer rests on item', menu8.underIdx, 'active', menu8.activeIdx);
   assert(
@@ -441,7 +453,7 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
     null,
     { timeout: 5000 },
   );
-  await page.waitForTimeout(600);
+  await settleRestingPointer();
   assert(
     await page.isVisible('.pathpick'),
     'the picker should outlive the Enter that opened it: a key the menu takes must not reach the shell',
