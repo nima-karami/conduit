@@ -8,10 +8,18 @@
  *   5. A visible `file:///<home>/src/a.ts` opens in-app; openExternal is never called.
  *   6. A visible `file:///<outside>/x.ts` opens nothing: a confined dead click, the deliberate
  *      asymmetry with a plain absolute path (plan Decisions).
+ *   OSC 8 (printed with [char]27 escapes, so the label hides the target):
+ *   1. `file:///<home>/src/a.ts#L3` opens src/a.ts at line 3; openExternal is never called.
+ *   2. A scheme-less `<home>/src/b.ts` target opens.
+ *   3. A target outside every session root opens nothing.
+ *   4. `javascript:window.__pwned=1` never runs and nothing opens.
+ *   7. `file:////localhost/c$/x` (UNC form) opens nothing and the host logs uri-refused.
+ *   8. Right-click: a confined target gets the link menu, a refused one only the terminal's.
+ *   The https case stays covered by terminal-osc8-link.
  *
  * exit 0 pass/SKIP · 1 assertion failed · 2 infra error
  */
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -24,6 +32,24 @@ import {
   waitForOutput,
 } from './harness.mjs';
 import { tabInfo } from './middle-click-fixture.mjs';
+import { waitCursor } from './nav-history-fixture.mjs';
+
+// Must match electron/logger.ts's CONDUIT_E2E branch (see logging.e2e.mjs).
+const LOGS_DIR = join(tmpdir(), 'conduit-e2e-logs');
+
+/** Every links/uri-refused record in the newest host log. */
+function uriRefusals() {
+  const newest = readdirSync(LOGS_DIR)
+    .filter((f) => f.startsWith('conduit-') && f.endsWith('.log'))
+    .sort()
+    .pop();
+  if (!newest) return [];
+  return readFileSync(join(LOGS_DIR, newest), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+    .filter((r) => r.scope === 'links' && r.msg === 'uri-refused');
+}
 
 const body = (tag) =>
   `${Array.from({ length: 30 }, (_, i) => `export const ${tag}${i + 1} = ${i + 1};`).join('\n')}\n`;
@@ -33,10 +59,15 @@ runScenario('terminal-osc8-file-link', async ({ app, page, log }) => {
   const outside = mkdtempSync(join(tmpdir(), 'conduit-osc8out-')).replace(/\\/g, '/');
   mkdirSync(join(home, 'src'));
   writeFileSync(join(home, 'src', 'a.ts'), body('a'));
+  writeFileSync(join(home, 'src', 'b.ts'), body('b'));
   writeFileSync(join(outside, 'x.ts'), body('x'));
   log('fixture', home, outside);
 
   await spyMain(app, [{ api: 'openExternal' }]);
+  // uri-refused is a debug record (plan T8.3).
+  await page.evaluate(() =>
+    window.agentDeck.post({ type: 'updateSettings', settings: { logLevel: 'debug' } }),
+  );
   await page.evaluate(() => {
     window.__terms = {};
     window.__opens = [];
@@ -96,7 +127,7 @@ runScenario('terminal-osc8-file-link', async ({ app, page, log }) => {
     page.evaluate((id) => !!window.__terms[id].element.querySelector('.xterm-cursor-pointer'), sid);
 
   /** Real hover then click, once xterm shows the link pointer (the user's "this is a link"). */
-  const clickLink = async (needle, charIdx) => {
+  const clickLink = async (needle, charIdx, button = 'left') => {
     const c = await cellOf(needle, charIdx);
     assert(c.onScreen, `"${needle}" is not on screen: ${JSON.stringify(c)}`);
     for (let attempt = 0; attempt < 40; attempt++) {
@@ -106,7 +137,7 @@ runScenario('terminal-osc8-file-link', async ({ app, page, log }) => {
       if (await hovering()) break;
     }
     assert(await hovering(), `"${needle}" never showed the link pointer`);
-    await page.mouse.click(c.x, c.y);
+    await page.mouse.click(c.x, c.y, { button });
   };
 
   const activeDocPath = () =>
@@ -175,4 +206,94 @@ runScenario('terminal-osc8-file-link', async ({ app, page, log }) => {
   await clickLink(outsideUrl, 10);
   await assertNothingOpened(tabs6, 'an out-of-root file:// URL', '/x.ts');
   log('step 6: a visible out-of-root file:// URL is a dead click ✓');
+
+  // ── OSC 8: the label hides the target, so only the host decides what it opens ─────────
+  /** Prints one OSC 8 hyperlink through PowerShell, then waits for the line to settle. Printed
+   *  just before its click: a repaint after a tab switch must not be what the click lands on. */
+  const printOsc8 = async (target, label) => {
+    await backToTerminal();
+    await typeLine(
+      page,
+      sid,
+      `[Console]::Write([char]27 + ']8;;${target}' + [char]27 + '\\' + '${label}' + [char]27 + ']8;;' + [char]27 + '\\' + [char]13 + [char]10)`,
+    );
+    await waitForOutput(page, sid, label);
+    await waitQuiet();
+  };
+
+  // ── 1. an OSC 8 file:// target inside home opens at its #L line ───────────────────
+  await printOsc8(`file:///${home}/src/a.ts#L3`, 'OSC8-INSIDE');
+  await clickLink('OSC8-INSIDE', 2);
+  assert(await waitCursor(page, 3, 15000), 'the OSC 8 target should open src/a.ts at line 3');
+  assert(
+    ((await activeDocPath()) ?? '').toLowerCase().endsWith('/src/a.ts'),
+    'the active doc should be src/a.ts',
+  );
+  assert((await externalCalls()) === 0, 'an OSC 8 file target must never reach openExternal');
+  log('step 1: OSC 8 file:// target opened in-app at line 3 ✓');
+
+  // ── 2. a scheme-less absolute target opens ─────────────────────────────────────────
+  await printOsc8(`${home}/src/b.ts`, 'OSC8-BARE');
+  await clickLink('OSC8-BARE', 2);
+  assert(await waitDoc('/src/b.ts'), 'a scheme-less OSC 8 target should open src/b.ts');
+  log('step 2: scheme-less OSC 8 target opened ✓');
+
+  // ── 3. a target outside every session root opens nothing ───────────────────────────
+  await printOsc8(`file:///${outside}/x.ts`, 'OSC8-OUTSIDE');
+  const tabs3 = (await tabInfo(page)).length;
+  await clickLink('OSC8-OUTSIDE', 2);
+  await assertNothingOpened(tabs3, 'an out-of-root OSC 8 target', '/x.ts');
+  log('step 3: out-of-root OSC 8 target refused ✓');
+
+  // ── 4. javascript: is dropped before any dispatch ──────────────────────────────────
+  await printOsc8('javascript:window.__pwned=1', 'OSC8-JS');
+  const tabs4 = (await tabInfo(page)).length;
+  await clickLink('OSC8-JS', 2);
+  await assertNothingOpened(tabs4, 'a javascript: OSC 8 target', '/x.ts');
+  assert(
+    (await page.evaluate(() => window.__pwned)) === undefined,
+    'a javascript: target must never run',
+  );
+  log('step 4: javascript: OSC 8 target dropped ✓');
+
+  // ── 7. a UNC-form target is refused by the host, which logs it ─────────────────────
+  const refusalsBefore = uriRefusals().length;
+  await printOsc8('file:////localhost/c$/x', 'OSC8-UNC');
+  const tabs7 = (await tabInfo(page)).length;
+  await clickLink('OSC8-UNC', 2);
+  await assertNothingOpened(tabs7, 'a UNC-form OSC 8 target', '/x');
+  const refusals = uriRefusals().slice(refusalsBefore);
+  assert(
+    refusals.length === 1 && refusals[0].data?.reason === 'undecodable',
+    `the host should log one uri-refused (undecodable), got ${JSON.stringify(refusals)}`,
+  );
+  log('step 7: UNC-form OSC 8 target refused and logged ✓');
+
+  // ── 8. right-click: a confined target gets the link menu, a refused one today's menu ─
+  const menuLabels = async () => {
+    await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 8000 });
+    const labels = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.ctxmenu .ctxmenu__label')).map(
+        (el) => el.textContent?.trim() ?? '',
+      ),
+    );
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
+    return labels;
+  };
+  await printOsc8(`file:///${home}/src/a.ts`, 'OSC8-MENU');
+  await clickLink('OSC8-MENU', 2, 'right');
+  const inMenu = await menuLabels();
+  assert(
+    inMenu.includes('Copy path') && inMenu.includes('Open as new session'),
+    `a confined OSC 8 target should get the link menu, got ${JSON.stringify(inMenu)}`,
+  );
+  await printOsc8(`file:///${outside}/x.ts`, 'OSC8-MENU-OUT');
+  await clickLink('OSC8-MENU-OUT', 2, 'right');
+  const outMenu = await menuLabels();
+  assert(
+    !outMenu.includes('Copy path') && outMenu.length > 0,
+    `a refused OSC 8 target should get only the terminal menu, got ${JSON.stringify(outMenu)}`,
+  );
+  log('step 8: right-click menus follow the host verdict ✓');
 });

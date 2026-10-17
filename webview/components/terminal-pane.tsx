@@ -5,7 +5,7 @@ import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } 
 import '@xterm/xterm/css/xterm.css';
 import { FILE_INDEX_TTL_MS } from '../../src/file-index-ttl';
 import { folderKey } from '../../src/folder-key';
-import { dispatchLinkUri, type LinkUriSinks } from '../../src/link-target';
+import { classifyLinkUri, dispatchLinkUri, type LinkUriSinks } from '../../src/link-target';
 import { isAncestorOf } from '../../src/owning-session';
 import type { ResolveRoot } from '../../src/path-link-roots';
 import type { PathCandidate, TokenResolution } from '../../src/path-resolve';
@@ -130,6 +130,7 @@ interface PickerState {
  *  its actions. */
 type HoveredLink =
   | { kind: 'path'; token: string; found: LinkResolution; link: LinkTarget; firstRow: number }
+  | { kind: 'osc8-file'; uri: string }
   | { kind: 'url' | 'commit' };
 
 // Explorer's icons for the same actions (webview/explorer-menu.tsx).
@@ -450,12 +451,25 @@ export function TerminalPane({
         // `window.open()` with NO url, which the host's setWindowOpenHandler denies as
         // about:blank — so the warning appeared and the link never opened.
         linkHandler: {
+          // OSC 8 file targets (plan T8.3, behind the T8.4 review). Every scheme now reaches
+          // activate, where dispatchLinkUri drops all but file and http(s)/mailto.
+          allowNonHttpProtocols: true,
           activate: (event: MouseEvent, uri: string) => {
-            if (terminalLinkMiddleAction(event.button, navigator.platform) === 'ignore') return;
-            if (!openExternal(uri)) window.open(uri, '_blank', 'noopener,noreferrer');
+            const action = terminalLinkMiddleAction(event.button, navigator.platform);
+            if (action === 'ignore') return;
+            dispatchLinkUri(
+              uri,
+              linkUriSinks((target) => {
+                void openUriTargetRef.current(
+                  target,
+                  action === 'background' ? 'background' : undefined,
+                );
+              }),
+            );
           },
-          hover: () => {
-            hoveredLinkRef.current = { kind: 'url' };
+          hover: (_event: MouseEvent, uri: string) => {
+            hoveredLinkRef.current =
+              classifyLinkUri(uri) === 'file' ? { kind: 'osc8-file', uri } : { kind: 'url' };
           },
           leave: () => {
             hoveredLinkRef.current = null;
@@ -1168,14 +1182,50 @@ export function TerminalPane({
       separatorBefore: s.separatorBefore,
       onClick: () => runMenuAction(s.action),
     }));
+    const at = { x: e.clientX, y: e.clientY };
     const hovered = hoveredLinkRef.current;
-    if (hovered?.kind !== 'path') {
-      setMenu({ x: e.clientX, y: e.clientY, items: termItems });
+    if (hovered?.kind === 'osc8-file') {
+      // Resolved by the host exactly as a click is (uncached, confined); a refused target gets
+      // the terminal's own menu.
+      const { uri } = hovered;
+      void requestOnceRef.current(uri).then((reply) => {
+        const res = reply?.results[0];
+        if (!reply || !res || res.candidates.length === 0) {
+          setMenu({ ...at, items: termItems });
+          return;
+        }
+        showLinkMenu(at, termItems, {
+          found: { res, roots: reply.roots },
+          link: { key: res.key, scope: '', line: res.line, col: res.col },
+          token: uri,
+        });
+      });
       return;
     }
-    // A path link: its actions lead, then the terminal's own (spec §3.4).
+    if (hovered?.kind !== 'path') {
+      setMenu({ ...at, items: termItems });
+      return;
+    }
     const { found, link, token } = hovered;
-    const contextRootIdx = contextRootFor(hovered.firstRow, found.roots);
+    showLinkMenu(at, termItems, {
+      found,
+      link,
+      token,
+      contextRootIdx: contextRootFor(hovered.firstRow, found.roots),
+    });
+  };
+
+  /** A link's actions lead, then the terminal's own (spec §3.4). */
+  const showLinkMenu = (
+    at: { x: number; y: number },
+    termItems: MenuItem[],
+    {
+      found,
+      link,
+      token,
+      contextRootIdx,
+    }: { found: LinkResolution; link: LinkTarget; token: string; contextRootIdx?: number },
+  ) => {
     const ranked = rankCandidates(found.res.candidates, {
       roots: found.roots,
       contextRootIdx,
@@ -1183,7 +1233,6 @@ export function TerminalPane({
     });
     const click = chooseClickAction(ranked);
     const single = click.kind === 'open' ? click.cand : null;
-    const at = { x: e.clientX, y: e.clientY };
     const openPicker = (mode: PickerMode) =>
       setPicker({
         at,
