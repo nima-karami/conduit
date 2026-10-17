@@ -29,7 +29,11 @@ import {
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
 // The dialog bookends paths with LRMs and either separator/case may come back.
-const norm = (p) => (p ?? '').replace(/[‎\s]/g, '').replace(/\\/g, '/').toLowerCase();
+const norm = (p) =>
+  (p ?? '')
+    .replace(/[\u200e\s]/g, '')
+    .replace(/\\/g, '/')
+    .toLowerCase();
 
 const TERMINAL_ITEMS = ['Copy', 'Paste', 'Find', 'Clear'];
 
