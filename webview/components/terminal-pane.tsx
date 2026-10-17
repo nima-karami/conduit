@@ -5,7 +5,7 @@ import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } 
 import '@xterm/xterm/css/xterm.css';
 import { FILE_INDEX_TTL_MS } from '../../src/file-index-ttl';
 import { folderKey } from '../../src/folder-key';
-import { classifyLinkUri } from '../../src/link-target';
+import { dispatchLinkUri, type LinkUriSinks } from '../../src/link-target';
 import { isAncestorOf } from '../../src/owning-session';
 import type { ResolveRoot } from '../../src/path-link-roots';
 import type { PathCandidate, TokenResolution } from '../../src/path-resolve';
@@ -145,6 +145,17 @@ const LINK_MENU_ICONS: Record<LinkMenuAction, ReactNode> = {
 interface ReplayState {
   active: boolean;
   resyncDue: boolean;
+}
+
+/** Where a terminal link URI may go; `openFile` is the host-confined open. */
+function linkUriSinks(openFile: (uri: string) => void): LinkUriSinks {
+  return {
+    openFile,
+    openExternal,
+    windowOpen: (uri) => {
+      window.open(uri, '_blank', 'noopener,noreferrer');
+    },
+  };
 }
 
 function tellHostSize(sent: { current: TermGeometry | null }, sessionId: string, term: Terminal) {
@@ -668,17 +679,17 @@ export function TerminalPane({
             activate(event: MouseEvent, _text: string) {
               const action = terminalLinkMiddleAction(event.button, navigator.platform);
               if (action === 'ignore') return;
-              const kind = classifyLinkUri(tok.raw);
-              if (kind === 'file') {
-                // Confined like an OSC 8 target, even though it is visible (plan Decisions).
-                void openUriTargetRef.current(
-                  tok.raw,
-                  action === 'background' ? 'background' : undefined,
-                );
-                return;
-              }
-              if (kind !== 'external') return;
-              if (!openExternal(tok.raw)) window.open(tok.raw, '_blank', 'noopener,noreferrer');
+              // A file:// URL is confined like an OSC 8 target, even though it is visible (plan
+              // Decisions).
+              dispatchLinkUri(
+                tok.raw,
+                linkUriSinks((uri) => {
+                  void openUriTargetRef.current(
+                    uri,
+                    action === 'background' ? 'background' : undefined,
+                  );
+                }),
+              );
             },
             hover(_event: MouseEvent, _text: string) {
               hoveredLinkRef.current = { kind: 'url' };

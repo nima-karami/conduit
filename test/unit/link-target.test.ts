@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { classifyLinkUri, decodeFileUri } from '../../src/link-target';
+import { describe, expect, it, vi } from 'vitest';
+import { classifyLinkUri, decodeFileUri, dispatchLinkUri } from '../../src/link-target';
 
 describe('classifyLinkUri', () => {
   it.each([
@@ -133,5 +133,47 @@ describe('decodeFileUri', () => {
     expect(decodeFileUri('javascript:alert(1)', 'posix')).toBeNull();
     expect(decodeFileUri('src/a.ts', 'posix')).toBeNull();
     expect(decodeFileUri('', 'posix')).toBeNull();
+  });
+});
+
+describe('dispatchLinkUri', () => {
+  const sinks = (hasBridge: boolean) => ({
+    openFile: vi.fn(),
+    openExternal: vi.fn(() => hasBridge),
+    windowOpen: vi.fn(),
+  });
+
+  it.each(['javascript:alert(1)', 'data:text/html,x', 'vscode://file/x', 'src/a.ts', '//host/x'])(
+    '%j reaches no sink, with or without the bridge (no window.open fallback)',
+    (uri) => {
+      for (const bridge of [true, false]) {
+        const s = sinks(bridge);
+        expect(dispatchLinkUri(uri, s)).toBe('ignore');
+        expect(s.openFile).not.toHaveBeenCalled();
+        expect(s.openExternal).not.toHaveBeenCalled();
+        expect(s.windowOpen).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it('a file URI goes to openFile only, never openExternal or window.open', () => {
+    for (const bridge of [true, false]) {
+      const s = sinks(bridge);
+      expect(dispatchLinkUri('file:///w/a.ts', s)).toBe('file');
+      expect(s.openFile).toHaveBeenCalledWith('file:///w/a.ts');
+      expect(s.openExternal).not.toHaveBeenCalled();
+      expect(s.windowOpen).not.toHaveBeenCalled();
+    }
+  });
+
+  it('an external URI goes to the host, and to window.open only without the bridge', () => {
+    const withBridge = sinks(true);
+    dispatchLinkUri('https://x', withBridge);
+    expect(withBridge.openExternal).toHaveBeenCalledWith('https://x');
+    expect(withBridge.windowOpen).not.toHaveBeenCalled();
+    const without = sinks(false);
+    dispatchLinkUri('https://x', without);
+    expect(without.windowOpen).toHaveBeenCalledWith('https://x');
+    expect(without.openFile).not.toHaveBeenCalled();
   });
 });

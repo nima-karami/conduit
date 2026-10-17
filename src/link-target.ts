@@ -122,3 +122,21 @@ export function decodeFileUri(
     ...(col !== undefined ? { col } : {}),
   };
 }
+
+export interface LinkUriSinks {
+  /** A file-class URI, which the host decodes and confines. */
+  openFile(uri: string): void;
+  /** False when there is no host bridge to hand it to. */
+  openExternal(uri: string): boolean;
+  windowOpen(uri: string): void;
+}
+
+/** The one dispatch for terminal link URIs (OSC 8 and printed URLs): only file and
+ *  http(s)/mailto go anywhere, and the bridge-less window.open fallback is for external ones only
+ *  (plan T8.4 item 10). */
+export function dispatchLinkUri(uri: string, sinks: LinkUriSinks): LinkUriClass {
+  const kind = classifyLinkUri(uri);
+  if (kind === 'file') sinks.openFile(uri);
+  else if (kind === 'external' && !sinks.openExternal(uri)) sinks.windowOpen(uri);
+  return kind;
+}
