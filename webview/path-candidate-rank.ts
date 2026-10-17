@@ -1,7 +1,7 @@
 /**
  * Renderer-side ranking of a path token's candidates and the click decision (spec
- * 2026-10-16-terminal-path-links §3.3). Runs after the cache, so session-local signals (last
- * pick, context root) never get cached. Pure.
+ * 2026-10-16-terminal-path-links §3.3). Runs after the cache, so the session-local last pick never
+ * gets cached. Pure.
  */
 import { folderKey } from '../src/folder-key';
 import type { ResolveRoot } from '../src/path-link-roots';
@@ -9,21 +9,19 @@ import type { CandidateStrength, PathCandidate } from '../src/path-resolve';
 
 export interface RankInputs {
   roots: readonly ResolveRoot[];
-  /** inferContextRoot over the lines above the token (Slice 7). */
-  contextRootIdx?: number;
   lastPickRepoRoot?: string;
 }
 
-export type RankKey = 'strength' | 'context' | 'lastPick' | 'rootGroup' | 'rootOrder' | 'shorter';
+export type RankKey = 'strength' | 'lastPick' | 'rootGroup' | 'rootOrder' | 'shorter';
 
-/** 'context' is a tie-breaker: the T7.2 measurement failed the plan's bar (see
+/** No context-root key: the T7.2 measurement failed the plan's bar, and after rootOrder it could
+ *  never reorder distinct roots, so it is the picker's "working here" label only (see
  *  docs/runs/2026-10-16-terminal-path-links/report.md "Context-root measurement (T7.2)"). */
 export const RANK_KEYS: readonly RankKey[] = [
   'strength',
   'lastPick',
   'rootGroup',
   'rootOrder',
-  'context',
   'shorter',
 ];
 
@@ -50,9 +48,6 @@ function comparators(inputs: RankInputs): Record<RankKey, Comparator> {
   const order = (c: PathCandidate) => (c.rootIdx < 0 ? Number.MAX_SAFE_INTEGER : c.rootIdx);
   return {
     strength: (a, b) => STRENGTH[a.strength] - STRENGTH[b.strength],
-    context: flag(
-      (c) => inputs.contextRootIdx !== undefined && c.rootIdx === inputs.contextRootIdx,
-    ),
     lastPick: flag((c) => pickKey !== undefined && folderKey(c.repoRoot) === pickKey),
     rootGroup: (a, b) => group(a) - group(b),
     rootOrder: (a, b) => order(a) - order(b),

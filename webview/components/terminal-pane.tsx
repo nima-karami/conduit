@@ -353,18 +353,16 @@ export function TerminalPane({
   const openUriTargetRef = useRef(openUriTarget);
   openUriTargetRef.current = openUriTarget;
 
-  /** A path link's click (spec §2.3 step 5), ranked now so the last pick and context are
-   *  current: one target opens, an ambiguous one opens the picker at `at`. */
+  /** A path link's click (spec §2.3 step 5), ranked now so the last pick is current: one target
+   *  opens, an ambiguous one opens the picker at `at`. */
   const activatePathLink = (
     entry: PathLinkEntry,
     at: { x: number; y: number },
     mode?: OpenMode,
   ) => {
     const { found, link, token } = entry;
-    const contextRootIdx = contextRootFor(entry.firstRow, found.roots);
     const ranked = rankCandidates(found.res.candidates, {
       roots: found.roots,
-      contextRootIdx,
       lastPickRepoRoot: lastPick(sessionId),
     });
     const click = chooseClickAction(ranked);
@@ -374,7 +372,7 @@ export function TerminalPane({
       setPicker({
         at,
         token,
-        rows: pickerRows(ranked, found.roots, contextRootIdx),
+        rows: pickerRows(ranked, found.roots, contextRootFor(entry.firstRow, found.roots)),
         total: found.res.total,
         truncated: found.res.truncated,
         link,
@@ -1330,12 +1328,7 @@ export function TerminalPane({
       setMenu({ ...cell.at, items: termItems, keyboard: true });
       return;
     }
-    showLinkMenu(
-      cell.at,
-      termItems,
-      { ...entry, contextRootIdx: contextRootFor(entry.firstRow, entry.found.roots) },
-      true,
-    );
+    showLinkMenu(cell.at, termItems, entry, true);
   };
 
   const openContextMenu = (e: React.MouseEvent) => {
@@ -1369,16 +1362,11 @@ export function TerminalPane({
       setMenu({ ...at, items: termItems });
       return;
     }
-    const { found, link, token } = hovered;
-    showLinkMenu(at, termItems, {
-      found,
-      link,
-      token,
-      contextRootIdx: contextRootFor(hovered.firstRow, found.roots),
-    });
+    showLinkMenu(at, termItems, hovered);
   };
 
-  /** A link's actions lead, then the terminal's own (spec §3.4). */
+  /** A link's actions lead, then the terminal's own (spec §3.4). An OSC 8 target has no
+   *  `firstRow`, so no context root. */
   const showLinkMenu = (
     at: { x: number; y: number },
     termItems: MenuItem[],
@@ -1386,13 +1374,12 @@ export function TerminalPane({
       found,
       link,
       token,
-      contextRootIdx,
-    }: { found: LinkResolution; link: LinkTarget; token: string; contextRootIdx?: number },
+      firstRow,
+    }: { found: LinkResolution; link: LinkTarget; token: string; firstRow?: number },
     keyboard = false,
   ) => {
     const ranked = rankCandidates(found.res.candidates, {
       roots: found.roots,
-      contextRootIdx,
       lastPickRepoRoot: lastPick(sessionId),
     });
     const click = chooseClickAction(ranked);
@@ -1401,7 +1388,11 @@ export function TerminalPane({
       setPicker({
         at,
         token,
-        rows: pickerRows(ranked, found.roots, contextRootIdx),
+        rows: pickerRows(
+          ranked,
+          found.roots,
+          firstRow === undefined ? undefined : contextRootFor(firstRow, found.roots),
+        ),
         total: found.res.total,
         truncated: found.res.truncated,
         link,

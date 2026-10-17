@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ResolveRoot } from '../../src/path-link-roots';
 import type { PathCandidate } from '../../src/path-resolve';
+import { pickerRows } from '../../webview/components/path-candidate-picker-model';
 import { chooseClickAction, RANK_KEYS, rankCandidates } from '../../webview/path-candidate-rank';
 import { lastPick, notePick } from '../../webview/terminal-link-picks';
 
@@ -90,30 +91,10 @@ describe('rankCandidates', () => {
     expect(names(rankCandidates(cs, { roots: ROOTS }))).toEqual(['repoB', '-']);
   });
 
-  // T7.2 failed the bar (23 ambiguous samples < 30, and no better than the baseline), so context
-  // is a tie-breaker: see docs/runs/2026-10-16-terminal-path-links/report.md "Context-root
-  // measurement (T7.2)".
-  it('context is the tie-breaker just before shorter: lastPick and root order win over it', () => {
-    expect(RANK_KEYS).toEqual([
-      'strength',
-      'lastPick',
-      'rootGroup',
-      'rootOrder',
-      'context',
-      'shorter',
-    ]);
-    const cs = [cand(1, 'x.ts'), cand(2, 'x.ts'), cand(3, 'x.ts')];
-    const both = { roots: ROOTS, lastPickRepoRoot: '/w/repoB' };
-    expect(names(rankCandidates(cs, { ...both, contextRootIdx: 2 }))).toEqual([
-      'repoB',
-      'repoA',
-      'repoA-wt',
-    ]);
-    expect(names(rankCandidates(cs, { roots: ROOTS, contextRootIdx: 3 }))).toEqual([
-      'repoA',
-      'repoA-wt',
-      'repoB',
-    ]);
+  // T7.2 failed the bar, so the context root is a label only: see
+  // docs/runs/2026-10-16-terminal-path-links/report.md "Context-root measurement (T7.2)".
+  it('the context root is not a rank key', () => {
+    expect(RANK_KEYS).toEqual(['strength', 'lastPick', 'rootGroup', 'rootOrder', 'shorter']);
   });
 
   it('does not mutate its input', () => {
@@ -121,6 +102,18 @@ describe('rankCandidates', () => {
     const copy = structuredClone(cs);
     rankCandidates(cs, { roots: ROOTS });
     expect(cs).toEqual(copy);
+  });
+});
+
+describe('pickerRows — the context root labels, never reorders', () => {
+  it('keeps the ranked order and flags only the context root row as working here', () => {
+    const ranked = rankCandidates([cand(3, 'x.ts'), cand(2, 'x.ts'), cand(1, 'x.ts')], {
+      roots: ROOTS,
+    });
+    const rows = pickerRows(ranked, ROOTS, 3);
+    expect(rows.map((r) => r.repoName)).toEqual(['repoA', 'repoA-wt', 'repoB']);
+    expect(rows.map((r) => r.workingHere)).toEqual([false, false, true]);
+    expect(pickerRows(ranked, ROOTS).some((r) => r.workingHere)).toBe(false);
   });
 });
 
