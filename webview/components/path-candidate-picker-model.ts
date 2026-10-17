@@ -15,6 +15,8 @@ export interface PickerRow {
   cand: PathCandidate;
   /** roots[rootIdx].name, or the last segment of repoRoot when outside every root. */
   repoName: string;
+  /** The dimmed second column; null omits it. */
+  detail: string | null;
   /** cwd-repo and outside-root rows carry no tag. */
   tag: 'home' | 'attached' | 'nested' | 'worktree' | null;
   branch?: string;
@@ -23,7 +25,32 @@ export interface PickerRow {
   workingHere: boolean;
 }
 
+/** Which list the picker shows: one token's candidate files, or Open Detected Link's links. */
+export type PickerList = 'files' | 'links';
+
 const lastSeg = (p: string) => p.split('/').filter(Boolean).pop() ?? p;
+const rootNameOf = (cand: PathCandidate, roots: readonly ResolveRoot[]) =>
+  (cand.rootIdx >= 0 ? roots[cand.rootIdx]?.name : undefined) ?? lastSeg(cand.repoRoot);
+
+/** An Open Detected Link row: titled by its link's token, so the second column says where the
+ *  token resolved rather than repeating it (QA r2 Q2). */
+export function detectedLinkRow(
+  key: string,
+  token: string,
+  cand: PathCandidate,
+  roots: readonly ResolveRoot[],
+): PickerRow {
+  const where = rootNameOf(cand, roots);
+  return {
+    key,
+    cand,
+    repoName: token,
+    detail: where === token ? null : where,
+    tag: null,
+    accessibleName: token,
+    workingHere: false,
+  };
+}
 
 export function pickerRows(
   ranked: readonly PathCandidate[],
@@ -32,7 +59,7 @@ export function pickerRows(
 ): PickerRow[] {
   return ranked.map((cand) => {
     const root = cand.rootIdx >= 0 ? roots[cand.rootIdx] : undefined;
-    const repoName = root?.name ?? lastSeg(cand.repoRoot);
+    const repoName = rootNameOf(cand, roots);
     const tag = root && root.kind !== 'cwd-repo' ? root.kind : null;
     const workingHere = contextRootIdx !== undefined && cand.rootIdx === contextRootIdx;
     // The row's aria-label replaces its text, so the tag pill, branch and "working here" are
@@ -47,6 +74,7 @@ export function pickerRows(
       key: cand.absPath,
       cand,
       repoName,
+      detail: cand.relToRoot || cand.absPath,
       tag,
       ...(root?.branch ? { branch: root.branch } : {}),
       accessibleName: `${named} / ${cand.relToRoot}`,
@@ -66,6 +94,14 @@ export function pickerHeading(token: string, total: number, action?: LinkMenuAct
   return action
     ? TERM_LINK_STR.pickFor(TERM_LINK_STR[action])
     : TERM_LINK_STR.heading(token, total);
+}
+
+/** The capped picker's footer. A link list is capped by tokens, unresolved ones included, so it
+ *  never claims a total (review r2 SF-a). */
+export function pickerFooter(list: PickerList, shown: number, total: number): string {
+  return list === 'links'
+    ? TERM_LINK_STR.showingNewest(shown)
+    : TERM_LINK_STR.showingOf(shown, total);
 }
 
 /** What "Search all files…" looks for: an elided token's concrete tail, since quick open has no

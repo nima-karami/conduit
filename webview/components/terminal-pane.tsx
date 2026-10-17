@@ -76,7 +76,7 @@ import { pushToast } from '../toast-store';
 import { buildXtermTheme, monoStack } from '../xterm-theme';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { PathCandidatePicker, type PickerMode } from './path-candidate-picker';
-import { type PickerRow, pickerRows } from './path-candidate-picker-model';
+import { detectedLinkRow, type PickerRow, pickerRows } from './path-candidate-picker-model';
 import { disposeTerminal } from './safe-dispose';
 import { TermSearchBar } from './term-search-bar';
 import { TimerChip } from './timer-chip';
@@ -289,13 +289,13 @@ export function TerminalPane({
   const evictPathRef = useRef<(key: string, scope: string) => void>(() => {});
   // Set by the init effect, which owns the path cache: the resolved path links on the given
   // buffer rows, newest first, or the one under `cell` on that row (row 60's keyboard path).
-  // `truncated`: more distinct tokens (`total`) were on those rows than one resolve takes.
+  // `truncated`: more distinct tokens were on those rows than one resolve takes.
   const pathLinksAtRef = useRef<
     (
       rows: readonly number[],
       cell?: { col: number },
-    ) => Promise<{ entries: PathLinkEntry[]; truncated: boolean; total: number }>
-  >(async () => ({ entries: [], truncated: false, total: 0 }));
+    ) => Promise<{ entries: PathLinkEntry[]; truncated: boolean }>
+  >(async () => ({ entries: [], truncated: false }));
   // Set by the init effect, which owns the reply subscription: one uncached host resolve of a
   // link URI (plan T8.3). Null without the bridge or on a timeout.
   const requestOnceRef = useRef<(uri: string) => Promise<PathLinkReply | null>>(async () => null);
@@ -677,7 +677,7 @@ export function TerminalPane({
         commitCache.dispose();
         for (const done of [...pendingOnce.values()]) done(null);
         requestOnceRef.current = async () => null;
-        pathLinksAtRef.current = async () => ({ entries: [], truncated: false, total: 0 });
+        pathLinksAtRef.current = async () => ({ entries: [], truncated: false });
       };
       evictPathRef.current = (key, scope) => resolveCache.evict(key, scope);
       // Folder keys of the roots the last reply resolved against: an fsChanged under one of them
@@ -883,8 +883,8 @@ export function TerminalPane({
           );
           lines.push({ firstRow: ll.firstRow, tokens, ...(at !== undefined ? { at } : {}) });
         }
-        const { keys, truncated, total } = capTokenKeys(lines, MAX_PATH_TOKENS);
-        if (keys.length === 0) return { entries: [], truncated, total };
+        const { keys, truncated } = capTokenKeys(lines, MAX_PATH_TOKENS);
+        if (keys.length === 0) return { entries: [], truncated };
         const resMap = await withTimeout(
           resolveCache.get(keys, scope),
           LINK_RESOLVE_TIMEOUT_MS,
@@ -897,7 +897,7 @@ export function TerminalPane({
           seen.add(entry.link.key);
           entries.push(entry);
         }
-        return { entries, truncated, total };
+        return { entries, truncated };
       };
       // Test observability (opt-in, mirrors window.__terms): expose the live link provider so
       // e2e can invoke provideLinks/activate directly — clicking xterm's canvas links in the
@@ -1265,7 +1265,7 @@ export function TerminalPane({
     if (!term) return;
     const buf = term.buffer.active;
     const rows = Array.from({ length: term.rows }, (_, i) => buf.viewportY + i);
-    const { entries, truncated, total } = await pathLinksAtRef.current(rows);
+    const { entries, truncated } = await pathLinksAtRef.current(rows);
     if (entries.length === 0) {
       pushToast({ message: TERM_LINK_STR.noLinksOnScreen, variant: 'info' });
       return;
@@ -1275,23 +1275,15 @@ export function TerminalPane({
         roots: entry.found.roots,
         lastPickRepoRoot: lastPick(sessionId),
       });
-      const row: PickerRow = {
-        // Two links can share a top candidate; the link's own key is unique.
-        key: entry.link.key,
-        cand: top,
-        repoName: entry.token,
-        tag: null,
-        accessibleName: entry.token,
-        workingHere: false,
-      };
+      // Two links can share a top candidate; the link's own key is unique.
+      const row = detectedLinkRow(entry.link.key, entry.token, top, entry.found.roots);
       return { row, entry };
     });
     setPicker({
       at: cursorCell(term).at,
       token: TERM_LINK_STR.linksOnScreen,
       rows: pickerEntries.map((p) => p.row),
-      // Every distinct token on screen, as a candidate picker counts every match.
-      total: truncated ? total : entries.length,
+      total: entries.length,
       truncated,
       link: entries[0].link,
       mode: { kind: 'open' },
@@ -1520,6 +1512,7 @@ export function TerminalPane({
           rows={picker.rows}
           total={picker.total}
           truncated={picker.truncated}
+          list={picker.entries ? 'links' : 'files'}
           mode={picker.mode}
           onPick={(row, how) => void pickRow(row, how, picker)}
           // Open Detected Link lists links, not one token's matches: nothing to search for.

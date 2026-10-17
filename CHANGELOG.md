@@ -32,7 +32,8 @@ All notable user-facing changes to Conduit. Format follows
   session. When the lines above a path show the agent working in one repo (`cd` into it, or a file
   path inside it), the picker marks that repo's row "working here".
 - **Terminal links from the keyboard.** The command palette's **Terminal: Open Detected Link…**
-  lists the path links on screen, newest first, and opens the one you pick; Shift+F10 or the Menu key opens the
+  lists the path links on screen, newest first, each with the repo it resolved in, and opens the one you
+  pick; Shift+F10 or the Menu key opens the
   link menu for the link under the cursor, or the terminal's own menu.
 - A cwd reported by terminal output that points at a network share outside the session's folders
   is ignored, so printing `\\server\share` no longer freezes the app while Windows tries to reach it.

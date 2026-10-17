@@ -13,7 +13,9 @@ import type { LinkMenuAction } from '../term-menu';
 import {
   FILTER_THRESHOLD,
   filterRows,
+  type PickerList,
   type PickerRow,
+  pickerFooter,
   pickerHeading,
   searchQueryOf,
 } from './path-candidate-picker-model';
@@ -29,6 +31,7 @@ export interface PathCandidatePickerProps {
   rows: PickerRow[];
   total: number;
   truncated: boolean;
+  list: PickerList;
   mode: PickerMode;
   /** background = middle-click, files only. */
   onPick(row: PickerRow, how: 'foreground' | 'background'): void;
@@ -46,6 +49,7 @@ export function PathCandidatePicker({
   rows,
   total,
   truncated,
+  list,
   mode,
   onPick,
   onSearchAll,
@@ -58,10 +62,16 @@ export function PathCandidatePicker({
   const hover = useHoverGate(JSON.stringify([query, rows.map((r) => r.key)]));
   const baseId = useId();
   const listId = `${baseId}-list`;
+  const headId = `${baseId}-head`;
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const withFilter = rows.length >= FILTER_THRESHOLD;
-  const heading = pickerHeading(token, total, mode.kind === 'action' ? mode.action : undefined);
+  // A link list is capped by tokens, so only the rows it shows are counted (review r2 SF-a).
+  const heading = pickerHeading(
+    token,
+    list === 'links' ? rows.length : total,
+    mode.kind === 'action' ? mode.action : undefined,
+  );
 
   const visible = useMemo(() => filterRows(rows, query), [rows, query]);
   const items: Item[] = useMemo(
@@ -117,15 +127,17 @@ export function PathCandidatePicker({
   return (
     <Popover
       at={at}
-      className="ctxmenu pathpick"
+      className={`ctxmenu pathpick${withFilter ? ' pathpick--filterable' : ''}`}
       data-pointer={hover.pointer}
       onClose={onClose}
       // Escape clears a non-empty filter first, then closes.
       onEscape={() => (query ? setQuery('') : onClose())}
       onKeyDown={onKeyDown}
     >
-      {/* The visible twin of the focused element's accessible name, which already announces it. */}
+      {/* The visible title. It names the list and describes the filter, so the count is still
+          announced when the filter, named only "Filter", takes focus. */}
       <div
+        id={headId}
         className="pathpick__head"
         aria-hidden="true"
         // Not focusable: a press here must not take focus off the list or the filter.
@@ -142,9 +154,10 @@ export function PathCandidatePicker({
           aria-expanded
           aria-controls={listId}
           aria-activedescendant={activeDescendant}
-          aria-label={heading}
+          aria-label={TERM_LINK_STR.filter}
+          aria-describedby={headId}
           value={query}
-          placeholder={heading}
+          placeholder={list === 'links' ? TERM_LINK_STR.filterLinks : TERM_LINK_STR.filterFiles}
           onChange={(e) => {
             setQuery(e.target.value);
             setActive(0);
@@ -230,15 +243,18 @@ export function PathCandidatePicker({
               {row.workingHere && (
                 <span className="pathpick__here">{TERM_LINK_STR.workingHere}</span>
               )}
-              <span className="pathpick__rel" dir="ltr">
-                {row.cand.relToRoot || row.cand.absPath}
-              </span>
+              {row.detail !== null && (
+                <span className="pathpick__rel" dir="ltr">
+                  {row.detail}
+                </span>
+              )}
             </div>
           );
         })}
       </div>
-      {truncated && (
-        <div className="pathpick__foot">{TERM_LINK_STR.showingOf(rows.length, total)}</div>
+      {/* The cap is about the unfiltered list; under a filter it would read as the match count. */}
+      {truncated && !query && (
+        <div className="pathpick__foot">{pickerFooter(list, rows.length, total)}</div>
       )}
     </Popover>
   );

@@ -7903,8 +7903,14 @@ body.gh-resizing {
 /* Its bounds go through the variables .ctxmenu reads rather than competing with .ctxmenu's own
    min/max-width, which comes later in the sheet and would win on order alone. */
 .pathpick {
-  --ctxmenu-min-w: 280px;
-  --ctxmenu-max-w: min(640px, calc(100vw - 16px));
+  --pathpick-max-w: min(640px, calc(100vw - 16px));
+  --ctxmenu-min-w: var(--pathpick-min-w, 280px);
+  --ctxmenu-max-w: var(--pathpick-max-w);
+}
+/* Only a filterable picker loses rows while open; sized by its content it would shrink and jump
+   under the pointer as the filter narrows (QA r2 Q4), so it holds its widest bound instead. */
+.pathpick--filterable {
+  --pathpick-min-w: var(--pathpick-max-w);
 }
 .pathpick__head {
   padding: 3px 10px 5px;

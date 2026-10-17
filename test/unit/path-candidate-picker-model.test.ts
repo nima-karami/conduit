@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { ResolveRoot } from '../../src/path-link-roots';
 import type { PathCandidate } from '../../src/path-resolve';
 import {
+  detectedLinkRow,
   FILTER_THRESHOLD,
   filterRows,
+  pickerFooter,
   pickerHeading,
   pickerRows,
   searchQueryOf,
@@ -72,10 +74,34 @@ describe('pickerRows', () => {
     expect(row.accessibleName).toBe('r / /far/r/a.ts');
   });
 
+  it('the second column is the path relative to its root', () => {
+    expect(pickerRows([cand(1, 'src/a.ts')], ROOTS)[0].detail).toBe('src/a.ts');
+    expect(pickerRows([cand(-1, '/far/r/a.ts', '/far/r')], ROOTS)[0].detail).toBe('/far/r/a.ts');
+  });
+
   it('workingHere marks the context root only', () => {
     const rows = pickerRows([cand(1, 'a'), cand(3, 'a')], ROOTS, 3);
     expect(rows.map((r) => r.workingHere)).toEqual([false, true]);
     expect(pickerRows([cand(1, 'a')], ROOTS).map((r) => r.workingHere)).toEqual([false]);
+  });
+});
+
+// v1 QA r2 Q2: the row is titled by the link's token, so the second column names where it
+// resolved instead of repeating the token.
+describe('detectedLinkRow', () => {
+  it('title = the token, second column = its root name', () => {
+    const row = detectedLinkRow('k1', 'src/index.ts', cand(3, 'src/index.ts'), ROOTS);
+    expect(row).toMatchObject({ key: 'k1', repoName: 'src/index.ts', detail: 'repoB' });
+    expect(row.accessibleName).toBe('src/index.ts');
+  });
+
+  it('outside every root: the last segment of its repoRoot', () => {
+    const row = detectedLinkRow('k', '/far/r/a.ts', cand(-1, '/far/r/a.ts', '/far/r'), ROOTS);
+    expect(row.detail).toBe('r');
+  });
+
+  it('a second column equal to the title is omitted', () => {
+    expect(detectedLinkRow('k', 'repoB', cand(3, ''), ROOTS).detail).toBeNull();
   });
 });
 
@@ -105,6 +131,12 @@ describe('pickerHeading and strings', () => {
 
   it('showingOf formats with Intl.NumberFormat', () => {
     expect(TERM_LINK_STR.showingOf(200, 1234)).toBe('Showing 200 of 1,234');
+  });
+
+  // v1 review r2 SF-a: the token cap counts unresolved tokens, so a total would claim them.
+  it('footer: links say how many newest, files how many of the total', () => {
+    expect(pickerFooter('links', 10, 37)).toBe('Showing the 10 newest');
+    expect(pickerFooter('files', 200, 1234)).toBe('Showing 200 of 1,234');
   });
 
   it('noMatches and noLongerExists', () => {
