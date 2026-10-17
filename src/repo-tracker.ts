@@ -71,6 +71,11 @@ export interface RepoTracker {
   refreshNow(root: string): void;
   /** Keyed by RepoInfo.root. */
   snapshotsFor(sessionId: string): Record<string, RepoSnapshot>;
+  /** A repo's file listing (key) or the loose files outside every repo (null) may have changed.
+   *  Not gated on visibility. */
+  onDirty(listener: (key: string | null) => void): () => void;
+  /** Registered repos at or below the folderKey'd folder, sorted by key. */
+  reposUnder(rootKey: string): Array<{ key: string; root: string }>;
   stop(): void;
 }
 
@@ -110,6 +115,10 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
   let liveRoots: string[] = [];
   let pathMap = new RepoPathMap([]);
   let stopped = false;
+  const dirtyListeners = new Set<(key: string | null) => void>();
+  const notifyDirty = (key: string | null) => {
+    for (const listener of dirtyListeners) listener(key);
+  };
 
   const scheduler = createRefreshScheduler({
     run: (key, kinds) => runJob(key, kinds),
@@ -266,9 +275,13 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
 
   function onWatchedPath(absKey: string): void {
     if (stopped) return;
-    for (const hit of pathMap.classify(absKey)) {
+    const hits = pathMap.classify(absKey);
+    if (hits.length === 0 && !pathMap.isGitMetadata(absKey)) notifyDirty(null);
+    for (const hit of hits) {
       const repo = repos.get(hit.key);
-      if (repo) mark(repo, [hit.kind]);
+      if (!repo) continue;
+      mark(repo, [hit.kind]);
+      if (hit.kind === 'tree') notifyDirty(repo.key);
     }
   }
 
@@ -342,20 +355,29 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
         const hit = keys.some(
           (f) => isAncestorOf(f, repo.key) || (!!repo.commonDir && isAncestorOf(f, repo.commonDir)),
         );
-        if (hit) mark(repo, ['tree', 'meta']);
+        if (!hit) continue;
+        mark(repo, ['tree', 'meta']);
+        notifyDirty(repo.key);
       }
+      // A dropped event may as well have been a loose file's.
+      if (!stopped && keys.length > 0) notifyDirty(null);
     },
     setLiveRoots(roots) {
       if (stopped) return;
+      const before = liveRoots;
       liveRoots = roots.map(folderKey);
       for (const repo of repos.values()) {
         const covered = isCovered(repo.key);
         // Edits made while nothing watched the tree are caught up once; losing coverage may
         // have dropped events, including a checkout.
-        if (covered && !repo.covered) mark(repo, ['tree']);
-        else if (!covered && repo.covered) mark(repo, ['tree', 'meta']);
+        if (covered && !repo.covered) {
+          mark(repo, ['tree']);
+          notifyDirty(repo.key);
+        } else if (!covered && repo.covered) mark(repo, ['tree', 'meta']);
         repo.covered = covered;
       }
+      // Loose files written while a root was unwatched raised no event either.
+      if (liveRoots.some((r) => !before.includes(r))) notifyDirty(null);
       reconcileWatches();
     },
     visibilityChanged() {
@@ -388,6 +410,18 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
         if (snapshot) out[ri.root] = snapshot;
       }
       return out;
+    },
+    onDirty(listener) {
+      dirtyListeners.add(listener);
+      return () => {
+        dirtyListeners.delete(listener);
+      };
+    },
+    reposUnder(rootKey) {
+      return [...repos.values()]
+        .filter((r) => isAncestorOf(rootKey, r.key))
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+        .map((r) => ({ key: r.key, root: r.root }));
     },
     stop() {
       stopped = true;

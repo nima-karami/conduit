@@ -652,3 +652,93 @@ describe('createRepoTracker', () => {
     expect(h.reads).toEqual([]);
   });
 });
+
+describe('onDirty / reposUnder (file index invalidation)', () => {
+  const dirtyLog = (h: ReturnType<typeof harness>) => {
+    const seen: Array<string | null> = [];
+    const off = h.tracker.onDirty((k) => seen.push(k));
+    return { seen, off };
+  };
+
+  it('a loose path notifies null only', async () => {
+    const h = harness();
+    h.visible.add('s1');
+    h.tracker.setSessionRepos('s1', [info('/w/A')]);
+    await settleAll();
+    const d = dirtyLog(h);
+    h.tracker.onWatchedPath(edit('/w/notes.md'));
+    expect(d.seen).toEqual([null]);
+  });
+
+  it('a repo edit notifies that key only; meta-only events notify nothing', async () => {
+    const h = harness();
+    h.visible.add('s1');
+    h.tracker.setSessionRepos('s1', [info('/w/A'), info('/w/B')]);
+    await settleAll();
+    const d = dirtyLog(h);
+    h.tracker.onWatchedPath(edit('/w/A/src/a.ts'));
+    expect(d.seen).toEqual([folderKey('/w/A')]);
+    d.seen.length = 0;
+    h.tracker.onWatchedPath(edit('/w/A/.git/HEAD'));
+    h.tracker.onWatchedPath(edit('/w/A/.git/refs/heads/main'));
+    h.tracker.onWatchedPath(edit('/w/A/.git/objects/ab/cdef'));
+    expect(d.seen).toEqual([]);
+  });
+
+  it('a hidden session still notifies (invalidation is not gated on visibility)', () => {
+    const h = harness();
+    h.tracker.setSessionRepos('bg', [info('/w/A')]);
+    const d = dirtyLog(h);
+    h.tracker.onWatchedPath(edit('/w/A/src/a.ts'));
+    expect(d.seen).toEqual([folderKey('/w/A')]);
+  });
+
+  it('lostFolders notifies every repo under the folder, and null for its loose files', async () => {
+    const h = harness();
+    h.visible.add('s1');
+    h.tracker.setSessionRepos('s1', [info('/w/A'), info('/y/B')]);
+    await settleAll();
+    const d = dirtyLog(h);
+    h.tracker.lostFolders(['/w']);
+    expect(d.seen).toEqual([folderKey('/w/A'), null]);
+  });
+
+  it('a root turning live notifies its newly covered repos and null', async () => {
+    const h = harness();
+    h.visible.add('s1');
+    h.tracker.setSessionRepos('s1', [info('/w/A'), info('/y/B')]);
+    await settleAll();
+    const d = dirtyLog(h);
+    h.tracker.setLiveRoots(['/w']);
+    expect(d.seen).toEqual([folderKey('/w/A'), null]);
+    d.seen.length = 0;
+    h.tracker.setLiveRoots(['/w']);
+    expect(d.seen).toEqual([]);
+  });
+
+  it('the returned function unsubscribes', () => {
+    const h = harness();
+    h.tracker.setSessionRepos('s1', [info('/w/A')]);
+    const d = dirtyLog(h);
+    d.off();
+    h.tracker.onWatchedPath(edit('/w/A/src/a.ts'));
+    h.tracker.onWatchedPath(edit('/w/notes.md'));
+    expect(d.seen).toEqual([]);
+  });
+
+  it('reposUnder lists registered repos below a folder, sorted by key', () => {
+    const h = harness();
+    h.tracker.setSessionRepos('s1', [info('/w/B'), info('/w/A'), info('/w/A/sub'), info('/y/C')]);
+    h.tracker.setSessionRepos('s2', [info('/w2/D')]);
+    expect(h.tracker.reposUnder(folderKey('/w'))).toEqual([
+      { key: folderKey('/w/A'), root: '/w/A' },
+      { key: folderKey('/w/A/sub'), root: '/w/A/sub' },
+      { key: folderKey('/w/B'), root: '/w/B' },
+    ]);
+    expect(h.tracker.reposUnder(folderKey('/w/A'))).toEqual([
+      { key: folderKey('/w/A'), root: '/w/A' },
+      { key: folderKey('/w/A/sub'), root: '/w/A/sub' },
+    ]);
+    expect(h.tracker.reposUnder(folderKey('/z'))).toEqual([]);
+  });
+});

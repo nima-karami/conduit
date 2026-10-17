@@ -57,6 +57,23 @@ describe('walkFiles', () => {
     expect(SEARCH_IGNORE.has('node_modules')).toBe(true);
   });
 
+  it('prune skips repo dirs during the loose walk', async () => {
+    const root = tmpTree();
+    fs.mkdirSync(path.join(root, 'repoA', 'deep'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'repoA', 'deep', 'a.ts'), 'a');
+    fs.writeFileSync(path.join(root, 'notes.md'), 'n');
+    const pruned: string[] = [];
+    const prune = (abs: string) => {
+      const hit = path.basename(abs) === 'repoA';
+      if (hit) pruned.push(abs);
+      return hit;
+    };
+    const rels = (await walkFilesAsync(root, 100, prune)).map((h) => h.rel).sort();
+    expect(rels).toEqual(['README.md', 'notes.md', 'src/index.ts', 'src/util.ts']);
+    expect(pruned).toEqual([path.join(root, 'repoA')]);
+    expect((await walkFilesAsync(root, 100)).map((h) => h.rel)).toContain('repoA/deep/a.ts');
+  });
+
   it('respects the cap', () => {
     const root = tmpTree();
     expect(walkFiles(root, 2).length).toBe(2);

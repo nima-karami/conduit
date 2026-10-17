@@ -42,8 +42,13 @@ export function walkFiles(
   return step.value;
 }
 
-export async function walkFilesAsync(root: string, cap = DEFAULT_CAP): Promise<SearchHit[]> {
-  const walk = fileWalk(root, cap, SEARCH_IGNORE);
+/** `prune(absDir)` true skips that directory (abs as built by path.join, so OS separators). */
+export async function walkFilesAsync(
+  root: string,
+  cap = DEFAULT_CAP,
+  prune?: (absDir: string) => boolean,
+): Promise<SearchHit[]> {
+  const walk = fileWalk(root, cap, SEARCH_IGNORE, prune);
   let step = walk.next();
   while (!step.done) {
     let entries: fs.Dirent[];
@@ -61,6 +66,7 @@ function* fileWalk(
   root: string,
   cap: number,
   ignore: ReadonlySet<string>,
+  prune?: (absDir: string) => boolean,
 ): Generator<string, SearchHit[], fs.Dirent[]> {
   const hits: SearchHit[] = [];
   const queue: string[] = [root];
@@ -71,7 +77,7 @@ function* fileWalk(
     for (const e of entries) {
       const abs = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (!ignore.has(e.name) && !e.name.startsWith('.git')) queue.push(abs);
+        if (!ignore.has(e.name) && !e.name.startsWith('.git') && !prune?.(abs)) queue.push(abs);
       } else if (e.isFile()) {
         const rel = path.relative(root, abs).split(path.sep).join('/');
         hits.push({ rel, abs });

@@ -139,6 +139,7 @@ import { summarizeQueue } from '../src/queue-summary';
 import { busySessions, runningSessions } from '../src/quit-guard';
 import { resolveRangePreset } from '../src/range-preset';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
+import { createRepoFileIndex } from '../src/repo-file-index';
 import {
   filterExistingRepos,
   restoreRepos,
@@ -453,6 +454,15 @@ const fileIndexCache = new ExpiringCache<
     entry.files.reduce((bytes, file) => bytes + (file.rel.length + file.abs.length) * 2 + 96, 0),
 });
 
+const repoFileIndex = createRepoFileIndex({
+  listRepo: gitListedFiles,
+  walkLoose: (root, prune, cap) => walkFilesAsync(root, cap, prune),
+});
+
+// Set by the app-ready closure, which owns the repo tracker; until then a non-git root has no
+// registered repos and its index is the loose walk alone.
+let trackedReposUnder: ((rootKey: string) => Array<{ key: string; root: string }>) | null = null;
+
 const statKind = (absPath: string): 'file' | 'dir' | null => {
   try {
     return fs.statSync(absPath).isDirectory() ? 'dir' : 'file';
@@ -461,10 +471,11 @@ const statKind = (absPath: string): 'file' | 'dir' | null => {
   }
 };
 
-/** Build (or reuse, within the TTL) the project file index for `root`. Prefers `git ls-files`
- *  (fast, respects .gitignore, includes untracked-but-not-ignored); falls back to a bounded
- *  filesystem walk when the root isn't a git repo. `fromGit` distinguishes the two so callers
- *  that only want the gitignore-respecting set (content search) can tell them apart. */
+/** Build (or reuse, within the TTL) the project file index for `root`: `git ls-files` (fast,
+ *  respects .gitignore, includes untracked-but-not-ignored) for a git root; for a non-git root,
+ *  its registered repos' listings plus the loose files outside them (src/repo-file-index.ts).
+ *  `fromGit` = the files are authoritative candidates for content search, not a walk it should
+ *  redo itself. */
 async function projectFileIndexMeta(
   root: string,
   opts: { fresh?: boolean } = {},
@@ -482,14 +493,8 @@ async function projectFileIndexMeta(
     fromGit = true;
     files = listed.map((rel) => ({ rel, abs: `${root}/${rel}` }));
   } else {
-    fromGit = false;
-    // A generous cap for the non-git fallback: this index also backs the source index for
-    // go-to-definition, and the search-sized default truncated deep source directories out
-    // of it (they were never even offered to selectIndexHits).
-    files = (await walkFilesAsync(root, 20000)).map((h) => ({
-      rel: h.rel,
-      abs: h.abs.replace(/\\/g, '/'),
-    }));
+    fromGit = true;
+    files = await repoFileIndex.build(root, trackedReposUnder?.(folderKey(root)) ?? []);
   }
   fileIndexCache.set(root, { files, at: Date.now(), fromGit });
   return { files, fromGit };
@@ -1324,6 +1329,11 @@ app.whenReady().then(() => {
       warn: (scope, msg, data) => log.warn(scope, msg, data),
     },
   });
+
+  repoTrackerHost.tracker.onDirty((key) =>
+    key === null ? repoFileIndex.invalidateLoose() : repoFileIndex.invalidateRepo(key),
+  );
+  trackedReposUnder = (rootKey) => repoTrackerHost.tracker.reposUnder(rootKey);
 
   // Multi-repo: debounced sub-repo scan per session (re-detect on open + project changes).
   const detectShared = asyncSingleFlight(detectRepos, folderKey);
