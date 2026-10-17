@@ -150,7 +150,10 @@ function focusableSubject(selector: string): boolean {
 /** Every fill a hover rule is allowed to paint, beyond the state tokens themselves. */
 const HOVER_FILL_ALLOW = new Map<string, string>([
   ['.winctl__btn--close:hover', 'OS convention: the close button goes red, not grey'],
-  ['.ctxmenu__item--danger:hover:not(:disabled)', 'destructive menu item — red is the meaning'],
+  [
+    '.ctxmenu__item--danger:hover:not(:disabled, [data-pointer="resting"] *)',
+    'destructive menu item — red is the meaning',
+  ],
   ['.btn--danger:hover', 'destructive button — red is the meaning'],
   ['.btn--warn:hover:not(:disabled)', 'warn action — amber is the meaning'],
   ['.attnchip:hover', 'amber is session STATUS (needs you), not interaction state'],

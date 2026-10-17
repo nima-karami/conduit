@@ -70,20 +70,3 @@ export function pickerHeading(token: string, total: number, action?: LinkMenuAct
 export function searchQueryOf(token: string): string {
   return elisionTail(token) ?? token;
 }
-
-/** Pointer hover may move the active row only once the pointer has really moved after the picker
- *  opened: it opens under a resting cursor, and whatever row lands there was never chosen (QA r1
- *  Q3). The first event only records where the pointer is. */
-export function createHoverGate(): (x: number, y: number) => boolean {
-  let origin: { x: number; y: number } | null = null;
-  let moved = false;
-  return (x, y) => {
-    if (moved) return true;
-    if (!origin) {
-      origin = { x, y };
-      return false;
-    }
-    moved = x !== origin.x || y !== origin.y;
-    return moved;
-  };
-}

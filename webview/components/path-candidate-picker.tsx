@@ -5,12 +5,12 @@
  * into the overlay stack. Pure rows/heading: path-candidate-picker-model.ts.
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useHoverGate } from '../hover-gate';
 import { IconDoc, IconFolder, IconSearch } from '../icons';
 import { isMiddleButton } from '../middle-click';
 import { TERM_LINK_STR } from '../term-link-strings';
 import type { LinkMenuAction } from '../term-menu';
 import {
-  createHoverGate,
   FILTER_THRESHOLD,
   filterRows,
   type PickerRow,
@@ -53,7 +53,7 @@ export function PathCandidatePicker({
 }: PathCandidatePickerProps) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
-  const [hoverMoved] = useState(createHoverGate);
+  const hover = useHoverGate();
   const baseId = useId();
   const listId = `${baseId}-list`;
   const inputRef = useRef<HTMLInputElement>(null);
@@ -116,6 +116,7 @@ export function PathCandidatePicker({
     <Popover
       at={at}
       className="ctxmenu pathpick"
+      data-pointer={hover.pointer}
       onClose={onClose}
       // Escape clears a non-empty filter first, then closes.
       onEscape={() => (query ? setQuery('') : onClose())}
@@ -175,7 +176,7 @@ export function PathCandidatePicker({
                 className={`${cls} pathpick__search`}
                 onMouseDown={(e) => e.preventDefault()}
                 onPointerMove={(e) => {
-                  if (hoverMoved(e.clientX, e.clientY)) setActive(i);
+                  if (hover.moved(e)) setActive(i);
                 }}
                 onClick={() => choose(item, 'foreground')}
               >
@@ -201,7 +202,7 @@ export function PathCandidatePicker({
                 e.preventDefault();
               }}
               onPointerMove={(e) => {
-                if (hoverMoved(e.clientX, e.clientY)) setActive(i);
+                if (hover.moved(e)) setActive(i);
               }}
               onClick={() => choose(item, 'foreground')}
               onAuxClick={(e) => {

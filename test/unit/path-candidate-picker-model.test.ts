@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { ResolveRoot } from '../../src/path-link-roots';
 import type { PathCandidate } from '../../src/path-resolve';
 import {
-  createHoverGate,
   FILTER_THRESHOLD,
   filterRows,
   pickerHeading,
@@ -119,21 +118,5 @@ describe('searchQueryOf', () => {
     expect(searchQueryOf('…/src/index.ts')).toBe('src/index.ts');
     expect(searchQueryOf('C:\\a\\...\\b\\c.ts')).toBe('b/c.ts');
     expect(searchQueryOf('src/index.ts')).toBe('src/index.ts');
-  });
-});
-
-describe('createHoverGate (QA r1 Q3)', () => {
-  it('a pointer resting where the picker opened never arms it', () => {
-    const moved = createHoverGate();
-    expect(moved(10, 20)).toBe(false);
-    expect(moved(10, 20)).toBe(false);
-    expect(moved(10, 20)).toBe(false);
-  });
-
-  it('arms on the first event at a new position, and stays armed', () => {
-    const moved = createHoverGate();
-    expect(moved(10, 20)).toBe(false);
-    expect(moved(11, 20)).toBe(true);
-    expect(moved(11, 20)).toBe(true);
   });
 });

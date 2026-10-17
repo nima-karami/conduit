@@ -45,6 +45,11 @@ All notable user-facing changes to Conduit. Format follows
   minute or more.
 
 ### Fixed
+- **A menu that opens under the mouse no longer picks the row the mouse happens to be on.** Right-
+  click near the bottom or right edge and the menu opens on top of the pointer: that row used to be
+  highlighted, so Enter or the arrow keys started from it. Now nothing is highlighted until you
+  move the mouse, and the arrow keys and Enter in a menu opened from the terminal no longer also
+  reach the shell.
 - **Go to Definition follows your tsconfig in every window.** A second window open on the same
   folder, or a window after a reload, used TypeScript's default settings instead of the project's
   `tsconfig.json` (so `paths` aliases didn't resolve), and could miss files another window had

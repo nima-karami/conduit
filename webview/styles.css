@@ -7900,9 +7900,11 @@ body.gh-resizing {
 }
 
 /* ---------- terminal path picker (spec 2026-10-16-terminal-path-links §8) ---------- */
+/* Its bounds go through the variables .ctxmenu reads rather than competing with .ctxmenu's own
+   min/max-width, which comes later in the sheet and would win on order alone. */
 .pathpick {
-  min-width: 280px;
-  max-width: min(640px, calc(100vw - 16px));
+  --ctxmenu-min-w: 280px;
+  --ctxmenu-max-w: min(640px, calc(100vw - 16px));
 }
 .pathpick__head {
   padding: 3px 10px 5px;
@@ -7979,9 +7981,9 @@ body.gh-resizing {
      positioning scheme those coordinates are inert and the menu lands in body flow. */
   position: fixed;
   z-index: var(--layer-popover);
-  min-width: 184px;
+  min-width: var(--ctxmenu-min-w, 184px);
   /* clampMenuPosition keeps 8px clear on each side; a label wider than that ellipsizes. */
-  max-width: calc(100vw - 16px);
+  max-width: var(--ctxmenu-max-w, calc(100vw - 16px));
   max-height: min(480px, 80vh);
   display: flex;
   flex-direction: column;
@@ -8036,7 +8038,11 @@ body.gh-resizing {
   color: var(--state-sel-fg);
   --rest-shadow: inset var(--state-spine) 0 0 var(--accent);
 }
-.ctxmenu__item[aria-checked="true"]:hover:not(:disabled, [aria-disabled="true"]) {
+.ctxmenu__item[aria-checked="true"]:hover:not(
+  :disabled,
+  [aria-disabled="true"],
+  [data-pointer="resting"] *
+) {
   background: var(--state-sel-hover-bg);
 }
 /* Status and already-current rows are not targets; the shared .ctxmenu__item cursor says
@@ -8047,7 +8053,7 @@ body.gh-resizing {
 .ctxmenu__item--danger {
   color: var(--red);
 }
-.ctxmenu__item--danger:hover:not(:disabled) {
+.ctxmenu__item--danger:hover:not(:disabled, [data-pointer="resting"] *) {
   background: color-mix(in srgb, var(--red) 14%, transparent);
 }
 .ctxmenu__icon {
@@ -14088,7 +14094,9 @@ button.toggle--on .toggle__knob {
     .planflow__node--selected,
     .planflow__picker-option--active,
     .plancomment__picker-option--active,
-    .bcard--proposed
+    .bcard--proposed,
+    /* a menu opened under a resting pointer: that row was never pointed at (hover-gate.ts) */
+    [data-pointer="resting"] .ctxmenu__item
   )
 ):hover {
   background: var(--state-hover-bg);

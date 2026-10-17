@@ -127,3 +127,68 @@ describe('triggerMenu', () => {
     spy.mockRestore();
   });
 });
+
+describe('ContextMenu under a resting pointer (path-links QA r1 Q3)', () => {
+  const items = (): MenuItem[] =>
+    ['One', 'Two', 'Three'].map((label) => ({ label, onClick: vi.fn() }));
+  const activeLabel = () => document.querySelector('.ctxmenu__item--active')?.textContent ?? null;
+  const frame = () => document.querySelector('.ctxmenu') as HTMLElement;
+
+  /** What Chromium sends a row that lands under a stationary cursor: boundary events plus a
+   *  pointermove at the same point. */
+  async function pointAt(el: Element, x: number, y: number) {
+    await act(async () => {
+      el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: x, clientY: y }));
+      el.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: x, clientY: y }));
+    });
+  }
+
+  it('a keyboard-opened menu keeps its first row active until the pointer really moves', async () => {
+    const list = items();
+    await mount(
+      createElement(ContextMenu, {
+        menu: { x: 5, y: 5, items: list, keyboard: true },
+        onClose: vi.fn(),
+      }),
+    );
+    expect(activeLabel()).toBe('One');
+    await pointAt(row('Three'), 40, 60);
+    await pointAt(row('Three'), 40, 60);
+    expect(activeLabel()).toBe('One');
+    expect(frame().dataset.pointer).toBe('resting');
+    await keydown('Enter');
+    expect(list[0].onClick).toHaveBeenCalledTimes(1);
+    expect(list[2].onClick).not.toHaveBeenCalled();
+  });
+
+  it('a pointer-opened menu highlights nothing under a resting pointer, then follows a real move', async () => {
+    await mount(
+      createElement(ContextMenu, { menu: { x: 5, y: 5, items: items() }, onClose: vi.fn() }),
+    );
+    await pointAt(row('Two'), 40, 40);
+    expect(activeLabel()).toBeNull();
+    await pointAt(row('Two'), 41, 40);
+    expect(activeLabel()).toBe('Two');
+    expect(frame().dataset.pointer).toBe('armed');
+  });
+});
+
+describe('ContextMenu keys', () => {
+  // The terminal under a right-click menu keeps focus, and xterm ignores defaultPrevented.
+  it('a key the menu acts on never reaches the focused element under it', async () => {
+    const under = document.createElement('textarea');
+    document.body.append(under);
+    under.focus();
+    const reached = vi.fn();
+    under.addEventListener('keydown', (e) => reached(e.key));
+    const items: MenuItem[] = [{ label: 'One', onClick: vi.fn() }];
+    await mount(createElement(ContextMenu, { menu: { x: 5, y: 5, items }, onClose: vi.fn() }));
+    for (const key of ['ArrowDown', 'Home', 'End', 'Enter']) {
+      await act(async () => {
+        under.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+      });
+    }
+    expect(items[0].onClick).toHaveBeenCalledTimes(1);
+    expect(reached).not.toHaveBeenCalled();
+  });
+});

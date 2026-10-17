@@ -12,8 +12,10 @@
  *   5. `● Update(src/index.ts)` → only the path cells are a link; a click on `U` opens nothing.
  *   6. `…/repoB/src/index.ts` → a single candidate, opened directly.
  *   7. repoA's file deleted on disk, then picked → "no longer exists" toast, no tab opens.
- *   8. Printed on the bottom row, the link's picker is clamped up over the resting pointer; with
- *      no mouse move, Enter still opens the top-ranked row (QA r1 Q3).
+ *   8. Printed on the bottom row, the link is right-clicked and never moved off: its menu and then
+ *      the Copy path picker are clamped up over the resting pointer, which neither highlights nor
+ *      takes a row. ArrowDown starts on the menu's first item; Enter copies the top-ranked
+ *      match (QA r1 Q3). The picker stays within its 640 px cap.
  *
  * Step 1 also checks the visible heading (Q2) and that the worktree row's accessible name
  * carries its tag and branch (Q4).
@@ -132,9 +134,9 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
       { id: sid, needle, charIdx },
     );
 
-  /** Real hover then click. With `onLink`, the click waits for xterm's pointer cursor — the
+  /** Real hover then click (or right-click). With `onLink`, the click waits for xterm's pointer cursor — the
    *  same "this is a link" cue a user waits for — so it never lands before the link resolved. */
-  const clickAt = async (needle, charIdx, { onLink = true } = {}) => {
+  const clickAt = async (needle, charIdx, { onLink = true, button = 'left' } = {}) => {
     const c = await cellOf(needle, charIdx);
     assert(c.onScreen, `"${needle}" is not on screen: ${JSON.stringify(c)}`);
     const hovering = () =>
@@ -151,7 +153,7 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
       if (!onLink || (await hovering())) break;
     }
     if (onLink) assert(await hovering(), `"${needle}" never showed the link pointer`);
-    await page.mouse.click(c.x, c.y);
+    await page.mouse.click(c.x, c.y, { button });
     return c;
   };
 
@@ -344,58 +346,128 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   assert((await tabInfo(page)).length === tabs7, 'a stale pick must open no tab');
   log('step 7: stale pick toasts and opens nothing ✓');
 
-  // ── 8. resting pointer under a clamped picker keeps the top-ranked row ─────────────
+  // ── 8. a resting pointer under the clamped menu and picker takes neither ───────────
   for (const dir of ['repoA', 'repoB', 'T-123/repoA-wt']) {
     mkdirSync(join(parent, dir, DEEP_DIR), { recursive: true });
     writeFileSync(join(parent, dir, DEEP_DIR, 'index.ts'), body('d'));
   }
+  // The explorer would keep the terminal's right edge too far from the window's for the menu to
+  // be clamped left over the pointer. Out of the terminal first: it keeps this chord for the shell.
+  if (await page.isVisible('.rightpane')) {
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.keyboard.press('Control+Shift+E');
+    await page.waitForSelector('.rightpane', { state: 'hidden', timeout: 8000 });
+    await page.waitForTimeout(500);
+  }
   await typeLine(page, sid, 'cls');
   // Blank lines first and right-aligned, so the link lands in the bottom-right corner and the
-  // picker is clamped up and left over the pointer that clicked it (unclamped, the pointer only
-  // ever rests on the frame's own padding).
+  // menu and picker are clamped up and left over the pointer that clicked it (unclamped, the
+  // pointer only ever rests on the frame's own padding).
   await typeLine(page, sid, 'for /L %i in (1,1,120) do @echo.');
   const cols = await page.evaluate((id) => window.__terms[id].cols, sid);
   await typeLine(page, sid, `echo ${' '.repeat(cols - LINE_BOTTOM.length - 1)}${LINE_BOTTOM}`);
   await waitForOutput(page, sid, LINE_BOTTOM);
   await waitQuiet();
-  const c8 = await clickAt(LINE_BOTTOM, LINE_BOTTOM.length - 6);
+  // What the app copies, not what the OS clipboard holds (see markdown-viewer.e2e.mjs).
+  await page.evaluate(() => {
+    window.__copied = [];
+    navigator.clipboard.writeText = async (text) => {
+      window.__copied.push(text);
+    };
+  });
+  const c8 = await clickAt(LINE_BOTTOM, LINE_BOTTOM.length - 6, { button: 'right' });
+  await page.waitForSelector('.ctxmenu[role="menu"]', { state: 'visible', timeout: 10000 });
+  /** Where the pointer rests relative to `rowSel` rows under `frameSel`, and whether the row
+   *  under it paints a hover fill a row it is not over does not (one highlight only). */
+  const restingOn = (frameSel, rowSel) =>
+    page.evaluate(
+      ({ x, y, frameSel, rowSel }) => {
+        const frame = document.querySelector(frameSel);
+        const rows = Array.from(frame?.querySelectorAll(rowSel) ?? []);
+        const under = document.elementFromPoint(x, y)?.closest(rowSel);
+        const underIdx = under ? rows.indexOf(under) : -1;
+        const activeIdx = rows.findIndex((el) => el.classList.contains('ctxmenu__item--active'));
+        const other = rows.find((_, i) => i !== underIdx && i !== activeIdx);
+        const bg = (el) => (el ? getComputedStyle(el).backgroundColor : null);
+        return {
+          underIdx,
+          activeIdx,
+          underHovered: !!under?.matches(':hover'),
+          underBg: bg(under),
+          otherBg: bg(other),
+          pointer: frame?.getAttribute('data-pointer') ?? null,
+          width: frame?.getBoundingClientRect().width ?? 0,
+          top: rows[0]?.textContent ?? '',
+          labels: rows.map((el) => el.textContent ?? ''),
+          at: { x, y, vw: window.innerWidth, vh: window.innerHeight },
+          rect: frame?.getBoundingClientRect().toJSON(),
+        };
+      },
+      { ...c8, frameSel, rowSel },
+    );
+  // Long enough for the hover update a stationary pointer gets after layout.
+  await page.waitForTimeout(600);
+  const menu8 = await restingOn('.ctxmenu[role="menu"]', '.ctxmenu__item');
+  log('step 8 menu: pointer rests on item', menu8.underIdx, 'active', menu8.activeIdx);
+  assert(
+    menu8.underIdx >= 1 && menu8.underHovered,
+    `precondition: the resting pointer should hover a menu item below the first, got ${JSON.stringify(menu8)}`,
+  );
+  assert(
+    menu8.activeIdx === -1 && menu8.pointer === 'resting',
+    `a right-click menu should highlight nothing under a resting pointer, got ${JSON.stringify(menu8)}`,
+  );
+  assert(
+    menu8.underBg === menu8.otherBg,
+    `the item under a resting pointer should not paint a hover fill, got ${JSON.stringify(menu8)}`,
+  );
+  await page.keyboard.press('ArrowDown');
+  const first8 = await page.evaluate(
+    () => document.querySelector('.ctxmenu[role="menu"] .ctxmenu__item--active')?.textContent,
+  );
+  assert(
+    first8 === menu8.labels[0],
+    `ArrowDown should start on the first item, not after the one under the pointer; got "${first8}"`,
+  );
+  await page.keyboard.press('ArrowDown');
+  const copy8 = await page.evaluate(
+    () => document.querySelector('.ctxmenu[role="menu"] .ctxmenu__item--active')?.textContent,
+  );
+  assert(/^Copy path/.test(copy8 ?? ''), `the second item should be Copy path, got "${copy8}"`);
+  await page.keyboard.press('Enter');
   await page.waitForSelector('.pathpick', { state: 'visible', timeout: 10000 });
   await page.waitForFunction(
     () => document.querySelectorAll('.pathpick [role="option"]').length === 3,
     null,
     { timeout: 5000 },
   );
-  // Long enough for the hover update a stationary pointer gets after layout.
   await page.waitForTimeout(600);
-  const rest = await page.evaluate(({ x, y }) => {
-    const opts = Array.from(document.querySelectorAll('.pathpick [role="option"]'));
-    const under = document.elementFromPoint(x, y)?.closest('[role="option"]');
-    return {
-      underIdx: under ? opts.indexOf(under) : -1,
-      activeIdx: opts.findIndex((el) => el.getAttribute('aria-selected') === 'true'),
-      top: opts[0]?.textContent ?? '',
-      at: { x, y, vw: window.innerWidth, vh: window.innerHeight },
-      frame: document.querySelector('.pathpick')?.getBoundingClientRect().toJSON(),
-      rows: opts.map((el) => Math.round(el.getBoundingClientRect().top)),
-      hit: document.elementFromPoint(x, y)?.className ?? null,
-    };
-  }, c8);
-  log('step 8 pointer rests on row', rest.underIdx, 'active row', rest.activeIdx);
   assert(
-    rest.underIdx >= 1,
-    `precondition: the resting pointer should be over a row below the first, got ${JSON.stringify(rest)}`,
+    await page.isVisible('.pathpick'),
+    'the picker should outlive the Enter that opened it: a key the menu takes must not reach the shell',
+  );
+  const pick8 = await restingOn('.pathpick', '[role="option"]');
+  log('step 8 picker: pointer rests on row', pick8.underIdx, 'active', pick8.activeIdx);
+  assert(
+    pick8.underIdx >= 1 && pick8.underHovered,
+    `precondition: the resting pointer should hover a picker row below the first, got ${JSON.stringify(pick8)}`,
   );
   assert(
-    rest.activeIdx === 0,
-    `the top-ranked row should stay active under a resting pointer, got ${JSON.stringify(rest)}`,
+    pick8.activeIdx === 0,
+    `the top-ranked row should stay active under a resting pointer, got ${JSON.stringify(pick8)}`,
   );
+  assert(
+    pick8.underBg === pick8.otherBg,
+    `the row under a resting pointer should not paint a hover fill, got ${JSON.stringify(pick8)}`,
+  );
+  // The deep path makes every row want more than 640 px; the cap must hold anyway.
+  assert(pick8.width <= 640, `the picker should be at most 640 px wide, got ${pick8.width}`);
   const topRepo = `${
-    /^repoA-wt/.test(rest.top) ? '/t-123/repoa-wt' : /^repoB/.test(rest.top) ? '/repob' : '/repoa'
+    /^repoA-wt/.test(pick8.top) ? '/t-123/repoa-wt' : /^repoB/.test(pick8.top) ? '/repob' : '/repoa'
   }/${DEEP_DIR}/index.ts`;
   await page.keyboard.press('Enter');
   await page.waitForSelector('.pathpick', { state: 'detached', timeout: 5000 });
-  await waitCursor(page, 7, 15000);
-  const opened8 = norm(await activeDocPath());
-  assert(opened8.endsWith(topRepo), `Enter should open the top-ranked ${topRepo}, got ${opened8}`);
-  log('step 8: a resting pointer does not steal the preselection ✓');
+  const copied8 = norm((await page.evaluate(() => window.__copied))[0]);
+  assert(copied8.endsWith(topRepo), `Enter should copy the top-ranked ${topRepo}, got ${copied8}`);
+  log('step 8: a resting pointer takes neither the menu item nor the picker row ✓');
 });

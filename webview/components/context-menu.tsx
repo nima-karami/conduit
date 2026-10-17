@@ -1,6 +1,7 @@
 import type { ReactNode, RefObject } from 'react';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { PopoverSide, Rect } from '../../src/menu-position';
+import { useHoverGate } from '../hover-gate';
 import { middleClickProps } from '../middle-click';
 import { Popover } from './popover';
 
@@ -85,6 +86,7 @@ export function ContextMenu({
   const [activeIndex, setActiveIndex] = useState(-1);
   const activeRef = useRef(-1);
   const baseId = useId();
+  const hover = useHoverGate(menu);
 
   const setActive = useCallback((i: number) => {
     activeRef.current = i;
@@ -109,8 +111,14 @@ export function ContextMenu({
     if (enabled.length === 0) return;
 
     const onKey = (e: KeyboardEvent) => {
-      const step = (dir: 1 | -1) => {
+      // preventDefault alone leaves the key to the focused surface under the menu: xterm acts on a
+      // keydown without reading defaultPrevented, so the shell got the Enter that picked an item.
+      const claim = () => {
         e.preventDefault();
+        e.stopPropagation();
+      };
+      const step = (dir: 1 | -1) => {
+        claim();
         const cur = activeRef.current;
         const at = enabled.indexOf(cur);
         if (at === -1) {
@@ -122,16 +130,16 @@ export function ContextMenu({
       if (e.key === 'ArrowDown') step(1);
       else if (e.key === 'ArrowUp') step(-1);
       else if (e.key === 'Home') {
-        e.preventDefault();
+        claim();
         setActive(enabled[0]);
       } else if (e.key === 'End') {
-        e.preventDefault();
+        claim();
         setActive(enabled[enabled.length - 1]);
       } else if (e.key === 'Enter') {
         const i = activeRef.current;
         const it = menu.items[i];
         if (it && !it.disabled) {
-          e.preventDefault();
+          claim();
           const rect = document.getElementById(`${baseId}-item-${i}`)?.getBoundingClientRect();
           it.onClick(rect ? { rect } : undefined);
           onClose();
@@ -168,7 +176,9 @@ export function ContextMenu({
             }`}
             disabled={it.disabled}
             aria-disabled={it.disabled || undefined}
-            onMouseEnter={() => setActive(it.disabled ? -1 : i)}
+            onPointerMove={(e) => {
+              if (hover.moved(e)) setActive(it.disabled ? -1 : i);
+            }}
             onClick={(e) => {
               it.onClick({ rect: e.currentTarget.getBoundingClientRect() });
               onClose();
@@ -203,6 +213,7 @@ export function ContextMenu({
       className="ctxmenu"
       role="menu"
       aria-activedescendant={activeId}
+      data-pointer={hover.pointer}
       style={{ maxWidth }}
     >
       {content}
@@ -215,6 +226,7 @@ export function ContextMenu({
       className="ctxmenu"
       role="menu"
       aria-activedescendant={activeId}
+      data-pointer={hover.pointer}
       style={{ minWidth, maxWidth }}
     >
       {content}
