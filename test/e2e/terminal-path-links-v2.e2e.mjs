@@ -15,7 +15,7 @@
  *   9. Keyboard (row 60): the palette's "Terminal: Open Detected Link…" lists the links on screen;
  *      picking …/repoB/src/index.ts opens it. 9b: Shift+F10 opens the highlighted terminal menu.
  *   7b. After `Bash(cd <parent>/repoA && npm test)`, `src/ctx.ts:9` → the repoA row says
- *      "working here" while the last pick (repoB) keeps row 0 (context is a tie-breaker, T7.2).
+ *      "working here" while the last pick (repoB) keeps row 0 (context is a label only, T7.2).
  *   8. Printed on the bottom row, the link is right-clicked and never moved off: its menu and then
  *      the Copy path picker are clamped up over the resting pointer, which neither highlights nor
  *      takes a row. ArrowDown starts on the menu's first item; Enter copies the top-ranked
@@ -364,7 +364,7 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   await page.waitForSelector('.pathpick', { state: 'visible', timeout: 10000 });
   const rowsCtx = await pickerRowsText();
   log('context rows:', JSON.stringify(rowsCtx));
-  // T7.2 made context a tie-breaker, so the last pick (repoB) keeps row 0 and only the label moves.
+  // T7.2 made context a label only, so the last pick (repoB) keeps row 0 and only the label moves.
   assert(
     /^repoB(?!-)/.test(rowsCtx[0] ?? ''),
     `the last pick should keep row 0 over the context root, got ${JSON.stringify(rowsCtx)}`,

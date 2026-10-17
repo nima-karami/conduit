@@ -27,7 +27,7 @@ export interface LinkFs {
   realpath(p: string): Promise<string>;
 }
 
-export const nodeLinkFs: LinkFs = {
+const nodeLinkFs: LinkFs = {
   lstat: (p) => fsp.lstat(p),
   readlink: (p) => fsp.readlink(p),
   realpath: (p) => fsp.realpath(p),

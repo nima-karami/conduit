@@ -16,10 +16,10 @@ import {
   userRootsOf,
 } from '../src/path-link-roots';
 import {
+  folderOfFile,
   type IndexedFile,
   MAX_ALTS,
   type PathCandidate,
-  parentFolder,
   type ResolveIndex,
   resolveTokens,
   type TokenResolution,
@@ -376,7 +376,7 @@ export function createPathLinkResolver(deps: PathLinkResolverDeps): PathLinkReso
       )
         rootIdx = i;
     });
-    const folder = kind === 'dir' ? real : parentFolder(real);
+    const folder = kind === 'dir' ? real : folderOfFile(real);
     const top = knownRepoKeys.has(key(folder))
       ? folder
       : await lease.io(() => deps.topLevel(folder)).catch(() => '');

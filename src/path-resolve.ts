@@ -441,7 +441,7 @@ async function finalize(key: string, found: Found[], r: Resolution): Promise<Tok
   const candidates = await Promise.all(
     [...byPath.values()].map(async (f): Promise<PathCandidate> => {
       const rootIdx = r.deepestRoot(f.absPath);
-      const folder = f.isDir ? f.absPath : parentFolder(f.absPath);
+      const folder = f.isDir ? f.absPath : folderOfFile(f.absPath);
       const fromRoot = rootIdx >= 0 ? await r.topLevel(ctx.roots[rootIdx].abs) : '';
       const top = fromRoot || (await r.topLevel(folder));
       const repoRoot = top || normalizeAbs(folder, ctx.platform);
@@ -475,7 +475,7 @@ async function finalize(key: string, found: Found[], r: Resolution): Promise<Tok
 }
 
 /** The folder holding `abs` (forward-slashed); a drive or posix root keeps its separator. */
-export function parentFolder(abs: string): string {
+export function folderOfFile(abs: string): string {
   const cut = abs.lastIndexOf('/');
   if (cut < 0) return abs;
   const head = abs.slice(0, cut);
