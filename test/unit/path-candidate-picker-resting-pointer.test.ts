@@ -181,7 +181,7 @@ describe('PathCandidatePicker per list', () => {
   it('links: the heading counts the rows shown, never the token total', async () => {
     await mount({ list: 'links', truncated: true, n: FILTER_THRESHOLD });
     expect(document.querySelector('.pathpick__head')?.textContent).toBe(
-      `Links on screen · ${FILTER_THRESHOLD} matches`,
+      `Links on screen · ${FILTER_THRESHOLD} links`,
     );
     expect(document.querySelector('.pathpick__foot')?.textContent).toBe(
       `Showing the ${FILTER_THRESHOLD} newest`,
@@ -196,20 +196,35 @@ describe('PathCandidatePicker per list', () => {
   });
 
   it.each([
-    ['links', 'Filter links'],
-    ['files', 'Filter files'],
-  ] as const)('%s: the filter says what it filters and is labelled "Filter"', async (list, ph) => {
-    await mount({ list, truncated: false, n: FILTER_THRESHOLD });
-    const input = document.querySelector('.pathpick__filter') as HTMLInputElement;
-    expect(input.placeholder).toBe(ph);
-    expect(input.getAttribute('aria-label')).toBe('Filter');
-    // The count is still announced when the filter takes focus.
-    const described = document.getElementById(input.getAttribute('aria-describedby') ?? '');
-    expect(described?.textContent).toMatch(/\d+ matches$/);
-    // The heading stays the listbox's name.
-    expect(document.querySelector('[role="listbox"]')?.getAttribute('aria-label')).toBe(
-      described?.textContent,
-    );
+    ['links', 'Filter links', 'links'],
+    ['files', 'Filter files', 'matches'],
+  ] as const)(
+    '%s: the filter says what it filters and is labelled "Filter"',
+    async (list, ph, noun) => {
+      await mount({ list, truncated: false, n: FILTER_THRESHOLD });
+      const input = document.querySelector('.pathpick__filter') as HTMLInputElement;
+      expect(input.placeholder).toBe(ph);
+      expect(input.getAttribute('aria-label')).toBe('Filter');
+      // The count is still announced when the filter takes focus.
+      const described = document.getElementById(input.getAttribute('aria-describedby') ?? '');
+      expect(described?.textContent).toMatch(new RegExp(`\\d+ ${noun}$`));
+      // The heading stays the listbox's name.
+      expect(document.querySelector('[role="listbox"]')?.getAttribute('aria-label')).toBe(
+        described?.textContent,
+      );
+    },
+  );
+
+  // v1 review r3 SF-1.
+  it.each([
+    ['links', 'Links on screen', '1 link', `${FILTER_THRESHOLD} links`],
+    ['files', 'src/index.ts', '1 match', '37 matches'],
+  ] as const)('%s: the heading counts what the filter leaves', async (list, token, one, all) => {
+    await mount({ list, truncated: true, n: FILTER_THRESHOLD });
+    await typeFilter('repo1');
+    expect(document.querySelector('.pathpick__head')?.textContent).toBe(`${token} · ${one}`);
+    await typeFilter('');
+    expect(document.querySelector('.pathpick__head')?.textContent).toBe(`${token} · ${all}`);
   });
 
   it('the cap footer hides while a filter is typed, and returns when cleared', async () => {

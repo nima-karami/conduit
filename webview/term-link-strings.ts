@@ -7,6 +7,7 @@ const count = new Intl.NumberFormat('en-US');
 export const TERM_LINK_STR = {
   matches: (n: number) => countNoun(n, 'match', 'matches'),
   heading: (token: string, n: number) => `${token} · ${countNoun(n, 'match', 'matches')}`,
+  linksHeading: (token: string, n: number) => `${token} · ${countNoun(n, 'link', 'links')}`,
   pickFor: (actionLabel: string) => `${actionLabel} — pick a match`,
   showingOf: (shown: number, total: number) =>
     `Showing ${count.format(shown)} of ${count.format(total)}`,

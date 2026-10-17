@@ -90,10 +90,29 @@ export function filterRows(rows: readonly PickerRow[], query: string): PickerRow
 }
 
 /** The focused element's accessible name, so the count is announced on open. */
-export function pickerHeading(token: string, total: number, action?: LinkMenuAction): string {
-  return action
-    ? TERM_LINK_STR.pickFor(TERM_LINK_STR[action])
+export function pickerHeading(
+  token: string,
+  total: number,
+  action?: LinkMenuAction,
+  list: PickerList = 'files',
+): string {
+  if (action) return TERM_LINK_STR.pickFor(TERM_LINK_STR[action]);
+  return list === 'links'
+    ? TERM_LINK_STR.linksHeading(token, total)
     : TERM_LINK_STR.heading(token, total);
+}
+
+/** The heading's count: what the filter left, else what the list stands for. A link list is
+ *  capped by tokens, so it counts only the rows it shows (review r2 SF-a, r3 SF-1). */
+export function pickerCount(
+  list: PickerList,
+  query: string,
+  visible: readonly unknown[],
+  rows: readonly unknown[],
+  total: number,
+): number {
+  if (query.trim()) return visible.length;
+  return list === 'links' ? rows.length : total;
 }
 
 /** The capped picker's footer. A link list is capped by tokens, unresolved ones included, so it

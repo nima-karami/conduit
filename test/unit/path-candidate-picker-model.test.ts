@@ -5,6 +5,7 @@ import {
   detectedLinkRow,
   FILTER_THRESHOLD,
   filterRows,
+  pickerCount,
   pickerFooter,
   pickerHeading,
   pickerRows,
@@ -137,6 +138,26 @@ describe('pickerHeading and strings', () => {
   it('footer: links say how many newest, files how many of the total', () => {
     expect(pickerFooter('links', 10, 37)).toBe('Showing the 10 newest');
     expect(pickerFooter('files', 200, 1234)).toBe('Showing 200 of 1,234');
+  });
+
+  // v1 review r3 SF-1: a filtered heading counts what the filter left, not the unfiltered list.
+  it('count follows the filter; unfiltered, links count rows and files the total', () => {
+    const three = [1, 2, 3];
+    expect(pickerCount('files', 'ab', [1], three, 1234)).toBe(1);
+    expect(pickerCount('links', 'ab', [], three, 37)).toBe(0);
+    expect(pickerCount('files', '', three, three, 1234)).toBe(1234);
+    expect(pickerCount('links', '', three, three, 37)).toBe(3);
+    expect(pickerCount('files', '  ', three, three, 1234)).toBe(1234);
+  });
+
+  it('the links list counts links; file lists count matches', () => {
+    expect(pickerHeading('Links on screen', 2, undefined, 'links')).toBe(
+      'Links on screen · 2 links',
+    );
+    expect(pickerHeading('Links on screen', 1, undefined, 'links')).toBe(
+      'Links on screen · 1 link',
+    );
+    expect(pickerHeading('a.ts', 2, undefined, 'files')).toBe('a.ts · 2 matches');
   });
 
   it('noMatches and noLongerExists', () => {

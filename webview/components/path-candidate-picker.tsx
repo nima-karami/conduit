@@ -15,6 +15,7 @@ import {
   filterRows,
   type PickerList,
   type PickerRow,
+  pickerCount,
   pickerFooter,
   pickerHeading,
   searchQueryOf,
@@ -66,14 +67,13 @@ export function PathCandidatePicker({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const withFilter = rows.length >= FILTER_THRESHOLD;
-  // A link list is capped by tokens, so only the rows it shows are counted (review r2 SF-a).
+  const visible = useMemo(() => filterRows(rows, query), [rows, query]);
   const heading = pickerHeading(
     token,
-    list === 'links' ? rows.length : total,
+    pickerCount(list, query, visible, rows, total),
     mode.kind === 'action' ? mode.action : undefined,
+    list,
   );
-
-  const visible = useMemo(() => filterRows(rows, query), [rows, query]);
   const items: Item[] = useMemo(
     () => [
       ...visible.map((row): Item => ({ kind: 'row', row })),
