@@ -1,29 +1,31 @@
 /**
  * Pure path-token detection for the terminal link provider (D11). The xterm link-provider
- * wiring lives in terminal-pane.tsx and consumes this side-effect-free core.
+ * wiring lives in terminal-pane.tsx and consumes this side-effect-free core. The rules are
+ * docs/specs/2026-10-16-terminal-path-links.md §3.1; resolution is host-side (src/path-resolve.ts).
  */
+import { langFromPath } from '../src/lang';
 
 export interface PathToken {
-  /** The matched path text as printed (cleaned of trailing junk + the `:line:col` suffix).
-   *  This is what the host resolver searches with — for a bare filename it's `accent.ts`,
-   *  for a relative path `src/core/theme/accent.ts`, for an absolute one the absolute path. */
+  /** === alts[0]. */
   raw: string;
-  /** Resolved absolute path (relative tokens joined to cwd), forward-slash normalized.
-   *  Retained for back-compat; the v1 link provider resolves via the host using `raw`. */
-  path: string;
-  /** 1-based line number from a `:line` suffix, if present. */
+  /** Forward-slashed raws the host tries in order, first hit wins (e.g. a route group's whole
+   *  token, then its post-paren tail). 1..MAX_ALTS entries. */
+  alts: string[];
+  /** 1-based, from a `:l`, `(l,c)`, `#Ll` or ` line l` suffix. */
   line?: number;
-  /** 1-based column number from a `:line:col` suffix, if present. */
   col?: number;
-  /** 0-based start index in the original line string. */
+  /** 0-based offsets in the logical line; end exclusive. */
   start: number;
-  /** 0-based exclusive end index in the original line string. */
   end: number;
 }
 
-// Characters that are legitimate path-terminators when found at the tail —
-// sentence punctuation and paired delimiters that shouldn't be part of the path.
-const TRAILING_JUNK = /[.,;)}\]'"]+$/;
+// VS Code's link limits (spec §3.1): proven defaults, no local data.
+export const MAX_LOGICAL_LINE = 2000;
+export const MAX_PATH_TOKENS = 10;
+export const MAX_TOKEN_LENGTH = 1024;
+
+// Always junk at a path's tail; `)` is junk only when unbalanced (see trimTrailing).
+const TRAILING_ALWAYS = new Set(['.', ',', ';', "'", '"', '`', '}', ']']);
 
 // Path character class — every char that can appear inside a path segment.
 // Explicitly excludes: colon (reserved for :line suffix), whitespace, quotes,
@@ -102,12 +104,27 @@ const FILENAME_EXTS = new Set([
   'ico',
   'bmp',
   'pdf',
+  // The language registry maps csv to plaintext, but a printed `z.csv` is a file (spec row 44).
+  'csv',
 ]);
+
+// Extensionless names the language registry doesn't know as a language (spec §3.1); Makefile,
+// Dockerfile and dotfiles like `.env` / `.gitignore` pass through langFromPath instead.
+const EXTENSIONLESS = new Set(['README', 'LICENSE', 'CODEOWNERS', 'Justfile', 'Procfile']);
 
 /** The extension (lowercase, no dot) of a bare filename, or '' if none. */
 function fileExt(name: string): string {
   const dot = name.lastIndexOf('.');
   return dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+}
+
+/** The false-positive gate for a separator-free token (`obj.foo`, `example.com`, `version 1.2`). */
+function isFileLikeName(name: string): boolean {
+  return (
+    FILENAME_EXTS.has(fileExt(name)) ||
+    EXTENSIONLESS.has(name) ||
+    langFromPath(name) !== 'plaintext'
+  );
 }
 
 // Candidate finder: looks for path-start characters and returns the raw match.
@@ -138,11 +155,18 @@ const PATH_RE = new RegExp(
     // `user@host/p`, `pkg.name/x` blocked too). Resolved against the session cwd like any
     // relative path; the host `pathExists` check is the false-positive filter, so only tokens
     // that name a real file/dir ever render as links.
-    `|(?<![\\w./\\\\:~@[-])${SEG}+(?:/${SEG}+)+` +
+    // A backslash separator (`src\index.ts`, row 48) and a trailing-slash dir (`src/`, row 45)
+    // count too.
+    `|(?<![\\w./\\\\:~@[-])${SEG}+(?:(?:[/\\\\]${SEG}+)+[/\\\\]?|/)` +
+    // Known extensionless names and dotfiles (rows 43); the gate in detectPathTokens filters
+    // the dotfile shape through the language registry. Listed before the bare-filename
+    // alternate so `.env.local` isn't split into a stem and a non-extension.
+    `|(?<![\\w./\\\\:~@[-])(?:README|LICENSE|CODEOWNERS|Makefile|Dockerfile|Containerfile|Justfile|Procfile|Gemfile|Rakefile)(?![\\w.-])` +
+    `|(?<![\\w./\\\\:~@[-])\\.[A-Za-z][\\w-]*(?:\\.[\\w-]+)*` +
     // Bare filename WITH an extension (single segment, no separator), e.g. `accent.ts`,
-    // `README.md`. Same start lookbehind. The extension is gated against FILENAME_EXTS in
+    // `README.md`. Same start lookbehind. The name is gated by isFileLikeName in
     // detectPathTokens (the regex just shapes the candidate); the host then suffix-searches
-    // the project for it (1 match opens, >1 opens a disambiguation dropdown).
+    // the session's roots for it.
     `|(?<![\\w./\\\\:~@[-])${SEG}+\\.[A-Za-z0-9]{1,8}` +
     `)` +
     // Optional :line[:col] suffix — note the path char class excludes `:` so
@@ -151,58 +175,145 @@ const PATH_RE = new RegExp(
   'g',
 );
 
+// git's diff headers prefix both sides with `a/` and `b/` (spec row 49).
+const DIFF_HEADER_RE = /^(?:diff --git |--- |\+\+\+ )/;
+// tsc / MSBuild `(l,c)` and GitHub `#Ll[-Lm]` suffixes, inside the matched text (PC allows them).
+const PAREN_POS_RE = /\((\d+)(?:,\s?(\d+))?\)$/;
+const HASH_LINE_RE = /#L(\d+)(?:-L?\d+)?$/;
+// ` line 42` / Python's `File "x.py", line 42`, just past the path.
+const LINE_WORD_RE = /^"?,?\s+line\s+(\d+)/;
+// A quoted span holding whitespace (row 39). The quote must open after a boundary and close
+// before one, so apostrophes in prose (`don't … it's`) never pair up.
+const QC = `[^"'<>|?*\\x00-\\x1f]`;
+const QUOTED_RE = new RegExp(`(?<=^|[\\s(=:[])(["'])(${QC}*\\s${QC}*)\\1(?=$|[\\s),.;:\\]])`, 'g');
+
+/** How many leading chars are wrapper, not path: backticks, then the opener of a first-segment
+ *  `(` whose `)` is not in that segment (`Update(src/x.ts)`, `(src/x.ts)`, `[t](src/x.ts)`).
+ *  A `(` after a separator is a real path char (`app/(group)/page.tsx`). `[` and `<` never reach
+ *  here: the path char class excludes them. */
+function leadingWrapper(text: string): number {
+  let i = 0;
+  while (text[i] === '`') i++;
+  const rest = text.slice(i);
+  const sep = rest.search(/[/\\]/);
+  const first = sep < 0 ? rest : rest.slice(0, sep);
+  const open = first.lastIndexOf('(');
+  if (open >= 0 && !first.includes(')', open)) i += open + 1;
+  return i;
+}
+
+/** Drop sentence punctuation and closers off the tail; a `)` only when unbalanced, so a route
+ *  group or an `(l,c)` suffix keeps its own. */
+function trimTrailing(text: string): string {
+  let t = text;
+  for (;;) {
+    const last = t[t.length - 1];
+    if (last === undefined) return t;
+    if (TRAILING_ALWAYS.has(last)) {
+      t = t.slice(0, -1);
+      continue;
+    }
+    if (last === ')' && t.split(')').length > t.split('(').length) {
+      t = t.slice(0, -1);
+      continue;
+    }
+    return t;
+  }
+}
+
+function isAbsoluteOrHome(p: string): boolean {
+  return p.startsWith('/') || p.startsWith('~/') || /^[A-Za-z]:\//.test(p);
+}
+
+/** Whether a forward-slashed path's shape is worth a host round-trip. */
+function isLinkable(p: string, activeCwd: string | undefined): boolean {
+  if (!p || p.length > MAX_TOKEN_LENGTH) return false;
+  if (!p.includes('/') && !isFileLikeName(p)) return false;
+  return isAbsoluteOrHome(p) || Boolean(activeCwd);
+}
+
+function quotedTokens(line: string, activeCwd: string | undefined): PathToken[] {
+  const out: PathToken[] = [];
+  QUOTED_RE.lastIndex = 0;
+  for (;;) {
+    const m = QUOTED_RE.exec(line);
+    if (m === null) break;
+    const content = m[2];
+    if (content !== content.trim()) continue;
+    const p = content.replace(/\\/g, '/');
+    if (!p.includes('/')) continue;
+    const last = p.slice(p.lastIndexOf('/') + 1);
+    if (last !== '' && !isFileLikeName(last)) continue;
+    if (!isLinkable(p, activeCwd)) continue;
+    const start = m.index + 1;
+    out.push({ raw: p, alts: [p], start, end: start + content.length });
+  }
+  return out;
+}
+
 /**
- * Detect path-like tokens in a terminal line, sorted by start offset. `line` may contain
- * ANSI codes — the regex's path char class excludes `[` and `\x1b`, so ANSI sequences
- * terminate matches cleanly. Relative paths are skipped when `activeCwd` is absent.
+ * Detect path-like tokens in a (logical) terminal line: the first MAX_PATH_TOKENS by start.
+ * `line` may contain ANSI codes — the path char class excludes `[` and `\x1b`, so ANSI
+ * sequences terminate matches cleanly. Relative paths are skipped when `activeCwd` is absent.
  */
 export function detectPathTokens(line: string, activeCwd: string | undefined): PathToken[] {
-  const tokens: PathToken[] = [];
+  if (line.length > MAX_LOGICAL_LINE) return [];
+  const diffHeader = DIFF_HEADER_RE.test(line);
+  const quoted = quotedTokens(line, activeCwd);
+  const tokens: PathToken[] = [...quoted];
   PATH_RE.lastIndex = 0;
 
   for (;;) {
     const m = PATH_RE.exec(line);
     if (m === null) break;
-    const rawPath = m[1];
-    const rawLineNum = m[2];
-    const rawColNum = m[3];
+    const lead = leadingWrapper(m[1]);
+    let start = m.index + lead;
+    const text = trimTrailing(m[1].slice(lead));
+    if (!text) continue;
 
-    const junk = TRAILING_JUNK.exec(rawPath);
-    const cleanPath = junk ? rawPath.slice(0, junk.index) : rawPath;
-    if (!cleanPath) continue;
-
-    // A BARE filename (no separator) only qualifies if its extension is allowlisted — this is
-    // the false-positive gate that keeps `obj.foo` / `example.com` from reaching the resolver.
-    const hasSep = /[/\\]/.test(cleanPath);
-    if (!hasSep && !FILENAME_EXTS.has(fileExt(cleanPath))) continue;
-
-    let resolved: string;
-    if (isAbsolutePath(cleanPath)) {
-      resolved = cleanPath.replace(/\\/g, '/');
+    let pathText = text;
+    let lineNum: number | undefined;
+    let colNum: number | undefined;
+    let end = start + text.length;
+    // A `:l` suffix only belongs to the path when nothing was trimmed between them.
+    if (m[2] !== undefined && text.length === m[1].length - lead) {
+      lineNum = Number(m[2]);
+      colNum = m[3] !== undefined ? Number(m[3]) : undefined;
+      end = m.index + m[0].length;
     } else {
-      if (!activeCwd) continue;
-      resolved = resolvePath(activeCwd, cleanPath);
+      const pos = PAREN_POS_RE.exec(text) ?? HASH_LINE_RE.exec(text);
+      if (pos) {
+        pathText = text.slice(0, pos.index);
+        lineNum = Number(pos[1]);
+        colNum = pos[2] !== undefined ? Number(pos[2]) : undefined;
+      } else {
+        const word = LINE_WORD_RE.exec(line.slice(end));
+        if (word) lineNum = Number(word[1]);
+      }
     }
 
-    const lineNum = rawLineNum !== undefined ? parseInt(rawLineNum, 10) : undefined;
-    const colNum = rawColNum !== undefined ? parseInt(rawColNum, 10) : undefined;
+    let p = pathText.replace(/\\/g, '/');
+    if (diffHeader && /^[ab]\//.test(p)) {
+      p = p.slice(2);
+      start += 2;
+      if (lineNum === undefined) end = start + p.length;
+    }
+    if (!isLinkable(p, activeCwd)) continue;
+    if (quoted.some((q) => start < q.end && q.start < end)) continue;
 
-    const start = m.index;
-    const matchEnd = m.index + m[0].length;
-    // With no numeric suffix, shrink end past any stripped trailing junk to the clean path.
-    const end = rawLineNum !== undefined ? matchEnd : start + cleanPath.length;
+    const alts = [p];
+    // A route group (`app/(group)/page.tsx`) may also be a printed suffix of a longer path.
+    const close = p.lastIndexOf(')/');
+    if (close >= 0 && p.lastIndexOf('(', close) >= 0) {
+      const tail = p.slice(close + 2);
+      if (tail && isLinkable(tail, activeCwd)) alts.push(tail);
+    }
 
-    tokens.push({
-      raw: cleanPath.replace(/\\/g, '/'),
-      path: resolved,
-      line: lineNum,
-      col: colNum,
-      start,
-      end,
-    });
+    tokens.push({ raw: p, alts, line: lineNum, col: colNum, start, end });
   }
 
-  return tokens;
+  tokens.sort((a, b) => a.start - b.start);
+  return tokens.slice(0, MAX_PATH_TOKENS);
 }
 
 /** An http(s)/file URL span in a terminal line (0-based `start`, exclusive `end`, like PathToken). */
@@ -311,29 +422,4 @@ export function filterCommitTokensByPathSpans(
   pathSpans: Array<{ start: number; end: number }>,
 ): CommitToken[] {
   return commits.filter((c) => !pathSpans.some((p) => c.start < p.end && p.start < c.end));
-}
-
-/** True when `p` looks like an absolute path (POSIX or Windows). */
-function isAbsolutePath(p: string): boolean {
-  return p.startsWith('/') || /^[A-Za-z]:[/\\]/.test(p);
-}
-
-/**
- * Resolve a relative path against a cwd (`./`, `../`) without node:path, since this module
- * must import in the browser renderer.
- */
-function resolvePath(base: string, rel: string): string {
-  const baseParts = base.replace(/\\/g, '/').replace(/\/$/, '').split('/');
-  const relParts = rel.replace(/\\/g, '/').split('/');
-
-  const parts = [...baseParts];
-  for (const part of relParts) {
-    if (part === '..') {
-      if (parts.length > 1) parts.pop();
-    } else if (part !== '.') {
-      parts.push(part);
-    }
-  }
-
-  return parts.join('/');
 }

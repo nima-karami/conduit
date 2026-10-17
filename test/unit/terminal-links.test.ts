@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { detectPathTokens, detectUrlTokens } from '../../webview/terminal-links';
+import {
+  detectPathTokens,
+  detectUrlTokens,
+  MAX_LOGICAL_LINE,
+  MAX_PATH_TOKENS,
+  MAX_TOKEN_LENGTH,
+} from '../../webview/terminal-links';
 
 // The detection module normalizes resolved paths to forward slashes internally.
 // This test suite is platform-neutral and asserts on the forward-slash form.
@@ -8,14 +14,14 @@ describe('detectPathTokens — POSIX absolute paths', () => {
   it('matches a bare absolute POSIX path', () => {
     const tokens = detectPathTokens('/home/user/project/app.tsx', undefined);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/home/user/project/app.tsx');
+    expect(tokens[0].raw).toBe('/home/user/project/app.tsx');
     expect(tokens[0].line).toBeUndefined();
   });
 
   it('matches with :line suffix', () => {
     const tokens = detectPathTokens('Error at /src/main.ts:109', undefined);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/src/main.ts');
+    expect(tokens[0].raw).toBe('/src/main.ts');
     expect(tokens[0].line).toBe(109);
     expect(tokens[0].col).toBeUndefined();
   });
@@ -23,7 +29,7 @@ describe('detectPathTokens — POSIX absolute paths', () => {
   it('matches with :line:col suffix', () => {
     const tokens = detectPathTokens('see /src/main.ts:42:7', undefined);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/src/main.ts');
+    expect(tokens[0].raw).toBe('/src/main.ts');
     expect(tokens[0].line).toBe(42);
     expect(tokens[0].col).toBe(7);
   });
@@ -31,25 +37,25 @@ describe('detectPathTokens — POSIX absolute paths', () => {
   it('strips trailing period', () => {
     const tokens = detectPathTokens('Look at /foo/bar.ts.', undefined);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/foo/bar.ts');
+    expect(tokens[0].raw).toBe('/foo/bar.ts');
   });
 
   it('strips trailing comma', () => {
     const tokens = detectPathTokens('/foo/bar.ts,', undefined);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/foo/bar.ts');
+    expect(tokens[0].raw).toBe('/foo/bar.ts');
   });
 
   it('strips trailing closing paren', () => {
     const tokens = detectPathTokens('(see /foo/bar.ts)', undefined);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/foo/bar.ts');
+    expect(tokens[0].raw).toBe('/foo/bar.ts');
   });
 
   it('strips trailing closing bracket', () => {
     const tokens = detectPathTokens('[/foo/bar.ts]', undefined);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/foo/bar.ts');
+    expect(tokens[0].raw).toBe('/foo/bar.ts');
   });
 
   it('reports correct start index', () => {
@@ -70,13 +76,13 @@ describe('detectPathTokens — Windows absolute paths', () => {
   it('matches C:\\ style path', () => {
     const tokens = detectPathTokens('C:\\Users\\foo\\bar.ts', undefined);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toMatch(/bar\.ts/);
+    expect(tokens[0].raw).toMatch(/bar\.ts/);
   });
 
   it('matches C:/ style path (forward slashes)', () => {
     const tokens = detectPathTokens('D:/work/project/index.js', undefined);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toMatch(/index\.js/);
+    expect(tokens[0].raw).toMatch(/index\.js/);
   });
 
   it('matches Windows path with :line suffix', () => {
@@ -99,13 +105,13 @@ describe('detectPathTokens — relative paths', () => {
   it('resolves ./ relative path against activeCwd', () => {
     const tokens = detectPathTokens('./src/app.tsx', CWD);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/project/sub/src/app.tsx');
+    expect(tokens[0].raw).toBe('./src/app.tsx');
   });
 
   it('resolves ../ relative path against activeCwd', () => {
     const tokens = detectPathTokens('../other/file.ts', CWD);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/project/other/file.ts');
+    expect(tokens[0].raw).toBe('../other/file.ts');
   });
 
   it('skips relative paths when activeCwd is absent', () => {
@@ -117,7 +123,7 @@ describe('detectPathTokens — relative paths', () => {
     const tokens = detectPathTokens('./src/app.tsx:42', CWD);
     expect(tokens).toHaveLength(1);
     expect(tokens[0].line).toBe(42);
-    expect(tokens[0].path).toBe('/project/sub/src/app.tsx');
+    expect(tokens[0].raw).toBe('./src/app.tsx');
   });
 
   it('resolves relative path with :line:col suffix', () => {
@@ -134,19 +140,19 @@ describe('detectPathTokens — bare project-relative paths (with separator)', ()
   it('matches a bare repo-relative path and resolves against cwd', () => {
     const tokens = detectPathTokens('see src/core/theme/accent.ts here', CWD);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/project/src/core/theme/accent.ts');
+    expect(tokens[0].raw).toBe('src/core/theme/accent.ts');
   });
 
   it('matches a two-segment bare relative path', () => {
     const tokens = detectPathTokens('edit webview/app.tsx', CWD);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/project/webview/app.tsx');
+    expect(tokens[0].raw).toBe('webview/app.tsx');
   });
 
   it('carries a :line:col suffix on a bare relative path', () => {
     const tokens = detectPathTokens('src/main.ts:42:7', CWD);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/project/src/main.ts');
+    expect(tokens[0].raw).toBe('src/main.ts');
     expect(tokens[0].line).toBe(42);
     expect(tokens[0].col).toBe(7);
   });
@@ -199,13 +205,13 @@ describe('detectPathTokens — bare filenames (v1, extension-gated)', () => {
 
   it('does not grab the host/path of a URL as a bare relative path', () => {
     const tokens = detectPathTokens('clone https://example.com/a/b please', CWD);
-    expect(tokens.every((t) => !t.path.includes('example.com'))).toBe(true);
+    expect(tokens.every((t) => !t.raw.includes('example.com'))).toBe(true);
   });
 
   it('strips trailing punctuation on a bare relative path', () => {
     const tokens = detectPathTokens('(see src/a.ts).', CWD);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/project/src/a.ts');
+    expect(tokens[0].raw).toBe('src/a.ts');
   });
 
   it('reports a span that covers exactly the matched path', () => {
@@ -238,20 +244,20 @@ describe('detectPathTokens — non-path prose', () => {
   it('handles multiple paths on one line', () => {
     const tokens = detectPathTokens('/foo/a.ts and /bar/b.ts', undefined);
     expect(tokens).toHaveLength(2);
-    expect(tokens[0].path).toBe('/foo/a.ts');
-    expect(tokens[1].path).toBe('/bar/b.ts');
+    expect(tokens[0].raw).toBe('/foo/a.ts');
+    expect(tokens[1].raw).toBe('/bar/b.ts');
   });
 
   it('does not swallow trailing double-quote into path', () => {
     const tokens = detectPathTokens('"/foo/bar.ts"', undefined);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/foo/bar.ts');
+    expect(tokens[0].raw).toBe('/foo/bar.ts');
   });
 
   it('does not swallow trailing single-quote into path', () => {
     const tokens = detectPathTokens("'/foo/bar.ts'", undefined);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/foo/bar.ts');
+    expect(tokens[0].raw).toBe('/foo/bar.ts');
   });
 });
 
@@ -263,20 +269,20 @@ describe('detectPathTokens — edge cases', () => {
   it('handles path at start of line', () => {
     const tokens = detectPathTokens('/foo/bar.ts: no such file', undefined);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/foo/bar.ts');
+    expect(tokens[0].raw).toBe('/foo/bar.ts');
   });
 
   it('handles ANSI escape codes surrounding a real path', () => {
     // \x1b[31m is a colour code; the path follows it.
     const tokens = detectPathTokens('\x1b[31m/src/main.ts\x1b[0m', undefined);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/src/main.ts');
+    expect(tokens[0].raw).toBe('/src/main.ts');
   });
 
   it('strips multiple trailing punctuation chars', () => {
     const tokens = detectPathTokens('/foo/bar.ts,)', undefined);
     expect(tokens).toHaveLength(1);
-    expect(tokens[0].path).toBe('/foo/bar.ts');
+    expect(tokens[0].raw).toBe('/foo/bar.ts');
   });
 
   it('does not match just a slash at word boundary', () => {
@@ -399,5 +405,255 @@ describe('detectPathTokens — abbreviated paths (... elision)', () => {
   it('captures a leading-elision path', () => {
     const tokens = detectPathTokens('edit .../webview/app.tsx please', 'C:/proj');
     expect(tokens.map((t) => t.raw)).toContain('.../webview/app.tsx');
+  });
+});
+
+// Spec 2026-10-16-terminal-path-links §2.2 / §3.1 — one case per matrix row the detector owns.
+describe('detectPathTokens — v2 matrix', () => {
+  const CWD = '/w';
+  const one = (line: string, cwd: string | undefined = CWD) => {
+    const tokens = detectPathTokens(line, cwd);
+    expect(tokens).toHaveLength(1);
+    const t = tokens[0];
+    return { ...t, span: line.slice(t.start, t.end) };
+  };
+
+  it('rows 1, 6, 7: plain, :l and :l:c keep today', () => {
+    expect(one('src/index.ts')).toMatchObject({ alts: ['src/index.ts'], raw: 'src/index.ts' });
+    expect(one('at src/index.ts:42')).toMatchObject({
+      alts: ['src/index.ts'],
+      line: 42,
+      span: 'src/index.ts:42',
+    });
+    expect(one('src/index.ts:42:7: error')).toMatchObject({
+      line: 42,
+      col: 7,
+      span: 'src/index.ts:42:7',
+    });
+    expect(one('(at src/index.ts:42:7)')).toMatchObject({
+      alts: ['src/index.ts'],
+      line: 42,
+      col: 7,
+    });
+  });
+
+  it('row 8: tsc/MSBuild (l,c) and (l)', () => {
+    expect(one('src/index.ts(42,7): error TS2322')).toMatchObject({
+      alts: ['src/index.ts'],
+      line: 42,
+      col: 7,
+      span: 'src/index.ts(42,7)',
+    });
+    expect(one('src/index.ts(42)')).toMatchObject({
+      alts: ['src/index.ts'],
+      line: 42,
+      col: undefined,
+    });
+  });
+
+  it('row 9: #L42 and #L42-L50', () => {
+    expect(one('src/index.ts#L42')).toMatchObject({
+      alts: ['src/index.ts'],
+      line: 42,
+      span: 'src/index.ts#L42',
+    });
+    expect(one('see src/index.ts#L42-L50.')).toMatchObject({
+      alts: ['src/index.ts'],
+      line: 42,
+      span: 'src/index.ts#L42-L50',
+    });
+  });
+
+  it('row 10: :42-50 keeps line 42', () => {
+    expect(one('src/index.ts:42-50')).toMatchObject({ alts: ['src/index.ts'], line: 42 });
+  });
+
+  it('row 11: " line 42" and Python `File "x.py", line 42`', () => {
+    expect(one('src/index.ts line 42')).toMatchObject({
+      alts: ['src/index.ts'],
+      line: 42,
+      span: 'src/index.ts',
+    });
+    expect(one('  File "x.py", line 42, in <module>')).toMatchObject({
+      alts: ['x.py'],
+      line: 42,
+      span: 'x.py',
+    });
+  });
+
+  it('row 24: backticks stripped', () => {
+    expect(one('edit `src/index.ts` now')).toMatchObject({
+      alts: ['src/index.ts'],
+      span: 'src/index.ts',
+    });
+    expect(one('`src/index.ts:42`')).toMatchObject({
+      alts: ['src/index.ts'],
+      line: 42,
+      span: 'src/index.ts:42',
+    });
+  });
+
+  it('row 25: quoted paths keep today', () => {
+    expect(one('"src/index.ts"')).toMatchObject({ alts: ['src/index.ts'], span: 'src/index.ts' });
+    expect(one("'src/index.ts'")).toMatchObject({ alts: ['src/index.ts'], span: 'src/index.ts' });
+  });
+
+  it('rows 26–28: paren wrapper, tool header and markdown link target', () => {
+    expect(one('(src/index.ts)')).toMatchObject({ alts: ['src/index.ts'], span: 'src/index.ts' });
+    expect(one('● Update(src/index.ts)')).toMatchObject({
+      alts: ['src/index.ts'],
+      span: 'src/index.ts',
+    });
+    expect(one('Read(./src/x.ts)')).toMatchObject({ alts: ['./src/x.ts'], span: './src/x.ts' });
+    expect(one('Write(index.ts)')).toMatchObject({ alts: ['index.ts'], span: 'index.ts' });
+    expect(one('Update(src/index.ts:42)')).toMatchObject({ alts: ['src/index.ts'], line: 42 });
+    expect(one('[index](src/index.ts)')).toMatchObject({
+      alts: ['src/index.ts'],
+      span: 'src/index.ts',
+    });
+  });
+
+  it('row 29: a Next.js route group stays whole, the post-paren tail is alts[1]', () => {
+    expect(one('app/(group)/page.tsx')).toMatchObject({
+      alts: ['app/(group)/page.tsx', 'page.tsx'],
+      span: 'app/(group)/page.tsx',
+    });
+  });
+
+  it('row 30: Codex shapes keep today', () => {
+    expect(one('⎿ Read src/index.ts (120 lines)')).toMatchObject({ alts: ['src/index.ts'] });
+    expect(one('• Edited src/index.ts (+3 -1)')).toMatchObject({ alts: ['src/index.ts'] });
+  });
+
+  it('row 31: trailing sentence punctuation trimmed', () => {
+    expect(one('See src/index.ts.')).toMatchObject({
+      alts: ['src/index.ts'],
+      span: 'src/index.ts',
+    });
+    expect(one('src/index.ts, and')).toMatchObject({ alts: ['src/index.ts'] });
+  });
+
+  it('row 32: Unicode ellipsis kept for host elision', () => {
+    expect(one('…/src/index.ts')).toMatchObject({ alts: ['…/src/index.ts'] });
+  });
+
+  it('rows 34–36: elided absolute and a mid-segment truncation', () => {
+    expect(one('G:\\work\\…\\src\\index.ts', undefined)).toMatchObject({
+      alts: ['G:/work/…/src/index.ts'],
+    });
+    expect(one('G:/work/repoB/.../index.ts', undefined)).toMatchObject({
+      alts: ['G:/work/repoB/.../index.ts'],
+    });
+    expect(one('…rc/util/a.ts')).toMatchObject({ alts: ['…rc/util/a.ts'] });
+  });
+
+  it('row 38: an unquoted span with spaces gives no token for the joined text', () => {
+    const tokens = detectPathTokens('repoA/src/my file.ts', CWD);
+    expect(tokens.map((t) => t.raw)).not.toContain('repoA/src/my file.ts');
+  });
+
+  it('row 39: a quoted span with spaces is tried whole', () => {
+    expect(one('"repoA/src/my file.ts"')).toMatchObject({
+      alts: ['repoA/src/my file.ts'],
+      span: 'repoA/src/my file.ts',
+    });
+    expect(one("open 'C:\\Program Files\\x\\y.ts' now", undefined)).toMatchObject({
+      alts: ['C:/Program Files/x/y.ts'],
+    });
+  });
+
+  it('row 39: apostrophes in prose are not quotes', () => {
+    const tokens = detectPathTokens("don't edit src/a.ts or it's bad", CWD);
+    expect(tokens.map((t) => t.raw)).toEqual(['src/a.ts']);
+  });
+
+  it('row 41: bare filename keeps today', () => {
+    expect(one('index.ts')).toMatchObject({ alts: ['index.ts'] });
+  });
+
+  it('row 43: known extensionless names and dotfiles', () => {
+    for (const name of [
+      'README',
+      'Makefile',
+      'Dockerfile',
+      '.env',
+      '.env.local',
+      '.gitignore',
+      'LICENSE',
+    ]) {
+      expect(one(`see ${name} here`)).toMatchObject({ alts: [name], span: name });
+    }
+    expect(detectPathTokens('use .map here', CWD)).toHaveLength(0);
+  });
+
+  it('row 44: extensions from the language registry', () => {
+    for (const name of ['foo.mts', 'x.lua', 'y.tf', 'z.csv', 'log.log']) {
+      expect(one(`see ${name}`)).toMatchObject({ alts: [name] });
+    }
+    expect(detectPathTokens('call obj.foo here', CWD)).toHaveLength(0);
+    expect(detectPathTokens('version 1.2', CWD)).toHaveLength(0);
+  });
+
+  it('row 45: a relative dir with a trailing slash', () => {
+    expect(one('cd src/')).toMatchObject({ alts: ['src/'], span: 'src/' });
+    expect(one('in webview/ and')).toMatchObject({ alts: ['webview/'] });
+    expect(one('src/core/')).toMatchObject({ alts: ['src/core/'] });
+    expect(detectPathTokens('a / b', CWD)).toHaveLength(0);
+  });
+
+  it('row 46: a bare dir name stays unlinked', () => {
+    expect(detectPathTokens('repoA', CWD)).toHaveLength(0);
+  });
+
+  it('row 47: absolute dir keeps today', () => {
+    expect(one('G:\\work\\repoA', undefined)).toMatchObject({ alts: ['G:/work/repoA'] });
+    expect(one('G:\\work\\repoA\\', undefined)).toMatchObject({ alts: ['G:/work/repoA/'] });
+  });
+
+  it('row 48: a relative backslash path', () => {
+    expect(one('src\\index.ts')).toMatchObject({ alts: ['src/index.ts'], span: 'src\\index.ts' });
+  });
+
+  it('row 49: diff-header a/ b/ prefixes stripped only on diff-header lines', () => {
+    const git = detectPathTokens('diff --git a/src/x.ts b/src/x.ts', CWD);
+    expect(git.map((t) => t.alts)).toEqual([['src/x.ts'], ['src/x.ts']]);
+    expect(git.map((t) => t.start)).toEqual([13, 24]);
+    expect(one('--- a/src/x.ts')).toMatchObject({ alts: ['src/x.ts'], span: 'src/x.ts' });
+    expect(one('+++ b/src/x.ts')).toMatchObject({ alts: ['src/x.ts'] });
+    expect(one('see a/src/x.ts')).toMatchObject({ alts: ['a/src/x.ts'] });
+  });
+
+  it('row 50: a scoped package path keeps today', () => {
+    expect(one('@scope/pkg/index.ts')).toMatchObject({ alts: ['@scope/pkg/index.ts'] });
+  });
+
+  it('row 51: a URL wins — every path token lies inside the URL span the pane drops it for', () => {
+    const line = 'http://localhost:3000/src/index.ts';
+    const [url] = detectUrlTokens(line);
+    expect(url.raw).toBe(line);
+    for (const t of detectPathTokens(line, CWD)) {
+      expect(t.start >= url.start && t.end <= url.end).toBe(true);
+    }
+  });
+
+  it('~ paths need no cwd', () => {
+    expect(one('~/foo/bar.ts', undefined)).toMatchObject({ alts: ['~/foo/bar.ts'] });
+  });
+
+  it('limits: the first 10 tokens by start; a token over 1024 chars is skipped', () => {
+    const line = Array.from({ length: 11 }, (_, i) => `src/f${i}.ts`).join(' ');
+    const tokens = detectPathTokens(line, CWD);
+    expect(tokens).toHaveLength(MAX_PATH_TOKENS);
+    expect(tokens[9].raw).toBe('src/f9.ts');
+    const long = `src/${'a'.repeat(MAX_TOKEN_LENGTH - 6)}.ts`;
+    expect(long.length).toBe(MAX_TOKEN_LENGTH + 1);
+    expect(detectPathTokens(`${long} src/ok.ts`, CWD).map((t) => t.raw)).toEqual(['src/ok.ts']);
+    expect(detectPathTokens(`src/a.ts ${'x'.repeat(MAX_LOGICAL_LINE)}`, CWD)).toHaveLength(0);
+  });
+
+  it('every token has raw === alts[0]', () => {
+    const tokens = detectPathTokens('a/b.ts app/(g)/p.tsx Update(c/d.ts)', CWD);
+    expect(tokens).toHaveLength(3);
+    for (const t of tokens) expect(t.raw).toBe(t.alts[0]);
   });
 });
