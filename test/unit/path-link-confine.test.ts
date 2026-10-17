@@ -249,6 +249,37 @@ describe('safeRealPathLeaf (injected fs)', () => {
     mapped.fsx.realpath = async () => '\\\\srv\\share\\x';
     expect(await safeRealPathLeaf('Z:/x', mapped.fsx, 'win32')).toBeNull();
   });
+
+  // v1 review r3: only a missing component is walked past; any other lstat failure fails closed.
+  it.each(['EACCES', 'EPERM', 'EIO', undefined])(
+    'an lstat failing with %s → null, never realpath',
+    async (code) => {
+      const { fsx, calls } = fakeFs(['G:/root']);
+      const lstat = fsx.lstat;
+      fsx.lstat = async (p) => {
+        if (p === 'G:/root/locked') throw Object.assign(new Error(String(code)), { code });
+        return lstat(p);
+      };
+      expect(await safeRealPathLeaf('G:/root/locked/x.ts', fsx, 'win32')).toBeNull();
+      expect(calls.some((c) => c.startsWith('realpath'))).toBe(false);
+    },
+  );
+
+  it.each(['ENOENT', 'ENOTDIR'])('an lstat failing with %s is a missing tail', async (code) => {
+    const { fsx } = fakeFs(['G:/root']);
+    fsx.lstat = async (p) => {
+      if (p === 'G:/root') return { isSymbolicLink: () => false };
+      throw Object.assign(new Error(code), { code });
+    };
+    expect(await safeRealPathLeaf('G:/root/a/x.ts', fsx, 'win32')).toBe('G:/root/a/x.ts');
+  });
+
+  // v1 review r3: `C:etc` is relative to C:'s per-process cwd, which the walk cannot know.
+  it.each(['C:etc', 'c:..\\x', 'C:'])('a drive-relative link target %j → null', async (to) => {
+    const { fsx, calls } = fakeFs(['G:/root', 'C:/etc', 'G:/root/C:etc'], { 'G:/root/l': to });
+    expect(await safeRealPathLeaf('G:/root/l/x.ts', fsx, 'win32')).toBeNull();
+    expect(calls.some((c) => c.startsWith('realpath'))).toBe(false);
+  });
 });
 
 describe('confineToRoots (fs, hostRealPathLeaf)', () => {

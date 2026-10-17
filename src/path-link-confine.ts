@@ -42,6 +42,12 @@ export const MAX_WALK_STEPS = 256;
 const slash = (p: string) => p.replace(/\\/g, '/');
 const join = (base: string, seg: string) => (base.endsWith('/') ? base + seg : `${base}/${seg}`);
 const DRIVE_ROOT_RE = /^[A-Za-z]:\//;
+const DRIVE_RELATIVE_RE = /^[A-Za-z]:(?![\\/])/;
+
+function isMissing(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
 
 /** `G:/` or `/` for an absolute (normalized, forward-slashed) path; null when relative. A win32
  *  `/x` is drive-relative, so it takes the drive of `from`. */
@@ -63,7 +69,7 @@ function parentOf(p: string, root: string): string {
  * lstat'ed and each link read before anything follows it: a link whose target is UNC-like is
  * refused before a realpath or stat could open an SMB connection to it (T8.4 security r1 H2).
  * Null refuses: a UNC-like link or result, a link chain past MAX_LINK_HOPS, a walk past
- * MAX_WALK_STEPS, or an unreadable link.
+ * MAX_WALK_STEPS, an unreadable link or component, or a drive-relative link target.
  */
 export async function safeRealPathLeaf(
   target: string,
@@ -100,9 +106,11 @@ export async function safeRealPathLeaf(
     let isLink: boolean;
     try {
       isLink = (await fs.lstat(next)).isSymbolicLink();
-    } catch {
-      // Missing (or unreadable): only the existing part is realpath'ed, once. The tail is joined
-      // lexically, so a `..` in it would climb back into folders whose links were never read.
+    } catch (err) {
+      // An unreadable component may still be a link, so only a missing one is walked past.
+      if (!isMissing(err)) return null;
+      // Only the existing part is realpath'ed, once. The tail is joined lexically, so a `..` in
+      // it would climb back into folders whose links were never read.
       if (pending.includes('..')) return null;
       const real = await realOf(resolved);
       if (real === null) return null;
@@ -120,6 +128,8 @@ export async function safeRealPathLeaf(
       return null;
     }
     if (isUncLike(to)) return null;
+    // `C:etc` is relative to that drive's per-process cwd, which the walk cannot know.
+    if (DRIVE_RELATIVE_RE.test(to)) return null;
     const toRoot = rootOf(to, platform, resolved);
     // A planted link to an already-mapped drive letter is still lstat'ed: one connect to a server
     // the user mapped, accepted (spec 2026-10-16-terminal-path-links §3.5 Confinement).
