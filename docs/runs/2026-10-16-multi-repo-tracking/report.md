@@ -114,3 +114,19 @@ Lane EXIT=0, both scenarios PASS with the §7 lag gate active (machine busy 0.03
 | Settle tail | 0 | 0 | 0 |
 
 The 800 ms cooldown costs +10 status per 15 s across 5 written repos (55 → 65) and buys p95 1,039 → 900 ms. A background session receives no deltas (it renders from the tracker's cache on switch-in, spec §2), so ticket 0's 0/50 in Phase A is by design. Spec §6 revival trigger (p95 > 1 s or git busy > 70 %): **not met** — the tracked set and tiers stay parked.
+
+## After engine + search scope (`7cb58eaf`, final)
+
+Lane EXIT=0, both scenarios PASS, gate active (machine busy 0.01 cap / 0.064 tickets). Evidence: `.autoloop/evidence/final-stress.log` (local, gitignored).
+
+| Metric | Baseline (before engine) | Tickets A | Tickets B | Cap (200) |
+|---|---|---|---|---|
+| git / status (15 s) | cap 819 | 98 / 65 | 89 / 65 | 70 / 52 |
+| `statusOutsideWritten` | tickets 248 | 0 | 0 | 0 |
+| **§7 refresh lag p95** | cap 6.6 s | **879 ms** | **797 ms** | **785 ms** |
+| Writes seen | cap 184/200 | 250/250 | 250/250; split session 50/50 | 200/200 |
+| Commit seen by ticket session | stale | 397 ms | | |
+| Host main-thread lag p95 | | 14 ms | 15 ms | 13 ms |
+| Idle git after the burst | | 0 | 0 | 0 |
+
+The search index (S3/S4 + four review rounds) adds no git while idle: the quick-open freshness signal only marks the list stale, and `ls-files` runs on demand. Git counts sit within run-to-run noise of S2b (79/80/66 → 98/89/70; S3/S4 to here ranged 90–98 on tickets A). Renderer responsiveness (advisory) is unchanged across S2b, S3/S4, r1 and final (tickets blockMs 4958–5831, maxStall ≈1 s; that 1 s frame gap predates the engine). Spec §6 revival trigger (p95 > 1 s or git busy > 70 %): **not met** — the tracked set stays parked. The 200-repo cap holds with margin (p95 785 ms vs the 1 s gate).
