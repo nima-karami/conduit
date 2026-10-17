@@ -20,5 +20,5 @@ export const TERM_LINK_STR = {
   reveal: 'Reveal in Explorer',
   openAsSession: 'Open as new session',
   workingHere: 'working here',
-  worktree: 'worktree',
+  worktree: 'Worktree',
 } as const;
