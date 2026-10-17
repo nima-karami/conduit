@@ -10,6 +10,8 @@ import { repoTagLabel } from './repo-picker-menu';
 export const FILTER_THRESHOLD = 9;
 
 export interface PickerRow {
+  /** Unique among the picker's rows (a React key). */
+  key: string;
   cand: PathCandidate;
   /** roots[rootIdx].name, or the last segment of repoRoot when outside every root. */
   repoName: string;
@@ -42,6 +44,7 @@ export function pickerRows(
     ].filter((x): x is string => !!x);
     const named = extras.length > 0 ? `${repoName} (${extras.join(', ')})` : repoName;
     return {
+      key: cand.absPath,
       cand,
       repoName,
       tag,

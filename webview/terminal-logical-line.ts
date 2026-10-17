@@ -105,6 +105,15 @@ function rowOf(ll: LogicalLine, offset: number): number {
   return i;
 }
 
+/** The text offset under 0-based cell `col` of 0-based buffer row `y`; null on a cell an Ink
+ *  indent skips, which no link covers (it would otherwise land in the row above). */
+export function offsetAtCell(ll: LogicalLine, y: number, col: number): number | null {
+  const row = y - ll.firstRow;
+  if (row < 0 || row >= ll.rowStarts.length) return null;
+  const indent = ll.rowIndents?.[row] ?? 0;
+  return col < indent ? null : ll.rowStarts[row] + col - indent;
+}
+
 /** Logical offsets (end exclusive) → xterm's 1-based, end-inclusive buffer range. */
 export function toBufferRange(
   ll: LogicalLine,

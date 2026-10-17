@@ -7942,9 +7942,15 @@ body.gh-resizing {
   letter-spacing: normal;
   text-transform: none;
 }
-/* The repo is what tells the rows apart, so it never ellipsizes; the path gives way. */
+/* The repo is what tells the rows apart, so the path gives way first: it takes only the room the
+   repo leaves (basis 0). A title too wide on its own — an Open Detected Link row is titled by its
+   token — ellipsizes rather than running past the frame (QA r1 D2). */
 .pathpick__repo {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
 }
 .pathpick__branch,
@@ -7954,7 +7960,7 @@ body.gh-resizing {
   font-size: calc(11px * var(--font-scale));
 }
 .pathpick__rel {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

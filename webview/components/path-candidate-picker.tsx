@@ -32,8 +32,8 @@ export interface PathCandidatePickerProps {
   mode: PickerMode;
   /** background = middle-click, files only. */
   onPick(row: PickerRow, how: 'foreground' | 'background'): void;
-  /** "Search all files…" (truncated only). */
-  onSearchAll(query: string): void;
+  /** "Search all files…" (truncated only); absent, the row is not offered. */
+  onSearchAll?(query: string): void;
   /** Returns focus to the terminal. */
   onClose(): void;
 }
@@ -55,7 +55,7 @@ export function PathCandidatePicker({
   const [active, setActive] = useState(0);
   // Rows re-filter or re-list under a pointer that may not move: each restarts the gate, so Enter
   // still takes the top match rather than whatever row slid under the cursor.
-  const hover = useHoverGate(JSON.stringify([query, rows.map((r) => r.cand.absPath)]));
+  const hover = useHoverGate(JSON.stringify([query, rows.map((r) => r.key)]));
   const baseId = useId();
   const listId = `${baseId}-list`;
   const inputRef = useRef<HTMLInputElement>(null);
@@ -67,9 +67,9 @@ export function PathCandidatePicker({
   const items: Item[] = useMemo(
     () => [
       ...visible.map((row): Item => ({ kind: 'row', row })),
-      ...(truncated ? [{ kind: 'searchAll' } as const] : []),
+      ...(truncated && onSearchAll ? [{ kind: 'searchAll' } as const] : []),
     ],
-    [visible, truncated],
+    [visible, truncated, onSearchAll],
   );
   const clamped = Math.min(active, Math.max(items.length - 1, 0));
   const itemId = (i: number) => `${baseId}-o${i}`;
@@ -87,7 +87,7 @@ export function PathCandidatePicker({
   const choose = (item: Item | undefined, how: 'foreground' | 'background') => {
     if (!item) return;
     if (item.kind === 'searchAll') {
-      if (how === 'foreground') onSearchAll(searchQueryOf(token));
+      if (how === 'foreground') onSearchAll?.(searchQueryOf(token));
       return;
     }
     if (how === 'background' && item.row.cand.isDir) return;
@@ -192,7 +192,7 @@ export function PathCandidatePicker({
           const { row } = item;
           return (
             <div
-              key={row.cand.absPath}
+              key={row.key}
               id={itemId(i)}
               role="option"
               aria-selected={isActive}

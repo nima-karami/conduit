@@ -60,9 +60,15 @@ import {
   detectUrlTokens,
   filterCommitTokensByPathSpans,
   MAX_PATH_TOKENS,
-  type PathToken,
 } from '../terminal-links';
-import { buildLogicalLine, toBufferRange } from '../terminal-logical-line';
+import { buildLogicalLine, offsetAtCell, toBufferRange } from '../terminal-logical-line';
+import {
+  capTokenKeys,
+  type LinkTarget,
+  pathLinksOf,
+  pathTokenKey,
+  type TokenLine,
+} from '../terminal-path-links-at';
 import { isViewportAtBottom, shouldHandleWheelLocally, wheelScrollLines } from '../terminal-scroll';
 import { attachScrollDiagnostics } from '../terminal-scroll-diagnostics';
 import { createTerminalTokenCache } from '../terminal-token-cache';
@@ -107,18 +113,11 @@ interface LinkResolution {
   roots: ResolveRoot[];
 }
 
-/** What a clicked path link needs to open a candidate: its cache entry and position. */
-interface LinkTarget {
-  key: string;
-  scope: string;
-  line?: number;
-  col?: number;
-}
-
 type PathLinkReply = Extract<HostToWebview, { type: 'resolvePathTokenResult' }>;
 
 /** A resolved path link: what a click, a right-click or the keyboard path acts on. */
 interface PathLinkEntry {
+  /** The alt that resolved (row 40), as printed. */
   token: string;
   found: LinkResolution;
   link: LinkTarget;
@@ -136,22 +135,6 @@ interface PickerState {
   mode: PickerMode;
   /** The keyboard path's list (row 60): one row per link, picking runs that link's click. */
   entries?: PathLinkEntry[];
-}
-
-/** The text a path token's link covers and what it opens. Row 40: the link covers the alt that
- *  resolved, and the `:l` printed after the longest alt is only that alt's. */
-function linkTargetOf(
-  tok: PathToken,
-  res: TokenResolution,
-  key: string,
-  scope: string,
-): { span: { start: number; end: number }; link: LinkTarget } {
-  const altIdx = res.alt ?? 0;
-  const own = !tok.altEnds || altIdx === 0;
-  return {
-    span: { start: tok.start, end: tok.altEnds?.[altIdx] ?? tok.end },
-    link: { key, scope, line: own ? tok.line : undefined, col: own ? tok.col : undefined },
-  };
 }
 
 /** The link under the pointer, tracked by the links' own hover/leave (xterm's current link is
@@ -305,10 +288,14 @@ export function TerminalPane({
   // Set by the init effect, which owns the path cache: a stale target's entry is evicted.
   const evictPathRef = useRef<(key: string, scope: string) => void>(() => {});
   // Set by the init effect, which owns the path cache: the resolved path links on the given
-  // buffer rows, or the one under `cell` on that row (row 60's keyboard path).
+  // buffer rows, newest first, or the one under `cell` on that row (row 60's keyboard path).
+  // `truncated`: more distinct tokens (`total`) were on those rows than one resolve takes.
   const pathLinksAtRef = useRef<
-    (rows: readonly number[], cell?: { col: number }) => Promise<PathLinkEntry[]>
-  >(async () => []);
+    (
+      rows: readonly number[],
+      cell?: { col: number },
+    ) => Promise<{ entries: PathLinkEntry[]; truncated: boolean; total: number }>
+  >(async () => ({ entries: [], truncated: false, total: 0 }));
   // Set by the init effect, which owns the reply subscription: one uncached host resolve of a
   // link URI (plan T8.3). Null without the bridge or on a timeout.
   const requestOnceRef = useRef<(uri: string) => Promise<PathLinkReply | null>>(async () => null);
@@ -639,7 +626,7 @@ export function TerminalPane({
       const scopeNow = () =>
         `${(cwdRef.current ?? '').replace(/\\/g, '/')}\0${rootsSigRef.current}`;
       const resolveCache = createTerminalTokenCache<LinkResolution>(
-        // A path token is its alts joined by NUL; no path char is NUL, so the split is exact.
+        // pathTokenKey joins a token's alts by NUL; no path char is NUL, so the split is exact.
         (batch) =>
           post({
             type: 'resolvePathToken',
@@ -686,7 +673,7 @@ export function TerminalPane({
         commitCache.dispose();
         for (const done of [...pendingOnce.values()]) done(null);
         requestOnceRef.current = async () => null;
-        pathLinksAtRef.current = async () => [];
+        pathLinksAtRef.current = async () => ({ entries: [], truncated: false, total: 0 });
       };
       evictPathRef.current = (key, scope) => resolveCache.evict(key, scope);
       // Folder keys of the roots the last reply resolved against: an fsChanged under one of them
@@ -791,7 +778,6 @@ export function TerminalPane({
             return;
           }
 
-          const keyOf = (tok: { alts: string[] }) => tok.alts.join('\0');
           const scope = scopeNow();
           // A host reply may never arrive (session disposed mid-flight); without a
           // bound the link callback would never fire and xterm would leave that line's
@@ -801,7 +787,7 @@ export function TerminalPane({
           void withTimeout(
             Promise.all([
               tokens.length > 0
-                ? resolveCache.get(tokens.map(keyOf), scope)
+                ? resolveCache.get(tokens.map(pathTokenKey), scope)
                 : Promise.resolve(new Map<string, LinkResolution>()),
               commitTokens.length > 0
                 ? commitCache.get(commitTokens.map((t) => t.raw))
@@ -818,16 +804,9 @@ export function TerminalPane({
               // Collected from the path links below; commit links then avoid overlapping a path.
               // (No need to seed URL spans here — both path and commit tokens were already filtered
               // against URLs upstream via overlapsUrl.)
-              const pathSpans: Array<{ start: number; end: number }> = [];
-              for (const tok of tokens) {
-                const key = keyOf(tok);
-                const found = resMap.get(key);
-                if (!found || found.res.candidates.length === 0) continue; // 0 candidates → plain text
-                const { span, link } = linkTargetOf(tok, found.res, key, scope);
-                // A word a longer path already took is its own token too; the earlier link wins.
-                if (pathSpans.some((p) => span.start < p.end && p.start < span.end)) continue;
-                pathSpans.push(span);
-                const entry: PathLinkEntry = { token: tok.raw, found, link, firstRow: ll.firstRow };
+              const pathLinks = pathLinksOf([{ firstRow: ll.firstRow, tokens }], resMap, scope);
+              const pathSpans = pathLinks.map((p) => p.span);
+              for (const { span, ...entry } of pathLinks) {
                 links.push({
                   range: rangeOf(span),
                   text: text.slice(span.start, span.end),
@@ -886,36 +865,34 @@ export function TerminalPane({
       pathLinksAtRef.current = async (rows, cell) => {
         const buf = term.buffer.active;
         const scope = scopeNow();
-        const picked = new Map<string, { tok: PathToken; firstRow: number }>();
+        const lines: TokenLine[] = [];
         for (const y of rows) {
           const ll = buildLogicalLine(buf, y, term.cols);
-          if (!ll) continue;
+          // A logical line spanning several of the rows is read once.
+          if (!ll || lines.at(-1)?.firstRow === ll.firstRow) continue;
+          const at = cell ? offsetAtCell(ll, y, cell.col) : undefined;
+          if (at === null) continue;
           const urls = detectUrlTokens(ll.text);
-          const rowIdx = y - ll.firstRow;
-          const at = cell ? ll.rowStarts[rowIdx] + cell.col - (ll.rowIndents?.[rowIdx] ?? 0) : -1;
-          for (const tok of detectPathTokens(ll.text, cwdRef.current)) {
-            if (urls.some((u) => tok.start < u.end && u.start < tok.end)) continue;
-            if (cell && !(tok.start <= at && at < tok.end)) continue;
-            const key = tok.alts.join('\0');
-            if (!picked.has(key) && picked.size < MAX_PATH_TOKENS) {
-              picked.set(key, { tok, firstRow: ll.firstRow });
-            }
-          }
+          const tokens = detectPathTokens(ll.text, cwdRef.current).filter(
+            (tok) => !urls.some((u) => tok.start < u.end && u.start < tok.end),
+          );
+          lines.push({ firstRow: ll.firstRow, tokens, ...(at !== undefined ? { at } : {}) });
         }
-        if (picked.size === 0) return [];
+        const { keys, truncated, total } = capTokenKeys(lines, MAX_PATH_TOKENS);
+        if (keys.length === 0) return { entries: [], truncated, total };
         const resMap = await withTimeout(
-          resolveCache.get([...picked.keys()], scope),
+          resolveCache.get(keys, scope),
           LINK_RESOLVE_TIMEOUT_MS,
           new Map<string, LinkResolution>(),
         );
-        const out: PathLinkEntry[] = [];
-        for (const [key, { tok, firstRow }] of picked) {
-          const found = resMap.get(key);
-          if (!found || found.res.candidates.length === 0) continue;
-          const { link } = linkTargetOf(tok, found.res, key, scope);
-          out.push({ token: tok.raw, found, link, firstRow });
+        const seen = new Set<string>();
+        const entries: PathLinkEntry[] = [];
+        for (const { span: _span, ...entry } of pathLinksOf(lines, resMap, scope)) {
+          if (seen.has(entry.link.key)) continue;
+          seen.add(entry.link.key);
+          entries.push(entry);
         }
-        return out;
+        return { entries, truncated, total };
       };
       // Test observability (opt-in, mirrors window.__terms): expose the live link provider so
       // e2e can invoke provideLinks/activate directly — clicking xterm's canvas links in the
@@ -1283,7 +1260,7 @@ export function TerminalPane({
     if (!term) return;
     const buf = term.buffer.active;
     const rows = Array.from({ length: term.rows }, (_, i) => buf.viewportY + i);
-    const entries = await pathLinksAtRef.current(rows);
+    const { entries, truncated, total } = await pathLinksAtRef.current(rows);
     if (entries.length === 0) {
       pushToast({ message: TERM_LINK_STR.noLinksOnScreen, variant: 'info' });
       return;
@@ -1294,6 +1271,8 @@ export function TerminalPane({
         lastPickRepoRoot: lastPick(sessionId),
       });
       const row: PickerRow = {
+        // Two links can share a top candidate; the link's own key is unique.
+        key: entry.link.key,
         cand: top,
         repoName: entry.token,
         tag: null,
@@ -1306,8 +1285,9 @@ export function TerminalPane({
       at: cursorCell(term).at,
       token: TERM_LINK_STR.linksOnScreen,
       rows: pickerEntries.map((p) => p.row),
-      total: entries.length,
-      truncated: false,
+      // Every distinct token on screen, as a candidate picker counts every match.
+      total: truncated ? total : entries.length,
+      truncated,
       link: entries[0].link,
       mode: { kind: 'open' },
       entries: pickerEntries.map((p) => p.entry),
@@ -1323,7 +1303,9 @@ export function TerminalPane({
     if (!term) return;
     const cell = cursorCell(term);
     const termItems = terminalMenuItems(term);
-    const [entry] = await pathLinksAtRef.current([cell.row], { col: cell.col });
+    const {
+      entries: [entry],
+    } = await pathLinksAtRef.current([cell.row], { col: cell.col });
     if (!entry) {
       setMenu({ ...cell.at, items: termItems, keyboard: true });
       return;
@@ -1535,10 +1517,15 @@ export function TerminalPane({
           truncated={picker.truncated}
           mode={picker.mode}
           onPick={(row, how) => void pickRow(row, how, picker)}
-          onSearchAll={(query) => {
-            setPicker(null);
-            onSearchAllFiles?.(query);
-          }}
+          // Open Detected Link lists links, not one token's matches: nothing to search for.
+          onSearchAll={
+            picker.entries
+              ? undefined
+              : (query) => {
+                  setPicker(null);
+                  onSearchAllFiles?.(query);
+                }
+          }
           onClose={closePicker}
         />
       )}

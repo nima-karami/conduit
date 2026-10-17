@@ -30,6 +30,7 @@ afterEach(async () => {
 });
 
 const row = (repo: string): PickerRow => ({
+  key: repo,
   cand: {
     absPath: `/w/${repo}/src/index.ts`,
     rootIdx: 0,
@@ -104,5 +105,42 @@ describe('PathCandidatePicker re-filter under a resting pointer', () => {
     });
     expect(onPick).toHaveBeenCalledTimes(1);
     expect(onPick.mock.calls[0][0].repoName).toBe('beta1');
+  });
+});
+
+// Review r1 SF2: Open Detected Link rows are links, and two links can share a top candidate.
+describe('PathCandidatePicker rows keyed by row.key', () => {
+  it('two rows with one candidate both render, with no duplicate-key warning', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    const shared = row('alpha');
+    await act(async () =>
+      root?.render(
+        createElement(PathCandidatePicker, {
+          at: { x: 5, y: 5 },
+          token: 'Links on screen',
+          rows: [
+            { ...shared, key: 'src/index.ts', repoName: 'src/index.ts' },
+            { ...shared, key: 'index.ts', repoName: 'index.ts' },
+          ],
+          total: 12,
+          truncated: true,
+          mode: { kind: 'open' },
+          onPick: () => {},
+          onClose: () => {},
+        }),
+      ),
+    );
+    expect(options().map((o) => o.querySelector('.pathpick__repo')?.textContent)).toEqual([
+      'src/index.ts',
+      'index.ts',
+    ]);
+    // Truncated without onSearchAll: the footer, never a "Search all files…" row.
+    expect(document.querySelector('.pathpick__search')).toBeNull();
+    expect(document.querySelector('.pathpick__foot')?.textContent).toBe('Showing 2 of 12');
+    expect(error.mock.calls.flat().join(' ')).not.toMatch(/same key/);
+    error.mockRestore();
   });
 });

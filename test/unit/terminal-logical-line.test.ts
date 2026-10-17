@@ -3,6 +3,7 @@ import { detectPathTokens, MAX_LOGICAL_LINE } from '../../webview/terminal-links
 import {
   type BufferLike,
   buildLogicalLine,
+  offsetAtCell,
   toBufferRange,
 } from '../../webview/terminal-logical-line';
 
@@ -120,6 +121,16 @@ describe('buildLogicalLine — Ink hard-wrap heuristic', () => {
       start: { x: 6, y: 2 },
       end: { x: 9, y: 2 },
     });
+  });
+
+  it('offsetAtCell: a cell in the Ink indent is on no offset, never the row above', () => {
+    const buf = fakeBuffer([{ text: 'G:/work/re' }, { text: '  po/x.ts' }], cols);
+    const ll = buildLogicalLine(buf, 0, cols) as NonNullable<ReturnType<typeof buildLogicalLine>>;
+    expect(offsetAtCell(ll, 1, 0)).toBeNull();
+    expect(offsetAtCell(ll, 1, 1)).toBeNull();
+    expect(offsetAtCell(ll, 1, 2)).toBe(10);
+    expect(offsetAtCell(ll, 0, 4)).toBe(4);
+    expect(offsetAtCell(ll, 2, 0)).toBeNull();
   });
 
   it('a row shorter than cols never joins', () => {
