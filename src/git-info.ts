@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { type GitFailure, gitFailureOf, runGitBin } from './git-exec';
+import { type GitFailure, gitFailureOf, gitFailureText, runGitBin } from './git-exec';
 import type { GitInfo, GitOperation } from './types';
 
 /**
@@ -447,9 +447,7 @@ export function switchBranch(
   return runGitBin(gitBin, ['checkout', ref], { cwd, timeoutMs, maxBuffer: MAX_BUFFER }).then(
     (r) => {
       if (r.ok) return { ok: true };
-      const message = (
-        r.stderr.trim() || (r.notFound ? 'git not found' : 'git checkout failed')
-      ).split('\n')[0];
+      const message = (r.stderr.trim() || gitFailureText(r, 'git checkout failed')).split('\n')[0];
       return { ok: false, reason: 'failed', message };
     },
   );

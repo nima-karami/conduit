@@ -61,12 +61,6 @@ runScenario('repo-rescan', async ({ page, log }) => {
     sid1,
     { timeout: 20000 },
   );
-  // No repo to wait on, so give the open scan of a one-file folder time to finish; repo-c must
-  // not exist yet when it runs.
-  await page.waitForTimeout(800);
-  assert((await repoNames(page, sid1)).length === 0, 'starts with no registered repo');
-  log('no repo detected on open ✓');
-
   // Open a SECOND session elsewhere — it becomes active, so the single live fs-watch follows
   // it, not `root`. (sibling temp dir: neither contains the other.)
   const other = mkdtempSync(join(tmpdir(), 'conduit-other-'));
@@ -76,6 +70,10 @@ runScenario('repo-rescan', async ({ page, log }) => {
   // Create a repo under the FIRST session's root while it is outside every watched folder.
   makeRepo(join(root, 'repo-c'));
   await page.waitForTimeout(800); // a stray fs-watch event would land here (there should be none)
+  // Checked here, after the open scan and any stray watch event had their time, so the post below
+  // is the only thing that can register repo-c.
+  assert((await repoNames(page, sid1)).length === 0, 'no repo registered before the refresh');
+  log('no repo registered before the refresh ✓');
 
   // Fire the refresh the renderer posts for the first session on focus/cwd-change. The fix
   // re-scans sub-repos for the session whose home contains this path → recovers repo-c.

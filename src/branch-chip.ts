@@ -80,12 +80,14 @@ export function branchChipModel(g: GitInfo | undefined): BranchChipModel {
 
 /** The worktree segment the chip shows. A ticket worktree is named after its repo, so beside a head
  *  that already reads that name it only repeats it (engine runtime QA4); the accessible name keeps
- *  it either way. */
+ *  it either way. Case-blind on every platform: a Windows folder can differ from git's spelling of
+ *  it only in case, and the two still read as one name. */
 export function chipWorktreeSegment(
   worktree: string | undefined,
   headName: string | undefined,
 ): string | undefined {
-  return worktree === undefined || worktree === headName ? undefined : worktree;
+  if (worktree === undefined) return undefined;
+  return worktree.toLowerCase() === headName?.toLowerCase() ? undefined : worktree;
 }
 
 export type SwitchOutcome = { announce: string } | { toast: string; variant: 'info' | 'error' };

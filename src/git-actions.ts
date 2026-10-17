@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { toLf } from './file-service';
-import { GIT_TIMEOUT, runGit } from './git-exec';
+import { GIT_TIMEOUT, gitFailureText, runGit } from './git-exec';
 import { type HunkRange, selectHunks } from './hunk-patch';
 import { isInsideRoot } from './path-guard';
 import { contentHash } from './review-marks';
@@ -323,7 +323,7 @@ async function gitExec(
     throw new Error(
       explainGitFailure(
         plan.args,
-        r.stderr.trim() || (r.notFound ? 'git not found' : `git exited with code ${r.code}`),
+        r.stderr.trim() || gitFailureText(r, `git exited with code ${r.code}`),
       ),
     );
   }

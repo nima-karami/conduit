@@ -31,6 +31,13 @@ export function gitFailureOf(r: GitResult): GitFailure | undefined {
   return 'failed';
 }
 
+/** Copy for a failure git printed nothing about, so a gone folder never reads as an exit code. */
+export function gitFailureText(r: GitResult, fallback: string): string {
+  if (r.cwdMissing) return 'folder not found';
+  if (r.notFound) return 'git not found';
+  return fallback;
+}
+
 export interface GitOpts {
   cwd: string;
   timeoutMs?: number;
@@ -82,7 +89,7 @@ export function runGitBin(gitBin: string, args: string[], opts: GitOpts): Promis
         // spawn reports a missing cwd as ENOENT too; reading that as "no git" latches every later
         // interrogation off (multi-repo-tracking engine review r2).
         const enoent = e.code === 'ENOENT';
-        const cwdMissing = enoent && !existsSync(opts.cwd);
+        const cwdMissing = enoent && !!opts.cwd && !existsSync(opts.cwd);
         const notFound = enoent && !cwdMissing;
         const truncated =
           e.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || /maxBuffer/i.test(e.message ?? '');

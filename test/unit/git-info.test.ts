@@ -421,6 +421,10 @@ d(
         expect(res.message.length).toBeGreaterThan(0);
       }
     });
+    it('switchBranch in a removed folder says "folder not found"', async () => {
+      const res = await switchBranch(path.join(mkTmp(), 'gone-wt'), 'main');
+      expect(res).toEqual({ ok: false, reason: 'failed', message: 'folder not found' });
+    });
     // Headroom for the real-git subprocess spawns under full-suite load (see above).
   },
   30_000,

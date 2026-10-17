@@ -134,14 +134,16 @@ async function setBarWidth(page, target) {
   return (await rect(page, '.files__bar, .repo-head')).width;
 }
 
-/** No other visible header child's rect intersects a header's chevron. */
+/** No other visible header child's rect intersects a header's chevron. A repo head nests its first
+ *  row in `.repo-head__line`, so that row's children count as the head's. */
 const chevronClear = (page, headSel) =>
   page.evaluate((hs) => {
     const bad = [];
     for (const head of document.querySelectorAll(hs)) {
       const chev = head.querySelector('.treechev')?.getBoundingClientRect();
       if (!chev) continue;
-      for (const kid of head.children) {
+      const kids = head.querySelectorAll(':scope > *, :scope > .repo-head__line > *');
+      for (const kid of kids) {
         if (kid.contains(head.querySelector('.treechev'))) continue;
         const r = kid.getBoundingClientRect();
         if (r.width === 0 || r.height === 0 || getComputedStyle(kid).display === 'none') continue;

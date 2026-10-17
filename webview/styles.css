@@ -3049,7 +3049,12 @@ body.resizing .panel__resize::after {
 .branch-chip--muted {
   color: var(--text-faint);
 }
+/* A track that may shrink to 0 gives the label no min-content of its own (see ChipLabel). */
 .branch-chip__label {
+  display: inline-grid;
+  grid-template-columns: minmax(0, max-content);
+}
+.branch-chip__text {
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -3059,11 +3064,12 @@ body.resizing .panel__resize::after {
   color: var(--text-dim);
   opacity: 0.85;
 }
+/* No min-width: 0 here. Its label has no min-content, so the automatic minimum is the glyph, and a
+   squeezed chip shrinks the labels instead of folding the glyph under its neighbour. */
 .branch-chip__worktree {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-width: 0;
 }
 /* Worktree marker echoes the kind-glyph colour language (--blue) used in the breadcrumb. */
 .branch-chip__worktree .branch-chip__glyph {
@@ -5674,16 +5680,24 @@ body.gh-resizing {
   font-family: var(--font-ui);
   font-size: calc(12px * var(--font-scale));
 }
-.treehead > .iconbtn {
+:is(.treehead, .repo-head__line) > .iconbtn {
   flex: none;
 }
 
 /* ---------- repo head (Changes tab, one per repo) ---------- */
-/* The sub-path wraps onto its own line under the name. */
+/* Two rows: the line (chevron, glyph, name, tag, chip) never wraps, and the sub-path sits under it. */
 .repo-head {
   container: repo-head / inline-size;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
   margin: 10px 0 2px;
+}
+.repo-head__line {
+  display: flex;
+  flex: 1 0 auto;
+  align-items: center;
+  gap: var(--treehead-gap);
+  min-width: 0;
 }
 .repo-head:first-child {
   margin-top: 2px;
@@ -5693,8 +5707,9 @@ body.gh-resizing {
   color: var(--accent);
 }
 /* The name keeps its width and the branch chip takes what is left (engine runtime QA4, which
-   reverses mf-changes §10's name-shrinks-first): the chip's zero basis below means it never wraps
-   and never squeezes the name; the name shrinks only once the chip has nothing left. */
+   reverses mf-changes §10's name-shrinks-first). On the one non-wrapping line the chip's zero basis
+   never squeezes the name: the chip gives up its labels first, down to its glyphs, and only then
+   does the name ellipsize. */
 .repo-head__name,
 .repo-head__picker {
   flex: 0 1 auto;
@@ -5752,22 +5767,22 @@ body.gh-resizing {
 /* On a narrow head the repo name wins over its tag, as on the Files bars. The group's aria-label
    already names the tag. */
 @container repo-head (max-width: 200px) {
-  .repo-head > .repo-head__tag {
+  .repo-head__line > .repo-head__tag {
     display: none;
   }
 }
 /* Gets only the room the name leaves, up to its own width; the branch chip's labels ellipsize
-   inside it. */
+   inside it. Its min-content is the chip's glyphs (the labels have none), so it never collapses
+   to a zero-width button. */
 .repo-head__chip {
   display: inline-flex;
   flex: 1 1 0;
   max-width: max-content;
-  min-width: 0;
+  min-width: min-content;
   align-self: stretch;
   margin-inline-start: auto;
 }
 .repo-head__sub {
-  flex: 1 0 100%;
   min-width: 0;
   /* Under the name: past the chevron column and the 13px folder glyph. */
   padding-inline-start: calc(var(--treehead-lead) + 2 * var(--treehead-gap) + 13px);

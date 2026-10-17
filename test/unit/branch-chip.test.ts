@@ -123,6 +123,11 @@ describe('chipWorktreeSegment', () => {
     expect(chipWorktreeSegment('repo-000', 'repo-000')).toBeUndefined();
   });
 
+  it('drops it when the two differ only in case (a Windows folder vs git spelling it)', () => {
+    expect(chipWorktreeSegment('Conduit', 'conduit')).toBeUndefined();
+    expect(chipWorktreeSegment('conduit', 'CONDUIT')).toBeUndefined();
+  });
+
   it('keeps a worktree segment that differs from the head name', () => {
     expect(chipWorktreeSegment('wt', 'repo-000')).toBe('wt');
   });

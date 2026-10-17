@@ -68,6 +68,12 @@ d('git-actions integration (real executor on a scratch repo)', () => {
     }
   });
 
+  it('a removed repo folder fails as "folder not found", not an exit code', async () => {
+    const gone = path.join(root, 'gone-wt');
+    const res = await executeGitAction({ root: gone, op: 'stageAll' });
+    expect(res).toEqual({ ok: false, error: 'folder not found' });
+  });
+
   it('stages a modified tracked file (status shows staged)', async () => {
     fs.writeFileSync(path.join(root, 'tracked.txt'), 'one\ntwo\n');
     expect(status(root).get('tracked.txt')).toBe(' M'); // unstaged

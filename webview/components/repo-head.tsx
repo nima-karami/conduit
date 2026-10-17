@@ -77,42 +77,44 @@ export function RepoHead({
         onContextMenu(e);
       }}
     >
-      {view === 'all' ? (
-        <button
-          type="button"
-          className="iconbtn iconbtn--sm repo-head__chev"
-          aria-expanded={!collapsed}
-          aria-controls={listId}
-          aria-label={collapsed ? STR.expand(head.label) : STR.collapse(head.label)}
-          onClick={onToggle}
-          onKeyDown={onControlKey}
-        >
-          <TreeChevron open={!collapsed} />
-        </button>
-      ) : (
-        <TreeChevronSpacer size="head" />
-      )}
-      <IconFolder size={13} className="repo-head__glyph" />
-      {view === 'active' && picker ? (
-        <button
-          ref={pickerRef}
-          type="button"
-          className="repo-head__picker"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          aria-label={STR.picker(head.label, picker.pinned)}
-          onClick={() => setMenuOpen((v) => !v)}
-          onKeyDown={onControlKey}
-        >
-          {name}
-          {picker.pinned && <IconPin size={11} className="repo-head__pin" />}
-          <IconChevronDown size={11} className="repo-head__caret" />
-        </button>
-      ) : (
-        name
-      )}
-      {view === 'all' && <RepoTagPill tag={tag} />}
-      <span className="repo-head__chip">{chip}</span>
+      <div className="repo-head__line">
+        {view === 'all' ? (
+          <button
+            type="button"
+            className="iconbtn iconbtn--sm repo-head__chev"
+            aria-expanded={!collapsed}
+            aria-controls={listId}
+            aria-label={collapsed ? STR.expand(head.label) : STR.collapse(head.label)}
+            onClick={onToggle}
+            onKeyDown={onControlKey}
+          >
+            <TreeChevron open={!collapsed} />
+          </button>
+        ) : (
+          <TreeChevronSpacer size="head" />
+        )}
+        <IconFolder size={13} className="repo-head__glyph" />
+        {view === 'active' && picker ? (
+          <button
+            ref={pickerRef}
+            type="button"
+            className="repo-head__picker"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label={STR.picker(head.label, picker.pinned)}
+            onClick={() => setMenuOpen((v) => !v)}
+            onKeyDown={onControlKey}
+          >
+            {name}
+            {picker.pinned && <IconPin size={11} className="repo-head__pin" />}
+            <IconChevronDown size={11} className="repo-head__caret" />
+          </button>
+        ) : (
+          name
+        )}
+        {view === 'all' && <RepoTagPill tag={tag} />}
+        <span className="repo-head__chip">{chip}</span>
+      </div>
       {head.sub && (
         <span className="repo-head__sub" dir="ltr">
           {head.sub}

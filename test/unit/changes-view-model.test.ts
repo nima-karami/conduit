@@ -254,6 +254,16 @@ describe('changesModel snapshot fields', () => {
     expect(notLoaded.linesPending).toBe(false);
   });
 
+  it('a clean repo still awaiting lines does not hold the header pending', () => {
+    const clean = changesModel({
+      session,
+      repoChanges: [{ ...entry(r, []), lines: false }],
+      view: 'all',
+    });
+    if (clean.kind !== 'ready') throw new Error(clean.kind);
+    expect(clean.linesPending).toBe(false);
+  });
+
   it('repoChangesOf carries stale and refreshedAt through to the head model', () => {
     const repoChanges = repoChangesOf([r], {
       '/w/a': snap([ch('a', false)], { stale: true, refreshedAt: 42 }),

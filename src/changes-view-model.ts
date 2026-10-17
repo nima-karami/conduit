@@ -136,7 +136,8 @@ export function changesModel(input: {
     added: loaded.reduce((a, c) => a + c.added, 0),
     removed: loaded.reduce((a, c) => a + c.removed, 0),
     loading,
-    linesPending: heads.some((h) => h.changes !== undefined && !h.lines),
+    // Same rule as the Review nav: a clean repo has no counts to wait on.
+    linesPending: heads.some((h) => !!h.changes?.length && !h.lines),
     allClean: !loading && loaded.length === 0,
   };
 }

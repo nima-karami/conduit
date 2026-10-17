@@ -113,7 +113,9 @@ describe('tree headers', () => {
     await render(repoHead('all', true));
     let el = host.querySelector('.repo-head');
     expect(el?.classList.contains('treehead')).toBe(true);
-    const first = el?.firstElementChild;
+    const line = el?.firstElementChild;
+    expect(line?.matches('.repo-head__line')).toBe(true);
+    const first = line?.firstElementChild;
     expect(first?.matches('button.repo-head__chev')).toBe(true);
     const chev = first?.querySelector('svg.treechev');
     expect(chev).not.toBeNull();
@@ -121,7 +123,11 @@ describe('tree headers', () => {
     await act(async () => root?.render(repoHead('active', false)));
     el = host.querySelector('.repo-head');
     expect(el?.classList.contains('treehead')).toBe(true);
-    expect(el?.firstElementChild?.matches('span.treechev-spacer--head')).toBe(true);
+    expect(
+      el
+        ?.querySelector(':scope > .repo-head__line')
+        ?.firstElementChild?.matches('span.treechev-spacer--head'),
+    ).toBe(true);
     expect(el?.querySelector('.repo-head__chev')).toBeNull();
   });
 });

@@ -26,6 +26,16 @@ const STR = {
   switchBranch: 'Switch branch',
 } as const;
 
+/** The outer span has a zero min-content so a squeezed chip floors at its glyphs, not its text;
+ *  the inner one ellipsizes. */
+function ChipLabel({ children, dir }: { children: React.ReactNode; dir?: 'ltr' }) {
+  return (
+    <span className="branch-chip__label" dir={dir}>
+      <span className="branch-chip__text">{children}</span>
+    </span>
+  );
+}
+
 export interface BranchChipProps {
   sessionId: string;
   repo: RepoInfo;
@@ -147,11 +157,7 @@ export function BranchChip({
             {ready.worktree !== undefined && (
               <span className="branch-chip__worktree">
                 <IconWorktree size={12} className="branch-chip__glyph" />
-                {worktree && (
-                  <span className="branch-chip__label" dir="ltr">
-                    {worktree}
-                  </span>
-                )}
+                {worktree && <ChipLabel dir="ltr">{worktree}</ChipLabel>}
               </span>
             )}
             {worktree && (
@@ -161,18 +167,14 @@ export function BranchChip({
             )}
             {ready.opLabel && <span className="branch-chip__op">{ready.opLabel}</span>}
             <IconBranch size={12} className="branch-chip__glyph" />
-            <span className="branch-chip__label" dir="ltr">
-              {ready.text}
-            </span>
+            <ChipLabel dir="ltr">{ready.text}</ChipLabel>
             {ready.tag && <span className="branch-chip__tag">{ready.tag}</span>}
             {ready.dirty && (
               <span className="branch-chip__dirty" title={STR.uncommitted} aria-hidden />
             )}
           </>
         ) : (
-          <span className="branch-chip__label">
-            {model.state === 'none' ? STR.none : STR.unknown}
-          </span>
+          <ChipLabel>{model.state === 'none' ? STR.none : STR.unknown}</ChipLabel>
         )}
         {model.state !== 'unknown' && (
           <IconChevronDown size={11} className="branch-chip__caret" aria-hidden />

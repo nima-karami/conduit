@@ -32,8 +32,11 @@ All notable user-facing changes to Conduit. Format follows
 - **Removing a worktree no longer freezes every branch label.** After `git worktree remove` on a
   worktree Conduit was showing, branch labels in every repo could stop updating until a restart.
 - **A worktree's repo name is no longer cut down to "r…".** In a repo heading, the name now keeps
-  its room and the branch label shrinks first. The label also stops repeating the worktree's name
-  when it is the same as the repo's.
+  its room and the branch label shrinks first, down to its icons. A long name stays on one line
+  in a narrow panel instead of pushing the branch label onto a line of its own. The label also stops
+  repeating the worktree's name when it is the same as the repo's, whatever the letter case.
+- **A git action in a deleted folder says "folder not found".** Staging or switching branch in a
+  repo whose folder was removed used to fail with "git exited with code null".
 - **The Changes and Review totals no longer show a partial count.** While some repos are still
   counting lines, the header shows only the placeholder instead of a placeholder next to a number
   that leaves those repos out.

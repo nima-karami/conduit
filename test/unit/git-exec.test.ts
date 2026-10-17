@@ -3,6 +3,7 @@ import {
   GIT_TIMEOUT,
   type GitResult,
   gitFailureOf,
+  gitFailureText,
   mapWithConcurrency,
   runGitBin,
 } from '../../src/git-exec';
@@ -86,6 +87,12 @@ describe('runGitBin (node as a fake binary)', () => {
     expect(r.cwdMissing).toBe(true);
   });
 
+  it('an empty cwd never reads as a missing folder', async () => {
+    const r = await runGitBin('definitely-not-a-real-binary-xyz', ['--version'], { cwd: '' });
+    expect(r.notFound).toBe(true);
+    expect(r.cwdMissing).toBeUndefined();
+  });
+
   it('feeds stdin when provided', async () => {
     const script =
       'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>process.stdout.write(d.toUpperCase()))';
@@ -139,5 +146,26 @@ describe('gitFailureOf', () => {
     expect(gitFailureOf(result({}))).toBe('failed');
     expect(gitFailureOf(result({ truncated: true }))).toBe('failed');
     expect(gitFailureOf(result({ ok: true, code: 0 }))).toBeUndefined();
+  });
+});
+
+describe('gitFailureText', () => {
+  const result = (over: Partial<GitResult>): GitResult => ({
+    ok: false,
+    stdout: '',
+    stdoutBuffer: Buffer.alloc(0),
+    stderr: '',
+    code: null,
+    notFound: false,
+    timedOut: false,
+    aborted: false,
+    truncated: false,
+    ...over,
+  });
+
+  it('names a missing folder or binary, else the caller fallback', () => {
+    expect(gitFailureText(result({ cwdMissing: true }), 'fallback')).toBe('folder not found');
+    expect(gitFailureText(result({ notFound: true }), 'fallback')).toBe('git not found');
+    expect(gitFailureText(result({ code: 1 }), 'fallback')).toBe('fallback');
   });
 });

@@ -710,6 +710,23 @@ where it is; history is not rewritten.
 | `test/e2e/git-indicator.e2e.mjs` | modify | AC11: no worktree segment beside a head of the same name; accessible name still says worktree |
 | `CHANGELOG.md` | modify | Worktree-remove freeze, stale copy, name priority, partial total |
 
+**Engine review r3 fix**
+
+| Path | Action | Responsibility |
+|---|---|---|
+| `webview/components/repo-head.tsx` | modify | First row wrapped in `.repo-head__line` (never wraps); sub-path its own row |
+| `webview/components/branch-chip.tsx` | modify | `ChipLabel`: zero-min-content label around an ellipsizing `.branch-chip__text` |
+| `webview/styles.css` | modify | `.repo-head` column of two rows; chip floored at its glyphs (`min-width: min-content`); worktree segment keeps its glyph; tag container query and `.iconbtn` rule follow the line |
+| `src/git-exec.ts` | modify | `gitFailureText` ("folder not found" / "git not found"); an empty cwd is never `cwdMissing` |
+| `src/git-actions.ts`, `src/git-info.ts` | modify | Failure copy via `gitFailureText` |
+| `src/changes-view-model.ts` | modify | Header pending only over repos with changes |
+| `src/branch-chip.ts` | modify | Worktree segment vs head name compared case-blind |
+| `test/e2e/repo-head-fit.e2e.mjs` | create | Long-name worktree head at 220 / 330 / 480 px: one line above the sub-path, labels go before the name, glyphs keep their room |
+| `test/e2e/tree-chevrons-helpers.mjs` | modify | `chevronClear` also checks the line's children |
+| `test/e2e/repo-rescan.e2e.mjs` | modify | No-repo premise asserted right before the refresh; open-scan wait dropped |
+| `test/unit/git-exec.test.ts`, `git-actions-integration.test.ts`, `git-info.test.ts`, `changes-view-model.test.ts`, `branch-chip.test.ts`, `tree-chevron.test.ts` | modify | r3 cases; RepoHead's chevron now leads the line |
+| `CHANGELOG.md` | modify | Name-priority line covers narrow panes and case; "folder not found" line |
+
 ## Scripts
 
 **None.** The only repeated routine is building git fixtures, and that is runtime test code
