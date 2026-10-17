@@ -19,6 +19,7 @@ import {
   type IndexedFile,
   MAX_ALTS,
   type PathCandidate,
+  parentFolder,
   type ResolveIndex,
   resolveTokens,
   type TokenResolution,
@@ -82,7 +83,14 @@ const slash = (p: string) => p.replace(/\\/g, '/');
 /** `uri`: an OSC 8 / file:// target, resolved by decode + confinement only (plan Contracts
  *  "v1 OSC 8 / file://"), never by the path rules. */
 type Entry =
-  | { kind: 'valid'; key: string; alts: string[]; uri: boolean }
+  | {
+      kind: 'valid';
+      key: string;
+      alts: string[];
+      /** Each kept alt's index among the renderer's alts: a reply's `alt` is the renderer's. */
+      altIdx: number[];
+      uri: boolean;
+    }
   | { kind: 'invalid'; key: string };
 
 /** Per-token validation at the renderer→host trust boundary (plan Decisions, blocker 3). */
@@ -96,9 +104,17 @@ function validate(tokens: unknown): Entry[] {
       return { kind: 'invalid', key: '' };
     }
     const key = alts.join('\0');
-    const kept = alts.slice(0, MAX_ALTS).filter((a) => a.length > 0 && a.length <= MAX_ALT_LENGTH);
-    return kept.length > 0
-      ? { kind: 'valid', key, alts: kept, uri: obj.target === 'uri' }
+    const altIdx = alts
+      .slice(0, MAX_ALTS)
+      .flatMap((a, i) => (a.length > 0 && a.length <= MAX_ALT_LENGTH ? [i] : []));
+    return altIdx.length > 0
+      ? {
+          kind: 'valid',
+          key,
+          alts: altIdx.map((i) => alts[i]),
+          altIdx,
+          uri: obj.target === 'uri',
+        }
       : { kind: 'invalid', key };
   });
 }
@@ -313,7 +329,9 @@ export function createPathLinkResolver(deps: PathLinkResolverDeps): PathLinkReso
       const u = uriResults.get(e);
       if (u) return u;
       // The trimmed alts resolved; the renderer's pending token is the original join.
-      return { ...resolved[next++], key: e.key };
+      const { alt, ...res } = resolved[next++];
+      const orig = e.altIdx[alt ?? 0];
+      return { ...res, key: e.key, ...(orig > 0 ? { alt: orig } : {}) };
     });
     return { cwd, rootsSig, roots, results };
   };
@@ -356,8 +374,7 @@ export function createPathLinkResolver(deps: PathLinkResolverDeps): PathLinkReso
       )
         rootIdx = i;
     });
-    const folder =
-      kind === 'dir' ? real : real.slice(0, Math.max(real.lastIndexOf('/'), 0)) || real;
+    const folder = kind === 'dir' ? real : parentFolder(real);
     const top = knownRepoKeys.has(key(folder))
       ? folder
       : await lease.io(() => deps.topLevel(folder)).catch(() => '');
@@ -367,7 +384,12 @@ export function createPathLinkResolver(deps: PathLinkResolverDeps): PathLinkReso
       rootIdx,
       relToRoot: rootIdx >= 0 ? relUnder(roots[rootIdx].abs, real) : real,
       repoRoot,
-      relToRepo: isAncestorOf(key(repoRoot), realKey) ? relUnder(repoRoot, real) : real,
+      // Outside any repo, relative to the user root it was confined to (QA r1 D3).
+      relToRepo: top
+        ? isAncestorOf(key(repoRoot), realKey)
+          ? relUnder(repoRoot, real)
+          : real
+        : relUnder(isAncestorOf(key(confined.root), realKey) ? confined.root : folder, real),
       isDir: kind === 'dir',
       strength: 'exact-cwd',
     };

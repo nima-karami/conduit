@@ -614,13 +614,14 @@ describe('resolveTokens — v2 matrix', () => {
       expect(r.candidates[0]).toMatchObject({ repoRoot: '/w/repoA', relToRepo: 'src/index.ts' });
     });
 
-    it('a file under a non-git home outside any repo → the containing folder', async () => {
+    // QA r1 D3: Copy relative path is relative to the user root, Open as new session the folder.
+    it('a file under a non-git home outside any repo → the containing folder, relative to home', async () => {
       const { deps } = wFs(['/w/notes/x.md']);
       const r = await one('notes/x.md', wCtx(), deps);
       expect(r.candidates[0]).toMatchObject({
         rootIdx: 0,
         repoRoot: '/w/notes',
-        relToRepo: 'x.md',
+        relToRepo: 'notes/x.md',
       });
     });
 

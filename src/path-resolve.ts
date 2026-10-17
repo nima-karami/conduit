@@ -139,6 +139,7 @@ class Resolution {
   readonly fold: (s: string) => string;
   readonly rootKeys: string[];
   private readonly rootIdxByKey: Map<string, number>;
+  private readonly userRootIdxByKey = new Map<string, number>();
   /** First index listing each root, built once: a find() per root per alt made a 200-root
    *  resolve quadratic (review r1 PERF). */
   private readonly coveringByRoot = new Map<number, ResolveIndex>();
@@ -153,6 +154,7 @@ class Resolution {
     this.rootIdxByKey = new Map();
     this.rootKeys.forEach((k, i) => {
       if (!this.rootIdxByKey.has(k)) this.rootIdxByKey.set(k, i);
+      if (ctx.roots[i].userChosen && !this.userRootIdxByKey.has(k)) this.userRootIdxByKey.set(k, i);
     });
     for (const ix of ctx.indexes) {
       for (const i of ix.coveredRootIdx)
@@ -176,16 +178,20 @@ class Resolution {
 
   /** Walks the path's ancestors against a key map: a scan of every root per candidate made a
    *  200-root resolve quadratic (plan Slice 6 profile). */
-  deepestRoot(absPath: string): number {
+  deepestRoot(absPath: string, byKey = this.rootIdxByKey): number {
     let cur = this.keyOf(absPath);
     for (;;) {
-      const idx = this.rootIdxByKey.get(cur);
+      const idx = byKey.get(cur);
       if (idx !== undefined) return idx;
       if (cur === '/' || cur.endsWith(':/') || !cur.includes('/')) return -1;
       const cut = cur.lastIndexOf('/');
       const parent = cut === 0 ? '/' : cur.slice(0, cut);
       cur = /^[a-z]:$/i.test(parent) ? `${parent}/` : parent;
     }
+  }
+
+  deepestUserRoot(absPath: string): number {
+    return this.deepestRoot(absPath, this.userRootIdxByKey);
   }
 
   /** A UNC path may only be touched under a user-chosen UNC root (plan: resolver rule 2). */
@@ -435,17 +441,16 @@ async function finalize(key: string, found: Found[], r: Resolution): Promise<Tok
   const candidates = await Promise.all(
     [...byPath.values()].map(async (f): Promise<PathCandidate> => {
       const rootIdx = r.deepestRoot(f.absPath);
-      const folder = f.isDir
-        ? f.absPath
-        : f.absPath.slice(0, Math.max(f.absPath.lastIndexOf('/'), 0)) || f.absPath;
+      const folder = f.isDir ? f.absPath : parentFolder(f.absPath);
       const fromRoot = rootIdx >= 0 ? await r.topLevel(ctx.roots[rootIdx].abs) : '';
-      const repoRoot = fromRoot || (await r.topLevel(folder)) || normalizeAbs(folder, ctx.platform);
+      const top = fromRoot || (await r.topLevel(folder));
+      const repoRoot = top || normalizeAbs(folder, ctx.platform);
       return {
         absPath: f.absPath,
         rootIdx,
         relToRoot: rootIdx >= 0 ? relTo(ctx.roots[rootIdx].abs, f.absPath) : f.absPath,
         repoRoot,
-        relToRepo: relTo(repoRoot, f.absPath),
+        relToRepo: relTo(top || copyBaseOutsideRepo(r, f.absPath, repoRoot), f.absPath),
         isDir: f.isDir,
         strength: f.strength,
       };
@@ -467,6 +472,21 @@ async function finalize(key: string, found: Found[], r: Resolution): Promise<Tok
     truncated: candidates.length > cap,
     total: candidates.length,
   };
+}
+
+/** The folder holding `abs` (forward-slashed); a drive or posix root keeps its separator. */
+export function parentFolder(abs: string): string {
+  const cut = abs.lastIndexOf('/');
+  if (cut < 0) return abs;
+  const head = abs.slice(0, cut);
+  return head === '' || /^[A-Za-z]:$/.test(head) ? abs.slice(0, cut + 1) : head;
+}
+
+/** Copy relative path outside any repo: relative to the user root the file is under, not its own
+ *  folder, which would leave only its name (QA r1 D3). */
+function copyBaseOutsideRepo(r: Resolution, abs: string, folder: string): string {
+  const u = r.deepestUserRoot(abs);
+  return u >= 0 ? r.ctx.roots[u].abs : folder;
 }
 
 /** Never rejects: a throwing stat or topLevel counts as a miss or as ''. Trusts its input — the

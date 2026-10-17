@@ -176,6 +176,17 @@ describe('createPathLinkResolver', () => {
       expect(gone).toMatchObject({ key: long, error: 'invalid' });
     });
 
+    it("res.alt indexes the renderer's alts, not the host's trimmed list", async () => {
+      const { resolver } = make({ sessions: { s1: session() }, files: ['/w/ok'] });
+      const long = 'x'.repeat(1025);
+      const [two] = (await resolver.resolve('s1', [{ alts: [long, 'miss', 'ok'] }])).results;
+      expect(two.alt).toBe(2);
+      const [one] = (await resolver.resolve('s1', [{ alts: [long, 'ok'] }])).results;
+      expect(one.alt).toBe(1);
+      const [zero] = (await resolver.resolve('s1', [{ alts: ['ok', long] }])).results;
+      expect(zero.alt).toBeUndefined();
+    });
+
     it('a non-array `tokens` → results []', async () => {
       const { resolver } = make({ sessions: { s1: session() } });
       expect((await resolver.resolve('s1', 'nope')).results).toEqual([]);
@@ -478,6 +489,16 @@ describe('createPathLinkResolver', () => {
     expect(topLevelCalls).toEqual([]);
   });
 
+  it('a file outside any repo copies relative to its user root, opens as a session on its folder (QA r1 D3)', async () => {
+    const { resolver } = make({ sessions: { s1: session() }, files: ['/w/docs/notes/a.md'] });
+    const [r] = (await resolver.resolve('s1', [{ alts: ['docs/notes/a.md'] }])).results;
+    expect(r.candidates[0]).toMatchObject({
+      absPath: '/w/docs/notes/a.md',
+      repoRoot: '/w/docs/notes',
+      relToRepo: 'docs/notes/a.md',
+    });
+  });
+
   it('the reply carries the live cwd used, the roots and the rootsSig', async () => {
     const s = session({ cwd: '/w/repoA', repos: [repo('/w/repoA')] });
     const { resolver } = make({ sessions: { s1: s } });
@@ -674,6 +695,33 @@ describe("createPathLinkResolver target:'uri'", () => {
     const { results } = await resolver.resolve('s1', [{ alts: ['/w/a.ts'], target: 'URI' }]);
     expect(results[0].candidates.map((c) => c.absPath)).toEqual(['/w/a.ts']);
     expect(realCalls).toEqual([]);
+  });
+
+  it('a file at a drive root: its folder keeps the separator (G:/, not G:)', async () => {
+    const { resolver, topLevelCalls } = make({
+      sessions: { s1: session({ home: 'G:/' }) },
+      platform: 'win32',
+      caseSensitive: false,
+      files: ['G:/a.ts'],
+    });
+    const { results } = await resolver.resolve('s1', [uri('file:///G:/a.ts')]);
+    expect(results[0].candidates[0]).toMatchObject({ absPath: 'G:/a.ts', repoRoot: 'G:/' });
+    expect(topLevelCalls).toEqual(['G:/']);
+  });
+
+  it('a file at the posix root: its folder is /', async () => {
+    const { resolver } = make({ sessions: { s1: session({ home: '/' }) }, files: ['/a.ts'] });
+    const { results } = await resolver.resolve('s1', [uri('file:///a.ts')]);
+    expect(results[0].candidates[0]).toMatchObject({ absPath: '/a.ts', repoRoot: '/' });
+  });
+
+  it('outside any repo: relative to the user root it is under; Open as session keeps its folder (QA r1 D3)', async () => {
+    const { resolver } = make({ sessions: { s1: session() }, files: ['/w/docs/notes/a.md'] });
+    const { results } = await resolver.resolve('s1', [uri('file:///w/docs/notes/a.md')]);
+    expect(results[0].candidates[0]).toMatchObject({
+      repoRoot: '/w/docs/notes',
+      relToRepo: 'docs/notes/a.md',
+    });
   });
 
   it('a uri only uses its first alt', async () => {
