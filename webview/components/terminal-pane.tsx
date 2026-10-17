@@ -504,7 +504,8 @@ export function TerminalPane({
         // about:blank — so the warning appeared and the link never opened.
         linkHandler: {
           // OSC 8 file targets (plan T8.3, behind the T8.4 review). Every scheme now reaches
-          // activate, where dispatchLinkUri drops all but file and http(s)/mailto.
+          // activate, where dispatchLinkUri drops all but file and http(s). xterm gives an OSC 8
+          // link no decorations hook, so an inert scheme still underlines (T8.4 r1 H5).
           allowNonHttpProtocols: true,
           activate: (event: MouseEvent, uri: string) => {
             const action = terminalLinkMiddleAction(event.button, navigator.platform);
@@ -517,11 +518,14 @@ export function TerminalPane({
                   action === 'background' ? 'background' : undefined,
                 );
               }),
+              'osc8',
             );
           },
           hover: (_event: MouseEvent, uri: string) => {
             hoveredLinkRef.current =
-              classifyLinkUri(uri) === 'file' ? { kind: 'osc8-file', uri } : { kind: 'url' };
+              classifyLinkUri(uri, 'osc8') === 'file'
+                ? { kind: 'osc8-file', uri }
+                : { kind: 'url' };
           },
           leave: () => {
             hoveredLinkRef.current = null;
@@ -760,6 +764,7 @@ export function TerminalPane({
                     action === 'background' ? 'background' : undefined,
                   );
                 }),
+                'printed',
               );
             },
             hover(_event: MouseEvent, _text: string) {

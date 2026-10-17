@@ -148,7 +148,8 @@ describe('dispatchLinkUri', () => {
     (uri) => {
       for (const bridge of [true, false]) {
         const s = sinks(bridge);
-        expect(dispatchLinkUri(uri, s)).toBe('ignore');
+        expect(dispatchLinkUri(uri, s, 'osc8')).toBe('ignore');
+        expect(dispatchLinkUri(uri, s, 'printed')).toBe('ignore');
         expect(s.openFile).not.toHaveBeenCalled();
         expect(s.openExternal).not.toHaveBeenCalled();
         expect(s.windowOpen).not.toHaveBeenCalled();
@@ -159,7 +160,7 @@ describe('dispatchLinkUri', () => {
   it('a file URI goes to openFile only, never openExternal or window.open', () => {
     for (const bridge of [true, false]) {
       const s = sinks(bridge);
-      expect(dispatchLinkUri('file:///w/a.ts', s)).toBe('file');
+      expect(dispatchLinkUri('file:///w/a.ts', s, 'osc8')).toBe('file');
       expect(s.openFile).toHaveBeenCalledWith('file:///w/a.ts');
       expect(s.openExternal).not.toHaveBeenCalled();
       expect(s.windowOpen).not.toHaveBeenCalled();
@@ -168,12 +169,29 @@ describe('dispatchLinkUri', () => {
 
   it('an external URI goes to the host, and to window.open only without the bridge', () => {
     const withBridge = sinks(true);
-    dispatchLinkUri('https://x', withBridge);
+    dispatchLinkUri('https://x', withBridge, 'osc8');
     expect(withBridge.openExternal).toHaveBeenCalledWith('https://x');
     expect(withBridge.windowOpen).not.toHaveBeenCalled();
     const without = sinks(false);
-    dispatchLinkUri('https://x', without);
+    dispatchLinkUri('https://x', without, 'printed');
     expect(without.windowOpen).toHaveBeenCalledWith('https://x');
     expect(without.openFile).not.toHaveBeenCalled();
+  });
+
+  // T8.4 security r1 H1: an OSC 8 label can hide its target, so a hidden mailto: never leaves.
+  it('a mailto: behind an OSC 8 label reaches no sink; a printed one still opens', () => {
+    for (const bridge of [true, false]) {
+      const s = sinks(bridge);
+      expect(dispatchLinkUri('mailto:a@b', s, 'osc8')).toBe('ignore');
+      expect(dispatchLinkUri('MAILTO:a@b', s, 'osc8')).toBe('ignore');
+      expect(s.openFile).not.toHaveBeenCalled();
+      expect(s.openExternal).not.toHaveBeenCalled();
+      expect(s.windowOpen).not.toHaveBeenCalled();
+    }
+    const printed = sinks(true);
+    expect(dispatchLinkUri('mailto:a@b', printed, 'printed')).toBe('external');
+    expect(printed.openExternal).toHaveBeenCalledWith('mailto:a@b');
+    expect(classifyLinkUri('mailto:a@b', 'osc8')).toBe('ignore');
+    expect(classifyLinkUri('https://x', 'osc8')).toBe('external');
   });
 });
