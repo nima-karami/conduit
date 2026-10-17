@@ -35,6 +35,7 @@ import { loadAgents, readBlob, readFileState } from '../src/config';
 import type { TruncatedBy } from '../src/content-search';
 import { searchContentFs } from '../src/content-search-fs';
 import { decideCrashRecovery } from '../src/crash-recovery';
+import { createCwdReportGate } from '../src/cwd-report-gate';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
 import { ExpiringCache } from '../src/expiring-cache';
 import { indexToSearchHits, walkFilesAsync } from '../src/file-search';
@@ -122,7 +123,12 @@ import {
 } from '../src/outgoing-paths';
 import { resolveOwningSession } from '../src/owning-session';
 import { isInsideAnyRoot, isInsideRoot, realPathLeaf } from '../src/path-guard';
-import { type IndexedFile, resolveToken, type TokenResolution } from '../src/path-resolve';
+import { userRootsOf } from '../src/path-link-roots';
+import {
+  type IndexedFile,
+  resolveToken,
+  type LegacyTokenResolution as TokenResolution,
+} from '../src/path-resolve';
 import {
   parseDocs,
   parseSessions,
@@ -471,6 +477,19 @@ const statKind = (absPath: string): 'file' | 'dir' | null => {
   } catch {
     return null;
   }
+};
+
+/** Async existence + kind; null on a miss (ENOENT, EPERM — the caller only asks "is it there"). */
+const statKindAsync = (absPath: string): Promise<'file' | 'dir' | null> =>
+  fs.promises.stat(absPath).then(
+    (st) => (st.isDirectory() ? 'dir' : 'file'),
+    () => null,
+  );
+
+// Path-token and cwd-report path rules take the platform injected (src/path-token-normalize.ts).
+const PATH_LINK_OPTS = {
+  platform: process.platform === 'win32' ? ('win32' as const) : ('posix' as const),
+  caseSensitive: process.platform === 'linux',
 };
 
 // path-links v1: cached briefly so files created after the cache was built still become
@@ -1306,6 +1325,23 @@ app.whenReady().then(() => {
   // Per-session CWD scanners: parse OSC cwd-report sequences from terminal output
   // to track the live working directory (E2a).
   const cwdScanners = new Map<string, CwdScanner>();
+  // Reported cwds are untrusted output: UNC refused without fs, the rest stat'ed off-thread.
+  const cwdGate = createCwdReportGate({
+    stat: statKindAsync,
+    userRoots: (id) => {
+      const s = mgr.get(id);
+      return s ? userRootsOf(s, PATH_LINK_OPTS) : null;
+    },
+    accept: (id, cwd) => {
+      const s = mgr.get(id);
+      if (!s || cwd === s.cwd) return;
+      mgr.setCwd(id, cwd);
+      // Multi-repo: a cd inside a detected sub-repo auto-follows (SessionManager ignores this
+      // while pinned).
+      mgr.setAutoRepo(id, repoForPath(s.repos ?? [], cwd));
+    },
+    ...PATH_LINK_OPTS,
+  });
 
   // Per-session carry for the bare-bell scanner: where the previous term:data chunk left
   // the escape-sequence walk. Same lifecycle as cwdScanners.
@@ -1534,22 +1570,9 @@ app.whenReady().then(() => {
             cwdScanners.set(msg.sessionId, scanner);
           }
           const newCwd = scanner.push(msg.data);
-          if (newCwd !== null) {
-            const session = mgr.get(msg.sessionId);
-            if (session && newCwd !== session.cwd) {
-              // Existence check: must be a real directory on disk (E2a).
-              try {
-                if (fs.existsSync(newCwd) && fs.statSync(newCwd).isDirectory()) {
-                  mgr.setCwd(msg.sessionId, newCwd);
-                  // Multi-repo: a cd inside a detected sub-repo auto-follows (SessionManager
-                  // ignores this while pinned).
-                  mgr.setAutoRepo(msg.sessionId, repoForPath(session.repos ?? [], newCwd));
-                }
-              } catch {
-                /* ignore stat errors (e.g. permission denied) */
-              }
-            }
-          }
+          // Every report goes through the gate, even one equal to the current cwd: it must
+          // supersede an older report still being stat'ed (plan T2.4, A→B(slow)→A).
+          if (newCwd !== null) cwdGate.report(msg.sessionId, newCwd);
         }
       } else if (msg.type === 'term:exit') {
         log.info('pty', 'exit', { sessionId: msg.sessionId, code: msg.code });
@@ -1580,6 +1603,7 @@ app.whenReady().then(() => {
     activity.recordExit(sessionId);
     // Clean up the scanners for this session (E2a + the bell-scan carry).
     cwdScanners.delete(sessionId);
+    cwdGate.drop(sessionId);
     bellScanState.delete(sessionId);
     pasteModes.delete(sessionId);
     inertTails.delete(sessionId);
@@ -2547,6 +2571,7 @@ app.whenReady().then(() => {
     for (const [windowId, request] of deferredProjectRequests)
       if (request.sessionId === id) deferredProjectRequests.delete(windowId);
     cwdScanners.delete(id);
+    cwdGate.drop(id);
     bellScanState.delete(id);
     pasteModes.delete(id);
     inertTails.delete(id);

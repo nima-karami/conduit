@@ -1,50 +1,399 @@
 /**
- * Pure resolution of a terminal path TOKEN to candidate files (path-links v1). The host
- * wires this with a real file index + `statSync`; the renderer link provider renders the
- * result (0 → plain, 1 → open, >1 → disambiguation dropdown). Side-effect-free over its
- * inputs (the existence/type check is injected) so it's exhaustively unit-testable.
- *
- * Two rules, in order:
- *  1. Exact — the token joined to the session cwd, then the project root, then (if already
- *     absolute) as-is. The first that exists is the sole candidate. This covers absolute,
- *     `./`/`../`, and bare project-relative paths, and keeps directory links working
- *     (existence/type comes from the injected stat).
- *  2. Suffix search — only when no exact hit and the token is not absolute: project files
- *     whose path ends with the token on a SEGMENT boundary (`accent.ts` matches
- *     `src/core/theme/accent.ts`, never `xaccent.ts`). Sorted shortest-path-first, capped.
- *
- * Abbreviated paths (`C:/x/.../src/app.tsx`, `.../foo/bar.ts`) — where an agent elides the
- * middle with `...` — short-circuit to a suffix search on the concrete tail after the last
- * elision (the drive/root prefix and elided middle are unknowable). >1 hit → disambiguation.
+ * Pure async resolution of terminal path tokens against every session root (spec
+ * 2026-10-16-terminal-path-links §3.2; the rules are the plan's Contracts "src/path-resolve.ts").
+ * Browser-safe: string work on forward-slashed input, platform and fs injected. The host shell is
+ * electron/path-link-resolver.ts; ranking happens renderer-side after the cache.
  */
+import type { ResolveRoot } from './path-link-roots';
+import {
+  expandToken,
+  isAbsoluteToken,
+  isUncLike,
+  joinAbs,
+  normalizeAbs,
+  type PathPlatform,
+} from './path-token-normalize';
 
-/** One entry of the project file index. `rel` is forward-slash, relative to the project root. */
+export { isUncLike };
+
+/** One entry of a file index. `rel` is forward-slash, relative to the index root. */
 export interface IndexedFile {
   rel: string;
   abs: string;
 }
 
+export type CandidateStrength = 'exact-cwd' | 'exact-root' | 'suffix';
+
 export interface PathCandidate {
+  /** normalizeAbs'd. */
+  absPath: string;
+  /** Index into the reply's roots; -1 = outside every root. */
+  rootIdx: number;
+  /** Relative to roots[rootIdx].abs ('' for the root itself); absPath when rootIdx is -1. */
+  relToRoot: string;
+  repoRoot: string;
+  /** Relative to repoRoot (Copy relative path). */
+  relToRepo: string;
+  isDir: boolean;
+  strength: CandidateStrength;
+}
+
+export interface TokenResolution {
+  /** alts.join('\0') — the renderer's pending cache token. */
+  key: string;
+  /** Strength, then root order, then shorter relToRoot (the renderer re-ranks). */
+  candidates: PathCandidate[];
+  truncated: boolean;
+  total: number;
+  /** 'invalid' = this entry failed host validation. */
+  error?: 'timeout' | 'session-gone' | 'invalid';
+}
+
+export type StatKind = (absPath: string) => Promise<'file' | 'dir' | null>;
+
+export interface ResolveDeps {
+  stat: StatKind;
+  /** git toplevel of a folder, '' when not a repo. */
+  topLevel: (dir: string) => Promise<string>;
+}
+
+export interface ResolveIndex {
+  root: string;
+  files: IndexedFile[];
+  /** Root indices whose files this index lists completely (git listing answered, not capped). */
+  coveredRootIdx: number[];
+}
+
+export interface ResolveCtx {
+  /** Live cwd, forward-slashed. */
+  cwd: string;
+  cwdGitRoot: string;
+  roots: ResolveRoot[];
+  indexes: ResolveIndex[];
+  caseSensitive: boolean;
+  homeDir: string;
+  platform: PathPlatform;
+  cap?: number;
+}
+
+export const DEFAULT_CANDIDATE_CAP = 200;
+export const MAX_ALTS = 4;
+
+export interface IndexMemo {
+  foldedRels: string[];
+  absSet: Set<string>;
+}
+
+// Keyed by the index ARRAY: the host's 5 s index cache hands back the same array while warm, so
+// repaints never re-fold 20k paths.
+const memoByCase = {
+  sensitive: new WeakMap<IndexedFile[], IndexMemo>(),
+  folded: new WeakMap<IndexedFile[], IndexMemo>(),
+};
+
+const foldWith = (caseSensitive: boolean) => (s: string) => (caseSensitive ? s : s.toLowerCase());
+const slash = (s: string) => s.replace(/\\/g, '/');
+
+export function memoFor(files: IndexedFile[], caseSensitive: boolean): IndexMemo {
+  const map = caseSensitive ? memoByCase.sensitive : memoByCase.folded;
+  const hit = map.get(files);
+  if (hit) return hit;
+  const fold = foldWith(caseSensitive);
+  const memo: IndexMemo = {
+    foldedRels: files.map((f) => fold(f.rel)),
+    absSet: new Set(files.map((f) => fold(slash(f.abs)))),
+  };
+  map.set(files, memo);
+  return memo;
+}
+
+const STRENGTH_ORDER: Record<CandidateStrength, number> = {
+  'exact-cwd': 0,
+  'exact-root': 1,
+  suffix: 2,
+};
+const ELISION_SEG = /^(?:\.{3,}|…)$/;
+
+interface Found {
+  absPath: string;
+  isDir: boolean;
+  strength: CandidateStrength;
+}
+
+/** Per-call view of the ctx with folded keys precomputed. */
+class Resolution {
+  readonly fold: (s: string) => string;
+  readonly rootKeys: string[];
+  private readonly topMemo = new Map<string, Promise<string>>();
+
+  constructor(
+    readonly ctx: ResolveCtx,
+    readonly deps: ResolveDeps,
+  ) {
+    this.fold = foldWith(ctx.caseSensitive);
+    this.rootKeys = ctx.roots.map((r) => this.keyOf(r.abs));
+  }
+
+  keyOf(p: string): string {
+    return this.fold(normalizeAbs(p, this.ctx.platform));
+  }
+
+  /** `key` lies at or under `rootKey` (both from keyOf). */
+  static under(rootKey: string, key: string): boolean {
+    if (key === rootKey) return true;
+    return key.startsWith(rootKey.endsWith('/') ? rootKey : `${rootKey}/`);
+  }
+
+  deepestRoot(absPath: string): number {
+    const k = this.keyOf(absPath);
+    let best = -1;
+    for (let i = 0; i < this.rootKeys.length; i++) {
+      if (!Resolution.under(this.rootKeys[i], k)) continue;
+      if (best < 0 || this.rootKeys[i].length > this.rootKeys[best].length) best = i;
+    }
+    return best;
+  }
+
+  /** A UNC path may only be touched under a user-chosen UNC root (plan: resolver rule 2). */
+  uncAdmitted(absPath: string): boolean {
+    const k = this.keyOf(absPath);
+    return this.ctx.roots.some(
+      (r, i) => r.userChosen && isUncLike(r.abs) && Resolution.under(this.rootKeys[i], k),
+    );
+  }
+
+  async stat(absPath: string): Promise<'file' | 'dir' | null> {
+    try {
+      return await this.deps.stat(absPath);
+    } catch {
+      // A failed stat is a miss by contract: resolveTokens never rejects.
+      return null;
+    }
+  }
+
+  topLevel(dir: string): Promise<string> {
+    const k = this.keyOf(dir);
+    let p = this.topMemo.get(k);
+    if (!p) {
+      p = this.deps.topLevel(dir).then(
+        (t) => (t ? normalizeAbs(t, this.ctx.platform) : ''),
+        // A failed toplevel probe means "not a repo" by contract.
+        () => '',
+      );
+      this.topMemo.set(k, p);
+    }
+    return p;
+  }
+
+  indexCovering(rootIdx: number): ResolveIndex | undefined {
+    return this.ctx.indexes.find((ix) => ix.coveredRootIdx.includes(rootIdx));
+  }
+
+  suffixSearch(needle: string, partialFirst: boolean): Found[] {
+    const n = this.fold(needle);
+    const out: Found[] = [];
+    for (const ix of this.ctx.indexes) {
+      const { foldedRels } = memoFor(ix.files, this.ctx.caseSensitive);
+      for (let i = 0; i < foldedRels.length; i++) {
+        const rel = foldedRels[i];
+        const hit = partialFirst ? rel.endsWith(n) : rel === n || rel.endsWith(`/${n}`);
+        if (hit)
+          out.push({
+            absPath: normalizeAbs(ix.files[i].abs, this.ctx.platform),
+            isDir: false,
+            strength: 'suffix',
+          });
+      }
+    }
+    return out;
+  }
+}
+
+/** Rule 6: the head before the first elision and the tail after the last one. */
+function splitElision(t: string): { head: string; tail: string; partialFirst: boolean } | null {
+  const segs = t.split('/');
+  let first = -1;
+  let last = -1;
+  let partialFirst = false;
+  for (let i = 0; i < segs.length; i++) {
+    const pure = ELISION_SEG.test(segs[i]);
+    const partial = !pure && segs[i].startsWith('…');
+    if (!pure && !partial) continue;
+    if (first < 0) first = i;
+    last = i;
+    partialFirst = partial;
+  }
+  if (last < 0) return null;
+  const tailSegs = partialFirst
+    ? [segs[last].slice(1), ...segs.slice(last + 1)]
+    : segs.slice(last + 1);
+  const tail = tailSegs.filter(Boolean).join('/');
+  if (!tail) return null;
+  return { head: segs.slice(0, first).join('/'), tail, partialFirst };
+}
+
+async function resolveAlt(alt: string, r: Resolution): Promise<Found[]> {
+  const { ctx } = r;
+  const t = expandToken(alt, { platform: ctx.platform, homeDir: ctx.homeDir });
+  const isDirTok = t.endsWith('/');
+
+  const elided = splitElision(t);
+  if (elided) {
+    let found = r.suffixSearch(elided.tail, elided.partialFirst);
+    if (elided.head && isAbsoluteToken(elided.head, ctx.platform)) {
+      const headKey = r.keyOf(elided.head);
+      found = found.filter((f) => Resolution.under(headKey, r.keyOf(f.absPath)));
+    }
+    return found;
+  }
+
+  if (isUncLike(t)) {
+    const abs = normalizeAbs(t, ctx.platform);
+    return r.uncAdmitted(abs) ? [{ absPath: abs, isDir: isDirTok, strength: 'exact-cwd' }] : [];
+  }
+
+  if (isAbsoluteToken(t, ctx.platform)) {
+    const abs = normalizeAbs(t, ctx.platform);
+    const kind = await r.stat(abs);
+    return kind ? [{ absPath: abs, isDir: kind === 'dir', strength: 'exact-cwd' }] : [];
+  }
+
+  const found: Found[] = [];
+  const cwdBases = [ctx.cwd];
+  if (ctx.cwdGitRoot && r.keyOf(ctx.cwdGitRoot) !== r.keyOf(ctx.cwd)) cwdBases.push(ctx.cwdGitRoot);
+  const joinedKeys = new Set(cwdBases.map((b) => r.keyOf(b)));
+  for (const base of cwdBases) {
+    if (!base) continue;
+    const abs = joinAbs(base, t, ctx.platform);
+    if (isUncLike(abs) && !r.uncAdmitted(abs)) continue;
+    const kind = await r.stat(abs);
+    if (kind) {
+      found.push({ absPath: abs, isDir: kind === 'dir', strength: 'exact-cwd' });
+      break;
+    }
+  }
+
+  const rootHits = await Promise.all(
+    ctx.roots.map(async (root, i): Promise<Found | null> => {
+      if (joinedKeys.has(r.rootKeys[i])) return null;
+      const abs = joinAbs(root.abs, t, ctx.platform);
+      const covering = r.indexCovering(i);
+      if (!isDirTok && covering) {
+        return memoFor(covering.files, ctx.caseSensitive).absSet.has(r.fold(abs))
+          ? { absPath: abs, isDir: false, strength: 'exact-root' }
+          : null;
+      }
+      if (isUncLike(root.abs)) return null;
+      const kind = await r.stat(abs);
+      return kind ? { absPath: abs, isDir: kind === 'dir', strength: 'exact-root' } : null;
+    }),
+  );
+  for (const hit of rootHits) if (hit) found.push(hit);
+  if (found.length > 0 || isDirTok) return found;
+
+  const needle = t.replace(/^(?:\.\/)+/, '');
+  if (needle.split('/').some((s) => s === '..' || s === '.')) return [];
+  return r.suffixSearch(needle, false);
+}
+
+async function finalize(key: string, found: Found[], r: Resolution): Promise<TokenResolution> {
+  const { ctx } = r;
+  const byPath = new Map<string, Found>();
+  for (const f of found) {
+    const k = r.keyOf(f.absPath);
+    const prev = byPath.get(k);
+    if (!prev || STRENGTH_ORDER[f.strength] < STRENGTH_ORDER[prev.strength]) byPath.set(k, f);
+  }
+
+  const relTo = (base: string, abs: string): string => {
+    const bk = r.keyOf(base);
+    const ak = r.keyOf(abs);
+    if (ak === bk) return '';
+    if (!Resolution.under(bk, ak)) return abs;
+    return abs.slice(normalizeAbs(base, ctx.platform).replace(/\/$/, '').length + 1);
+  };
+
+  const candidates = await Promise.all(
+    [...byPath.values()].map(async (f): Promise<PathCandidate> => {
+      const rootIdx = r.deepestRoot(f.absPath);
+      const folder = f.isDir
+        ? f.absPath
+        : f.absPath.slice(0, Math.max(f.absPath.lastIndexOf('/'), 0)) || f.absPath;
+      const fromRoot = rootIdx >= 0 ? await r.topLevel(ctx.roots[rootIdx].abs) : '';
+      const repoRoot = fromRoot || (await r.topLevel(folder)) || normalizeAbs(folder, ctx.platform);
+      return {
+        absPath: f.absPath,
+        rootIdx,
+        relToRoot: rootIdx >= 0 ? relTo(ctx.roots[rootIdx].abs, f.absPath) : f.absPath,
+        repoRoot,
+        relToRepo: relTo(repoRoot, f.absPath),
+        isDir: f.isDir,
+        strength: f.strength,
+      };
+    }),
+  );
+
+  candidates.sort(
+    (a, b) =>
+      STRENGTH_ORDER[a.strength] - STRENGTH_ORDER[b.strength] ||
+      (a.rootIdx < 0 ? Number.MAX_SAFE_INTEGER : a.rootIdx) -
+        (b.rootIdx < 0 ? Number.MAX_SAFE_INTEGER : b.rootIdx) ||
+      a.relToRoot.length - b.relToRoot.length ||
+      a.relToRoot.localeCompare(b.relToRoot),
+  );
+  const cap = ctx.cap ?? DEFAULT_CANDIDATE_CAP;
+  return {
+    key,
+    candidates: candidates.slice(0, cap),
+    truncated: candidates.length > cap,
+    total: candidates.length,
+  };
+}
+
+/** Never rejects: a throwing stat or topLevel counts as a miss or as ''. Trusts its input — the
+ *  host shell enforces MAX_ALTS and the token limits. */
+export async function resolveTokens(
+  tokens: ReadonlyArray<{ alts: string[] }>,
+  ctx: ResolveCtx,
+  deps: ResolveDeps,
+): Promise<TokenResolution[]> {
+  const r = new Resolution(ctx, deps);
+  return Promise.all(
+    tokens.map(async ({ alts }) => {
+      const key = alts.join('\0');
+      for (const alt of alts) {
+        const found = await resolveAlt(alt, r);
+        if (found.length > 0) return finalize(key, found, r);
+      }
+      return { key, candidates: [], truncated: false, total: 0 };
+    }),
+  );
+}
+
+// ── Legacy v1 sync resolver: kept for exactly one slice so Slice 2 is green alone; Task 3.3
+// rewires its callers and deletes it (plan Decisions "A slice-local two-step in S2→S3"). ──
+
+export interface LegacyPathCandidate {
   absPath: string;
   /** Path relative to the project root — the dropdown's display label. */
   relPath: string;
   isDir: boolean;
 }
 
-export interface TokenResolution {
+export interface LegacyTokenResolution {
   token: string;
-  candidates: PathCandidate[];
+  candidates: LegacyPathCandidate[];
   /** True when more than `cap` files matched the suffix search; only the first `cap` returned. */
   truncated: boolean;
 }
 
 /** Existence + type of an absolute path: 'file' | 'dir' | null (missing). Injected for purity. */
-export type StatKind = (absPath: string) => 'file' | 'dir' | null;
+export type LegacyStatKind = (absPath: string) => 'file' | 'dir' | null;
 
-const DEFAULT_CANDIDATE_CAP = 50;
+const LEGACY_CANDIDATE_CAP = 50;
 
-const normSlash = (s: string): string => s.replace(/\\/g, '/');
-const isAbsolute = (p: string): boolean => p.startsWith('/') || /^[A-Za-z]:\//.test(p);
+const legacyNormSlash = (s: string): string => s.replace(/\\/g, '/');
+const legacyIsAbsolute = (p: string): boolean => p.startsWith('/') || /^[A-Za-z]:\//.test(p);
 const stripDotSlash = (s: string): string => s.replace(/^\.\//, '');
 
 const joinPath = (base: string, rel: string): string =>
@@ -55,7 +404,7 @@ const relTo = (root: string, abs: string): string => {
   return abs.toLowerCase().startsWith(`${r.toLowerCase()}/`) ? abs.slice(r.length + 1) : abs;
 };
 
-export interface ResolveCtx {
+export interface LegacyResolveCtx {
   /** Session live working directory (forward-slash). */
   cwd: string;
   /** Project root (forward-slash); falls back to cwd when not a repo. */
@@ -68,7 +417,7 @@ export interface ResolveCtx {
 }
 
 /** A path SEGMENT that is an elision marker (3+ dots), e.g. the `...` in `a/.../b`. */
-const ELISION_SEG = /^\.{3,}$/;
+const LEGACY_ELISION_SEG = /^\.{3,}$/;
 
 /**
  * When `token` has an elision segment (`.../`), return the concrete tail after the LAST
@@ -78,7 +427,7 @@ const ELISION_SEG = /^\.{3,}$/;
 function elisionTail(token: string): string | null {
   const segs = token.split('/');
   let last = -1;
-  for (let i = 0; i < segs.length; i++) if (ELISION_SEG.test(segs[i])) last = i;
+  for (let i = 0; i < segs.length; i++) if (LEGACY_ELISION_SEG.test(segs[i])) last = i;
   if (last === -1) return null;
   const tail = segs
     .slice(last + 1)
@@ -88,8 +437,12 @@ function elisionTail(token: string): string | null {
 }
 
 /** Segment-aligned suffix search over the file index for a (non-absolute) needle token. */
-function suffixSearch(needleToken: string, rawToken: string, ctx: ResolveCtx): TokenResolution {
-  const cap = ctx.cap ?? DEFAULT_CANDIDATE_CAP;
+function suffixSearch(
+  needleToken: string,
+  rawToken: string,
+  ctx: LegacyResolveCtx,
+): LegacyTokenResolution {
+  const cap = ctx.cap ?? LEGACY_CANDIDATE_CAP;
   const fold = (s: string) => (ctx.caseSensitive ? s : s.toLowerCase());
   const needle = fold(stripDotSlash(needleToken));
   const matched = ctx.files.filter((f) => {
@@ -104,14 +457,18 @@ function suffixSearch(needleToken: string, rawToken: string, ctx: ResolveCtx): T
   return { token: rawToken, candidates, truncated };
 }
 
-export function resolveToken(rawToken: string, ctx: ResolveCtx, stat: StatKind): TokenResolution {
-  const token = normSlash(rawToken);
+export function resolveToken(
+  rawToken: string,
+  ctx: LegacyResolveCtx,
+  stat: LegacyStatKind,
+): LegacyTokenResolution {
+  const token = legacyNormSlash(rawToken);
 
   // Abbreviated path (`.../` elision): resolve by suffix-searching the concrete tail.
   const tail = elisionTail(token);
   if (tail !== null) return suffixSearch(tail, rawToken, ctx);
 
-  const abs = isAbsolute(token);
+  const abs = legacyIsAbsolute(token);
 
   // Rule 1 — exact (cwd over root). Absolute tokens are checked as-is.
   const exacts = abs

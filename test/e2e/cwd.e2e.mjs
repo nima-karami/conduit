@@ -23,6 +23,7 @@ import {
   openSession,
   REPO,
   tapBridge,
+  typeLine,
 } from './harness.mjs';
 
 if (process.platform !== 'win32') {
@@ -174,6 +175,41 @@ try {
     `after cd, Files should still show exactly one section named "${homeName}"`,
   );
   log('PASS: Files sections unchanged by cd ✓');
+
+  // ── Part 1b: a UNC cwd report from terminal output is refused without touching SMB ─────────
+  // Plan 2026-10-16-terminal-path-links T2.4: output is untrusted, so the host must not stat a
+  // printed `\\host\share` (an SMB connect on the main thread). 192.0.2.1 is TEST-NET-1: it never
+  // answers, so a sync stat would block the main thread for the SMB timeout.
+  await typeLine(page, sid, "[Console]::Write([char]27 + ']9;9;\\\\192.0.2.1\\share' + [char]7)");
+  const t0 = Date.now();
+  await launched.app.evaluate(() => 1);
+  const roundTrip = Date.now() - t0;
+  await page.waitForTimeout(3000);
+  const roundTripAfter = await (async () => {
+    const t = Date.now();
+    await launched.app.evaluate(() => 1);
+    return Date.now() - t;
+  })();
+  const cwdAfterUnc = await page.evaluate((id) => {
+    const s = (window.__sessions || []).find((x) => x.id === id);
+    return s ? s.cwd : null;
+  }, sid);
+  log(
+    'session.cwd after UNC report:',
+    cwdAfterUnc,
+    'main round-trips ms:',
+    roundTrip,
+    roundTripAfter,
+  );
+  assert(
+    cwdAfterUnc && cwdAfterUnc.toLowerCase() === expectedCwd.toLowerCase(),
+    `a UNC cwd report must be refused; cwd moved to "${cwdAfterUnc}"`,
+  );
+  assert(
+    roundTrip < 500 && roundTripAfter < 500,
+    `main thread blocked after a UNC report (${roundTrip} ms, ${roundTripAfter} ms)`,
+  );
+  log('PASS: UNC cwd report refused, main thread responsive ✓');
 
   // ── Part 2: trackCwd OFF → cd does NOT move cwd ─────────────────────────────
   // Disable trackCwd.

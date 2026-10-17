@@ -9,7 +9,7 @@ import type { LauncherDTO } from './launchers';
 import type { LogLevel } from './logging';
 import type { LspServerStatus, LspTrustState } from './lsp-protocol';
 import type { DragOutRefusal } from './outgoing-paths';
-import type { TokenResolution } from './path-resolve';
+import type { LegacyTokenResolution as TokenResolution } from './path-resolve';
 import type { PipelineConfig } from './pipeline';
 import type { PlanCommentPatch, PlanCommentsData } from './plan-comments';
 import type { PreviewReason } from './preview-url';

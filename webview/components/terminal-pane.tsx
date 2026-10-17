@@ -3,7 +3,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { type ILinkProvider, Terminal } from '@xterm/xterm';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
-import type { PathCandidate } from '../../src/path-resolve';
+import type { LegacyPathCandidate as PathCandidate } from '../../src/path-resolve';
 import type { TermGeometry } from '../../src/protocol';
 import { withTimeout } from '../../src/with-timeout';
 import {
