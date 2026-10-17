@@ -518,14 +518,11 @@ export function TerminalPane({
                   action === 'background' ? 'background' : undefined,
                 );
               }),
-              'osc8',
             );
           },
           hover: (_event: MouseEvent, uri: string) => {
             hoveredLinkRef.current =
-              classifyLinkUri(uri, 'osc8') === 'file'
-                ? { kind: 'osc8-file', uri }
-                : { kind: 'url' };
+              classifyLinkUri(uri) === 'file' ? { kind: 'osc8-file', uri } : { kind: 'url' };
           },
           leave: () => {
             hoveredLinkRef.current = null;
@@ -764,7 +761,6 @@ export function TerminalPane({
                     action === 'background' ? 'background' : undefined,
                   );
                 }),
-                'printed',
               );
             },
             hover(_event: MouseEvent, _text: string) {

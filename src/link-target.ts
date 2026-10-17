@@ -13,14 +13,12 @@ import {
 } from './path-token-normalize';
 
 export type LinkUriClass = 'external' | 'file' | 'ignore';
-/** Where the URI came from: an OSC 8 target hides behind its label, a printed URL is visible. */
-export type LinkUriOrigin = 'osc8' | 'printed';
 
 const SCHEME_RE = /^([A-Za-z][A-Za-z0-9+.-]*):/;
 const DRIVE_RE = /^[A-Za-z]:[\\/]/;
-const EXTERNAL_SCHEMES = new Set(['http', 'https', 'mailto']);
-// A hidden mailto: hands the label's author the mail client (T8.4 security r1 H1).
-const OSC8_EXTERNAL_SCHEMES = new Set(['http', 'https']);
+// No mailto: behind an OSC 8 label it hands the label's author the mail client (T8.4 security
+// r1 H1), and a printed one is never linkified.
+const EXTERNAL_SCHEMES = new Set(['http', 'https']);
 // Any C0 control or DEL: a decoded NUL truncates the path in native code, and no other control
 // byte belongs in a path a terminal printed.
 function hasControlChar(s: string): boolean {
@@ -31,12 +29,11 @@ function hasControlChar(s: string): boolean {
   return false;
 }
 
-export function classifyLinkUri(uri: string, origin: LinkUriOrigin = 'printed'): LinkUriClass {
+export function classifyLinkUri(uri: string): LinkUriClass {
   if (DRIVE_RE.test(uri)) return 'file';
   const scheme = SCHEME_RE.exec(uri)?.[1].toLowerCase();
   if (scheme !== undefined) {
-    const external = origin === 'osc8' ? OSC8_EXTERNAL_SCHEMES : EXTERNAL_SCHEMES;
-    if (external.has(scheme)) return 'external';
+    if (EXTERNAL_SCHEMES.has(scheme)) return 'external';
     return scheme === 'file' ? 'file' : 'ignore';
   }
   if (isUncLike(uri)) return 'ignore';
@@ -137,14 +134,10 @@ export interface LinkUriSinks {
 }
 
 /** The one dispatch for terminal link URIs (OSC 8 and printed URLs): only file and http(s) go
- *  anywhere, plus mailto when printed, and the bridge-less window.open fallback is for external
- *  ones only (plan T8.4 item 10). */
-export function dispatchLinkUri(
-  uri: string,
-  sinks: LinkUriSinks,
-  origin: LinkUriOrigin,
-): LinkUriClass {
-  const kind = classifyLinkUri(uri, origin);
+ *  anywhere, and the bridge-less window.open fallback is for external ones only (plan T8.4
+ *  item 10). */
+export function dispatchLinkUri(uri: string, sinks: LinkUriSinks): LinkUriClass {
+  const kind = classifyLinkUri(uri);
   if (kind === 'file') sinks.openFile(uri);
   else if (kind === 'external' && !sinks.openExternal(uri)) sinks.windowOpen(uri);
   return kind;
