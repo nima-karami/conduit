@@ -18,6 +18,21 @@ All notable user-facing changes to Conduit. Format follows
   straight away. Right-click a path for Open, Copy path, Copy relative path, Reveal in Explorer and
   **Open as new session**, which fills in the New session dialog with that folder (or the file's
   repo) and the session's project. A file deleted since it was printed says so instead of opening.
+- **Hidden-target and printed `file://` links open in Conduit, but only inside the session.** An
+  OSC 8 hyperlink (a label whose target is a file, as Claude Code and other CLIs print them) and a
+  printed `file:///…` URL now open the file in an editor tab at its `#L42` line, or reveal a
+  folder, instead of doing nothing. Conduit opens the target only when it lies inside one of the
+  session's own folders, following symlinks and junctions to check; anything else, including a
+  network-share or device path and every `javascript:` or `data:` link, opens nothing. Right-click
+  such a link for the same actions as a path.
+- **More path shapes link.** An unquoted absolute path with spaces (`C:/Program Files/app/x.ts`), a
+  path cut short at its end (`src/util/a…`, when only a few files match), a path Claude Code
+  hard-wrapped across two rows, and a `\\server\share\x.ts` path under a network-share folder of the
+  session. When the lines above a path show the agent working in one repo (`cd` into it, or a file
+  path inside it), the picker marks that repo's row "working here".
+- **Terminal links from the keyboard.** The command palette's **Terminal: Open Detected Link…**
+  lists the path links on screen and opens the one you pick; Shift+F10 or the Menu key opens the
+  link menu for the link under the cursor, or the terminal's own menu.
 - A cwd reported by terminal output that points at a network share outside the session's folders
   is ignored, so printing `\\server\share` no longer freezes the app while Windows tries to reach it.
 
