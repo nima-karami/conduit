@@ -74,14 +74,21 @@ import {
   searchHistory,
 } from '../src/git-history';
 import { getGitInfo, isDirty, listBranches, listRefs, switchBranch } from '../src/git-info';
-import { gitIgnoredNames, gitListedFiles } from '../src/git-listing';
+import { gitIgnoredNames, gitListedFiles, LISTING_MAX_BUFFER } from '../src/git-listing';
 import { createAsyncMemo } from '../src/git-memo';
 import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range';
 import { decideSwitch, isKnownRef } from '../src/git-switch';
 import { type HeadBlobShow, readHeadBlob } from '../src/head-blob';
 import { IgnoreCache } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
-import { indexRemovals, staleIndexRoots } from '../src/index-resync';
+import { staleIndexRoots } from '../src/index-resync';
+import {
+  type IndexMode,
+  planIndexPass,
+  type RootIndexState,
+  takeChunks,
+  wantsFullIndex,
+} from '../src/index-streams';
 import { type BellScanState, countBareBells } from '../src/last-line';
 import { previewLaunch } from '../src/launch-preview';
 import { buildLaunchSpec } from '../src/launch-spec';
@@ -184,12 +191,7 @@ import {
 import { detectAgentClis, detectShells, hostCliScanEnv, resolveCommand } from '../src/shells';
 import { expandShortNames, hasShortComponent, hostShortNameDeps } from '../src/short-names';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
-import {
-  INDEX_FILE_CAP,
-  isOversizedForIndex,
-  newIndexPaths,
-  selectIndexCandidates,
-} from '../src/source-index';
+import { INDEX_FILE_CAP, isOversizedForIndex, selectIndexCandidates } from '../src/source-index';
 import {
   PASTE_MODE_OFF,
   type PasteModeState,
@@ -477,6 +479,8 @@ const projectFileIndexMeta = createProjectFileIndex({
   walk: (root, cap) => walkFilesAsync(root, cap),
   repoIndex: repoFileIndex,
   reposUnder: (rootKey) => trackedReposUnder?.(rootKey) ?? [],
+  onTruncated: (root) =>
+    hostLog?.warn('index', 'git-listing-truncated', { root, maxBytes: LISTING_MAX_BUFFER }),
 });
 
 async function projectFileIndex(root: string, scope?: IndexScope): Promise<IndexedFile[]> {
@@ -487,28 +491,19 @@ async function projectFileIndex(root: string, scope?: IndexScope): Promise<Index
  *  a frame, large enough that a 5000-file project is ~25 messages, not 5000. */
 const INDEX_CHUNK_SIZE = 200;
 
-/** What the source index has already streamed per root, so a `fsChanged` top-up sends only
- *  the files that appeared since — the whole point of the incremental path (spec contract 5).
- *  `nextSeq` keeps chunk ordinals monotonic per root: a top-up must never be `seq === 0`,
- *  which is the chunk that owns the compiler options. `resolved` = what on-demand module
- *  resolutions added to `sent`; `repoSet` = what the last pass's file index was built from
- *  (src/index-resync.ts); `windows` = the windows indexing the root. Each holds its own TS
- *  project while all share `sent`, so a top-up or re-sync streams to every one of them. */
-const projectIndexState = new Map<
-  string,
-  {
-    sent: Set<string>;
-    nextSeq: number;
-    resolved: Set<string>;
-    repoSet: string | null;
-    windows: Set<number>;
-  }
->();
+/** What the source index has already streamed per root and window, so a `fsChanged` top-up
+ *  sends each window only the files it lacks (spec contract 5; streams: src/index-streams.ts).
+ *  A root is kept only while some window streams it. */
+const projectIndexState = new Map<string, RootIndexState>();
+
+const isLiveWindow = (windowId: number) => {
+  const w = windows.get(windowId);
+  return !!w && !w.isDestroyed() && !w.webContents.isDestroyed();
+};
 
 /** Window ids, not IPC events, so a closed window's sender is never kept alive or posted to. */
 function sendToWindow(windowId: number, msg: HostToWebview) {
-  const w = windows.get(windowId);
-  if (w && !w.isDestroyed() && !w.webContents.isDestroyed()) w.webContents.send('to-webview', msg);
+  if (isLiveWindow(windowId)) windows.get(windowId)?.webContents.send('to-webview', msg);
 }
 
 type E2eHoldPoint = 'index' | 'scan' | 'topup';
@@ -518,10 +513,6 @@ type E2eHoldPoint = 'index' | 'scan' | 'topup';
  *  against a registration by hand. 'topup' exists because reading a tree on Windows fires
  *  directory change events, and the top-up they cause re-syncs on its own and hides the race. */
 let e2eHold: ((at: E2eHoldPoint) => Promise<void>) | null = null;
-
-/** full: chunk 0 onward. incremental: files that appeared since. resync: incremental, plus the
- *  files that left the selection go out as `removed`. */
-type IndexMode = 'full' | 'incremental' | 'resync';
 
 /** On-demand module resolutions, keyed by root so a whole project's entries can be dropped in
  *  one pass — see docs/specs/archive/2026-08-21-goto-definition-flows.md §1. A failure is cached too:
@@ -610,21 +601,24 @@ async function indexProjectSources(
   log: Logger,
   requested: IndexMode,
 ): Promise<void> {
-  const prior = projectIndexState.get(root);
   // A host-started re-sync for a root every window has since stopped indexing.
-  if (windowId === null && !prior) return;
-  // An incremental request for a root this process never indexed (a reloaded renderer) is a
-  // full index, not a no-op — otherwise the root would never be indexed at all.
-  const incremental = requested !== 'full' && prior !== undefined;
+  if (windowId === null && !projectIndexState.has(root)) return;
   // A re-index means the tree was re-read; a resolution cached against the old one may name a
   // file that has since moved.
   dropResolutionsForRoot(moduleResolveCache, root);
 
-  const meta = await projectFileIndexMeta(root, { fresh: incremental });
+  const meta = await projectFileIndexMeta(root, {
+    fresh: !wantsFullIndex(projectIndexState.get(root), windowId, requested),
+  });
   await e2eHold?.('index');
-  // A top-up that finds the repo set changed under it re-syncs too: a top-up only adds, and the
-  // files a newly registered repo ignores must leave (src/index-resync.ts).
-  const resync = incremental && (requested === 'resync' || prior?.repoSet !== meta.repoSet);
+  // Read after the await: the requester may have closed meanwhile, and its close pruned this
+  // root, so neither may be stored now (search-scope review r3 SF-A).
+  const requester = windowId !== null && isLiveWindow(windowId) ? windowId : null;
+  const prior = projectIndexState.get(root);
+  if (requester === null && !prior) return;
+  const state: RootIndexState = prior ?? { repoSet: meta.repoSet, streams: new Map() };
+  const full = wantsFullIndex(state, requester, requested);
+
   const selected = selectIndexCandidates(
     meta.files.map((f) => ({ rel: f.rel, abs: f.abs.replace(/\\/g, '/') })),
   );
@@ -641,8 +635,9 @@ async function indexProjectSources(
     if (isOversizedForIndex(fileSizeBytes(h.abs))) skipped += 1;
     else hits.push(h);
   }
+  const hitPaths = hits.map((h) => h.abs);
 
-  // Read once, reuse for both the closure walk and the chunk payload.
+  // Read once, reuse for the closure walk and every window's chunks.
   const cache = new Map<string, { content: string; language: string } | null>();
   const readCached = async (abs: string) => {
     const hit = cache.get(abs);
@@ -653,14 +648,27 @@ async function indexProjectSources(
     return value;
   };
 
-  const state = prior ?? {
-    sent: new Set<string>(),
-    nextSeq: 0,
-    resolved: new Set<string>(),
+  let fullOrder: string[] = [];
+  let priorityCount = 0;
+  if (full) {
+    const candidates = new Set(hitPaths);
+    const normalizedSeeds = seeds.map((s) => s.replace(/\\/g, '/'));
+    const priority = await importClosure(normalizedSeeds, candidates, async (p) => {
+      const v = await readCached(p);
+      return v?.content ?? null;
+    });
+    const prioritySet = new Set(priority);
+    priorityCount = priority.length;
+    fullOrder = [...priority, ...hitPaths.filter((p) => !prioritySet.has(p))];
+  }
+
+  const plans = planIndexPass(state, {
+    requester,
+    mode: requested,
     repoSet: meta.repoSet,
-    windows: new Set<number>(),
-  };
-  if (windowId !== null) state.windows.add(windowId);
+    selected: hitPaths,
+    fullOrder,
+  });
   projectIndexState.set(root, state);
   // A repo registered while the listing above was built found no state here to re-sync, so
   // this run catches it (search-scope review r2 SF1).
@@ -669,86 +677,46 @@ async function indexProjectSources(
     meta.repoSet !== repoSetOf(trackedReposUnder?.(folderKey(root)) ?? [])
   )
     void queueProjectIndex(root, [], null, log, 'resync');
-  const send = (msg: HostToWebview) => {
-    if (incremental || windowId === null) for (const id of state.windows) sendToWindow(id, msg);
-    else sendToWindow(windowId, msg);
-  };
-
-  let ordered: string[];
-  let priorityCount = 0;
-  let removed: string[] = [];
-  if (incremental) {
-    ordered = newIndexPaths(
-      hits.map((h) => h.abs),
-      state.sent,
-    );
-    if (resync) {
-      removed = indexRemovals(
-        state.sent,
-        state.resolved,
-        hits.map((h) => h.abs),
-      );
-      for (const p of removed) state.sent.delete(p);
-      state.repoSet = meta.repoSet;
-    }
-    if (!ordered.length && !removed.length) {
-      log.info('index', 'project-index-unchanged', { root });
-      return;
-    }
-  } else {
-    const candidates = new Set(hits.map((h) => h.abs));
-    const normalizedSeeds = seeds.map((s) => s.replace(/\\/g, '/'));
-    const priority = await importClosure(normalizedSeeds, candidates, async (p) => {
-      const v = await readCached(p);
-      return v?.content ?? null;
-    });
-    const prioritySet = new Set(priority);
-    priorityCount = priority.length;
-    ordered = [...priority, ...hits.map((h) => h.abs).filter((p) => !prioritySet.has(p))];
-    state.sent = new Set<string>();
-    state.resolved = new Set<string>();
-    state.repoSet = meta.repoSet;
+  if (!plans.length) {
+    log.info('index', 'project-index-unchanged', { root });
+    return;
   }
 
-  const total = ordered.length;
-  const tsconfig = incremental ? undefined : readProjectTsconfig(root, log);
-  let seq = state.nextSeq;
-  // Chunk 0 always goes (it owns the compiler options), and so does a re-sync that only removes.
-  const sendEmpty = seq === 0 || removed.length > 0;
-  for (let i = 0; i < total || (i === 0 && sendEmpty); i += INDEX_CHUNK_SIZE) {
-    const slice = ordered.slice(i, i + INDEX_CHUNK_SIZE);
-    const files: { path: string; content: string; language: string }[] = [];
-    for (const abs of slice) {
-      const dto = await readCached(abs);
-      if (dto) files.push({ path: abs, content: dto.content, language: dto.language });
-      state.sent.add(abs);
+  const tsconfig = full ? readProjectTsconfig(root, log) : undefined;
+  for (const plan of plans) {
+    const stream = state.streams.get(plan.windowId);
+    if (!stream) continue;
+    const total = plan.paths.length;
+    for (const chunk of takeChunks(plan, stream, INDEX_CHUNK_SIZE)) {
+      const files: { path: string; content: string; language: string }[] = [];
+      for (const abs of chunk.paths) {
+        const dto = await readCached(abs);
+        if (dto) files.push({ path: abs, content: dto.content, language: dto.language });
+      }
+      sendToWindow(plan.windowId, {
+        type: 'projectFiles',
+        root,
+        files,
+        seq: chunk.seq,
+        total,
+        done: chunk.done,
+        skipped,
+        capped,
+        ...(plan.full ? {} : { supplemental: true as const }),
+        ...(chunk.removed.length ? { removed: chunk.removed } : {}),
+        ...(chunk.tsconfig && tsconfig ? { tsconfig } : {}),
+      });
     }
-    const done = i + INDEX_CHUNK_SIZE >= total;
-    send({
-      type: 'projectFiles',
+    log.info('index', plan.full ? 'project-indexed' : 'project-index-topup', {
       root,
-      files,
-      seq,
+      windowId: plan.windowId,
       total,
-      done,
+      ...(plan.removed.length ? { removed: plan.removed.length } : {}),
+      ...(plan.full ? { priority: priorityCount } : {}),
       skipped,
       capped,
-      ...(incremental ? { supplemental: true as const } : {}),
-      ...(i === 0 && removed.length ? { removed } : {}),
-      ...(seq === 0 && tsconfig ? { tsconfig } : {}),
     });
-    seq += 1;
-    state.nextSeq = seq;
-    if (done) break;
   }
-  log.info('index', incremental ? 'project-index-topup' : 'project-indexed', {
-    root,
-    total,
-    ...(resync ? { removed: removed.length } : {}),
-    priority: priorityCount,
-    skipped,
-    capped,
-  });
 }
 
 /** Resolve a batch of raw path tokens to candidate files for the terminal link provider.
@@ -1212,6 +1180,9 @@ app.whenReady().then(() => {
         holding.delete(at);
         for (const resolve of parked[at].splice(0)) resolve();
       },
+      /** The TS index's per-root state, so a scenario can see a leak no window would show. */
+      indexState: () =>
+        [...projectIndexState].map(([root, s]) => ({ root, windows: [...s.streams.keys()] })),
     };
   }
 
@@ -3652,14 +3623,14 @@ app.whenReady().then(() => {
             });
             break;
           }
-          // These files are outside the index's own selection, so the root's "already sent"
+          // These files are outside the index's own selection, so this window's "already sent"
           // set has to learn about them or the next `fsChanged` top-up re-streams them and
-          // inflates the progress counters the status line reports.
-          const state = projectIndexState.get(root);
-          if (state)
+          // inflates the progress counters the status line reports. Only this window gets them.
+          const stream = projectIndexState.get(root)?.streams.get(senderId);
+          if (stream)
             for (const f of value.files) {
-              state.sent.add(f.path);
-              state.resolved.add(f.path);
+              stream.sent.add(f.path);
+              stream.resolved.add(f.path);
             }
           if (fresh) {
             log.info('index', 'resolve-hit', {
@@ -4739,8 +4710,8 @@ app.whenReady().then(() => {
         for (const [key, request] of deferredIndexes)
           if (request.windowId === windowId) deferredIndexes.delete(key);
         for (const [root, state] of projectIndexState) {
-          state.windows.delete(windowId);
-          if (!state.windows.size) projectIndexState.delete(root);
+          state.streams.delete(windowId);
+          if (!state.streams.size) projectIndexState.delete(root);
         }
         folders.windowClosed(windowId);
         log.info('window', 'closed', { windowId });

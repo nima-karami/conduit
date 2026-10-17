@@ -24,6 +24,9 @@ export interface ProjectFileIndexDeps {
   walk(root: string, cap: number): Promise<SearchHit[]>;
   repoIndex: Pick<RepoFileIndex, 'build'>;
   reposUnder(rootKey: string): readonly { key: string; root: string }[];
+  /** A root's listing outgrew the buffer. Called once per root: it recurs on every build, and
+   *  the walk it falls back to ignores .gitignore, so the search results change shape. */
+  onTruncated?(root: string): void;
   clock?: () => number;
 }
 
@@ -49,6 +52,7 @@ export function createProjectFileIndex(deps: ProjectFileIndexDeps): ProjectFileI
       entry.files.reduce((bytes, file) => bytes + (file.rel.length + file.abs.length) * 2 + 96, 0),
     clock,
   });
+  const reportedTruncated = new Set<string>();
   const keep = (key: string, meta: ProjectFileIndexMeta): ProjectFileIndexMeta => {
     cache.set(key, { ...meta, at: clock() });
     return meta;
@@ -65,6 +69,10 @@ export function createProjectFileIndex(deps: ProjectFileIndexDeps): ProjectFileI
     if (listing.kind === 'listed') {
       const files = listing.rels.map((rel) => ({ rel, abs: `${root}/${rel}` }));
       return keep(cacheKey, { files, capped: false, repoSet: null });
+    }
+    if (listing.kind === 'truncated' && !reportedTruncated.has(root)) {
+      reportedTruncated.add(root);
+      deps.onTruncated?.(root);
     }
     if (listing.kind !== 'not-repo' || opts.scope === 'everything') {
       // The cap is generous because this walk used to back the TS source index too, and the

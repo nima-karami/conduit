@@ -171,7 +171,7 @@ describe('createRepoFileIndex', () => {
 
   it('an empty listing is an empty repo, cached like any other answer', async () => {
     const h = harness({ '/w/repoA': [] });
-    expect(await h.raw.build('/w', [repo('/w/repoA')])).toEqual({ files: [], degraded: false });
+    expect(await h.raw.build('/w', [repo('/w/repoA')])).toEqual({ files: [] });
     await h.index.build('/w', [repo('/w/repoA')]);
     expect(h.listCalls).toEqual(['/w/repoA']);
   });
@@ -184,13 +184,11 @@ describe('createRepoFileIndex', () => {
     h.listings['/w/repoA'] = null;
     const failed = await h.raw.build('/w', repos);
     expect(rels(failed.files)).toEqual(['notes.md', 'repoA/a.ts']);
-    expect(failed.degraded).toBe(true);
     // Still pruned from the loose walk: its last good listing stands in for it.
     expect(h.walks.every((w) => w.pruned.includes('repoA'))).toBe(true);
     h.listings['/w/repoA'] = ['a.ts', 'b.ts'];
     const retried = await h.raw.build('/w', repos);
     expect(rels(retried.files)).toEqual(['notes.md', 'repoA/a.ts', 'repoA/b.ts']);
-    expect(retried.degraded).toBe(false);
     expect(h.listCalls).toEqual(['/w/repoA', '/w/repoA', '/w/repoA']);
   });
 
@@ -206,7 +204,6 @@ describe('createRepoFileIndex', () => {
     });
     const built = await index.build('/w', [repo('/w/A'), repo('/w/A/inner')]);
     expect(rels(built.files)).toEqual(['A/a.ts', 'A/inner/i.ts', 'notes.md']);
-    expect(built.degraded).toBe(true);
     expect(calls).toEqual([
       { root: '/w', pruned: true },
       { root: '/w/A', pruned: true },
@@ -224,7 +221,6 @@ describe('createRepoFileIndex', () => {
     });
     const built = await index.build('/w', [repo('/w/A'), repo('/w/B')]);
     expect(rels(built.files)).toEqual(['A/a.ts', 'B/b.ts']);
-    expect(built.degraded).toBe(false);
     // Walked again next build: a walk has no serial, so the union is never memoized over it.
     await index.build('/w', [repo('/w/A'), repo('/w/B')]);
     expect(walked.filter((r) => r === '/w/A')).toHaveLength(2);
@@ -234,7 +230,6 @@ describe('createRepoFileIndex', () => {
     const h = harness({ '/w': null }, { loose: ['x.ts', 'gen/y.ts'], dirs: [] });
     const built = await h.raw.build('/w', [repo('/w')]);
     expect(rels(built.files)).toEqual(['gen/y.ts', 'x.ts']);
-    expect(built.degraded).toBe(true);
   });
 
   it('builds asking for the same repo at the same version share one ls-files', async () => {

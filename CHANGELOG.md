@@ -30,6 +30,10 @@ All notable user-facing changes to Conduit. Format follows
   minute or more.
 
 ### Fixed
+- **Go to Definition follows your tsconfig in every window.** A second window open on the same
+  folder, or a window after a reload, used TypeScript's default settings instead of the project's
+  `tsconfig.json` (so `paths` aliases didn't resolve), and could miss files another window had
+  already been sent.
 - **Quick open's file list keeps up with the disk.** Files created after you first opened quick open
   (Ctrl+P) now show up, and deleted ones disappear, without restarting Conduit. Picking a file that
   was deleted in the meantime says it no longer exists instead of "File could not be read."

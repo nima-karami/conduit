@@ -7,6 +7,10 @@
  * The race is forced, not timed: repoA is a plain folder when the session opens and is indexed,
  * so the first index MUST see its gen/y.ts. Then repoA becomes a repo whose `.gitignore` names
  * gen/, the scan registers it, and gen/y.ts must leave the TS project while src/a.ts stays.
+ *
+ * The renderer's top-ups are parked (`__conduitHold` 'topup') from the first index on: `git init`,
+ * `add` and `commit` fire watcher events whose top-ups re-sync on their own and would heal the race
+ * without the host's repo-set re-sync (search-scope review r3).
  */
 
 import { execFileSync } from 'node:child_process';
@@ -17,6 +21,9 @@ import { assert, closeApp, openSession, removeDir, runScenario, tapBridge } from
 
 /** The session-open index waits 1.5 s, then streams; the re-scan, the re-sync and the flush. */
 const INDEX_BUDGET_MS = 30000;
+
+const hold = (app, at) => app.evaluate((_, a) => global.__conduitHold.hold(a), at);
+const release = (app, at) => app.evaluate((_, a) => global.__conduitHold.release(a), at);
 
 const slash = (p) => p.replace(/\\/g, '/');
 
@@ -60,6 +67,7 @@ runScenario('index-repo-set', async ({ app, page, log }) => {
   const ws = join(root, 'ws');
   const repoA = join(ws, 'repoA');
   try {
+    assert(await app.evaluate(() => !!global.__conduitHold), 'the smoke-only holds are installed');
     mkdirSync(join(repoA, 'src'), { recursive: true });
     mkdirSync(join(repoA, 'gen'), { recursive: true });
     writeFileSync(join(repoA, '.gitignore'), 'gen/\n');
@@ -73,6 +81,7 @@ runScenario('index-repo-set', async ({ app, page, log }) => {
       'with no repo registered, the first index takes in every .ts under the folder',
     );
     log('index built before any repo is known: a.ts and gen/y.ts both in');
+    await hold(app, 'topup');
 
     git(repoA, 'init', '-q', '-b', 'main');
     git(repoA, 'config', 'user.email', 'test@example.com');
@@ -100,6 +109,7 @@ runScenario('index-repo-set', async ({ app, page, log }) => {
     );
     log('re-sync: gen/y.ts out, src/a.ts kept ✓');
   } finally {
+    await release(app, 'topup');
     await closeApp(app, page);
     await removeDir(root);
   }

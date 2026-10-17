@@ -11,7 +11,7 @@ export type GitListing =
   | { kind: 'failed' };
 
 /** Bounded because the whole listing is buffered in the main process: ~400k typical paths. */
-const LISTING_MAX_BUFFER = 32 * 1024 * 1024;
+export const LISTING_MAX_BUFFER = 32 * 1024 * 1024;
 
 /** Every path git would list for `root`: tracked plus untracked-but-not-ignored, minus tracked
  *  files deleted from the worktree but not staged. `-z` because without it git C-quotes any

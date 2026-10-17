@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { GitListing } from '../../src/git-listing';
 import { createProjectFileIndex, FILE_INDEX_TTL_MS } from '../../src/project-file-index';
 
-function harness(listing: GitListing, degraded = false) {
+function harness(listing: GitListing) {
   let t = 1000;
   const calls = { list: 0, walk: 0, build: 0 };
+  const truncated: string[] = [];
   const meta = createProjectFileIndex({
     async listGit() {
       calls.list += 1;
@@ -17,15 +18,17 @@ function harness(listing: GitListing, degraded = false) {
     repoIndex: {
       async build(root) {
         calls.build += 1;
-        return { files: [{ rel: 'r/x.ts', abs: `${root}/r/x.ts` }], degraded };
+        return { files: [{ rel: 'r/x.ts', abs: `${root}/r/x.ts` }] };
       },
     },
     reposUnder: () => [{ key: '/w/r', root: '/w/r' }],
+    onTruncated: (root) => truncated.push(root),
     clock: () => t,
   });
   return {
     meta,
     calls,
+    truncated,
     advance(ms: number) {
       t += ms;
     },
@@ -54,12 +57,29 @@ describe('createProjectFileIndex: a listing git could not give', () => {
     expect(h.calls.list).toBe(2);
   });
 
-  it("a non-git root's degraded build is cached for the TTL too", async () => {
-    const h = harness({ kind: 'not-repo' }, true);
+  it("a non-git root's build is cached for the TTL", async () => {
+    const h = harness({ kind: 'not-repo' });
     const first = await h.meta('/w');
     expect(first).toMatchObject({ capped: false, repoSet: '/w/r' });
     await h.meta('/w');
     expect(h.calls).toEqual({ list: 1, walk: 0, build: 1 });
+  });
+
+  it('a truncated listing is reported once per root, however often it recurs', async () => {
+    const h = harness({ kind: 'truncated' });
+    await h.meta('/w');
+    h.advance(FILE_INDEX_TTL_MS + 1);
+    await h.meta('/w');
+    await h.meta('/w', { fresh: true });
+    await h.meta('/v');
+    expect(h.calls.list).toBe(4);
+    expect(h.truncated).toEqual(['/w', '/v']);
+  });
+
+  it('a failed listing is not reported as truncated', async () => {
+    const h = harness({ kind: 'failed' });
+    await h.meta('/w');
+    expect(h.truncated).toEqual([]);
   });
 
   it('each scope has its own entry', async () => {

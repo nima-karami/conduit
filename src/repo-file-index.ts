@@ -23,9 +23,6 @@ export interface RepoFileIndexDeps {
 export interface RepoFileIndexBuild {
   /** Forward-slash rel (root-relative) and abs. */
   files: IndexedFile[];
-  /** Some repo's listing is a last good one, or a walk, because git did not answer: the next
-   *  build asks git for that repo again. */
-  degraded: boolean;
 }
 
 export interface RepoFileIndex {
@@ -148,7 +145,7 @@ export function createRepoFileIndex(deps: RepoFileIndexDeps): RepoFileIndex {
           ? null
           : `${parts.join('\n')}\n#${looseFiles?.serial ?? ''}`;
       const memo = unions.get(rootKey);
-      if (sig !== null && memo?.sig === sig) return { files: memo.files, degraded };
+      if (sig !== null && memo?.sig === sig) return { files: memo.files };
 
       // A repo git never listed is walked instead (the loose walk pruned it), skipping the
       // listed repos inside it.
@@ -172,7 +169,7 @@ export function createRepoFileIndex(deps: RepoFileIndexDeps): RepoFileIndex {
       const files = [...byRel.values()];
       if (sig === null) unions.delete(rootKey);
       else unions.set(rootKey, { sig, files });
-      return { files, degraded };
+      return { files };
     },
     invalidateRepo(key) {
       repoVersions.set(key, (repoVersions.get(key) ?? 0) + 1);

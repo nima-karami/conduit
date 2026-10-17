@@ -796,6 +796,21 @@ where it is; history is not rewritten.
 | `test/unit/project-file-index.test.ts` | create | SF3 caching |
 | `test/unit/git-listing.test.ts`, `repo-file-index.test.ts`, `content-search.test.ts`, `quick-open-folders.test.ts` | modify | One test per behaviour above |
 
+**Search-scope review r3 fix**
+
+| Path | Action | Responsibility |
+|---|---|---|
+| `src/index-streams.ts` | create | `IndexStream` per window (`sent`, `resolved`, `nextSeq`) under a root's `RootIndexState` (`repoSet`, `streams`); `wantsFullIndex`, `planIndexPass` (the requester's full index resets only its own stream, from seq 0; every other window gets what its own stream lacks, plus removals on a repo-set change), `takeChunks` (SF-B) |
+| `electron/main.ts` | modify | TS index through `src/index-streams.ts`; `IndexMode` moved there; after the `index` hold a closed requester is dropped and no state is stored for it (SF-A); module resolutions join the asking window's stream only; `__conduitHold.indexState()` (smoke-only); truncated listing logged via `onTruncated` |
+| `src/project-file-index.ts` | modify | `onTruncated(root)`, once per root (nit) |
+| `src/git-listing.ts` | modify | `LISTING_MAX_BUFFER` exported for that log line |
+| `src/repo-file-index.ts` | modify | `RepoFileIndexBuild.degraded` dropped (no consumer; still decides the memo internally) |
+| `test/unit/index-streams.test.ts` | create | Two windows; B full-indexes while A has files pending; reload gets seq 0 + tsconfig; top-up with no stream is full; per-window re-sync |
+| `test/unit/project-file-index.test.ts`, `repo-file-index.test.ts` | modify | Truncation reported once per root; `degraded` asserts dropped |
+| `test/e2e/index-window-streams.e2e.mjs` | create | Second window and reloaded window get the tsconfig; a window closed while its first build is held leaves no state; red with either fix removed |
+| `test/e2e/index-repo-set.e2e.mjs` | modify | Renderer top-ups held from the first index on; red without the `afterReposChanged` re-sync |
+| `CHANGELOG.md` | modify | tsconfig in every window |
+
 ## Scripts
 
 **None.** The only repeated routine is building git fixtures, and that is runtime test code
