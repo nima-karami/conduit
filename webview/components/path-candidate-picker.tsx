@@ -53,7 +53,9 @@ export function PathCandidatePicker({
 }: PathCandidatePickerProps) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
-  const hover = useHoverGate();
+  // Rows re-filter or re-list under a pointer that may not move: each restarts the gate, so Enter
+  // still takes the top match rather than whatever row slid under the cursor.
+  const hover = useHoverGate(JSON.stringify([query, rows.map((r) => r.cand.absPath)]));
   const baseId = useId();
   const listId = `${baseId}-list`;
   const inputRef = useRef<HTMLInputElement>(null);
