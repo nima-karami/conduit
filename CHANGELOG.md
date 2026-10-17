@@ -14,6 +14,14 @@ All notable user-facing changes to Conduit. Format follows
   branch switch made inside a worktree whose main repo lives elsewhere now shows up on its own,
   without clicking anything. Line counts (`+3 −1`) are read only while the Changes tab or Review is
   open; until they arrive, a small placeholder stands in for them, in Review's file list too.
+- **Search in a folder of repos skips gitignored files.** When a session's folder isn't a git repo
+  itself but holds repos, quick open, find in files and Go to Definition now use each repo's own
+  file list (what git tracks, plus new files it doesn't ignore) and the files outside any repo,
+  instead of walking the first 20,000 files and ignoring `.gitignore`. Saving a file re-reads only
+  its own repo's list. A scope chip under the search box picks **All repos**, just the active repo, or
+  **Everything (may be slow)**, which walks the folder the old way, gitignored files included (but
+  still not `node_modules`, `dist` or other generated folders). The choice is kept per session until
+  Conduit restarts.
 - **A repo whose git status can't be read now says so.** The Changes tab shows "Couldn't read git
   status" under that repo with a Retry button, instead of quietly showing no changes. A list that
   is waiting to be refreshed says "Updating…", and how long ago it was last read once that is a

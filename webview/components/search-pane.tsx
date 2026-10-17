@@ -5,6 +5,7 @@ import {
   type SearchFileResult,
   type SearchQuery,
 } from '../../src/content-search';
+import { folderKey } from '../../src/folder-key';
 import {
   acceptFolderReply,
   IDLE_SEARCH,
@@ -18,6 +19,8 @@ import {
   startMultiSearch,
   timeOutSearch,
 } from '../../src/folder-search';
+import type { IndexScope } from '../../src/protocol';
+import { type SearchScope, searchTargets } from '../../src/search-scope';
 import type { FolderSectionModel } from '../../src/session-sections';
 import { post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
@@ -26,6 +29,7 @@ import { IconChevronDown, IconSearch } from '../icons';
 import { middleClickProps } from '../middle-click';
 import { highlightSegments } from '../search-highlight';
 import { EmptyState } from './empty-state';
+import { SearchScopeChip } from './search-scope-chip';
 
 /** Imperative handle so the parent (right-pane) can focus the query input on Mod+Shift+F. */
 export interface SearchPaneHandle {
@@ -35,6 +39,21 @@ export interface SearchPaneHandle {
   /** Replace the query with `next`, run it, and focus + select-all so typing replaces the
    *  seed. Used to seed the box from the editor selection (Mod+Shift+F). */
   setQuery(next: string): void;
+}
+
+/** The session's search scope (multi-repo spec §2 Search); absent = today's folder search. */
+export interface SearchScopeModel {
+  scope: SearchScope;
+  onScope: (scope: SearchScope) => void;
+  /** scopeChipFolders: the chip shows only when some folder is under no repo. */
+  chipFolders: readonly string[];
+  activeRepo?: { root: string; label: string };
+}
+
+interface SearchTarget {
+  root: string;
+  key: string;
+  scope?: IndexScope;
 }
 
 const DEBOUNCE_MS = 180;
@@ -220,6 +239,7 @@ export function SearchPane({
   paneRef,
   onTextChange,
   hideResultsWhenEmpty,
+  scope,
 }: {
   /** The session's folders; only the present ones are searched (L9). */
   folders: readonly FolderSectionModel[];
@@ -231,6 +251,7 @@ export function SearchPane({
   /** When true, suppress the empty-state hint below the bar when there's no query.
    *  Used by the Files tab so the search bar is compact and the tree shows below. */
   hideResultsWhenEmpty?: boolean;
+  scope?: SearchScopeModel;
 }) {
   const [text, setText] = useState('');
   const [matchCase, setMatchCase] = useState(false);
@@ -241,13 +262,31 @@ export function SearchPane({
   const [exclude, setExclude] = useState('');
 
   const present = searchableFolders(folders);
-  const folderKeys = present.map((f) => f.key).join('\n');
+  const chip = scope && scope.chipFolders.length > 0 ? scope : undefined;
+  // "This repo" with no active repo left would search nothing; the chip shows what runs.
+  const effectiveScope: SearchScope | undefined = chip
+    ? chip.scope === 'repo' && !chip.activeRepo
+      ? 'tracked'
+      : chip.scope
+    : undefined;
+  const targets: SearchTarget[] =
+    chip && effectiveScope
+      ? searchTargets(
+          present.map((f) => f.path),
+          effectiveScope,
+          chip.activeRepo?.root,
+          chip.chipFolders,
+        ).map((t) => ({ root: t.root, key: folderKey(t.root), scope: t.scope }))
+      : present.map((f) => ({ root: f.path, key: f.key }));
+  const targetKeys = targets.map((t) => t.key).join('\n');
+  // A scope change re-runs the search even when the target folders stay the same.
+  const targetSig = targets.map((t) => `${t.key}\t${t.scope ?? ''}`).join('\n');
   const [search, setSearch] = useState<MultiSearchState>(IDLE_SEARCH);
   // Between a keystroke and its debounced dispatch the previous results stay up, still busy.
   const [pending, setPending] = useState(false);
   const [didSearch, setDidSearch] = useState(false);
-  const presentRef = useRef(present);
-  presentRef.current = present;
+  const targetsRef = useRef(targets);
+  targetsRef.current = targets;
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Monotonic request id: a newer query supersedes any older in-flight reply.
@@ -326,13 +365,13 @@ export function SearchPane({
   }, [search]);
   // A folder that left the session mid-flight stops being waited for (spec §4).
   useEffect(() => {
-    const keys = folderKeys === '' ? [] : folderKeys.split('\n');
+    const keys = targetKeys === '' ? [] : targetKeys.split('\n');
     setSearch((s) => retainFolders(s, keys));
-  }, [folderKeys]);
+  }, [targetKeys]);
 
   // Debounced query dispatch. Empty query clears results without a host round-trip.
   useEffect(() => {
-    if (folderKeys === '' || text.trim() === '') {
+    if (targetSig === '' || text.trim() === '') {
       if (watchdogRef.current) {
         clearTimeout(watchdogRef.current);
         watchdogRef.current = null;
@@ -356,15 +395,22 @@ export function SearchPane({
       // One requestId for every folder (D11); the host cancels per root, so siblings never
       // supersede each other.
       const requestId = ++reqIdRef.current;
-      const targets = presentRef.current;
+      const sent = targetsRef.current;
       setSearch(
         startMultiSearch(
           requestId,
-          targets.map((f) => f.key),
+          sent.map((t) => t.key),
         ),
       );
       setPending(false);
-      for (const f of targets) post({ type: 'contentSearch', requestId, root: f.path, query });
+      for (const t of sent)
+        post({
+          type: 'contentSearch',
+          requestId,
+          root: t.root,
+          query,
+          ...(t.scope ? { scope: t.scope } : {}),
+        });
       if (watchdogRef.current) clearTimeout(watchdogRef.current);
       watchdogRef.current = setTimeout(() => {
         watchdogRef.current = null;
@@ -372,13 +418,13 @@ export function SearchPane({
       }, SEARCH_TIMEOUT_MS);
     }, DEBOUNCE_MS);
     return () => clearTimeout(id);
-  }, [folderKeys, text, matchCase, wholeWord, regex, include, exclude]);
+  }, [targetSig, text, matchCase, wholeWord, regex, include, exclude]);
 
   const busy = pending || isSearching(search);
   const groups = searchFolderGroups(search);
-  const single = present.length === 1;
+  const single = targets.length === 1;
   // One folder renders exactly as before mf-files, fed from that folder's own reply.
-  const only = single ? search.replies[present[0].key] : undefined;
+  const only = single ? search.replies[targets[0].key] : undefined;
   const results: SearchFileResult[] = single
     ? (only?.results ?? [])
     : groups.flatMap((g) => g.results);
@@ -391,7 +437,9 @@ export function SearchPane({
   const totalMatches = results.reduce((n, f) => n + (f.matches.length || 1), 0);
   const query: SearchQuery = { text, matchCase, wholeWord, regex };
   const searchIsActive = didSearch;
-  const labelOf = (key: string) => present.find((f) => f.key === key)?.label ?? key;
+  const labelOf = (key: string) =>
+    present.find((f) => f.key === key)?.label ??
+    (chip?.activeRepo && folderKey(chip.activeRepo.root) === key ? chip.activeRepo.label : key);
 
   const rootClass = hideResultsWhenEmpty
     ? `search search--embedded${searchIsActive ? ' search--active' : ''}`
@@ -451,6 +499,15 @@ export function SearchPane({
           <IconChevronDown size={13} />
         </button>
       </div>
+      {chip && effectiveScope && (!hideResultsWhenEmpty || text !== '') && (
+        <div className="search__scope">
+          <SearchScopeChip
+            scope={effectiveScope}
+            repoLabel={chip.activeRepo?.label}
+            onPick={chip.onScope}
+          />
+        </div>
+      )}
       {showFilters && (
         <div className="search__filters">
           <input
@@ -474,7 +531,7 @@ export function SearchPane({
         <div className="search__error" role="alert">
           {error}
         </div>
-      ) : present.length === 0 || (hideResultsWhenEmpty && !didSearch) ? null : !didSearch ? (
+      ) : targets.length === 0 || (hideResultsWhenEmpty && !didSearch) ? null : !didSearch ? (
         <EmptyState title="Type to search across the project." icon={<IconSearch size={20} />} />
       ) : busy && results.length === 0 ? (
         <EmptyState title="Searching…" role="status" />

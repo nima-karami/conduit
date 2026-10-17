@@ -46,7 +46,7 @@ import {
   isOsFileDrag,
 } from './folder-section';
 import { MissingFolder } from './missing-folder';
-import { SearchPane, type SearchPaneHandle } from './search-pane';
+import { SearchPane, type SearchPaneHandle, type SearchScopeModel } from './search-pane';
 
 // Fallback row height (px) used before a real `.filerow` is measured; corrected on first mount.
 const DEFAULT_ROW_HEIGHT = 25;
@@ -123,6 +123,7 @@ export interface FilesViewProps {
   searchPaneRef: React.MutableRefObject<SearchPaneHandle | null>;
   /** Record a successful fs op into the app-level undo stack. */
   recordFsOp?: (op: FsOp) => void;
+  searchScope?: SearchScopeModel;
 }
 
 export function FilesView({
@@ -147,6 +148,7 @@ export function FilesView({
   onRenamed,
   searchPaneRef,
   recordFsOp,
+  searchScope,
 }: FilesViewProps) {
   const present = sections.filter((s) => !s.missing);
   const presentRef = useRef(present);
@@ -680,6 +682,7 @@ export function FilesView({
         paneRef={searchPaneRef}
         onTextChange={setSearchText}
         hideResultsWhenEmpty={!searchActive}
+        scope={searchScope}
       />
       {/* Kept mounted while search is active so every section keeps its tree state. */}
       <div

@@ -5375,6 +5375,18 @@ body.gh-resizing {
   gap: 6px;
   padding: 4px 12px 6px;
 }
+/* Search scope chip (multi-repo spec §8): its own row so a long repo name ellipsizes inside the
+   pane instead of squeezing the query box. */
+.search__scope {
+  display: flex;
+  padding: 2px 12px 4px;
+  min-width: 0;
+}
+.search__scopechip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
 .search__glob {
   background: var(--raise);
   border: 1px solid var(--border);

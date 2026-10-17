@@ -128,6 +128,7 @@ import type {
   AboutInfo,
   DiffBase,
   HostToWebview,
+  IndexScope,
   LimitOffer,
   PersistedDoc,
   RepoDTO,
@@ -139,7 +140,7 @@ import { summarizeQueue } from '../src/queue-summary';
 import { busySessions, runningSessions } from '../src/quit-guard';
 import { resolveRangePreset } from '../src/range-preset';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
-import { createRepoFileIndex } from '../src/repo-file-index';
+import { createRepoFileIndex, LOOSE_FILE_CAP } from '../src/repo-file-index';
 import {
   filterExistingRepos,
   restoreRepos,
@@ -473,14 +474,15 @@ const statKind = (absPath: string): 'file' | 'dir' | null => {
 
 /** Build (or reuse, within the TTL) the project file index for `root`: `git ls-files` (fast,
  *  respects .gitignore, includes untracked-but-not-ignored) for a git root; for a non-git root,
- *  its registered repos' listings plus the loose files outside them (src/repo-file-index.ts).
- *  `fromGit` = the files are authoritative candidates for content search, not a walk it should
- *  redo itself. */
+ *  its registered repos' listings plus the loose files outside them (src/repo-file-index.ts),
+ *  or with scope 'everything' the capped walk that ignores .gitignore. `fromGit` = the files
+ *  are authoritative candidates for content search, not a walk it should redo itself. */
 async function projectFileIndexMeta(
   root: string,
-  opts: { fresh?: boolean } = {},
+  opts: { fresh?: boolean; scope?: IndexScope } = {},
 ): Promise<{ files: IndexedFile[]; fromGit: boolean }> {
-  const cached = fileIndexCache.get(root);
+  const cacheKey = `${root}\0${opts.scope ?? 'tracked'}`;
+  const cached = fileIndexCache.get(cacheKey);
   // An incremental index is triggered BY a filesystem change, so serving it the TTL cache
   // would hand back exactly the pre-change listing it was called to notice. It still WRITES
   // the cache, so the refresh is shared with whatever asks next.
@@ -492,16 +494,24 @@ async function projectFileIndexMeta(
   if (listed.length > 0) {
     fromGit = true;
     files = listed.map((rel) => ({ rel, abs: `${root}/${rel}` }));
+  } else if (opts.scope === 'everything') {
+    fromGit = false;
+    // The cap is generous because this walk used to back the TS source index too, and the
+    // search-sized default truncated deep source directories out of it.
+    files = (await walkFilesAsync(root, LOOSE_FILE_CAP)).map((h) => ({
+      rel: h.rel,
+      abs: h.abs.replace(/\\/g, '/'),
+    }));
   } else {
     fromGit = true;
     files = await repoFileIndex.build(root, trackedReposUnder?.(folderKey(root)) ?? []);
   }
-  fileIndexCache.set(root, { files, at: Date.now(), fromGit });
+  fileIndexCache.set(cacheKey, { files, at: Date.now(), fromGit });
   return { files, fromGit };
 }
 
-async function projectFileIndex(root: string): Promise<IndexedFile[]> {
-  return (await projectFileIndexMeta(root)).files;
+async function projectFileIndex(root: string, scope?: IndexScope): Promise<IndexedFile[]> {
+  return (await projectFileIndexMeta(root, { scope })).files;
 }
 
 /** Files per `projectFiles` chunk — small enough that building one can't cost the renderer
@@ -3729,9 +3739,9 @@ app.whenReady().then(() => {
         case 'searchFiles': {
           // Quick-open corpus (Mod+P): back it with the shared project index (git ls-files —
           // gitignore-respecting, uncapped) so files past walkFiles' BFS cap surface and
-          // ignored trees (vendor/, target/, .venv/, …) don't. projectFileIndex itself falls
-          // back to walkFiles for non-git roots, so this preserves behavior there.
-          const indexed = await projectFileIndex(m.root);
+          // ignored trees (vendor/, target/, .venv/, …) don't. A non-git root gets its repos'
+          // listings plus loose files the same way (projectFileIndexMeta).
+          const indexed = await projectFileIndex(m.root, m.scope);
           replyHere({
             type: 'searchResults',
             root: m.root,
@@ -3742,8 +3752,9 @@ app.whenReady().then(() => {
         case 'contentSearch': {
           // Project-wide find-in-files (L5). For a git root, drive the search from the
           // gitignore-respecting file set (shared `projectFileIndex` — git ls-files) so
-          // vendored/build/gitignored trees (vendor/, target/, .venv/, …) don't surface;
-          // non-git roots fall back to the core's bounded BFS walk. Either way the result
+          // vendored/build/gitignored trees (vendor/, target/, .venv/, …) don't surface; a
+          // non-git root searched with scope 'everything' falls back to the core's bounded BFS
+          // walk. Either way the result
           // caps, time budget, and binary/large-file skips still apply. `requestId` is
           // echoed back so a newer query supersedes this (stale) reply in the renderer.
           // Wrapped so a throw (e.g. a vanished root) surfaces as an inline error.
@@ -3756,7 +3767,9 @@ app.whenReady().then(() => {
           contentSearchGen.set(m.root, gen);
           const isCancelled = () => contentSearchGen.get(m.root) !== gen;
           try {
-            const { files: indexed, fromGit } = await projectFileIndexMeta(m.root);
+            const { files: indexed, fromGit } = await projectFileIndexMeta(m.root, {
+              scope: m.scope,
+            });
             const candidates = fromGit
               ? indexed.map((f) => ({ rel: f.rel, abs: f.abs.replace(/\\/g, '/') }))
               : undefined;

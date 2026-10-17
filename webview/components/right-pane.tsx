@@ -24,7 +24,7 @@ import type { MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
 import { FilesView, type FilesViewHandle, type FolderUiCache } from './files-view';
 import { ReviewNavigator } from './review-navigator';
-import type { SearchPaneHandle } from './search-pane';
+import type { SearchPaneHandle, SearchScopeModel } from './search-pane';
 
 /** Imperative handle so App's Mod+Shift+F can switch to the Files tab and focus the search input. */
 export interface RightPaneHandle {
@@ -62,6 +62,7 @@ export function RightPane({
   recordFsOp,
   onContextPath,
   activeTarget,
+  searchScope,
   ...changesProps
 }: Omit<ChangesViewProps, 'model' | 'collapsedRepos'> & {
   sessionId: string | undefined;
@@ -101,6 +102,7 @@ export function RightPane({
   recordFsOp?: (op: FsOp) => void;
   /** Multi-repo auto-follow: report a clicked file/folder path so the active repo follows it. */
   onContextPath?: (absPath: string) => void;
+  searchScope?: SearchScopeModel;
 }) {
   const { settings, update } = useSettings();
   const [tab, setTab] = useState<RightPaneTab>(settings.rightPaneTab);
@@ -247,6 +249,7 @@ export function RightPane({
           folderUi={folderUiRef.current}
           recordFsOp={recordFsOp}
           onContextPath={onContextPath}
+          searchScope={searchScope}
         />
       )}
     </aside>

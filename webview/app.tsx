@@ -63,6 +63,7 @@ import {
 import { gitOf } from '../src/repo-git';
 import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
+import { type SearchScope, scopeChipFolders } from '../src/search-scope';
 import { resolveSessionIcon } from '../src/session-icon';
 import { sessionNameFromPath } from '../src/session-name';
 import {
@@ -118,6 +119,7 @@ import { type DockHandlers, PanelFrame } from './components/panel-frame';
 import { ProjectPicker } from './components/project-picker';
 import { QuitScrim } from './components/quit-scrim';
 import { RightPane, type RightPaneHandle } from './components/right-pane';
+import type { SearchScopeModel } from './components/search-pane';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
 import { TimedMessageDialog } from './components/timed-message-dialog';
@@ -1973,6 +1975,37 @@ export function App() {
     () => sessionSections(active),
     [active?.home, active?.roots, active?.missingRoots, active?.homeMissing],
   );
+  // In memory per session: it resets to All repos on restart (plan, Decisions Needed).
+  const [searchScopeBySession, setSearchScopeBySession] = useState<Record<string, SearchScope>>({});
+  const onSearchScope = useCallback(
+    (scope: SearchScope) => {
+      if (activeId) setSearchScopeBySession((prev) => ({ ...prev, [activeId]: scope }));
+    },
+    [activeId],
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
+  const searchScope = useMemo<SearchScopeModel | undefined>(() => {
+    if (!active) return undefined;
+    const repos = active.repos ?? [];
+    const activeKey = active.activeRepoRoot ? folderKey(active.activeRepoRoot) : undefined;
+    const activeRepo = repos.find((r) => folderKey(r.root) === activeKey);
+    return {
+      scope: searchScopeBySession[active.id] ?? 'tracked',
+      onScope: onSearchScope,
+      chipFolders: scopeChipFolders(active),
+      activeRepo: activeRepo && { root: activeRepo.root, label: repoLabel(activeRepo, repos) },
+    };
+  }, [
+    active?.id,
+    active?.home,
+    active?.roots,
+    active?.repos,
+    active?.missingRoots,
+    active?.homeMissing,
+    active?.activeRepoRoot,
+    searchScopeBySession,
+    onSearchScope,
+  ]);
   const hintProjectId = projectForNewSession(active, state?.projects ?? []);
   const newSessionReturnFocus = useRef<HTMLElement | null>(null);
   const startSessionForCard = useCallback(
@@ -4394,6 +4427,7 @@ export function App() {
           sessionId={active?.id}
           activeTarget={activeTargetValue}
           sections={sections}
+          searchScope={searchScope}
           rowChanges={rowChanges}
           osDropSeam={state?.about?.e2e === true}
           openAsSessionHint={openAsSessionHint}

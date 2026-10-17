@@ -115,8 +115,14 @@ export interface RepoChanges {
   error?: GitFailure;
 }
 
+/** Which file index a non-git root is searched through: its repos' git listings plus loose
+ *  files ('tracked', the default), or the capped walk that ignores .gitignore ('everything').
+ *  A git root has one index either way. See docs/specs/2026-10-16-multi-repo-tracking.md §2. */
+export type IndexScope = 'tracked' | 'everything';
+
 /** One repo's entry in a `repoDelta`, as the host-wide repo tracker caches it
  *  (docs/plans/2026-10-16-multi-repo-tracking.plan.md, Contracts). */
+
 export interface RepoSnapshot {
   /** Status-derived, always present once read. */
   changes: ChangeDTO[];
@@ -997,10 +1003,16 @@ export type WebviewToHost =
   // Explicit Retry of one repo's read; the host checks `root` against the session's repos.
   | { type: 'repo:refresh'; sessionId: string; root: string }
   | { type: 'updateSettings'; settings: AppSettings }
-  | { type: 'searchFiles'; root: string; query: string } // recursive file search under root
+  | { type: 'searchFiles'; root: string; query: string; scope?: IndexScope } // recursive file search under root
   // Project-wide content search (find-in-files, L5). `requestId` monotonically increases
   // per renderer query so the host can echo it back and the renderer can drop stale replies.
-  | { type: 'contentSearch'; requestId: number; root: string; query: SearchQuery }
+  | {
+      type: 'contentSearch';
+      requestId: number;
+      root: string;
+      query: SearchQuery;
+      scope?: IndexScope;
+    }
   | { type: 'revealInExplorer'; path: string } // open the OS file manager at path
   | { type: 'openExternalPath'; path: string } // open a file with its OS-default app (shell.openPath)
   | { type: 'openWith'; path: string } // open the OS "Open with…" application chooser for a file

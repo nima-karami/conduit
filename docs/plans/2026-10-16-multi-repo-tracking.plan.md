@@ -745,6 +745,18 @@ where it is; history is not rewritten.
 | `webview/styles.css` | modify | `.branch-chip__shrink` clips (`overflow: clip`, min-content stays 0) so squeezed text padding never paints over a glyph; repo-head tag threshold 252px → `calc(220px + 3.4em)`, from the widest pill ("Attached", 52.4px at scale 1) with its text in container em so it tracks font scale |
 | `test/e2e/repo-head-fit.e2e.mjs` | modify | Attached long-name worktree (colliding name, so the chip keeps its worktree segment) at 220 / 262–268 / 272 / 330; at the floor every `.branch-chip__text` lies inside its track or paints nothing |
 
+**Slices 3 / 4**
+
+| Path | Action | Responsibility |
+|---|---|---|
+| `src/repo-tracker.ts` | modify | `onDirty` also fires `null` on `lostFolders` and when a root turns live, and a key for each repo a live root newly covers (a dropped or unwatched event may have been a loose file's) |
+| `src/repo-file-index.ts` | create | Also re-walks the loose part when the repo set under the root changes; an empty listing is never cached; a root that is itself a repo has no loose part |
+| `electron/main.ts` | modify | `walkLoose: (root, prune, cap) => walkFilesAsync(root, cap, prune)` (the contract's two orders differ); `trackedReposUnder` module hook set by the app-ready closure, like `onWindowFocus` |
+| `src/search-scope.ts` | create | `scopeChipFolders` is empty before the first scan and while the session has no repo at all (search stays as before) |
+| `webview/components/search-pane.tsx` | modify | Exports `SearchScopeModel` (one prop threaded through right-pane → files-view); chip row shown while a query is typed in the Files tab; "This repo" with no active repo searches as All repos |
+| `webview/styles.css` | modify | `.search__scope` row and `.search__scopechip` (shrinks and ellipsizes inside the pane) |
+| `CHANGELOG.md` | modify | Search entry; the engine and line-count entries were already written in Slice 2 |
+
 ## Scripts
 
 **None.** The only repeated routine is building git fixtures, and that is runtime test code
