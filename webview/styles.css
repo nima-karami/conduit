@@ -3025,9 +3025,10 @@ body.resizing .panel__resize::after {
    The chip is a FIELD in the state vocabulary: the hairline is what says "this one opens", and
    because it is there at rest, hover and open only recolour an edge that already exists. */
 .branch-chip {
+  --chip-gap: 5px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--chip-gap);
   height: 100%;
   padding: 0 8px;
   border: 1px solid var(--state-edge);
@@ -3049,14 +3050,40 @@ body.resizing .panel__resize::after {
 .branch-chip--muted {
   color: var(--text-faint);
 }
-/* A track that may shrink to 0 gives the label no min-content of its own (see ChipLabel). */
-.branch-chip__label {
+/* A track that may shrink to 0 gives the text no min-content of its own (see ChipLabel). */
+.branch-chip__shrink {
   display: inline-grid;
   grid-template-columns: minmax(0, max-content);
 }
 .branch-chip__text {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Each text's spacing from its glyph is padding inside the text, so text squeezed to 0 takes its
+   gap with it and the floor is the glyphs, dirty dot and caret alone (engine review r4). */
+.branch-chip__label > .branch-chip__text,
+.branch-chip__tag > .branch-chip__text {
+  padding-inline-start: var(--chip-gap);
+}
+/* The tag word goes first: it wraps onto a second line that the one-line-high box clips, so it is
+   gone exactly when the chip can no longer show everything, before any label ellipsizes. Its
+   meaning stays in the chip's accessible name and the detached styling. A container query cannot
+   do this: it would contain the chip's width, and the head sizes the chip from its content. */
+.branch-chip__fit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  height: 1lh;
+  overflow: hidden;
+}
+.branch-chip__main {
+  display: flex;
+  align-items: center;
+  gap: var(--chip-gap);
+}
+.branch-chip__ref {
+  display: inline-flex;
+  align-items: center;
 }
 /* Branch/worktree glyphs sit a hair below the cap line; dim by default so the name leads. */
 .branch-chip__glyph {
@@ -3069,7 +3096,6 @@ body.resizing .panel__resize::after {
 .branch-chip__worktree {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
 }
 /* Worktree marker echoes the kind-glyph colour language (--blue) used in the breadcrumb. */
 .branch-chip__worktree .branch-chip__glyph {
@@ -3088,11 +3114,10 @@ body.resizing .panel__resize::after {
   font-family: var(--font-mono);
 }
 .branch-chip__sep {
-  display: inline-flex;
-  align-items: center;
   color: var(--text-faint);
-  margin: 0 2px;
-  flex: 0 0 auto;
+}
+.branch-chip__sep > .branch-chip__text {
+  padding-inline: calc(var(--chip-gap) + 2px) 2px;
 }
 /* Faint trailing tag ("detached" / "no commits") — supporting text, not the headline. */
 .branch-chip__tag {
@@ -3114,7 +3139,9 @@ body.resizing .panel__resize::after {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--amber, #d9a14b);
-  flex: 0 0 auto;
+}
+.branch-chip__op > .branch-chip__text {
+  padding-inline-end: var(--chip-gap);
 }
 .branch-chip__caret {
   flex: 0 0 auto;
@@ -5697,7 +5724,6 @@ body.gh-resizing {
   flex: 1 0 auto;
   align-items: center;
   gap: var(--treehead-gap);
-  min-width: 0;
 }
 .repo-head:first-child {
   margin-top: 2px;
@@ -5765,8 +5791,11 @@ body.gh-resizing {
   background: rgba(var(--overlay), 0.06);
 }
 /* On a narrow head the repo name wins over its tag, as on the Files bars. The group's aria-label
-   already names the tag. */
-@container repo-head (max-width: 200px) {
+   already names the tag. The tag shows only while the name keeps 80px (~14 characters) beside it
+   and the widest chip floor, measured at font scale 1 (engine review r4): 24 chevron + 13 glyph +
+   4 × 4 gaps + 44 "Nested" pill + 75 chip floor (worktree + branch glyph, dirty dot, caret) + 80
+   name = 252px of content box. */
+@container repo-head (max-width: 252px) {
   .repo-head__line > .repo-head__tag {
     display: none;
   }

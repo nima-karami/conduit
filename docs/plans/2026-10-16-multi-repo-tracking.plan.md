@@ -727,6 +727,17 @@ where it is; history is not rewritten.
 | `test/unit/git-exec.test.ts`, `git-actions-integration.test.ts`, `git-info.test.ts`, `changes-view-model.test.ts`, `branch-chip.test.ts`, `tree-chevron.test.ts` | modify | r3 cases; RepoHead's chevron now leads the line |
 | `CHANGELOG.md` | modify | Name-priority line covers narrow panes and case; "folder not found" line |
 
+**Engine review r4 fix**
+
+| Path | Action | Responsibility |
+|---|---|---|
+| `webview/components/branch-chip.tsx` | modify | All chip text (op badge, separator, tag word) through `ChipLabel`; `.branch-chip__fit` (one-line box) holds the main row and the tag word; `.branch-chip__ref-label` names the branch/SHA label |
+| `webview/styles.css` | modify | Text spacing as padding inside the text so the floor is glyphs + dot + caret; tag word wraps away first (clipped one-line box, not a container query); repo-head tag threshold 200 → 252px from measurement; no-op `min-width: 0` on `.repo-head__line` dropped |
+| `src/git-actions.ts` | modify | `runHunkPlan` diff failure via `gitFailureText` |
+| `test/unit/git-actions-integration.test.ts` | modify | Hunk op in a removed folder says "folder not found" |
+| `test/e2e/repo-head-fit.e2e.mjs` | modify | Detached + REBASING long-name worktree at 220 / 330 (+400 / 460 / 560); head reaches its target ±2 px; no horizontal overflow; tag word first; floor = glyphs + dot + caret; tag pill never leaves the name under 80px |
+| `test/e2e/branch-switch.e2e.mjs`, `test/e2e/git-indicator.e2e.mjs` | modify | Branch label read via `.branch-chip__ref-label` (no longer a direct child of the chip) |
+
 ## Scripts
 
 **None.** The only repeated routine is building git fixtures, and that is runtime test code

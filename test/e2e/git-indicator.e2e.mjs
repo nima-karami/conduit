@@ -121,7 +121,7 @@ const readChipOnce = (page) =>
     const chip = document.querySelector('.repo-head .branch-chip');
     if (!chip) return null;
     return {
-      label: chip.querySelector(':scope > .branch-chip__label')?.textContent ?? null,
+      label: chip.querySelector('.branch-chip__ref-label')?.textContent ?? null,
       tag: chip.querySelector('.branch-chip__tag')?.textContent ?? null,
       op: chip.querySelector('.branch-chip__op')?.textContent ?? null,
       worktree:

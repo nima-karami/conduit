@@ -222,7 +222,7 @@ try {
   await gitForSession(page, sid, repo, (g) => g.branch === 'feature', 5000);
   await page.waitForFunction(
     () =>
-      document.querySelector('.repo-head .branch-chip > .branch-chip__label')?.textContent ===
+      document.querySelector('.repo-head .branch-chip .branch-chip__ref-label')?.textContent ===
       'feature',
     null,
     { timeout: 5000 },

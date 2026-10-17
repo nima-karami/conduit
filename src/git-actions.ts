@@ -348,7 +348,7 @@ async function runHunkPlan(
     return {
       ok: false,
       error: 'apply-failed',
-      message: diff.stderr.trim() || `git diff exited with code ${diff.code}`,
+      message: diff.stderr.trim() || gitFailureText(diff, `git diff exited with code ${diff.code}`),
     };
   }
   // Refuse a stale diff instead of guessing. The renderer's range describes the diff it drew;

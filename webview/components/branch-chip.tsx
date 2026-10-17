@@ -27,10 +27,19 @@ const STR = {
 } as const;
 
 /** The outer span has a zero min-content so a squeezed chip floors at its glyphs, not its text;
- *  the inner one ellipsizes. */
-function ChipLabel({ children, dir }: { children: React.ReactNode; dir?: 'ltr' }) {
+ *  the inner one ellipsizes. Every piece of chip text goes through it, or its width joins the
+ *  floor (engine review r4). */
+function ChipLabel({
+  children,
+  className = 'branch-chip__label',
+  dir,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  dir?: 'ltr';
+}) {
   return (
-    <span className="branch-chip__label" dir={dir}>
+    <span className={`branch-chip__shrink ${className}`} dir={dir}>
       <span className="branch-chip__text">{children}</span>
     </span>
   );
@@ -153,28 +162,36 @@ export function BranchChip({
       >
         {ready ? (
           <>
-            {/* The glyph alone stays the worktree cue when the name segment is dropped (QA4). */}
-            {ready.worktree !== undefined && (
-              <span className="branch-chip__worktree">
-                <IconWorktree size={12} className="branch-chip__glyph" />
-                {worktree && <ChipLabel dir="ltr">{worktree}</ChipLabel>}
+            <span className="branch-chip__fit">
+              <span className="branch-chip__main">
+                {/* The glyph alone stays the worktree cue when the name segment is dropped (QA4). */}
+                {ready.worktree !== undefined && (
+                  <span className="branch-chip__worktree">
+                    <IconWorktree size={12} className="branch-chip__glyph" />
+                    {worktree && <ChipLabel dir="ltr">{worktree}</ChipLabel>}
+                    {worktree && <ChipLabel className="branch-chip__sep">/</ChipLabel>}
+                  </span>
+                )}
+                <span className="branch-chip__ref">
+                  {ready.opLabel && (
+                    <ChipLabel className="branch-chip__op">{ready.opLabel}</ChipLabel>
+                  )}
+                  <IconBranch size={12} className="branch-chip__glyph" />
+                  <ChipLabel className="branch-chip__label branch-chip__ref-label" dir="ltr">
+                    {ready.text}
+                  </ChipLabel>
+                </span>
               </span>
-            )}
-            {worktree && (
-              <span className="branch-chip__sep" aria-hidden>
-                /
-              </span>
-            )}
-            {ready.opLabel && <span className="branch-chip__op">{ready.opLabel}</span>}
-            <IconBranch size={12} className="branch-chip__glyph" />
-            <ChipLabel dir="ltr">{ready.text}</ChipLabel>
-            {ready.tag && <span className="branch-chip__tag">{ready.tag}</span>}
+              {ready.tag && <ChipLabel className="branch-chip__tag">{ready.tag}</ChipLabel>}
+            </span>
             {ready.dirty && (
               <span className="branch-chip__dirty" title={STR.uncommitted} aria-hidden />
             )}
           </>
         ) : (
-          <ChipLabel>{model.state === 'none' ? STR.none : STR.unknown}</ChipLabel>
+          <ChipLabel className="branch-chip__status">
+            {model.state === 'none' ? STR.none : STR.unknown}
+          </ChipLabel>
         )}
         {model.state !== 'unknown' && (
           <IconChevronDown size={11} className="branch-chip__caret" aria-hidden />
