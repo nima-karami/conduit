@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_LOGICAL_LINE } from '../../webview/terminal-links';
+import { detectPathTokens, MAX_LOGICAL_LINE } from '../../webview/terminal-links';
 import {
   type BufferLike,
   buildLogicalLine,
@@ -148,6 +148,22 @@ describe('buildLogicalLine — Ink hard-wrap heuristic', () => {
       buildLogicalLine(fakeBuffer([{ text: 'G:/work/re' }, { text: '' }], cols), 0, cols)?.text,
     ).toBe('G:/work/re');
   });
+
+  it.each(['-', '=', '_', '~', '#', '.'])(
+    'a full-width %j rule never joins the next row, nor a row onto it',
+    (ch) => {
+      const w = 24;
+      const below = fakeBuffer([{ text: ch.repeat(w) }, { text: 'src/foo.ts:3:1 error' }], w);
+      const ll = buildLogicalLine(below, 1, w);
+      expect(ll?.text).toBe('src/foo.ts:3:1 error');
+      expect(detectPathTokens(ll?.text ?? '', '/w').map((t) => t.raw)).toEqual(['src/foo.ts']);
+      const rule = ch.repeat(cols);
+      const above = fakeBuffer([{ text: 'G:/w/src/a' }, { text: rule }], cols);
+      expect(buildLogicalLine(above, 0, cols)?.text).toBe('G:/w/src/a');
+      const indented = fakeBuffer([{ text: `  ${ch.repeat(cols - 2)}` }, { text: 'x/y.ts' }], cols);
+      expect(buildLogicalLine(indented, 1, cols)?.text).toBe('x/y.ts');
+    },
+  );
 
   it('chains over several hard-wrapped rows, still under MAX_LOGICAL_LINE', () => {
     const rows = [{ text: 'G:/aaaaaaa' }, { text: 'bbbbbbbbbb' }, { text: 'cc/x.ts' }];

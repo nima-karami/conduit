@@ -34,15 +34,27 @@ function joinsOn(ch: string | undefined): boolean {
   return isPathChar(ch) && !(c >= 0x2500 && c <= 0x259f);
 }
 
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
+/** A row that is one punctuation char repeated (`-----`, `=====`): a separator rule is a full
+ *  row of path chars, and joining it would glue it onto the path next to it. */
+function isRule(row: string): boolean {
+  const body = row.trim();
+  if (body.length < 2 || WORD_CHAR.test(body[0])) return false;
+  for (let i = 1; i < body.length; i++) if (body[i] !== body[0]) return false;
+  return true;
+}
+
 /** Row 52, v1: Claude Code's Ink UI hard-wraps (no isWrapped). Row `a` continues into `a + 1`
  *  when it fills every column ending in a path char and the next row, after up to 2 spaces of
- *  indent, starts with one. Returns that indent, or null. */
+ *  indent, starts with one — unless either row is a rule. Returns that indent, or null. */
 function inkIndent(buf: BufferLike, a: number, cols: number): number | null {
   const next = buf.getLine(a + 1);
   if (!next || next.isWrapped) return null;
   const cur = buf.getLine(a)?.translateToString(true) ?? '';
-  if (cur.length !== cols || !joinsOn(cur[cur.length - 1])) return null;
+  if (cur.length !== cols || !joinsOn(cur[cur.length - 1]) || isRule(cur)) return null;
   const n = next.translateToString(true);
+  if (isRule(n)) return null;
   let indent = 0;
   while (indent < MAX_INK_INDENT && n[indent] === ' ') indent++;
   return joinsOn(n[indent]) ? indent : null;
