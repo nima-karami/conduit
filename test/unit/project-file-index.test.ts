@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { FILE_INDEX_TTL_MS } from '../../src/file-index-ttl';
 import type { GitListing } from '../../src/git-listing';
-import { createProjectFileIndex, FILE_INDEX_TTL_MS } from '../../src/project-file-index';
+import { createProjectFileIndex } from '../../src/project-file-index';
 
 function harness(listing: GitListing) {
   let t = 1000;

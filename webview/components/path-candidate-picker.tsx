@@ -10,10 +10,12 @@ import { isMiddleButton } from '../middle-click';
 import { TERM_LINK_STR } from '../term-link-strings';
 import type { LinkMenuAction } from '../term-menu';
 import {
+  createHoverGate,
   FILTER_THRESHOLD,
   filterRows,
   type PickerRow,
   pickerHeading,
+  searchQueryOf,
 } from './path-candidate-picker-model';
 import { Popover } from './popover';
 import { RepoTagPill } from './repo-picker-menu';
@@ -51,6 +53,7 @@ export function PathCandidatePicker({
 }: PathCandidatePickerProps) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
+  const [hoverMoved] = useState(createHoverGate);
   const baseId = useId();
   const listId = `${baseId}-list`;
   const inputRef = useRef<HTMLInputElement>(null);
@@ -82,7 +85,7 @@ export function PathCandidatePicker({
   const choose = (item: Item | undefined, how: 'foreground' | 'background') => {
     if (!item) return;
     if (item.kind === 'searchAll') {
-      if (how === 'foreground') onSearchAll(token);
+      if (how === 'foreground') onSearchAll(searchQueryOf(token));
       return;
     }
     if (how === 'background' && item.row.cand.isDir) return;
@@ -118,6 +121,15 @@ export function PathCandidatePicker({
       onEscape={() => (query ? setQuery('') : onClose())}
       onKeyDown={onKeyDown}
     >
+      {/* The visible twin of the focused element's accessible name, which already announces it. */}
+      <div
+        className="pathpick__head"
+        aria-hidden="true"
+        // Not focusable: a press here must not take focus off the list or the filter.
+        onMouseDown={(e) => e.preventDefault()}
+      >
+        {heading}
+      </div>
       {withFilter && (
         <input
           ref={inputRef}
@@ -162,7 +174,9 @@ export function PathCandidatePicker({
                 aria-selected={isActive}
                 className={`${cls} pathpick__search`}
                 onMouseDown={(e) => e.preventDefault()}
-                onMouseEnter={() => setActive(i)}
+                onPointerMove={(e) => {
+                  if (hoverMoved(e.clientX, e.clientY)) setActive(i);
+                }}
                 onClick={() => choose(item, 'foreground')}
               >
                 <span className="ctxmenu__icon">
@@ -186,7 +200,9 @@ export function PathCandidatePicker({
                 // Keep focus in the picker; a middle press must not start autoscroll.
                 e.preventDefault();
               }}
-              onMouseEnter={() => setActive(i)}
+              onPointerMove={(e) => {
+                if (hoverMoved(e.clientX, e.clientY)) setActive(i);
+              }}
               onClick={() => choose(item, 'foreground')}
               onAuxClick={(e) => {
                 if (isMiddleButton(e.nativeEvent)) choose(item, 'background');

@@ -12,6 +12,11 @@
  *   5. `● Update(src/index.ts)` → only the path cells are a link; a click on `U` opens nothing.
  *   6. `…/repoB/src/index.ts` → a single candidate, opened directly.
  *   7. repoA's file deleted on disk, then picked → "no longer exists" toast, no tab opens.
+ *   8. Printed on the bottom row, the link's picker is clamped up over the resting pointer; with
+ *      no mouse move, Enter still opens the top-ranked row (QA r1 Q3).
+ *
+ * Step 1 also checks the visible heading (Q2) and that the worktree row's accessible name
+ * carries its tag and branch (Q4).
  *
  * exit 0 pass/SKIP · 1 assertion failed · 2 infra error
  */
@@ -43,6 +48,9 @@ const norm = (p) => (p ?? '').replace(/\\/g, '/').toLowerCase();
 const LINE_AMBIG = 'src/index.ts:42';
 const LINE_TOOL = '● Update(src/index.ts)';
 const LINE_ELIDED = '…/repoB/src/index.ts';
+// Long, so the picker is wide enough to be clamped left of the pointer that opened it.
+const DEEP_DIR = 'src/a-deliberately-long-folder-name-so-the-picker-is-wide/deep';
+const LINE_BOTTOM = `${DEEP_DIR}/index.ts:7`;
 
 runScenario('terminal-path-links-v2', async ({ page, log }) => {
   const parent = mkdtempSync(join(tmpdir(), 'conduit-pl2-')).replace(/\\/g, '/');
@@ -196,7 +204,32 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
     focusedLabel.includes('3 matches'),
     `focused element should announce 3 matches, got "${focusedLabel}"`,
   );
-  log('step 1: picker with 3 named rows, focus announces the count ✓');
+  const head = await page.evaluate(() => {
+    const el = document.querySelector('.pathpick__head');
+    return el
+      ? {
+          text: el.textContent ?? '',
+          shown: el.getBoundingClientRect().height > 0,
+          inList: !!el.closest('[role="listbox"]'),
+          focusable: el.tabIndex >= 0,
+        }
+      : null;
+  });
+  assert(
+    head?.shown && head.text === 'src/index.ts · 3 matches' && !head.inList && !head.focusable,
+    `the picker should show a non-row, non-focusable heading "src/index.ts · 3 matches", got ${JSON.stringify(head)}`,
+  );
+  const wtName = await page.evaluate(
+    () =>
+      Array.from(document.querySelectorAll('.pathpick [role="option"]'))
+        .map((el) => el.getAttribute('aria-label') ?? '')
+        .find((n) => n.startsWith('repoA-wt')) ?? '',
+  );
+  assert(
+    wtName.includes('Worktree') && wtName.includes('feat/x'),
+    `the worktree row's accessible name should carry its tag and branch, got "${wtName}"`,
+  );
+  log('step 1: picker with 3 named rows and a heading, focus announces the count ✓');
 
   // ── 2. pick repoB → opens at line 42 ───────────────────────────────────────────────
   const repoBIdx = rows1.findIndex((t) => /^repoB(?!-)/.test(t));
@@ -310,4 +343,59 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   await page.waitForTimeout(500);
   assert((await tabInfo(page)).length === tabs7, 'a stale pick must open no tab');
   log('step 7: stale pick toasts and opens nothing ✓');
+
+  // ── 8. resting pointer under a clamped picker keeps the top-ranked row ─────────────
+  for (const dir of ['repoA', 'repoB', 'T-123/repoA-wt']) {
+    mkdirSync(join(parent, dir, DEEP_DIR), { recursive: true });
+    writeFileSync(join(parent, dir, DEEP_DIR, 'index.ts'), body('d'));
+  }
+  await typeLine(page, sid, 'cls');
+  // Blank lines first and right-aligned, so the link lands in the bottom-right corner and the
+  // picker is clamped up and left over the pointer that clicked it (unclamped, the pointer only
+  // ever rests on the frame's own padding).
+  await typeLine(page, sid, 'for /L %i in (1,1,120) do @echo.');
+  const cols = await page.evaluate((id) => window.__terms[id].cols, sid);
+  await typeLine(page, sid, `echo ${' '.repeat(cols - LINE_BOTTOM.length - 1)}${LINE_BOTTOM}`);
+  await waitForOutput(page, sid, LINE_BOTTOM);
+  await waitQuiet();
+  const c8 = await clickAt(LINE_BOTTOM, LINE_BOTTOM.length - 6);
+  await page.waitForSelector('.pathpick', { state: 'visible', timeout: 10000 });
+  await page.waitForFunction(
+    () => document.querySelectorAll('.pathpick [role="option"]').length === 3,
+    null,
+    { timeout: 5000 },
+  );
+  // Long enough for the hover update a stationary pointer gets after layout.
+  await page.waitForTimeout(600);
+  const rest = await page.evaluate(({ x, y }) => {
+    const opts = Array.from(document.querySelectorAll('.pathpick [role="option"]'));
+    const under = document.elementFromPoint(x, y)?.closest('[role="option"]');
+    return {
+      underIdx: under ? opts.indexOf(under) : -1,
+      activeIdx: opts.findIndex((el) => el.getAttribute('aria-selected') === 'true'),
+      top: opts[0]?.textContent ?? '',
+      at: { x, y, vw: window.innerWidth, vh: window.innerHeight },
+      frame: document.querySelector('.pathpick')?.getBoundingClientRect().toJSON(),
+      rows: opts.map((el) => Math.round(el.getBoundingClientRect().top)),
+      hit: document.elementFromPoint(x, y)?.className ?? null,
+    };
+  }, c8);
+  log('step 8 pointer rests on row', rest.underIdx, 'active row', rest.activeIdx);
+  assert(
+    rest.underIdx >= 1,
+    `precondition: the resting pointer should be over a row below the first, got ${JSON.stringify(rest)}`,
+  );
+  assert(
+    rest.activeIdx === 0,
+    `the top-ranked row should stay active under a resting pointer, got ${JSON.stringify(rest)}`,
+  );
+  const topRepo = `${
+    /^repoA-wt/.test(rest.top) ? '/t-123/repoa-wt' : /^repoB/.test(rest.top) ? '/repob' : '/repoa'
+  }/${DEEP_DIR}/index.ts`;
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.pathpick', { state: 'detached', timeout: 5000 });
+  await waitCursor(page, 7, 15000);
+  const opened8 = norm(await activeDocPath());
+  assert(opened8.endsWith(topRepo), `Enter should open the top-ranked ${topRepo}, got ${opened8}`);
+  log('step 8: a resting pointer does not steal the preselection ✓');
 });

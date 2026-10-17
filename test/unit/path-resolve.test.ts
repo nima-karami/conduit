@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ResolveRoot } from '../../src/path-link-roots';
 import {
   DEFAULT_CANDIDATE_CAP,
+  IGNORED_FALLBACK_BATCH,
   type IndexedFile,
   isUncLike,
   MAX_ALTS,
@@ -267,9 +268,99 @@ describe('resolveTokens — v2 matrix', () => {
     expect(r).toMatchObject({ key: 'src/index.ts', total: 3, truncated: false });
   });
 
-  it('membership, not stat: a covered root misses an unindexed (gitignored) file', async () => {
-    const { deps } = wFs(['/w/repoA/src/ignored.ts']);
-    expect((await one('src/ignored.ts', wCtx(), deps)).candidates).toHaveLength(0);
+  describe('gitignored files in covered roots (review r1 SF2)', () => {
+    it('a token with a separator that misses membership is stat’ed in each covered root', async () => {
+      const { deps, statCalls } = wFs(['/w/repoB/dist/x.js']);
+      const r = await one('dist/x.js', wCtx(), deps);
+      expect(names(r.candidates)).toEqual(['repoB']);
+      expect(r.candidates[0]).toMatchObject({ strength: 'exact-root', isDir: false });
+      expect(statCalls).toEqual([
+        '/w/dist/x.js',
+        '/w/repoA/dist/x.js',
+        '/w/T-123/repoA-wt/dist/x.js',
+        '/w/repoB/dist/x.js',
+      ]);
+    });
+
+    it('a dotfile basename that misses membership is stat’ed in each covered root', async () => {
+      const { deps } = wFs(['/w/repoA/.env']);
+      expect(names((await one('.env', wCtx(), deps)).candidates)).toEqual(['repoA']);
+    });
+
+    it('a bare prose-like word that misses membership is never stat’ed in a covered root', async () => {
+      const { deps, statCalls } = wFs(['/w/repoA/ignored.ts']);
+      expect((await one('ignored.ts', wCtx(), deps)).candidates).toHaveLength(0);
+      expect(statCalls).toEqual(['/w/ignored.ts']);
+    });
+
+    it('a membership hit anywhere skips the fallback', async () => {
+      const { deps, statCalls } = wFs(['/w/repoB/src/index.ts']);
+      await one('src/index.ts', wCtx(), deps);
+      expect(statCalls).toEqual(['/w/src/index.ts']);
+    });
+
+    it(`stats ${IGNORED_FALLBACK_BATCH} roots at a time, yielding before each batch`, async () => {
+      const many = Array.from({ length: 10 }, (_, i) => root(`/m/r${i}`, 'nested'));
+      let inFlight = 0;
+      let peak = 0;
+      let yields = 0;
+      const deps: ResolveDeps = {
+        stat: async () => {
+          inFlight++;
+          peak = Math.max(peak, inFlight);
+          await new Promise((res) => setTimeout(res, 1));
+          inFlight--;
+          return null;
+        },
+        topLevel: async () => '',
+        yieldTurn: async () => {
+          yields++;
+        },
+      };
+      await one(
+        'dist/x.js',
+        wCtx({
+          cwd: '/m',
+          cwdGitRoot: '/m',
+          roots: [root('/m', 'home'), ...many],
+          indexes: [{ root: '/m', files: [], coveredRootIdx: many.map((_, i) => i + 1) }],
+        }),
+        deps,
+      );
+      expect(peak).toBe(IGNORED_FALLBACK_BATCH);
+      expect(yields).toBe(Math.ceil(10 / IGNORED_FALLBACK_BATCH));
+    });
+  });
+
+  it('yields between tokens, never before the first', async () => {
+    const { deps } = wFs();
+    let yields = 0;
+    await resolveTokens(
+      [{ alts: ['src/index.ts'] }, { alts: ['index.ts'] }, { alts: ['zzz.ts'] }],
+      wCtx(),
+      {
+        ...deps,
+        yieldTurn: async () => {
+          yields++;
+        },
+      },
+    );
+    expect(yields).toBe(2);
+  });
+
+  it('the first index listing a root answers for it', async () => {
+    const { deps } = wFs();
+    const r = await one(
+      'src/index.ts',
+      wCtx({
+        indexes: [
+          { root: '/w', files: [], coveredRootIdx: [1] },
+          { root: '/w', files: wIndexFiles(), coveredRootIdx: [1, 2, 3] },
+        ],
+      }),
+      deps,
+    );
+    expect(names(r.candidates)).toEqual(['repoA-wt', 'repoB']);
   });
 
   it('a root no index covers is stat’ed', async () => {

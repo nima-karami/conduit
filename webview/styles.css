@@ -7904,6 +7904,14 @@ body.gh-resizing {
   min-width: 280px;
   max-width: min(640px, calc(100vw - 16px));
 }
+.pathpick__head {
+  padding: 3px 10px 5px;
+  color: var(--text-faint);
+  font-size: calc(11px * var(--font-scale));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .pathpick__filter {
   margin: 0 0 4px;
   padding: 5px 8px;
@@ -7923,6 +7931,14 @@ body.gh-resizing {
 }
 .pathpick__row--active {
   background: var(--accent-soft);
+}
+/* Repo, branch and path are data, so they keep their case under an uppercasing theme the way
+   .ctxmenu__detail does; the row's static labels (tag pill, "working here") follow the theme. */
+.pathpick__repo,
+.pathpick__branch,
+.pathpick__rel {
+  letter-spacing: normal;
+  text-transform: none;
 }
 /* The repo is what tells the rows apart, so it never ellipsizes; the path gives way. */
 .pathpick__repo {

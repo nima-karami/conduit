@@ -12,8 +12,9 @@ All notable user-facing changes to Conduit. Format follows
   with a `(42,7)`, `#L42` or `line 42` position, truncated with `…`, wrapped across rows, relative
   with backslashes, as a folder with a trailing `/`, or as a file like `Makefile` or `.env`. A
   relative path is tried against every folder of the session, not just the one the terminal is
-  in. When it exists in several repos or worktrees, clicking it opens a picker that names each
-  one, with the repo you picked last at the top; a match in the terminal's own folder still opens
+  in, and a gitignored file such as `.env` or `dist/app.js` links too. When it exists in several
+  repos or worktrees, clicking it opens a picker headed by the path and its match count that names
+  each one, with the repo you picked last at the top; a match in the terminal's own folder still opens
   straight away. Right-click a path for Open, Copy path, Copy relative path, Reveal in Explorer and
   **Open as new session**, which fills in the New session dialog with that folder (or the file's
   repo) and the session's project. A file deleted since it was printed says so instead of opening.

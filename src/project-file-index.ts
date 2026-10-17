@@ -9,8 +9,6 @@ import { LOOSE_FILE_CAP, type RepoFileIndex } from './repo-file-index';
 // The project file index behind quick open, find in files, path links and the TS source index.
 // See docs/specs/2026-10-16-multi-repo-tracking.md §2 (Search) and the plan's Contracts.
 
-export { FILE_INDEX_TTL_MS };
-
 export interface ProjectFileIndexMeta {
   files: IndexedFile[];
   /** The capped walk hit its cap. */

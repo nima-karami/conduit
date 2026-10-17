@@ -55,6 +55,9 @@ export interface ResolveDeps {
   stat: StatKind;
   /** git toplevel of a folder, '' when not a repo. */
   topLevel: (dir: string) => Promise<string>;
+  /** Hands the thread back between tokens and between fallback batches; the host passes a
+   *  setImmediate chain so a 200-root burst does not starve its other IPC (review r1 PERF). */
+  yieldTurn?: () => Promise<void>;
 }
 
 export interface ResolveIndex {
@@ -78,6 +81,9 @@ export interface ResolveCtx {
 
 export const DEFAULT_CANDIDATE_CAP = 200;
 export const MAX_ALTS = 4;
+/** Covered roots stat'ed at once by the ignored-file fallback: libuv's default pool size, so a
+ *  fallback never queues more fs work than the pool runs at once. */
+export const IGNORED_FALLBACK_BATCH = 4;
 
 export interface IndexMemo {
   foldedRels: string[];
@@ -125,6 +131,9 @@ class Resolution {
   readonly fold: (s: string) => string;
   readonly rootKeys: string[];
   private readonly rootIdxByKey: Map<string, number>;
+  /** First index listing each root, built once: a find() per root per alt made a 200-root
+   *  resolve quadratic (review r1 PERF). */
+  private readonly coveringByRoot = new Map<number, ResolveIndex>();
   private readonly topMemo = new Map<string, Promise<string>>();
 
   constructor(
@@ -137,6 +146,14 @@ class Resolution {
     this.rootKeys.forEach((k, i) => {
       if (!this.rootIdxByKey.has(k)) this.rootIdxByKey.set(k, i);
     });
+    for (const ix of ctx.indexes) {
+      for (const i of ix.coveredRootIdx)
+        if (!this.coveringByRoot.has(i)) this.coveringByRoot.set(i, ix);
+    }
+  }
+
+  yieldTurn(): Promise<void> {
+    return this.deps.yieldTurn ? this.deps.yieldTurn() : Promise.resolve();
   }
 
   keyOf(p: string): string {
@@ -195,7 +212,7 @@ class Resolution {
   }
 
   indexCovering(rootIdx: number): ResolveIndex | undefined {
-    return this.ctx.indexes.find((ix) => ix.coveredRootIdx.includes(rootIdx));
+    return this.coveringByRoot.get(rootIdx);
   }
 
   suffixSearch(needle: string, partialFirst: boolean): Found[] {
@@ -239,6 +256,38 @@ function splitElision(t: string): { head: string; tail: string; partialFirst: bo
   const tail = tailSegs.filter(Boolean).join('/');
   if (!tail) return null;
   return { head: segs.slice(0, first).join('/'), tail, partialFirst };
+}
+
+/** The concrete tail of an elided token (`…/src/index.ts` → `src/index.ts`), null when the token
+ *  has no elision: what a search for the token should look for. */
+export function elisionTail(token: string): string | null {
+  return splitElision(slash(token))?.tail ?? null;
+}
+
+/** Membership comes from `ls-files --exclude-standard`, so a gitignored file is never in it. A
+ *  dotfile or a token with a separator is worth a stat; a bare word is prose far more often than
+ *  an ignored file (spec §3.2 "Index", review r1 SF2). */
+function mayBeIgnoredFile(t: string): boolean {
+  if (t.includes('/')) return true;
+  return t.startsWith('.') && t !== '.' && t !== '..';
+}
+
+/** Stats the token in each covered root whose membership missed, a batch at a time. */
+async function ignoredFallback(t: string, roots: number[], r: Resolution): Promise<Found[]> {
+  const { ctx } = r;
+  const out: Found[] = [];
+  for (let b = 0; b < roots.length; b += IGNORED_FALLBACK_BATCH) {
+    await r.yieldTurn();
+    const hits = await Promise.all(
+      roots.slice(b, b + IGNORED_FALLBACK_BATCH).map(async (i): Promise<Found | null> => {
+        const abs = joinAbs(ctx.roots[i].abs, t, ctx.platform);
+        const kind = await r.stat(abs);
+        return kind ? { absPath: abs, isDir: kind === 'dir', strength: 'exact-root' } : null;
+      }),
+    );
+    for (const hit of hits) if (hit) out.push(hit);
+  }
+  return out;
 }
 
 async function resolveAlt(alt: string, r: Resolution): Promise<Found[]> {
@@ -299,6 +348,14 @@ async function resolveAlt(alt: string, r: Resolution): Promise<Found[]> {
   );
   for (const hit of rootHits) if (hit) found.push(hit);
   if (found.length > 0 || isDirTok) return found;
+
+  if (mayBeIgnoredFile(t)) {
+    const missed = ctx.roots.flatMap((root, i) =>
+      !joinedKeys.has(r.rootKeys[i]) && r.indexCovering(i) && !isUncLike(root.abs) ? [i] : [],
+    );
+    const ignored = await ignoredFallback(t, missed, r);
+    if (ignored.length > 0) return ignored;
+  }
 
   const needle = t.replace(/^(?:\.\/)+/, '');
   if (needle.split('/').some((s) => s === '..' || s === '.')) return [];
@@ -368,7 +425,8 @@ export async function resolveTokens(
 ): Promise<TokenResolution[]> {
   const r = new Resolution(ctx, deps);
   return Promise.all(
-    tokens.map(async ({ alts }) => {
+    tokens.map(async ({ alts }, i) => {
+      if (i > 0) await r.yieldTurn();
       const key = alts.join('\0');
       for (const alt of alts) {
         const found = await resolveAlt(alt, r);

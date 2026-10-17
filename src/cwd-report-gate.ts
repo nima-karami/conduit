@@ -44,11 +44,14 @@ export function createCwdReportGate(deps: CwdReportGateDeps): CwdReportGate {
   };
 
   return {
-    report(sessionId, cwd) {
+    report(sessionId, raw) {
+      const roots = deps.userRoots(sessionId);
+      // Checked before newest.set: a report for a dropped session must not re-insert it.
+      if (roots === null) return;
       const seq = ++counter;
       newest.set(sessionId, seq);
-      const roots = deps.userRoots(sessionId);
-      if (roots === null) return;
+      // The form the UNC check judged is the one stat'ed and applied, so the two cannot disagree.
+      const cwd = normalizeAbs(raw, deps.platform);
       if (isUncLike(cwd) && !underUncUserRoot(cwd, roots)) return;
       deps.stat(cwd).then(
         (kind) => {

@@ -1326,6 +1326,8 @@ app.whenReady().then(() => {
     stat: statKindAsync,
     topLevel: repoTopLevel,
     homeDir: os.homedir().replace(/\\/g, '/'),
+    // `log` is created further down this function; resolves only run after it exists.
+    log: { warn: (scope, msg, data) => log.warn(scope, msg, data) },
     ...PATH_LINK_OPTS,
   });
 

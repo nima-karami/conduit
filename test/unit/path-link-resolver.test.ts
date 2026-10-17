@@ -3,6 +3,7 @@ import {
   createPathLinkResolver,
   MAX_TOKENS,
   type PathLinkResolverDeps,
+  RESOLVE_CONCURRENCY,
   STAT_CONCURRENCY,
   UNC_PROBE_BUDGET_MS,
 } from '../../electron/path-link-resolver';
@@ -36,7 +37,7 @@ interface Fake {
   sessions: Record<string, Session>;
   files?: string[];
   index?: Record<string, { files: IndexedFile[]; coveredRoots: string[] } | 'reject'>;
-  gitRoot?: string;
+  gitRoot?: string | (() => Promise<string>);
   stat?: PathLinkResolverDeps['stat'];
 }
 
@@ -45,9 +46,11 @@ function make(f: Fake) {
   const statCalls: string[] = [];
   const indexCalls: string[] = [];
   const topLevelCalls: string[] = [];
+  const warns: Array<{ scope: string; msg: string; data?: Record<string, unknown> }> = [];
   const deps: PathLinkResolverDeps = {
     getSession: (id) => f.sessions[id],
-    gitRoot: async (s) => f.gitRoot ?? s.cwd ?? s.home,
+    gitRoot: async (s) =>
+      typeof f.gitRoot === 'function' ? f.gitRoot() : (f.gitRoot ?? s.cwd ?? s.home),
     fileIndex: async (root) => {
       indexCalls.push(root);
       const ix = f.index?.[root];
@@ -67,8 +70,9 @@ function make(f: Fake) {
     homeDir: '/home/u',
     platform: 'posix',
     caseSensitive: true,
+    log: { warn: (scope, msg, data) => warns.push({ scope, msg, data }) },
   };
-  return { resolver: createPathLinkResolver(deps), statCalls, indexCalls, topLevelCalls };
+  return { resolver: createPathLinkResolver(deps), statCalls, indexCalls, topLevelCalls, warns };
 }
 
 const W_FILES = ['/w/repoA/src/index.ts', '/w/repoB/src/index.ts'];
@@ -229,8 +233,8 @@ describe('createPathLinkResolver', () => {
     expect(statCalls).toContain('/w/repoB/src/index.ts');
   });
 
-  it('a fileIndex rejection degrades to exact-only: every root is stat’ed, no throw', async () => {
-    const { resolver, statCalls } = make({
+  it('a fileIndex rejection is logged, then degrades to exact-only: every root is stat’ed, no throw', async () => {
+    const { resolver, statCalls, warns } = make({
       sessions: { s1: wSession },
       files: W_FILES,
       index: { '/w': 'reject' },
@@ -240,6 +244,47 @@ describe('createPathLinkResolver', () => {
     expect(statCalls).toEqual(
       expect.arrayContaining(['/w/repoA/src/index.ts', '/w/repoB/src/index.ts']),
     );
+    expect(warns).toEqual([
+      { scope: 'links', msg: 'index-failed', data: { root: '/w', error: 'Error: index failed' } },
+    ]);
+  });
+
+  it('hands the event loop a turn between tokens', async () => {
+    const events: string[] = [];
+    const { resolver } = make({
+      sessions: { s1: wSession },
+      stat: async (abs) => {
+        if (events.length === 0) setImmediate(() => events.push('tick'));
+        events.push(`stat ${abs}`);
+        return null;
+      },
+    });
+    await resolver.resolve('s1', [{ alts: ['/a.ts'] }, { alts: ['/b.ts'] }]);
+    expect(events).toEqual(['stat /a.ts', 'tick', 'stat /b.ts']);
+  });
+
+  it(`never more than ${RESOLVE_CONCURRENCY} resolves in flight; the rest queue and all answer`, async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const { resolver } = make({
+      sessions: { s1: wSession },
+      gitRoot: async () => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 2));
+        return '/w';
+      },
+      stat: async () => {
+        await new Promise((r) => setTimeout(r, 1));
+        inFlight--;
+        return null;
+      },
+    });
+    const replies = await Promise.all(
+      Array.from({ length: 6 }, () => resolver.resolve('s1', [{ alts: ['/abs/only.ts'] }])),
+    );
+    expect(replies).toHaveLength(6);
+    expect(peak).toBe(RESOLVE_CONCURRENCY);
   });
 
   it('a registered repo root is its own toplevel: no git asked for it (Slice 6 budget)', async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { type CwdReportGateDeps, createCwdReportGate } from '../../src/cwd-report-gate';
+import { parseCwdReports } from '../../src/osc-cwd';
 
 type Kind = 'file' | 'dir' | null;
 
@@ -59,9 +60,17 @@ describe('createCwdReportGate', () => {
   it('a UNC cwd under a UNC home is stat’ed and accepted when it is a dir', async () => {
     const h = harness({ roots: ['//srv/share'], cwd: '//srv/share' });
     h.gate.report('s', '\\\\SRV\\share\\sub');
-    expect(h.stat).toHaveBeenCalledWith('\\\\SRV\\share\\sub');
-    await h.release('\\\\SRV\\share\\sub', 'dir');
-    expect(h.accepted).toEqual(['\\\\SRV\\share\\sub']);
+    expect(h.stat).toHaveBeenCalledWith('//SRV/share/sub');
+    await h.release('//SRV/share/sub', 'dir');
+    expect(h.accepted).toEqual(['//SRV/share/sub']);
+  });
+
+  it('stats and accepts the normalized form it judged, not the raw report', async () => {
+    const h = harness();
+    h.gate.report('s', 'g:\\w\\src\\.\\');
+    expect(h.stat).toHaveBeenCalledWith('G:/w/src');
+    await h.release('G:/w/src', 'dir');
+    expect(h.accepted).toEqual(['G:/w/src']);
   });
 
   it('a cwd moved outside every user root to a UNC path is refused (the cwd repo is never a user root)', () => {
@@ -153,5 +162,27 @@ describe('createCwdReportGate', () => {
     await h.release('G:/w/a', 'dir');
     await h.release('G:/w/b', 'dir');
     expect(h.accepted).toEqual(['G:/w/a', 'G:/w/b']);
+  });
+
+  // Seam: raw terminal output through the OSC parser into the gate (review r1 SF4).
+  describe('parseCwdReports → gate: UNC and device forms never reach stat', () => {
+    const osc7 = (url: string) => `\x1b]7;${url}\x07`;
+    const osc99 = (p: string) => `\x1b]9;9;${p}\x1b\\`;
+    it.each([
+      ['OSC 7 file://// (UNC path, empty host)', osc7('file:////h/s')],
+      ['OSC 7 percent-encoded backslashes', osc7('file:///%5C%5Ch%5Cs')],
+      ['OSC 9;9 \\\\?\\UNC\\h\\s', osc99('\\\\?\\UNC\\h\\s')],
+      ['OSC 9;9 \\\\.\\pipe\\x', osc99('\\\\.\\pipe\\x')],
+      ['OSC 9;9 bare \\\\h\\s', osc99('\\\\h\\s')],
+    ])('%s', async (_name, raw) => {
+      const h = harness({ cwd: 'G:/w' });
+      const reports = parseCwdReports(raw);
+      expect(reports).toHaveLength(1);
+      for (const cwd of reports) h.gate.report('s', cwd);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(h.stat).not.toHaveBeenCalled();
+      expect(h.accepted).toEqual([]);
+      expect(h.cwd()).toBe('G:/w');
+    });
   });
 });

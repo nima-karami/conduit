@@ -202,6 +202,12 @@ interface RootedFile { file: IndexedFile; rootIdx: number }   // wraps, never mu
   root). Suffix search over all nested repos waits for the engine's union index
   (docs/specs/2026-10-16-multi-repo-tracking.md §2 "Search") — it must not be built by fanning
   `git ls-files` over 200 repos through the shared cache.
+- **Gitignored files** (review r1): a covered root answers `exact-root` from index membership, and the
+  index is `git ls-files --exclude-standard`, so an ignored file (`.env`, `dist/x.js`) is never a member.
+  When membership finds the token in no covered root, a token whose basename starts with `.` or that
+  contains a separator is stat'ed in each covered root, 4 at a time with a yield before each batch, through
+  the same stat limiter. A bare word is not: it is prose far more often than an ignored file, so an
+  ignored `notes.txt` outside the cwd stays plain text.
 - **Budget**: warm resolve of one line ≤ 50 ms p95 with 30 roots; ≤ 150 ms with 200 roots (stats only).
 - UNC / `\\?\`: same async stat with a 500 ms per-path budget (one SMB timeout must not hold the line's other
   tokens; 500 ms is ~10× a LAN stat), else plain.
@@ -397,8 +403,8 @@ focus to the terminal.
 
 - **Keyboard:** picker and menu fully keyboard-operable once open; opening a link without a pointer is a
   real gap today and is closed in v1 (palette command, VS Code *Terminal: Open Detected Link…*).
-- **Names:** each picker row's accessible name is the full `repoName / relToRoot`, even when visually
-  middle-ellipsised; tag pills are text.
+- **Names:** each picker row's accessible name is the full `repoName (tag, branch, working here) /
+  relToRoot` (only the parts the row shows), even when visually middle-ellipsised; tag pills are text.
 - **Announce:** picker open announces "`N` matches for `<token>`" — extract the module-private `announce`
   in `webview/project-announcer.ts` to a shared helper; stale toast uses the toast live region.
 - **Colour:** "Working here" and tags are text, never colour alone. Visible focus on rows and the filter in

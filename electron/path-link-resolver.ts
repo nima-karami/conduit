@@ -19,7 +19,7 @@ import type { Session } from '../src/types';
 
 export interface PathLinkResolverDeps {
   getSession(id: string): Session | undefined;
-  /** sessionGitRoot(session, git). */
+  /** The git toplevel of the session's live cwd, or that cwd when it is in no repo. */
   gitRoot(session: Session): Promise<string>;
   /** projectFileIndexMeta(root).files plus the roots it lists completely (meta.covered). */
   fileIndex(root: string): Promise<{ files: IndexedFile[]; coveredRoots: string[] }>;
@@ -30,6 +30,7 @@ export interface PathLinkResolverDeps {
   homeDir: string;
   platform: PathPlatform;
   caseSensitive: boolean;
+  log: { warn(scope: string, msg: string, data?: Record<string, unknown>): void };
 }
 
 export interface PathLinkReply {
@@ -49,6 +50,9 @@ export interface PathLinkResolver {
 }
 
 export const STAT_CONCURRENCY = 16;
+/** Resolves running at once; the rest queue. A burst of 50 left the main thread no gap for a
+ *  readFile round trip (review r1 PERF: p95 38 ms idle vs 1,073 ms under the burst). */
+export const RESOLVE_CONCURRENCY = 2;
 export const MAX_TOKENS = 10;
 export const UNC_PROBE_BUDGET_MS = 500;
 // Mirrors MAX_TOKEN_LENGTH in webview/terminal-links.ts; the renderer is never trusted for it.
@@ -100,6 +104,16 @@ function withConcurrency(limit: number) {
   };
 }
 
+/** Each call waits for the previous one, then for a setImmediate: chained, so every turn lands in
+ *  its own event-loop iteration and pending I/O callbacks run between them. */
+function turnTaker(): () => Promise<void> {
+  let tail = Promise.resolve();
+  return () => {
+    tail = tail.then(() => new Promise<void>((resolve) => setImmediate(resolve)));
+    return tail;
+  };
+}
+
 /** An offline share must delay only its own token: a UNC stat past the budget is a miss. */
 function raceUnc(abs: string, stat: PathLinkResolverDeps['stat']): Promise<'file' | 'dir' | null> {
   if (!isUncLike(abs)) return stat(abs);
@@ -137,66 +151,72 @@ export function createPathLinkResolver(deps: PathLinkResolverDeps): PathLinkReso
               .map((c) => rootIdxByKey.get(key(c)))
               .filter((i): i is number => i !== undefined),
           }),
-          // A failed index degrades this root to stat-only resolution (no suffix search).
-          () => null,
+          (error: unknown) => {
+            // A failed index degrades this root to stat-only resolution (no suffix search).
+            deps.log.warn('links', 'index-failed', { root, error: String(error) });
+            return null;
+          },
         ),
       ),
     );
     return built.filter((ix): ix is ResolveIndex => ix !== null);
   };
 
+  const resolveSlot = withConcurrency(RESOLVE_CONCURRENCY);
+
+  const resolveNow = async (sessionId: string, tokens: unknown): Promise<PathLinkReply> => {
+    const entries = validate(tokens);
+    const session = deps.getSession(sessionId);
+    if (!session) {
+      return {
+        cwd: '',
+        rootsSig: '',
+        roots: [],
+        results: entries.map((e) => empty(e.key, 'session-gone')),
+      };
+    }
+    const cwd = slash(activeCwd(session));
+    const cwdGitRoot = slash(await deps.gitRoot(session).catch(() => cwd));
+    const roots = buildResolveRoots(session, cwdGitRoot, opts);
+    const rootsSig = rootsSigOf(session);
+    const valid = entries.filter((e): e is Extract<Entry, { kind: 'valid' }> => e.kind === 'valid');
+    const indexes = valid.length > 0 ? await indexesFor(roots, cwdGitRoot || cwd) : [];
+    const limit = withConcurrency(STAT_CONCURRENCY);
+    const knownRepoKeys = new Set([
+      ...(session.repos ?? []).map((r) => key(r.root)),
+      ...(cwdGitRoot !== cwd ? [key(cwdGitRoot)] : []),
+    ]);
+    const resolved = await resolveTokens(
+      valid.map((e) => ({ alts: e.alts })),
+      {
+        cwd,
+        cwdGitRoot,
+        roots,
+        indexes,
+        caseSensitive: deps.caseSensitive,
+        homeDir: deps.homeDir,
+        platform: deps.platform,
+      },
+      {
+        stat: (abs) => limit(() => raceUnc(abs, deps.stat)),
+        yieldTurn: turnTaker(),
+        // A repo the session's scan registered, or the cwd's git root, is its own toplevel:
+        // asking git once per root put 200 spawns on every 200-repo resolve (Slice 6 profile).
+        topLevel: (dir) =>
+          knownRepoKeys.has(key(dir)) ? Promise.resolve(dir) : deps.topLevel(dir),
+      },
+    );
+    let next = 0;
+    const results = entries.map((e) => {
+      if (e.kind === 'invalid') return empty(e.key, 'invalid');
+      // The trimmed alts resolved; the renderer's pending token is the original join.
+      return { ...resolved[next++], key: e.key };
+    });
+    return { cwd, rootsSig, roots, results };
+  };
+
   return {
-    async resolve(sessionId, tokens) {
-      const entries = validate(tokens);
-      const session = deps.getSession(sessionId);
-      if (!session) {
-        return {
-          cwd: '',
-          rootsSig: '',
-          roots: [],
-          results: entries.map((e) => empty(e.key, 'session-gone')),
-        };
-      }
-      const cwd = slash(activeCwd(session));
-      const cwdGitRoot = slash(await deps.gitRoot(session).catch(() => cwd));
-      const roots = buildResolveRoots(session, cwdGitRoot, opts);
-      const rootsSig = rootsSigOf(session);
-      const valid = entries.filter(
-        (e): e is Extract<Entry, { kind: 'valid' }> => e.kind === 'valid',
-      );
-      const indexes = valid.length > 0 ? await indexesFor(roots, cwdGitRoot || cwd) : [];
-      const limit = withConcurrency(STAT_CONCURRENCY);
-      const knownRepoKeys = new Set([
-        ...(session.repos ?? []).map((r) => key(r.root)),
-        ...(cwdGitRoot !== cwd ? [key(cwdGitRoot)] : []),
-      ]);
-      const resolved = await resolveTokens(
-        valid.map((e) => ({ alts: e.alts })),
-        {
-          cwd,
-          cwdGitRoot,
-          roots,
-          indexes,
-          caseSensitive: deps.caseSensitive,
-          homeDir: deps.homeDir,
-          platform: deps.platform,
-        },
-        {
-          stat: (abs) => limit(() => raceUnc(abs, deps.stat)),
-          // A repo the session's scan registered, or the cwd's git root, is its own toplevel:
-          // asking git once per root put 200 spawns on every 200-repo resolve (Slice 6 profile).
-          topLevel: (dir) =>
-            knownRepoKeys.has(key(dir)) ? Promise.resolve(dir) : deps.topLevel(dir),
-        },
-      );
-      let next = 0;
-      const results = entries.map((e) => {
-        if (e.kind === 'invalid') return empty(e.key, 'invalid');
-        // The trimmed alts resolved; the renderer's pending token is the original join.
-        return { ...resolved[next++], key: e.key };
-      });
-      return { cwd, rootsSig, roots, results };
-    },
+    resolve: (sessionId, tokens) => resolveSlot(() => resolveNow(sessionId, tokens)),
     probe(abs) {
       return raceUnc(abs, deps.stat).catch(() => null);
     },
