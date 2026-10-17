@@ -738,6 +738,13 @@ where it is; history is not rewritten.
 | `test/e2e/repo-head-fit.e2e.mjs` | modify | Detached + REBASING long-name worktree at 220 / 330 (+400 / 460 / 560); head reaches its target ±2 px; no horizontal overflow; tag word first; floor = glyphs + dot + caret; tag pill never leaves the name under 80px |
 | `test/e2e/branch-switch.e2e.mjs`, `test/e2e/git-indicator.e2e.mjs` | modify | Branch label read via `.branch-chip__ref-label` (no longer a direct child of the chip) |
 
+**Engine review r5 fix**
+
+| Path | Action | Responsibility |
+|---|---|---|
+| `webview/styles.css` | modify | `.branch-chip__shrink` clips (`overflow: clip`, min-content stays 0) so squeezed text padding never paints over a glyph; repo-head tag threshold 252px → `calc(220px + 3.4em)`, from the widest pill ("Attached", 52.4px at scale 1) with its text in container em so it tracks font scale |
+| `test/e2e/repo-head-fit.e2e.mjs` | modify | Attached long-name worktree (colliding name, so the chip keeps its worktree segment) at 220 / 262–268 / 272 / 330; at the floor every `.branch-chip__text` lies inside its track or paints nothing |
+
 ## Scripts
 
 **None.** The only repeated routine is building git fixtures, and that is runtime test code

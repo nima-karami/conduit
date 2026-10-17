@@ -1,16 +1,18 @@
 /**
- * Repo head geometry with a long repo name (engine review r3, r4). The head's first line (chevron,
- * glyph, name, tag, branch chip) never wraps and sits above the sub-path; the chip gives up its
- * text before the name ellipsizes, the tag word first; and the chip floors at its glyphs, dirty dot
- * and caret, nothing else. Two long-name linked worktrees, so each chip carries the worktree and
- * the branch glyph: one on a branch, one detached in a conflicting rebase (REBASING op badge,
- * "detached" tag, SHA). Rendered layout in the real app; a style-only check would not count.
+ * Repo head geometry with a long repo name (engine review r3, r4, r5). The head's first line
+ * (chevron, glyph, name, tag, branch chip) never wraps and sits above the sub-path; the chip gives
+ * up its text before the name ellipsizes, the tag word first; the chip floors at its glyphs, dirty
+ * dot and caret, nothing else, with no sliver of squeezed text painting over them; and a tag pill
+ * shows only beside an 80px name. Three long-name linked worktrees, so each chip carries the
+ * worktree and the branch glyph: one on a branch, one detached in a conflicting rebase (REBASING
+ * op badge, "detached" tag, SHA), and one attached whose chip keeps its worktree segment. Rendered
+ * layout in the real app; a style-only check would not count.
  */
 
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { assert, openChangesTab, openSession, runScenario } from './harness.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -22,9 +24,11 @@ const git = (cwd, args) => execFileSync('git', args, { cwd, stdio: 'ignore' });
 
 /**
  * A repo on `main` with two dirty linked worktrees beside it: `long` on `branch`, and `rebasing`
- * stopped on a conflict while rebasing onto `main`, which leaves it detached.
+ * stopped on a conflict while rebasing onto `main`, which leaves it detached. A third dirty linked
+ * worktree, also named `long`, lives in `elsewhere`: attached, so its head carries the widest pill
+ * ("Attached"), and its label gains the parent folder, so its chip keeps the worktree segment.
  */
-function makeRepoWithWorktrees(root, { long, branch, rebasing }) {
+function makeRepoWithWorktrees(root, { long, branch, rebasing, elsewhere }) {
   const main = join(root, 'ref');
   mkdirSync(main, { recursive: true });
   git(main, ['init', '-q']);
@@ -53,6 +57,9 @@ function makeRepoWithWorktrees(root, { long, branch, rebasing }) {
   writeFileSync(join(main, 'a.txt'), 'two\n');
   git(main, ['worktree', 'add', '-q', '-b', branch, join(root, long)]);
   writeFileSync(join(root, long, 'a.txt'), 'three\n');
+
+  git(main, ['worktree', 'add', '-q', '-b', `${branch}-2`, join(elsewhere, long)]);
+  writeFileSync(join(elsewhere, long, 'a.txt'), 'four\n');
 }
 
 const headWidth = (page, name) =>
@@ -106,6 +113,26 @@ const measure = (page, headName) =>
         const inner = el.querySelector('.branch-chip__text') ?? el;
         return { sel, w: shown(el), cut: inner.scrollWidth > inner.clientWidth };
       });
+    // Each text clips its content at its own padding box; what of that box survives every
+    // clipping ancestor up to the chip is what paints. Its padding can overflow a 0 track.
+    const painted = (el) => {
+      const r = el.getBoundingClientRect();
+      let left = r.left;
+      let right = r.right;
+      for (let a = el.parentElement; a && chip.contains(a); a = a.parentElement) {
+        if (getComputedStyle(a).overflowX === 'visible') continue;
+        const ar = a.getBoundingClientRect();
+        left = Math.max(left, ar.left + a.clientLeft);
+        right = Math.min(right, ar.left + a.clientLeft + a.clientWidth);
+      }
+      return Math.max(0, right - left);
+    };
+    const textBoxes = [...chip.querySelectorAll('.branch-chip__text')].map((el) => ({
+      cls: el.parentElement.className,
+      text: box(el),
+      shrink: box(el.parentElement),
+      painted: painted(el),
+    }));
     const floorParts = [
       ...chip.querySelectorAll('.branch-chip__glyph, .branch-chip__dirty, .branch-chip__caret'),
     ];
@@ -153,6 +180,7 @@ const measure = (page, headName) =>
         ...text('.branch-chip__sep'),
         ...text('.branch-chip__tag'),
       ],
+      textBoxes,
       op: chip.querySelector('.branch-chip__op')?.textContent ?? null,
       chipTag: chip.querySelector('.branch-chip__tag')?.textContent ?? null,
       floor,
@@ -236,6 +264,17 @@ async function checkHead(page, log, headName, target) {
       Math.abs(m.chip.width - m.floor) <= 1,
       `${at} chip floors at ${m.floor}px (glyphs + dot + caret), got ${m.chip.width}px`,
     );
+    // 7. At the floor no squeezed text paints a sliver over a glyph (engine review r5): each text
+    // box stays inside its shrink track, or nothing of it paints.
+    const stray = m.textBoxes.filter(
+      (t) =>
+        !(t.text.left >= t.shrink.left - 0.5 && t.text.right <= t.shrink.right + 0.5) &&
+        t.painted > 0.5,
+    );
+    assert(
+      stray.length === 0,
+      `${at} squeezed chip text paints outside its track: ${JSON.stringify(stray)}`,
+    );
   } else {
     assert(textRoom > 0, `${at} a whole name leaves the chip room for its text`);
   }
@@ -251,21 +290,28 @@ async function checkHead(page, log, headName, target) {
 
 runScenario('repo-head-fit', async ({ page, log }) => {
   const root = mkdtempSync(join(tmpdir(), 'conduit-headfit-'));
+  const elsewhere = mkdtempSync(join(tmpdir(), 'conduit-headfit-att-'));
   makeRepoWithWorktrees(root, {
     long: LONG,
     branch: 'feature/a-fairly-long-branch-name',
     rebasing: REBASING,
+    elsewhere,
   });
+  // repoLabel: an attached repo whose name collides gains its parent folder.
+  const ATTACHED = `${LONG} — ${basename(elsewhere)}`;
 
-  const sid = await openSession(page, { path: root.replace(/\\/g, '/') });
+  const sid = await openSession(page, {
+    path: root.replace(/\\/g, '/'),
+    roots: [elsewhere],
+  });
   await page.waitForFunction(
-    (id) => ((window.__sessions || []).find((x) => x.id === id)?.repos?.length ?? 0) >= 3,
+    (id) => ((window.__sessions || []).find((x) => x.id === id)?.repos?.length ?? 0) >= 4,
     sid,
     { timeout: 20000 },
   );
   await openChangesTab(page);
   await page.waitForFunction(
-    ([long, rebasing]) => {
+    ([long, rebasing, attached]) => {
       const head = (n) =>
         [...document.querySelectorAll('.repo-head')].find(
           (h) => h.querySelector('.repo-head__name')?.textContent === n,
@@ -276,10 +322,12 @@ runScenario('repo-head-fit', async ({ page, log }) => {
       return (
         ready(head(long)) &&
         ready(head(rebasing)) &&
-        head(rebasing).querySelector('.branch-chip__op')
+        head(rebasing).querySelector('.branch-chip__op') &&
+        ready(head(attached)) &&
+        head(attached).querySelector('.branch-chip__sep')
       );
     },
-    [LONG, REBASING],
+    [LONG, REBASING, ATTACHED],
     { timeout: 20000 },
   );
 
@@ -303,4 +351,17 @@ runScenario('repo-head-fit', async ({ page, log }) => {
       `${REBASING}: the chip shows REBASING and the detached tag: ${m.op} / ${m.chipTag}`,
     );
   }
+
+  // The widest pill and the worktree segment: the floor, the band where a threshold taken from
+  // the narrower "Nested" pill showed "Attached" over a name cut below 80px, and the default pane.
+  let attachedPill = false;
+  for (const width of [220, 262, 264, 266, 268, 272, 330]) {
+    const m = await checkHead(page, log, ATTACHED, width);
+    assert(
+      m.textBoxes.some((t) => t.cls.includes('branch-chip__sep')),
+      `${ATTACHED}: the chip keeps its worktree segment: ${JSON.stringify(m.textBoxes)}`,
+    );
+    if (m.tag) attachedPill = true;
+  }
+  assert(attachedPill, `${ATTACHED}: the Attached pill shows at some measured width`);
 });
