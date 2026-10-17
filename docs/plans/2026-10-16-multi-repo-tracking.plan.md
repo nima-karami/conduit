@@ -811,6 +811,16 @@ where it is; history is not rewritten.
 | `test/e2e/index-repo-set.e2e.mjs` | modify | Renderer top-ups held from the first index on; red without the `afterReposChanged` re-sync |
 | `CHANGELOG.md` | modify | tsconfig in every window |
 
+**Search-scope review r4 fix**
+
+| Path | Action | Responsibility |
+|---|---|---|
+| `electron/main.ts` | modify | Seed import closure read before the liveness check and state read, so everything from there to `projectIndexState.set` runs after the pass's last await (SF-A); smoke-only `closure` hold on each closure read; `queueProjectIndex` coalesces by `indexQueueSlot` (SF-B) |
+| `src/index-streams.ts` | modify | `indexQueueSlot`: a top-up joins the shared slot only when it is not that window's full index; a streamless window's burst coalesces per window; explicit `full` never joins (SF-B) |
+| `test/unit/index-streams.test.ts` | modify | Queue slots: streamed windows share one, a streamless window never joins another's; red with the per-window branch removed |
+| `test/e2e/index-window-streams.e2e.mjs` | modify | A fourth window's seeded full build held on its closure reads, window closed there, leaves no state; red with the r3 ordering |
+| `test/unit/repo-file-index.test.ts` | modify | Test retitled (nit) |
+
 ## Scripts
 
 **None.** The only repeated routine is building git fixtures, and that is runtime test code

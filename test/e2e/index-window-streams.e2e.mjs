@@ -8,7 +8,9 @@
  *
  * SF-A: a window that closes while its first build is parked (`__conduitHold` 'index') must
  * leave no index state behind once the build resumes; one left behind is re-synced on every repo
- * change, to nobody.
+ * change, to nobody. A full build with seeds awaits again after that hold, reading the seeds'
+ * import closure, so a window that closes during those reads ('closure') must leave none either
+ * (search-scope review r4 SF-A).
  */
 
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
@@ -91,7 +93,32 @@ function makeFolder(parent, name) {
     JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { [MARKER]: ['src/*'] } } }),
   );
   writeFileSync(join(dir, 'src', 'a.ts'), 'export const a = 1;\n');
+  writeFileSync(join(dir, 'src', 'b.ts'), "import { a } from './a';\nexport const b = a;\n");
   return dir;
+}
+
+/** Close a window and wait until it is gone. */
+async function closeWindow(app, id, what) {
+  await answerQuitAsks(app, { proceed: true });
+  await app.evaluate((e, w) => e.BrowserWindow.fromId(w)?.close(), id);
+  const closeBy = Date.now() + BUDGET_MS;
+  while ((await windowIds(app)).includes(id)) {
+    assert(Date.now() < closeBy, what);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+/** For SETTLE_MS, no index state is kept for `dir` or for the closed window `id`. */
+async function assertNoStateFor(app, dir, id, what) {
+  const key = slash(dir).toLowerCase();
+  const settleBy = Date.now() + SETTLE_MS;
+  while (Date.now() < settleBy) {
+    const leaked = (await indexState(app)).filter(
+      (s) => slash(s.root).toLowerCase() === key || s.windows.includes(id),
+    );
+    assert(leaked.length === 0, `${what}: ${JSON.stringify(leaked)}`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
 }
 
 runScenario('index-window-streams', async ({ app, page, log }) => {
@@ -100,6 +127,7 @@ runScenario('index-window-streams', async ({ app, page, log }) => {
     assert(await app.evaluate(() => !!global.__conduitHold), 'the smoke-only holds are installed');
     const ws = makeFolder(root, 'ws');
     const late = makeFolder(root, 'late');
+    const seeded = makeFolder(root, 'seeded');
 
     // The launch's own session would be the one a reload activates; only ws's may be on screen.
     await tapBridge(page);
@@ -138,28 +166,41 @@ runScenario('index-window-streams', async ({ app, page, log }) => {
     const third = await openWindow(app, page);
     await openSession(third.page, { path: slash(late) });
     await waitHeld(app, 'index', "the third window's first index build never reached its hold");
-    await answerQuitAsks(app, { proceed: true });
-    await app.evaluate((e, id) => e.BrowserWindow.fromId(id)?.close(), third.id);
-    const closeBy = Date.now() + BUDGET_MS;
-    while ((await windowIds(app)).includes(third.id)) {
-      assert(Date.now() < closeBy, 'the third window closes');
-      await new Promise((r) => setTimeout(r, 100));
-    }
+    await closeWindow(app, third.id, 'the third window closes');
     await release(app, 'index');
     log('third window closed while its build was parked; build released');
+    await assertNoStateFor(
+      app,
+      late,
+      third.id,
+      "a closed window's resumed build stored index state",
+    );
+    log('no state left for the third window ✓');
 
-    const lateKey = slash(late).toLowerCase();
-    const settleBy = Date.now() + SETTLE_MS;
-    while (Date.now() < settleBy) {
-      const leaked = (await indexState(app)).filter(
-        (s) => slash(s.root).toLowerCase() === lateKey || s.windows.includes(third.id),
-      );
-      assert(
-        leaked.length === 0,
-        `a closed window's resumed build stored index state: ${JSON.stringify(leaked)}`,
-      );
-      await new Promise((r) => setTimeout(r, 100));
-    }
+    // r4 SF-A: a fourth window's full build with a seed parks while reading the seed's import
+    // closure, after the 'index' hold and its liveness check, and the window closes there. The
+    // request is the one opening a file in a not-yet-indexed root sends; it is posted directly
+    // because the session-open index's own 1.5 s timer would race a real file open to it.
+    const fourth = await openWindow(app, page);
+    await openSession(fourth.page, { path: slash(seeded) });
+    await waitIndexed(fourth.page, '/seeded/src/a.ts', 'window 4 indexes the seeded folder');
+    await hold(app, 'closure');
+    await fourth.page.evaluate(
+      ({ root, seed }) => window.agentDeck.post({ type: 'indexProject', root, seeds: [seed] }),
+      { root: slash(seeded), seed: slash(join(seeded, 'src', 'b.ts')) },
+    );
+    await waitHeld(app, 'closure', "the fourth window's seeded build never read its closure");
+    await closeWindow(app, fourth.id, 'the fourth window closes');
+    await release(app, 'closure');
+    log('fourth window closed while its build read the seed closure; build released');
+    await assertNoStateFor(
+      app,
+      seeded,
+      fourth.id,
+      "a closed window's build resumed from its closure reads stored index state",
+    );
+    log('no state left for the fourth window ✓');
+
     const wsState = (await indexState(app)).find(
       (s) => slash(s.root).toLowerCase() === slash(ws).toLowerCase(),
     );
@@ -170,6 +211,7 @@ runScenario('index-window-streams', async ({ app, page, log }) => {
     log('no state left for the closed window; ws still streams to windows 1 and 2 ✓');
   } finally {
     await release(app, 'index');
+    await release(app, 'closure');
     await closeApp(app, page);
     await removeDir(root);
   }

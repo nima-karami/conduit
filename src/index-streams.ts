@@ -48,6 +48,24 @@ export function wantsFullIndex(
 }
 
 /**
+ * The queued pass a request may ride on instead of queueing its own, or null when it needs its
+ * own. A queued pass runs under its first requester's id, so only a request that is the same
+ * top-up for every window may join it: one from a window with no stream is that window's full
+ * index (`wantsFullIndex`), and merged into another window's top-up it would never be streamed
+ * its index or tsconfig (search-scope review r4 SF-B). A burst of those still coalesces, per
+ * window. An explicit full index never joins anything.
+ */
+export function indexQueueSlot(
+  state: RootIndexState | undefined,
+  windowId: number | null,
+  mode: IndexMode,
+): string | null {
+  if (mode === 'full') return null;
+  if (wantsFullIndex(state, windowId, mode)) return `full:${windowId}`;
+  return mode;
+}
+
+/**
  * One index pass over `selected` (the root's current selection), for every window indexing the
  * root. The requester, when it wants a full index, gets a fresh stream from seq 0 in
  * `fullOrder`; every other window gets what its own stream lacks, plus its removals when the

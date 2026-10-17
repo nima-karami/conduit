@@ -84,6 +84,7 @@ import { importClosure } from '../src/import-graph';
 import { staleIndexRoots } from '../src/index-resync';
 import {
   type IndexMode,
+  indexQueueSlot,
   planIndexPass,
   type RootIndexState,
   takeChunks,
@@ -506,11 +507,12 @@ function sendToWindow(windowId: number, msg: HostToWebview) {
   if (isLiveWindow(windowId)) windows.get(windowId)?.webContents.send('to-webview', msg);
 }
 
-type E2eHoldPoint = 'index' | 'scan' | 'topup';
+type E2eHoldPoint = 'index' | 'closure' | 'scan' | 'topup';
 /** Smoke-only (installed under CONDUIT_E2E): parks an index build between reading the repo set
- *  and recording the root's state ('index'), a repo scan before it runs ('scan'), or a
- *  renderer's top-up request before it is queued ('topup'), so a scenario can order a build
- *  against a registration by hand. 'topup' exists because reading a tree on Windows fires
+ *  and recording the root's state ('index'), a full build on each read of its seeds' import
+ *  closure ('closure'), a repo scan before it runs ('scan'), or a renderer's top-up request
+ *  before it is queued ('topup'), so a scenario can order a build against a registration or a
+ *  window close by hand. 'topup' exists because reading a tree on Windows fires
  *  directory change events, and the top-up they cause re-syncs on its own and hides the race. */
 let e2eHold: ((at: E2eHoldPoint) => Promise<void>) | null = null;
 
@@ -519,15 +521,13 @@ let e2eHold: ((at: E2eHoldPoint) => Promise<void>) | null = null;
  *  a specifier that resolves nowhere would otherwise pay a full walk on every retry. */
 const moduleResolveCache = new Map<string, CachedResolution>();
 
-/** In-flight index work per root: the run to chain behind, and whether a top-up is already
- *  waiting for it. */
-const indexRuns = new Map<
-  string,
-  { tail: Promise<void>; queued: { incremental: boolean; resync: boolean } }
->();
+/** In-flight index work per root: the run to chain behind, and the slots (indexQueueSlot)
+ *  already waiting behind it. */
+const indexRuns = new Map<string, { tail: Promise<void>; queued: Set<string> }>();
 
 /**
- * Run at most ONE index per root at a time, with at most one top-up queued behind it.
+ * Run at most ONE index per root at a time, with at most one top-up per slot (indexQueueSlot)
+ * queued behind it.
  *
  * Overlapping runs share `projectIndexState`: a `fsChanged` top-up that starts while the full
  * index is still streaming reads a half-filled "already sent" set and re-streams everything the
@@ -542,15 +542,13 @@ function queueProjectIndex(
   log: Logger,
   mode: IndexMode,
 ): Promise<void> {
-  const run = indexRuns.get(root) ?? {
-    tail: Promise.resolve(),
-    queued: { incremental: false, resync: false },
-  };
+  const run = indexRuns.get(root) ?? { tail: Promise.resolve(), queued: new Set<string>() };
   indexRuns.set(root, run);
-  if (mode !== 'full' && run.queued[mode]) return run.tail;
-  if (mode !== 'full') run.queued[mode] = true;
+  const slot = indexQueueSlot(projectIndexState.get(root), windowId, mode);
+  if (slot !== null && run.queued.has(slot)) return run.tail;
+  if (slot !== null) run.queued.add(slot);
   run.tail = run.tail.then(async () => {
-    if (mode !== 'full') run.queued[mode] = false;
+    if (slot !== null) run.queued.delete(slot);
     try {
       await indexProjectSources(root, seeds, windowId, log, mode);
     } catch (e) {
@@ -611,13 +609,6 @@ async function indexProjectSources(
     fresh: !wantsFullIndex(projectIndexState.get(root), windowId, requested),
   });
   await e2eHold?.('index');
-  // Read after the await: the requester may have closed meanwhile, and its close pruned this
-  // root, so neither may be stored now (search-scope review r3 SF-A).
-  const requester = windowId !== null && isLiveWindow(windowId) ? windowId : null;
-  const prior = projectIndexState.get(root);
-  if (requester === null && !prior) return;
-  const state: RootIndexState = prior ?? { repoSet: meta.repoSet, streams: new Map() };
-  const full = wantsFullIndex(state, requester, requested);
 
   const selected = selectIndexCandidates(
     meta.files.map((f) => ({ rel: f.rel, abs: f.abs.replace(/\\/g, '/') })),
@@ -648,19 +639,32 @@ async function indexProjectSources(
     return value;
   };
 
-  let fullOrder: string[] = [];
-  let priorityCount = 0;
-  if (full) {
-    const candidates = new Set(hitPaths);
-    const normalizedSeeds = seeds.map((s) => s.replace(/\\/g, '/'));
-    const priority = await importClosure(normalizedSeeds, candidates, async (p) => {
-      const v = await readCached(p);
-      return v?.content ?? null;
-    });
-    const prioritySet = new Set(priority);
-    priorityCount = priority.length;
-    fullOrder = [...priority, ...hitPaths.filter((p) => !prioritySet.has(p))];
-  }
+  const closure = wantsFullIndex(projectIndexState.get(root), windowId, requested)
+    ? await importClosure(
+        seeds.map((s) => s.replace(/\\/g, '/')),
+        new Set(hitPaths),
+        async (p) => {
+          await e2eHold?.('closure');
+          const v = await readCached(p);
+          return v?.content ?? null;
+        },
+      )
+    : [];
+
+  // Everything from here to the state write is synchronous, after the pass's last await: the
+  // requester may have closed, or a prune dropped this root, during any read above, so neither
+  // may be stored now (search-scope review r3 SF-A, r4 SF-A).
+  const requester = windowId !== null && isLiveWindow(windowId) ? windowId : null;
+  const prior = projectIndexState.get(root);
+  if (requester === null && !prior) return;
+  const state: RootIndexState = prior ?? { repoSet: meta.repoSet, streams: new Map() };
+  const full = wantsFullIndex(state, requester, requested);
+  // A prune during the reads can turn this pass full for a requester that held a stream; it
+  // still streams everything, only without the seeds' imports first.
+  const priority = full ? closure : [];
+  const priorityCount = priority.length;
+  const prioritySet = new Set(priority);
+  const fullOrder = full ? [...priority, ...hitPaths.filter((p) => !prioritySet.has(p))] : [];
 
   const plans = planIndexPass(state, {
     requester,
@@ -1166,7 +1170,12 @@ app.whenReady().then(() => {
 
   if (process.env.CONDUIT_E2E === '1') {
     const holding = new Set<E2eHoldPoint>();
-    const parked: Record<E2eHoldPoint, Array<() => void>> = { index: [], scan: [], topup: [] };
+    const parked: Record<E2eHoldPoint, Array<() => void>> = {
+      index: [],
+      closure: [],
+      scan: [],
+      topup: [],
+    };
     e2eHold = (at) =>
       holding.has(at)
         ? new Promise<void>((resolve) => parked[at].push(resolve))

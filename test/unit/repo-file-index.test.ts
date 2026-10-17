@@ -210,7 +210,7 @@ describe('createRepoFileIndex', () => {
     ]);
   });
 
-  it('a registered repo git calls not-a-repo is walked without degrading the build', async () => {
+  it('a registered repo git calls not-a-repo is walked and never memoized', async () => {
     const walked: string[] = [];
     const index = createRepoFileIndex({
       listRepo: async (root) => (root === '/w/A' ? 'not-repo' : ['b.ts']),

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type IndexChunk,
   type IndexMode,
+  indexQueueSlot,
   planIndexPass,
   type RootIndexState,
   takeChunks,
@@ -101,5 +102,29 @@ describe('per-window index streams (search-scope review r3 SF-B)', () => {
 
   it('a host pass for a root no window streams plans nothing', () => {
     expect(pass(fresh(), null, 'resync', ['/w/a.ts']).size).toBe(0);
+  });
+});
+
+describe('index queue coalescing (search-scope review r4 SF-B)', () => {
+  it('a top-up from a window that holds a stream joins the shared top-up', () => {
+    const s = fresh();
+    pass(s, A, 'full', ['/w/a.ts']);
+    pass(s, B, 'full', ['/w/a.ts']);
+    expect(indexQueueSlot(s, A, 'incremental')).toBe(indexQueueSlot(s, B, 'incremental'));
+    expect(indexQueueSlot(s, null, 'resync')).toBe(indexQueueSlot(s, null, 'resync'));
+  });
+
+  it("a top-up from a window with no stream never joins another window's top-up", () => {
+    const s = fresh();
+    pass(s, A, 'full', ['/w/a.ts']);
+    const own = indexQueueSlot(s, B, 'incremental');
+    expect(own).not.toBeNull();
+    expect(own).not.toBe(indexQueueSlot(s, A, 'incremental'));
+    // A burst of them from the same window still costs one pass.
+    expect(indexQueueSlot(s, B, 'incremental')).toBe(own);
+  });
+
+  it('an explicit full index always queues its own pass', () => {
+    expect(indexQueueSlot(fresh(), A, 'full')).toBeNull();
   });
 });
