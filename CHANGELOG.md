@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.48.1] — 2026-10-19
+
 ### Fixed
 - **Review shows images stored in Git LFS.** In a repo that keeps images in Git LFS, every
   committed side of an image diff said "Could not render image." — Conduit was reading the LFS
