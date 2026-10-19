@@ -6,6 +6,14 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Review shows images stored in Git LFS.** In a repo that keeps images in Git LFS, every
+  committed side of an image diff said "Could not render image." — Conduit was reading the LFS
+  pointer instead of the image. Commit and branch comparisons, single commits, and the HEAD and
+  staged sides of your working changes now show the real image whenever it has been pulled to
+  this machine. Conduit never downloads to show a diff; an image you haven't pulled still can't
+  be shown.
+
 ## [0.48.0] — 2026-10-17
 
 ### Added

@@ -4,6 +4,7 @@ import { isBinary } from './content-search';
 import { buildImageDiff } from './file-service';
 import { parseBlamePorcelain } from './git-blame';
 import { mapWithConcurrency, runGitBin } from './git-exec';
+import { resolveLfsImage } from './git-lfs';
 import { dotModeFor, type RefEndpoint } from './git-range';
 import { dedupeAndSortCommits } from './git-search';
 import { mediaKindForPath } from './media-kind';
@@ -51,6 +52,20 @@ interface MultiFileDiff {
   /** A read failure, as distinct from a legitimately empty result — see
    *  docs/specs/archive/2026-08-20-commit-review-memory-bounds.md §4. */
   error?: string;
+}
+
+/** A blob for display; an image's LFS pointer is swapped for its local object. */
+async function readBlob(
+  gitBin: string,
+  spec: string,
+  rel: string,
+  cwd: string,
+  timeoutMs: number,
+): Promise<Buffer | null> {
+  const res = await runGitBuffer(gitBin, ['show', spec], cwd, timeoutMs);
+  if (!res.ok) return null;
+  if (mediaKindForPath(rel) !== 'image') return res.stdout;
+  return resolveLfsImage(res.stdout, { gitBin, cwd, timeoutMs, maxBytes: MAX_BUFFER });
 }
 
 /** Build one file's FileDiffDTO from its head/work blob buffers, applying the image, binary, and
@@ -512,10 +527,8 @@ export async function getCommitDiff(
     ? parseNumstatZ(numstat.stdout)
     : new Map<string, { added: number; removed: number }>();
 
-  const showBlob = async (rev: string, rel: string): Promise<Buffer | null> => {
-    const res = await runGitBuffer(gitBin, ['show', `${rev}:${rel}`], cwd, timeoutMs);
-    return res.ok ? res.stdout : null;
-  };
+  const showBlob = (rev: string, rel: string) =>
+    readBlob(gitBin, `${rev}:${rel}`, rel, cwd, timeoutMs);
 
   const total = changed.length;
   const capped = changed.slice(0, maxFiles);
@@ -616,10 +629,8 @@ export async function getRangeDiff(
   if (!nameStatus.ok) return { files: [] };
   const changed = parseNameStatusZ(nameStatus.stdout);
 
-  const showBlob = async (rev: string, rel: string): Promise<Buffer | null> => {
-    const res = await runGitBuffer(gitBin, ['show', `${rev}:${rel}`], cwd, timeoutMs);
-    return res.ok ? res.stdout : null;
-  };
+  const showBlob = (rev: string, rel: string) =>
+    readBlob(gitBin, `${rev}:${rel}`, rel, cwd, timeoutMs);
   // Working-tree read (two-dot mode). Stat first: a file over the cap returns its size, NOT its
   // bytes, so buildFileDiff can flag oversize without ever buffering a giant file.
   const readWork = async (rel: string): Promise<{ buf: Buffer | null; oversizeBytes?: number }> => {

@@ -75,6 +75,7 @@ import {
   searchHistory,
 } from '../src/git-history';
 import { getGitInfo, isDirty, listBranches, listRefs, switchBranch } from '../src/git-info';
+import { resolveLfsImage } from '../src/git-lfs';
 import { gitIgnoredNames, gitListedFiles, LISTING_MAX_BUFFER } from '../src/git-listing';
 import { createAsyncMemo } from '../src/git-memo';
 import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range';
@@ -919,7 +920,14 @@ async function gitShowBuffer(
   const rel = root ? repoRelPath(root, absPath) : null;
   if (!rel) return null;
   const res = await gitShowBlob(root, rel, ref, IMAGE_BLOB_MAX_BUFFER);
-  if (res.ok) return res.bytes;
+  if (res.ok) {
+    return resolveLfsImage(res.bytes, {
+      gitBin: 'git',
+      cwd: root,
+      timeoutMs: GIT_TIMEOUT.metadata,
+      maxBytes: IMAGE_BLOB_MAX_BUFFER,
+    });
+  }
   return ref === 'index' && (await indexUnmerged(root, rel)) ? UNMERGED : null;
 }
 

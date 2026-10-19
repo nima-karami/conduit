@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -387,6 +387,100 @@ describe('diff producers: renamed-with-edits (integration, temp repo)', () => {
       expect(doc?.head).toBe(OLD_CONTENT);
       expect(doc?.work).toBe(NEW_CONTENT);
       expect(doc?.head).not.toBe('');
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+});
+
+describe('diff producers: Git LFS images (integration, temp repo)', () => {
+  const lfsPresent = (() => {
+    try {
+      execFileSync('git', ['lfs', 'version'], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  const INTEGRATION_TIMEOUT_MS = 30_000;
+  // A real 1×1 PNG: the bytes must survive pointer → local object → data URL untouched.
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const REL = 'src/assets/symbols/04.png';
+
+  let repo = '';
+  let baseSha = '';
+  let headSha = '';
+
+  beforeAll(() => {
+    if (!lfsPresent) return;
+    repo = mkdtempSync(join(os.tmpdir(), 'conduit-lfs-'));
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'ignore' });
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    git('config', 'commit.gpgsign', 'false');
+    git('lfs', 'install', '--local');
+    git('lfs', 'track', '*.png');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'track png in lfs');
+    baseSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
+    mkdirSync(join(repo, 'src/assets/symbols'), { recursive: true });
+    writeFileSync(join(repo, REL), PNG);
+    git('add', '-A');
+    git('commit', '-q', '-m', 'add png');
+    headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
+    __resetHistoryGitAvailableForTest();
+  });
+
+  afterAll(() => {
+    if (repo) rmSync(repo, { recursive: true, force: true });
+  });
+
+  const pngIn = (url: string | undefined) =>
+    url?.startsWith('data:image/png;base64,') === true &&
+    Buffer.from(url.slice(url.indexOf(',') + 1), 'base64').equals(PNG);
+
+  it.runIf(lfsPresent)(
+    'getRangeDiff ships the smudged image, not the LFS pointer',
+    async () => {
+      const { files } = await getRangeDiff(
+        repo,
+        { kind: 'commit', sha: baseSha },
+        { kind: 'commit', sha: headSha },
+      );
+      const doc = files.find((d) => d.path === REL);
+      expect(doc?.image?.status).toBe('added');
+      expect(pngIn(doc?.image?.work?.dataUrl)).toBe(true);
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+
+  it.runIf(lfsPresent)(
+    'getCommitDiff ships the smudged image, not the LFS pointer',
+    async () => {
+      const { files } = await getCommitDiff(repo, headSha);
+      const doc = files.find((d) => d.path === REL);
+      expect(pngIn(doc?.image?.work?.dataUrl)).toBe(true);
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+
+  it.runIf(lfsPresent)(
+    'an image whose LFS object is not local keeps its true status (the pointer stands in)',
+    async () => {
+      const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'ignore' });
+      writeFileSync(join(repo, REL), Buffer.concat([PNG, Buffer.from([0])]));
+      git('add', '-A');
+      git('commit', '-q', '-m', 'modify png');
+      const modSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
+      // As after a clone that never pulled this commit's objects.
+      rmSync(join(repo, '.git', 'lfs', 'objects'), { recursive: true, force: true });
+      const { files } = await getCommitDiff(repo, modSha);
+      const doc = files.find((d) => d.path === REL);
+      expect(doc?.image?.status).toBe('modified');
     },
     INTEGRATION_TIMEOUT_MS,
   );
