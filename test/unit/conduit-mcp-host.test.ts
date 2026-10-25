@@ -216,6 +216,36 @@ async function client(ep: string, token: string | null) {
   return { request, call, sock };
 }
 
+/** A client that sends only the hello: the test drives every request, initialize included. */
+async function helloOnly(ep: string, token: string | null) {
+  const sock = await new Promise<net.Socket>((resolve, reject) => {
+    const s = net.connect(ep, () => resolve(s));
+    s.on('error', reject);
+  });
+  sockets.push(sock);
+  sock.setEncoding('utf8');
+  const closed = new Promise<void>((r) => sock.on('close', () => r()));
+  const waiting = new Map<number, (v: Record<string, unknown>) => void>();
+  let buf = '';
+  sock.on('data', (d: string) => {
+    buf += d;
+    let i = buf.indexOf('\n');
+    while (i >= 0) {
+      const msg = JSON.parse(buf.slice(0, i)) as Record<string, unknown>;
+      buf = buf.slice(i + 1);
+      waiting.get(msg.id as number)?.(msg);
+      i = buf.indexOf('\n');
+    }
+  });
+  sock.write(`${JSON.stringify({ conduit: 1, token })}\n`);
+  const request = (id: number, method: string, params?: unknown) =>
+    new Promise<Record<string, unknown>>((resolve) => {
+      waiting.set(id, resolve);
+      sock.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
+    });
+  return { request, closed };
+}
+
 /** Launch a fake session through prepareLaunch + onSpawn, returning its token. */
 function launch(h: Harness, id: string, def = FAKE, sp = spec()) {
   if (!h.sessions.has(id)) h.sessions.set(id, session(id, { agentId: def.id }));
@@ -328,6 +358,42 @@ describe('createConduitMcpHost — launch', () => {
     await expect.poll(() => fs.existsSync(cfg)).toBe(false);
     const again = await client(h.ep, token);
     expect((await again.call('list_sessions')).body.error.code).toBe('not_in_session');
+  });
+
+  it('a connection that said hello but had not initialized does not survive the exit', async () => {
+    const h = harness();
+    await h.host.start();
+    const { token } = launch(h, 's1');
+    const c = await helloOnly(h.ep, token);
+    const list = (await c.request(1, 'tools/list')) as { result: { tools: unknown[] } };
+    expect(list.result.tools.length).toBeGreaterThan(0);
+    h.host.onExit('s1');
+    h.alive.delete('s1');
+    await c.closed;
+    expect(h.host.uiState().sessions.s1?.connected).toBe(false);
+  });
+
+  it('initialize on a connection whose token was re-minted does not make the session live', async () => {
+    const h = harness();
+    await h.host.start();
+    const { token } = launch(h, 's1');
+    const c = await helloOnly(h.ep, token);
+    await c.request(1, 'tools/list');
+    h.host.prepareLaunch('s1', FAKE, spec());
+    const init = c.request(2, 'initialize', { protocolVersion: '2025-06-18' });
+    await Promise.race([init, c.closed]);
+    await c.closed;
+    expect(h.host.uiState().sessions.s1?.connected).toBe(false);
+  });
+
+  it('a revoked token is refused by an already-initialized connection', async () => {
+    const h = harness();
+    await h.host.start();
+    const { token } = launch(h, 's1');
+    const c = await client(h.ep, token);
+    h.host.prepareLaunch('s1', FAKE, spec());
+    const r = await c.call('list_sessions');
+    expect(r.body.error.code).toBe('not_in_session');
   });
 
   it('start sweeps launch configs left by a crash', async () => {

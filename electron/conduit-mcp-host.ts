@@ -157,6 +157,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const registry = createSessionRegistry();
   const runtime = new Map<string, Runtime>();
   const conns = new Map<number, EndpointConnection>();
+  /** Every connection whose hello token resolved, initialized or not: revoke closes them all. */
+  const connSession = new Map<number, string>();
   const launchDir = path.join(deps.dir, LAUNCH_DIR);
   const handlesFile = path.join(deps.dir, HANDLES_FILE);
 
@@ -440,19 +442,29 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   };
 
   const onConnection = (conn: EndpointConnection) => {
-    const sessionId = registry.resolve(conn.token);
+    const resolved = registry.resolve(conn.token);
     conns.set(conn.id, conn);
+    if (resolved) connSession.set(conn.id, resolved);
+    // The token is checked on every use, not once at hello: it dies with the PTY (spec §3.1),
+    // and a connection that outlived it speaks for nobody.
+    const current = (): string | null =>
+      resolved && registry.resolve(conn.token) === resolved ? resolved : null;
     const core = createMcpServerCore({
       serverInfo: { name: 'conduit', version: VERSION },
       instructions: CONDUIT_INSTRUCTIONS,
-      tools: () => (sessionId ? CONDUIT_TOOLS : []),
-      call: (name, args) => callTool(sessionId, name, args),
+      tools: () => (current() ? CONDUIT_TOOLS : []),
+      call: (name, args) => callTool(current(), name, args),
     });
     conn.onLine((line) => {
       void core.handleLine(line).then(
         (reply) => {
           if (reply === undefined) return;
           conn.send(reply);
+          const sessionId = current();
+          if (resolved && !sessionId) {
+            conn.close();
+            return;
+          }
           // Live only once the CLI has completed initialize: a shim that merely dialled in is
           // not yet a CLI that can take a turn (spec §2 gate, "MCP connection is live").
           if (sessionId && isInitialize(line)) {
@@ -465,6 +477,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     });
     conn.onClose(() => {
       conns.delete(conn.id);
+      connSession.delete(conn.id);
       registry.disconnect(conn.id);
       scheduleBroadcast();
     });
@@ -527,7 +540,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     });
 
   const closeConnectionsOf = (sessionId: string) => {
-    for (const id of registry.connectionsOf(sessionId)) conns.get(id)?.close();
+    for (const [id, s] of connSession) if (s === sessionId) conns.get(id)?.close();
   };
 
   const loadStore = async () => {
