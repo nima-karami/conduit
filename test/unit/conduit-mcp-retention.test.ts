@@ -180,6 +180,27 @@ describe('enforceRetention (age only)', () => {
     expect(await again.readBlob('b3')).toEqual(new Uint8Array([1]));
   });
 
+  it('dropping a read you-post keeps its loop-guard reset', async () => {
+    const { s, m } = await store();
+    const unreadAgent = msg(T0);
+    const youPost = msg(T0 + 1, { from: 'you', to: ['codex-2'] });
+    await s.append(unreadAgent, []);
+    await s.append(youPost, []);
+    await s.setStatus(youPost.messageId, 'codex-2', 'read');
+    await s.append(msg(T0 + MAX_AGE), []);
+    expect(s.agentCountSinceHuman('t_1')).toBe(1);
+
+    const r = await s.enforceRetention(new Date(T0 + MAX_AGE + 2));
+    expect(r).toMatchObject({ ok: true, value: { removed: 1, tombstoned: 1 } });
+    expect(s.get(youPost.messageId)).toBeUndefined();
+    expect(s.get(unreadAgent.messageId)?.expired).toBe(true);
+    expect(s.agentCountSinceHuman('t_1')).toBe(1);
+
+    const again = createMessageStore(m.io, { maxAgeMs: MAX_AGE });
+    await again.load();
+    expect(again.agentCountSinceHuman('t_1')).toBe(1);
+  });
+
   it('nothing old → no rewrite and no change', async () => {
     const { s, m } = await store();
     await s.append(msg(T0), []);

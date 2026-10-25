@@ -252,9 +252,20 @@ function compact(
     }
     entries.push({ seq: s.seqOf.get(m.messageId) ?? 0, records });
   }
-  for (const [threadId, allow] of s.lastAllow) {
+  // The loop guard counts from the thread's last reset; when that reset was a you-post being
+  // dropped here, an allow at its position keeps the count the human already reset.
+  const messageAtSeq = new Map<number, StoredMessage>();
+  for (const m of s.messages.values()) {
+    const q = s.seqOf.get(m.messageId);
+    if (q !== undefined) messageAtSeq.set(q, m);
+  }
+  for (const [threadId, seq] of s.resetSeq) {
     if (!keptThreads.has(threadId)) continue;
-    entries.push({ seq: allow.seq, records: [{ v: 1, t: 'allow', threadId, at: allow.at }] });
+    const youPost = messageAtSeq.get(seq);
+    if (youPost && !drop.has(youPost.messageId)) continue;
+    const allow = s.lastAllow.get(threadId);
+    const resetAt = allow?.seq === seq ? allow.at : (youPost?.sentAt ?? at);
+    entries.push({ seq, records: [{ v: 1, t: 'allow', threadId, at: resetAt }] });
   }
   entries.sort((a, b) => a.seq - b.seq);
   return {
