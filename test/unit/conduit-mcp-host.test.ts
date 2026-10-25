@@ -396,6 +396,49 @@ describe('createConduitMcpHost — launch', () => {
     expect(r.body.error.code).toBe('not_in_session');
   });
 
+  it('a launch before the endpoint listens gets no wiring and reads endpoint-down', async () => {
+    const h = harness();
+    h.sessions.set('s1', session('s1'));
+    const sp = spec();
+    expect(h.host.prepareLaunch('s1', FAKE, sp)).toBe(sp);
+    expect(h.host.uiState().sessions.s1?.unavailable).toBe('endpoint-down');
+    await h.host.start();
+    const wired = h.host.prepareLaunch('s1', FAKE, sp);
+    expect(wired.env?.CONDUIT_SESSION_TOKEN).toBeDefined();
+    expect(h.host.uiState().sessions.s1?.unavailable).toBeNull();
+  });
+
+  it('the endpoint listens before the store loads', async () => {
+    let release = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const io: StoreIo = {
+      readLog: async () => {
+        await gate;
+        return undefined;
+      },
+      appendLog: async () => {},
+      rewriteLog: async () => {},
+      writeBlob: async () => {},
+      readBlob: async () => undefined,
+      deleteBlob: async () => {},
+      listBlobs: async () => [],
+      sweepPartialBlobs: async () => {},
+    };
+    const h = harness({ storeIo: io });
+    const started = h.host.start();
+    await expect
+      .poll(() => {
+        h.sessions.set('s1', session('s1'));
+        return h.host.prepareLaunch('s1', FAKE, spec()).env?.CONDUIT_SESSION_TOKEN;
+      })
+      .toBeDefined();
+    expect(h.host.uiState().loading).toBe(true);
+    release();
+    await started;
+  });
+
   it('start sweeps launch configs left by a crash', async () => {
     const h = harness();
     fs.mkdirSync(path.join(h.dir, 'launch'), { recursive: true });

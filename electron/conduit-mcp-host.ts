@@ -165,7 +165,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   let counters: HandleCounters | undefined;
   let loading = true;
   let storeError: string | null = null;
-  let endpointDown = false;
+  /** Set by start once the endpoint listens; until then a launch gets no wiring. */
+  let endpointReady = false;
   let attention: McpAttentionItem[] = [];
   let notifier: Notifier | undefined;
   let endpoint: McpEndpoint | undefined;
@@ -572,13 +573,16 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       } catch (err) {
         deps.log.warn('conduit-mcp', 'launch dir sweep failed', { err: String(err) });
       }
-      await loadStore();
-      notifier = makeNotifier();
+      // Listening first: a launch wired before then would point its shim at nothing, and one
+      // wired while the store loads only meets store_unavailable, which it can retry.
       if (deps.listen !== false) {
         endpoint = createMcpEndpoint({ path: deps.endpointPath, onConnection, log: deps.log });
         const r = await endpoint.listen();
-        endpointDown = !r.ok;
-      }
+        endpointReady = r.ok;
+      } else endpointReady = true;
+      scheduleBroadcast();
+      await loadStore();
+      notifier = makeNotifier();
       const tickMs = deps.tickMs ?? TICK_MS;
       if (tickMs > 0 && !stopped) {
         tickTimer = setInterval(() => void tick(), tickMs);
@@ -632,7 +636,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return spec;
       };
       if (!deps.messagingOn()) return unavailable('messaging-off');
-      if (endpointDown) return unavailable('endpoint-down');
+      if (!endpointReady) return unavailable('endpoint-down');
       const configFile = configFileOf(sessionId);
       const wiring = mcpLaunchWiring({
         adapter,
