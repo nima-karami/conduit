@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
+import type { McpSessionBadge } from '../../src/conduit-mcp/ui-types';
 import { sessionRowClass } from '../../src/session-dot';
 import {
   type ResolvedSessionIcon,
@@ -10,7 +11,8 @@ import type { CardField } from '../../src/settings';
 import { canRelaunch } from '../../src/stale-sessions';
 import type { Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
-import { IconClock, IconClose, SessionGlyph } from '../icons';
+import { MCP_STR } from '../conduit-mcp-strings';
+import { IconClock, IconClose, IconMail, IconPause, IconWarning, SessionGlyph } from '../icons';
 import { getTimerSnapshot, subscribeTimers, waitingCountFor } from '../timer-store';
 
 export interface CardRoles {
@@ -49,6 +51,7 @@ export function SessionCard({
   roles,
   drag,
   dropTarget,
+  mcp,
 }: {
   session: Session;
   agentLabel: string;
@@ -66,6 +69,8 @@ export function SessionCard({
   roles: CardRoles;
   drag?: SessionDragProps;
   dropTarget?: boolean;
+  /** Messaging state (docs/specs/2026-10-25-conduit-mcp-server.md §8 Session card). */
+  mcp?: McpSessionBadge;
 }) {
   const [draft, setDraft] = useState(session.name);
   useEffect(() => {
@@ -84,11 +89,26 @@ export function SessionCard({
   const waitingTimers = waitingCountFor(timerSnap, session.id);
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
+  // Why messaging is down, else why notices are held (plan ruling 4).
+  const mcpTitle = !mcp
+    ? undefined
+    : mcp.unavailable
+      ? MCP_STR.unavailable[mcp.unavailable]
+      : mcp.gate && mcp.gate !== 'open'
+        ? MCP_STR.gate[mcp.gate]
+        : undefined;
+  const mcpBadgeText =
+    mcp && mcp.unread > 0
+      ? [MCP_STR.unread(mcp.unread), mcp.urgent > 0 ? MCP_STR.urgentBadge(mcp.urgent) : '']
+          .filter(Boolean)
+          .join(', ')
+      : '';
 
   return (
     <div
       className={sessionRowClass({ selected: active, state, dropTarget: !!dropTarget })}
       data-sessionid={session.id}
+      title={mcpTitle}
       onClick={() => !editing && onSelect()}
       onContextMenu={onContextMenu}
       draggable={!!drag && !editing}
@@ -161,6 +181,30 @@ export function SessionCard({
             <span className="sr-only">
               {`${waitingTimers} timed message${waitingTimers === 1 ? '' : 's'} waiting`}
             </span>
+          </>
+        )}
+        {!editing && mcp && mcp.unread > 0 && (
+          <>
+            <span
+              className={`session__mcp${mcp.urgent > 0 ? ' session__mcp--urgent' : ''}`}
+              aria-hidden
+              title={mcpBadgeText}
+            >
+              {mcp.urgent > 0 ? <IconWarning size={11} /> : <IconMail size={11} />}
+              {mcp.unread}
+              {mcp.urgent > 0 && (
+                <span className="session__mcp-word">{MCP_STR.priority.urgent}</span>
+              )}
+            </span>
+            <span className="sr-only">{mcpBadgeText}</span>
+          </>
+        )}
+        {!editing && mcp?.paused && (
+          <>
+            <span className="session__mcp-paused" aria-hidden title={MCP_STR.noticesPaused}>
+              <IconPause size={11} />
+            </span>
+            <span className="sr-only">{MCP_STR.noticesPaused}</span>
           </>
         )}
         {/* Row actions keep their slot at all times and only fade in — revealing them by

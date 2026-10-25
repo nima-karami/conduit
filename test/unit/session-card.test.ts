@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import type { McpSessionBadge } from '../../src/conduit-mcp/ui-types';
 import type { Session } from '../../src/types';
 import {
   type CardRoles,
@@ -28,7 +29,7 @@ function session(o: Partial<Session> = {}): Session {
   };
 }
 
-const card = (s: Session, roles: CardRoles = ROLES) =>
+const card = (s: Session, roles: CardRoles = ROLES, mcp?: McpSessionBadge) =>
   renderToStaticMarkup(
     createElement(SessionCard, {
       session: s,
@@ -44,6 +45,7 @@ const card = (s: Session, roles: CardRoles = ROLES) =>
       onEditStart: noop,
       onEditEnd: noop,
       roles,
+      mcp,
     }),
   );
 
@@ -190,5 +192,58 @@ describe('SessionCardPreview', () => {
     expect(html).toContain('session__metaitem">Edit webview/styles.css<');
     expect(html).toContain('session__path');
     expect(html).toContain('feature/auth');
+  });
+});
+
+describe('SessionCard messaging badge (conduit-mcp §8)', () => {
+  const mcp = (o: Partial<McpSessionBadge> = {}): McpSessionBadge => ({
+    handle: 'claude-1',
+    unread: 0,
+    urgent: 0,
+    paused: false,
+    unavailable: null,
+    connected: true,
+    gate: 'open',
+    ...o,
+  });
+  const srText = (html: string) =>
+    [...html.matchAll(/<span class="sr-only">([^<]*)<\/span>/g)].map((m) => m[1]);
+
+  it('unread count in the accessible text', () => {
+    const html = card(session(), ROLES, mcp({ unread: 3 }));
+    expect(html).toContain('session__mcp');
+    expect(srText(html)).toContain('3 unread messages');
+    expect(html).not.toContain('session__mcp--urgent');
+  });
+
+  it('urgent shows icon + word', () => {
+    const html = card(session(), ROLES, mcp({ unread: 2, urgent: 1 }));
+    expect(html).toContain('session__mcp session__mcp--urgent');
+    expect(html).toContain('session__mcp-word">Urgent<');
+    expect(html).toMatch(/session__mcp--urgent[^>]*><svg/);
+    expect(srText(html)).toContain('2 unread messages, 1 urgent message');
+  });
+
+  it('paused glyph labelled', () => {
+    const html = card(session(), ROLES, mcp({ paused: true }));
+    expect(html).toContain('session__mcp-paused');
+    expect(srText(html)).toContain('Notices paused');
+  });
+
+  it('unavailable tooltip "Messaging unavailable: …"', () => {
+    const html = card(session(), ROLES, mcp({ unavailable: 'endpoint-down', gate: null }));
+    expect(html).toMatch(/data-sessionid="s1" title="Messaging unavailable: [^"]+"/);
+  });
+
+  it('gate reason tooltip, e.g. "Notices held: prompt on screen"', () => {
+    const html = card(session(), ROLES, mcp({ gate: 'blocking-prompt' }));
+    expect(html).toContain('title="Notices held: prompt on screen"');
+    expect(card(session(), ROLES, mcp({ gate: 'open' }))).not.toMatch(/data-sessionid="s1" title=/);
+  });
+
+  it('no badge without mcp', () => {
+    const html = card(session());
+    expect(html).not.toContain('session__mcp');
+    expect(html).not.toMatch(/data-sessionid="s1" title=/);
   });
 });

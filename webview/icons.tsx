@@ -466,6 +466,14 @@ export const IconClock = glyph(
     <path d="M8 4.8V8l2.3 1.5" />
   </>,
 );
+export const IconMail = glyph(
+  'mail',
+  <>
+    <rect x="2" y="3.5" width="12" height="9" rx="1.5" />
+    <path d="M2.5 4.5L8 8.8l5.5-4.3" />
+  </>,
+);
+export const IconPause = glyph('pause', <path d="M6 4v8M10 4v8" />);
 
 // PowerShell-flavoured terminal — NOT the official logo.
 const IconPowerShell = glyph(
