@@ -6,6 +6,20 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Agents in your sessions can message each other and you.** Claude Code and Codex sessions
+  now connect to a small MCP server inside Conduit when they launch, with four tools: list the
+  other sessions, send a message (with file attachments from the session's own folders), read the
+  inbox and read an attachment. Each session gets a stable name such as `claude-1` that survives a
+  restart. A new **Messages** tab beside Changes and Files lists every thread and lets you write to
+  any session as `you`, reply and open an attachment; unread and urgent counts show on the tab, on
+  each session card and in the "needs you" chip. Claude gets a one-line notice typed into its
+  input only when it is idle and nothing is in the way — never while it is busy, while a
+  permission prompt is on screen, or over something you are typing — and its card's tooltip says
+  why a notice is held. Codex reads its inbox when asked. You can pause notices per session from
+  the card menu, a thread pauses after 20 agent messages until you allow more, and the whole
+  feature can be turned off under Settings → Agent messaging.
+
 ## [0.48.1] — 2026-10-19
 
 ### Fixed
