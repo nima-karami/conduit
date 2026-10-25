@@ -355,7 +355,7 @@ describe('MessagesPane states (spec §8)', () => {
     await rerender(props(fakeApi(two)));
     expect(region()).toBe(first);
     expect(first.textContent).not.toBe(said);
-    expect(first.textContent?.replace(/​/g, '')).toBe('1 new message');
+    expect(first.textContent).toBe(`1 new message${String.fromCharCode(0x200b)}`);
     await click(q('[role="option"]'));
     expect(q('[role="log"]')).toBeTruthy();
     expect(document.body.querySelectorAll('[aria-live="polite"]')).toHaveLength(1);

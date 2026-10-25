@@ -31,7 +31,7 @@ export interface MessagesPaneProps {
 /** §10: one summary per 5 s at most, so a burst of agent traffic is one announcement. */
 const ANNOUNCE_EVERY_MS = 5_000;
 const SKELETON_ROWS = 4;
-const ZWSP = '​';
+const ZWSP = String.fromCharCode(0x200b);
 const STAMP = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
 type View =
