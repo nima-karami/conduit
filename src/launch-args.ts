@@ -24,6 +24,11 @@ export function firstCmdMetachar(s: string): string | undefined {
   return CMD_METACHARS.exec(s)?.[0];
 }
 
+/** cmd.exe re-parses a batch file's arguments; an unresolvable command may turn out to be one (S10). */
+export function batchGuarded(platform: HostPlatform, resolvedCommand: string | undefined): boolean {
+  return platform === 'win32' && (resolvedCommand === undefined || BATCH_EXT.test(resolvedCommand));
+}
+
 export function launchArgsFor(
   def: Pick<AgentDefinition, 'command' | 'args'>,
   roots: readonly string[],
@@ -32,10 +37,7 @@ export function launchArgsFor(
   if (commandLeaf(def.command) !== 'claude') {
     return { addDir: false, args: [...def.args], launchedRoots: [], skippedAddDirRoots: [] };
   }
-  // cmd.exe re-parses a batch file's arguments; an unresolvable command may turn out to be one (S10).
-  const guarded =
-    opts.platform === 'win32' &&
-    (opts.resolvedCommand === undefined || BATCH_EXT.test(opts.resolvedCommand));
+  const guarded = batchGuarded(opts.platform, opts.resolvedCommand);
   const launchedRoots: string[] = [];
   const skippedAddDirRoots: string[] = [];
   for (const r of roots) {

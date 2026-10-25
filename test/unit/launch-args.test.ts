@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { launchArgsFor } from '../../src/launch-args';
+import { batchGuarded, launchArgsFor } from '../../src/launch-args';
 
 const def = (command: string, args: string[] = []) => ({ command, args });
 
@@ -89,5 +89,19 @@ describe('launchArgsFor', () => {
       expect(r.skippedAddDirRoots, ch).toEqual([root]);
       expect(r.launchedRoots, ch).toEqual(['C:\\plain']);
     }
+  });
+});
+
+describe('batchGuarded', () => {
+  it('win32 guards batch files and unresolvable commands only', () => {
+    expect(batchGuarded('win32', undefined)).toBe(true);
+    expect(batchGuarded('win32', 'C:\npm\claude.cmd')).toBe(true);
+    expect(batchGuarded('win32', 'C:\npm\claude.BAT')).toBe(true);
+    expect(batchGuarded('win32', 'C:\bin\claude.exe')).toBe(false);
+  });
+
+  it('posix is never guarded', () => {
+    expect(batchGuarded('linux', undefined)).toBe(false);
+    expect(batchGuarded('darwin', '/x/claude.cmd')).toBe(false);
   });
 });
