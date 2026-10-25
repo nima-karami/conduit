@@ -4079,6 +4079,10 @@ app.whenReady().then(() => {
             // launch built before it lands could pass a missing root (mf-model spec §2.5).
             const healthPending = folders.pending(m.sessionId);
             if (healthPending) await healthPending;
+            // A session restored at app start launches before the messaging endpoint listens;
+            // it waits (bounded) rather than launching unwired (plan Decisions, endpoint wait).
+            const mcpDef = m.agentId ? registry.get(m.agentId) : undefined;
+            if (mcpDef) await mcpHost.whenLaunchReady(mcpDef);
             const s = mgr.get(m.sessionId);
             if (!s) break;
             if (pty.isAlive(m.sessionId)) {

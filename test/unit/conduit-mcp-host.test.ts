@@ -2,15 +2,17 @@ import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   type ConduitMcpHost,
   type ConduitMcpHostDeps,
   createConduitMcpHost,
+  ENDPOINT_READY_WAIT_MS,
 } from '../../electron/conduit-mcp-host';
 import { createSessionScreens } from '../../electron/session-screens';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
 import type { StoreIo } from '../../src/conduit-mcp/store';
+import { toolError } from '../../src/conduit-mcp/types';
 import type { HostToWebview } from '../../src/protocol';
 import { createPtyWriter } from '../../src/pty-writer';
 import type { AgentDefinition, Session, SpawnSpec } from '../../src/types';
@@ -89,6 +91,7 @@ function harness(
     holdGaps?: boolean;
     tickMs?: number;
     log?: ConduitMcpHostDeps['log'];
+    createEndpoint?: ConduitMcpHostDeps['createEndpoint'];
   } = {},
 ): Harness {
   const dir = opts.dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'cmcp-host-'));
@@ -158,6 +161,7 @@ function harness(
     screens: createSessionScreens(),
     listen: opts.listen ?? true,
     tickMs: opts.tickMs ?? 0,
+    createEndpoint: opts.createEndpoint,
   });
   hosts.push(host);
   return {
@@ -841,5 +845,79 @@ describe('createConduitMcpHost — store', () => {
     h2.clock.t += 30_000;
     await h2.host.tick();
     expect(writesTo(h2, 's2')).toEqual([composeNotice(false), '\r']);
+  });
+});
+
+describe('a launch waits for the endpoint (conductor decision: restored sessions get messaging)', () => {
+  it('a launch that awaits whenLaunchReady while start() is still listening is wired', async () => {
+    const h = harness();
+    h.sessions.set('s1', session('s1'));
+    const started = h.host.start();
+    const t0 = Date.now();
+    await h.host.whenLaunchReady(FAKE);
+    // Released by the listen itself, not by the bound.
+    expect(Date.now() - t0).toBeLessThan(ENDPOINT_READY_WAIT_MS);
+    const out = h.host.prepareLaunch('s1', FAKE, spec());
+    expect(out.env?.CONDUIT_SESSION_TOKEN).toBeDefined();
+    expect(h.host.uiState().sessions.s1?.unavailable).toBeNull();
+    await started;
+  });
+
+  it('the wait is bounded at 3 s, then the launch reads endpoint-down', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const h = harness({
+        createEndpoint: () => ({ listen: () => new Promise(() => {}), close: async () => {} }),
+      });
+      h.sessions.set('s1', session('s1'));
+      void h.host.start();
+      let done = false;
+      const waited = h.host.whenLaunchReady(FAKE).then(() => {
+        done = true;
+      });
+      await vi.advanceTimersByTimeAsync(ENDPOINT_READY_WAIT_MS - 1);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await waited;
+      expect(ENDPOINT_READY_WAIT_MS).toBe(3_000);
+      const sp = spec();
+      expect(h.host.prepareLaunch('s1', FAKE, sp)).toBe(sp);
+      expect(h.host.uiState().sessions.s1?.unavailable).toBe('endpoint-down');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a failed listen ends the wait at once', async () => {
+    const h = harness({
+      createEndpoint: () => ({
+        listen: async () => ({ ok: false, error: toolError('host_unavailable', 'EADDRINUSE') }),
+        close: async () => {},
+      }),
+    });
+    h.sessions.set('s1', session('s1'));
+    const started = h.host.start();
+    const t0 = Date.now();
+    await h.host.whenLaunchReady(FAKE);
+    expect(Date.now() - t0).toBeLessThan(ENDPOINT_READY_WAIT_MS);
+    const sp = spec();
+    expect(h.host.prepareLaunch('s1', FAKE, sp)).toBe(sp);
+    expect(h.host.uiState().sessions.s1?.unavailable).toBe('endpoint-down');
+    await started;
+  });
+
+  it('an agent without an adapter never waits', async () => {
+    const h = harness({
+      createEndpoint: () => ({ listen: () => new Promise(() => {}), close: async () => {} }),
+    });
+    void h.host.start();
+    let done = false;
+    await Promise.race([
+      h.host.whenLaunchReady(SHELL).then(() => {
+        done = true;
+      }),
+      new Promise((r) => setTimeout(r, 50)),
+    ]);
+    expect(done).toBe(true);
   });
 });

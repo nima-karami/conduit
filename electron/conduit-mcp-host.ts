@@ -91,12 +91,19 @@ export interface ConduitMcpHostDeps {
   screens?: SessionScreens;
   listen?: boolean;
   tickMs?: number;
+  createEndpoint?: typeof createMcpEndpoint;
 }
 
 export type McpRendererMessage = Extract<WebviewToHost, { type: `mcp:${string}` }>;
 
 export interface ConduitMcpHost {
   start(): Promise<void>;
+  /**
+   * Resolves once a launch of `def` can be wired: at once for an agent with no adapter, else when
+   * start's listen attempt settles, bounded by ENDPOINT_READY_WAIT_MS. A session restored at app
+   * start launches before start() has listened; without the wait it would read endpoint-down.
+   */
+  whenLaunchReady(def: AgentDefinition): Promise<void>;
   prepareLaunch(sessionId: string, def: AgentDefinition, spec: SpawnSpec): SpawnSpec;
   onSpawn(sessionId: string, cols: number, rows: number): void;
   onOutput(sessionId: string, data: string): void;
@@ -120,6 +127,8 @@ const MAX_UI_THREADS = 500;
 const LAUNCH_DIR = 'launch';
 const HANDLES_FILE = 'handles.json';
 const VERSION = '1';
+/** How long a launch waits for the endpoint (conductor decision; plan Decisions). */
+export const ENDPOINT_READY_WAIT_MS = 3_000;
 
 /** Per-session runtime state; the gate's inputs that no other module owns (plan T9.2). */
 interface Runtime {
@@ -169,6 +178,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   let storeError: string | null = null;
   /** Set by start once the endpoint listens; until then a launch gets no wiring. */
   let endpointReady = false;
+  /** start's listen attempt has finished, either way: launch waits end here. */
+  let endpointSettled = false;
+  const settleWaiters = new Set<() => void>();
+  const settleEndpoint = () => {
+    endpointSettled = true;
+    for (const w of [...settleWaiters]) w();
+  };
   let attention: McpAttentionItem[] = [];
   let notifier: Notifier | undefined;
   let endpoint: McpEndpoint | undefined;
@@ -588,10 +604,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       // Listening first: a launch wired before then would point its shim at nothing, and one
       // wired while the store loads only meets store_unavailable, which it can retry.
       if (deps.listen !== false) {
-        endpoint = createMcpEndpoint({ path: deps.endpointPath, onConnection, log: deps.log });
+        const create = deps.createEndpoint ?? createMcpEndpoint;
+        endpoint = create({ path: deps.endpointPath, onConnection, log: deps.log });
         const r = await endpoint.listen();
         endpointReady = r.ok;
       } else endpointReady = true;
+      settleEndpoint();
       scheduleBroadcast();
       await loadStore();
       notifier = makeNotifier();
@@ -608,6 +626,19 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         }, RETENTION_EVERY_MS);
         retentionTimer.unref?.();
       }
+    },
+
+    whenLaunchReady(def) {
+      if (endpointSettled || !adapterFor(def, { e2e: deps.e2e })) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        const timer = setTimeout(done, ENDPOINT_READY_WAIT_MS);
+        function done() {
+          clearTimeout(timer);
+          settleWaiters.delete(done);
+          resolve();
+        }
+        settleWaiters.add(done);
+      });
     },
 
     prepareLaunch(sessionId, def, spec) {
@@ -835,6 +866,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     async stop() {
       stopped = true;
+      settleEndpoint();
       if (tickTimer) clearInterval(tickTimer);
       if (retentionTimer) clearInterval(retentionTimer);
       if (broadcastTimer) clearTimeout(broadcastTimer);

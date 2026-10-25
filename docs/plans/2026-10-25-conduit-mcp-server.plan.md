@@ -2465,3 +2465,14 @@ that keeps the locked decision.
 - **[normal] The branch is `feat/conduit-mcp`, with no release and no version bump** (spec §13).
 - **[normal] Numbers are reversible:** age retention, loop guard, rate, spacing, the 500 ms tick
   and `NOTICE_ECHO_ROWS`.
+- **[high, conductor, S11] Sessions restored at app start get messaging.** A restored (or
+  auto-relaunched) session starts before `start()` has listened, and an unwired launch read as
+  `endpoint-down` was not accepted as "honest unwired". The launch path (`term:start` in
+  `electron/main.ts`) awaits `mcpHost.whenLaunchReady(def)` before building the spec: it resolves
+  at once for an agent without an adapter, else when `start()`'s listen attempt settles (ok or
+  failed), bounded by `ENDPOINT_READY_WAIT_MS` = 3 s. Only past the bound does `prepareLaunch`
+  fall back to `unavailable('endpoint-down')`. `prepareLaunch` stays synchronous. Covered by
+  `test/unit/conduit-mcp-host.test.ts` ("a launch waits for the endpoint") and the
+  `conduit-mcp-restart` e2e, which relaunches with `autoRelaunchStale` on.
+- **[normal, S10] `THREAD_AGENT_LIMIT` lives in `types.ts`** so the renderer can name the loop
+  guard ("Paused after 20 agent messages") without importing the node-backed `tools.ts`.
