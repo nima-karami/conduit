@@ -42,6 +42,7 @@ function memIo(delayMs = 0) {
       state.blobs.delete(s);
     }),
     listBlobs: op(() => [...state.blobs.keys()]),
+    sweepPartialBlobs: op(() => {}),
   };
   return { io, state, maxActive: () => maxActive };
 }

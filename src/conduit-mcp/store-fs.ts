@@ -4,6 +4,7 @@ import { atomicWriteFile } from '../atomic-write';
 import type { StoreIo } from './store';
 
 const SHA256_NAME = /^[0-9a-f]{64}$/;
+const PARTIAL_BLOB = /^[0-9a-f]{64}\.\d+\.tmp$/;
 
 const isMissing = (e: unknown) =>
   typeof e === 'object' && e !== null && (e as NodeJS.ErrnoException).code === 'ENOENT';
@@ -50,10 +51,22 @@ export function createFsStoreIo(dir: string): StoreIo {
       } catch (e) {
         if (!isMissing(e)) throw e;
       }
-      // A crash mid-write must never leave a truncated file under a content address.
+      // The bytes are on disk before the rename publishes them under their content address; a
+      // crash before the rename leaves only a temp, which sweepPartialBlobs removes at load.
       const tmp = `${target}.${process.pid}.tmp`;
-      await fs.promises.writeFile(tmp, data);
-      await fs.promises.rename(tmp, target);
+      try {
+        const handle = await fs.promises.open(tmp, 'w');
+        try {
+          await handle.writeFile(data);
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+        await fs.promises.rename(tmp, target);
+      } catch (e) {
+        await fs.promises.rm(tmp, { force: true });
+        throw e;
+      }
     },
 
     async readBlob(sha) {
@@ -67,6 +80,19 @@ export function createFsStoreIo(dir: string): StoreIo {
 
     async deleteBlob(sha) {
       await fs.promises.rm(blobPath(sha), { force: true });
+    },
+
+    async sweepPartialBlobs() {
+      let names: string[];
+      try {
+        names = await fs.promises.readdir(blobDir);
+      } catch (e) {
+        if (isMissing(e)) return;
+        throw e;
+      }
+      for (const n of names) {
+        if (PARTIAL_BLOB.test(n)) await fs.promises.rm(path.join(blobDir, n), { force: true });
+      }
     },
 
     async listBlobs() {

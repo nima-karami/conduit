@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMessageStore, type StoreIo } from '../../src/conduit-mcp/store';
 import { createFsStoreIo } from '../../src/conduit-mcp/store-fs';
 import type { MessageRecord } from '../../src/conduit-mcp/types';
@@ -43,6 +43,7 @@ function memIo(opts: { delayMs?: number } = {}) {
       state.blobs.delete(sha);
     }),
     listBlobs: op('listBlobs', () => [...state.blobs.keys()]),
+    sweepPartialBlobs: op('sweepPartialBlobs', () => {}),
   };
   return {
     io,
@@ -348,6 +349,49 @@ describe('createFsStoreIo', () => {
     expect(await io2.readLog()).toBe('');
     await io2.deleteBlob(sha);
     expect(await io2.readBlob(sha)).toBeUndefined();
+  });
+
+  it('a blob is fsynced before its rename and a failed write leaves no temp', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'conduit-mcp-store-'));
+    tmpDirs.push(dir);
+    const io = createFsStoreIo(dir);
+    const order: string[] = [];
+    const open = fs.promises.open.bind(fs.promises);
+    const openSpy = vi.spyOn(fs.promises, 'open').mockImplementation(async (...a) => {
+      const h = await open(...a);
+      const sync = h.sync.bind(h);
+      h.sync = async () => {
+        order.push('sync');
+        return sync();
+      };
+      return h;
+    });
+    const rename = fs.promises.rename.bind(fs.promises);
+    const renameSpy = vi.spyOn(fs.promises, 'rename').mockImplementation(async (a, b) => {
+      order.push('rename');
+      return rename(a, b);
+    });
+    try {
+      await io.writeBlob('b'.repeat(64), new Uint8Array([1, 2]));
+      expect(order).toEqual(['sync', 'rename']);
+      renameSpy.mockRejectedValueOnce(new Error('EPERM'));
+      await expect(io.writeBlob('c'.repeat(64), new Uint8Array([3]))).rejects.toThrow('EPERM');
+    } finally {
+      openSpy.mockRestore();
+      renameSpy.mockRestore();
+    }
+    expect(fs.readdirSync(path.join(dir, 'blobs'))).toEqual(['b'.repeat(64)]);
+  });
+
+  it('load sweeps partial blob temps left by a crash', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'conduit-mcp-store-'));
+    tmpDirs.push(dir);
+    fs.mkdirSync(path.join(dir, 'blobs'));
+    const stray = path.join(dir, 'blobs', `${'d'.repeat(64)}.4242.tmp`);
+    fs.writeFileSync(stray, 'partial');
+    const store = createMessageStore(createFsStoreIo(dir));
+    expect((await store.load()).ok).toBe(true);
+    expect(fs.existsSync(stray)).toBe(false);
   });
 
   it('an absent directory reads as an empty store', async () => {

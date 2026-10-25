@@ -409,6 +409,7 @@ export interface StoreIo {
   readBlob(sha256: string): Promise<Uint8Array | undefined>;
   deleteBlob(sha256: string): Promise<void>;
   listBlobs(): Promise<string[]>;                   // sha256 names
+  sweepPartialBlobs(): Promise<void>;               // at load: temps a crash left (review A4)
 }
 export function createFsStoreIo(dir: string): StoreIo;   // store-fs.ts: <dir>/messages.log, <dir>/blobs/<sha256>
 export interface InboxQuery { unreadOnly: boolean; threadId?: string; limit: number }

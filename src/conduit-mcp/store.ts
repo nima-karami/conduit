@@ -25,6 +25,8 @@ export interface StoreIo {
   deleteBlob(sha256: string): Promise<void>;
   /** sha256 names */
   listBlobs(): Promise<string[]>;
+  /** Removes blob writes a crash cut short (never visible under a sha256 name). */
+  sweepPartialBlobs(): Promise<void>;
 }
 export interface InboxQuery {
   unreadOnly: boolean;
@@ -321,6 +323,7 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
           for (const rec of records) applyRecord(next, rec);
           const refs = liveBlobRefs(next);
           for (const sha of await io.listBlobs()) if (!refs.has(sha)) await io.deleteBlob(sha);
+          await io.sweepPartialBlobs();
           state = next;
           isAvailable = true;
         } catch (e) {

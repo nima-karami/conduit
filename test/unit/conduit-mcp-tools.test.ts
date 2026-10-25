@@ -40,6 +40,7 @@ function memIo(): StoreIo & { failAppend: boolean } {
       blobs.delete(s);
     },
     listBlobs: async () => [...blobs.keys()],
+    sweepPartialBlobs: async () => {},
   };
   return io;
 }

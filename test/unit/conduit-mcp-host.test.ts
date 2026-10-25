@@ -616,6 +616,7 @@ describe('createConduitMcpHost — store', () => {
       async listBlobs() {
         return [];
       },
+      async sweepPartialBlobs() {},
     };
     return io;
   }
