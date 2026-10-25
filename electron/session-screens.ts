@@ -17,11 +17,20 @@ export interface SessionScreens {
 
 export function createSessionScreens(opts: { scrollback?: number } = {}): SessionScreens {
   const terms = new Map<string, Terminal>();
+  /** Snapshots waiting on a model's write callback, per model. */
+  const waiting = new Map<Terminal, Set<(s: ScreenSnapshot | undefined) => void>>();
   const scrollback = opts.scrollback ?? 0;
 
+  // A disposed model answers its waiters now: xterm may parse the dead backlog first, or never
+  // call back, and the gate must not wait on a session that is gone.
   const dispose = (sessionId: string) => {
-    terms.get(sessionId)?.dispose();
+    const term = terms.get(sessionId);
+    if (!term) return;
     terms.delete(sessionId);
+    const pending = waiting.get(term);
+    waiting.delete(term);
+    for (const resolve of pending ?? []) resolve(undefined);
+    term.dispose();
   };
 
   return {
@@ -41,11 +50,14 @@ export function createSessionScreens(opts: { scrollback?: number } = {}): Sessio
       if (!term) return Promise.resolve(undefined);
       // An empty write's callback fires once every earlier write is parsed.
       return new Promise((resolve) => {
+        let set = waiting.get(term);
+        if (!set) {
+          set = new Set();
+          waiting.set(term, set);
+        }
+        set.add(resolve);
         term.write('', () => {
-          if (terms.get(sessionId) !== term) {
-            resolve(undefined);
-            return;
-          }
+          if (!waiting.get(term)?.delete(resolve)) return;
           const buf = term.buffer.active;
           const lines: string[] = [];
           for (let y = 0; y < term.rows; y += 1) {

@@ -51,6 +51,31 @@ describe('createSessionScreens', () => {
     expect(snap?.cursorY).toBe(0);
   });
 
+  // Settled before a timer tick: a disposed model must not hold the caller while xterm parses its
+  // dead backlog (or never calls back at all).
+  const settles = (p: Promise<unknown>) =>
+    Promise.race([p.then(() => 'settled'), new Promise((r) => setTimeout(() => r('pending'), 0))]);
+
+  it('a snapshot pending at dispose resolves undefined', async () => {
+    const s = createSessionScreens();
+    s.start('a', 40, 6);
+    s.feed('a', 'x'.repeat(2_000_000));
+    const snap = s.snapshot('a');
+    s.dispose('a');
+    expect(await settles(snap)).toBe('settled');
+    expect(await snap).toBeUndefined();
+  });
+
+  it('a snapshot pending when start replaces the model resolves undefined', async () => {
+    const s = createSessionScreens();
+    s.start('a', 40, 6);
+    s.feed('a', 'x'.repeat(2_000_000));
+    const snap = s.snapshot('a');
+    s.start('a', 40, 6);
+    expect(await settles(snap)).toBe('settled');
+    expect(await snap).toBeUndefined();
+  });
+
   it('snapshot of an unknown session → undefined', async () => {
     const s = createSessionScreens();
     expect(await s.snapshot('nope')).toBeUndefined();
