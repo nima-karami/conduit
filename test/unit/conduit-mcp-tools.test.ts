@@ -112,6 +112,7 @@ async function harness(over: Partial<ToolDeps> = {}) {
     },
     onStored: (m) => stored.push(m),
     onThreadLimit: (t, by) => limits.push([t, by]),
+    warn: () => {},
     ...over,
   };
   const tools = createToolHandlers(deps);
@@ -422,6 +423,29 @@ describe('readInbox', () => {
     expect(okValue(await h.tools.readInbox(CODEX, { unread_only: false })).messages).toHaveLength(
       1,
     );
+  });
+
+  it('a mark-read write failing mid-way still returns every unread message', async () => {
+    const warnings: string[] = [];
+    const h = await harness({ warn: (msg) => warnings.push(msg) });
+    const ids: string[] = [];
+    for (const body of ['one', 'two', 'three']) {
+      ids.push(okValue(await h.tools.sendMessage(CLAUDE, send(body))).message_id);
+    }
+    const append = h.io.appendLog;
+    let marks = 0;
+    h.io.appendLog = async (l) => {
+      marks += 1;
+      if (marks === 2) throw new Error('disk full');
+      return append(l);
+    };
+    const first = okValue(await h.tools.readInbox(CODEX, {}));
+    const retry = okValue(await h.tools.readInbox(CODEX, {}));
+    const seen = new Set([...first.messages, ...retry.messages].map((m) => m.message_id));
+    expect([...seen].sort()).toEqual([...ids].sort());
+    expect(first.messages.map((m) => m.message_id)).toEqual(ids);
+    expect(retry.messages.map((m) => m.message_id)).toEqual([ids[1]]);
+    expect(warnings).toHaveLength(1);
   });
 
   it('unread_only false includes what the caller sent, without marking anything', async () => {

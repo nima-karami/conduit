@@ -286,6 +286,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     onThreadLimit: (threadId, by) => {
       dispatch({ t: 'thread-limit', threadId, handle: by, at: new Date(now()).toISOString() });
     },
+    warn: (message, data) => deps.log.warn('conduit-mcp', message, data),
   });
 
   // ---- gate -------------------------------------------------------------------------------

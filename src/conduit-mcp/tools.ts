@@ -54,6 +54,7 @@ export interface ToolDeps {
   snapshot(sender: AttachmentSender, path: string): Promise<Result<AttachmentSnapshot>>;
   onStored(msg: MessageRecord): void;
   onThreadLimit(threadId: string, by: Handle): void;
+  warn(message: string, data: Record<string, unknown>): void;
 }
 export interface ToolHandlers {
   listSessions(caller: Caller): Result<ListSessionsOutput>;
@@ -315,11 +316,18 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
       limit,
     });
     const out = messages.map(inboxOut);
+    // The messages go back even when a mark fails: an unmarked one is simply returned again,
+    // while failing the call would hide the ones already marked read.
     for (const m of messages) {
       const r = m.recipients[caller.handle];
       if (!r || r.status === 'read' || r.status === 'expired') continue;
       const marked = await deps.store.setStatus(m.messageId, caller.handle, 'read');
-      if (!marked.ok) return marked;
+      if (!marked.ok) {
+        deps.warn('read_inbox: mark read failed', {
+          messageId: m.messageId,
+          code: marked.error.code,
+        });
+      }
     }
     return { ok: true, value: { messages: out, remaining } };
   }
