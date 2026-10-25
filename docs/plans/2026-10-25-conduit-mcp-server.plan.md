@@ -2431,6 +2431,10 @@ that keeps the locked decision.
   had no code for a malformed call.
 - **[normal] The human sees every thread and attachment.** UI reads skip the participation filter
   (spec §1: "The human sees every message"). Agent reads keep it.
+- **[normal] The human may post into any existing thread** (review A5). `send_message` from `you`
+  with a `thread_id` skips the participation check but still needs the thread to exist
+  (`participants(threadId).size > 0`), else `not_found`. Agents keep spec §3.2: a thread they have
+  no message in is `not_found`.
 - **[normal] Human-compose attachments are cut to v1** (ruling 7; this overturns spec §6's MVP
   "Attach…" and §9's "Save attachment as…"). `send_message` from `you` with attachments →
   `invalid_argument`. Agents' attachments and the human's attachment view stay.

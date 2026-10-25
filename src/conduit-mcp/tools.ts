@@ -214,13 +214,13 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
     if (!human && recentSends(caller.handle, now.getTime()).length >= RATE_LIMIT_PER_MIN) {
       return fail('rate_limited', `more than ${RATE_LIMIT_PER_MIN} sends in a minute`);
     }
-    // The human sees every thread, so may reply in any (plan Decisions: UI skips participation).
-    if (
-      a.threadId !== undefined &&
-      !human &&
-      !deps.store.participants(a.threadId).has(caller.handle)
-    ) {
-      return fail('not_found', `thread ${a.threadId} not found`);
+    // The human may post into any existing thread; an agent only into one it is part of (plan
+    // Decisions). A thread nobody posted in does not exist for either.
+    if (a.threadId !== undefined) {
+      const participants = deps.store.participants(a.threadId);
+      if (human ? participants.size === 0 : !participants.has(caller.handle)) {
+        return fail('not_found', `thread ${a.threadId} not found`);
+      }
     }
     if (
       a.threadId !== undefined &&

@@ -292,12 +292,15 @@ describe('sendMessage', () => {
     expect(reply.thread_id).toBe(t);
   });
 
-  it('the human may post into any thread', async () => {
+  it('the human may post into any existing thread, never a made-up one', async () => {
     const h = await harness();
     const t = okValue(await h.tools.sendMessage(CLAUDE, send())).thread_id;
     expect((await h.tools.sendMessage(YOU, { to: ['claude-1'], body: 'x', thread_id: t })).ok).toBe(
       true,
     );
+    const r = await h.tools.sendMessage(YOU, { to: ['claude-1'], body: 'x', thread_id: 't_none' });
+    expect(errCode(r)).toBe('not_found');
+    expect(h.store.thread('t_none')).toEqual([]);
   });
 
   it('21st agent message → thread_limit + onThreadLimit; a you-post resets', async () => {
