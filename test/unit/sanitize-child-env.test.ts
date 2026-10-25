@@ -107,4 +107,9 @@ describe('sanitizeChildEnv', () => {
     expect(() => sanitizeChildEnv({})).not.toThrow();
     expect(sanitizeChildEnv({})).toEqual({});
   });
+
+  it('parent CONDUIT_SESSION_TOKEN is not inherited', () => {
+    const result = sanitizeChildEnv({ CONDUIT_SESSION_TOKEN: 'x', PATH: 'p' });
+    expect(result).toEqual({ PATH: 'p' });
+  });
 });
