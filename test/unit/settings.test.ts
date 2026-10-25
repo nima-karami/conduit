@@ -392,3 +392,17 @@ describe('auto-save settings', () => {
       expect(parseAutoSaveDelayInput(bad)).toBeNull();
   });
 });
+
+describe('conduit MCP settings', () => {
+  it('conduitMcp defaults true and coerces', () => {
+    expect(DEFAULT_SETTINGS.conduitMcp).toBe(true);
+    expect(restoreSettings(JSON.stringify({ version: 1, settings: {} })).conduitMcp).toBe(true);
+    expect(coerceSettings({ conduitMcp: false }).conduitMcp).toBe(false);
+    expect(coerceSettings({ conduitMcp: 'no' }).conduitMcp).toBe(true);
+  });
+
+  it("rightPaneTab 'messages' survives restoreSettings", () => {
+    const blob = serializeSettings({ ...DEFAULT_SETTINGS, rightPaneTab: 'messages' });
+    expect(restoreSettings(blob).rightPaneTab).toBe('messages');
+  });
+});

@@ -502,3 +502,24 @@ describe('SessionManager folders and projects', () => {
     expect(h.calls).toBe(2);
   });
 });
+
+describe('SessionManager conduit MCP fields', () => {
+  it('setMcp emits change and patches only the MCP fields', () => {
+    const h = managerWithClockAndSession();
+    expect(h.m.setMcp(h.s.id, { mcpHandle: 'claude-1' })).toBe(true);
+    expect(h.calls).toBe(1);
+    expect(h.m.setMcp(h.s.id, { mcpNoticesPaused: true })).toBe(true);
+    expect(h.calls).toBe(2);
+    expect(h.m.get(h.s.id)).toMatchObject({ mcpHandle: 'claude-1', mcpNoticesPaused: true });
+    expect(h.m.setMcp('nope', { mcpNoticesPaused: true })).toBe(false);
+    expect(h.calls).toBe(2);
+  });
+
+  it('duplicate does not copy mcpHandle', () => {
+    const h = managerWithClockAndSession();
+    h.m.setMcp(h.s.id, { mcpHandle: 'claude-1', mcpNoticesPaused: true });
+    const copy = h.m.duplicate(h.s.id);
+    expect(copy?.mcpHandle).toBeUndefined();
+    expect(copy?.mcpNoticesPaused).toBeUndefined();
+  });
+});

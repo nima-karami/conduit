@@ -392,3 +392,14 @@ describe('SessionActivity — spawn grace and exit (contracts 5 and 6)', () => {
     expect(a.sweep(quietAfter(end)).edges).toEqual([{ id: 's', kind: 'run-end' }]);
   });
 });
+
+describe('SessionActivity — output clock accessor', () => {
+  it('lastOutputAt reflects recordOutput and is undefined for an unknown id', () => {
+    const a = make();
+    expect(a.lastOutputAt('s')).toBeUndefined();
+    a.recordOutput('s', 1234, 10, 0);
+    expect(a.lastOutputAt('s')).toBe(1234);
+    a.recordOutput('s', 5000, 10, 0);
+    expect(a.lastOutputAt('s')).toBe(5000);
+  });
+});

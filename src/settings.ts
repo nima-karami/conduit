@@ -37,7 +37,7 @@ export type Background = 'none' | 'aurora' | 'mesh' | 'grid' | 'flow' | 'shader'
 export type BgIntensity = 'subtle' | 'balanced' | 'vivid';
 export type SessionSort = 'manual' | 'name' | 'recent' | 'active' | 'status' | 'project';
 /** Active top-level tab of the right (explorer) pane. */
-export type RightPaneTab = 'changes' | 'files';
+export type RightPaneTab = 'changes' | 'files' | 'messages';
 /** Which side of an `.html`/`.htm` document a tab opens on. */
 export type HtmlDefaultView = 'preview' | 'source';
 /** VS Code `files.autoSave` modes (docs/specs/archive/2026-09-28-auto-save.md §2.2). */
@@ -177,6 +177,9 @@ export interface AppSettings {
   // Diagnostics verbosity. `off` silences everything; `info` (default) excludes the chatty
   // debug/trace. The host logger reads this live (no restart).
   logLevel: LogLevel;
+  // Behaviour: the Conduit MCP server lets agent sessions message each other and you. Default ON;
+  // off answers every tool call with messaging_off (docs/specs/2026-10-25-conduit-mcp-server.md §5).
+  conduitMcp: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -236,6 +239,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   scrollbackPersistence: true,
   logging: true,
   logLevel: 'info',
+  conduitMcp: true,
 };
 
 const LOG_LEVELS: LogLevel[] = ['off', 'error', 'warn', 'info', 'debug', 'trace'];
@@ -272,7 +276,7 @@ function backgroundFrom(v: unknown): Background {
 const INTENSITIES: BgIntensity[] = ['subtle', 'balanced', 'vivid'];
 const SESSION_SORTS: SessionSort[] = ['manual', 'name', 'recent', 'active', 'status', 'project'];
 const ICON_PACKS: IconPack[] = ['none', 'minimal', 'colored'];
-const RIGHT_PANE_TABS: RightPaneTab[] = ['changes', 'files'];
+const RIGHT_PANE_TABS: RightPaneTab[] = ['changes', 'files', 'messages'];
 const HTML_DEFAULT_VIEWS: HtmlDefaultView[] = ['preview', 'source'];
 
 /**
@@ -517,6 +521,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     ),
     logging: bool(payload.logging, DEFAULT_SETTINGS.logging),
     logLevel: oneOf(payload.logLevel, LOG_LEVELS, DEFAULT_SETTINGS.logLevel),
+    conduitMcp: bool(payload.conduitMcp, DEFAULT_SETTINGS.conduitMcp),
   };
 }
 

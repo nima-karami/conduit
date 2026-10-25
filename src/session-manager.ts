@@ -273,6 +273,15 @@ export class SessionManager {
     this.emit();
   }
 
+  setMcp(id: string, patch: Partial<Pick<Session, 'mcpHandle' | 'mcpNoticesPaused'>>): boolean {
+    const s = this.sessions.get(id);
+    if (!s) return false;
+    if ('mcpHandle' in patch) s.mcpHandle = patch.mcpHandle;
+    if ('mcpNoticesPaused' in patch) s.mcpNoticesPaused = patch.mcpNoticesPaused;
+    this.emit();
+    return true;
+  }
+
   /**
    * Adopt the terminal's title (OSC 0/2) as the session name, if policy allows
    * (see resolveTitleSync: ignores empty/path/folder titles). This is how an app

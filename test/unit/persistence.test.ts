@@ -341,3 +341,12 @@ describe('persistence — editor tabs (docs.json)', () => {
     expect(parsed.some((d) => 'group' in d)).toBe(false);
   });
 });
+
+describe('conduit MCP session fields', () => {
+  it('mcpHandle and mcpNoticesPaused round-trip sessions.json', () => {
+    const blob = serializeSessions([{ ...s, mcpHandle: 'claude-3', mcpNoticesPaused: true }]);
+    const [back] = sessionsOf(blob);
+    expect(back?.mcpHandle).toBe('claude-3');
+    expect(back?.mcpNoticesPaused).toBe(true);
+  });
+});

@@ -89,6 +89,11 @@ export interface Session {
   // Persisted in sessions.json via the existing spread in persistence.ts (parseSessions
   // spreads ...s so all fields round-trip). Cleared by setting to undefined.
   iconOverride?: string;
+  // Conduit MCP handle (`claude-1`): assigned at the first launch with a messaging adapter and
+  // never reused (docs/specs/2026-10-25-conduit-mcp-server.md §3.1). Persisted.
+  mcpHandle?: string;
+  // The human paused message notices for this session (spec §5). Persisted.
+  mcpNoticesPaused?: boolean;
   /** live working dir (cd-tracked); falls back to home */
   cwd?: string;
   /** Runtime-only (stripped by serializeSessions). Keyed by RepoInfo.root exactly as in `repos`.

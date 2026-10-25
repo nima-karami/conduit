@@ -233,6 +233,11 @@ export class SessionActivity {
     return { changed, edges };
   }
 
+  /** The output clock the notice gate reads (plan ruling 9): one clock, not a second copy. */
+  lastOutputAt(id: string): number | undefined {
+    return this.entries.get(id)?.lastOutputAt;
+  }
+
   /** Current public flags for a session (defaults to all-false when untracked). */
   statusOf(id: string): ActivitySnapshot {
     const e = this.entries.get(id);

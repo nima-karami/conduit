@@ -1,6 +1,13 @@
 import type { AgentScopeReason } from './add-dir-delivery';
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
+import type { Handle, MessageKind, Priority, ToolErrorCode } from './conduit-mcp/types';
+import type {
+  McpAttachmentPayload,
+  McpSendResult,
+  McpThreadView,
+  McpUiState,
+} from './conduit-mcp/ui-types';
 import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-search';
 import type { DroppedRoot, SessionOpReason } from './folder-validation';
 import type { GitFailure } from './git-exec';
@@ -549,6 +556,16 @@ export type HostToWebview =
   // A rejected timer:set / timer:sendOnce, back to the SENDER only: the other window did not
   // ask for anything and must not toast. Never a silent drop (§3).
   | { type: 'timer:error'; message: string }
+  // Conduit MCP server (docs/specs/2026-10-25-conduit-mcp-server.md §8): one coalesced state
+  // broadcast, plus replies to the sender's mcp:* requests.
+  | { type: 'mcp:state'; state: McpUiState }
+  | { type: 'mcp:thread'; requestId: number; thread: McpThreadView | null }
+  | { type: 'mcp:sent'; requestId: number; result: McpSendResult }
+  | {
+      type: 'mcp:attachment';
+      requestId: number;
+      result: { ok: true; value: McpAttachmentPayload } | { ok: false; error: ToolErrorCode };
+    }
   // Endpoints for a Review source quick-pick, as shas. `error` set => the picker hides the row.
   | {
       type: 'git:resolveRangeResult';
@@ -987,6 +1004,24 @@ export type WebviewToHost =
   // Resolve a limit offer. A NO-OP when the session's episode is already resolved, which is
   // what makes two windows clicking "Resume then" produce one schedule (§3, §4).
   | { type: 'timer:offer'; sessionId: string; action: 'arm' | 'dismiss' }
+  // Conduit MCP server: the human composes as `you`; reads skip the participation filter because
+  // the human sees every thread (plan Decisions).
+  | {
+      type: 'mcp:compose';
+      requestId: number;
+      to: Handle[];
+      subject?: string;
+      body: string;
+      priority: Priority;
+      kind: MessageKind;
+      threadId?: string;
+    }
+  | { type: 'mcp:thread:get'; requestId: number; threadId: string }
+  | { type: 'mcp:markRead'; messageIds: string[] }
+  | { type: 'mcp:allowMore'; threadId: string }
+  | { type: 'mcp:pause'; sessionId: string; paused: boolean }
+  | { type: 'mcp:attachment:get'; requestId: number; messageId: string; attachmentId: string }
+  | { type: 'mcp:retry' }
   // CONDUIT_E2E=1 ONLY: shift the host's schedule clock and re-evaluate, so the smoke scenario
   // proves interval repeats and the expiry windows in milliseconds instead of hours (§7).
   | { type: 'timer:test'; op: 'advance'; ms: number }
