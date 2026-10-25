@@ -87,6 +87,12 @@ await runScenario(
     await tabBadge.waitFor({ timeout: 5_000 });
     const badgeText = (await tabBadge.textContent())?.trim() ?? '';
     assert(badgeText.startsWith('1'), `tab badge: ${badgeText}`);
+    // The tab's accessible name reads "Messages, 1 unread message", not "Messages1 unread…".
+    const badgeSr = (await tabBadge.locator('.sr-only').textContent()) ?? '';
+    assert(badgeSr === ', 1 unread message', `tab badge sr text: ${JSON.stringify(badgeSr)}`);
+    // The card names the handle the chip and threads use.
+    const meta = (await card(a).locator('.session__metaitem').textContent()) ?? '';
+    assert(meta.endsWith(` · ${a.handle}`), `card subtitle: ${JSON.stringify(meta)}`);
     await page.locator('.mcpmsg [role="option"]', { hasText: 'attachment for you' }).click();
     await tabBadge.waitFor({ state: 'detached', timeout: 5_000 });
     await page.locator('button[aria-label="Open attachment: note.txt"]').click();

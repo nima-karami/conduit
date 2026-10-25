@@ -209,10 +209,12 @@ describe('SessionCard messaging badge (conduit-mcp §8)', () => {
   const srText = (html: string) =>
     [...html.matchAll(/<span class="sr-only">([^<]*)<\/span>/g)].map((m) => m[1]);
 
+  // Each sr-only part leads with ", " so the row's text reads as separate phrases (top-bar's
+  // attnchip__reason precedent).
   it('unread count in the accessible text', () => {
     const html = card(session(), ROLES, mcp({ unread: 3 }));
     expect(html).toContain('session__mcp');
-    expect(srText(html)).toContain('3 unread messages');
+    expect(srText(html)).toContain(', 3 unread messages');
     expect(html).not.toContain('session__mcp--urgent');
   });
 
@@ -221,13 +223,22 @@ describe('SessionCard messaging badge (conduit-mcp §8)', () => {
     expect(html).toContain('session__mcp session__mcp--urgent');
     expect(html).toContain('session__mcp-word">Urgent<');
     expect(html).toMatch(/session__mcp--urgent[^>]*><svg/);
-    expect(srText(html)).toContain('2 unread messages, 1 urgent message');
+    expect(srText(html)).toContain(', 2 unread messages, 1 urgent message');
   });
 
   it('paused glyph labelled', () => {
     const html = card(session(), ROLES, mcp({ paused: true }));
     expect(html).toContain('session__mcp-paused');
-    expect(srText(html)).toContain('Notices paused');
+    expect(srText(html)).toContain(', Notices paused');
+  });
+
+  it('the subtitle names the handle, so a chip naming it maps to this card', () => {
+    const html = card(session(), ROLES, mcp({ handle: 'claude-1' }));
+    expect(html).toContain('session__metaitem">claude · claude-1<');
+    expect(html).toContain('session__meta" title="claude · claude-1"');
+    const bare = card(session(), { ...ROLES, subtitle: 'none' }, mcp({ handle: 'fake-2' }));
+    expect(bare).toContain('session__metaitem">fake-2<');
+    expect(card(session())).toContain('session__metaitem">claude<');
   });
 
   it('unavailable tooltip "Messaging unavailable: …"', () => {

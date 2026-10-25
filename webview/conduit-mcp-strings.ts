@@ -96,6 +96,8 @@ export const MCP_STR = {
   pauseNotices: (h: string) => `Pause notices for ${h}`,
   resumeNotices: (h: string) => `Resume notices for ${h}`,
   noticesPaused: 'Notices paused',
+  // The card's subtitle carries the handle that chips and threads name (e.g. "Claude · claude-1").
+  cardMeta: (subtitle: string, handle: string) => (subtitle ? `${subtitle} · ${handle}` : handle),
   openMessages: 'Open messages',
   newMessages: (n: number) => countNoun(n, 'new message', 'new messages'),
   copyBody: 'Copy body',

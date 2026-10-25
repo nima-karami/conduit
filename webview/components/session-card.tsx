@@ -84,6 +84,7 @@ export function SessionCard({
   const state = sessionIconState(session);
   const titleText = fieldValue(session, agentLabel, roles.title) || session.name;
   const subtitle = roles.subtitle !== 'none' ? fieldValue(session, agentLabel, roles.subtitle) : '';
+  const meta = mcp ? MCP_STR.cardMeta(subtitle, mcp.handle) : subtitle;
   const detail = roles.detail !== 'none' ? fieldValue(session, agentLabel, roles.detail) : '';
   const timerSnap = useSyncExternalStore(subscribeTimers, getTimerSnapshot, getTimerSnapshot);
   const waitingTimers = waitingCountFor(timerSnap, session.id);
@@ -143,9 +144,9 @@ export function SessionCard({
             {titleText}
           </span>
         )}
-        {subtitle && (
-          <span className="session__meta" title={subtitle}>
-            <span className="session__metaitem">{subtitle}</span>
+        {meta && (
+          <span className="session__meta" title={meta}>
+            <span className="session__metaitem">{meta}</span>
           </span>
         )}
         {detail && (
@@ -179,7 +180,7 @@ export function SessionCard({
               {waitingTimers}
             </span>
             <span className="sr-only">
-              {`${waitingTimers} timed message${waitingTimers === 1 ? '' : 's'} waiting`}
+              {`, ${waitingTimers} timed message${waitingTimers === 1 ? '' : 's'} waiting`}
             </span>
           </>
         )}
@@ -196,7 +197,7 @@ export function SessionCard({
                 <span className="session__mcp-word">{MCP_STR.priority.urgent}</span>
               )}
             </span>
-            <span className="sr-only">{mcpBadgeText}</span>
+            <span className="sr-only">{`, ${mcpBadgeText}`}</span>
           </>
         )}
         {!editing && mcp?.paused && (
@@ -204,7 +205,7 @@ export function SessionCard({
             <span className="session__mcp-paused" aria-hidden title={MCP_STR.noticesPaused}>
               <IconPause size={11} />
             </span>
-            <span className="sr-only">{MCP_STR.noticesPaused}</span>
+            <span className="sr-only">{`, ${MCP_STR.noticesPaused}`}</span>
           </>
         )}
         {/* Row actions keep their slot at all times and only fade in — revealing them by

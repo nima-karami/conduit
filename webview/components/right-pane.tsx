@@ -247,7 +247,7 @@ export function RightPane({
             >
               {messagesBadge.urgent && <IconWarning size={10} />}
               <span aria-hidden>{messagesBadge.count}</span>
-              <span className="sr-only">{messagesBadgeText}</span>
+              <span className="sr-only">{`, ${messagesBadgeText}`}</span>
             </span>
           )}
         </button>
