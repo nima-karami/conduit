@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   applySnooze,
   attentionChipLabel,
+  attentionEntries,
   attentionSessions,
   nextSnoozeExpiry,
   pruneSnoozed,
   SNOOZE_MS,
   visibleSessionIds,
 } from '../../src/attention';
+import type { McpAttentionItem } from '../../src/conduit-mcp/types';
 import type { Session } from '../../src/types';
 
 type Flags = Pick<Session, 'status' | 'busy' | 'needsAttention'> & { id: string };
@@ -121,5 +123,52 @@ describe('Snooze (D16)', () => {
         ]),
       ),
     ).toBe(T0 + 10);
+  });
+});
+
+describe('attentionEntries (conduit-mcp §8 chip)', () => {
+  const item = (o: Partial<McpAttentionItem>): McpAttentionItem => ({
+    id: 'urgent-waiting:codex-2:m1',
+    reason: 'urgent-waiting',
+    handle: 'codex-2',
+    sessionId: 'b',
+    threadId: 't1',
+    messageId: 'm1',
+    at: '2026-10-25T10:00:00.000Z',
+    ...o,
+  });
+  const NOW = 1_000_000;
+
+  it('session entries first, then items by at', () => {
+    const sessions = [s('a', { needsAttention: true }), s('b')];
+    const items = [
+      item({ id: 'late', at: '2026-10-25T11:00:00.000Z' }),
+      item({ id: 'early', at: '2026-10-25T09:00:00.000Z', reason: 'message-to-you' }),
+    ];
+    const entries = attentionEntries(sessions, items, new Map(), NOW);
+    expect(entries.map((e) => e.key)).toEqual(['session:a', 'early', 'late']);
+    expect(entries[0]).toMatchObject({ kind: 'session', sessionId: 'a', reason: null });
+    expect(entries[1]).toMatchObject({ kind: 'message', threadId: 't1', reason: 'message-to-you' });
+  });
+
+  it('items of a snoozed session are hidden; thread items stay', () => {
+    const sessions = [s('b', { needsAttention: true })];
+    const items = [item({ id: 'tied' }), item({ id: 'thread', sessionId: null })];
+    const snoozed = new Map([['b', NOW + SNOOZE_MS]]);
+    expect(attentionEntries(sessions, items, snoozed, NOW).map((e) => e.key)).toEqual(['thread']);
+    // A lapsed snooze hides nothing.
+    const lapsed = new Map([['b', NOW - 1]]);
+    expect(attentionEntries(sessions, items, lapsed, NOW).map((e) => e.key)).toEqual([
+      'session:b',
+      'tied',
+      'thread',
+    ]);
+  });
+
+  it('count includes items', () => {
+    const sessions = [s('a', { needsAttention: true })];
+    expect(attentionChipLabel(attentionEntries(sessions, [item({})], new Map(), NOW).length)).toBe(
+      '2 need you',
+    );
   });
 });

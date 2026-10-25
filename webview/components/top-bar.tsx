@@ -1,9 +1,11 @@
 import type { JSX as ReactJSX } from 'react';
 import { useEffect, useState } from 'react';
-import { attentionChipLabel, attentionSessions } from '../../src/attention';
+import { attentionChipLabel, attentionEntries, type SnoozeMap } from '../../src/attention';
+import type { McpAttentionItem } from '../../src/conduit-mcp/types';
 import type { Session } from '../../src/types';
 import { win } from '../bridge';
 import { CENTER_VIEWS, type CenterView } from '../center-view';
+import { MCP_STR } from '../conduit-mcp-strings';
 import {
   IconBoard,
   IconChevron,
@@ -23,6 +25,9 @@ const VIEW_ICON: Record<CenterView, ReactJSX.Element> = {
   canvas: <IconGraph size={14} />,
 };
 
+const NO_ITEMS: readonly McpAttentionItem[] = [];
+const NO_SNOOZE: SnoozeMap = new Map();
+
 export function TopBar({
   isDev,
   onOpenSearch,
@@ -34,6 +39,9 @@ export function TopBar({
   onSelectView,
   sessions,
   onFocusAttention,
+  attentionItems = NO_ITEMS,
+  snoozed = NO_SNOOZE,
+  onOpenThread,
   onContextMenu,
 }: {
   isDev?: boolean;
@@ -49,6 +57,12 @@ export function TopBar({
   sessions: Session[];
   /** Focus one session — the chip hands it the first one waiting on the user. */
   onFocusAttention: (sessionId: string) => void;
+  /** Messaging's own reasons (urgent waiting, a message for you, …) join the count. */
+  attentionItems?: readonly McpAttentionItem[];
+  /** The same Snooze map the rail uses, so a snoozed session's items hide with it. */
+  snoozed?: SnoozeMap;
+  /** The chip's message entry opens its thread. */
+  onOpenThread?: (threadId: string) => void;
   // Right-click the top bar to open the panel show/hide menu.
   onContextMenu?: (e: React.MouseEvent) => void;
 }) {
@@ -60,8 +74,20 @@ export function TopBar({
     return win.onMaximizeChange(setMaxed);
   }, []);
 
-  const waiting = attentionSessions(sessions);
-  const chipLabel = attentionChipLabel(waiting.length);
+  const entries = attentionEntries(sessions, attentionItems, snoozed, Date.now());
+  const chipLabel = attentionChipLabel(entries.length);
+  const first = entries[0];
+  const reason =
+    first?.reason && first.handle ? MCP_STR.attention[first.reason](first.handle) : null;
+  const firstName = first?.sessionId
+    ? sessions.find((s) => s.id === first.sessionId)?.name
+    : undefined;
+  const chipTitle = reason ?? (firstName ? `Go to ${firstName}` : undefined);
+  const onChip = () => {
+    if (!first) return;
+    if (first.kind === 'message' && first.threadId && onOpenThread) onOpenThread(first.threadId);
+    else if (first.sessionId) onFocusAttention(first.sessionId);
+  };
 
   const logo = (
     <img
@@ -108,14 +134,15 @@ export function TopBar({
   );
 
   const attnchipEl = chipLabel ? (
-    <button
-      type="button"
-      className="attnchip"
-      title={`Go to ${waiting[0].name}`}
-      onClick={() => onFocusAttention(waiting[0].id)}
-    >
+    <button type="button" className="attnchip" title={chipTitle} onClick={onChip}>
       <span className="attnchip__dot" aria-hidden />
       {chipLabel}
+      {reason && (
+        <span className="attnchip__reason">
+          <span className="sr-only">, </span>
+          {reason}
+        </span>
+      )}
     </button>
   ) : null;
 

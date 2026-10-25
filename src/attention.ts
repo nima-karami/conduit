@@ -1,3 +1,4 @@
+import type { Handle, McpAttentionItem, McpAttentionReason } from './conduit-mcp/types';
 import { type SessionStateFields, sessionIconState } from './session-icon';
 
 /**
@@ -79,4 +80,50 @@ export function nextSnoozeExpiry(snoozed: SnoozeMap): number | undefined {
     if (earliest === undefined || until < earliest) earliest = until;
   }
   return earliest;
+}
+
+/** One reason the topbar chip counts: a session waiting on you, or a message item. */
+export interface AttentionEntry {
+  key: string;
+  kind: 'session' | 'message';
+  sessionId: string | null;
+  threadId: string | null;
+  reason: McpAttentionReason | null;
+  handle: Handle | null;
+}
+
+/**
+ * The chip's entries: sessions that need you first (rail order), then the host's message items
+ * by time (docs/specs/2026-10-25-conduit-mcp-server.md §8 Attention chip). An item tied to a
+ * snoozed session is hidden with it, so Snooze silences the whole session. Pure.
+ */
+export function attentionEntries<T extends SessionStateFields & { id: string }>(
+  sessions: readonly T[],
+  items: readonly McpAttentionItem[],
+  snoozed: SnoozeMap,
+  now: number,
+): AttentionEntry[] {
+  const live = pruneSnoozed(snoozed, now);
+  const fromSessions: AttentionEntry[] = attentionSessions(applySnooze(sessions, live, now)).map(
+    (s) => ({
+      key: `session:${s.id}`,
+      kind: 'session',
+      sessionId: s.id,
+      threadId: null,
+      reason: null,
+      handle: null,
+    }),
+  );
+  const fromItems: AttentionEntry[] = items
+    .filter((i) => i.sessionId === null || !live.has(i.sessionId))
+    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
+    .map((i) => ({
+      key: i.id,
+      kind: 'message',
+      sessionId: i.sessionId,
+      threadId: i.threadId,
+      reason: i.reason,
+      handle: i.handle,
+    }));
+  return [...fromSessions, ...fromItems];
 }
