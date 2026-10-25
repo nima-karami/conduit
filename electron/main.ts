@@ -2730,7 +2730,11 @@ app.whenReady().then(() => {
               isBusy: () => !!activity.statusOf(sessionId).busy,
               typeable: () => scopes.typeable(sessionId),
               bracketedPaste: () => !!pasteModes.get(sessionId)?.on,
-              write: (d) => pty.input(sessionId, d),
+              write: (d) => {
+                // A paste the human still has to submit: a draft to the notice gate (spec §2).
+                mcpHost.noteHostInput(sessionId, d);
+                return pty.input(sessionId, d);
+              },
               onPasted: (p) => scopes.pasted(sessionId, p),
             });
             log.info('agentScope', r.ok ? 'add-dir pasted' : r.reason, { sessionId });

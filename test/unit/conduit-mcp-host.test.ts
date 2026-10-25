@@ -590,6 +590,19 @@ describe('createConduitMcpHost — notices', () => {
     expect(h.host.uiState().sessions.s2?.gate).toBe('draft');
   });
 
+  it('host-originated input inside the submit gap (add-dir paste) withholds the Enter', async () => {
+    const h = harness({ holdGaps: true });
+    const { ca } = await pair(h);
+    await ca.call('send_message', { to: ['fake-2'], body: 'see' });
+    const tickP = h.host.tick();
+    await expect.poll(() => h.gaps.length).toBe(1);
+    h.host.noteHostInput('s2', '\x1b[200~/add-dir /x\x1b[201~');
+    h.gaps.shift()?.();
+    await tickP;
+    expect(writesTo(h, 's2')).toEqual([composeNotice(false)]);
+    expect(h.host.uiState().attention.map((a) => a.reason)).toEqual(['unsent-notice']);
+  });
+
   it('blocking screen 15 rows below the cursor → no submit', async () => {
     const h = harness();
     const { ca } = await pair(h);

@@ -103,6 +103,8 @@ export interface ConduitMcpHost {
   onResize(sessionId: string, cols: number, rows: number): void;
   onExit(sessionId: string): void;
   onRendererInput(sessionId: string, data: string): void;
+  /** Input the host writes outside the PTY writer (the add-dir paste): it is a draft too. */
+  noteHostInput(sessionId: string, data: string): void;
   onSessionDeleted(sessionId: string): Promise<void>;
   refresh(): void;
   uiState(): McpUiState;
@@ -557,6 +559,16 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     scheduleBroadcast();
   };
 
+  /** Input that is not a notice: it closes the gate as a draft and withholds an in-flight Enter. */
+  const noteInput = (sessionId: string, data: string): boolean => {
+    const r = runtime.get(sessionId);
+    if (!r || !isCountedInput(data)) return false;
+    r.inputSeq += 1;
+    r.lastInputAt = now();
+    r.hasDraft = nextDraftState(r.hasDraft, data);
+    return true;
+  };
+
   const tick = async () => {
     if (!notifier || stopped) return;
     // Badge gate state for every notifiable session, then the notifier's own pass.
@@ -694,13 +706,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     onRendererInput(sessionId, data) {
-      const r = runtime.get(sessionId);
-      if (!r || !isCountedInput(data)) return;
-      r.inputSeq += 1;
-      r.lastInputAt = now();
-      r.hasDraft = nextDraftState(r.hasDraft, data);
+      if (!noteInput(sessionId, data)) return;
       const handle = handleOf(sessionId);
       if (handle) dispatch({ t: 'renderer-input', handle });
+    },
+
+    noteHostInput(sessionId, data) {
+      noteInput(sessionId, data);
     },
 
     async onSessionDeleted(sessionId) {
