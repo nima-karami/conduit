@@ -1,12 +1,12 @@
 import {
   type Handle,
   HUMAN_HANDLE,
-  type StoreLogRecord,
   type MessageRecord,
   type Priority,
   type RecipientState,
   type Result,
   type StoredMessage,
+  type StoreLogRecord,
   type ThreadSummary,
   type ToolError,
   toolError,
