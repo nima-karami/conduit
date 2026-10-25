@@ -77,7 +77,7 @@ export interface ConduitMcpHostDeps {
   platform: HostPlatform;
   e2e: boolean;
   mgr: Pick<SessionManager, 'get' | 'list' | 'setMcp'>;
-  pty: Pick<PtyHost, 'isAlive' | 'generation' | 'size'>;
+  pty: Pick<PtyHost, 'isAlive' | 'generation'>;
   writer: PtyWriter;
   activity: Pick<SessionActivity, 'statusOf' | 'lastOutputAt'>;
   messagingOn(): boolean;
@@ -597,7 +597,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       notifier = makeNotifier();
       const tickMs = deps.tickMs ?? TICK_MS;
       if (tickMs > 0 && !stopped) {
-        tickTimer = setInterval(() => void tick(), tickMs);
+        tickTimer = setInterval(() => {
+          tick().catch((err: unknown) => {
+            deps.log.error('conduit-mcp', 'notice tick failed', { err: String(err) });
+          });
+        }, tickMs);
         tickTimer.unref?.();
         retentionTimer = setInterval(() => {
           void store.enforceRetention(new Date(now()));

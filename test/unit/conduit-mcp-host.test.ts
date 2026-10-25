@@ -87,6 +87,8 @@ function harness(
     listen?: boolean;
     platform?: ConduitMcpHostDeps['platform'];
     holdGaps?: boolean;
+    tickMs?: number;
+    log?: ConduitMcpHostDeps['log'];
   } = {},
 ): Harness {
   const dir = opts.dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'cmcp-host-'));
@@ -140,7 +142,6 @@ function harness(
     pty: {
       isAlive: (id) => alive.has(id),
       generation: (id) => gens.get(id),
-      size: () => ({ cols: 80, rows: 24 }),
     },
     writer,
     activity: {
@@ -150,13 +151,13 @@ function harness(
     messagingOn: opts.messagingOn ?? (() => true),
     projectName: () => null,
     broadcast: (m) => broadcasts.push(m),
-    log: noLog,
+    log: opts.log ?? noLog,
     now: () => clock.t,
     randomToken: () => `tok${++tokenN}`,
     storeIo: opts.storeIo,
     screens: createSessionScreens(),
     listen: opts.listen ?? true,
-    tickMs: 0,
+    tickMs: opts.tickMs ?? 0,
   });
   hosts.push(host);
   return {
@@ -451,6 +452,30 @@ describe('createConduitMcpHost — launch', () => {
     expect(h.host.uiState().loading).toBe(true);
     release();
     await started;
+  });
+
+  it('a tick that throws is logged, not left unhandled', async () => {
+    const errors: string[] = [];
+    const h = harness({
+      tickMs: 5,
+      log: { ...noLog, error: (_scope, msg) => errors.push(msg) },
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: unknown) => unhandled.push(e);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      await h.host.start();
+      launch(h, 's1');
+      // The activity tracker is read only by the tick, so the throw stays inside it.
+      h.busy.has = () => {
+        throw new Error('boom');
+      };
+      await expect.poll(() => errors.length, { timeout: 2_000 }).toBeGreaterThan(0);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 
   it('start sweeps launch configs left by a crash', async () => {

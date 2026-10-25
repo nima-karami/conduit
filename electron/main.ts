@@ -1535,13 +1535,13 @@ app.whenReady().then(() => {
       // (multi-window isolation). The narrowing makes `sessionId` available for routing.
       if (msg.type === 'term:data' || msg.type === 'term:exit') sendToOwner(msg.sessionId, msg);
       if (msg.type === 'term:data') {
+        // The notice gate's screen model (docs/specs/2026-10-25-conduit-mcp-server.md §2).
+        mcpHost.onOutput(msg.sessionId, msg.data);
         // Output activity drives the busy/needs-attention machine; byte count and bare
         // bells are the evidence it weighs (see the attention-signal-quality spec).
         // The scanner's state rides across chunks — an escape sequence straddling two
         // `onData` chunks would otherwise fabricate or swallow a bell.
         // Only an idle->busy edge is a change worth broadcasting.
-        // The notice gate's screen model (docs/specs/2026-10-25-conduit-mcp-server.md §2).
-        mcpHost.onOutput(msg.sessionId, msg.data);
         const scan = countBareBells(msg.data, bellScanState.get(msg.sessionId));
         bellScanState.set(msg.sessionId, scan.state);
         // A chunk that draws nothing (a focus-change answer, a mode re-assert) is not work: it
