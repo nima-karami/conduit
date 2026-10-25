@@ -361,4 +361,61 @@ describe('MessagesPane states (spec §8)', () => {
     expect(document.body.querySelectorAll('[aria-live="polite"]')).toHaveLength(1);
     expect(region()).toBe(first);
   });
+
+  it('the active thread follows its id when a newer thread arrives above it', async () => {
+    const a = summary({ threadId: 'a', subject: 'A', lastAt: '2026-10-25T12:00:00.000Z' });
+    const b = summary({ threadId: 'b', subject: 'B', lastAt: '2026-10-25T11:00:00.000Z' });
+    const z = summary({ threadId: 'z', subject: 'Z', lastAt: '2026-10-25T13:00:00.000Z' });
+    const rerender = await render(props(fakeApi(uiState({ threads: [a, b] }))));
+    await key(q('[role="listbox"]'), 'ArrowDown');
+    await rerender(props(fakeApi(uiState({ threads: [a, b, z] }))));
+    const list = q('[role="listbox"]');
+    const activeId = list.getAttribute('aria-activedescendant') ?? '';
+    expect(document.getElementById(activeId)?.getAttribute('aria-label')?.split(',')[0]).toBe('B');
+  });
+});
+
+describe('MessagesPane focus (spec §10)', () => {
+  const threeThreads = () =>
+    uiState({
+      threads: [
+        summary({ threadId: 'a', subject: 'A', lastAt: '2026-10-25T12:00:00.000Z' }),
+        summary({ threadId: 'b', subject: 'B', lastAt: '2026-10-25T11:00:00.000Z' }),
+        summary({ threadId: 'c', subject: 'C', lastAt: '2026-10-25T10:00:00.000Z' }),
+      ],
+    });
+  const selected = () =>
+    q('[role="listbox"]')
+      .querySelector('[aria-selected="true"]')
+      ?.getAttribute('aria-label')
+      ?.split(',')[0];
+
+  it('opening a thread focuses its first message', async () => {
+    await render(props(fakeApi(threeThreads())));
+    await click(document.body.querySelectorAll('[role="option"]')[1]);
+    expect(document.activeElement).toBe(q('[role="log"] article'));
+  });
+
+  it('Back focuses the list with the thread just left active', async () => {
+    await render(props(fakeApi(threeThreads())));
+    await click(document.body.querySelectorAll('[role="option"]')[1]);
+    await click(q('button[aria-label="Back to threads"]'));
+    expect(document.activeElement).toBe(q('[role="listbox"]'));
+    expect(selected()).toBe('B');
+  });
+
+  it('a new compose cancelled focuses New message', async () => {
+    await render(props(fakeApi(threeThreads())));
+    await click(byText('New message'));
+    await click(byText('Cancel'));
+    expect(document.activeElement).toBe(byText('New message'));
+  });
+
+  it('a reply cancelled returns to the thread with its first message focused', async () => {
+    await render(props(fakeApi(threeThreads()), { initialThreadId: 'b' }));
+    await click(byText('Reply'));
+    expect(document.activeElement).toBe(q('textarea'));
+    await click(byText('Cancel'));
+    expect(document.activeElement).toBe(q('[role="log"] article'));
+  });
 });

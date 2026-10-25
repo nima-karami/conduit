@@ -157,13 +157,26 @@ function MessagesView({
     initialThreadId ? { t: 'thread', threadId: initialThreadId } : { t: 'list' },
   );
   const [unreadOnly, setUnreadOnly] = useState(false);
-  const [active, setActive] = useState(0);
+  // By id, not index: a thread arriving above the active one must not move the selection.
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const baseId = useId();
+  const listRef = useRef<HTMLDivElement>(null);
+  const newMessageRef = useRef<HTMLButtonElement>(null);
+  // Where focus lands after the next view switch (spec §10); null leaves it alone.
+  const focusNext = useRef<'list' | 'new-message' | null>(null);
 
   useEffect(() => {
     if (initialThreadId) setView({ t: 'thread', threadId: initialThreadId });
   }, [initialThreadId]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a view switch is the trigger.
+  useEffect(() => {
+    const target = focusNext.current;
+    focusNext.current = null;
+    if (target === 'list') (listRef.current ?? newMessageRef.current)?.focus();
+    else if (target === 'new-message') newMessageRef.current?.focus();
+  }, [view]);
 
   if (!state || state.loading) {
     return (
@@ -205,21 +218,29 @@ function MessagesView({
   }
 
   const targets = composeTargets(sessions, state);
-  const toList = () => setView({ t: 'list' });
 
   if (view.t === 'compose') {
+    const back = view.back;
     return (
       <MessageCompose
         api={api}
         targets={targets}
         replyTo={view.replyTo}
-        onDone={() => setView(view.back)}
+        onDone={() => {
+          if (back.t === 'list') focusNext.current = 'new-message';
+          setView(back);
+        }}
       />
     );
   }
 
   if (view.t === 'thread') {
     const summary = state.threads.find((t) => t.threadId === view.threadId);
+    const toList = () => {
+      setActiveThreadId(view.threadId);
+      focusNext.current = 'list';
+      setView({ t: 'list' });
+    };
     return (
       <>
         <div className="mcpmsg__bar">
@@ -248,15 +269,18 @@ function MessagesView({
   }
 
   const threads = visibleThreads(state.threads, { unreadOnly, handle: filterHandle });
-  const activeIndex = Math.min(active, Math.max(threads.length - 1, 0));
-  const open = (t: McpThreadSummary) => setView({ t: 'thread', threadId: t.threadId });
+  const activeIndex = Math.max(
+    threads.findIndex((t) => t.threadId === activeThreadId),
+    0,
+  );
+  const openThread = (t: McpThreadSummary) => setView({ t: 'thread', threadId: t.threadId });
   const optionId = (i: number) => `${baseId}-opt-${i}`;
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (threads.length === 0) return;
     const go = (i: number) => {
       e.preventDefault();
-      setActive(i);
+      setActiveThreadId(threads[i].threadId);
       document.getElementById(optionId(i))?.scrollIntoView({ block: 'nearest' });
     };
     if (e.key === 'ArrowDown') go(Math.min(activeIndex + 1, threads.length - 1));
@@ -265,7 +289,7 @@ function MessagesView({
     else if (e.key === 'End') go(threads.length - 1);
     else if (e.key === 'Enter') {
       e.preventDefault();
-      open(threads[activeIndex]);
+      openThread(threads[activeIndex]);
     }
   };
 
@@ -285,6 +309,7 @@ function MessagesView({
   const toolbar = (
     <div className="mcpmsg__bar">
       <button
+        ref={newMessageRef}
         type="button"
         className="btn btn--primary btn--sm"
         onClick={() => setView({ t: 'compose', replyTo: null, back: { t: 'list' } })}
@@ -344,6 +369,7 @@ function MessagesView({
   } else {
     body = (
       <div
+        ref={listRef}
         className="mcpmsg__list"
         role="listbox"
         aria-label={MCP_STR.threadList}
@@ -357,8 +383,8 @@ function MessagesView({
             t={t}
             id={optionId(i)}
             active={i === activeIndex}
-            onOpen={() => open(t)}
-            onHover={() => setActive(i)}
+            onOpen={() => openThread(t)}
+            onHover={() => setActiveThreadId(t.threadId)}
             onMenu={(e) => {
               e.preventDefault();
               setMenu({

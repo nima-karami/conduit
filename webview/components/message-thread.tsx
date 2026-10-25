@@ -32,6 +32,8 @@ export function MessageThread({ api, threadId, onReply }: MessageThreadProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [opened, setOpened] = useState<{ messageId: string; att: AttachmentRecord } | null>(null);
   const markedRef = useRef(new Set<string>());
+  const logRef = useRef<HTMLDivElement>(null);
+  const focusedRef = useRef(false);
 
   // Re-read on every state broadcast: recipient states (noticed, read) change without changing
   // the thread's summary, and the broadcast is already coalesced host-side.
@@ -57,6 +59,13 @@ export function MessageThread({ api, threadId, onReply }: MessageThreadProps) {
     api.markRead(ids);
   }, [view, api.markRead]);
 
+  // Opening a thread moves focus to its first message once, not on every refetch (spec §10).
+  useEffect(() => {
+    if (!view || focusedRef.current) return;
+    focusedRef.current = true;
+    logRef.current?.querySelector<HTMLElement>('article')?.focus();
+  }, [view]);
+
   if (view === undefined) {
     return <div className="mcpmsg-thread mcpmsg-thread--loading" aria-busy="true" />;
   }
@@ -69,7 +78,7 @@ export function MessageThread({ api, threadId, onReply }: MessageThreadProps) {
 
   return (
     <div className="mcpmsg-thread">
-      <div className="mcpmsg-thread__log" role="log" aria-label={MCP_STR.thread}>
+      <div ref={logRef} className="mcpmsg-thread__log" role="log" aria-label={MCP_STR.thread}>
         {view.messages.map((m) => (
           <article
             key={m.messageId}
