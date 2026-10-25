@@ -22,6 +22,7 @@ import {
   type SessionSnapshots,
 } from '../src/changes-view-model';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
+import type { Handle } from '../src/conduit-mcp/types';
 import type { McpSessionBadge } from '../src/conduit-mcp/ui-types';
 import {
   type DeleteOutcome,
@@ -873,6 +874,14 @@ export function App() {
     (seed?: string) => {
       if (settings.explorerCollapsed) update({ explorerCollapsed: false });
       requestAnimationFrame(() => rightPaneRef.current?.openSearch(seed));
+    },
+    [settings.explorerCollapsed, update],
+  );
+  // The Messages tab lives in the Explorer panel: un-collapse it first, as openGlobalSearch does.
+  const openMessages = useCallback(
+    (filterHandle: Handle | null, threadId?: string) => {
+      if (settings.explorerCollapsed) update({ explorerCollapsed: false });
+      requestAnimationFrame(() => rightPaneRef.current?.showMessages(filterHandle, threadId));
     },
     [settings.explorerCollapsed, update],
   );
@@ -2866,7 +2875,7 @@ export function App() {
             label: MCP_STR.openMessages,
             icon: <IconMail size={14} />,
             separatorBefore: lifecycle.length > 0,
-            onClick: () => rightPaneRef.current?.showMessages(badge.handle),
+            onClick: () => openMessages(badge.handle),
           },
           {
             label: badge.paused
@@ -4613,7 +4622,7 @@ export function App() {
         onFocusAttention={setActiveId}
         attentionItems={mcp.state?.attention}
         snoozed={snoozed}
-        onOpenThread={(threadId) => rightPaneRef.current?.showMessages(null, threadId)}
+        onOpenThread={(threadId) => openMessages(null, threadId)}
         onContextMenu={onPanelTogglesMenu}
       />
       <div className="workbench">{visibleOrder.map(renderRegion)}</div>

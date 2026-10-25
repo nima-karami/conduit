@@ -4,6 +4,8 @@
  *   1. Messages tab → New message → fake-1 → Send: the thread appears and fake-1 is noticed.
  *   2. fake-1 sends to `you` with an attachment: the chip names the reason, the tab badge shows 1,
  *      opening the thread clears it, and Open attachment shows the snapshotted text.
+ *   2b. With the Explorer collapsed, the chip opens the thread and the card's Open messages
+ *      opens the filtered list.
  *   3. Card menu → Pause notices: a send to the paused fake gives no notice for 8 s, and its card
  *      shows the pause glyph. Resume delivers it.
  *   4. fake-2 shows `permit`: its card's tooltip names the held gate.
@@ -93,6 +95,33 @@ await runScenario(
     const shown = await pre.textContent();
     assert(shown === ATTACHMENT_TEXT, `attachment view: ${JSON.stringify(shown)}`);
     await page.locator('[role="dialog"] button', { hasText: 'Close' }).click();
+
+    // 2b. the chip and the card menu reach Messages with the Explorer collapsed
+    const rightPane = page.locator('.rightpane');
+    const collapseExplorer = async () => {
+      await page.locator('.rightpane .rtab', { hasText: 'Files' }).click();
+      await page.keyboard.press('Control+Shift+E');
+      await rightPane.waitFor({ state: 'detached', timeout: 5_000 });
+    };
+    await collapseExplorer();
+    const jump = await callTool(page, a.sessionId, 'send_message', {
+      to: ['you'],
+      subject: 'jump while collapsed',
+      body: 'the chip opens this',
+    });
+    assert(jump.recipients?.[0]?.status === 'queued', `send to you: ${JSON.stringify(jump)}`);
+    await page.locator('.attnchip', { hasText: 'a message for you' }).waitFor({ timeout: 10_000 });
+    await page.locator('.attnchip').click();
+    const barTitle = page.locator('.mcpmsg__bartitle');
+    await barTitle.waitFor({ timeout: 5_000 });
+    const jumpedTo = (await barTitle.textContent())?.trim();
+    assert(jumpedTo === 'jump while collapsed', `chip opened thread: ${jumpedTo}`);
+    await collapseExplorer();
+    await cardMenu(a, 'Open messages');
+    await page.locator('.rightpane .rtab--active', { hasText: 'Messages' }).waitFor({
+      timeout: 5_000,
+    });
+    await page.locator('.mcpmsg__scopetext', { hasText: a.handle }).waitFor({ timeout: 5_000 });
 
     // 3. pause notices from the card menu
     await cardMenu(b, `Pause notices for ${b.handle}`);
