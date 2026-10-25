@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { THREAD_AGENT_LIMIT } from '../../src/conduit-mcp/types';
 import type { McpGateState, McpThreadSummary, McpUiState } from '../../src/conduit-mcp/ui-types';
 import type { Session } from '../../src/types';
 import { MCP_STR } from '../../webview/conduit-mcp-strings';
@@ -99,6 +100,24 @@ describe('threadAccessibleName', () => {
     expect(name).toContain('unread');
     expect(name).toContain('urgent');
     expect(threadAccessibleName(thread())).not.toMatch(/unread|urgent/);
+  });
+
+  it('takes its words from MCP_STR.a11y, never by lower-casing a visible string', () => {
+    const a11y: Record<string, unknown> = MCP_STR.a11y;
+    const saved = { unread: a11y.unread, urgent: a11y.urgent };
+    a11y.unread = 'NEU';
+    a11y.urgent = 'DRINGEND';
+    const paused = vi.spyOn(MCP_STR.a11y, 'paused').mockReturnValue('PAUSIERT');
+    try {
+      const name = threadAccessibleName(
+        thread({ unreadForYou: true, topPriority: 'urgent', paused: true }),
+      );
+      expect(name).toBe('Build fix, claude-1, codex-2, NEU, DRINGEND, PAUSIERT');
+      expect(paused).toHaveBeenCalledWith(THREAD_AGENT_LIMIT);
+    } finally {
+      Object.assign(a11y, saved);
+      paused.mockRestore();
+    }
   });
 });
 

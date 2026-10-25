@@ -29,9 +29,9 @@ export function threadTitle(t: McpThreadSummary): string {
 /** Unread and priority are in the name, never colour alone (§9, §10). */
 export function threadAccessibleName(t: McpThreadSummary): string {
   const parts = [threadTitle(t), t.participants.join(', ')];
-  if (t.unreadForYou) parts.push('unread');
-  if (t.topPriority === 'urgent') parts.push('urgent');
-  if (t.paused) parts.push(MCP_STR.paused(THREAD_AGENT_LIMIT).toLowerCase());
+  if (t.unreadForYou) parts.push(MCP_STR.a11y.unread);
+  if (t.topPriority === 'urgent') parts.push(MCP_STR.a11y.urgent);
+  if (t.paused) parts.push(MCP_STR.a11y.paused(THREAD_AGENT_LIMIT));
   return parts.join(', ');
 }
 

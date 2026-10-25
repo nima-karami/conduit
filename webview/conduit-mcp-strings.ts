@@ -34,6 +34,12 @@ export const MCP_STR = {
   allowMore: 'Allow 20 more',
   paused: (n: number) => `Paused after ${countNoun(n, 'agent message', 'agent messages')}`,
   pausedShort: 'Paused',
+  // Words inside an accessible name, mid-sentence; not the visible chips' title case.
+  a11y: {
+    unread: 'unread',
+    urgent: 'urgent',
+    paused: (n: number) => `paused after ${countNoun(n, 'agent message', 'agent messages')}`,
+  },
   attachmentExpired: 'Attachment expired',
   send: 'Send',
   sending: 'Sending…',
