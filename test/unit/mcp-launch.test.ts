@@ -163,8 +163,9 @@ describe('mcpLaunchWiring', () => {
     expect(w.ok).toBe(true);
   });
 
-  it('no adapter output contains a token value', () => {
-    const token = 'deadbeefcafef00d';
+  // The token value never reaching args or the config file is asserted in the host test, where
+  // a token exists; here, only that no adapter assigns the variable itself.
+  it('no adapter output assigns the session token', () => {
     for (const a of MCP_ADAPTERS) {
       const w = mcpLaunchWiring({
         adapter: a,
@@ -176,7 +177,6 @@ describe('mcpLaunchWiring', () => {
       expect(w.ok).toBe(true);
       if (!w.ok) continue;
       const text = `${w.args.join(' ')} ${w.configJson ?? ''}`;
-      expect(text).not.toContain(token);
       expect(text).not.toMatch(/CONDUIT_SESSION_TOKEN['"]?\s*[:=]/);
     }
   });

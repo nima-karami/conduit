@@ -293,6 +293,24 @@ describe('createConduitMcpHost — launch', () => {
     expect(h.sessions.get('s1')?.mcpHandle).toBe('fake-1');
   });
 
+  it('the token value reaches only the PTY env: never args or a config file', async () => {
+    const h = harness();
+    await h.host.start();
+    for (const [id, def, cmd] of [
+      ['s1', FAKE, '/usr/bin/node'],
+      ['s2', CODEX, '/usr/bin/codex'],
+    ] as const) {
+      h.sessions.set(id, session(id, { agentId: def.id }));
+      const out = h.host.prepareLaunch(id, def, spec(cmd));
+      const token = out.env?.CONDUIT_SESSION_TOKEN;
+      expect(token).toMatch(/^tok\d+$/);
+      expect(out.args.join(' ')).not.toContain(token);
+      const cfg = path.join(h.dir, 'launch', `${id}.json`);
+      if (fs.existsSync(cfg)) expect(fs.readFileSync(cfg, 'utf8')).not.toContain(token);
+    }
+    expect(fs.existsSync(path.join(h.dir, 'launch', 's1.json'))).toBe(true);
+  });
+
   it('prepareLaunch for a plain shell returns spec unchanged', async () => {
     const h = harness();
     await h.host.start();
