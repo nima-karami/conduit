@@ -1,7 +1,7 @@
 import {
   type Handle,
   HUMAN_HANDLE,
-  type LogRecord,
+  type StoreLogRecord,
   type MessageRecord,
   type Priority,
   type RecipientState,
@@ -117,7 +117,7 @@ function nextRecipient(
   return { ...cur, status: 'undelivered', updatedAt: at };
 }
 
-function isLogRecord(v: unknown): v is LogRecord {
+function isLogRecord(v: unknown): v is StoreLogRecord {
   if (typeof v !== 'object' || v === null) return false;
   const r = v as { v?: unknown; t?: unknown };
   return r.v === 1 && (r.t === 'msg' || r.t === 'rcpt' || r.t === 'allow' || r.t === 'expire');
@@ -127,12 +127,12 @@ function isLogRecord(v: unknown): v is LogRecord {
  * Splits the log into records. A final line without '\n' or that isn't a record is a torn
  * write (plan ruling 2) and is reported so load can rewrite the log before any append.
  */
-function parseLog(text: string): { records: LogRecord[]; valid: string[]; torn: boolean } {
+function parseLog(text: string): { records: StoreLogRecord[]; valid: string[]; torn: boolean } {
   const lines = text.split('\n');
   let torn = false;
   if (lines[lines.length - 1] === '') lines.pop();
   else torn = true;
-  const records: LogRecord[] = [];
+  const records: StoreLogRecord[] = [];
   const valid: string[] = [];
   lines.forEach((line, i) => {
     let parsed: unknown;
@@ -150,7 +150,7 @@ function parseLog(text: string): { records: LogRecord[]; valid: string[]; torn: 
   return { records, valid, torn };
 }
 
-function applyRecord(s: State, rec: LogRecord): void {
+function applyRecord(s: State, rec: StoreLogRecord): void {
   const seq = s.nextSeq++;
   switch (rec.t) {
     case 'msg': {
@@ -204,8 +204,8 @@ function liveBlobRefs(s: State): Map<string, number> {
 const bySentAt = (a: StoredMessage, b: StoredMessage) =>
   a.sentAt < b.sentAt ? -1 : a.sentAt > b.sentAt ? 1 : 0;
 
-function recipientRecords(m: StoredMessage): LogRecord[] {
-  const out: LogRecord[] = [];
+function recipientRecords(m: StoredMessage): StoreLogRecord[] {
+  const out: StoreLogRecord[] = [];
   for (const [handle, r] of Object.entries(m.recipients)) {
     const base = { v: 1, t: 'rcpt', messageId: m.messageId, handle, at: r.updatedAt } as const;
     for (let i = 0; i < r.noticeCount; i++) out.push({ ...base, status: 'noticed' });
@@ -222,7 +222,7 @@ function compact(
   s: State,
   now: number,
   maxAgeMs: number,
-): { records: LogRecord[]; removed: number; tombstoned: number } | null {
+): { records: StoreLogRecord[]; removed: number; tombstoned: number } | null {
   const isOld = (iso: string) => now - Date.parse(iso) > maxAgeMs;
   const drop = new Set<string>();
   const expire = new Set<string>();
@@ -239,13 +239,13 @@ function compact(
 
   const at = new Date(now).toISOString();
   const keptThreads = new Set<string>();
-  const entries: Array<{ seq: number; records: LogRecord[] }> = [];
+  const entries: Array<{ seq: number; records: StoreLogRecord[] }> = [];
   for (const m of s.messages.values()) {
     if (drop.has(m.messageId)) continue;
     keptThreads.add(m.threadId);
     const { recipients: _r, expired: _e, ...rec } = m;
     const gone = m.expired || expire.has(m.messageId);
-    const records: LogRecord[] = [
+    const records: StoreLogRecord[] = [
       { v: 1, t: 'msg', msg: gone ? { ...rec, body: '' } : rec },
       ...recipientRecords(m),
     ];
@@ -278,7 +278,7 @@ function compact(
   };
 }
 
-const line = (rec: LogRecord) => `${JSON.stringify(rec)}\n`;
+const line = (rec: StoreLogRecord) => `${JSON.stringify(rec)}\n`;
 
 export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): MessageStore {
   const maxAgeMs = opts?.maxAgeMs ?? RETENTION_MAX_AGE_MS;
@@ -301,7 +301,7 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
     for (const cb of listeners) cb();
   };
 
-  async function write(rec: LogRecord): Promise<Result<void>> {
+  async function write(rec: StoreLogRecord): Promise<Result<void>> {
     try {
       await io.appendLog(line(rec));
     } catch (e) {

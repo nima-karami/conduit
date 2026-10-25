@@ -70,7 +70,7 @@ export interface StoredMessage extends MessageRecord {
   /** Tombstone: body '' and blobs unref'd. */
   expired: boolean;
 }
-export type LogRecord =
+export type StoreLogRecord =
   | { v: 1; t: 'msg'; msg: MessageRecord }
   | {
       v: 1;
