@@ -240,6 +240,20 @@ describe('createNotifier', () => {
     ]);
   });
 
+  it('per-message state is dropped once the message leaves pending', async () => {
+    const h = harness();
+    h.setGate(CLOSED);
+    const a = h.add('urgent');
+    const b = h.add('normal', 'noticed', 1);
+    await h.notifier.tick();
+    await h.cycle();
+    expect(h.notifier.trackedIds()).toBe(2);
+    h.read(a);
+    h.read(b);
+    await h.notifier.tick();
+    expect(h.notifier.trackedIds()).toBe(0);
+  });
+
   it('rearmAll arms noticed pending', async () => {
     const plain = harness();
     plain.add('normal', 'noticed', 1);

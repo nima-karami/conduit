@@ -24,12 +24,13 @@ export type AttentionEvent =
   | { t: 'renderer-input'; handle: Handle }
   | { t: 'session-gone'; handle: Handle };
 
+/** handle null: the item belongs to a thread, not to whoever raised it. */
 export function attentionItemId(
   reason: McpAttentionReason,
-  handle: Handle,
+  handle: Handle | null,
   ref: string | null,
 ): string {
-  return `${reason}:${handle}:${ref ?? ''}`;
+  return `${reason}:${handle ?? ''}:${ref ?? ''}`;
 }
 
 /** The id is the identity, so a repeated raise is a no-op: each reason fires once. */
@@ -57,7 +58,7 @@ export function reduceAttention(
     }
     case 'thread-limit':
       return add(items, {
-        id: attentionItemId('thread-paused', e.handle, e.threadId),
+        id: attentionItemId('thread-paused', null, e.threadId),
         reason: 'thread-paused',
         handle: e.handle,
         sessionId: null,
@@ -82,7 +83,7 @@ export function reduceAttention(
     case 'renderer-input':
       return items.filter((i) => !(i.reason === 'unsent-notice' && i.handle === e.handle));
     case 'session-gone':
-      return items.filter((i) => i.handle !== e.handle);
+      return items.filter((i) => i.reason === 'thread-paused' || i.handle !== e.handle);
   }
 }
 

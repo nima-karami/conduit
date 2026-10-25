@@ -156,7 +156,8 @@ function applyRecord(s: State, rec: LogRecord): void {
     case 'msg': {
       const m = rec.msg;
       if (s.messages.has(m.messageId)) return;
-      const recipients: Record<Handle, RecipientState> = {};
+      // No prototype: a handle named like an Object member must not read as a recipient.
+      const recipients: Record<Handle, RecipientState> = Object.create(null);
       for (const h of m.to)
         recipients[h] = { status: 'queued', noticeCount: 0, updatedAt: m.sentAt };
       s.messages.set(m.messageId, { ...m, recipients, expired: false });
@@ -412,7 +413,7 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
         .filter((m) =>
           q.unreadOnly
             ? !m.expired && isUnread(m.recipients[handle])
-            : handle in m.recipients || m.from === handle,
+            : Object.hasOwn(m.recipients, handle) || m.from === handle,
         )
         .sort(bySentAt);
       const messages = matches.slice(0, Math.max(0, q.limit));

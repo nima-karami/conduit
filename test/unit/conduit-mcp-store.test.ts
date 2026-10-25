@@ -109,6 +109,19 @@ describe('createMessageStore', () => {
     expect(fresh.get(a.messageId)?.body).toBe(a.body);
   });
 
+  it('a handle named like an Object.prototype member is no recipient', async () => {
+    const { store } = await loaded();
+    const a = msg();
+    await store.append(a, []);
+    for (const h of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      expect(store.inbox(h, { unreadOnly: false, limit: 50 }).messages).toEqual([]);
+      expect(store.inbox(h, { unreadOnly: true, limit: 50 }).messages).toEqual([]);
+      expect(store.pending(h)).toEqual([]);
+      expect(store.get(a.messageId)?.recipients[h]).toBeUndefined();
+      expect((await store.setStatus(a.messageId, h, 'read')).ok).toBe(false);
+    }
+  });
+
   it('torn tail is truncated by rewriteLog before the first append', async () => {
     const m = memIo();
     const first = msg();

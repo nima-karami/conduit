@@ -25,6 +25,8 @@ export interface NotifierDeps {
 export interface Notifier {
   tick(): Promise<void>;
   forget(sessionId: string): void;
+  /** Per-message ids held across ticks. Exists so a test can catch a leak. */
+  trackedIds(): number;
 }
 
 interface HandleState {
@@ -57,6 +59,10 @@ export function createNotifier(deps: NotifierDeps, opts: { rearmAll: boolean }):
   async function tickSession(s: NotifierSession): Promise<void> {
     const pending = deps.pending(s.handle);
     const st = handleState(s.handle, pending);
+    const live = new Set(pending.map((m) => m.messageId));
+    for (const ids of [st.armed, st.exhausted, st.urgentRaised]) {
+      for (const id of ids) if (!live.has(id)) ids.delete(id);
+    }
 
     if (wasBusy.get(s.sessionId) === true && !s.busy) {
       for (const m of pending) {
@@ -114,6 +120,12 @@ export function createNotifier(deps: NotifierDeps, opts: { rearmAll: boolean }):
     },
     forget(sessionId) {
       wasBusy.delete(sessionId);
+    },
+    trackedIds() {
+      let n = 0;
+      for (const st of handles.values())
+        n += st.armed.size + st.exhausted.size + st.urgentRaised.size;
+      return n;
     },
   };
 }

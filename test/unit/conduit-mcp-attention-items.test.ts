@@ -120,9 +120,18 @@ describe('reduceAttention', () => {
     expect(run([raise, clear])).toHaveLength(left);
   });
 
+  it('thread-paused is one item per thread, whichever agent hits the limit', () => {
+    const other: AttentionEvent = { ...paused, handle: 'codex-2' };
+    const items = run([paused, other]);
+    expect(items).toHaveLength(1);
+    expect(items[0].handle).toBe('claude-1');
+    expect(run([paused, { t: 'session-gone', handle: 'claude-1' }])).toHaveLength(1);
+  });
+
   it('thread-paused carries the thread and the agent that hit the limit', () => {
     expect(run([paused])[0]).toMatchObject({
-      id: 'thread-paused:claude-1:t_1',
+      id: 'thread-paused::t_1',
+      handle: 'claude-1',
       reason: 'thread-paused',
       threadId: 't_1',
       messageId: null,
