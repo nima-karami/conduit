@@ -2471,9 +2471,12 @@ that keeps the locked decision.
   `electron/main.ts`) awaits `mcpHost.whenLaunchReady(def)` before building the spec: it resolves
   at once for an agent without an adapter, else when `start()`'s listen attempt settles (ok or
   failed), bounded by `ENDPOINT_READY_WAIT_MS` = 3 s. Only past the bound does `prepareLaunch`
-  fall back to `unavailable('endpoint-down')`. `prepareLaunch` stays synchronous. Covered by
-  `test/unit/conduit-mcp-host.test.ts` ("a launch waits for the endpoint") and the
-  `conduit-mcp-restart` e2e, which relaunches with `autoRelaunchStale` on.
+  fall back to `unavailable('endpoint-down')`. `prepareLaunch` stays synchronous. The startup
+  race is covered by `test/unit/conduit-mcp-host.test.ts` ("a launch waits for the endpoint")
+  only: it holds the listen open and proves a waiting launch is wired. The `conduit-mcp-restart`
+  e2e relaunches with `autoRelaunchStale` on and checks that restored sessions, including the one
+  mounted at startup with no click, come back wired; whether that launch beat the listen is up to
+  timing, so it is not evidence for the race.
 - **[normal, S10] `THREAD_AGENT_LIMIT` lives in `types.ts`** so the renderer can name the loop
   guard ("Paused after 20 agent messages") without importing the node-backed `tools.ts`.
 - **[high, conductor, runtime QA] Claude launches pre-approve Conduit's four tools.** Under

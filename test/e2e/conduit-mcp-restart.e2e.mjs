@@ -3,9 +3,11 @@
  * messaging (spec docs/specs/2026-10-25-conduit-mcp-server.md §3.4, §7; plan T11.1 and the
  * conductor's endpoint-wait decision):
  *   run 1: A sends to B while B is busy, so nothing is noticed; quit.
- *   run 2 (same profile, autoRelaunchStale on, so both relaunch at startup — the race the endpoint
- *   wait closes): B reconnects under the same handle, the thread is intact in the Messages tab,
- *   and exactly one notice arrives once B's gate opens.
+ *   run 2 (same profile, autoRelaunchStale on, so both relaunch at startup): the session selected
+ *   at startup mounts with no click and is wired; B reconnects under the same handle, the thread is
+ *   intact in the Messages tab, and exactly one notice arrives once B's gate opens. Whether A's
+ *   launch actually beats the listen is up to timing; the race itself is pinned by the unit test
+ *   "a launch waits for the endpoint" (conduit-mcp-host.test.ts).
  */
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -60,6 +62,7 @@ await runScenario(
     await sleep(1_000);
     assert(notices(b.sessionId).length === 0, 'B was noticed while busy, before the quit');
     const readyBefore = records(b.sessionId, 'READY').length;
+    const readyBeforeA = records(a.sessionId, 'READY').length;
 
     await closeApp(app, page);
     const settingsPath = join(userDataDir, 'settings.json');
@@ -68,11 +71,43 @@ await runScenario(
       : { version: 1, settings: {} };
     blob.settings = { ...blob.settings, restoreSessions: true, autoRelaunchStale: true };
     writeFileSync(settingsPath, JSON.stringify(blob));
+    // Startup selects the first restored session and mounts its pane; keeping only A and B, A
+    // first, makes that a fake, so its launch is one no click triggers.
+    const sessionsPath = join(userDataDir, 'sessions.json');
+    const saved = JSON.parse(readFileSync(sessionsPath, 'utf8'));
+    const byId = new Map((saved.sessions ?? []).map((s) => [s.id, s]));
+    assert(byId.has(a.sessionId) && byId.has(b.sessionId), 'A or B missing from sessions.json');
+    saved.sessions = [byId.get(a.sessionId), byId.get(b.sessionId)];
+    writeFileSync(sessionsPath, JSON.stringify(saved));
 
     const second = await launchApp({ userDataDir });
     try {
       const p2 = second.page;
       await tapMcp(p2);
+      // The selected session's pane mounts at startup, before any click: that launch is the one
+      // that can run ahead of the endpoint's listen.
+      const activeCard = p2.locator('.session.session--active');
+      await activeCard.waitFor({ timeout: 10_000 });
+      const startupId = await activeCard.getAttribute('data-sessionid');
+      const startup = [a, b].find((s) => s.sessionId === startupId);
+      assert(startup, `the session selected at startup is neither A nor B: ${startupId}`);
+      const startupBefore = startup === a ? readyBeforeA : readyBefore;
+      const startupWired = await until(
+        () =>
+          records(startup.sessionId, 'READY')
+            .slice(startupBefore)
+            .some((r) => r.tools.includes('read_inbox')),
+        READY_AFTER_RELAUNCH_MS,
+      );
+      assert(startupWired, `${startup.handle}, mounted at startup, has no READY with tools`);
+      const st0 = await mcpState(p2);
+      const startupBadge = st0?.sessions?.[startup.sessionId];
+      assert(
+        startupBadge?.unavailable === null,
+        `${startup.handle} unavailable after startup: ${startupBadge?.unavailable}`,
+      );
+      log(`run 2: ${startup.handle} was wired at startup with no click`);
+
       // autoRelaunchStale marks the restored sessions running at startup; a terminal starts when
       // its pane mounts, so showing B is what spawns it.
       await p2.locator(`.session[data-sessionid="${b.sessionId}"]`).click();
@@ -103,6 +138,8 @@ await runScenario(
         squash(notices(b.sessionId)[0].line) === squash(NOTICE),
         `notice text: ${notices(b.sessionId)[0].line}`,
       );
+      // Exactly one: the queued state restored from the log and B's reconnect must not each
+      // produce a notice, and a re-sent notice would mean the restored state lost its `noticed`.
       await sleep(4_000);
       assert(notices(b.sessionId).length === 1, 'more than one notice after the restart');
       log(`run 2: ${b.handle} reconnected and was noticed once`);
