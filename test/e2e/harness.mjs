@@ -1115,11 +1115,13 @@ class AssertionError extends Error {
  *   runScenario('paste', async ({ app, page, log }) => { ... });
  *
  * @param {string} name  Scenario name (used for log prefix)
- * @param {(ctx: { app: any, page: any, log: (...a: any[]) => void }) => Promise<void>} fn
- * @param {{ env?: Record<string, string> }} [opts]  env overrides for the launched app only —
- *   never mutate this process's env: the harness itself resolves Playwright through it.
+ * @param {(ctx: { app: any, page: any, userDataDir: string, log: (...a: any[]) => void }) => Promise<void>} fn
+ * @param {{ env?: Record<string, string>, userDataDir?: string }} [opts]  env overrides for the
+ *   launched app only — never mutate this process's env: the harness itself resolves Playwright
+ *   through it. `userDataDir`: a profile the scenario prepared (from `profileDir()`), e.g. with an
+ *   agents.json written before launch.
  */
-export async function runScenario(name, fn, { env } = {}) {
+export async function runScenario(name, fn, { env, userDataDir } = {}) {
   if (process.platform !== 'win32') {
     console.log(`[${name}] SKIP — suite is Windows-only (non-win32 platform)`);
     await finishScenario(0);
@@ -1129,8 +1131,13 @@ export async function runScenario(name, fn, { env } = {}) {
   let launched = null;
   let code = 0;
   try {
-    launched = await launchApp({ env });
-    await fn({ app: launched.app, page: launched.page, log: scenarioLog });
+    launched = await launchApp({ env, userDataDir });
+    await fn({
+      app: launched.app,
+      page: launched.page,
+      userDataDir: launched.userDataDir,
+      log: scenarioLog,
+    });
     scenarioLog('PASS ✓');
   } catch (e) {
     const isAssertion = e?.name === 'AssertionError';
