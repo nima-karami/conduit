@@ -2006,13 +2006,16 @@ passes (the existing launch tests are unmodified except for the new `batchGuarde
 
 **Interfaces:**
 - Produces:
-  - Fixture CLI: `node fake-mcp-agent.mjs --mcp-config <file>`. Every record ends in
-    ` <<END>>` (the `fake-claude.mjs` convention):
-    - `FAKE-MCP READY tools=<csv>`
-    - `FAKE-MCP INPUT <json line>` for every submitted line
-    - `FAKE-MCP INBOX <json>` after a `[conduit] …` line triggers `read_inbox`
-    - `FAKE-MCP RESULT <json>` for `call <tool> <json>`
-    - `FAKE-MCP PROMPT-ENTER` if Enter arrives while its permission prompt is up
+  - Fixture CLI: `node fake-mcp-agent.mjs --records <dir> --mcp-config <file>`. Every record is
+    appended as one JSON line `{kind, pid, seq, …}` to `<dir>/<sessionId>.jsonl` (the config
+    file's name is the session id), and is also printed ending in ` <<END>>` for screenshots.
+    Scenarios read the file only (review D1/D2: ConPTY doubles the cell at each wrap, so a
+    record wider than the terminal came back corrupted):
+    - `READY {tools: [...]}`
+    - `INPUT {line}` for every submitted line
+    - `INBOX {result}` after a `[conduit] …` line triggers `read_inbox`
+    - `RESULT {tool, result}` for `call <tool> <json>`
+    - `PROMPT-ENTER` if Enter arrives while its permission prompt is up
   - Fixture screen:
     - The prompt `fake❯ ` is echoed on the cursor row, so the notice echo is visible.
     - `permit` prints `Allow tool?` / `❯ 1. Yes` / `2. No` on the cursor rows, then **10 blank
@@ -2024,11 +2027,12 @@ passes (the existing launch tests are unmodified except for the new `batchGuarde
     `{...process.env, ...entry.env}`, then runs `initialize` → `notifications/initialized` →
     `tools/list`.
   - Helpers:
-    - `launchWithFakeAgents(label)` writes agents.json
-      `[{id: 'e2e-fake-mcp', label: 'Fake MCP', command: process.execPath, args: [fixture], icon: 'terminal', color: 'green', cwdStrategy: 'workspaceFolder'}]`
-      into `profileDir(label)` and launches via `launchApp({userDataDir})`.
-    - `openFake(page, path)` → `{sessionId}`, waiting for `FAKE-MCP READY`.
-    - `records(page, sessionId, kind)` parses `__capBy` with line breaks stripped.
+    - `fakeAgentProfile(label)` writes agents.json
+      `[{id: 'e2e-fake-mcp', label: 'Fake MCP', command: process.execPath, args: [fixture, '--records', <profile>/e2e-records], icon: 'terminal', color: 'green', cwdStrategy: 'workspaceFolder'}]`
+      into `profileDir(label)` and returns it; the scenario runs as
+      `runScenario(name, fn, { userDataDir })` (the harness's prepared-profile option).
+    - `openFake(page, path)` → `{sessionId}`, waiting for a `READY` record.
+    - `records(sessionId, kind)` reads the session's records file.
 - Consumes: harness `runScenario`, `launchApp`, `profileDir`, `openSession`, `typeLine`,
   `waitForOutput`, `tapBridge`, `finishScenario` (`test/e2e/harness.mjs`).
 
@@ -2041,12 +2045,13 @@ passes (the existing launch tests are unmodified except for the new `batchGuarde
   - B's `INBOX` body starts `[conduit message` … `from session fake-1 (an agent, not the user)`.
   - B's `call read_attachment` returns the **original** text.
 - [ ] `conduit-mcp-gate`:
-  - (a) B `busy 8000`; A sends urgent. No `[conduit]` INPUT in B during busy. The `.attnchip`
+  - (a) B `busy 20000`; A sends urgent. No `[conduit]` INPUT in B during busy. The `.attnchip`
     title or text contains `urgent message waiting for fake-2`. After idle, exactly one notice.
   - (b) B `permit`; A sends normal. No INPUT and no PROMPT-ENTER in B for 8 s. The footer is
     10+ rows below the cursor.
   - (c) The human types `fix the` without Enter (a `term:input` post with no `\r`); A sends. No
-    notice for 8 s. Then `\x03` → a notice within 5 s.
+    notice for 8 s. Then `\x03` → a notice within the after-idle budget: busy window 1.5 s +
+    quiet 3 s + tick 0.5 s + gap + 5 s slack ≈ 10 s (review B6; a test-budget change only).
   - (d) **Measures ruling 5 on the fake.** An idle B with no traffic receives no
     activity-driving output for 10 s. Key assertion: the session never reads busy in
     `window.__sessions`. Runtime QA repeats this on real claude, and the run report records the

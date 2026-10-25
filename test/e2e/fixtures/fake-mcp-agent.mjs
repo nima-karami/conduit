@@ -1,13 +1,15 @@
 // A fake MCP-capable agent CLI for the conduit-mcp scenarios (docs/plans/2026-10-25-conduit-mcp-server.plan.md
 // T9.4): the remote runner has no logged-in claude or codex. Launched as
-// `node fake-mcp-agent.mjs --mcp-config <file>`, it spawns the REAL shim from the config's
+// `node fake-mcp-agent.mjs --records <dir> --mcp-config <file>`, it spawns the REAL shim from the config's
 // `mcpServers.conduit` entry (env merged over its own, as claude does), so the token, the endpoint
 // and every tool call cross the same path a real CLI's would.
 //
-// Every record ends in " <<END>>" (the fake-claude.mjs convention: ConPTY wraps and repaints, and
-// the scenario reads output with line breaks stripped). Records carry a per-process `seq`, so a
-// repaint can never pass for a second record:
-//   FAKE-MCP READY tools=<csv>
+// Every record is appended as one JSON line ({kind, pid, seq, …}) to `<--records dir>/<id>.jsonl`,
+// where <id> is the --mcp-config file's name (the session id), and the scenarios read that file.
+// The terminal stream is no transport: ConPTY re-emits a wrapped row's last cell on the next row,
+// so a record wider than the terminal came back with a character doubled (a 17-char thread id
+// that still parsed). The records are also printed, for screenshots, ending in " <<END>>":
+//   FAKE-MCP READY {"seq":n,"tools":[…]}
 //   FAKE-MCP INPUT {"seq":n,"line":"…"}            every submitted line
 //   FAKE-MCP INBOX {"seq":n,"result":…}             after a `[conduit] …` line, its read_inbox
 //   FAKE-MCP RESULT {"seq":n,"tool":"…","result":…} for `call <tool> <json>`
@@ -18,27 +20,39 @@
 // cursor, then 10 blank lines, then `Esc to cancel` — S0's cursor-far-from-footer layout — until
 // `1`, `2` or Esc. `busy <ms>` prints a line every 100 ms. Idle prints nothing at all.
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 
 const ESC = '\x1b';
 const CSI_SEQ = new RegExp(`^${ESC}\\[[0-9;?<>]*[ -/]*[@-~]`);
 const PROMPT = 'fake❯ ';
 const write = (s) => process.stdout.write(s);
+const argAfter = (flag) => {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+};
+const recordsDir = argAfter('--records');
+const mcpConfig = argAfter('--mcp-config');
+const recordsName = mcpConfig ? basename(mcpConfig, '.json') : `unwired-${process.pid}`;
+const recordsFile = recordsDir ? join(recordsDir, `${recordsName}.jsonl`) : undefined;
+if (recordsDir) mkdirSync(recordsDir, { recursive: true });
+
 let seq = 0;
 const record = (kind, payload) => {
   seq += 1;
   const body = payload === undefined ? { seq } : { seq, ...payload };
+  if (recordsFile) {
+    appendFileSync(recordsFile, `${JSON.stringify({ kind, pid: process.pid, ...body })}\n`);
+  }
   write(`\r\nFAKE-MCP ${kind} ${JSON.stringify(body)} <<END>>\r\n`);
 };
 const prompt = () => write(`\r\n${PROMPT}`);
 
 // ── MCP client over the shim ────────────────────────────────────────────────
 
-const cfgAt = process.argv.indexOf('--mcp-config');
-const entry =
-  cfgAt >= 0
-    ? JSON.parse(readFileSync(process.argv[cfgAt + 1], 'utf8')).mcpServers?.conduit
-    : undefined;
+const entry = mcpConfig
+  ? JSON.parse(readFileSync(mcpConfig, 'utf8')).mcpServers?.conduit
+  : undefined;
 
 let server = null;
 let nextId = 0;
@@ -68,7 +82,8 @@ async function callTool(name, args) {
 
 async function connect() {
   if (!entry) {
-    write(`FAKE-MCP READY tools= <<END>>\r\n${PROMPT}`);
+    record('READY', { tools: [] });
+    write(PROMPT);
     return;
   }
   server = spawn(entry.command, entry.args ?? [], {
@@ -103,8 +118,8 @@ async function connect() {
   });
   notify('notifications/initialized');
   const list = await rpc('tools/list', {});
-  const names = (list.result?.tools ?? []).map((t) => t.name).join(',');
-  write(`FAKE-MCP READY tools=${names} <<END>>\r\n${PROMPT}`);
+  record('READY', { tools: (list.result?.tools ?? []).map((t) => t.name) });
+  write(PROMPT);
 }
 
 // ── the CLI ─────────────────────────────────────────────────────────────────
