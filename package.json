@@ -62,6 +62,10 @@
       {
         "from": "resources/skills",
         "to": "skills"
+      },
+      {
+        "from": "resources/conduit-mcp",
+        "to": "conduit-mcp"
       }
     ],
     "npmRebuild": false,
