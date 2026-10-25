@@ -603,13 +603,21 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       }
       // Listening first: a launch wired before then would point its shim at nothing, and one
       // wired while the store loads only meets store_unavailable, which it can retry.
-      if (deps.listen !== false) {
-        const create = deps.createEndpoint ?? createMcpEndpoint;
-        endpoint = create({ path: deps.endpointPath, onConnection, log: deps.log });
-        const r = await endpoint.listen();
-        endpointReady = r.ok;
-      } else endpointReady = true;
-      settleEndpoint();
+      // A listen that throws is a down endpoint like a refused one; either way the launches
+      // waiting on it go now, as endpoint-down, rather than at the bound.
+      try {
+        if (deps.listen !== false) {
+          const create = deps.createEndpoint ?? createMcpEndpoint;
+          endpoint = create({ path: deps.endpointPath, onConnection, log: deps.log });
+          const r = await endpoint.listen();
+          endpointReady = r.ok;
+        } else endpointReady = true;
+      } catch (err) {
+        endpointReady = false;
+        deps.log.error('conduit-mcp', 'endpoint listen threw', { err: String(err) });
+      } finally {
+        settleEndpoint();
+      }
       scheduleBroadcast();
       await loadStore();
       notifier = makeNotifier();

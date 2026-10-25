@@ -908,6 +908,29 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
     await started;
   });
 
+  it('a listen that throws ends the wait at once, and start() still finishes', async () => {
+    const h = harness({
+      createEndpoint: () => ({
+        listen: async () => {
+          throw new Error('EACCES');
+        },
+        close: async () => {},
+      }),
+    });
+    h.sessions.set('s1', session('s1'));
+    const started = h.host.start().then(
+      () => 'resolved',
+      (err: unknown) => `rejected: ${String(err)}`,
+    );
+    const t0 = Date.now();
+    await h.host.whenLaunchReady(FAKE);
+    expect(Date.now() - t0).toBeLessThan(ENDPOINT_READY_WAIT_MS);
+    const sp = spec();
+    expect(h.host.prepareLaunch('s1', FAKE, sp)).toBe(sp);
+    expect(h.host.uiState().sessions.s1?.unavailable).toBe('endpoint-down');
+    expect(await started).toBe('resolved');
+  });
+
   it('an agent without an adapter never waits', async () => {
     const h = harness({
       createEndpoint: () => ({ listen: () => new Promise(() => {}), close: async () => {} }),
