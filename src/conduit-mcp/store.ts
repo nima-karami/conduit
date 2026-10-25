@@ -8,6 +8,7 @@ import {
   type Result,
   type StoredMessage,
   type ThreadSummary,
+  type ToolError,
   toolError,
 } from './types';
 
@@ -30,6 +31,11 @@ export interface InboxQuery {
   threadId?: string;
   limit: number;
 }
+export interface RetentionResult {
+  removed: number;
+  tombstoned: number;
+  blobsDeleted: number;
+}
 type RcptStatus = 'noticed' | 'read' | 'undelivered';
 type BlobInput = ReadonlyArray<{ sha256: string; data: Uint8Array }>;
 export interface MessageStore {
@@ -51,8 +57,10 @@ export interface MessageStore {
   /** Messages from ≠ you after the last you-post or allow, in log order. */
   agentCountSinceHuman(threadId: string): number;
   readBlob(sha256: string): Promise<Uint8Array | undefined>;
+  enforceRetention(now: Date): Promise<Result<RetentionResult>>;
   onChange(cb: () => void): () => void;
 }
+export const RETENTION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface State {
   /** Insertion order = log order. */
@@ -60,6 +68,9 @@ interface State {
   seqOf: Map<string, number>;
   /** Log position of the last you-post or allow per thread (loop guard, spec §2). */
   resetSeq: Map<string, number>;
+  /** Kept so compaction can re-emit the allow at its log position. */
+  lastAllow: Map<string, { seq: number; at: string }>;
+  expiredAt: Map<string, string>;
   nextSeq: number;
 }
 
@@ -67,6 +78,8 @@ const emptyState = (): State => ({
   messages: new Map(),
   seqOf: new Map(),
   resetSeq: new Map(),
+  lastAllow: new Map(),
+  expiredAt: new Map(),
   nextSeq: 0,
 });
 
@@ -77,7 +90,7 @@ const isUnread = (r: RecipientState | undefined) =>
   r !== undefined && (r.status === 'queued' || r.status === 'noticed');
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const unavailable = (e: unknown): Result<void> => ({
+const unavailable = (e: unknown): { ok: false; error: ToolError } => ({
   ok: false,
   error: toolError('store_unavailable', `message store unavailable: ${messageOf(e)}`),
 });
@@ -159,11 +172,13 @@ function applyRecord(s: State, rec: LogRecord): void {
     }
     case 'allow':
       s.resetSeq.set(rec.threadId, seq);
+      s.lastAllow.set(rec.threadId, { seq, at: rec.at });
       return;
     case 'expire': {
       const m = s.messages.get(rec.messageId);
-      if (!m) return;
+      if (!m || m.expired) return;
       m.expired = true;
+      s.expiredAt.set(m.messageId, rec.at);
       m.body = '';
       for (const h of Object.keys(m.recipients)) {
         const r = m.recipients[h];
@@ -186,9 +201,73 @@ function liveBlobRefs(s: State): Map<string, number> {
 const bySentAt = (a: StoredMessage, b: StoredMessage) =>
   a.sentAt < b.sentAt ? -1 : a.sentAt > b.sentAt ? 1 : 0;
 
+function recipientRecords(m: StoredMessage): LogRecord[] {
+  const out: LogRecord[] = [];
+  for (const [handle, r] of Object.entries(m.recipients)) {
+    const base = { v: 1, t: 'rcpt', messageId: m.messageId, handle, at: r.updatedAt } as const;
+    for (let i = 0; i < r.noticeCount; i++) out.push({ ...base, status: 'noticed' });
+    if (r.status === 'read' || r.status === 'undelivered') out.push({ ...base, status: r.status });
+  }
+  return out;
+}
+
+/**
+ * The compacted log after age retention (plan ruling 7: age only), or null when nothing ages
+ * out. Tombstones are written with an empty body so the text leaves the disk too.
+ */
+function compact(
+  s: State,
+  now: number,
+  maxAgeMs: number,
+): { records: LogRecord[]; removed: number; tombstoned: number } | null {
+  const isOld = (iso: string) => now - Date.parse(iso) > maxAgeMs;
+  const drop = new Set<string>();
+  const expire = new Set<string>();
+  for (const m of s.messages.values()) {
+    if (m.expired) {
+      const since = s.expiredAt.get(m.messageId);
+      if (since !== undefined && isOld(since)) drop.add(m.messageId);
+    } else if (isOld(m.sentAt)) {
+      if (Object.values(m.recipients).every((r) => r.status === 'read')) drop.add(m.messageId);
+      else expire.add(m.messageId);
+    }
+  }
+  if (drop.size === 0 && expire.size === 0) return null;
+
+  const at = new Date(now).toISOString();
+  const keptThreads = new Set<string>();
+  const entries: Array<{ seq: number; records: LogRecord[] }> = [];
+  for (const m of s.messages.values()) {
+    if (drop.has(m.messageId)) continue;
+    keptThreads.add(m.threadId);
+    const { recipients: _r, expired: _e, ...rec } = m;
+    const gone = m.expired || expire.has(m.messageId);
+    const records: LogRecord[] = [
+      { v: 1, t: 'msg', msg: gone ? { ...rec, body: '' } : rec },
+      ...recipientRecords(m),
+    ];
+    if (gone) {
+      const expiredAt = s.expiredAt.get(m.messageId) ?? at;
+      records.push({ v: 1, t: 'expire', messageId: m.messageId, at: expiredAt });
+    }
+    entries.push({ seq: s.seqOf.get(m.messageId) ?? 0, records });
+  }
+  for (const [threadId, allow] of s.lastAllow) {
+    if (!keptThreads.has(threadId)) continue;
+    entries.push({ seq: allow.seq, records: [{ v: 1, t: 'allow', threadId, at: allow.at }] });
+  }
+  entries.sort((a, b) => a.seq - b.seq);
+  return {
+    records: entries.flatMap((e) => e.records),
+    removed: drop.size,
+    tombstoned: expire.size,
+  };
+}
+
 const line = (rec: LogRecord) => `${JSON.stringify(rec)}\n`;
 
-export function createMessageStore(io: StoreIo, _opts?: { maxAgeMs?: number }): MessageStore {
+export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): MessageStore {
+  const maxAgeMs = opts?.maxAgeMs ?? RETENTION_MAX_AGE_MS;
   let state = emptyState();
   let isAvailable = false;
   const listeners = new Set<() => void>();
@@ -352,6 +431,35 @@ export function createMessageStore(io: StoreIo, _opts?: { maxAgeMs?: number }): 
     },
 
     readBlob: (sha256) => enqueue(() => io.readBlob(sha256)),
+
+    enforceRetention: (now) =>
+      enqueue(async (): Promise<Result<RetentionResult>> => {
+        if (!isAvailable) return unavailable('not loaded');
+        const plan = compact(state, now.getTime(), maxAgeMs);
+        let blobsDeleted = 0;
+        try {
+          let next = state;
+          if (plan) {
+            await io.rewriteLog(plan.records.map(line).join(''));
+            next = emptyState();
+            for (const rec of plan.records) applyRecord(next, rec);
+            state = next;
+          }
+          const refs = liveBlobRefs(next);
+          for (const sha of await io.listBlobs()) {
+            if (refs.has(sha)) continue;
+            await io.deleteBlob(sha);
+            blobsDeleted += 1;
+          }
+        } catch (e) {
+          return unavailable(e);
+        }
+        if (plan) emit();
+        return {
+          ok: true,
+          value: { removed: plan?.removed ?? 0, tombstoned: plan?.tombstoned ?? 0, blobsDeleted },
+        };
+      }),
 
     onChange(cb) {
       listeners.add(cb);
