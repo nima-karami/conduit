@@ -14382,6 +14382,19 @@ button.toggle--on .toggle__knob {
   letter-spacing: var(--label-track);
   text-transform: var(--label-case);
 }
+/* At rail width the word cost the name all but two characters (S10 shots). The warning glyph
+   still tells urgent from the mail glyph without colour, and the word stays in the accessible
+   text and the tooltip — the same trade .session__statedot makes. */
+@container session-card (max-width: 320px) {
+  .session__mcp-word {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
 .session__mcp-paused {
   display: inline-flex;
   color: var(--text-dim);
