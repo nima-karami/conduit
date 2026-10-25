@@ -4,6 +4,8 @@ export type Handle = string;
 export const HUMAN_HANDLE = 'you';
 export type Priority = 'fyi' | 'normal' | 'urgent';
 export type MessageKind = 'inform' | 'request' | 'question' | 'done';
+/** Agent messages per thread before it pauses for the human (spec §2 loop guard). */
+export const THREAD_AGENT_LIMIT = 20;
 export type RecipientStatus = 'queued' | 'noticed' | 'read' | 'undelivered' | 'expired';
 export type ToolErrorCode =
   | 'not_in_session'

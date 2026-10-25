@@ -23,6 +23,7 @@ import {
   type Result,
   type SendMessageOutput,
   type StoredMessage,
+  THREAD_AGENT_LIMIT,
   type ToolError,
   type ToolErrorCode,
   toolError,
@@ -64,7 +65,6 @@ export interface ToolHandlers {
 }
 
 export const RATE_LIMIT_PER_MIN = 60;
-export const THREAD_AGENT_LIMIT = 20;
 export const MAX_BODY_BYTES = 32 * 1024;
 const MAX_RECIPIENTS = 10;
 const MAX_SUBJECT_CHARS = 200;

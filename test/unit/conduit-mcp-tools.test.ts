@@ -8,7 +8,6 @@ import {
   frameBody,
   MAX_BODY_BYTES,
   RATE_LIMIT_PER_MIN,
-  THREAD_AGENT_LIMIT,
   type ToolDeps,
   toToolCallResult,
 } from '../../src/conduit-mcp/tools';
@@ -16,6 +15,7 @@ import {
   type MessageRecord,
   type ReadAttachmentOutput,
   type Result,
+  THREAD_AGENT_LIMIT,
   toolError,
 } from '../../src/conduit-mcp/types';
 

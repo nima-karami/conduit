@@ -32,7 +32,6 @@ import {
   type Caller,
   createToolHandlers,
   type DirectoryEntry,
-  THREAD_AGENT_LIMIT,
   toToolCallResult,
 } from '../src/conduit-mcp/tools';
 import {
@@ -42,6 +41,7 @@ import {
   type McpUnavailableReason,
   type Presence,
   type ScreenVerdict,
+  THREAD_AGENT_LIMIT,
   toolError,
 } from '../src/conduit-mcp/types';
 import type {
