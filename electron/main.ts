@@ -150,6 +150,7 @@ import type {
   WebviewToHost,
 } from '../src/protocol';
 import { currentWindowsPty, PtyHost } from '../src/pty-host';
+import { createPtyWriter } from '../src/pty-writer';
 import { summarizeQueue } from '../src/queue-summary';
 import { busySessions, runningSessions } from '../src/quit-guard';
 import { resolveRangePreset } from '../src/range-preset';
@@ -1658,25 +1659,24 @@ app.whenReady().then(() => {
     broadcast({ type: 'timer:state', schedules: timers.list(), offer: limitOffer });
   };
 
+  // Every host-originated PTY write goes through this one per-session writer, so a notice can
+  // never land inside a timed message's submit gap. See docs/plans/2026-10-25-conduit-mcp-server.plan.md T6.1.
+  const ptyWriter = createPtyWriter({
+    generation: (id) => pty.generation(id),
+    input: (id, data) => pty.input(id, data),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    gapMs: SUBMIT_GAP_MS,
+  });
+
   /**
-   * THE fire path into a PTY. Liveness-checked on BOTH sides of the submit gap: the child can
-   * exit inside it, and half a message sitting in a dead PTY must never be reported as sent.
-   * Two writes rather than one string — a TUI that coalesces a single read keeps a trailing CR
-   * as literal text instead of treating it as submit.
+   * THE fire path for timed messages. Liveness and generation are checked by the writer on both
+   * sides of the submit gap (mf-live-edits §2.4 R1).
    *
    * Deliberately does NOT call mgr.touch: a 3am robot keystroke is not the user at the keyboard,
    * and lastActiveAt drives card age, the rail's recency sort and board linkage (§2 "Delivery").
    */
-  const deliverTimedMessage = async (sessionId: string, message: string): Promise<boolean> => {
-    // Bound to the child live now: a restart inside the gap must not send this Enter into the
-    // new child (mf-live-edits §2.4 R1).
-    const gen = pty.generation(sessionId);
-    if (gen === undefined) return false;
-    if (!pty.input(sessionId, message)) return false;
-    await new Promise((resolve) => setTimeout(resolve, SUBMIT_GAP_MS));
-    if (pty.generation(sessionId) !== gen) return false;
-    return pty.input(sessionId, '\r');
-  };
+  const deliverTimedMessage = (sessionId: string, message: string): Promise<boolean> =>
+    ptyWriter.submit(sessionId, message).then((o) => o === 'submitted');
 
   const timers = new TimerScheduler({
     now: () => Date.now(),
