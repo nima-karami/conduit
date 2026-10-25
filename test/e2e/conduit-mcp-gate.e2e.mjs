@@ -81,6 +81,17 @@ await runScenario(
         );
       }, 5_000);
       assert(raised, `no "urgent message waiting for ${b.handle}" attention while busy`);
+      // The same reason rides the topbar chip (spec §8 Attention chip).
+      const chipText = () =>
+        page
+          .locator('.attnchip')
+          .textContent()
+          .catch(() => '');
+      const onChip = await until(
+        async () => ((await chipText()) ?? '').includes(`urgent message waiting for ${b.handle}`),
+        5_000,
+      );
+      assert(onChip, `.attnchip text: ${await chipText()}`);
       // B's output runs BUSY_MS from before busyFrom; no notice may land inside it.
       while (Date.now() - busyFrom < BUSY_MS - 500) {
         assert(notices(b.sessionId).length === 0, 'a notice was typed while B was busy');
