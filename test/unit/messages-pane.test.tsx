@@ -1,0 +1,339 @@
+// @vitest-environment jsdom
+import { act, createElement } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { StoredMessage } from '../../src/conduit-mcp/types';
+import type {
+  McpAttachmentPayload,
+  McpThreadSummary,
+  McpThreadView,
+  McpUiState,
+} from '../../src/conduit-mcp/ui-types';
+import type { Session } from '../../src/types';
+import { MessagesPane, type MessagesPaneProps } from '../../webview/components/messages-pane';
+import type { ConduitMcpApi } from '../../webview/use-conduit-mcp';
+
+beforeAll(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    },
+  );
+  Element.prototype.scrollIntoView = () => {};
+});
+
+let host: HTMLDivElement | null = null;
+let root: Root | null = null;
+
+afterEach(async () => {
+  const r = root;
+  root = null;
+  if (r) await act(async () => r.unmount());
+  host?.remove();
+  host = null;
+  document.body.innerHTML = '';
+  vi.useRealTimers();
+});
+
+function summary(o: Partial<McpThreadSummary> = {}): McpThreadSummary {
+  return {
+    threadId: 't1',
+    subject: 'Build fix',
+    firstLine: 'the build is red',
+    participants: ['fake-1', 'you'],
+    topPriority: 'normal',
+    lastAt: '2026-10-25T10:00:00.000Z',
+    messageCount: 1,
+    unreadFor: [],
+    paused: false,
+    unreadForYou: false,
+    ...o,
+  };
+}
+
+function uiState(o: Partial<McpUiState> = {}): McpUiState {
+  return {
+    enabled: true,
+    storeError: null,
+    loading: false,
+    sessions: {},
+    threads: [],
+    attention: [],
+    youUnread: 0,
+    youUrgent: 0,
+    ...o,
+  };
+}
+
+function message(o: Partial<StoredMessage> = {}): StoredMessage {
+  return {
+    messageId: 'm1',
+    threadId: 't1',
+    from: 'fake-1',
+    to: ['you', 'fake-2'],
+    subject: 'Build fix',
+    kind: 'request',
+    priority: 'normal',
+    sentAt: '2026-10-25T10:00:00.000Z',
+    body: 'please look',
+    attachments: [],
+    recipients: {
+      you: { status: 'queued', noticeCount: 0, updatedAt: '2026-10-25T10:00:00.000Z' },
+      'fake-2': { status: 'read', noticeCount: 1, updatedAt: '2026-10-25T10:00:01.000Z' },
+    },
+    expired: false,
+    ...o,
+  };
+}
+
+function threadView(o: Partial<McpThreadView> = {}, m: Partial<StoredMessage> = {}): McpThreadView {
+  return {
+    threadId: 't1',
+    paused: false,
+    messages: [{ ...message(m), attachmentsExpired: false }],
+    ...o,
+  };
+}
+
+function fakeApi(state: McpUiState | null, o: Partial<ConduitMcpApi> = {}): ConduitMcpApi {
+  return {
+    state,
+    getThread: vi.fn(async () => threadView()),
+    send: vi.fn(async () => null),
+    getAttachment: vi.fn(async () => null),
+    markRead: vi.fn(),
+    allowMore: vi.fn(),
+    pause: vi.fn(),
+    retry: vi.fn(),
+    ...o,
+  };
+}
+
+const SESSIONS: Session[] = [];
+
+function props(api: ConduitMcpApi, o: Partial<MessagesPaneProps> = {}): MessagesPaneProps {
+  return {
+    api,
+    sessions: SESSIONS,
+    filterHandle: null,
+    onClearFilter: vi.fn(),
+    onOpenSettings: vi.fn(),
+    initialThreadId: null,
+    ...o,
+  };
+}
+
+async function render(p: MessagesPaneProps) {
+  host = document.createElement('div');
+  document.body.append(host);
+  const r = createRoot(host);
+  root = r;
+  await act(async () => {
+    r.render(createElement(MessagesPane, p));
+  });
+  return (next: MessagesPaneProps) =>
+    act(async () => {
+      r.render(createElement(MessagesPane, next));
+    });
+}
+
+const text = () => document.body.textContent ?? '';
+const q = <T extends Element>(sel: string): T => {
+  const el = document.body.querySelector<T>(sel);
+  if (!el) throw new Error(`no ${sel}`);
+  return el;
+};
+const byText = (label: string) => {
+  const el = [...document.body.querySelectorAll<HTMLElement>('button')].find(
+    (b) => b.textContent?.trim() === label,
+  );
+  if (!el) throw new Error(`no button ${label}`);
+  return el;
+};
+const click = (el: Element) =>
+  act(async () => {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+const key = (el: Element, k: string) =>
+  act(async () => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+  });
+
+describe('MessagesPane states (spec §8)', () => {
+  it('first-run text and New message', async () => {
+    await render(props(fakeApi(uiState())));
+    expect(text()).toContain(
+      'Agents in your sessions can message each other and you. Messages appear here.',
+    );
+    expect(byText('New message')).toBeTruthy();
+  });
+
+  it('loading skeleton while state is null', async () => {
+    await render(props(fakeApi(null)));
+    expect(q('[aria-busy="true"] .mcpmsg-skeleton__row')).toBeTruthy();
+  });
+
+  it('store error with its cause; Retry calls api.retry', async () => {
+    const api = fakeApi(uiState({ storeError: 'EACCES: permission denied' }));
+    await render(props(api));
+    expect(q('[role="alert"]').textContent).toContain('Messages couldn’t be loaded');
+    expect(text()).toContain('EACCES: permission denied');
+    await click(byText('Retry'));
+    expect(api.retry).toHaveBeenCalledTimes(1);
+  });
+
+  it('server off; Open Settings', async () => {
+    const p = props(fakeApi(uiState({ enabled: false })));
+    await render(p);
+    expect(text()).toContain('Messaging is turned off');
+    await click(byText('Open Settings'));
+    expect(p.onOpenSettings).toHaveBeenCalled();
+  });
+
+  it('"No unread messages" + Show all under the unread filter', async () => {
+    await render(props(fakeApi(uiState({ threads: [summary()] }))));
+    await click(byText('Unread only'));
+    expect(text()).toContain('No unread messages');
+    await click(byText('Show all'));
+    expect(document.body.querySelectorAll('[role="option"]')).toHaveLength(1);
+  });
+
+  it('populated list is a listbox of options driven by ↑/↓/Home/End/Enter', async () => {
+    const api = fakeApi(
+      uiState({
+        threads: [
+          summary({ threadId: 'a', subject: 'A', lastAt: '2026-10-25T12:00:00.000Z' }),
+          summary({
+            threadId: 'b',
+            subject: 'B',
+            lastAt: '2026-10-25T11:00:00.000Z',
+            unreadForYou: true,
+            topPriority: 'urgent',
+          }),
+          summary({ threadId: 'c', subject: 'C', lastAt: '2026-10-25T10:00:00.000Z' }),
+        ],
+      }),
+    );
+    await render(props(api));
+    const list = q('[role="listbox"]');
+    const opts = [...list.querySelectorAll('[role="option"]')];
+    expect(opts.map((o) => o.getAttribute('aria-label')?.split(',')[0])).toEqual(['A', 'B', 'C']);
+    expect(opts[1].getAttribute('aria-label')).toMatch(/unread.*urgent/);
+    const selected = () =>
+      list.querySelector('[aria-selected="true"]')?.getAttribute('aria-label')?.split(',')[0];
+    expect(selected()).toBe('A');
+    await key(list, 'ArrowDown');
+    expect(selected()).toBe('B');
+    await key(list, 'End');
+    expect(selected()).toBe('C');
+    await key(list, 'Home');
+    expect(selected()).toBe('A');
+    await key(list, 'ArrowUp');
+    expect(selected()).toBe('A');
+    await key(list, 'ArrowDown');
+    await key(list, 'Enter');
+    expect(api.getThread).toHaveBeenCalledWith('b');
+  });
+
+  it('a thread is a log of articles showing per-recipient states', async () => {
+    await render(props(fakeApi(uiState({ threads: [summary()] })), { initialThreadId: 't1' }));
+    const log = q('[role="log"]');
+    const arts = log.querySelectorAll('article');
+    expect(arts).toHaveLength(1);
+    expect(arts[0].textContent).toContain('please look');
+    expect(arts[0].textContent).toContain('fake-2: Read');
+    expect(arts[0].textContent).toContain('you: Queued');
+  });
+
+  it('paused thread offers Allow 20 more', async () => {
+    const api = fakeApi(uiState({ threads: [summary({ paused: true })] }), {
+      getThread: vi.fn(async () => threadView({ paused: true })),
+    });
+    await render(props(api, { initialThreadId: 't1' }));
+    expect(text()).toContain('Paused after 20 agent messages');
+    await click(byText('Allow 20 more'));
+    expect(api.allowMore).toHaveBeenCalledWith('t1');
+  });
+
+  it('an expired attachment shows in place of the chip', async () => {
+    const api = fakeApi(uiState({ threads: [summary()] }), {
+      getThread: vi.fn(async () => ({
+        threadId: 't1',
+        paused: false,
+        messages: [
+          {
+            ...message({
+              expired: true,
+              body: '',
+              attachments: [
+                { attachmentId: 'a1', name: 'log.txt', mime: 'text/plain', bytes: 3, sha256: 'x' },
+              ],
+            }),
+            attachmentsExpired: true,
+          },
+        ],
+      })),
+    });
+    await render(props(api, { initialThreadId: 't1' }));
+    expect(text()).toContain('Attachment expired');
+    expect(document.body.querySelector('button[aria-label^="Open attachment"]')).toBeNull();
+  });
+
+  it('Open attachment shows the view modal', async () => {
+    const payload: McpAttachmentPayload = {
+      name: 'log.txt',
+      mime: 'text/plain',
+      bytes: 3,
+      base64: btoa('abc'),
+    };
+    const api = fakeApi(uiState({ threads: [summary()] }), {
+      getThread: vi.fn(async () =>
+        threadView(
+          {},
+          {
+            attachments: [
+              { attachmentId: 'a1', name: 'log.txt', mime: 'text/plain', bytes: 3, sha256: 'x' },
+            ],
+          },
+        ),
+      ),
+      getAttachment: vi.fn(async () => payload),
+    });
+    await render(props(api, { initialThreadId: 't1' }));
+    await click(q('button[aria-label="Open attachment: log.txt"]'));
+    await act(async () => {});
+    expect(api.getAttachment).toHaveBeenCalledWith('m1', 'a1');
+    expect(q('[role="dialog"] pre').textContent).toBe('abc');
+  });
+
+  it('opening a thread marks the human’s unread messages read', async () => {
+    const api = fakeApi(uiState({ threads: [summary({ unreadForYou: true })] }));
+    await render(props(api));
+    await click(q('[role="option"]'));
+    expect(api.markRead).toHaveBeenCalledWith(['m1']);
+  });
+
+  it('announces new messages at most once per 5 s', async () => {
+    vi.useFakeTimers();
+    const s0 = uiState({ threads: [] });
+    const rerender = await render(props(fakeApi(s0)));
+    const region = () => q('[aria-live="polite"]').textContent;
+    const withThreads = (n: number) =>
+      uiState({
+        threads: Array.from({ length: n }, (_, i) => summary({ threadId: `t${i}` })),
+      });
+    await rerender(props(fakeApi(withThreads(1))));
+    expect(region()).toBe('1 new message');
+    await rerender(props(fakeApi(withThreads(2))));
+    await rerender(props(fakeApi(withThreads(4))));
+    expect(region()).toBe('1 new message');
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+    });
+    expect(region()).toBe('3 new messages');
+  });
+});

@@ -33,6 +33,7 @@ export const MCP_STR = {
   reply: 'Reply',
   allowMore: 'Allow 20 more',
   paused: (n: number) => `Paused after ${countNoun(n, 'agent message', 'agent messages')}`,
+  pausedShort: 'Paused',
   attachmentExpired: 'Attachment expired',
   send: 'Send',
   sending: 'Sending…',
@@ -135,6 +136,7 @@ export const MCP_STR = {
   attachmentLoading: 'Loading attachment…',
   attachmentMissing: 'The attachment couldn’t be read.',
   noSubject: '(no subject)',
+  threadGone: 'This thread is no longer available.',
   settingsTitle: 'Agent messaging',
   settingsDesc:
     'Agents in your sessions can message each other and you through Conduit. Turning it off stops new launches from connecting.',
