@@ -288,7 +288,9 @@ describe('createConduitMcpHost — launch', () => {
     h.sessions.set('s1', session('s1'));
     const out = h.host.prepareLaunch('s1', FAKE, spec());
     const cfgPath = path.join(h.dir, 'launch', 's1.json');
-    expect(out.args).toEqual(['fake.mjs', '--mcp-config', cfgPath]);
+    expect(out.args?.slice(0, 3)).toEqual(['fake.mjs', '--mcp-config', cfgPath]);
+    expect(out.args?.[3]).toBe('--allowedTools');
+    expect(out.args).toHaveLength(5);
     expect(out.env).toEqual({ A: '1', CONDUIT_SESSION_TOKEN: 'tok1' });
     expect(out.env && 'ELECTRON_RUN_AS_NODE' in out.env).toBe(false);
     const cfg = fs.readFileSync(cfgPath, 'utf8');

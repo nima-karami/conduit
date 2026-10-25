@@ -2476,3 +2476,13 @@ that keeps the locked decision.
   `conduit-mcp-restart` e2e, which relaunches with `autoRelaunchStale` on.
 - **[normal, S10] `THREAD_AGENT_LIMIT` lives in `types.ts`** so the renderer can name the loop
   guard ("Paused after 20 agent messages") without importing the node-backed `tools.ts`.
+- **[high, conductor, runtime QA] Claude launches pre-approve Conduit's four tools.** Under
+  Claude's default permission mode every conduit call raised a Claude permission prompt, so a
+  notice stalled before `read_inbox`. The `mcp-config-flag` wiring (claude, and the fake that
+  stands in for it) appends `--allowedTools` with exactly `mcp__conduit__list_sessions`,
+  `mcp__conduit__send_message`, `mcp__conduit__read_inbox` and `mcp__conduit__read_attachment`,
+  derived from `CONDUIT_TOOLS`: parity with codex's `default_tools_approval_mode='auto'`. Only
+  Conduit's own tools; the user's permission mode governs everything else. The list is one
+  comma-joined arg placed last, since `--mcp-config` and `--allowedTools` are both variadic. The
+  values carry no cmd metachar, so the batch guard's outcome is unchanged. Covered by
+  `test/unit/mcp-launch.test.ts`.

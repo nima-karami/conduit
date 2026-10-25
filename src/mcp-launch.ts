@@ -1,6 +1,7 @@
 // Per-CLI launch wiring for the conduit MCP server (spec §3.1): per-launch flags only, never an
 // edit of the user's CLI config. Renderer-safe like its sibling launch-args.ts.
 import type { McpAdapter } from './conduit-mcp/adapters';
+import { CONDUIT_TOOLS } from './conduit-mcp/tool-schemas';
 import type { McpUnavailableReason } from './conduit-mcp/types';
 import { batchGuarded, firstCmdMetachar } from './launch-args';
 import type { HostPlatform } from './lsp-binary';
@@ -30,6 +31,8 @@ export function mcpServerCommand(
     env: { ELECTRON_RUN_AS_NODE: '1' },
   };
 }
+
+const CLAUDE_ALLOWED_TOOLS = CONDUIT_TOOLS.map((t) => `mcp__conduit__${t.name}`).join(',');
 
 /** A TOML literal string has no escapes, so a quote or newline can't be represented at all. */
 const tomlLiteral = (v: string): string | undefined => (/['\r\n]/.test(v) ? undefined : `'${v}'`);
@@ -65,7 +68,9 @@ export function mcpLaunchWiring(i: {
   let configJson: string | null = null;
   switch (i.adapter.wiring) {
     case 'mcp-config-flag':
-      args = ['--mcp-config', i.configFile];
+      // Pre-approves Conduit's own tools only, parity with codex's 'auto' (plan Decisions). Last:
+      // both flags are variadic, so a positional after them would be read as a value.
+      args = ['--mcp-config', i.configFile, '--allowedTools', CLAUDE_ALLOWED_TOOLS];
       configJson = JSON.stringify({
         mcpServers: {
           conduit: {
