@@ -149,14 +149,23 @@ export function mimeFor(name: string, data: Uint8Array): string {
   return isUtf8Text(data) ? 'text/plain' : 'application/octet-stream';
 }
 
-/** One page ending on a UTF-8 character boundary, so a page never splits a character. */
+/** A UTF-8 character has at most 3 continuation bytes. */
+const MAX_CONTINUATION = 3;
+
+/**
+ * One page ending on a UTF-8 character boundary, so a page never splits a character. Bytes that
+ * are not UTF-8 have no boundary to find: the cut stays at the page size, so paging always moves.
+ */
 export function textPage(
   data: Uint8Array,
   offset: number,
 ): { text: string; nextOffset: number | null } {
   if (offset >= data.length) return { text: '', nextOffset: null };
-  let end = Math.min(data.length, offset + TEXT_PAGE_BYTES);
-  while (end < data.length && end > offset && (data[end] & 0xc0) === 0x80) end -= 1;
+  const full = Math.min(data.length, offset + TEXT_PAGE_BYTES);
+  let end = full;
+  const floor = Math.max(offset + 1, full - MAX_CONTINUATION);
+  while (end < data.length && end > floor && (data[end] & 0xc0) === 0x80) end -= 1;
+  if (end < data.length && (data[end] & 0xc0) === 0x80) end = full;
   return {
     text: new TextDecoder('utf-8').decode(data.subarray(offset, end)),
     nextOffset: end >= data.length ? null : end,

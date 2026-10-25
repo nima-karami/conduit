@@ -164,6 +164,20 @@ describe('textPage', () => {
     const second = textPage(data, first.nextOffset ?? -1);
     expect(second).toEqual({ text: '€b', nextOffset: null });
   });
+  it('bytes with no character boundary still page forward', () => {
+    const data = new Uint8Array(70 * 1024).fill(0x80);
+    const first = textPage(data, 0);
+    expect(first.nextOffset).toBe(TEXT_PAGE_BYTES);
+    const offsets: number[] = [];
+    let at: number | null = 0;
+    while (at !== null && offsets.length < 10) {
+      offsets.push(at);
+      const next: number | null = textPage(data, at).nextOffset;
+      if (next !== null) expect(next).toBeGreaterThan(at);
+      at = next;
+    }
+    expect(offsets).toEqual([0, TEXT_PAGE_BYTES]);
+  });
   it('a short file is one page', () => {
     expect(textPage(new TextEncoder().encode('hi'), 0)).toEqual({ text: 'hi', nextOffset: null });
   });
