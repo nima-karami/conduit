@@ -334,7 +334,7 @@ export type ReadAttachmentOutput =
   | { kind: 'text'; attachment_id: string; name: string; mime: string; bytes: number; offset: number; next_offset: number | null; text: string }
   | { kind: 'image'; attachment_id: string; name: string; mime: string; bytes: number; base64: string };
 // launch + attention (wire to the renderer)
-export type McpUnavailableReason = 'cmd-metachar' | 'unquotable-path' | 'messaging-off' | 'endpoint-down';
+export type McpUnavailableReason = 'cmd-metachar' | 'unquotable-path' | 'messaging-off' | 'endpoint-down' | 'launch-io';
 export type McpAttentionReason = 'urgent-waiting' | 'message-to-you' | 'thread-paused' | 'unread-after-renotice' | 'unsent-notice';
 export interface McpAttentionItem {
   id: string;                                  // `${reason}:${handle}:${messageId ?? threadId ?? ''}`
@@ -2431,6 +2431,9 @@ that keeps the locked decision.
   had no code for a malformed call.
 - **[normal] The human sees every thread and attachment.** UI reads skip the participation filter
   (spec §1: "The human sees every message"). Agent reads keep it.
+- **[normal] `launch-io` is added to `McpUnavailableReason`** (review B7). A handles.json or
+  launch-config write failure is a local IO fault, not a down endpoint; the card names it
+  separately so the cause is honest.
 - **[normal] The human may post into any existing thread** (review A5). `send_message` from `you`
   with a `thread_id` skips the participation check but still needs the thread to exist
   (`participants(threadId).size > 0`), else `not_found`. Agents keep spec §3.2: a thread they have

@@ -396,6 +396,20 @@ describe('createConduitMcpHost — launch', () => {
     expect(r.body.error.code).toBe('not_in_session');
   });
 
+  it('a handles.json or launch-config write failure → unchanged + unavailable launch-io', async () => {
+    const h = harness();
+    await h.host.start();
+    fs.mkdirSync(path.join(h.dir, 'handles.json'));
+    h.sessions.set('s1', session('s1'));
+    const sp = spec();
+    expect(h.host.prepareLaunch('s1', FAKE, sp)).toBe(sp);
+    fs.rmSync(path.join(h.dir, 'handles.json'), { recursive: true });
+    h.sessions.set('s2', session('s2'));
+    fs.mkdirSync(path.join(h.dir, 'launch', 's2.json'), { recursive: true });
+    expect(h.host.prepareLaunch('s2', FAKE, sp)).toBe(sp);
+    expect(h.host.uiState().sessions.s2?.unavailable).toBe('launch-io');
+  });
+
   it('a launch before the endpoint listens gets no wiring and reads endpoint-down', async () => {
     const h = harness();
     h.sessions.set('s1', session('s1'));

@@ -634,7 +634,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           atomicWriteFileSync(handlesFile, serializeHandleCounters(a.counters));
         } catch (err) {
           deps.log.error('conduit-mcp', 'handles.json write failed', { err: String(err) });
-          r.unavailable = 'endpoint-down';
+          r.unavailable = 'launch-io';
           scheduleBroadcast();
           return spec;
         }
@@ -664,7 +664,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           atomicWriteFileSync(configFile, wiring.configJson);
         } catch (err) {
           deps.log.error('conduit-mcp', 'launch config write failed', { err: String(err) });
-          return unavailable('endpoint-down');
+          return unavailable('launch-io');
         }
       }
       const token = randomToken();
