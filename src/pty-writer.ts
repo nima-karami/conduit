@@ -51,6 +51,8 @@ export function createPtyWriter(deps: PtyWriterDeps): PtyWriter {
     const gen = deps.generation(sessionId);
     if (gen === undefined) return 'no-pty';
     if (!(await hookAllows(hooks.beforeText))) return 'gate-closed';
+    // The hook awaited (a screen snapshot): the PTY may have been respawned meanwhile.
+    if (deps.generation(sessionId) !== gen) return 'generation-changed';
     if (!deps.input(sessionId, text)) return 'write-failed';
     await deps.sleep(deps.gapMs);
     if (deps.generation(sessionId) !== gen) return 'generation-changed';

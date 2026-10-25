@@ -107,6 +107,19 @@ describe('createPtyWriter', () => {
     expect(h.gaps).toEqual([]);
   });
 
+  it('a respawn while beforeText awaits → generation-changed, nothing written', async () => {
+    const h = harness();
+    const p = h.writer.submit('a', 'x', {
+      beforeText: async () => {
+        h.gens.set('a', 2);
+        return true;
+      },
+    });
+    await h.flush();
+    expect(h.log).toEqual([]);
+    expect(await p).toBe('generation-changed');
+  });
+
   it('different sessions do not block each other', async () => {
     const h = harness();
     const pa = h.writer.submit('a', 'x');
