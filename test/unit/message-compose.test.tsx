@@ -170,6 +170,77 @@ describe('MessageCompose', () => {
     expect(q<HTMLTextAreaElement>('textarea').value).toBe('hello');
   });
 
+  it('after a partial refusal, Send again goes only to the refused, in the same thread', async () => {
+    const send = vi.fn(
+      async (): Promise<McpSendResult> => ({
+        ok: true,
+        value: {
+          message_id: 'm1',
+          thread_id: 't1',
+          recipients: [
+            { handle: 'claude-1', status: 'queued' },
+            { handle: 'codex-2', status: 'refused', reason: 'rate_limited' },
+          ],
+        },
+      }),
+    );
+    const api = fakeApi({ send });
+    await render(
+      createElement(MessageCompose, { api, targets: TARGETS, replyTo: null, onDone: vi.fn() }),
+    );
+    await click(recipient('claude-1'));
+    await click(recipient('codex-2'));
+    await typeInto(q<HTMLInputElement>('input:not([type])'), 'Status');
+    await typeInto(q<HTMLTextAreaElement>('textarea'), 'hello');
+    await key(q('textarea'), 'Enter', { ctrlKey: true });
+    expect(recipient('claude-1').checked).toBe(false);
+    expect(recipient('codex-2').checked).toBe(true);
+    await key(q('textarea'), 'Enter', { ctrlKey: true });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(api.send).mock.calls[1][0]).toEqual({
+      to: ['codex-2'],
+      body: 'hello',
+      priority: 'normal',
+      kind: 'inform',
+      threadId: 't1',
+    });
+  });
+
+  it('a new compose focuses the first recipient; with none, the subject', async () => {
+    await render(
+      createElement(MessageCompose, {
+        api: fakeApi(),
+        targets: TARGETS,
+        replyTo: null,
+        onDone: vi.fn(),
+      }),
+    );
+    expect(document.activeElement).toBe(recipient('claude-1'));
+    await act(async () => root?.unmount());
+    root = null;
+    await render(
+      createElement(MessageCompose, {
+        api: fakeApi(),
+        targets: [],
+        replyTo: null,
+        onDone: vi.fn(),
+      }),
+    );
+    expect(document.activeElement).toBe(q('input:not([type])'));
+  });
+
+  it('a reply focuses the body', async () => {
+    await render(
+      createElement(MessageCompose, {
+        api: fakeApi(),
+        targets: TARGETS,
+        replyTo: { threadId: 't9', to: ['claude-1'] },
+        onDone: vi.fn(),
+      }),
+    );
+    expect(document.activeElement).toBe(q('textarea'));
+  });
+
   it('priority is a radiogroup with labelled options', async () => {
     await render(
       createElement(MessageCompose, {

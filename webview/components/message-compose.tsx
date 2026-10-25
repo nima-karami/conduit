@@ -40,12 +40,18 @@ export function MessageCompose({ api, targets, replyTo, onDone }: MessageCompose
   const [priority, setPriority] = useState<Priority>('normal');
   const [kind, setKind] = useState<MessageKind>('inform');
   const [phase, setPhase] = useState<Phase>({ t: 'idle' });
+  // Set once a send reached some recipients: a retry goes to the rest, in that same thread.
+  const [sentThreadId, setSentThreadId] = useState<string | null>(null);
+  const threadId = replyTo?.threadId ?? sentThreadId;
   const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const firstRecipientRef = useRef<HTMLInputElement>(null);
+  const subjectRef = useRef<HTMLInputElement>(null);
   const ids = { subject: useId(), body: useId(), hint: useId() };
 
   // A reply already knows who it is for; the next thing to say is the message.
   useEffect(() => {
     if (replyTo) bodyRef.current?.focus();
+    else (firstRecipientRef.current ?? subjectRef.current)?.focus();
   }, [replyTo]);
 
   // A reply's recipients may include a session that has since lost its handle: still listed,
@@ -66,8 +72,8 @@ export function MessageCompose({ api, targets, replyTo, onDone }: MessageCompose
       body,
       priority,
       kind,
-      ...(!replyTo && subject.trim() ? { subject: subject.trim() } : {}),
-      ...(replyTo ? { threadId: replyTo.threadId } : {}),
+      ...(!threadId && subject.trim() ? { subject: subject.trim() } : {}),
+      ...(threadId ? { threadId } : {}),
     });
     if (!result) {
       setPhase({ t: 'failed', lines: [MCP_STR.noResponse] });
@@ -81,6 +87,10 @@ export function MessageCompose({ api, targets, replyTo, onDone }: MessageCompose
     if (refused.length === 0) {
       onDone();
       return;
+    }
+    if (refused.length < result.value.recipients.length) {
+      setTo(refused.map((r) => r.handle));
+      setSentThreadId(result.value.thread_id);
     }
     setPhase({
       t: 'failed',
@@ -115,9 +125,10 @@ export function MessageCompose({ api, targets, replyTo, onDone }: MessageCompose
         {rows.length === 0 ? (
           <p className="mcpmsg-compose__none">{MCP_STR.noRecipients}</p>
         ) : (
-          rows.map((t) => (
+          rows.map((t, i) => (
             <label key={t.handle} className="mcpmsg-compose__recipient">
               <input
+                ref={i === 0 ? firstRecipientRef : undefined}
                 type="checkbox"
                 checked={to.includes(t.handle)}
                 onChange={(e) =>
@@ -132,12 +143,13 @@ export function MessageCompose({ api, targets, replyTo, onDone }: MessageCompose
           ))
         )}
       </fieldset>
-      {!replyTo && (
+      {!threadId && (
         <div className="mcpmsg-compose__field">
           <label className="mcpmsg-compose__label" htmlFor={ids.subject}>
             {MCP_STR.subject}
           </label>
           <input
+            ref={subjectRef}
             id={ids.subject}
             className="mcpmsg-compose__input"
             value={subject}
