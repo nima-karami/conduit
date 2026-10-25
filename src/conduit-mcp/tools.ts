@@ -75,11 +75,15 @@ const PRIORITIES: readonly Priority[] = ['fyi', 'normal', 'urgent'];
 const KINDS: readonly MessageKind[] = ['inform', 'request', 'question', 'done'];
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
+// A body line that looks like a frame line could close the real frame and open a forged one.
+const FRAME_LIKE_LINE = /^(\s*)(\[(?:end of )?conduit message )/gm;
+
 /** Provenance framing: docs/specs/2026-10-25-conduit-mcp-server.md §3.2. */
 export function frameBody(from: Handle, messageId: string, body: string): string {
   const who =
     from === HUMAN_HANDLE ? 'the human via Conduit' : `session ${from} (an agent, not the user)`;
-  return `[conduit message ${messageId} from ${who}]\n${body}\n[end of conduit message ${messageId}]`;
+  const inner = body.replace(FRAME_LIKE_LINE, '$1\\$2');
+  return `[conduit message ${messageId} from ${who}]\n${inner}\n[end of conduit message ${messageId}]`;
 }
 
 type Fail = { ok: false; error: ToolError };
