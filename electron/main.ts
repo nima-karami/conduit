@@ -31,6 +31,7 @@ import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
 import { createCloseGuard, createQuitGrant, GRANT_TTL_MS, openWindowIds } from '../src/close-guard';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
+import { endpointPath } from '../src/conduit-mcp/endpoint-path';
 import { loadAgents, readBlob, readFileState } from '../src/config';
 import type { TruncatedBy } from '../src/content-search';
 import { searchContentFs } from '../src/content-search-fs';
@@ -260,6 +261,7 @@ import {
   writeReviewNotesArtifactFile,
   writeSpec,
 } from './conduit-fs';
+import { createConduitMcpHost } from './conduit-mcp-host';
 import { createDragOutHost } from './drag-out-host';
 import { execFileBounded } from './exec-bounded';
 import { createFolderPicker } from './folder-picker';
@@ -408,6 +410,12 @@ let onWindowFocus: (() => void) | null = null;
 let broadcastWinList: (() => void) | null = null;
 
 const userData = () => app.getPath('userData');
+/** The shim every CLI spawns as its MCP server: `extraResources` when packaged, the repo copy in
+ *  dev (the bundledSkillsDir pattern, electron/skills-service.ts). */
+const mcpShimPath = () =>
+  app.isPackaged
+    ? path.join(process.resourcesPath, 'conduit-mcp', 'conduit-mcp-shim.cjs')
+    : path.join(__dirname, '..', 'resources', 'conduit-mcp', 'conduit-mcp-shim.cjs');
 const sessionsFile = () => path.join(userData(), 'sessions.json');
 const projectsFile = () => path.join(userData(), 'projects.json');
 const agentsFile = () => path.join(userData(), 'agents.json');
@@ -1532,6 +1540,8 @@ app.whenReady().then(() => {
         // The scanner's state rides across chunks — an escape sequence straddling two
         // `onData` chunks would otherwise fabricate or swallow a bell.
         // Only an idle->busy edge is a change worth broadcasting.
+        // The notice gate's screen model (docs/specs/2026-10-25-conduit-mcp-server.md §2).
+        mcpHost.onOutput(msg.sessionId, msg.data);
         const scan = countBareBells(msg.data, bellScanState.get(msg.sessionId));
         bellScanState.set(msg.sessionId, scan.state);
         // A chunk that draws nothing (a focus-change answer, a mode re-assert) is not work: it
@@ -1603,6 +1613,8 @@ app.whenReady().then(() => {
     // A dead child is not waiting for anyone (spec contract 6) — drop its evidence
     // so the quiet after its last output can't be read as "finished, needs you".
     activity.recordExit(sessionId);
+    // The exited child's token dies with it; a relaunch mints a new one (spec §3.1).
+    mcpHost.onExit(sessionId);
     // Clean up the scanners for this session (E2a + the bell-scan carry).
     cwdScanners.delete(sessionId);
     cwdGate.drop(sessionId);
@@ -1855,10 +1867,35 @@ app.whenReady().then(() => {
     () => `p-${crypto.randomBytes(6).toString('hex')}`,
   );
 
+  // Conduit MCP server: agent sessions message each other and the human
+  // (docs/specs/2026-10-25-conduit-mcp-server.md). The host owns IO; decisions are pure modules.
+  const mcpHost = createConduitMcpHost({
+    dir: path.join(userData(), 'conduit-mcp'),
+    endpointPath: endpointPath(
+      userData(),
+      process.platform === 'win32' ? 'win32' : 'posix',
+      os.tmpdir(),
+    ),
+    execPath: process.execPath,
+    shimPath: mcpShimPath(),
+    platform: hostPlatform,
+    e2e: process.env.CONDUIT_E2E === '1',
+    mgr,
+    pty,
+    writer: ptyWriter,
+    activity,
+    messagingOn: () => settings.conduitMcp,
+    projectName: (projectId) =>
+      projectId ? (projectStore.list().find((p) => p.id === projectId)?.name ?? null) : null,
+    broadcast,
+    log,
+  });
+
   // Restore previously persisted sessions (as stale) + save on every change.
   if (settings.restoreSessions) {
     mgr.restore(startup.sessions);
   }
+  void mcpHost.start();
   // AFTER the session set, because a schedule whose session is gone is dropped at load and never
   // re-persisted (§4). Every restored session is `stale` with no PTY, so anything already due
   // lands in `waiting` — nothing is written and nothing is spawned (§2 "Lifecycle").
@@ -2557,6 +2594,8 @@ app.whenReady().then(() => {
   const disposeSession = (id: string) => {
     const planRoot = mgr.get(id)?.home;
     pty.dispose(id);
+    // Before mgr.remove: its unread messages are marked undelivered under its handle.
+    void mcpHost.onSessionDeleted(id);
     mgr.remove(id);
     scopes.ended(id);
     restartSeq.delete(id);
@@ -2622,6 +2661,7 @@ app.whenReady().then(() => {
           // Timed messages, to the window that just loaded. An empty list is a real answer: it is
           // what opens the renderer's load gate (§3).
           replyHere({ type: 'timer:state', schedules: timers.list(), offer: limitOffer });
+          replyHere({ type: 'mcp:state', state: mcpHost.uiState() });
           break;
         case 'log': {
           // Back-compatible: a bare {type:'log', message} defaults to info / scope 'renderer'.
@@ -3557,6 +3597,7 @@ app.whenReady().then(() => {
           // enum strings, and runs the legacy codeBg→surfaceColor migration.
           settings = coerceSettings(m.settings as unknown as Record<string, unknown>);
           persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
+          mcpHost.refresh();
           // Push the new diagnostics level to the live logger (no restart). Log AFTER the
           // level update so a just-enabled level captures its own enabling.
           log.setLevel(settings.logging ? settings.logLevel : 'off');
@@ -4074,7 +4115,7 @@ app.whenReady().then(() => {
               mgr.setStatus(m.sessionId, 'stale');
               break;
             }
-            const spec = plan.spec;
+            let spec = plan.spec;
             for (const root of plan.skippedAddDirRoots) {
               log.warn('pty', 'add-dir skipped', { sessionId: m.sessionId, root });
             }
@@ -4090,6 +4131,9 @@ app.whenReady().then(() => {
                 if (aug.env) spec.env = { ...spec.env, ...aug.env };
               }
             }
+            // Messaging wiring goes on last: per-launch args + the session token (spec §3.1).
+            const launchDef = m.agentId ? registry.get(m.agentId) : undefined;
+            if (launchDef) spec = mcpHost.prepareLaunch(m.sessionId, launchDef, spec);
             log.info('pty', 'spawn', {
               sessionId: m.sessionId,
               agentId: m.agentId,
@@ -4099,6 +4143,7 @@ app.whenReady().then(() => {
             const size = preSpawnSizes.get(m.sessionId) ?? { cols: m.cols, rows: m.rows };
             preSpawnSizes.delete(m.sessionId);
             pty.start(m.sessionId, size.cols, size.rows, spec);
+            mcpHost.onSpawn(m.sessionId, size.cols, size.rows);
             startRefusals.delete(m.sessionId);
             // Claude's visible scope is read off the FINAL args, so a user's own --add-dir counts
             // (mf-live-edits spec §2.1; no session field, L12 S7).
@@ -4177,7 +4222,18 @@ app.whenReady().then(() => {
           // Smoke-only seam, gated so it never exists in a shipped build (§7).
           if (process.env.CONDUIT_E2E === '1' && m.op === 'advance') timers.advanceClock(m.ms);
           break;
+        case 'mcp:compose':
+        case 'mcp:thread:get':
+        case 'mcp:markRead':
+        case 'mcp:allowMore':
+        case 'mcp:pause':
+        case 'mcp:attachment:get':
+        case 'mcp:retry':
+          await mcpHost.handleRenderer(m, replyHere);
+          break;
         case 'term:input':
+          // Observed before the write: a human draft closes the notice gate (spec §2).
+          mcpHost.onRendererInput(m.sessionId, m.data);
           pty.input(m.sessionId, m.data);
           // Throttle: input fires per keystroke; avoid a disk write + state
           // broadcast on every character (30s is well under minute granularity).
@@ -4185,8 +4241,10 @@ app.whenReady().then(() => {
           break;
         case 'term:resize':
           log.debug('pty', 'resize', { sessionId: m.sessionId, cols: m.cols, rows: m.rows });
-          if (pty.isAlive(m.sessionId)) pty.resize(m.sessionId, m.cols, m.rows);
-          else preSpawnSizes.set(m.sessionId, { cols: m.cols, rows: m.rows });
+          if (pty.isAlive(m.sessionId)) {
+            pty.resize(m.sessionId, m.cols, m.rows);
+            mcpHost.onResize(m.sessionId, m.cols, m.rows);
+          } else preSpawnSizes.set(m.sessionId, { cols: m.cols, rows: m.rows });
           break;
         case 'term:dispose':
           // Slice B: a session mid-move keeps its live PTY — the dispose comes from the source
@@ -4691,6 +4749,7 @@ app.whenReady().then(() => {
     // branch in onWindowClose doesn't dispose them), so they restore next launch.
     flushStateSync();
     clearInterval(sweepTimer);
+    void mcpHost.stop();
     // The armed setTimeout would otherwise keep the main process alive past quit; the pending
     // persist would also fire AFTER flushStateSync has already written the same file.
     timers.stop();
