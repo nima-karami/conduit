@@ -8,21 +8,28 @@ import {
 } from 'react';
 import { changesBadgeClass } from '../../src/changes-badge';
 import type { ChangesModel } from '../../src/changes-view-model';
+import type { Handle } from '../../src/conduit-mcp/types';
 import type { DeleteOutcome } from '../../src/delete-confirm';
 import type { ChangeKind, RepoChanges } from '../../src/protocol';
 import type { FolderSectionModel } from '../../src/session-sections';
 import type { RightPaneTab } from '../../src/settings';
+import type { Session } from '../../src/types';
+import { MCP_STR } from '../conduit-mcp-strings';
+import { tabBadge } from '../conduit-mcp-view-model';
 import type { OpenMode } from '../docs';
 import type { FsOp } from '../fs-undo';
+import { IconWarning } from '../icons';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { reviewModeStatusLabel } from '../review-commit';
 import { getReviewNav, subscribeReviewNav } from '../review-nav-store';
 import type { ReviewScope } from '../review-scope';
 import { useSettings } from '../settings';
+import type { ConduitMcpApi } from '../use-conduit-mcp';
 import { ChangesView, type ChangesViewProps } from './changes-view';
 import type { MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
 import { FilesView, type FilesViewHandle, type FolderUiCache } from './files-view';
+import { MessagesPane } from './messages-pane';
 import { ReviewNavigator } from './review-navigator';
 import type { SearchPaneHandle, SearchScopeModel } from './search-pane';
 
@@ -34,6 +41,15 @@ export interface RightPaneHandle {
   revealInTree(path: string): void;
   /** Switch to the Changes tab without persisting the choice (review mode). */
   showChanges(): void;
+  /** Switch to Messages, filtered to one handle and/or opened on a thread (card menu, chip). */
+  showMessages(filterHandle: Handle | null, threadId?: string): void;
+}
+
+/** Where the Messages tab lands; `seq` remounts the pane so a repeat jump re-applies. */
+interface MessagesNav {
+  filterHandle: Handle | null;
+  threadId: string | null;
+  seq: number;
 }
 
 export function RightPane({
@@ -63,6 +79,9 @@ export function RightPane({
   onContextPath,
   activeTarget,
   searchScope,
+  mcp,
+  sessions,
+  onOpenSettings,
   ...changesProps
 }: Omit<ChangesViewProps, 'model' | 'collapsedRepos'> & {
   sessionId: string | undefined;
@@ -103,6 +122,10 @@ export function RightPane({
   /** Multi-repo auto-follow: report a clicked file/folder path so the active repo follows it. */
   onContextPath?: (absPath: string) => void;
   searchScope?: SearchScopeModel;
+  /** Messaging state and requests; the Messages tab is app-wide, not per session. */
+  mcp: ConduitMcpApi;
+  sessions: readonly Session[];
+  onOpenSettings: () => void;
 }) {
   const { settings, update } = useSettings();
   const [tab, setTab] = useState<RightPaneTab>(settings.rightPaneTab);
@@ -142,6 +165,11 @@ export function RightPane({
   // switch.
   const folderUiRef = useRef<FolderUiCache>({ treeCache: new Map(), collapsed: new Set() });
   const changesCollapsedRef = useRef<Set<string>>(new Set());
+  const [messagesNav, setMessagesNav] = useState<MessagesNav>({
+    filterHandle: null,
+    threadId: null,
+    seq: 0,
+  });
 
   useImperativeHandle(
     paneRef,
@@ -164,9 +192,23 @@ export function RightPane({
       showChanges() {
         setTab('changes');
       },
+      showMessages(filterHandle, threadId) {
+        setTab('messages');
+        setMessagesNav((cur) => ({ filterHandle, threadId: threadId ?? null, seq: cur.seq + 1 }));
+      },
     }),
     [],
   );
+
+  const messagesBadge = mcp.state ? tabBadge(mcp.state) : null;
+  const messagesBadgeText = messagesBadge
+    ? [
+        MCP_STR.unread(messagesBadge.count),
+        messagesBadge.urgent && mcp.state ? MCP_STR.urgentBadge(mcp.state.youUrgent) : '',
+      ]
+        .filter(Boolean)
+        .join(', ')
+    : '';
 
   return (
     <aside className="rightpane">
@@ -193,11 +235,37 @@ export function RightPane({
         >
           Files
         </button>
+        <button
+          className={`rtab ${tab === 'messages' ? 'rtab--active' : ''}`}
+          onClick={() => selectTab('messages')}
+        >
+          {MCP_STR.tab}
+          {messagesBadge && (
+            <span
+              className={`rtab__badge${messagesBadge.urgent ? ' rtab__badge--urgent' : tab === 'messages' ? '' : ' rtab__badge--attention'}`}
+              title={messagesBadgeText}
+            >
+              {messagesBadge.urgent && <IconWarning size={10} />}
+              <span aria-hidden>{messagesBadge.count}</span>
+              <span className="sr-only">{messagesBadgeText}</span>
+            </span>
+          )}
+        </button>
         <span className="sr-only" role="status">
           {statusText}
         </span>
       </div>
-      {tab === 'changes' ? (
+      {tab === 'messages' ? (
+        <MessagesPane
+          key={messagesNav.seq}
+          api={mcp}
+          sessions={sessions}
+          filterHandle={messagesNav.filterHandle}
+          onClearFilter={() => setMessagesNav((cur) => ({ ...cur, filterHandle: null }))}
+          onOpenSettings={onOpenSettings}
+          initialThreadId={messagesNav.threadId}
+        />
+      ) : tab === 'changes' ? (
         changesModel.kind === 'no-session' ? (
           <EmptyState
             variant="panel"

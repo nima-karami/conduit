@@ -22,6 +22,7 @@ import {
   type SessionSnapshots,
 } from '../src/changes-view-model';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
+import type { McpSessionBadge } from '../src/conduit-mcp/ui-types';
 import {
   type DeleteOutcome,
   permanentConfirmMessage,
@@ -127,6 +128,7 @@ import { Toasts } from './components/toasts';
 import { TopBar } from './components/top-bar';
 import type { UpdateStatus } from './components/update-card';
 import { WebPromptModal } from './components/web-prompt-modal';
+import { MCP_STR } from './conduit-mcp-strings';
 import { decideShortcut, type ShortcutContext } from './decide-shortcut';
 import { createDiffReadQueue, type DiffReadQueue, diffReadTargets } from './diff-read-queue';
 import { diffTabKey } from './diff-tab-scope';
@@ -206,6 +208,8 @@ import {
   IconExternal,
   IconFolder,
   IconGraph,
+  IconMail,
+  IconPause,
   IconPencil,
   IconPlus,
   IconRefresh,
@@ -295,6 +299,7 @@ import {
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
 import { sessionDirtyPaths } from './unsaved-files';
 import { useBackgroundOpenFeedback } from './use-background-open-feedback';
+import { useConduitMcp } from './use-conduit-mcp';
 import { useDirtyClose } from './use-dirty-close';
 import { focusOpenModal, nextModalKey, useModalSlot } from './use-modal-slot';
 import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-history';
@@ -320,6 +325,9 @@ const joinPath = (base: string, rel: string) =>
  *  enough that a file an agent just wrote is navigable by the time the user looks for it,
  *  long enough that a multi-file write lands as one top-up. */
 const INCREMENTAL_INDEX_DEBOUNCE_MS = 500;
+
+/** Stable empty badges, so the rail doesn't re-render on every state before messaging loads. */
+const NO_MCP_BADGES: Readonly<Record<string, McpSessionBadge>> = {};
 
 const isCodeFile = (p: string) => /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/i.test(p);
 
@@ -785,7 +793,8 @@ export function App() {
   const hostSessions: Session[] = useMemo(() => state?.sessions ?? [], [state]);
   // Snooze is applied here, above everything that reads a session's attention state, so the
   // rail and the topbar's aggregate chip can never disagree about who is waiting (D16).
-  const { sessions, snooze } = useSnooze(hostSessions);
+  const { sessions, snooze, snoozed } = useSnooze(hostSessions);
+  const mcp = useConduitMcp();
   const agents: AgentDefinition[] = state?.agents ?? [];
 
   // Auto-switch to a newly created (running) session (when enabled).
@@ -2849,15 +2858,35 @@ export function App() {
         onClick: () => post({ type: 'relaunch' as const, id: s.id }),
       });
     }
+    // Messaging (spec §9 card menu): only a session with a handle can be messaged or paused.
+    const badge = mcp.state?.sessions[s.id];
+    const messaging: MenuItem[] = badge
+      ? [
+          {
+            label: MCP_STR.openMessages,
+            icon: <IconMail size={14} />,
+            separatorBefore: lifecycle.length > 0,
+            onClick: () => rightPaneRef.current?.showMessages(badge.handle),
+          },
+          {
+            label: badge.paused
+              ? MCP_STR.resumeNotices(badge.handle)
+              : MCP_STR.pauseNotices(badge.handle),
+            icon: <IconPause size={14} />,
+            onClick: () => mcp.pause(s.id, !badge.paused),
+          },
+        ]
+      : [];
     setMenu({
       x: e.clientX,
       y: e.clientY,
       items: [
         ...lifecycle,
+        ...messaging,
         {
           label: 'Rename',
           icon: <IconPencil size={14} />,
-          separatorBefore: lifecycle.length > 0,
+          separatorBefore: lifecycle.length + messaging.length > 0,
           onClick: () => {
             setActiveId(s.id);
             setRenamingId(s.id);
@@ -4457,6 +4486,7 @@ export function App() {
             onOpenSettings={() => openSettingsAt('general')}
             onContextMenu={onSessionContextMenu}
             onSnooze={snooze}
+            mcpBadges={mcp.state?.sessions ?? NO_MCP_BADGES}
             renamingId={renamingId}
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
             onReorderSessions={(o) => post({ type: 'reorderSessions', order: o })}
@@ -4532,6 +4562,9 @@ export function App() {
           onOpenFile={(p, mode) => openFile(p, undefined, mode)}
           onOpenMatch={openMatch}
           paneRef={rightPaneRef}
+          mcp={mcp}
+          sessions={sessions}
+          onOpenSettings={() => openSettingsAt('general')}
           onOpenDiff={(repoRoot, rel, diffScope, mode) =>
             openDiff(joinPath(repoRoot, rel), undefined, { diffScope, mode })
           }
@@ -4578,6 +4611,9 @@ export function App() {
         onSelectView={setCenterView}
         sessions={sessions}
         onFocusAttention={setActiveId}
+        attentionItems={mcp.state?.attention}
+        snoozed={snoozed}
+        onOpenThread={(threadId) => rightPaneRef.current?.showMessages(null, threadId)}
         onContextMenu={onPanelTogglesMenu}
       />
       <div className="workbench">{visibleOrder.map(renderRegion)}</div>

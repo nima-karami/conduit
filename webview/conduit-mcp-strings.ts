@@ -138,6 +138,7 @@ export const MCP_STR = {
   noSubject: '(no subject)',
   threadGone: 'This thread is no longer available.',
   settingsTitle: 'Agent messaging',
+  settingsToggle: 'Let agents message each other and you',
   settingsDesc:
     'Agents in your sessions can message each other and you through Conduit. Turning it off stops new launches from connecting.',
   cursorConnect: 'Connect Cursor',

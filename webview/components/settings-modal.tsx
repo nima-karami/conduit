@@ -28,6 +28,7 @@ import {
   revealLogs,
 } from '../bridge';
 import { CARD_FIELD_LABELS } from '../card-fields';
+import { MCP_STR } from '../conduit-mcp-strings';
 import { IconCheck, IconClose, IconDownload, IconRefreshCw } from '../icons';
 import { useSettings } from '../settings';
 import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
@@ -918,6 +919,12 @@ function General({
             ]}
             onChange={(v) => update({ autoResumeOnLimit: v as LimitResumeMode })}
           />
+        </Section>
+      </SetGroup>
+
+      <SetGroup title={MCP_STR.settingsTitle}>
+        <Section title={MCP_STR.settingsToggle} desc={MCP_STR.settingsDesc}>
+          <Toggle value={settings.conduitMcp} onChange={(v) => update({ conduitMcp: v })} />
         </Section>
       </SetGroup>
 

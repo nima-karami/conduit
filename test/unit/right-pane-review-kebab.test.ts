@@ -93,6 +93,18 @@ async function render(
           onRepoContext: noop,
           onPickActiveRepo: noop,
           renderChip: () => null,
+          mcp: {
+            state: null,
+            getThread: async () => null,
+            send: async () => null,
+            getAttachment: async () => null,
+            markRead: noop,
+            allowMore: noop,
+            pause: noop,
+            retry: noop,
+          },
+          sessions: [],
+          onOpenSettings: noop,
         }),
       ),
     );

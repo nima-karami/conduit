@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { agentLabelFor } from '../../src/agent-label';
+import type { McpSessionBadge } from '../../src/conduit-mcp/ui-types';
 import { type Rect, triggerMenu } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { renamedProjectName } from '../../src/project-name';
@@ -63,6 +64,7 @@ export function Sidebar({
   onOpenSettings,
   onContextMenu,
   onSnooze,
+  mcpBadges,
   renamingId,
   onSetRenaming,
   onReorderSessions,
@@ -97,6 +99,8 @@ export function Sidebar({
   /** Silence one session's "needs you" for 10 minutes (D16). Held above the rail so the
    *  topbar's aggregate chip drops the same session at the same moment. */
   onSnooze: (id: string) => void;
+  /** Messaging badges by session id (docs/specs/2026-10-25-conduit-mcp-server.md §8). */
+  mcpBadges: Readonly<Record<string, McpSessionBadge>>;
   renamingId?: string;
   onSetRenaming: (id: string | null) => void;
   onReorderSessions: (order: string[]) => void;
@@ -402,6 +406,7 @@ export function Sidebar({
       roles={roles}
       drag={canDrag ? sessionDrag(s, groupKey, renderedIds) : undefined}
       dropTarget={overId === s.id}
+      mcp={mcpBadges[s.id]}
     />
   );
 

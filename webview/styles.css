@@ -13972,6 +13972,438 @@ button.toggle--on .toggle__knob {
   background: var(--state-sel-bg);
 }
 
+/* ---------- Conduit MCP: the Messages tab, card badge, chip reason ----------
+   docs/specs/2026-10-25-conduit-mcp-server.md §8–§11. Existing roles only: accent marks
+   unread, the attention amber marks urgent (always with an icon and a word, never alone). */
+.mcpmsg {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.mcpmsg__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.mcpmsg__bar .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.mcpmsg__filter[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.mcpmsg__bartitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: calc(12px * var(--font-scale));
+}
+.mcpmsg__scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+}
+.mcpmsg__scopetext {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcpmsg__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 6px 12px;
+}
+.mcpmsg__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.mcpmsg-row {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.mcpmsg-row--active {
+  background: var(--state-sel-bg);
+}
+.mcpmsg-row__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.mcpmsg-row--unread .mcpmsg-row__dot {
+  background: var(--accent);
+}
+.mcpmsg-row__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.mcpmsg-row__title,
+.mcpmsg-row__who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcpmsg-row__title {
+  color: var(--text);
+  font-size: calc(12px * var(--font-scale));
+}
+.mcpmsg-row--unread .mcpmsg-row__title {
+  font-weight: 600;
+}
+.mcpmsg-row__who {
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.mcpmsg-row__side {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mcpmsg-row__time {
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+  white-space: nowrap;
+}
+.mcpmsg-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: var(--r-badge);
+  background: var(--panel-2);
+  color: var(--text-dim);
+  font-size: calc(10px * var(--font-scale));
+  font-weight: 600;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  white-space: nowrap;
+}
+.mcpmsg-chip--fyi {
+  color: var(--text-faint);
+}
+/* The attention chip's own text tier: pure amber misses 4.5:1 on its wash (see .attnchip). */
+.mcpmsg-chip--urgent {
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+}
+.mcpmsg-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+.mcpmsg-skeleton__row {
+  height: calc(28px * var(--font-scale));
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+}
+.mcpmsg-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+.mcpmsg-thread__log {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mcpmsg-msg {
+  min-width: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--border-2);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  font-size: calc(12px * var(--font-scale));
+}
+.mcpmsg-msg--urgent {
+  border-left-color: var(--amber);
+}
+.mcpmsg-msg__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+}
+.mcpmsg-msg__route {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.mcpmsg-msg__from {
+  color: var(--text);
+  font-weight: 600;
+}
+.mcpmsg-msg__time {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+  white-space: nowrap;
+}
+.mcpmsg-msg__subject,
+.mcpmsg-msg__body {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.mcpmsg-msg__subject {
+  font-weight: 600;
+}
+.mcpmsg-msg__body {
+  color: var(--text);
+  white-space: pre-wrap;
+}
+.mcpmsg-msg__atts,
+.mcpmsg-msg__rcpts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.mcpmsg-att {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-badge);
+  background: var(--raise);
+  color: var(--text);
+  font: inherit;
+  font-size: calc(11px * var(--font-scale));
+  cursor: pointer;
+}
+.mcpmsg-att__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcpmsg-att--expired {
+  border-style: dashed;
+  color: var(--text-faint);
+  cursor: default;
+}
+.mcpmsg-rcpt {
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.mcpmsg-rcpt--undelivered {
+  color: var(--red);
+}
+.mcpmsg-thread__paused {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+  border-radius: var(--r-sm);
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+  font-size: calc(12px * var(--font-scale));
+}
+.mcpmsg-thread__actions {
+  display: flex;
+  gap: 8px;
+}
+.mcpmsg-thread__gone {
+  margin: 0;
+  padding: 12px;
+  color: var(--text-dim);
+}
+.mcpmsg-compose {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 10px 14px;
+  font-size: calc(12px * var(--font-scale));
+}
+.mcpmsg-compose__to {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.mcpmsg-compose__label {
+  padding: 0;
+  margin-bottom: 2px;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 600;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+}
+.mcpmsg-compose__recipient {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  cursor: pointer;
+}
+.mcpmsg-compose__handle {
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--font-scale));
+}
+.mcpmsg-compose__sublabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+}
+.mcpmsg-compose__none {
+  margin: 0;
+  color: var(--text-faint);
+}
+.mcpmsg-compose__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.mcpmsg-compose__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.mcpmsg-compose__input,
+.mcpmsg-compose__body {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--state-edge);
+  border-radius: var(--r-sm);
+  background: var(--raise);
+  color: var(--text);
+  font: inherit;
+}
+.mcpmsg-compose__body {
+  min-height: calc(90px * var(--font-scale));
+  resize: vertical;
+}
+.mcpmsg-compose__error {
+  margin: 0;
+  padding: 6px 8px 6px 22px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+  color: var(--red);
+}
+.mcpmsg-compose__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.mcpmsg-compose__hint {
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.mcpmsg-attview {
+  width: 640px;
+}
+.mcpmsg-attview__facts {
+  margin: 2px 0 0;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+}
+.mcpmsg-attview__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 18px;
+}
+.mcpmsg-attview__text {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-scale));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mcpmsg-attview__img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+.mcpmsg-attview__note {
+  margin: 0;
+  color: var(--text-dim);
+}
+/* An INDEPENDENT indicator like .session__timer: messaging is orthogonal to the five session
+   states, so it is never a sixth one. */
+.session__mcp {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.session__mcp--urgent {
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+}
+.session__mcp-word {
+  font-family: var(--font-ui);
+  font-size: calc(10px * var(--font-scale));
+  font-weight: 600;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+}
+.session__mcp-paused {
+  display: inline-flex;
+  color: var(--text-dim);
+}
+.rtab__badge--urgent {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+}
+/* The first message entry's reason rides the chip; the title carries it whole when cut. */
+.attnchip__reason {
+  min-width: 0;
+  max-width: 30ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: 7px;
+  border-left: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+  font-weight: 500;
+}
+
 /* ═════════ interaction state vocabulary ══════════════════════════════════════
    docs/specs/archive/2026-08-01-interaction-state-vocabulary.md. Read it before touching
    a value here; test/unit/state-vocabulary.test.ts holds the line.

@@ -22,6 +22,8 @@ const EMPTY: SnoozeMap = new Map();
 export function useSnooze(sessions: Session[]): {
   sessions: Session[];
   snooze: (id: string) => void;
+  /** The live map, for the topbar chip: a snoozed session's message items hide with it. */
+  snoozed: SnoozeMap;
 } {
   const [snoozed, setSnoozed] = useState<SnoozeMap>(EMPTY);
 
@@ -45,5 +47,5 @@ export function useSnooze(sessions: Session[]): {
     return applySnooze(sessions, pruneSnoozed(snoozed, now), now);
   }, [sessions, snoozed]);
 
-  return { sessions: visible, snooze };
+  return { sessions: visible, snooze, snoozed };
 }

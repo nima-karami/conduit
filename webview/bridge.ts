@@ -601,7 +601,56 @@ function mockHost(msg: WebviewToHost) {
       // first review:marks arrives).
       emit({ type: 'review:marks', repos: [] });
       emit({ type: 'timer:state', schedules: [], offer: null });
+      // The preview has no agents, so messaging is on and empty: the Messages tab's first run.
+      emit({
+        type: 'mcp:state',
+        state: {
+          enabled: true,
+          storeError: null,
+          loading: false,
+          sessions: {},
+          threads: [],
+          attention: [],
+          youUnread: 0,
+          youUrgent: 0,
+        },
+      });
     }, 20);
+    return;
+  }
+  if (msg.type === 'mcp:thread:get') {
+    setTimeout(() => emit({ type: 'mcp:thread', requestId: msg.requestId, thread: null }), 5);
+    return;
+  }
+  if (msg.type === 'mcp:compose') {
+    setTimeout(
+      () =>
+        emit({
+          type: 'mcp:sent',
+          requestId: msg.requestId,
+          result: {
+            ok: true,
+            value: {
+              message_id: 'm_preview',
+              thread_id: msg.threadId ?? 't_preview',
+              recipients: msg.to.map((handle) => ({ handle, status: 'queued' as const })),
+            },
+          },
+        }),
+      5,
+    );
+    return;
+  }
+  if (msg.type === 'mcp:attachment:get') {
+    setTimeout(
+      () =>
+        emit({
+          type: 'mcp:attachment',
+          requestId: msg.requestId,
+          result: { ok: false, error: 'not_found' },
+        }),
+      5,
+    );
     return;
   }
   if (msg.type === 'searchFiles') {
