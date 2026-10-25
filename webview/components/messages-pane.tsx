@@ -31,6 +31,7 @@ export interface MessagesPaneProps {
 /** §10: one summary per 5 s at most, so a burst of agent traffic is one announcement. */
 const ANNOUNCE_EVERY_MS = 5_000;
 const SKELETON_ROWS = 4;
+const ZWSP = '​';
 const STAMP = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
 type View =
@@ -38,7 +39,10 @@ type View =
   | { t: 'thread'; threadId: string }
   | { t: 'compose'; replyTo: { threadId: string; to: Handle[] } | null; back: View };
 
-/** The polite live region's text: new-message counts, throttled (§10). */
+/**
+ * The polite live region's text: new-message counts, throttled (§10). A repeat of the text on
+ * screen alternates a zero-width suffix, so the region still mutates and is read again.
+ */
 function useNewMessageAnnouncer(state: McpUiState | null): string {
   const [text, setText] = useState('');
   const prev = useRef<McpUiState | null>(state);
@@ -54,7 +58,8 @@ function useNewMessageAnnouncer(state: McpUiState | null): string {
     pending.current += n;
     const flush = () => {
       timer.current = null;
-      setText(MCP_STR.newMessages(pending.current));
+      const said = MCP_STR.newMessages(pending.current);
+      setText((cur) => (cur === said ? `${said}${ZWSP}` : said));
       pending.current = 0;
       last.current = Date.now();
     };
@@ -122,8 +127,24 @@ function ThreadRow({
   );
 }
 
-/** The Messages tab body (docs/specs/2026-10-25-conduit-mcp-server.md §8–§10). */
-export function MessagesPane({
+/**
+ * The Messages tab body (docs/specs/2026-10-25-conduit-mcp-server.md §8–§10). The live region
+ * sits outside the view switch: one region, mounted for the pane's life.
+ */
+export function MessagesPane(props: MessagesPaneProps) {
+  const { state } = props.api;
+  const announcement = useNewMessageAnnouncer(state);
+  return (
+    <div className="mcpmsg" aria-busy={!state || state.loading || undefined}>
+      <MessagesView {...props} />
+      <span className="sr-only" aria-live="polite" role="status">
+        {announcement}
+      </span>
+    </div>
+  );
+}
+
+function MessagesView({
   api,
   sessions,
   filterHandle,
@@ -139,63 +160,47 @@ export function MessagesPane({
   const [active, setActive] = useState(0);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const baseId = useId();
-  const announcement = useNewMessageAnnouncer(state);
 
   useEffect(() => {
     if (initialThreadId) setView({ t: 'thread', threadId: initialThreadId });
   }, [initialThreadId]);
 
-  const live = (
-    <span className="sr-only" aria-live="polite" role="status">
-      {announcement}
-    </span>
-  );
-
   if (!state || state.loading) {
     return (
-      <div className="mcpmsg" aria-busy="true">
-        <div className="mcpmsg-skeleton">
-          {Array.from({ length: SKELETON_ROWS }, (_, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: fixed placeholder rows, never reordered.
-            <span key={i} className="mcpmsg-skeleton__row" />
-          ))}
-        </div>
-        {live}
+      <div className="mcpmsg-skeleton">
+        {Array.from({ length: SKELETON_ROWS }, (_, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: fixed placeholder rows, never reordered.
+          <span key={i} className="mcpmsg-skeleton__row" />
+        ))}
       </div>
     );
   }
   if (!state.enabled) {
     return (
-      <div className="mcpmsg">
-        <EmptyState
-          variant="panel"
-          title={MCP_STR.off}
-          action={
-            <button type="button" className="btn btn--sm" onClick={onOpenSettings}>
-              {MCP_STR.openSettings}
-            </button>
-          }
-        />
-        {live}
-      </div>
+      <EmptyState
+        variant="panel"
+        title={MCP_STR.off}
+        action={
+          <button type="button" className="btn btn--sm" onClick={onOpenSettings}>
+            {MCP_STR.openSettings}
+          </button>
+        }
+      />
     );
   }
   if (state.storeError) {
     return (
-      <div className="mcpmsg">
-        <EmptyState
-          variant="panel"
-          role="alert"
-          title={MCP_STR.loadError}
-          hint={state.storeError}
-          action={
-            <button type="button" className="btn btn--sm" onClick={() => api.retry()}>
-              {MCP_STR.retry}
-            </button>
-          }
-        />
-        {live}
-      </div>
+      <EmptyState
+        variant="panel"
+        role="alert"
+        title={MCP_STR.loadError}
+        hint={state.storeError}
+        action={
+          <button type="button" className="btn btn--sm" onClick={() => api.retry()}>
+            {MCP_STR.retry}
+          </button>
+        }
+      />
     );
   }
 
@@ -204,22 +209,19 @@ export function MessagesPane({
 
   if (view.t === 'compose') {
     return (
-      <div className="mcpmsg">
-        <MessageCompose
-          api={api}
-          targets={targets}
-          replyTo={view.replyTo}
-          onDone={() => setView(view.back)}
-        />
-        {live}
-      </div>
+      <MessageCompose
+        api={api}
+        targets={targets}
+        replyTo={view.replyTo}
+        onDone={() => setView(view.back)}
+      />
     );
   }
 
   if (view.t === 'thread') {
     const summary = state.threads.find((t) => t.threadId === view.threadId);
     return (
-      <div className="mcpmsg">
+      <>
         <div className="mcpmsg__bar">
           <button
             type="button"
@@ -241,8 +243,7 @@ export function MessagesPane({
             onReply={(replyTo) => setView({ t: 'compose', replyTo, back: view })}
           />
         </div>
-        {live}
-      </div>
+      </>
     );
   }
 
@@ -379,11 +380,10 @@ export function MessagesPane({
   }
 
   return (
-    <div className="mcpmsg">
+    <>
       {toolbar}
       <div className="mcpmsg__scroll">{body}</div>
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
-      {live}
-    </div>
+    </>
   );
 }

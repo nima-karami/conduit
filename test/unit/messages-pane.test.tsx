@@ -336,4 +336,29 @@ describe('MessagesPane states (spec §8)', () => {
     });
     expect(region()).toBe('3 new messages');
   });
+
+  it('one live region survives view switches, and a repeated announcement still mutates it', async () => {
+    vi.useFakeTimers();
+    const one = (id: string) => uiState({ threads: [summary({ threadId: id })] });
+    const two = uiState({
+      threads: [summary({ threadId: 'a' }), summary({ threadId: 'b', subject: 'Second' })],
+    });
+    const rerender = await render(props(fakeApi(uiState())));
+    const region = () => q('[aria-live="polite"]');
+    await rerender(props(fakeApi(one('a'))));
+    const first = region();
+    const said = first.textContent;
+    expect(said).toBe('1 new message');
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+    });
+    await rerender(props(fakeApi(two)));
+    expect(region()).toBe(first);
+    expect(first.textContent).not.toBe(said);
+    expect(first.textContent?.replace(/​/g, '')).toBe('1 new message');
+    await click(q('[role="option"]'));
+    expect(q('[role="log"]')).toBeTruthy();
+    expect(document.body.querySelectorAll('[aria-live="polite"]')).toHaveLength(1);
+    expect(region()).toBe(first);
+  });
 });
