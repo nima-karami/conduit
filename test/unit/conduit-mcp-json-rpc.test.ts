@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createMcpServerCore,
+  type JsonRpcId,
   type McpServerCoreDeps,
   negotiateProtocolVersion,
   SUPPORTED_PROTOCOL_VERSIONS,
@@ -30,7 +31,7 @@ async function rpc(line: string, over: Partial<McpServerCoreDeps> = {}) {
   return { reply: out === undefined ? undefined : JSON.parse(out), calls };
 }
 
-const req = (id: number | string, method: string, params?: unknown) =>
+const req = (id: JsonRpcId, method: string, params?: unknown) =>
   JSON.stringify({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) });
 
 function schemaOf(name: string): ToolSchema {

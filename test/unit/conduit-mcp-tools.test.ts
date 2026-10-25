@@ -7,6 +7,8 @@ import {
   type DirectoryEntry,
   frameBody,
   MAX_BODY_BYTES,
+  RATE_LIMIT_PER_MIN,
+  THREAD_AGENT_LIMIT,
   type ToolDeps,
   toToolCallResult,
 } from '../../src/conduit-mcp/tools';
@@ -259,7 +261,10 @@ describe('sendMessage', () => {
 
   it('61st send in 60 s → rate_limited (retryable), with you exempt', async () => {
     const h = await harness();
-    for (let i = 0; i < 60; i++) expect((await h.tools.sendMessage(CLAUDE, send())).ok).toBe(true);
+    expect(RATE_LIMIT_PER_MIN).toBe(60);
+    for (let i = 0; i < RATE_LIMIT_PER_MIN; i++) {
+      expect((await h.tools.sendMessage(CLAUDE, send())).ok).toBe(true);
+    }
     const r = await h.tools.sendMessage(CLAUDE, send());
     expect(r).toMatchObject({ ok: false, error: { code: 'rate_limited', retryable: true } });
     for (let i = 0; i < 61; i++) {
@@ -296,7 +301,8 @@ describe('sendMessage', () => {
   it('21st agent message → thread_limit + onThreadLimit; a you-post resets', async () => {
     const h = await harness();
     const t = okValue(await h.tools.sendMessage(CLAUDE, send())).thread_id;
-    for (let i = 1; i < 20; i++) {
+    expect(THREAD_AGENT_LIMIT).toBe(20);
+    for (let i = 1; i < THREAD_AGENT_LIMIT; i++) {
       const from = i % 2 ? CODEX : CLAUDE;
       const to = i % 2 ? ['claude-1'] : ['codex-2'];
       expect((await h.tools.sendMessage(from, { to, body: 'x', thread_id: t })).ok).toBe(true);
