@@ -118,6 +118,8 @@ function harness(
     lagEcho?: boolean;
     /** The fake prompt answers an Enter with a fresh empty prompt line. */
     echoSubmit?: boolean;
+    /** Runs inside the host's wait between echo polls, i.e. while the Enter is still pending. */
+    duringWait?: (host: ConduitMcpHost) => void;
     tickMs?: number;
     log?: ConduitMcpHostDeps['log'];
     createEndpoint?: ConduitMcpHostDeps['createEndpoint'];
@@ -192,6 +194,7 @@ function harness(
     now: () => clock.t,
     sleep: async (ms) => {
       clock.t += ms;
+      opts.duringWait?.(host);
       for (const [id, data] of lagged.splice(0)) host.onOutput(id, data);
     },
     randomToken: () => `tok${++tokenN}`,
@@ -584,6 +587,21 @@ describe('createConduitMcpHost — tools over the endpoint', () => {
     expect((await none.call('list_sessions')).body.error.code).toBe('not_in_session');
   });
 
+  it('logs calls rejected before the tool runs', async () => {
+    const rec = recordingLog();
+    const h = harness({ log: rec.log });
+    await h.host.start();
+    const a = launch(h, 's1');
+    const forged = await client(h.ep, 'forged');
+    await forged.call('list_sessions');
+    const c = await client(h.ep, a.token);
+    await c.call('list_sessions');
+    expect(rec.of('tool call').map((e) => e.data)).toEqual([
+      { tool: 'list_sessions', handle: undefined, ok: false, code: 'not_in_session' },
+      { tool: 'list_sessions', handle: 'fake-1', ok: true },
+    ]);
+  });
+
   it('messaging turned off → messaging_off', async () => {
     let on = true;
     const h = harness({ messagingOn: () => on });
@@ -678,6 +696,15 @@ describe('createConduitMcpHost — notices', () => {
     await h.host.tick();
     expect(writesTo(h, 's2')).toEqual([composeNotice(false), '\r']);
     expect(h.host.uiState().attention).toEqual([]);
+  });
+
+  it('a human keystroke during the echo wait withholds the Enter', async () => {
+    const h = harness({ lagEcho: true, duringWait: (host) => host.noteHostInput('s2', 'x') });
+    const { ca } = await pair(h);
+    await ca.call('send_message', { to: ['fake-2'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 's2')).toEqual([composeNotice(false)]);
+    expect(h.host.uiState().attention.map((a) => a.reason)).toEqual(['unsent-notice']);
   });
 
   it('logs the notice lifecycle and gate transitions, once per change', async () => {

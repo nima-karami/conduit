@@ -100,7 +100,7 @@ notifier tick (500 ms) [notifier.ts]
      try ─► ptyWriter.submit(id, composeNotice(urgent), {
                beforeText:  full evaluateGate in the session's slot   (closed → 'gate-closed', nothing written)
                text ─ SUBMIT_GAP_MS ─
-               beforeEnter: evaluateEnterRecheck — requires ScreenVerdict 'notice-echoed'
+               beforeEnter: evaluateEnterRecheck — requires ScreenVerdict 'notice-echoed'; re-polled every 50 ms up to 2 s while 'no-echo'
              }) ─ "\r"                      [src/pty-writer.ts, shared with timed messages]
            submitted ─► store.setStatus(noticed)     withheld ─► attention 'unsent-notice'
      pre-check closed + urgent ─► attention 'urgent-waiting' (once per message)
