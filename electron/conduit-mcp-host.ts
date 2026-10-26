@@ -15,7 +15,7 @@ import {
   parseHandleCounters,
   serializeHandleCounters,
 } from '../src/conduit-mcp/handles';
-import { createMcpServerCore, type ToolCallResult } from '../src/conduit-mcp/json-rpc';
+import { createMcpServerCore } from '../src/conduit-mcp/json-rpc';
 import {
   awaitEnterVerdict,
   ECHO_POLL_MS,
@@ -485,23 +485,23 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   // ---- connections ------------------------------------------------------------------------
 
-  const notInSession = (): ToolCallResult =>
-    toToolCallResult({
-      ok: false,
-      error: toolError('not_in_session', 'this MCP connection is not a Conduit session'),
-    });
-
   const callTool = async (sessionId: string | null, name: string, args: unknown) => {
     const handle = sessionId ? handleOf(sessionId) : undefined;
-    if (!sessionId || !handle) return notInSession();
-    if (!store.available()) {
-      return toToolCallResult({
-        ok: false,
-        error: toolError('store_unavailable', storeError ?? 'message store unavailable'),
-      });
-    }
-    const caller: Caller = { handle, sessionId };
-    const result = await runTool(caller, name, args);
+    const result = await (async () => {
+      if (!sessionId || !handle) {
+        return {
+          ok: false as const,
+          error: toolError('not_in_session', 'this MCP connection is not a Conduit session'),
+        };
+      }
+      if (!store.available()) {
+        return {
+          ok: false as const,
+          error: toolError('store_unavailable', storeError ?? 'message store unavailable'),
+        };
+      }
+      return runTool({ handle, sessionId }, name, args);
+    })();
     deps.log.info('conduit-mcp', 'tool call', {
       tool: name,
       handle,

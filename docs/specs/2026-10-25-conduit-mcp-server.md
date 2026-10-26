@@ -77,7 +77,10 @@ set after every finished run (measured in `src/session-activity.ts`), so it is w
 **Notice text** (fixed, ASCII, no digits, no peer text):
 `[conduit] New messages for you (urgent). Use the conduit read_inbox tool.` — `(urgent)` only when an
 urgent one is pending. It is written the way timed messages are: the text, then `SUBMIT_GAP_MS`, then
-`\r`, bound to the PTY generation, through one serialized writer per session shared with timed messages.
+the Enter waits for a positive echo, polling every 50 ms (`ECHO_POLL_MS`) up to 2 s (`ECHO_WAIT_MS`);
+only a `no-echo` verdict keeps it waiting, any other closure withholds at once. Codex 0.164 renders typed
+text 220-350 ms after the write, so for Codex the unsent-notice window is up to ~2.1 s, and a human Enter
+inside it yields an `unsent-notice` attention item (safe, possibly noisy). The `\r` is bound to the PTY generation, through one serialized writer per session shared with timed messages.
 **The whole gate is re-checked before the `\r`.** If it closed during the gap, no `\r` is sent: the text
 stays in the input and the human gets one attention signal ("a notice was left unsent in codex-2").
 
