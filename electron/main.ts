@@ -2911,6 +2911,8 @@ app.whenReady().then(() => {
               exists: fs.existsSync,
               resolveCommand: (c) => resolveCommand(c, hostPlatform),
               platform: hostPlatform,
+              userData: userData(),
+              e2e: process.env.CONDUIT_E2E === '1',
             })),
           });
           break;

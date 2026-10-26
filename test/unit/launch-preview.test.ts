@@ -3,6 +3,7 @@ import { AgentRegistry } from '../../src/agent-registry';
 import { formatCommandLine } from '../../src/command-line';
 import { previewLaunch } from '../../src/launch-preview';
 import { buildLaunchSpec } from '../../src/launch-spec';
+import { BRIEF_PREVIEW_DIR, briefPreviewArgs } from '../../src/role-brief';
 import type { AgentDefinition } from '../../src/types';
 
 const def = (id: string, command: string): AgentDefinition => ({
@@ -47,6 +48,8 @@ function deps(over: Partial<Deps> = {}): Deps {
     exists: (p) => p === HOME,
     resolveCommand: (c) => (c === 'codex' ? undefined : c),
     platform: 'win32',
+    userData: 'C:\\Users\\u\\Conduit',
+    e2e: false,
     ...over,
   };
 }
@@ -169,5 +172,55 @@ describe('previewLaunch', () => {
     expect(seen).toEqual([LONG]);
     expect(r.cwd).toBe(LONG);
     expect(r.args).toEqual(['--add-dir', B]);
+  });
+});
+
+describe('previewLaunch role brief', () => {
+  it('claude + brief:true appends the elided brief args and shows them', async () => {
+    const r = await previewLaunch(
+      { agentId: 'cli:claude', home: HOME, roots: [B], brief: true },
+      deps(),
+    );
+    const tail = briefPreviewArgs({ readAccess: 'add-dir' });
+    expect(r.args).toEqual(['--add-dir', B, ...tail]);
+    expect(r.display).toContain(BRIEF_PREVIEW_DIR);
+    expect(r.briefBlocked).toBeUndefined();
+  });
+
+  it('brief:false and an absent flag leave the preview unchanged', async () => {
+    for (const brief of [false, undefined]) {
+      const r = await previewLaunch(
+        { agentId: 'cli:claude', home: HOME, roots: [B], brief },
+        deps(),
+      );
+      expect(r.args).toEqual(['--add-dir', B]);
+    }
+  });
+
+  it('a batch launcher with a metachar in userData is blocked and gets no brief args', async () => {
+    const r = await previewLaunch(
+      { agentId: 'cli:claude-cmd', home: HOME, roots: [B], brief: true },
+      deps({ userData: 'C:\\Users\\50%\\Conduit' }),
+    );
+    expect(r.briefBlocked).toBe('%');
+    expect(r.args).toEqual(['--add-dir', B]);
+  });
+
+  it('a clean userData does not block a batch launcher', async () => {
+    const r = await previewLaunch(
+      { agentId: 'cli:claude-cmd', home: HOME, roots: [B], brief: true },
+      deps(),
+    );
+    expect(r.briefBlocked).toBeUndefined();
+    expect(r.args?.slice(-4)).toEqual(briefPreviewArgs({ readAccess: 'add-dir' }));
+  });
+
+  it('an unsupported launcher is unchanged and never blocked', async () => {
+    const r = await previewLaunch(
+      { agentId: 'shell:pwsh', home: HOME, roots: [B], brief: true },
+      deps({ userData: 'C:\\50%' }),
+    );
+    expect(r.args).toEqual([]);
+    expect(r.briefBlocked).toBeUndefined();
   });
 });
