@@ -51,6 +51,15 @@ export interface Project {
   order: number;
 }
 
+export type BriefState = 'pending' | 'sent';
+export type AgentBriefSource = { kind: 'text'; text: string } | { kind: 'file'; path: string }; // path absolute
+export type BriefRequest =
+  | { kind: 'agent' }
+  | { kind: 'none' }
+  | { kind: 'text'; text: string }
+  | { kind: 'file'; path: string };
+export type BriefError = 'brief-unreadable' | 'brief-too-large' | 'brief-invalid' | 'brief-io';
+
 export interface Session {
   id: string;
   name: string;
@@ -94,6 +103,8 @@ export interface Session {
   mcpHandle?: string;
   // The human paused message notices for this session (spec §5). Persisted.
   mcpNoticesPaused?: boolean;
+  /** Role brief state (docs/specs/2026-10-26-conduit-role-brief.md §2.3). Persisted. */
+  brief?: BriefState;
   /** live working dir (cd-tracked); falls back to home */
   cwd?: string;
   /** Runtime-only (stripped by serializeSessions). Keyed by RepoInfo.root exactly as in `repos`.

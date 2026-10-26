@@ -33,6 +33,10 @@ const START_ERROR: Record<OpenRepoError, string> = {
   'home-missing': 'home folder not found',
   'invalid-path': 'home is not a folder',
   'unknown-agent': 'launcher is no longer available',
+  'brief-unreadable': "can't read the role brief file",
+  'brief-too-large': 'role brief is over 64 KiB',
+  'brief-invalid': 'role brief is not UTF-8 text',
+  'brief-io': "couldn't save the role brief",
 };
 
 export interface NewSessionModalProps {

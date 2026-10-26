@@ -206,3 +206,12 @@ describe('a Claude notice wrapped over the 3 rows ending at the cursor', () => {
     );
   });
 });
+
+describe('brief support', () => {
+  it('claude reads through --add-dir; the rest read in place', () => {
+    expect(adapter('claude').brief).toEqual({ readAccess: 'add-dir' });
+    for (const id of ['codex', 'cursor', 'fake'] as const) {
+      expect(adapter(id).brief).toEqual({ readAccess: 'none' });
+    }
+  });
+});

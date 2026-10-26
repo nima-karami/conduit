@@ -87,6 +87,7 @@ export function parseSessions(blob: string | undefined): SessionsParse {
     const s = rest as Omit<Session, 'home' | 'roots' | 'projectId'>;
     // Back-compat: blobs written before lastActiveAt/createdAt existed.
     const createdAt = s.createdAt ?? Date.now();
+    if (s.brief !== 'pending' && s.brief !== 'sent') delete s.brief;
     sessions.push({
       ...s,
       home,

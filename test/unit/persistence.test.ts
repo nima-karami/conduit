@@ -350,3 +350,16 @@ describe('conduit MCP session fields', () => {
     expect(back?.mcpNoticesPaused).toBe(true);
   });
 });
+
+describe('persistence role brief', () => {
+  it('round-trips a valid brief state', () => {
+    for (const brief of ['pending', 'sent'] as const) {
+      expect(sessionsOf(serializeSessions([{ ...s, brief }]))[0].brief).toBe(brief);
+    }
+  });
+
+  it('drops an unknown brief value', () => {
+    const [r] = sessionsOf(v1([{ ...s, brief: 'bogus' }]));
+    expect('brief' in r).toBe(false);
+  });
+});
