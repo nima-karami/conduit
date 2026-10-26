@@ -96,7 +96,17 @@ function start() {
   const child = spawn(
     electron,
     [`--user-data-dir=${USER_DATA}`, `--remote-debugging-port=${PORT}`, RUN_DIR],
-    { cwd: RUN_DIR, detached: true, stdio: ['ignore', out, out], windowsHide: false },
+    {
+      cwd: RUN_DIR,
+      detached: true,
+      stdio: ['ignore', out, out],
+      windowsHide: false,
+      // Launched from an agent's shell: its session markers would make every Claude in the app a
+      // child of that agent (no transcript, not a messaging peer).
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE')),
+      ),
+    },
   );
   child.unref();
   writeFileSync(STATE, JSON.stringify({ pid: child.pid, sha, logFile, port: PORT }, null, 2));
