@@ -103,9 +103,7 @@ function start() {
       windowsHide: false,
       // Launched from an agent's shell: its session markers would make every Claude in the app a
       // child of that agent (no transcript, not a messaging peer).
-      env: Object.fromEntries(
-        Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE')),
-      ),
+      env: Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE'))),
     },
   );
   child.unref();

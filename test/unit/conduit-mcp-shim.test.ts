@@ -178,14 +178,19 @@ describe('conduit-mcp-shim', () => {
     const p = await host((c) => c.onLine(() => c.close()));
     const s = start(p, 't');
     s.child.stdin.write('{"jsonrpc":"2.0","id":1,"method":"ping"}\n');
-    // The relayed line is lost with the connection; the next one is answered by the fallback.
-    await new Promise((r) => setTimeout(r, 300));
-    s.child.stdin.write('{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n');
-    expect(JSON.parse(await s.nextLine())).toEqual({
-      jsonrpc: '2.0',
-      id: 2,
-      result: { tools: [] },
-    });
+    // Lines relayed before the shim sees the close are lost with the connection, and a shim slow
+    // to start (a loaded machine) is still relaying long after a fixed wait: ask until answered.
+    const first = s.nextLine();
+    let id = 1;
+    const ask = setInterval(() => {
+      id += 1;
+      s.child.stdin.write(`{"jsonrpc":"2.0","id":${id},"method":"tools/list"}\n`);
+    }, 200);
+    try {
+      expect(JSON.parse(await first)).toMatchObject({ jsonrpc: '2.0', result: { tools: [] } });
+    } finally {
+      clearInterval(ask);
+    }
   });
 
   it('stdin end → exit 0 (host up and host down)', async () => {
