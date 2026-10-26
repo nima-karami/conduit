@@ -112,4 +112,9 @@ describe('sanitizeChildEnv', () => {
     const result = sanitizeChildEnv({ CONDUIT_SESSION_TOKEN: 'x', PATH: 'p' });
     expect(result).toEqual({ PATH: 'p' });
   });
+
+  it('parent CONDUIT_MCP_ENDPOINT is not inherited', () => {
+    const result = sanitizeChildEnv({ CONDUIT_MCP_ENDPOINT: '/tmp/outer.sock', PATH: 'p' });
+    expect(result).toEqual({ PATH: 'p' });
+  });
 });

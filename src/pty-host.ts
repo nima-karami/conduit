@@ -41,9 +41,7 @@ const EDITOR_PREFIXES = ['VSCODE_', 'CURSOR_'];
  * Stripped unconditionally:
  *   - TERM_PROGRAM, TERM_PROGRAM_VERSION
  *   - All keys starting with VSCODE_ or CURSOR_
- *   - CONDUIT_SESSION_TOKEN: a Conduit started from inside a Conduit session must not hand the
- *     outer session's identity to its own shells; only prepareLaunch sets it, via spec.env
- *     (docs/specs/2026-10-25-conduit-mcp-server.md §3.1).
+ *   - CONDUIT_SESSION_TOKEN and CONDUIT_MCP_ENDPOINT: see docs/specs/2026-10-26-conduit-mcp-cursor.md §3.2.
  *
  * Stripped conditionally (only when editor-prefix vars are present):
  *   - GIT_ASKPASS: editors inject their own askpass shim, which arrives via the
@@ -62,6 +60,7 @@ export function sanitizeChildEnv(parentEnv: NodeJS.ProcessEnv): NodeJS.ProcessEn
     if (EDITOR_PREFIXES.some((p) => key.startsWith(p))) continue;
     if (key === 'TERM_PROGRAM' || key === 'TERM_PROGRAM_VERSION') continue;
     if (key === 'CONDUIT_SESSION_TOKEN') continue;
+    if (key === 'CONDUIT_MCP_ENDPOINT') continue;
     if (key === 'GIT_ASKPASS' && hasEditorVars) continue;
     result[key] = value;
   }

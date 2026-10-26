@@ -716,7 +716,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       return {
         ...spec,
         args: [...spec.args, ...wiring.args],
-        env: { ...spec.env, CONDUIT_SESSION_TOKEN: token },
+        env: {
+          ...spec.env,
+          CONDUIT_SESSION_TOKEN: token,
+          CONDUIT_MCP_ENDPOINT: deps.endpointPath,
+        },
       };
     },
 
