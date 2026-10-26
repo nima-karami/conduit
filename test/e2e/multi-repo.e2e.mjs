@@ -22,6 +22,13 @@ import { assert, openChangesTab, openHistory, openSession, runScenario } from '.
 
 const PER_REPO_TITLE = 'Works on one repo. Right-click a repo header, or switch to Active repo.';
 
+// Matched on the name span exactly: a row-level `hasText` substring also hit the other repo's row
+// (strict-mode violation, run 40382206600), whose secondary text named this repo.
+const pickerRow = (menu, name) =>
+  menu.locator('.repo-picker-menu__row', {
+    has: menu.page().locator('.repo-picker-menu__name', { hasText: new RegExp(`^${name}$`) }),
+  });
+
 function makeRepo(dir, file, committed, working, subject) {
   mkdirSync(dir, { recursive: true });
   execFileSync('git', ['init', '-q'], { cwd: dir });
@@ -242,7 +249,7 @@ runScenario('multi-repo', async ({ page, log }) => {
   const expectActiveRepo = async (name, file, otherFile, subject, otherSubject) => {
     await picker.click();
     await page.locator('.repo-picker-menu').waitFor({ state: 'visible', timeout: 10000 });
-    await page.locator('.repo-picker-menu__row', { hasText: name }).first().click();
+    await pickerRow(page.locator('.repo-picker-menu'), name).click();
 
     // 1) Host state pins + re-scopes the active repo.
     await page.waitForFunction(
@@ -383,7 +390,7 @@ runScenario('multi-repo', async ({ page, log }) => {
       JSON.stringify(rows) === JSON.stringify(['repo-a', 'repo-b']),
       `History repo menu lists repo-a then repo-b: ${JSON.stringify(rows)}`,
     );
-    await historyMenu.locator('.repo-picker-menu__row', { hasText: name }).click();
+    await pickerRow(historyMenu, name).click();
     await page.waitForFunction(
       (want) =>
         Array.from(
