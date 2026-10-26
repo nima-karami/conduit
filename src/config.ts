@@ -1,5 +1,4 @@
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { adapterFor } from './conduit-mcp/adapters';
 import { parseBriefField } from './role-brief';
@@ -69,11 +68,6 @@ export function loadAgentsConfig(
     briefs.set(def.id, source);
   }
   return { defs, briefs };
-}
-
-/** Temporary delegate so electron/main.ts typechecks until S4 rewires it to loadAgentsConfig. */
-export function loadAgents(file: string): AgentDefinition[] {
-  return loadAgentsConfig(file, { homeDir: os.homedir(), e2e: false, warn: () => {} }).defs;
 }
 
 /** Read the persisted sessions blob, or undefined if none exists. */

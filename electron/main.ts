@@ -32,7 +32,7 @@ import { fingerprint } from '../src/board-watch';
 import { createCloseGuard, createQuitGrant, GRANT_TTL_MS, openWindowIds } from '../src/close-guard';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
 import { endpointPath } from '../src/conduit-mcp/endpoint-path';
-import { loadAgents, readBlob, readFileState } from '../src/config';
+import { loadAgentsConfig, readBlob, readFileState } from '../src/config';
 import type { TruncatedBy } from '../src/content-search';
 import { searchContentFs } from '../src/content-search-fs';
 import { decideCrashRecovery } from '../src/crash-recovery';
@@ -215,7 +215,7 @@ import {
 import { TimerScheduler } from '../src/timer-scheduler';
 import { loadTsconfigChain } from '../src/tsconfig-discovery';
 import { type TsconfigDTO, toTsconfigDTO } from '../src/tsconfig-map';
-import type { Session, StartRefusal } from '../src/types';
+import type { BriefError, BriefRequest, Session, StartRefusal } from '../src/types';
 import { createGuestOpenGate, hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
   assignOwner,
@@ -288,6 +288,7 @@ import { defaultTreeKillDeps } from './process-tree';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
 import { createRepoTrackerHost } from './repo-tracker-host';
+import { createRoleBriefHost } from './role-brief-host';
 import { SessionFolderRuntime } from './session-folder-runtime';
 import { installSkill, listSkills } from './skills-service';
 import { checkForUpdate, initUpdater, quitAndInstall } from './updater';
@@ -1278,9 +1279,16 @@ app.whenReady().then(() => {
   // Shells stay first in the registry so `registry.list()[0]` (OS-open, openRepo's fallback)
   // is still a shell, never an agent.
   const registry = new AgentRegistry([]);
+  // The logger is built later in this closure, so load-time warnings are replayed once it exists.
+  const agentsWarnings: { message: string; data?: Record<string, unknown> }[] = [];
+  const agentsConfig = loadAgentsConfig(agentsFile(), {
+    homeDir: os.homedir(),
+    e2e: process.env.CONDUIT_E2E === '1',
+    warn: (message, data) => agentsWarnings.push({ message, data }),
+  });
   const launcherHost = new LauncherHost({
     registry,
-    config: loadAgents(agentsFile()),
+    config: agentsConfig.defs,
     detectShells,
     detectClis: () => detectAgentClis(hostCliScanEnv()),
     readFile: () => {
@@ -1811,6 +1819,7 @@ app.whenReady().then(() => {
   // updated live on a settings change. `off` (via logLevel) or logging=false silences it.
   const log = new Logger(settings.logging ? settings.logLevel : 'off');
   hostLog = log;
+  for (const w of agentsWarnings) log.warn('agents', w.message, w.data);
   log.info('app', 'ready', { version: aboutInfo.version, e2e: process.env.CONDUIT_E2E === '1' });
   // The only record of a GPU-process restart, which blanks WebGL terminals (webview/terminal-gpu.ts)
   // and is the leading suspect for the unexplained green flash.
@@ -1907,6 +1916,27 @@ app.whenReady().then(() => {
   // re-persisted (§4). Every restored session is `stale` with no PTY, so anything already due
   // lands in `waiting` — nothing is written and nothing is spawned (§2 "Lifecycle").
   timers.load(parseTimedMessagesFile(readBlob(timedMessagesFile())).schedules);
+
+  const roleBriefs = createRoleBriefHost({
+    userData: userData(),
+    agentBriefs: agentsConfig.briefs,
+    mgr,
+    platform: hostPlatform,
+    e2e: process.env.CONDUIT_E2E === '1',
+    log,
+  });
+  // Before any window or second-instance handler can create a session, and not gated on restore:
+  // a restore-off run keeps sessions.json, so its briefs must survive (plan Decisions Needed).
+  // see docs/specs/2026-10-26-conduit-role-brief.md §2.4
+  {
+    const onDisk = parseSessions(readBlob(sessionsFile()));
+    roleBriefs.sweep(
+      new Set([
+        ...mgr.list().map((s) => s.id),
+        ...(onDisk.kind === 'ok' ? onDisk.sessions.map((s) => s.id) : []),
+      ]),
+    );
+  }
 
   // Scrollback files are only deleted on session dispose; a session that was never restored
   // would leak its scrollback-<id>.json forever. Sweep any that belong to no live/restored
@@ -2171,14 +2201,32 @@ app.whenReady().then(() => {
     ownerWindowId: number,
     cardId?: string,
     extras?: { roots: string[]; missingRoots: string[]; projectId?: string },
-  ): string | undefined {
+    brief: { request: BriefRequest | undefined; dialog: boolean } = {
+      request: undefined,
+      dialog: false,
+    },
+  ): { sessionId: string } | { error: BriefError } | undefined {
     if (!p) return undefined;
     const agent = registry.get(agentId) ?? registry.list()[0];
     if (!agent) {
       dialog.showErrorBox('Conduit', 'No terminals available.');
       return undefined;
     }
-    const id = mgr.create(agent.id, p, { cardId, ...extras }).id; // emits change -> postState
+    const c = roleBriefs.beginCreate({ def: agent, request: brief.request, dialog: brief.dialog });
+    if (!c.ok) return { error: c.error };
+    let id: string;
+    try {
+      // emits change -> postState
+      id = mgr.create(agent.id, p, {
+        cardId,
+        ...extras,
+        id: c.id,
+        ...(c.brief ? { brief: c.brief } : {}),
+      }).id;
+    } catch (err) {
+      c.rollback();
+      throw err;
+    }
     launcherHost.bump(agent.id);
     const now = Date.now();
     const missing = new Set(extras?.missingRoots ?? []);
@@ -2200,8 +2248,10 @@ app.whenReady().then(() => {
     assignOwner(sessionOwner, id, ownerWindowId);
     postState();
     folders.created(id);
-    return id;
+    return { sessionId: id };
   }
+  const sessionIdOf = (r: ReturnType<typeof openRepo>): string | undefined =>
+    r && 'sessionId' in r ? r.sessionId : undefined;
 
   // Read-grant store (K2): the set of exact files the host has served via readFile this
   // session. A write to one of these is allowed even when it falls outside every write
@@ -2404,12 +2454,19 @@ app.whenReady().then(() => {
     const initial = await sessionOps.resolveInitialRoots(home, m.roots);
     const projectId =
       typeof m.projectId === 'string' && projectStore.has(m.projectId) ? m.projectId : undefined;
-    const sessionId = openRepo(home, m.agentId, ownerWindowId, m.cardId, {
-      roots: initial.roots,
-      missingRoots: initial.missing,
-      projectId,
-    });
-    answer({ sessionId, droppedRoots: initial.dropped });
+    const opened = openRepo(
+      home,
+      m.agentId,
+      ownerWindowId,
+      m.cardId,
+      { roots: initial.roots, missingRoots: initial.missing, projectId },
+      { request: m.brief, dialog: true },
+    );
+    if (opened && 'error' in opened) {
+      answer({ droppedRoots: [], error: opened.error });
+      return;
+    }
+    answer({ sessionId: opened?.sessionId, droppedRoots: initial.dropped });
   }
 
   // The renderer keys read-only off `EACCES`/`EPERM` in this text, so the errno has to survive.
@@ -2603,6 +2660,7 @@ app.whenReady().then(() => {
     pty.dispose(id);
     // Before mgr.remove: its unread messages are marked undelivered under its handle.
     void mcpHost.onSessionDeleted(id);
+    void roleBriefs.onSessionDeleted(id);
     mgr.remove(id);
     scopes.ended(id);
     restartSeq.delete(id);
@@ -2871,6 +2929,41 @@ app.whenReady().then(() => {
             type: 'folder:picked',
             requestId: m.requestId,
             path: await folderPicker.pick(senderWin, 'Add a folder'),
+          });
+          break;
+        case 'file:pick':
+          if (typeof m.requestId !== 'number') {
+            log.warn('brief', 'file:pick without a requestId');
+            break;
+          }
+          replyHere({
+            type: 'file:picked',
+            requestId: m.requestId,
+            path: await folderPicker.pickFile(senderWin, m.title),
+          });
+          break;
+        case 'brief:probe': {
+          if (typeof m.requestId !== 'number') {
+            log.warn('brief', 'brief:probe without a requestId');
+            break;
+          }
+          const r = await roleBriefs.probe(m.path);
+          replyHere({
+            type: 'brief:probed',
+            requestId: m.requestId,
+            ...(r.ok ? { ok: true, bytes: r.bytes } : { ok: false, error: r.error }),
+          });
+          break;
+        }
+        case 'brief:agentPreview':
+          if (typeof m.requestId !== 'number') {
+            log.warn('brief', 'brief:agentPreview without a requestId');
+            break;
+          }
+          replyHere({
+            type: 'brief:agentPreviewed',
+            requestId: m.requestId,
+            ...(await roleBriefs.agentPreview(registry.get(m.agentId))),
           });
           break;
         case 'folder:probe':
@@ -3593,7 +3686,10 @@ app.whenReady().then(() => {
           break;
         case 'duplicate': {
           log.info('session', 'duplicate', { sessionId: m.id });
-          const dup = mgr.duplicate(m.id); // emits change -> postState
+          const d = roleBriefs.beginDuplicate(m.id);
+          // emits change -> postState
+          const dup = mgr.duplicate(m.id, { id: d.id, ...(d.brief ? { brief: d.brief } : {}) });
+          if (!dup) d.rollback();
           if (dup) {
             // Owner = the source session's owner (same window), falling back to the sender.
             assignOwner(sessionOwner, dup.id, sessionOwner.get(m.id) ?? senderId);
@@ -4151,6 +4247,11 @@ app.whenReady().then(() => {
             // Messaging wiring goes on last: per-launch args + the session token (spec §3.1).
             const launchDef = m.agentId ? registry.get(m.agentId) : undefined;
             if (launchDef) spec = mcpHost.prepareLaunch(m.sessionId, launchDef, spec);
+            // brief --add-dir is not a session root (docs/specs/2026-10-26-conduit-role-brief.md §3.2)
+            const scopeArgs = spec.args;
+            // Synchronous through pty.start: nothing may await after the isAlive re-check above.
+            const brief = roleBriefs.prepareSpawn(m.sessionId, launchDef, spec);
+            spec = brief.spec;
             log.info('pty', 'spawn', {
               sessionId: m.sessionId,
               agentId: m.agentId,
@@ -4159,7 +4260,9 @@ app.whenReady().then(() => {
             });
             const size = preSpawnSizes.get(m.sessionId) ?? { cols: m.cols, rows: m.rows };
             preSpawnSizes.delete(m.sessionId);
+            for (const b of brief.banners) scrollbacks.show(m.sessionId, b, size);
             pty.start(m.sessionId, size.cols, size.rows, spec);
+            brief.commit(pty.isAlive(m.sessionId));
             mcpHost.onSpawn(m.sessionId, size.cols, size.rows);
             startRefusals.delete(m.sessionId);
             // Claude's visible scope is read off the FINAL args, so a user's own --add-dir counts
@@ -4167,7 +4270,7 @@ app.whenReady().then(() => {
             if (plan.addDir && pty.isAlive(m.sessionId)) {
               scopes.captured(
                 m.sessionId,
-                scopeFromSpawnArgs(spec.cwd, spec.args, path.resolve, s),
+                scopeFromSpawnArgs(spec.cwd, scopeArgs, path.resolve, s),
               );
             }
             // Opens the spawn grace: shell banners, the relaunch marker's follow-on repaint
@@ -4989,7 +5092,8 @@ app.whenReady().then(() => {
       openDocs: [],
       activeId: null,
     });
-    const sessionId = existing ?? openRepo(root, registry.list()[0]?.id ?? '', ownerWindowId);
+    const sessionId =
+      existing ?? sessionIdOf(openRepo(root, registry.list()[0]?.id ?? '', ownerWindowId));
     if (sessionId) sendOpenFileInEditor(filePath, sessionId);
   };
 

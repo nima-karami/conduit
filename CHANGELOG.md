@@ -7,6 +7,10 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **Give a session its role when you create it.** New session has a **Role brief** section
+  (from the agent's `agents.json` `brief`, typed text, or a file). Claude Code, Codex and Cursor
+  sessions start with one turn asking them to read it, and only on the first launch. Codex asks
+  once to allow reading the file.
 - **Cursor sessions can join agent messaging.** Use **Connect Cursor** under Settings → Agent
   messaging to add Conduit to `~/.cursor/mcp.json`, then launch a fresh Cursor session. Connect
   preserves other servers and backs up the original config; **Disconnect** removes only Conduit.

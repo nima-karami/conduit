@@ -14,6 +14,7 @@
 //   FAKE-MCP INBOX {"seq":n,"result":…}             after a `[conduit] …` line, its read_inbox
 //   FAKE-MCP RESULT {"seq":n,"tool":"…","result":…} for `call <tool> <json>`
 //   FAKE-MCP PROMPT-ENTER {"seq":n}                 Enter while the permission prompt is up
+//   FAKE-MCP ARGV {"seq":n,"argv":[…]}              once at startup: the launch args, so a scenario sees what the host appended
 //
 // Screen: the prompt `fake❯ ` sits on the cursor row and typed keys are echoed after it, so a
 // notice's echo is visible there. `permit` draws `Allow tool?` / `❯ 1. Yes` / `2. No` at the
@@ -47,6 +48,8 @@ const record = (kind, payload) => {
   write(`\r\nFAKE-MCP ${kind} ${JSON.stringify(body)} <<END>>\r\n`);
 };
 const prompt = () => write(`\r\n${PROMPT}`);
+
+record('ARGV', { argv: process.argv.slice(2) });
 
 // ── MCP client over the shim ────────────────────────────────────────────────
 
@@ -152,6 +155,10 @@ async function submit() {
   const got = line;
   line = '';
   record('INPUT', { line: got });
+  if (got === 'quit') {
+    server?.kill();
+    process.exit(0);
+  }
   if (got.startsWith('[conduit]')) {
     record('INBOX', { result: await callTool('read_inbox', {}) });
     prompt();
@@ -238,5 +245,5 @@ process.stdin.on('data', (chunk) => {
 });
 
 await connect();
-// Never exits on its own: only a kill (restart / dispose / quit) ends it.
+// Exits only on a typed `quit` or a kill (restart / dispose / quit).
 setInterval(() => {}, 1 << 30);
