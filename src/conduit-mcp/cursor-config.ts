@@ -21,7 +21,13 @@ export interface CursorConnectResult {
   actionFailed?: boolean;
 }
 
-export class CursorConfigShapeError extends Error {}
+class CursorConfigShapeError extends Error {}
+
+// Cursor's own ${env:VAR} syntax, resolved from the agent's env (spec 2026-10-26-conduit-mcp-cursor §2).
+// biome-ignore lint/suspicious/noTemplateCurlyInString: a literal Cursor placeholder, not a template
+const TOKEN_PLACEHOLDER = '${env:CONDUIT_SESSION_TOKEN}';
+// biome-ignore lint/suspicious/noTemplateCurlyInString: a literal Cursor placeholder, not a template
+const ENDPOINT_PLACEHOLDER = '${env:CONDUIT_MCP_ENDPOINT}';
 
 export function cursorEntry(execPath: string, shimPath: string): CursorEntry {
   return {
@@ -29,8 +35,8 @@ export function cursorEntry(execPath: string, shimPath: string): CursorEntry {
     args: [shimPath],
     env: {
       ELECTRON_RUN_AS_NODE: '1',
-      CONDUIT_SESSION_TOKEN: '${env:CONDUIT_SESSION_TOKEN}',
-      CONDUIT_MCP_ENDPOINT: '${env:CONDUIT_MCP_ENDPOINT}',
+      CONDUIT_SESSION_TOKEN: TOKEN_PLACEHOLDER,
+      CONDUIT_MCP_ENDPOINT: ENDPOINT_PLACEHOLDER,
     },
   };
 }
@@ -56,8 +62,8 @@ export function cursorConfigState(config: CursorConfig, expected: CursorEntry): 
 export function wiresLaunch(entry: unknown): boolean {
   if (!isRecord(entry) || !isRecord(entry.env)) return false;
   return (
-    entry.env.CONDUIT_SESSION_TOKEN === '${env:CONDUIT_SESSION_TOKEN}' &&
-    entry.env.CONDUIT_MCP_ENDPOINT === '${env:CONDUIT_MCP_ENDPOINT}'
+    entry.env.CONDUIT_SESSION_TOKEN === TOKEN_PLACEHOLDER &&
+    entry.env.CONDUIT_MCP_ENDPOINT === ENDPOINT_PLACEHOLDER
   );
 }
 

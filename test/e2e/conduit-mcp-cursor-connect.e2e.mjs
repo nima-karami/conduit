@@ -22,7 +22,7 @@ await runScenario(
       });
       const status = cursor.locator('[role="status"]');
       await status.getByText('Not connected', { exact: true }).waitFor({ timeout: 10_000 });
-      const runtimeHome = await app.evaluate(() => require('node:os').homedir());
+      const runtimeHome = await app.evaluate(() => process.getBuiltinModule('node:os').homedir());
       assert(
         normalizePath(runtimeHome) === normalizePath(homeDir),
         `Electron homedir ${runtimeHome} should match injected home ${homeDir}`,
