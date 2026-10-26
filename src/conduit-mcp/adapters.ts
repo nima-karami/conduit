@@ -15,6 +15,10 @@ export interface ScreenPatterns {
   /** How the CLI draws its input placeholder and suggested prompt; absent ⇒ never dropped. */
   placeholder?: 'dim';
 }
+// Brief support: docs/specs/2026-10-26-conduit-role-brief.md §3.2
+export interface BriefSupport {
+  readAccess: 'add-dir' | 'none';
+}
 export type McpWiringKind = 'mcp-config-flag' | 'codex-c-flags' | 'cursor-global';
 export interface McpAdapter {
   id: McpAdapterId;
@@ -26,6 +30,7 @@ export interface McpAdapter {
   /** null ⇒ pull-only */
   screen: ScreenPatterns | null;
   e2eOnly: boolean;
+  brief: BriefSupport | null;
 }
 
 // Patterns come from the captured screens in test/unit/fixtures/conduit-mcp/screens/
@@ -44,6 +49,7 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
       placeholder: 'dim',
     },
     e2eOnly: false,
+    brief: { readAccess: 'add-dir' },
   },
   {
     // Idle row measured in Conduit (fixture codex-idle). An approval replaces the composer, so it
@@ -58,6 +64,7 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
       placeholder: 'dim',
     },
     e2eOnly: false,
+    brief: { readAccess: 'none' },
   },
   {
     id: 'cursor',
@@ -78,6 +85,7 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
       ],
     },
     e2eOnly: false,
+    brief: { readAccess: 'none' },
   },
   {
     id: 'fake',
@@ -86,6 +94,7 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
     wiring: 'mcp-config-flag',
     screen: { blocking: [/Esc to cancel/], emptyInput: [/^fake❯\s*$/] },
     e2eOnly: true,
+    brief: { readAccess: 'none' },
   },
 ];
 

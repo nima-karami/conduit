@@ -101,3 +101,59 @@ describe('createFolderPicker', () => {
     expect(showOpenDialog).not.toHaveBeenCalled();
   });
 });
+
+describe('createFolderPicker.pickFile', () => {
+  it('a queued hook entry answers before the dialog', async () => {
+    const { picker, hook, showOpenDialog } = setup(true, picked('/native'));
+    hook()?.queue(['/f.md', null]);
+    expect(await picker.pickFile(winA, 'Choose')).toBe('/f.md');
+    expect(await picker.pickFile(winA, 'Choose')).toBeNull();
+    expect(showOpenDialog).not.toHaveBeenCalled();
+  });
+
+  it('opens a file dialog with the title', async () => {
+    const { picker, showOpenDialog } = setup(false, picked('/f.md'));
+    expect(await picker.pickFile(winA, 'Choose role brief file')).toBe('/f.md');
+    expect(showOpenDialog).toHaveBeenCalledWith(winA, {
+      properties: ['openFile'],
+      title: 'Choose role brief file',
+    });
+  });
+
+  it('cancelled → null', async () => {
+    const { picker } = setup(false, async () => ({ canceled: true, filePaths: [] }));
+    expect(await picker.pickFile(winA, 't')).toBeNull();
+  });
+
+  it('a second concurrent pickFile for the same window → null, one dialog', async () => {
+    let resolve: (v: { canceled: boolean; filePaths: string[] }) => void = () => {};
+    const { picker, showOpenDialog } = setup(
+      false,
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    );
+    const first = picker.pickFile(winA, 't');
+    expect(await picker.pickFile(winA, 't')).toBeNull();
+    resolve({ canceled: false, filePaths: ['/x'] });
+    expect(await first).toBe('/x');
+    expect(showOpenDialog).toHaveBeenCalledTimes(1);
+  });
+
+  it('pick and pickFile share the per-window guard', async () => {
+    let resolve: (v: { canceled: boolean; filePaths: string[] }) => void = () => {};
+    const { picker, showOpenDialog } = setup(
+      false,
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    );
+    const first = picker.pick(winA, 't');
+    expect(await picker.pickFile(winA, 't')).toBeNull();
+    resolve({ canceled: false, filePaths: ['/x'] });
+    await first;
+    expect(showOpenDialog).toHaveBeenCalledTimes(1);
+  });
+});

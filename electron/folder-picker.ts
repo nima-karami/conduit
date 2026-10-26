@@ -15,6 +15,8 @@ export interface FolderPicker {
   /** A queued hook entry answers first (e2e); else the native dialog, parented to win.
    *  A second pick while one is open for the same window resolves null without a dialog. */
   pick(win: BrowserWindow | null, title: string, defaultPath?: string): Promise<string | null>;
+  /** Same queue and per-window guard as `pick`, for one file (role brief spec §3.4). */
+  pickFile(win: BrowserWindow | null, title: string): Promise<string | null>;
 }
 
 export function createFolderPicker(deps: FolderPickerDeps): FolderPicker {
@@ -22,21 +24,27 @@ export function createFolderPicker(deps: FolderPickerDeps): FolderPicker {
   // Playwright can't drive a native dialog, so e2e scenarios answer picks through this queue.
   if (deps.e2e) deps.installHook({ queue: (paths) => queued.push(...paths) });
   const open = new Set<BrowserWindow | null>();
+  async function openDialog(
+    win: BrowserWindow | null,
+    opts: Electron.OpenDialogOptions,
+  ): Promise<string | null> {
+    if (queued.length > 0) return queued.shift() ?? null;
+    if (open.has(win)) return null;
+    open.add(win);
+    try {
+      const r = await deps.showOpenDialog(win, opts);
+      return r.canceled ? null : (r.filePaths[0] ?? null);
+    } finally {
+      open.delete(win);
+    }
+  }
   return {
-    async pick(win, title, defaultPath) {
-      if (queued.length > 0) return queued.shift() ?? null;
-      if (open.has(win)) return null;
-      open.add(win);
-      try {
-        const r = await deps.showOpenDialog(win, {
-          properties: ['openDirectory'],
-          title,
-          ...(defaultPath !== undefined ? { defaultPath } : {}),
-        });
-        return r.canceled ? null : (r.filePaths[0] ?? null);
-      } finally {
-        open.delete(win);
-      }
-    },
+    pick: (win, title, defaultPath) =>
+      openDialog(win, {
+        properties: ['openDirectory'],
+        title,
+        ...(defaultPath !== undefined ? { defaultPath } : {}),
+      }),
+    pickFile: (win, title) => openDialog(win, { properties: ['openFile'], title }),
   };
 }

@@ -5,7 +5,7 @@ import type { RepoInfo } from './repo-scan';
 import { iconKindFromText } from './session-icon';
 import { sessionNameFromPath } from './session-name';
 import { resolveTitleSync } from './session-title';
-import type { GitInfo, Session, SessionStatus } from './types';
+import type { BriefState, GitInfo, Session, SessionStatus } from './types';
 
 /** Shallow value-equality for GitInfo so setRepoGit only emits on a real change. */
 function sameGit(a: GitInfo | undefined, b: GitInfo | undefined): boolean {
@@ -42,6 +42,9 @@ export interface SessionCreateOpts {
   roots?: string[];
   missingRoots?: string[];
   projectId?: string;
+  /** Pre-minted via {@link SessionManager.mintId}; the role brief's canonical file is keyed by it. */
+  id?: string;
+  brief?: BriefState;
 }
 
 function setMissing(s: Session, keys: ReadonlySet<string>) {
@@ -78,11 +81,19 @@ export class SessionManager {
     });
   }
 
+  /** An id no live session holds. */
+  mintId(): string {
+    let id = this.newId();
+    while (this.sessions.has(id)) id = this.newId();
+    return id;
+  }
+
   create(agentId: string, home: string, opts: SessionCreateOpts = {}): Session {
     const { name, cardId, projectId } = opts;
     const def = this.registry.get(agentId);
     if (!def) throw new Error(`Unknown agent: ${agentId}`);
-    const id = this.newId();
+    const id = opts.id ?? this.newId();
+    if (this.sessions.has(id)) throw new Error(`Session id in use: ${id}`);
     const ts = this.now();
     const session: Session = {
       id,
@@ -97,6 +108,7 @@ export class SessionManager {
       // N2: stamp the originating board card so the link survives (persisted in sessions.json).
       ...(cardId ? { cardId } : {}),
       ...(projectId ? { projectId } : {}),
+      ...(opts.brief ? { brief: opts.brief } : {}),
     };
     setMissing(session, new Set((opts.missingRoots ?? []).map(folderKey)));
     this.sessions.set(id, session);
@@ -134,7 +146,7 @@ export class SessionManager {
   }
 
   /** Clone an existing session (same agent + folder), as a new running session. */
-  duplicate(id: string): Session | undefined {
+  duplicate(id: string, opts: { id?: string; brief?: BriefState } = {}): Session | undefined {
     const src = this.sessions.get(id);
     if (!src) return undefined;
     return this.create(src.agentId, src.home, {
@@ -142,7 +154,20 @@ export class SessionManager {
       roots: src.roots,
       missingRoots: src.missingRoots,
       projectId: src.projectId,
+      ...(opts.id !== undefined ? { id: opts.id } : {}),
+      ...(opts.brief ? { brief: opts.brief } : {}),
     });
+  }
+
+  /** undefined deletes the key. */
+  setBrief(id: string, brief: BriefState | undefined): boolean {
+    const s = this.sessions.get(id);
+    if (!s) return false;
+    if (s.brief === brief) return true;
+    if (brief === undefined) delete s.brief;
+    else s.brief = brief;
+    this.emit();
+    return true;
   }
 
   // The folder mutations below take already-validated input (src/session-ops.ts validates).

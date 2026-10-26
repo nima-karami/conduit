@@ -159,6 +159,20 @@ describe('persistence', () => {
     expect(r.sessions.map((x) => x.id)).toEqual(['a']);
   });
 
+  it('an entry whose id is missing, empty or not a string is dropped and counted', () => {
+    const r = parseSessions(
+      v1([
+        { id: 'a', name: 'A', agentId: 'c', home: '/a', createdAt: 1 },
+        { name: 'B', agentId: 'c', home: '/b', createdAt: 1 },
+        { id: '', name: 'C', agentId: 'c', home: '/c', createdAt: 1 },
+        { id: 7, name: 'D', agentId: 'c', home: '/d', createdAt: 1 },
+      ]),
+    );
+    if (r.kind !== 'ok') throw new Error(r.kind);
+    expect(r.dropped).toBe(3);
+    expect(r.sessions.map((x) => x.id)).toEqual(['a']);
+  });
+
   it('roots: non-array → [], deduped by key, home key dropped', () => {
     const r = parseSessions(
       v1([
@@ -348,5 +362,18 @@ describe('conduit MCP session fields', () => {
     const [back] = sessionsOf(blob);
     expect(back?.mcpHandle).toBe('claude-3');
     expect(back?.mcpNoticesPaused).toBe(true);
+  });
+});
+
+describe('persistence role brief', () => {
+  it('round-trips a valid brief state', () => {
+    for (const brief of ['pending', 'sent'] as const) {
+      expect(sessionsOf(serializeSessions([{ ...s, brief }]))[0].brief).toBe(brief);
+    }
+  });
+
+  it('drops an unknown brief value', () => {
+    const [r] = sessionsOf(v1([{ ...s, brief: 'bogus' }]));
+    expect('brief' in r).toBe(false);
   });
 });

@@ -84,9 +84,15 @@ export function parseSessions(blob: string | undefined): SessionsParse {
       dropped++;
       continue;
     }
+    // The id keys every per-session file on disk, so an entry without one is unusable.
+    if (!nonEmpty(rest.id)) {
+      dropped++;
+      continue;
+    }
     const s = rest as Omit<Session, 'home' | 'roots' | 'projectId'>;
     // Back-compat: blobs written before lastActiveAt/createdAt existed.
     const createdAt = s.createdAt ?? Date.now();
+    if (s.brief !== 'pending' && s.brief !== 'sent') delete s.brief;
     sessions.push({
       ...s,
       home,

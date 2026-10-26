@@ -1,5 +1,8 @@
 import * as fs from 'node:fs';
-import type { AgentDefinition } from './types';
+import * as path from 'node:path';
+import { adapterFor } from './conduit-mcp/adapters';
+import { parseBriefField } from './role-brief';
+import type { AgentBriefSource, AgentDefinition } from './types';
 
 /**
  * Built-in default *agent* set. Empty by design: the New menu offers the
@@ -9,18 +12,62 @@ import type { AgentDefinition } from './types';
  */
 const DEFAULT_AGENTS: AgentDefinition[] = [];
 
+export interface AgentsConfig {
+  defs: AgentDefinition[];
+  briefs: Map<string, AgentBriefSource>;
+}
+
 /**
  * Load agent definitions from a JSON file (an array of {@link AgentDefinition}),
  * falling back to {@link DEFAULT_AGENTS} when the file is missing or invalid.
+ * `brief` is split off into a host-side map so its text never rides `state.agents`
+ * (docs/plans/2026-10-26-conduit-role-brief.plan.md, Spec staleness §3.4).
  */
-export function loadAgents(file: string): AgentDefinition[] {
+export function loadAgentsConfig(
+  file: string,
+  opts: {
+    homeDir: string;
+    e2e: boolean;
+    warn: (message: string, data?: Record<string, unknown>) => void;
+  },
+): AgentsConfig {
+  const empty = (): AgentsConfig => ({ defs: [...DEFAULT_AGENTS], briefs: new Map() });
+  let raw: unknown;
   try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (Array.isArray(raw) && raw.length > 0) return raw as AgentDefinition[];
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch {
-    /* missing or malformed — use defaults */
+    // Missing or malformed agents.json is the normal first-run state.
+    return empty();
   }
-  return DEFAULT_AGENTS;
+  if (!Array.isArray(raw) || raw.length === 0) return empty();
+
+  const defs: AgentDefinition[] = [];
+  const briefs = new Map<string, AgentBriefSource>();
+  for (const entry of raw as unknown[]) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      defs.push(entry as AgentDefinition);
+      continue;
+    }
+    const { brief, ...rest } = entry as Record<string, unknown>;
+    const def = rest as unknown as AgentDefinition;
+    defs.push(def);
+    const source = parseBriefField(brief, {
+      agentsDir: path.dirname(file),
+      homeDir: opts.homeDir,
+      resolve: path.resolve,
+    });
+    if (source === undefined) continue;
+    if (source === 'invalid') {
+      opts.warn('agent brief ignored: invalid shape', { id: def.id });
+      continue;
+    }
+    if (!adapterFor(def, { e2e: opts.e2e })?.brief) {
+      opts.warn('agent brief ignored: launcher takes no brief', { id: def.id });
+      continue;
+    }
+    briefs.set(def.id, source);
+  }
+  return { defs, briefs };
 }
 
 /** Read the persisted sessions blob, or undefined if none exists. */

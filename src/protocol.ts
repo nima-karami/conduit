@@ -29,7 +29,7 @@ import type { ReviewNote, ReviewNotePatch } from './review-notes';
 import type { AppSettings } from './settings';
 import type { FireFailure, TimedMessage, TimedMessageInput } from './timed-messages';
 import type { TsconfigDTO } from './tsconfig-map';
-import type { AgentDefinition, Project, Session } from './types';
+import type { AgentDefinition, BriefError, BriefRequest, Project, Session } from './types';
 
 export type { DragOutRefusal } from './outgoing-paths';
 export type { RepoInfo } from './repo-scan';
@@ -176,6 +176,8 @@ export interface LaunchPreviewResult {
   display?: string;
   error?: LaunchPreviewError;
   skippedAddDirRoots: string[];
+  /** The cmd metachar, when the launcher is batch-guarded and userData has one (role brief spec §3.2). */
+  briefBlocked?: string;
 }
 
 /** A previously-opened repository/folder, with the terminal last used in it. */
@@ -741,8 +743,19 @@ export type HostToWebview =
       requestId: number;
       sessionId?: string;
       droppedRoots: DroppedRoot[];
-      error?: 'home-missing' | 'invalid-path' | 'unknown-agent';
+      error?: 'home-missing' | 'invalid-path' | 'unknown-agent' | BriefError;
     }
+  | { type: 'brief:probed'; requestId: number; ok: boolean; bytes?: number; error?: BriefError }
+  | {
+      type: 'brief:agentPreviewed';
+      requestId: number;
+      supported: boolean;
+      has: boolean;
+      firstLine?: string;
+      path?: string;
+      error?: BriefError;
+    }
+  | { type: 'file:picked'; requestId: number; path: string | null }
   | {
       type: 'updateStatus';
       status: 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error';
@@ -881,6 +894,8 @@ export type WebviewToHost =
       roots?: string[];
       projectId?: string | null;
       requestId?: number;
+      /** Absent ⇒ { kind: 'agent' }. */
+      brief?: BriefRequest;
     }
   // New session launchers (mf-new-session spec §3.2). A rescan posts `state` only on a change.
   | { type: 'launchers:rescan' }
@@ -892,7 +907,18 @@ export type WebviewToHost =
   | { type: 'fs:copyToOsClipboard'; requestId: number; sessionId: string; paths: string[] }
   // Sent at a DownloadURL dragstart; the host's will-download admits only an armed file.
   | { type: 'fs:armDragDownload'; path: string }
-  | { type: 'launch:preview'; requestId: number; agentId: string; home: string; roots: string[] }
+  | {
+      type: 'launch:preview';
+      requestId: number;
+      agentId: string;
+      home: string;
+      roots: string[];
+      /** true ⇒ append the elided brief args. */
+      brief?: boolean;
+    }
+  | { type: 'brief:probe'; requestId: number; path: string }
+  | { type: 'brief:agentPreview'; requestId: number; agentId: string }
+  | { type: 'file:pick'; requestId: number; title: string }
   // The session's view moved to `path`: the host arms its watch, rescans repos and checks folder
   // health. No reply; change lists arrive as `repoDelta`.
   | {

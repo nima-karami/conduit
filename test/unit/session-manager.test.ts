@@ -523,3 +523,64 @@ describe('SessionManager conduit MCP fields', () => {
     expect(copy?.mcpNoticesPaused).toBeUndefined();
   });
 });
+
+describe('SessionManager role brief', () => {
+  const seq = (...ids: string[]) => {
+    let i = 0;
+    return () => ids[i++] ?? `x${i}`;
+  };
+
+  it('create takes a pre-minted id and brief state', () => {
+    const m = new SessionManager(new AgentRegistry([claude]), seqIds());
+    m.create('claude', '/w', { id: 'abc', brief: 'pending' });
+    expect(m.get('abc')?.brief).toBe('pending');
+  });
+
+  it('create without a brief leaves the key absent', () => {
+    const m = new SessionManager(new AgentRegistry([claude]), seqIds());
+    expect('brief' in m.create('claude', '/w')).toBe(false);
+  });
+
+  it('create with a taken id throws and leaves the live session alone', () => {
+    const m = new SessionManager(new AgentRegistry([claude]), seqIds());
+    m.create('claude', '/w', { id: 'abc' });
+    expect(() => m.create('claude', '/w', { id: 'abc' })).toThrow('Session id in use: abc');
+    expect(m.list()).toHaveLength(1);
+  });
+
+  it('mintId skips a live id', () => {
+    const m = new SessionManager(new AgentRegistry([claude]), seq('a', 'a', 'b'));
+    m.create('claude', '/w');
+    expect(m.mintId()).toBe('b');
+  });
+
+  it('duplicate forwards id and brief; without opts there is no brief', () => {
+    const m = new SessionManager(new AgentRegistry([claude]), seqIds());
+    const src = m.create('claude', '/w', { brief: 'sent' });
+    expect(m.duplicate(src.id, { id: 'd', brief: 'pending' })?.brief).toBe('pending');
+    expect(m.get('d')?.id).toBe('d');
+    const plain = m.duplicate(src.id);
+    expect(plain && 'brief' in plain).toBe(false);
+  });
+
+  it('setBrief emits only on a change; undefined deletes the key', () => {
+    const h = managerWithClockAndSession();
+    expect(h.m.setBrief(h.s.id, 'pending')).toBe(true);
+    expect(h.calls).toBe(1);
+    h.m.setBrief(h.s.id, 'pending');
+    expect(h.calls).toBe(1);
+    h.m.setBrief(h.s.id, 'sent');
+    expect(h.calls).toBe(2);
+    h.m.setBrief(h.s.id, undefined);
+    expect(h.calls).toBe(3);
+    expect('brief' in (h.m.get(h.s.id) ?? {})).toBe(false);
+    h.m.setBrief(h.s.id, undefined);
+    expect(h.calls).toBe(3);
+  });
+
+  it('setBrief on an unknown session is false', () => {
+    const h = managerWithClockAndSession();
+    expect(h.m.setBrief('nope', 'sent')).toBe(false);
+    expect(h.calls).toBe(0);
+  });
+});

@@ -1903,6 +1903,57 @@ body.resizing .panel__resize::after {
   color: var(--syn-attr);
 }
 
+.ns-brief__modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ns-brief__agent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ns-brief__first {
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ns-brief__path {
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.ns-brief__text {
+  resize: vertical;
+  min-height: calc(4em + 14px);
+  line-height: 1.5;
+}
+.ns-brief__file {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+.ns-brief__input {
+  flex: 1;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.ns-brief__status:empty {
+  display: none;
+}
+.ns-brief__status {
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-faint);
+}
+.ns-brief__error {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--danger);
+}
+
 .ns__error {
   padding: 0 18px 10px;
   font-size: calc(11.5px * var(--font-scale));
