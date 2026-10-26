@@ -3,6 +3,7 @@ import { BRIEF_MAX_BYTES } from '../../src/role-brief';
 import {
   type BriefAction,
   type BriefDialogState,
+  briefAnnouncement,
   briefRequestOf,
   briefStartBlock,
   initialBriefState,
@@ -74,8 +75,23 @@ describe('briefStartBlock', () => {
     run([supported(), { type: 'setMode', mode: 'text' }, { type: 'setText', text: t }]);
   const file = (...a: BriefAction[]) => run([supported(), { type: 'setMode', mode: 'file' }, ...a]);
 
-  it('never blocks an unsupported launcher', () => {
-    expect(briefStartBlock(initialBriefState(), '%')).toBeNull();
+  it('never blocks an unsupported launcher once the host has answered', () => {
+    expect(briefStartBlock(run([supported({ supported: false })]), '%')).toBeNull();
+  });
+
+  it('blocks Start with Checking… until the host has answered', () => {
+    expect(briefStartBlock(initialBriefState(), undefined)).toEqual({ reason: BRIEF_STR.checking });
+  });
+
+  it('a failed preview leaves None selected and Start open', () => {
+    const s = run([{ type: 'previewFailed' }]);
+    expect(briefStartBlock(s, undefined)).toBeNull();
+    expect(briefRequestOf(s)).toEqual({ kind: 'none' });
+    expect(briefAnnouncement(s)).toBe(BRIEF_STR.previewFailed);
+  });
+
+  it('a failed preview drops a mode the user had picked', () => {
+    expect(run([{ type: 'setMode', mode: 'text' }, { type: 'previewFailed' }]).mode).toBe('none');
   });
 
   it('never blocks None', () => {
@@ -142,7 +158,7 @@ describe('briefRequestOf', () => {
   });
 
   it('is undefined for an unsupported launcher', () => {
-    expect(briefRequestOf(initialBriefState())).toBeUndefined();
+    expect(briefRequestOf(run([supported({ supported: false })]))).toBeUndefined();
   });
 });
 

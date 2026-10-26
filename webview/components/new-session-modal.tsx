@@ -20,6 +20,7 @@ import {
   startBlock,
 } from '../new-session-state';
 import {
+  briefAnnouncement,
   briefRequestOf,
   briefStartBlock,
   initialBriefState,
@@ -65,7 +66,6 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
   const [brief, dispatchBrief] = useReducer(reduceBrief, undefined, initialBriefState);
   const briefSeq = useRef(0);
   const probeSeq = useRef(0);
-  const briefLiveId = useId();
   const [preview, setPreview] = useState<LaunchPreviewView>({ loading: false });
   const frameRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -115,7 +115,11 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
       REPLY_TIMEOUT_MS,
     ).then((reply) => {
       // Latest launcher wins; a superseded launcher's answer must not unlock this one's section.
-      if (!reply || seq !== briefSeq.current) return;
+      if (seq !== briefSeq.current) return;
+      if (!reply) {
+        dispatchBrief({ type: 'previewFailed' });
+        return;
+      }
       const { type: _type, requestId: _id, ...rest } = reply;
       dispatchBrief({ type: 'agentPreviewed', ...rest });
     });
@@ -325,7 +329,6 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
             state={brief}
             dispatch={dispatchBrief}
             onBrowse={() => void browseBrief()}
-            liveId={briefLiveId}
           />
 
           <section className="ns__section">
@@ -359,7 +362,8 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
           </div>
         </div>
         <div className="ns__live" aria-live="polite">
-          {state.announce}
+          <span>{state.announce}</span>
+          <span>{briefAnnouncement(brief)}</span>
         </div>
       </div>
     </ModalLayer>

@@ -5,7 +5,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import type { LauncherDTO } from '../../src/launchers';
 import type { NewSessionPrefill, SeedContext } from '../../src/new-session-seed';
 import type { HostToWebview, WebviewToHost } from '../../src/protocol';
-import type { AgentDefinition, Project } from '../../src/types';
+import type { AgentDefinition, BriefError, Project } from '../../src/types';
 import { BRIEF_STR } from '../../webview/role-brief-strings';
 
 const h = vi.hoisted(() => ({
@@ -234,6 +234,7 @@ describe('NewSessionModal', () => {
   it('Enter in the custom Command input does not start', async () => {
     await render({ home: '/w/a' });
     await answerProbes();
+    await answerBriefPreview();
     await answerPreview();
     await click(q('.ns-more'));
     await click(q('.ns-more__custom'));
@@ -267,6 +268,7 @@ describe('NewSessionModal', () => {
   it('Enter on the frame starts once; a second Enter while starting posts nothing', async () => {
     await render({ home: '/w/a', roots: ['/w/b'], agentId: 'cli:claude' });
     await answerProbes();
+    await answerBriefPreview();
     await answerPreview();
     const frame = q('.modal.ns');
     await key(frame, 'Enter');
@@ -291,6 +293,7 @@ describe('NewSessionModal', () => {
   it('Enter after a fast success, before the dialog unmounts, posts nothing (Re-QA F1)', async () => {
     await render({ home: '/w/a', agentId: 'cli:codex' });
     await answerProbes();
+    await answerBriefPreview();
     await answerPreview();
     const frame = q('.modal.ns');
     await key(frame, 'Enter');
@@ -309,6 +312,7 @@ describe('NewSessionModal', () => {
   it('a failed start re-arms Start', async () => {
     await render({ home: '/w/a', agentId: 'cli:codex' });
     await answerProbes();
+    await answerBriefPreview();
     await answerPreview();
     const frame = q('.modal.ns');
     await key(frame, 'Enter');
@@ -325,6 +329,7 @@ describe('NewSessionModal', () => {
   it('Enter on a pill starts; Enter on another button does not', async () => {
     await render({ home: '/w/a', agentId: 'cli:claude' });
     await answerProbes();
+    await answerBriefPreview();
     await answerPreview();
     await key(q('.ns-folders__add'), 'Enter');
     expect(postedOf('openRepo')).toHaveLength(0);
@@ -335,6 +340,7 @@ describe('NewSessionModal', () => {
   it('missing home disables Start with Home folder not found', async () => {
     await render({ home: '/w/gone', roots: ['/w/b'] });
     await answerProbes(['/w/gone']);
+    await answerBriefPreview();
     expect(startBtn().disabled).toBe(true);
     expect(q('.ns__reason')?.textContent).toBe('Home folder not found');
     expect(startBtn().getAttribute('aria-describedby')).toBe(q('.ns__reason')?.id);
@@ -344,6 +350,7 @@ describe('NewSessionModal', () => {
   it('a missing attached root shows Not found, keeps ×, hides Make home, and is still sent', async () => {
     await render({ home: '/w/a', roots: ['/w/gone'], agentId: 'cli:claude' });
     await answerProbes(['/w/gone']);
+    await answerBriefPreview();
     await answerPreview();
     const row = qa('.ns-folder')[1];
     expect(row.querySelector('.ns-folder__missing')?.textContent).toBe('Not found');
@@ -356,6 +363,7 @@ describe('NewSessionModal', () => {
   it('preview skippedAddDirRoots → Start disabled, message names the folder', async () => {
     await render({ home: '/w/a', roots: ['D:\\x&y'], agentId: 'cli:claude' });
     await answerProbes();
+    await answerBriefPreview();
     await answerPreview({ command: 'C:\\npm\\claude.cmd', skippedAddDirRoots: ['D:\\x&y'] });
     expect(startBtn().disabled).toBe(true);
     expect(q('.ns__reason')?.textContent).toBe(
@@ -370,6 +378,7 @@ describe('NewSessionModal', () => {
     const repos = [{ path: 'D:\\x&y', name: 'x&y', lastOpened: 2 }];
     await render({ home: '/w/a', agentId: 'cli:claude' }, ctx({ repos }));
     await answerProbes();
+    await answerBriefPreview();
     await answerPreview({ command: 'C:\\npm\\claude.cmd' });
     expect(startBtn().disabled).toBe(false);
     await click(q('.ns-folders__add'));
@@ -387,6 +396,7 @@ describe('NewSessionModal', () => {
   it("an unresolvable launcher shows Can't resolve and disables Start (QA F1)", async () => {
     await render({ home: '/w/a', roots: ['/w/b'], agentId: 'cli:claude' });
     await answerProbes();
+    await answerBriefPreview();
     await answerPreview({
       error: 'unresolvable',
       command: 'claude',
@@ -418,6 +428,7 @@ describe('NewSessionModal', () => {
     await click(q('button[aria-label="Remove from project"]'));
     expect(q('.ns-chip--none')?.textContent).toBe('No project');
     await answerProbes();
+    await answerBriefPreview();
     await answerPreview();
     await click(startBtn());
     expect(postedOf('openRepo')).toHaveLength(1);
@@ -433,6 +444,7 @@ describe('NewSessionModal', () => {
     await click(item);
     expect(q('.ns-chip__body')?.getAttribute('aria-label')).toBe('Project: RMB pipeline');
     await answerProbes();
+    await answerBriefPreview();
     await answerPreview();
     await click(startBtn());
     expect(last('openRepo')?.projectId).toBe('p1');
@@ -447,6 +459,7 @@ describe('NewSessionModal', () => {
     await key(input, 'Enter');
     expect(q('.ns-chip--pending .ns-chip__body')?.textContent).toBe('in Fresh one');
     await answerProbes();
+    await answerBriefPreview();
     await answerPreview();
     await click(startBtn());
     expect(postedOf('openRepo')).toHaveLength(0);
@@ -481,6 +494,7 @@ describe('NewSessionModal', () => {
     await type(input, 'Fresh');
     await key(input, 'Enter');
     await answerProbes();
+    await answerBriefPreview();
     await answerPreview();
     await click(startBtn());
     const create = last('project:create');
@@ -497,6 +511,7 @@ describe('NewSessionModal', () => {
   it("openRepo:result error keeps the dialog open with Couldn't start session: home folder not found", async () => {
     await render({ home: '/w/a', agentId: 'cli:claude' });
     await answerProbes();
+    await answerBriefPreview();
     await answerPreview();
     await click(startBtn());
     const req = last('openRepo');
@@ -515,6 +530,7 @@ describe('NewSessionModal', () => {
     await render({ home: '/w/a', roots: ['/w/b'], agentId: 'cli:claude' });
     const first = last('launch:preview');
     await answerProbes();
+    await answerBriefPreview();
     await click(q('button[aria-label="Make b home"]'));
     const second = last('launch:preview');
     expect(second?.requestId).not.toBe(first?.requestId);
@@ -539,6 +555,7 @@ describe('NewSessionModal', () => {
   it('Make home changes the preview request home', async () => {
     await render({ home: '/w/a', roots: ['/w/b', '/w/c'], agentId: 'cli:claude' });
     await answerProbes();
+    await answerBriefPreview();
     await click(q('button[aria-label="Make b home"]'));
     expect(last('launch:preview')).toMatchObject({ home: '/w/b', roots: ['/w/a', '/w/c'] });
     expect(names()).toEqual(['b', 'a', 'c']);
@@ -650,9 +667,42 @@ describe('NewSessionModal role brief', () => {
     expect(last('openRepo')?.brief).toEqual({ kind: 'agent' });
   });
 
-  it('openRepo without a supported launcher omits brief', async () => {
+  it('Start waits for brief:agentPreviewed, so an unseen agent brief is never sent', async () => {
     await render({ home: '/w/a', agentId: 'cli:claude' });
     await answerProbes();
+    await answerPreview();
+    expect(startBtn().disabled).toBe(true);
+    expect(q('.ns__reason')?.textContent).toBe(BRIEF_STR.checking);
+    await answerBriefPreview({ has: true });
+    await answerPreview();
+    expect(startBtn().disabled).toBe(false);
+  });
+
+  it('no brief reply in time shows an error, leaves only None, and starts with an explicit None', async () => {
+    vi.useFakeTimers();
+    try {
+      await render({ home: '/w/a', agentId: 'cli:claude' });
+      await answerProbes();
+      await answerPreview();
+      expect(startBtn().disabled).toBe(true);
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+      });
+      expect(briefRadios().map((r) => r.textContent)).toEqual(['None']);
+      expect(q('.ns-brief__error')?.textContent).toBe(BRIEF_STR.previewFailed);
+      expect(q('.ns__live')?.textContent).toContain(BRIEF_STR.previewFailed);
+      expect(startBtn().disabled).toBe(false);
+      await click(startBtn());
+      expect(last('openRepo')?.brief).toEqual({ kind: 'none' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('an unsupported launcher omits brief', async () => {
+    await render({ home: '/w/a', agentId: 'cli:claude' });
+    await answerProbes();
+    await answerBriefPreview({ supported: false });
     await answerPreview();
     await click(startBtn());
     expect(last('openRepo')).not.toHaveProperty('brief');
@@ -714,6 +764,68 @@ describe('NewSessionModal role brief', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe('file probe results', () => {
+    async function typePath(path: string) {
+      await type(q<HTMLInputElement>('.ns-brief input'), path);
+      await act(async () => {
+        vi.advanceTimersByTime(250);
+      });
+    }
+    async function fileMode() {
+      await render({ home: '/w/a', agentId: 'cli:claude' });
+      await answerProbes();
+      await answerBriefPreview();
+      await answerPreview();
+      await click(briefRadios()[2]);
+    }
+    const probeReply = (i: number, r: { ok: boolean; bytes?: number; error?: BriefError }) =>
+      emit({ type: 'brief:probed', requestId: postedOf('brief:probe')[i].requestId, ...r });
+
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it('AC12: a probe reply for a superseded path is ignored', async () => {
+      await fileMode();
+      await typePath('/b/one.md');
+      await typePath('/b/two.md');
+      expect(postedOf('brief:probe')).toHaveLength(2);
+      await probeReply(1, { ok: true, bytes: 2048 });
+      await probeReply(0, { ok: false, error: 'brief-invalid' });
+      expect(q('.ns-brief__status')?.textContent).toBe('2 / 64 KiB');
+      expect(q('.ns-brief__error')).toBeNull();
+      await answerPreview();
+      expect(startBtn().disabled).toBe(false);
+    });
+
+    it.each([
+      ['unreadable', 'brief-unreadable' as const],
+      ['over the cap', 'brief-too-large' as const],
+    ])(
+      'AC12: a %s probe disables Start with the reason, announced in the live region',
+      async (_n, error) => {
+        await fileMode();
+        await typePath('/b/one.md');
+        await probeReply(0, { ok: false, error });
+        await answerPreview();
+        expect(startBtn().disabled).toBe(true);
+        expect(q('.ns__reason')?.textContent).toBe(BRIEF_STR.errors[error]);
+        expect(q('.ns__live')?.textContent).toContain(BRIEF_STR.errors[error]);
+        const input = q('.ns-brief input');
+        expect(input?.getAttribute('aria-describedby')).toContain(q('.ns-brief__error')?.id ?? '?');
+      },
+    );
+
+    it('an ok probe is announced and described by the status line', async () => {
+      await fileMode();
+      await typePath('/b/one.md');
+      await probeReply(0, { ok: true, bytes: 2048 });
+      expect(q('.ns__live')?.textContent).toContain('2 / 64 KiB');
+      expect(q('.ns-brief input')?.getAttribute('aria-describedby')).toBe(
+        q('.ns-brief__status')?.id,
+      );
+    });
   });
 
   it('Browse posts file:pick and a picked path fills the input', async () => {

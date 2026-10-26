@@ -288,7 +288,7 @@ import { defaultTreeKillDeps } from './process-tree';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
 import { createRepoTrackerHost } from './repo-tracker-host';
-import { createRoleBriefHost } from './role-brief-host';
+import { briefKeepIds, createRoleBriefHost, parseBriefRequest } from './role-brief-host';
 import { SessionFolderRuntime } from './session-folder-runtime';
 import { installSkill, listSkills } from './skills-service';
 import { checkForUpdate, initUpdater, quitAndInstall } from './updater';
@@ -1927,15 +1927,10 @@ app.whenReady().then(() => {
   });
   // Before any window or second-instance handler can create a session, and not gated on restore:
   // a restore-off run keeps sessions.json, so its briefs must survive (plan Decisions Needed).
-  // see docs/specs/2026-10-26-conduit-role-brief.md §2.4
+  // see docs/specs/2026-10-26-conduit-role-brief.md §3.3
   {
     const onDisk = parseSessions(readBlob(sessionsFile()));
-    roleBriefs.sweep(
-      new Set([
-        ...mgr.list().map((s) => s.id),
-        ...(onDisk.kind === 'ok' ? onDisk.sessions.map((s) => s.id) : []),
-      ]),
-    );
+    roleBriefs.sweep(briefKeepIds(mgr.list(), onDisk.kind === 'ok' ? onDisk.sessions : []));
   }
 
   // Scrollback files are only deleted on session dispose; a session that was never restored
@@ -2451,6 +2446,13 @@ app.whenReady().then(() => {
     } catch {
       // Gone again after the stat: its key stays lexical-only, like a folder first seen missing.
     }
+    // A present but malformed brief is refused, not read as absent: absent means "the agent's
+    // brief", which the user didn't pick.
+    const brief = parseBriefRequest(m.brief);
+    if (m.brief !== undefined && brief === undefined) {
+      answer({ droppedRoots: [], error: 'brief-invalid' });
+      return;
+    }
     const initial = await sessionOps.resolveInitialRoots(home, m.roots);
     const projectId =
       typeof m.projectId === 'string' && projectStore.has(m.projectId) ? m.projectId : undefined;
@@ -2460,7 +2462,7 @@ app.whenReady().then(() => {
       ownerWindowId,
       m.cardId,
       { roots: initial.roots, missingRoots: initial.missing, projectId },
-      { request: m.brief, dialog: true },
+      { request: brief, dialog: true },
     );
     if (opened && 'error' in opened) {
       answer({ droppedRoots: [], error: opened.error });

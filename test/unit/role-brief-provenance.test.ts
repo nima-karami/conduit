@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CONDUIT_TOOLS } from '../../src/conduit-mcp/tool-schemas';
 
-// AC11: the MCP surface never carries a role brief (docs/specs/2026-10-26-conduit-role-brief.md §3.2).
+// AC11: the MCP surface never carries a role brief (docs/specs/2026-10-26-conduit-role-brief.md §3.4).
 const root = path.resolve(__dirname, '..', '..');
 const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
 
@@ -30,11 +30,21 @@ describe('role brief provenance', () => {
     expect(JSON.stringify(CONDUIT_TOOLS)).not.toContain('"brief"');
   });
 
+  it('only the host and the session manager write a brief state, and no MCP file reads one', () => {
+    const all = [...walk('src'), ...walk('electron'), ...walk('webview')];
+    const writers = all.filter((f) => read(f).includes('setBrief(')).sort();
+    expect(writers).toEqual(['electron/role-brief-host.ts', 'src/session-manager.ts']);
+    const mcp = all.filter(
+      (f) => f.startsWith('src/conduit-mcp/') || f.startsWith('electron/conduit-mcp-'),
+    );
+    expect(mcp.length).toBeGreaterThan(2);
+    for (const f of mcp) expect(read(f), f).not.toMatch(/\.brief\b/);
+  });
+
   it('electron/main.ts is the only importer of role-brief-host', () => {
     const importers = [...walk('src'), ...walk('electron'), ...walk('webview')].filter(
       (f) => /role-brief-host/.test(read(f)) && f !== 'electron/role-brief-host.ts',
     );
-    // S4 wires main.ts; until then nothing imports it.
     expect(importers.filter((f) => f !== 'electron/main.ts')).toEqual([]);
   });
 });

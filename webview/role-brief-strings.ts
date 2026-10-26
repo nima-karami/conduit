@@ -13,6 +13,7 @@ export const BRIEF_STR = {
   browse: 'Browse…',
   browseName: 'Choose role brief file',
   checking: 'Checking…',
+  previewFailed: "Couldn't check this launcher's role brief. Choose None to start without one.",
   textLabel: 'Role brief text',
   errors: {
     'brief-unreadable': "can't read the role brief file",

@@ -93,7 +93,7 @@ DIALOG brief:agentPreview / brief:probe / file:pick ─► host ─► replies (
 - **A `sent` launch whose canonical file is missing** clears `brief`, adds no read flag and logs a
   warn, with **no banner**. Nothing was due to be sent. The banner is only for `pending`.
 - **The cmd guard also applies to `sent` launches** (Claude's read flag). It then clears `brief`
-  with the same banner.
+  with **no banner**, like a missing file: the banner is only for `pending`.
 - **The renderer learns brief support** from `brief:agentPreviewed.supported`. It is a plan
   addition, already written into spec §3.4.
 
@@ -635,7 +635,7 @@ removes it.
   - AC6: write `briefs/<key>/CLAUDE.md`, and overwrite `brief.md` with `'edited'`. After
     `prepareSpawn` only `brief.md` exists, and it equals the canonical copy.
   - AC7:
-    - `beginCreate` text `'﻿hello '` → the canonical file reads `'hello '`;
+    - `beginCreate` text `'<BOM>hello '` → the canonical file reads `'hello '`;
     - a whitespace-only text → `brief: undefined`, no file;
     - an oversize file → `{ok:false, error:'brief-too-large'}`, and the `brief-store` dir is empty;
     - a file source edited after `beginCreate` → the canonical file is unchanged;

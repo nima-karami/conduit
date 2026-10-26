@@ -66,7 +66,7 @@ export interface RoleBriefHost {
   ): { spec: SpawnSpec; banners: string[]; commit(alive: boolean): void };
   onSessionDeleted(sessionId: string): Promise<void>;
   sweep(keepIds: ReadonlySet<string>): void;
-  probe(p: string): Promise<{ ok: true; bytes: number } | { ok: false; error: BriefError }>;
+  probe(p: unknown): Promise<{ ok: true; bytes: number } | { ok: false; error: BriefError }>;
   agentPreview(def: AgentDefinition | undefined): Promise<AgentPreview>;
 }
 
@@ -75,9 +75,38 @@ const FIRST_LINE_MAX = 120;
 const LOG_SCOPE = 'brief';
 
 /** Same transform as scrollbackFileName, plus dot-only keys: unlike the `scrollback-` prefix there
- *  is no literal part here, so an id of `..` would otherwise name userData itself. */
-function keyOf(id: string): string {
+ *  is no literal part here, so an id of `..` would otherwise name userData itself. Restored ids are
+ *  untrusted, so it is total: an empty id would name the brief root, a non-string would throw. */
+function keyOf(id: unknown): string | null {
+  if (typeof id !== 'string' || id === '') return null;
   return id.replace(SANITIZE, '_').replace(/^\.+$/, (dots) => '_'.repeat(dots.length));
+}
+
+/** The renderer is never load-bearing: a malformed request yields undefined (the caller refuses
+ *  it) rather than reaching `fs.readFileSync`, where a numeric path is a file descriptor. */
+export function parseBriefRequest(raw: unknown): BriefRequest | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const { kind, text, path: file } = raw as Record<string, unknown>;
+  switch (kind) {
+    case 'agent':
+    case 'none':
+      return { kind };
+    case 'text':
+      return typeof text === 'string' ? { kind, text } : undefined;
+    case 'file':
+      return typeof file === 'string' && path.isAbsolute(file) ? { kind, path: file } : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** Sessions whose brief files must survive the startup sweep: live plus whatever sessions.json
+ *  holds, because a restore-off run keeps that file (plan Decisions Needed). */
+export function briefKeepIds(
+  live: readonly { id: string }[],
+  onDisk: readonly { id: string }[],
+): Set<string> {
+  return new Set([...live, ...onDisk].map((s) => s.id).filter((id) => keyOf(id) !== null));
 }
 
 function isEnoent(err: unknown): boolean {
@@ -96,8 +125,14 @@ export function createRoleBriefHost(deps: RoleBriefHostDeps): RoleBriefHost {
   const { userData, agentBriefs, mgr, platform, e2e, log } = deps;
   const storeDir = path.join(userData, 'brief-store');
   const exposedRoot = path.join(userData, 'briefs');
-  const canonicalOf = (id: string) => path.join(storeDir, `${keyOf(id)}.md`);
-  const briefDirOf = (id: string) => path.join(exposedRoot, keyOf(id));
+  const canonicalOf = (id: string): string | null => {
+    const key = keyOf(id);
+    return key === null ? null : path.join(storeDir, `${key}.md`);
+  };
+  const briefDirOf = (id: string): string | null => {
+    const key = keyOf(id);
+    return key === null ? null : path.join(exposedRoot, key);
+  };
 
   /** Banners owed to a session whose brief was dropped before it had a launch (spec §2.2). */
   const queued = new Map<string, string[]>();
@@ -115,7 +150,10 @@ export function createRoleBriefHost(deps: RoleBriefHostDeps): RoleBriefHost {
   const supportFor = (def: AgentDefinition | undefined): BriefSupport | null =>
     def ? (adapterFor(def, { e2e })?.brief ?? null) : null;
 
-  const rmCanonical = (id: string) => fs.rmSync(canonicalOf(id), { force: true });
+  const rmCanonical = (id: string) => {
+    const file = canonicalOf(id);
+    if (file !== null) fs.rmSync(file, { force: true });
+  };
 
   /** A read failure is `brief-unreadable`; the decode rules are the pure core's. */
   function readSource(file: string): DecodedBrief | { ok: false; error: 'brief-unreadable' } {
@@ -156,8 +194,10 @@ export function createRoleBriefHost(deps: RoleBriefHostDeps): RoleBriefHost {
       const id = mgr.mintId();
       if (decoded.ok && decoded.text !== null) {
         try {
+          const file = canonicalOf(id);
+          if (file === null) throw new Error('session id has no brief key');
           fs.mkdirSync(storeDir, { recursive: true });
-          atomicWriteFileSync(canonicalOf(id), decoded.text);
+          atomicWriteFileSync(file, decoded.text);
         } catch (err) {
           log.warn(LOG_SCOPE, 'brief write failed', { id, error: String(err) });
           rmCanonical(id);
@@ -188,8 +228,11 @@ export function createRoleBriefHost(deps: RoleBriefHostDeps): RoleBriefHost {
       };
       if (mgr.get(sourceId)?.brief === undefined) return { id, brief: undefined, rollback };
       try {
+        const from = canonicalOf(sourceId);
+        const to = canonicalOf(id);
+        if (from === null || to === null) throw new Error('session id has no brief key');
         fs.mkdirSync(storeDir, { recursive: true });
-        fs.copyFileSync(canonicalOf(sourceId), canonicalOf(id));
+        fs.copyFileSync(from, to);
       } catch (err) {
         log.warn(LOG_SCOPE, 'brief copy failed', { sourceId, id, error: String(err) });
         rmCanonical(id);
@@ -201,8 +244,11 @@ export function createRoleBriefHost(deps: RoleBriefHostDeps): RoleBriefHost {
 
     prepareSpawn(sessionId, def, spec) {
       const briefDir = briefDirOf(sessionId);
-      const briefFile = path.join(briefDir, 'brief.md');
       const canonical = canonicalOf(sessionId);
+      if (briefDir === null || canonical === null) {
+        return { spec, banners: drain(sessionId), commit() {} };
+      }
+      const briefFile = path.join(briefDir, 'brief.md');
       const plan = planBriefSpawn({
         state: mgr.get(sessionId)?.brief,
         support: supportFor(def),
@@ -238,7 +284,8 @@ export function createRoleBriefHost(deps: RoleBriefHostDeps): RoleBriefHost {
           }
         } catch (err) {
           log.warn(LOG_SCOPE, 'brief rebuild failed', { sessionId, error: String(err) });
-          banners.push(briefBanner({ code: 'rebuild-failed' }));
+          // A `sent` brief was delivered at an earlier launch, so nothing is owed or retried.
+          if (plan.sendPrompt) banners.push(briefBanner({ code: 'rebuild-failed' }));
         }
       }
       banners.unshift(...drain(sessionId));
@@ -255,6 +302,7 @@ export function createRoleBriefHost(deps: RoleBriefHostDeps): RoleBriefHost {
     async onSessionDeleted(sessionId) {
       queued.delete(sessionId);
       for (const target of [canonicalOf(sessionId), briefDirOf(sessionId)]) {
+        if (target === null) continue;
         try {
           await fs.promises.rm(target, { recursive: true, force: true });
         } catch (err) {
@@ -265,6 +313,7 @@ export function createRoleBriefHost(deps: RoleBriefHostDeps): RoleBriefHost {
 
     sweep(keepIds) {
       const keep = new Set([...keepIds].map(keyOf));
+      keep.delete(null);
       for (const [dir, keyOfEntry] of [
         [storeDir, (n: string) => (n.endsWith('.md') ? n.slice(0, -3) : n)],
         [exposedRoot, (n: string) => n],
@@ -289,6 +338,10 @@ export function createRoleBriefHost(deps: RoleBriefHostDeps): RoleBriefHost {
     },
 
     async probe(p) {
+      // A numeric path would be read as a file descriptor, a relative one against the cwd.
+      if (typeof p !== 'string' || !path.isAbsolute(p)) {
+        return { ok: false, error: 'brief-unreadable' };
+      }
       let bytes: Uint8Array;
       try {
         bytes = await fs.promises.readFile(p);
@@ -313,16 +366,11 @@ export function createRoleBriefHost(deps: RoleBriefHostDeps): RoleBriefHost {
           decoded = { ok: false, error: 'brief-unreadable' };
         }
       }
-      return {
-        supported,
-        has: true,
-        ...(source.kind === 'file' ? { path: source.path } : {}),
-        ...(decoded.ok
-          ? decoded.text === null
-            ? {}
-            : { firstLine: firstLineOf(decoded.text) }
-          : { error: decoded.error }),
-      };
+      // Whitespace-only is "no brief" to beginCreate, so the dialog must not offer or preview one.
+      if (decoded.ok && decoded.text === null) return { supported, has: false };
+      const where = source.kind === 'file' ? { path: source.path } : {};
+      if (!decoded.ok) return { supported, has: true, ...where, error: decoded.error };
+      return { supported, has: true, ...where, firstLine: firstLineOf(decoded.text ?? '') };
     },
   };
 }

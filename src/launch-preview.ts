@@ -56,7 +56,7 @@ export async function previewLaunch(
       : { error: 'home-missing', skippedAddDirRoots: [] };
   }
   const support = def ? adapterFor(def, { e2e: deps.e2e })?.brief : undefined;
-  // Same cmd-metachar guard the spawn applies, so the dialog can warn before launch (spec §3.3).
+  // Same cmd-metachar guard the spawn applies, so the dialog can warn before launch (role brief spec §3.2).
   const briefBlocked =
     support && batchGuarded(deps.platform, plan.spec.command)
       ? firstCmdMetachar(deps.userData)

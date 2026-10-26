@@ -28,9 +28,7 @@ async function render(s: BriefDialogState) {
   document.body.append(host);
   root = createRoot(host);
   await act(async () => {
-    root?.render(
-      createElement(NewSessionRoleBrief, { state: s, dispatch, onBrowse, liveId: 'lv' }),
-    );
+    root?.render(createElement(NewSessionRoleBrief, { state: s, dispatch, onBrowse }));
   });
 }
 const radios = () => [...host.querySelectorAll<HTMLElement>('.ns-brief [role="radio"]')];

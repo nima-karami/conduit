@@ -176,7 +176,7 @@ export interface LaunchPreviewResult {
   display?: string;
   error?: LaunchPreviewError;
   skippedAddDirRoots: string[];
-  /** The cmd metachar, when the launcher is batch-guarded and userData has one (role brief spec §3.3). */
+  /** The cmd metachar, when the launcher is batch-guarded and userData has one (role brief spec §3.2). */
   briefBlocked?: string;
 }
 

@@ -2,7 +2,13 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRoleBriefHost, type RoleBriefHostDeps } from '../../electron/role-brief-host';
+import {
+  briefKeepIds,
+  createRoleBriefHost,
+  parseBriefRequest,
+  type RoleBriefHostDeps,
+} from '../../electron/role-brief-host';
+import { scopeFromSpawnArgs } from '../../src/agent-scope';
 import type { HostPlatform } from '../../src/lsp-binary';
 import type {
   AgentBriefSource,
@@ -236,6 +242,34 @@ describe('prepareSpawn', () => {
     expect(sessions.get(c.id)?.brief).toBe('pending');
   });
 
+  it('a rebuild failure on a sent session is silent: nothing was owed', () => {
+    const host = make();
+    const c = create(host, CLAUDE, { kind: 'text', text: 'x' });
+    host.prepareSpawn(c.id, CLAUDE, spec()).commit(true);
+    expect(sessions.get(c.id)?.brief).toBe('sent');
+    fs.rmSync(path.dirname(briefDir(c.id)), { recursive: true, force: true });
+    fs.writeFileSync(path.dirname(briefDir(c.id)), 'not a dir');
+    const out = host.prepareSpawn(c.id, CLAUDE, spec(['--a']));
+    expect(out.spec.args).toEqual(['--a']);
+    expect(out.banners).toEqual([]);
+    expect(sessions.get(c.id)?.brief).toBe('sent');
+    expect(log.warn).toHaveBeenCalledWith('brief', 'brief rebuild failed', expect.anything());
+  });
+
+  it('AC2: the brief --add-dir is not a launched root when the scope is read before prepareSpawn', () => {
+    const host = make();
+    const c = create(host, CLAUDE, { kind: 'text', text: 'x' });
+    const input = spec(['--add-dir', path.resolve(userData, 'own')]);
+    const folders = { home: userData, roots: [] };
+    const before = scopeFromSpawnArgs(input.cwd, input.args, path.resolve, folders);
+    const out = host.prepareSpawn(c.id, CLAUDE, input);
+    const after = scopeFromSpawnArgs(out.spec.cwd, out.spec.args, path.resolve, folders);
+    expect(before.dirs).toEqual([path.resolve(userData, 'own')]);
+    expect(after.dirs).toContain(briefDir(c.id));
+    expect(before.dirs).not.toContain(briefDir(c.id));
+    expect(before.external).not.toContain(briefDir(c.id));
+  });
+
   it('a launcher with no brief support is left alone', () => {
     const host = make();
     const out = host.prepareSpawn('nope', CMD, spec(['--a'], 'cmd.exe'));
@@ -388,6 +422,22 @@ describe('delete and sweep', () => {
     expect(fs.existsSync(userData)).toBe(true);
   });
 
+  it('empty and non-string ids never resolve to the brief roots', async () => {
+    const host = make();
+    const c = create(host, CLAUDE, { kind: 'text', text: 'x' });
+    host.prepareSpawn(c.id, CLAUDE, spec());
+    for (const bad of ['', undefined as unknown as string]) {
+      sessions.set(bad, { id: bad, brief: 'pending' });
+      const out = host.prepareSpawn(bad, CLAUDE, spec(['--a']));
+      expect(out.spec.args).toEqual(['--a']);
+      await host.onSessionDeleted(bad);
+      expect(() => host.sweep(new Set([bad, c.id]))).not.toThrow();
+    }
+    expect(fs.existsSync(canonical(c.id))).toBe(true);
+    expect(fs.existsSync(briefDir(c.id))).toBe(true);
+    expect(fs.existsSync(path.join(userData, 'briefs'))).toBe(true);
+  });
+
   it('canonical is only written by beginCreate and beginDuplicate', async () => {
     const host = make();
     const c = create(host, CLAUDE, { kind: 'text', text: 'x' });
@@ -400,7 +450,62 @@ describe('delete and sweep', () => {
   });
 });
 
+describe('parseBriefRequest', () => {
+  const abs = path.resolve('role.md');
+  it('accepts the four well-formed kinds', () => {
+    expect(parseBriefRequest({ kind: 'agent' })).toEqual({ kind: 'agent' });
+    expect(parseBriefRequest({ kind: 'none' })).toEqual({ kind: 'none' });
+    expect(parseBriefRequest({ kind: 'text', text: 'hi' })).toEqual({ kind: 'text', text: 'hi' });
+    expect(parseBriefRequest({ kind: 'file', path: abs })).toEqual({ kind: 'file', path: abs });
+  });
+
+  it('rejects malformed input instead of passing it to the filesystem', () => {
+    for (const bad of [
+      undefined,
+      null,
+      'file',
+      3,
+      {},
+      { kind: 'other' },
+      { kind: 'file', path: 3 },
+      { kind: 'file', path: 'relative/role.md' },
+      { kind: 'file' },
+      { kind: 'text', text: {} },
+      { kind: 'text' },
+    ]) {
+      expect(parseBriefRequest(bad), JSON.stringify(bad)).toBeUndefined();
+    }
+  });
+
+  it('drops fields the kind does not own', () => {
+    expect(parseBriefRequest({ kind: 'none', path: 3, text: {} })).toEqual({ kind: 'none' });
+  });
+});
+
+describe('briefKeepIds', () => {
+  it('is the union of live and on-disk ids, with restore on or off', () => {
+    const live = [{ id: 'a' }, { id: 'b' }];
+    const disk = [{ id: 'b' }, { id: 'c' }];
+    expect([...briefKeepIds(live, disk)].sort()).toEqual(['a', 'b', 'c']);
+    expect([...briefKeepIds([], disk)].sort()).toEqual(['b', 'c']);
+    expect([...briefKeepIds(live, [])].sort()).toEqual(['a', 'b']);
+  });
+
+  it('skips ids that cannot name a brief file', () => {
+    const ids = briefKeepIds([{ id: '' }, { id: undefined as unknown as string }], [{ id: 'x' }]);
+    expect([...ids]).toEqual(['x']);
+  });
+});
+
 describe('probe and agentPreview', () => {
+  it('probe refuses a non-string or relative path', async () => {
+    const host = make();
+    expect(await host.probe(3)).toEqual({ ok: false, error: 'brief-unreadable' });
+    expect(await host.probe(undefined)).toEqual({ ok: false, error: 'brief-unreadable' });
+    // Exists relative to the cwd, so only the absolute-path guard can refuse it.
+    expect(await host.probe('package.json')).toEqual({ ok: false, error: 'brief-unreadable' });
+  });
+
   it('probe maps read, size and decode failures and counts trimmed bytes', async () => {
     const host = make();
     const f = path.join(userData, 'p.md');
@@ -443,6 +548,20 @@ describe('probe and agentPreview', () => {
       path: path.join(userData, 'gone.md'),
       error: 'brief-unreadable',
     });
+  });
+
+  it('agentPreview: a whitespace-only agent brief is no brief', async () => {
+    const f = path.join(userData, 'blank.md');
+    fs.writeFileSync(f, ' \n\t\n');
+    const host = make(
+      {},
+      new Map<string, AgentBriefSource>([
+        [CLAUDE.id, { kind: 'text', text: '  \n ' }],
+        [CODEX.id, { kind: 'file', path: f }],
+      ]),
+    );
+    expect(await host.agentPreview(CLAUDE)).toEqual({ supported: true, has: false });
+    expect(await host.agentPreview(CODEX)).toEqual({ supported: true, has: false });
   });
 
   it('agentPreview: unsupported launcher and unknown agent', async () => {
