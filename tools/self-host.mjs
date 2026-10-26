@@ -13,6 +13,8 @@
  *   node tools/self-host.mjs open <agentId> <path>       open a session
  *   node tools/self-host.mjs type <sessionId> <text> [--enter]
  *   node tools/self-host.mjs screen <sessionId> [--json]  print the visible terminal rows
+ *   node tools/self-host.mjs kill|relaunch <sessionId...>
+ *   node tools/self-host.mjs tidy                        kill stray shells, relaunch stale agents
  *   node tools/self-host.mjs shot <file.png>             screenshot the window
  *
  * Profile: `--user-data-dir` (default `%APPDATA%/Conduit (selfhost)`), so it never shares state
@@ -92,6 +94,12 @@ function start() {
   mkdirSync(logs, { recursive: true });
   const logFile = join(logs, `app-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
   const out = openSync(logFile, 'a');
+  // A restart leaves every session stale; the team needs its agents back, never stale cards.
+  const settingsFile = join(USER_DATA, 'settings.json');
+  const saved = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, 'utf8')) : {};
+  saved.version ??= 1;
+  saved.settings = { ...saved.settings, autoRelaunchStale: true };
+  writeFileSync(settingsFile, JSON.stringify(saved));
   const electron = createRequire(join(RUN_DIR, 'package.json'))('electron');
   const child = spawn(
     electron,
@@ -103,9 +111,7 @@ function start() {
       windowsHide: false,
       // Launched from an agent's shell: its session markers would make every Claude in the app a
       // child of that agent (no transcript, not a messaging peer).
-      env: Object.fromEntries(
-        Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE')),
-      ),
+      env: Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE'))),
     },
   );
   child.unref();
@@ -133,13 +139,13 @@ async function withPage(fn) {
       window.__selfhost = true;
       // Opt-in test observability (terminal-pane.tsx): panes mounted from now on register here.
       window.__terms ??= {};
-      window.__sessions = [];
+      window.__sessions = null;
       window.agentDeck.subscribe((m) => {
         if (m.type === 'state') window.__sessions = m.sessions || [];
       });
       window.agentDeck.post({ type: 'ready' });
     });
-    await page.waitForFunction(() => window.__sessions.length >= 0);
+    await page.waitForFunction(() => window.__sessions !== null);
     return await fn(page);
   } finally {
     await browser.close();
@@ -148,8 +154,18 @@ async function withPage(fn) {
 
 const sessions = (page) =>
   page.evaluate(() =>
-    window.__sessions.map((s) => ({ id: s.id, agentId: s.agentId, title: s.title, cwd: s.cwd })),
+    window.__sessions.map((s) => ({
+      id: s.id,
+      agentId: s.agentId,
+      name: s.name,
+      status: s.status,
+    })),
   );
+
+const post = (page, msgs) =>
+  page.evaluate((ms) => {
+    for (const m of ms) window.agentDeck.post(m);
+  }, msgs);
 
 const commands = {
   start,
@@ -210,6 +226,34 @@ const commands = {
       if (json) return console.log(JSON.stringify({ cursorY: rows.cursorY, lines: rows.rows }));
       console.log(rows.rows.join('\n'));
       console.log(`--- cursorY ${rows.cursorY}`);
+    }),
+  kill: (ids) =>
+    withPage((page) =>
+      post(
+        page,
+        ids.map((id) => ({ type: 'kill', id })),
+      ),
+    ),
+  relaunch: (ids) =>
+    withPage((page) =>
+      post(
+        page,
+        ids.map((id) => ({ type: 'relaunch', id })),
+      ),
+    ),
+  // Stray shells (the app opens its own launch dir as a folder) go; stale agents come back.
+  tidy: () =>
+    withPage(async (page) => {
+      const all = await sessions(page);
+      const msgs = all.flatMap((s) =>
+        s.agentId.startsWith('shell:')
+          ? [{ type: 'kill', id: s.id }]
+          : s.status === 'stale'
+            ? [{ type: 'relaunch', id: s.id }]
+            : [],
+      );
+      await post(page, msgs);
+      console.log(msgs.map((m) => `${m.type} ${m.id}`).join('\n') || 'nothing to tidy');
     }),
   shot: ([file]) => withPage((page) => page.screenshot({ path: resolve(file) })),
 };
