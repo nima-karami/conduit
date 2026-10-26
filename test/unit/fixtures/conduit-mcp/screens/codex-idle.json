@@ -4,6 +4,8 @@
   "cols": 120,
   "rows": 44,
   "cursorY": 40,
+  "cursorX": 2,
+  "cursorRowStyles": "..dddddddddddddddddddddddd",
   "lines": [
     "",
     "  >_ OpenAI Codex (v0.164.0)",
