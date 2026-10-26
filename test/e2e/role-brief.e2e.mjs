@@ -8,7 +8,7 @@
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fakeAgentProfile, records, until } from './conduit-mcp-helpers.mjs';
+import { FAKE_AGENT_ID, fakeAgentProfile, records, until } from './conduit-mcp-helpers.mjs';
 import { assert, runScenario, tapBridge, typeLine } from './harness.mjs';
 import { browseAdd, openDialog, tapResults } from './new-session-folders-helpers.mjs';
 
@@ -25,9 +25,15 @@ await runScenario(
     const work = mkdtempSync(join(tmpdir(), 'role-brief-'));
 
     await openDialog(page);
-    // A config agent is not a ranked pill until picked, so it is chosen from More.
-    await page.locator('.ns-more').click();
-    await page.locator('.ns-more__item', { hasText: 'Fake MCP' }).click();
+    // Ranking depends on the machine: with fewer than three CLIs installed (the runner) the fake
+    // fills a pill slot, otherwise it is only in More.
+    const pill = page.locator(`.ns-launch [data-launcher="${FAKE_AGENT_ID}"]`);
+    await page.locator('.ns-more').waitFor();
+    if ((await pill.count()) > 0) await pill.click();
+    else {
+      await page.locator('.ns-more').click();
+      await page.locator('.ns-more__item', { hasText: 'Fake MCP' }).click();
+    }
     await browseAdd(app, page, [work]);
     await page.locator('.ns-brief [role="radio"]', { hasText: /^Text$/ }).click();
     await page.locator('[aria-label="Role brief text"]').fill(BRIEF);

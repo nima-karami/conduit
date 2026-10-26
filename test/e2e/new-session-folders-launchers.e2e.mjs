@@ -78,7 +78,7 @@ await runNewSession('new-session-folders-launchers', async ({ fx, log, launch, c
   await page.locator('input[aria-label="Command"]').fill('codex --x');
   await page.locator('.ns-custom .btn--primary', { hasText: 'Add' }).click();
   await page.waitForSelector('.ns-custom', { state: 'detached', timeout: 8000 });
-  const selected = await page.locator('.ns-pill[aria-checked="true"]').innerText();
+  const selected = await page.locator('.ns-launch .ns-pill[aria-checked="true"]').innerText();
   assert(selected === 'codex (2)', `the new launcher is the selected extra pill (got ${selected})`);
   const withCustom = await stateAgents(page);
   assert(
