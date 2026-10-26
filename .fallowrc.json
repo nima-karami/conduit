@@ -14,7 +14,7 @@
     "test/e2e/stress/*.mjs",
     "resources/conduit-mcp/*.cjs"
   ],
-  "ignoreDependencies": ["electron-updater"],
+  "ignoreDependencies": ["electron-updater", "dompurify"],
   "ignorePatterns": ["out/**", "dist/**", "designs/**", "node_modules/**"],
   "ignoreExports": [
     {

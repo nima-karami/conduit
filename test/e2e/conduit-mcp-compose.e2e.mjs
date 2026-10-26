@@ -47,6 +47,13 @@ await runScenario(
       await card(s).click({ button: 'right' });
       await page.locator('.ctxmenu__item', { hasText: label }).click();
     };
+    // A hidden session arms "needs you" 4 s after its last output, and the chip acts on
+    // sessions before messages; callTool makes A print, so keep A visible or a slow click
+    // lands on "Go to A" instead of the thread (item 5 trace, run 40377084385).
+    await card(a).click();
+    await page.locator(`.session--active[data-sessionid="${a.sessionId}"]`).waitFor({
+      timeout: 5_000,
+    });
 
     // 1. compose as you
     await messagesTab.click();

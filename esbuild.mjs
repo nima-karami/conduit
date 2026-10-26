@@ -1,5 +1,6 @@
 import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import * as esbuild from 'esbuild';
+import { monacoDompurify } from './tools/monaco-dompurify.mjs';
 
 const watch = process.argv.includes('--watch');
 const common = { bundle: true, sourcemap: true, logLevel: 'info', target: 'es2022' };
@@ -40,6 +41,7 @@ const web = {
   platform: 'browser',
   format: 'iife',
   jsx: 'automatic',
+  plugins: [monacoDompurify],
   // .ttf = Monaco's codicon font; .woff/.woff2 = KaTeX math fonts (referenced by
   // katex.min.css). Without these loaders esbuild errors on the font url()s.
   loader: { '.ttf': 'file', '.woff': 'file', '.woff2': 'file' },
