@@ -30,6 +30,7 @@ const FAKE: AgentDefinition = {
 };
 const SHELL: AgentDefinition = { ...FAKE, id: 'pwsh', command: 'pwsh' };
 const CODEX: AgentDefinition = { ...FAKE, id: 'codex', command: '/usr/bin/codex' };
+const CURSOR: AgentDefinition = { ...FAKE, id: 'cursor', command: '/usr/bin/agent' };
 const spec = (command = '/usr/bin/node'): SpawnSpec => ({
   command,
   args: ['fake.mjs'],
@@ -159,6 +160,7 @@ function harness(
   });
   host = createConduitMcpHost({
     dir,
+    homeDir: dir,
     endpointPath: ep,
     execPath: '/opt/conduit/conduit',
     shimPath: '/opt/conduit/resources/conduit-mcp/conduit-mcp-shim.cjs',
@@ -323,6 +325,73 @@ async function lastState(h: Harness) {
 }
 
 describe('createConduitMcpHost — launch', () => {
+  it('leaves Cursor launch unchanged and reports cursor-not-connected without the user entry', async () => {
+    const h = harness();
+    await h.host.start();
+    h.sessions.set('c1', session('c1', { agentId: 'cursor' }));
+    const original = spec('/usr/bin/agent');
+    expect(h.host.prepareLaunch('c1', CURSOR, original)).toBe(original);
+    expect(h.host.uiState().sessions.c1?.unavailable).toBe('cursor-not-connected');
+  });
+
+  it.each([
+    ['malformed JSON', '{'],
+    [
+      'missing token placeholder',
+      JSON.stringify({
+        mcpServers: {
+          conduit: { env: { CONDUIT_MCP_ENDPOINT: '${env:CONDUIT_MCP_ENDPOINT}' } },
+        },
+      }),
+    ],
+    [
+      'missing endpoint placeholder',
+      JSON.stringify({
+        mcpServers: {
+          conduit: { env: { CONDUIT_SESSION_TOKEN: '${env:CONDUIT_SESSION_TOKEN}' } },
+        },
+      }),
+    ],
+  ])('leaves Cursor launch unchanged for %s', async (_label, contents) => {
+    const h = harness();
+    const cursorDir = path.join(h.dir, '.cursor');
+    fs.mkdirSync(cursorDir, { recursive: true });
+    fs.writeFileSync(path.join(cursorDir, 'mcp.json'), contents);
+    await h.host.start();
+    h.sessions.set('c1', session('c1', { agentId: 'cursor' }));
+    const original = spec('/usr/bin/agent');
+    expect(h.host.prepareLaunch('c1', CURSOR, original)).toBe(original);
+    expect(h.host.uiState().sessions.c1?.unavailable).toBe('cursor-not-connected');
+  });
+
+  it('wires Cursor with no args when a stale user entry has both env placeholders', async () => {
+    const h = harness();
+    const cursorDir = path.join(h.dir, '.cursor');
+    fs.mkdirSync(cursorDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(cursorDir, 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          conduit: {
+            command: '/old/conduit',
+            args: ['old-shim'],
+            env: {
+              CONDUIT_SESSION_TOKEN: '${env:CONDUIT_SESSION_TOKEN}',
+              CONDUIT_MCP_ENDPOINT: '${env:CONDUIT_MCP_ENDPOINT}',
+            },
+          },
+        },
+      }),
+    );
+    await h.host.start();
+    h.sessions.set('c1', session('c1', { agentId: 'cursor' }));
+    const original = spec('/usr/bin/agent');
+    const out = h.host.prepareLaunch('c1', CURSOR, original);
+    expect(out.args).toEqual(original.args);
+    expect(out.env).toMatchObject({ CONDUIT_SESSION_TOKEN: 'tok1', CONDUIT_MCP_ENDPOINT: h.ep });
+    expect(h.host.uiState().sessions.c1?.unavailable).toBeNull();
+  });
+
   it('prepareLaunch for fake adds --mcp-config and a token; config file written without the token; env has no ELECTRON_RUN_AS_NODE', async () => {
     const h = harness();
     await h.host.start();

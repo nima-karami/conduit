@@ -34,6 +34,7 @@ import { useSettings } from '../settings';
 import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
 import { MONO_FONTS, THEMES, type ThemeDef, UI_FONTS } from '../themes';
 import { AutoSaveDelayField } from './auto-save-delay-field';
+import { CursorConnectRow } from './cursor-connect-row';
 import { ModalLayer } from './modal-layer';
 import { SelectField } from './select-field';
 import { SessionCardPreview } from './session-card';
@@ -147,10 +148,12 @@ function Section({
   title,
   desc,
   children,
+  controlClassName,
 }: {
   title: string;
   desc?: string;
   children: React.ReactNode;
+  controlClassName?: string;
 }) {
   return (
     <section className="set">
@@ -158,7 +161,9 @@ function Section({
         <span className="set__title">{title}</span>
         {desc && <span className="set__desc">{desc}</span>}
       </div>
-      <div className="set__control">{children}</div>
+      <div className={`set__control${controlClassName ? ` ${controlClassName}` : ''}`}>
+        {children}
+      </div>
     </section>
   );
 }
@@ -925,6 +930,13 @@ function General({
       <SetGroup title={MCP_STR.settingsTitle}>
         <Section title={MCP_STR.settingsToggle} desc={MCP_STR.settingsDesc}>
           <Toggle value={settings.conduitMcp} onChange={(v) => update({ conduitMcp: v })} />
+        </Section>
+        <Section
+          title={MCP_STR.cursorTitle}
+          desc={MCP_STR.cursorDesc}
+          controlClassName="set__control--cursor"
+        >
+          <CursorConnectRow />
         </Section>
       </SetGroup>
 

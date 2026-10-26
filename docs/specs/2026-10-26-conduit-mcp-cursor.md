@@ -61,9 +61,11 @@ gets no notices (`screen: null`). So the cheapest executor on the team can't mes
 - **Connect:**
   1. Read `~/.cursor/mcp.json` through its realpath, so a dotfile-manager symlink stays a link. A
      missing file means `{}`; a UTF-8 BOM is stripped.
-  2. **Backup rule:** if no backup exists **and** the file has no `conduit` key, write the original
-     to `mcp.json.conduit-backup` first (a missing original is recorded as a backup holding `null`).
-     If the backup write fails, abort.
+  2. **Backup rule:** if no backup exists and the file has no `conduit` key or has a stale
+     `conduit` entry, write the original to `mcp.json.conduit-backup` first (a missing original is
+     recorded as the JSON text `null`). An already connected entry is a no-op and creates or touches
+     no backup. Backup creation is exclusive; a concurrently created backup is preserved. If backup
+     creation fails, abort.
   3. Set `mcpServers.conduit`; every other key stays deep-equal.
   4. Write atomically: 2-space JSON plus a trailing newline.
 - **Disconnect:** remove `mcpServers.conduit` only, same write path. If `mcpServers` is now empty it
@@ -137,10 +139,10 @@ gets no notices (`screen: null`). So the cheapest executor on the team can't mes
 
 | Condition | Behavior |
 |---|---|
-| `mcp.json` has comments or trailing commas (not valid JSON) | `error` state, no write |
+| `mcp.json` has comments or trailing commas (not valid JSON), or has an invalid shape | `error` state with `EJSON`, no write |
 | `mcp.json` changes between read and write (Cursor IDE edits) | read-modify-write is not locked. Accepted: the window is milliseconds. The write keeps the keys read a moment ago |
 | A backup already exists | it is never overwritten (it is the pre-Conduit original) |
-| A user-authored `conduit` entry differs | `stale`. Connect overwrites it; the backup still holds the original |
+| A user-authored `conduit` entry differs | `stale`. Connect backs up the stale original when no backup exists, then overwrites it |
 | `~/.cursor` missing | Connect creates the dir and the file |
 | Cursor running when Connect is clicked | that session isn't wired until it relaunches. The card reason stays until then |
 | Both an installed Conduit and a dev build are present | the last Connect wins the `command`. Both apps wire their sessions (placeholder env), and each session reaches its own host via the env endpoint. The other app shows `stale` |
@@ -167,9 +169,12 @@ gets no notices (`screen: null`). So the cheapest executor on the team can't mes
 ## 7. Acceptance criteria
 All file ACs run against an injected home dir.
 1. Connect on a missing file creates `.cursor/mcp.json` with exactly `mcpServers.conduit` =
-   `cursorEntry()`, as 2-space JSON plus a trailing newline. The state reads `connected`.
-2. Connect on a file with other servers keeps them deep-equal, and the backup holds the original.
-   A second Connect, or a Connect when the file already has `conduit`, creates or touches no backup.
+   `cursorEntry()`, as 2-space JSON plus a trailing newline; the backup contains the JSON text
+   `null`. The state reads `connected`.
+2. Connect on a file with other servers and no `conduit` entry keeps the servers deep-equal and the
+   backup holds the original. Connect on a stale `conduit` entry backs up that original before
+   overwriting it when no backup exists. A second Connect, or Connect on an already connected entry,
+   creates or touches no backup. An existing backup is never overwritten.
 3. Disconnect removes only `conduit`, from `connected` and from `stale`. Invalid JSON, a non-object
    top level, or a non-object `mcpServers` gives `error`, and the file is unchanged. A
    BOM-prefixed valid file parses.

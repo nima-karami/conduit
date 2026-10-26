@@ -67,6 +67,7 @@ import {
   type EndpointConnection,
   type McpEndpoint,
 } from './conduit-mcp-endpoint';
+import { readCursorLaunchEntry } from './cursor-connect';
 import type { Logger } from './logger';
 import { createSessionScreens, type SessionScreens } from './session-screens';
 
@@ -76,6 +77,7 @@ export interface ConduitMcpHostDeps {
   endpointPath: string;
   execPath: string;
   shimPath: string;
+  homeDir: string;
   platform: HostPlatform;
   e2e: boolean;
   mgr: Pick<SessionManager, 'get' | 'list' | 'setMcp'>;
@@ -775,6 +777,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       };
       if (!deps.messagingOn()) return unavailable('messaging-off');
       if (!endpointReady) return unavailable('endpoint-down');
+      if (adapter.wiring === 'cursor-global' && !readCursorLaunchEntry(deps.homeDir)) {
+        return unavailable('cursor-not-connected');
+      }
       const configFile = configFileOf(sessionId);
       const wiring = mcpLaunchWiring({
         adapter,

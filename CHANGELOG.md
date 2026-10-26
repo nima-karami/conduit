@@ -7,6 +7,11 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **Cursor sessions can join agent messaging.** Use **Connect Cursor** under Settings → Agent
+  messaging to add Conduit to `~/.cursor/mcp.json`, then launch a fresh Cursor session. Connect
+  preserves other servers and backs up the original config; **Disconnect** removes only Conduit.
+  Cursor asks you to allow each tool the first time it runs. Its editor reads the same config
+  and lists Conduit with no tools outside Conduit. Disconnect before uninstalling Conduit.
 - **Agents in your sessions can message each other and you.** Claude Code and Codex sessions
   now connect to a small MCP server inside Conduit when they launch, with four tools: list the
   other sessions, send a message (with file attachments from the session's own folders), read the
