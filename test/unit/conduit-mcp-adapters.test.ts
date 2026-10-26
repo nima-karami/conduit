@@ -18,8 +18,9 @@ function screen(name: string): ScreenSnapshot {
   const j = JSON.parse(fs.readFileSync(path.join(SCREENS, `${name}.json`), 'utf8')) as {
     lines: string[];
     cursorY: number;
+    styles?: string[];
   };
-  return { lines: j.lines, cursorY: j.cursorY };
+  return { lines: j.lines, cursorY: j.cursorY, styles: j.styles };
 }
 function adapter(id: McpAdapter['id']): McpAdapter {
   const a = MCP_ADAPTERS.find((x) => x.id === id);
@@ -53,6 +54,73 @@ describe('adapterFor', () => {
     expect(notifiable(adapter('fake'))).toBe(true);
     expect(notifiable(adapter('codex'))).toBe(true);
     expect(notifiable(adapter('cursor'))).toBe(true);
+  });
+});
+
+// Captured with cell styles: docs/runs/2026-10-26-conduit-mcp/placeholder-cells.md.
+describe('screenVerdict ignores placeholder-styled cells', () => {
+  const codex = adapter('codex').screen;
+
+  it.each([
+    ['claude-suggestion', 'claude', 'empty-input'],
+    ['claude-typed', 'claude', 'unknown'],
+    ['codex-placeholder', 'codex', 'empty-input'],
+    ['codex-typed', 'codex', 'unknown'],
+  ] as const)('%s → %s', (name, id, want) => {
+    expect(screenVerdict(adapter(id).screen, screen(name))).toBe(want);
+  });
+
+  it('the fixtures are what they claim: faint suggestion, typed text not faint', () => {
+    const s = screen('claude-suggestion');
+    expect(s.lines[s.cursorY]).toMatch(/^❯\syes, go ahead$/);
+    expect(s.styles?.[s.cursorY]).toMatch(/^\.\.d+$/);
+    const t = screen('codex-typed');
+    expect(t.lines[t.cursorY]).toBe('› Summarize recent commits');
+    expect(t.styles?.[t.cursorY]).toMatch(/^\.+$/);
+  });
+
+  it('a suggestion with no styles in the snapshot is not empty-input', () => {
+    const { styles: _, ...s } = screen('claude-suggestion');
+    expect(screenVerdict(claude.screen, s)).toBe('unknown');
+  });
+
+  it('text placeholders stand in only when the snapshot has no styles', () => {
+    const typed = { lines: ['› Summarize recent commits'], cursorY: 0 };
+    expect(screenVerdict(codex, typed)).toBe('empty-input');
+    expect(screenVerdict(codex, { ...typed, styles: ['.'.repeat(26)] })).toBe('unknown');
+    const tryRow = { lines: ['❯ Try "fix lint errors"'], cursorY: 0 };
+    expect(screenVerdict(claude.screen, tryRow)).toBe('empty-input');
+    expect(screenVerdict(claude.screen, { ...tryRow, styles: [`..${'d'.repeat(21)}`] })).toBe(
+      'empty-input',
+    );
+    expect(screenVerdict(claude.screen, { ...tryRow, styles: ['.'.repeat(23)] })).toBe('unknown');
+  });
+
+  it('typed text after a faint run is still input', () => {
+    const s = { lines: ['❯ yes, go ahead'], cursorY: 0, styles: ['..dddddddddd...'] };
+    expect(screenVerdict(claude.screen, s)).toBe('unknown');
+  });
+
+  it('the echo check reads the real text, not the suggestion', () => {
+    const s = screen('claude-suggestion');
+    const lines = [...s.lines];
+    const styles = [...(s.styles ?? [])];
+    lines[s.cursorY] = `❯ ${NOTICE}`;
+    styles[s.cursorY] = `..${'d'.repeat(NOTICE.length)}`;
+    expect(screenVerdict(claude.screen, { lines, cursorY: s.cursorY, styles }, NOTICE)).toBe(
+      'empty-input',
+    );
+    styles[s.cursorY] = '.'.repeat(NOTICE.length + 2);
+    expect(screenVerdict(claude.screen, { lines, cursorY: s.cursorY, styles }, NOTICE)).toBe(
+      'notice-echoed',
+    );
+  });
+
+  it('an adapter without a placeholder style keeps faint cells', () => {
+    const fake = adapter('fake').screen;
+    expect(screenVerdict(fake, { lines: ['fake❯ x'], cursorY: 0, styles: ['......d'] })).toBe(
+      'unknown',
+    );
   });
 });
 
@@ -145,6 +213,7 @@ describe('screenVerdict on the S0 screens', () => {
   });
 
   it('null patterns → unknown', () => {
+    expect(screenVerdict(null, screen('claude-suggestion'), NOTICE)).toBe('unknown');
     expect(screenVerdict(null, screen('claude-idle'), NOTICE)).toBe('unknown');
   });
 });

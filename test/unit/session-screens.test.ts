@@ -23,6 +23,18 @@ describe('createSessionScreens', () => {
     expect(snap?.cursorY).toBe(1);
   });
 
+  it('styles mark faint (SGR 2) cells, aligned with the trimmed text', async () => {
+    const s = createSessionScreens();
+    s.start('a', 40, 3);
+    s.feed(
+      'a',
+      '❯ \x1b[2myes, go ahead\x1b[22m   \r\n\x1b[1m›\x1b[22m\x1b[2m Ask 世界\x1b[22m\r\nplain',
+    );
+    const snap = await s.snapshot('a');
+    expect(snap?.lines).toEqual(['❯ yes, go ahead', '› Ask 世界', 'plain']);
+    expect(snap?.styles).toEqual(['..ddddddddddddd', '.ddddddd', '.....']);
+  });
+
   it('cursorY is viewport-relative after scrolling', async () => {
     const s = createSessionScreens({ scrollback: 100 });
     s.start('a', 20, 4);

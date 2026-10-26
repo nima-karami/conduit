@@ -19,7 +19,8 @@ All notable user-facing changes to Conduit. Format follows
   restart. A new **Messages** tab beside Changes and Files lists every thread and lets you write to
   any session as `you`, reply and open an attachment; unread and urgent counts show on the tab, on
   each session card and in the "needs you" chip. Claude gets a one-line notice typed into its
-  input only when it is idle and nothing is in the way — never while it is busy, while a
+  input only when it is idle and nothing is in the way (a grey suggested next prompt or
+  placeholder in its input doesn't count as in the way) — never while it is busy, while a
   permission prompt is on screen, or over something you are typing — and its card's tooltip says
   why a notice is held. Codex reads its inbox when asked. You can pause notices per session from
   the card menu, a thread pauses after 20 agent messages until you allow more, and the whole
