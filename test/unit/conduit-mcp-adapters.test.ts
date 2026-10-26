@@ -18,9 +18,29 @@ function screen(name: string): ScreenSnapshot {
   const j = JSON.parse(fs.readFileSync(path.join(SCREENS, `${name}.json`), 'utf8')) as {
     lines: string[];
     cursorY: number;
-    styles?: string[];
+    cursorX: number;
+    cursorRowStyles: string;
   };
-  return { lines: j.lines, cursorY: j.cursorY, styles: j.styles };
+  return {
+    lines: j.lines,
+    cursorY: j.cursorY,
+    cursorX: j.cursorX,
+    cursorRowStyles: j.cursorRowStyles,
+  };
+}
+/** A snapshot whose cursor row is plain text with the cursor after it, unless told otherwise. */
+function snap(
+  lines: readonly string[],
+  cursorY: number,
+  opts: { cursorX?: number; styles?: string } = {},
+): ScreenSnapshot {
+  const row = lines[cursorY] ?? '';
+  return {
+    lines,
+    cursorY,
+    cursorX: opts.cursorX ?? row.length,
+    cursorRowStyles: opts.styles ?? '.'.repeat(row.length),
+  };
 }
 function adapter(id: McpAdapter['id']): McpAdapter {
   const a = MCP_ADAPTERS.find((x) => x.id === id);
@@ -28,6 +48,7 @@ function adapter(id: McpAdapter['id']): McpAdapter {
   return a;
 }
 const claude = adapter('claude');
+const codex = adapter('codex').screen;
 const NOTICE = '[conduit] New messages for you. Use the conduit read_inbox tool.';
 
 describe('adapterFor', () => {
@@ -58,9 +79,7 @@ describe('adapterFor', () => {
 });
 
 // Captured with cell styles: docs/runs/2026-10-26-conduit-mcp/placeholder-cells.md.
-describe('screenVerdict ignores placeholder-styled cells', () => {
-  const codex = adapter('codex').screen;
-
+describe('screenVerdict drops a measured placeholder', () => {
   it.each([
     ['claude-suggestion', 'claude', 'empty-input'],
     ['claude-typed', 'claude', 'unknown'],
@@ -70,57 +89,69 @@ describe('screenVerdict ignores placeholder-styled cells', () => {
     expect(screenVerdict(adapter(id).screen, screen(name))).toBe(want);
   });
 
-  it('the fixtures are what they claim: faint suggestion, typed text not faint', () => {
+  it('the fixtures are what they claim: faint suggestion at the cursor, typed text not faint', () => {
     const s = screen('claude-suggestion');
     expect(s.lines[s.cursorY]).toMatch(/^❯\syes, go ahead$/);
-    expect(s.styles?.[s.cursorY]).toMatch(/^\.\.d+$/);
+    expect(s.cursorRowStyles).toMatch(/^\.\.d+$/);
+    expect(s.cursorX).toBe(2);
     const t = screen('codex-typed');
     expect(t.lines[t.cursorY]).toBe('› Summarize recent commits');
-    expect(t.styles?.[t.cursorY]).toMatch(/^\.+$/);
+    expect(t.cursorRowStyles).toMatch(/^\.+$/);
   });
 
-  it('a suggestion with no styles in the snapshot is not empty-input', () => {
-    const { styles: _, ...s } = screen('claude-suggestion');
-    expect(screenVerdict(claude.screen, s)).toBe('unknown');
+  it("Claude's first-paint Try placeholder (faint words, plain gaps) is empty-input", () => {
+    const s = screen('claude-idle-placeholder');
+    expect(s.lines[s.cursorY]).toMatch(/^❯\sTry "fix lint errors"$/);
+    expect(s.cursorRowStyles).toBe('..ddd.dddd.dddd.ddddddd');
+    expect(screenVerdict(claude.screen, s)).toBe('empty-input');
   });
 
-  it('text placeholders stand in only when the snapshot has no styles', () => {
-    const typed = { lines: ['› Summarize recent commits'], cursorY: 0 };
-    expect(screenVerdict(codex, typed)).toBe('empty-input');
-    expect(screenVerdict(codex, { ...typed, styles: ['.'.repeat(26)] })).toBe('unknown');
-    const tryRow = { lines: ['❯ Try "fix lint errors"'], cursorY: 0 };
-    expect(screenVerdict(claude.screen, tryRow)).toBe('empty-input');
-    expect(screenVerdict(claude.screen, { ...tryRow, styles: [`..${'d'.repeat(21)}`] })).toBe(
-      'empty-input',
-    );
-    expect(screenVerdict(claude.screen, { ...tryRow, styles: ['.'.repeat(23)] })).toBe('unknown');
+  it("a placeholder's words typed for real are input", () => {
+    expect(screenVerdict(codex, snap(['› Write tests for @filename'], 0))).toBe('unknown');
+    expect(screenVerdict(claude.screen, snap(['❯ Try "fix lint errors"'], 0))).toBe('unknown');
+  });
+
+  it('a faint run counts only with the cursor parked at its start', () => {
+    const row = ['❯ yes, go ahead'];
+    const styles = '..ddddddddddddd';
+    expect(screenVerdict(claude.screen, snap(row, 0, { cursorX: 2, styles }))).toBe('empty-input');
+    expect(screenVerdict(claude.screen, snap(row, 0, { cursorX: 15, styles }))).toBe('unknown');
+    expect(screenVerdict(claude.screen, snap(row, 0, { cursorX: 0, styles }))).toBe('unknown');
   });
 
   it('typed text after a faint run is still input', () => {
-    const s = { lines: ['❯ yes, go ahead'], cursorY: 0, styles: ['..dddddddddd...'] };
+    const s = snap(['❯ yes, go ahead'], 0, { cursorX: 2, styles: '..dddddddddd...' });
     expect(screenVerdict(claude.screen, s)).toBe('unknown');
   });
 
-  it('the echo check reads the real text, not the suggestion', () => {
+  it('a faint run that does not follow a bare prompt is input', () => {
+    const s = snap(['❯ fix yes, go ahead'], 0, { cursorX: 6, styles: '......ddddddddddddd' });
+    expect(screenVerdict(claude.screen, s)).toBe('unknown');
+  });
+
+  // Measured: chips draw plain (Claude) or coloured (Codex), with the cursor after them. Even a
+  // faint chip must not read as empty: the cursor isn't parked at its start.
+  it.each([
+    ['claude paste chip', '❯ [Pasted text #1 +29 lines]', 28, '.'.repeat(28)],
+    ['claude paste chip drawn faint', '❯ [Pasted text #1 +29 lines]', 28, `..${'d'.repeat(26)}`],
+    ['codex image chip', '› [Image #1]', 12, '.'.repeat(12)],
+    ['codex image chip drawn faint', '› [Image #1]', 12, `..${'d'.repeat(10)}`],
+  ] as const)('a draft holding a %s is never empty-input', (_, row, cursorX, styles) => {
+    const patterns = row.startsWith('❯') ? claude.screen : codex;
+    expect(screenVerdict(patterns, snap([row], 0, { cursorX, styles }))).toBe('unknown');
+  });
+
+  it('the echo check reads the row text', () => {
     const s = screen('claude-suggestion');
     const lines = [...s.lines];
-    const styles = [...(s.styles ?? [])];
     lines[s.cursorY] = `❯ ${NOTICE}`;
-    styles[s.cursorY] = `..${'d'.repeat(NOTICE.length)}`;
-    expect(screenVerdict(claude.screen, { lines, cursorY: s.cursorY, styles }, NOTICE)).toBe(
-      'empty-input',
-    );
-    styles[s.cursorY] = '.'.repeat(NOTICE.length + 2);
-    expect(screenVerdict(claude.screen, { lines, cursorY: s.cursorY, styles }, NOTICE)).toBe(
-      'notice-echoed',
-    );
+    expect(screenVerdict(claude.screen, snap(lines, s.cursorY), NOTICE)).toBe('notice-echoed');
   });
 
   it('an adapter without a placeholder style keeps faint cells', () => {
     const fake = adapter('fake').screen;
-    expect(screenVerdict(fake, { lines: ['fake❯ x'], cursorY: 0, styles: ['......d'] })).toBe(
-      'unknown',
-    );
+    const s = snap(['fake❯ x'], 0, { cursorX: 6, styles: '......d' });
+    expect(screenVerdict(fake, s)).toBe('unknown');
   });
 });
 
@@ -144,15 +175,15 @@ describe('screenVerdict on the S0 screens', () => {
   it('old prompt text above the cursor is not empty-input', () => {
     const s = screen('claude-idle');
     expect(s.lines[5]).toMatch(/^❯\sUse the Bash tool/);
-    expect(screenVerdict(claude.screen, { ...s, cursorY: 5 })).toBe('unknown');
+    expect(screenVerdict(claude.screen, snap(s.lines, 5))).toBe('unknown');
   });
 
   it('a typed notice on the cursor row is notice-echoed', () => {
     const s = screen('claude-idle');
     const lines = [...s.lines];
     lines[13] = `❯ ${NOTICE}`;
-    expect(screenVerdict(claude.screen, { lines, cursorY: 13 }, NOTICE)).toBe('notice-echoed');
-    expect(screenVerdict(claude.screen, { lines, cursorY: 13 })).toBe('unknown');
+    expect(screenVerdict(claude.screen, snap(lines, 13), NOTICE)).toBe('notice-echoed');
+    expect(screenVerdict(claude.screen, snap(lines, 13))).toBe('unknown');
   });
 
   it('a notice wrapped across rows at 40 cols is still notice-echoed', () => {
@@ -161,14 +192,14 @@ describe('screenVerdict on the S0 screens', () => {
     const lines = [...s.lines];
     lines[12] = typed.slice(0, 40);
     lines[13] = typed.slice(40);
-    expect(screenVerdict(claude.screen, { lines, cursorY: 13 }, NOTICE)).toBe('notice-echoed');
+    expect(screenVerdict(claude.screen, snap(lines, 13), NOTICE)).toBe('notice-echoed');
   });
 
   it('a notice elsewhere on screen is not an echo', () => {
     const s = screen('claude-idle');
     const lines = [...s.lines];
     lines[5] = `❯ ${NOTICE}`;
-    expect(screenVerdict(claude.screen, { lines, cursorY: 13 }, NOTICE)).toBe('empty-input');
+    expect(screenVerdict(claude.screen, { ...s, lines }, NOTICE)).toBe('empty-input');
   });
 
   it('a blocking footer anywhere beats an echo', () => {
@@ -176,40 +207,34 @@ describe('screenVerdict on the S0 screens', () => {
     const lines = [...s.lines];
     lines[13] = `❯ ${NOTICE}`;
     lines[30] = ' Esc to cancel · Tab to amend';
-    expect(screenVerdict(claude.screen, { lines, cursorY: 13 }, NOTICE)).toBe('blocking');
+    expect(screenVerdict(claude.screen, snap(lines, 13), NOTICE)).toBe('blocking');
   });
 
   it('codex idle composer is empty-input; typed text and old rows are not', () => {
-    const codex = adapter('codex').screen;
     const s = screen('codex-idle');
     expect(screenVerdict(codex, s)).toBe('empty-input');
-    expect(screenVerdict(codex, { lines: ['› '], cursorY: 0 })).toBe('empty-input');
-    expect(screenVerdict(codex, { lines: ['› Write tests for @filename'], cursorY: 0 })).toBe(
-      'empty-input',
-    );
-    expect(screenVerdict(codex, { lines: ['› fix the build'], cursorY: 0 })).toBe('unknown');
-    expect(screenVerdict(codex, { ...s, cursorY: 0 })).toBe('unknown');
+    expect(screenVerdict(codex, snap(['› '], 0))).toBe('empty-input');
+    expect(screenVerdict(codex, snap(['› fix the build'], 0))).toBe('unknown');
+    expect(screenVerdict(codex, snap(s.lines, 0))).toBe('unknown');
     const lines = [...s.lines];
     lines[s.cursorY] = `› ${NOTICE}`;
-    expect(screenVerdict(codex, { lines, cursorY: s.cursorY }, NOTICE)).toBe('notice-echoed');
+    expect(screenVerdict(codex, snap(lines, s.cursorY), NOTICE)).toBe('notice-echoed');
   });
 
   it('codex approval footer is blocking', () => {
-    const s = { lines: ['  Press enter to confirm or esc to cancel'], cursorY: 0 };
-    expect(screenVerdict(adapter('codex').screen, s)).toBe('blocking');
+    const s = snap(['  Press enter to confirm or esc to cancel'], 0);
+    expect(screenVerdict(codex, s)).toBe('blocking');
   });
 
   it('codex trust footer is blocking', () => {
-    const s = { lines: ['  Trust this folder?', '', '  enter continue · esc quit'], cursorY: 0 };
-    expect(screenVerdict(adapter('codex').screen, s)).toBe('blocking');
+    const s = snap(['  Trust this folder?', '', '  enter continue · esc quit'], 0);
+    expect(screenVerdict(codex, s)).toBe('blocking');
   });
 
   it('the fake agent prompt is empty-input', () => {
     const fake = adapter('fake').screen;
-    expect(screenVerdict(fake, { lines: ['hello', 'fake❯ '], cursorY: 1 })).toBe('empty-input');
-    expect(screenVerdict(fake, { lines: ['Esc to cancel', 'fake❯ '], cursorY: 1 })).toBe(
-      'blocking',
-    );
+    expect(screenVerdict(fake, snap(['hello', 'fake❯ '], 1))).toBe('empty-input');
+    expect(screenVerdict(fake, snap(['Esc to cancel', 'fake❯ '], 1))).toBe('blocking');
   });
 
   it('null patterns → unknown', () => {
@@ -270,8 +295,6 @@ describe('a Claude notice wrapped over the 3 rows ending at the cursor', () => {
     lines[s.cursorY - 2] = `❯ ${NOTICE.slice(0, 24)}`;
     lines[s.cursorY - 1] = `  ${NOTICE.slice(24, 48)}`;
     lines[s.cursorY] = `  ${NOTICE.slice(48)}`;
-    expect(screenVerdict(claude.screen, { lines, cursorY: s.cursorY }, NOTICE)).toBe(
-      'notice-echoed',
-    );
+    expect(screenVerdict(claude.screen, { ...s, lines }, NOTICE)).toBe('notice-echoed');
   });
 });

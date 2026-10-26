@@ -6,7 +6,7 @@ the notice gate sat at `no-empty-input` and notices were never delivered.
 
 Driver: `@lydell/node-pty` → `@xterm/headless` at 120×36, cwd = the Conduit repo, `CLAUDE*` env vars
 stripped. Each input-row cell read via `buffer.active.getLine(y).getCell(x)`: `isDim()`, `isBold()`,
-`getFgColorMode()`/`getFgColor()`. Fixtures (with a `styles` mask per line, `d` = dim, `.` = otherwise):
+`getFgColorMode()`/`getFgColor()`. Fixtures (with `cursorX` and a `cursorRowStyles` mask, `d` = dim, `.` = otherwise):
 `test/unit/fixtures/conduit-mcp/screens/{claude-suggestion,claude-typed,codex-placeholder,codex-typed}.json`.
 
 | | CLI | Row text | Cell style |
@@ -27,6 +27,24 @@ Findings:
 - **When the suggestion appears** (from the 2.1.310 binary, confirmed by runs): only from the 2nd assistant
   turn on (`early_conversation`), not on cache-cold turns, not in plan mode or under rate-limit warnings, and
   with a back-off after a streak of unused suggestions. One-turn probes never show it; a 3-turn probe does.
+
+## Drafts that must never read as empty (measured for the narrowed rule)
+
+| CLI | Draft | Style | Cursor |
+|---|---|---|---|
+| claude | bracketed paste of 30 lines → `❯ [Pasted text #1 +29 lines]` | **plain** (not dim), default fg | after the chip (x=28) |
+| claude | pasted image path | not turned into a chip by the headless driver (no `[Image #N]` seen); not measured | — |
+| claude | Ctrl+R → `search prompts:` on its own row | grey `rgb #999999` / amber, not dim | on that row, which has no `❯` |
+| codex | bracketed paste, 30–60 lines (~2.4k chars) | shown inline, **plain**; no chip appeared | after the text |
+| codex | pasted image path → `[Image #1]` | **palette colour 6**, not dim | after the chip (x=13) |
+| codex | Ctrl+R → `reverse-i-search:` | **dim**, but on a row without `›` | on that row |
+
+So the strip is narrowed to the measured shape: **one dim run from the cursor to the end of the row,
+directly after a bare prompt** (whitespace gaps inside the run may be plain — Claude's first paint).
+A placeholder or suggestion parks the cursor at the run's start (x=2 for both CLIs); every draft above
+leaves it after the text, so even a chip drawn faint can't read as empty-input. Only the cursor row
+carries styles. The S0 fixtures got `cursorX` and a cursor-row mask from these measurements
+(`claude-idle-placeholder` uses the first-paint shape; `codex-idle` the codex placeholder shape).
 
 ## Turning suggestions off per launch
 

@@ -5,11 +5,12 @@ import type { ScreenVerdict } from './types';
 export interface ScreenSnapshot {
   lines: readonly string[];
   cursorY: number;
+  cursorX: number;
   /**
-   * Per-line style masks aligned char-for-char with `lines`: `STYLE_DIM` for a faint (SGR 2) cell,
-   * `STYLE_PLAIN` otherwise. Absent ⇒ styles unknown, and only the text patterns apply.
+   * Style mask of the cursor row, aligned char-for-char with `lines[cursorY]`: `STYLE_DIM` for a
+   * faint (SGR 2) cell, `STYLE_PLAIN` otherwise. Only the cursor row: nothing else is stripped.
    */
-  styles?: readonly string[];
+  cursorRowStyles: string;
 }
 
 export const STYLE_PLAIN = '.';
@@ -34,16 +35,23 @@ function findInputRow(
 }
 
 /**
- * The row's real text: CLIs draw their placeholders and suggested prompts faint in the input row
- * (docs/runs/2026-10-26-conduit-mcp/placeholder-cells.md), so those cells are not input.
+ * Row `y` with a placeholder dropped. Narrowed to what was measured
+ * (docs/runs/2026-10-26-conduit-mcp/placeholder-cells.md): one faint run (gaps may be plain
+ * whitespace — Claude's first paint) from the cursor to the end of the row, after a bare prompt.
+ * A placeholder parks the cursor at its start; typed text, a paste chip or an image chip never do,
+ * so off the cursor row nothing is dropped.
+ * Char index = cell index here because the prompt glyphs before the run are single-width.
  */
-function realText(patterns: ScreenPatterns, s: ScreenSnapshot, y: number): string {
-  const line = s.lines[y] ?? '';
-  const mask = s.styles?.[y];
-  if (patterns.placeholder !== 'dim' || mask === undefined) return line;
-  let out = '';
-  for (let i = 0; i < line.length; i += 1) if (mask[i] !== STYLE_DIM) out += line[i];
-  return out;
+function inputText(patterns: ScreenPatterns, s: ScreenSnapshot, y: number): string {
+  const row = s.lines[y] ?? '';
+  if (patterns.placeholder !== 'dim' || y !== s.cursorY) return row;
+  const start = s.cursorRowStyles.indexOf(STYLE_DIM);
+  if (start < 0 || s.cursorX !== start) return row;
+  for (let i = start; i < row.length; i += 1) {
+    if (s.cursorRowStyles[i] !== STYLE_DIM && !/\s/.test(row[i])) return row;
+  }
+  const head = row.slice(0, start);
+  return patterns.emptyInput.some((re) => re.test(head)) ? head : row;
 }
 
 // Blocking matches the whole viewport, because Claude's permission dialog sits ~15 rows below the
@@ -68,16 +76,10 @@ export function screenVerdict(
   }
 
   if (expectNotice !== undefined) {
-    let rows = '';
-    for (let y = echoFrom; y < echoTo; y += 1) rows += realText(patterns, s, y);
-    if (squash(rows).includes(squash(expectNotice))) return 'notice-echoed';
+    const rows = s.lines.slice(echoFrom, echoTo);
+    if (squash(rows.join('')).includes(squash(expectNotice))) return 'notice-echoed';
   }
   if (s.lines[rowY] === undefined) return 'unknown';
-  const row = realText(patterns, s, rowY);
-  if (patterns.emptyInput.some((re) => re.test(row))) return 'empty-input';
-  // The placeholder text patterns also match the same words typed for real, so they only stand in
-  // when the snapshot can't tell faint from typed.
-  const stylesKnown = patterns.placeholder !== undefined && s.styles !== undefined;
-  if (!stylesKnown && patterns.placeholderText?.some((re) => re.test(row))) return 'empty-input';
-  return 'unknown';
+  const row = inputText(patterns, s, rowY);
+  return patterns.emptyInput.some((re) => re.test(row)) ? 'empty-input' : 'unknown';
 }

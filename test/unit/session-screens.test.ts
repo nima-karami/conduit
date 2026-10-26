@@ -23,16 +23,30 @@ describe('createSessionScreens', () => {
     expect(snap?.cursorY).toBe(1);
   });
 
-  it('styles mark faint (SGR 2) cells, aligned with the trimmed text', async () => {
+  it('cursor row styles mark faint (SGR 2) cells, aligned with the trimmed text', async () => {
     const s = createSessionScreens();
     s.start('a', 40, 3);
-    s.feed(
-      'a',
-      '❯ \x1b[2myes, go ahead\x1b[22m   \r\n\x1b[1m›\x1b[22m\x1b[2m Ask 世界\x1b[22m\r\nplain',
-    );
+    s.feed('a', '❯ \x1b[2myes, go ahead\x1b[22m   \x1b[1;3H');
     const snap = await s.snapshot('a');
-    expect(snap?.lines).toEqual(['❯ yes, go ahead', '› Ask 世界', 'plain']);
-    expect(snap?.styles).toEqual(['..ddddddddddddd', '.ddddddd', '.....']);
+    expect(snap?.lines[0]).toBe('❯ yes, go ahead');
+    expect(snap).toMatchObject({ cursorY: 0, cursorX: 2, cursorRowStyles: '..ddddddddddddd' });
+  });
+
+  it('a wide char takes one mask char per string char, not per cell', async () => {
+    const s = createSessionScreens();
+    s.start('a', 40, 3);
+    s.feed('a', '\x1b[1m›\x1b[22m\x1b[2m Ask 世界\x1b[22m x');
+    const snap = await s.snapshot('a');
+    expect(snap?.lines[0]).toBe('› Ask 世界 x');
+    expect(snap?.cursorRowStyles).toBe('.ddddddd..');
+  });
+
+  it('only the cursor row carries styles', async () => {
+    const s = createSessionScreens();
+    s.start('a', 40, 3);
+    s.feed('a', '\x1b[2mfaint above\x1b[22m\r\n');
+    const snap = await s.snapshot('a');
+    expect(snap).toMatchObject({ cursorY: 1, cursorX: 0, cursorRowStyles: '' });
   });
 
   it('cursorY is viewport-relative after scrolling', async () => {

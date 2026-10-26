@@ -1,22 +1,21 @@
 import { type IBufferLine, Terminal } from '@xterm/headless';
 import { type ScreenSnapshot, STYLE_DIM, STYLE_PLAIN } from '../src/conduit-mcp/screen-verdict';
 
-/** translateToString(true).trimEnd(), plus a style mask aligned with it char-for-char. */
-function readRow(line: IBufferLine | undefined, cols: number): { text: string; styles: string } {
-  if (!line) return { text: '', styles: '' };
-  let text = '';
-  let styles = '';
-  const cell = line.getCell(0);
-  for (let x = 0; x < cols && cell; x += 1) {
-    line.getCell(x, cell);
+const rowText = (line: IBufferLine | undefined) => line?.translateToString(true).trimEnd() ?? '';
+
+/** A style mask aligned char-for-char with rowText(line), which is `length` long. */
+function styleMask(line: IBufferLine | undefined, length: number): string {
+  let mask = '';
+  const cell = line?.getCell(0);
+  if (!line || !cell) return mask;
+  for (let x = 0; x < line.length && mask.length < length; x += 1) {
+    if (!line.getCell(x, cell)) break;
     // The trailing half of a wide char: translateToString skips it too.
     if (cell.getWidth() === 0) continue;
-    const chars = cell.getChars() || ' ';
-    text += chars;
-    styles += (cell.isDim() ? STYLE_DIM : STYLE_PLAIN).repeat(chars.length);
+    const n = (cell.getChars() || ' ').length;
+    mask += (cell.isDim() ? STYLE_DIM : STYLE_PLAIN).repeat(n);
   }
-  const trimmed = text.trimEnd();
-  return { text: trimmed, styles: styles.slice(0, trimmed.length) };
+  return mask.slice(0, length);
 }
 
 /**
@@ -78,13 +77,16 @@ export function createSessionScreens(opts: { scrollback?: number } = {}): Sessio
           if (!waiting.get(term)?.delete(resolve)) return;
           const buf = term.buffer.active;
           const lines: string[] = [];
-          const styles: string[] = [];
-          for (let y = 0; y < term.rows; y += 1) {
-            const row = readRow(buf.getLine(buf.viewportY + y), term.cols);
-            lines.push(row.text);
-            styles.push(row.styles);
-          }
-          resolve({ lines, styles, cursorY: buf.cursorY + buf.baseY - buf.viewportY });
+          for (let y = 0; y < term.rows; y += 1)
+            lines.push(rowText(buf.getLine(buf.viewportY + y)));
+          const cursorY = buf.cursorY + buf.baseY - buf.viewportY;
+          const cursorLine = buf.getLine(buf.viewportY + cursorY);
+          resolve({
+            lines,
+            cursorY,
+            cursorX: buf.cursorX,
+            cursorRowStyles: styleMask(cursorLine, lines[cursorY]?.length ?? 0),
+          });
         });
       });
     },
