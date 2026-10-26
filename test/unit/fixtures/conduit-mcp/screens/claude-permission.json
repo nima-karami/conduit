@@ -4,6 +4,8 @@
   "cols": 120,
   "rows": 36,
   "cursorY": 7,
+  "cursorX": 36,
+  "cursorRowStyles": "....................................",
   "lines": [
     " ▐▛███▛█   Claude Code v2.1.310",
     "▝▜██████▀  Haiku 5.5 · Claude Max",

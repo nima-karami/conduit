@@ -2,15 +2,16 @@ import { commandLeaf } from '../launch-args';
 import type { AgentDefinition } from '../types';
 
 export type McpAdapterId = 'claude' | 'codex' | 'cursor' | 'fake';
-/** emptyInput [] ⇒ never 'empty-input' ⇒ pull-only. */
 export interface ScreenPatterns {
+  /** Matched on every viewport row. */
   blocking: readonly RegExp[];
-  /** The bare prompt, matched on the cursor row after placeholder-styled cells are dropped. */
+  /**
+   * The bare prompt, matched on the cursor row once a placeholder is dropped (screenVerdict).
+   * [] ⇒ never 'empty-input' ⇒ pull-only.
+   */
   emptyInput: readonly RegExp[];
-  /** How the CLI styles placeholder text in its input row; those cells are never input. */
+  /** How the CLI draws its input placeholder and suggested prompt; absent ⇒ never dropped. */
   placeholder?: 'dim';
-  /** Known placeholder texts, for snapshots without styles only. */
-  placeholderText?: readonly RegExp[];
 }
 export type McpWiringKind = 'mcp-config-flag' | 'codex-c-flags' | 'cursor-global';
 export interface McpAdapter {
@@ -39,13 +40,12 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
       blocking: [/Esc to cancel/, /^\s*❯\s*\d+\.\s/],
       emptyInput: [/^\s*❯\s*$/],
       placeholder: 'dim',
-      placeholderText: [/^\s*❯\s+Try ".*"\s*$/],
     },
     e2eOnly: false,
   },
   {
-    // Idle row measured in Conduit (fixture codex-idle). placeholderText lists Codex's rotating
-    // composer examples; an approval replaces the composer, so it never reads as empty.
+    // Idle row measured in Conduit (fixture codex-idle). An approval replaces the composer, so it
+    // never reads as empty.
     id: 'codex',
     leaves: ['codex'],
     ids: [],
@@ -54,9 +54,6 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
       blocking: [/enter continue · esc quit/i, /enter to confirm or esc to cancel/i],
       emptyInput: [/^\s*›\s*$/],
       placeholder: 'dim',
-      placeholderText: [
-        /^\s*›\s+(Ask Codex to do anything|Explain this codebase|Summarize recent commits|Implement \{feature\}|(Find and fix a bug in|Write tests for|Improve documentation in) @filename|Run \/review on my current changes|Use \/skills to list available skills)\s*$/,
-      ],
     },
     e2eOnly: false,
   },
