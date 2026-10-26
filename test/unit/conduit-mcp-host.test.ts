@@ -30,6 +30,7 @@ const FAKE: AgentDefinition = {
 };
 const SHELL: AgentDefinition = { ...FAKE, id: 'pwsh', command: 'pwsh' };
 const CODEX: AgentDefinition = { ...FAKE, id: 'codex', command: '/usr/bin/codex' };
+const CLAUDE: AgentDefinition = { ...FAKE, id: 'claude', command: '/usr/bin/claude' };
 const spec = (command = '/usr/bin/node'): SpawnSpec => ({
   command,
   args: ['fake.mjs'],
@@ -916,6 +917,39 @@ describe('createConduitMcpHost — notices', () => {
       handle: 'codex-1',
       gate: 'no-empty-input',
     });
+  });
+
+  it('claude session whose input row holds only a dim suggested prompt gets its notice', async () => {
+    const h = harness();
+    await h.host.start();
+    const a = launch(h, 's1');
+    const ca = await client(h.ep, a.token);
+    h.sessions.set('s4', session('s4', { agentId: 'claude' }));
+    const c = launch(h, 's4', CLAUDE, spec('/usr/bin/claude'));
+    await client(h.ep, c.token);
+    // Claude 2.1.310 after a turn: bare prompt, a faint suggestion, cursor parked before it.
+    h.host.onOutput('s4', '❯ \x1b[2myes, go ahead\x1b[22m\x1b[3G');
+    h.echo.add('s4');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 's4')).toEqual([composeNotice(false), '\r']);
+  });
+
+  it('claude session with typed (normal-weight) text on the input row is not typed into', async () => {
+    const h = harness();
+    await h.host.start();
+    const a = launch(h, 's1');
+    const ca = await client(h.ep, a.token);
+    h.sessions.set('s4', session('s4', { agentId: 'claude' }));
+    const c = launch(h, 's4', CLAUDE, spec('/usr/bin/claude'));
+    await client(h.ep, c.token);
+    h.host.onOutput('s4', '❯ yes, go ahead');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 's4')).toEqual([]);
+    expect(h.host.uiState().sessions.s4?.gate).toBe('no-empty-input');
   });
 
   it('no live connection → never typed into', async () => {
