@@ -4,7 +4,7 @@
 // Dependency-free and run by Conduit's own executable as Node (ELECTRON_RUN_AS_NODE=1), so no
 // system Node is needed. See docs/specs/2026-10-25-conduit-mcp-server.md §3.1.
 //
-// Usage: <node> conduit-mcp-shim.cjs --endpoint <pipe-or-socket-path>
+// Usage: <node> conduit-mcp-shim.cjs [--endpoint <pipe-or-socket-path>] (or CONDUIT_MCP_ENDPOINT)
 const net = require('node:net');
 
 function argValue(name) {
@@ -12,8 +12,10 @@ function argValue(name) {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-const endpoint = argValue('--endpoint');
-const token = process.env.CONDUIT_SESSION_TOKEN || null;
+const endpointValue = argValue('--endpoint') ?? process.env.CONDUIT_MCP_ENDPOINT;
+const endpoint = endpointValue && !endpointValue.startsWith('${') ? endpointValue : undefined;
+const tokenValue = process.env.CONDUIT_SESSION_TOKEN;
+const token = tokenValue && !tokenValue.startsWith('${') ? tokenValue : null;
 
 /** 'connecting' buffers stdin; 'relay' pipes bytes; 'fallback' answers requests itself. */
 let mode = 'connecting';

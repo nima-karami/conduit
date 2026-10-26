@@ -1,5 +1,5 @@
-// Per-CLI launch wiring for the conduit MCP server (spec §3.1): per-launch flags only, never an
-// edit of the user's CLI config. Renderer-safe like its sibling launch-args.ts.
+// Per-CLI launch wiring for the conduit MCP server (spec §3.1). Cursor is the opt-in exception:
+// it reads the user config and receives only its token and endpoint in the PTY env.
 import type { McpAdapter } from './conduit-mcp/adapters';
 import { CONDUIT_TOOLS } from './conduit-mcp/tool-schemas';
 import type { McpUnavailableReason } from './conduit-mcp/types';
@@ -89,6 +89,7 @@ export function mcpLaunchWiring(i: {
       break;
     }
     case 'cursor-global':
+      // Cursor's user MCP entry carries placeholders; no per-launch CLI args exist (spec §3.3).
       return { ok: true, args: [], configJson: null };
   }
   // A launch that would trip the metachar guard goes without messaging, never broken (spec §3.1).

@@ -52,7 +52,7 @@ describe('adapterFor', () => {
     expect(notifiable(claude)).toBe(true);
     expect(notifiable(adapter('fake'))).toBe(true);
     expect(notifiable(adapter('codex'))).toBe(true);
-    expect(notifiable(adapter('cursor'))).toBe(false);
+    expect(notifiable(adapter('cursor'))).toBe(true);
   });
 });
 
@@ -146,6 +146,63 @@ describe('screenVerdict on the S0 screens', () => {
 
   it('null patterns → unknown', () => {
     expect(screenVerdict(null, screen('claude-idle'), NOTICE)).toBe('unknown');
-    expect(adapter('cursor').screen).toBeNull();
+  });
+});
+
+describe('Cursor screens (S0 captures; input row located by inputRow)', () => {
+  const cursor = adapter('cursor');
+  it.each([
+    ['cursor-idle-startup', 'empty-input'],
+    ['cursor-idle-after-turn', 'empty-input'],
+    ['cursor-draft', 'unknown'],
+    ['cursor-notice-draft', 'unknown'],
+    ['cursor-trust', 'blocking'],
+    ['cursor-tool-approval', 'blocking'],
+    ['cursor-mid-turn', 'unknown'],
+    ['cursor-idle-stale-input-row-far-above', 'unknown'],
+  ])('%s → %s', (name, want) => {
+    expect(screenVerdict(cursor.screen, screen(name))).toBe(want);
+  });
+
+  it('the cursor parks below the input row, on a blank row', () => {
+    const s = screen('cursor-idle-after-turn');
+    const row = s.lines.findLastIndex((l) => /^\s*→/.test(l));
+    expect(s.cursorY - row).toBeGreaterThan(NOTICE_ECHO_ROWS);
+    expect(s.lines[s.cursorY].trim()).toBe('');
+  });
+
+  it('mid-turn: the empty → row is on screen, but the ctrl+c suffix keeps it closed', () => {
+    const s = screen('cursor-mid-turn');
+    expect(s.lines.some((l) => /^\s*→\s*Add a follow-up/.test(l))).toBe(true);
+    expect(screenVerdict(cursor.screen, s)).toBe('unknown');
+  });
+
+  it('the notice typed on the input row is echoed although the cursor parks far below', () => {
+    expect(screenVerdict(cursor.screen, screen('cursor-notice-draft'), NOTICE)).toBe(
+      'notice-echoed',
+    );
+  });
+
+  it('a notice wrapped downward over the 3 rows from the input row is echoed', () => {
+    expect(screenVerdict(cursor.screen, screen('cursor-notice-wrapped-draft'), NOTICE)).toBe(
+      'notice-echoed',
+    );
+  });
+
+  it('a draft that is not the notice is not echoed', () => {
+    expect(screenVerdict(cursor.screen, screen('cursor-draft'), NOTICE)).toBe('unknown');
+  });
+});
+
+describe('a Claude notice wrapped over the 3 rows ending at the cursor', () => {
+  it('still reads notice-echoed', () => {
+    const s = screen('claude-idle');
+    const lines = [...s.lines];
+    lines[s.cursorY - 2] = `❯ ${NOTICE.slice(0, 24)}`;
+    lines[s.cursorY - 1] = `  ${NOTICE.slice(24, 48)}`;
+    lines[s.cursorY] = `  ${NOTICE.slice(48)}`;
+    expect(screenVerdict(claude.screen, { lines, cursorY: s.cursorY }, NOTICE)).toBe(
+      'notice-echoed',
+    );
   });
 });

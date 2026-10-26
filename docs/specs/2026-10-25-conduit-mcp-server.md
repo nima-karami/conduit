@@ -117,7 +117,7 @@ differentially repainted screen.
 - A shim script shipped in app resources is the stdio MCP server each CLI spawns. It is a **byte relay**
   (stdio ↔ endpoint) that first sends the session token; all MCP handling lives in the host. Run with
   Conduit's own executable as Node (`ELECTRON_RUN_AS_NODE=1`), so no system Node is needed.
-- **Per-launch registration, never editing the user's CLI config:**
+- **Per-launch registration, with an opt-in user-config edit for Cursor:**
   - `claude`: `--mcp-config <generated json>`; the file lives in userData, is written per session, holds
     no token (the token reaches the child through the PTY env), and is deleted when the session ends.
   - `codex`: `-c mcp_servers.conduit.command=…`, `…args=[…]`, `…env_vars=['CONDUIT_SESSION_TOKEN']`,
@@ -125,10 +125,14 @@ differentially repainted screen.
     only), so Codex doesn't raise its own prompt on every call.
   - `cursor` (`agent`): it has no per-launch flag (documented). Settings gets an opt-in **Connect Cursor**
     action that adds one `conduit` entry to `~/.cursor/mcp.json` (backed up first, removable through a
-    matching **Disconnect** action). The entry's env is `{"CONDUIT_SESSION_TOKEN": "${env:CONDUIT_SESSION_TOKEN}"}`,
-    which uses Cursor's documented interpolation. Outside Conduit the shim gets no token and lists no
-    tools. Per-project approval follows Cursor's own `agent mcp enable`; Conduit never passes
-    `--approve-mcps` (that would approve every server).
+    matching **Disconnect** action). The entry's env carries both
+    `CONDUIT_SESSION_TOKEN: "${env:CONDUIT_SESSION_TOKEN}"` and
+    `CONDUIT_MCP_ENDPOINT: "${env:CONDUIT_MCP_ENDPOINT}"`; the host supplies their values in each
+    session's PTY env. Cursor's user-file servers need no server approval. Each tool can be
+    allowlisted through Cursor's own first-call prompt; Conduit does not edit `cli-config.json`.
+    Outside Conduit the shim has no endpoint and lists no tools. Conduit never passes
+    `--approve-mcps` (that would approve every server). See the
+    [Cursor spec](2026-10-26-conduit-mcp-cursor.md) for Connect and launch behavior.
   - `ELECTRON_RUN_AS_NODE` goes only in the server's own env entry, **never in the PTY env**. Otherwise
     any Electron app started from that shell would run as Node.
   - The token is inherited by every process in the session, including a nested CLI, which then speaks

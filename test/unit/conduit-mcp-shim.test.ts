@@ -40,12 +40,20 @@ interface Shim {
   exit: Promise<number | null>;
 }
 
-function runShim(endpoint: string, token: string | undefined, preload?: string): Shim {
+function runShim(
+  endpoint: string | undefined,
+  token: string | undefined,
+  preload?: string,
+  envEndpoint?: string,
+): Shim {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.CONDUIT_SESSION_TOKEN;
+  delete env.CONDUIT_MCP_ENDPOINT;
   if (token !== undefined) env.CONDUIT_SESSION_TOKEN = token;
+  if (envEndpoint !== undefined) env.CONDUIT_MCP_ENDPOINT = envEndpoint;
   const pre = preload ? ['--require', preload] : [];
-  const child = spawn(process.execPath, [...pre, SHIM, '--endpoint', endpoint], { env });
+  const args = endpoint === undefined ? [] : ['--endpoint', endpoint];
+  const child = spawn(process.execPath, [...pre, SHIM, ...args], { env });
   let buf = '';
   const queued: string[] = [];
   const waiters: Array<(l: string) => void> = [];
@@ -92,8 +100,13 @@ describe('conduit-mcp-shim', () => {
     return p;
   }
 
-  function start(endpoint: string, token: string | undefined, preload?: string): Shim {
-    const s = runShim(endpoint, token, preload);
+  function start(
+    endpoint: string | undefined,
+    token: string | undefined,
+    preload?: string,
+    envEndpoint?: string,
+  ): Shim {
+    const s = runShim(endpoint, token, preload, envEndpoint);
     children.push(s.child);
     return s;
   }
@@ -104,6 +117,39 @@ describe('conduit-mcp-shim', () => {
     start(p, 'abc');
     await expect.poll(() => conns.length, { timeout: 10_000 }).toBe(1);
     expect(conns[0]?.token).toBe('abc');
+  });
+
+  it('uses the endpoint env var when --endpoint is absent', async () => {
+    const conns: EndpointConnection[] = [];
+    const p = await host((c) => conns.push(c));
+    start(undefined, 'abc', undefined, p);
+    await expect.poll(() => conns.length, { timeout: 10_000 }).toBe(1);
+    expect(conns[0]?.token).toBe('abc');
+  });
+
+  it('treats a literal endpoint placeholder as absent and exits on stdin end', async () => {
+    const s = start(undefined, undefined, undefined, '${env:CONDUIT_MCP_ENDPOINT}');
+    s.child.stdin.write('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n');
+    expect(JSON.parse(await s.nextLine())).toMatchObject({
+      id: 1,
+      result: { capabilities: { tools: {} } },
+    });
+    s.child.stdin.write('{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n');
+    expect(JSON.parse(await s.nextLine())).toEqual({
+      jsonrpc: '2.0',
+      id: 2,
+      result: { tools: [] },
+    });
+    s.child.stdin.end();
+    expect(await s.exit).toBe(0);
+  });
+
+  it('sends a null token for a literal token placeholder', async () => {
+    const conns: EndpointConnection[] = [];
+    const p = await host((c) => conns.push(c));
+    start(p, '${env:CONDUIT_SESSION_TOKEN}');
+    await expect.poll(() => conns.length, { timeout: 10_000 }).toBe(1);
+    expect(conns[0]?.token).toBeNull();
   });
 
   it('no token → hello token null', async () => {

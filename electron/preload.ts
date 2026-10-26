@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { CursorConnectResult } from '../src/conduit-mcp/cursor-config';
 import type { DndOpts, DndResult } from '../src/fs-dnd';
 import type { ImportConflictPolicy, ImportResult } from '../src/fs-import';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
@@ -49,6 +50,15 @@ const api = {
   /** Read the last `n` lines of the active log (already redacted on disk) for the About tail. */
   readLogTail(n: number): Promise<{ off: boolean; tail: string }> {
     return ipcRenderer.invoke('readLogTail', n);
+  },
+  readCursorConnection(): Promise<CursorConnectResult> {
+    return ipcRenderer.invoke('cursor-connect:read');
+  },
+  connectCursor(): Promise<CursorConnectResult> {
+    return ipcRenderer.invoke('cursor-connect:connect');
+  },
+  disconnectCursor(): Promise<CursorConnectResult> {
+    return ipcRenderer.invoke('cursor-connect:disconnect');
   },
   /** The skill installer: list the app's bundled skills, and copy one into a destination's
    *  `.claude/skills`. `projectRoot` is the renderer's active project (null = none open). */

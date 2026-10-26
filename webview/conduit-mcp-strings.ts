@@ -17,6 +17,7 @@ const UNAVAILABLE_CAUSE: Record<McpUnavailableReason, string> = {
   'messaging-off': 'messaging is turned off',
   'endpoint-down': 'the message server isn’t running',
   'launch-io': 'its launch files couldn’t be written',
+  'cursor-not-connected': 'Connect Cursor in Settings',
 };
 
 export const MCP_STR = {
@@ -150,10 +151,24 @@ export const MCP_STR = {
   settingsDesc:
     'Agents in your sessions can message each other and you through Conduit. Turning it off stops new launches from connecting.',
   cursorConnect: 'Connect Cursor',
+  cursorTitle: 'Cursor',
   cursorDisconnect: 'Disconnect',
+  cursorDisconnectAria: 'Disconnect Cursor',
+  cursorCheckAgain: 'Check again',
+  cursorDesc:
+    'Adds Conduit to Cursor’s user MCP config (~/.cursor/mcp.json). Cursor’s editor will list the server with no tools outside Conduit. Cursor may ask you to allow each Conduit tool the first time it runs. Disconnect before uninstalling Conduit.',
+  cursorPending: 'Checking Cursor configuration…',
+  cursorActionFailed: (code: string, previousState: string) =>
+    `Couldn’t update Cursor’s MCP config (code ${code}). Previous state: ${previousState}.`,
+  cursorConfigError: (code: string) =>
+    code === 'EJSON'
+      ? 'Cursor’s MCP config is not valid JSON or has an invalid shape.'
+      : `Cursor’s MCP config couldn’t be read (code ${code}).`,
   cursorState: {
     connected: 'Connected',
     disconnected: 'Not connected',
-    stale: 'Connected to an older Conduit',
-  } satisfies Record<'connected' | 'disconnected' | 'stale', string>,
+    stale: 'Connected to another Conduit install',
+    error: 'Configuration error',
+    pending: 'Checking…',
+  } satisfies Record<'connected' | 'disconnected' | 'stale' | 'error' | 'pending', string>,
 } as const;

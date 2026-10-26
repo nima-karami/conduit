@@ -6,6 +6,8 @@ export type McpAdapterId = 'claude' | 'codex' | 'cursor' | 'fake';
 export interface ScreenPatterns {
   blocking: readonly RegExp[];
   emptyInput: readonly RegExp[];
+  /** Locates the input box when the cursor parks away from it; see screen-verdict.ts. */
+  inputRow?: { pattern: RegExp; maxAbove: number };
 }
 export type McpWiringKind = 'mcp-config-flag' | 'codex-c-flags' | 'cursor-global';
 export interface McpAdapter {
@@ -55,8 +57,20 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
     id: 'cursor',
     leaves: ['agent', 'cursor-agent'],
     ids: [],
+    // Cursor parks the cursor 5-6 rows below its `→` input row (S0, spec §3.4), so the row is
+    // located by pattern; maxAbove adds a wrap allowance.
     wiring: 'cursor-global',
-    screen: null,
+    screen: {
+      inputRow: { pattern: /^\s*→/, maxAbove: 8 },
+      emptyInput: [/^\s*→\s*(Plan, search, build anything|Add a follow-up)?\s*$/],
+      blocking: [
+        /Use arrow keys to navigate, Enter to select/,
+        /MCP Server Approval Required/,
+        /Run this (MCP tool|command)\?/,
+        /^\s*→ Run \(once\) \(y\)/,
+        /Esc to close\s*$/,
+      ],
+    },
     e2eOnly: false,
   },
   {

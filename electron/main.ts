@@ -262,6 +262,7 @@ import {
   writeSpec,
 } from './conduit-fs';
 import { createConduitMcpHost } from './conduit-mcp-host';
+import { createCursorConnect } from './cursor-connect';
 import { createDragOutHost } from './drag-out-host';
 import { execFileBounded } from './exec-bounded';
 import { createFolderPicker } from './folder-picker';
@@ -1871,6 +1872,7 @@ app.whenReady().then(() => {
   // (docs/specs/2026-10-25-conduit-mcp-server.md). The host owns IO; decisions are pure modules.
   const mcpHost = createConduitMcpHost({
     dir: path.join(userData(), 'conduit-mcp'),
+    homeDir: os.homedir(),
     endpointPath: endpointPath(
       userData(),
       process.platform === 'win32' ? 'win32' : 'posix',
@@ -1889,6 +1891,11 @@ app.whenReady().then(() => {
       projectId ? (projectStore.list().find((p) => p.id === projectId)?.name ?? null) : null,
     broadcast,
     log,
+  });
+  const cursorConnect = createCursorConnect({
+    homeDir: os.homedir(),
+    execPath: process.execPath,
+    shimPath: mcpShimPath(),
   });
 
   // Restore previously persisted sessions (as stale) + save on every change.
@@ -4676,6 +4683,11 @@ app.whenReady().then(() => {
     (_e, id: string, dest: SkillDestination, projectRoot: string | null): SkillInstallResult =>
       installSkill(id, dest, projectRoot),
   );
+
+  // Cursor's user MCP config is only touched by the explicit Settings actions.
+  ipcMain.handle('cursor-connect:read', () => cursorConnect.read());
+  ipcMain.handle('cursor-connect:connect', () => cursorConnect.connect());
+  ipcMain.handle('cursor-connect:disconnect', () => cursorConnect.disconnect());
 
   // Diagnostics bundle (Slice B): assemble a version/OS header + the already-redacted
   // recent log tail into a file under the logs dir, then reveal it. The header carries only

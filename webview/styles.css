@@ -7387,6 +7387,10 @@ body.gh-resizing {
   align-items: center;
   gap: 10px;
 }
+.set__control--cursor {
+  flex: 1 1 0;
+  min-width: 0;
+}
 .set__number {
   width: 96px;
   padding: 5px 8px;
@@ -7527,6 +7531,33 @@ body.gh-resizing {
 .skillrow__actions {
   display: flex;
   flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.cursor-connect-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  width: 100%;
+}
+.cursor-connect-row__status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 0;
+  color: var(--text-dim);
+  font-size: calc(11.5px * var(--font-scale));
+}
+.cursor-connect-row__path {
+  direction: ltr;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+.cursor-connect-row__actions {
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   flex: 0 0 auto;
 }

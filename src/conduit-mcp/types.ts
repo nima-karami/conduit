@@ -170,6 +170,7 @@ export type McpUnavailableReason =
   | 'unquotable-path'
   | 'messaging-off'
   | 'endpoint-down'
+  | 'cursor-not-connected'
   /** handles.json or the per-launch config could not be written. */
   | 'launch-io';
 export type McpAttentionReason =
