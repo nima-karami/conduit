@@ -743,7 +743,7 @@ describe('createConduitMcpHost — notices', () => {
     expect(h.host.uiState().sessions.s2).toMatchObject({ paused: true, gate: 'paused', unread: 1 });
   });
 
-  it('codex session gets a handle but badge gate "pull-only" and never a submit', async () => {
+  it('codex session gets a handle and is never typed into while its own prompt is not on screen', async () => {
     const h = harness();
     await h.host.start();
     const a = launch(h, 's1');
@@ -757,7 +757,10 @@ describe('createConduitMcpHost — notices', () => {
     await ca.call('send_message', { to: ['codex-1'], body: 'see' });
     await h.host.tick();
     expect(writesTo(h, 's3')).toEqual([]);
-    expect(h.host.uiState().sessions.s3).toMatchObject({ handle: 'codex-1', gate: 'pull-only' });
+    expect(h.host.uiState().sessions.s3).toMatchObject({
+      handle: 'codex-1',
+      gate: 'no-empty-input',
+    });
   });
 
   it('no live connection → never typed into', async () => {

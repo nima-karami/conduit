@@ -36,12 +36,19 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
     e2eOnly: false,
   },
   {
-    // Idle and approval screens are not captured yet, so no empty-input: pull-only (plan S0).
+    // Idle row measured in Conduit (fixture codex-idle). The other placeholders are Codex's
+    // rotating composer examples; an approval replaces the composer, so it never reads as empty.
     id: 'codex',
     leaves: ['codex'],
     ids: [],
     wiring: 'codex-c-flags',
-    screen: { blocking: [/enter continue · esc quit/i], emptyInput: [] },
+    screen: {
+      blocking: [/enter continue · esc quit/i, /enter to confirm or esc to cancel/i],
+      emptyInput: [
+        /^\s*›\s*$/,
+        /^\s*›\s+(Ask Codex to do anything|Explain this codebase|Summarize recent commits|Implement \{feature\}|(Find and fix a bug in|Write tests for|Improve documentation in) @filename|Run \/review on my current changes|Use \/skills to list available skills)\s*$/,
+      ],
+    },
     e2eOnly: false,
   },
   {

@@ -51,7 +51,7 @@ describe('adapterFor', () => {
     expect(adapter('cursor').wiring).toBe('cursor-global');
     expect(notifiable(claude)).toBe(true);
     expect(notifiable(adapter('fake'))).toBe(true);
-    expect(notifiable(adapter('codex'))).toBe(false);
+    expect(notifiable(adapter('codex'))).toBe(true);
     expect(notifiable(adapter('cursor'))).toBe(false);
   });
 });
@@ -109,6 +109,26 @@ describe('screenVerdict on the S0 screens', () => {
     lines[13] = `❯ ${NOTICE}`;
     lines[30] = ' Esc to cancel · Tab to amend';
     expect(screenVerdict(claude.screen, { lines, cursorY: 13 }, NOTICE)).toBe('blocking');
+  });
+
+  it('codex idle composer is empty-input; typed text and old rows are not', () => {
+    const codex = adapter('codex').screen;
+    const s = screen('codex-idle');
+    expect(screenVerdict(codex, s)).toBe('empty-input');
+    expect(screenVerdict(codex, { lines: ['› '], cursorY: 0 })).toBe('empty-input');
+    expect(screenVerdict(codex, { lines: ['› Write tests for @filename'], cursorY: 0 })).toBe(
+      'empty-input',
+    );
+    expect(screenVerdict(codex, { lines: ['› fix the build'], cursorY: 0 })).toBe('unknown');
+    expect(screenVerdict(codex, { ...s, cursorY: 0 })).toBe('unknown');
+    const lines = [...s.lines];
+    lines[s.cursorY] = `› ${NOTICE}`;
+    expect(screenVerdict(codex, { lines, cursorY: s.cursorY }, NOTICE)).toBe('notice-echoed');
+  });
+
+  it('codex approval footer is blocking', () => {
+    const s = { lines: ['  Press enter to confirm or esc to cancel'], cursorY: 0 };
+    expect(screenVerdict(adapter('codex').screen, s)).toBe('blocking');
   });
 
   it('codex trust footer is blocking', () => {
