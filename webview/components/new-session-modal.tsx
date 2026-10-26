@@ -19,13 +19,24 @@ import {
   reduceNewSession,
   startBlock,
 } from '../new-session-state';
+import {
+  briefRequestOf,
+  briefStartBlock,
+  initialBriefState,
+  reduceBrief,
+} from '../role-brief-state';
+import { BRIEF_STR } from '../role-brief-strings';
 import { ModalLayer } from './modal-layer';
 import { NewSessionFolders } from './new-session-folders';
 import { NewSessionLaunchRow } from './new-session-launch-row';
 import { NewSessionPreview } from './new-session-preview';
 import { NewSessionProjectChip } from './new-session-project-chip';
+import { NewSessionRoleBrief } from './new-session-role-brief';
 
 const REPLY_TIMEOUT_MS = 5000;
+const PICK_TIMEOUT_MS = 30 * 60_000;
+// Typing a path must not hit the disk per keystroke.
+const PROBE_DEBOUNCE_MS = 250;
 
 type OpenRepoError = NonNullable<Extract<HostToWebview, { type: 'openRepo:result' }>['error']>;
 /** mf-new-session plan, Spec staleness §3.2: one copy per mf-model error. */
@@ -33,10 +44,7 @@ const START_ERROR: Record<OpenRepoError, string> = {
   'home-missing': 'home folder not found',
   'invalid-path': 'home is not a folder',
   'unknown-agent': 'launcher is no longer available',
-  'brief-unreadable': "can't read the role brief file",
-  'brief-too-large': 'role brief is over 64 KiB',
-  'brief-invalid': 'role brief is not UTF-8 text',
-  'brief-io': "couldn't save the role brief",
+  ...BRIEF_STR.errors,
 };
 
 export interface NewSessionModalProps {
@@ -54,6 +62,10 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
     undefined,
     () => initialNewSessionState(seedNewSession(prefill, ctx)),
   );
+  const [brief, dispatchBrief] = useReducer(reduceBrief, undefined, initialBriefState);
+  const briefSeq = useRef(0);
+  const probeSeq = useRef(0);
+  const briefLiveId = useId();
   const [preview, setPreview] = useState<LaunchPreviewView>({ loading: false });
   const frameRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -94,6 +106,55 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
   }, [state.folders]);
 
   useEffect(() => {
+    const seq = ++briefSeq.current;
+    dispatchBrief({ type: 'launcherChanged' });
+    const agentId = state.agentId;
+    void requestHost(
+      (requestId) => ({ type: 'brief:agentPreview', requestId, agentId }),
+      ['brief:agentPreviewed'],
+      REPLY_TIMEOUT_MS,
+    ).then((reply) => {
+      // Latest launcher wins; a superseded launcher's answer must not unlock this one's section.
+      if (!reply || seq !== briefSeq.current) return;
+      const { type: _type, requestId: _id, ...rest } = reply;
+      dispatchBrief({ type: 'agentPreviewed', ...rest });
+    });
+  }, [state.agentId]);
+
+  const briefReq = briefRequestOf(brief);
+  const briefOn = briefReq !== undefined && briefReq.kind !== 'none';
+
+  useEffect(() => {
+    const seq = ++probeSeq.current;
+    const path = brief.path.trim();
+    if (brief.mode !== 'file' || path === '') return;
+    const timer = setTimeout(() => {
+      void requestHost(
+        (requestId) => ({ type: 'brief:probe', requestId, path }),
+        ['brief:probed'],
+        REPLY_TIMEOUT_MS,
+      ).then((reply) => {
+        if (seq !== probeSeq.current) return;
+        dispatchBrief(
+          reply
+            ? { type: 'probed', ok: reply.ok, bytes: reply.bytes, error: reply.error }
+            : { type: 'probed', ok: false, error: 'brief-unreadable' },
+        );
+      });
+    }, PROBE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [brief.mode, brief.path]);
+
+  const browseBrief = async () => {
+    const reply = await requestHost(
+      (requestId) => ({ type: 'file:pick', requestId, title: BRIEF_STR.browseName }),
+      ['file:picked'],
+      PICK_TIMEOUT_MS,
+    );
+    if (reply?.path) dispatchBrief({ type: 'setPath', path: reply.path });
+  };
+
+  useEffect(() => {
     const [home, ...roots] = state.folders;
     const seq = ++previewSeq.current;
     if (home === undefined) {
@@ -102,7 +163,14 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
     }
     setPreview((p) => ({ ...p, loading: true }));
     void requestHost(
-      (requestId) => ({ type: 'launch:preview', requestId, agentId: state.agentId, home, roots }),
+      (requestId) => ({
+        type: 'launch:preview',
+        requestId,
+        agentId: state.agentId,
+        home,
+        roots,
+        ...(briefOn ? { brief: true } : {}),
+      }),
       ['launch:previewResult'],
       REPLY_TIMEOUT_MS,
     ).then((reply) => {
@@ -116,7 +184,7 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
       const { type: _type, requestId: _id, ...result } = reply;
       setPreview({ result, loading: false });
     });
-  }, [state.agentId, state.folders]);
+  }, [state.agentId, state.folders, briefOn]);
 
   const agents = useMemo(() => [...ctx.agents], [ctx.agents]);
   const launchers = useMemo(() => [...ctx.launchers], [ctx.launchers]);
@@ -124,7 +192,8 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
     () => rankLaunchers(agents, launchers, preferredShellId(launchers, ctx.defaultAgentId)),
     [agents, launchers, ctx.defaultAgentId],
   );
-  const block = startBlock(state, preview, agents);
+  const block =
+    startBlock(state, preview, agents) ?? briefStartBlock(brief, preview.result?.briefBlocked);
   const label = agents.find((a) => a.id === state.agentId)?.label ?? state.agentId;
   const starting = state.phase === 'starting';
 
@@ -158,6 +227,7 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
           agentId: state.agentId,
           roots,
           projectId,
+          ...(briefReq ? { brief: briefReq } : {}),
           ...(prefill.cardId ? { cardId: prefill.cardId } : {}),
           requestId,
         }),
@@ -250,6 +320,13 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
               onMakeHome={(path) => dispatch({ type: 'makeHome', path })}
             />
           </section>
+
+          <NewSessionRoleBrief
+            state={brief}
+            dispatch={dispatchBrief}
+            onBrowse={() => void browseBrief()}
+            liveId={briefLiveId}
+          />
 
           <section className="ns__section">
             <span className="ns__label">Launches as</span>

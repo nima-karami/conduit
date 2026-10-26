@@ -15,6 +15,8 @@ import {
 } from '../../src/role-brief';
 
 const enc = (s: string) => new TextEncoder().encode(s);
+// Built from its code point: a literal U+FEFF in source trips the source-bytes guard.
+const BOM = String.fromCharCode(0xfeff);
 const ctx = { agentsDir: '/cfg', homeDir: '/home/u', resolve: path.posix.resolve };
 
 describe('parseBriefField', () => {
@@ -43,7 +45,7 @@ describe('parseBriefField', () => {
 
 describe('decodeBrief', () => {
   it('strips a BOM and keeps the rest verbatim', () => {
-    expect(decodeBrief(enc('﻿hello '))).toEqual({ ok: true, text: 'hello ' });
+    expect(decodeBrief(enc(`${BOM}hello `))).toEqual({ ok: true, text: 'hello ' });
   });
   it('whitespace only is no brief', () => {
     expect(decodeBrief(enc('  \n'))).toEqual({ ok: true, text: null });
@@ -63,7 +65,7 @@ describe('decodeBrief', () => {
     expect(decodeBrief(enc('a\0b'))).toEqual({ ok: false, error: 'brief-invalid' });
   });
   it('decodeBriefText applies the same rules', () => {
-    for (const t of ['﻿hi ', '  ', 'a\0', 'é'.repeat(BRIEF_MAX_BYTES)]) {
+    for (const t of [`${BOM}hi `, '  ', 'a\0', 'é'.repeat(BRIEF_MAX_BYTES)]) {
       expect(decodeBriefText(t)).toEqual(decodeBrief(enc(t)));
     }
   });

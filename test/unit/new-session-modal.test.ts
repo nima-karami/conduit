@@ -6,6 +6,7 @@ import type { LauncherDTO } from '../../src/launchers';
 import type { NewSessionPrefill, SeedContext } from '../../src/new-session-seed';
 import type { HostToWebview, WebviewToHost } from '../../src/protocol';
 import type { AgentDefinition, Project } from '../../src/types';
+import { BRIEF_STR } from '../../webview/role-brief-strings';
 
 const h = vi.hoisted(() => ({
   posted: [] as WebviewToHost[],
@@ -580,5 +581,152 @@ describe('NewSessionModal', () => {
   it('the board card subtitle names the card', async () => {
     await render({ home: '/w/a', cardId: 'c1', cardTitle: 'Move RMB to CI' });
     expect(q('.ns .modal__sub')?.textContent).toBe('Start a session for "Move RMB to CI"');
+  });
+});
+
+type BriefReply = Extract<HostToWebview, { type: 'brief:agentPreviewed' }>;
+async function answerBriefPreview(extra: Partial<BriefReply> = {}, requestId?: number) {
+  const req = last('brief:agentPreview');
+  if (!req) throw new Error('no brief preview request');
+  await emit({
+    type: 'brief:agentPreviewed',
+    requestId: requestId ?? req.requestId,
+    supported: true,
+    has: false,
+    ...extra,
+  });
+}
+const briefRadios = () => qa('.ns-brief [role="radio"]');
+
+describe('NewSessionModal role brief', () => {
+  it('opening posts brief:agentPreview for the selected launcher; no section until supported', async () => {
+    await render({ home: '/w/a', agentId: 'cli:claude' });
+    expect(last('brief:agentPreview')).toMatchObject({ agentId: 'cli:claude' });
+    expect(q('.ns-brief')).toBeNull();
+    await answerBriefPreview();
+    expect(briefRadios().map((r) => r.textContent)).toEqual(['None', 'Text', 'File']);
+  });
+
+  it('picking another launcher re-posts the preview and hides the section until it answers', async () => {
+    await render({ home: '/w/a', agentId: 'cli:claude' });
+    await answerBriefPreview();
+    await click(qa('.ns-launch .ns-pill').find((p) => p.textContent === 'codex'));
+    expect(last('brief:agentPreview')).toMatchObject({ agentId: 'cli:codex' });
+    expect(q('.ns-brief')).toBeNull();
+  });
+
+  it('a stale brief:agentPreviewed from a superseded launcher is ignored', async () => {
+    await render({ home: '/w/a', agentId: 'cli:claude' });
+    const first = last('brief:agentPreview')?.requestId ?? -1;
+    await click(qa('.ns-launch .ns-pill').find((p) => p.textContent === 'codex'));
+    await answerBriefPreview({ has: true }, first);
+    expect(q('.ns-brief')).toBeNull();
+    await answerBriefPreview({ has: true, firstLine: 'You review' });
+    expect(briefRadios().map((r) => r.getAttribute('aria-checked'))).toEqual([
+      'true',
+      'false',
+      'false',
+      'false',
+    ]);
+    expect(q('.ns-brief')?.textContent).toContain('You review');
+  });
+
+  it('launch:preview carries brief:true iff the mode is not None', async () => {
+    await render({ home: '/w/a', agentId: 'cli:claude' });
+    await answerBriefPreview();
+    expect(last('launch:preview')?.brief).toBeUndefined();
+    await click(briefRadios()[1]);
+    expect(last('launch:preview')?.brief).toBe(true);
+    await click(briefRadios()[0]);
+    expect(last('launch:preview')?.brief).toBeUndefined();
+  });
+
+  it('Start posts openRepo with the brief; an unsupported launcher posts none', async () => {
+    await render({ home: '/w/a', agentId: 'cli:claude' });
+    await answerProbes();
+    await answerBriefPreview({ has: true });
+    await answerPreview();
+    await click(startBtn());
+    expect(last('openRepo')?.brief).toEqual({ kind: 'agent' });
+  });
+
+  it('openRepo without a supported launcher omits brief', async () => {
+    await render({ home: '/w/a', agentId: 'cli:claude' });
+    await answerProbes();
+    await answerPreview();
+    await click(startBtn());
+    expect(last('openRepo')).not.toHaveProperty('brief');
+  });
+
+  it('openRepo:result brief-too-large shows the brief copy', async () => {
+    await render({ home: '/w/a', agentId: 'cli:claude' });
+    await answerProbes();
+    await answerBriefPreview();
+    await answerPreview();
+    await click(startBtn());
+    await emit({
+      type: 'openRepo:result',
+      requestId: last('openRepo')?.requestId ?? -1,
+      droppedRoots: [],
+      error: 'brief-too-large',
+    });
+    expect(q('.ns__error')?.textContent).toContain(BRIEF_STR.errors['brief-too-large']);
+  });
+
+  it('briefBlocked in the preview disables Start with the reason, unless the mode is None', async () => {
+    await render({ home: '/w/a', agentId: 'cli:claude' });
+    await answerProbes();
+    await answerBriefPreview();
+    await answerPreview({ briefBlocked: '%' });
+    expect(startBtn().disabled).toBe(false);
+    await click(briefRadios()[1]);
+    await answerPreview({ briefBlocked: '%' });
+    expect(startBtn().disabled).toBe(true);
+    expect(q('.ns__reason')?.textContent).toBe(BRIEF_STR.blocked('%'));
+  });
+
+  it('file mode probes the path after a 250 ms debounce, latest wins, and Start waits for it', async () => {
+    vi.useFakeTimers();
+    try {
+      await render({ home: '/w/a', agentId: 'cli:claude' });
+      await answerProbes();
+      await answerBriefPreview();
+      await answerPreview();
+      await click(briefRadios()[2]);
+      const input = q<HTMLInputElement>('.ns-brief input');
+      await type(input, '/b/one.md');
+      await type(input, '/b/two.md');
+      expect(postedOf('brief:probe')).toHaveLength(0);
+      await act(async () => {
+        vi.advanceTimersByTime(250);
+      });
+      expect(postedOf('brief:probe').map((m) => m.path)).toEqual(['/b/two.md']);
+      expect(startBtn().disabled).toBe(true);
+      await emit({
+        type: 'brief:probed',
+        requestId: last('brief:probe')?.requestId ?? -1,
+        ok: true,
+        bytes: 2048,
+      });
+      expect(q('.ns-brief__status')?.textContent).toBe('2 / 64 KiB');
+      await answerPreview();
+      expect(startBtn().disabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Browse posts file:pick and a picked path fills the input', async () => {
+    await render({ home: '/w/a', agentId: 'cli:claude' });
+    await answerBriefPreview();
+    await click(briefRadios()[2]);
+    await click(q(`.ns-brief button[aria-label="${BRIEF_STR.browseName}"]`));
+    expect(last('file:pick')).toMatchObject({ title: BRIEF_STR.browseName });
+    await emit({
+      type: 'file:picked',
+      requestId: last('file:pick')?.requestId ?? -1,
+      path: '/b/role.md',
+    });
+    expect(q<HTMLInputElement>('.ns-brief input')?.value).toBe('/b/role.md');
   });
 });
