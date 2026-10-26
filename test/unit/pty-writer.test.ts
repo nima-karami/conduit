@@ -144,6 +144,19 @@ describe('createPtyWriter', () => {
     expect(writes(h.log, 'a')).toEqual(['x']);
   });
 
+  it('a respawn while beforeEnter awaits → generation-changed, no \\r', async () => {
+    const h = harness();
+    const p = h.writer.submit('a', 'x', {
+      beforeEnter: async () => {
+        h.gens.set('a', 2);
+        return true;
+      },
+    });
+    await h.releaseGap();
+    expect(await p).toBe('generation-changed');
+    expect(writes(h.log, 'a')).toEqual(['x']);
+  });
+
   it('beforeEnter false → withheld, no \\r', async () => {
     const h = harness();
     const p = h.writer.submit('a', 'x', { beforeEnter: async () => false });

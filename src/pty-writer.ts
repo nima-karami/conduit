@@ -57,6 +57,8 @@ export function createPtyWriter(deps: PtyWriterDeps): PtyWriter {
     await deps.sleep(deps.gapMs);
     if (deps.generation(sessionId) !== gen) return 'generation-changed';
     if (!(await hookAllows(hooks.beforeEnter))) return 'withheld';
+    // beforeEnter may wait out a slow echo: a respawn meanwhile must not get the Enter either.
+    if (deps.generation(sessionId) !== gen) return 'generation-changed';
     return deps.input(sessionId, '\r') ? 'submitted' : 'write-failed';
   };
 

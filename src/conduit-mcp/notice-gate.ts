@@ -52,6 +52,30 @@ export interface EnterRecheckInput {
   inputSinceText: boolean;
 }
 
+/**
+ * Codex 0.164 shows fast-typed text only on a later frame, measured 220–350 ms after the write —
+ * past the submit gap — and an Enter sent before that frame becomes a newline in its composer.
+ * So the Enter waits for the echo itself, bounded.
+ */
+export const ECHO_WAIT_MS = 2_000;
+export const ECHO_POLL_MS = 50;
+
+/** Re-runs the Enter recheck while its only objection is a missing echo. */
+export async function awaitEnterVerdict(
+  check: () => Promise<GateVerdict>,
+  clock: { now(): number; sleep(ms: number): Promise<void> },
+): Promise<{ verdict: GateVerdict; waitedMs: number }> {
+  const start = clock.now();
+  for (;;) {
+    const verdict = await check();
+    const waitedMs = clock.now() - start;
+    if (verdict.open || verdict.reason !== 'no-echo' || waitedMs >= ECHO_WAIT_MS) {
+      return { verdict, waitedMs };
+    }
+    await clock.sleep(ECHO_POLL_MS);
+  }
+}
+
 /** Opens only on positive evidence that the notice is what sits in the input (plan ruling 3). */
 export function evaluateEnterRecheck(i: EnterRecheckInput): GateVerdict {
   if (!i.messagingOn) return closed('off');

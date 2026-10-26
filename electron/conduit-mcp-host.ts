@@ -17,6 +17,8 @@ import {
 } from '../src/conduit-mcp/handles';
 import { createMcpServerCore, type ToolCallResult } from '../src/conduit-mcp/json-rpc';
 import {
+  awaitEnterVerdict,
+  ECHO_POLL_MS,
   evaluateEnterRecheck,
   evaluateGate,
   type GateVerdict,
@@ -83,9 +85,10 @@ export interface ConduitMcpHostDeps {
   messagingOn(): boolean;
   projectName(projectId: string | undefined): string | null;
   broadcast(msg: HostToWebview): void;
-  log: Pick<Logger, 'debug' | 'warn' | 'error'>;
+  log: Pick<Logger, 'debug' | 'info' | 'warn' | 'error'>;
   // tests only
   now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
   randomToken?: () => string;
   storeIo?: StoreIo;
   screens?: SessionScreens;
@@ -121,6 +124,7 @@ export interface ConduitMcpHost {
 }
 
 const TICK_MS = 500;
+const SUBMIT_CONFIRM_WAIT_MS = 2_000;
 const RETENTION_EVERY_MS = 6 * 60 * 60 * 1000;
 const BROADCAST_COALESCE_MS = 150;
 const MAX_UI_THREADS = 500;
@@ -140,6 +144,8 @@ interface Runtime {
   lastInputAt: number | undefined;
   lastNoticeAt: number | undefined;
   gate: McpGateState | null;
+  /** Last gate a notice attempt logged; the per-tick badge pass doesn't log (volume). */
+  loggedGate: McpGateState | null;
 }
 
 const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
@@ -162,6 +168,8 @@ const handlePrefix = (h: Handle) => h.replace(/-\d+$/, '');
 
 export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const now = deps.now ?? (() => Date.now());
+  const sleep =
+    deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const randomToken = deps.randomToken ?? (() => randomBytes(32).toString('hex'));
   const store = createMessageStore(deps.storeIo ?? createFsStoreIo(deps.dir));
   const screens = deps.screens ?? createSessionScreens();
@@ -205,6 +213,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         lastInputAt: undefined,
         lastNoticeAt: undefined,
         gate: null,
+        loggedGate: null,
       };
       runtime.set(sessionId, r);
     }
@@ -319,7 +328,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   };
 
   /** The full gate; precheck and beforeText run exactly this (plan T9.2 "Gate inputs"). */
-  const evaluate = async (sessionId: string): Promise<GateVerdict> => {
+  const evaluate = async (sessionId: string, forNotice = false): Promise<GateVerdict> => {
     const r = rt(sessionId);
     const session = deps.mgr.get(sessionId);
     if (!r.adapter || !session) return { open: false, reason: 'not-running' };
@@ -347,6 +356,15 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       lastNoticeAt: r.lastNoticeAt,
     });
     const gate: McpGateState = verdict.open ? 'open' : verdict.reason;
+    if (forNotice && r.loggedGate !== gate) {
+      deps.log.info('conduit-mcp', 'gate', {
+        sessionId,
+        handle: handleOf(sessionId),
+        from: r.loggedGate,
+        to: gate,
+      });
+      r.loggedGate = gate;
+    }
     if (r.gate !== gate) {
       r.gate = gate;
       scheduleBroadcast();
@@ -354,37 +372,77 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return verdict;
   };
 
+  /**
+   * Log-only: whether the CLI took the Enter, read as its prompt coming back empty. An Enter a TUI
+   * turned into a newline leaves the notice in its input. Not `busy`: the echo itself sets it.
+   */
+  const confirmSubmit = async (sessionId: string, adapter: McpAdapter, handle?: Handle) => {
+    const start = now();
+    for (;;) {
+      const taken = (await screenOf(sessionId, adapter)) === 'empty-input';
+      const waitedMs = now() - start;
+      if (taken) {
+        deps.log.info('conduit-mcp', 'notice submit confirmed', { sessionId, handle, waitedMs });
+        return;
+      }
+      if (waitedMs >= SUBMIT_CONFIRM_WAIT_MS || !deps.pty.isAlive(sessionId)) {
+        deps.log.warn('conduit-mcp', 'notice submit unconfirmed', { sessionId, handle, waitedMs });
+        return;
+      }
+      await sleep(ECHO_POLL_MS);
+    }
+  };
+
   const submitNotice = async (sessionId: string, text: string): Promise<SubmitOutcome> => {
     const r = rt(sessionId);
+    const handle = handleOf(sessionId);
     let gen: number | undefined;
     let seq = 0;
+    const recheck = async (adapter: McpAdapter): Promise<GateVerdict> => {
+      const session = deps.mgr.get(sessionId);
+      if (!session) return { open: false, reason: 'not-running' };
+      return evaluateEnterRecheck({
+        messagingOn: deps.messagingOn(),
+        paused: session.mcpNoticesPaused === true,
+        running: deps.pty.isAlive(sessionId),
+        sameGeneration: gen !== undefined && deps.pty.generation(sessionId) === gen,
+        connectionLive: registry.isLive(sessionId),
+        screen: await screenOf(sessionId, adapter, text),
+        inputSinceText: r.inputSeq !== seq,
+      });
+    };
     const outcome = await deps.writer.submit(sessionId, text, {
       beforeText: async () => {
-        const v = await evaluate(sessionId);
+        const v = await evaluate(sessionId, true);
         gen = deps.pty.generation(sessionId);
         seq = r.inputSeq;
         return v.open;
       },
       beforeEnter: async () => {
-        const session = deps.mgr.get(sessionId);
-        if (!r.adapter || !session) return false;
-        const v = evaluateEnterRecheck({
-          messagingOn: deps.messagingOn(),
-          paused: session.mcpNoticesPaused === true,
-          running: deps.pty.isAlive(sessionId),
-          sameGeneration: gen !== undefined && deps.pty.generation(sessionId) === gen,
-          connectionLive: registry.isLive(sessionId),
-          screen: await screenOf(sessionId, r.adapter, text),
-          inputSinceText: r.inputSeq !== seq,
+        const adapter = r.adapter;
+        if (!adapter) return false;
+        deps.log.info('conduit-mcp', 'notice typed', { sessionId, handle });
+        const { verdict, waitedMs } = await awaitEnterVerdict(() => recheck(adapter), {
+          now,
+          sleep,
         });
-        if (!v.open)
-          deps.log.debug('conduit-mcp', 'notice withheld', { sessionId, reason: v.reason });
-        return v.open;
+        deps.log.info('conduit-mcp', 'notice echo', {
+          sessionId,
+          handle,
+          verdict: verdict.open ? 'echoed' : verdict.reason,
+          waitedMs,
+        });
+        return verdict.open;
       },
     });
+    deps.log.info('conduit-mcp', 'notice result', { sessionId, handle, outcome });
     if (outcome === 'submitted' || outcome === 'withheld') r.lastNoticeAt = now();
-    const handle = handleOf(sessionId);
     if (outcome === 'submitted' && handle) dispatch({ t: 'notice-submitted', handle });
+    if (outcome === 'submitted' && r.adapter) {
+      confirmSubmit(sessionId, r.adapter, handle).catch((err: unknown) => {
+        deps.log.warn('conduit-mcp', 'notice confirm failed', { sessionId, err: String(err) });
+      });
+    }
     return outcome;
   };
 
@@ -411,7 +469,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       {
         sessions: notifierSessions,
         pending: (h) => store.pending(h),
-        precheck: evaluate,
+        precheck: (sessionId) => evaluate(sessionId, true),
         submit: submitNotice,
         markNoticed: async (h, ids) => {
           for (const id of ids) {
@@ -443,20 +501,31 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       });
     }
     const caller: Caller = { handle, sessionId };
+    const result = await runTool(caller, name, args);
+    deps.log.info('conduit-mcp', 'tool call', {
+      tool: name,
+      handle,
+      ok: result.ok,
+      ...(result.ok ? {} : { code: result.error.code }),
+    });
+    return toToolCallResult(result);
+  };
+
+  const runTool = async (caller: Caller, name: string, args: unknown) => {
     switch (name) {
       case 'list_sessions':
-        return toToolCallResult(tools.listSessions(caller));
+        return tools.listSessions(caller);
       case 'send_message':
-        return toToolCallResult(await tools.sendMessage(caller, args));
+        return tools.sendMessage(caller, args);
       case 'read_inbox':
-        return toToolCallResult(await tools.readInbox(caller, args));
+        return tools.readInbox(caller, args);
       case 'read_attachment':
-        return toToolCallResult(await tools.readAttachment(caller, args));
+        return tools.readAttachment(caller, args);
       default:
-        return toToolCallResult({
-          ok: false,
+        return {
+          ok: false as const,
           error: toolError('invalid_argument', `unknown tool: ${name}`),
-        });
+        };
     }
   };
 
@@ -468,6 +537,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     // and a connection that outlived it speaks for nobody.
     const current = (): string | null =>
       resolved && registry.resolve(conn.token) === resolved ? resolved : null;
+    let connectedAs: string | null = null;
     const core = createMcpServerCore({
       serverInfo: { name: 'conduit', version: VERSION },
       instructions: CONDUIT_INSTRUCTIONS,
@@ -488,6 +558,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           // not yet a CLI that can take a turn (spec §2 gate, "MCP connection is live").
           if (sessionId && isInitialize(line)) {
             registry.connect(conn.id, sessionId);
+            connectedAs = sessionId;
+            deps.log.info('conduit-mcp', 'mcp connected', {
+              connId: conn.id,
+              sessionId,
+              handle: handleOf(sessionId),
+            });
             scheduleBroadcast();
           }
         },
@@ -495,6 +571,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       );
     });
     conn.onClose(() => {
+      if (connectedAs) {
+        deps.log.info('conduit-mcp', 'mcp disconnected', {
+          connId: conn.id,
+          sessionId: connectedAs,
+          handle: handleOf(connectedAs),
+        });
+      }
       conns.delete(conn.id);
       connSession.delete(conn.id);
       registry.disconnect(conn.id);

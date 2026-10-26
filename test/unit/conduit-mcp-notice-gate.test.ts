@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  awaitEnterVerdict,
+  ECHO_POLL_MS,
+  ECHO_WAIT_MS,
   type EnterRecheckInput,
   evaluateEnterRecheck,
   evaluateGate,
   type GateInput,
+  type GateVerdict,
   IDLE_QUIET_MS,
   NOTICE_SPACING_MS,
 } from '../../src/conduit-mcp/notice-gate';
@@ -119,6 +123,55 @@ describe('evaluateEnterRecheck', () => {
       want === 'open' ? { open: true } : { open: false, reason: want },
     );
   });
+});
+
+describe('awaitEnterVerdict', () => {
+  const closedBy = (reason: GateClosedReason) => ({ open: false as const, reason });
+  function clock() {
+    const c = { t: 0, sleeps: [] as number[] };
+    return {
+      c,
+      deps: {
+        now: () => c.t,
+        sleep: async (ms: number) => {
+          c.sleeps.push(ms);
+          c.t += ms;
+        },
+      },
+    };
+  }
+
+  it('waits out a late echo (Codex renders typed text ~200–350 ms after it arrives)', async () => {
+    const { c, deps } = clock();
+    const seq: GateVerdict[] = [
+      closedBy('no-echo'),
+      closedBy('no-echo'),
+      closedBy('no-echo'),
+      { open: true },
+    ];
+    const r = await awaitEnterVerdict(async () => seq.shift() ?? closedBy('no-echo'), deps);
+    expect(r).toEqual({ verdict: { open: true }, waitedMs: 3 * ECHO_POLL_MS });
+    expect(c.sleeps).toEqual([ECHO_POLL_MS, ECHO_POLL_MS, ECHO_POLL_MS]);
+  });
+
+  it('gives up at ECHO_WAIT_MS with no-echo', async () => {
+    const { c, deps } = clock();
+    const r = await awaitEnterVerdict(async () => closedBy('no-echo'), deps);
+    expect(r.verdict).toEqual(closedBy('no-echo'));
+    expect(r.waitedMs).toBeGreaterThanOrEqual(ECHO_WAIT_MS);
+    expect(c.t).toBeLessThan(ECHO_WAIT_MS + ECHO_POLL_MS);
+  });
+
+  it.each(['draft', 'blocking-prompt', 'not-running', 'no-connection', 'off', 'paused'] as const)(
+    'a %s closure ends the wait at once',
+    async (reason) => {
+      const { c, deps } = clock();
+      const seq = [closedBy('no-echo'), closedBy(reason)];
+      const r = await awaitEnterVerdict(async () => seq.shift() ?? closedBy('no-echo'), deps);
+      expect(r).toEqual({ verdict: closedBy(reason), waitedMs: ECHO_POLL_MS });
+      expect(c.sleeps).toHaveLength(1);
+    },
+  );
 });
 
 describe('composeNotice', () => {
