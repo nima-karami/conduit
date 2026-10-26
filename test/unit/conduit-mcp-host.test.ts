@@ -10,6 +10,7 @@ import {
   ENDPOINT_READY_WAIT_MS,
 } from '../../electron/conduit-mcp-host';
 import { createSessionScreens } from '../../electron/session-screens';
+import { ECHO_POLL_MS } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
 import type { StoreIo } from '../../src/conduit-mcp/store';
 import { toolError } from '../../src/conduit-mcp/types';
@@ -36,7 +37,31 @@ const spec = (command = '/usr/bin/node'): SpawnSpec => ({
   env: { A: '1' },
 });
 
-const noLog = { debug: () => undefined, warn: () => undefined, error: () => undefined };
+const noLog = {
+  debug: () => undefined,
+  info: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+};
+
+interface LogEntry {
+  level: 'debug' | 'info' | 'warn' | 'error';
+  scope: string;
+  msg: string;
+  data?: Record<string, unknown>;
+}
+function recordingLog() {
+  const entries: LogEntry[] = [];
+  const at =
+    (level: LogEntry['level']) => (scope: string, msg: string, data?: Record<string, unknown>) => {
+      entries.push({ level, scope, msg, data });
+    };
+  return {
+    entries,
+    log: { debug: at('debug'), info: at('info'), warn: at('warn'), error: at('error') },
+    of: (msg: string) => entries.filter((e) => e.msg === msg),
+  };
+}
 
 interface Harness {
   host: ConduitMcpHost;
@@ -89,6 +114,10 @@ function harness(
     listen?: boolean;
     platform?: ConduitMcpHostDeps['platform'];
     holdGaps?: boolean;
+    /** Typed text shows on screen only at the host's next wait, as Codex renders it (measured). */
+    lagEcho?: boolean;
+    /** The fake prompt answers an Enter with a fresh empty prompt line. */
+    echoSubmit?: boolean;
     tickMs?: number;
     log?: ConduitMcpHostDeps['log'];
     createEndpoint?: ConduitMcpHostDeps['createEndpoint'];
@@ -108,6 +137,7 @@ function harness(
   const alive = new Set<string>();
   const gens = new Map<string, number>();
   const gaps: Array<() => void> = [];
+  const lagged: Array<[string, string]> = [];
   let tokenN = 0;
   let host: ConduitMcpHost;
   const writer = createPtyWriter({
@@ -115,7 +145,11 @@ function harness(
     input: (id, data) => {
       inputs.push([id, data]);
       // The PTY echoes typed text back, which the host's screen model then shows.
-      if (data !== '\r' && echo.has(id)) host.onOutput(id, data);
+      if (!echo.has(id)) return true;
+      if (data === '\r') {
+        if (opts.echoSubmit) host.onOutput(id, '\r\nfake❯ ');
+      } else if (opts.lagEcho) lagged.push([id, data]);
+      else host.onOutput(id, data);
       return true;
     },
     sleep: () => (opts.holdGaps ? new Promise<void>((r) => gaps.push(r)) : Promise.resolve()),
@@ -156,6 +190,10 @@ function harness(
     broadcast: (m) => broadcasts.push(m),
     log: opts.log ?? noLog,
     now: () => clock.t,
+    sleep: async (ms) => {
+      clock.t += ms;
+      for (const [id, data] of lagged.splice(0)) host.onOutput(id, data);
+    },
     randomToken: () => `tok${++tokenN}`,
     storeIo: opts.storeIo,
     screens: createSessionScreens(),
@@ -631,6 +669,96 @@ describe('createConduitMcpHost — notices', () => {
     await h.host.tick();
     expect(writesTo(h, 's2')).toEqual([composeNotice(false)]);
     expect(h.host.uiState().attention.map((a) => a.reason)).toEqual(['unsent-notice']);
+  });
+
+  it('typed text that renders only after the submit gap (Codex) still gets its Enter', async () => {
+    const h = harness({ lagEcho: true });
+    const { ca } = await pair(h);
+    await ca.call('send_message', { to: ['fake-2'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 's2')).toEqual([composeNotice(false), '\r']);
+    expect(h.host.uiState().attention).toEqual([]);
+  });
+
+  it('logs the notice lifecycle and gate transitions, once per change', async () => {
+    const rec = recordingLog();
+    const h = harness({ lagEcho: true, echoSubmit: true, log: rec.log });
+    const { ca } = await pair(h);
+    await ca.call('send_message', { to: ['fake-2'], body: 'a-private-body' });
+    await h.host.tick();
+    await h.host.tick();
+    const lifecycle = () =>
+      rec.entries
+        .filter((e) => e.msg.startsWith('notice') && e.data?.sessionId === 's2')
+        .map((e) => [e.level, e.msg, e.data]);
+    await expect.poll(lifecycle).toEqual([
+      ['info', 'notice typed', { sessionId: 's2', handle: 'fake-2' }],
+      [
+        'info',
+        'notice echo',
+        { sessionId: 's2', handle: 'fake-2', verdict: 'echoed', waitedMs: ECHO_POLL_MS },
+      ],
+      ['info', 'notice result', { sessionId: 's2', handle: 'fake-2', outcome: 'submitted' }],
+      ['info', 'notice submit confirmed', { sessionId: 's2', handle: 'fake-2', waitedMs: 0 }],
+    ]);
+    // Precheck and the slot's recheck both read 'open': one line. The per-tick badge pass, which
+    // reads 'spacing' afterwards with nothing due, logs nothing.
+    expect(rec.of('gate').map((e) => [e.data?.sessionId, e.data?.from, e.data?.to])).toEqual([
+      ['s2', null, 'open'],
+    ]);
+    expect(h.host.uiState().sessions.s2?.gate).toBe('spacing');
+    expect(rec.entries.every((e) => e.scope === 'conduit-mcp')).toBe(true);
+    expect(JSON.stringify(rec.entries)).not.toContain('a-private-body');
+  });
+
+  it('logs an Enter the CLI did not take as unconfirmed', async () => {
+    const rec = recordingLog();
+    const h = harness({ log: rec.log });
+    const { ca } = await pair(h);
+    await ca.call('send_message', { to: ['fake-2'], body: 'see' });
+    await h.host.tick();
+    // ~40 screen snapshots before the bound: slow on a loaded machine.
+    await expect
+      .poll(() => rec.of('notice submit unconfirmed').map((e) => [e.level, e.data?.sessionId]), {
+        timeout: 15_000,
+      })
+      .toEqual([['warn', 's2']]);
+  });
+
+  it('logs a withheld notice with its reason', async () => {
+    const rec = recordingLog();
+    const h = harness({ log: rec.log });
+    const { ca } = await pair(h);
+    h.echo.delete('s2');
+    await ca.call('send_message', { to: ['fake-2'], body: 'see' });
+    await h.host.tick();
+    expect(rec.of('notice echo').map((e) => [e.level, e.data?.verdict])).toEqual([
+      ['info', 'no-echo'],
+    ]);
+    expect(rec.of('notice result').map((e) => e.data?.outcome)).toEqual(['withheld']);
+  });
+
+  it('logs MCP connects, disconnects and tool calls by name and caller, never their bodies', async () => {
+    const rec = recordingLog();
+    const h = harness({ log: rec.log });
+    await h.host.start();
+    const a = launch(h, 's1');
+    const ca = await client(h.ep, a.token);
+    launch(h, 's2');
+    await ca.call('send_message', { to: ['fake-2'], body: 'a-private-body' });
+    await ca.call('read_attachment', { message_id: 'nope', attachment_id: 'nope' });
+    expect(
+      rec.of('mcp connected').map((e) => [e.level, e.data?.sessionId, e.data?.handle]),
+    ).toEqual([['info', 's1', 'fake-1']]);
+    expect(rec.of('tool call').map((e) => e.data)).toEqual([
+      { tool: 'send_message', handle: 'fake-1', ok: true },
+      { tool: 'read_attachment', handle: 'fake-1', ok: false, code: expect.any(String) },
+    ]);
+    ca.sock.destroy();
+    await expect
+      .poll(() => rec.of('mcp disconnected').map((e) => [e.data?.sessionId, e.data?.handle]))
+      .toEqual([['s1', 'fake-1']]);
+    expect(JSON.stringify(rec.entries)).not.toContain('a-private-body');
   });
 
   it('gate closes between precheck and slot (renderer input) → gate-closed, nothing written', async () => {
