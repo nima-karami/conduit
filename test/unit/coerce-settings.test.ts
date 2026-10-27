@@ -496,3 +496,33 @@ describe('coerceSettings — mcpTools (control tools spec §5)', () => {
     expect(restoreSettings(serializeSettings(s)).mcpTools.open_session).toBe(true);
   });
 });
+
+describe('coerceSettings — MCP install suggestions', () => {
+  it('absent → true and {}', () => {
+    const s = coerceSettings({});
+    expect(s.mcpInstallSuggest).toBe(true);
+    expect(s.mcpInstallPromptDismissed).toEqual({});
+    expect(coerceSettings({ mcpInstallSuggest: 'no' }).mcpInstallSuggest).toBe(true);
+    expect(coerceSettings({ mcpInstallSuggest: false }).mcpInstallSuggest).toBe(false);
+  });
+
+  it('dismissals drop unknown keys and non-true values', () => {
+    expect(
+      coerceSettings({ mcpInstallPromptDismissed: { codex: true, claude: 1, gemini: true } })
+        .mcpInstallPromptDismissed,
+    ).toEqual({ codex: true });
+    expect(
+      coerceSettings({ mcpInstallPromptDismissed: ['codex'] }).mcpInstallPromptDismissed,
+    ).toEqual({});
+  });
+
+  it('round-trip keeps {codex: true}', () => {
+    const s = coerceSettings({
+      mcpInstallSuggest: false,
+      mcpInstallPromptDismissed: { codex: true },
+    });
+    const back = restoreSettings(serializeSettings(s));
+    expect(back.mcpInstallPromptDismissed).toEqual({ codex: true });
+    expect(back.mcpInstallSuggest).toBe(false);
+  });
+});
