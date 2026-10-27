@@ -373,7 +373,7 @@ Declarative:
 | Component | State | What the user sees | Action |
 |---|---|---|---|
 | Settings → MCP → Tools | Ideal | Two groups: **Messaging** (4 switches) and **Control** (3 switches, each with a one-line description of what it allows); a note that sessions can override | Toggle |
-| | Master off | Tool switches disabled (not hidden), with the hint "Turn on the Conduit MCP server to use tools" | Turn the master on |
+| | Master off | Tool switches disabled (not hidden), with the hint "Turn on “Let agents message each other and you” to use tools" (names the master switch by its visible label) | Turn the master on |
 | | First run | Control tools off. Descriptions state the risk plainly. `open_terminal`: "Lets an agent run any program as you, outside its own sandbox." `open_session`: "Lets an agent start sessions from your profiles." | — |
 | Session menu | Session has a handle | **MCP tools…** item | Opens the dialog |
 | | No handle (plain shell) | Item absent | — |

@@ -806,6 +806,10 @@ export function App() {
   const mcp = useConduitMcp();
   const agents: AgentDefinition[] = state?.agents ?? [];
 
+  useEffect(() => {
+    if (mcpToolsFor && !sessions.some((s) => s.id === mcpToolsFor)) setMcpToolsFor(null);
+  }, [sessions, mcpToolsFor]);
+
   // Auto-switch to a newly created (running) session (when enabled).
   const knownIds = useRef<Set<string>>(new Set());
   // Ids an MCP open with focus:false introduced; each is consumed by the first state that adds it.

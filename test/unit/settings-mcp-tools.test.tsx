@@ -112,5 +112,22 @@ describe('Settings → MCP tools', () => {
     await act(async () => masterSwitch().click());
     for (const t of TOOL_NAMES) expect(switchFor(t)?.disabled).toBe(true);
     expect(document.body.textContent).toContain(MCP_STR.tools.masterOffHint);
+    // The hint names the master switch by the label the user actually sees.
+    expect(MCP_STR.tools.masterOffHint).toContain(MCP_STR.settingsToggle);
+  });
+
+  // Ids built from copy would break the IDREF once a translation contains a space.
+  it('tool group headings are keyed on stable ids, not their copy', async () => {
+    await mount();
+    const groups = [...document.body.querySelectorAll('.settools[role="group"]')];
+    expect(groups).toHaveLength(2);
+    for (const [g, key, title] of [
+      [groups[0], 'messaging', MCP_STR.tools.groupMessaging],
+      [groups[1], 'control', MCP_STR.tools.groupControl],
+    ] as const) {
+      const id = g.getAttribute('aria-labelledby') ?? '';
+      expect(id.endsWith(`-${key}`)).toBe(true);
+      expect(document.getElementById(id)?.textContent).toBe(title);
+    }
   });
 });

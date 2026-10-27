@@ -834,8 +834,8 @@ function Toggle({
 }
 
 const TOOL_GROUPS = [
-  { title: MCP_STR.tools.groupMessaging, tools: MESSAGING_TOOL_NAMES },
-  { title: MCP_STR.tools.groupControl, tools: CONTROL_TOOL_NAMES },
+  { key: 'messaging', title: MCP_STR.tools.groupMessaging, tools: MESSAGING_TOOL_NAMES },
+  { key: 'control', title: MCP_STR.tools.groupControl, tools: CONTROL_TOOL_NAMES },
 ] as const;
 
 /** The per-tool switches under the MCP master (control-tools spec §8). Disabled, not hidden,
@@ -853,13 +853,8 @@ function McpToolSwitchRows({
     <>
       {off && <p className="settools__hint">{MCP_STR.tools.masterOffHint}</p>}
       {TOOL_GROUPS.map((g) => (
-        <div
-          key={g.title}
-          className="settools"
-          role="group"
-          aria-labelledby={`${idBase}-${g.title}`}
-        >
-          <h4 className="settools__title" id={`${idBase}-${g.title}`}>
+        <div key={g.key} className="settools" role="group" aria-labelledby={`${idBase}-${g.key}`}>
+          <h4 className="settools__title" id={`${idBase}-${g.key}`}>
             {g.title}
           </h4>
           {g.tools.map((tool) => (

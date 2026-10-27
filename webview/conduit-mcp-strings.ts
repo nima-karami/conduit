@@ -22,6 +22,8 @@ const UNAVAILABLE_CAUSE: Record<McpUnavailableReason, string> = {
   'cursor-not-connected': 'Connect Cursor in Settings',
 };
 
+const SETTINGS_TOGGLE = 'Let agents message each other and you';
+
 export const MCP_STR = {
   tab: 'Messages',
   firstRun: 'Agents in your sessions can message each other and you. Messages appear here.',
@@ -158,7 +160,7 @@ export const MCP_STR = {
   noSubject: '(no subject)',
   threadGone: 'This thread is no longer available.',
   settingsTitle: 'Agent messaging',
-  settingsToggle: 'Let agents message each other and you',
+  settingsToggle: SETTINGS_TOGGLE,
   settingsDesc:
     'Agents in your sessions can message each other and you through Conduit. Turning it off stops new launches from connecting.',
   cursorConnect: 'Connect Cursor',
@@ -190,7 +192,7 @@ export const MCP_STR = {
       open_file: 'Lets an agent open files in your editor.',
     } satisfies Record<ToolName, string>,
     overrideNote: 'Sessions can override these from their menu (MCP tools…).',
-    masterOffHint: 'Turn on the Conduit MCP server to use tools',
+    masterOffHint: `Turn on “${SETTINGS_TOGGLE}” to use tools`,
     menuItem: 'MCP tools…',
     dialogTitle: (label: string) => `MCP tools — ${label}`,
     inherit: (on: boolean) => `Inherit (${on ? 'On' : 'Off'})`,
