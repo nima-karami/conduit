@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CONDUIT_TOOLS } from '../../src/conduit-mcp/tool-schemas';
+import { toolSchemas } from '../../src/conduit-mcp/tool-schemas';
 
 // AC11: the MCP surface never carries a role brief (docs/specs/2026-10-26-conduit-role-brief.md §3.4).
 const root = path.resolve(__dirname, '..', '..');
@@ -27,7 +27,7 @@ describe('role brief provenance', () => {
   });
 
   it('no MCP tool schema has a brief property', () => {
-    expect(JSON.stringify(CONDUIT_TOOLS)).not.toContain('"brief"');
+    expect(JSON.stringify(toolSchemas(['claude']))).not.toContain('"brief"');
   });
 
   it('only the host and the session manager write a brief state, and no MCP file reads one', () => {

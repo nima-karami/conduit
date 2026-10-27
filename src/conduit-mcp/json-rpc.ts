@@ -1,4 +1,4 @@
-import { CONDUIT_TOOLS } from './tool-schemas';
+import { TOOL_NAMES } from './tool-switches';
 
 /** Newest first: an unknown client version is answered with [0] (MCP version negotiation). */
 export const SUPPORTED_PROTOCOL_VERSIONS: readonly string[] = [
@@ -39,7 +39,13 @@ const METHOD_NOT_FOUND = -32601;
 
 // Unknown means outside the server's catalog, not outside tools(): a tokenless connection lists
 // no tools yet must still get not_in_session from call() (spec §3.1).
-const KNOWN_TOOLS: ReadonlySet<string> = new Set(CONDUIT_TOOLS.map((t) => t.name));
+const KNOWN_TOOLS: ReadonlySet<string> = new Set(TOOL_NAMES);
+
+// Sent by the host when a connection's effective tool set changes (spec 2026-10-27-conduit-mcp-control-tools §3.4).
+export const TOOLS_LIST_CHANGED = JSON.stringify({
+  jsonrpc: '2.0',
+  method: 'notifications/tools/list_changed',
+});
 
 export function negotiateProtocolVersion(requested: unknown): string {
   return typeof requested === 'string' && SUPPORTED_PROTOCOL_VERSIONS.includes(requested)
@@ -81,7 +87,7 @@ export function createMcpServerCore(deps: McpServerCoreDeps): McpServerCore {
       case 'initialize':
         return ok(id, {
           protocolVersion: negotiateProtocolVersion(params.protocolVersion),
-          capabilities: { tools: { listChanged: false } },
+          capabilities: { tools: { listChanged: true } },
           serverInfo: deps.serverInfo,
           instructions: deps.instructions,
         });

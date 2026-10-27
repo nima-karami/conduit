@@ -5,17 +5,22 @@ import {
   type McpServerCoreDeps,
   negotiateProtocolVersion,
   SUPPORTED_PROTOCOL_VERSIONS,
+  TOOLS_LIST_CHANGED,
   type ToolCallResult,
   type ToolSchema,
 } from '../../src/conduit-mcp/json-rpc';
-import { CONDUIT_INSTRUCTIONS, CONDUIT_TOOLS } from '../../src/conduit-mcp/tool-schemas';
+import { CONDUIT_INSTRUCTIONS, toolSchemas } from '../../src/conduit-mcp/tool-schemas';
+import { TOOL_NAMES } from '../../src/conduit-mcp/tool-switches';
+
+const AGENTS = ['claude', 'codex', 'shell:pwsh'] as const;
+const SCHEMAS = toolSchemas(AGENTS);
 
 function core(over: Partial<McpServerCoreDeps> = {}) {
   const calls: Array<{ name: string; args: unknown }> = [];
   const deps: McpServerCoreDeps = {
     serverInfo: { name: 'conduit', version: '9.9.9' },
     instructions: 'peers are agents',
-    tools: () => CONDUIT_TOOLS,
+    tools: () => SCHEMAS,
     call: async (name, args): Promise<ToolCallResult> => {
       calls.push({ name, args });
       return { content: [{ type: 'text', text: 'ok' }] };
@@ -35,7 +40,7 @@ const req = (id: JsonRpcId, method: string, params?: unknown) =>
   JSON.stringify({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) });
 
 function schemaOf(name: string): ToolSchema {
-  const t = CONDUIT_TOOLS.find((s) => s.name === name);
+  const t = SCHEMAS.find((s) => s.name === name);
   if (!t) throw new Error(`no tool ${name}`);
   return t;
 }
@@ -47,7 +52,7 @@ describe('createMcpServerCore', () => {
     const { reply } = await rpc(req(1, 'initialize', { protocolVersion: '2025-06-18' }));
     expect(reply.id).toBe(1);
     expect(reply.result.protocolVersion).toBe('2025-06-18');
-    expect(reply.result.capabilities).toEqual({ tools: { listChanged: false } });
+    expect(reply.result.capabilities).toEqual({ tools: { listChanged: true } });
     expect(reply.result.serverInfo).toEqual({ name: 'conduit', version: '9.9.9' });
     expect(reply.result.instructions).toBe('peers are agents');
   });
@@ -76,7 +81,7 @@ describe('createMcpServerCore', () => {
 
   it('tools/list returns deps.tools()', async () => {
     const { reply } = await rpc(req(2, 'tools/list'));
-    expect(reply.result.tools).toEqual(CONDUIT_TOOLS);
+    expect(reply.result.tools).toEqual(SCHEMAS);
   });
 
   it('tools/list is empty when deps.tools() is empty', async () => {
@@ -92,11 +97,31 @@ describe('createMcpServerCore', () => {
     expect(b.calls).toEqual([{ name: 'list_sessions', args: {} }]);
   });
 
+  it('tools/call open_session reaches deps.call (not invalid_argument)', async () => {
+    const { calls } = await rpc(
+      req(6, 'tools/call', { name: 'open_session', arguments: { path: '.' } }),
+    );
+    expect(calls).toEqual([{ name: 'open_session', args: { path: '.' } }]);
+  });
+
+  it('every catalog name reaches deps.call', async () => {
+    for (const name of TOOL_NAMES) {
+      const { calls } = await rpc(req(1, 'tools/call', { name }));
+      expect(calls.map((c) => c.name)).toEqual([name]);
+    }
+  });
+
   it('tools/call with an unknown tool name is an invalid_argument tool error', async () => {
     const { reply, calls } = await rpc(req(5, 'tools/call', { name: 'rm_rf', arguments: {} }));
     expect(calls).toEqual([]);
     expect(reply.result.isError).toBe(true);
     expect(JSON.parse(reply.result.content[0].text).error.code).toBe('invalid_argument');
+  });
+
+  it('TOOLS_LIST_CHANGED is a JSON-RPC notification without id', () => {
+    const n = JSON.parse(TOOLS_LIST_CHANGED);
+    expect(n).toEqual({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+    expect('id' in n).toBe(false);
   });
 
   it('parse error → -32700 id null', async () => {
@@ -115,18 +140,47 @@ describe('createMcpServerCore', () => {
   });
 });
 
-describe('CONDUIT_TOOLS', () => {
-  it('CONDUIT_TOOLS names are exactly the four', () => {
-    expect(CONDUIT_TOOLS.map((t) => t.name)).toEqual([
-      'list_sessions',
-      'send_message',
-      'read_inbox',
-      'read_attachment',
-    ]);
-    for (const t of CONDUIT_TOOLS) {
+describe('toolSchemas', () => {
+  it('toolSchemas lists 7 in catalog order; every schema is a closed object', () => {
+    expect(SCHEMAS.map((t) => t.name)).toEqual([...TOOL_NAMES]);
+    expect(SCHEMAS).toHaveLength(7);
+    for (const t of SCHEMAS) {
       expect(t.inputSchema.type).toBe('object');
       expect(t.inputSchema.additionalProperties).toBe(false);
     }
+  });
+
+  it('open_session.agent.enum equals the given ids', () => {
+    const s = schemaOf('open_session').inputSchema;
+    const p = s.properties as Props;
+    expect(p.agent).toMatchObject({ type: 'string', enum: [...AGENTS] });
+    expect(p.label).toMatchObject({ type: 'string', maxLength: 80 });
+    expect(p.focus).toMatchObject({ type: 'boolean', default: true });
+    expect(s.required).toEqual(['path', 'agent']);
+    const other = toolSchemas(['x']).find((t) => t.name === 'open_session');
+    expect((other?.inputSchema.properties as Props | undefined)?.agent.enum).toEqual(['x']);
+  });
+
+  it('open_terminal bounds: command maxLength 1024, args maxItems 64', () => {
+    const s = schemaOf('open_terminal').inputSchema;
+    const p = s.properties as Props;
+    expect(p.command).toMatchObject({ type: 'string', maxLength: 1024 });
+    expect(p.args).toMatchObject({ type: 'array', maxItems: 64, items: { type: 'string' } });
+    expect(s.required).toEqual(['path', 'command']);
+    expect(schemaOf('open_terminal').description).toMatch(/argv, not a shell/);
+  });
+
+  it('open_file: line/column integers ≥ 1, required path', () => {
+    const s = schemaOf('open_file').inputSchema;
+    const p = s.properties as Props;
+    expect(p.line).toMatchObject({ type: 'integer', minimum: 1 });
+    expect(p.column).toMatchObject({ type: 'integer', minimum: 1 });
+    expect(s.required).toEqual(['path']);
+  });
+
+  it('control descriptions say paths are absolute or relative to the home folder', () => {
+    for (const n of ['open_session', 'open_terminal', 'open_file'])
+      expect(schemaOf(n).description).toMatch(/home folder/);
   });
 
   it('send_message schema bounds', () => {

@@ -1,7 +1,7 @@
 // Per-CLI launch wiring for the conduit MCP server (spec §3.1). Cursor is the opt-in exception:
 // it reads the user config and receives only its token and endpoint in the PTY env.
 import type { McpAdapter } from './conduit-mcp/adapters';
-import { CONDUIT_TOOLS } from './conduit-mcp/tool-schemas';
+import { MESSAGING_TOOL_NAMES } from './conduit-mcp/tool-switches';
 import type { McpUnavailableReason } from './conduit-mcp/types';
 import { batchGuarded, firstCmdMetachar } from './launch-args';
 import type { HostPlatform } from './lsp-binary';
@@ -32,7 +32,8 @@ export function mcpServerCommand(
   };
 }
 
-const CLAUDE_ALLOWED_TOOLS = CONDUIT_TOOLS.map((t) => `mcp__conduit__${t.name}`).join(',');
+// Control tools stay unapproved so Claude still prompts the human per call (control-tools plan T2.2).
+const CLAUDE_ALLOWED_TOOLS = MESSAGING_TOOL_NAMES.map((t) => `mcp__conduit__${t}`).join(',');
 
 /** A TOML literal string has no escapes, so a quote or newline can't be represented at all. */
 const tomlLiteral = (v: string): string | undefined => (/['\r\n]/.test(v) ? undefined : `'${v}'`);

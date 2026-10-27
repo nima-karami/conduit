@@ -29,7 +29,8 @@ import { screenVerdict } from '../src/conduit-mcp/screen-verdict';
 import { assignHandle, createSessionRegistry } from '../src/conduit-mcp/session-registry';
 import { createMessageStore, type StoreIo } from '../src/conduit-mcp/store';
 import { createFsStoreIo } from '../src/conduit-mcp/store-fs';
-import { CONDUIT_INSTRUCTIONS, CONDUIT_TOOLS } from '../src/conduit-mcp/tool-schemas';
+import { CONDUIT_INSTRUCTIONS, toolSchemas } from '../src/conduit-mcp/tool-schemas';
+import { MESSAGING_TOOL_NAMES } from '../src/conduit-mcp/tool-switches';
 import {
   type Caller,
   createToolHandlers,
@@ -543,7 +544,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const core = createMcpServerCore({
       serverInfo: { name: 'conduit', version: VERSION },
       instructions: CONDUIT_INSTRUCTIONS,
-      tools: () => (current() ? CONDUIT_TOOLS : []),
+      tools: () =>
+        current()
+          ? toolSchemas([]).filter((t) => MESSAGING_TOOL_NAMES.some((n) => n === t.name))
+          : [],
       call: (name, args) => callTool(current(), name, args),
     });
     conn.onLine((line) => {
