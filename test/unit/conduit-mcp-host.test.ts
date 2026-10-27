@@ -1789,3 +1789,117 @@ describe('lazy identity: token for every session, handle from clientInfo (spec 2
     expect(h.host.uiState().switchable).toEqual(['sh1']);
   });
 });
+
+describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-install §2.4, D6)', () => {
+  const shell = (h: Harness, id: string) => launch(h, id, SHELL, spec('/usr/bin/pwsh'));
+  async function sender(h: Harness) {
+    await h.host.start();
+    const a = launch(h, 's1');
+    return client(h.ep, a.token);
+  }
+
+  it('AC3 a shell running claude gets claude notices', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    await client(h.ep, token, 'claude-code');
+    h.host.onOutput('sh1', '❯ ');
+    h.echo.add('sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
+  });
+
+  it('AC3 opencode / unmapped client → pull-only, nothing typed', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    await client(h.ep, shell(h, 'sh1').token, 'opencode');
+    await client(h.ep, shell(h, 'sh2').token, 'some-ide');
+    for (const id of ['sh1', 'sh2']) {
+      h.host.onOutput(id, '❯ ');
+      h.echo.add(id);
+    }
+    settle(h);
+    await ca.call('send_message', { to: ['opencode-1', 'agent-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
+    expect(writesTo(h, 'sh2')).toEqual([]);
+    expect(h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
+    expect(h.host.uiState().sessions.sh2?.gate).toBe('pull-only');
+  });
+
+  it('AC3 no live connection → no notice; badge gate null for a non-adapter session', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const c = await client(h.ep, shell(h, 'sh1').token, 'claude-code');
+    h.host.onOutput('sh1', '❯ ');
+    h.echo.add('sh1');
+    await ca.call('send_message', { to: ['claude-1'], body: 'first' });
+    c.sock.destroy();
+    await expect.poll(() => h.host.uiState().sessions.sh1?.connected).toBe(false);
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
+    expect(h.host.uiState().sessions.sh1?.gate).toBeNull();
+  });
+
+  it('AC3 newest live wins; when it closes the previous applies; an unmapped newest is skipped', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    await client(h.ep, token, 'claude-code');
+    const codex = await client(h.ep, token, 'codex-mcp-client');
+    await client(h.ep, token, 'opencode');
+    h.host.onOutput('sh1', '❯ ');
+    h.echo.add('sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    // Codex's composer is not on screen, so its adapter holds the notice.
+    expect(writesTo(h, 'sh1')).toEqual([]);
+    expect(h.host.uiState().sessions.sh1?.gate).toBe('no-empty-input');
+    codex.sock.destroy();
+    await expect
+      .poll(async () => {
+        await h.host.tick();
+        return writesTo(h, 'sh1');
+      })
+      .toEqual([composeNotice(false), '\r']);
+  });
+
+  it('definition adapter still wins in a profile session', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = launch(h, 's2');
+    await client(h.ep, token, 'claude-code');
+    h.host.onOutput('s2', 'fake❯ ');
+    h.echo.add('s2');
+    settle(h);
+    await ca.call('send_message', { to: ['fake-2'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 's2')).toEqual([composeNotice(false), '\r']);
+  });
+
+  it("D6 a shell's screen model starts at its first initialize with the last known size, not at spawn", async () => {
+    const h = harness();
+    await h.host.start();
+    const start = vi.spyOn(h.screens, 'start');
+    const { token } = shell(h, 'sh1');
+    h.host.onResize('sh1', 100, 30);
+    expect(h.screens.has('sh1')).toBe(false);
+    await client(h.ep, token, 'claude-code');
+    expect(h.screens.has('sh1')).toBe(true);
+    expect(start).toHaveBeenCalledWith('sh1', 100, 30);
+    await client(h.ep, token, 'codex-mcp-client');
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('a profile session still starts its screen model at spawn', async () => {
+    const h = harness();
+    await h.host.start();
+    launch(h, 's1');
+    expect(h.screens.has('s1')).toBe(true);
+  });
+});

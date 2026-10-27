@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteFileSync } from '../src/atomic-write';
-import { adapterFor, type McpAdapter, notifiable } from '../src/conduit-mcp/adapters';
+import { adapterFor, MCP_ADAPTERS, type McpAdapter, notifiable } from '../src/conduit-mcp/adapters';
 import { snapshotAttachment } from '../src/conduit-mcp/attachments';
 import {
   type AttentionEvent,
@@ -13,6 +13,7 @@ import {
   type ClientKind,
   clientKindOf,
   initializeClientName,
+  pickNoticeAdapterId,
 } from '../src/conduit-mcp/client-info';
 import { type ControlDeps, createControlHandlers } from '../src/conduit-mcp/control-tools';
 import { isCountedInput, nextDraftState, settleDraft } from '../src/conduit-mcp/draft-input';
@@ -166,6 +167,8 @@ interface Runtime {
   defAdapter: McpAdapter | undefined;
   unavailable: McpUnavailableReason | null;
   spawnedAt: number | undefined;
+  /** Last PTY size, for a screen model started later than spawn (D6). */
+  size: { cols: number; rows: number } | undefined;
   hasDraft: boolean;
   inputSeq: number;
   lastInputAt: number | undefined;
@@ -237,6 +240,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         defAdapter: undefined,
         unavailable: null,
         spawnedAt: undefined,
+        size: undefined,
         hasDraft: false,
         inputSeq: 0,
         lastInputAt: undefined,
@@ -263,6 +267,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       })
       .sort((a, b) => a.seq - b.seq)
       .map((k) => k.kind);
+  /** Spec 2026-10-27-conduit-mcp-install §2.4: the definition's adapter, else the live client's. */
+  const noticeAdapterOf = (sessionId: string): McpAdapter | null => {
+    const id = pickNoticeAdapterId(runtime.get(sessionId)?.defAdapter?.id, liveKinds(sessionId));
+    return MCP_ADAPTERS.find((a) => a.id === id) ?? null;
+  };
   const hasDefAdapter = (sessionId: string): boolean => {
     const def = deps.defOf(sessionId);
     return def !== undefined && adapterFor(def, { e2e: deps.e2e }) !== undefined;
@@ -389,8 +398,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const evaluate = async (sessionId: string, forNotice = false): Promise<GateVerdict> => {
     const r = rt(sessionId);
     const session = deps.mgr.get(sessionId);
-    if (!r.defAdapter || !session) return { open: false, reason: 'not-running' };
-    const screen = await screenOf(sessionId, r.defAdapter);
+    const adapter = noticeAdapterOf(sessionId);
+    if (!adapter || !session) return { open: false, reason: 'not-running' };
+    const screen = await screenOf(sessionId, adapter);
     const t = now();
     r.hasDraft = settleDraft({
       hasDraft: r.hasDraft,
@@ -456,6 +466,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const handle = handleOf(sessionId);
     let gen: number | undefined;
     let seq = 0;
+    /** The adapter whose screen admitted the text; its echo decides the Enter, whoever connects since. */
+    let typedFor: McpAdapter | null = null;
     const recheck = async (adapter: McpAdapter): Promise<GateVerdict> => {
       const session = deps.mgr.get(sessionId);
       if (!session) return { open: false, reason: 'not-running' };
@@ -474,10 +486,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         const v = await evaluate(sessionId, true);
         gen = deps.pty.generation(sessionId);
         seq = r.inputSeq;
+        typedFor = noticeAdapterOf(sessionId);
         return v.open;
       },
       beforeEnter: async () => {
-        const adapter = r.defAdapter;
+        const adapter = typedFor;
         if (!adapter) return false;
         deps.log.info('conduit-mcp', 'notice typed', { sessionId, handle });
         const { verdict, waitedMs } = await awaitEnterVerdict(() => recheck(adapter), {
@@ -496,8 +509,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     deps.log.info('conduit-mcp', 'notice result', { sessionId, handle, outcome });
     if (outcome === 'submitted' || outcome === 'withheld') r.lastNoticeAt = now();
     if (outcome === 'submitted' && handle) dispatch({ t: 'notice-submitted', handle });
-    if (outcome === 'submitted' && r.defAdapter) {
-      confirmSubmit(sessionId, r.defAdapter, handle).catch((err: unknown) => {
+    if (outcome === 'submitted' && typedFor) {
+      confirmSubmit(sessionId, typedFor, handle).catch((err: unknown) => {
         deps.log.warn('conduit-mcp', 'notice confirm failed', { sessionId, err: String(err) });
       });
     }
@@ -556,7 +569,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const notifierSessions = () =>
     deps.mgr.list().flatMap((s) => {
       const r = runtime.get(s.id);
-      if (!s.mcpHandle || !r?.defAdapter || !notifiable(r.defAdapter) || r.unavailable) return [];
+      const adapter = noticeAdapterOf(s.id);
+      if (!s.mcpHandle || !r || !adapter || !notifiable(adapter) || r.unavailable) return [];
       return [{ sessionId: s.id, handle: s.mcpHandle, busy: deps.activity.statusOf(s.id).busy }];
     });
 
@@ -668,6 +682,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const kind = clientKindOf(name, { e2e: deps.e2e });
     if (!connKinds.has(connId)) connKinds.set(connId, { kind, seq: ++connSeq });
     if (!handleOf(sessionId)) claimHandle(sessionId, kind);
+    // D6 ruling: a shell's screen model costs memory, so it starts only once a CLI shows up.
+    const size = runtime.get(sessionId)?.size;
+    if (size && !screens.has(sessionId)) screens.start(sessionId, size.cols, size.rows);
   };
 
   const onConnection = (conn: EndpointConnection) => {
@@ -763,10 +780,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const r = runtime.get(sessionId);
     const pending = store.pending(handle);
     const unavailable = r?.unavailable ?? null;
+    const adapter = noticeAdapterOf(sessionId);
     const gate: McpGateState | null =
-      unavailable !== null
+      unavailable !== null || (adapter === null && !registry.isLive(sessionId))
         ? null
-        : r?.defAdapter && !notifiable(r.defAdapter)
+        : adapter === null || !notifiable(adapter)
           ? 'pull-only'
           : deps.mgr.get(sessionId)?.mcpNoticesPaused
             ? 'paused'
@@ -979,10 +997,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     onSpawn(sessionId, cols, rows) {
       const r = runtime.get(sessionId);
-      if (!r?.defAdapter || r.unavailable) return;
+      if (!r) return;
+      r.size = { cols, rows };
       r.spawnedAt = now();
       r.hasDraft = false;
       r.lastInputAt = undefined;
+      if (!r.defAdapter || r.unavailable) return;
       screens.start(sessionId, cols, rows);
     },
 
@@ -991,6 +1011,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     onResize(sessionId, cols, rows) {
+      const r = runtime.get(sessionId);
+      if (r) r.size = { cols, rows };
       screens.resize(sessionId, cols, rows);
     },
 
