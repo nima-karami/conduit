@@ -106,7 +106,7 @@ const isAction = (v: unknown): v is McpInstallAction =>
   v === 'install' || v === 'uninstall' || v === 'replace' || v === 'remove';
 const isProjectScope = (v: unknown): v is ProjectScope => v === 'project' || v === 'local';
 
-export function isAgentCli(v: unknown): v is AgentCli {
+function isAgentCli(v: unknown): v is AgentCli {
   return typeof v === 'string' && (AGENT_CLIS as readonly string[]).includes(v);
 }
 
