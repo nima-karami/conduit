@@ -6,7 +6,6 @@ import type { McpThreadSummary, McpUiState } from '../../src/conduit-mcp/ui-type
 import type { Session } from '../../src/types';
 import { mcpInstallStatus } from '../bridge';
 import { MCP_STR } from '../conduit-mcp-strings';
-import { log } from '../log';
 import {
   composeTargets,
   newMessageCount,
@@ -15,6 +14,7 @@ import {
   visibleThreads,
 } from '../conduit-mcp-view-model';
 import { IconChevron, IconClose, IconPlus, IconWarning } from '../icons';
+import { log } from '../log';
 import { relativeTime } from '../relative-time';
 import type { ConduitMcpApi } from '../use-conduit-mcp';
 import { ContextMenu, type MenuState } from './context-menu';
