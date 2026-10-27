@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useId, useState } from 'react';
+import { CONTROL_TOOL_NAMES, MESSAGING_TOOL_NAMES } from '../../src/conduit-mcp/tool-switches';
 import type { LogLevel } from '../../src/logging';
 import type { AboutInfo } from '../../src/protocol';
 import type {
@@ -804,16 +805,88 @@ function Slider({
   );
 }
 
-function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+function Toggle({
+  value,
+  onChange,
+  labelledBy,
+  describedBy,
+  disabled,
+}: {
+  value: boolean;
+  onChange: (v: boolean) => void;
+  labelledBy?: string;
+  describedBy?: string;
+  disabled?: boolean;
+}) {
   return (
     <button
       className={`toggle ${value ? 'toggle--on' : ''}`}
       role="switch"
       aria-checked={value}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      disabled={disabled}
       onClick={() => onChange(!value)}
     >
       <span className="toggle__knob" />
     </button>
+  );
+}
+
+const TOOL_GROUPS = [
+  { title: MCP_STR.tools.groupMessaging, tools: MESSAGING_TOOL_NAMES },
+  { title: MCP_STR.tools.groupControl, tools: CONTROL_TOOL_NAMES },
+] as const;
+
+/** The per-tool switches under the MCP master (control-tools spec §8). Disabled, not hidden,
+ *  while the master is off so the user can see what turning it on would allow. */
+function McpToolSwitchRows({
+  settings,
+  update,
+}: {
+  settings: AppSettings;
+  update: (p: Partial<AppSettings>) => void;
+}) {
+  const idBase = useId();
+  const off = !settings.conduitMcp;
+  return (
+    <>
+      {off && <p className="settools__hint">{MCP_STR.tools.masterOffHint}</p>}
+      {TOOL_GROUPS.map((g) => (
+        <div
+          key={g.title}
+          className="settools"
+          role="group"
+          aria-labelledby={`${idBase}-${g.title}`}
+        >
+          <h4 className="settools__title" id={`${idBase}-${g.title}`}>
+            {g.title}
+          </h4>
+          {g.tools.map((tool) => (
+            <section key={tool} className="set">
+              <div className="set__label">
+                <code className="settools__name" id={`${idBase}-${tool}`}>
+                  {tool}
+                </code>
+                <span className="set__desc" id={`${idBase}-${tool}-desc`}>
+                  {MCP_STR.tools.description[tool]}
+                </span>
+              </div>
+              <div className="set__control">
+                <Toggle
+                  value={settings.mcpTools[tool]}
+                  labelledBy={`${idBase}-${tool}`}
+                  describedBy={`${idBase}-${tool}-desc`}
+                  disabled={off}
+                  onChange={(v) => update({ mcpTools: { ...settings.mcpTools, [tool]: v } })}
+                />
+              </div>
+            </section>
+          ))}
+        </div>
+      ))}
+      <p className="settools__hint">{MCP_STR.tools.overrideNote}</p>
+    </>
   );
 }
 
@@ -931,6 +1004,7 @@ function General({
         <Section title={MCP_STR.settingsToggle} desc={MCP_STR.settingsDesc}>
           <Toggle value={settings.conduitMcp} onChange={(v) => update({ conduitMcp: v })} />
         </Section>
+        <McpToolSwitchRows settings={settings} update={update} />
         <Section
           title={MCP_STR.cursorTitle}
           desc={MCP_STR.cursorDesc}

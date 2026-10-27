@@ -14499,6 +14499,31 @@ button.toggle--on .toggle__knob {
   font-weight: 500;
 }
 
+/* Settings → MCP tool switches (docs/specs/2026-10-27-conduit-mcp-control-tools.md §8). */
+.settools {
+  padding: 4px 0 4px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.settools__title {
+  font-size: calc(11px * var(--font-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  font-weight: 600;
+  margin: 6px 0 0;
+}
+/* A code identifier: never re-cased by a theme's --label-case (spec §10). */
+.settools__name {
+  font-family: var(--font-mono);
+  font-size: calc(12.5px * var(--font-scale));
+  color: var(--text);
+}
+.settools__hint {
+  margin: 8px 0;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-dim);
+}
+
 /* ---------- Conduit MCP: per-session tools dialog ----------
    docs/specs/2026-10-27-conduit-mcp-control-tools.md §8–§11: existing tokens only. */
 .mcptools {
