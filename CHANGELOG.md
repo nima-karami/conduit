@@ -7,6 +7,16 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **Agents can open sessions, terminals and files — when you let them.** Three new Conduit
+  tools: `open_session` starts a session of one of your agents in a folder, `open_terminal` runs
+  any command there (the session is named after the command, and Relaunch and Duplicate run it
+  again), and `open_file` opens a file in the editor at a line. They are **off by default**. Turn
+  each one on for every session in Settings → Agent messaging (Control), or for one session from
+  its card menu (**MCP tools…**, where each tool is Inherit, On or Off). Some agents only see a
+  newly enabled tool after Relaunch. A new session opens in the caller's window and project and
+  takes focus unless the agent asks it not to. Codex sessions run these tools without asking.
+  If you downgrade, an older Conduit opens an `open_terminal` session as a plain shell in its
+  folder.
 - **Give a session its role when you create it.** New session has a **Role brief** section
   (from the agent's `agents.json` `brief`, typed text, or a file). Claude Code, Codex and Cursor
   sessions start with one turn asking them to read it, and only on the first launch. Codex asks
