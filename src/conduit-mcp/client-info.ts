@@ -2,8 +2,8 @@ import type { McpAdapterId } from './adapters';
 
 export type ClientKind = 'claude' | 'codex' | 'cursor' | 'opencode' | 'fake' | 'agent';
 
-/** Empty until S0 measures Cursor's clientInfo.name; unmapped Cursor reads as 'agent' (spec D9). */
-export const CURSOR_CLIENT_NAMES: readonly string[] = [];
+/** Measured in S0: docs/runs/2026-10-27-mcp-install/s0.md. Exact match, like every other name. */
+export const CURSOR_CLIENT_NAMES: readonly string[] = ['Cursor'];
 
 const KNOWN: Readonly<Record<string, ClientKind>> = {
   'claude-code': 'claude',

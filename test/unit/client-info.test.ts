@@ -25,6 +25,12 @@ describe('client-info', () => {
     }
   });
 
+  it('Cursor names its MCP client "Cursor" (S0, docs/runs/2026-10-27-mcp-install/s0.md)', () => {
+    expect(CURSOR_CLIENT_NAMES).toEqual(['Cursor']);
+    expect(clientKindOf('Cursor', PROD)).toBe('cursor');
+    expect(clientKindOf('cursor', PROD)).toBe('agent');
+  });
+
   it('conduit-e2e-fake → fake only with e2e', () => {
     expect(clientKindOf('conduit-e2e-fake', E2E)).toBe('fake');
     expect(clientKindOf('conduit-e2e-fake', PROD)).toBe('agent');
