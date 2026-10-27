@@ -14499,6 +14499,91 @@ button.toggle--on .toggle__knob {
   font-weight: 500;
 }
 
+/* ---------- Conduit MCP: per-session tools dialog ----------
+   docs/specs/2026-10-27-conduit-mcp-control-tools.md §8–§11: existing tokens only. */
+.mcptools {
+  width: min(560px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-panel);
+  box-shadow: var(--elev-3);
+}
+.mcptools__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.mcptools__title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.mcptools__group {
+  margin-top: 12px;
+}
+.mcptools__grouptitle {
+  font-size: calc(11px * var(--font-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+.mcptools__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.mcptools__group .mcptools__row:last-child {
+  border-bottom: 0;
+}
+.mcptools__label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.mcptools__name {
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-scale));
+  color: var(--text);
+}
+.mcptools__desc {
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-faint);
+}
+.mcptools__hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: calc(12px * var(--font-scale));
+}
+.mcptools__error {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--danger);
+}
+.mcptools__relaunch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
 /* ═════════ interaction state vocabulary ══════════════════════════════════════
    docs/specs/archive/2026-08-01-interaction-state-vocabulary.md. Read it before touching
    a value here; test/unit/state-vocabulary.test.ts holds the line.

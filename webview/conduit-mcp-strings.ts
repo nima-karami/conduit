@@ -1,5 +1,7 @@
 // User-facing strings for the Messages tab, card badges and the attention chip: one place for the
 // future i18n seam (docs/specs/2026-10-25-conduit-mcp-server.md §10).
+
+import type { ToolName } from '../src/conduit-mcp/tool-switches';
 import type {
   McpAttentionReason,
   McpUnavailableReason,
@@ -172,6 +174,34 @@ export const MCP_STR = {
     code === 'EJSON'
       ? 'Cursor’s MCP config is not valid JSON or has an invalid shape.'
       : `Cursor’s MCP config couldn’t be read (code ${code}).`,
+  // Settings Tools group and the per-session dialog share these (control-tools spec §8, §10).
+  tools: {
+    groupMessaging: 'Messaging',
+    groupControl: 'Control',
+    description: {
+      list_sessions: 'Lets an agent see the other sessions it can message.',
+      send_message: 'Lets an agent message other sessions and you.',
+      read_inbox: 'Lets an agent read the messages sent to it.',
+      read_attachment: 'Lets an agent open files attached to its messages.',
+      open_session: 'Lets an agent start sessions from your profiles.',
+      open_terminal:
+        'Lets an agent run any program as you, outside its own sandbox. Codex sessions run it without asking.',
+      open_file: 'Lets an agent open files in your editor.',
+    } satisfies Record<ToolName, string>,
+    overrideNote: 'Sessions can override these from their menu (MCP tools…).',
+    masterOffHint: 'Turn on the Conduit MCP server to use tools',
+    menuItem: 'MCP tools…',
+    dialogTitle: (label: string) => `MCP tools — ${label}`,
+    inherit: (on: boolean) => `Inherit (${on ? 'On' : 'Off'})`,
+    on: 'On',
+    off: 'Off',
+    relaunchHint: 'Some agents only see newly enabled tools after Relaunch',
+    relaunch: 'Relaunch',
+    saveFailed: 'Couldn’t save. Change it again to retry.',
+    announce: (tool: string, value: string, label: string) =>
+      `${tool} set to ${value} for ${label}`,
+    openedBy: (handle: string) => `Opened by ${handle}`,
+  },
   cursorState: {
     connected: 'Connected',
     disconnected: 'Not connected',
