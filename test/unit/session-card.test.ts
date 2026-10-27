@@ -10,6 +10,7 @@ import {
   SessionCard,
   SessionCardPreview,
 } from '../../webview/components/session-card';
+import type { CardMcpStatus } from '../../webview/mcp-card-status';
 
 const noop = () => {};
 const ROLES: CardRoles = { title: 'name', subtitle: 'agent', detail: 'none' };
@@ -29,7 +30,12 @@ function session(o: Partial<Session> = {}): Session {
   };
 }
 
-const card = (s: Session, roles: CardRoles = ROLES, mcp?: McpSessionBadge) =>
+const card = (
+  s: Session,
+  roles: CardRoles = ROLES,
+  mcp?: McpSessionBadge,
+  mcpLink?: CardMcpStatus | null,
+) =>
   renderToStaticMarkup(
     createElement(SessionCard, {
       session: s,
@@ -46,6 +52,7 @@ const card = (s: Session, roles: CardRoles = ROLES, mcp?: McpSessionBadge) =>
       onEditEnd: noop,
       roles,
       mcp,
+      mcpLink,
     }),
   );
 
@@ -264,5 +271,48 @@ describe('SessionCard messaging badge (conduit-mcp §8)', () => {
     const html = card(session());
     expect(html).not.toContain('session__mcp');
     expect(html).not.toMatch(/data-sessionid="s1" title=/);
+  });
+});
+
+describe('SessionCard connection indicator (mcp-install §2.4, §9)', () => {
+  // Each glyph is told apart by a path fragment unique to it; icons carry no name attribute.
+  const PLUG = 'M8 14.7v-3.4';
+  const UNPLUG = 'M12.7 3.3l2-2';
+  const indicator = (html: string) =>
+    html.match(/<span class="session__mcp-link"[^>]*>/)?.[0] ?? '';
+
+  it('connected renders Plug with tooltip "Connected to Conduit as claude-3"', () => {
+    const html = card(session(), ROLES, undefined, { kind: 'connected', handle: 'claude-3' });
+    expect(indicator(html)).toContain('title="Connected to Conduit as claude-3"');
+    expect(html).toContain(PLUG);
+    expect(html).not.toContain(UNPLUG);
+  });
+
+  it('not-connected renders Unplug; installed → restart copy, else install copy', () => {
+    const nc = (install: 'installed' | 'not-installed'): CardMcpStatus => ({
+      kind: 'not-connected',
+      cli: 'codex',
+      install,
+    });
+    const installed = card(session(), ROLES, undefined, nc('installed'));
+    expect(installed).toContain(UNPLUG);
+    expect(installed).not.toContain(PLUG);
+    expect(indicator(installed)).toContain('Restart it in this terminal');
+    expect(indicator(card(session(), ROLES, undefined, nc('not-installed')))).toContain(
+      'install Conduit for Codex in Settings',
+    );
+  });
+
+  it('the indicator is role img with an aria-label and is not focusable', () => {
+    const tag = indicator(
+      card(session(), ROLES, undefined, { kind: 'connected', handle: 'claude-3' }),
+    );
+    expect(tag).toContain('role="img"');
+    expect(tag).toContain('aria-label="Connected to Conduit as claude-3"');
+    expect(tag).not.toContain('tabindex');
+  });
+
+  it('renders nothing without a status', () => {
+    expect(card(session(), ROLES, undefined, null)).not.toContain('session__mcp-link');
   });
 });

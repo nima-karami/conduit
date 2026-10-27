@@ -83,6 +83,8 @@ async function render(onConfirm: (c: ConfirmState) => void) {
           onOpenSettings: noop,
           onSnooze: noop,
           mcpBadges: {},
+          mcpNotConnected: {},
+          mcpEnabled: false,
           onSetRenaming: noop,
           onReorderSessions: noop,
         }),

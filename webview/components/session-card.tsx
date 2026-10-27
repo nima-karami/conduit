@@ -12,7 +12,17 @@ import { canRelaunch } from '../../src/stale-sessions';
 import type { Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
 import { MCP_STR } from '../conduit-mcp-strings';
-import { IconClock, IconClose, IconMail, IconPause, IconWarning, SessionGlyph } from '../icons';
+import {
+  IconClock,
+  IconClose,
+  IconMail,
+  IconPause,
+  IconPlug,
+  IconUnplug,
+  IconWarning,
+  SessionGlyph,
+} from '../icons';
+import type { CardMcpStatus } from '../mcp-card-status';
 import { getTimerSnapshot, subscribeTimers, waitingCountFor } from '../timer-store';
 
 export interface CardRoles {
@@ -52,6 +62,7 @@ export function SessionCard({
   drag,
   dropTarget,
   mcp,
+  mcpLink,
 }: {
   session: Session;
   agentLabel: string;
@@ -71,6 +82,8 @@ export function SessionCard({
   dropTarget?: boolean;
   /** Messaging state (docs/specs/2026-10-25-conduit-mcp-server.md §8 Session card). */
   mcp?: McpSessionBadge;
+  /** Whether the agent reached Conduit's MCP server (mcp-install spec §2.4). */
+  mcpLink?: CardMcpStatus | null;
 }) {
   const [draft, setDraft] = useState(session.name);
   useEffect(() => {
@@ -102,6 +115,13 @@ export function SessionCard({
     [mcpTitle, session.openedBy && MCP_STR.tools.openedBy(session.openedBy.handle)]
       .filter(Boolean)
       .join('\n') || undefined;
+  const mcpLinkTip = !mcpLink
+    ? ''
+    : mcpLink.kind === 'connected'
+      ? MCP_STR.install.connectedTip(mcpLink.handle)
+      : mcpLink.install === 'installed'
+        ? MCP_STR.install.notConnectedInstalledTip(mcpLink.cli)
+        : MCP_STR.install.notConnectedTip(mcpLink.cli);
   const mcpBadgeText =
     mcp && mcp.unread > 0
       ? [MCP_STR.unread(mcp.unread), mcp.urgent > 0 ? MCP_STR.urgentBadge(mcp.urgent) : '']
@@ -203,6 +223,12 @@ export function SessionCard({
             </span>
             <span className="sr-only">{`, ${mcpBadgeText}`}</span>
           </>
+        )}
+        {!editing && mcpLink && (
+          // role=img with a label is read inside the row's name; no sr-only twin or it is said twice.
+          <span className="session__mcp-link" role="img" aria-label={mcpLinkTip} title={mcpLinkTip}>
+            {mcpLink.kind === 'connected' ? <IconPlug size={12} /> : <IconUnplug size={12} />}
+          </span>
         )}
         {!editing && mcp?.paused && (
           <>

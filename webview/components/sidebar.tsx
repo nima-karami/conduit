@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { sessionAgentLabel } from '../../src/agent-label';
-import type { McpSessionBadge } from '../../src/conduit-mcp/ui-types';
+import type { McpNotConnected, McpSessionBadge } from '../../src/conduit-mcp/ui-types';
 import { type Rect, triggerMenu } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { renamedProjectName } from '../../src/project-name';
@@ -38,6 +38,7 @@ import {
   IconSettings,
   IconTrash,
 } from '../icons';
+import { cardMcpStatus } from '../mcp-card-status';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { projectAnnouncer } from '../project-announcer';
 import { useSettings } from '../settings';
@@ -65,6 +66,8 @@ export function Sidebar({
   onContextMenu,
   onSnooze,
   mcpBadges,
+  mcpNotConnected,
+  mcpEnabled,
   renamingId,
   onSetRenaming,
   onReorderSessions,
@@ -101,6 +104,9 @@ export function Sidebar({
   onSnooze: (id: string) => void;
   /** Messaging badges by session id (docs/specs/2026-10-25-conduit-mcp-server.md §8). */
   mcpBadges: Readonly<Record<string, McpSessionBadge>>;
+  /** Sessions whose agent CLI never reached the host, by session id (mcp-install spec §2.5). */
+  mcpNotConnected: Readonly<Record<string, McpNotConnected>>;
+  mcpEnabled: boolean;
   renamingId?: string;
   onSetRenaming: (id: string | null) => void;
   onReorderSessions: (order: string[]) => void;
@@ -407,6 +413,7 @@ export function Sidebar({
       drag={canDrag ? sessionDrag(s, groupKey, renderedIds) : undefined}
       dropTarget={overId === s.id}
       mcp={mcpBadges[s.id]}
+      mcpLink={cardMcpStatus(mcpBadges[s.id], mcpNotConnected[s.id], mcpEnabled)}
     />
   );
 
