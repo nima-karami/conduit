@@ -1,0 +1,199 @@
+import { useLayoutEffect, useRef, useState } from 'react';
+import {
+  type AgentCli,
+  BACKUP_SUFFIX,
+  type CliInstallStatus,
+  type McpInstallAction,
+  type McpInstallRequest,
+  type McpInstallResult,
+  type UserInstallState,
+} from '../../src/conduit-mcp/install-types';
+import { MCP_STR } from '../conduit-mcp-strings';
+import { ConfirmDialog } from './confirm-dialog';
+
+export interface McpInstallRowProps {
+  cli: AgentCli;
+  /** null ⇒ 'checking'. */
+  status: CliInstallStatus | null;
+  onAct(req: McpInstallRequest): Promise<McpInstallResult | null>;
+  onRecheck(): void;
+  /** Focus the row's first enabled button once on mount (opened "at that CLI"). */
+  focusOnMount?: boolean;
+}
+
+type RowButton =
+  | { kind: 'recheck' }
+  | { kind: 'act'; action: 'install' | 'uninstall'; useThis?: boolean }
+  | { kind: 'replace' };
+
+// spec 2026-10-27-conduit-mcp-install §2.3: each state's actions, in this order.
+const BUTTONS: Record<UserInstallState, RowButton[]> = {
+  'not-found': [{ kind: 'recheck' }],
+  'not-installed': [{ kind: 'act', action: 'install' }],
+  installed: [{ kind: 'act', action: 'uninstall' }],
+  'other-conduit': [
+    { kind: 'act', action: 'install', useThis: true },
+    { kind: 'act', action: 'uninstall' },
+  ],
+  conflict: [{ kind: 'replace' }],
+  error: [{ kind: 'recheck' }],
+};
+
+const actionOf = (b: RowButton): McpInstallAction | null =>
+  b.kind === 'act' ? b.action : b.kind === 'replace' ? 'replace' : null;
+
+interface Failure {
+  action: McpInstallAction;
+  code: string;
+}
+
+export function McpInstallRow({ cli, status, onAct, onRecheck, focusOnMount }: McpInstallRowProps) {
+  const S = MCP_STR.install;
+  const [pending, setPending] = useState(false);
+  const [failure, setFailure] = useState<Failure | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const focusNext = useRef(!!focusOnMount);
+
+  // Runs once the buttons for the new state exist: on the first status (focusOnMount) and after
+  // an action settles (spec §10, the cursor-connect precedent).
+  useLayoutEffect(() => {
+    if (pending || status === null || !focusNext.current) return;
+    focusNext.current = false;
+    actionsRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+  }, [pending, status]);
+
+  const path = status?.user.path ?? '';
+
+  const run = async (action: McpInstallAction) => {
+    focusNext.current = true;
+    setPending(true);
+    const result = await onAct({ cli, scope: 'user', action });
+    setFailure(
+      result === null
+        ? { action, code: 'EINVAL' }
+        : result.ok
+          ? null
+          : { action, code: result.errorCode },
+    );
+    setPending(false);
+  };
+
+  const recheck = () => {
+    focusNext.current = true;
+    setFailure(null);
+    onRecheck();
+  };
+
+  const state = status?.user.state;
+  const stateButtons = state ? BUTTONS[state] : [];
+  // A retry is offered only while the failed action still fits the re-read state; otherwise the
+  // state's own buttons are the way forward (ESTATE: the file changed under us).
+  const retry =
+    failure !== null && stateButtons.some((b) => actionOf(b) === failure.action) ? failure : null;
+  const shown = retry ? stateButtons.filter((b) => actionOf(b) !== retry.action) : stateButtons;
+
+  const stateText =
+    status === null ? S.state.checking : pending ? S.state.pending : S.state[status.user.state];
+  const detail =
+    !pending && failure
+      ? S.actionFailed(path, failure.code)
+      : !pending && state === 'error' && status?.user.errorCode
+        ? S.errorDetail(status.user.errorCode)
+        : '';
+  // A not-found CLI has no file yet; naming its would-be path reads as if one existed.
+  const showPath = path !== '' && state !== undefined && state !== 'not-found';
+
+  const label = (b: RowButton): { text: string; aria: string } => {
+    switch (b.kind) {
+      case 'recheck':
+        return { text: S.checkAgain, aria: S.checkAgainAria(cli) };
+      case 'replace':
+        return { text: S.replace, aria: S.replaceAria(cli) };
+      case 'act':
+        if (b.useThis) return { text: S.useThis, aria: S.adoptAria(cli) };
+        return b.action === 'install'
+          ? { text: S.install, aria: S.installAria(cli) }
+          : { text: S.uninstall, aria: S.uninstallAria(cli) };
+    }
+  };
+  const press = (action: McpInstallAction | null) => {
+    if (action === null) recheck();
+    else if (action === 'replace') setConfirming(true);
+    else void run(action);
+  };
+
+  return (
+    <div className="mcp-install-row" aria-busy={pending || undefined}>
+      <div className="mcp-install-row__head">
+        <span className="mcp-install-row__name">{S.cliName[cli]}</span>
+        <span
+          className="mcp-install-row__status"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {stateText}
+          {detail && (
+            <>
+              {' '}
+              <span className="mcp-install-row__detail">{detail}</span>
+            </>
+          )}
+        </span>
+      </div>
+      {showPath && (
+        <span className="mcp-install-row__path" dir="ltr">
+          {path}
+        </span>
+      )}
+      {status?.user.shadowedBy && (
+        <span className="mcp-install-row__note">{S.shadowed(status.user.shadowedBy)}</span>
+      )}
+      {cli === 'cursor' && <span className="mcp-install-row__note">{S.cursorNote}</span>}
+      {status !== null && (
+        <div className="mcp-install-row__actions" ref={actionsRef}>
+          {retry && (
+            <button
+              type="button"
+              className="btn btn--sm"
+              aria-label={S.tryAgainAria(cli)}
+              disabled={pending}
+              onClick={() => press(retry.action)}
+            >
+              {S.tryAgain}
+            </button>
+          )}
+          {shown.map((b) => {
+            const { text, aria } = label(b);
+            return (
+              <button
+                key={text}
+                type="button"
+                className="btn btn--sm"
+                aria-label={aria}
+                disabled={pending}
+                onClick={() => press(actionOf(b))}
+              >
+                {text}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {confirming && (
+        <ConfirmDialog
+          state={{
+            title: S.replaceTitle,
+            message: S.replaceBody(path, `${path}${BACKUP_SUFFIX}`),
+            confirmLabel: S.replaceConfirm,
+            danger: true,
+            focusCancel: true,
+            onConfirm: () => void run('replace'),
+          }}
+          onClose={() => setConfirming(false)}
+        />
+      )}
+    </div>
+  );
+}

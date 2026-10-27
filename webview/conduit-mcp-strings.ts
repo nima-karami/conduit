@@ -278,7 +278,7 @@ export const MCP_STR = {
     installProject: 'Install for this project',
     installAria: (cli: AgentCli) => `Install Conduit for ${CLI_NAME[cli]}`,
     uninstallAria: (cli: AgentCli) => `Uninstall Conduit from ${CLI_NAME[cli]}`,
-    useThisAria: (cli: AgentCli) => `Use this Conduit for ${CLI_NAME[cli]}`,
+    adoptAria: (cli: AgentCli) => `Use this Conduit for ${CLI_NAME[cli]}`,
     replaceAria: (cli: AgentCli) => `Replace the “conduit” server for ${CLI_NAME[cli]}`,
     checkAgainAria: (cli: AgentCli) => `Check ${CLI_NAME[cli]} again`,
     tryAgainAria: (cli: AgentCli) => `Try again for ${CLI_NAME[cli]}`,
