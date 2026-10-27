@@ -16,12 +16,18 @@ import {
   pickNoticeAdapterId,
 } from '../src/conduit-mcp/client-info';
 import { type ControlDeps, createControlHandlers } from '../src/conduit-mcp/control-tools';
-import { isCountedInput, nextDraftState, settleDraft } from '../src/conduit-mcp/draft-input';
+import {
+  isCountedInput,
+  nextDraftState,
+  settleDraft,
+  stripTerminalReplies,
+} from '../src/conduit-mcp/draft-input';
 import {
   type HandleCounters,
   parseHandleCounters,
   serializeHandleCounters,
 } from '../src/conduit-mcp/handles';
+import type { AgentCli, UserInstallState } from '../src/conduit-mcp/install-types';
 import { createMcpServerCore, TOOLS_LIST_CHANGED } from '../src/conduit-mcp/json-rpc';
 import {
   awaitEnterVerdict,
@@ -54,6 +60,11 @@ import {
   toToolCallResult,
 } from '../src/conduit-mcp/tools';
 import {
+  createTypedLineTracker,
+  DETECT_GRACE_MS,
+  type TypedLineTracker,
+} from '../src/conduit-mcp/typed-command';
+import {
   type Handle,
   HUMAN_HANDLE,
   type McpAttentionItem,
@@ -65,6 +76,7 @@ import {
 } from '../src/conduit-mcp/types';
 import type {
   McpGateState,
+  McpNotConnected,
   McpSessionBadge,
   McpThreadMessage,
   McpThreadSummary,
@@ -100,6 +112,10 @@ export interface ConduitMcpHostDeps {
   mgr: Pick<SessionManager, 'get' | 'list' | 'setMcp' | 'setMcpToolOverride'>;
   /** settings.mcpTools: the global per-tool switches. */
   mcpTools(): McpToolSwitches;
+  /** The CLI's user-scope install state, shown with a not-connected session (spec §2.4). */
+  installState(cli: AgentCli): UserInstallState;
+  /** Default DETECT_GRACE_MS. */
+  detectGraceMs?: number;
   /** effectiveDef(session, registry), bound in main. */
   defOf(sessionId: string): AgentDefinition | undefined;
   /** Registered agent ids, for the open_session schema enum. */
@@ -140,6 +156,8 @@ export interface ConduitMcpHost {
   onResize(sessionId: string, cols: number, rows: number): void;
   onExit(sessionId: string): void;
   onRendererInput(sessionId: string, data: string): void;
+  /** After an install action: re-reads the install state behind every notConnected entry. */
+  onInstallChanged(): void;
   /** Input the host writes outside the PTY writer (the add-dir paste): it is a draft too. */
   noteHostInput(sessionId: string, data: string): void;
   onSessionDeleted(sessionId: string): Promise<void>;
@@ -169,6 +187,12 @@ interface Runtime {
   spawnedAt: number | undefined;
   /** Last PTY size, for a screen model started later than spawn (D6). */
   size: { cols: number; rows: number } | undefined;
+  /** Bumped per prepareLaunch: the banner's once-per-PTY-generation key, known before the PTY exists. */
+  launch: number;
+  /** Only for token-bearing sessions without a definition adapter. */
+  tracker: TypedLineTracker | undefined;
+  detect: { cli: AgentCli; at: number } | undefined;
+  notConnected: McpNotConnected | undefined;
   hasDraft: boolean;
   inputSeq: number;
   lastInputAt: number | undefined;
@@ -201,6 +225,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const sleep =
     deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const randomToken = deps.randomToken ?? (() => randomBytes(32).toString('hex'));
+  const detectGraceMs = deps.detectGraceMs ?? DETECT_GRACE_MS;
   const store = createMessageStore(deps.storeIo ?? createFsStoreIo(deps.dir));
   const screens = deps.screens ?? createSessionScreens();
   const registry = createSessionRegistry();
@@ -241,6 +266,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         unavailable: null,
         spawnedAt: undefined,
         size: undefined,
+        launch: 0,
+        tracker: undefined,
+        detect: undefined,
+        notConnected: undefined,
         hasDraft: false,
         inputSeq: 0,
         lastInputAt: undefined,
@@ -683,8 +712,15 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     if (!connKinds.has(connId)) connKinds.set(connId, { kind, seq: ++connSeq });
     if (!handleOf(sessionId)) claimHandle(sessionId, kind);
     // D6 ruling: a shell's screen model costs memory, so it starts only once a CLI shows up.
-    const size = runtime.get(sessionId)?.size;
-    if (size && !screens.has(sessionId)) screens.start(sessionId, size.cols, size.rows);
+    const r = runtime.get(sessionId);
+    if (r?.size && !screens.has(sessionId)) screens.start(sessionId, r.size.cols, r.size.rows);
+    if (r) {
+      r.detect = undefined;
+      if (r.notConnected?.reason === 'no-initialize') {
+        r.notConnected = undefined;
+        scheduleBroadcast();
+      }
+    }
   };
 
   const onConnection = (conn: EndpointConnection) => {
@@ -823,6 +859,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       switchable: deps.mgr
         .list()
         .flatMap((s) => (hasDefAdapter(s.id) || s.mcpHandle ? [s.id] : [])),
+      notConnected: deps.messagingOn()
+        ? Object.fromEntries(
+            [...runtime].flatMap(([id, r]) => (r.notConnected ? [[id, r.notConnected]] : [])),
+          )
+        : {},
     };
   }
 
@@ -862,8 +903,39 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return true;
   };
 
+  const detectTyped = (sessionId: string, data: string) => {
+    const r = runtime.get(sessionId);
+    if (!r?.tracker) return;
+    // Focus reports and device-attribute replies would mark the line unknown (plan amendment N2).
+    const clis = r.tracker.feed(stripTerminalReplies(data));
+    const cli = clis.at(-1);
+    // A CLI already live here sees this line as its own prompt input, not a command (plan Decisions).
+    if (cli === undefined || registry.isLive(sessionId)) return;
+    r.detect = { cli, at: now() };
+  };
+
+  /** A typed CLI that hasn't initialized within the grace never reached this host (spec §2.5). */
+  const detectPass = () => {
+    const t = now();
+    for (const r of runtime.values()) {
+      if (!r.detect || t - r.detect.at < detectGraceMs) continue;
+      const { cli } = r.detect;
+      r.detect = undefined;
+      r.notConnected = {
+        cli,
+        install: deps.installState(cli),
+        launch: r.launch,
+        reason: 'no-initialize',
+      };
+      scheduleBroadcast();
+    }
+  };
+
   const tick = async () => {
-    if (!notifier || stopped) return;
+    if (stopped) return;
+    // Before the notifier check: detection must not wait for the message store to load.
+    detectPass();
+    if (!notifier) return;
     // Badge gate state for every notifiable session, then the notifier's own pass.
     for (const s of notifierSessions()) await evaluate(s.sessionId);
     await notifier.tick();
@@ -873,10 +945,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
    * Any session may run a CLI the user installed Conduit into: it gets identity env, but a handle
    * only when a CLI initializes (spec 2026-10-27-conduit-mcp-install §3.1).
    */
-  const wireWithoutAdapter = (sessionId: string, spec: SpawnSpec): SpawnSpec => {
+  const wireWithoutAdapter = (sessionId: string, r: Runtime, spec: SpawnSpec): SpawnSpec => {
     if (!deps.messagingOn() || !endpointReady) return spec;
     const token = randomToken();
     registry.mint(sessionId, token);
+    r.tracker = createTypedLineTracker();
     return {
       ...spec,
       env: { ...spec.env, CONDUIT_SESSION_TOKEN: token, CONDUIT_MCP_ENDPOINT: deps.endpointPath },
@@ -949,8 +1022,15 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       const r = rt(sessionId);
       r.defAdapter = adapter;
       r.unavailable = null;
+      r.launch += 1;
+      r.tracker = undefined;
+      r.detect = undefined;
+      if (r.notConnected) {
+        r.notConnected = undefined;
+        scheduleBroadcast();
+      }
       registry.revoke(sessionId);
-      if (!adapter) return wireWithoutAdapter(sessionId, spec);
+      if (!adapter) return wireWithoutAdapter(sessionId, r, spec);
       if (claimHandle(sessionId, adapter.id) === null) return spec;
 
       const unavailable = (reason: McpUnavailableReason) => {
@@ -961,6 +1041,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       if (!deps.messagingOn()) return unavailable('messaging-off');
       if (!endpointReady) return unavailable('endpoint-down');
       if (adapter.wiring === 'cursor-global' && !readCursorLaunchEntry(deps.homeDir)) {
+        r.notConnected = {
+          cli: 'cursor',
+          install: deps.installState('cursor'),
+          launch: r.launch,
+          reason: 'cursor-not-connected',
+        };
         return unavailable('cursor-not-connected');
       }
       const configFile = configFileOf(sessionId);
@@ -1024,13 +1110,36 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       screens.dispose(sessionId);
       const r = rt(sessionId);
       r.spawnedAt = undefined;
+      r.tracker = undefined;
+      r.detect = undefined;
+      r.notConnected = undefined;
       scheduleBroadcast();
     },
 
     onRendererInput(sessionId, data) {
+      // Ahead of noteInput's filter, which serves the notice gate's draft state only.
+      detectTyped(sessionId, data);
       if (!noteInput(sessionId, data)) return;
       const handle = handleOf(sessionId);
       if (handle) dispatch({ t: 'renderer-input', handle });
+    },
+
+    // One read per CLI shown, not per session: ~/.claude.json can be several MB (plan amendment S4).
+    onInstallChanged() {
+      const read = new Map<AgentCli, UserInstallState>();
+      for (const r of runtime.values()) {
+        const nc = r.notConnected;
+        if (!nc) continue;
+        let install = read.get(nc.cli);
+        if (install === undefined) {
+          install = deps.installState(nc.cli);
+          read.set(nc.cli, install);
+        }
+        if (install !== nc.install) {
+          r.notConnected = { ...nc, install };
+          scheduleBroadcast();
+        }
+      }
     },
 
     noteHostInput(sessionId, data) {

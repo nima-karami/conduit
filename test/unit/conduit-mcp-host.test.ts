@@ -53,6 +53,9 @@ const spec = (command = '/usr/bin/node'): SpawnSpec => ({
   env: { A: '1' },
 });
 
+/** The harness's detection grace; the host default (DETECT_GRACE_MS) is main's. */
+const GRACE = 1_000;
+
 const noLog = {
   debug: () => undefined,
   info: () => undefined,
@@ -147,6 +150,7 @@ function harness(
     kinds?: Record<string, PathKind>;
     /** Records every line the host sends into `calls`, so ordering against setMcp is visible. */
     recordSends?: boolean;
+    installState?: ConduitMcpHostDeps['installState'];
   } = {},
 ): Harness {
   const dir = opts.dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'cmcp-host-'));
@@ -215,6 +219,8 @@ function harness(
       },
     },
     mcpTools: opts.mcpTools ?? (() => DEFAULT_MCP_TOOLS),
+    installState: opts.installState ?? (() => 'not-installed'),
+    detectGraceMs: GRACE,
     defOf: (id) => defOfSession(sessions.get(id)),
     agentIds: () => DEFS.map((d) => d.id),
     control: {
@@ -1901,5 +1907,182 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     await h.host.start();
     launch(h, 's1');
     expect(h.screens.has('s1')).toBe(true);
+  });
+});
+
+describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-install §2.5, AC11)', () => {
+  const shell = (h: Harness, id: string) => launch(h, id, SHELL, spec('/usr/bin/pwsh'));
+  const notConnected = (h: Harness) => h.host.uiState().notConnected;
+  async function typedAndWaited(h: Harness, id: string, line: string) {
+    h.host.onRendererInput(id, line);
+    h.clock.t += GRACE;
+    await h.host.tick();
+  }
+
+  it('AC11 typed codex + no initialize within the grace → notConnected {cli: codex, install, reason: no-initialize}', async () => {
+    const h = harness();
+    await h.host.start();
+    shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'codex\r');
+    h.clock.t += GRACE - 1;
+    await h.host.tick();
+    expect(notConnected(h)).toEqual({});
+    h.clock.t += 1;
+    await h.host.tick();
+    expect(notConnected(h)).toEqual({
+      sh1: { cli: 'codex', install: 'not-installed', launch: 1, reason: 'no-initialize' },
+    });
+    await expect
+      .poll(() =>
+        h.broadcasts.some((b) => b.type === 'mcp:state' && b.state.notConnected.sh1 !== undefined),
+      )
+      .toBe(true);
+  });
+
+  it('AC11 detection runs before the store has loaded (tick before the notifier exists)', async () => {
+    let release = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const io = failingIo();
+    io.fail = false;
+    const slow: StoreIo = { ...io, readLog: async () => (await gate, undefined) };
+    const h = harness({ storeIo: slow });
+    const started = h.host.start();
+    await expect
+      .poll(() => {
+        h.sessions.set('sh1', session('sh1', { agentId: 'pwsh' }));
+        return h.host.prepareLaunch('sh1', SHELL, spec('/usr/bin/pwsh')).env?.CONDUIT_SESSION_TOKEN;
+      })
+      .toBeDefined();
+    await typedAndWaited(h, 'sh1', 'claude\r');
+    expect(notConnected(h).sh1?.cli).toBe('claude');
+    release();
+    await started;
+  });
+
+  it('AC11 initialize inside the grace → nothing; initialize after → cleared', async () => {
+    const h = harness();
+    await h.host.start();
+    const a = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'claude\r');
+    await client(h.ep, a.token, 'claude-code');
+    h.clock.t += GRACE;
+    await h.host.tick();
+    expect(notConnected(h)).toEqual({});
+
+    const b = shell(h, 'sh2');
+    await typedAndWaited(h, 'sh2', 'claude\r');
+    expect(notConnected(h).sh2?.reason).toBe('no-initialize');
+    await client(h.ep, b.token, 'claude-code');
+    expect(notConnected(h)).toEqual({});
+  });
+
+  it('AC11 exit clears; relaunch clears and bumps launch', async () => {
+    const h = harness();
+    await h.host.start();
+    shell(h, 'sh1');
+    await typedAndWaited(h, 'sh1', 'claude\r');
+    expect(notConnected(h).sh1?.launch).toBe(1);
+    h.host.onExit('sh1');
+    expect(notConnected(h)).toEqual({});
+    await typedAndWaited(h, 'sh1', 'claude\r');
+    expect(notConnected(h)).toEqual({});
+
+    shell(h, 'sh1');
+    await typedAndWaited(h, 'sh1', 'claude\r');
+    expect(notConnected(h).sh1?.launch).toBe(2);
+    shell(h, 'sh1');
+    expect(notConnected(h)).toEqual({});
+    await typedAndWaited(h, 'sh1', 'claude\r');
+    expect(notConnected(h).sh1?.launch).toBe(3);
+  });
+
+  it('AC11 skip-list line is not a candidate', async () => {
+    const h = harness();
+    await h.host.start();
+    shell(h, 'sh1');
+    await typedAndWaited(h, 'sh1', 'codex --help\r');
+    await typedAndWaited(h, 'sh1', 'claude mcp list\r');
+    expect(notConnected(h)).toEqual({});
+  });
+
+  it('N2 focus reports and device-attribute replies mid-line are not typed input', async () => {
+    const h = harness();
+    await h.host.start();
+    shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'cod');
+    h.host.onRendererInput('sh1', '\x1b[I');
+    h.host.onRendererInput('sh1', '\x1b[?1;2c');
+    h.host.onRendererInput('sh1', 'ex\x1b[O\r');
+    h.clock.t += GRACE;
+    await h.host.tick();
+    expect(notConnected(h).sh1?.cli).toBe('codex');
+  });
+
+  it('adapter sessions never detect', async () => {
+    const h = harness();
+    await h.host.start();
+    launch(h, 's1');
+    launch(h, 'c1', CODEX, spec('/usr/bin/codex'));
+    await typedAndWaited(h, 's1', 'codex\r');
+    await typedAndWaited(h, 'c1', 'claude\r');
+    expect(notConnected(h)).toEqual({});
+  });
+
+  it('a line typed while a CLI is live is ignored', async () => {
+    const h = harness();
+    await h.host.start();
+    await client(h.ep, shell(h, 'sh1').token, 'claude-code');
+    await typedAndWaited(h, 'sh1', 'codex\r');
+    expect(notConnected(h)).toEqual({});
+  });
+
+  it('messaging off → notConnected {}', async () => {
+    let on = true;
+    const h = harness({ messagingOn: () => on });
+    await h.host.start();
+    shell(h, 'sh1');
+    await typedAndWaited(h, 'sh1', 'claude\r');
+    expect(Object.keys(notConnected(h))).toEqual(['sh1']);
+    on = false;
+    expect(notConnected(h)).toEqual({});
+  });
+
+  it('cursor-not-connected profile launch → notConnected {cli: cursor, reason: cursor-not-connected}', async () => {
+    const h = harness({ installState: (cli) => (cli === 'cursor' ? 'conflict' : 'not-installed') });
+    await h.host.start();
+    h.sessions.set('c1', session('c1', { agentId: 'cursor' }));
+    h.host.prepareLaunch('c1', CURSOR, spec('/usr/bin/agent'));
+    expect(notConnected(h)).toEqual({
+      c1: { cli: 'cursor', install: 'conflict', launch: 1, reason: 'cursor-not-connected' },
+    });
+    // A Cursor client connecting cannot clear it: the session never got a token.
+    h.host.onExit('c1');
+    expect(notConnected(h)).toEqual({});
+  });
+
+  it('onInstallChanged re-reads install state and broadcasts; only for the CLIs shown', async () => {
+    const reads: string[] = [];
+    let claude: 'not-installed' | 'installed' = 'not-installed';
+    const h = harness({
+      installState: (cli) => {
+        reads.push(cli);
+        return cli === 'claude' ? claude : 'not-installed';
+      },
+    });
+    await h.host.start();
+    shell(h, 'sh1');
+    shell(h, 'sh2');
+    await typedAndWaited(h, 'sh1', 'claude\r');
+    await typedAndWaited(h, 'sh2', 'claude\r');
+    reads.length = 0;
+    claude = 'installed';
+    const before = h.broadcasts.length;
+    h.host.onInstallChanged();
+    expect(reads).toEqual(['claude']);
+    expect(notConnected(h).sh1?.install).toBe('installed');
+    expect(notConnected(h).sh2?.install).toBe('installed');
+    await expect.poll(() => h.broadcasts.length).toBeGreaterThan(before);
   });
 });
