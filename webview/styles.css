@@ -7438,10 +7438,6 @@ body.gh-resizing {
   align-items: center;
   gap: 10px;
 }
-.set__control--cursor {
-  flex: 1 1 0;
-  min-width: 0;
-}
 .set__number {
   width: 96px;
   padding: 5px 8px;
@@ -7582,33 +7578,6 @@ body.gh-resizing {
 .skillrow__actions {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  flex: 0 0 auto;
-}
-.cursor-connect-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  min-width: 0;
-  width: 100%;
-}
-.cursor-connect-row__status {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  flex: 1 1 0;
-  color: var(--text-dim);
-  font-size: calc(11.5px * var(--font-scale));
-}
-.cursor-connect-row__path {
-  direction: ltr;
-  overflow-wrap: anywhere;
-  unicode-bidi: isolate;
-}
-.cursor-connect-row__actions {
-  display: flex;
-  flex-wrap: wrap;
   gap: 6px;
   flex: 0 0 auto;
 }
@@ -9589,7 +9558,8 @@ button.toggle--on .toggle__knob {
 }
 /* 12c: in flow above the terminal, which refits to what is left (mf-live-edits spec §2.2, D16).
    On the terminal's own ink in every theme, so its text reads with the code tokens. */
-.scope-banner {
+.scope-banner,
+.mcp-banner {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -9600,6 +9570,17 @@ button.toggle--on .toggle__knob {
   color: var(--syn-default);
   font-size: calc(12.5px * var(--font-scale));
   font-weight: 600;
+}
+/* A suggestion, not a warning about the session's files: the accent, not amber. */
+.mcp-banner {
+  background: color-mix(in srgb, var(--accent) 12%, var(--term-bg));
+  border-bottom-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+/* The setup copy is a full sentence and must survive +30% translations, so it wraps, never clamps. */
+.mcp-banner__msg {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.4;
 }
 .scope-banner__dot {
   flex: 0 0 auto;
@@ -9631,17 +9612,20 @@ button.toggle--on .toggle__knob {
   font-weight: 400;
   opacity: 0.8;
 }
-.scope-banner__actions {
+.scope-banner__actions,
+.mcp-banner__actions {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.scope-banner__actions .btn {
+.scope-banner__actions .btn,
+.mcp-banner__actions .btn {
   flex: 0 0 auto;
   white-space: nowrap;
 }
-.scope-banner__close {
+.scope-banner__close,
+.mcp-banner__close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -9656,15 +9640,19 @@ button.toggle--on .toggle__knob {
   cursor: pointer;
 }
 .scope-banner__close:hover,
-.scope-banner__close:focus-visible {
+.scope-banner__close:focus-visible,
+.mcp-banner__close:hover,
+.mcp-banner__close:focus-visible {
   opacity: 1;
   background: var(--state-hover-bg);
 }
 @media (forced-colors: active) {
-  .scope-banner {
+  .scope-banner,
+  .mcp-banner {
     border-bottom-color: CanvasText;
   }
-  .scope-banner__close {
+  .scope-banner__close,
+  .mcp-banner__close {
     border-color: ButtonText;
   }
 }
@@ -14481,6 +14469,11 @@ button.toggle--on .toggle__knob {
   display: inline-flex;
   color: var(--text-dim);
 }
+/* Shape carries the meaning (plug vs unplug), so colour stays muted (install spec §10–§11). */
+.session__mcp-link {
+  display: inline-flex;
+  color: var(--text-dim);
+}
 .rtab__badge--urgent {
   display: inline-flex;
   align-items: center;
@@ -14522,6 +14515,97 @@ button.toggle--on .toggle__knob {
   margin: 8px 0;
   font-size: calc(11.5px * var(--font-scale));
   color: var(--text-dim);
+}
+
+/* Settings → MCP agent CLI rows and project entries (docs/specs/2026-10-27-conduit-mcp-install.md §8, §10). */
+.mcp-install-row,
+.mcp-project__cli {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--density-set-pad-v) 0;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.mcp-install-row__head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
+}
+.mcp-install-row__name,
+.mcp-project__name {
+  font-size: calc(13px * var(--font-scale));
+  font-weight: 600;
+  color: var(--text);
+}
+.mcp-install-row__status,
+.mcp-project__state {
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-dim);
+  min-width: 0;
+}
+.mcp-install-row__detail {
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+}
+.mcp-install-row__path,
+.mcp-project__path {
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-faint);
+  direction: ltr;
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.mcp-install-row__note,
+.mcp-project__note,
+.mcp-project__none {
+  margin: 0;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-faint);
+}
+.mcp-install-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+.mcp-project {
+  padding-top: 8px;
+}
+.mcp-project__title {
+  margin: 6px 0 0;
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+.mcp-project__entry {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+}
+.mcp-project__scope {
+  font-size: calc(11.5px * var(--font-scale));
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.mcp-project__warn {
+  flex: 1 1 24ch;
+  min-width: 0;
+  font-size: calc(11.5px * var(--font-scale));
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+  overflow-wrap: anywhere;
+}
+.mcp-project__status {
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
 }
 
 /* ---------- Conduit MCP: per-session tools dialog ----------
