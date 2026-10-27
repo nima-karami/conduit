@@ -1423,7 +1423,18 @@ describe('control tools: gate, effective tool list, list_changed, overrides (spe
     h.sessions.set('shell', session('shell', { agentId: 'pwsh' }));
     h.sessions.set('gone', session('gone', { agentId: 'removed-profile' }));
     h.sessions.set('claude', session('claude', { agentId: 'claude' }));
-    expect(h.host.uiState().switchable).toEqual(['fake', 'claude']);
+    h.sessions.set(
+      'cmd-codex',
+      session('cmd-codex', {
+        agentId: COMMAND_AGENT_ID,
+        command: { command: '/usr/bin/codex', args: [] },
+      }),
+    );
+    h.sessions.set(
+      'cmd-node',
+      session('cmd-node', { agentId: COMMAND_AGENT_ID, command: { command: 'node', args: [] } }),
+    );
+    expect(h.host.uiState().switchable).toEqual(['fake', 'claude', 'cmd-codex']);
   });
 });
 
@@ -1474,15 +1485,30 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     expect(fs.readFileSync(path.join(h.dir, 'handles.json'), 'utf8')).toBe(handles);
   });
 
-  it('open_terminal claims a handle through the command definition', async () => {
+  it('open_terminal: a command with no adapter gets no handle', async () => {
     const h = harness({ kinds: { '/w': 'dir' } });
     await h.host.start();
     const a = launch(h, 's1');
     on(h, 's1', { open_terminal: true });
     const c = await client(h.ep, a.token);
     const r = await c.call('open_terminal', { path: '/w', command: 'node', args: ['-e', 'x'] });
-    // An arbitrary program has no MCP adapter, so it gets no handle.
     expect(r.body).toMatchObject({ session_id: 'n1', handle: null, agent: 'node' });
+    expect(h.sessions.get('n1')?.mcpHandle).toBeUndefined();
+  });
+
+  it('open_terminal: a command whose leaf matches an adapter gets a handle at create and MCP wiring at launch', async () => {
+    const h = harness({ kinds: { '/w': 'dir' } });
+    await h.host.start();
+    const a = launch(h, 's1');
+    on(h, 's1', { open_terminal: true });
+    const c = await client(h.ep, a.token);
+    const r = await c.call('open_terminal', { path: '/w', command: '/opt/bin/claude' });
+    expect(r.body).toMatchObject({ session_id: 'n1', handle: 'claude-1', agent: 'claude' });
+    const n1 = h.sessions.get('n1');
+    if (!n1?.command) throw new Error('n1 has no command');
+    const out = launch(h, 'n1', commandDef(n1.command), spec('/opt/bin/claude'));
+    expect(out.token).toEqual(expect.any(String));
+    expect(h.sessions.get('n1')?.mcpHandle).toBe('claude-1');
   });
 
   it('handles.json write failure → handle null, unavailable launch-io', async () => {

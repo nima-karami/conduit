@@ -30,7 +30,8 @@ export type ToolErrorCode =
   | 'not_a_file'
   | 'invalid_args'
   | 'command_not_found'
-  | 'brief_unavailable';
+  | 'brief_unavailable'
+  | 'open_failed';
 export interface ToolError {
   code: ToolErrorCode;
   message: string;

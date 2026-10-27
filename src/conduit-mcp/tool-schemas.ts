@@ -1,3 +1,5 @@
+import { MAX_ARGS, MAX_COMMAND_BYTES } from '../session-command';
+import { MAX_LABEL_CHARS } from './control-tools';
 import type { ToolSchema } from './json-rpc';
 
 // Inputs are exactly spec §3.2; every tool context-costs every agent, so descriptions stay short.
@@ -87,7 +89,7 @@ const PATH = {
   type: 'string',
   description: "Absolute, or relative to your session's home folder.",
 } as const;
-const LABEL = { type: 'string', maxLength: 80 } as const;
+const LABEL = { type: 'string', maxLength: MAX_LABEL_CHARS } as const;
 const FOCUS = { type: 'boolean', default: true } as const;
 
 // Spec 2026-10-27-conduit-mcp-control-tools §3.1; agent ids are an enum unless S0 finds a CLI that rejects it (A6).
@@ -116,8 +118,8 @@ function controlSchemas(agentIds: readonly string[]): ToolSchema[] {
         ...OBJECT,
         properties: {
           path: PATH,
-          command: { type: 'string', maxLength: 1024 },
-          args: { type: 'array', items: { type: 'string' }, maxItems: 64 },
+          command: { type: 'string', maxLength: MAX_COMMAND_BYTES },
+          args: { type: 'array', items: { type: 'string' }, maxItems: MAX_ARGS },
           label: LABEL,
           focus: FOCUS,
         },

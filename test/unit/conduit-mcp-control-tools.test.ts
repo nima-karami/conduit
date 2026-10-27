@@ -178,6 +178,7 @@ describe('createControlHandlers', () => {
     await bad(c.openTerminal(caller(), { path: '/repo', command: 'n', args: ['a', 2] }));
     await bad(c.openTerminal(caller(), { path: '/repo', command: 'n'.repeat(1025) }));
     await bad(c.openTerminal(caller(), { path: '/repo', command: '' }));
+    await bad(c.openTerminal(caller(), { path: '/repo', command: 'n', args: null }));
     await bad(
       c.openTerminal(caller(), { path: '/repo', command: 'n', args: ['a'.repeat(8 * 1024 + 1)] }),
     );
@@ -219,8 +220,12 @@ describe('createControlHandlers', () => {
       command: { command: '/usr/local/bin/cursor-agent', args: ['-p', 'x'] },
     });
     expect(r.ok && r.value.agent).toBe('cursor-agent');
+    expect(h.opens[0].label).toBe('cursor-agent');
+    expect(r.ok && r.value.label).toBe('cursor-agent');
     await c.openTerminal(caller(), { path: '/repo', command: 'node' });
     expect(h.opens[1].launch).toEqual({ kind: 'command', command: { command: 'node', args: [] } });
+    await c.openTerminal(caller(), { path: '/repo', command: 'node', label: 'Build' });
+    expect(h.opens[2].label).toBe('Build');
   });
 
   it('success returns {session_id, handle: claimHandle(id), label, agent}', async () => {
@@ -262,16 +267,44 @@ describe('createControlHandlers', () => {
     expect(code(await c.openSession(caller(), sessionArgs()))).toBe('ok');
   });
 
-  it('openSession throwing releases the reservation and propagates', async () => {
+  it('openSession throwing → open_failed (logged), the reservation released', async () => {
     const h = harness();
     const c = createControlHandlers(h.deps);
     h.outcome = async () => {
       throw new Error('boom');
     };
-    for (let i = 0; i < OPEN_RATE_PER_CALLER; i++)
-      await expect(c.openSession(caller(), sessionArgs())).rejects.toThrow('boom');
+    for (let i = 0; i < OPEN_RATE_PER_CALLER; i++) {
+      const r = await c.openSession(caller(), sessionArgs());
+      expect(r).toEqual({
+        ok: false,
+        error: { code: 'open_failed', message: 'boom', retryable: false },
+      });
+    }
+    expect(h.logs.at(-1)).toEqual({
+      message: 'control open failed',
+      data: { tool: 'open_session', caller: 'claude-1', path: '/repo', error: 'boom' },
+    });
     h.outcome = async () => ({ ok: true, sessionId: 's', label: 'x' });
     expect(code(await c.openSession(caller(), sessionArgs()))).toBe('ok');
+  });
+
+  it('openFile throwing → open_failed (logged)', async () => {
+    const h = harness({
+      openFile: async () => {
+        throw new Error('no window');
+      },
+    });
+    const r = await createControlHandlers(h.deps).openFile(caller(), { path: '/repo/a.ts' });
+    expect(r).toEqual({
+      ok: false,
+      error: { code: 'open_failed', message: 'no window', retryable: false },
+    });
+    expect(h.logs).toEqual([
+      {
+        message: 'control open failed',
+        data: { tool: 'open_file', caller: 'claude-1', path: '/repo/a.ts', error: 'no window' },
+      },
+    ]);
   });
 
   it('rate: 10 successful opens by one caller in 60s → 11th rate_limited; at 60s+1 allowed again', async () => {

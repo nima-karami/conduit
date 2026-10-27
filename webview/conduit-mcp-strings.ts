@@ -145,6 +145,7 @@ export const MCP_STR = {
     invalid_args: 'the request is incomplete',
     command_not_found: 'command not found',
     brief_unavailable: 'the role brief couldn’t be prepared',
+    open_failed: 'Conduit couldn’t open it',
   } satisfies Record<ToolErrorCode, string>,
   noResponse: 'Conduit didn’t answer. Try again.',
   you: 'you',

@@ -177,6 +177,7 @@ The existing `{error: {code, message, retryable}}` shape. New codes:
 | `invalid_args` | Malformed input | — |
 | `command_not_found` | `command` doesn't resolve on PATH or as a path | Nothing is created |
 | `brief_unavailable` | The definition's default brief can't be prepared | Nothing is created |
+| `open_failed` | Conduit threw while opening (added at build, review r1) | The thrown message; the rate slot is not charged |
 
 Reused codes: `not_in_session`, `messaging_off`, `rate_limited`.
 
@@ -306,6 +307,9 @@ Reused codes: `not_in_session`, `messaging_off`, `rate_limited`.
   handle (or null) and label.
 - When `open_terminal` succeeds, the host shall spawn `command` with `args` as argv, without a
   shell, and persist both so a relaunch runs the same command.
+  - Note (review r1): on Windows a command that resolves to a `.cmd`/`.bat` (npm-installed CLIs)
+    is re-parsed by cmd.exe. That grants nothing extra, since the caller already chooses the
+    program (A1), but the args are not literally passed as argv there.
 - While `focus` is false, the renderer shall not change the active session, including under
   `autoSwitchSession`.
 - When `open_file` is given `line`, the editor shall reveal and place the cursor at that

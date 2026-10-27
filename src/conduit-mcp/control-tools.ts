@@ -115,7 +115,10 @@ function parseSessionArgs(raw: unknown): (Common & { agent: string }) | Fail {
 function parseTerminalArgs(raw: unknown): (Common & { command: SessionCommand }) | Fail {
   const o = parseObject(raw, ['path', 'command', 'args', 'label', 'focus']);
   if (isFail(o)) return o;
-  const command = coerceSessionCommand({ command: o.command, args: o.args ?? [] });
+  const command = coerceSessionCommand({
+    command: o.command,
+    args: o.args === undefined ? [] : o.args,
+  });
   if (!command)
     return fail(
       'invalid_args',
@@ -190,6 +193,16 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     return { sessionId: caller.sessionId, home };
   }
 
+  /**
+   * main's open path does real IO; a throw must still answer tools/call, because json-rpc awaits
+   * deps.call unguarded and an escaped rejection leaves the request unanswered.
+   */
+  function failed(tool: string, caller: Caller, abs: string, e: unknown): Fail {
+    const message = e instanceof Error ? e.message : String(e);
+    deps.info('control open failed', { tool, caller: caller.handle, path: abs, error: message });
+    return fail('open_failed', message);
+  }
+
   async function checkKind(abs: string, want: 'dir' | 'file'): Promise<Fail | null> {
     const kind = await deps.kindOf(abs);
     if (kind === 'missing') return fail('path_missing', `no such path: ${abs}`);
@@ -226,14 +239,19 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
       } else if (deps.resolveCommand(launch.command.command) === undefined) {
         return fail('command_not_found', `command not found: ${launch.command.command}`);
       }
-      const outcome = await deps.openSession({
-        callerSessionId: who.sessionId,
-        openedBy: { handle: caller.handle, sessionId: who.sessionId },
-        home: abs,
-        label: a.label,
-        focus: a.focus,
-        launch,
-      });
+      let outcome: McpOpenOutcome;
+      try {
+        outcome = await deps.openSession({
+          callerSessionId: who.sessionId,
+          openedBy: { handle: caller.handle, sessionId: who.sessionId },
+          home: abs,
+          label: a.label,
+          focus: a.focus,
+          launch,
+        });
+      } catch (e) {
+        return failed(tool, caller, abs, e);
+      }
       if (!outcome.ok) return fail(outcome.code, outcome.message);
       opened = true;
       deps.info('control open', {
@@ -265,12 +283,13 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     async openTerminal(caller, raw) {
       const a = parseTerminalArgs(raw);
       if (isFail(a)) return a;
+      const leaf = commandLabel(a.command);
       return open(
         'open_terminal',
         caller,
-        a,
+        { ...a, label: a.label ?? leaf },
         { kind: 'command', command: a.command },
-        commandLabel(a.command),
+        leaf,
       );
     },
     async openFile(caller, raw) {
@@ -281,13 +300,18 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
       const abs = deps.resolvePath(who.home, a.path);
       const bad = await checkKind(abs, 'file');
       if (bad) return bad;
-      const { sessionId } = await deps.openFile({
-        callerSessionId: who.sessionId,
-        path: abs,
-        line: a.line,
-        column: a.column,
-        focus: a.focus,
-      });
+      let sessionId: string;
+      try {
+        ({ sessionId } = await deps.openFile({
+          callerSessionId: who.sessionId,
+          path: abs,
+          line: a.line,
+          column: a.column,
+          focus: a.focus,
+        }));
+      } catch (e) {
+        return failed('open_file', caller, abs, e);
+      }
       deps.info('control open', { tool: 'open_file', caller: caller.handle, sessionId, path: abs });
       return { ok: true, value: { opened: abs, session_id: sessionId } };
     },

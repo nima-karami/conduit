@@ -1375,3 +1375,26 @@ Report: architecture-critic, REVISE (1 blocker, 5 should-fix, 3 nits), all accep
   - `planFileOpen` takes an explicit `source: 'os' | 'mcp'`, not "focus absent".
   - `syncToolLists` gets a one-line pointer: the enum changes are deliberately ignored (A6
     validates live).
+
+## Build deviations (S1–S5, recorded after review r1)
+
+Unplanned files and edits the build was forced into; none changes behaviour beyond the plan.
+
+- **T3.1 call sites missing from the producer/consumer map:** `McpUiState.switchable` made typed
+  literals fail to compile: `webview/bridge.ts` (the fake shell's state) and the fixtures in
+  `test/unit/conduit-mcp-view-model.test.ts` and `test/unit/messages-pane.test.tsx` (each gained
+  `switchable: []`).
+- **T3.1 router case:** `electron/main.ts` gained `case 'mcp:setToolOverride'` in the webview
+  message router; without it the override IPC never reaches the host.
+- **T5.x styles:** `webview/styles.css` carries the MCP tools dialog and Settings Tools group rules.
+- **SF2 consumers:** `src/agent-label.ts` and `webview/components/board-view.tsx` were touched so
+  the sidebar and board card label a command session by `commandLabel`.
+- **ConduitMcpApi fakes:** the host-API fakes in `test/unit/message-compose.test.tsx`,
+  `test/unit/messages-pane.test.tsx` and `test/unit/right-pane-review-kebab.test.ts` gained
+  `setToolOverride`.
+- **Review r1 fixes:**
+  - the `open_terminal` default label (spec §3.1/D2, the command leaf) is applied in
+    `control-tools.ts`, the one place that parses the tool's args, so `createMcpSession` receives
+    it as `req.label` and the returned `label` is the created session's name (no main.ts change);
+  - a throw from main's open path maps to the new `open_failed` code at the control-tools
+    boundary (catalog + strings). Non-retryable: a retry could repeat a half-done open.
