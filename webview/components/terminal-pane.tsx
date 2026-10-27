@@ -5,6 +5,7 @@ import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } 
 import '@xterm/xterm/css/xterm.css';
 import { FILE_INDEX_TTL_MS } from '../../src/file-index-ttl';
 import { folderKey } from '../../src/folder-key';
+import { type InputBoxPrompt, inputBoxTop } from '../../src/input-box-rows';
 import { classifyLinkUri, dispatchLinkUri, type LinkUriSinks } from '../../src/link-target';
 import { isAncestorOf } from '../../src/owning-session';
 import type { ResolveRoot } from '../../src/path-link-roots';
@@ -195,6 +196,7 @@ export function TerminalPane({
   onSearchAllFiles,
   onOpenAsSession,
   openAsSessionHint,
+  inputBox,
 }: {
   sessionId: string;
   agentId?: string;
@@ -231,6 +233,8 @@ export function TerminalPane({
   ) => void;
   /** "in <project>", shown beside "Open as new session". */
   openAsSessionHint?: string;
+  /** The session agent's input prompt row, when its CLI draws no rules (inputBoxPrompt). */
+  inputBox?: InputBoxPrompt;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -270,6 +274,8 @@ export function TerminalPane({
   rootsSigRef.current = rootsSig;
   const agentIdRef = useRef(agentId);
   agentIdRef.current = agentId;
+  const inputBoxRef = useRef(inputBox);
+  inputBoxRef.current = inputBox;
   const onOpenFileRef = useRef(onOpenFile);
   onOpenFileRef.current = onOpenFile;
   const onRevealFolderRef = useRef(onRevealFolder);
@@ -710,8 +716,23 @@ export function TerminalPane({
         for (const r of msg.results) commitCache.resolve(r.token, r.commit);
       });
 
+      // The live input box is the user's own text and the CLI's chrome, never agent output, so it
+      // never links (spec 2026-10-27-input-box-links). Re-read on every ask: it moves with the cursor.
+      const inputBoxTopNow = () => {
+        const buf = term.buffer.active;
+        return inputBoxTop(
+          (y) => buf.getLine(y)?.translateToString(true),
+          buf.baseY + buf.cursorY,
+          { cols: term.cols, rows: term.rows, prompt: inputBoxRef.current },
+        );
+      };
       const linkProvider: ILinkProvider = {
         provideLinks(bufferLineNumber, callback) {
+          const boxTop = inputBoxTopNow();
+          if (boxTop !== null && bufferLineNumber - 1 >= boxTop) {
+            callback(undefined);
+            return;
+          }
           // Detection runs on the soft-wrapped logical line, so a path split at the wrap is one
           // link; xterm asks per row, and only links touching that row are returned.
           const ll = buildLogicalLine(term.buffer.active, bufferLineNumber - 1, term.cols);
@@ -867,7 +888,9 @@ export function TerminalPane({
         const buf = term.buffer.active;
         const scope = scopeNow();
         const lines: TokenLine[] = [];
+        const boxTop = inputBoxTopNow();
         for (const y of rows) {
+          if (boxTop !== null && y >= boxTop) continue;
           const ll = buildLogicalLine(buf, y, term.cols);
           // A logical line spanning several of the rows is read once.
           if (!ll || lines.at(-1)?.firstRow === ll.firstRow) continue;

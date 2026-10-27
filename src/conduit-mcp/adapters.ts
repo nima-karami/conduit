@@ -14,6 +14,11 @@ export interface ScreenPatterns {
   inputRow?: { pattern: RegExp; maxAbove: number };
   /** How the CLI draws its input placeholder and suggested prompt; absent ⇒ never dropped. */
   placeholder?: 'dim';
+  /**
+   * Where the input box starts, for keeping it out of terminal link detection, when `inputRow`
+   * doesn't already say (spec 2026-10-27-input-box-links §3).
+   */
+  inputBox?: { pattern: RegExp; maxAbove: number };
 }
 // Brief support: docs/specs/2026-10-26-conduit-role-brief.md §3.2
 export interface BriefSupport {
@@ -62,6 +67,8 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
       blocking: [/enter continue · esc quit/i, /enter to confirm or esc to cancel/i],
       emptyInput: [/^\s*›\s*$/],
       placeholder: 'dim',
+      // A multi-line draft moves the cursor below the `›` row.
+      inputBox: { pattern: /^\s*›/, maxAbove: 8 },
     },
     e2eOnly: false,
     brief: { readAccess: 'none' },

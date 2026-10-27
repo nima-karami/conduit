@@ -6,6 +6,12 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Nothing in an agent's input box is clickable any more.** URLs, file names and commit hashes
+  you type into Claude Code's chat box, its suggested prompt, and the status lines under it no
+  longer turn into links; what the agent prints above stays clickable. Codex and Cursor input
+  rows get the same treatment.
+
 ## [0.49.0] — 2026-10-27
 
 ### Added
