@@ -27,6 +27,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FAKE_AGENT, FAKE_AGENT_ID } from '../conduit-mcp-helpers.mjs';
 import {
   closeApp,
   launchApp,
@@ -256,6 +257,47 @@ const SCENES = {
     await c.dismiss();
   },
 
+  // The MCP tool switches (control-tools spec §8–§10): Settings' Tools group sits below the fold
+  // of General, and the per-session dialog is offered only for a session with an MCP adapter,
+  // hence the fake MCP agent seeded into every profile (the e2e-only adapter needs CONDUIT_E2E).
+  async 'mcp-tools'(c) {
+    await c.page.click('.footbtn');
+    await sleep(1500);
+    await c.page.evaluate(() => document.querySelector('.settools')?.scrollIntoView());
+    await sleep(600);
+    await c.shot('settings-mcp-tools');
+    await c.dismiss();
+
+    const before = await c.page.evaluate(() => (window.__sessions || []).map((s) => s.id));
+    // Later scenes work in the active session's editor; hand it back once the fake is gone.
+    const wasActive = await c.page.evaluate(
+      () =>
+        document.querySelector('.session.session--active')?.getAttribute('data-sessionid') ?? null,
+    );
+    await c.page.evaluate(
+      (a) => window.agentDeck.post({ type: 'openRepo', path: a.path, agentId: a.agentId }),
+      { path: c.fixture.plain, agentId: FAKE_AGENT_ID },
+    );
+    const id = await c.page
+      .waitForFunction(
+        (ids) => (window.__sessions || []).find((s) => !ids.includes(s.id))?.id || null,
+        before,
+        { timeout: 25_000 },
+      )
+      .then((h) => h.jsonValue());
+    await sleep(2500);
+    await c.rightClickSel(`.session[data-sessionid="${id}"]`);
+    const opened = await c.clickMenuItem(/MCP tools/);
+    if (!opened) throw new Error('no "MCP tools…" item on the fake MCP session');
+    await sleep(900);
+    await c.shot('mcp-tools-dialog');
+    await c.dismiss();
+    await c.page.evaluate((sid) => window.agentDeck.post({ type: 'kill', id: sid }), id);
+    await sleep(800);
+    if (wasActive) await c.page.click(`.session[data-sessionid="${wasActive}"]`);
+    await sleep(2500);
+  },
+
   async palette(c) {
     await c.page.click('.omnibar');
     await sleep(900);
@@ -413,6 +455,7 @@ const DEFAULT_ORDER = [
   'canvas',
   'new-session',
   'settings',
+  'mcp-tools',
   'palette',
   'monaco',
   'markdown',
@@ -445,6 +488,20 @@ function seedProfile(theme) {
   writeFileSync(
     join(dir, 'settings.json'),
     JSON.stringify({ version: 1, settings: { theme, restoreSessions: false } }),
+  );
+  writeFileSync(
+    join(dir, 'agents.json'),
+    JSON.stringify([
+      {
+        id: FAKE_AGENT_ID,
+        label: 'Fake MCP',
+        command: process.execPath,
+        args: [FAKE_AGENT],
+        icon: 'terminal',
+        color: 'green',
+        cwdStrategy: 'workspaceFolder',
+      },
+    ]),
   );
   return dir;
 }
