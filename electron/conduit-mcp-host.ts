@@ -9,6 +9,7 @@ import {
   reduceAttention,
   youAttention,
 } from '../src/conduit-mcp/attention-items';
+import { type ControlDeps, createControlHandlers } from '../src/conduit-mcp/control-tools';
 import { isCountedInput, nextDraftState, settleDraft } from '../src/conduit-mcp/draft-input';
 import {
   type HandleCounters,
@@ -97,6 +98,8 @@ export interface ConduitMcpHostDeps {
   defOf(sessionId: string): AgentDefinition | undefined;
   /** Registered agent ids, for the open_session schema enum. */
   agentIds(): string[];
+  /** Main's side of the control tools: paths, commands, and creating sessions/opening files. */
+  control: Omit<ControlDeps, 'claimHandle' | 'now' | 'info' | 'agentIds'>;
   pty: Pick<PtyHost, 'isAlive' | 'generation'>;
   writer: PtyWriter;
   activity: Pick<SessionActivity, 'statusOf' | 'lastOutputAt'>;
@@ -466,6 +469,55 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return outcome;
   };
 
+  /**
+   * The session's handle, allocating one when it has none. Shared by launch and by an MCP open,
+   * which must return the handle before the renderer has spawned anything (spec 2026-10-27 §3.1).
+   * Null on a handles.json write failure, which marks the session launch-io.
+   */
+  const claimHandle = (sessionId: string, adapter: McpAdapter): Handle | null => {
+    const session = deps.mgr.get(sessionId);
+    if (!session) return null;
+    const takenByOthers = new Set(
+      deps.mgr
+        .list()
+        .filter((s) => s.id !== sessionId && s.mcpHandle)
+        .map((s) => s.mcpHandle as Handle),
+    );
+    const a = assignHandle({
+      current: session.mcpHandle,
+      prefix: adapter.id,
+      takenByOthers,
+      counters: loadCounters(),
+    });
+    if (!a.allocated) return a.handle;
+    // Counter first, then the handle (plan ruling 10): a crash between burns a number.
+    try {
+      fs.mkdirSync(deps.dir, { recursive: true });
+      atomicWriteFileSync(handlesFile, serializeHandleCounters(a.counters));
+    } catch (err) {
+      deps.log.error('conduit-mcp', 'handles.json write failed', { err: String(err) });
+      rt(sessionId).unavailable = 'launch-io';
+      scheduleBroadcast();
+      return null;
+    }
+    counters = a.counters;
+    deps.mgr.setMcp(sessionId, { mcpHandle: a.handle });
+    scheduleBroadcast();
+    return a.handle;
+  };
+
+  const control = createControlHandlers({
+    ...deps.control,
+    agentIds: () => deps.agentIds(),
+    claimHandle: (sessionId) => {
+      const def = deps.defOf(sessionId);
+      const adapter = def && adapterFor(def, { e2e: deps.e2e });
+      return adapter ? claimHandle(sessionId, adapter) : null;
+    },
+    now,
+    info: (message, data) => deps.log.info('conduit-mcp', message, data),
+  });
+
   const notifierSessions = () =>
     deps.mgr.list().flatMap((s) => {
       const r = runtime.get(s.id);
@@ -564,11 +616,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return tools.readInbox(caller, args);
       case 'read_attachment':
         return tools.readAttachment(caller, args);
-      default:
-        return {
-          ok: false as const,
-          error: toolError('invalid_argument', `unknown tool: ${name}`),
-        };
+      case 'open_session':
+        return control.openSession(caller, args);
+      case 'open_terminal':
+        return control.openTerminal(caller, args);
+      case 'open_file':
+        return control.openFile(caller, args);
     }
   };
 
@@ -813,33 +866,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       r.adapter = adapter;
       r.unavailable = null;
       registry.revoke(sessionId);
-
-      const takenByOthers = new Set(
-        deps.mgr
-          .list()
-          .filter((s) => s.id !== sessionId && s.mcpHandle)
-          .map((s) => s.mcpHandle as Handle),
-      );
-      const a = assignHandle({
-        current: session.mcpHandle,
-        prefix: adapter.id,
-        takenByOthers,
-        counters: loadCounters(),
-      });
-      if (a.allocated) {
-        // Counter first, then the handle (plan ruling 10): a crash between burns a number.
-        try {
-          fs.mkdirSync(deps.dir, { recursive: true });
-          atomicWriteFileSync(handlesFile, serializeHandleCounters(a.counters));
-        } catch (err) {
-          deps.log.error('conduit-mcp', 'handles.json write failed', { err: String(err) });
-          r.unavailable = 'launch-io';
-          scheduleBroadcast();
-          return spec;
-        }
-        counters = a.counters;
-        deps.mgr.setMcp(sessionId, { mcpHandle: a.handle });
-      }
+      if (claimHandle(sessionId, adapter) === null) return spec;
 
       const unavailable = (reason: McpUnavailableReason) => {
         r.unavailable = reason;

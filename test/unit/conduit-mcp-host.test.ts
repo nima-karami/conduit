@@ -10,6 +10,7 @@ import {
   ENDPOINT_READY_WAIT_MS,
 } from '../../electron/conduit-mcp-host';
 import { createSessionScreens } from '../../electron/session-screens';
+import type { McpFileRequest, McpOpenRequest, PathKind } from '../../src/conduit-mcp/control-tools';
 import { ECHO_POLL_MS } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
 import type { StoreIo } from '../../src/conduit-mcp/store';
@@ -22,6 +23,7 @@ import {
 import { toolError } from '../../src/conduit-mcp/types';
 import type { HostToWebview } from '../../src/protocol';
 import { createPtyWriter } from '../../src/pty-writer';
+import { COMMAND_AGENT_ID, commandDef } from '../../src/session-command';
 import type { AgentDefinition, Session, SpawnSpec } from '../../src/types';
 import { testEndpoint } from '../helpers/test-endpoint';
 
@@ -39,6 +41,10 @@ const CODEX: AgentDefinition = { ...FAKE, id: 'codex', command: '/usr/bin/codex'
 const CURSOR: AgentDefinition = { ...FAKE, id: 'cursor', command: '/usr/bin/agent' };
 const CLAUDE: AgentDefinition = { ...FAKE, id: 'claude', command: '/usr/bin/claude' };
 const DEFS = [FAKE, SHELL, CODEX, CURSOR, CLAUDE];
+const defOfSession = (s: Session | undefined): AgentDefinition | undefined =>
+  s?.agentId === COMMAND_AGENT_ID
+    ? s.command && commandDef(s.command)
+    : DEFS.find((d) => d.id === s?.agentId);
 const spec = (command = '/usr/bin/node'): SpawnSpec => ({
   command,
   args: ['fake.mjs'],
@@ -89,6 +95,9 @@ interface Harness {
   writer: ReturnType<typeof createPtyWriter>;
   /** Gap releases, when the harness holds submit gaps. */
   gaps: Array<() => void>;
+  /** Every control open/file request the host handed to main. */
+  opens: McpOpenRequest[];
+  files: McpFileRequest[];
 }
 
 const dirs: string[] = [];
@@ -133,6 +142,7 @@ function harness(
     log?: ConduitMcpHostDeps['log'];
     createEndpoint?: ConduitMcpHostDeps['createEndpoint'];
     mcpTools?: () => McpToolSwitches;
+    kinds?: Record<string, PathKind>;
   } = {},
 ): Harness {
   const dir = opts.dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'cmcp-host-'));
@@ -149,6 +159,8 @@ function harness(
   const alive = new Set<string>();
   const gens = new Map<string, number>();
   const gaps: Array<() => void> = [];
+  const opens: McpOpenRequest[] = [];
+  const files: McpFileRequest[] = [];
   const lagged: Array<[string, string]> = [];
   let tokenN = 0;
   let host: ConduitMcpHost;
@@ -198,8 +210,32 @@ function harness(
       },
     },
     mcpTools: opts.mcpTools ?? (() => DEFAULT_MCP_TOOLS),
-    defOf: (id) => DEFS.find((d) => d.id === sessions.get(id)?.agentId),
+    defOf: (id) => defOfSession(sessions.get(id)),
     agentIds: () => DEFS.map((d) => d.id),
+    control: {
+      homeOf: (id) => sessions.get(id)?.home,
+      resolvePath: (h, rel) => (rel.startsWith('/') ? rel : `${h}/${rel}`),
+      kindOf: async (abs) => opts.kinds?.[abs] ?? 'missing',
+      resolveCommand: (c) => `/usr/bin/${c}`,
+      // Stands in for main's createMcpSession: the session exists, unlaunched and unhandled.
+      openSession: async (req) => {
+        const id = `n${opens.length + 1}`;
+        opens.push(req);
+        sessions.set(
+          id,
+          session(id, {
+            agentId: req.launch.kind === 'agent' ? req.launch.agentId : COMMAND_AGENT_ID,
+            home: req.home,
+            ...(req.launch.kind === 'command' ? { command: req.launch.command } : {}),
+          }),
+        );
+        return { ok: true, sessionId: id, label: `S ${id}` };
+      },
+      openFile: async (req) => {
+        files.push(req);
+        return { sessionId: req.callerSessionId };
+      },
+    },
     pty: {
       isAlive: (id) => alive.has(id),
       generation: (id) => gens.get(id),
@@ -243,6 +279,8 @@ function harness(
     gens,
     writer,
     gaps,
+    opens,
+    files,
   };
 }
 
@@ -1386,5 +1424,105 @@ describe('control tools: gate, effective tool list, list_changed, overrides (spe
     h.sessions.set('gone', session('gone', { agentId: 'removed-profile' }));
     h.sessions.set('claude', session('claude', { agentId: 'claude' }));
     expect(h.host.uiState().switchable).toEqual(['fake', 'claude']);
+  });
+});
+
+describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §3.1)', () => {
+  const on = (h: Harness, id: string, o: Session['mcpToolOverrides']) => {
+    const s = h.sessions.get(id);
+    if (!s) throw new Error(`no session ${id}`);
+    s.mcpToolOverrides = o;
+  };
+
+  it('open_session with the switch on calls control.openSession and returns the claimed handle', async () => {
+    const h = harness({ kinds: { '/w/wt': 'dir' } });
+    await h.host.start();
+    const a = launch(h, 's1');
+    on(h, 's1', { open_session: true });
+    const c = await client(h.ep, a.token);
+    const r = await c.call('open_session', { path: 'wt', agent: 'e2e-fake-mcp', focus: false });
+    expect(r.isError).toBe(false);
+    expect(r.body).toEqual({
+      session_id: 'n1',
+      handle: 'fake-2',
+      label: 'S n1',
+      agent: 'e2e-fake-mcp',
+    });
+    expect(h.opens).toEqual([
+      {
+        callerSessionId: 's1',
+        openedBy: { handle: 'fake-1', sessionId: 's1' },
+        home: '/w/wt',
+        label: undefined,
+        focus: false,
+        launch: { kind: 'agent', agentId: 'e2e-fake-mcp' },
+      },
+    ]);
+    expect(h.sessions.get('n1')?.mcpHandle).toBe('fake-2');
+  });
+
+  it('claimHandle at create: a later prepareLaunch keeps the same handle', async () => {
+    const h = harness({ kinds: { '/w/wt': 'dir' } });
+    await h.host.start();
+    const a = launch(h, 's1');
+    on(h, 's1', { open_session: true });
+    const c = await client(h.ep, a.token);
+    await c.call('open_session', { path: 'wt', agent: 'e2e-fake-mcp' });
+    const handles = fs.readFileSync(path.join(h.dir, 'handles.json'), 'utf8');
+    launch(h, 'n1');
+    expect(h.sessions.get('n1')?.mcpHandle).toBe('fake-2');
+    expect(fs.readFileSync(path.join(h.dir, 'handles.json'), 'utf8')).toBe(handles);
+  });
+
+  it('open_terminal claims a handle through the command definition', async () => {
+    const h = harness({ kinds: { '/w': 'dir' } });
+    await h.host.start();
+    const a = launch(h, 's1');
+    on(h, 's1', { open_terminal: true });
+    const c = await client(h.ep, a.token);
+    const r = await c.call('open_terminal', { path: '/w', command: 'node', args: ['-e', 'x'] });
+    // An arbitrary program has no MCP adapter, so it gets no handle.
+    expect(r.body).toMatchObject({ session_id: 'n1', handle: null, agent: 'node' });
+  });
+
+  it('handles.json write failure → handle null, unavailable launch-io', async () => {
+    const rec = recordingLog();
+    const h = harness({ kinds: { '/w/wt': 'dir' }, log: rec.log });
+    await h.host.start();
+    const a = launch(h, 's1');
+    on(h, 's1', { open_session: true });
+    const c = await client(h.ep, a.token);
+    fs.rmSync(path.join(h.dir, 'handles.json'));
+    fs.mkdirSync(path.join(h.dir, 'handles.json'));
+    const r = await c.call('open_session', { path: 'wt', agent: 'e2e-fake-mcp' });
+    expect(r.body).toMatchObject({ session_id: 'n1', handle: null });
+    expect(h.sessions.get('n1')?.mcpHandle).toBeUndefined();
+    expect(rec.of('handles.json write failed')).toHaveLength(1);
+  });
+
+  it('open_file routes to control.openFile', async () => {
+    const h = harness({ kinds: { '/w/src/a.ts': 'file' } });
+    await h.host.start();
+    const a = launch(h, 's1');
+    on(h, 's1', { open_file: true });
+    const c = await client(h.ep, a.token);
+    const r = await c.call('open_file', { path: 'src/a.ts', line: 3 });
+    expect(r.body).toEqual({ opened: '/w/src/a.ts', session_id: 's1' });
+    expect(h.files).toEqual([
+      { callerSessionId: 's1', path: '/w/src/a.ts', line: 3, column: undefined, focus: true },
+    ]);
+  });
+
+  it('a control tool with the store down is not store_unavailable', async () => {
+    const h = harness({ kinds: { '/w/src/a.ts': 'file' }, storeIo: failingIo() });
+    await h.host.start();
+    const a = launch(h, 's1');
+    on(h, 's1', { open_file: true });
+    const c = await client(h.ep, a.token);
+    expect((await c.call('send_message', { to: ['x'], body: 'b' })).body.error.code).toBe(
+      'store_unavailable',
+    );
+    const r = await c.call('open_file', { path: 'src/a.ts' });
+    expect(r.isError).toBe(false);
   });
 });

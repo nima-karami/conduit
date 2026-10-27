@@ -1928,6 +1928,19 @@ app.whenReady().then(() => {
       return s ? effectiveDef(s, registry) : undefined;
     },
     agentIds: () => registry.list().map((d) => d.id),
+    control: {
+      homeOf: (id) => mgr.get(id)?.home,
+      resolvePath: (home, p) => path.resolve(home, p),
+      // Not probeDeps.kind: its 'not-dir' can't tell a file from a socket or device.
+      kindOf: (p) =>
+        fs.promises.stat(p).then(
+          (st) => (st.isDirectory() ? 'dir' : st.isFile() ? 'file' : 'other'),
+          () => 'missing' as const,
+        ),
+      resolveCommand: (c) => resolveCommand(c, hostPlatform),
+      openSession: (req) => createMcpSession(req),
+      openFile: (req) => openMcpFile(req),
+    },
     projectName: (projectId) =>
       projectId ? (projectStore.list().find((p) => p.id === projectId)?.name ?? null) : null,
     broadcast,
