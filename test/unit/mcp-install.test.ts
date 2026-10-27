@@ -679,3 +679,76 @@ describe('repair (D2)', () => {
     expect(fs.readFileSync(claude, 'utf8')).toBe(userText);
   });
 });
+
+// Counterparts of the Cursor connect cases deleted with that module (plan T4.9).
+describe('write failures and no-op installs (Cursor connect parity)', () => {
+  const failingWrite = (nth: number) => {
+    let writes = 0;
+    return new Proxy(fs, {
+      get(target, property, receiver) {
+        if (property === 'writeFileSync') {
+          return (...args: Parameters<typeof fs.writeFileSync>) => {
+            writes += 1;
+            if (writes === nth) throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+            return fs.writeFileSync(...args);
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    }) as ConfigIo;
+  };
+
+  it('an existing empty config is backed up verbatim', () => {
+    const s = setup();
+    const f = s.seed('cursor', '{}');
+    expect(
+      createMcpInstall(s.deps).act({ cli: 'cursor', scope: 'user', action: 'install' }).ok,
+    ).toBe(true);
+    expect(fs.readFileSync(`${f}.conduit-backup`, 'utf8')).toBe('{}');
+  });
+
+  it('install on an installed entry neither backs up nor rewrites', () => {
+    const s = setup();
+    const original = JSON.stringify({
+      mcpServers: { conduit: conduitEntry('cursor', execPath, shimPath) },
+    });
+    const f = s.seed('cursor', original);
+    const r = createMcpInstall(s.deps).act({ cli: 'cursor', scope: 'user', action: 'install' });
+    expect(r).toMatchObject({ ok: true, status: { user: { state: 'installed' } } });
+    expect(fs.readFileSync(f, 'utf8')).toBe(original);
+    expect(fs.existsSync(`${f}.conduit-backup`)).toBe(false);
+  });
+
+  it('a failed backup write reports its code and leaves the config, and no temp, behind', () => {
+    const s = setup();
+    const original = '{"mcpServers":{"keep":{"command":"x"}}}';
+    const f = s.seed('cursor', original);
+    const r = createMcpInstall({ ...s.deps, io: failingWrite(1) }).act({
+      cli: 'cursor',
+      scope: 'user',
+      action: 'install',
+    });
+    expect(r).toMatchObject({
+      ok: false,
+      errorCode: 'ENOSPC',
+      status: { user: { state: 'not-installed' } },
+    });
+    expect(fs.readFileSync(f, 'utf8')).toBe(original);
+    expect(fs.existsSync(`${f}.conduit-backup`)).toBe(false);
+    expect(fs.readdirSync(path.dirname(f)).some((n) => n.includes('.tmp'))).toBe(false);
+  });
+
+  it('a failed config write keeps the backup of the original', () => {
+    const s = setup();
+    const original = '{"mcpServers":{"keep":{"command":"x"}}}';
+    const f = s.seed('cursor', original);
+    const r = createMcpInstall({ ...s.deps, io: failingWrite(2) }).act({
+      cli: 'cursor',
+      scope: 'user',
+      action: 'install',
+    });
+    expect(r).toMatchObject({ ok: false, errorCode: 'ENOSPC' });
+    expect(fs.readFileSync(f, 'utf8')).toBe(original);
+    expect(fs.readFileSync(`${f}.conduit-backup`, 'utf8')).toBe(original);
+  });
+});

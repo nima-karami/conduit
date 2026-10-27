@@ -1,7 +1,6 @@
 import { type ArchDoc, seedArchitecture } from '../src/architecture';
 import { type BoardData, seedBoard } from '../src/board';
 import { formatCommandLine } from '../src/command-line';
-import type { CursorConnectResult } from '../src/conduit-mcp/cursor-config';
 import {
   AGENT_CLIS,
   type AgentCli,
@@ -82,9 +81,6 @@ interface HostBridge {
   revealLogs(): void;
   copyDiagnostics(): Promise<string | null>;
   readLogTail(n: number): Promise<{ off: boolean; tail: string }>;
-  readCursorConnection(): Promise<CursorConnectResult>;
-  connectCursor(): Promise<CursorConnectResult>;
-  disconnectCursor(): Promise<CursorConnectResult>;
   skills: {
     list(projectRoot: string | null): Promise<SkillInfo[]>;
     install(
@@ -183,24 +179,6 @@ export function copyDiagnostics(): Promise<string | null> {
 export function readLogTail(n: number): Promise<{ off: boolean; tail: string }> {
   if (host) return host.readLogTail(n);
   return Promise.resolve({ off: true, tail: '' });
-}
-
-/** Read Cursor's user MCP config status without writing it. */
-export function readCursorConnection(): Promise<CursorConnectResult> {
-  return host?.readCursorConnection() ?? Promise.resolve({ state: 'disconnected', path: '' });
-}
-
-/** Connect Cursor by adding Conduit's entry to the user MCP config. */
-export function connectCursor(): Promise<CursorConnectResult> {
-  return (
-    host?.connectCursor() ??
-    Promise.resolve({ state: 'error', path: '', actionFailed: true, errorCode: 'ENOSYS' })
-  );
-}
-
-/** Disconnect Cursor by removing only Conduit's entry from the user MCP config. */
-export function disconnectCursor(): Promise<CursorConnectResult> {
-  return host?.disconnectCursor() ?? Promise.resolve({ state: 'disconnected', path: '' });
 }
 
 /**

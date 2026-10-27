@@ -199,20 +199,6 @@ export const MCP_STR = {
   settingsToggle: SETTINGS_TOGGLE,
   settingsDesc:
     'Agents in your sessions can message each other and you through Conduit. Turning it off stops new launches from connecting.',
-  cursorConnect: 'Connect Cursor',
-  cursorTitle: 'Cursor',
-  cursorDisconnect: 'Disconnect',
-  cursorDisconnectAria: 'Disconnect Cursor',
-  cursorCheckAgain: 'Check again',
-  cursorDesc:
-    'Adds Conduit to Cursor’s user MCP config (~/.cursor/mcp.json). Cursor’s editor will list the server with no tools outside Conduit. Cursor may ask you to allow each Conduit tool the first time it runs. Disconnect before uninstalling Conduit.',
-  cursorPending: 'Checking Cursor configuration…',
-  cursorActionFailed: (code: string, previousState: string) =>
-    `Couldn’t update Cursor’s MCP config (code ${code}). Previous state: ${previousState}.`,
-  cursorConfigError: (code: string) =>
-    code === 'EJSON'
-      ? 'Cursor’s MCP config is not valid JSON or has an invalid shape.'
-      : `Cursor’s MCP config couldn’t be read (code ${code}).`,
   // Settings Tools group and the per-session dialog share these (control-tools spec §8, §10).
   tools: {
     groupMessaging: 'Messaging',
@@ -329,11 +315,4 @@ export const MCP_STR = {
       'Agents in your sessions can message each other and you. Install Conduit for your agent CLIs so ones started in any terminal can join.',
     setupButton: 'Set up agent CLIs',
   },
-  cursorState: {
-    connected: 'Connected',
-    disconnected: 'Not connected',
-    stale: 'Connected to another Conduit install',
-    error: 'Configuration error',
-    pending: 'Checking…',
-  } satisfies Record<'connected' | 'disconnected' | 'stale' | 'error' | 'pending', string>,
 } as const;

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { wiresLaunch } from '../src/conduit-mcp/cursor-config';
 import {
   type ConduitEntry,
   classifyEntry,
@@ -359,4 +360,16 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
 
 function projectScopeOf(target: ConfigTarget): 'project' | 'local' {
   return target.scope === 'local' ? 'local' : 'project';
+}
+
+// see docs/specs/2026-10-26-conduit-mcp-cursor.md §3.3: a Cursor profile session is wired only
+// when Cursor's user config forwards the session's identity; any unreadable file means it isn't.
+export function readCursorLaunchEntry(homeDir: string): boolean {
+  const configPath = path.join(homeDir, '.cursor', 'mcp.json');
+  try {
+    const json = parseJsonConfig(fs.readFileSync(fs.realpathSync(configPath), 'utf8'));
+    return wiresLaunch(getPath(json, ['mcpServers', 'conduit']));
+  } catch {
+    return false;
+  }
 }

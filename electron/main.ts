@@ -276,7 +276,6 @@ import {
   writeSpec,
 } from './conduit-fs';
 import { createConduitMcpHost } from './conduit-mcp-host';
-import { createCursorConnect } from './cursor-connect';
 import { createDragOutHost } from './drag-out-host';
 import { execFileBounded } from './exec-bounded';
 import { createFolderPicker } from './folder-picker';
@@ -1981,11 +1980,6 @@ app.whenReady().then(() => {
       projectId ? (projectStore.list().find((p) => p.id === projectId)?.name ?? null) : null,
     broadcast,
     log,
-  });
-  const cursorConnect = createCursorConnect({
-    homeDir: os.homedir(),
-    execPath: process.execPath,
-    shimPath: mcpShimPath(),
   });
 
   // Restore previously persisted sessions (as stale) + save on every change.
@@ -4983,11 +4977,6 @@ app.whenReady().then(() => {
     if (r.ok) mcpHost.onInstallChanged();
     return r;
   });
-
-  // Cursor's user MCP config is only touched by the explicit Settings actions.
-  ipcMain.handle('cursor-connect:read', () => cursorConnect.read());
-  ipcMain.handle('cursor-connect:connect', () => cursorConnect.connect());
-  ipcMain.handle('cursor-connect:disconnect', () => cursorConnect.disconnect());
 
   // Diagnostics bundle (Slice B): assemble a version/OS header + the already-redacted
   // recent log tail into a file under the logs dir, then reveal it. The header carries only

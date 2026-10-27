@@ -96,8 +96,8 @@ import {
   type EndpointConnection,
   type McpEndpoint,
 } from './conduit-mcp-endpoint';
-import { readCursorLaunchEntry } from './cursor-connect';
 import type { Logger } from './logger';
+import { readCursorLaunchEntry } from './mcp-install';
 import { createSessionScreens, type SessionScreens } from './session-screens';
 
 export interface ConduitMcpHostDeps {
