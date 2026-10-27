@@ -98,6 +98,10 @@ export function SessionCard({
       : mcp.gate && mcp.gate !== 'open'
         ? MCP_STR.gate[mcp.gate]
         : undefined;
+  const rowTitle =
+    [mcpTitle, session.openedBy && MCP_STR.tools.openedBy(session.openedBy.handle)]
+      .filter(Boolean)
+      .join('\n') || undefined;
   const mcpBadgeText =
     mcp && mcp.unread > 0
       ? [MCP_STR.unread(mcp.unread), mcp.urgent > 0 ? MCP_STR.urgentBadge(mcp.urgent) : '']
@@ -109,7 +113,7 @@ export function SessionCard({
     <div
       className={sessionRowClass({ selected: active, state, dropTarget: !!dropTarget })}
       data-sessionid={session.id}
-      title={mcpTitle}
+      title={rowTitle}
       onClick={() => !editing && onSelect()}
       onContextMenu={onContextMenu}
       draggable={!!drag && !editing}

@@ -42,7 +42,7 @@ const sess = (id: string, name: string, agentId: string, status: Session['status
   cardId: 'c1',
 });
 
-const label = (agentId: string) => (agentId === 'cli:claude' ? 'claude' : 'shell');
+const label = (s: Pick<Session, 'agentId'>) => (s.agentId === 'cli:claude' ? 'claude' : 'shell');
 const rows = (h: HTMLElement) => [
   ...h.querySelectorAll<HTMLButtonElement>('button.bcard__session'),
 ];

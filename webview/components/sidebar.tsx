@@ -7,7 +7,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import { agentLabelFor } from '../../src/agent-label';
+import { sessionAgentLabel } from '../../src/agent-label';
 import type { McpSessionBadge } from '../../src/conduit-mcp/ui-types';
 import { type Rect, triggerMenu } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
@@ -218,7 +218,7 @@ export function Sidebar({
     });
   };
 
-  const labelFor = useCallback((agentId: string) => agentLabelFor(agents, agentId), [agents]);
+  const labelFor = useCallback((s: Session) => sessionAgentLabel(agents, s), [agents]);
 
   // Drag is enabled in every sort mode; disabled only when a text filter is active
   // (reordering a filtered subset is ambiguous). A drop that violates the active sort
@@ -305,7 +305,7 @@ export function Sidebar({
       sessions.filter((s) =>
         sessionMatchesFilter(s, filter, {
           projectName: projectName(s.projectId),
-          agentLabel: labelFor(s.agentId),
+          agentLabel: labelFor(s),
         }),
       ),
     [sessions, filter, projectName, labelFor],
@@ -391,7 +391,7 @@ export function Sidebar({
     <SessionCard
       key={s.id}
       session={s}
-      agentLabel={labelFor(s.agentId)}
+      agentLabel={labelFor(s)}
       resolvedIcon={resolveSessionIcon(s, agents)}
       active={s.id === activeId}
       onSelect={() => onSelect(s.id)}

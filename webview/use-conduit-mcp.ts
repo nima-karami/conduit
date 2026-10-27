@@ -1,4 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react';
+import type { ToolName, ToolOverrideValue } from '../src/conduit-mcp/tool-switches';
 import type { ToolErrorCode } from '../src/conduit-mcp/types';
 import type {
   McpAttachmentPayload,
@@ -26,6 +27,8 @@ export interface ConduitMcpApi {
   allowMore(threadId: string): void;
   pause(sessionId: string, paused: boolean): void;
   retry(): void;
+  /** False when the host refused it or didn't answer: the caller reverts. */
+  setToolOverride(sessionId: string, tool: ToolName, value: ToolOverrideValue): Promise<boolean>;
 }
 
 // A module singleton, like timer-store.ts: the host answers `ready` once, possibly before any
@@ -84,6 +87,14 @@ const api: Omit<ConduitMcpApi, 'state'> = {
   },
   retry() {
     post({ type: 'mcp:retry' });
+  },
+  async setToolOverride(sessionId, tool, value) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:setToolOverride', requestId, sessionId, tool, value }),
+      ['mcp:toolOverrideResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.ok === true;
   },
 };
 

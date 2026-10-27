@@ -252,6 +252,14 @@ describe('SessionCard messaging badge (conduit-mcp §8)', () => {
     expect(card(session(), ROLES, mcp({ gate: 'open' }))).not.toMatch(/data-sessionid="s1" title=/);
   });
 
+  it('an MCP-opened session names its opener in the tooltip, after the gate reason', () => {
+    const opened = session({ openedBy: { handle: 'codex-2', sessionId: 's9' } });
+    expect(card(opened)).toMatch(/data-sessionid="s1" title="Opened by codex-2"/);
+    expect(card(opened, ROLES, mcp({ gate: 'blocking-prompt' }))).toContain(
+      'title="Notices held: prompt on screen\nOpened by codex-2"',
+    );
+  });
+
   it('no badge without mcp', () => {
     const html = card(session());
     expect(html).not.toContain('session__mcp');

@@ -83,6 +83,7 @@ import { DRAG_STAY_INSET_PX, pointWellInside } from '../src/window-registry';
 import { activeTarget } from './active-target';
 import { AUTO_SAVE_COPY } from './auto-save-copy';
 import { afterCloseSave, type CloseStep, dirtyCloseStep } from './auto-save-policy';
+import { pickAutoSwitch } from './auto-switch';
 import {
   fsDndCopy,
   fsDndMove,
@@ -116,6 +117,7 @@ import { ContextMenu, type MenuItem, type MenuState } from './components/context
 import { DirtyCloseDialog } from './components/dirty-close-dialog';
 import { ErrorBoundary } from './components/error-boundary';
 import { IconPickerModal } from './components/icon-picker-modal';
+import { McpToolsDialog } from './components/mcp-tools-dialog';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
 import { ProjectPicker } from './components/project-picker';
@@ -172,6 +174,7 @@ import {
   navEntryFor,
 } from './editor-nav';
 import { shouldReplaceContent } from './file-freshness';
+import { type FileOpenRequest, planFileOpen } from './file-open-request';
 import { fileSaves, moveFileBuffer, setDocCloser } from './file-saves';
 import { buildRowChangeMap } from './file-tree';
 import {
@@ -491,6 +494,7 @@ export function App() {
   } | null>(null);
   const closeMovePicker = useCallback(() => setMovePicker(null), []);
   const [timedMessageFor, setTimedMessageFor] = useState<string | null>(null);
+  const [mcpToolsFor, setMcpToolsFor] = useState<string | null>(null);
 
   /** The palette acts on the ACTIVE session; the chip, the card menu and the stale card name one. */
   const openTimedMessages = useCallback(
@@ -699,6 +703,10 @@ export function App() {
         // Host requests the renderer to bring a session into focus — e.g. after the
         // user clicks an OS notification for a backgrounded session (T1A).
         setActiveId(msg.sessionId);
+      } else if (msg.type === 'suppressAutoSwitch') {
+        // Sent before the state post that introduces the session, so the autoSwitch effect sees
+        // the id when that session first appears (control-tools spec §3.1, focus).
+        suppressedAutoSwitchRef.current.add(msg.sessionId);
       } else if (msg.type === 'restoreDocs') {
         // editor-tabs-persist: buffer the persisted tabs and apply once this window's sessions
         // are known (see applyRestore). One-shot — a re-sent `restoreDocs` (e.g. a second
@@ -708,9 +716,9 @@ export function App() {
           applyRestoreRef.current();
         }
       } else if (msg.type === 'openFileInEditor') {
-        // OS "Open with Conduit": enqueue the open; the flush effect opens it once the
-        // target session is present in state (it may have just been created host-side).
-        pendingOsOpensRef.current.push({ path: msg.path, sessionId: msg.sessionId });
+        // OS "Open with Conduit" or an MCP open_file: enqueue the open; the flush effect opens it
+        // once the target session is present in state (it may have just been created host-side).
+        pendingOsOpensRef.current.push(msg);
         flushOsOpensRef.current();
       } else if (msg.type === 'fileChanged') {
         // A file open in a tab changed on disk. Re-read it; the fileContent handler's
@@ -800,14 +808,15 @@ export function App() {
 
   // Auto-switch to a newly created (running) session (when enabled).
   const knownIds = useRef<Set<string>>(new Set());
+  // Ids an MCP open with focus:false introduced; each is consumed by the first state that adds it.
+  const suppressedAutoSwitchRef = useRef(new Set<string>());
   useEffect(() => {
     const added = sessions.filter((s) => !knownIds.current.has(s.id));
     knownIds.current = new Set(sessions.map((s) => s.id));
-    if (!settings.autoSwitchSession) return;
-    const newest = added
-      .filter((s) => s.status === 'running')
-      .sort((a, b) => b.createdAt - a.createdAt)[0];
-    if (newest) setActiveId(newest.id);
+    const suppressed = suppressedAutoSwitchRef.current;
+    const pick = settings.autoSwitchSession ? pickAutoSwitch(added, suppressed) : undefined;
+    for (const s of added) suppressed.delete(s.id);
+    if (pick) setActiveId(pick);
   }, [sessions, settings.autoSwitchSession]);
 
   // Auto-relaunch stale sessions on the FIRST state message after startup (T1B).
@@ -1164,12 +1173,12 @@ export function App() {
     );
   }, [openGlobalSearch]);
 
-  // OS file-open requests (openFileInEditor) that arrived before their target session
+  // OS and MCP file-open requests (openFileInEditor) that arrived before their target session
   // landed in `state`. The host may create a session and immediately send the open; the
   // session id only becomes addressable once its `state` broadcast arrives. We enqueue
   // every request and drain it from the sessions-flush effect once the session exists, so
   // a just-created-session open is never dropped (open-after-ready). See electron/main.ts.
-  const pendingOsOpensRef = useRef<{ path: string; sessionId: string }[]>([]);
+  const pendingOsOpensRef = useRef<FileOpenRequest[]>([]);
 
   // editor-tabs-persist: the one-shot `restoreDocs` payload, buffered until this window's
   // sessions land (so owner sessionIds resolve), then applied exactly once. `applyRestoreRef`
@@ -2671,19 +2680,20 @@ export function App() {
     [],
   );
 
-  // Drain queued OS file-open requests whose target session now exists in state. Opening
-  // switches to the editor center view + the owning session and focuses it, so a doc
-  // launched from Explorer lands visibly. Requests for not-yet-present sessions stay queued
-  // and are retried when `sessions` next changes (a just-created session's state arrives).
+  // Drain queued file-open requests whose target session now exists in state; planFileOpen
+  // decides activation, center view and tab mode per source. Requests for not-yet-present
+  // sessions stay queued and are retried when `sessions` next changes (a just-created
+  // session's state arrives).
   const flushOsOpens = useCallback(() => {
     if (pendingOsOpensRef.current.length === 0) return;
     const known = new Set(sessions.map((s) => s.id));
-    const remaining: { path: string; sessionId: string }[] = [];
+    const remaining: FileOpenRequest[] = [];
     for (const req of pendingOsOpensRef.current) {
       if (known.has(req.sessionId)) {
-        setCenterView('editor');
-        // OS/external open is a deliberate "work on this" act → permanent (spec §9 D7).
-        openFile(req.path, req.sessionId, 'permanent');
+        const p = planFileOpen(req);
+        if (p.activate) setActiveId(req.sessionId);
+        if (p.showEditor) setCenterView('editor');
+        openFile(req.path, req.sessionId, p.mode, p.reveal ? { reveal: p.reveal } : undefined);
       } else {
         remaining.push(req);
       }
@@ -2886,6 +2896,15 @@ export function App() {
           },
         ]
       : [];
+    // Offered before any launch: a switchable session may not have a handle yet (spec §4).
+    if (mcp.state?.switchable.includes(s.id)) {
+      messaging.push({
+        label: MCP_STR.tools.menuItem,
+        icon: <IconSettings size={14} />,
+        separatorBefore: messaging.length === 0 && lifecycle.length > 0,
+        onClick: () => setMcpToolsFor(s.id),
+      });
+    }
     setMenu({
       x: e.clientX,
       y: e.clientY,
@@ -4739,6 +4758,30 @@ export function App() {
               session={target}
               onClose={() => setTimedMessageFor(null)}
               requestConfirm={showConfirm}
+            />
+          ) : null;
+        })()}
+      {mcpToolsFor &&
+        (() => {
+          const target = sessions.find((s) => s.id === mcpToolsFor);
+          return target ? (
+            <McpToolsDialog
+              key={target.id}
+              session={target}
+              global={settings.mcpTools}
+              masterOn={settings.conduitMcp}
+              connected={mcp.state?.sessions[target.id]?.connected === true}
+              onChange={(tool, value) => mcp.setToolOverride(target.id, tool, value)}
+              onRelaunch={() => post({ type: 'relaunch', id: target.id })}
+              announce={(text) => {
+                if (navLiveRef.current) navLiveRef.current.textContent = text;
+              }}
+              onClose={() => {
+                setMcpToolsFor(null);
+                document
+                  .querySelector<HTMLElement>(`.session[data-sessionid="${CSS.escape(target.id)}"]`)
+                  ?.focus();
+              }}
             />
           ) : null;
         })()}

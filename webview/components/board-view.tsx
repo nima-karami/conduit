@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { agentLabelFor } from '../../src/agent-label';
+import { sessionAgentLabel } from '../../src/agent-label';
 import {
   addCard,
   type BoardCard,
@@ -64,7 +64,7 @@ export function BoardView({
   home?: string;
   /** This window's sessions — each card lists the ones linked to it (linkedSessionsForCard). */
   sessions?: Session[];
-  /** Registry agents — the row's agent label (agentLabelFor). */
+  /** Registry agents — the row's agent label (sessionAgentLabel). */
   agents?: readonly AgentDefinition[];
   /** Open New session prefilled for this card; returnFocus is the card's + Start session pill. */
   onStartSessionForCard?: (card: BoardCard, returnFocus: HTMLElement | null) => void;
@@ -101,7 +101,7 @@ export function BoardView({
   const canStartSession = !!home && !!onStartSessionForCard;
   const startFor = (card: BoardCard) =>
     onStartSessionForCard?.(card, startButtons.current.get(card.id) ?? null);
-  const agentLabel = (agentId: string) => agentLabelFor(agents, agentId);
+  const agentLabel = (s: Session) => sessionAgentLabel(agents, s);
 
   // Latest board/pipeline so debounce-flush closures see fresh data even when they fire
   // after a React state update cycle.
@@ -707,7 +707,7 @@ function Card({
   ghost?: boolean;
   /** Sessions linked to this card on this board, in host list order (spec mf-board §3.2). */
   linked: Session[];
-  agentLabel: (agentId: string) => string;
+  agentLabel: (s: Session) => string;
   /** Activate a linked session when its row is clicked. */
   onActivateSession?: (sessionId: string) => void;
   /** False with no board home or no start handler: the pill renders disabled. */

@@ -35,14 +35,14 @@ export function LinkedSessions({
   onActivate,
 }: {
   sessions: readonly Session[];
-  agentLabel: (agentId: string) => string;
+  agentLabel: (s: Session) => string;
   onActivate: (sessionId: string) => void;
 }) {
   if (sessions.length === 0) return null;
   return (
     <ul className="bcard__sessions" aria-label="Linked sessions">
       {sessions.map((s) => {
-        const label = agentLabel(s.agentId);
+        const label = agentLabel(s);
         const name = linkedRowName(s);
         return (
           <li key={s.id} className="bcard__sessionitem">
