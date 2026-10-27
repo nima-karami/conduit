@@ -3,13 +3,14 @@ import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createMcpEndpoint } from '../../electron/conduit-mcp-endpoint';
 import {
   type ConduitMcpHost,
   type ConduitMcpHostDeps,
   createConduitMcpHost,
   ENDPOINT_READY_WAIT_MS,
 } from '../../electron/conduit-mcp-host';
-import { createSessionScreens } from '../../electron/session-screens';
+import { createSessionScreens, type SessionScreens } from '../../electron/session-screens';
 import type { McpFileRequest, McpOpenRequest, PathKind } from '../../src/conduit-mcp/control-tools';
 import { ECHO_POLL_MS } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
@@ -98,6 +99,7 @@ interface Harness {
   /** Every control open/file request the host handed to main. */
   opens: McpOpenRequest[];
   files: McpFileRequest[];
+  screens: SessionScreens;
 }
 
 const dirs: string[] = [];
@@ -143,6 +145,8 @@ function harness(
     createEndpoint?: ConduitMcpHostDeps['createEndpoint'];
     mcpTools?: () => McpToolSwitches;
     kinds?: Record<string, PathKind>;
+    /** Records every line the host sends into `calls`, so ordering against setMcp is visible. */
+    recordSends?: boolean;
   } = {},
 ): Harness {
   const dir = opts.dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'cmcp-host-'));
@@ -162,6 +166,7 @@ function harness(
   const opens: McpOpenRequest[] = [];
   const files: McpFileRequest[] = [];
   const lagged: Array<[string, string]> = [];
+  const screens = createSessionScreens();
   let tokenN = 0;
   let host: ConduitMcpHost;
   const writer = createPtyWriter({
@@ -257,10 +262,29 @@ function harness(
     },
     randomToken: () => `tok${++tokenN}`,
     storeIo: opts.storeIo,
-    screens: createSessionScreens(),
+    screens,
     listen: opts.listen ?? true,
     tickMs: opts.tickMs ?? 0,
-    createEndpoint: opts.createEndpoint,
+    createEndpoint:
+      opts.createEndpoint ??
+      (opts.recordSends
+        ? (o) =>
+            createMcpEndpoint({
+              ...o,
+              onConnection: (conn) =>
+                o.onConnection({
+                  id: conn.id,
+                  token: conn.token,
+                  send: (line) => {
+                    calls.push(`send ${line}`);
+                    conn.send(line);
+                  },
+                  onLine: (cb) => conn.onLine(cb),
+                  onClose: (cb) => conn.onClose(cb),
+                  close: () => conn.close(),
+                }),
+            })
+        : undefined),
   });
   hosts.push(host);
   return {
@@ -281,11 +305,12 @@ function harness(
     gaps,
     opens,
     files,
+    screens,
   };
 }
 
 /** A minimal JSON-RPC client over the endpoint, as the shim + CLI would be. */
-async function client(ep: string, token: string | null) {
+async function client(ep: string, token: string | null, clientName?: string) {
   const sock = await new Promise<net.Socket>((resolve, reject) => {
     const s = net.connect(ep, () => resolve(s));
     s.on('error', reject);
@@ -314,7 +339,10 @@ async function client(ep: string, token: string | null) {
       waiting.set(id, resolve);
       sock.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
     });
-  await request('initialize', { protocolVersion: '2025-06-18' });
+  await request('initialize', {
+    protocolVersion: '2025-06-18',
+    ...(clientName === undefined ? {} : { clientInfo: { name: clientName, version: '1' } }),
+  });
   const call = async (name: string, args: unknown = {}) => {
     const r = (await request('tools/call', { name, arguments: args })) as {
       result: { content: Array<{ text: string }>; isError?: boolean };
@@ -493,11 +521,29 @@ describe('createConduitMcpHost — launch', () => {
     expect(fs.existsSync(path.join(h.dir, 'launch', 's1.json'))).toBe(true);
   });
 
-  it('prepareLaunch for a plain shell returns spec unchanged', async () => {
+  it('AC1 a plain shell gets token + endpoint and no handle', async () => {
     const h = harness();
     await h.host.start();
     h.sessions.set('s1', session('s1', { agentId: 'pwsh' }));
     const sp = spec('/usr/bin/pwsh');
+    const out = h.host.prepareLaunch('s1', SHELL, sp);
+    expect(out.env).toEqual({ A: '1', CONDUIT_SESSION_TOKEN: 'tok1', CONDUIT_MCP_ENDPOINT: h.ep });
+    expect(out.args).toEqual(sp.args);
+    expect(out.command).toBe(sp.command);
+    expect(h.sessions.get('s1')?.mcpHandle).toBeUndefined();
+    expect(fs.existsSync(path.join(h.dir, 'launch', 's1.json'))).toBe(false);
+    expect(h.host.uiState().sessions).toEqual({});
+  });
+
+  it('AC1 messaging off or endpoint down: a shell gets nothing, uiState shows nothing', async () => {
+    let on = false;
+    const h = harness({ messagingOn: () => on });
+    h.sessions.set('s1', session('s1', { agentId: 'pwsh' }));
+    const sp = spec('/usr/bin/pwsh');
+    on = true;
+    expect(h.host.prepareLaunch('s1', SHELL, sp)).toBe(sp);
+    await h.host.start();
+    on = false;
     expect(h.host.prepareLaunch('s1', SHELL, sp)).toBe(sp);
     expect(h.sessions.get('s1')?.mcpHandle).toBeUndefined();
     expect(h.host.uiState().sessions).toEqual({});
@@ -1257,19 +1303,56 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
     expect(await started).toBe('resolved');
   });
 
-  it('an agent without an adapter never waits', async () => {
+  it('B1 a shell restored at start waits too, and is wired once the endpoint listens', async () => {
+    const h = harness();
+    h.sessions.set('sh', session('sh', { agentId: 'pwsh' }));
+    let done = false;
+    const waited = h.host.whenLaunchReady(SHELL).then(() => {
+      done = true;
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(done).toBe(false);
+    const started = h.host.start();
+    await waited;
+    const out = h.host.prepareLaunch('sh', SHELL, spec('/usr/bin/pwsh'));
+    expect(out.env?.CONDUIT_SESSION_TOKEN).toBeDefined();
+    await started;
+  });
+
+  it('B1 the shell wait is bounded at 3 s', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const h = harness({
+        createEndpoint: () => ({ listen: () => new Promise(() => {}), close: async () => {} }),
+      });
+      void h.host.start();
+      let done = false;
+      const waited = h.host.whenLaunchReady(SHELL).then(() => {
+        done = true;
+      });
+      await vi.advanceTimersByTimeAsync(ENDPOINT_READY_WAIT_MS - 1);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await waited;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('with messaging off nothing waits', async () => {
     const h = harness({
+      messagingOn: () => false,
       createEndpoint: () => ({ listen: () => new Promise(() => {}), close: async () => {} }),
     });
     void h.host.start();
-    let done = false;
+    let done = 0;
     await Promise.race([
-      h.host.whenLaunchReady(SHELL).then(() => {
-        done = true;
+      Promise.all([h.host.whenLaunchReady(SHELL), h.host.whenLaunchReady(FAKE)]).then(() => {
+        done = 2;
       }),
       new Promise((r) => setTimeout(r, 50)),
     ]);
-    expect(done).toBe(true);
+    expect(done).toBe(2);
   });
 });
 
@@ -1550,5 +1633,159 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     );
     const r = await c.call('open_file', { path: 'src/a.ts' });
     expect(r.isError).toBe(false);
+  });
+});
+
+describe('lazy identity: token for every session, handle from clientInfo (spec 2026-10-27-conduit-mcp-install §3.1, §3.3)', () => {
+  const shell = (h: Harness, id: string) => launch(h, id, SHELL, spec('/usr/bin/pwsh'));
+  const handlesOf = (body: { sessions: Array<{ handle: string; agent: string }> }) =>
+    body.sessions.map((s) => [s.handle, s.agent]);
+
+  it('AC2 first initialize from claude-code allocates claude-<n> before the reply', async () => {
+    const h = harness({ recordSends: true });
+    await h.host.start();
+    const { token } = shell(h, 'sh1');
+    const c = await helloOnly(h.ep, token);
+    await c.request(1, 'initialize', {
+      protocolVersion: '2025-06-18',
+      clientInfo: { name: 'claude-code', version: '2.1.312' },
+    });
+    const setAt = h.calls.findIndex((x) => x.startsWith('setMcp {"mcpHandle":"claude-1"}'));
+    const replyAt = h.calls.findIndex((x) => x.startsWith('send ') && x.includes('"serverInfo"'));
+    expect(setAt).toBeGreaterThanOrEqual(0);
+    expect(replyAt).toBeGreaterThan(setAt);
+    expect(h.sessions.get('sh1')?.mcpHandle).toBe('claude-1');
+    expect(JSON.parse(fs.readFileSync(path.join(h.dir, 'handles.json'), 'utf8'))).toEqual({
+      claude: 1,
+    });
+    await expect.poll(() => h.host.uiState().sessions.sh1?.connected).toBe(true);
+  });
+
+  it('a server/discover request before initialize is answered -32601 and initialize still connects', async () => {
+    const h = harness();
+    await h.host.start();
+    const { token } = shell(h, 'sh1');
+    const c = await helloOnly(h.ep, token);
+    const discover = (await c.request(1, 'server/discover', {})) as {
+      error?: { code: number };
+    };
+    expect(discover.error?.code).toBe(-32601);
+    expect(h.sessions.get('sh1')?.mcpHandle).toBeUndefined();
+    const init = (await c.request(2, 'initialize', {
+      protocolVersion: '2025-06-18',
+      clientInfo: { name: 'claude-code', version: '2.1.312' },
+    })) as { result?: { serverInfo: { name: string } } };
+    expect(init.result?.serverInfo.name).toBe('conduit');
+    expect(h.sessions.get('sh1')?.mcpHandle).toBe('claude-1');
+    await expect.poll(() => h.host.uiState().sessions.sh1?.connected).toBe(true);
+  });
+
+  it('AC2 unknown client → agent-<n>; a missing clientInfo too', async () => {
+    const h = harness();
+    await h.host.start();
+    await client(h.ep, shell(h, 'sh1').token, 'some-ide');
+    await client(h.ep, shell(h, 'sh2').token);
+    expect(h.sessions.get('sh1')?.mcpHandle).toBe('agent-1');
+    expect(h.sessions.get('sh2')?.mcpHandle).toBe('agent-2');
+  });
+
+  it('AC2 second CLI in the same shell keeps the handle', async () => {
+    const h = harness();
+    await h.host.start();
+    const { token } = shell(h, 'sh1');
+    await client(h.ep, token, 'claude-code');
+    await client(h.ep, token, 'codex-mcp-client');
+    expect(h.sessions.get('sh1')?.mcpHandle).toBe('claude-1');
+    expect(h.calls.filter((c) => c.startsWith('setMcp'))).toHaveLength(1);
+  });
+
+  it('AC2 the lazily named session is in list_sessions with agent = live kind, else prefix', async () => {
+    const h = harness();
+    await h.host.start();
+    const a = launch(h, 's1');
+    const ca = await client(h.ep, a.token);
+    const { token } = shell(h, 'sh1');
+    const claude = await client(h.ep, token, 'claude-code');
+    const codex = await client(h.ep, token, 'codex-mcp-client');
+    const list = async () => handlesOf((await ca.call('list_sessions')).body);
+    await expect.poll(list).toEqual([
+      ['fake-1', 'fake'],
+      ['claude-1', 'codex'],
+    ]);
+    // Message history keeps a lazy session listed after its CLIs leave (amendment B2).
+    expect((await ca.call('send_message', { to: ['claude-1'], body: 'hi' })).isError).toBe(false);
+    codex.sock.destroy();
+    await expect.poll(list).toEqual([
+      ['fake-1', 'fake'],
+      ['claude-1', 'claude'],
+    ]);
+    claude.sock.destroy();
+    await expect.poll(() => h.host.uiState().sessions.sh1?.connected).not.toBe(true);
+    expect(await list()).toEqual([
+      ['fake-1', 'fake'],
+      ['claude-1', 'claude'],
+    ]);
+  });
+
+  it('B2 a health check does not enrol a shell: after it closes the session is absent', async () => {
+    const h = harness();
+    await h.host.start();
+    const a = launch(h, 's1');
+    const ca = await client(h.ep, a.token);
+    const check = await client(h.ep, shell(h, 'sh1').token, 'claude-code');
+    expect(h.sessions.get('sh1')?.mcpHandle).toBe('claude-1');
+    await expect.poll(() => Object.keys(h.host.uiState().sessions).sort()).toEqual(['s1', 'sh1']);
+    check.sock.destroy();
+    await expect
+      .poll(async () => handlesOf((await ca.call('list_sessions')).body))
+      .toEqual([['fake-1', 'fake']]);
+    expect(Object.keys(h.host.uiState().sessions)).toEqual(['s1']);
+    expect((await ca.call('send_message', { to: ['claude-1'], body: 'x' })).body.error.code).toBe(
+      'unknown_handle',
+    );
+  });
+
+  it('an adapter session stays listed without a connection', async () => {
+    const h = harness();
+    await h.host.start();
+    const a = launch(h, 's1');
+    launch(h, 's2');
+    const ca = await client(h.ep, a.token);
+    expect(handlesOf((await ca.call('list_sessions')).body).map(([x]) => x)).toEqual([
+      'fake-1',
+      'fake-2',
+    ]);
+  });
+
+  it('a forged token initialize allocates nothing', async () => {
+    const h = harness();
+    await h.host.start();
+    shell(h, 'sh1');
+    const c = await client(h.ep, 'forged', 'claude-code');
+    expect(await c.listed()).toEqual([]);
+    expect(h.sessions.get('sh1')?.mcpHandle).toBeUndefined();
+    expect(h.calls).toEqual([]);
+  });
+
+  it('N5 a failed lazy claim is cleared by the next launch', async () => {
+    const h = harness();
+    await h.host.start();
+    fs.mkdirSync(path.join(h.dir, 'handles.json'));
+    await client(h.ep, shell(h, 'sh1').token, 'claude-code');
+    expect(h.sessions.get('sh1')?.mcpHandle).toBeUndefined();
+    fs.rmSync(path.join(h.dir, 'handles.json'), { recursive: true });
+    const { token } = shell(h, 'sh1');
+    await client(h.ep, token, 'claude-code');
+    expect(h.sessions.get('sh1')?.mcpHandle).toBe('claude-1');
+    await expect.poll(() => h.host.uiState().sessions.sh1?.unavailable).toBeNull();
+  });
+
+  it('S1 switchable includes a shell once it has a handle', async () => {
+    const h = harness();
+    await h.host.start();
+    const { token } = shell(h, 'sh1');
+    expect(h.host.uiState().switchable).toEqual([]);
+    await client(h.ep, token, 'claude-code');
+    expect(h.host.uiState().switchable).toEqual(['sh1']);
   });
 });
