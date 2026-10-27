@@ -25,11 +25,13 @@ const SCRIPT =
   "process.stdout.write('CTRL-MARK '+process.pid+'\\n');" +
   "process.stdin.on('data',d=>{if(String(d).includes('q'))process.stdin.destroy()})";
 
-/** The pids of every marker the session has printed so far. */
+/** The pids of every complete marker line so far; a chunk split mid-pid must not yield a prefix. */
 const markerPids = (page, sid) =>
   page.evaluate(
     (id) => [
-      ...new Set([...(window.__capBy?.[id] ?? '').matchAll(/CTRL-MARK (\d+)/g)].map((m) => m[1])),
+      ...new Set(
+        [...(window.__capBy?.[id] ?? '').matchAll(/CTRL-MARK (\d+)\r?\n/g)].map((m) => m[1]),
+      ),
     ],
     sid,
   );

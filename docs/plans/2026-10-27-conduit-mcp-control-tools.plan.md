@@ -1398,3 +1398,13 @@ Unplanned files and edits the build was forced into; none changes behaviour beyo
     it as `req.label` and the returned `label` is the created session's name (no main.ts change);
   - a throw from main's open path maps to the new `open_failed` code at the control-tools
     boundary (catalog + strings). Non-retryable: a retry could repeat a half-done open.
+- **S6 text-fit infra:** `test/e2e/visual/text-fit-sweep.mjs` `seedProfile` writes an
+  `agents.json` holding the fake MCP agent into every theme's profile, so the MCP tools dialog
+  scene has a switchable session. `agents.json` is read once at startup, so this can't be scoped
+  to one scene without a relaunch. Effect: every launcher list in every pass (e.g. the
+  new-session scene) shows one extra "Fake MCP" config row; other scenes' sessions are opened
+  with an explicit `agentId: 'shell:pwsh'` and are unaffected. Finding ids in launcher-list
+  scenes may change once, and a hand-picked eye-findings clip there can shift by one row.
+- **Review S5–S6 fixes:** `webview/components/segmented-radios.tsx` gained an opt-in
+  `selectOnArrow={false}` manual-activation mode (used only by the MCP tools dialog, spec §9);
+  the spec §8 master-off hint copy now names the visible master switch label.
