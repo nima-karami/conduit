@@ -1,11 +1,10 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as pty from '@lydell/node-pty';
-import type { AgentRegistry } from './agent-registry';
 import { lastNonEmptyLine, lastNonEmptyLines } from './last-line';
 import type { HostToWebview, TermGeometry, WindowsPtyInfo } from './protocol';
 import { appendScrollback } from './scrollback-persistence';
-import type { SpawnSpec } from './types';
+import type { AgentDefinition, SpawnSpec } from './types';
 
 /**
  * @lydell/node-pty ships ConPTY only (no winpty agent) and ignores `useConpty`, so every Windows
@@ -273,27 +272,16 @@ function defaultShellSpec(cwd: string): SpawnSpec {
 }
 
 /**
- * Decide what to launch in a session's terminal: the session's configured agent
- * (resolved via the registry) in its project folder. Falls back to a plain shell
- * when the agent is unknown or is the special id 'shell'; falls back to
- * `fallbackCwd` when the requested cwd is missing or doesn't exist.
- *
- * Pure (filesystem check injected) so it can be unit-tested without VS Code.
+ * Decide what to launch in a session's terminal: its resolved definition in its folder, or a
+ * plain shell when there is none; `fallbackCwd` when the requested cwd is missing or gone.
+ * The caller resolves the definition (effectiveDef, spec 2026-10-27-conduit-mcp-control-tools §3.3).
  */
 export function resolveLaunchSpec(
-  registry: AgentRegistry,
-  agentId: string | undefined,
+  def: AgentDefinition | undefined,
   cwd: string | undefined,
   cwdExists: (p: string) => boolean,
   fallbackCwd: string,
 ): SpawnSpec {
   const dir = cwd && cwdExists(cwd) ? cwd : fallbackCwd;
-  if (agentId && agentId !== 'shell') {
-    try {
-      return registry.resolve(agentId, dir);
-    } catch {
-      /* unknown agent — fall through to a shell */
-    }
-  }
-  return defaultShellSpec(dir);
+  return def ? { command: def.command, args: [...def.args], cwd: dir } : defaultShellSpec(dir);
 }

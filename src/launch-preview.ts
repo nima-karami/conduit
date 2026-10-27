@@ -40,8 +40,7 @@ export async function previewLaunch(
   const home = probed.stored;
   const initial = await deps.resolveInitialRoots(home, input.roots);
   const plan = buildLaunchSpec({
-    registry: deps.registry,
-    agentId,
+    def,
     cwd: undefined,
     home,
     homeMissing: false,

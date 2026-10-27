@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AgentRegistry } from '../../src/agent-registry';
 import { buildLaunchSpec, type LaunchRequest } from '../../src/launch-spec';
 import { resolveLaunchSpec } from '../../src/pty-host';
+import { COMMAND_AGENT_ID, commandDef } from '../../src/session-command';
 import type { AgentDefinition } from '../../src/types';
 
 const agent = (id: string, command: string): AgentDefinition => ({
@@ -16,8 +17,7 @@ const agent = (id: string, command: string): AgentDefinition => ({
 const registry = new AgentRegistry([agent('claude', 'claude'), agent('codex', 'codex')]);
 
 const req = (over: Partial<LaunchRequest> = {}): LaunchRequest => ({
-  registry,
-  agentId: 'claude',
+  def: registry.get('claude'),
   cwd: '/live',
   home: '/home/p',
   homeMissing: false,
@@ -30,9 +30,10 @@ const req = (over: Partial<LaunchRequest> = {}): LaunchRequest => ({
 
 describe('buildLaunchSpec', () => {
   it('roots [] → spec equals resolveLaunchSpec for the same cwd, with the command resolved', () => {
-    for (const agentId of ['claude', 'codex', 'shell', undefined]) {
-      const plan = buildLaunchSpec(req({ agentId }));
-      const today = resolveLaunchSpec(registry, agentId, '/live', () => true, '/live');
+    for (const agentId of ['claude', 'codex', undefined]) {
+      const def = agentId ? registry.get(agentId) : undefined;
+      const plan = buildLaunchSpec(req({ def }));
+      const today = resolveLaunchSpec(def, '/live', () => true, '/live');
       const command =
         agentId === 'claude' || agentId === 'codex' ? `/usr/bin/${agentId}` : today.command;
       expect(plan).toMatchObject({ ok: true, spec: { ...today, command } });
@@ -55,8 +56,10 @@ describe('buildLaunchSpec', () => {
   });
 
   it('shell / unknown agent → addDir false, empty lists', () => {
-    for (const agentId of ['shell', 'nope', 'codex', undefined]) {
-      const plan = buildLaunchSpec(req({ agentId, roots: ['/a'] }));
+    for (const agentId of ['nope', 'codex', undefined]) {
+      const plan = buildLaunchSpec(
+        req({ def: agentId ? registry.get(agentId) : undefined, roots: ['/a'] }),
+      );
       expect(plan, String(agentId)).toMatchObject({
         ok: true,
         addDir: false,
@@ -83,8 +86,7 @@ describe('buildLaunchSpec', () => {
   it('spawns the RESOLVED command: a bare agents.json command reaches node-pty absolute', () => {
     const plan = buildLaunchSpec(
       req({
-        registry: new AgentRegistry([agent('my-claude', 'claude')]),
-        agentId: 'my-claude',
+        def: agent('my-claude', 'claude'),
         platform: 'win32',
         cwd: 'C:\\p',
         home: 'C:\\p',
@@ -103,6 +105,39 @@ describe('buildLaunchSpec', () => {
       ok: false,
       reason: 'unresolvable',
       command: 'claude',
+    });
+  });
+
+  it('def undefined → the default shell spec, no add-dir', () => {
+    const plan = buildLaunchSpec(req({ def: undefined, roots: ['/a'] }));
+    expect(plan).toEqual({
+      ok: true,
+      spec: resolveLaunchSpec(undefined, '/live', () => true, '/live'),
+      addDir: false,
+      launchedRoots: [],
+      skippedAddDirRoots: [],
+    });
+  });
+
+  it('command def → spawns def.command resolved, args as argv, launchArgsFor applied', () => {
+    const def = commandDef({ command: 'node', args: ['-e', 'a b; c'] });
+    expect(def.id).toBe(COMMAND_AGENT_ID);
+    const plan = buildLaunchSpec(req({ def, roots: ['/a'] }));
+    expect(plan).toEqual({
+      ok: true,
+      spec: { command: '/usr/bin/node', args: ['-e', 'a b; c'], cwd: '/live' },
+      addDir: false,
+      launchedRoots: [],
+      skippedAddDirRoots: [],
+    });
+  });
+
+  it('unresolvable command def → unresolvable with def.command', () => {
+    const def = commandDef({ command: 'no-such-cmd', args: [] });
+    expect(buildLaunchSpec(req({ def, resolveCommand: () => undefined }))).toEqual({
+      ok: false,
+      reason: 'unresolvable',
+      command: 'no-such-cmd',
     });
   });
 

@@ -183,7 +183,7 @@ import { restoreScrollback, spawnPrelude } from '../src/scrollback-persistence';
 import { ScrollbackStore } from '../src/scrollback-store';
 import { isIndexScope, searchRootAllowed } from '../src/search-scope';
 import { SessionActivity } from '../src/session-activity';
-import { effectiveDef } from '../src/session-command';
+import { COMMAND_AGENT_ID, effectiveDef } from '../src/session-command';
 import { presentRoots, sessionContains } from '../src/session-folders';
 import { SessionManager } from '../src/session-manager';
 import { buildStartupModel } from '../src/session-migration';
@@ -4195,17 +4195,32 @@ app.whenReady().then(() => {
             if (healthPending) await healthPending;
             // A session restored at app start launches before the messaging endpoint listens;
             // it waits (bounded) rather than launching unwired (plan Decisions, endpoint wait).
-            const mcpDef = m.agentId ? registry.get(m.agentId) : undefined;
-            if (mcpDef) await mcpHost.whenLaunchReady(mcpDef);
+            // The definition comes from the session, never the renderer's agentId (spec
+            // 2026-10-27-conduit-mcp-control-tools §3.3; plan D6).
+            const before = mgr.get(m.sessionId);
+            const waitDef = before ? effectiveDef(before, registry) : undefined;
+            if (waitDef) await mcpHost.whenLaunchReady(waitDef);
             const s = mgr.get(m.sessionId);
             if (!s) break;
             if (pty.isAlive(m.sessionId)) {
               attach();
               break;
             }
+            if (s.agentId === COMMAND_AGENT_ID && !s.command) {
+              // A saved open_terminal command that failed coercion: never guess what to run.
+              scrollbacks.show(
+                m.sessionId,
+                "\r\n\x1b[2m— can't start: the saved command is invalid —\x1b[0m\r\n",
+                { cols: m.cols, rows: m.rows },
+              );
+              log.warn('pty', 'refused', { sessionId: m.sessionId, reason: 'command-invalid' });
+              pendingRelaunchMarker.delete(m.sessionId);
+              mgr.setStatus(m.sessionId, 'stale');
+              break;
+            }
+            const launchDef = effectiveDef(s, registry);
             const plan = buildLaunchSpec({
-              registry,
-              agentId: m.agentId,
+              def: launchDef,
               cwd: m.cwd,
               home: s.home,
               homeMissing: !!s.homeMissing,
@@ -4247,14 +4262,13 @@ app.whenReady().then(() => {
             // A shell whose id is not recognized (or trackCwd is off) launches exactly
             // as before (fail-safe: null augmentation → no change).
             if (settings.trackCwd) {
-              const aug = cwdReportingAugmentation(m.agentId, spec.args);
+              const aug = cwdReportingAugmentation(launchDef?.id ?? s.agentId, spec.args);
               if (aug) {
                 if (aug.args) spec.args = [...spec.args, ...aug.args];
                 if (aug.env) spec.env = { ...spec.env, ...aug.env };
               }
             }
             // Messaging wiring goes on last: per-launch args + the session token (spec §3.1).
-            const launchDef = m.agentId ? registry.get(m.agentId) : undefined;
             if (launchDef) spec = mcpHost.prepareLaunch(m.sessionId, launchDef, spec);
             // brief --add-dir is not a session root (docs/specs/2026-10-26-conduit-role-brief.md §3.2)
             const scopeArgs = spec.args;
@@ -4263,7 +4277,7 @@ app.whenReady().then(() => {
             spec = brief.spec;
             log.info('pty', 'spawn', {
               sessionId: m.sessionId,
-              agentId: m.agentId,
+              agentId: s.agentId,
               command: spec.command,
               cwd: spec.cwd,
             });

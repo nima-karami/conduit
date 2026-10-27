@@ -139,8 +139,7 @@ describe('previewLaunch', () => {
     const d = deps();
     const r = await previewLaunch({ agentId: 'cli:claude', home: HOME, roots: [B, GONE] }, d);
     const plan = buildLaunchSpec({
-      registry: d.registry,
-      agentId: 'cli:claude',
+      def: d.registry.get('cli:claude'),
       cwd: undefined,
       home: HOME,
       homeMissing: false,

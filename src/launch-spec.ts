@@ -1,13 +1,12 @@
 // The one spawn resolution `term:start` launches from (mf-model spec §2.5).
-import type { AgentRegistry } from './agent-registry';
 import { launchArgsFor } from './launch-args';
 import type { HostPlatform } from './lsp-binary';
 import { resolveLaunchSpec } from './pty-host';
-import type { SpawnSpec } from './types';
+import type { AgentDefinition, SpawnSpec } from './types';
 
 export interface LaunchRequest {
-  registry: AgentRegistry;
-  agentId: string | undefined;
+  /** effectiveDef of the session; undefined launches the default shell. */
+  def: AgentDefinition | undefined;
   cwd: string | undefined;
   home: string;
   homeMissing: boolean;
@@ -33,8 +32,8 @@ export function buildLaunchSpec(req: LaunchRequest): LaunchPlan {
   const dir =
     req.cwd && req.exists(req.cwd) ? req.cwd : req.exists(req.home) ? req.home : undefined;
   if (dir === undefined) return { ok: false, reason: 'home-missing' };
-  const spec = resolveLaunchSpec(req.registry, req.agentId, dir, req.exists, dir);
-  const def = req.agentId && req.agentId !== 'shell' ? req.registry.get(req.agentId) : undefined;
+  const spec = resolveLaunchSpec(req.def, dir, req.exists, dir);
+  const { def } = req;
   if (!def) return { ok: true, spec, addDir: false, launchedRoots: [], skippedAddDirRoots: [] };
   // node-pty on win32 neither walks PATHEXT nor finds a `.cmd` by its bare name, so a raw
   // agents.json `claude` fails "File not found" (QA F1): spawn only what was resolved.
