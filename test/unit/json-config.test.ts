@@ -8,6 +8,8 @@ import {
   setPath,
 } from '../../src/conduit-mcp/json-config';
 
+const BOM = String.fromCharCode(0xfeff);
+
 function codeOf(fn: () => unknown): string | undefined {
   try {
     fn();
@@ -19,10 +21,11 @@ function codeOf(fn: () => unknown): string | undefined {
 
 describe('json-config', () => {
   it('BOM stripped; whitespace-only is {}', () => {
-    expect(parseJsonConfig('﻿{"a":1}')).toEqual({ a: 1 });
+    expect(parseJsonConfig(`${BOM}{"a":1}`)).toEqual({ a: 1 });
     expect(parseJsonConfig('')).toEqual({});
     expect(parseJsonConfig(' \n\t ')).toEqual({});
-    expect(parseJsonConfig('﻿')).toEqual({});
+    expect(parseJsonConfig(BOM)).toEqual({});
+    expect(codeOf(() => parseJsonConfig(`${BOM}${BOM}{}`))).toBe('EJSON');
   });
 
   it('comments or trailing commas → EJSON', () => {

@@ -2,13 +2,15 @@ import { ConfigFormatError } from './install-types';
 
 export type JsonObject = Record<string, unknown>;
 
+const BOM = 0xfeff;
+
 function isObject(v: unknown): v is JsonObject {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 /** Strict on purpose: rewriting a JSONC file through JSON.stringify would drop the user's comments. */
 export function parseJsonConfig(raw: string): JsonObject {
-  const text = raw.replace(/^﻿/, '');
+  const text = raw.charCodeAt(0) === BOM ? raw.slice(1) : raw;
   if (text.trim() === '') return {};
   let parsed: unknown;
   try {
