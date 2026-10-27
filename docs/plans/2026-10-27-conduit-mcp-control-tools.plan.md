@@ -1342,3 +1342,36 @@ of its semantic source. The report leads with the fix that keeps the locked deci
 - [normal] **D6:** `term:start` reads the definition from the session, not `m.agentId`. They are
   equal for every existing producer (`center-pane.tsx:358`), and the field stays in the protocol,
   unread.
+
+## Architecture review r1 amendments (2026-10-27, conductor-accepted; override the task text above)
+
+Report: architecture-critic, REVISE (1 blocker, 5 should-fix, 3 nits), all accepted.
+
+- **B1 · T4.1:** read the session before the `whenLaunchReady` wait **only** to compute `def`.
+  Keep the post-await `const s = mgr.get(m.sessionId); if (!s) break` re-read exactly where it is
+  (`main.ts:~4189`): it is the kill-race guard, and moving it up spawns an orphaned PTY for a
+  session killed during the wait.
+- **SF1 · T4.2:** extract a shared `prepareOpen(home, roots, projectId)` used by both
+  `openRepoRequest` and `createMcpSession`. It includes the `realKeys.set(folderKey(home), …)`
+  step, so the MCP path can't drift from the dialog path (spec A3).
+  - Don't grow `openRepo`'s positional arguments. Pass one options object whose `mcp` part
+    carries only "skip launcher bump and recents" plus the focus hooks.
+  - The definition comes from `effectiveDef`; no second `commandDef ?? registry.get` branch.
+- **SF2 · T5.4:** the sidebar and board card agent label use `commandLabel(s.command)` when
+  `s.command` is set. Today `agentLabelFor` falls back to the raw id. Consumers:
+  `sidebar.tsx:308,394`, `board-card-links.tsx:45`.
+- **SF3 · T6.4 + spec §3.3:** downgrade truth. An older build's `resolveLaunchSpec` catches
+  `Unknown agent` and launches the default shell in the session's folder. It doesn't fail stale.
+  The CHANGELOG/spec note says that.
+- **SF4 · T2.3:** rate slots are reserved at check time and released on failure, with a
+  concurrency test (11 parallel → 10 OK). Sent to the slice 1–2 executor.
+- **SF5 · D3:** Codex approves the whole server automatically, so an `open_terminal`-enabled
+  Codex session runs commands **without asking**. The T5.2 Settings and dialog description for
+  `open_terminal` adds: "Codex sessions run it without asking." D3 is surfaced to the human in the
+  run report. S0, if run, also records Cursor's approval behavior.
+- **Nits:**
+  - The synthesized definition id is `conduit:command`, and agents.json rejects `conduit:` ids.
+    Sent to the executor.
+  - `planFileOpen` takes an explicit `source: 'os' | 'mcp'`, not "focus absent".
+  - `syncToolLists` gets a one-line pointer: the enum changes are deliberately ignored (A6
+    validates live).

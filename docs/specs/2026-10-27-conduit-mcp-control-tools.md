@@ -210,8 +210,8 @@ Reused codes: `not_in_session`, `messaging_off`, `rate_limited`.
 - **Persistence:**
   - `parseSessions` explicitly coerces all three new fields. Malformed values are dropped, never
     fatal. A `command` session with an invalid `command` loads as stale with an error.
-  - **Downgrade:** an older build launches a `command` session as an unknown agent, and it fails
-    stale. Acceptable for a dev-channel feature; noted in CHANGELOG.
+  - **Downgrade:** an older build's `resolveLaunchSpec` falls back on `Unknown agent`, so it
+    launches the default shell in the session's folder. Harmless; noted in CHANGELOG.
 
 ### 3.4 Producers / consumers
 
