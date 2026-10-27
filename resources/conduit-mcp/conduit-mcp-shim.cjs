@@ -53,7 +53,7 @@ function answer(line) {
       result: {
         protocolVersion: version,
         capabilities: { tools: {} },
-        serverInfo: { name: 'conduit' },
+        serverInfo: { name: 'conduit', version: 'fallback' },
       },
     });
   } else if (req.method === 'tools/list') {

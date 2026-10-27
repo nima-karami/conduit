@@ -196,7 +196,7 @@ describe('conduit-mcp-shim', () => {
       result: {
         protocolVersion: '2025-06-18',
         capabilities: { tools: {} },
-        serverInfo: { name: 'conduit' },
+        serverInfo: { name: 'conduit', version: 'fallback' },
       },
     });
     s.child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
