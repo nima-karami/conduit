@@ -14,7 +14,7 @@ import { SettingsProvider } from '../../webview/settings';
 
 const bridge = vi.hoisted(() => ({
   post: vi.fn<(m: unknown) => void>(),
-  readCursorConnection: vi.fn(async () => ({ state: 'disconnected', path: '/h/.cursor/mcp.json' })),
+  mcpInstallStatus: vi.fn(async () => ({ clis: [] })),
 }));
 vi.mock('../../webview/bridge', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../webview/bridge')>()),
@@ -47,7 +47,12 @@ async function mount() {
   await act(async () =>
     root?.render(
       <SettingsProvider>
-        <SettingsModal agents={[]} onClose={() => {}} onSetChangesView={() => {}} />
+        <SettingsModal
+          agents={[]}
+          initialTab="mcp"
+          onClose={() => {}}
+          onSetChangesView={() => {}}
+        />
       </SettingsProvider>,
     ),
   );

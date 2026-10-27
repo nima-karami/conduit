@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useId, useState } from 'react';
+import { AGENT_CLIS, type AgentCli } from '../../src/conduit-mcp/install-types';
 import { CONTROL_TOOL_NAMES, MESSAGING_TOOL_NAMES } from '../../src/conduit-mcp/tool-switches';
 import type { LogLevel } from '../../src/logging';
 import type { AboutInfo } from '../../src/protocol';
@@ -34,15 +35,17 @@ import { IconCheck, IconClose, IconDownload, IconRefreshCw } from '../icons';
 import { useSettings } from '../settings';
 import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
 import { MONO_FONTS, THEMES, type ThemeDef, UI_FONTS } from '../themes';
+import { useMcpInstall } from '../use-mcp-install';
 import { AutoSaveDelayField } from './auto-save-delay-field';
-import { CursorConnectRow } from './cursor-connect-row';
+import { McpInstallRow } from './mcp-install-row';
+import { McpProjectEntries } from './mcp-project-entries';
 import { ModalLayer } from './modal-layer';
 import { SelectField } from './select-field';
 import { SessionCardPreview } from './session-card';
 import { ShortcutsTab } from './shortcuts-tab';
 import type { UpdateStatus } from './update-card';
 
-type Tab = 'general' | 'appearance' | 'shortcuts' | 'skills' | 'about';
+type Tab = 'general' | 'mcp' | 'appearance' | 'shortcuts' | 'skills' | 'about';
 
 const CARD_ROLES: { key: 'cardTitle' | 'cardSubtitle' | 'cardDetail'; label: string }[] = [
   { key: 'cardTitle', label: 'Title' },
@@ -64,6 +67,7 @@ export function SettingsModal({
   initialTab = 'general',
   about,
   projectPath = null,
+  initialCli,
   onClose,
   onCheckUpdate,
   onRelaunch,
@@ -74,6 +78,8 @@ export function SettingsModal({
   initialTab?: Tab;
   about?: AboutInfo;
   projectPath?: string | null;
+  /** Opens the MCP tab at that CLI's row (banner, card menu). */
+  initialCli?: AgentCli;
   onClose: () => void;
   /** The same path as the Changes header toggle, so switching to All unpins (spec D15). */
   onSetChangesView: (view: ChangesViewMode) => void;
@@ -86,6 +92,7 @@ export function SettingsModal({
 
   const TAB_LABELS: { id: Tab; label: string }[] = [
     { id: 'general', label: 'General' },
+    { id: 'mcp', label: MCP_STR.install.tab },
     { id: 'appearance', label: 'Appearance' },
     { id: 'shortcuts', label: 'Shortcuts' },
     { id: 'skills', label: 'Skills' },
@@ -126,6 +133,14 @@ export function SettingsModal({
                 update={update}
                 agents={agents}
                 onSetChangesView={onSetChangesView}
+              />
+            )}
+            {tab === 'mcp' && (
+              <McpTab
+                settings={settings}
+                update={update}
+                projectPath={projectPath}
+                initialCli={initialCli}
               />
             )}
             {tab === 'shortcuts' && <ShortcutsTab settings={settings} update={update} />}
@@ -885,6 +900,74 @@ function McpToolSwitchRows({
   );
 }
 
+/** Settings → MCP (spec 2026-10-27-conduit-mcp-install §12: Messaging, Agent CLIs, Tools, Suggestions). */
+function McpTab({
+  settings,
+  update,
+  projectPath,
+  initialCli,
+}: {
+  settings: AppSettings;
+  update: (p: Partial<AppSettings>) => void;
+  projectPath: string | null;
+  initialCli?: AgentCli;
+}) {
+  const S = MCP_STR.install;
+  const install = useMcpInstall(projectPath);
+  return (
+    <>
+      <SetGroup title={MCP_STR.settingsTitle}>
+        <Section title={MCP_STR.settingsToggle} desc={MCP_STR.settingsDesc}>
+          <Toggle value={settings.conduitMcp} onChange={(v) => update({ conduitMcp: v })} />
+        </Section>
+        <p className="settools__hint">{S.messagingNotices}</p>
+      </SetGroup>
+
+      <SetGroup title={S.clisTitle}>
+        <p className="settools__hint">{S.clisDesc}</p>
+        {!settings.conduitMcp && <p className="settools__hint">{S.masterOffHint}</p>}
+        {AGENT_CLIS.map((cli) => (
+          <McpInstallRow
+            key={cli}
+            cli={cli}
+            status={install.status?.clis.find((c) => c.cli === cli) ?? null}
+            onAct={install.act}
+            onRecheck={install.refresh}
+            focusOnMount={cli === initialCli}
+          />
+        ))}
+        {projectPath !== null && (
+          <McpProjectEntries
+            status={install.status}
+            projectPath={projectPath}
+            onAct={install.act}
+          />
+        )}
+      </SetGroup>
+
+      <SetGroup title={S.toolsTitle}>
+        <McpToolSwitchRows settings={settings} update={update} />
+      </SetGroup>
+
+      <SetGroup title={S.suggestTitle}>
+        <Section title={S.suggestToggle} desc={S.suggestDesc}>
+          <Toggle
+            value={settings.mcpInstallSuggest}
+            // Turning suggestions back on forgets every "Don't suggest again" (spec §3.6).
+            onChange={(v) =>
+              update(
+                v
+                  ? { mcpInstallSuggest: true, mcpInstallPromptDismissed: {} }
+                  : { mcpInstallSuggest: false },
+              )
+            }
+          />
+        </Section>
+      </SetGroup>
+    </>
+  );
+}
+
 function General({
   settings,
   update,
@@ -992,20 +1075,6 @@ function General({
             ]}
             onChange={(v) => update({ autoResumeOnLimit: v as LimitResumeMode })}
           />
-        </Section>
-      </SetGroup>
-
-      <SetGroup title={MCP_STR.settingsTitle}>
-        <Section title={MCP_STR.settingsToggle} desc={MCP_STR.settingsDesc}>
-          <Toggle value={settings.conduitMcp} onChange={(v) => update({ conduitMcp: v })} />
-        </Section>
-        <McpToolSwitchRows settings={settings} update={update} />
-        <Section
-          title={MCP_STR.cursorTitle}
-          desc={MCP_STR.cursorDesc}
-          controlClassName="set__control--cursor"
-        >
-          <CursorConnectRow />
         </Section>
       </SetGroup>
 
