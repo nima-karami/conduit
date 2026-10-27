@@ -2,6 +2,14 @@ import { type ArchDoc, seedArchitecture } from '../src/architecture';
 import { type BoardData, seedBoard } from '../src/board';
 import { formatCommandLine } from '../src/command-line';
 import type { CursorConnectResult } from '../src/conduit-mcp/cursor-config';
+import {
+  AGENT_CLIS,
+  type AgentCli,
+  type CliInstallStatus,
+  type McpInstallRequest,
+  type McpInstallResult,
+  type McpInstallStatus,
+} from '../src/conduit-mcp/install-types';
 import { type ContentSearchDeps, type Dirent, searchContent } from '../src/content-search';
 import type { DndOpts, DndResult } from '../src/fs-dnd';
 import type { ImportConflictPolicy, ImportResult } from '../src/fs-import';
@@ -84,6 +92,10 @@ interface HostBridge {
       dest: SkillDestination,
       projectRoot: string | null,
     ): Promise<SkillInstallResult>;
+  };
+  mcpInstall: {
+    status(projectPath: string | null): Promise<McpInstallStatus>;
+    act(req: McpInstallRequest): Promise<McpInstallResult>;
   };
 }
 
@@ -292,6 +304,25 @@ export function installSkill(
 ): Promise<SkillInstallResult> {
   if (host) return host.skills.install(id, dest, projectRoot);
   return Promise.resolve({ ok: true });
+}
+
+const previewCliStatus = (cli: AgentCli): CliInstallStatus => ({
+  cli,
+  found: false,
+  user: { state: 'not-found', path: '' },
+  project: null,
+});
+
+/** Install state of the four agent CLIs. The browser preview has no CLIs: all not-found. */
+export function mcpInstallStatus(projectPath: string | null): Promise<McpInstallStatus> {
+  if (host) return host.mcpInstall.status(projectPath);
+  return Promise.resolve({ clis: AGENT_CLIS.map(previewCliStatus) });
+}
+
+/** Install/uninstall Conduit for one CLI via the host. The preview refuses with ENOSYS. */
+export function mcpInstallAct(req: McpInstallRequest): Promise<McpInstallResult> {
+  if (host) return host.mcpInstall.act(req);
+  return Promise.resolve({ ok: false, status: previewCliStatus(req.cli), errorCode: 'ENOSYS' });
 }
 
 /**

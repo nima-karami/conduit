@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { CursorConnectResult } from '../src/conduit-mcp/cursor-config';
+import type {
+  McpInstallRequest,
+  McpInstallResult,
+  McpInstallStatus,
+} from '../src/conduit-mcp/install-types';
 import type { DndOpts, DndResult } from '../src/fs-dnd';
 import type { ImportConflictPolicy, ImportResult } from '../src/fs-import';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
@@ -72,6 +77,15 @@ const api = {
       projectRoot: string | null,
     ): Promise<SkillInstallResult> {
       return ipcRenderer.invoke('skills-install', id, dest, projectRoot);
+    },
+  },
+  /** Conduit's entry in the agent CLIs' configs. The host re-validates every request. */
+  mcpInstall: {
+    status(projectPath: string | null): Promise<McpInstallStatus> {
+      return ipcRenderer.invoke('mcpInstall:status', projectPath);
+    },
+    act(req: McpInstallRequest): Promise<McpInstallResult> {
+      return ipcRenderer.invoke('mcpInstall:act', req);
     },
   },
   /**

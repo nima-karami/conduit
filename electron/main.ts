@@ -37,6 +37,7 @@ import type {
   McpOpenRequest,
 } from '../src/conduit-mcp/control-tools';
 import { endpointPath } from '../src/conduit-mcp/endpoint-path';
+import { CLI_BINARIES, coerceInstallRequest } from '../src/conduit-mcp/install-types';
 import { loadAgentsConfig, readBlob, readFileState } from '../src/config';
 import type { TruncatedBy } from '../src/content-search';
 import { searchContentFs } from '../src/content-search-fs';
@@ -284,6 +285,7 @@ import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
 import { startLanguageServer } from './lsp-server';
 import { watchServerRoot } from './lsp-watcher';
+import { createMcpInstall } from './mcp-install';
 import { NotesWatcher } from './notes-watcher';
 import { OpenFileWatcher } from './open-file-watcher';
 import { createOsFileClipboard, spawnPowerShell } from './os-file-clipboard';
@@ -1903,6 +1905,34 @@ app.whenReady().then(() => {
     () => `p-${crypto.randomBytes(6).toString('hex')}`,
   );
 
+  // Installs Conduit's entry into agent CLIs' own configs (spec 2026-10-27-conduit-mcp-install).
+  const mcpInstall = createMcpInstall({
+    homeDir: os.homedir(),
+    env: process.env,
+    userDataDir: userData(),
+    platform: hostPlatform,
+    execPath: process.execPath,
+    shimPath: mcpShimPath(),
+    onPath: (cli) => CLI_BINARIES[cli].some((b) => resolveCommand(b, hostPlatform) !== undefined),
+    // Any folder of an open session, never an arbitrary path (spec §3.6; plan amendment N1).
+    knownHome: (p) => {
+      const k = folderKey(p);
+      for (const s of mgr.list()) {
+        const hit = [s.home, ...s.roots].find((f) => folderKey(f) === k);
+        if (hit !== undefined) return hit;
+      }
+      return null;
+    },
+  });
+  // A dev build would point entries at its own worktree, and e2e must never touch real configs
+  // (plan amendment S3; spec §14 D2).
+  if (app.isPackaged && process.env.CONDUIT_E2E !== '1') {
+    for (const r of mcpInstall.repair()) {
+      if (r.errorCode) log.warn('mcp-install', 'repair failed', r);
+      else log.info('mcp-install', 'repaired', r);
+    }
+  }
+
   // Conduit MCP server: agent sessions message each other and the human
   // (docs/specs/2026-10-25-conduit-mcp-server.md). The host owns IO; decisions are pure modules.
   const mcpHost = createConduitMcpHost({
@@ -1923,6 +1953,12 @@ app.whenReady().then(() => {
     activity,
     messagingOn: () => settings.conduitMcp,
     mcpTools: () => settings.mcpTools,
+    installState: (cli) => mcpInstall.userState(cli),
+    // E2E shortens the 15 s grace so a scenario can watch detection happen.
+    detectGraceMs:
+      process.env.CONDUIT_E2E === '1' && process.env.CONDUIT_E2E_DETECT_GRACE_MS
+        ? Number(process.env.CONDUIT_E2E_DETECT_GRACE_MS)
+        : undefined,
     defOf: (id) => {
       const s = mgr.get(id);
       return s ? effectiveDef(s, registry) : undefined;
@@ -4935,6 +4971,18 @@ app.whenReady().then(() => {
     (_e, id: string, dest: SkillDestination, projectRoot: string | null): SkillInstallResult =>
       installSkill(id, dest, projectRoot),
   );
+
+  // MCP install (spec 2026-10-27-conduit-mcp-install §3.6): nothing is written without a click.
+  ipcMain.handle('mcpInstall:status', (_e, p: unknown) =>
+    mcpInstall.status(typeof p === 'string' ? p : null),
+  );
+  ipcMain.handle('mcpInstall:act', (_e, v: unknown) => {
+    const req = coerceInstallRequest(v);
+    if (!req) throw new Error('invalid mcpInstall request');
+    const r = mcpInstall.act(req);
+    if (r.ok) mcpHost.onInstallChanged();
+    return r;
+  });
 
   // Cursor's user MCP config is only touched by the explicit Settings actions.
   ipcMain.handle('cursor-connect:read', () => cursorConnect.read());
