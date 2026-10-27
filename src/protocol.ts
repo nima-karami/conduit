@@ -698,8 +698,21 @@ export type HostToWebview =
   // Host routes an OS "Open with Conduit" file launch: open `path` as a doc in `sessionId`
   // (the host already created/reused the owning session). The renderer opens it via the
   // existing open-file flow; if the session isn't in state yet (just created), it defers
-  // until that session's `state` arrives. See electron/main.ts openFileFromOS.
-  | { type: 'openFileInEditor'; path: string; sessionId: string }
+  // until that session's `state` arrives. See electron/main.ts openFileFromOS. An MCP open_file
+  // carries its own position and focus (spec 2026-10-27-conduit-mcp-control-tools §3.1).
+  | { type: 'openFileInEditor'; path: string; sessionId: string; source: 'os' }
+  | {
+      type: 'openFileInEditor';
+      path: string;
+      sessionId: string;
+      source: 'mcp';
+      line?: number;
+      column?: number;
+      focus: boolean;
+    }
+  // An MCP open_session/open_terminal with focus:false: the next state post introduces this
+  // session, and the renderer's autoSwitch must not activate it (spec §3.1, focus).
+  | { type: 'suppressAutoSwitch'; sessionId: string }
   // A file currently open in an editor/markdown tab changed on disk (external editor,
   // agent, or terminal command). The renderer re-reads it (dirty-buffer protection in
   // app.tsx still withholds clobbering an unsaved buffer). See electron/open-file-watcher.ts.

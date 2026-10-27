@@ -31,6 +31,11 @@ import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
 import { createCloseGuard, createQuitGrant, GRANT_TTL_MS, openWindowIds } from '../src/close-guard';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
+import type {
+  McpFileRequest,
+  McpOpenOutcome,
+  McpOpenRequest,
+} from '../src/conduit-mcp/control-tools';
 import { endpointPath } from '../src/conduit-mcp/endpoint-path';
 import { loadAgentsConfig, readBlob, readFileState } from '../src/config';
 import type { TruncatedBy } from '../src/content-search';
@@ -216,7 +221,14 @@ import {
 import { TimerScheduler } from '../src/timer-scheduler';
 import { loadTsconfigChain } from '../src/tsconfig-discovery';
 import { type TsconfigDTO, toTsconfigDTO } from '../src/tsconfig-map';
-import type { BriefError, BriefRequest, Session, StartRefusal } from '../src/types';
+import type {
+  BriefError,
+  BriefRequest,
+  Session,
+  SessionCommand,
+  SessionOpener,
+  StartRefusal,
+} from '../src/types';
 import { createGuestOpenGate, hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
   assignOwner,
@@ -953,6 +965,25 @@ function broadcast(msg: HostToWebview) {
   for (const w of windows.values()) w.webContents.send('to-webview', msg);
 }
 
+type OpenFileInEditor = Extract<HostToWebview, { type: 'openFileInEditor' }>;
+
+/** openRepo's optional parts; `mcp` marks an MCP open (spec 2026-10-27-conduit-mcp-control-tools §3.1). */
+interface OpenRepoOptions {
+  /** Stamps the new session with the board card it was started for (N2). */
+  cardId?: string;
+  extras?: {
+    roots: string[];
+    missingRoots: string[];
+    projectId?: string;
+    name?: string;
+    command?: SessionCommand;
+    openedBy?: SessionOpener;
+  };
+  brief?: { request: BriefRequest | undefined; dialog: boolean };
+  /** Skips launcher usage and recents; focus picks activateSession or suppressAutoSwitch. */
+  mcp?: { focus: boolean };
+}
+
 function reply(e: IpcMainEvent, msg: HostToWebview) {
   // An async handler (.then/.catch) may resolve after the sender's window closed; sending
   // to a destroyed webContents throws. Guard it (multi-window Slice A).
@@ -1161,20 +1192,14 @@ app.whenReady().then(() => {
   // signals readiness (its first 'ready' → postState) and flush them then. A warm
   // second-instance (renderer already ready) sends immediately.
   let rendererReady = false;
-  const pendingOsOpens: { path: string; sessionId: string }[] = [];
-  const sendOpenFileInEditor = (path: string, sessionId: string) => {
-    if (rendererReady) sendToOwner(sessionId, { type: 'openFileInEditor', path, sessionId });
-    else pendingOsOpens.push({ path, sessionId });
+  const pendingOsOpens: OpenFileInEditor[] = [];
+  const sendOpenFileInEditor = (msg: OpenFileInEditor) => {
+    if (rendererReady) sendToOwner(msg.sessionId, msg);
+    else pendingOsOpens.push(msg);
   };
   const flushPendingOsOpens = () => {
     rendererReady = true;
-    for (const op of pendingOsOpens.splice(0)) {
-      sendToOwner(op.sessionId, {
-        type: 'openFileInEditor',
-        path: op.path,
-        sessionId: op.sessionId,
-      });
-    }
+    for (const msg of pendingOsOpens.splice(0)) sendToOwner(msg.sessionId, msg);
   };
 
   if (process.env.CONDUIT_E2E === '1') {
@@ -2201,17 +2226,17 @@ app.whenReady().then(() => {
     p: string,
     agentId: string,
     ownerWindowId: number,
-    cardId?: string,
-    extras?: { roots: string[]; missingRoots: string[]; projectId?: string },
-    brief: { request: BriefRequest | undefined; dialog: boolean } = {
-      request: undefined,
-      dialog: false,
-    },
+    opts: OpenRepoOptions = {},
   ): { sessionId: string } | { error: BriefError } | undefined {
     if (!p) return undefined;
-    const agent = registry.get(agentId) ?? registry.list()[0];
+    const { cardId, extras, mcp } = opts;
+    const brief = opts.brief ?? { request: undefined, dialog: false };
+    // An MCP open names its agent exactly: no first-terminal fallback (spec §3.1 unknown_agent).
+    const agent =
+      effectiveDef({ agentId, command: extras?.command }, registry) ??
+      (mcp ? undefined : registry.list()[0]);
     if (!agent) {
-      dialog.showErrorBox('Conduit', 'No terminals available.');
+      if (!mcp) dialog.showErrorBox('Conduit', 'No terminals available.');
       return undefined;
     }
     const c = roleBriefs.beginCreate({ def: agent, request: brief.request, dialog: brief.dialog });
@@ -2229,7 +2254,33 @@ app.whenReady().then(() => {
       c.rollback();
       throw err;
     }
-    launcherHost.bump(agent.id);
+    if (!mcp) rememberOpen(agent.id, p, extras);
+    // Before the owner's first sight of the session (assignOwner + postState below), so its
+    // autoSwitch already knows to leave it in the background (spec §3.1, focus).
+    if (mcp && !mcp.focus) {
+      windows.get(ownerWindowId)?.webContents.send('to-webview', {
+        type: 'suppressAutoSwitch',
+        sessionId: id,
+      } satisfies HostToWebview);
+    }
+    // mgr.create's change fired postState BEFORE this assignment, so no window saw the new
+    // session yet (it had no owner). Assign ownership, then re-post so the owner window
+    // gets it immediately.
+    assignOwner(sessionOwner, id, ownerWindowId);
+    postState();
+    if (mcp?.focus) {
+      windows.get(ownerWindowId)?.webContents.send('to-webview', {
+        type: 'activateSession',
+        sessionId: id,
+      } satisfies HostToWebview);
+    }
+    folders.created(id);
+    return { sessionId: id };
+  }
+
+  /** Launcher usage + recents for a human open; MCP opens never touch them (spec §3.1). */
+  function rememberOpen(agentId: string, p: string, extras: OpenRepoOptions['extras']) {
+    launcherHost.bump(agentId);
     const now = Date.now();
     const missing = new Set(extras?.missingRoots ?? []);
     const attached = (extras?.roots ?? []).filter((r) => !missing.has(r));
@@ -2240,17 +2291,10 @@ app.whenReady().then(() => {
     repos = upsertRepo(repos, {
       path: p,
       name: path.basename(p) || p,
-      lastAgentId: agent.id,
+      lastAgentId: agentId,
       lastOpened: now,
     });
     persistFile(reposFile(), serializeRepos(repos), 'repos.json');
-    // mgr.create's change fired postState BEFORE this assignment, so no window saw the new
-    // session yet (it had no owner). Assign ownership, then re-post so the owner window
-    // gets it immediately.
-    assignOwner(sessionOwner, id, ownerWindowId);
-    postState();
-    folders.created(id);
-    return { sessionId: id };
   }
   const sessionIdOf = (r: ReturnType<typeof openRepo>): string | undefined =>
     r && 'sessionId' in r ? r.sessionId : undefined;
@@ -2421,6 +2465,83 @@ app.whenReady().then(() => {
     if (!projectPostSuppressed) postState();
   });
 
+  /**
+   * The folder half of a create, shared by the dialog and MCP opens so they can't drift (spec
+   * 2026-10-27-conduit-mcp-control-tools A3): long name, realpath key, initial roots, project.
+   */
+  async function prepareOpen(rawHome: string, roots: unknown, projectId: unknown) {
+    const home = await probeDeps.longName(rawHome);
+    try {
+      realKeys.set(folderKey(home), folderKey(await probeDeps.realpath(home)));
+    } catch {
+      // Gone again after the stat: its key stays lexical-only, like a folder first seen missing.
+    }
+    const initial = await sessionOps.resolveInitialRoots(home, roots);
+    return {
+      home,
+      initial,
+      projectId:
+        typeof projectId === 'string' && projectStore.has(projectId) ? projectId : undefined,
+    };
+  }
+
+  /** The caller's window, else the primary, else the focused one (spec §3.1 placement). */
+  const mcpOwnerWindow = (callerSessionId: string): number => {
+    const callerWindow = sessionOwner.get(callerSessionId);
+    if (callerWindow !== undefined && windows.has(callerWindow)) return callerWindow;
+    if (windows.has(primaryWindowId)) return primaryWindowId;
+    return focusedWindow()?.id ?? -1;
+  };
+
+  async function createMcpSession(req: McpOpenRequest): Promise<McpOpenOutcome> {
+    const caller = mgr.get(req.callerSessionId);
+    const { home, initial, projectId } = await prepareOpen(req.home, undefined, caller?.projectId);
+    const command = req.launch.kind === 'command' ? req.launch.command : undefined;
+    const agentId = req.launch.kind === 'agent' ? req.launch.agentId : COMMAND_AGENT_ID;
+    const opened = openRepo(home, agentId, mcpOwnerWindow(req.callerSessionId), {
+      extras: {
+        roots: initial.roots,
+        missingRoots: initial.missing,
+        projectId,
+        ...(req.label !== undefined ? { name: req.label } : {}),
+        ...(command ? { command } : {}),
+        openedBy: req.openedBy,
+      },
+      // A command has no brief to deliver; an agent gets its definition's default (spec §3.1).
+      brief: { request: command ? { kind: 'none' } : undefined, dialog: true },
+      mcp: { focus: req.focus },
+    });
+    if (!opened) {
+      return { ok: false, code: 'unknown_agent', message: `unknown agent: ${agentId}` };
+    }
+    if ('error' in opened) return { ok: false, code: 'brief_unavailable', message: opened.error };
+    return {
+      ok: true,
+      sessionId: opened.sessionId,
+      label: mgr.get(opened.sessionId)?.name ?? '',
+    };
+  }
+
+  async function openMcpFile(req: McpFileRequest): Promise<{ sessionId: string }> {
+    const sessionId =
+      resolveOwningSession({
+        path: req.path,
+        sessions: mgr.list().map(({ id, home, roots }) => ({ id, home, roots })),
+        openDocs: [],
+        activeId: null,
+      }) ?? req.callerSessionId;
+    sendOpenFileInEditor({
+      type: 'openFileInEditor',
+      path: req.path,
+      sessionId,
+      source: 'mcp',
+      ...(req.line !== undefined ? { line: req.line } : {}),
+      ...(req.column !== undefined ? { column: req.column } : {}),
+      focus: req.focus,
+    });
+    return { sessionId };
+  }
+
   async function openRepoRequest(
     m: Extract<WebviewToHost, { type: 'openRepo' }>,
     ownerWindowId: number,
@@ -2447,12 +2568,6 @@ app.whenReady().then(() => {
       answer({ droppedRoots: [], error: kind === 'missing' ? 'home-missing' : 'invalid-path' });
       return;
     }
-    const home = await probeDeps.longName(m.path);
-    try {
-      realKeys.set(folderKey(home), folderKey(await probeDeps.realpath(home)));
-    } catch {
-      // Gone again after the stat: its key stays lexical-only, like a folder first seen missing.
-    }
     // A present but malformed brief is refused, not read as absent: absent means "the agent's
     // brief", which the user didn't pick.
     const brief = parseBriefRequest(m.brief);
@@ -2460,17 +2575,12 @@ app.whenReady().then(() => {
       answer({ droppedRoots: [], error: 'brief-invalid' });
       return;
     }
-    const initial = await sessionOps.resolveInitialRoots(home, m.roots);
-    const projectId =
-      typeof m.projectId === 'string' && projectStore.has(m.projectId) ? m.projectId : undefined;
-    const opened = openRepo(
-      home,
-      m.agentId,
-      ownerWindowId,
-      m.cardId,
-      { roots: initial.roots, missingRoots: initial.missing, projectId },
-      { request: brief, dialog: true },
-    );
+    const { home, initial, projectId } = await prepareOpen(m.path, m.roots, m.projectId);
+    const opened = openRepo(home, m.agentId, ownerWindowId, {
+      cardId: m.cardId,
+      extras: { roots: initial.roots, missingRoots: initial.missing, projectId },
+      brief: { request: brief, dialog: true },
+    });
     if (opened && 'error' in opened) {
       answer({ droppedRoots: [], error: opened.error });
       return;
@@ -5118,7 +5228,8 @@ app.whenReady().then(() => {
     });
     const sessionId =
       existing ?? sessionIdOf(openRepo(root, registry.list()[0]?.id ?? '', ownerWindowId));
-    if (sessionId) sendOpenFileInEditor(filePath, sessionId);
+    if (sessionId)
+      sendOpenFileInEditor({ type: 'openFileInEditor', path: filePath, sessionId, source: 'os' });
   };
 
   // OS opens are owned by the given window (multi-window Slice A): the focused window for a
