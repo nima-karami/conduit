@@ -1,11 +1,20 @@
 import { resolveActiveRepo } from './active-repo';
 import type { AgentRegistry } from './agent-registry';
+import { type ToolName, type ToolOverrideValue, withOverride } from './conduit-mcp/tool-switches';
 import { folderKey } from './folder-key';
 import type { RepoInfo } from './repo-scan';
+import { COMMAND_AGENT_ID, effectiveDef } from './session-command';
 import { iconKindFromText } from './session-icon';
 import { sessionNameFromPath } from './session-name';
 import { resolveTitleSync } from './session-title';
-import type { BriefState, GitInfo, Session, SessionStatus } from './types';
+import type {
+  BriefState,
+  GitInfo,
+  Session,
+  SessionCommand,
+  SessionOpener,
+  SessionStatus,
+} from './types';
 
 /** Shallow value-equality for GitInfo so setRepoGit only emits on a real change. */
 function sameGit(a: GitInfo | undefined, b: GitInfo | undefined): boolean {
@@ -45,6 +54,9 @@ export interface SessionCreateOpts {
   /** Pre-minted via {@link SessionManager.mintId}; the role brief's canonical file is keyed by it. */
   id?: string;
   brief?: BriefState;
+  /** Requires agentId === COMMAND_AGENT_ID. */
+  command?: SessionCommand;
+  openedBy?: SessionOpener;
 }
 
 function setMissing(s: Session, keys: ReadonlySet<string>) {
@@ -90,7 +102,9 @@ export class SessionManager {
 
   create(agentId: string, home: string, opts: SessionCreateOpts = {}): Session {
     const { name, cardId, projectId } = opts;
-    const def = this.registry.get(agentId);
+    if (opts.command && agentId !== COMMAND_AGENT_ID)
+      throw new Error(`command requires agent ${COMMAND_AGENT_ID}`);
+    const def = effectiveDef({ agentId, command: opts.command }, this.registry);
     if (!def) throw new Error(`Unknown agent: ${agentId}`);
     const id = opts.id ?? this.newId();
     if (this.sessions.has(id)) throw new Error(`Session id in use: ${id}`);
@@ -109,6 +123,10 @@ export class SessionManager {
       ...(cardId ? { cardId } : {}),
       ...(projectId ? { projectId } : {}),
       ...(opts.brief ? { brief: opts.brief } : {}),
+      ...(opts.command
+        ? { command: { command: opts.command.command, args: [...opts.command.args] } }
+        : {}),
+      ...(opts.openedBy ? { openedBy: { ...opts.openedBy } } : {}),
     };
     setMissing(session, new Set((opts.missingRoots ?? []).map(folderKey)));
     this.sessions.set(id, session);
@@ -154,6 +172,8 @@ export class SessionManager {
       roots: src.roots,
       missingRoots: src.missingRoots,
       projectId: src.projectId,
+      // Overrides and openedBy are deliberately not copied (control-tools spec §3.1).
+      ...(src.command ? { command: src.command } : {}),
       ...(opts.id !== undefined ? { id: opts.id } : {}),
       ...(opts.brief ? { brief: opts.brief } : {}),
     });
@@ -303,6 +323,17 @@ export class SessionManager {
     if (!s) return false;
     if ('mcpHandle' in patch) s.mcpHandle = patch.mcpHandle;
     if ('mcpNoticesPaused' in patch) s.mcpNoticesPaused = patch.mcpNoticesPaused;
+    this.emit();
+    return true;
+  }
+
+  setMcpToolOverride(id: string, tool: ToolName, value: ToolOverrideValue): boolean {
+    const s = this.sessions.get(id);
+    if (!s) return false;
+    const next = withOverride(s.mcpToolOverrides, tool, value);
+    if (next?.[tool] === s.mcpToolOverrides?.[tool]) return true;
+    if (next) s.mcpToolOverrides = next;
+    else delete s.mcpToolOverrides;
     this.emit();
     return true;
   }

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { coerceSettings, DEFAULT_SETTINGS, serializeSettings } from '../../src/settings';
+import { DEFAULT_MCP_TOOLS } from '../../src/conduit-mcp/tool-switches';
+import {
+  coerceSettings,
+  DEFAULT_SETTINGS,
+  restoreSettings,
+  serializeSettings,
+} from '../../src/settings';
 
 // Helper: run coerceSettings on a partial plain object, merging it over an empty base.
 const coerce = (partial: Record<string, unknown>) => coerceSettings(partial);
@@ -460,5 +466,33 @@ describe('coerceSettings — editorSplitRatio', () => {
     expect(coerce({ editorSplitRatio: 0.37 }).editorSplitRatio).toBe(0.37);
     expect(coerce({ editorSplitRatio: 'wide' }).editorSplitRatio).toBe(0.5);
     expect(coerce({ editorSplitRatio: Number.NaN }).editorSplitRatio).toBe(0.5);
+  });
+});
+
+describe('coerceSettings — mcpTools (control tools spec §5)', () => {
+  it('mcpTools absent → defaults', () => {
+    expect(coerceSettings({}).mcpTools).toEqual(DEFAULT_MCP_TOOLS);
+    expect(DEFAULT_SETTINGS.mcpTools).toEqual(DEFAULT_MCP_TOOLS);
+  });
+
+  it('mcpTools partial → merged per key', () => {
+    expect(
+      coerceSettings({ mcpTools: { open_session: true, send_message: false } }).mcpTools,
+    ).toEqual({
+      ...DEFAULT_MCP_TOOLS,
+      open_session: true,
+      send_message: false,
+    });
+  });
+
+  it('mcpTools malformed → defaults', () => {
+    expect(coerceSettings({ mcpTools: 'on' }).mcpTools).toEqual(DEFAULT_MCP_TOOLS);
+    expect(coerceSettings({ mcpTools: [true] }).mcpTools).toEqual(DEFAULT_MCP_TOOLS);
+    expect(coerceSettings({ mcpTools: { open_file: 'yes' } }).mcpTools).toEqual(DEFAULT_MCP_TOOLS);
+  });
+
+  it('round-trip through serializeSettings/restoreSettings keeps open_session: true', () => {
+    const s = coerceSettings({ mcpTools: { open_session: true } });
+    expect(restoreSettings(serializeSettings(s)).mcpTools.open_session).toBe(true);
   });
 });

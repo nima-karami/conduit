@@ -22,7 +22,15 @@ export type ToolErrorCode =
   | 'store_unavailable'
   | 'messaging_off'
   | 'host_unavailable'
-  | 'invalid_argument';
+  | 'invalid_argument'
+  | 'tool_disabled'
+  | 'unknown_agent'
+  | 'path_missing'
+  | 'not_a_directory'
+  | 'not_a_file'
+  | 'invalid_args'
+  | 'command_not_found'
+  | 'brief_unavailable';
 export interface ToolError {
   code: ToolErrorCode;
   message: string;

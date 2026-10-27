@@ -24,6 +24,17 @@ describe('AgentRegistry', () => {
     expect(r.list().map((a) => a.id)).toEqual(['claude']);
   });
 
+  it('rejects ids in the reserved conduit: namespace (agents.json can never shadow conduit:command)', () => {
+    const reserved = { ...claude, id: 'conduit:command' };
+    expect(AgentRegistry.isValid(reserved)).toBe(false);
+    const r = new AgentRegistry([claude, reserved]);
+    expect(r.list().map((a) => a.id)).toEqual(['claude']);
+    expect(r.get('conduit:command')).toBeUndefined();
+    r.replace([reserved, { ...claude, id: 'conduit:x' }], {});
+    expect(r.list()).toEqual([]);
+    expect(AgentRegistry.isValid({ ...claude, id: 'conduitx' })).toBe(true);
+  });
+
   it('resolves an agent + target into a SpawnSpec', () => {
     const r = new AgentRegistry([claude]);
     const spec = r.resolve('claude', '/work/proj');

@@ -7,6 +7,7 @@ import {
   shouldPersistSessions,
 } from '../../src/persistence';
 import type { PersistedDoc } from '../../src/protocol';
+import { COMMAND_AGENT_ID } from '../../src/session-command';
 import type { Session } from '../../src/types';
 import { docsReducer, initialDocs } from '../../webview/docs';
 
@@ -375,5 +376,79 @@ describe('persistence role brief', () => {
   it('drops an unknown brief value', () => {
     const [r] = sessionsOf(v1([{ ...s, brief: 'bogus' }]));
     expect('brief' in r).toBe(false);
+  });
+});
+
+describe('persistence — MCP control fields (control-tools spec §3.3)', () => {
+  const cmd = { command: 'node', args: ['-e', 'x'] };
+  const opener = { handle: 'claude-1', sessionId: 'caller' };
+
+  it('parseSessions keeps valid mcpToolOverrides/command/openedBy', () => {
+    const [x] = sessionsOf(
+      v1([
+        {
+          ...s,
+          agentId: COMMAND_AGENT_ID,
+          mcpToolOverrides: { open_file: true },
+          command: cmd,
+          openedBy: opener,
+        },
+      ]),
+    );
+    expect(x.mcpToolOverrides).toEqual({ open_file: true });
+    expect(x.command).toEqual(cmd);
+    expect(x.openedBy).toEqual(opener);
+  });
+
+  it('round-trips through serializeSessions', () => {
+    const live: Session = {
+      ...s,
+      agentId: COMMAND_AGENT_ID,
+      mcpToolOverrides: { send_message: false },
+      command: cmd,
+      openedBy: opener,
+    };
+    const [x] = sessionsOf(serializeSessions([live]));
+    expect(x.mcpToolOverrides).toEqual({ send_message: false });
+    expect(x.command).toEqual(cmd);
+    expect(x.openedBy).toEqual(opener);
+  });
+
+  it('drops malformed ones without dropping the entry', () => {
+    const r = parseSessions(
+      v1([
+        {
+          ...s,
+          id: 'a',
+          mcpToolOverrides: { bogus: true, open_file: 'yes' },
+          openedBy: { handle: 'h' },
+          command: 'node',
+        },
+        {
+          ...s,
+          id: 'b',
+          mcpToolOverrides: { bogus: true, open_session: false },
+          openedBy: 3,
+          command: { command: '' },
+        },
+      ]),
+    );
+    expect(r.kind).toBe('ok');
+    const list = r.kind === 'ok' ? r.sessions : [];
+    expect(list.map((x) => x.id)).toEqual(['a', 'b']);
+    expect(r.kind === 'ok' && r.dropped).toBe(0);
+    for (const k of ['command', 'openedBy'] as const)
+      for (const x of list) expect(k in x).toBe(false);
+    expect('mcpToolOverrides' in list[0]).toBe(false);
+    expect(list[1].mcpToolOverrides).toEqual({ open_session: false });
+  });
+
+  it('command session with invalid command loads stale with agentId conduit:command and no command', () => {
+    const [x] = sessionsOf(
+      v1([{ ...s, agentId: COMMAND_AGENT_ID, command: { command: 'n', args: [1] } }]),
+    );
+    expect(x.agentId).toBe(COMMAND_AGENT_ID);
+    expect(x.status).toBe('stale');
+    expect('command' in x).toBe(false);
   });
 });

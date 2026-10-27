@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { AgentRegistry } from '../../src/agent-registry';
 import { folderKey } from '../../src/folder-key';
 import type { RepoInfo } from '../../src/repo-scan';
+import { COMMAND_AGENT_ID } from '../../src/session-command';
 import { SessionManager } from '../../src/session-manager';
 import type { AgentDefinition, Session } from '../../src/types';
 
@@ -582,5 +583,71 @@ describe('SessionManager role brief', () => {
     const h = managerWithClockAndSession();
     expect(h.m.setBrief('nope', 'sent')).toBe(false);
     expect(h.calls).toBe(0);
+  });
+});
+
+describe('SessionManager MCP control fields (control-tools spec §3.1, §3.3)', () => {
+  const cmd = { command: 'node', args: ['-e', 'x'] };
+  const opener = { handle: 'claude-1', sessionId: 'caller' };
+  let m: SessionManager;
+  beforeEach(() => {
+    m = new SessionManager(new AgentRegistry([claude]), seqIds());
+  });
+
+  it('create command without opts.command throws Unknown agent: conduit:command', () => {
+    expect(() => m.create(COMMAND_AGENT_ID, '/w')).toThrow(`Unknown agent: ${COMMAND_AGENT_ID}`);
+  });
+
+  it('create with command on another agent throws', () => {
+    expect(() => m.create('claude', '/w', { command: cmd })).toThrow(
+      `command requires agent ${COMMAND_AGENT_ID}`,
+    );
+    expect(m.list()).toEqual([]);
+  });
+
+  it('create command session stamps command and openedBy, no overrides', () => {
+    const s = m.create(COMMAND_AGENT_ID, '/w', { command: cmd, openedBy: opener });
+    expect(s.agentId).toBe(COMMAND_AGENT_ID);
+    expect(s.command).toEqual(cmd);
+    expect(s.command).not.toBe(cmd);
+    expect(s.openedBy).toEqual(opener);
+    expect('mcpToolOverrides' in s).toBe(false);
+  });
+
+  it('create without command/openedBy adds neither key', () => {
+    const s = m.create('claude', '/w');
+    expect('command' in s).toBe(false);
+    expect('openedBy' in s).toBe(false);
+  });
+
+  it('duplicate carries command, not overrides or openedBy', () => {
+    const s = m.create(COMMAND_AGENT_ID, '/w', { command: cmd, openedBy: opener });
+    m.setMcpToolOverride(s.id, 'open_file', true);
+    const d = m.duplicate(s.id);
+    expect(d?.agentId).toBe(COMMAND_AGENT_ID);
+    expect(d?.command).toEqual(cmd);
+    expect(d && 'mcpToolOverrides' in d).toBe(false);
+    expect(d && 'openedBy' in d).toBe(false);
+  });
+
+  it('setMcpToolOverride sets, inherit deletes, unknown id → false, no emit when unchanged', () => {
+    const s = m.create('claude', '/w');
+    let calls = 0;
+    m.onChange(() => calls++);
+    expect(m.setMcpToolOverride(s.id, 'open_session', true)).toBe(true);
+    expect(m.get(s.id)?.mcpToolOverrides).toEqual({ open_session: true });
+    expect(calls).toBe(1);
+    expect(m.setMcpToolOverride(s.id, 'open_session', true)).toBe(true);
+    expect(calls).toBe(1);
+    expect(m.setMcpToolOverride(s.id, 'send_message', false)).toBe(true);
+    expect(m.get(s.id)?.mcpToolOverrides).toEqual({ open_session: true, send_message: false });
+    expect(m.setMcpToolOverride(s.id, 'open_session', 'inherit')).toBe(true);
+    expect(m.setMcpToolOverride(s.id, 'send_message', 'inherit')).toBe(true);
+    expect('mcpToolOverrides' in (m.get(s.id) ?? {})).toBe(false);
+    expect(calls).toBe(4);
+    expect(m.setMcpToolOverride(s.id, 'open_file', 'inherit')).toBe(true);
+    expect(calls).toBe(4);
+    expect(m.setMcpToolOverride('nope', 'open_file', true)).toBe(false);
+    expect(calls).toBe(4);
   });
 });

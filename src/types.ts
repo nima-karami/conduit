@@ -1,3 +1,4 @@
+import type { McpToolOverrides } from './conduit-mcp/tool-switches';
 import type { RepoInfo } from './repo-scan';
 
 export type CwdStrategy = 'workspaceFolder' | 'gitWorktree' | 'prompt';
@@ -59,6 +60,16 @@ export type BriefRequest =
   | { kind: 'text'; text: string }
   | { kind: 'file'; path: string };
 export type BriefError = 'brief-unreadable' | 'brief-too-large' | 'brief-invalid' | 'brief-io';
+/** argv for an `open_terminal` session; never a shell string (spec 2026-10-27-conduit-mcp-control-tools A2). */
+export interface SessionCommand {
+  command: string;
+  args: string[];
+}
+/** Both kept because handles can be reused (spec 2026-10-27-conduit-mcp-control-tools §3.3). */
+export interface SessionOpener {
+  handle: string;
+  sessionId: string;
+}
 
 export interface Session {
   id: string;
@@ -105,6 +116,12 @@ export interface Session {
   mcpNoticesPaused?: boolean;
   /** Role brief state (docs/specs/2026-10-26-conduit-role-brief.md §2.3). Persisted. */
   brief?: BriefState;
+  /** Absent key = inherit the global switch; never inherited from an opener or copied (control-tools spec §3.1). Persisted. */
+  mcpToolOverrides?: McpToolOverrides;
+  /** Only when agentId === COMMAND_AGENT_ID (src/session-command.ts). Persisted. */
+  command?: SessionCommand;
+  /** The MCP caller that opened this session. Persisted. */
+  openedBy?: SessionOpener;
   /** live working dir (cd-tracked); falls back to home */
   cwd?: string;
   /** Runtime-only (stripped by serializeSessions). Keyed by RepoInfo.root exactly as in `repos`.
