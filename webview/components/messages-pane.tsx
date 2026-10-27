@@ -1,9 +1,12 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useEffect, useId, useRef, useState } from 'react';
+import { needsSetup } from '../../src/conduit-mcp/install-types';
 import { type Handle, HUMAN_HANDLE } from '../../src/conduit-mcp/types';
 import type { McpThreadSummary, McpUiState } from '../../src/conduit-mcp/ui-types';
 import type { Session } from '../../src/types';
+import { mcpInstallStatus } from '../bridge';
 import { MCP_STR } from '../conduit-mcp-strings';
+import { log } from '../log';
 import {
   composeTargets,
   newMessageCount,
@@ -124,6 +127,38 @@ function ThreadRow({
         </time>
       </span>
     </div>
+  );
+}
+
+/** Failure and loading both degrade to the plain first-run copy (install spec §2.6). */
+function SetupEmptyState({ onOpenSettings }: { onOpenSettings(): void }) {
+  const [setup, setSetup] = useState(false);
+  useEffect(() => {
+    let active = true;
+    mcpInstallStatus(null).then(
+      (status) => {
+        if (active) setSetup(needsSetup(status));
+      },
+      (error: unknown) => {
+        log.warn('mcp-install', 'status read failed', { error: String(error) });
+        if (active) setSetup(false);
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
+  if (!setup) return <EmptyState variant="panel" title={MCP_STR.firstRun} />;
+  return (
+    <EmptyState
+      variant="panel"
+      title={MCP_STR.install.setupCopy}
+      action={
+        <button type="button" className="btn btn--sm" onClick={onOpenSettings}>
+          {MCP_STR.install.setupButton}
+        </button>
+      }
+    />
   );
 }
 
@@ -346,7 +381,7 @@ function MessagesView({
 
   let body: React.ReactNode;
   if (state.threads.length === 0) {
-    body = <EmptyState variant="panel" title={MCP_STR.firstRun} />;
+    body = <SetupEmptyState onOpenSettings={onOpenSettings} />;
   } else if (threads.length === 0) {
     body = (
       <EmptyState

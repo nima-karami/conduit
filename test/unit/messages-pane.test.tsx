@@ -10,8 +10,14 @@ import type {
   McpUiState,
 } from '../../src/conduit-mcp/ui-types';
 import type { Session } from '../../src/types';
+import { mcpInstallStatus } from '../../webview/bridge';
 import { MessagesPane, type MessagesPaneProps } from '../../webview/components/messages-pane';
 import type { ConduitMcpApi } from '../../webview/use-conduit-mcp';
+
+vi.mock('../../webview/bridge', async (orig) => ({
+  ...(await orig<typeof import('../../webview/bridge')>()),
+  mcpInstallStatus: vi.fn(async () => ({ clis: [] })),
+}));
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -173,6 +179,53 @@ describe('MessagesPane states (spec §8)', () => {
       'Agents in your sessions can message each other and you. Messages appear here.',
     );
     expect(byText('New message')).toBeTruthy();
+  });
+
+  describe('empty state setup prompt (install spec §2.6)', () => {
+    const FIRST_RUN =
+      'Agents in your sessions can message each other and you. Messages appear here.';
+    const cli = (found: boolean, state: 'installed' | 'not-installed') => ({
+      cli: 'claude' as const,
+      found,
+      user: { state, path: '/h/.claude.json' },
+      project: null,
+    });
+    const status = (...clis: ReturnType<typeof cli>[]) =>
+      ({ clis }) as Awaited<ReturnType<typeof mcpInstallStatus>>;
+
+    it('no threads + needsSetup shows the setup copy; the button opens settings (AC13)', async () => {
+      vi.mocked(mcpInstallStatus).mockResolvedValue(status(cli(true, 'not-installed')));
+      const p = props(fakeApi(uiState()));
+      await render(p);
+      expect(text()).toContain('Install Conduit for your agent CLIs');
+      expect(text()).not.toContain(FIRST_RUN);
+      await click(byText('Set up agent CLIs'));
+      expect(p.onOpenSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['all found CLIs installed', status(cli(true, 'installed'))],
+      ['no CLI found', status(cli(false, 'not-installed'))],
+    ])('%s keeps the first-run copy and no button', async (_n, s) => {
+      vi.mocked(mcpInstallStatus).mockResolvedValue(s);
+      await render(props(fakeApi(uiState())));
+      expect(text()).toContain(FIRST_RUN);
+      expect(text()).not.toContain('Set up agent CLIs');
+    });
+
+    it('a rejected status falls back to the first-run copy', async () => {
+      vi.mocked(mcpInstallStatus).mockRejectedValue(new Error('boom'));
+      await render(props(fakeApi(uiState())));
+      expect(text()).toContain(FIRST_RUN);
+      expect(text()).not.toContain('Set up agent CLIs');
+    });
+
+    it('messaging off keeps the off state and never asks for status', async () => {
+      vi.mocked(mcpInstallStatus).mockClear();
+      await render(props(fakeApi(uiState({ enabled: false }))));
+      expect(text()).toContain('Messaging is turned off');
+      expect(mcpInstallStatus).not.toHaveBeenCalled();
+    });
   });
 
   it('loading skeleton while state is null', async () => {
