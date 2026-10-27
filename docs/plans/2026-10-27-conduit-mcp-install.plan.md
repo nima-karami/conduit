@@ -1649,3 +1649,35 @@ semantic source. The report leads with the fix that keeps the locked decision.
 - [normal] The banner's "PTY generation" is the host's `launch` counter (bumped per
   `prepareLaunch`), not `pty.generation`, because the `cursor-not-connected` case is raised before
   the PTY exists.
+
+## Architecture review r1 amendments (2026-10-27, conductor-accepted; override the task text above)
+
+Verdict REVISE (report: architecture-critic). The trust model is accepted: anything holding the
+token already runs as the user, the token is revoked at PTY exit, and notices still need a real
+idle-screen match.
+
+- **B1 · T3.1:** apply `whenLaunchReady` to **every** definition while messaging is on, bounded at
+  3 s. Otherwise persistent shells restored at startup launch before the endpoint listens and stay
+  unwired. Drop that out-of-scope bullet and add a unit test.
+- **B2 · T3.1:** a session whose definition has no adapter, i.e. one that got its handle lazily,
+  appears in `directory()`/`list_sessions` and the card badges **only while it has a live
+  connection or has message history**. A health check (`claude mcp list`) must not permanently
+  enrol a shell. AC2 test: health check, then close → absent.
+- **S1 · T3.3:** `switchable` = adapter sessions **or** any session with a handle, so a shell can
+  get per-session tool overrides.
+- **S2 · T1.5:** `pickNoticeAdapterId` = the newest live connection whose kind **maps** to an
+  adapter. Unmapped kinds are skipped, and the screen check stays the guard. Sent to the slice 1
+  executor.
+- **S3 · T3.4:** `repair()` runs only when `app.isPackaged`. A dev build must never rewrite entries
+  to its own worktree path.
+- **S4 · T2.3:**
+  - `status()` resolves PATH lookups once per call.
+  - `onInstallChanged` re-reads only the CLIs that currently show not-connected.
+  - No repeated synchronous re-reads of a multi-MB `~/.claude.json` on the main thread.
+- **N1:** "Install for this project" targets the folder of the active session's roots, not only
+  known session homes.
+- **N2:** xterm focus and device-attribute replies don't count as typed input for detection.
+- **N5:** a shell's next launch clears `r.unavailable` after a failed lazy claim.
+- **N3 kept:** the project-scope extras stay in the MVP. The user asked for project entries to be
+  shown with Remove.
+- **N4:** smol-toml is **1.9.1** exact, the current release (1.3.1 is from 2024).
