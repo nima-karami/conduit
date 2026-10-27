@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import type { AgentCli } from '../../src/conduit-mcp/install-types';
+import type { McpNotConnected } from '../../src/conduit-mcp/ui-types';
 import { rootsSigOf } from '../../src/path-link-roots';
 import type { FileContentDTO, FileDiffDTO, RepoChanges, RepoDTO } from '../../src/protocol';
 import { historyRepoFor, orderRepos } from '../../src/repo-display';
@@ -28,6 +30,7 @@ import { EditorGroupPane } from './editor-group-pane';
 import { EditorGroups } from './editor-groups';
 import { CenterEmptyState } from './empty-state';
 import { GitHistoryView } from './git-history-view';
+import { McpSetupBanner } from './mcp-setup-banner';
 import { MissingHomeState, StartRefusedState } from './missing-home-state';
 import type { DockHandlers } from './panel-frame';
 import { ReviewView } from './review-view';
@@ -114,6 +117,9 @@ export function CenterPane({
   onClearSideBySide,
   onRetryDiff,
   onOpenFullDiff,
+  mcpNotConnected,
+  mcpEnabled,
+  onOpenMcpSettings,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -210,6 +216,10 @@ export function CenterPane({
   onClearSideBySide?: (id: string) => void;
   onRetryDiff: (doc: OpenDoc) => void;
   onOpenFullDiff: (doc: OpenDoc) => void;
+  /** By sessionId; {} while messaging is off. */
+  mcpNotConnected: Readonly<Record<string, McpNotConnected>>;
+  mcpEnabled: boolean;
+  onOpenMcpSettings: (cli: AgentCli) => void;
 }) {
   const [compareOpen, setCompareOpen] = useState(false);
   const saveStatuses = useFileSaveStatuses();
@@ -352,6 +362,12 @@ export function CenterPane({
             )}
             <div className="termhost__body">
               <AgentScopeBanner session={s} />
+              <McpSetupBanner
+                session={s}
+                nc={mcpNotConnected[s.id]}
+                messagingOn={mcpEnabled}
+                onOpenMcpSettings={onOpenMcpSettings}
+              />
               <TerminalPane
                 key={`${s.id}:${s.restartSeq ?? 0}`}
                 sessionId={s.id}
