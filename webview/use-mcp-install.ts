@@ -58,23 +58,30 @@ export function useMcpInstall(projectPath: string | null): McpInstallApi {
 
   const refresh = useCallback(() => read(projectPath), [projectPath, read]);
 
-  const act = useCallback(async (req: McpInstallRequest): Promise<McpInstallResult | null> => {
-    let result: McpInstallResult;
-    try {
-      result = await mcpInstallAct(req);
-    } catch (error) {
-      log.warn('mcp-install', 'action failed', { error: String(error), cli: req.cli });
-      return null;
-    }
-    if (mounted.current) {
-      setStatus((prev) =>
-        prev
-          ? { clis: prev.clis.map((c) => (c.cli === result.status.cli ? result.status : c)) }
-          : prev,
-      );
-    }
-    return result;
-  }, []);
+  const act = useCallback(
+    async (req: McpInstallRequest): Promise<McpInstallResult | null> => {
+      // The host re-reads the CLI against req.projectPath and the result replaces the whole slot,
+      // so a user-scope action without it would drop that CLI's project section.
+      const full =
+        projectPath !== null && req.projectPath === undefined ? { ...req, projectPath } : req;
+      let result: McpInstallResult;
+      try {
+        result = await mcpInstallAct(full);
+      } catch (error) {
+        log.warn('mcp-install', 'action failed', { error: String(error), cli: req.cli });
+        return null;
+      }
+      if (mounted.current) {
+        setStatus((prev) =>
+          prev
+            ? { clis: prev.clis.map((c) => (c.cli === result.status.cli ? result.status : c)) }
+            : prev,
+        );
+      }
+      return result;
+    },
+    [projectPath],
+  );
 
   return { status, refresh, act };
 }

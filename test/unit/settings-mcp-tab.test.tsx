@@ -168,6 +168,29 @@ describe('Settings → MCP tab', () => {
     expect(document.activeElement?.getAttribute('aria-label')).toBe(S.installAria('cursor'));
   });
 
+  // The re-read status replaces the CLI's whole slot, so a user-scope action must still carry the
+  // project or that CLI's project section would vanish.
+  it('a user-scope action carries the project so the re-read keeps its project section', async () => {
+    bridge.mcpInstallAct.mockImplementation(async (req: { cli: AgentCli }) => ({
+      ok: true,
+      status: status(true).clis.find((c) => c.cli === req.cli),
+    }));
+    await mount({ projectPath: '/work/app' });
+    const install = document.body.querySelector<HTMLButtonElement>(
+      `button[aria-label="${S.installAria('claude')}"]`,
+    );
+    await act(async () => install?.click());
+    expect(bridge.mcpInstallAct).toHaveBeenCalledWith({
+      cli: 'claude',
+      scope: 'user',
+      action: 'install',
+      projectPath: '/work/app',
+    });
+    expect(
+      document.body.querySelector(`button[aria-label="${S.installProjectAria('claude')}"]`),
+    ).not.toBeNull();
+  });
+
   it('General no longer contains the messaging master switch', async () => {
     await mount({ tab: 'general' });
     expect(settingSwitch(MCP_STR.settingsToggle)).toBeNull();
