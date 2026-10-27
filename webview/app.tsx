@@ -22,8 +22,9 @@ import {
   type SessionSnapshots,
 } from '../src/changes-view-model';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
+import type { AgentCli } from '../src/conduit-mcp/install-types';
 import type { Handle } from '../src/conduit-mcp/types';
-import type { McpSessionBadge } from '../src/conduit-mcp/ui-types';
+import type { McpNotConnected, McpSessionBadge } from '../src/conduit-mcp/ui-types';
 import {
   type DeleteOutcome,
   permanentConfirmMessage,
@@ -312,7 +313,7 @@ import { useSnooze } from './use-snooze';
 import { fileViewStateIds, renameViewState } from './view-state-store';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
-type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'skills' | 'about';
+type SettingsTab = 'general' | 'mcp' | 'appearance' | 'shortcuts' | 'skills' | 'about';
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
 /** `record: false` for an open that is not a navigation (a Back reopen, a rename). */
@@ -332,6 +333,7 @@ const INCREMENTAL_INDEX_DEBOUNCE_MS = 500;
 
 /** Stable empty badges, so the rail doesn't re-render on every state before messaging loads. */
 const NO_MCP_BADGES: Readonly<Record<string, McpSessionBadge>> = {};
+const NO_NOT_CONNECTED: Readonly<Record<string, McpNotConnected>> = {};
 
 const isCodeFile = (p: string) => /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/i.test(p);
 
@@ -468,6 +470,7 @@ export function App() {
   }, [docState.docs, diffs]);
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+  const [settingsFocusCli, setSettingsFocusCli] = useState<AgentCli | undefined>(undefined);
   const [recentsBySession, setRecentsBySession] = useState<Record<string, RecentDoc[]>>({});
   const [corpus, setCorpus] = useState<FolderCorpus>({});
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -1368,6 +1371,7 @@ export function App() {
       newWindow: () => post({ type: 'win:new' }),
       openSettings: () => {
         setSettingsTab('general');
+        setSettingsFocusCli(undefined);
         setSettingsOpen(true);
       },
       // Global save (K2): route Mod+S — pressed ANYWHERE, including the terminal or
@@ -2596,8 +2600,9 @@ export function App() {
   // close button + Esc. Defined here because it needs forceCloseDoc (declared above).
   const closeReviewTab = useCallback(() => forceCloseDoc(REVIEW_DOC_ID), [forceCloseDoc]);
 
-  const openSettingsAt = useCallback((tab: SettingsTab) => {
+  const openSettingsAt = useCallback((tab: SettingsTab, cli?: AgentCli) => {
     setSettingsTab(tab);
+    setSettingsFocusCli(cli);
     setSettingsOpen(true);
   }, []);
 
@@ -2907,6 +2912,16 @@ export function App() {
         icon: <IconSettings size={14} />,
         separatorBefore: messaging.length === 0 && lifecycle.length > 0,
         onClick: () => setMcpToolsFor(s.id),
+      });
+    }
+    // The banner's actions, reachable by keyboard while focus sits in xterm (spec 2026-10-27-conduit-mcp-install §2.5).
+    const notConnected = mcp.state?.notConnected[s.id];
+    if (notConnected) {
+      messaging.push({
+        label: MCP_STR.install.setupCommand,
+        icon: <IconSettings size={14} />,
+        separatorBefore: messaging.length === 0 && lifecycle.length > 0,
+        onClick: () => openSettingsAt('mcp', notConnected.cli),
       });
     }
     setMenu({
@@ -4222,6 +4237,14 @@ export function App() {
         icon: <IconSettings size={14} />,
         run: () => openSettingsAt('skills'),
       },
+      {
+        id: 'set:mcp',
+        title: MCP_STR.install.setupCommand,
+        keywords: ['mcp', 'claude', 'codex', 'opencode', 'cursor'],
+        group: 'Settings',
+        icon: <IconSettings size={14} />,
+        run: () => openSettingsAt('mcp'),
+      },
     ];
     const themeCmds: PaletteEntry[] = THEMES.map((t) => ({
       id: `theme:${t.id}`,
@@ -4400,6 +4423,9 @@ export function App() {
         // and falls back to the editor start state instead of a void.
         <ErrorBoundary key="center" onReset={() => setCenterView('editor')}>
           <CenterPane
+            mcpNotConnected={mcp.state?.notConnected ?? NO_NOT_CONNECTED}
+            mcpEnabled={mcp.state?.enabled ?? false}
+            onOpenMcpSettings={(cli) => openSettingsAt('mcp', cli)}
             sessions={sessions}
             agents={agents}
             repos={state?.repos ?? []}
@@ -4519,6 +4545,8 @@ export function App() {
             onContextMenu={onSessionContextMenu}
             onSnooze={snooze}
             mcpBadges={mcp.state?.sessions ?? NO_MCP_BADGES}
+            mcpNotConnected={mcp.state?.notConnected ?? NO_NOT_CONNECTED}
+            mcpEnabled={mcp.state?.enabled ?? false}
             renamingId={renamingId}
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
             onReorderSessions={(o) => post({ type: 'reorderSessions', order: o })}
@@ -4596,7 +4624,7 @@ export function App() {
           paneRef={rightPaneRef}
           mcp={mcp}
           sessions={sessions}
-          onOpenSettings={() => openSettingsAt('general')}
+          onOpenSettings={() => openSettingsAt('mcp')}
           onOpenDiff={(repoRoot, rel, diffScope, mode) =>
             openDiff(joinPath(repoRoot, rel), undefined, { diffScope, mode })
           }
@@ -4683,6 +4711,7 @@ export function App() {
         <SettingsModal
           agents={agents}
           initialTab={settingsTab}
+          initialCli={settingsFocusCli}
           about={state?.about}
           projectPath={active?.home || null}
           onClose={() => setSettingsOpen(false)}
