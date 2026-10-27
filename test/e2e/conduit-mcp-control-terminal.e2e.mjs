@@ -23,7 +23,7 @@ import { assert, phase, removeDir, runScenario, typeLine } from './harness.mjs';
 const errCode = (r) => r?.error?.code;
 const SCRIPT =
   "process.stdout.write('CTRL-MARK '+process.pid+'\\n');" +
-  "process.stdin.on('data',d=>{if(String(d).includes('q'))process.exit(0)})";
+  "process.stdin.on('data',d=>{if(String(d).includes('q'))process.stdin.destroy()})";
 
 /** The pids of every marker the session has printed so far. */
 const markerPids = (page, sid) =>
