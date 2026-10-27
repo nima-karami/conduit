@@ -123,7 +123,12 @@ export async function openDoc(app, page, sessionId, absPath) {
   await app.evaluate(
     (electron, { path, sid }) => {
       const w = electron.BrowserWindow.getAllWindows()[0];
-      w?.webContents.send('to-webview', { type: 'openFileInEditor', path, sessionId: sid });
+      w?.webContents.send('to-webview', {
+        type: 'openFileInEditor',
+        source: 'os',
+        path,
+        sessionId: sid,
+      });
     },
     { path: p, sid: sessionId },
   );

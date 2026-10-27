@@ -233,6 +233,7 @@ async function scenario({ app, page, log }, root) {
     (electron, { path, sid }) => {
       electron.BrowserWindow.getAllWindows()[0]?.webContents.send('to-webview', {
         type: 'openFileInEditor',
+        source: 'os',
         path,
         sessionId: sid,
       });

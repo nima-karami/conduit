@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { planFileOpen } from '../../webview/file-open-request';
+import { type FileOpenRequest, planFileOpen } from '../../webview/file-open-request';
 
 const base = { type: 'openFileInEditor', path: '/p/a.ts', sessionId: 's1' } as const;
 
 describe('planFileOpen', () => {
+  it('a request without source (an untyped IPC sender) opens like an OS open', () => {
+    const legacy: FileOpenRequest = JSON.parse(JSON.stringify(base));
+    expect(planFileOpen(legacy)).toEqual({ activate: false, showEditor: true, mode: 'permanent' });
+  });
+
   it('an OS open shows the editor as a permanent tab without activating the session', () => {
     expect(planFileOpen({ ...base, source: 'os' })).toEqual({
       activate: false,

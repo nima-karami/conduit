@@ -238,6 +238,7 @@ async function open(app, page, sid, absPath, name) {
     (electron, { path, sid }) => {
       electron.BrowserWindow.getAllWindows()[0]?.webContents.send('to-webview', {
         type: 'openFileInEditor',
+        source: 'os',
         path,
         sessionId: sid,
       });
