@@ -32,7 +32,12 @@ describe('install-types', () => {
       action: 'install',
     });
     expect(
-      coerceInstallRequest({ cli: 'codex', scope: 'project', action: 'replace', projectPath: '/p' }),
+      coerceInstallRequest({
+        cli: 'codex',
+        scope: 'project',
+        action: 'replace',
+        projectPath: '/p',
+      }),
     ).toEqual({ cli: 'codex', scope: 'project', action: 'replace', projectPath: '/p' });
     expect(
       coerceInstallRequest({
@@ -62,7 +67,12 @@ describe('install-types', () => {
       coerceInstallRequest({ cli: 'claude', scope: 'project', action: 'install', projectPath: 3 }),
     ).toBeNull();
     expect(
-      coerceInstallRequest({ cli: 'claude', scope: 'project', action: 'remove', projectPath: '/p' }),
+      coerceInstallRequest({
+        cli: 'claude',
+        scope: 'project',
+        action: 'remove',
+        projectPath: '/p',
+      }),
     ).toBeNull();
     expect(
       coerceInstallRequest({
