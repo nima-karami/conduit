@@ -1,6 +1,12 @@
 // User-facing strings for the Messages tab, card badges and the attention chip: one place for the
 // future i18n seam (docs/specs/2026-10-25-conduit-mcp-server.md §10).
 
+import type {
+  AgentCli,
+  ProjectEntryState,
+  ProjectScope,
+  UserInstallState,
+} from '../src/conduit-mcp/install-types';
 import type { ToolName } from '../src/conduit-mcp/tool-switches';
 import type {
   McpAttentionReason,
@@ -19,10 +25,40 @@ const UNAVAILABLE_CAUSE: Record<McpUnavailableReason, string> = {
   'messaging-off': 'messaging is turned off',
   'endpoint-down': 'the message server isn’t running',
   'launch-io': 'its launch files couldn’t be written',
-  'cursor-not-connected': 'Connect Cursor in Settings',
+  'cursor-not-connected': 'Install Conduit for Cursor in Settings → MCP',
 };
 
 const SETTINGS_TOGGLE = 'Let agents message each other and you';
+
+// Product names stay untranslated (spec 2026-10-27-conduit-mcp-install §10).
+const CLI_NAME: Record<AgentCli, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  cursor: 'Cursor',
+  opencode: 'OpenCode',
+};
+// What the user types; the restart hint names it.
+const CLI_COMMAND: Record<AgentCli, string> = {
+  claude: 'claude',
+  codex: 'codex',
+  cursor: 'agent',
+  opencode: 'opencode',
+};
+
+const INSTALL_ERROR_TEXT: Readonly<Record<string, string>> = {
+  EJSON: 'it isn’t valid JSON',
+  EJSONC: 'it has comments Conduit can’t keep',
+  ETOML: 'it isn’t valid TOML',
+  EUNEDITABLE: 'the server is defined in a form Conduit can’t edit',
+  EGUARD: 'the edit didn’t check out, so nothing was written',
+  EBUSY: 'the file changed while Conduit was writing it',
+  ESTATE: 'it changed since it was last read',
+  EPROJECT: 'that folder isn’t open in Conduit',
+  EACCES: 'permission denied',
+  EPERM: 'permission denied',
+  ENOSPC: 'the disk is full',
+};
+const installErrorText = (code: string): string => INSTALL_ERROR_TEXT[code] ?? code;
 
 export const MCP_STR = {
   tab: 'Messages',
@@ -159,7 +195,7 @@ export const MCP_STR = {
   attachmentMissing: 'The attachment couldn’t be read.',
   noSubject: '(no subject)',
   threadGone: 'This thread is no longer available.',
-  settingsTitle: 'Agent messaging',
+  settingsTitle: 'Messaging',
   settingsToggle: SETTINGS_TOGGLE,
   settingsDesc:
     'Agents in your sessions can message each other and you through Conduit. Turning it off stops new launches from connecting.',
@@ -204,6 +240,94 @@ export const MCP_STR = {
     announce: (tool: string, value: string, label: string) =>
       `${tool} set to ${value} for ${label}`,
     openedBy: (handle: string) => `Opened by ${handle}`,
+  },
+  // Settings → MCP, the card indicator, the setup banner and the Messages empty state
+  // (spec 2026-10-27-conduit-mcp-install §2.3–§2.6, §8).
+  install: {
+    tab: 'MCP',
+    clisTitle: 'Agent CLIs',
+    toolsTitle: 'Tools',
+    suggestTitle: 'Suggestions',
+    clisDesc:
+      'Adds Conduit to each CLI’s own MCP config, so agents you start in any Conduit terminal can message each other and you. Outside Conduit the server lists no tools. Uninstall here before removing Conduit.',
+    messagingNotices:
+      'When a message arrives for an idle agent, Conduit types a short notice into its session. Pause notices for one session from its menu.',
+    suggestToggle: 'Suggest setup when an agent CLI can’t connect',
+    suggestDesc:
+      'Shows a banner in a terminal where you start an agent CLI that isn’t set up for Conduit.',
+    masterOffHint: 'Messaging is off; installed CLIs get no tools.',
+    cliName: CLI_NAME,
+    cliCommand: CLI_COMMAND,
+    state: {
+      'not-installed': 'Not installed',
+      installed: 'Installed',
+      'other-conduit': 'Installed by another Conduit',
+      conflict: 'Another “conduit” server',
+      error: 'Configuration error',
+      'not-found': 'Not found',
+      checking: 'Checking…',
+      pending: 'Working…',
+    } satisfies Record<UserInstallState | 'checking' | 'pending', string>,
+    install: 'Install',
+    uninstall: 'Uninstall',
+    useThis: 'Use this Conduit',
+    replace: 'Replace…',
+    checkAgain: 'Check again',
+    tryAgain: 'Try again',
+    remove: 'Remove',
+    installProject: 'Install for this project',
+    installAria: (cli: AgentCli) => `Install Conduit for ${CLI_NAME[cli]}`,
+    uninstallAria: (cli: AgentCli) => `Uninstall Conduit from ${CLI_NAME[cli]}`,
+    useThisAria: (cli: AgentCli) => `Use this Conduit for ${CLI_NAME[cli]}`,
+    replaceAria: (cli: AgentCli) => `Replace the “conduit” server for ${CLI_NAME[cli]}`,
+    checkAgainAria: (cli: AgentCli) => `Check ${CLI_NAME[cli]} again`,
+    tryAgainAria: (cli: AgentCli) => `Try again for ${CLI_NAME[cli]}`,
+    removeAria: (cli: AgentCli, scope: ProjectScope) =>
+      `Remove the ${scope} Conduit entry for ${CLI_NAME[cli]}`,
+    installProjectAria: (cli: AgentCli) => `Install Conduit for ${CLI_NAME[cli]} in this project`,
+    actionFailed: (path: string, code: string) =>
+      path
+        ? `Couldn’t update ${path}: ${installErrorText(code)}`
+        : `Couldn’t update: ${installErrorText(code)}`,
+    errorDetail: installErrorText,
+    shadowed: (scope: ProjectScope) => `Overridden in this project by its ${scope} entry`,
+    codexTrustNote: 'Codex reads a project’s config only when you trust the project.',
+    cursorNote: 'Cursor may ask you to allow each Conduit tool the first time it runs.',
+    projectTitle: 'This project',
+    projectNone: 'No Conduit entries in this project.',
+    projectWarn: (file: string) =>
+      `Adds ${file} to this project. It contains paths on this computer; don’t commit it.`,
+    projectScope: { project: 'Project', local: 'Local' } satisfies Record<ProjectScope, string>,
+    projectState: {
+      ours: 'Installed',
+      'other-conduit': 'Installed by another Conduit',
+      conflict: 'Another “conduit” server',
+      error: 'Configuration error',
+    } satisfies Record<ProjectEntryState, string>,
+    replaceTitle: 'Replace the “conduit” server?',
+    replaceConfirm: 'Replace',
+    replaceBody: (path: string, backup: string) =>
+      `${path} already has a “conduit” server that isn’t Conduit. Replacing it backs the file up first, to ${backup}.`,
+    connectedTip: (handle: string) => `Connected to Conduit as ${handle}`,
+    notConnectedTip: (cli: AgentCli) =>
+      `Not connected: install Conduit for ${CLI_NAME[cli]} in Settings → MCP`,
+    notConnectedInstalledTip: (cli: AgentCli) =>
+      `${CLI_NAME[cli]} didn’t connect to Conduit. Restart it in this terminal.`,
+    bannerBody: (cli: AgentCli) =>
+      `${CLI_NAME[cli]} isn’t connected to Conduit. Install Conduit for ${CLI_NAME[cli]} so agents you start in any terminal can message each other and you.`,
+    bannerInstall: (cli: AgentCli) => `Install for ${CLI_NAME[cli]}`,
+    bannerInstalling: 'Installing…',
+    bannerDismiss: 'Don’t suggest again',
+    bannerClose: 'Close Conduit setup suggestion',
+    bannerInstalled: (cli: AgentCli) =>
+      `Installed. Restart ${CLI_COMMAND[cli]} in this terminal to connect.`,
+    bannerOpenSettings: 'Open MCP settings',
+    bannerAnnounce: (cli: AgentCli) => `Conduit setup suggestion for ${CLI_NAME[cli]}`,
+    bannerRegion: 'Conduit setup',
+    setupCommand: 'Set up Conduit MCP…',
+    setupCopy:
+      'Agents in your sessions can message each other and you. Install Conduit for your agent CLIs so ones started in any terminal can join.',
+    setupButton: 'Set up agent CLIs',
   },
   cursorState: {
     connected: 'Connected',

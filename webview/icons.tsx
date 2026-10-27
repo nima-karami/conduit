@@ -473,6 +473,15 @@ export const IconMail = glyph(
     <path d="M2.5 4.5L8 8.8l5.5-4.3" />
   </>,
 );
+// Lucide's plug/unplug redrawn on the 16 grid (×⅔) so the shared .icon stroke weight applies.
+export const IconPlug = glyph(
+  'plug',
+  <path d="M8 14.7v-3.4M10 5.3v-4M6 5.3v-4M11.3 5.3a.7.7 0 0 1 .7.7v2.7a2.7 2.7 0 0 1-2.7 2.6H6.7A2.7 2.7 0 0 1 4 8.7V6a.7.7 0 0 1 .7-.7z" />,
+);
+export const IconUnplug = glyph(
+  'unplug',
+  <path d="M12.7 3.3l2-2M1.3 14.7l2-2M4.2 13.5a1.6 1.6 0 0 0 2.3 0L8 12 4 8 2.5 9.5a1.6 1.6 0 0 0 0 2.3zM5 9l1.7-1.7M7 11l1.7-1.7M8 4l4 4 1.5-1.5a1.6 1.6 0 0 0 0-2.3l-1.7-1.7a1.6 1.6 0 0 0-2.3 0z" />,
+);
 export const IconPause = glyph('pause', <path d="M6 4v8M10 4v8" />);
 
 // PowerShell-flavoured terminal — NOT the official logo.

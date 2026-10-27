@@ -9,6 +9,9 @@ export const CLI_BINARIES: Readonly<Record<AgentCli, readonly string[]>> = {
   opencode: ['opencode'],
 };
 
+/** A user-scope file's backup sits next to it with this suffix; the Replace dialog names it. */
+export const BACKUP_SUFFIX = '.conduit-backup';
+
 export type UserInstallState =
   | 'not-found'
   | 'not-installed'

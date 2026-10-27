@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import * as path from 'node:path';
-import type { AgentCli, ProjectScope } from '../src/conduit-mcp/install-types';
+import { type AgentCli, BACKUP_SUFFIX, type ProjectScope } from '../src/conduit-mcp/install-types';
 import type { JsonObject } from '../src/conduit-mcp/json-config';
 import { folderKey } from '../src/folder-key';
 import type { HostPlatform } from '../src/lsp-binary';
@@ -57,7 +57,7 @@ export function userTarget(cli: AgentCli, t: TargetEnv): ConfigTarget {
     path: file,
     format,
     keys,
-    backupPath: `${file}.conduit-backup`,
+    backupPath: `${file}${BACKUP_SUFFIX}`,
     mtimeGuard: cli === 'claude',
   });
   switch (cli) {
@@ -96,7 +96,7 @@ export function projectTarget(cli: AgentCli, root: string, t: TargetEnv): Config
       t.userDataDir,
       'mcp-install-backups',
       bucket,
-      `${rel.join('__')}.conduit-backup`,
+      `${rel.join('__')}${BACKUP_SUFFIX}`,
     ),
     mtimeGuard: false,
   };
