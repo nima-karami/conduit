@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.49.0] — 2026-10-27
+
 ### Added
 - **Agents can open sessions, terminals and files — when you let them.** Three new Conduit
   tools: `open_session` starts a session of one of your agents in a folder, `open_terminal` runs
