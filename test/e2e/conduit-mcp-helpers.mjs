@@ -83,8 +83,12 @@ export function records(sessionId, kind) {
 }
 
 /** Open a fake-agent session in `path` and wait for its MCP handshake to finish. */
-export async function openFake(page, path) {
-  const sessionId = await openSession(page, { path, agentId: FAKE_AGENT_ID });
+export async function openFake(page, path, { projectId } = {}) {
+  const sessionId = await openSession(page, {
+    path,
+    agentId: FAKE_AGENT_ID,
+    ...(projectId !== undefined ? { projectId } : {}),
+  });
   const ok = await until(
     () => records(sessionId, 'READY').some((r) => r.tools.includes('list_sessions')),
     30_000,
@@ -167,3 +171,50 @@ export function setMessaging(page, on) {
     on,
   );
 }
+
+/** The session's current tool list: its last re-list after a list_changed, else its first. */
+export function toolsSeen(sessionId) {
+  const relisted = records(sessionId, 'TOOLS');
+  if (relisted.length > 0) return relisted[relisted.length - 1].tools;
+  return records(sessionId, 'READY')[0]?.tools ?? [];
+}
+
+const SEG = { On: 'on', Off: 'off', Inherit: 'inherit' };
+
+/**
+ * Set one tool's override through the session's MCP tools dialog (card menu → MCP tools…), and
+ * wait for the host to persist it: the dialog only reverts on a refusal, so the click alone
+ * proves nothing.
+ * @param {'On' | 'Off' | 'Inherit'} value
+ */
+export async function enableToolViaDialog(page, sessionId, tool, value) {
+  await tapBridge(page);
+  await page.locator(`.session[data-sessionid="${sessionId}"]`).click({ button: 'right' });
+  await page.locator('.ctxmenu__item', { hasText: 'MCP tools…' }).click();
+  const dialog = page.locator('.mcptools[role="dialog"]');
+  await dialog.waitFor({ timeout: 5_000 });
+  await dialog
+    .locator(`[role="radiogroup"][aria-label="${tool}"] [data-seg="${SEG[value]}"]`)
+    .click();
+  const want = value === 'Inherit' ? null : value === 'On';
+  await page.waitForFunction(
+    ({ id, t, w }) => {
+      const s = (window.__sessions || []).find((x) => x.id === id);
+      return (s?.mcpToolOverrides?.[t] ?? null) === w;
+    },
+    { id: sessionId, t: tool, w: want },
+    { timeout: 10_000 },
+  );
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({ state: 'detached', timeout: 5_000 });
+}
+
+/** The sessions of the latest host `state` (needs `tapBridge`). */
+export const sessions = (page) => page.evaluate(() => window.__sessions || []);
+
+/** The id of the sidebar's selected session row (`sessionRowClass({selected: true})`). */
+export const activeSessionId = (page) =>
+  page.evaluate(
+    () =>
+      document.querySelector('.session.session--active')?.getAttribute('data-sessionid') ?? null,
+  );

@@ -15,6 +15,8 @@
 //   FAKE-MCP RESULT {"seq":n,"tool":"…","result":…} for `call <tool> <json>`
 //   FAKE-MCP PROMPT-ENTER {"seq":n}                 Enter while the permission prompt is up
 //   FAKE-MCP ARGV {"seq":n,"argv":[…]}              once at startup: the launch args, so a scenario sees what the host appended
+//   FAKE-MCP LIST_CHANGED {"seq":n}                 a notifications/tools/list_changed arrived; then it re-lists:
+//   FAKE-MCP TOOLS {"seq":n,"tools":[…]}            the re-listed tool names, as a real CLI refreshes its tool set
 //
 // Screen: the prompt `fake❯ ` sits on the cursor row and typed keys are echoed after it, so a
 // notice's echo is visible there. `permit` draws `Allow tool?` / `❯ 1. Yes` / `2. No` at the
@@ -105,6 +107,13 @@ async function connect() {
       try {
         msg = JSON.parse(line);
       } catch {
+        continue;
+      }
+      if (msg.method === 'notifications/tools/list_changed' && msg.id === undefined) {
+        record('LIST_CHANGED');
+        void rpc('tools/list', {}).then((list) =>
+          record('TOOLS', { tools: (list.result?.tools ?? []).map((t) => t.name) }),
+        );
         continue;
       }
       const w = waiting.get(msg.id);
