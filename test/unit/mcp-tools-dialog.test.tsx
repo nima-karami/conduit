@@ -65,6 +65,10 @@ const group = (tool: string) =>
   document.body.querySelector<HTMLElement>(`[role="radiogroup"][aria-label="${tool}"]`);
 const radio = (tool: string, label: string) =>
   group(tool)?.querySelector<HTMLButtonElement>(`[role="radio"][aria-label="${label}"]`) ?? null;
+const key = (k: string) =>
+  act(async () => {
+    document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+  });
 const checked = (tool: string) =>
   group(tool)?.querySelector('[role="radio"][aria-checked="true"]')?.getAttribute('aria-label');
 
@@ -115,6 +119,67 @@ describe('McpToolsDialog', () => {
       for (const b of group(t)?.querySelectorAll('button') ?? []) expect(b.disabled).toBe(true);
     }
     expect(document.body.textContent).toContain(MCP_STR.tools.masterOffHint);
+  });
+
+  // Spec §9: arrows move, Space selects. Arrow-select would persist every value walked through
+  // (Inherit → On → Off), briefly opening open_terminal.
+  it('arrows move focus without selecting; Space and Enter select the focused option', async () => {
+    const p = props();
+    await mount(p);
+    radio('open_terminal', 'Inherit (Off)')?.focus();
+    await key('ArrowRight');
+    expect(document.activeElement).toBe(radio('open_terminal', 'On'));
+    expect(p.onChange).not.toHaveBeenCalled();
+    expect(checked('open_terminal')).toBe('Inherit (Off)');
+    expect(radio('open_terminal', 'On')?.tabIndex).toBe(0);
+    expect(radio('open_terminal', 'Inherit (Off)')?.tabIndex).toBe(-1);
+    await key('ArrowRight');
+    await key('End');
+    expect(document.activeElement).toBe(radio('open_terminal', 'Off'));
+    expect(p.onChange).not.toHaveBeenCalled();
+    await key(' ');
+    expect(p.onChange).toHaveBeenCalledTimes(1);
+    expect(p.onChange).toHaveBeenCalledWith('open_terminal', false);
+    expect(checked('open_terminal')).toBe('Off');
+    await key('Home');
+    await key('Enter');
+    expect(p.onChange).toHaveBeenCalledTimes(2);
+    expect(p.onChange).toHaveBeenLastCalledWith('open_terminal', 'inherit');
+  });
+
+  it('focus leaving a group puts its tab stop back on the selected option', async () => {
+    await mount(props());
+    radio('open_terminal', 'Inherit (Off)')?.focus();
+    await key('ArrowRight');
+    await act(async () => radio('open_file', 'Inherit (Off)')?.focus());
+    expect(radio('open_terminal', 'Inherit (Off)')?.tabIndex).toBe(0);
+    expect(radio('open_terminal', 'On')?.tabIndex).toBe(-1);
+  });
+
+  it('only the newest pick per tool can revert', async () => {
+    const pending: ((ok: boolean) => void)[] = [];
+    const p = props({ onChange: vi.fn(() => new Promise<boolean>((r) => pending.push(r))) });
+    await mount(p);
+    await act(async () => radio('open_file', 'On')?.click());
+    await act(async () => radio('open_file', 'Off')?.click());
+    await act(async () => pending[0](false));
+    expect(checked('open_file')).toBe('Off');
+    expect(document.body.textContent).not.toContain(MCP_STR.tools.saveFailed);
+    await act(async () => pending[1](true));
+    expect(checked('open_file')).toBe('Off');
+  });
+
+  it('success then failure on the same tool reverts to the confirmed value, not props', async () => {
+    const pending: ((ok: boolean) => void)[] = [];
+    const p = props({ onChange: vi.fn(() => new Promise<boolean>((r) => pending.push(r))) });
+    await mount(p);
+    await act(async () => radio('open_file', 'On')?.click());
+    await act(async () => pending[0](true));
+    await act(async () => radio('open_file', 'Off')?.click());
+    await act(async () => pending[1](false));
+    // Props still say Inherit: the state broadcast carrying On hasn't re-rendered the dialog.
+    expect(checked('open_file')).toBe('On');
+    expect(document.body.textContent).toContain(MCP_STR.tools.saveFailed);
   });
 
   it('Esc calls onClose', async () => {

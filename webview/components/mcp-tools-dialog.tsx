@@ -51,7 +51,6 @@ export function McpToolsDialog({
   onClose,
 }: McpToolsDialogProps) {
   const titleId = useId();
-  const idBase = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   useFocusTrap(rootRef);
 
@@ -59,10 +58,12 @@ export function McpToolsDialog({
   const [shown, setShown] = useState(session.mcpToolOverrides);
   const [failed, setFailed] = useState<ReadonlySet<ToolName>>(new Set());
   const [changed, setChanged] = useState(false);
-  // A revert reads the persisted value from the latest props, and only the newest pick per tool
-  // may revert: an older pick resolving late must not undo a newer one.
+  // A revert goes to the last value the host confirmed in this dialog, else the persisted props:
+  // the broadcast carrying a confirmed pick can arrive after a later pick has already failed.
+  // Only the newest pick per tool may revert, so an older pick resolving late can't undo it.
   const persistedRef = useRef(session.mcpToolOverrides);
   persistedRef.current = session.mcpToolOverrides;
+  const confirmedRef = useRef(new Map<ToolName, ToolOverrideValue>());
   const seqRef = useRef(new Map<ToolName, number>());
 
   useEffect(() => {
@@ -79,9 +80,11 @@ export function McpToolsDialog({
     setShown((o) => withOverride(o, tool, fromSeg(next)));
     setFailed((f) => withoutTool(f, tool));
     const ok = await onChange(tool, fromSeg(next));
+    if (ok) confirmedRef.current.set(tool, fromSeg(next));
     if (seqRef.current.get(tool) !== seq) return;
     if (!ok) {
-      setShown((o) => withOverride(o, tool, persistedRef.current?.[tool] ?? 'inherit'));
+      const revertTo = confirmedRef.current.get(tool) ?? persistedRef.current?.[tool] ?? 'inherit';
+      setShown((o) => withOverride(o, tool, revertTo));
       setFailed((f) => new Set(f).add(tool));
       return;
     }
@@ -114,15 +117,14 @@ export function McpToolsDialog({
             {g.tools.map((tool) => (
               <div key={tool} className="mcptools__row">
                 <div className="mcptools__label">
-                  <code className="mcptools__name" id={`${idBase}-${tool}`}>
-                    {tool}
-                  </code>
+                  <code className="mcptools__name">{tool}</code>
                   <span className="mcptools__desc">{MCP_STR.tools.description[tool]}</span>
                 </div>
                 <SegmentedRadios<Seg>
                   label={tool}
                   value={toSeg(shown?.[tool])}
                   disabled={!masterOn}
+                  selectOnArrow={false}
                   options={[
                     { id: 'inherit', label: MCP_STR.tools.inherit(global[tool]) },
                     { id: 'on', label: MCP_STR.tools.on },
