@@ -183,6 +183,7 @@ import { restoreScrollback, spawnPrelude } from '../src/scrollback-persistence';
 import { ScrollbackStore } from '../src/scrollback-store';
 import { isIndexScope, searchRootAllowed } from '../src/search-scope';
 import { SessionActivity } from '../src/session-activity';
+import { effectiveDef } from '../src/session-command';
 import { presentRoots, sessionContains } from '../src/session-folders';
 import { SessionManager } from '../src/session-manager';
 import { buildStartupModel } from '../src/session-migration';
@@ -1896,6 +1897,12 @@ app.whenReady().then(() => {
     writer: ptyWriter,
     activity,
     messagingOn: () => settings.conduitMcp,
+    mcpTools: () => settings.mcpTools,
+    defOf: (id) => {
+      const s = mgr.get(id);
+      return s ? effectiveDef(s, registry) : undefined;
+    },
+    agentIds: () => registry.list().map((d) => d.id),
     projectName: (projectId) =>
       projectId ? (projectStore.list().find((p) => p.id === projectId)?.name ?? null) : null,
     broadcast,
@@ -4351,6 +4358,7 @@ app.whenReady().then(() => {
         case 'mcp:pause':
         case 'mcp:attachment:get':
         case 'mcp:retry':
+        case 'mcp:setToolOverride':
           await mcpHost.handleRenderer(m, replyHere);
           break;
         case 'term:input':

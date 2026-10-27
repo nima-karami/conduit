@@ -13,6 +13,12 @@ import { createSessionScreens } from '../../electron/session-screens';
 import { ECHO_POLL_MS } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
 import type { StoreIo } from '../../src/conduit-mcp/store';
+import {
+  DEFAULT_MCP_TOOLS,
+  type McpToolSwitches,
+  TOOL_NAMES,
+  withOverride,
+} from '../../src/conduit-mcp/tool-switches';
 import { toolError } from '../../src/conduit-mcp/types';
 import type { HostToWebview } from '../../src/protocol';
 import { createPtyWriter } from '../../src/pty-writer';
@@ -32,6 +38,7 @@ const SHELL: AgentDefinition = { ...FAKE, id: 'pwsh', command: 'pwsh' };
 const CODEX: AgentDefinition = { ...FAKE, id: 'codex', command: '/usr/bin/codex' };
 const CURSOR: AgentDefinition = { ...FAKE, id: 'cursor', command: '/usr/bin/agent' };
 const CLAUDE: AgentDefinition = { ...FAKE, id: 'claude', command: '/usr/bin/claude' };
+const DEFS = [FAKE, SHELL, CODEX, CURSOR, CLAUDE];
 const spec = (command = '/usr/bin/node'): SpawnSpec => ({
   command,
   args: ['fake.mjs'],
@@ -125,6 +132,7 @@ function harness(
     tickMs?: number;
     log?: ConduitMcpHostDeps['log'];
     createEndpoint?: ConduitMcpHostDeps['createEndpoint'];
+    mcpTools?: () => McpToolSwitches;
   } = {},
 ): Harness {
   const dir = opts.dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'cmcp-host-'));
@@ -180,7 +188,18 @@ function harness(
         Object.assign(s, patch);
         return true;
       },
+      setMcpToolOverride: (id, tool, value) => {
+        const s = sessions.get(id);
+        if (!s) return false;
+        const next = withOverride(s.mcpToolOverrides, tool, value);
+        if (next) s.mcpToolOverrides = next;
+        else delete s.mcpToolOverrides;
+        return true;
+      },
     },
+    mcpTools: opts.mcpTools ?? (() => DEFAULT_MCP_TOOLS),
+    defOf: (id) => DEFS.find((d) => d.id === sessions.get(id)?.agentId),
+    agentIds: () => DEFS.map((d) => d.id),
     pty: {
       isAlive: (id) => alive.has(id),
       generation: (id) => gens.get(id),
@@ -237,13 +256,15 @@ async function client(ep: string, token: string | null) {
   sock.setEncoding('utf8');
   let buf = '';
   const waiting = new Map<number, (v: Record<string, unknown>) => void>();
+  const notifications: string[] = [];
   sock.on('data', (d: string) => {
     buf += d;
     let i = buf.indexOf('\n');
     while (i >= 0) {
       const msg = JSON.parse(buf.slice(0, i)) as Record<string, unknown>;
       buf = buf.slice(i + 1);
-      waiting.get(msg.id as number)?.(msg);
+      if (msg.id === undefined && typeof msg.method === 'string') notifications.push(msg.method);
+      else waiting.get(msg.id as number)?.(msg);
       i = buf.indexOf('\n');
     }
   });
@@ -262,7 +283,11 @@ async function client(ep: string, token: string | null) {
     };
     return { isError: r.result.isError === true, body: JSON.parse(r.result.content[0].text) };
   };
-  return { request, call, sock };
+  const listed = async () => {
+    const r = (await request('tools/list')) as { result: { tools: Array<{ name: string }> } };
+    return r.result.tools.map((t) => t.name);
+  };
+  return { request, call, sock, notifications, listed };
 }
 
 /** A client that sends only the hello: the test drives every request, initialize included. */
@@ -275,6 +300,7 @@ async function helloOnly(ep: string, token: string | null) {
   sock.setEncoding('utf8');
   const closed = new Promise<void>((r) => sock.on('close', () => r()));
   const waiting = new Map<number, (v: Record<string, unknown>) => void>();
+  const notifications: string[] = [];
   let buf = '';
   sock.on('data', (d: string) => {
     buf += d;
@@ -282,7 +308,8 @@ async function helloOnly(ep: string, token: string | null) {
     while (i >= 0) {
       const msg = JSON.parse(buf.slice(0, i)) as Record<string, unknown>;
       buf = buf.slice(i + 1);
-      waiting.get(msg.id as number)?.(msg);
+      if (msg.id === undefined && typeof msg.method === 'string') notifications.push(msg.method);
+      else waiting.get(msg.id as number)?.(msg);
       i = buf.indexOf('\n');
     }
   });
@@ -292,7 +319,7 @@ async function helloOnly(ep: string, token: string | null) {
       waiting.set(id, resolve);
       sock.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
     });
-  return { request, closed };
+  return { request, closed, notifications };
 }
 
 /** Launch a fake session through prepareLaunch + onSpawn, returning its token. */
@@ -1037,36 +1064,36 @@ describe('createConduitMcpHost — notices', () => {
   });
 });
 
-describe('createConduitMcpHost — store', () => {
-  function failingIo(): StoreIo & { fail: boolean; loads: number } {
-    const io = {
-      fail: true,
-      loads: 0,
-      log: '',
-      async readLog() {
-        io.loads += 1;
-        if (io.fail) throw new Error('disk gone');
-        return io.log || undefined;
-      },
-      async appendLog(line: string) {
-        io.log += line;
-      },
-      async rewriteLog(text: string) {
-        io.log = text;
-      },
-      async writeBlob() {},
-      async readBlob() {
-        return undefined;
-      },
-      async deleteBlob() {},
-      async listBlobs() {
-        return [];
-      },
-      async sweepPartialBlobs() {},
-    };
-    return io;
-  }
+function failingIo(): StoreIo & { fail: boolean; loads: number } {
+  const io = {
+    fail: true,
+    loads: 0,
+    log: '',
+    async readLog() {
+      io.loads += 1;
+      if (io.fail) throw new Error('disk gone');
+      return io.log || undefined;
+    },
+    async appendLog(line: string) {
+      io.log += line;
+    },
+    async rewriteLog(text: string) {
+      io.log = text;
+    },
+    async writeBlob() {},
+    async readBlob() {
+      return undefined;
+    },
+    async deleteBlob() {},
+    async listBlobs() {
+      return [];
+    },
+    async sweepPartialBlobs() {},
+  };
+  return io;
+}
 
+describe('createConduitMcpHost — store', () => {
   it('store load failure → storeError and store_unavailable; mcp:retry reloads; retry while available does not', async () => {
     const io = failingIo();
     const h = harness({ storeIo: io });
@@ -1205,5 +1232,159 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
       new Promise((r) => setTimeout(r, 50)),
     ]);
     expect(done).toBe(true);
+  });
+});
+
+describe('control tools: gate, effective tool list, list_changed, overrides (spec 2026-10-27 §2, §3.4)', () => {
+  const MESSAGING = ['list_sessions', 'send_message', 'read_inbox', 'read_attachment'];
+  const overrideOf = (h: Harness, id: string, o: Session['mcpToolOverrides']) => {
+    const s = h.sessions.get(id);
+    if (!s) throw new Error(`no session ${id}`);
+    s.mcpToolOverrides = o;
+  };
+  const settleNotes = () => new Promise((r) => setTimeout(r, 30));
+
+  it('master off → messaging_off for open_session and send_message; tools/list lists all 7', async () => {
+    // A launch with the master off is unwired, so this is a CLI started before it was turned off.
+    let on = true;
+    const h = harness({ messagingOn: () => on });
+    await h.host.start();
+    const a = launch(h, 's1');
+    const c = await client(h.ep, a.token);
+    on = false;
+    expect(await c.listed()).toEqual([...TOOL_NAMES]);
+    expect(
+      (await c.call('open_session', { path: '/w', agent: 'e2e-fake-mcp' })).body.error.code,
+    ).toBe('messaging_off');
+    expect((await c.call('send_message', { to: ['x'], body: 'b' })).body.error.code).toBe(
+      'messaging_off',
+    );
+  });
+
+  it('master on, control default → open_session tool_disabled; list excludes control tools', async () => {
+    const h = harness();
+    await h.host.start();
+    const a = launch(h, 's1');
+    const c = await client(h.ep, a.token);
+    expect(await c.listed()).toEqual(MESSAGING);
+    const r = await c.call('open_session', { path: '/w', agent: 'e2e-fake-mcp' });
+    expect(r.body.error.code).toBe('tool_disabled');
+  });
+
+  it('tool_disabled precedes store_unavailable', async () => {
+    const h = harness({ storeIo: failingIo() });
+    await h.host.start();
+    const a = launch(h, 's1');
+    const c = await client(h.ep, a.token);
+    overrideOf(h, 's1', { send_message: false });
+    expect((await c.call('send_message', { to: ['x'], body: 'b' })).body.error.code).toBe(
+      'tool_disabled',
+    );
+    overrideOf(h, 's1', { send_message: true });
+    expect((await c.call('send_message', { to: ['x'], body: 'b' })).body.error.code).toBe(
+      'store_unavailable',
+    );
+  });
+
+  it('override true for one session lists open_session only on that connection', async () => {
+    const h = harness();
+    await h.host.start();
+    const a = launch(h, 's1');
+    const b = launch(h, 's2');
+    overrideOf(h, 's1', { open_session: true });
+    const ca = await client(h.ep, a.token);
+    const cb = await client(h.ep, b.token);
+    expect(await ca.listed()).toEqual([...MESSAGING, 'open_session']);
+    expect(await cb.listed()).toEqual(MESSAGING);
+  });
+
+  it('override change sends list_changed once to an initialized connection, not an uninitialized one, not again when unchanged', async () => {
+    const h = harness();
+    await h.host.start();
+    const a = launch(h, 's1');
+    const c = await client(h.ep, a.token);
+    await c.listed();
+    const raw = await helloOnly(h.ep, a.token);
+    await raw.request(1, 'tools/list');
+    const set = async (value: boolean | 'inherit') => {
+      const replies: HostToWebview[] = [];
+      await h.host.handleRenderer(
+        { type: 'mcp:setToolOverride', requestId: 1, sessionId: 's1', tool: 'open_session', value },
+        (m) => replies.push(m),
+      );
+      return replies;
+    };
+    await set(true);
+    await settleNotes();
+    expect(c.notifications).toEqual(['notifications/tools/list_changed']);
+    await set(true);
+    await settleNotes();
+    expect(c.notifications).toHaveLength(1);
+    await set('inherit');
+    await settleNotes();
+    expect(c.notifications).toHaveLength(2);
+    expect(raw.notifications).toEqual([]);
+  });
+
+  it('settings change via refresh() sends list_changed to affected connections only', async () => {
+    let tools: McpToolSwitches = { ...DEFAULT_MCP_TOOLS };
+    const h = harness({ mcpTools: () => tools });
+    await h.host.start();
+    const a = launch(h, 's1');
+    const b = launch(h, 's2');
+    overrideOf(h, 's2', { open_file: false });
+    const ca = await client(h.ep, a.token);
+    const cb = await client(h.ep, b.token);
+    await ca.listed();
+    await cb.listed();
+    tools = { ...tools, open_file: true };
+    h.host.refresh();
+    await settleNotes();
+    expect(ca.notifications).toEqual(['notifications/tools/list_changed']);
+    expect(cb.notifications).toEqual([]);
+    expect(await ca.listed()).toEqual([...MESSAGING, 'open_file']);
+  });
+
+  it('mcp:setToolOverride replies unknown-session / unknown-tool / invalid-value / ok', async () => {
+    const h = harness();
+    await h.host.start();
+    h.sessions.set('s1', session('s1'));
+    const ask = async (m: { sessionId: string; tool: string; value: unknown }) => {
+      const replies: HostToWebview[] = [];
+      await h.host.handleRenderer(
+        {
+          type: 'mcp:setToolOverride',
+          requestId: 9,
+          sessionId: m.sessionId,
+          tool: m.tool,
+          value: m.value as boolean,
+        },
+        (r) => replies.push(r),
+      );
+      return replies;
+    };
+    expect(await ask({ sessionId: 'nope', tool: 'open_file', value: true })).toEqual([
+      { type: 'mcp:toolOverrideResult', requestId: 9, ok: false, error: 'unknown-session' },
+    ]);
+    expect(await ask({ sessionId: 's1', tool: 'rm_rf', value: true })).toEqual([
+      { type: 'mcp:toolOverrideResult', requestId: 9, ok: false, error: 'unknown-tool' },
+    ]);
+    expect(await ask({ sessionId: 's1', tool: 'open_file', value: 'yes' })).toEqual([
+      { type: 'mcp:toolOverrideResult', requestId: 9, ok: false, error: 'invalid-value' },
+    ]);
+    expect(h.sessions.get('s1')?.mcpToolOverrides).toBeUndefined();
+    expect(await ask({ sessionId: 's1', tool: 'open_file', value: true })).toEqual([
+      { type: 'mcp:toolOverrideResult', requestId: 9, ok: true },
+    ]);
+    expect(h.sessions.get('s1')?.mcpToolOverrides).toEqual({ open_file: true });
+  });
+
+  it('uiState.switchable lists sessions whose defOf matches an adapter, before any launch', () => {
+    const h = harness();
+    h.sessions.set('fake', session('fake'));
+    h.sessions.set('shell', session('shell', { agentId: 'pwsh' }));
+    h.sessions.set('gone', session('gone', { agentId: 'removed-profile' }));
+    h.sessions.set('claude', session('claude', { agentId: 'claude' }));
+    expect(h.host.uiState().switchable).toEqual(['fake', 'claude']);
   });
 });

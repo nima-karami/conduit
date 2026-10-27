@@ -563,6 +563,13 @@ export type HostToWebview =
   | { type: 'mcp:state'; state: McpUiState }
   | { type: 'mcp:thread'; requestId: number; thread: McpThreadView | null }
   | { type: 'mcp:sent'; requestId: number; result: McpSendResult }
+  | { type: 'mcp:toolOverrideResult'; requestId: number; ok: true }
+  | {
+      type: 'mcp:toolOverrideResult';
+      requestId: number;
+      ok: false;
+      error: 'unknown-session' | 'unknown-tool' | 'invalid-value';
+    }
   | {
       type: 'mcp:attachment';
       requestId: number;
@@ -1048,6 +1055,15 @@ export type WebviewToHost =
   | { type: 'mcp:pause'; sessionId: string; paused: boolean }
   | { type: 'mcp:attachment:get'; requestId: number; messageId: string; attachmentId: string }
   | { type: 'mcp:retry' }
+  // Per-session tool override (spec 2026-10-27-conduit-mcp-control-tools §4); the host validates
+  // every field, so tool stays a string here.
+  | {
+      type: 'mcp:setToolOverride';
+      requestId: number;
+      sessionId: string;
+      tool: string;
+      value: boolean | 'inherit';
+    }
   // CONDUIT_E2E=1 ONLY: shift the host's schedule clock and re-evaluate, so the smoke scenario
   // proves interval repeats and the expiry windows in milliseconds instead of hours (§7).
   | { type: 'timer:test'; op: 'advance'; ms: number }

@@ -15,7 +15,7 @@ import {
   parseHandleCounters,
   serializeHandleCounters,
 } from '../src/conduit-mcp/handles';
-import { createMcpServerCore } from '../src/conduit-mcp/json-rpc';
+import { createMcpServerCore, TOOLS_LIST_CHANGED } from '../src/conduit-mcp/json-rpc';
 import {
   awaitEnterVerdict,
   ECHO_POLL_MS,
@@ -30,7 +30,16 @@ import { assignHandle, createSessionRegistry } from '../src/conduit-mcp/session-
 import { createMessageStore, type StoreIo } from '../src/conduit-mcp/store';
 import { createFsStoreIo } from '../src/conduit-mcp/store-fs';
 import { CONDUIT_INSTRUCTIONS, toolSchemas } from '../src/conduit-mcp/tool-schemas';
-import { MESSAGING_TOOL_NAMES } from '../src/conduit-mcp/tool-switches';
+import {
+  effectiveTool,
+  effectiveTools,
+  gateToolCall,
+  isMessagingTool,
+  isToolName,
+  type McpToolSwitches,
+  TOOL_NAMES,
+  type ToolName,
+} from '../src/conduit-mcp/tool-switches';
 import {
   type Caller,
   createToolHandlers,
@@ -81,7 +90,13 @@ export interface ConduitMcpHostDeps {
   homeDir: string;
   platform: HostPlatform;
   e2e: boolean;
-  mgr: Pick<SessionManager, 'get' | 'list' | 'setMcp'>;
+  mgr: Pick<SessionManager, 'get' | 'list' | 'setMcp' | 'setMcpToolOverride'>;
+  /** settings.mcpTools: the global per-tool switches. */
+  mcpTools(): McpToolSwitches;
+  /** effectiveDef(session, registry), bound in main. */
+  defOf(sessionId: string): AgentDefinition | undefined;
+  /** Registered agent ids, for the open_session schema enum. */
+  agentIds(): string[];
   pty: Pick<PtyHost, 'isAlive' | 'generation'>;
   writer: PtyWriter;
   activity: Pick<SessionActivity, 'statusOf' | 'lastOutputAt'>;
@@ -181,6 +196,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const conns = new Map<number, EndpointConnection>();
   /** Every connection whose hello token resolved, initialized or not: revoke closes them all. */
   const connSession = new Map<number, string>();
+  /** The tool-name key each connection last listed; list_changed fires only when it moves. */
+  const lastListed = new Map<number, string>();
   const launchDir = path.join(deps.dir, LAUNCH_DIR);
   const handlesFile = path.join(deps.dir, HANDLES_FILE);
 
@@ -488,16 +505,39 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   // ---- connections ------------------------------------------------------------------------
 
+  /**
+   * What a session's connection lists (spec 2026-10-27-conduit-mcp-control-tools §3.4): with the
+   * master off, everything, so the CLI's calls get messaging_off rather than an unknown tool.
+   */
+  const listedTools = (sessionId: string): readonly ToolName[] =>
+    deps.messagingOn()
+      ? effectiveTools(deps.mgr.get(sessionId)?.mcpToolOverrides, deps.mcpTools())
+      : TOOL_NAMES;
+
   const callTool = async (sessionId: string | null, name: string, args: unknown) => {
     const handle = sessionId ? handleOf(sessionId) : undefined;
     const result = await (async () => {
+      // The core refused names outside the catalog already; this only narrows the type.
+      if (!isToolName(name)) {
+        return {
+          ok: false as const,
+          error: toolError('invalid_argument', `unknown tool: ${name}`),
+        };
+      }
       if (!sessionId || !handle) {
         return {
           ok: false as const,
           error: toolError('not_in_session', 'this MCP connection is not a Conduit session'),
         };
       }
-      if (!store.available()) {
+      const refused = gateToolCall({
+        sessionId,
+        messagingOn: deps.messagingOn(),
+        enabled: effectiveTool(deps.mgr.get(sessionId)?.mcpToolOverrides, deps.mcpTools(), name),
+        tool: name,
+      });
+      if (refused) return { ok: false as const, error: refused };
+      if (isMessagingTool(name) && !store.available()) {
         return {
           ok: false as const,
           error: toolError('store_unavailable', storeError ?? 'message store unavailable'),
@@ -514,7 +554,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return toToolCallResult(result);
   };
 
-  const runTool = async (caller: Caller, name: string, args: unknown) => {
+  const runTool = async (caller: Caller, name: ToolName, args: unknown) => {
     switch (name) {
       case 'list_sessions':
         return tools.listSessions(caller);
@@ -544,10 +584,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const core = createMcpServerCore({
       serverInfo: { name: 'conduit', version: VERSION },
       instructions: CONDUIT_INSTRUCTIONS,
-      tools: () =>
-        current()
-          ? toolSchemas([]).filter((t) => MESSAGING_TOOL_NAMES.some((n) => n === t.name))
-          : [],
+      tools: () => {
+        const sessionId = current();
+        if (!sessionId) return [];
+        const names = listedTools(sessionId);
+        lastListed.set(conn.id, names.join(','));
+        return toolSchemas(deps.agentIds()).filter((t) => names.some((n) => n === t.name));
+      },
       call: (name, args) => callTool(current(), name, args),
     });
     conn.onLine((line) => {
@@ -586,9 +629,29 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       }
       conns.delete(conn.id);
       connSession.delete(conn.id);
+      lastListed.delete(conn.id);
       registry.disconnect(conn.id);
       scheduleBroadcast();
     });
+  };
+
+  /**
+   * Tells each initialized connection whose tool set changed to re-list. The key is the names
+   * only: an agent-enum change alone is ignored, since open_session validates agents live (A6).
+   */
+  const syncToolLists = () => {
+    for (const s of deps.mgr.list()) {
+      for (const connId of registry.connectionsOf(s.id)) {
+        const key = listedTools(s.id).join(',');
+        if (lastListed.get(connId) === key) continue;
+        conns.get(connId)?.send(TOOLS_LIST_CHANGED);
+        lastListed.set(connId, key);
+        deps.log.info('conduit-mcp', 'tools list_changed', {
+          sessionId: s.id,
+          handle: handleOf(s.id),
+        });
+      }
+    }
   };
 
   // ---- ui state ---------------------------------------------------------------------------
@@ -635,6 +698,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       attention: [...attention, ...youAttention(all, new Date(now()).toISOString())],
       youUnread: youPending.length,
       youUrgent: youPending.filter((m) => m.priority === 'urgent').length,
+      switchable: deps.mgr.list().flatMap((s) => {
+        const def = deps.defOf(s.id);
+        return def && adapterFor(def, { e2e: deps.e2e }) ? [s.id] : [];
+      }),
     };
   }
 
@@ -873,6 +940,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     refresh() {
+      syncToolLists();
       scheduleBroadcast();
     },
 
@@ -949,6 +1017,22 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         case 'mcp:allowMore': {
           const r = await store.allowMore(m.threadId);
           if (!r.ok) deps.log.warn('conduit-mcp', 'allowMore failed', { code: r.error.code });
+          return;
+        }
+        case 'mcp:setToolOverride': {
+          const refuse = (error: 'unknown-session' | 'unknown-tool' | 'invalid-value') =>
+            reply({ type: 'mcp:toolOverrideResult', requestId: m.requestId, ok: false, error });
+          if (!deps.mgr.get(m.sessionId)) return refuse('unknown-session');
+          if (!isToolName(m.tool)) return refuse('unknown-tool');
+          // The renderer is never load-bearing: the value is re-checked here.
+          const value: unknown = m.value;
+          if (value !== true && value !== false && value !== 'inherit') {
+            return refuse('invalid-value');
+          }
+          deps.mgr.setMcpToolOverride(m.sessionId, m.tool, value);
+          reply({ type: 'mcp:toolOverrideResult', requestId: m.requestId, ok: true });
+          syncToolLists();
+          scheduleBroadcast();
           return;
         }
         case 'mcp:pause':

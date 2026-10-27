@@ -635,6 +635,7 @@ function mockHost(msg: WebviewToHost) {
           attention: [],
           youUnread: 0,
           youUrgent: 0,
+          switchable: [],
         },
       });
     }, 20);

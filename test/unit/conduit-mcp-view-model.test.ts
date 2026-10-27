@@ -37,6 +37,7 @@ function state(o: Partial<McpUiState> = {}): McpUiState {
     attention: [],
     youUnread: 0,
     youUrgent: 0,
+    switchable: [],
     ...o,
   };
 }

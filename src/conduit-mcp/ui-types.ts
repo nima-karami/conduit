@@ -50,6 +50,8 @@ export interface McpUiState {
   attention: McpAttentionItem[];
   youUnread: number;
   youUrgent: number;
+  /** Session ids whose effective definition has an MCP adapter: they get the MCP tools… item (spec 2026-10-27-conduit-mcp-control-tools §4). */
+  switchable: string[];
 }
 
 export type McpSendResult = Result<SendMessageOutput>;
