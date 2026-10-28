@@ -1866,6 +1866,56 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
   });
 
+  /** The first row of a model started now: what the session's output tail seeds it with. */
+  async function seededRow(h: Harness, id: string) {
+    h.screens.start(id, 40, 24);
+    return (await h.screens.snapshot(id))?.lines[0];
+  }
+
+  it('S6 a shell keeps an output tail only while messaging is on', async () => {
+    for (const [on, row] of [
+      [true, 'before'],
+      [false, ''],
+    ] as const) {
+      const h = harness({ messagingOn: () => on });
+      await h.host.start();
+      shell(h, 'sh1');
+      h.host.onOutput('sh1', 'before');
+      expect(await seededRow(h, 'sh1')).toBe(row);
+    }
+  });
+
+  it('S6 a profile session keeps no tail: its model starts at spawn', async () => {
+    const h = harness();
+    await h.host.start();
+    const keepTail = vi.spyOn(h.screens, 'keepTail');
+    launch(h, 'c1', CLAUDE);
+    expect(keepTail).not.toHaveBeenCalled();
+    expect(h.screens.has('c1')).toBe(true);
+    shell(h, 'sh1');
+    expect(keepTail).toHaveBeenCalledWith('sh1', 40, 24);
+  });
+
+  it('S6 exit and delete drop the tail; a relaunch keeps only the new generation', async () => {
+    const h = harness();
+    await h.host.start();
+    shell(h, 'ex');
+    h.host.onOutput('ex', 'old');
+    h.host.onExit('ex');
+    expect(await seededRow(h, 'ex')).toBe('');
+
+    shell(h, 'del');
+    h.host.onOutput('del', 'old');
+    await h.host.onSessionDeleted('del');
+    expect(await seededRow(h, 'del')).toBe('');
+
+    shell(h, 're');
+    h.host.onOutput('re', 'old');
+    shell(h, 're');
+    h.host.onOutput('re', 'new');
+    expect(await seededRow(h, 're')).toBe('new');
+  });
+
   for (const [what, keys] of [
     ['Down+Enter in its trust dialog', '\x1b[B\r'],
     ['a bare Enter', '\r'],
