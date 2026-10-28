@@ -367,7 +367,10 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
         if (classOf(cli, loaded) !== 'other-conduit') return null;
         const { command, shim } = entryTargets(cli, loaded.entry);
         if (!isDeadPath(command) && !isDeadPath(shim)) return null;
-        const value = retargetEntry(cli, loaded.entry, deps.execPath, deps.shimPath);
+        const value = retargetEntry(cli, loaded.entry, {
+          ...(isDeadPath(command) ? { exe: deps.execPath } : {}),
+          ...(isDeadPath(shim) ? { shim: deps.shimPath } : {}),
+        });
         return value && { kind: 'retarget', value };
       };
       if (decide(user.loaded) === null) continue;

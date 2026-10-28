@@ -686,7 +686,8 @@ describe('repair (D2)', () => {
     const cursorBytes = fs.readFileSync(cursor, 'utf8');
     const rows = createMcpInstall(s.deps).repair();
     expect(rows).toEqual([{ cli: 'claude', path: s.file('claude') }]);
-    expect(json(claude).mcpServers.conduit).toEqual(conduitEntry('claude', execPath, shimPath));
+    // Only the dead part is replaced: the live exe stays.
+    expect(json(claude).mcpServers.conduit).toEqual(conduitEntry('claude', liveExe, shimPath));
     expect(fs.readFileSync(`${claude}.conduit-backup`, 'utf8')).toBe(
       JSON.stringify({ mcpServers: { conduit: dead } }),
     );
@@ -735,6 +736,49 @@ describe('repair (D2)', () => {
     });
     const want = conduitEntry('claude', execPath, shimPath) as { env: object };
     expect(json(claude).mcpServers.conduit).toEqual({ ...want, env: { ...want.env, FOO: '1' } });
+  });
+
+  it('SF-2 Repair of `node <dead shim>` retargets the shim and keeps the runner', () => {
+    const s = setup();
+    const ours = conduitEntry('claude', execPath, shimPath) as { env: Record<string, string> };
+    const { ELECTRON_RUN_AS_NODE: _, ...identity } = ours.env;
+    const old = {
+      type: 'stdio',
+      command: 'node',
+      args: ['/gone/conduit-mcp-shim.cjs'],
+      env: identity,
+    };
+    const claude = s.seed('claude', JSON.stringify({ mcpServers: { conduit: old } }));
+    expect(createMcpInstall(s.deps).repair()).toEqual([{ cli: 'claude', path: s.file('claude') }]);
+    expect(json(claude).mcpServers.conduit).toEqual({ ...old, args: [shimPath] });
+  });
+
+  it('SF-2 Repair of `<dead exe> <shim>` points at the Conduit exe and runs it as node', () => {
+    const s = setup();
+    const live = tmp('conduit-live-');
+    const liveShim = path.join(live, 'conduit-mcp-shim.cjs');
+    fs.writeFileSync(liveShim, '');
+    const ours = conduitEntry('claude', execPath, shimPath) as { env: Record<string, string> };
+    const { ELECTRON_RUN_AS_NODE: _, ...identity } = ours.env;
+    const old = { type: 'stdio', command: '/gone/conduit', args: [liveShim], env: identity };
+    const claude = s.seed('claude', JSON.stringify({ mcpServers: { conduit: old } }));
+    const codex = s.seed(
+      'codex',
+      OLD_CODEX_TABLE.replace('"/old/conduit-mcp-shim.cjs"', JSON.stringify(liveShim)).replace(
+        'env = { ELECTRON_RUN_AS_NODE = "1" }\n',
+        '',
+      ),
+    );
+    const rows = createMcpInstall(s.deps).repair();
+    expect(rows.map((r) => r.cli).sort()).toEqual(['claude', 'codex']);
+    expect(json(claude).mcpServers.conduit).toEqual({
+      ...old,
+      command: execPath,
+      env: { ...identity, ELECTRON_RUN_AS_NODE: '1' },
+    });
+    expect(readCodexConduit(fs.readFileSync(codex, 'utf8'))).toEqual(
+      conduitEntry('codex', execPath, liveShim),
+    );
   });
 
   it('Repair reports a failed write as a row with its code', () => {

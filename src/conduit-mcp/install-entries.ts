@@ -110,22 +110,29 @@ export function entryTargets(
 }
 
 /**
- * The entry with only the exe and shim entryTargets reads replaced; every other key and argument is
- * the user's and stays (spec §14 D2: Repair fixes a moved install, nothing else). null: not an object.
+ * The entry with only the parts given in `to` replaced: `exe` for the command, `shim` for the
+ * script; every other key and argument is the user's and stays (spec §14 D2: Repair fixes a moved
+ * install, nothing else). A command that becomes Conduit's exe gets ELECTRON_RUN_AS_NODE=1 in the
+ * CLI's env shape, or every CLI start would open the Conduit GUI. null: not an object.
  */
 export function retargetEntry(
   cli: AgentCli,
   entry: unknown,
-  execPath: string,
-  shimPath: string,
+  to: { exe?: string; shim?: string },
 ): Record<string, unknown> | null {
   if (!isRecord(entry)) return null;
+  const envKey = cli === 'opencode' ? 'environment' : 'env';
+  const env = isRecord(entry[envKey]) ? entry[envKey] : {};
+  const asNode = to.exe === undefined ? {} : { [envKey]: { ...env, ELECTRON_RUN_AS_NODE: '1' } };
   if (cli === 'opencode') {
-    const rest = Array.isArray(entry.command) ? entry.command.slice(2) : [];
-    return { ...entry, command: [execPath, shimPath, ...rest] };
+    const command: unknown[] = Array.isArray(entry.command) ? [...entry.command] : [];
+    if (to.exe !== undefined) command[0] = to.exe;
+    if (to.shim !== undefined) command[1] = to.shim;
+    return { ...entry, command, ...asNode };
   }
-  const rest = Array.isArray(entry.args) ? entry.args.slice(1) : [];
-  return { ...entry, command: execPath, args: [shimPath, ...rest] };
+  const args: unknown[] = Array.isArray(entry.args) ? [...entry.args] : [];
+  if (to.shim !== undefined) args[0] = to.shim;
+  return { ...entry, ...(to.exe === undefined ? {} : { command: to.exe }), args, ...asNode };
 }
 
 /** Spec §2.3 "Conduit shape": the shim leaf at the script position, and identity forwarded the CLI's way. */
