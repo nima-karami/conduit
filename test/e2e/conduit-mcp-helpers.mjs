@@ -21,7 +21,11 @@ export const FAKE_CLI = join(REPO, 'test', 'e2e', 'fixtures', 'fake-agent-cli.mj
  */
 export function isolatedHome(userDataDir) {
   const homeDir = join(userDataDir, 'home');
-  mkdirSync(homeDir, { recursive: true });
+  // A real profile has these: Windows PowerShell's GetFolderPath returns '' for a missing
+  // AppData\Local, so the launch's default PowerShell session wrote its module cache to
+  // `Microsoft\Windows\PowerShell` under its cwd, the repo.
+  mkdirSync(join(homeDir, 'AppData', 'Local'), { recursive: true });
+  mkdirSync(join(homeDir, 'AppData', 'Roaming'), { recursive: true });
   return {
     homeDir,
     env: {
