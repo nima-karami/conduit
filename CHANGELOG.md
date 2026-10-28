@@ -28,10 +28,11 @@ All notable user-facing changes to Conduit. Format follows
   under Settings → **MCP**.
 - **Cursor's Connect is now Install.** The Cursor row works like the others: Install and
   Uninstall, and an entry another Conduit wrote can be taken over with **Use this Conduit**.
-- **In a plain shell, notices are typed only into the agent you started there.** Conduit types a
-  notice into a shell session only while the agent CLI typed as its last command line is the one
-  connected. Once you type another line (a prompt to the agent counts), or an app started from that shell (an editor, say)
-  connects instead, messages wait in the inbox for the agent to read.
+- **In a plain shell, notices are typed only into the agent you started there.** When you type
+  `claude` (or another agent CLI) and it connects, notices go to that agent while it runs, prompts
+  you type into it included. Once it exits or you suspend it with Ctrl+Z, messages wait in the
+  inbox. An app started from that shell (an editor running its own Claude, say) never gets notices
+  typed into the shell.
 
 ### Fixed
 - **The `conduit` server no longer shows as failed outside Conduit** in Claude Code and OpenCode;

@@ -49,29 +49,14 @@ function cliOfClientKind(kind: ClientKind): AgentCli | null {
   }
 }
 
-export interface LiveClient {
-  kind: ClientKind;
-  /** Ordered with TypedLine.seq on one counter. */
-  seq: number;
-}
-export interface TypedLine {
-  cli: AgentCli | null;
-  seq: number;
-}
-
 /**
- * The live clients that may pick the notice adapter of a session without a definition adapter
- * (spec 2026-10-27-conduit-mcp-install §2.4, conductor amendment A1): only clients of the CLI the
- * last typed command line ran, initialized after it. Any other client (an IDE started from the
- * shell, a CLI that handed the prompt back) would let a shell prompt pass for the CLI's input row.
+ * Whether a client initializing now binds the notices of a session without a definition adapter
+ * whose last typed command line ran `lineCli` (spec 2026-10-27-conduit-mcp-install §2.4, conductor
+ * amendment A1). Any other client (an IDE started from the shell by `code .`) would let a shell
+ * prompt pass for the CLI's input row.
  */
-export function boundClientKinds(
-  live: readonly LiveClient[],
-  lastLine: TypedLine | undefined,
-): ClientKind[] {
-  if (lastLine === undefined || lastLine.cli === null) return [];
-  const { cli, seq } = lastLine;
-  return live.filter((c) => c.seq > seq && cliOfClientKind(c.kind) === cli).map((c) => c.kind);
+export function bindsTypedLine(kind: ClientKind, lineCli: AgentCli | null | undefined): boolean {
+  return lineCli !== undefined && lineCli !== null && cliOfClientKind(kind) === lineCli;
 }
 
 export function pickNoticeAdapterId(

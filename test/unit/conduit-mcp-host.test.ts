@@ -1852,19 +1852,69 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     expect(h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
   });
 
-  it('notice rule: `claude` typed, connected, then another line typed → pull-only', async () => {
+  it('notice rule: `claude`, connect, a prompt typed into it → still bound', async () => {
     const h = harness();
     const ca = await sender(h);
     const { token } = shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
     await client(h.ep, token, 'claude-code');
+    h.host.onRendererInput('sh1', 'fix the failing test\r');
+    h.host.onRendererInput('sh1', '\x1b[A\r');
+    idlePrompt(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
+  });
+
+  it('notice rule: `claude`, connect, the connection closes, then `ls` → a later client stays pull-only', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'claude\r');
+    const first = await client(h.ep, token, 'claude-code');
+    first.sock.destroy();
+    await expect.poll(() => h.host.uiState().sessions.sh1?.connected ?? false).toBe(false);
     h.host.onRendererInput('sh1', 'ls\r');
+    await client(h.ep, token, 'claude-code');
     idlePrompt(h, 'sh1');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
     await h.host.tick();
     expect(writesTo(h, 'sh1')).toEqual([]);
     expect(h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
+  });
+
+  it('notice rule: `claude`, connect, Ctrl+Z → pull-only while it is suspended', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'claude\r');
+    await client(h.ep, token, 'claude-code');
+    h.host.onRendererInput('sh1', '\x1a');
+    idlePrompt(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
+    expect(h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
+  });
+
+  it('notice rule: a second claude-code client never binds; when the bound one closes → pull-only', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'claude\r');
+    const bound = await client(h.ep, token, 'claude-code');
+    await client(h.ep, token, 'claude-code');
+    idlePrompt(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
+    bound.sock.destroy();
+    await expect.poll(() => h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
+    expect(h.host.uiState().sessions.sh1?.connected).toBe(true);
   });
 
   it('notice rule: a connection that initialized before the `claude` line does not count', async () => {
@@ -1894,13 +1944,12 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     expect(h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
   });
 
-  it('notice rule: a line the tracker cannot read (history recall) is still a new line → pull-only', async () => {
+  it('notice rule: a recalled line the tracker cannot read never binds', async () => {
     const h = harness();
     const ca = await sender(h);
     const { token } = shell(h, 'sh1');
-    h.host.onRendererInput('sh1', 'claude\r');
-    await client(h.ep, token, 'claude-code');
     h.host.onRendererInput('sh1', '\x1b[A\r');
+    await client(h.ep, token, 'claude-code');
     idlePrompt(h, 'sh1');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });

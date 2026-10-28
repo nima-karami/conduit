@@ -10,12 +10,11 @@ import {
   youAttention,
 } from '../src/conduit-mcp/attention-items';
 import {
-  boundClientKinds,
+  bindsTypedLine,
+  type ClientKind,
   clientKindOf,
   initializeClientName,
-  type LiveClient,
   pickNoticeAdapterId,
-  type TypedLine,
 } from '../src/conduit-mcp/client-info';
 import { type ControlDeps, createControlHandlers } from '../src/conduit-mcp/control-tools';
 import {
@@ -193,8 +192,13 @@ interface Runtime {
   launch: number;
   /** Only for token-bearing sessions without a definition adapter. */
   tracker: TypedLineTracker | undefined;
-  /** The last command line the tracker saw submitted; binds a shell's notices (spec §2.4 A1). */
-  lastLine: TypedLine | undefined;
+  /**
+   * The agent CLI the last typed command line ran (null: some other line), until a client of that
+   * CLI binds it. Spec §2.4 A1.
+   */
+  lastLine: AgentCli | null | undefined;
+  /** The connection a shell's notices are bound to; typed lines are its prompts while it lives. */
+  bound: number | undefined;
   detect: { cli: AgentCli; at: number } | undefined;
   notConnected: McpNotConnected | undefined;
   hasDraft: boolean;
@@ -273,6 +277,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         launch: 0,
         tracker: undefined,
         lastLine: undefined,
+        bound: undefined,
         detect: undefined,
         notConnected: undefined,
         hasDraft: false,
@@ -288,27 +293,36 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   };
 
   const handleOf = (sessionId: string): Handle | undefined => deps.mgr.get(sessionId)?.mcpHandle;
-  /** Initialized connections' client kinds. */
-  const connKinds = new Map<number, LiveClient>();
-  /** One counter for initializes and typed lines, so "initialized after that line" is an order. */
-  let eventSeq = 0;
+  /** Initialized connections' client kinds; seq is initialize order. */
+  const connKinds = new Map<number, { kind: ClientKind; seq: number }>();
+  let connSeq = 0;
   /** Oldest → newest. */
-  const liveClients = (sessionId: string): LiveClient[] =>
+  const liveKinds = (sessionId: string): ClientKind[] =>
     registry
       .connectionsOf(sessionId)
       .flatMap((c) => {
         const k = connKinds.get(c);
         return k ? [k] : [];
       })
-      .sort((a, b) => a.seq - b.seq);
+      .sort((a, b) => a.seq - b.seq)
+      .map((k) => k.kind);
+  /** The bound connection's kind while it is live (spec §2.4 A1); [] when nothing is bound. */
+  const boundKinds = (sessionId: string, r: Runtime | undefined): ClientKind[] => {
+    const bound = r?.bound;
+    if (bound === undefined || !registry.connectionsOf(sessionId).includes(bound)) return [];
+    const k = connKinds.get(bound);
+    return k ? [k.kind] : [];
+  };
   /** Spec 2026-10-27-conduit-mcp-install §2.4: the definition's adapter, else the bound client's. */
   const noticeAdapterOf = (sessionId: string): McpAdapter | null => {
     const r = runtime.get(sessionId);
-    const id = pickNoticeAdapterId(
-      r?.defAdapter?.id,
-      boundClientKinds(liveClients(sessionId), r?.lastLine),
-    );
+    const id = pickNoticeAdapterId(r?.defAdapter?.id, boundKinds(sessionId, r));
     return MCP_ADAPTERS.find((a) => a.id === id) ?? null;
+  };
+  const unbind = (r: Runtime) => {
+    r.bound = undefined;
+    r.lastLine = undefined;
+    scheduleBroadcast();
   };
   const hasDefAdapter = (sessionId: string): boolean => {
     const def = deps.defOf(sessionId);
@@ -399,8 +413,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       sessionId: s.id,
       label: s.name,
       // A profile session is its definition's agent whatever client name it sends, as for notices.
-      agent:
-        (hasDefAdapter(s.id) ? undefined : liveClients(s.id).at(-1)?.kind) ?? handlePrefix(handle),
+      agent: (hasDefAdapter(s.id) ? undefined : liveKinds(s.id).at(-1)) ?? handlePrefix(handle),
       project: deps.projectName(s.projectId),
       home: s.home,
       roots: [...s.roots],
@@ -727,11 +740,16 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
    */
   const onInitialize = (connId: number, sessionId: string, name: string | null) => {
     const kind = clientKindOf(name, { e2e: deps.e2e });
-    if (!connKinds.has(connId)) connKinds.set(connId, { kind, seq: ++eventSeq });
+    if (!connKinds.has(connId)) connKinds.set(connId, { kind, seq: ++connSeq });
     if (!handleOf(sessionId)) claimHandle(sessionId, kind);
     // D6 ruling: a shell's screen model costs memory, so it starts only once a CLI shows up.
     const r = runtime.get(sessionId);
     if (r?.size && !screens.has(sessionId)) screens.start(sessionId, r.size.cols, r.size.rows);
+    // One binding per typed line: a second client (`code .` from inside the CLI) never takes it.
+    if (r && !r.defAdapter && r.bound === undefined && bindsTypedLine(kind, r.lastLine)) {
+      r.bound = connId;
+      r.lastLine = undefined;
+    }
     if (r) {
       r.detect = undefined;
       if (r.notConnected?.reason === 'no-initialize') {
@@ -800,6 +818,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           handle: handleOf(connectedAs),
         });
       }
+      const owner = connSession.get(conn.id);
+      const r = owner === undefined ? undefined : runtime.get(owner);
+      if (r?.bound === conn.id) unbind(r);
       conns.delete(conn.id);
       connSession.delete(conn.id);
       connKinds.delete(conn.id);
@@ -930,8 +951,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const r = runtime.get(sessionId);
     if (!r?.tracker) return;
     // Focus reports and device-attribute replies would mark the line unknown (plan amendment N2).
+    // Ctrl+Z hands the prompt back to the shell while the CLI's connection stays open.
+    if (r.bound !== undefined && data.includes('\x1a')) unbind(r);
     const lines = r.tracker.feed(stripTerminalReplies(data));
-    for (const line of lines) r.lastLine = { cli: line, seq: ++eventSeq };
+    // While bound, a typed line is a prompt to that CLI, not a command line.
+    if (r.bound === undefined) for (const line of lines) r.lastLine = line;
     const cli = lines.filter((c) => c !== null).at(-1);
     // A CLI already live here sees this line as its own prompt input, not a command (plan Decisions).
     if (cli === undefined || registry.isLive(sessionId)) return;
@@ -1049,6 +1073,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       r.launch += 1;
       r.tracker = undefined;
       r.lastLine = undefined;
+      r.bound = undefined;
       r.detect = undefined;
       if (r.notConnected) {
         r.notConnected = undefined;
@@ -1137,6 +1162,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       r.spawnedAt = undefined;
       r.tracker = undefined;
       r.lastLine = undefined;
+      r.bound = undefined;
       r.detect = undefined;
       r.notConnected = undefined;
       scheduleBroadcast();

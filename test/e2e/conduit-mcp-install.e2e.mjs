@@ -8,8 +8,8 @@
  *      connects as claude-code: the shell gets handle claude-1 and the card's plug.
  *   3. A human message reaches it as a typed notice; the fake reads it with read_inbox.
  *   4. Amendment A1: a claude-code client started by a line that isn't `claude` (as `code .` would)
- *      and a bound shell after another typed line are both pull-only — their messages queue and
- *      nothing is typed.
+ *      is pull-only — its message queues and nothing is typed; a prompt typed into the bound CLI
+ *      keeps it bound; Ctrl+Z unbinds it.
  *   5. Uninstall removes only conduit; the file and the backup stay.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -22,6 +22,7 @@ import {
   fakeClaudeOnPath,
   installRow,
   isolatedHome,
+  keys,
   mcpState,
   normalizePath,
   openMcpSettings,
@@ -140,17 +141,17 @@ await runScenario(
     }, 15_000);
     assert(ide, `unbound shell: ${JSON.stringify((await mcpState(page))?.sessions?.[sid2])}`);
     const ideHandle = (await mcpState(page)).sessions[sid2].handle;
-    // A line typed into the bound shell after `claude` unbinds it too.
+    // A prompt typed into the bound CLI keeps the binding.
     await typeLine(page, sid, 'hello');
     await until(
       () => cliRecords(recordsDir, 'claude1', 'INPUT').some((r) => r.line === 'hello'),
       10_000,
     );
     await compose(ideHandle, 'for the ide client');
-    await compose('claude-1', 'after another line');
-    await sleep(PULL_ONLY_WAIT_MS);
+    await compose('claude-1', 'after a prompt');
+    const stillBound = await until(() => hasBody('claude1', 'after a prompt'), NOTICE_WITHIN_MS);
+    assert(stillBound, 'a prompt typed into the bound CLI unbound it');
     assert(!hasBody('ide1', 'for the ide client'), 'an unbound claude-code client got a notice');
-    assert(!hasBody('claude1', 'after another line'), 'a shell got a notice after a new line');
     const typedIde = cliRecords(recordsDir, 'ide1', 'INPUT').filter((r) =>
       r.line.includes('[conduit]'),
     );
@@ -158,12 +159,23 @@ await runScenario(
       typedIde.length === 0,
       `notice typed into the unbound session: ${JSON.stringify(typedIde)}`,
     );
-    const st = await mcpState(page);
     assert(
-      st.sessions[sid2].unread >= 1 && st.sessions[sid].unread >= 1,
-      `both messages stay queued: ${JSON.stringify([st.sessions[sid], st.sessions[sid2]])}`,
+      (await mcpState(page)).sessions[sid2].unread >= 1,
+      'the unbound client’s message stays queued',
     );
-    log(`A1: ${ideHandle} (no claude line) and claude-1 after another line stayed pull-only ✓`);
+    // Ctrl+Z hands the prompt back to the shell: the binding ends while the client stays live.
+    await keys(page, sid, '\x1a');
+    const suspended = await until(async () => {
+      const s = (await mcpState(page))?.sessions?.[sid];
+      return s?.connected === true && s.gate === 'pull-only';
+    }, 10_000);
+    assert(suspended, `after Ctrl+Z: ${JSON.stringify((await mcpState(page))?.sessions?.[sid])}`);
+    await compose('claude-1', 'after ctrl-z');
+    await sleep(PULL_ONLY_WAIT_MS);
+    assert(!hasBody('claude1', 'after ctrl-z'), 'a suspended CLI got a notice');
+    log(
+      `A1: ${ideHandle} (no claude line) stays pull-only; a prompt keeps claude-1 bound; Ctrl+Z unbinds ✓`,
+    );
 
     // 5. uninstall
     await openMcpSettings(page);
