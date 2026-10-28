@@ -155,6 +155,29 @@ describe('createSessionScreens', () => {
       expect((await s.snapshot('a'))?.lines[0]).toBe('rstuv€w');
     });
 
+    // Review F2: each input holds for exactly one cap, so an off-by-one either way goes red.
+    it('keeps exactly tailBytes: one byte fewer or more replays something else', async () => {
+      const replayed = async (input: string) => {
+        const s = createSessionScreens({ tailBytes: 8 });
+        s.keepTail('a', 20, 2);
+        s.feed('a', input);
+        s.start('a', 20, 2);
+        return (await s.snapshot('a'))?.lines;
+      };
+      // 7 bytes kept would lose the newline and replay nothing; 9 uncut would replay `a`.
+      expect(await replayed('a\nbcdefgh')).toEqual(['bcdefgh', '']);
+      // 9 bytes kept would keep the newline and replay `abcdefgh`.
+      expect(await replayed('\nabcdefgh')).toEqual(['', '']);
+    });
+
+    it('a tail of exactly tailBytes is uncut and replays from its first byte', async () => {
+      const s = createSessionScreens({ tailBytes: 8 });
+      s.keepTail('a', 20, 2);
+      s.feed('a', 'abcdefg\n');
+      s.start('a', 20, 2);
+      expect(await s.snapshot('a')).toMatchObject({ lines: ['abcdefg', ''], cursorY: 1 });
+    });
+
     it('a single chunk over the cap keeps its own last bytes', async () => {
       const s = createSessionScreens({ tailBytes: 4 });
       s.keepTail('a', 20, 2);
