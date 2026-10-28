@@ -97,9 +97,11 @@ adds "Overridden in this project by <scope> entry" (Claude/Codex precedence make
   allocates the handle **before** replying. Prefix from `clientInfo` (§3.3). The handle persists
   (sessions.json `mcpHandle`) across relaunches and later CLIs (D3). A health check (`claude mcp
   list`) also sends `initialize` and so also claims a handle — accepted (§4).
-- **Notice adapter** = the definition adapter if any, else the adapter mapped from the `clientInfo` of
+- ~~**Notice adapter** = the definition adapter if any, else the adapter mapped from the `clientInfo` of
   the **newest live** initialized connection; none live → no notices (existing gate). An unmapped
-  client or OpenCode → pull-only (gate closed: no screen patterns).
+  client or OpenCode → pull-only (gate closed: no screen patterns).~~ **Superseded by amendment A1
+  below:** without a definition adapter, the notice adapter is the *bound* connection's, never the
+  newest live one's.
 - **Conductor amendment A1 (2026-10-27, review of S1–S3, blocker B-1) — notices in a session without
   a definition adapter.** A live client is no proof the CLI owns the screen: `code .` hands the token
   to an IDE whose Claude connects as `claude-code` while the shell prompt (`❯ ` under starship/pure)
@@ -110,6 +112,20 @@ adds "Overridden in this project by <scope> entry" (Claude/Codex precedence make
   - While the bound connection is live, typed lines do not unbind: they are prompts to the agent.
   - The binding ends when the bound connection closes, on Ctrl+Z (the CLI is suspended and the
     shell has the prompt), or on PTY exit/relaunch. A new binding needs a new typed line.
+  - **The typed line has a lifetime too (review S5 SF-1, conductor ruling).** Ctrl+C (`\x03`) or
+    Ctrl+D (`\x04`) typed while the session is unbound drops the stored line: that is how a CLI that
+    never connected is left (Ctrl+C at the trust dialog, an uninstalled `claude`), and its line must
+    not bind a client that initializes later (an editor's Claude, `code .` typed earlier). A
+    Ctrl+C inside a CLI that hasn't connected yet also drops it; that session stays pull-only until
+    the next typed CLI line (fails safe).
+  - **A `claude` binding admits a notice only into Claude's ruled input box (review S5 SF-1,
+    conductor ruling).** Claude's bare `❯ ` row is also a starship/pure shell prompt, so for a session
+    without a definition adapter bound to a `claude` client the gate additionally requires the box
+    on the host screen model: a `─` rule above, the `❯`/`!` row under it, and a rule below the
+    cursor — the same `inputBoxTop` shape the renderer uses to unlink the box
+    (`src/input-box-rows.ts`, spec 2026-10-27-input-box-links §2). Without it the screen reads
+    `unknown` (gate `no-empty-input`). A plain shell prompt draws no rules, so it never qualifies.
+    Profile sessions and other CLIs' bindings are unchanged.
   - Other connections (an IDE's Claude from `code .`, a second client) never bind and never affect
     notices, even while the bound one is live or after it closes.
 
@@ -276,7 +292,7 @@ endpoint comes from env, so dev and installed builds share one entry (cursor spe
 |---|---|
 | Install clicked twice / two windows | serialised per realpath; second sees `installed` → no-op, no backup touch |
 | One shell runs `claude`, exits, then `codex` | same handle (`claude-3`); notice adapter follows the live client; `list_sessions` `agent` = live client kind, else handle prefix |
-| Nested `claude -p` / `codex exec` inside a CLI | same session; newest live connection picks patterns; a mismatch reads `unknown` (gate closed); when it ends the previous live one applies |
+| Nested `claude -p` / `codex exec` inside a CLI | same session; ~~newest live connection picks patterns; a mismatch reads `unknown` (gate closed); when it ends the previous live one applies~~ superseded by A1 (§2.4): in a shell only the bound connection picks patterns, a nested client never binds; a profile session keeps its definition adapter |
 | `claude mcp list` / `codex mcp list` in a shell | initializes with the token → the shell gets a handle and burns a counter number; it shows in `list_sessions` while connected. Accepted (D3) |
 | `claude --version`, `codex --help` etc. | not a candidate (skip list); no status, no banner |
 | CLI shows its trust / project-approval prompt for > 15 s | `not-connected` may show briefly; clears on `initialize`. Banner only if `not-installed` |

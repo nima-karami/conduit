@@ -39,7 +39,7 @@ import {
   IDLE_QUIET_MS,
 } from '../src/conduit-mcp/notice-gate';
 import { type AttentionRaise, createNotifier, type Notifier } from '../src/conduit-mcp/notifier';
-import { screenVerdict } from '../src/conduit-mcp/screen-verdict';
+import { type ScreenSnapshot, screenVerdict } from '../src/conduit-mcp/screen-verdict';
 import { assignHandle, createSessionRegistry } from '../src/conduit-mcp/session-registry';
 import { createMessageStore, type StoreIo } from '../src/conduit-mcp/store';
 import { createFsStoreIo } from '../src/conduit-mcp/store-fs';
@@ -83,6 +83,7 @@ import type {
   McpThreadSummary,
   McpUiState,
 } from '../src/conduit-mcp/ui-types';
+import { inputBoxTop } from '../src/input-box-rows';
 import type { HostPlatform } from '../src/lsp-binary';
 import { mcpLaunchWiring, mcpServerCommand } from '../src/mcp-launch';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
@@ -208,6 +209,16 @@ interface Runtime {
   gate: McpGateState | null;
   /** Last gate a notice attempt logged; the per-tick badge pass doesn't log (volume). */
   loggedGate: McpGateState | null;
+}
+
+/** Claude's rules + `❯`/`!` row around the cursor, by the same shape the renderer unlinks. */
+function ruledBoxOnScreen(s: ScreenSnapshot, cols: number): boolean {
+  // Snapshot rows are trimmed; an empty `❯ ` row needs its blank cells back to read as a prompt.
+  const rowAt = (y: number) => {
+    const text = s.lines[y]?.padEnd(cols);
+    return text === undefined ? undefined : { text, bg0: '', dim0: false, bgLast: '' };
+  };
+  return inputBoxTop(rowAt, s.cursorY, { cols, rows: s.lines.length }) !== null;
 }
 
 const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
@@ -440,11 +451,25 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   // ---- gate -------------------------------------------------------------------------------
 
-  const screenOf = async (sessionId: string, adapter: McpAdapter, expect?: string) => {
+  const screenOf = async (
+    sessionId: string,
+    adapter: McpAdapter,
+    expect?: string,
+    ruledBoxCols?: number,
+  ) => {
     const snap = await screens.snapshot(sessionId);
     const verdict: ScreenVerdict = snap ? screenVerdict(adapter.screen, snap, expect) : 'unknown';
-    return verdict;
+    if (verdict !== 'empty-input' || ruledBoxCols === undefined) return verdict;
+    return snap && ruledBoxOnScreen(snap, ruledBoxCols) ? verdict : 'unknown';
   };
+  /**
+   * A shell bound to a `claude` client admits a notice only into Claude's ruled input box: its bare
+   * `❯ ` row is also a starship/pure shell prompt (spec §2.4 A1, SF-1 ruling). NaN cols never match.
+   */
+  const ruledBoxColsOf = (sessionId: string, r: Runtime): number | undefined =>
+    !r.defAdapter && boundKinds(sessionId, r)[0] === 'claude'
+      ? (r.size?.cols ?? Number.NaN)
+      : undefined;
 
   /**
    * The full gate; precheck and beforeText run exactly this (plan T9.2 "Gate inputs"). Returns the
@@ -458,7 +483,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const session = deps.mgr.get(sessionId);
     const adapter = noticeAdapterOf(sessionId);
     if (!adapter || !session) return { verdict: { open: false, reason: 'not-running' }, adapter };
-    const screen = await screenOf(sessionId, adapter);
+    const screen = await screenOf(sessionId, adapter, undefined, ruledBoxColsOf(sessionId, r));
     const t = now();
     r.hasDraft = settleDraft({
       hasDraft: r.hasDraft,
@@ -956,6 +981,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const lines = r.tracker.feed(stripTerminalReplies(data));
     // While bound, a typed line is a prompt to that CLI, not a command line.
     if (r.bound === undefined) for (const line of lines) r.lastLine = line;
+    // Ctrl+C / Ctrl+D is how a CLI that never connected is left; its line must not bind a later
+    // client (spec §2.4 A1, SF-1 ruling).
+    if (r.bound === undefined && (data.includes('\x03') || data.includes('\x04'))) {
+      r.lastLine = undefined;
+    }
     const cli = lines.filter((c) => c !== null).at(-1);
     // A CLI already live here sees this line as its own prompt input, not a command (plan Decisions).
     if (cli === undefined || registry.isLive(sessionId)) return;

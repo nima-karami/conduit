@@ -61,13 +61,13 @@ export function bindsTypedLine(kind: ClientKind, lineCli: AgentCli | null | unde
 
 export function pickNoticeAdapterId(
   def: McpAdapterId | undefined,
-  liveKinds: readonly ClientKind[],
+  boundKinds: readonly ClientKind[],
 ): McpAdapterId | null {
   if (def !== undefined) return def;
-  // Unmapped kinds are skipped, not decisive: an IDE agent or a nested `opencode run` started from
-  // the shell must not silence the notices of the Claude already connected there.
-  for (let i = liveKinds.length - 1; i >= 0; i--) {
-    const kind = liveKinds[i];
+  // The host passes the bound connection's kind (spec §2.4 A1), so at most one; an unmapped one is
+  // skipped and leaves the session pull-only.
+  for (let i = boundKinds.length - 1; i >= 0; i--) {
+    const kind = boundKinds[i];
     const id = kind === undefined ? null : noticeAdapterIdOf(kind);
     if (id !== null) return id;
   }

@@ -32,7 +32,8 @@ All notable user-facing changes to Conduit. Format follows
   `claude` (or another agent CLI) and it connects, notices go to that agent while it runs, prompts
   you type into it included. Once it exits or you suspend it with Ctrl+Z, messages wait in the
   inbox. An app started from that shell (an editor running its own Claude, say) never gets notices
-  typed into the shell.
+  typed into the shell, nor does an agent you left with Ctrl+C or Ctrl+D before it connected. For
+  Claude, a notice also waits until Claude's own input box is on screen.
 
 ### Fixed
 - **The `conduit` server no longer shows as failed outside Conduit** in Claude Code and OpenCode;

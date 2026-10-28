@@ -1812,6 +1812,12 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     h.host.onOutput(id, '❯ ');
     h.echo.add(id);
   }
+  /** Claude's ruled input box at `launch`'s 40 cols: a rule, the `❯ ` row holding the cursor, a rule. */
+  function claudeBox(h: Harness, id: string) {
+    const rule = '─'.repeat(40);
+    h.host.onOutput(id, `${rule}\r\n❯ \r\n${rule}\x1b[1A\r\x1b[2C`);
+    h.echo.add(id);
+  }
 
   it('AC3 `claude` typed, then claude-code connects → claude notices', async () => {
     const h = harness();
@@ -1819,7 +1825,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     const { token } = shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
     await client(h.ep, token, 'claude-code');
-    idlePrompt(h, 'sh1');
+    claudeBox(h, 'sh1');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
     await h.host.tick();
@@ -1860,7 +1866,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     await client(h.ep, token, 'claude-code');
     h.host.onRendererInput('sh1', 'fix the failing test\r');
     h.host.onRendererInput('sh1', '\x1b[A\r');
-    idlePrompt(h, 'sh1');
+    claudeBox(h, 'sh1');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
     await h.host.tick();
@@ -1907,7 +1913,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     h.host.onRendererInput('sh1', 'claude\r');
     const bound = await client(h.ep, token, 'claude-code');
     await client(h.ep, token, 'claude-code');
-    idlePrompt(h, 'sh1');
+    claudeBox(h, 'sh1');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
     await h.host.tick();
@@ -1915,6 +1921,70 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     bound.sock.destroy();
     await expect.poll(() => h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
     expect(h.host.uiState().sessions.sh1?.connected).toBe(true);
+  });
+
+  it('SF-1 a bound claude with a plain `❯ ` prompt and no rules on screen → nothing typed', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'claude\r');
+    await client(h.ep, token, 'claude-code');
+    idlePrompt(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
+    expect(h.host.uiState().sessions.sh1?.gate).toBe('no-empty-input');
+  });
+
+  for (const [key, byte] of [
+    ['Ctrl+C', '\x03'],
+    ['Ctrl+D', '\x04'],
+  ] as const) {
+    it(`SF-1 \`claude\` typed, ${key} out of it unconnected, then a claude-code client connects → pull-only`, async () => {
+      const h = harness();
+      const ca = await sender(h);
+      const { token } = shell(h, 'sh1');
+      h.host.onRendererInput('sh1', 'claude\r');
+      h.host.onRendererInput('sh1', byte);
+      await client(h.ep, token, 'claude-code');
+      claudeBox(h, 'sh1');
+      settle(h);
+      await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+      await h.host.tick();
+      expect(writesTo(h, 'sh1')).toEqual([]);
+      expect(h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
+    });
+  }
+
+  it('SF-3 a relaunch ends the binding even while the old connection is still open', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'claude\r');
+    await client(h.ep, token, 'claude-code');
+    shell(h, 'sh1');
+    claudeBox(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
+    expect(h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
+  });
+
+  it('SF-3 a relaunch drops the typed line: a client of the new generation does not bind', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'claude\r');
+    const { token } = shell(h, 'sh1');
+    await client(h.ep, token, 'claude-code');
+    claudeBox(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
+    expect(h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
   });
 
   it('notice rule: a connection that initialized before the `claude` line does not count', async () => {

@@ -6,9 +6,10 @@
 //
 //   node fake-agent-cli.mjs --records <dir> --name <label> [--as claude]
 //
-// `--as claude` sends clientInfo `claude-code` and draws Claude's bare `❯ ` input row, so a session
-// that typed `claude` (a claude.cmd on PATH that runs this) is bound to Claude's notice adapter
-// (spec §2.4, amendment A1). Without it: clientInfo `conduit-e2e-fake` and a `fake❯ ` row.
+// `--as claude` sends clientInfo `claude-code` and draws Claude's ruled input box (rule, `❯ ` row,
+// rule), so a session that typed `claude` (a claude.cmd on PATH that runs this) is bound to Claude's
+// notice adapter and passes the ruled-box check (spec §2.4, amendment A1). Without it: clientInfo
+// `conduit-e2e-fake` and a `fake❯ ` row.
 //
 // Records go to <dir>/<label>.jsonl as JSON lines {kind, pid, …}; never the token:
 //   READY {tools}       after initialize + tools/list
@@ -41,7 +42,15 @@ const record = (kind, payload = {}) => {
     `${JSON.stringify({ kind, pid: process.pid, ...payload })}\n`,
   );
 };
-const prompt = () => write(`\r\n${PROMPT}`);
+// One column short of the width: a full-width row leaves a pending wrap for ConPTY to repaint.
+const rule = () => '─'.repeat(Math.max(20, (process.stdout.columns || 80) - 1));
+// The cursor rests on the `❯ ` row with the bottom rule under it, so the next box starts below it.
+const prompt = () =>
+  write(
+    asClaude
+      ? `${ESC}[1B\r\n${rule()}\r\n${PROMPT}\r\n${rule()}${ESC}[1A\r${ESC}[${PROMPT.length}C`
+      : `\r\n${PROMPT}`,
+  );
 
 const configDir = process.env.CLAUDE_CONFIG_DIR || homedir();
 const configFile = join(configDir, '.claude.json');
@@ -158,5 +167,5 @@ await rpc('initialize', {
 server.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
 const list = await rpc('tools/list', {});
 record('READY', { tools: (list.result?.tools ?? []).map((t) => t.name) });
-write(`\r\n${PROMPT}`);
+prompt();
 setInterval(() => {}, 1 << 30);
