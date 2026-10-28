@@ -4,7 +4,7 @@ import { needsSetup } from '../../src/conduit-mcp/install-types';
 import { type Handle, HUMAN_HANDLE } from '../../src/conduit-mcp/types';
 import type { McpThreadSummary, McpUiState } from '../../src/conduit-mcp/ui-types';
 import type { Session } from '../../src/types';
-import { mcpInstallStatus } from '../bridge';
+import { mcpInstallStatus, onMcpInstallChanged } from '../bridge';
 import { MCP_STR } from '../conduit-mcp-strings';
 import {
   composeTargets,
@@ -135,24 +135,33 @@ function SetupEmptyState({ onOpenSettings }: { onOpenSettings(): void }) {
   const [setup, setSetup] = useState(false);
   useEffect(() => {
     let active = true;
-    mcpInstallStatus(null).then(
-      (status) => {
-        if (active) setSetup(needsSetup(status));
-      },
-      (error: unknown) => {
-        log.warn('mcp-install', 'status read failed', { error: String(error) });
-        if (active) setSetup(false);
-      },
-    );
+    // The newest read wins: an install can land while the mount read is still in flight.
+    let latest = 0;
+    const read = () => {
+      const mine = ++latest;
+      mcpInstallStatus(null).then(
+        (status) => {
+          if (active && mine === latest) setSetup(needsSetup(status));
+        },
+        (error: unknown) => {
+          log.warn('mcp-install', 'status read failed', { error: String(error) });
+          if (active && mine === latest) setSetup(false);
+        },
+      );
+    };
+    read();
+    const off = onMcpInstallChanged(read);
     return () => {
       active = false;
+      off();
     };
   }, []);
   if (!setup) return <EmptyState variant="panel" title={MCP_STR.firstRun} />;
   return (
     <EmptyState
       variant="panel"
-      title={MCP_STR.install.setupCopy}
+      title={MCP_STR.install.setupTitle}
+      hint={MCP_STR.install.setupBody}
       action={
         <button type="button" className="btn btn--sm" onClick={onOpenSettings}>
           {MCP_STR.install.setupButton}

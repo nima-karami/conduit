@@ -1681,3 +1681,8 @@ idle-screen match.
 - **N3 kept:** the project-scope extras stay in the MVP. The user asked for project entries to be
   shown with Remove.
 - **N4:** smol-toml is **1.9.1** exact, the current release (1.3.1 is from 2024).
+
+## Build deviations (recorded)
+
+- **S4:** `BACKUP_SUFFIX` moved to `src/conduit-mcp/install-types.ts`, which touches `electron/mcp-install-targets.ts` outside the S4 file map. The literal is unchanged; accepted in review.
+- **S4:** `isAgentCli` was de-exported (commit 4ac4eb99), a change to an S1 file.

@@ -65,7 +65,9 @@ describe('McpProjectEntries', () => {
     const onAct = vi.fn<Act>(async () => null);
     await mount(allNone(), onAct);
     expect(host.textContent).toContain(MCP_STR.install.projectNone);
-    expect(host.textContent).toContain(MCP_STR.install.projectWarn(`${ROOT}/claude.cfg`));
+    expect(host.textContent?.split(MCP_STR.install.projectWarn)).toHaveLength(2);
+    expect(host.textContent).toContain('claude.cfg');
+    expect(host.textContent).not.toContain(`${ROOT}/claude.cfg`);
     expect(byName(MCP_STR.install.installProjectAria('claude'))).toBeDefined();
     expect(byName(MCP_STR.install.installProjectAria('codex'))).toBeDefined();
     expect(byName(MCP_STR.install.installProjectAria('opencode'))).toBeDefined();
@@ -147,6 +149,24 @@ describe('McpProjectEntries', () => {
     );
   });
 
+  it('names scopes with the localisable labels, never the raw key', () => {
+    const S = MCP_STR.install;
+    expect(S.removeAria('claude', 'local')).toContain(S.projectScope.local);
+    expect(S.removeAria('claude', 'local')).not.toContain('local');
+    expect(S.shadowed('project')).toContain(S.projectScope.project);
+    expect(S.shadowed('project')).not.toContain('project entry');
+  });
+
+  it('a rejected act reads as plain copy with the code only in a title', async () => {
+    await mount(
+      allNone(),
+      vi.fn<Act>(async () => null),
+    );
+    await act(async () => byName(MCP_STR.install.installProjectAria('codex'))?.click());
+    expect(host.textContent).not.toContain('EINVAL');
+    expect(host.querySelector('[title="EINVAL"]')).not.toBeNull();
+  });
+
   it('renders nothing while checking or without a project answer', async () => {
     await mount(null);
     expect(host.textContent).toBe('');
@@ -154,5 +174,31 @@ describe('McpProjectEntries', () => {
     root = null;
     await mount({ clis: allNone().clis.map((c) => ({ ...c, project: null })) });
     expect(host.textContent).toBe('');
+  });
+});
+
+describe('McpProjectEntries short paths', () => {
+  it('shortens Windows paths relative to the project too', async () => {
+    const win = String.raw`C:\work\app`;
+    const status: McpInstallStatus = {
+      clis: [
+        cliStatus('claude', {
+          entries: [],
+          installable: true,
+          installPath: `${win}${String.raw`\.codex\config.toml`}`,
+        }),
+      ],
+    };
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () =>
+      root?.render(
+        <McpProjectEntries status={status} projectPath={win} onAct={async () => null} />,
+      ),
+    );
+    expect(host.querySelector('.mcp-project__path')?.textContent).toBe(
+      String.raw`.codex\config.toml`,
+    );
   });
 });

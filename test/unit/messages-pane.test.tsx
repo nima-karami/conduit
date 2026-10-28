@@ -14,9 +14,14 @@ import { mcpInstallStatus } from '../../webview/bridge';
 import { MessagesPane, type MessagesPaneProps } from '../../webview/components/messages-pane';
 import type { ConduitMcpApi } from '../../webview/use-conduit-mcp';
 
+const installChange = vi.hoisted(() => ({ listeners: new Set<() => void>() }));
 vi.mock('../../webview/bridge', async (orig) => ({
   ...(await orig<typeof import('../../webview/bridge')>()),
   mcpInstallStatus: vi.fn(async () => ({ clis: [] })),
+  onMcpInstallChanged: (cb: () => void) => {
+    installChange.listeners.add(cb);
+    return () => installChange.listeners.delete(cb);
+  },
 }));
 
 beforeAll(() => {
@@ -197,7 +202,10 @@ describe('MessagesPane states (spec §8)', () => {
       vi.mocked(mcpInstallStatus).mockResolvedValue(status(cli(true, 'not-installed')));
       const p = props(fakeApi(uiState()));
       await render(p);
-      expect(text()).toContain('Install Conduit for your agent CLIs');
+      expect(q('.emptystate__title').textContent).toBe('Agents can message each other and you.');
+      expect(q('.emptystate__hint').textContent).toBe(
+        'Install Conduit for your agent CLIs so ones started in any terminal can join.',
+      );
       expect(text()).not.toContain(FIRST_RUN);
       await click(byText('Set up agent CLIs'));
       expect(p.onOpenSettings).toHaveBeenCalledTimes(1);
@@ -211,6 +219,41 @@ describe('MessagesPane states (spec §8)', () => {
       await render(props(fakeApi(uiState())));
       expect(text()).toContain(FIRST_RUN);
       expect(text()).not.toContain('Set up agent CLIs');
+    });
+
+    it('re-reads when an install changes, switching to the first-run copy', async () => {
+      vi.mocked(mcpInstallStatus).mockResolvedValue(status(cli(true, 'not-installed')));
+      await render(props(fakeApi(uiState())));
+      expect(text()).toContain('Set up agent CLIs');
+      vi.mocked(mcpInstallStatus).mockResolvedValue(status(cli(true, 'installed')));
+      await act(async () => {
+        for (const cb of installChange.listeners) cb();
+      });
+      expect(text()).toContain(FIRST_RUN);
+      expect(text()).not.toContain('Set up agent CLIs');
+    });
+
+    it('a slow mount read cannot overwrite a newer one', async () => {
+      let releaseOld: (s: ReturnType<typeof status>) => void = () => {};
+      vi.mocked(mcpInstallStatus).mockImplementationOnce(
+        () => new Promise((r) => (releaseOld = r)),
+      );
+      await render(props(fakeApi(uiState())));
+      vi.mocked(mcpInstallStatus).mockResolvedValue(status(cli(true, 'installed')));
+      await act(async () => {
+        for (const cb of installChange.listeners) cb();
+      });
+      await act(async () => releaseOld(status(cli(true, 'not-installed'))));
+      expect(text()).toContain(FIRST_RUN);
+    });
+
+    it('stops listening when it unmounts', async () => {
+      vi.mocked(mcpInstallStatus).mockResolvedValue(status(cli(true, 'not-installed')));
+      await render(props(fakeApi(uiState())));
+      expect(installChange.listeners.size).toBe(1);
+      await act(async () => root?.unmount());
+      root = null;
+      expect(installChange.listeners.size).toBe(0);
     });
 
     it('a rejected status falls back to the first-run copy', async () => {

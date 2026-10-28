@@ -11,6 +11,7 @@ import type {
 } from '../../src/conduit-mcp/install-types';
 import { McpInstallRow } from '../../webview/components/mcp-install-row';
 import { MCP_STR } from '../../webview/conduit-mcp-strings';
+import { STATUS_UNREADABLE } from '../../webview/mcp-install-codes';
 
 vi.mock('../../webview/bridge', () => ({ isHosted: false, logToHost: vi.fn() }));
 
@@ -49,12 +50,14 @@ function Harness(p: {
   onAct: Act;
   onRecheck: () => void;
   focusOnMount: boolean;
+  checking?: boolean;
 }) {
   const [s, setS] = useState(p.initial);
   return (
     <McpInstallRow
       cli={p.initial?.cli ?? 'codex'}
       status={s}
+      checking={p.checking}
       onAct={async (req) => {
         const r = await p.onAct(req);
         if (r) setS(r.status);
@@ -71,6 +74,7 @@ async function mount(
   onAct: Act = vi.fn<Act>(async () => null),
   onRecheck: () => void = vi.fn(),
   focusOnMount = false,
+  checking = false,
 ) {
   host = document.createElement('div');
   document.body.append(host);
@@ -81,7 +85,13 @@ async function mount(
   root = createRoot(host);
   await act(async () =>
     root?.render(
-      <Harness initial={s} onAct={onAct} onRecheck={onRecheck} focusOnMount={focusOnMount} />,
+      <Harness
+        initial={s}
+        onAct={onAct}
+        onRecheck={onRecheck}
+        focusOnMount={focusOnMount}
+        checking={checking}
+      />,
     ),
   );
 }
@@ -89,6 +99,7 @@ async function mount(
 const buttons = () => [...host.querySelectorAll<HTMLButtonElement>('button')];
 const labels = () => buttons().map((b) => b.textContent);
 const live = () => host.querySelector('[aria-live="polite"]');
+const visibleStatus = () => host.querySelector('.mcp-install-row__status');
 const byName = (name: string) =>
   buttons().find((b) => (b.getAttribute('aria-label') ?? b.textContent) === name);
 
@@ -96,7 +107,8 @@ describe('McpInstallRow', () => {
   it('checking: no buttons, Checking…', async () => {
     await mount(null);
     expect(buttons()).toHaveLength(0);
-    expect(live()?.textContent).toContain(MCP_STR.install.state.checking);
+    expect(visibleStatus()?.textContent).toContain(MCP_STR.install.state.checking);
+    expect(live()?.textContent).toBe('');
   });
 
   it.each([
@@ -109,7 +121,8 @@ describe('McpInstallRow', () => {
   ] as const)('%s shows exactly its §2.3 buttons', async (state, expected) => {
     await mount(status(state, state === 'error' ? { errorCode: 'ETOML' } : {}));
     expect(labels()).toEqual(expected);
-    expect(live()?.textContent).toContain(MCP_STR.install.state[state]);
+    expect(visibleStatus()?.textContent).toContain(MCP_STR.install.state[state]);
+    expect(live()?.textContent).toBe('');
   });
 
   it('error shows the path and the code text', async () => {
@@ -158,6 +171,8 @@ describe('McpInstallRow', () => {
     await mount(status('installed'));
     await act(async () => buttons()[0].click());
     expect(live()?.textContent).toContain(MCP_STR.install.actionFailed(PATH, 'EINVAL'));
+    expect(host.textContent).not.toContain('EINVAL');
+    expect(host.querySelector('[title="EINVAL"]')).not.toBeNull();
   });
 
   it('a failed action no longer valid for the re-read state offers only that state’s buttons', async () => {
@@ -224,10 +239,150 @@ describe('McpInstallRow', () => {
   it('shadowed user entry carries the override note; Cursor carries its tool-approval note', async () => {
     await mount(status('installed', { shadowedBy: 'local' }));
     expect(host.textContent).toContain(MCP_STR.install.shadowed('local'));
+    expect(host.textContent).toContain(MCP_STR.install.projectScope.local);
     await act(async () => root?.unmount());
     root = null;
     await mount(status('installed', {}, 'cursor'));
     expect(host.textContent).toContain(MCP_STR.install.cursorNote);
     expect(host.textContent).toContain('Cursor');
+  });
+});
+
+describe('McpInstallRow announcements (review SF6, nit 6)', () => {
+  it('the live region is empty on open and after nothing but a read', async () => {
+    await mount(status('installed'));
+    expect(live()?.textContent).toBe('');
+  });
+
+  it('a successful action announces the state and the file path', async () => {
+    const onAct = vi.fn<Act>(async () => ({ ok: true, status: status('installed') }));
+    await mount(status('not-installed'), onAct);
+    await act(async () => buttons()[0].click());
+    expect(live()?.textContent).toBe(
+      MCP_STR.install.actionDone(MCP_STR.install.state.installed, PATH),
+    );
+    expect(live()?.textContent).toContain(PATH);
+  });
+
+  it('an explicit Check again announces Checking…, a plain read does not', async () => {
+    let opts: { checking: boolean } = { checking: false };
+    const draw = () =>
+      root?.render(
+        <McpInstallRow
+          cli="codex"
+          status={status('not-found')}
+          checking={opts.checking}
+          onAct={async () => null}
+          onRecheck={() => {
+            opts = { checking: true };
+          }}
+        />,
+      );
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => draw());
+    expect(live()?.textContent).toBe('');
+    await act(async () => buttons()[0].click());
+    await act(async () => draw());
+    expect(live()?.textContent).toBe(MCP_STR.install.state.checking);
+  });
+});
+
+describe('McpInstallRow while checking (review SF2)', () => {
+  function drawRow(s: CliInstallStatus | null, checking: boolean, onRecheck = vi.fn()) {
+    return root?.render(
+      <McpInstallRow
+        cli="codex"
+        status={s}
+        checking={checking}
+        onAct={async () => null}
+        onRecheck={onRecheck}
+      />,
+    );
+  }
+
+  it('keeps its buttons mounted, focus on Check again, and reads Checking…', async () => {
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => drawRow(status('not-found'), false));
+    const check = buttons()[0];
+    check.focus();
+    await act(async () => drawRow(status('not-found'), true));
+    expect(buttons()[0]).toBe(check);
+    expect(document.activeElement).toBe(check);
+    expect(visibleStatus()?.textContent).toContain(MCP_STR.install.state.checking);
+    await act(async () => drawRow(status('not-installed'), false));
+    expect(visibleStatus()?.textContent).toContain(MCP_STR.install.state['not-installed']);
+  });
+
+  it('a press while checking does not start a second read', async () => {
+    const onRecheck = vi.fn();
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => drawRow(status('error', { errorCode: 'ETOML' }), true, onRecheck));
+    await act(async () => buttons()[0].click());
+    expect(onRecheck).not.toHaveBeenCalled();
+  });
+
+  it('a stale failure does not survive a new check', async () => {
+    const onAct = vi.fn<Act>(async () => ({
+      ok: false,
+      status: status('not-installed'),
+      errorCode: 'EACCES',
+    }));
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    const draw = (checking: boolean) =>
+      root?.render(
+        <McpInstallRow
+          cli="codex"
+          status={status('not-installed')}
+          checking={checking}
+          onAct={onAct}
+          onRecheck={() => {}}
+        />,
+      );
+    await act(async () => draw(false));
+    await act(async () => buttons()[0].click());
+    expect(host.textContent).toContain(MCP_STR.install.actionFailed(PATH, 'EACCES'));
+    await act(async () => draw(true));
+    await act(async () => draw(false));
+    expect(host.textContent).not.toContain(MCP_STR.install.actionFailed(PATH, 'EACCES'));
+  });
+});
+
+describe('McpInstallRow focusOnMount via the Settings path (nit)', () => {
+  it('mounts with status null, then the status arrives: the first button takes focus', async () => {
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    const draw = (s: CliInstallStatus | null) =>
+      root?.render(
+        <McpInstallRow
+          cli="codex"
+          status={s}
+          onAct={async () => null}
+          onRecheck={() => {}}
+          focusOnMount
+        />,
+      );
+    await act(async () => draw(null));
+    expect(buttons()).toHaveLength(0);
+    await act(async () => draw(status('not-installed')));
+    expect(document.activeElement).toBe(buttons()[0]);
+  });
+});
+
+describe('McpInstallRow unreadable status (nit 10)', () => {
+  it('shows plain copy, the code only in a title', async () => {
+    await mount(status('error', { errorCode: STATUS_UNREADABLE, path: '' }));
+    expect(host.textContent).toContain(MCP_STR.install.unreadable);
+    expect(host.textContent).not.toContain(STATUS_UNREADABLE);
+    expect(host.querySelector(`[title="${STATUS_UNREADABLE}"]`)).not.toBeNull();
+    expect(labels()).toEqual([MCP_STR.install.checkAgain]);
   });
 });

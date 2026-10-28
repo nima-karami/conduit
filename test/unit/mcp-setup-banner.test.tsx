@@ -23,7 +23,12 @@ const bridge = vi.hoisted(() => ({
   post: vi.fn<(m: unknown) => void>(),
   mcpInstallAct: vi.fn<(req: unknown) => Promise<McpInstallResult>>(),
 }));
+const terminal = vi.hoisted(() => ({ requestTerminalFocus: vi.fn<(id: string) => void>() }));
 const box = vi.hoisted(() => ({ settings: undefined as AppSettings | undefined }));
+vi.mock('../../webview/terminal-bus', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../webview/terminal-bus')>()),
+  ...terminal,
+}));
 vi.mock('../../webview/bridge', async (importOriginal) => {
   const orig = await importOriginal<typeof import('../../webview/bridge')>();
   return {
@@ -320,6 +325,13 @@ describe('McpSetupBanner', () => {
     expect(document.activeElement).toBe(document.body);
   });
 
+  it('Cursor’s restart hint names Cursor, not the bare agent command', () => {
+    expect(S.bannerInstalled('cursor')).toContain('Cursor');
+    expect(S.bannerInstalled('codex')).toBe(
+      'Installed. Restart codex in this terminal to connect.',
+    );
+  });
+
   it('cursor-not-connected uses the same banner with Install for Cursor', async () => {
     await mount({
       ...base,
@@ -327,5 +339,107 @@ describe('McpSetupBanner', () => {
     });
     expect(banner()?.textContent).toContain(S.bannerBody('cursor'));
     expect(button('Install for Cursor')).toBeDefined();
+  });
+});
+
+describe('McpSetupBanner latch (review SF1, SF3)', () => {
+  it('SF1 an out-of-band install hides a banner that is still only offering', async () => {
+    await mount(base);
+    expect(banner()).not.toBeNull();
+    await rerender({ ...base, nc: nc({ install: 'installed' }) });
+    expect(banner()).toBeNull();
+  });
+
+  it('SF1 an out-of-band install does not hide the banner mid-install', async () => {
+    bridge.mcpInstallAct.mockReturnValue(new Promise(() => {}));
+    await mount(base);
+    await act(async () => button(S.bannerInstall('codex'))?.click());
+    await rerender({ ...base, nc: nc({ install: 'installed' }) });
+    expect(banner()?.textContent).toContain(S.bannerInstalling);
+  });
+
+  it('SF3 the scope banner appearing after the MCP banner is shown hides it', async () => {
+    await mount(base);
+    expect(banner()).not.toBeNull();
+    const scoped = session({ agentScope: { unseen: ['/x'], stillSeen: [], typeable: [] } });
+    await rerender({ ...base, session: scoped });
+    expect(banner()).toBeNull();
+  });
+
+  it('SF3 the scope banner also hides the restart copy after an install', async () => {
+    bridge.mcpInstallAct.mockResolvedValue({
+      ok: true,
+      status: {
+        cli: 'codex',
+        found: true,
+        user: { state: 'installed', path: '/h/.codex/config.toml' },
+        project: null,
+      },
+    });
+    await mount(base);
+    await act(async () => button(S.bannerInstall('codex'))?.click());
+    expect(banner()?.textContent).toContain(S.bannerInstalled('codex'));
+    const scoped = session({ agentScope: { unseen: ['/x'], stillSeen: [], typeable: [] } });
+    await rerender({ ...base, session: scoped });
+    expect(banner()).toBeNull();
+  });
+});
+
+describe('McpSetupBanner focus (review SF4, spec §10)', () => {
+  const installed: McpInstallResult = {
+    ok: true,
+    status: {
+      cli: 'codex',
+      found: true,
+      user: { state: 'installed', path: '/h/.codex/config.toml' },
+      project: null,
+    },
+  };
+
+  it('after a successful install focus moves to the close button', async () => {
+    bridge.mcpInstallAct.mockResolvedValue(installed);
+    await mount(base);
+    const install = button(S.bannerInstall('codex'));
+    install?.focus();
+    await act(async () => install?.click());
+    expect(document.activeElement).toBe(closeButton());
+  });
+
+  it('after a failed install focus moves to Open MCP settings', async () => {
+    bridge.mcpInstallAct.mockResolvedValue({ ...installed, ok: false, errorCode: 'EACCES' });
+    await mount(base);
+    const install = button(S.bannerInstall('codex'));
+    install?.focus();
+    await act(async () => install?.click());
+    expect(document.activeElement).toBe(button(S.bannerOpenSettings));
+  });
+
+  it('a user who moved focus elsewhere during the install keeps it', async () => {
+    let resolve: (r: McpInstallResult) => void = () => {};
+    bridge.mcpInstallAct.mockReturnValue(new Promise((r) => (resolve = r)));
+    await mount(base);
+    const outside = document.createElement('input');
+    document.body.append(outside);
+    await act(async () => button(S.bannerInstall('codex'))?.click());
+    outside.focus();
+    await act(async () => resolve(installed));
+    expect(document.activeElement).toBe(outside);
+  });
+
+  it("Don't suggest again returns focus to the session's terminal", async () => {
+    await mount(base);
+    const dismiss = button(S.bannerDismiss);
+    dismiss?.focus();
+    await act(async () => dismiss?.click());
+    expect(banner()).toBeNull();
+    expect(terminal.requestTerminalFocus).toHaveBeenCalledWith('s1');
+  });
+
+  it("× returns focus to the session's terminal", async () => {
+    await mount(base);
+    closeButton()?.focus();
+    await act(async () => closeButton()?.click());
+    expect(banner()).toBeNull();
+    expect(terminal.requestTerminalFocus).toHaveBeenCalledWith('s1');
   });
 });

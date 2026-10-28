@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useState } from 'react';
+import { Fragment, useCallback, useEffect, useId, useState } from 'react';
 import { AGENT_CLIS, type AgentCli } from '../../src/conduit-mcp/install-types';
 import { CONTROL_TOOL_NAMES, MESSAGING_TOOL_NAMES } from '../../src/conduit-mcp/tool-switches';
 import type { LogLevel } from '../../src/logging';
@@ -89,6 +89,9 @@ export function SettingsModal({
 }) {
   const { settings, update } = useSettings();
   const [tab, setTab] = useState<Tab>(initialTab);
+  // Spent once the row has taken focus, so switching back to the MCP tab doesn't pull it again.
+  const [focusCli, setFocusCli] = useState(initialCli);
+  const spendFocusCli = useCallback(() => setFocusCli(undefined), []);
 
   const TAB_LABELS: { id: Tab; label: string }[] = [
     { id: 'general', label: 'General' },
@@ -140,7 +143,8 @@ export function SettingsModal({
                 settings={settings}
                 update={update}
                 projectPath={projectPath}
-                initialCli={initialCli}
+                focusCli={focusCli}
+                onFocusCliSpent={spendFocusCli}
               />
             )}
             {tab === 'shortcuts' && <ShortcutsTab settings={settings} update={update} />}
@@ -905,15 +909,22 @@ function McpTab({
   settings,
   update,
   projectPath,
-  initialCli,
+  focusCli,
+  onFocusCliSpent,
 }: {
   settings: AppSettings;
   update: (p: Partial<AppSettings>) => void;
   projectPath: string | null;
-  initialCli?: AgentCli;
+  focusCli?: AgentCli;
+  onFocusCliSpent: () => void;
 }) {
   const S = MCP_STR.install;
   const install = useMcpInstall(projectPath);
+  // The first status is when the focused row takes focus (its layout effect has run by now).
+  const haveStatus = install.status !== null;
+  useEffect(() => {
+    if (haveStatus) onFocusCliSpent();
+  }, [haveStatus, onFocusCliSpent]);
   return (
     <>
       <SetGroup title={MCP_STR.settingsTitle}>
@@ -931,9 +942,10 @@ function McpTab({
             key={cli}
             cli={cli}
             status={install.status?.clis.find((c) => c.cli === cli) ?? null}
+            checking={install.checking.has(cli)}
             onAct={install.act}
             onRecheck={install.refresh}
-            focusOnMount={cli === initialCli}
+            focusOnMount={cli === focusCli}
           />
         ))}
         {projectPath !== null && (

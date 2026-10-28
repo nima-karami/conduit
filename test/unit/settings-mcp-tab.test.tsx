@@ -168,6 +168,52 @@ describe('Settings → MCP tab', () => {
     expect(document.activeElement?.getAttribute('aria-label')).toBe(S.installAria('cursor'));
   });
 
+  it('initialCli focuses only on the first open, not when switching back to the tab', async () => {
+    await mount({ initialCli: 'cursor' });
+    const nav = (label: string) =>
+      [...document.body.querySelectorAll<HTMLButtonElement>('.settings__navitem')].find(
+        (b) => b.textContent === label,
+      );
+    expect(document.activeElement?.getAttribute('aria-label')).toBe(S.installAria('cursor'));
+    await act(async () => nav('General')?.click());
+    await act(async () => nav(S.tab)?.click());
+    expect(document.activeElement?.getAttribute('aria-label') ?? null).not.toBe(
+      S.installAria('cursor'),
+    );
+  });
+
+  it('Check again keeps every row mounted and focus on the pressed button', async () => {
+    bridge.mcpInstallStatus.mockImplementation(async () => ({
+      clis: status(false).clis.map((c) => ({
+        ...c,
+        found: false,
+        user: { ...c.user, state: 'not-found' },
+      })),
+    }));
+    await mount();
+    const check = document.body.querySelector<HTMLButtonElement>(
+      `button[aria-label="${S.checkAgainAria('codex')}"]`,
+    );
+    check?.focus();
+    let release: () => void = () => {};
+    bridge.mcpInstallStatus.mockImplementation(
+      () =>
+        new Promise((r) => {
+          release = () => r(status(false));
+        }),
+    );
+    await act(async () => check?.click());
+    expect(document.activeElement).toBe(check);
+    expect(document.body.querySelectorAll('.mcp-install-row')).toHaveLength(4);
+    expect(document.body.querySelectorAll('.mcp-install-row__status')[1].textContent).toBe(
+      S.state.checking,
+    );
+    await act(async () => release());
+    expect(document.body.querySelectorAll('.mcp-install-row__status')[1].textContent).toBe(
+      S.state['not-installed'],
+    );
+  });
+
   // The re-read status replaces the CLI's whole slot, so a user-scope action must still carry the
   // project or that CLI's project section would vanish.
   it('a user-scope action carries the project so the re-read keeps its project section', async () => {

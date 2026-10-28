@@ -32,11 +32,22 @@ export function McpProjectEntries({
     <div className="mcp-project">
       <h4 className="mcp-project__title">{S.projectTitle}</h4>
       {empty && <p className="mcp-project__none">{S.projectNone}</p>}
+      {shown.some((c) => c.project.installable && c.project.installPath !== null) && (
+        <p className="mcp-project__warn">{S.projectWarn}</p>
+      )}
       {shown.map((c) => (
         <ProjectCli key={c.cli} status={c} projectPath={projectPath} onAct={onAct} />
       ))}
     </div>
   );
+}
+
+// The warning is shown once per section; per CLI only the file's place in the project is needed.
+function shortPath(file: string, projectPath: string): string {
+  const root = projectPath.replace(/[\\/]+$/, '');
+  return file.startsWith(root) && /[\\/]/.test(file.charAt(root.length))
+    ? file.slice(root.length + 1)
+    : file.split(/[\\/]/).pop() || file;
 }
 
 function ProjectCli({
@@ -106,7 +117,9 @@ function ProjectCli({
       ))}
       {project.installable && project.installPath !== null && (
         <div className="mcp-project__entry">
-          <span className="mcp-project__warn">{S.projectWarn(project.installPath)}</span>
+          <span className="mcp-project__path" dir="ltr">
+            {shortPath(project.installPath, projectPath)}
+          </span>
           <button
             type="button"
             className="btn btn--sm"
@@ -122,7 +135,13 @@ function ProjectCli({
         </div>
       )}
       {cli === 'codex' && <span className="mcp-project__note">{S.codexTrustNote}</span>}
-      <span className="mcp-project__status" role="status" aria-live="polite" aria-atomic="true">
+      <span
+        className="mcp-project__status"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        title={failure?.code}
+      >
         {pending ? S.state.pending : failure ? S.actionFailed(failure.path, failure.code) : ''}
       </span>
     </div>

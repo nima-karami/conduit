@@ -297,10 +297,22 @@ export function mcpInstallStatus(projectPath: string | null): Promise<McpInstall
   return Promise.resolve({ clis: AGENT_CLIS.map(previewCliStatus) });
 }
 
+const mcpInstallListeners = new Set<() => void>();
+
+/** Runs after any install action that succeeded, so views that read install status can re-read. */
+export function onMcpInstallChanged(cb: () => void): () => void {
+  mcpInstallListeners.add(cb);
+  return () => {
+    mcpInstallListeners.delete(cb);
+  };
+}
+
 /** Install/uninstall Conduit for one CLI via the host. The preview refuses with ENOSYS. */
-export function mcpInstallAct(req: McpInstallRequest): Promise<McpInstallResult> {
-  if (host) return host.mcpInstall.act(req);
-  return Promise.resolve({ ok: false, status: previewCliStatus(req.cli), errorCode: 'ENOSYS' });
+export async function mcpInstallAct(req: McpInstallRequest): Promise<McpInstallResult> {
+  if (!host) return { ok: false, status: previewCliStatus(req.cli), errorCode: 'ENOSYS' };
+  const result = await host.mcpInstall.act(req);
+  if (result.ok) for (const cb of [...mcpInstallListeners]) cb();
+  return result;
 }
 
 /**

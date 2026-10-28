@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AGENT_CLIS,
+  type AgentCli,
   type McpInstallRequest,
   type McpInstallResult,
   type McpInstallStatus,
 } from '../src/conduit-mcp/install-types';
 import { mcpInstallAct, mcpInstallStatus } from './bridge';
 import { log } from './log';
+import { STATUS_UNREADABLE } from './mcp-install-codes';
 
 export interface McpInstallApi {
-  /** null while the first read is in flight. */
+  /** null only while the first read for this project is in flight. */
   status: McpInstallStatus | null;
+  /** The CLIs whose Check again is in flight; their last status stays in `status` meanwhile. */
+  checking: ReadonlySet<AgentCli>;
   /** Re-reads all four (Check again). */
   refresh(): void;
   /** Replaces that CLI's slot with result.status; resolves null when the invoke rejected. */
@@ -19,44 +23,54 @@ export interface McpInstallApi {
 
 // A rejected read has no per-CLI answer; each row shows it as its own error with Check again,
 // because the tab has no page-level error state (spec 2026-10-27-conduit-mcp-install §8).
+const NONE: ReadonlySet<AgentCli> = new Set();
+const ALL: ReadonlySet<AgentCli> = new Set(AGENT_CLIS);
+
 const unreadable = (): McpInstallStatus => ({
   clis: AGENT_CLIS.map((cli) => ({
     cli,
     found: true,
-    user: { state: 'error', path: '', errorCode: 'EINVAL' },
+    user: { state: 'error', path: '', errorCode: STATUS_UNREADABLE },
     project: null,
   })),
 });
 
 export function useMcpInstall(projectPath: string | null): McpInstallApi {
   const [status, setStatus] = useState<McpInstallStatus | null>(null);
+  const [checking, setChecking] = useState<ReadonlySet<AgentCli>>(NONE);
   // Only the newest read may land: a slow read for an old project must not overwrite a new one.
   const generation = useRef(0);
   const mounted = useRef(true);
 
-  const read = useCallback((path: string | null) => {
+  // A refresh keeps the last status so the rows (and the focused Check again) stay mounted; a new
+  // project drops it, because the old project's entries would be wrong for the new one.
+  const read = useCallback((path: string | null, keepStatus: boolean) => {
     const gen = ++generation.current;
-    setStatus(null);
-    void mcpInstallStatus(path).then(
-      (s) => {
-        if (mounted.current && gen === generation.current) setStatus(s);
-      },
-      (error: unknown) => {
-        log.warn('mcp-install', 'status read failed', { error: String(error) });
-        if (mounted.current && gen === generation.current) setStatus(unreadable());
-      },
-    );
+    if (keepStatus) setChecking(ALL);
+    else {
+      setStatus(null);
+      setChecking(NONE);
+    }
+    const land = (next: McpInstallStatus) => {
+      if (!mounted.current || gen !== generation.current) return;
+      setStatus(next);
+      setChecking(NONE);
+    };
+    void mcpInstallStatus(path).then(land, (error: unknown) => {
+      log.warn('mcp-install', 'status read failed', { error: String(error) });
+      land(unreadable());
+    });
   }, []);
 
   useEffect(() => {
     mounted.current = true;
-    read(projectPath);
+    read(projectPath, false);
     return () => {
       mounted.current = false;
     };
   }, [projectPath, read]);
 
-  const refresh = useCallback(() => read(projectPath), [projectPath, read]);
+  const refresh = useCallback(() => read(projectPath, true), [projectPath, read]);
 
   const act = useCallback(
     async (req: McpInstallRequest): Promise<McpInstallResult | null> => {
@@ -83,5 +97,5 @@ export function useMcpInstall(projectPath: string | null): McpInstallApi {
     [projectPath],
   );
 
-  return { status, refresh, act };
+  return { status, checking, refresh, act };
 }

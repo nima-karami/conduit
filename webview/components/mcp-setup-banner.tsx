@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { AgentCli } from '../../src/conduit-mcp/install-types';
 import type { McpNotConnected } from '../../src/conduit-mcp/ui-types';
 import type { Session } from '../../src/types';
@@ -13,6 +13,7 @@ import {
   shouldOfferBanner,
 } from '../mcp-setup-banner-model';
 import { useSettings } from '../settings';
+import { requestTerminalFocus } from '../terminal-bus';
 
 const S = MCP_STR.install;
 
@@ -20,7 +21,7 @@ type Phase =
   | { kind: 'shown' }
   | { kind: 'installing' }
   | { kind: 'installed' }
-  | { kind: 'failed'; message: string };
+  | { kind: 'failed'; message: string; code: string };
 
 interface Latch {
   key: string;
@@ -75,11 +76,37 @@ export function McpSetupBanner({
     otherBannerShowing;
   const cli = nc?.cli;
 
-  // Once shown, the banner holds through install and its outcome: a successful install flips
-  // nc.install to 'installed', which must not take the restart hint away.
+  // Once the banner's own install is under way it holds through the outcome: success flips
+  // nc.install to 'installed', which must not take the restart hint away. Before that, an
+  // out-of-band install ends the offer, and so does the scope banner turning up (AC12 "iff").
   const latched =
-    latch !== null && latch.key === key && messagingOn && suggest && !dismissed[latch.cli];
+    latch !== null &&
+    latch.key === key &&
+    messagingOn &&
+    suggest &&
+    !dismissed[latch.cli] &&
+    !otherBannerShowing &&
+    (latch.phase.kind !== 'shown' || nc?.install === 'not-installed');
   const visible = offer || latched;
+
+  const bannerRef = useRef<HTMLDivElement>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const focusOutcome = useRef(false);
+  const phaseKind = latch?.phase.kind;
+  // The Install button unmounts on success/failure; focus goes to what remains (spec §10), unless
+  // the user has already moved on to something outside the banner.
+  useLayoutEffect(() => {
+    if (!focusOutcome.current || (phaseKind !== 'installed' && phaseKind !== 'failed')) return;
+    focusOutcome.current = false;
+    const active = document.activeElement;
+    if (active && active !== document.body && !bannerRef.current?.contains(active)) return;
+    actionsRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+  }, [phaseKind]);
+
+  const closeBanner = () => {
+    setLatch(null);
+    requestTerminalFocus(session.id);
+  };
 
   useLayoutEffect(() => {
     if (key === null || cli === undefined) return;
@@ -105,17 +132,22 @@ export function McpSetupBanner({
 
   const install = async () => {
     setPhase({ kind: 'installing' });
+    focusOutcome.current = true;
     try {
       const r = await mcpInstallAct({ cli, scope: 'user', action: 'install' });
       setPhase(
         r.ok
           ? { kind: 'installed' }
-          : { kind: 'failed', message: S.actionFailed(r.status.user.path, r.errorCode) },
+          : {
+              kind: 'failed',
+              message: S.actionFailed(r.status.user.path, r.errorCode),
+              code: r.errorCode,
+            },
       );
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       log.warn('mcp-install', 'banner install failed', { error: detail, cli });
-      setPhase({ kind: 'failed', message: S.actionFailed('', 'EINVAL') });
+      setPhase({ kind: 'failed', message: S.actionFailed('', 'EINVAL'), code: 'EINVAL' });
     }
   };
 
@@ -123,12 +155,14 @@ export function McpSetupBanner({
   const busy = phase.kind === 'installing';
 
   return (
-    <div className="mcp-banner" role="region" aria-label={S.bannerRegion}>
+    <div className="mcp-banner" role="region" aria-label={S.bannerRegion} ref={bannerRef}>
       <div className="sr-only" role="status" aria-live="polite">
         {live ? announcement : ''}
       </div>
-      <div className="mcp-banner__msg">{phaseText(cli, phase)}</div>
-      <div className="mcp-banner__actions">
+      <div className="mcp-banner__msg" title={phase.kind === 'failed' ? phase.code : undefined}>
+        {phaseText(cli, phase)}
+      </div>
+      <div className="mcp-banner__actions" ref={actionsRef}>
         {(phase.kind === 'shown' || phase.kind === 'installing') && (
           <>
             <button
@@ -145,7 +179,7 @@ export function McpSetupBanner({
               disabled={busy}
               onClick={() => {
                 update({ mcpInstallPromptDismissed: { ...dismissed, [cli]: true } });
-                setLatch(null);
+                closeBanner();
               }}
             >
               {S.bannerDismiss}
@@ -162,7 +196,7 @@ export function McpSetupBanner({
           className="mcp-banner__close"
           aria-label={S.bannerClose}
           title={S.bannerClose}
-          onClick={() => setLatch(null)}
+          onClick={closeBanner}
         >
           <IconClose size={12} />
         </button>

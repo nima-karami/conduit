@@ -57,7 +57,10 @@ const INSTALL_ERROR_TEXT: Readonly<Record<string, string>> = {
   EACCES: 'permission denied',
   EPERM: 'permission denied',
   ENOSPC: 'the disk is full',
+  // The host's catch-all and the renderer's rejected-invoke stand-in; the code itself stays in a title.
+  EINVAL: 'something went wrong',
 };
+const PROJECT_SCOPE = { project: 'Project', local: 'Local' } satisfies Record<ProjectScope, string>;
 const installErrorText = (code: string): string => INSTALL_ERROR_TEXT[code] ?? code;
 
 export const MCP_STR = {
@@ -269,21 +272,24 @@ export const MCP_STR = {
     checkAgainAria: (cli: AgentCli) => `Check ${CLI_NAME[cli]} again`,
     tryAgainAria: (cli: AgentCli) => `Try again for ${CLI_NAME[cli]}`,
     removeAria: (cli: AgentCli, scope: ProjectScope) =>
-      `Remove the ${scope} Conduit entry for ${CLI_NAME[cli]}`,
+      `Remove the ${PROJECT_SCOPE[scope]} Conduit entry for ${CLI_NAME[cli]}`,
     installProjectAria: (cli: AgentCli) => `Install Conduit for ${CLI_NAME[cli]} in this project`,
     actionFailed: (path: string, code: string) =>
       path
         ? `Couldn’t update ${path}: ${installErrorText(code)}`
         : `Couldn’t update: ${installErrorText(code)}`,
     errorDetail: installErrorText,
-    shadowed: (scope: ProjectScope) => `Overridden in this project by its ${scope} entry`,
+    shadowed: (scope: ProjectScope) =>
+      `Overridden in this project by its ${PROJECT_SCOPE[scope]} entry`,
+    unreadable: 'Couldn’t read the config. Check again.',
+    actionDone: (state: string, path: string) => `${state}. ${path}`,
     codexTrustNote: 'Codex reads a project’s config only when you trust the project.',
     cursorNote: 'Cursor may ask you to allow each Conduit tool the first time it runs.',
     projectTitle: 'This project',
     projectNone: 'No Conduit entries in this project.',
-    projectWarn: (file: string) =>
-      `Adds ${file} to this project. It contains paths on this computer; don’t commit it.`,
-    projectScope: { project: 'Project', local: 'Local' } satisfies Record<ProjectScope, string>,
+    projectWarn:
+      'Installing adds a config file to this project. It contains paths on this computer; don’t commit it.',
+    projectScope: PROJECT_SCOPE,
     projectState: {
       ours: 'Installed',
       'other-conduit': 'Installed by another Conduit',
@@ -305,14 +311,17 @@ export const MCP_STR = {
     bannerInstalling: 'Installing…',
     bannerDismiss: 'Don’t suggest again',
     bannerClose: 'Close Conduit setup suggestion',
+    // Cursor's command is a bare "agent", which reads as no product at all.
     bannerInstalled: (cli: AgentCli) =>
-      `Installed. Restart ${CLI_COMMAND[cli]} in this terminal to connect.`,
+      cli === 'cursor'
+        ? `Installed. Restart ${CLI_NAME.cursor} Agent in this terminal to connect.`
+        : `Installed. Restart ${CLI_COMMAND[cli]} in this terminal to connect.`,
     bannerOpenSettings: 'Open MCP settings',
     bannerAnnounce: (cli: AgentCli) => `Conduit setup suggestion for ${CLI_NAME[cli]}`,
     bannerRegion: 'Conduit setup',
     setupCommand: 'Set up Conduit MCP…',
-    setupCopy:
-      'Agents in your sessions can message each other and you. Install Conduit for your agent CLIs so ones started in any terminal can join.',
+    setupTitle: 'Agents can message each other and you.',
+    setupBody: 'Install Conduit for your agent CLIs so ones started in any terminal can join.',
     setupButton: 'Set up agent CLIs',
   },
 } as const;
