@@ -5,8 +5,10 @@ import {
   type ConduitEntry,
   classifyEntry,
   conduitEntry,
+  deepEqualConfig,
   type EntryClass,
   entryTargets,
+  retargetEntry,
 } from '../src/conduit-mcp/install-entries';
 import {
   AGENT_CLIS,
@@ -34,6 +36,7 @@ import {
   locateConduitTable,
   readCodexConduit,
   spliceConduitTable,
+  spliceRepairedTable,
 } from '../src/conduit-mcp/toml-config';
 import {
   backupOnce,
@@ -71,6 +74,14 @@ export interface McpInstall {
   /** Rewrites dead other-conduit user entries (spec §14 D2); one row per rewrite or failure. */
   repair(): { cli: AgentCli; path: string; errorCode?: string }[];
 }
+
+/** What an action writes: our entry, nothing (delete), or the user's entry repointed (Repair). */
+type Edit =
+  | { kind: 'set'; value: ConduitEntry }
+  | { kind: 'delete' }
+  | { kind: 'retarget'; value: Record<string, unknown> };
+/** The action's state check over the file as read: the edit, null for nothing to do, or throws ESTATE. */
+type Decide = (loaded: Loaded) => Edit | null;
 
 /** A config file read and parsed once; `json` only for JSON targets. */
 interface Loaded {
@@ -212,15 +223,21 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
   const rootOf = (projectPath: string | null): string | null =>
     projectPath === null ? null : deps.knownHome(projectPath);
 
-  function render(target: ConfigTarget, loaded: Loaded, value: ConduitEntry | null): string {
+  function render(target: ConfigTarget, loaded: Loaded, edit: Edit): string {
     if (target.format === 'json') {
       const json = loaded.json ?? {};
       return serializeJsonConfig(
-        value === null ? deletePath(json, target.keys) : setPath(json, target.keys, value),
+        edit.kind === 'delete'
+          ? deletePath(json, target.keys)
+          : setPath(json, target.keys, edit.value),
       );
     }
     // TOML is spliced, not re-serialized, so the user's bytes (and BOM) outside our table survive.
-    const out = spliceConduitTable(loaded.read.text ?? '', value as CodexEntry | null);
+    const text = loaded.read.text ?? '';
+    const out =
+      edit.kind === 'retarget'
+        ? spliceRepairedTable(text, edit.value)
+        : spliceConduitTable(text, edit.kind === 'delete' ? null : (edit.value as CodexEntry));
     return loaded.read.bom ? BOM + out : out;
   }
 
@@ -236,45 +253,60 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
   }
 
   // spec §3.5 step 4 (D1): a running Claude rewrites ~/.claude.json; re-apply once over its write,
-  // then give up rather than clobber it.
-  function writeEntry(target: ConfigTarget, first: Loaded, value: ConduitEntry | null): void {
+  // then give up rather than clobber it. The re-apply re-runs the state check: that writer may have
+  // changed conduit itself (`claude mcp add conduit …`). Returns whether it wrote.
+  function writeEntry(target: ConfigTarget, first: Loaded, decide: Decide): boolean {
     let loaded = first;
-    let data = render(target, loaded, value);
+    let edit = decide(loaded);
+    if (edit === null) return false;
+    let data = render(target, loaded, edit);
     backupOnce(io, target.backupPath, loaded.read.raw);
     if (target.mtimeGuard && !unchangedSince(loaded.read)) {
       loaded = load(target);
-      data = render(target, loaded, value);
+      edit = decide(loaded);
+      if (edit === null) return false;
+      data = render(target, loaded, edit);
       if (!unchangedSince(loaded.read)) throw new ActionError('EBUSY');
     }
     writeConfigAtomic(io, loaded.read.realPath, data, loaded.read.mode);
+    return true;
   }
+
+  const classOf = (cli: AgentCli, loaded: Loaded) =>
+    classifyEntry(cli, loaded.entry, expected(cli));
 
   function userAction(req: McpInstallRequest): void {
     const target = userTarget(req.cli, deps);
-    const loaded = loadUser(req.cli, target);
-    const cls = classifyEntry(req.cli, loaded.entry, expected(req.cli));
-    if (req.action === 'install' && cls === 'ours') return;
-    if (
-      (req.action === 'install' && (cls === 'absent' || cls === 'other-conduit')) ||
-      (req.action === 'replace' && cls === 'conflict')
-    ) {
-      writeEntry(target, loaded, expected(req.cli));
-      return;
-    }
-    if (req.action === 'uninstall' && (cls === 'ours' || cls === 'other-conduit')) {
-      writeEntry(target, loaded, null);
-      return;
-    }
-    throw new ActionError('ESTATE');
+    const first = loadUser(req.cli, target);
+    writeEntry(target, first, (loaded) => {
+      const cls = classOf(req.cli, loaded);
+      if (req.action === 'install' && cls === 'ours') return null;
+      if (req.action === 'install' && (cls === 'absent' || cls === 'other-conduit')) {
+        return { kind: 'set', value: expected(req.cli) };
+      }
+      // Replace was confirmed over the conflict the user saw, not over one written since.
+      if (
+        req.action === 'replace' &&
+        cls === 'conflict' &&
+        deepEqualConfig(loaded.entry, first.entry)
+      ) {
+        return { kind: 'set', value: expected(req.cli) };
+      }
+      if (req.action === 'uninstall' && (cls === 'ours' || cls === 'other-conduit')) {
+        return { kind: 'delete' };
+      }
+      throw new ActionError('ESTATE');
+    });
   }
 
   function projectAction(req: McpInstallRequest, root: string): void {
     if (req.action === 'install') {
       if (!installableInProject(req.cli)) throw new ActionError('ESTATE');
       const target = projectTarget(req.cli, root, deps);
-      const loaded = load(target);
-      if (loaded.entry !== undefined) throw new ActionError('ESTATE');
-      writeEntry(target, loaded, expected(req.cli));
+      writeEntry(target, load(target), (loaded) => {
+        if (loaded.entry !== undefined) throw new ActionError('ESTATE');
+        return { kind: 'set', value: expected(req.cli) };
+      });
       return;
     }
     if (req.action !== 'remove') throw new ActionError('ESTATE');
@@ -287,10 +319,11 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
       target = projectTarget(req.cli, root, deps);
     }
     if (target === null) throw new ActionError('ESTATE');
-    const loaded = load(target);
-    const cls = classifyEntry(req.cli, loaded.entry, expected(req.cli));
-    if (cls !== 'ours' && cls !== 'other-conduit') throw new ActionError('ESTATE');
-    writeEntry(target, loaded, null);
+    writeEntry(target, load(target), (loaded) => {
+      const cls = classOf(req.cli, loaded);
+      if (cls !== 'ours' && cls !== 'other-conduit') throw new ActionError('ESTATE');
+      return { kind: 'delete' };
+    });
   }
 
   function act(req: McpInstallRequest): McpInstallResult {
@@ -330,12 +363,17 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
       if (!isFound(cli)) continue;
       const user = readUser(cli);
       if (!('loaded' in user)) continue;
-      if (classifyEntry(cli, user.loaded.entry, expected(cli)) !== 'other-conduit') continue;
-      const { command, shim } = entryTargets(cli, user.loaded.entry);
-      if (!isDeadPath(command) && !isDeadPath(shim)) continue;
+      const decide = (loaded: Loaded): Edit | null => {
+        if (classOf(cli, loaded) !== 'other-conduit') return null;
+        const { command, shim } = entryTargets(cli, loaded.entry);
+        if (!isDeadPath(command) && !isDeadPath(shim)) return null;
+        const value = retargetEntry(cli, loaded.entry, deps.execPath, deps.shimPath);
+        return value && { kind: 'retarget', value };
+      };
+      if (decide(user.loaded) === null) continue;
       try {
-        writeEntry(user.target, user.loaded, expected(cli));
-        rows.push({ cli, path: user.target.path });
+        if (writeEntry(user.target, user.loaded, decide))
+          rows.push({ cli, path: user.target.path });
       } catch (error) {
         rows.push({
           cli,

@@ -65,10 +65,28 @@ const CASES: Case[] = [
   },
   { name: 'absent + remove → unchanged', input: 'a = 1\n', entry: null, expected: 'a = 1\n' },
   {
-    name: 'replace a table with a trailing comment line and a following [profiles.x]',
+    name: 'replace keeps the comment lines above the next header (they are not ours)',
     input: `top = 1\n\n${OLD}# trailing\n\n[profiles.x]\nmodel = "y"\n`,
     entry: ENTRY,
-    expected: `top = 1\n\n${TABLE}\n[profiles.x]\nmodel = "y"\n`,
+    expected: `top = 1\n\n${TABLE}# trailing\n\n[profiles.x]\nmodel = "y"\n`,
+  },
+  {
+    name: 'remove keeps a comment block and blank lines before the next header',
+    input: `a = 1\n\n${OLD}\n# profiles below\n  # second\n\n[profiles.x]\nm = 1\n`,
+    entry: null,
+    expected: 'a = 1\n\n\n# profiles below\n  # second\n\n[profiles.x]\nm = 1\n',
+  },
+  {
+    name: 'trailing comments at EOF stay',
+    input: `${OLD}# end\n`,
+    entry: ENTRY,
+    expected: `${TABLE}# end\n`,
+  },
+  {
+    name: 'a comment between our keys stays inside the range',
+    input: `${OLD.replace('\nargs', '\n# mine\nargs')}\n[p]\nx = 1\n`,
+    entry: ENTRY,
+    expected: `${TABLE}\n[p]\nx = 1\n`,
   },
   {
     name: 'replace at EOF without a trailing newline',

@@ -1,4 +1,4 @@
-import { parse } from 'smol-toml';
+import { parse, stringify } from 'smol-toml';
 import { deepEqualConfig } from './install-entries';
 import { type CodexEntry, ConfigFormatError } from './install-types';
 
@@ -159,7 +159,10 @@ function locate(text: string): Located {
   for (let h = headers[next]; h !== undefined && underConduit(h); h = headers[next]) next++;
   if (ours.length !== next - at) return { doc, lines, loc: { kind: 'uneditable' } };
   let end = headers[next]?.line ?? lines.length;
-  while (end > first.line + 1 && (lines[end - 1] ?? '').trim() === '') end--;
+  // Comments before the next header are that table's, or the user's: our table never holds one, so
+  // leaving them outside the range loses nothing of ours and deletes nothing of theirs.
+  const trailing = (l: string) => l.trim() === '' || l.trimStart().startsWith('#');
+  while (end > first.line + 1 && trailing(lines[end - 1] ?? '')) end--;
   // TOML forbids also defining a headed table by dotted keys or inline, so a valid file cannot mix
   // forms here; the splice guard still catches any parser leniency.
   return { doc, lines, loc: { kind: 'range', start: first.line, end } };
@@ -169,7 +172,7 @@ export function locateConduitTable(text: string): ConduitTableLocation {
   return locate(text).loc;
 }
 
-function withConduit(doc: TomlDoc, entry: CodexEntry | null, after: TomlDoc): TomlDoc {
+function withConduit(doc: TomlDoc, entry: TomlDoc | CodexEntry | null, after: TomlDoc): TomlDoc {
   const servers = isTable(doc.mcp_servers) ? { ...doc.mcp_servers } : {};
   if (entry === null) delete servers.conduit;
   else servers.conduit = entry;
@@ -182,6 +185,26 @@ function withConduit(doc: TomlDoc, entry: CodexEntry | null, after: TomlDoc): To
 }
 
 export function spliceConduitTable(text: string, entry: CodexEntry | null): string {
+  return splice(text, entry, (eol) => (entry === null ? '' : renderCodexTable(entry, eol)));
+}
+
+/**
+ * Repair's table: the user's entry with only its paths changed, so any key renderCodexTable doesn't
+ * know (`enabled`, `startup_timeout_sec`, a tools subtable) is kept (spec §14 D2).
+ */
+export function spliceRepairedTable(text: string, entry: Readonly<TomlDoc>): string {
+  return splice(text, entry, (eol) =>
+    stringify({ mcp_servers: { conduit: entry } }).replaceAll('\n', eol),
+  );
+}
+
+type Eol = '\n' | '\r\n';
+
+function splice(
+  text: string,
+  entry: TomlDoc | CodexEntry | null,
+  render: (eol: Eol) => string,
+): string {
   const { doc, lines, loc } = locate(text);
   if (loc.kind === 'uneditable') {
     throw new ConfigFormatError('EUNEDITABLE', 'conduit is defined in a form Conduit cannot edit');
@@ -194,9 +217,9 @@ export function spliceConduitTable(text: string, entry: CodexEntry | null): stri
     if (prefix !== '' && !prefix.endsWith('\n')) prefix += eol;
     const last = lines[lines.length - 1];
     if (prefix !== '' && last !== undefined && last.trim() !== '') prefix += eol;
-    out = prefix + renderCodexTable(entry, eol);
+    out = prefix + render(eol);
   } else {
-    const table = entry === null ? '' : renderCodexTable(entry, eol);
+    const table = render(eol);
     out = [...lines.slice(0, loc.start), table, ...lines.slice(loc.end)].join('');
   }
   let after: TomlDoc;

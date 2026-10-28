@@ -308,8 +308,7 @@ describe('errors (AC5)', () => {
     const f = s.seed('codex', text);
     const api = createMcpInstall(s.deps);
     const r = api.act({ cli: 'codex', scope: 'user', action: 'install' });
-    expect(r.ok).toBe(false);
-    expect(['EGUARD', 'EUNEDITABLE']).toContain(r.ok ? '' : r.errorCode);
+    expect(r).toMatchObject({ ok: false, errorCode: 'EGUARD' });
     expect(fs.readFileSync(f, 'utf8')).toBe(text);
   });
 
@@ -487,7 +486,11 @@ describe('uninstall and remove (AC7)', () => {
 });
 
 describe('mtime guard (AC8)', () => {
-  function racingIo(file: string, times: number): ConfigIo {
+  function racingIo(
+    file: string,
+    times: number,
+    write: (n: number) => unknown = (n) => ({ other: `writer-${n}`.repeat(n) }),
+  ): ConfigIo {
     let left = times;
     return {
       ...fs,
@@ -496,15 +499,71 @@ describe('mtime guard (AC8)', () => {
         if (left > 0 && typeof p === 'string' && path.resolve(p) === fs.realpathSync(file)) {
           left--;
           // Another writer lands between our read and our rename.
-          fs.writeFileSync(
-            file,
-            JSON.stringify({ other: `writer-${times - left}`.repeat(times - left) }),
-          );
+          fs.writeFileSync(file, JSON.stringify(write(times - left)));
         }
         return out;
       }) as typeof fs.readFileSync,
     };
   }
+  const USER_ENTRY = { command: 'my-own-conduit', args: [] };
+
+  it('uninstall raced by a writer that makes conduit user-authored → ESTATE, their entry kept', () => {
+    const s = setup();
+    const f = s.seed(
+      'claude',
+      JSON.stringify({ mcpServers: { conduit: conduitEntry('claude', execPath, shimPath) } }),
+    );
+    const api = createMcpInstall({
+      ...s.deps,
+      io: racingIo(f, 1, () => ({ mcpServers: { conduit: USER_ENTRY } })),
+    });
+    const r = api.act({ cli: 'claude', scope: 'user', action: 'uninstall' });
+    expect(r).toMatchObject({
+      ok: false,
+      errorCode: 'ESTATE',
+      status: { user: { state: 'conflict' } },
+    });
+    expect(json(f)).toEqual({ mcpServers: { conduit: USER_ENTRY } });
+  });
+
+  it('install raced by a writer that adds a user-authored conduit → ESTATE, not overwritten', () => {
+    const s = setup();
+    const f = s.seed('claude', '{}');
+    const api = createMcpInstall({
+      ...s.deps,
+      io: racingIo(f, 1, () => ({ mcpServers: { conduit: USER_ENTRY } })),
+    });
+    const r = api.act({ cli: 'claude', scope: 'user', action: 'install' });
+    expect(r).toMatchObject({
+      ok: false,
+      errorCode: 'ESTATE',
+      status: { user: { state: 'conflict' } },
+    });
+    expect(json(f)).toEqual({ mcpServers: { conduit: USER_ENTRY } });
+  });
+
+  it('install raced by a writer that installs the same entry → ok, their write left as is', () => {
+    const s = setup();
+    const f = s.seed('claude', '{}');
+    const theirs = { n: 1, mcpServers: { conduit: conduitEntry('claude', execPath, shimPath) } };
+    const api = createMcpInstall({ ...s.deps, io: racingIo(f, 1, () => theirs) });
+    const r = api.act({ cli: 'claude', scope: 'user', action: 'install' });
+    expect(r).toMatchObject({ ok: true, status: { user: { state: 'installed' } } });
+    expect(json(f)).toEqual(theirs);
+  });
+
+  it('replace raced by a writer that swaps in a different user entry → ESTATE, theirs kept', () => {
+    const s = setup();
+    const f = s.seed('claude', JSON.stringify({ mcpServers: { conduit: USER_ENTRY } }));
+    const newer = { command: 'newer-conduit', args: [] };
+    const api = createMcpInstall({
+      ...s.deps,
+      io: racingIo(f, 1, () => ({ mcpServers: { conduit: newer } })),
+    });
+    const r = api.act({ cli: 'claude', scope: 'user', action: 'replace' });
+    expect(r).toMatchObject({ ok: false, errorCode: 'ESTATE' });
+    expect(json(f)).toEqual({ mcpServers: { conduit: newer } });
+  });
 
   it('changed once → re-applied', () => {
     const s = setup();
@@ -648,6 +707,34 @@ describe('repair (D2)', () => {
     );
     const rows = createMcpInstall(s.deps).repair();
     expect(rows).toEqual([{ cli: 'opencode', path: s.file('opencode') }]);
+  });
+
+  it('Repair rewrites only the exe and shim paths; the user keys of the entry survive', () => {
+    const s = setup();
+    const codex = s.seed(
+      'codex',
+      `${OLD_CODEX_TABLE}enabled = false\nstartup_timeout_sec = 20\n`.replace(
+        'args = ["/old/conduit-mcp-shim.cjs"]',
+        'args = ["/old/conduit-mcp-shim.cjs", "--verbose"]',
+      ),
+    );
+    const dead = conduitEntry('claude', '/gone/conduit', '/gone/conduit-mcp-shim.cjs');
+    const claude = s.seed(
+      'claude',
+      JSON.stringify({
+        mcpServers: { conduit: { ...dead, env: { ...(dead as { env: object }).env, FOO: '1' } } },
+      }),
+    );
+    const rows = createMcpInstall(s.deps).repair();
+    expect(rows.map((r) => r.cli).sort()).toEqual(['claude', 'codex']);
+    expect(readCodexConduit(fs.readFileSync(codex, 'utf8'))).toEqual({
+      ...conduitEntry('codex', execPath, shimPath),
+      args: [shimPath, '--verbose'],
+      enabled: false,
+      startup_timeout_sec: 20,
+    });
+    const want = conduitEntry('claude', execPath, shimPath) as { env: object };
+    expect(json(claude).mcpServers.conduit).toEqual({ ...want, env: { ...want.env, FOO: '1' } });
   });
 
   it('Repair reports a failed write as a row with its code', () => {

@@ -109,6 +109,25 @@ export function entryTargets(
   };
 }
 
+/**
+ * The entry with only the exe and shim entryTargets reads replaced; every other key and argument is
+ * the user's and stays (spec §14 D2: Repair fixes a moved install, nothing else). null: not an object.
+ */
+export function retargetEntry(
+  cli: AgentCli,
+  entry: unknown,
+  execPath: string,
+  shimPath: string,
+): Record<string, unknown> | null {
+  if (!isRecord(entry)) return null;
+  if (cli === 'opencode') {
+    const rest = Array.isArray(entry.command) ? entry.command.slice(2) : [];
+    return { ...entry, command: [execPath, shimPath, ...rest] };
+  }
+  const rest = Array.isArray(entry.args) ? entry.args.slice(1) : [];
+  return { ...entry, command: execPath, args: [shimPath, ...rest] };
+}
+
 /** Spec §2.3 "Conduit shape": the shim leaf at the script position, and identity forwarded the CLI's way. */
 export function isConduitShaped(cli: AgentCli, entry: unknown): boolean {
   if (!isRecord(entry)) return false;
