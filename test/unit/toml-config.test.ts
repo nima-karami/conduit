@@ -39,19 +39,19 @@ interface Case {
 
 const CASES: Case[] = [
   {
-    name: 'absent + entry → appended after one blank line',
+    name: 'absent + entry → appended with no separator line, so uninstall is exact',
     input: 'model = "o3"\n',
     entry: ENTRY,
-    expected: `model = "o3"\n\n${TABLE}`,
+    expected: `model = "o3"\n${TABLE}`,
   },
   {
-    name: 'absent + entry, no trailing newline → newline then blank line',
+    name: 'absent + entry, no trailing newline → newline then the table',
     input: 'model = "o3"',
     entry: ENTRY,
-    expected: `model = "o3"\n\n${TABLE}`,
+    expected: `model = "o3"\n${TABLE}`,
   },
   {
-    name: 'absent + entry, already ends in a blank line → no second blank line',
+    name: 'absent + entry, already ends in a blank line → the user’s blank line kept, none added',
     input: 'model = "o3"\n\n',
     entry: ENTRY,
     expected: `model = "o3"\n\n${TABLE}`,
@@ -61,7 +61,7 @@ const CASES: Case[] = [
     name: 'absent + entry after other servers',
     input: '[mcp_servers.other]\ncommand = "x"\n',
     entry: ENTRY,
-    expected: `[mcp_servers.other]\ncommand = "x"\n\n${TABLE}`,
+    expected: `[mcp_servers.other]\ncommand = "x"\n${TABLE}`,
   },
   { name: 'absent + remove → unchanged', input: 'a = 1\n', entry: null, expected: 'a = 1\n' },
   {
@@ -119,16 +119,16 @@ const CASES: Case[] = [
     expected: '[mcp_servers]\n\n\n[mcp_servers.other]\ncommand = "x"\n',
   },
   {
-    name: 'remove the only server → the implicit parent and the separator install added go with it',
+    name: 'remove a hand-written table after the user’s blank line → that blank line stays',
     input: `a = 1\n\n${OLD}`,
     entry: null,
-    expected: 'a = 1\n',
+    expected: 'a = 1\n\n',
   },
   {
     name: 'CRLF file → inserted lines use CRLF',
     input: 'model = "o3"\r\n',
     entry: ENTRY,
-    expected: `model = "o3"\r\n\r\n${TABLE.replaceAll('\n', '\r\n')}`,
+    expected: `model = "o3"\r\n${TABLE.replaceAll('\n', '\r\n')}`,
   },
   {
     name: 'CRLF replace keeps the following bytes',
@@ -235,12 +235,22 @@ describe('toml-config', () => {
 
   it.each([
     'a = 1\n',
+    'a = 1\n\n',
+    'a = 1\r\n',
+    'a = 1\r\n\r\n',
     '# head\r\nmodel = "o3"\r\n',
     '[profiles.x]\nm = 1\n',
+    '[profiles.x]\r\nm = 1\r\n\r\n',
     '[mcp_servers.other]\ncommand = "x"\n',
+    '\n',
     '',
   ])('QA F3 install → uninstall restores the file byte for byte: %j', (input) => {
     expect(spliceConduitTable(spliceConduitTable(input, ENTRY), null)).toBe(input);
+  });
+
+  it('install → uninstall of a file without a final EOL keeps the EOL install added', () => {
+    expect(spliceConduitTable(spliceConduitTable('a = 1', ENTRY), null)).toBe('a = 1\n');
+    expect(spliceConduitTable(spliceConduitTable('# c', ENTRY), null)).toBe('# c\n');
   });
 
   it('absent + entry: every original byte is a prefix of the output', () => {

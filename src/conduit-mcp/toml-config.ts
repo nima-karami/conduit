@@ -213,23 +213,11 @@ function splice(
   let out: string;
   if (loc.kind === 'absent') {
     if (entry === null) return text;
-    let prefix = text;
-    if (prefix !== '' && !prefix.endsWith('\n')) prefix += eol;
-    const last = lines[lines.length - 1];
-    if (prefix !== '' && last !== undefined && last.trim() !== '') prefix += eol;
-    out = prefix + render(eol);
+    // No blank separator line: with one, "a\n" and "a\n\n" install to the same bytes and uninstall
+    // can no longer restore both, nor tell install's blank line from the user's own.
+    out = (text !== '' && !text.endsWith('\n') ? text + eol : text) + render(eol);
   } else {
-    const table = render(eol);
-    let start = loc.start;
-    // Install appends after one blank separator line when the file's last line has content; removing
-    // the table from the end takes that separator too, so install → uninstall is byte-exact.
-    const blank = (l: string | undefined) => l !== undefined && l.trim() === '';
-    const atEnd = lines.slice(loc.end).every((l) => l.trim() === '');
-    const prev = lines[start - 2];
-    if (entry === null && atEnd && blank(lines[start - 1]) && prev !== undefined && !blank(prev)) {
-      start -= 1;
-    }
-    out = [...lines.slice(0, start), table, ...lines.slice(loc.end)].join('');
+    out = [...lines.slice(0, loc.start), render(eol), ...lines.slice(loc.end)].join('');
   }
   let after: TomlDoc;
   try {
