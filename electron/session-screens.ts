@@ -60,6 +60,18 @@ const fromUtf8 = new TextDecoder();
 let scratch = new Uint8Array(0);
 
 /**
+ * Where a cut tail starts cleanly: just after its first newline, else at its first ESC, else
+ * nowhere. Both are ASCII, so this also skips a leading partial UTF-8 character, and no partial
+ * CSI/OSC is replayed as text (review S3). Modes set before the cut are lost (spec §14).
+ */
+function cleanStart(bytes: Uint8Array): number {
+  const nl = bytes.indexOf(0x0a);
+  if (nl !== -1) return nl + 1;
+  const esc = bytes.indexOf(0x1b);
+  return esc === -1 ? bytes.length : esc;
+}
+
+/**
  * The last `cap` UTF-8 bytes of a stream, in one preallocated ring, with the PTY resizes between
  * them: bytes replay at the size they were written at (review S2).
  */
@@ -67,6 +79,8 @@ class OutputTail {
   private readonly ring: Uint8Array;
   /** Bytes ever pushed; stream byte n sits at ring[n % cap] while n >= total - cap. */
   private total = 0;
+  /** Output was dropped, so the oldest kept byte may sit mid-character or mid-sequence. */
+  private cut = false;
   /** Resizes after `head`'s, each before the stream byte at `at`. */
   private resizes: Array<Size & { at: number }> = [];
   constructor(
@@ -87,6 +101,7 @@ class OutputTail {
     this.ring.set(kept.subarray(0, first), at);
     this.ring.set(kept.subarray(first), 0);
     this.total += n;
+    if (s !== data || this.total > this.cap) this.cut = true;
     this.foldResizes(this.total - this.cap);
   }
   resize(cols: number, rows: number) {
@@ -111,12 +126,11 @@ class OutputTail {
     const first = Math.min(len, this.cap - at);
     bytes.set(this.ring.subarray(at, at + first));
     bytes.set(this.ring.subarray(0, len - first), first);
-    this.foldResizes(start);
+    let pos = this.cut ? cleanStart(bytes) : 0;
+    this.foldResizes(start + pos);
     const steps: TailReplay['steps'] = [];
-    let pos = 0;
     for (const { cols, rows, at: end } of this.resizes) {
-      if (end > start + pos) steps.push(fromUtf8.decode(bytes.subarray(pos, end - start)));
-      steps.push({ cols, rows });
+      steps.push(fromUtf8.decode(bytes.subarray(pos, end - start)), { cols, rows });
       pos = end - start;
     }
     if (pos < len) steps.push(fromUtf8.decode(bytes.subarray(pos)));

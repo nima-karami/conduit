@@ -543,4 +543,9 @@ Existing Settings, banner and card tokens only (`--fg-muted` for connected; exis
   written at and applies each resize before the bytes written after it, then the current size. It
   stays a separate tail rather than reusing the scrollback ring, because that ring exists only when
   scrollback persistence is on.
+  **Cut (review S3, conductor ruling 2026-10-27):** once output has been dropped, the replay starts
+  just after the tail's first newline (else at its first ESC), so no partial character, CSI or OSC
+  is replayed as text. **Accepted residual:** modes set more than 64 KiB back (alt screen
+  `?1049h`, scroll region DECSTBM, origin mode) can't be recovered from any tail; such a screen may
+  read wrong until the CLI repaints it.
 - **D3, D4, D5, D7, D8, D9, D10, D11:** defaults as written.

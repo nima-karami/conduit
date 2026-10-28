@@ -138,29 +138,57 @@ describe('createSessionScreens', () => {
 
     it('keeps only the last tailBytes, counted in UTF-8 bytes', async () => {
       const s = createSessionScreens({ tailBytes: 8 });
-      s.keepTail('a', 20, 2);
-      s.feed('a', 'abcdef');
-      s.feed('a', 'gh€j');
-      s.start('a', 20, 2);
-      // `€` is 3 bytes, so the last 8 bytes are `efgh€j`.
-      expect((await s.snapshot('a'))?.lines[0]).toBe('efgh€j');
+      s.keepTail('a', 20, 3);
+      s.feed('a', 'x\ny\n');
+      s.feed('a', 'z€€');
+      s.start('a', 20, 3);
+      // 11 bytes, so the last 8 are `\nz€€`; counted in UTF-16 units nothing would be cut.
+      expect((await s.snapshot('a'))?.lines[0]).toBe('z€€');
     });
 
     it('the ring keeps stream order across many wraps, a character straddling the wrap included', async () => {
-      const s = createSessionScreens({ tailBytes: 8 });
+      const s = createSessionScreens({ tailBytes: 12 });
       s.keepTail('a', 20, 2);
-      for (const ch of 'abcdefghijklmnopqrstu') s.feed('a', ch);
+      for (const ch of 'abcdefghijklmnopq\nrstu') s.feed('a', ch);
       s.feed('a', 'v€w');
       s.start('a', 20, 2);
-      expect((await s.snapshot('a'))?.lines[0]).toBe('stuv€w');
+      expect((await s.snapshot('a'))?.lines[0]).toBe('rstuv€w');
     });
 
     it('a single chunk over the cap keeps its own last bytes', async () => {
       const s = createSessionScreens({ tailBytes: 4 });
       s.keepTail('a', 20, 2);
-      s.feed('a', 'abcdefgh');
+      s.feed('a', 'abcd\nfgh');
       s.start('a', 20, 2);
-      expect((await s.snapshot('a'))?.lines[0]).toBe('efgh');
+      expect((await s.snapshot('a'))?.lines[0]).toBe('fgh');
+    });
+
+    // Review S3: a cut lands mid-character or mid-sequence; replaying from there prints U+FFFD
+    // cells or a sequence's parameters as text.
+    it('a cut tail starts after its first newline: no half character is replayed', async () => {
+      const s = createSessionScreens({ tailBytes: 8 });
+      s.keepTail('a', 20, 3);
+      s.feed('a', 'xx€yz\nok');
+      s.start('a', 20, 3);
+      const snap = await s.snapshot('a');
+      expect(snap?.lines.join('|')).not.toContain('�');
+      expect(snap?.lines[0]).toBe('ok');
+    });
+
+    it('a cut tail with no newline starts at its first ESC: no half sequence is replayed', async () => {
+      const s = createSessionScreens({ tailBytes: 13 });
+      s.keepTail('a', 20, 3);
+      s.feed('a', '\x1b[5;10Hab\x1b[2;3Hok');
+      s.start('a', 20, 3);
+      expect((await s.snapshot('a'))?.lines).toEqual(['', '  ok', '']);
+    });
+
+    it('an uncut tail replays from its first byte', async () => {
+      const s = createSessionScreens({ tailBytes: 8 });
+      s.keepTail('a', 20, 3);
+      s.feed('a', 'ab\ncd');
+      s.start('a', 20, 3);
+      expect((await s.snapshot('a'))?.lines.slice(0, 2)).toEqual(['ab', '  cd']);
     });
 
     it('output is not kept for a session without keepTail', async () => {
