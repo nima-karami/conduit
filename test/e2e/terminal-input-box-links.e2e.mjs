@@ -1,6 +1,6 @@
 /**
- * An agent CLI's live input box is not linked; the agent's output above it is
- * (docs/specs/2026-10-27-input-box-links.md).
+ * An agent CLI's live input box and the prompts it echoes into history are not linked; the agent's
+ * output is, even when it starts with a markdown quote (docs/specs/2026-10-27-input-box-links.md).
  *
  * A Claude Code screen is written straight into the live xterm — the box is two full-width `─`
  * rules around the `❯` input rows, with the cursor parked inside, exactly as the captured screens
@@ -20,6 +20,9 @@ const OUT_URL = 'https://example.com/agent-output-link';
 const TYPED_URL = 'https://example.com/typed-input-link';
 const WRAP_URL = 'https://example.com/second-input-row';
 const HINT_URL = 'https://example.com/placeholder-link';
+const ECHO_URL = 'https://example.com/echoed-prompt-link';
+const ECHO2_URL = 'https://example.com/echoed-second-row';
+const QUOTE_URL = 'https://example.com/quoted-output-link';
 
 runScenario('terminal-input-box-links', async ({ page, log }) => {
   await page.evaluate(() => {
@@ -56,11 +59,15 @@ runScenario('terminal-input-box-links', async ({ page, log }) => {
       { id: sid, needle },
     );
 
-  // ── 1. typed input across two rows, cursor parked in the box ────────────────────────
+  // ── 1. typed input across two rows, cursor parked in the box. Above it: a submitted prompt
+  //       echoed on Claude's background (fixtures/input-box-links/claude-echo-draft) and agent
+  //       output starting with a markdown quote ──────────────────────────────────────────
   await writeToTerminal(
     page,
     sid,
-    `${ESC}[2J${ESC}[H● Docs are at ${OUT_URL} for details\r\n\r\n${rule}\r\n` +
+    `${ESC}[2J${ESC}[H${ESC}[48;2;55;55;55m❯ fetch ${ECHO_URL} and${ESC}[K\r\n` +
+      `  ${ECHO2_URL}${ESC}[K${ESC}[49m\r\n\r\n> see ${QUOTE_URL}\r\n` +
+      `● Docs are at ${OUT_URL} for details\r\n\r\n${rule}\r\n` +
       `❯ open ${TYPED_URL} please\r\n  and ${WRAP_URL}\r\n${rule}\r\n` +
       `  ⏵⏵ auto mode on ${HINT_URL}${ESC}[3A${ESC}[20G`,
   );
@@ -68,7 +75,10 @@ runScenario('terminal-input-box-links', async ({ page, log }) => {
   const typed = await linksOn('typed-input-link');
   const wrap = await linksOn('second-input-row');
   const footer = await linksOn('auto mode on');
-  log('typed:', JSON.stringify({ out, typed, wrap, footer }));
+  const echo = await linksOn('echoed-prompt-link');
+  const echo2 = await linksOn('echoed-second-row');
+  const quote = await linksOn('quoted-output-link');
+  log('typed:', JSON.stringify({ out, typed, wrap, footer, echo, echo2, quote }));
   assert(
     out.links.length === 1 && out.links[0] === OUT_URL,
     `output URL should link: ${JSON.stringify(out)}`,
@@ -76,6 +86,12 @@ runScenario('terminal-input-box-links', async ({ page, log }) => {
   assert(typed.links.length === 0, `typed input URL must not link: ${JSON.stringify(typed)}`);
   assert(wrap.links.length === 0, `second input row must not link: ${JSON.stringify(wrap)}`);
   assert(footer.links.length === 0, `box footer must not link: ${JSON.stringify(footer)}`);
+  assert(echo.links.length === 0, `echoed prompt must not link: ${JSON.stringify(echo)}`);
+  assert(echo2.links.length === 0, `echoed prompt row 2 must not link: ${JSON.stringify(echo2)}`);
+  assert(
+    quote.links.length === 1 && quote.links[0] === QUOTE_URL,
+    `agent output starting with > should link: ${JSON.stringify(quote)}`,
+  );
 
   // ── 2. dim placeholder in an empty box ───────────────────────────────────────────────
   await writeToTerminal(

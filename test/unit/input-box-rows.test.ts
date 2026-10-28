@@ -2,7 +2,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { MCP_ADAPTERS } from '../../src/conduit-mcp/adapters';
-import { type InputBoxOpts, inputBoxPrompt, inputBoxTop } from '../../src/input-box-rows';
+import {
+  type InputBoxOpts,
+  inPromptEcho,
+  inputBoxPrompt,
+  inputBoxTop,
+  type RowView,
+} from '../../src/input-box-rows';
 
 const SCREENS = path.join(__dirname, 'fixtures', 'conduit-mcp', 'screens');
 interface Fixture {
@@ -128,5 +134,80 @@ describe('inputBoxTop — adapter prompt rows', () => {
   it('without the adapter a › or → row is ordinary text', () => {
     expect(topOf(fixture('codex-typed'))).toBeNull();
     expect(topOf(fixture('cursor-draft'))).toBeNull();
+  });
+});
+
+// Real captures with cell styles (fixtures/input-box-links/*.json, see their `source`).
+interface StyledFixture {
+  lines: string[];
+  col0: { bg: string; dim: boolean }[];
+}
+const styled = (name: string): StyledFixture =>
+  JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'fixtures', 'input-box-links', `${name}.json`), 'utf8'),
+  ) as StyledFixture;
+const viewOf =
+  (f: StyledFixture) =>
+  (y: number): RowView | undefined =>
+    y < f.lines.length ? { text: f.lines[y], bg0: f.col0[y].bg, dim0: f.col0[y].dim } : undefined;
+/** The last row containing `needle`: agent output comes after the prompt that quoted it. */
+const rowWith = (f: StyledFixture, needle: string) =>
+  f.lines.findLastIndex((l) => l.includes(needle));
+const echoRows = (f: StyledFixture, echo?: RegExp) =>
+  f.lines.flatMap((_, y) => (inPromptEcho(viewOf(f), y, echo) ? [y] : []));
+
+describe('inPromptEcho — submitted prompts echoed into history', () => {
+  it('Claude: the ❯ row on a background and its wrapped rows, nothing else', () => {
+    const f = styled('claude-echo-draft');
+    const start = rowWith(f, 'Reply with');
+    expect(echoRows(f)).toEqual([start, start + 1, start + 2]);
+    expect(f.lines[start + 2]).toContain('echoed-prompt-link');
+  });
+
+  it('Claude: the live box row (❯ with no background) and agent output are not echoes', () => {
+    const f = styled('claude-echo-draft');
+    expect(inPromptEcho(viewOf(f), rowWith(f, 'second draft'))).toBe(false);
+    expect(inPromptEcho(viewOf(f), rowWith(f, 'plain-link'))).toBe(false);
+  });
+
+  it('a ❯ row with no background (plain text, a starship prompt) is not an echo', () => {
+    const rows: RowView[] = [{ text: '❯ git clone https://x.test/r', bg0: '', dim0: false }];
+    expect(inPromptEcho((y) => rows[y], 0)).toBe(false);
+  });
+
+  it('background rows with no ❯ row above them (a code block) are not an echo', () => {
+    const rows: RowView[] = [
+      { text: '● Here:', bg0: '', dim0: false },
+      { text: '  https://x.test/a', bg0: '2:236', dim0: false },
+      { text: '  https://x.test/b', bg0: '2:236', dim0: false },
+    ];
+    expect([1, 2].map((y) => inPromptEcho((r) => rows[r], y))).toEqual([false, false]);
+  });
+
+  it('a background row below an earlier echo, past agent output, is not part of that echo', () => {
+    const rows: RowView[] = [
+      { text: '❯ fix it', bg0: '3:3618615', dim0: false },
+      { text: '● Done, see:', bg0: '', dim0: false },
+      { text: '  https://x.test/a', bg0: '3:3618615', dim0: false },
+    ];
+    expect(inPromptEcho((r) => rows[r], 2)).toBe(false);
+  });
+
+  it('Codex (by adapter): the dim › row and its indented rows, not `• > quote` output', () => {
+    const f = styled('codex-echo-draft');
+    const echo = inputBoxPrompt(screenOf('codex'))?.echo;
+    expect(echo).toBeDefined();
+    const start = rowWith(f, 'Reply with');
+    expect(echoRows(f, echo)).toEqual([start, start + 1, start + 2]);
+    expect(inPromptEcho(viewOf(f), rowWith(f, '> Plain'), echo)).toBe(false);
+    expect(inPromptEcho(viewOf(f), rowWith(f, 'second draft'), echo)).toBe(false);
+  });
+
+  it('Codex rows are ordinary text without the adapter', () => {
+    expect(echoRows(styled('codex-echo-draft'))).toEqual([]);
+  });
+
+  it('cursor has no echo shape (no reliable signal measured)', () => {
+    expect(inputBoxPrompt(screenOf('cursor'))?.echo).toBeUndefined();
   });
 });

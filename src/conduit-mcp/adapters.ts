@@ -19,6 +19,11 @@ export interface ScreenPatterns {
    * doesn't already say (spec 2026-10-27-input-box-links §3).
    */
   inputBox?: { pattern: RegExp; maxAbove: number };
+  /**
+   * The first row of a submitted prompt echoed into history, matched when its first cell is dim; the
+   * echo runs on through the indented rows below it (spec 2026-10-27-input-box-links §2).
+   */
+  promptEcho?: RegExp;
 }
 // Brief support: docs/specs/2026-10-26-conduit-role-brief.md §3.2
 export interface BriefSupport {
@@ -69,6 +74,8 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
       placeholder: 'dim',
       // A multi-line draft moves the cursor below the `›` row.
       inputBox: { pattern: /^\s*›/, maxAbove: 8 },
+      // Measured: an echo's `›` is dim, the live composer's is not, and agent rows start `•`.
+      promptEcho: /^›\s/,
     },
     e2eOnly: false,
     brief: { readAccess: 'none' },
