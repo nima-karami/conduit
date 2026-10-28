@@ -27,9 +27,19 @@ const CLI_OF_LEAF: Readonly<Record<string, AgentCli>> = {
   opencode: 'opencode',
 };
 
+export interface TypedEnter {
+  /** The agent CLI the line ran, else null (also for a line edited out of sight). */
+  cli: AgentCli | null;
+  /**
+   * The line held a printable typed character. An Enter alone, or after arrow keys only, answers a
+   * CLI's own dialog (trust, login, a picker) rather than running a command (spec §2.4 A1).
+   */
+  typed: boolean;
+}
+
 export interface TypedLineTracker {
-  /** One entry per Enter in data, in order: the agent CLI that line ran, else null. */
-  feed(data: string): (AgentCli | null)[];
+  /** One entry per Enter in data, in order. */
+  feed(data: string): TypedEnter[];
 }
 
 // We only see keystrokes, not the shell's line buffer: anything that edits the line out of our sight
@@ -37,27 +47,43 @@ export interface TypedLineTracker {
 export function createTypedLineTracker(): TypedLineTracker {
   let line = '';
   let known = true;
+  let typed = false;
   let afterCr = false;
+  // An escape sequence's own bytes (the `[B` of an arrow key) were not typed.
+  let esc: 'none' | 'start' | 'csi' | 'ss3' = 'none';
   return {
     feed(data) {
-      const out: (AgentCli | null)[] = [];
+      const out: TypedEnter[] = [];
       for (const ch of data) {
+        // A control character inside a sequence still acts, as it does in a terminal.
+        if (esc !== 'none' && ch >= ' ') {
+          if (esc === 'start') esc = ch === '[' ? 'csi' : ch === 'O' ? 'ss3' : 'none';
+          else if (esc === 'ss3' || (ch >= '@' && ch <= '~')) esc = 'none';
+          continue;
+        }
+        esc = 'none';
         const crlf = afterCr && ch === '\n';
         afterCr = ch === '\r';
         if (crlf) continue;
         if (ch === '\r' || ch === '\n') {
-          out.push(known ? agentCliOfLine(line) : null);
+          out.push({ cli: known ? agentCliOfLine(line) : null, typed });
           line = '';
           known = true;
+          typed = false;
         } else if (ch === '\x03' || ch === '\x15') {
           line = '';
           known = true;
-        } else if (ch === '\x1b' || ch === '\t') {
+          typed = false;
+        } else if (ch === '\x1b') {
+          known = false;
+          esc = 'start';
+        } else if (ch === '\t') {
           known = false;
         } else if (ch === '\x7f' || ch === '\b') {
           line = line.slice(0, -1);
         } else if (ch >= ' ') {
           line += ch;
+          typed = true;
         }
       }
       return out;

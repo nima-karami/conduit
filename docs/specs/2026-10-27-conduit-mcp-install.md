@@ -118,6 +118,11 @@ adds "Overridden in this project by <scope> entry" (Claude/Codex precedence make
     not bind a client that initializes later (an editor's Claude, `code .` typed earlier). A
     Ctrl+C inside a CLI that hasn't connected yet also drops it; that session stays pull-only until
     the next typed CLI line (fails safe).
+  - **Only a line with printable typed content replaces the stored line (runtime QA F6, conductor
+    ruling 2026-10-27).** An Enter alone or after arrow keys only (escape-sequence bytes are not
+    typed characters) answers the starting CLI's own dialog (trust, login, onboarding, a picker), so
+    it keeps `claude` stored and the client that initializes afterwards binds. Measured before the
+    fix: answering Claude's trust dialog with Down, Enter left that whole run pull-only.
   - **A `claude` binding admits a notice only into Claude's ruled input box (review S5 SF-1,
     conductor ruling).** Claude's bare `❯ ` row is also a starship/pure shell prompt, so for a session
     without a definition adapter bound to a `claude` client the gate additionally requires the box

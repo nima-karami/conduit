@@ -979,14 +979,18 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     // Ctrl+Z hands the prompt back to the shell while the CLI's connection stays open.
     if (r.bound !== undefined && data.includes('\x1a')) unbind(r);
     const lines = r.tracker.feed(stripTerminalReplies(data));
-    // While bound, a typed line is a prompt to that CLI, not a command line.
-    if (r.bound === undefined) for (const line of lines) r.lastLine = line;
+    // While bound, a typed line is a prompt to that CLI, not a command line. An Enter with nothing
+    // typed answers the starting CLI's own dialog, so it keeps the line (spec §2.4 A1, F6).
+    if (r.bound === undefined) for (const line of lines) if (line.typed) r.lastLine = line.cli;
     // Ctrl+C / Ctrl+D is how a CLI that never connected is left; its line must not bind a later
     // client (spec §2.4 A1, SF-1 ruling).
     if (r.bound === undefined && (data.includes('\x03') || data.includes('\x04'))) {
       r.lastLine = undefined;
     }
-    const cli = lines.filter((c) => c !== null).at(-1);
+    const cli = lines
+      .map((l) => l.cli)
+      .filter((c) => c !== null)
+      .at(-1);
     // A CLI already live here sees this line as its own prompt input, not a command (plan Decisions).
     if (cli === undefined || registry.isLive(sessionId)) return;
     r.detect = { cli, at: now() };

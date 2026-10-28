@@ -4,12 +4,16 @@ import {
   createTypedLineTracker,
   DETECT_GRACE_MS,
   NON_INTERACTIVE_ARGS,
+  type TypedEnter,
 } from '../../src/conduit-mcp/typed-command';
+
+const clis = (enters: TypedEnter[]) => enters.map((e) => e.cli);
+const typedFlags = (enters: TypedEnter[]) => enters.map((e) => e.typed);
 
 /** Candidates only: the agent CLIs the Enters in chunks typed. */
 function feedEach(chunks: string[]): string[] {
   const t = createTypedLineTracker();
-  return chunks.flatMap((c) => t.feed(c)).filter((cli) => cli !== null);
+  return chunks.flatMap((c) => clis(t.feed(c))).filter((cli) => cli !== null);
 }
 
 describe('typed-command', () => {
@@ -41,9 +45,9 @@ describe('typed-command', () => {
 
   it('a whole line in one chunk is classified', () => {
     const t = createTypedLineTracker();
-    expect(t.feed('codex\r')).toEqual(['codex']);
-    expect(t.feed('claude\ropencode\r')).toEqual(['claude', 'opencode']);
-    expect(t.feed('ls\r')).toEqual([null]);
+    expect(clis(t.feed('codex\r'))).toEqual(['codex']);
+    expect(clis(t.feed('claude\ropencode\r'))).toEqual(['claude', 'opencode']);
+    expect(clis(t.feed('ls\r'))).toEqual([null]);
   });
 
   it('backspace edits', () => {
@@ -55,16 +59,16 @@ describe('typed-command', () => {
 
   it('an arrow key makes the line unknown', () => {
     const t = createTypedLineTracker();
-    expect(t.feed('\x1b[A')).toEqual([]);
-    expect(t.feed('\r')).toEqual([null]);
-    expect(t.feed('claude\r')).toEqual(['claude']);
-    expect(t.feed('claude\x1b[D\r')).toEqual([null]);
+    expect(clis(t.feed('\x1b[A'))).toEqual([]);
+    expect(clis(t.feed('\r'))).toEqual([null]);
+    expect(clis(t.feed('claude\r'))).toEqual(['claude']);
+    expect(clis(t.feed('claude\x1b[D\r'))).toEqual([null]);
   });
 
   it('Tab completion makes it unknown', () => {
     const t = createTypedLineTracker();
-    expect(t.feed('cla\tude\r')).toEqual([null]);
-    expect(t.feed('codex\r')).toEqual(['codex']);
+    expect(clis(t.feed('cla\tude\r'))).toEqual([null]);
+    expect(clis(t.feed('codex\r'))).toEqual(['codex']);
   });
 
   it('bracketed paste makes it unknown', () => {
@@ -79,9 +83,31 @@ describe('typed-command', () => {
 
   it('one entry per Enter, null for a line that is not an agent CLI (the notice rule counts every line)', () => {
     const t = createTypedLineTracker();
-    expect(t.feed('claude\rls\r\r')).toEqual(['claude', null, null]);
-    expect(t.feed('codex\r\n')).toEqual(['codex']);
-    expect(t.feed('x')).toEqual([]);
+    expect(clis(t.feed('claude\rls\r\r'))).toEqual(['claude', null, null]);
+    expect(clis(t.feed('codex\r\n'))).toEqual(['codex']);
+    expect(clis(t.feed('x'))).toEqual([]);
+  });
+
+  it('an Enter counts as typed only after a printable character (F6: dialog answers are not lines)', () => {
+    const t = createTypedLineTracker();
+    expect(typedFlags(t.feed('\r\x1b[B\r\x1bOA\r\x1b[1;5C\r'))).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ]);
+    expect(typedFlags(t.feed('ls\r\x1b[Ax\r'))).toEqual([true, true]);
+    expect(typedFlags(t.feed('\x1b[200~claude\x1b[201~\r'))).toEqual([true]);
+    expect(typedFlags(t.feed('ab\x7f\x7f\r'))).toEqual([true]);
+    expect(typedFlags(t.feed('ls\x03\r'))).toEqual([false]);
+  });
+
+  it('a sequence split across chunks is still skipped, and a control char ends it', () => {
+    const t = createTypedLineTracker();
+    expect(typedFlags(t.feed('\x1b'))).toEqual([]);
+    expect(typedFlags(t.feed('[B\r'))).toEqual([false]);
+    expect(typedFlags(t.feed('\x1b\r'))).toEqual([false]);
+    expect(clis(t.feed('claude\r'))).toEqual(['claude']);
   });
 
   it('\\n also ends a line, and CRLF does not double-count', () => {

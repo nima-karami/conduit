@@ -1866,6 +1866,40 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
   });
 
+  for (const [what, keys] of [
+    ['Down+Enter in its trust dialog', '\x1b[B\r'],
+    ['a bare Enter', '\r'],
+  ] as const) {
+    it(`F6 \`claude\`, then ${what} before initialize → still bound`, async () => {
+      const h = harness();
+      const ca = await sender(h);
+      const { token } = shell(h, 'sh1');
+      h.host.onRendererInput('sh1', 'claude\r');
+      h.host.onRendererInput('sh1', keys);
+      await client(h.ep, token, 'claude-code');
+      claudeBox(h, 'sh1');
+      settle(h);
+      await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+      await h.host.tick();
+      expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
+    });
+  }
+
+  it('F6 `claude`, then `ls` → a later client is not bound', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'claude\r');
+    h.host.onRendererInput('sh1', 'ls\r');
+    await client(h.ep, token, 'claude-code');
+    claudeBox(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
+    expect(h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
+  });
+
   it('notice rule: `code .` typed, then a claude-code client connects → nothing typed at the shell prompt', async () => {
     const h = harness();
     const ca = await sender(h);
