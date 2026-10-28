@@ -126,6 +126,11 @@ adds "Overridden in this project by <scope> entry" (Claude/Codex precedence make
     (`src/input-box-rows.ts`, spec 2026-10-27-input-box-links §2). Without it the screen reads
     `unknown` (gate `no-empty-input`). A plain shell prompt draws no rules, so it never qualifies.
     Profile sessions and other CLIs' bindings are unchanged.
+  - **Residuals (final review, accepted).** A TUI that draws a Claude-like ruled box (fzf
+    `--layout=reverse --border=horizontal --prompt='❯ '`) passes the gate while a `claude` client
+    stays bound off-screen (a tmux/zellij window switch, no Ctrl+Z/exit to unbind it). A Ctrl+C/D
+    anywhere in an input chunk (even after a CLI line in the same chunk, or inside a bracketed
+    paste) clears the stored line: fails safe, pull-only until the next CLI line.
   - Other connections (an IDE's Claude from `code .`, a second client) never bind and never affect
     notices, even while the bound one is live or after it closes.
 
