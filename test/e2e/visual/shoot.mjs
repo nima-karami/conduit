@@ -23,6 +23,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolatedHome } from '../conduit-mcp-helpers.mjs';
 import {
   closeApp,
   launchApp,
@@ -403,6 +404,9 @@ const SCENES = {
     });
     await nap(800);
     await shot('settings-appearance-end');
+    await clickText('.settings__navitem', 'MCP');
+    await nap(1500);
+    await shot('settings-mcp');
   },
 
   async 'new-session'({ click, dismiss, shot, nap }) {
@@ -527,9 +531,11 @@ async function runTheme(theme, sceneNames, repo) {
   const dest = join(outDir, label);
   mkdirSync(dest, { recursive: true });
 
+  const userDataDir = seedProfile(theme);
+  // The MCP tab reads the agent CLIs' configs: an isolated home keeps them off the real files.
   const { app, page, cleanup } = await launchApp({
-    env: { CONDUIT_E2E: '1' },
-    userDataDir: seedProfile(theme),
+    env: { CONDUIT_E2E: '1', ...isolatedHome(userDataDir).env },
+    userDataDir,
   });
 
   const shot = async (name) => {

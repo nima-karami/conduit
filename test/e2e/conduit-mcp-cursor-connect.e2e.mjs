@@ -1,90 +1,81 @@
-/** Cursor Settings opt-in writes only to the injected home and removes its entry on disconnect. */
-import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+/**
+ * Cursor's row on Settings → MCP writes only to the isolated home and removes its entry on
+ * Uninstall (spec docs/specs/2026-10-26-conduit-mcp-cursor.md §3.1, as amended by
+ * 2026-10-27-conduit-mcp-install; plan T5.4).
+ */
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import {
+  conduitCommand,
+  installRow,
+  isolatedHome,
+  normalizePath,
+  openMcpSettings,
+} from './conduit-mcp-helpers.mjs';
 import { assert, profileDir, runScenario } from './harness.mjs';
 
 const userDataDir = profileDir('cursor-connect');
-const homeDir = join(userDataDir, 'injected-home');
+const { homeDir, env } = isolatedHome(userDataDir);
 const configPath = join(homeDir, '.cursor', 'mcp.json');
-const normalizePath = (value) => {
-  const normalized = resolve(value).replaceAll('\\', '/');
-  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
-};
+// ~/.cursor marks Cursor as found, as an installed Cursor would; mcp.json itself doesn't exist yet.
+mkdirSync(join(homeDir, '.cursor'), { recursive: true });
 
 await runScenario(
   'conduit-mcp-cursor-connect',
   async ({ app, page, log }) => {
-    try {
-      await page.locator('.footbtn[title^="Settings"]').click();
-      const cursor = page.locator('.modal.settings .set').filter({
-        has: page.locator('.set__title', { hasText: 'Cursor' }),
-      });
-      const status = cursor.locator('[role="status"]');
-      await status.getByText('Not connected', { exact: true }).waitFor({ timeout: 10_000 });
-      const runtimeHome = await app.evaluate(() => process.getBuiltinModule('node:os').homedir());
-      assert(
-        normalizePath(runtimeHome) === normalizePath(homeDir),
-        `Electron homedir ${runtimeHome} should match injected home ${homeDir}`,
-      );
-      const hostConnection = await page.evaluate(async () =>
-        window.agentDeck.readCursorConnection(),
-      );
-      assert(
-        normalizePath(hostConnection.path) === normalizePath(configPath),
-        `Host config path ${hostConnection.path} should match ${configPath}`,
-      );
-      log('Electron and host both use the injected Cursor home ✓');
-      log('Settings starts disconnected in the injected home ✓');
+    await openMcpSettings(page);
+    const cursor = installRow(page, 'Cursor');
+    await cursor.getByText('Not installed', { exact: true }).waitFor({ timeout: 10_000 });
+    const runtimeHome = await app.evaluate(() => process.getBuiltinModule('node:os').homedir());
+    assert(
+      normalizePath(runtimeHome) === normalizePath(homeDir),
+      `Electron homedir ${runtimeHome} should match the isolated home ${homeDir}`,
+    );
+    const status = await page.evaluate(async () => window.agentDeck.mcpInstall.status(null));
+    const hostPath = status.clis.find((c) => c.cli === 'cursor')?.user.path ?? '';
+    assert(
+      normalizePath(hostPath) === normalizePath(configPath),
+      `Host config path ${hostPath} should match ${configPath}`,
+    );
+    log('Electron and host both use the isolated Cursor home ✓');
+    log('Settings starts not installed in the isolated home ✓');
 
-      await cursor.getByRole('button', { name: 'Connect Cursor' }).click();
-      await status.getByText('Connected', { exact: true }).waitFor({ timeout: 10_000 });
-      assert(existsSync(configPath), `Connect should create ${configPath}`);
+    await cursor.getByRole('button', { name: 'Install Conduit for Cursor' }).click();
+    await cursor.getByText('Installed', { exact: true }).waitFor({ timeout: 10_000 });
+    assert(existsSync(configPath), `Install should create ${configPath}`);
 
-      const expected = await app.evaluate(({ app: electronApp }) => {
-        const separator = process.platform === 'win32' ? '\\' : '/';
-        const shim = electronApp.isPackaged
-          ? [process.resourcesPath, 'conduit-mcp', 'conduit-mcp-shim.cjs'].join(separator)
-          : [electronApp.getAppPath(), 'resources', 'conduit-mcp', 'conduit-mcp-shim.cjs'].join(
-              separator,
-            );
-        return {
-          command: process.execPath,
-          args: [shim],
-          env: {
-            ELECTRON_RUN_AS_NODE: '1',
-            CONDUIT_SESSION_TOKEN: `\${env:CONDUIT_SESSION_TOKEN}`,
-            CONDUIT_MCP_ENDPOINT: `\${env:CONDUIT_MCP_ENDPOINT}`,
-          },
-        };
-      });
-      const raw = readFileSync(configPath, 'utf8');
-      const config = JSON.parse(raw);
-      assert(
-        isDeepStrictEqual(config.mcpServers?.conduit, expected),
-        `Cursor entry should match the app's command and shim: ${JSON.stringify(config.mcpServers?.conduit)}`,
-      );
-      assert(
-        raw === `${JSON.stringify(config, null, 2)}\n`,
-        'Connect writes two-space JSON plus newline',
-      );
-      log(`Connect wrote the exact entry and announced Connected ✓`);
+    const { command, shim } = await conduitCommand(app);
+    const expected = {
+      command,
+      args: [shim],
+      env: {
+        ELECTRON_RUN_AS_NODE: '1',
+        CONDUIT_SESSION_TOKEN: `\${env:CONDUIT_SESSION_TOKEN}`,
+        CONDUIT_MCP_ENDPOINT: `\${env:CONDUIT_MCP_ENDPOINT}`,
+      },
+    };
+    const raw = readFileSync(configPath, 'utf8');
+    const config = JSON.parse(raw);
+    assert(
+      isDeepStrictEqual(config.mcpServers?.conduit, expected),
+      `Cursor entry should match the app's command and shim: ${JSON.stringify(config.mcpServers?.conduit)}`,
+    );
+    assert(
+      raw === `${JSON.stringify(config, null, 2)}\n`,
+      'Install writes two-space JSON plus newline',
+    );
+    log('Install wrote the exact entry and shows Installed ✓');
 
-      await cursor.getByRole('button', { name: 'Disconnect Cursor' }).click();
-      await status.getByText('Not connected', { exact: true }).waitFor({ timeout: 10_000 });
-      const disconnected = JSON.parse(readFileSync(configPath, 'utf8'));
-      assert(
-        !Object.hasOwn(disconnected.mcpServers ?? {}, 'conduit'),
-        'Disconnect removes only the conduit entry',
-      );
-      assert(existsSync(configPath), 'Disconnect leaves mcp.json in place');
-      log('Disconnect removed the entry, kept mcp.json, and announced Not connected ✓');
-    } finally {
-      rmSync(homeDir, { recursive: true, force: true });
-    }
+    await cursor.getByRole('button', { name: 'Uninstall Conduit from Cursor' }).click();
+    await cursor.getByText('Not installed', { exact: true }).waitFor({ timeout: 10_000 });
+    const uninstalled = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert(
+      !Object.hasOwn(uninstalled.mcpServers ?? {}, 'conduit'),
+      'Uninstall removes only the conduit entry',
+    );
+    assert(existsSync(configPath), 'Uninstall leaves mcp.json in place');
+    log('Uninstall removed the entry, kept mcp.json, and shows Not installed ✓');
   },
-  {
-    userDataDir,
-    env: { HOME: homeDir, USERPROFILE: homeDir },
-  },
+  { userDataDir, env },
 );

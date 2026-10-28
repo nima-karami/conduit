@@ -6,9 +6,96 @@
  * session, never from the terminal stream: ConPTY doubles the cell at every wrap, which corrupted
  * any record wider than the terminal (see the fixture's header).
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { delimiter, join, resolve } from 'node:path';
 import { openSession, profileDir, REPO, tapBridge, typeLine } from './harness.mjs';
+
+/** The installed-CLI fake (plan 2026-10-27-conduit-mcp-install T5.1); reads Install's entry. */
+export const FAKE_CLI = join(REPO, 'test', 'e2e', 'fixtures', 'fake-agent-cli.mjs');
+
+/**
+ * A home inside the profile for every config Install reads or writes: HOME/USERPROFILE point at
+ * it and the CLIs' own dir overrides are emptied, so nothing reaches the real ~/.claude.json even
+ * when this machine sets CLAUDE_CONFIG_DIR, CODEX_HOME or XDG_CONFIG_HOME.
+ * @param {string} userDataDir
+ */
+export function isolatedHome(userDataDir) {
+  const homeDir = join(userDataDir, 'home');
+  mkdirSync(homeDir, { recursive: true });
+  return {
+    homeDir,
+    env: {
+      HOME: homeDir,
+      USERPROFILE: homeDir,
+      CLAUDE_CONFIG_DIR: '',
+      CODEX_HOME: '',
+      XDG_CONFIG_HOME: '',
+    },
+  };
+}
+
+/**
+ * `{ [pathKey]: dir + PATH }` under the key this process actually has: on Windows it is `Path`,
+ * and a second `PATH` key beside it leaves the child's lookup to chance.
+ * @param {string} dir
+ */
+export function pathWith(dir) {
+  const key = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+  return { [key]: `${dir}${delimiter}${process.env[key] ?? ''}` };
+}
+
+/**
+ * A `claude.cmd` in `binDir` that runs FAKE_CLI as Claude (`--as claude`), so typing `claude` in a
+ * Conduit shell is detected as Claude and the fake connects as `claude-code`.
+ */
+export function fakeClaudeOnPath(binDir, recordsDir, label) {
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(
+    join(binDir, 'claude.cmd'),
+    `@"${process.execPath}" "${FAKE_CLI}" --as claude --records "${recordsDir}" --name ${label}\r\n`,
+  );
+}
+
+/** FAKE_CLI's records of `kind` under `label`. */
+export function cliRecords(dir, label, kind) {
+  const file = join(dir, `${label}.jsonl`);
+  if (!existsSync(file)) return [];
+  const lines = readFileSync(file, 'utf8').split('\n');
+  lines.pop();
+  return lines.map((l) => JSON.parse(l)).filter((r) => r.kind === kind);
+}
+
+/** Settings from the footer, then its MCP tab. */
+export async function openMcpSettings(page) {
+  await page.locator('.footbtn[title^="Settings"]').click();
+  await page.locator('.settings__navitem', { hasText: 'MCP' }).click();
+  await page.locator('.mcp-install-row').first().waitFor({ timeout: 10_000 });
+}
+
+/** The MCP tab's row for one CLI, by its display name. */
+export const installRow = (page, name) =>
+  page.locator('.mcp-install-row').filter({
+    has: page.locator('.mcp-install-row__name', { hasText: name }),
+  });
+
+/** Case- and separator-insensitive on Windows, as the host compares folders. */
+export const normalizePath = (value) => {
+  const normalized = resolve(value).replaceAll('\\', '/');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+};
+
+/** The command and shim this build writes into a CLI's entry (spec §3.4). */
+export function conduitCommand(app) {
+  return app.evaluate(({ app: electronApp }) => {
+    const separator = process.platform === 'win32' ? '\\' : '/';
+    const shim = electronApp.isPackaged
+      ? [process.resourcesPath, 'conduit-mcp', 'conduit-mcp-shim.cjs'].join(separator)
+      : [electronApp.getAppPath(), 'resources', 'conduit-mcp', 'conduit-mcp-shim.cjs'].join(
+          separator,
+        );
+    return { command: process.execPath, shim };
+  });
+}
 
 export const FAKE_AGENT_ID = 'e2e-fake-mcp';
 export const FAKE_AGENT = join(REPO, 'test', 'e2e', 'fixtures', 'fake-mcp-agent.mjs');

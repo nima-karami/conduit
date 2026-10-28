@@ -27,7 +27,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FAKE_AGENT, FAKE_AGENT_ID } from '../conduit-mcp-helpers.mjs';
+import { FAKE_AGENT, FAKE_AGENT_ID, isolatedHome } from '../conduit-mcp-helpers.mjs';
 import {
   closeApp,
   launchApp,
@@ -258,11 +258,14 @@ const SCENES = {
   },
 
   // The MCP tool switches (control-tools spec §8–§10): Settings' Tools group sits below the fold
-  // of General, and the per-session dialog is offered only for a session with an MCP adapter,
+  // of the MCP tab, and the per-session dialog is offered only for a session with an MCP adapter,
   // hence the fake MCP agent seeded into every profile (the e2e-only adapter needs CONDUIT_E2E).
   async 'mcp-tools'(c) {
     await c.page.click('.footbtn');
     await sleep(1500);
+    await c.page.locator('.settings__navitem', { hasText: 'MCP' }).click();
+    await sleep(1000);
+    await c.shot('settings-mcp');
     await c.page.evaluate(() => document.querySelector('.settools')?.scrollIntoView());
     await sleep(600);
     await c.shot('settings-mcp-tools');
@@ -515,7 +518,11 @@ async function runPass({ theme, width, height, panels }, sceneNames, fixture) {
   console.log(`[text-fit] pass ${pass}`);
 
   const userDataDir = seedProfile(theme);
-  const { app, page } = await launchApp({ env: { CONDUIT_E2E: '1' }, userDataDir });
+  // The MCP tab reads the agent CLIs' configs: an isolated home keeps them off the real files.
+  const { app, page } = await launchApp({
+    env: { CONDUIT_E2E: '1', ...isolatedHome(userDataDir).env },
+    userDataDir,
+  });
   const findings = [];
   const covered = [];
 
