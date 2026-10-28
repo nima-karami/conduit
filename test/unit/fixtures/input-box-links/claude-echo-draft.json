@@ -1,0 +1,131 @@
+{
+  "cli": "claude",
+  "version": "2.1.312",
+  "cols": 120,
+  "cursorY": 15,
+  "source": "captured with @lydell/node-pty + @xterm/headless 120x40, 2026-10-27",
+  "lines": [
+    " ▐▛███▛█   Claude Code v2.1.312",
+    "▝▜██████▀  Haiku 5.5 · Claude Max",
+    " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude-scratch\\input-links\\capture\\cwd",
+    "",
+    "",
+    "❯ Reply with exactly these two lines and nothing else, and do not use any tools. Line one: > see",
+    "  https://example.com/quote-link . Line two: Plain https://example.com/plain-link . My own reference for context is",
+    "  https://example.com/echoed-prompt-link and src/input-box-rows.ts, please ignore it.",
+    "",
+    "● ▎ see https://example.com/quote-link .",
+    "  ▎ Plain https://example.com/plain-link .",
+    "",
+    "✻ Cogitated for 2s · done 8:00 PM",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ second draft https://example.com/draft-link",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  > Haiku 5.5  |  ~ 55k/1000k  |  + 1% session used (4h59m left)",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)",
+    ""
+  ],
+  "col0": [
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "50331648:3618615",
+      "dim": false,
+      "bgLast": "50331648:3618615"
+    },
+    {
+      "bg": "50331648:3618615",
+      "dim": false,
+      "bgLast": "50331648:3618615"
+    },
+    {
+      "bg": "50331648:3618615",
+      "dim": false,
+      "bgLast": "50331648:3618615"
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    }
+  ]
+}

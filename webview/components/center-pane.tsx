@@ -1,10 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { adapterFor } from '../../src/conduit-mcp/adapters';
 import type { AgentCli } from '../../src/conduit-mcp/install-types';
 import type { McpNotConnected } from '../../src/conduit-mcp/ui-types';
+import { inputBoxPrompt } from '../../src/input-box-rows';
 import { rootsSigOf } from '../../src/path-link-roots';
 import type { FileContentDTO, FileDiffDTO, RepoChanges, RepoDTO } from '../../src/protocol';
 import { historyRepoFor, orderRepos } from '../../src/repo-display';
 import type { RepoInfo } from '../../src/repo-scan';
+import { effectiveDef } from '../../src/session-command';
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { RightPaneTab } from '../../src/settings';
 import type { AgentDefinition, GitInfo, Session } from '../../src/types';
@@ -382,6 +385,7 @@ export function CenterPane({
                 onSearchAllFiles={onSearchAllFiles}
                 onOpenAsSession={onOpenAsSessionFromTerminal}
                 openAsSessionHint={openAsSessionHintFor?.(s.id)}
+                inputBox={inputBoxFor(s, agents)}
               />
             </div>
           </div>
@@ -559,4 +563,10 @@ export function CenterPane({
       )}
     </main>
   );
+}
+
+function inputBoxFor(s: Session, agents: readonly AgentDefinition[]) {
+  const def = effectiveDef(s, { get: (id) => agents.find((a) => a.id === id) });
+  // The e2e-only fake adapter is a host test seam, not a CLI anyone types into.
+  return inputBoxPrompt(def && adapterFor(def, { e2e: false })?.screen);
 }

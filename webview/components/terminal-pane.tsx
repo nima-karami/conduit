@@ -5,6 +5,12 @@ import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } 
 import '@xterm/xterm/css/xterm.css';
 import { FILE_INDEX_TTL_MS } from '../../src/file-index-ttl';
 import { folderKey } from '../../src/folder-key';
+import {
+  type InputBoxPrompt,
+  inPromptEcho,
+  inputBoxTop,
+  type RowView,
+} from '../../src/input-box-rows';
 import { classifyLinkUri, dispatchLinkUri, type LinkUriSinks } from '../../src/link-target';
 import { isAncestorOf } from '../../src/owning-session';
 import type { ResolveRoot } from '../../src/path-link-roots';
@@ -195,6 +201,7 @@ export function TerminalPane({
   onSearchAllFiles,
   onOpenAsSession,
   openAsSessionHint,
+  inputBox,
 }: {
   sessionId: string;
   agentId?: string;
@@ -231,6 +238,8 @@ export function TerminalPane({
   ) => void;
   /** "in <project>", shown beside "Open as new session". */
   openAsSessionHint?: string;
+  /** The session agent's input prompt row and prompt echo, when it has an adapter (inputBoxPrompt). */
+  inputBox?: InputBoxPrompt;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -270,6 +279,8 @@ export function TerminalPane({
   rootsSigRef.current = rootsSig;
   const agentIdRef = useRef(agentId);
   agentIdRef.current = agentId;
+  const inputBoxRef = useRef(inputBox);
+  inputBoxRef.current = inputBox;
   const onOpenFileRef = useRef(onOpenFile);
   onOpenFileRef.current = onOpenFile;
   const onRevealFolderRef = useRef(onRevealFolder);
@@ -710,8 +721,54 @@ export function TerminalPane({
         for (const r of msg.results) commitCache.resolve(r.token, r.commit);
       });
 
+      // Only agent output links: the live input box (the user's draft and the CLI's chrome) and
+      // prompts echoed into history are the user's own text (spec 2026-10-27-input-box-links).
+      // Re-read on every ask: the box moves with the cursor.
+      const userRowsNow = () => {
+        const buf = term.buffer.active;
+        const prompt = inputBoxRef.current;
+        const cell = buf.getNullCell();
+        const bgOf = () =>
+          cell.isBgDefault() ? '' : `${cell.getBgColorMode()}:${cell.getBgColor()}`;
+        // Memoised per ask, text read lazily: the keyboard path asks for every viewport row, and the
+        // echo walks mostly stop on a style check.
+        const views = new Map<number, RowView | undefined>();
+        const rowAt = (y: number): RowView | undefined => {
+          if (views.has(y)) return views.get(y);
+          const line = buf.getLine(y);
+          let view: RowView | undefined;
+          if (line) {
+            line.getCell(term.cols - 1, cell);
+            const bgLast = bgOf();
+            line.getCell(0, cell);
+            let text: string | undefined;
+            view = {
+              get text() {
+                text ??= line.translateToString(true);
+                return text;
+              },
+              bg0: bgOf(),
+              dim0: cell.isDim() !== 0,
+              bgLast,
+            };
+          }
+          views.set(y, view);
+          return view;
+        };
+        const boxTop = inputBoxTop(rowAt, buf.baseY + buf.cursorY, {
+          cols: term.cols,
+          rows: term.rows,
+          prompt,
+        });
+        return (y: number) =>
+          (boxTop !== null && y >= boxTop) || inPromptEcho(rowAt, y, prompt?.echo);
+      };
       const linkProvider: ILinkProvider = {
         provideLinks(bufferLineNumber, callback) {
+          if (userRowsNow()(bufferLineNumber - 1)) {
+            callback(undefined);
+            return;
+          }
           // Detection runs on the soft-wrapped logical line, so a path split at the wrap is one
           // link; xterm asks per row, and only links touching that row are returned.
           const ll = buildLogicalLine(term.buffer.active, bufferLineNumber - 1, term.cols);
@@ -867,7 +924,9 @@ export function TerminalPane({
         const buf = term.buffer.active;
         const scope = scopeNow();
         const lines: TokenLine[] = [];
+        const isUserRow = userRowsNow();
         for (const y of rows) {
+          if (isUserRow(y)) continue;
           const ll = buildLogicalLine(buf, y, term.cols);
           // A logical line spanning several of the rows is read once.
           if (!ll || lines.at(-1)?.firstRow === ll.firstRow) continue;
