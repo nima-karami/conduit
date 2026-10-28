@@ -146,6 +146,15 @@ describe('createSessionScreens', () => {
       expect((await s.snapshot('a'))?.lines[0]).toBe('efgh€j');
     });
 
+    it('the ring keeps stream order across many wraps, a character straddling the wrap included', async () => {
+      const s = createSessionScreens({ tailBytes: 8 });
+      s.keepTail('a');
+      for (const ch of 'abcdefghijklmnopqrstu') s.feed('a', ch);
+      s.feed('a', 'v€w');
+      s.start('a', 20, 2);
+      expect((await s.snapshot('a'))?.lines[0]).toBe('stuv€w');
+    });
+
     it('a single chunk over the cap keeps its own last bytes', async () => {
       const s = createSessionScreens({ tailBytes: 4 });
       s.keepTail('a');

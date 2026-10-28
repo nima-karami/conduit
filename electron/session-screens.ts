@@ -41,30 +41,44 @@ export interface SessionScreens {
   has(sessionId: string): boolean;
 }
 
-/** The last `cap` UTF-8 bytes of a stream, as chunks; a cut mid-character loses that character. */
+const utf8 = new TextEncoder();
+const fromUtf8 = new TextDecoder();
+// One encode buffer for every tail: a chunk is copied out of it before push returns, so the bound
+// stays one preallocated ring per tail (review S4).
+let scratch = new Uint8Array(0);
+
+/** The last `cap` UTF-8 bytes of a stream, in one preallocated ring. */
 class OutputTail {
-  private chunks: Buffer[] = [];
-  private bytes = 0;
-  constructor(private readonly cap: number) {}
+  private readonly ring: Uint8Array;
+  /** Bytes ever pushed; stream byte n sits at ring[n % cap] while n >= total - cap. */
+  private total = 0;
+  constructor(private readonly cap: number) {
+    this.ring = new Uint8Array(cap);
+  }
   push(data: string) {
-    const chunk = Buffer.from(data, 'utf8');
-    this.chunks.push(chunk);
-    this.bytes += chunk.length;
-    while (this.bytes > this.cap) {
-      const head = this.chunks[0];
-      if (!head) break;
-      const excess = this.bytes - this.cap;
-      if (head.length <= excess) {
-        this.chunks.shift();
-        this.bytes -= head.length;
-      } else {
-        this.chunks[0] = head.subarray(excess);
-        this.bytes -= excess;
-      }
-    }
+    // Only the last cap bytes survive, and no UTF-16 unit encodes to less than one byte.
+    const s = data.length > this.cap ? data.slice(-this.cap) : data;
+    if (scratch.length < s.length * 3) scratch = new Uint8Array(s.length * 3);
+    const n = utf8.encodeInto(s, scratch).written;
+    const kept = scratch.subarray(Math.max(0, n - this.cap), n);
+    const at = (this.total + n - kept.length) % this.cap;
+    const first = Math.min(kept.length, this.cap - at);
+    this.ring.set(kept.subarray(0, first), at);
+    this.ring.set(kept.subarray(first), 0);
+    this.total += n;
+  }
+  /** The kept bytes in stream order, as a copy. */
+  private bytes() {
+    const len = Math.min(this.total, this.cap);
+    const at = (this.total - len) % this.cap;
+    const out = new Uint8Array(len);
+    const first = Math.min(len, this.cap - at);
+    out.set(this.ring.subarray(at, at + first));
+    out.set(this.ring.subarray(0, len - first), first);
+    return out;
   }
   text() {
-    return Buffer.concat(this.chunks).toString('utf8');
+    return fromUtf8.decode(this.bytes());
   }
 }
 
