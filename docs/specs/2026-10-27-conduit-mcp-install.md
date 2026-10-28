@@ -123,6 +123,10 @@ adds "Overridden in this project by <scope> entry" (Claude/Codex precedence make
     typed characters) answers the starting CLI's own dialog (trust, login, onboarding, a picker), so
     it keeps `claude` stored and the client that initializes afterwards binds. Measured before the
     fix: answering Claude's trust dialog with Down, Enter left that whole run pull-only.
+    **Bounded to 60 s (review S1 / D-F6, conductor ruling 2026-10-27):** an untyped Enter keeps the
+    stored line only within `UNTYPED_ENTER_KEEP_MS` (60 s) of when that line was typed; after that it
+    clears it, because at a shell prompt Up, Enter is a history recall that may re-run `code .`. The
+    shell and the CLI's dialog see identical keystrokes, so time is the only separator.
   - **A `claude` binding admits a notice only into Claude's ruled input box (review S5 SF-1,
     conductor ruling).** Claude's bare `❯ ` row is also a starship/pure shell prompt, so for a session
     without a definition adapter bound to a `claude` client the gate additionally requires the box

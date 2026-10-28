@@ -1885,6 +1885,38 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     });
   }
 
+  it('D-F6 `claude`, an untyped Enter 30 s later, then the client → bound', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'claude\r');
+    h.clock.t += 30_000;
+    h.host.onRendererInput('sh1', '\x1b[B\r');
+    await client(h.ep, token, 'claude-code');
+    claudeBox(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
+  });
+
+  // History recall (Up, Enter) is untyped too, and may re-run `code .` (review S1).
+  it('D-F6 `claude`, an untyped Enter 90 s later → a later client is not bound', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'claude\r');
+    h.clock.t += 90_000;
+    h.host.onRendererInput('sh1', '\x1b[A\r');
+    await client(h.ep, token, 'claude-code');
+    claudeBox(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
+    expect(h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
+  });
+
   it('F6 `claude`, then `ls` → a later client is not bound', async () => {
     const h = harness();
     const ca = await sender(h);

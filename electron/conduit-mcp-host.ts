@@ -64,6 +64,7 @@ import {
   createTypedLineTracker,
   DETECT_GRACE_MS,
   type TypedLineTracker,
+  UNTYPED_ENTER_KEEP_MS,
 } from '../src/conduit-mcp/typed-command';
 import {
   type Handle,
@@ -197,7 +198,7 @@ interface Runtime {
    * The agent CLI the last typed command line ran (null: some other line), until a client of that
    * CLI binds it. Spec §2.4 A1.
    */
-  lastLine: AgentCli | null | undefined;
+  lastLine: { cli: AgentCli | null; at: number } | undefined;
   /** The connection a shell's notices are bound to; typed lines are its prompts while it lives. */
   bound: number | undefined;
   detect: { cli: AgentCli; at: number } | undefined;
@@ -771,7 +772,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const r = runtime.get(sessionId);
     if (r?.size && !screens.has(sessionId)) screens.start(sessionId, r.size.cols, r.size.rows);
     // One binding per typed line: a second client (`code .` from inside the CLI) never takes it.
-    if (r && !r.defAdapter && r.bound === undefined && bindsTypedLine(kind, r.lastLine)) {
+    if (r && !r.defAdapter && r.bound === undefined && bindsTypedLine(kind, r.lastLine?.cli)) {
       r.bound = connId;
       r.lastLine = undefined;
     }
@@ -980,8 +981,15 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     if (r.bound !== undefined && data.includes('\x1a')) unbind(r);
     const lines = r.tracker.feed(stripTerminalReplies(data));
     // While bound, a typed line is a prompt to that CLI, not a command line. An Enter with nothing
-    // typed answers the starting CLI's own dialog, so it keeps the line (spec §2.4 A1, F6).
-    if (r.bound === undefined) for (const line of lines) if (line.typed) r.lastLine = line.cli;
+    // typed answers the starting CLI's own dialog only while that CLI is fresh; later it may be a
+    // history recall (spec §2.4 A1, F6, D-F6).
+    if (r.bound === undefined) {
+      const t = now();
+      for (const line of lines) {
+        if (line.typed) r.lastLine = { cli: line.cli, at: t };
+        else if (r.lastLine && t - r.lastLine.at > UNTYPED_ENTER_KEEP_MS) r.lastLine = undefined;
+      }
+    }
     // Ctrl+C / Ctrl+D is how a CLI that never connected is left; its line must not bind a later
     // client (spec §2.4 A1, SF-1 ruling).
     if (r.bound === undefined && (data.includes('\x03') || data.includes('\x04'))) {

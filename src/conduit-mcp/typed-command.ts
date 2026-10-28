@@ -1,6 +1,8 @@
 import type { AgentCli } from './install-types';
 
 export const DETECT_GRACE_MS = 15_000;
+/** Spec §2.4 D-F6: how long after a typed CLI line an untyped Enter still answers that CLI. */
+export const UNTYPED_ENTER_KEEP_MS = 60_000;
 /** Spec §2.5: invocations that never start an MCP client, so no initialize is expected. */
 export const NON_INTERACTIVE_ARGS: readonly string[] = [
   '--version',
