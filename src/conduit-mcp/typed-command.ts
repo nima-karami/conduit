@@ -59,9 +59,16 @@ export function createTypedLineTracker(): TypedLineTracker {
       for (const ch of data) {
         // A control character inside a sequence still acts, as it does in a terminal.
         if (esc !== 'none' && ch >= ' ') {
-          if (esc === 'start') esc = ch === '[' ? 'csi' : ch === 'O' ? 'ss3' : 'none';
-          else if (esc === 'ss3' || (ch >= '@' && ch <= '~')) esc = 'none';
-          continue;
+          if (esc === 'start') {
+            esc = ch === '[' ? 'csi' : ch === 'O' ? 'ss3' : 'none';
+            continue;
+          }
+          // CSI parameter/intermediate bytes are 0x20–0x3F and finals 0x40–0x7E; any other byte is
+          // not part of the sequence, so it ends it and counts as input.
+          if (esc === 'csi' && ch <= '?') continue;
+          const ownByte = esc === 'ss3' || ch <= '~';
+          esc = 'none';
+          if (ownByte) continue;
         }
         esc = 'none';
         const crlf = afterCr && ch === '\n';

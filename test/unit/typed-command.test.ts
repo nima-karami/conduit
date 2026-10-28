@@ -110,6 +110,14 @@ describe('typed-command', () => {
     expect(clis(t.feed('claude\r'))).toEqual(['claude']);
   });
 
+  it('a byte outside the CSI ranges ends a malformed sequence and is not swallowed (review S5)', () => {
+    const t = createTypedLineTracker();
+    expect(t.feed('\x1b[1€\rclaude\r')).toEqual([
+      { cli: null, typed: true },
+      { cli: 'claude', typed: true },
+    ]);
+  });
+
   it('\\n also ends a line, and CRLF does not double-count', () => {
     expect(feedEach(['claude\n'])).toEqual(['claude']);
     expect(feedEach(['claude\r\n'])).toEqual(['claude']);
