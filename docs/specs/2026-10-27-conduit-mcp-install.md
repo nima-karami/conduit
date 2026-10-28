@@ -100,6 +100,20 @@ adds "Overridden in this project by <scope> entry" (Claude/Codex precedence make
 - **Notice adapter** = the definition adapter if any, else the adapter mapped from the `clientInfo` of
   the **newest live** initialized connection; none live → no notices (existing gate). An unmapped
   client or OpenCode → pull-only (gate closed: no screen patterns).
+- **Conductor amendment A1 (2026-10-27, review of S1–S3, blocker B-1) — notices in a session without
+  a definition adapter.** A live client is no proof the CLI owns the screen: `code .` hands the token
+  to an IDE whose Claude connects as `claude-code` while the shell prompt (`❯ ` under starship/pure)
+  passes Claude's idle check, and Conduit would type into the shell. Such a session gets notices
+  only while **all** hold:
+  (a) its last typed command line was detected (§2.5 tracker) as agent CLI X;
+  (b) a live connection whose client kind maps to X (`claude-code`→claude, `codex-mcp-client`→codex,
+  Cursor→cursor) initialized **after** that line was submitted;
+  (c) no command line has been typed in the session since (any Enter counts, including a line the
+  tracker can't read).
+  Otherwise the session is **pull-only**: messages queue for `read_inbox`, nothing is typed. The
+  notice adapter is then the newest such bound connection's. Profile (adapter) sessions are
+  unchanged. Consequence: rule (c) makes a shell-started CLI pull-only from the first prompt the user
+  types into it (the tracker cannot tell a prompt from a command line).
 - **Card status indicator** (new, beside the handle):
 
   | Status | When | Shows |
@@ -312,7 +326,8 @@ All file ACs run against an injected home/env/userData.
    allocate `<kind>-<n>` before replying, persist it, and list the session in `list_sessions`;
    unknown clients shall get prefix `agent`.
 3. While a session has live connections, its notice adapter shall be the definition adapter, else the
-   newest live connection's kind; with none or a pull-only kind, no notice shall be typed.
+   newest live connection's kind **bound under amendment A1 (§2.4)**; with none, no bound one, or a
+   pull-only kind, no notice shall be typed.
 4. When Install runs on `not-installed`, the host shall back up (first time; project backups in
    userData), add only Conduit's entry, keep every other key deep-equal (TOML: bytes outside the owned
    range identical), and preserve the file mode.

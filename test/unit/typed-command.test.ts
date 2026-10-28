@@ -6,9 +6,10 @@ import {
   NON_INTERACTIVE_ARGS,
 } from '../../src/conduit-mcp/typed-command';
 
+/** Candidates only: the agent CLIs the Enters in chunks typed. */
 function feedEach(chunks: string[]): string[] {
   const t = createTypedLineTracker();
-  return chunks.flatMap((c) => t.feed(c));
+  return chunks.flatMap((c) => t.feed(c)).filter((cli) => cli !== null);
 }
 
 describe('typed-command', () => {
@@ -42,7 +43,7 @@ describe('typed-command', () => {
     const t = createTypedLineTracker();
     expect(t.feed('codex\r')).toEqual(['codex']);
     expect(t.feed('claude\ropencode\r')).toEqual(['claude', 'opencode']);
-    expect(t.feed('ls\r')).toEqual([]);
+    expect(t.feed('ls\r')).toEqual([null]);
   });
 
   it('backspace edits', () => {
@@ -55,14 +56,14 @@ describe('typed-command', () => {
   it('an arrow key makes the line unknown', () => {
     const t = createTypedLineTracker();
     expect(t.feed('\x1b[A')).toEqual([]);
-    expect(t.feed('\r')).toEqual([]);
+    expect(t.feed('\r')).toEqual([null]);
     expect(t.feed('claude\r')).toEqual(['claude']);
-    expect(t.feed('claude\x1b[D\r')).toEqual([]);
+    expect(t.feed('claude\x1b[D\r')).toEqual([null]);
   });
 
   it('Tab completion makes it unknown', () => {
     const t = createTypedLineTracker();
-    expect(t.feed('cla\tude\r')).toEqual([]);
+    expect(t.feed('cla\tude\r')).toEqual([null]);
     expect(t.feed('codex\r')).toEqual(['codex']);
   });
 
@@ -74,6 +75,13 @@ describe('typed-command', () => {
     expect(feedEach(['ls -la', '\x03', 'codex\r'])).toEqual(['codex']);
     expect(feedEach(['\x1b[A', '\x03', 'codex\r'])).toEqual(['codex']);
     expect(feedEach(['vim', '\x15', 'claude\r'])).toEqual(['claude']);
+  });
+
+  it('one entry per Enter, null for a line that is not an agent CLI (the notice rule counts every line)', () => {
+    const t = createTypedLineTracker();
+    expect(t.feed('claude\rls\r\r')).toEqual(['claude', null, null]);
+    expect(t.feed('codex\r\n')).toEqual(['codex']);
+    expect(t.feed('x')).toEqual([]);
   });
 
   it('\\n also ends a line, and CRLF does not double-count', () => {

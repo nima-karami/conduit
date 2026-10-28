@@ -28,8 +28,8 @@ const CLI_OF_LEAF: Readonly<Record<string, AgentCli>> = {
 };
 
 export interface TypedLineTracker {
-  /** Candidates for each Enter in data, in order. */
-  feed(data: string): AgentCli[];
+  /** One entry per Enter in data, in order: the agent CLI that line ran, else null. */
+  feed(data: string): (AgentCli | null)[];
 }
 
 // We only see keystrokes, not the shell's line buffer: anything that edits the line out of our sight
@@ -37,13 +37,16 @@ export interface TypedLineTracker {
 export function createTypedLineTracker(): TypedLineTracker {
   let line = '';
   let known = true;
+  let afterCr = false;
   return {
     feed(data) {
-      const out: AgentCli[] = [];
+      const out: (AgentCli | null)[] = [];
       for (const ch of data) {
+        const crlf = afterCr && ch === '\n';
+        afterCr = ch === '\r';
+        if (crlf) continue;
         if (ch === '\r' || ch === '\n') {
-          const cli = known ? agentCliOfLine(line) : null;
-          if (cli !== null) out.push(cli);
+          out.push(known ? agentCliOfLine(line) : null);
           line = '';
           known = true;
         } else if (ch === '\x03' || ch === '\x15') {

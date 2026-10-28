@@ -1234,7 +1234,7 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
     h.sessions.set('s1', session('s1'));
     const started = h.host.start();
     const t0 = Date.now();
-    await h.host.whenLaunchReady(FAKE);
+    await h.host.whenLaunchReady();
     // Released by the listen itself, not by the bound.
     expect(Date.now() - t0).toBeLessThan(ENDPOINT_READY_WAIT_MS);
     const out = h.host.prepareLaunch('s1', FAKE, spec());
@@ -1252,7 +1252,7 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
       h.sessions.set('s1', session('s1'));
       void h.host.start();
       let done = false;
-      const waited = h.host.whenLaunchReady(FAKE).then(() => {
+      const waited = h.host.whenLaunchReady().then(() => {
         done = true;
       });
       await vi.advanceTimersByTimeAsync(ENDPOINT_READY_WAIT_MS - 1);
@@ -1278,7 +1278,7 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
     h.sessions.set('s1', session('s1'));
     const started = h.host.start();
     const t0 = Date.now();
-    await h.host.whenLaunchReady(FAKE);
+    await h.host.whenLaunchReady();
     expect(Date.now() - t0).toBeLessThan(ENDPOINT_READY_WAIT_MS);
     const sp = spec();
     expect(h.host.prepareLaunch('s1', FAKE, sp)).toBe(sp);
@@ -1301,7 +1301,7 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
       (err: unknown) => `rejected: ${String(err)}`,
     );
     const t0 = Date.now();
-    await h.host.whenLaunchReady(FAKE);
+    await h.host.whenLaunchReady();
     expect(Date.now() - t0).toBeLessThan(ENDPOINT_READY_WAIT_MS);
     const sp = spec();
     expect(h.host.prepareLaunch('s1', FAKE, sp)).toBe(sp);
@@ -1313,7 +1313,7 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
     const h = harness();
     h.sessions.set('sh', session('sh', { agentId: 'pwsh' }));
     let done = false;
-    const waited = h.host.whenLaunchReady(SHELL).then(() => {
+    const waited = h.host.whenLaunchReady().then(() => {
       done = true;
     });
     await new Promise((r) => setTimeout(r, 20));
@@ -1333,7 +1333,7 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
       });
       void h.host.start();
       let done = false;
-      const waited = h.host.whenLaunchReady(SHELL).then(() => {
+      const waited = h.host.whenLaunchReady().then(() => {
         done = true;
       });
       await vi.advanceTimersByTimeAsync(ENDPOINT_READY_WAIT_MS - 1);
@@ -1353,7 +1353,7 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
     void h.host.start();
     let done = 0;
     await Promise.race([
-      Promise.all([h.host.whenLaunchReady(SHELL), h.host.whenLaunchReady(FAKE)]).then(() => {
+      Promise.all([h.host.whenLaunchReady(), h.host.whenLaunchReady()]).then(() => {
         done = 2;
       }),
       new Promise((r) => setTimeout(r, 50)),
@@ -1791,8 +1791,11 @@ describe('lazy identity: token for every session, handle from clientInfo (spec 2
     await h.host.start();
     const { token } = shell(h, 'sh1');
     expect(h.host.uiState().switchable).toEqual([]);
-    await client(h.ep, token, 'claude-code');
+    const c = await client(h.ep, token, 'claude-code');
     expect(h.host.uiState().switchable).toEqual(['sh1']);
+    // B2 hides it once the health check closes; its menu item goes with the badge.
+    c.sock.destroy();
+    await expect.poll(() => h.host.uiState().switchable).toEqual([]);
   });
 });
 
@@ -1804,28 +1807,117 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     return client(h.ep, a.token);
   }
 
-  it('AC3 a shell running claude gets claude notices', async () => {
+  /** `❯ ` is Claude's empty input row, and just as much a starship/pure shell prompt. */
+  function idlePrompt(h: Harness, id: string) {
+    h.host.onOutput(id, '❯ ');
+    h.echo.add(id);
+  }
+
+  it('AC3 `claude` typed, then claude-code connects → claude notices', async () => {
     const h = harness();
     const ca = await sender(h);
     const { token } = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'claude\r');
     await client(h.ep, token, 'claude-code');
-    h.host.onOutput('sh1', '❯ ');
-    h.echo.add('sh1');
+    idlePrompt(h, 'sh1');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
     await h.host.tick();
     expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
   });
 
+  it('notice rule: `code .` typed, then a claude-code client connects → nothing typed at the shell prompt', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'code .\r');
+    await client(h.ep, token, 'claude-code');
+    idlePrompt(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
+    expect(h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
+  });
+
+  it('notice rule: no line typed at all → pull-only', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    await client(h.ep, shell(h, 'sh1').token, 'claude-code');
+    idlePrompt(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
+    expect(h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
+  });
+
+  it('notice rule: `claude` typed, connected, then another line typed → pull-only', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'claude\r');
+    await client(h.ep, token, 'claude-code');
+    h.host.onRendererInput('sh1', 'ls\r');
+    idlePrompt(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
+    expect(h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
+  });
+
+  it('notice rule: a connection that initialized before the `claude` line does not count', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    await client(h.ep, token, 'claude-code');
+    h.host.onRendererInput('sh1', 'claude\r');
+    idlePrompt(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
+  });
+
+  it('notice rule: `codex` typed, then a claude-code client connects → pull-only', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'codex\r');
+    await client(h.ep, token, 'claude-code');
+    idlePrompt(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
+    expect(h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
+  });
+
+  it('notice rule: a line the tracker cannot read (history recall) is still a new line → pull-only', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'claude\r');
+    await client(h.ep, token, 'claude-code');
+    h.host.onRendererInput('sh1', '\x1b[A\r');
+    idlePrompt(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
+  });
+
   it('AC3 opencode / unmapped client → pull-only, nothing typed', async () => {
     const h = harness();
     const ca = await sender(h);
-    await client(h.ep, shell(h, 'sh1').token, 'opencode');
-    await client(h.ep, shell(h, 'sh2').token, 'some-ide');
-    for (const id of ['sh1', 'sh2']) {
-      h.host.onOutput(id, '❯ ');
-      h.echo.add(id);
-    }
+    const sh1 = shell(h, 'sh1');
+    const sh2 = shell(h, 'sh2');
+    h.host.onRendererInput('sh1', 'opencode\r');
+    h.host.onRendererInput('sh2', 'claude\r');
+    await client(h.ep, sh1.token, 'opencode');
+    await client(h.ep, sh2.token, 'some-ide');
+    for (const id of ['sh1', 'sh2']) idlePrompt(h, id);
     settle(h);
     await ca.call('send_message', { to: ['opencode-1', 'agent-1'], body: 'see' });
     await h.host.tick();
@@ -1838,9 +1930,10 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('AC3 no live connection → no notice; badge gate null for a non-adapter session', async () => {
     const h = harness();
     const ca = await sender(h);
-    const c = await client(h.ep, shell(h, 'sh1').token, 'claude-code');
-    h.host.onOutput('sh1', '❯ ');
-    h.echo.add('sh1');
+    const { token } = shell(h, 'sh1');
+    h.host.onRendererInput('sh1', 'claude\r');
+    const c = await client(h.ep, token, 'claude-code');
+    idlePrompt(h, 'sh1');
     await ca.call('send_message', { to: ['claude-1'], body: 'first' });
     c.sock.destroy();
     await expect.poll(() => h.host.uiState().sessions.sh1?.connected).toBe(false);
@@ -1851,28 +1944,25 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     expect(h.host.uiState().sessions.sh1?.gate).toBeNull();
   });
 
-  it('AC3 newest live wins; when it closes the previous applies; an unmapped newest is skipped', async () => {
+  it('AC3 the bound CLI decides; a later client of another CLI or an unmapped one is skipped', async () => {
     const h = harness();
     const ca = await sender(h);
     const { token } = shell(h, 'sh1');
-    await client(h.ep, token, 'claude-code');
+    h.host.onRendererInput('sh1', 'codex\r');
     const codex = await client(h.ep, token, 'codex-mcp-client');
+    await client(h.ep, token, 'claude-code');
     await client(h.ep, token, 'opencode');
-    h.host.onOutput('sh1', '❯ ');
-    h.echo.add('sh1');
+    idlePrompt(h, 'sh1');
     settle(h);
-    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await ca.call('send_message', { to: ['codex-1'], body: 'see' });
     await h.host.tick();
-    // Codex's composer is not on screen, so its adapter holds the notice.
+    // Bound to Codex, whose composer is not on screen: Claude's `❯` row never admits the notice.
     expect(writesTo(h, 'sh1')).toEqual([]);
     expect(h.host.uiState().sessions.sh1?.gate).toBe('no-empty-input');
     codex.sock.destroy();
-    await expect
-      .poll(async () => {
-        await h.host.tick();
-        return writesTo(h, 'sh1');
-      })
-      .toEqual([composeNotice(false), '\r']);
+    await expect.poll(() => h.host.uiState().sessions.sh1?.gate).toBe('pull-only');
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([]);
   });
 
   it('definition adapter still wins in a profile session', async () => {

@@ -4347,12 +4347,8 @@ app.whenReady().then(() => {
             const healthPending = folders.pending(m.sessionId);
             if (healthPending) await healthPending;
             // A session restored at app start launches before the messaging endpoint listens;
-            // it waits (bounded) rather than launching unwired (plan Decisions, endpoint wait).
-            // The definition comes from the session, never the renderer's agentId (spec
-            // 2026-10-27-conduit-mcp-control-tools §3.3; plan D6).
-            const before = mgr.get(m.sessionId);
-            const waitDef = before ? effectiveDef(before, registry) : undefined;
-            if (waitDef) await mcpHost.whenLaunchReady(waitDef);
+            // it waits (bounded) rather than launching unwired (plan amendment B1).
+            if (mgr.get(m.sessionId)) await mcpHost.whenLaunchReady();
             const s = mgr.get(m.sessionId);
             if (!s) break;
             if (pty.isAlive(m.sessionId)) {
