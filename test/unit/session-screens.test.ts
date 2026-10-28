@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSessionScreens } from '../../electron/session-screens';
+import { createSessionScreens, SCREEN_TAIL_BYTES } from '../../electron/session-screens';
 
 describe('createSessionScreens', () => {
   it('feed then snapshot returns viewport lines and cursorY', async () => {
@@ -118,6 +118,72 @@ describe('createSessionScreens', () => {
     s.dispose('a');
     expect(s.has('a')).toBe(false);
     expect(await s.snapshot('a')).toBeUndefined();
+  });
+
+  describe('output tail (spec §2.4 D6: a lazy model is seeded from the last 64 KiB)', () => {
+    it('a model started after keepTail replays the output fed before it', async () => {
+      const s = createSessionScreens();
+      s.keepTail('a');
+      s.feed('a', 'hello\r\n\x1b[1;3Hy');
+      expect(s.has('a')).toBe(false);
+      s.start('a', 20, 4);
+      s.feed('a', '!');
+      const snap = await s.snapshot('a');
+      expect(snap?.lines.slice(0, 2)).toEqual(['hey!o', '']);
+    });
+
+    it('is 64 KiB by default', () => {
+      expect(SCREEN_TAIL_BYTES).toBe(64 * 1024);
+    });
+
+    it('keeps only the last tailBytes, counted in UTF-8 bytes', async () => {
+      const s = createSessionScreens({ tailBytes: 8 });
+      s.keepTail('a');
+      s.feed('a', 'abcdef');
+      s.feed('a', 'gh€j');
+      s.start('a', 20, 2);
+      // `€` is 3 bytes, so the last 8 bytes are `efgh€j`.
+      expect((await s.snapshot('a'))?.lines[0]).toBe('efgh€j');
+    });
+
+    it('a single chunk over the cap keeps its own last bytes', async () => {
+      const s = createSessionScreens({ tailBytes: 4 });
+      s.keepTail('a');
+      s.feed('a', 'abcdefgh');
+      s.start('a', 20, 2);
+      expect((await s.snapshot('a'))?.lines[0]).toBe('efgh');
+    });
+
+    it('output is not kept for a session without keepTail', async () => {
+      const s = createSessionScreens();
+      s.feed('a', 'before');
+      s.start('a', 20, 2);
+      expect((await s.snapshot('a'))?.lines[0]).toBe('');
+    });
+
+    it('dispose drops the tail, and keepTail starts a new one empty', async () => {
+      const s = createSessionScreens();
+      s.keepTail('a');
+      s.feed('a', 'old generation');
+      s.dispose('a');
+      s.start('a', 20, 2);
+      expect((await s.snapshot('a'))?.lines[0]).toBe('');
+      s.keepTail('b');
+      s.feed('b', 'old generation');
+      s.keepTail('b');
+      s.feed('b', 'new');
+      s.start('b', 20, 2);
+      expect((await s.snapshot('b'))?.lines[0]).toBe('new');
+    });
+
+    it('the tail is replayed once: a later start does not replay it again', async () => {
+      const s = createSessionScreens();
+      s.keepTail('a');
+      s.feed('a', 'seed');
+      s.start('a', 20, 2);
+      s.start('a', 20, 2);
+      expect((await s.snapshot('a'))?.lines[0]).toBe('');
+    });
   });
 
   it('alt screen content is what snapshot reads while active', async () => {

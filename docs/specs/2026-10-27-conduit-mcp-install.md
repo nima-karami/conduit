@@ -125,7 +125,8 @@ adds "Overridden in this project by <scope> entry" (Claude/Codex precedence make
     cursor — the same `inputBoxTop` shape the renderer uses to unlink the box
     (`src/input-box-rows.ts`, spec 2026-10-27-input-box-links §2). Without it the screen reads
     `unknown` (gate `no-empty-input`). A plain shell prompt draws no rules, so it never qualifies.
-    Profile sessions and other CLIs' bindings are unchanged.
+    Profile sessions and other CLIs' bindings are unchanged. Claude draws the box before it
+    initializes, so the model sees it only because it is seeded from the output tail (D6 refined, §14).
   - **Residuals (final review, accepted).** A TUI that draws a Claude-like ruled box (fzf
     `--layout=reverse --border=horizontal --prompt='❯ '`) passes the gate while a `claude` client
     stays bound off-screen (a tmux/zellij window switch, no Ctrl+Z/exit to unbind it). A Ctrl+C/D
@@ -196,7 +197,8 @@ adds "Overridden in this project by <scope> entry" (Claude/Codex precedence make
   messaging was off stays tokenless until relaunched (no card state).
 - `ELECTRON_RUN_AS_NODE` never enters the PTY env; `pty-host` keeps stripping both vars from a nested
   Conduit (both unchanged).
-- The host-side screen model starts at spawn for every token-bearing session (D6).
+- The host-side screen model of a token-bearing session starts at its first `initialize`, seeded
+  from a 64 KiB tail of its output kept since spawn (D6 as ruled and refined, §14).
 - **Threat model (same class, wider reach):** every process started in a Conduit terminal can speak
   as that session — including a GUI app launched from it (`code .`, `cursor .` when not already
   running), whose terminals and IDE agents inherit the token until that PTY exits. Such processes
@@ -518,4 +520,13 @@ Existing Settings, banner and card tokens only (`--fg-muted` for connected; exis
 - **D6:** the **alternative** is taken. A session's screen model starts at its first MCP
   `initialize`, not at spawn. Hidden shell sessions cost renderer and host memory, which is already
   a measured problem, so a session reads `unknown` until a full repaint.
+  **Refined (conductor ruling 2026-10-27, runtime QA F1):** Claude paints its ruled input box ~1 s
+  before it sends `initialize` and afterwards repaints only changed cells. A model started empty at
+  `initialize` never saw the box, so every new PTY read `unknown` and held notices until the user's
+  first prompt. The host therefore keeps a bounded **tail of the last 64 KiB of PTY output** (UTF-8
+  bytes, oldest trimmed) from spawn for every token-bearing session that has no model yet; it needs
+  no xterm instance. When the model starts lazily it is **seeded by replaying that tail** at the
+  session's current cols/rows, then live output continues. There is still no headless model before
+  `initialize`. A PTY exit or relaunch (new generation) drops the tail. Pinned by the measured bytes
+  in `test/unit/fixtures/conduit-mcp/claude-box-before-initialize.json`.
 - **D3, D4, D5, D7, D8, D9, D10, D11:** defaults as written.

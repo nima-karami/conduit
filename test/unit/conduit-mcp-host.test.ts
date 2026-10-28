@@ -11,9 +11,11 @@ import {
   ENDPOINT_READY_WAIT_MS,
 } from '../../electron/conduit-mcp-host';
 import { createSessionScreens, type SessionScreens } from '../../electron/session-screens';
+import { MCP_ADAPTERS } from '../../src/conduit-mcp/adapters';
 import type { McpFileRequest, McpOpenRequest, PathKind } from '../../src/conduit-mcp/control-tools';
 import { ECHO_POLL_MS } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
+import { screenVerdict } from '../../src/conduit-mcp/screen-verdict';
 import type { StoreIo } from '../../src/conduit-mcp/store';
 import {
   DEFAULT_MCP_TOOLS,
@@ -38,6 +40,18 @@ const FAKE: AgentDefinition = {
   cwdStrategy: 'workspaceFolder',
 };
 const SHELL: AgentDefinition = { ...FAKE, id: 'pwsh', command: 'pwsh' };
+/** Measured (runtime QA 2026-10-27, F1): a relaunched cmd.exe shell's bytes around Claude's initialize. */
+const CLAUDE_BEFORE_INIT: {
+  cols: number;
+  rows: number;
+  beforeInitialize: string;
+  afterInitialize: string;
+} = JSON.parse(
+  fs.readFileSync(
+    path.join(__dirname, 'fixtures', 'conduit-mcp', 'claude-box-before-initialize.json'),
+    'utf8',
+  ),
+);
 const CODEX: AgentDefinition = { ...FAKE, id: 'codex', command: '/usr/bin/codex' };
 const CURSOR: AgentDefinition = { ...FAKE, id: 'cursor', command: '/usr/bin/agent' };
 const CLAUDE: AgentDefinition = { ...FAKE, id: 'claude', command: '/usr/bin/claude' };
@@ -1826,6 +1840,26 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     h.host.onRendererInput('sh1', 'claude\r');
     await client(h.ep, token, 'claude-code');
     claudeBox(h, 'sh1');
+    settle(h);
+    await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
+  });
+
+  it('F1 Claude paints its box before initialize: the lazy model is seeded from the output tail', async () => {
+    const h = harness();
+    const ca = await sender(h);
+    const { token } = shell(h, 'sh1');
+    h.host.onResize('sh1', CLAUDE_BEFORE_INIT.cols, CLAUDE_BEFORE_INIT.rows);
+    h.host.onRendererInput('sh1', 'claude --model haiku\r');
+    h.host.onOutput('sh1', CLAUDE_BEFORE_INIT.beforeInitialize);
+    await client(h.ep, token, 'claude-code');
+    h.host.onOutput('sh1', CLAUDE_BEFORE_INIT.afterInitialize);
+    const snap = await h.screens.snapshot('sh1');
+    const claude = MCP_ADAPTERS.find((a) => a.id === 'claude');
+    expect(snap && claude && screenVerdict(claude.screen, snap)).toBe('empty-input');
+    expect(snap?.lines[(snap?.cursorY ?? 0) - 1]).toMatch(/^─{100,}$/);
+    h.echo.add('sh1');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
     await h.host.tick();

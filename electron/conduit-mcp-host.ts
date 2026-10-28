@@ -1168,6 +1168,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       r.spawnedAt = now();
       r.hasDraft = false;
       r.lastInputAt = undefined;
+      // A CLI paints its UI before it initializes and never fully repaints (spec §2.4 D6).
+      if (r.tracker) screens.keepTail(sessionId);
       if (!r.defAdapter || r.unavailable) return;
       screens.start(sessionId, cols, rows);
     },

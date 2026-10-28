@@ -1,6 +1,9 @@
 import { type IBufferLine, Terminal } from '@xterm/headless';
 import { type ScreenSnapshot, STYLE_DIM, STYLE_PLAIN } from '../src/conduit-mcp/screen-verdict';
 
+/** Spec §2.4 D6: a lazy model replays this much of the output it missed. */
+export const SCREEN_TAIL_BYTES = 64 * 1024;
+
 const rowText = (line: IBufferLine | undefined) => line?.translateToString(true).trimEnd() ?? '';
 
 /** A style mask aligned char-for-char with rowText(line), which is `length` long. */
@@ -24,7 +27,13 @@ function styleMask(line: IBufferLine | undefined, length: number): string {
  * Headless only — never a renderer xterm or a WebGL addon (CLAUDE.md, Terminal).
  */
 export interface SessionScreens {
+  /** Starts the model; output kept by keepTail is replayed into it first, then dropped. */
   start(sessionId: string, cols: number, rows: number): void;
+  /**
+   * A new PTY generation of a session whose model starts later: drops any model and tail, then keeps
+   * the last tailBytes of output until start (spec §2.4 D6).
+   */
+  keepTail(sessionId: string): void;
   feed(sessionId: string, data: string): void;
   resize(sessionId: string, cols: number, rows: number): void;
   dispose(sessionId: string): void;
@@ -32,8 +41,39 @@ export interface SessionScreens {
   has(sessionId: string): boolean;
 }
 
-export function createSessionScreens(opts: { scrollback?: number } = {}): SessionScreens {
+/** The last `cap` UTF-8 bytes of a stream, as chunks; a cut mid-character loses that character. */
+class OutputTail {
+  private chunks: Buffer[] = [];
+  private bytes = 0;
+  constructor(private readonly cap: number) {}
+  push(data: string) {
+    const chunk = Buffer.from(data, 'utf8');
+    this.chunks.push(chunk);
+    this.bytes += chunk.length;
+    while (this.bytes > this.cap) {
+      const head = this.chunks[0];
+      if (!head) break;
+      const excess = this.bytes - this.cap;
+      if (head.length <= excess) {
+        this.chunks.shift();
+        this.bytes -= head.length;
+      } else {
+        this.chunks[0] = head.subarray(excess);
+        this.bytes -= excess;
+      }
+    }
+  }
+  text() {
+    return Buffer.concat(this.chunks).toString('utf8');
+  }
+}
+
+export function createSessionScreens(
+  opts: { scrollback?: number; tailBytes?: number } = {},
+): SessionScreens {
   const terms = new Map<string, Terminal>();
+  const tails = new Map<string, OutputTail>();
+  const tailBytes = opts.tailBytes ?? SCREEN_TAIL_BYTES;
   /** Snapshots waiting on a model's write callback, per model. */
   const waiting = new Map<Terminal, Set<(s: ScreenSnapshot | undefined) => void>>();
   const scrollback = opts.scrollback ?? 0;
@@ -41,6 +81,7 @@ export function createSessionScreens(opts: { scrollback?: number } = {}): Sessio
   // A disposed model answers its waiters now: xterm may parse the dead backlog first, or never
   // call back, and the gate must not wait on a session that is gone.
   const dispose = (sessionId: string) => {
+    tails.delete(sessionId);
     const term = terms.get(sessionId);
     if (!term) return;
     terms.delete(sessionId);
@@ -52,11 +93,20 @@ export function createSessionScreens(opts: { scrollback?: number } = {}): Sessio
 
   return {
     start(sessionId, cols, rows) {
+      const seed = tails.get(sessionId)?.text();
       dispose(sessionId);
-      terms.set(sessionId, new Terminal({ cols, rows, allowProposedApi: true, scrollback }));
+      const term = new Terminal({ cols, rows, allowProposedApi: true, scrollback });
+      terms.set(sessionId, term);
+      if (seed) term.write(seed);
+    },
+    keepTail(sessionId) {
+      dispose(sessionId);
+      tails.set(sessionId, new OutputTail(tailBytes));
     },
     feed(sessionId, data) {
-      terms.get(sessionId)?.write(data);
+      const term = terms.get(sessionId);
+      if (term) term.write(data);
+      else tails.get(sessionId)?.push(data);
     },
     resize(sessionId, cols, rows) {
       terms.get(sessionId)?.resize(cols, rows);
