@@ -12,7 +12,15 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { isolatedHome, mcpState, pathWith, sleep, tapMcp, until } from './conduit-mcp-helpers.mjs';
+import {
+  isolatedHome,
+  mcpState,
+  normalizePath,
+  pathWith,
+  sleep,
+  tapMcp,
+  until,
+} from './conduit-mcp-helpers.mjs';
 import { assert, openSession, profileDir, runScenario, typeLine } from './harness.mjs';
 
 const userDataDir = profileDir('mcp-install-banner');
@@ -26,7 +34,12 @@ const DETECT_WITHIN_MS = 15_000;
 
 await runScenario(
   'conduit-mcp-install-banner',
-  async ({ page, log }) => {
+  async ({ app, page, log }) => {
+    const runtimeHome = await app.evaluate(() => process.getBuiltinModule('node:os').homedir());
+    assert(
+      normalizePath(runtimeHome) === normalizePath(homeDir),
+      `Electron homedir ${runtimeHome} should be the isolated ${homeDir}`,
+    );
     writeFileSync(join(homeDir, '.claude.json'), '{}');
     await tapMcp(page);
     const notConnected = async (sid) => (await mcpState(page))?.notConnected?.[sid];

@@ -284,7 +284,7 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
       if (req.action === 'install' && (cls === 'absent' || cls === 'other-conduit')) {
         return { kind: 'set', value: expected(req.cli) };
       }
-      // Replace was confirmed over the conflict the user saw, not over one written since.
+      // Replace applies to the conflict read when the action started, not to one written since.
       if (
         req.action === 'replace' &&
         cls === 'conflict' &&
