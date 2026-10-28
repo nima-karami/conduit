@@ -244,6 +244,19 @@ describe('createSessionScreens', () => {
       expect((await s.snapshot('a'))?.lines[1]).toBe(`${' '.repeat(99)}A`);
     });
 
+    // Review F1: the seed's last step must apply the size the session has when it runs.
+    it('a resize before the seed is parsed is the size the model ends at', async () => {
+      const s = createSessionScreens();
+      s.keepTail('a', 100, 6);
+      s.feed('a', 'seed\r\n');
+      s.start('a', 100, 6);
+      s.resize('a', 50, 3);
+      s.feed('a', 'x'.repeat(60));
+      const snap = await s.snapshot('a');
+      expect(snap?.lines).toHaveLength(3);
+      expect(snap?.lines[1]).toBe('x'.repeat(50));
+    });
+
     it('the tail is replayed once: a later start does not replay it again', async () => {
       const s = createSessionScreens();
       s.keepTail('a', 20, 2);

@@ -146,6 +146,8 @@ export function createSessionScreens(
   const tailBytes = opts.tailBytes ?? SCREEN_TAIL_BYTES;
   /** Snapshots waiting on a model's write callback, per model. */
   const waiting = new Map<Terminal, Set<(s: ScreenSnapshot | undefined) => void>>();
+  /** The session's size, for a model whose seed is still queued: its last step applies it (review F1). */
+  const seedTargets = new WeakMap<Terminal, Size>();
   const scrollback = opts.scrollback ?? 0;
 
   // A disposed model answers its waiters now: xterm may parse the dead backlog first, or never
@@ -177,7 +179,13 @@ export function createSessionScreens(
         if (typeof step === 'string') term.write(step);
         else resizeInOrder(step);
       }
-      if (seed) resizeInOrder({ cols, rows });
+      if (!seed) return;
+      seedTargets.set(term, { cols, rows });
+      term.write('', () => {
+        const to = seedTargets.get(term);
+        seedTargets.delete(term);
+        if (to && terms.get(sessionId) === term) term.resize(to.cols, to.rows);
+      });
     },
     keepTail(sessionId, cols, rows) {
       dispose(sessionId);
@@ -190,7 +198,8 @@ export function createSessionScreens(
     },
     resize(sessionId, cols, rows) {
       const term = terms.get(sessionId);
-      if (term) term.resize(cols, rows);
+      if (term && seedTargets.has(term)) seedTargets.set(term, { cols, rows });
+      else if (term) term.resize(cols, rows);
       else tails.get(sessionId)?.resize(cols, rows);
     },
     dispose,
