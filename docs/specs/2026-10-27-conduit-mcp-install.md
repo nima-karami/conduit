@@ -242,7 +242,9 @@ endpoint comes from env, so dev and installed builds share one entry (cursor spe
    else: dotted keys, an inline `conduit = {…}` under `[mcp_servers]`, `[[…]]` arrays, non-contiguous
    subtables. **Guard:** after splicing, re-parse; the result must equal the original parse with only
    `mcp_servers.conduit` changed, else abort with `error` (catches header-like text in multi-line
-   strings). Bytes outside the owned range are unchanged.
+   strings). Bytes outside the owned range are unchanged. Install appends the table with no blank
+   separator line (only an EOL if the file lacks one), so install → uninstall restores the file byte
+   for byte, the user's own trailing blank lines included.
 3. Backup on the first write only: exclusive create of a backup (missing original → text `null`);
    never overwritten; failure aborts. User files: `<file>.conduit-backup` beside it. **Project files:
    backups go to `userData/mcp-install-backups/<hash(root)>/`**, never into the repo.
