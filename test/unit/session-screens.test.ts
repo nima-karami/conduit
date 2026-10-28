@@ -123,7 +123,7 @@ describe('createSessionScreens', () => {
   describe('output tail (spec §2.4 D6: a lazy model is seeded from the last 64 KiB)', () => {
     it('a model started after keepTail replays the output fed before it', async () => {
       const s = createSessionScreens();
-      s.keepTail('a');
+      s.keepTail('a', 20, 4);
       s.feed('a', 'hello\r\n\x1b[1;3Hy');
       expect(s.has('a')).toBe(false);
       s.start('a', 20, 4);
@@ -138,7 +138,7 @@ describe('createSessionScreens', () => {
 
     it('keeps only the last tailBytes, counted in UTF-8 bytes', async () => {
       const s = createSessionScreens({ tailBytes: 8 });
-      s.keepTail('a');
+      s.keepTail('a', 20, 2);
       s.feed('a', 'abcdef');
       s.feed('a', 'gh€j');
       s.start('a', 20, 2);
@@ -148,7 +148,7 @@ describe('createSessionScreens', () => {
 
     it('the ring keeps stream order across many wraps, a character straddling the wrap included', async () => {
       const s = createSessionScreens({ tailBytes: 8 });
-      s.keepTail('a');
+      s.keepTail('a', 20, 2);
       for (const ch of 'abcdefghijklmnopqrstu') s.feed('a', ch);
       s.feed('a', 'v€w');
       s.start('a', 20, 2);
@@ -157,7 +157,7 @@ describe('createSessionScreens', () => {
 
     it('a single chunk over the cap keeps its own last bytes', async () => {
       const s = createSessionScreens({ tailBytes: 4 });
-      s.keepTail('a');
+      s.keepTail('a', 20, 2);
       s.feed('a', 'abcdefgh');
       s.start('a', 20, 2);
       expect((await s.snapshot('a'))?.lines[0]).toBe('efgh');
@@ -172,22 +172,53 @@ describe('createSessionScreens', () => {
 
     it('dispose drops the tail, and keepTail starts a new one empty', async () => {
       const s = createSessionScreens();
-      s.keepTail('a');
+      s.keepTail('a', 20, 2);
       s.feed('a', 'old generation');
       s.dispose('a');
       s.start('a', 20, 2);
       expect((await s.snapshot('a'))?.lines[0]).toBe('');
-      s.keepTail('b');
+      s.keepTail('b', 20, 2);
       s.feed('b', 'old generation');
-      s.keepTail('b');
+      s.keepTail('b', 20, 2);
       s.feed('b', 'new');
       s.start('b', 20, 2);
       expect((await s.snapshot('b'))?.lines[0]).toBe('new');
     });
 
+    it('a resize while the tail is kept replays at its place: the screen of a model that lived through it (review S2)', async () => {
+      const before = '\x1b[3;100HA';
+      const after = '\x1b[1;100HB\x1b[2;1Hdone';
+      const ref = createSessionScreens();
+      ref.start('r', 80, 5);
+      ref.feed('r', before);
+      await ref.snapshot('r');
+      ref.resize('r', 120, 6);
+      ref.feed('r', after);
+      const want = await ref.snapshot('r');
+      expect(want?.lines[2]).toBe(`${' '.repeat(79)}A`);
+
+      const s = createSessionScreens();
+      s.keepTail('a', 80, 5);
+      s.feed('a', before);
+      s.resize('a', 120, 6);
+      s.feed('a', after);
+      s.start('a', 120, 6);
+      expect(await s.snapshot('a')).toEqual(want);
+    });
+
+    it('a resize that fell out of the window still sets the size the kept bytes replay at', async () => {
+      const s = createSessionScreens({ tailBytes: 32 });
+      s.keepTail('a', 80, 4);
+      s.feed('a', 'old\r\n');
+      s.resize('a', 120, 4);
+      s.feed('a', `${'z'.repeat(30)}\n\x1b[2;100HA`);
+      s.start('a', 120, 4);
+      expect((await s.snapshot('a'))?.lines[1]).toBe(`${' '.repeat(99)}A`);
+    });
+
     it('the tail is replayed once: a later start does not replay it again', async () => {
       const s = createSessionScreens();
-      s.keepTail('a');
+      s.keepTail('a', 20, 2);
       s.feed('a', 'seed');
       s.start('a', 20, 2);
       s.start('a', 20, 2);

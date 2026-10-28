@@ -31,14 +31,26 @@ export interface SessionScreens {
   start(sessionId: string, cols: number, rows: number): void;
   /**
    * A new PTY generation of a session whose model starts later: drops any model and tail, then keeps
-   * the last tailBytes of output until start (spec §2.4 D6).
+   * the last tailBytes of output, and the resizes between them, until start (spec §2.4 D6). Takes
+   * the PTY's size at spawn.
    */
-  keepTail(sessionId: string): void;
+  keepTail(sessionId: string, cols: number, rows: number): void;
   feed(sessionId: string, data: string): void;
   resize(sessionId: string, cols: number, rows: number): void;
   dispose(sessionId: string): void;
   snapshot(sessionId: string): Promise<ScreenSnapshot | undefined>;
   has(sessionId: string): boolean;
+}
+
+interface Size {
+  cols: number;
+  rows: number;
+}
+
+/** What a seeded model replays: it starts at `size`, then applies `steps` in order. */
+interface TailReplay {
+  size: Size;
+  steps: Array<string | Size>;
 }
 
 const utf8 = new TextEncoder();
@@ -47,12 +59,21 @@ const fromUtf8 = new TextDecoder();
 // stays one preallocated ring per tail (review S4).
 let scratch = new Uint8Array(0);
 
-/** The last `cap` UTF-8 bytes of a stream, in one preallocated ring. */
+/**
+ * The last `cap` UTF-8 bytes of a stream, in one preallocated ring, with the PTY resizes between
+ * them: bytes replay at the size they were written at (review S2).
+ */
 class OutputTail {
   private readonly ring: Uint8Array;
   /** Bytes ever pushed; stream byte n sits at ring[n % cap] while n >= total - cap. */
   private total = 0;
-  constructor(private readonly cap: number) {
+  /** Resizes after `head`'s, each before the stream byte at `at`. */
+  private resizes: Array<Size & { at: number }> = [];
+  constructor(
+    private readonly cap: number,
+    /** The size the oldest kept byte was written at. */
+    private head: Size,
+  ) {
     this.ring = new Uint8Array(cap);
   }
   push(data: string) {
@@ -66,19 +87,40 @@ class OutputTail {
     this.ring.set(kept.subarray(0, first), at);
     this.ring.set(kept.subarray(first), 0);
     this.total += n;
+    this.foldResizes(this.total - this.cap);
   }
-  /** The kept bytes in stream order, as a copy. */
-  private bytes() {
+  resize(cols: number, rows: number) {
+    const last = this.resizes.at(-1);
+    // Resizes with no output between them: only the last one matters.
+    if (last?.at === this.total) this.resizes.pop();
+    this.resizes.push({ cols, rows, at: this.total });
+  }
+  /** Resizes before stream byte `from` only set the size that byte is written at. */
+  private foldResizes(from: number) {
+    while (this.resizes[0] && this.resizes[0].at <= from) {
+      const { cols, rows } = this.resizes[0];
+      this.head = { cols, rows };
+      this.resizes.shift();
+    }
+  }
+  replay(): TailReplay {
     const len = Math.min(this.total, this.cap);
-    const at = (this.total - len) % this.cap;
-    const out = new Uint8Array(len);
+    const start = this.total - len;
+    const bytes = new Uint8Array(len);
+    const at = start % this.cap;
     const first = Math.min(len, this.cap - at);
-    out.set(this.ring.subarray(at, at + first));
-    out.set(this.ring.subarray(0, len - first), first);
-    return out;
-  }
-  text() {
-    return fromUtf8.decode(this.bytes());
+    bytes.set(this.ring.subarray(at, at + first));
+    bytes.set(this.ring.subarray(0, len - first), first);
+    this.foldResizes(start);
+    const steps: TailReplay['steps'] = [];
+    let pos = 0;
+    for (const { cols, rows, at: end } of this.resizes) {
+      if (end > start + pos) steps.push(fromUtf8.decode(bytes.subarray(pos, end - start)));
+      steps.push({ cols, rows });
+      pos = end - start;
+    }
+    if (pos < len) steps.push(fromUtf8.decode(bytes.subarray(pos)));
+    return { size: this.head, steps };
   }
 }
 
@@ -107,15 +149,25 @@ export function createSessionScreens(
 
   return {
     start(sessionId, cols, rows) {
-      const seed = tails.get(sessionId)?.text();
+      const seed = tails.get(sessionId)?.replay();
       dispose(sessionId);
-      const term = new Terminal({ cols, rows, allowProposedApi: true, scrollback });
+      const size = seed?.size ?? { cols, rows };
+      const term = new Terminal({ ...size, allowProposedApi: true, scrollback });
       terms.set(sessionId, term);
-      if (seed) term.write(seed);
+      // xterm parses writes later but resizes at once: a resize waits for the bytes before it.
+      const resizeInOrder = (to: Size) =>
+        term.write('', () => {
+          if (terms.get(sessionId) === term) term.resize(to.cols, to.rows);
+        });
+      for (const step of seed?.steps ?? []) {
+        if (typeof step === 'string') term.write(step);
+        else resizeInOrder(step);
+      }
+      if (seed) resizeInOrder({ cols, rows });
     },
-    keepTail(sessionId) {
+    keepTail(sessionId, cols, rows) {
       dispose(sessionId);
-      tails.set(sessionId, new OutputTail(tailBytes));
+      tails.set(sessionId, new OutputTail(tailBytes, { cols, rows }));
     },
     feed(sessionId, data) {
       const term = terms.get(sessionId);
@@ -123,7 +175,9 @@ export function createSessionScreens(
       else tails.get(sessionId)?.push(data);
     },
     resize(sessionId, cols, rows) {
-      terms.get(sessionId)?.resize(cols, rows);
+      const term = terms.get(sessionId);
+      if (term) term.resize(cols, rows);
+      else tails.get(sessionId)?.resize(cols, rows);
     },
     dispose,
     snapshot(sessionId) {

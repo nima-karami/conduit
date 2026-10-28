@@ -534,8 +534,13 @@ Existing Settings, banner and card tokens only (`--fg-muted` for connected; exis
   `initialize` never saw the box, so every new PTY read `unknown` and held notices until the user's
   first prompt. The host therefore keeps a bounded **tail of the last 64 KiB of PTY output** (UTF-8
   bytes, oldest trimmed) from spawn for every token-bearing session that has no model yet; it needs
-  no xterm instance. When the model starts lazily it is **seeded by replaying that tail** at the
-  session's current cols/rows, then live output continues. There is still no headless model before
-  `initialize`. A PTY exit or relaunch (new generation) drops the tail. Pinned by the measured bytes
-  in `test/unit/fixtures/conduit-mcp/claude-box-before-initialize.json`.
+  no xterm instance. When the model starts lazily it is **seeded by replaying that tail**, then live
+  output continues. There is still no headless model before `initialize`. A PTY exit or relaunch
+  (new generation) drops the tail. Pinned by the measured bytes in
+  `test/unit/fixtures/conduit-mcp/claude-box-before-initialize.json`.
+  **Geometry (review S2 / D-F1, conductor ruling 2026-10-27):** the tail records each PTY resize
+  at its place in the stream; the seed starts the model at the size the oldest kept byte was
+  written at and applies each resize before the bytes written after it, then the current size. It
+  stays a separate tail rather than reusing the scrollback ring, because that ring exists only when
+  scrollback persistence is on.
 - **D3, D4, D5, D7, D8, D9, D10, D11:** defaults as written.
