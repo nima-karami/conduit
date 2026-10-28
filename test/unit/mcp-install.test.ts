@@ -710,6 +710,28 @@ describe('repair (D2)', () => {
     expect(rows).toEqual([{ cli: 'opencode', path: s.file('opencode') }]);
   });
 
+  it('Repair of an OpenCode entry without ELECTRON_RUN_AS_NODE adds it under `environment`', () => {
+    const s = setup();
+    const live = tmp('conduit-live-');
+    const liveShim = path.join(live, 'conduit-mcp-shim.cjs');
+    fs.writeFileSync(liveShim, '');
+    const base = conduitEntry('opencode', '/gone/conduit.exe', liveShim) as {
+      environment: Record<string, string>;
+    };
+    const environment = {
+      ...Object.fromEntries(
+        Object.entries(base.environment).filter(([k]) => k !== 'ELECTRON_RUN_AS_NODE'),
+      ),
+      FOO: '1',
+    };
+    const file = s.seed('opencode', JSON.stringify({ mcp: { conduit: { ...base, environment } } }));
+    expect(createMcpInstall(s.deps).repair()).toEqual([{ cli: 'opencode', path: file }]);
+    const written = json(file).mcp.conduit;
+    expect(written.command[0]).toBe(execPath);
+    expect(written.environment).toEqual({ ...environment, ELECTRON_RUN_AS_NODE: '1' });
+    expect(written).not.toHaveProperty('env');
+  });
+
   it('Repair rewrites only the exe and shim paths; the user keys of the entry survive', () => {
     const s = setup();
     const codex = s.seed(
