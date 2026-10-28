@@ -1,0 +1,143 @@
+{
+  "cli": "claude",
+  "version": "2.1.312",
+  "cols": 120,
+  "cursorY": 17,
+  "source": "captured with @lydell/node-pty + @xterm/headless 120x40, 2026-10-27",
+  "lines": [
+    " ▐▛███▛█   Claude Code v2.1.312",
+    "▝▜██████▀  Haiku 5.5 · Claude Max",
+    " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\claude-scratch\\input-links\\capture\\cwd",
+    "",
+    "",
+    "! echo https://example.com/bang-link",
+    "  ⎿  https://example.com/bang-link",
+    "  ⎿  Shell cwd was reset to C:\\Users\\karam\\AppData\\Local\\Temp\\claude-scratch\\input-links\\capture\\cwd",
+    "",
+    "● The command ran and printed https://example.com/bang-link. The shell's working directory was reset to",
+    "  C:\\Users\\karam\\AppData\\Local\\Temp\\claude-scratch\\input-links\\capture\\cwd.",
+    "",
+    "  What would you like to do with this link?",
+    "",
+    "✻ Churned for 4s · done 8:21 PM",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  > Haiku 5.5  |  ~ 38k/1000k  |  + 19% session used (4h38m left)",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)",
+    ""
+  ],
+  "col0": [
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "50331648:4275265",
+      "dim": false,
+      "bgLast": "50331648:4275265"
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    },
+    {
+      "bg": "",
+      "dim": false,
+      "bgLast": ""
+    }
+  ]
+}

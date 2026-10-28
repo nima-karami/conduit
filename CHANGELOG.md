@@ -9,8 +9,9 @@ All notable user-facing changes to Conduit. Format follows
 ### Fixed
 - **Only what the agent writes is clickable.** URLs, file names and commit hashes you type into
   Claude Code's chat box, its suggested prompt, the status lines under it, and your past prompts in
-  the conversation no longer turn into links; the agent's replies stay clickable. Codex gets the
-  same treatment; in Cursor only the input box does.
+  the conversation (shell `!` commands included) no longer turn into links; the agent's replies stay
+  clickable. Sessions started from a Codex agent get the same treatment; in Cursor sessions only the
+  input box does.
 
 ## [0.49.0] — 2026-10-27
 

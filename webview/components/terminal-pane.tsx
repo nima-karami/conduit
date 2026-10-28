@@ -727,22 +727,39 @@ export function TerminalPane({
       const userRowsNow = () => {
         const buf = term.buffer.active;
         const prompt = inputBoxRef.current;
-        const boxTop = inputBoxTop(
-          (y) => buf.getLine(y)?.translateToString(true),
-          buf.baseY + buf.cursorY,
-          { cols: term.cols, rows: term.rows, prompt },
-        );
         const cell = buf.getNullCell();
+        const bgOf = () =>
+          cell.isBgDefault() ? '' : `${cell.getBgColorMode()}:${cell.getBgColor()}`;
+        // Memoised per ask, text read lazily: the keyboard path asks for every viewport row, and the
+        // echo walks mostly stop on a style check.
+        const views = new Map<number, RowView | undefined>();
         const rowAt = (y: number): RowView | undefined => {
+          if (views.has(y)) return views.get(y);
           const line = buf.getLine(y);
-          if (!line) return undefined;
-          line.getCell(0, cell);
-          return {
-            text: line.translateToString(true),
-            bg0: cell.isBgDefault() ? '' : `${cell.getBgColorMode()}:${cell.getBgColor()}`,
-            dim0: cell.isDim() !== 0,
-          };
+          let view: RowView | undefined;
+          if (line) {
+            line.getCell(term.cols - 1, cell);
+            const bgLast = bgOf();
+            line.getCell(0, cell);
+            let text: string | undefined;
+            view = {
+              get text() {
+                text ??= line.translateToString(true);
+                return text;
+              },
+              bg0: bgOf(),
+              dim0: cell.isDim() !== 0,
+              bgLast,
+            };
+          }
+          views.set(y, view);
+          return view;
         };
+        const boxTop = inputBoxTop(rowAt, buf.baseY + buf.cursorY, {
+          cols: term.cols,
+          rows: term.rows,
+          prompt,
+        });
         return (y: number) =>
           (boxTop !== null && y >= boxTop) || inPromptEcho(rowAt, y, prompt?.echo);
       };

@@ -29,12 +29,16 @@ const screenOf = (id: string) => {
 function topOf(f: Fixture, prompt?: InputBoxOpts['prompt'], base = 0): number | null {
   const rows = f.lines.length;
   const cols = f.cols ?? Math.max(...f.lines.map((l) => l.length));
-  return inputBoxTop((y) => (y >= base ? f.lines[y - base] : 'scrollback'), base + f.cursorY, {
+  return inputBoxTop((y) => plain(y >= base ? f.lines[y - base] : 'scrollback'), base + f.cursorY, {
     cols,
     rows,
     prompt,
   });
 }
+
+/** A row with no styles: what every unstyled fixture row is. */
+const plain = (text: string | undefined): RowView | undefined =>
+  text === undefined ? undefined : { text, bg0: '', dim0: false, bgLast: '' };
 
 const RULE = '─'.repeat(40);
 const synth = (lines: string[], cursorY: number): Fixture => ({ lines, cursorY, cols: 40 });
@@ -89,7 +93,7 @@ describe('inputBoxTop — Claude ruled box (no identity)', () => {
   it('a top rule further than one viewport above the cursor → null (fails open)', () => {
     const lines = [RULE, '❯ a', ...Array.from({ length: 10 }, () => '  more'), RULE];
     const f = synth(lines, 11);
-    expect(inputBoxTop((y) => f.lines[y], 11, { cols: 40, rows: 6 })).toBeNull();
+    expect(inputBoxTop((y) => plain(f.lines[y]), 11, { cols: 40, rows: 6 })).toBeNull();
   });
 });
 
@@ -140,7 +144,7 @@ describe('inputBoxTop — adapter prompt rows', () => {
 // Real captures with cell styles (fixtures/input-box-links/*.json, see their `source`).
 interface StyledFixture {
   lines: string[];
-  col0: { bg: string; dim: boolean }[];
+  col0: { bg: string; dim: boolean; bgLast: string }[];
 }
 const styled = (name: string): StyledFixture =>
   JSON.parse(
@@ -149,7 +153,9 @@ const styled = (name: string): StyledFixture =>
 const viewOf =
   (f: StyledFixture) =>
   (y: number): RowView | undefined =>
-    y < f.lines.length ? { text: f.lines[y], bg0: f.col0[y].bg, dim0: f.col0[y].dim } : undefined;
+    y < f.lines.length
+      ? { text: f.lines[y], bg0: f.col0[y].bg, dim0: f.col0[y].dim, bgLast: f.col0[y].bgLast }
+      : undefined;
 /** The last row containing `needle`: agent output comes after the prompt that quoted it. */
 const rowWith = (f: StyledFixture, needle: string) =>
   f.lines.findLastIndex((l) => l.includes(needle));
@@ -171,24 +177,26 @@ describe('inPromptEcho — submitted prompts echoed into history', () => {
   });
 
   it('a ❯ row with no background (plain text, a starship prompt) is not an echo', () => {
-    const rows: RowView[] = [{ text: '❯ git clone https://x.test/r', bg0: '', dim0: false }];
+    const rows: RowView[] = [
+      { text: '❯ git clone https://x.test/r', bg0: '', dim0: false, bgLast: '' },
+    ];
     expect(inPromptEcho((y) => rows[y], 0)).toBe(false);
   });
 
   it('background rows with no ❯ row above them (a code block) are not an echo', () => {
     const rows: RowView[] = [
-      { text: '● Here:', bg0: '', dim0: false },
-      { text: '  https://x.test/a', bg0: '2:236', dim0: false },
-      { text: '  https://x.test/b', bg0: '2:236', dim0: false },
+      { text: '● Here:', bg0: '', dim0: false, bgLast: '' },
+      { text: '  https://x.test/a', bg0: '2:236', dim0: false, bgLast: '2:236' },
+      { text: '  https://x.test/b', bg0: '2:236', dim0: false, bgLast: '2:236' },
     ];
     expect([1, 2].map((y) => inPromptEcho((r) => rows[r], y))).toEqual([false, false]);
   });
 
   it('a background row below an earlier echo, past agent output, is not part of that echo', () => {
     const rows: RowView[] = [
-      { text: '❯ fix it', bg0: '3:3618615', dim0: false },
-      { text: '● Done, see:', bg0: '', dim0: false },
-      { text: '  https://x.test/a', bg0: '3:3618615', dim0: false },
+      { text: '❯ fix it', bg0: '3:3618615', dim0: false, bgLast: '3:3618615' },
+      { text: '● Done, see:', bg0: '', dim0: false, bgLast: '' },
+      { text: '  https://x.test/a', bg0: '3:3618615', dim0: false, bgLast: '3:3618615' },
     ];
     expect(inPromptEcho((r) => rows[r], 2)).toBe(false);
   });
@@ -205,6 +213,42 @@ describe('inPromptEcho — submitted prompts echoed into history', () => {
 
   it('Codex rows are ordinary text without the adapter', () => {
     expect(echoRows(styled('codex-echo-draft'))).toEqual([]);
+  });
+
+  it('Claude bash mode: the ! row on a background is an echo; its ⎿ output is not', () => {
+    const f = styled('claude-bang-echo');
+    const start = rowWith(f, '! echo');
+    // Every other row, the ⎿ command output included, stays linked.
+    expect(echoRows(f)).toEqual([start]);
+  });
+
+  it('a ❯ prompt painted on a background that stops short of the row end (a shell theme) is not an echo', () => {
+    const rows: RowView[] = [
+      { text: '❯ git clone https://x.test/r', bg0: '2:24', dim0: false, bgLast: '' },
+    ];
+    expect(inPromptEcho((y) => rows[y], 0)).toBe(false);
+  });
+
+  it('Codex multi-paragraph echo: rows past its blank lines are still the echo, the reply is not', () => {
+    const f = styled('codex-echo-paragraphs');
+    const echo = inputBoxPrompt(screenOf('codex'))?.echo;
+    const start = rowWith(f, 'Reply only with');
+    expect(echoRows(f, echo)).toEqual([
+      start,
+      rowWith(f, 'para-two-link'),
+      rowWith(f, 'para-three-link'),
+    ]);
+    expect(inPromptEcho(viewOf(f), rowWith(f, 'Worked for'), echo)).toBe(false);
+  });
+
+  it('Codex prompt shape: a dim (echoed) › above an off-composer cursor is not the input box', () => {
+    const codex = inputBoxPrompt(screenOf('codex'));
+    const rows: RowView[] = [
+      { text: '› old prompt https://x.test/a', bg0: '', dim0: true, bgLast: '' },
+      { text: '• reply https://x.test/b', bg0: '', dim0: true, bgLast: '' },
+      { text: '', bg0: '', dim0: false, bgLast: '' },
+    ];
+    expect(inputBoxTop((y) => rows[y], 2, { cols: 40, rows: 10, prompt: codex })).toBeNull();
   });
 
   it('cursor has no echo shape (no reliable signal measured)', () => {

@@ -29,83 +29,103 @@
   "col0": [
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "50331648:3618615",
-      "dim": false
+      "dim": false,
+      "bgLast": "50331648:3618615"
     },
     {
       "bg": "50331648:3618615",
-      "dim": false
+      "dim": false,
+      "bgLast": "50331648:3618615"
     },
     {
       "bg": "50331648:3618615",
-      "dim": false
+      "dim": false,
+      "bgLast": "50331648:3618615"
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     },
     {
       "bg": "",
-      "dim": false
+      "dim": false,
+      "bgLast": ""
     }
   ]
 }
