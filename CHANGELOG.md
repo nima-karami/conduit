@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.50.0] — 2026-10-27
+
 ### Added
 - **Agents you start in any terminal can join messaging.** A new **MCP** tab in Settings installs
   Conduit into Claude Code, Codex, Cursor and OpenCode's own MCP config, with one click per CLI.
