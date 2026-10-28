@@ -28,7 +28,7 @@ every `provideLinks` call, so the box stops excluding the moment the cursor leav
 | Shape | Applies to | Box found when | First excluded row |
 |---|---|---|---|
 | **ruled** | every terminal (no identity needed) | the nearest rule row at or above the cursor, the nearest at or below it, both within `rows` (viewport height) of the cursor row, and the row under the top rule starts with Claude's prompt glyph (`❯`, or `!` in bash mode) | the top rule |
-| **prompt** | sessions whose agent has an MCP adapter that locates its input row (Codex `›` via new `inputBox`; Cursor `→` via its existing `inputRow`) | the pattern on the cursor row or up to `maxAbove` (8, as `screenVerdict`) rows above, and no adapter `blocking` pattern on screen | that prompt row |
+| **prompt** | sessions whose agent has an MCP adapter that locates its input row (Codex `›` via new `inputBox`; Cursor `→` via its existing `inputRow`) | the pattern on a row whose first cell is **not dim** (a dim one is an echo) — the cursor row or up to `maxAbove` (8, as `screenVerdict`) rows above — and no adapter `blocking` pattern on screen | that prompt row |
 
 **Echoed prompts (D1, ruled by the conductor 2026-10-27).** A prompt the user submitted, echoed into
 history by the CLI, is the user's text and never links. It is told apart by cell style, never by glyph
@@ -36,8 +36,8 @@ alone, so agent output that starts with `>` or `❯` still links:
 
 | CLI | Applies to | An echo is | Measured |
 |---|---|---|---|
-| Claude | every terminal | a `❯` row whose column-0 cell has a non-default background, plus the rows directly below with the same column-0 background (wrapped/multi-line prompt) | real `claude --model haiku` (v2.1.312) capture: echo rows 5–7 on RGB #373737 full width; live box `❯` row and output default background; markdown quotes render as `▎` → `fixtures/input-box-links/claude-echo-draft.json` |
-| Codex | codex adapter (`promptEcho`) | a `›` row at column 0 whose first cell is dim, plus the indented non-blank rows below it, up to a blank row | v0.164.0 capture: echo `›` dim, live composer `›` plain, agent rows start `•` (also dim) → `codex-echo-draft.json` |
+| Claude | every terminal | a `❯` (or bash-mode `!`) row whose background is non-default and spans the **whole row** (column 0 and the last column match), plus the rows directly below with the same column-0 background (wrapped/multi-line prompt) | real `claude --model haiku` (v2.1.312) captures: echo rows 5–7 on RGB #373737 full width; a `! echo …` echo on #413C41 full width with its `⎿` output on the default background; live box `❯` row and output default background; markdown quotes render as `▎` → `fixtures/input-box-links/claude-echo-draft.json`, `claude-bang-echo.json` |
+| Codex | codex adapter (`promptEcho`) | a `›` row at column 0 whose first cell is dim, plus the indented rows below it **across blank rows** (paragraphs), until a non-blank row at column 0 (`•` reply, next `›`) | v0.164.0 captures: echo `›` dim, live composer `›` plain, agent rows start `•` (also dim); a 3-paragraph pasted prompt echoes as `›` row, blank, indented row, blank, indented row → `codex-echo-draft.json`, `codex-echo-paragraphs.json` |
 | Cursor | — | not implemented | v2026.10.22 capture: echo rows have no glyph, only a background from column 1, and code-block styling is unmeasured — no reliable signal; echoes stay linked |
 
 Rows below the box (Claude's status line and mode hint, `@`/`/` completion menus, Codex/Cursor footers)
@@ -85,7 +85,9 @@ excluded: Claude's has no rule pair around the cursor, Cursor's matches a `block
 | Box submitted; CLI echoes the prompt into history | Claude/Codex: not linked (D1); Cursor: linked |
 | Agent output starting with `>` (or a code block on a background) | linked: no echo glyph+style above it |
 | Claude echo longer than 500 rows | rows past the walk limit stay linked (fails open) |
-| Claude in a light theme or 256-colour mode | any non-default background counts, whatever its colour or mode |
+| Claude in a light theme or 256-colour mode | any non-default full-row background counts, whatever its colour or mode |
+| Plain-shell prompt theme painting `❯` on a background (oh-my-posh, p10k) | its segment stops short of the row end, so it is not an echo; the typed command line stays linked |
+| Codex cursor off the composer (e.g. an overlay) with an echoed `›` within 8 rows above | the dim echo row is never taken for the live box, so agent output under it stays linked |
 
 ## 5. Defaults vs settings
 | Decision | Default | Configurable | Rationale |
@@ -103,7 +105,7 @@ excluded: Claude's has no rule pair around the cursor, Cursor's matches a `block
 3. Rows under the box (status line) are not linked.
 4. Once the cursor leaves the box, the next `provideLinks` for its old rows (xterm asks again on the
    next pointer move onto a row) returns their links.
-5a. The keyboard "open links" list (`pathLinksAtRef`) offers no path from box rows.
+5a. The keyboard "open links" list (`pathLinksAtRef`, palette "Terminal: Open Detected Link") offers no path from box rows or echoed prompts (e2e `terminal-input-box-links` step 4).
 5. Codex `›` and Cursor `→` input rows (fixtures) are excluded only for those agents; a plain shell row
    starting with `›`/`→` is not.
 5b. A URL in an echoed Claude prompt (both rows) is not linked; agent output `> see <url>` is.
