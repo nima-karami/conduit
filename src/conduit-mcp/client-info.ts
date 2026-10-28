@@ -36,7 +36,7 @@ export function noticeAdapterIdOf(kind: ClientKind): McpAdapterId | null {
 }
 
 /** The agent CLI whose typed command line a client of this kind answers; fake/agent answer none. */
-export function cliOfClientKind(kind: ClientKind): AgentCli | null {
+function cliOfClientKind(kind: ClientKind): AgentCli | null {
   switch (kind) {
     case 'claude':
     case 'codex':
