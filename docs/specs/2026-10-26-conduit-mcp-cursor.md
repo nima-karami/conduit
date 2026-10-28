@@ -43,6 +43,13 @@ gets no notices (`screen: null`). So the cheapest executor on the team can't mes
 ## 3. Behavior
 
 ### 3.1 Connect / Disconnect (Settings → Agent messaging)
+> **Superseded by [2026-10-27-conduit-mcp-install](2026-10-27-conduit-mcp-install.md) §2.3, §3.5–§3.6:**
+> the Cursor row is one of four on Settings → **MCP**; Connect/Disconnect are **Install/Uninstall**,
+> through the generic `mcpInstall` status/act channels (the `cursor-connect:*` channels are gone).
+> The old `stale` state is split into `other-conduit` (another Conduit's entry: Use this Conduit, no
+> confirm) and `conflict` (a server named `conduit` that isn't Conduit: Replace… after a confirm).
+> The text below is kept as the original design.
+
 - Row: **Cursor** · state text · buttons. Description: "Adds Conduit to Cursor's user MCP config
   (`~/.cursor/mcp.json`). Cursor's editor reads the same file and will list a Conduit server with no
   tools outside Conduit."

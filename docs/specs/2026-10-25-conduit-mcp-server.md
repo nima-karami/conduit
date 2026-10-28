@@ -111,6 +111,12 @@ differentially repainted screen.
 ## 3. Data / interface contract
 
 ### 3.1 Wiring and identity
+> **Amended by [2026-10-27-conduit-mcp-install](2026-10-27-conduit-mcp-install.md) §3.1, §3.3:** every
+> session gets the token and endpoint in its PTY env while messaging is on, not only adapter
+> sessions. A session without a definition adapter gets its handle lazily, from the `clientInfo` of
+> its first `initialize` (`claude-<n>`, `codex-<n>`, unknown → `agent-<n>`), so a CLI the user
+> installed Conduit into joins from any terminal. Its notices follow that spec's §2.4 (amendment A1).
+
 - The host listens on a local endpoint scoped to its userData (Windows named pipe
   `\\.\pipe\conduit-mcp-<hash(userData)>`; a socket path in userData elsewhere), so a dev build and the
   installed app never collide. Unit tests inject the endpoint (CI is ubuntu).

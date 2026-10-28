@@ -6,6 +6,37 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Agents you start in any terminal can join messaging.** A new **MCP** tab in Settings installs
+  Conduit into Claude Code, Codex, Cursor and OpenCode's own MCP config, with one click per CLI.
+  After that, typing `claude`, `codex`, `agent` or `opencode` in any Conduit terminal — a plain
+  shell included — connects that agent: it gets a handle, can message other agents and you, and
+  its card shows a plug. Install backs the config file up the first time and leaves your other
+  servers alone; **Uninstall** removes only Conduit. A server named `conduit` that isn't Conduit's
+  is only replaced after you confirm. Project-level entries are listed with **Remove**, and you can
+  install for one project. **Uninstall here before removing Conduit.**
+- **Conduit tells you when an agent couldn't connect.** When you type an agent CLI that isn't set
+  up for Conduit, its card shows an unplug icon and the terminal offers **Install for …**, once,
+  with **Don't suggest again**. **Set up Conduit MCP…** is in the command palette and the card
+  menu. The Messages tab's empty state offers **Set up agent CLIs** while a CLI you have isn't
+  installed.
+- **Entries left by a moved Conduit are repaired.** At startup the installed app repoints a
+  Conduit entry whose program or script no longer exists; the entry's other settings stay.
+
+### Changed
+- **MCP settings moved to their own tab.** Messaging, the tool switches and the agent CLIs are
+  under Settings → **MCP**.
+- **Cursor's Connect is now Install.** The Cursor row works like the others: Install and
+  Uninstall, and an entry another Conduit wrote can be taken over with **Use this Conduit**.
+- **In a plain shell, notices are typed only into the agent you started there.** Conduit types a
+  notice into a shell session only while the agent CLI typed as its last command line is the one
+  connected. Once you type another line (a prompt to the agent counts), or an app started from that shell (an editor, say)
+  connects instead, messages wait in the inbox for the agent to read.
+
+### Fixed
+- **The `conduit` server no longer shows as failed outside Conduit** in Claude Code and OpenCode;
+  it connects and lists no tools.
+
 ## [0.49.0] — 2026-10-27
 
 ### Added

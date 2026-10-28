@@ -1,5 +1,5 @@
 ---
-status: draft
+status: built
 date: 2026-10-27
 ---
 
