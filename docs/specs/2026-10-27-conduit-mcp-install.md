@@ -127,6 +127,9 @@ adds "Overridden in this project by <scope> entry" (Claude/Codex precedence make
     stored line only within `UNTYPED_ENTER_KEEP_MS` (60 s) of when that line was typed; after that it
     clears it, because at a shell prompt Up, Enter is a history recall that may re-run `code .`. The
     shell and the CLI's dialog see identical keystrokes, so time is the only separator.
+    **Accepted residual:** a user who answers Claude's trust or onboarding dialog with arrows and
+    Enter more than 60 s after typing `claude` is back to the measured F6 failure — that run is
+    pull-only.
   - **A `claude` binding admits a notice only into Claude's ruled input box (review S5 SF-1,
     conductor ruling).** Claude's bare `❯ ` row is also a starship/pure shell prompt, so for a session
     without a definition adapter bound to a `claude` client the gate additionally requires the box
