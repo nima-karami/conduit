@@ -11,10 +11,11 @@
  * Windows only, real app.
  */
 
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, openSession, runScenario, writeToTerminal } from './harness.mjs';
+import { openPalette, paletteRow } from './middle-click-surfaces-helpers.mjs';
 
 const OUT_URL = 'https://example.com/agent-output-link';
 const TYPED_URL = 'https://example.com/typed-input-link';
@@ -30,6 +31,10 @@ runScenario('terminal-input-box-links', async ({ page, log }) => {
     window.__termLinkProviders = {};
   });
   const workDir = mkdtempSync(join(tmpdir(), 'conduit-inbox-'));
+  mkdirSync(join(workDir, 'src'));
+  for (const f of ['out-file.ts', 'box-file.ts', 'echo-file.ts']) {
+    writeFileSync(join(workDir, 'src', f), 'export {};\n');
+  }
   const sid = await openSession(page, { path: workDir.replace(/\\/g, '/') });
   await page.waitForFunction((id) => !!window.__termLinkProviders?.[id], sid, { timeout: 20000 });
   await page.waitForFunction((dir) => (window.__cap || '').includes(`${dir}>`), workDir, {
@@ -111,4 +116,32 @@ runScenario('terminal-input-box-links', async ({ page, log }) => {
   const after = await linksOn('placeholder-link');
   log('after:', JSON.stringify(after));
   assert(after.links.length === 1, `a box the cursor left is history: ${JSON.stringify(after)}`);
+
+  // ── 4. keyboard path: Open Detected Link lists the output path, not the box's or the echo's ─
+  await writeToTerminal(
+    page,
+    sid,
+    `${ESC}[2J${ESC}[H${ESC}[48;2;55;55;55m❯ edit src/echo-file.ts${ESC}[K${ESC}[49m\r\n\r\n` +
+      `● Changed src/out-file.ts\r\n\r\n${rule}\r\n❯ open src/box-file.ts\r\n${rule}\r\n` +
+      `${ESC}[2A${ESC}[5G`,
+  );
+  await openPalette(page, '>Terminal: Open Detected Link');
+  await paletteRow(page, 'Terminal: Open Detected Link…').waitFor({ timeout: 5000 });
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.pathpick', { state: 'visible', timeout: 10000 });
+  const detected = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('.pathpick [role="option"]')).map(
+      (el) => el.textContent ?? '',
+    ),
+  );
+  await page.keyboard.press('Escape');
+  log('detected:', JSON.stringify(detected));
+  assert(
+    detected.some((t) => t.startsWith('src/out-file.ts')),
+    `the output path should be offered: ${JSON.stringify(detected)}`,
+  );
+  assert(
+    !detected.some((t) => t.includes('box-file') || t.includes('echo-file')),
+    `no path from the box or an echoed prompt: ${JSON.stringify(detected)}`,
+  );
 });
