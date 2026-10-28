@@ -220,7 +220,16 @@ function splice(
     out = prefix + render(eol);
   } else {
     const table = render(eol);
-    out = [...lines.slice(0, loc.start), table, ...lines.slice(loc.end)].join('');
+    let start = loc.start;
+    // Install appends after one blank separator line when the file's last line has content; removing
+    // the table from the end takes that separator too, so install → uninstall is byte-exact.
+    const blank = (l: string | undefined) => l !== undefined && l.trim() === '';
+    const atEnd = lines.slice(loc.end).every((l) => l.trim() === '');
+    const prev = lines[start - 2];
+    if (entry === null && atEnd && blank(lines[start - 1]) && prev !== undefined && !blank(prev)) {
+      start -= 1;
+    }
+    out = [...lines.slice(0, start), table, ...lines.slice(loc.end)].join('');
   }
   let after: TomlDoc;
   try {

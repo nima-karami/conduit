@@ -119,10 +119,10 @@ const CASES: Case[] = [
     expected: '[mcp_servers]\n\n\n[mcp_servers.other]\ncommand = "x"\n',
   },
   {
-    name: 'remove the only server → the implicit parent goes with it',
+    name: 'remove the only server → the implicit parent and the separator install added go with it',
     input: `a = 1\n\n${OLD}`,
     entry: null,
-    expected: 'a = 1\n\n',
+    expected: 'a = 1\n',
   },
   {
     name: 'CRLF file → inserted lines use CRLF',
@@ -231,6 +231,16 @@ describe('toml-config', () => {
     expect(out).toBe(expected);
     if (entry !== null) expect(readCodexConduit(out)).toEqual(entry);
     else expect(readCodexConduit(out)).toBeUndefined();
+  });
+
+  it.each([
+    'a = 1\n',
+    '# head\r\nmodel = "o3"\r\n',
+    '[profiles.x]\nm = 1\n',
+    '[mcp_servers.other]\ncommand = "x"\n',
+    '',
+  ])('QA F3 install → uninstall restores the file byte for byte: %j', (input) => {
+    expect(spliceConduitTable(spliceConduitTable(input, ENTRY), null)).toBe(input);
   });
 
   it('absent + entry: every original byte is a prefix of the output', () => {
