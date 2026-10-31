@@ -529,6 +529,7 @@ export function CenterPane({
           renderWeb={(d, onGuestFocus) => (
             <WebView
               url={d.path}
+              focusKey={tabStateKey(d.id, webPlacement(d.id)?.group ?? 1)}
               onTitle={(title) => onDocTitle?.(d.id, title)}
               onGuestFocus={onGuestFocus}
               onOpenLink={(url, background) =>

@@ -66,6 +66,14 @@ Paths are absolute or relative to the caller's persisted home. `session` takes a
   and History are singletons, so opening one there takes it off the human's screen. A file or URL
   open into a non-shown session never takes a tab off the shown session's screen: a tab the shown
   session already holds stays with its owner (only un-previewed), and the caller's layout gets nothing.
+- **Focus.** A tool-driven open never moves DOM focus off an element it leaves visible: a split
+  partner's open, a `focus:false` open, or an open while focus sits outside the caller's panes.
+  When the caller is the shown session, the focused element was inside its center pane, and the
+  open hides or removes it (the terminal's or the editor's caret, any focused pane), focus moves
+  to the opened view's own focus target: the Review scroller, the History list, the editor, or a
+  web tab's host (never into the guest page). The open is announced politely in the navigation
+  live region: "<handle> opened <Review | History | web page | file>". Without this the keyboard
+  is left on `body` and typed keys are lost (runtime QA, part B).
 - **`close_session`.**
   - It runs as the renderer action `closeSession`: the renderer checks the target's dirty tabs and
     posts `kill` in the same synchronous turn, which is the UI's teardown minus the confirm.
@@ -180,7 +188,9 @@ Settings rows for these tools live in the policy spec.
 
 ## 7. Assumptions
 
-- **A4:** Tool-driven tab activation keeps DOM focus where it was.
+- **A4 (amended after runtime QA):** Tool-driven tab activation keeps DOM focus where it was,
+  unless the activation hid the focused element; then focus lands in the opened view (§2.1
+  "Focus").
 - **A5:** Branch names stay branch endpoints, tags stay tags, everything else becomes a SHA.
 - **A6:** There is no path confinement for `attach_folder` or `open_file`; the policy is the trust
   decision.

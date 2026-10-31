@@ -2204,8 +2204,8 @@ export function ReviewView({
         ref={scrollerFocusRef}
         className="review__scroll"
         // The keymap is scoped to focus inside this element, so it is focusable; it is the focus
-        // target a user's open or tab activation lands on, and a tool-driven open never focuses it
-        // (Lane B plan, assumption 11; spec 2026-10-30-conduit-mcp-app-control A4).
+        // target a user's open or tab activation lands on, and a tool-driven open focuses it only
+        // when the open hid the focused element (spec 2026-10-30-conduit-mcp-app-control §2.1).
         tabIndex={-1}
         onKeyDown={onKeyDown}
         onScroll={() => {

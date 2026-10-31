@@ -301,6 +301,7 @@ import {
 import { THEMES } from './themes';
 import { cancelTimedMessage, renewTimedMessage, subscribeTimerEvents } from './timer-store';
 import { pushToast } from './toast-store';
+import { openHidesFocus } from './tool-open-focus';
 import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';
 import {
   applyProjectFiles,
@@ -950,7 +951,7 @@ export function App() {
     [],
   );
   // `byUser`: a user's open lands keyboard focus in Review, as its mount did; a tool-driven one
-  // never moves DOM focus (spec 2026-10-30-conduit-mcp-app-control A4).
+  // lands it only through landToolOpen (spec 2026-10-30-conduit-mcp-app-control §2.1 "Focus").
   const openReviewIn = useCallback(
     (sessionId: string, source: ReviewSource, group?: GroupIndex, byUser = false) => {
       const shown = activeIdRef.current ?? '';
@@ -1300,6 +1301,37 @@ export function App() {
   // Polite live region announcing the landed location after a Back/Forward traversal — a
   // same-type editor→editor jump isn't conveyed by focus alone (spec §10).
   const navLiveRef = useRef<HTMLDivElement>(null);
+
+  // A tool's open that hid the element holding the keyboard lands it in the opened view, and says
+  // who opened what (spec 2026-10-30-conduit-mcp-app-control §2.1 "Focus").
+  const mcpSessionsRef = useRef(mcp.state?.sessions);
+  mcpSessionsRef.current = mcp.state?.sessions;
+  const landToolOpen = useCallback(
+    (
+      sessionId: string,
+      what: Parameters<typeof MCP_STR.opened>[1],
+      opened: (d: OpenDoc) => boolean,
+      open: () => void,
+    ) => {
+      const panes =
+        sessionId === activeIdRef.current ? document.querySelector('.centerpane') : null;
+      if (!openHidesFocus(panes, open)) return;
+      const state = docStateRef.current;
+      const layout = layoutOf(state, sessionId);
+      const at = layout.groups.findIndex((g) => {
+        const d = state.docs.find((x) => x.id === g.active);
+        return d !== undefined && opened(d);
+      });
+      if (at < 0) return;
+      focusView(sessionId, at === 0 ? 1 : 2, layout.groups[at].active);
+      const handle =
+        mcpSessionsRef.current?.[sessionId]?.handle ??
+        sessionsRef.current.find((s) => s.id === sessionId)?.name ??
+        '';
+      if (navLiveRef.current) navLiveRef.current.textContent = MCP_STR.opened(handle, what);
+    },
+    [],
+  );
 
   // §10: arm, auto-arm, cancel, fire, miss and waiting are announced ONCE each; the countdown
   // never is — a per-second live region would be a screen-reader firehose.
@@ -2771,11 +2803,19 @@ export function App() {
       if (known.has(req.sessionId)) {
         const p = planFileOpen(req);
         if (req.source === 'mcp') {
-          if (p.showEditor && req.sessionId === activeIdRef.current) setCenterView('editor');
-          openFile(req.path, req.sessionId, p.mode, {
-            ...(p.reveal ? { reveal: p.reveal } : {}),
-            keepActive: true,
-          });
+          const path = canonicalPath(req.path);
+          landToolOpen(
+            req.sessionId,
+            'file',
+            (d) => d.kind === 'file' && canonicalPath(d.path) === path,
+            () => {
+              if (p.showEditor && req.sessionId === activeIdRef.current) setCenterView('editor');
+              openFile(req.path, req.sessionId, p.mode, {
+                ...(p.reveal ? { reveal: p.reveal } : {}),
+                keepActive: true,
+              });
+            },
+          );
         } else {
           if (p.showEditor) setCenterView('editor');
           openFile(req.path, req.sessionId, p.mode, p.reveal ? { reveal: p.reveal } : undefined);
@@ -2785,7 +2825,7 @@ export function App() {
       }
     }
     pendingOsOpensRef.current = remaining;
-  }, [sessions, openFile]);
+  }, [sessions, openFile, landToolOpen]);
   const flushOsOpensRef = useRef(flushOsOpens);
   flushOsOpensRef.current = flushOsOpens;
   useEffect(() => {
@@ -2793,7 +2833,8 @@ export function App() {
   }, [flushOsOpens]);
 
   // MCP app-control's renderer step (spec 2026-10-30-conduit-mcp-app-control §2.3): every open
-  // names the caller's session and never calls setActiveId or moves DOM focus.
+  // names the caller's session and never calls setActiveId; it moves DOM focus only to replace a
+  // focused element it hid (§2.1 "Focus").
   useMcpUi({
     hasSession: (id) => sessionsRef.current.some((s) => s.id === id),
     dirtyPathsOf: (id) => sessionDirty([id]),
@@ -2806,13 +2847,31 @@ export function App() {
         forceClose: forceCloseDoc,
         closeDirtyUnprompted,
       }),
-    openReview: (id, source) => openReviewIn(id, source),
-    openGitHistory: (id, root, commit) => openGitHistoryIn(id, root, commit ?? undefined),
-    openUrl: (id, url, foreground) => {
-      // As open_file: a focused open into the shown session brings the editor forward.
-      if (foreground && id === activeIdRef.current) setCenterView('editor');
-      openWeb(url, id, foreground ? undefined : 'background');
-    },
+    openReview: (id, source) =>
+      landToolOpen(
+        id,
+        'Review',
+        (d) => d.kind === 'review',
+        () => openReviewIn(id, source),
+      ),
+    openGitHistory: (id, root, commit) =>
+      landToolOpen(
+        id,
+        'History',
+        (d) => d.kind === 'git-history',
+        () => openGitHistoryIn(id, root, commit ?? undefined),
+      ),
+    openUrl: (id, url, foreground) =>
+      landToolOpen(
+        id,
+        'web page',
+        (d) => d.kind === 'web' && d.path === url,
+        () => {
+          // As open_file: a focused open into the shown session brings the editor forward.
+          if (foreground && id === activeIdRef.current) setCenterView('editor');
+          openWeb(url, id, foreground ? undefined : 'background');
+        },
+      ),
   });
 
   // editor-tabs-persist: apply the buffered `restoreDocs` once this window's sessions are known,

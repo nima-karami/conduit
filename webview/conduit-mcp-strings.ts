@@ -336,6 +336,9 @@ export const MCP_STR = {
     waiting: 'Waiting for your approval',
     chipReason: (handle: string) => `${handle} is waiting for your approval`,
   },
+  // A tool's open that took the keyboard's place (app-control spec §2.1 "Focus").
+  opened: (handle: string, what: 'Review' | 'History' | 'web page' | 'file') =>
+    `${handle} opened ${what}`,
   // Settings → MCP, the card indicator, the setup banner and the Messages empty state
   // (spec 2026-10-27-conduit-mcp-install §2.3–§2.6, §8).
   install: {

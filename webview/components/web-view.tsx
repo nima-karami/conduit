@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { normalizeUrl } from '../../src/web-url';
 import { openExternal, subscribe } from '../bridge';
+import { useFocusTargetRef } from '../focus-targets';
 import { IconChevron, IconClose, IconExternal, IconRefreshCw } from '../icons';
 
 /** The subset of Electron's `<webview>` element API this component drives. */
@@ -35,8 +36,12 @@ export function WebView({
   onTitle,
   onOpenLink,
   onGuestFocus,
+  focusKey,
 }: {
   url: string;
+  /** Its (tab, group) focus key: a landing focuses this host, never the guest page (spec
+   *  2026-10-30-conduit-mcp-app-control §2.1 "Focus"). */
+  focusKey?: string;
   onTitle?: (title: string) => void;
   /** The guest took focus. A click into the page fires no focus event in the host document, not
    *  even on the <webview> itself; the host window blurs with the <webview> as its active element
@@ -47,6 +52,7 @@ export function WebView({
   onOpenLink?: (url: string, background: boolean) => void;
 }) {
   const ref = useRef<WebviewElement | null>(null);
+  const hostFocusRef = useFocusTargetRef<HTMLDivElement>(focusKey);
   // The failure panel unmounts the <webview> and Retry mounts a NEW one (a new guest), so every
   // listener below is keyed on the live element, not bound once to the first.
   const [frame, setFrame] = useState<WebviewElement | null>(null);
@@ -167,7 +173,7 @@ export function WebView({
   };
 
   return (
-    <div className="webview">
+    <div className="webview" ref={hostFocusRef} tabIndex={-1}>
       <div className="webview__bar">
         <button
           type="button"

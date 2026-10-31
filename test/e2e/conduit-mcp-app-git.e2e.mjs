@@ -3,20 +3,26 @@
  * docs/specs/2026-10-30-conduit-mcp-app-control.md §2.1, §2.2, §3, §5 EARS 2 and 3, A4, A5; plan
  * T3.4). A 600-commit repo (main; branch feature at c599; tag v1 at c1) is the home of fake agents
  * A and B:
- *   - Review opens for the working tree, one commit, and ranges whose endpoints classify as tag,
- *     branch, commit or working; the tab activates without moving DOM focus;
+ *   - open_file, then Review for the working tree, one commit, and ranges whose endpoints classify
+ *     as tag, branch, commit or working; each open hides the terminal or editor holding the caret,
+ *     so focus lands in the opened view and the open is announced (A4);
  *   - a ref starting with "-", an unresolvable ref, "working" as a base and a repo outside the
  *     session's folders are refused, and nothing opens;
  *   - History opens selecting a commit beyond the first page, and a branch ref selects its tip;
+ *     from a caret in the terminal or the editor, focus lands in History;
  *   - from split partner B, Review and History (singletons) open in B's own layout and leave A's
- *     screen; A stays active and B stays split.
+ *     screen; A stays active and B stays split, and A's caret stays in its editor, typing there;
+ *   - an open while focus sits on a control it doesn't hide leaves focus there.
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   activeTab,
+  assertLanded,
+  focusedNow,
   gitFixture,
+  parkKeyboard,
   shownTabs,
   splitName,
   splitWith,
@@ -78,11 +84,7 @@ await runScenario(
     const bName = (await sessions(page)).find((s) => s.id === b.sessionId)?.name;
     await makeActive(a.sessionId);
 
-    /**
-     * A4: park focus on a control outside the center pane, run `open`, and report whether focus
-     * stayed there. Collected, and asserted in the last phase, so one finding can't hide the rest.
-     */
-    const focusMoves = [];
+    /** A4: an open that hides nothing (focus on a control outside the center pane) keeps focus. */
     const keepsFocus = async (what, open) => {
       await page.evaluate(() => {
         const el = document.querySelector('.footbtn[title^="Settings"]');
@@ -90,37 +92,54 @@ await runScenario(
         window.__focusBefore = el;
       });
       await open();
-      const seen = await page.evaluate(() => {
-        const d = (el) => (el ? `${el.tagName}.${el.className}` : 'null');
-        return {
-          same: document.activeElement === window.__focusBefore,
-          before: d(window.__focusBefore),
-          after: d(document.activeElement),
-        };
-      });
-      if (!seen.same) focusMoves.push({ what, ...seen });
+      assert(
+        await page.evaluate(() => document.activeElement === window.__focusBefore),
+        `${what} moved focus off a control it doesn't hide, to ${await focusedNow(page)}`,
+      );
     };
+    const FILE = 'f.txt';
+    const showFile = async () => {
+      await page.locator('.tabbar [role="tab"]', { hasText: FILE }).first().click();
+      await page.waitForSelector('.viewer__monaco .monaco-editor', { timeout: 15_000 });
+    };
+    const fileText = () =>
+      page.evaluate(() => {
+        const ed = (window.monaco?.editor.getEditors() ?? []).find((e) =>
+          e.getModel()?.uri.path.toLowerCase().endsWith('/f.txt'),
+        );
+        return ed?.getModel()?.getValue() ?? null;
+      });
+
+    phase('file lands');
+    await parkKeyboard(page, 'terminal');
+    const opened = await callTool(page, a.sessionId, 'open_file', { path: FILE });
+    assert(opened?.opened, `open_file: ${JSON.stringify(opened)}`);
+    await page.waitForSelector('.viewer__monaco .monaco-editor', { timeout: 15_000 });
+    await assertLanded(page, '.monaco-editor', `${a.handle} opened file`, 'terminal → open_file');
+    log('open_file from a terminal caret lands focus in the editor ✓');
 
     phase('review working');
-    await keepsFocus('open_review', async () => {
-      const working = await callTool(page, a.sessionId, 'open_review', {
-        source: { kind: 'working' },
-      });
-      assert(
-        same(working, { opened: 'review', source: { kind: 'working', scope: 'all' } }),
-        `working: ${JSON.stringify(working)}`,
-      );
-      await waitActiveTab(REVIEW);
+    await parkKeyboard(page, 'editor');
+    const working = await callTool(page, a.sessionId, 'open_review', {
+      source: { kind: 'working' },
     });
-    log('open_review working activates Review ✓');
+    assert(
+      same(working, { opened: 'review', source: { kind: 'working', scope: 'all' } }),
+      `working: ${JSON.stringify(working)}`,
+    );
+    await waitActiveTab(REVIEW);
+    await assertLanded(page, '.review', `${a.handle} opened Review`, 'editor → open_review');
+    log('open_review working activates Review; focus lands there from the editor ✓');
 
-    // Each open starts from the terminal tab, so the Review activating is the open's doing, and
-    // the header label is what Review rendered from the source it was handed.
+    // Each open starts from a caret in the terminal, so the Review activating (and focus landing
+    // in it) is the open's doing, and the header label is what Review rendered from the source it
+    // was handed.
     const reviewShows = async (label, open) => {
-      await page.locator('.tab[data-tabid="__terminal__"]').first().click();
+      await parkKeyboard(page, 'terminal');
       await waitActiveTab(null);
       const r = await open();
       await waitActiveTab(REVIEW);
+      await assertLanded(page, '.review', `${a.handle} opened Review`, `terminal → ${label}`);
       assert(
         await until(async () => (await sourceLabel()) === label, 10_000),
         `Review shows "${await sourceLabel()}", not "${label}"`,
@@ -214,30 +233,62 @@ await runScenario(
     log('leading "-", unknown refs, working as base and a repo outside the session are refused ✓');
 
     phase('history at depth');
-    await keepsFocus('open_git_history', async () => {
-      const deep = await callTool(page, a.sessionId, 'open_git_history', { ref: shas[0] });
-      assert(
-        same(deep, { opened: 'git-history', selected: shas[0] }),
-        `deep: ${JSON.stringify(deep)}`,
-      );
-      await waitActiveTab(HISTORY);
-      await waitDetail(shas[0], 'c1');
-    });
+    await parkKeyboard(page, 'terminal');
+    const deep = await callTool(page, a.sessionId, 'open_git_history', { ref: shas[0] });
+    assert(
+      same(deep, { opened: 'git-history', selected: shas[0] }),
+      `deep: ${JSON.stringify(deep)}`,
+    );
+    await waitActiveTab(HISTORY);
+    await waitDetail(shas[0], 'c1');
+    await assertLanded(page, '.gh', `${a.handle} opened History`, 'terminal → open_git_history');
+    await showFile();
+    await parkKeyboard(page, 'editor');
     const tip = await callTool(page, a.sessionId, 'open_git_history', { ref: 'feature' });
     assert(
       same(tip, { opened: 'git-history', selected: shas[598] }),
       `feature: ${JSON.stringify(tip)}`,
     );
+    await waitActiveTab(HISTORY);
     await waitDetail(shas[598], 'c599');
-    log('History selects c1 beyond the first page, and feature selects c599 ✓');
+    await assertLanded(page, '.gh', `${a.handle} opened History`, 'editor → open_git_history');
+    await keepsFocus('open_git_history again', async () => {
+      const again = await callTool(page, a.sessionId, 'open_git_history', { ref: shas[0] });
+      assert(again?.selected === shas[0], `again: ${JSON.stringify(again)}`);
+      await waitDetail(shas[0], 'c1');
+    });
+    log('History selects c1 and c599; focus lands from either caret, stays on a visible control ✓');
 
     phase('split partner review');
     assert((await shownTabs(page)).includes(REVIEW), "A lost Review before B's open");
     await splitWith(page, b.sessionId);
+    await showFile();
+    await parkKeyboard(page, 'editor');
+    await page.evaluate(() => {
+      window.__caretBefore = document.activeElement;
+    });
     const bReview = await callTool(page, b.sessionId, 'open_review', {
       source: { kind: 'working' },
     });
     assert(bReview?.opened === 'review', `B's open_review: ${JSON.stringify(bReview)}`);
+    assert(
+      await page.evaluate(() => document.activeElement === window.__caretBefore),
+      `B's open moved A's caret to ${await focusedNow(page)}`,
+    );
+    const textBefore = await fileText();
+    await page.keyboard.type('Z');
+    assert(
+      await until(async () => {
+        const now = await fileText();
+        return now !== textBefore && now?.replace('Z', '') === textBefore;
+      }, 5_000),
+      `typing after B's open never reached A's f.txt: ${JSON.stringify(await fileText())}`,
+    );
+    await page.keyboard.press('Control+z');
+    assert(
+      await until(async () => (await fileText()) === textBefore, 5_000),
+      'undo never restored f.txt',
+    );
     assert(
       await until(async () => !(await shownTabs(page)).includes(REVIEW), 5_000),
       "Review stayed on A's screen",
@@ -266,13 +317,6 @@ await runScenario(
     assert((await shownTabs(page)).includes(REVIEW), `B's tabs: ${await shownTabs(page)}`);
     await waitDetail(shas[1], 'c2');
     log('B holds Review and History, History active at c2 ✓');
-
-    phase('A4 focus');
-    assert(
-      focusMoves.length === 0,
-      `a tool-driven open moved DOM focus: ${JSON.stringify(focusMoves)}`,
-    );
-    log('open_review and open_git_history keep DOM focus where it was ✓');
 
     phase('cleanup');
     // The sessions hold their folders as cwd; close them before removing the folders.

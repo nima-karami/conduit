@@ -8,14 +8,19 @@
  *     Forward afterwards walk A's own history and never reach B;
  *   - an off-screen caller is refused caller_not_visible and opens nothing;
  *   - javascript:, file:, conduit-preview: and ftp: URLs are bad_url and open nothing;
- *   - a tool-driven open keeps DOM focus where it was.
+ *   - a focused open that hides the terminal or editor holding the caret lands focus on the web
+ *     tab's host, never inside the guest page, and is announced; one that hides nothing (or a
+ *     focus:false open) leaves focus where it was (A4).
  */
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   activeTab,
+  assertLanded,
+  focusedNow,
   httpFixture,
+  parkKeyboard,
   shownTabs,
   splitName,
   splitWith,
@@ -44,6 +49,7 @@ await runScenario(
     const temp = (label) => mkdtempSync(join(tmpdir(), `conduit-mcp-app-web-${label}-`));
     const dirA = temp('a');
     const dirB = temp('b');
+    writeFileSync(join(dirA, 'w.txt'), 'web fixture\n');
     const url = http.url;
     const web = (u) => `web:${u}`;
 
@@ -68,20 +74,19 @@ await runScenario(
     await makeActive(a.sessionId);
 
     phase('foreground');
-    await page.evaluate(() => {
-      const el = document.querySelector('.footbtn[title^="Settings"]');
-      el?.focus();
-      window.__focusBefore = el;
-    });
+    await parkKeyboard(page, 'terminal');
     const fg = await callTool(page, a.sessionId, 'open_url', { url });
     assert(same(fg, { opened: url }), `foreground: ${JSON.stringify(fg)}`);
     await waitActiveTab(web(url), 'foreground');
+    await assertLanded(page, '.webview', `${a.handle} opened web page`, 'terminal → open_url');
     const focusNow = () =>
-      page.evaluate(() => ({
-        same: document.activeElement === window.__focusBefore,
-        after: `${document.activeElement?.tagName}.${document.activeElement?.className}`,
-      }));
-    const focusAtOpen = await focusNow();
+      page.evaluate(() => {
+        const el = document.activeElement;
+        return {
+          host: !!el?.closest('.webview') && el?.tagName !== 'WEBVIEW',
+          after: `${el?.tagName}.${el?.className}`,
+        };
+      });
     // A guest page can take focus as it loads, after the tab activates: sample again once the
     // page's <title> has reached the tab.
     const tabTitle = () =>
@@ -95,9 +100,13 @@ await runScenario(
       `the loopback page never loaded: tab says "${await tabTitle()}"`,
     );
     const focusAtLoad = await focusNow();
-    log(`open_url lands an active web tab at ${url}, and its page loads ✓`);
+    assert(focusAtLoad.host, `the loaded page took DOM focus: ${focusAtLoad.after}`);
+    log(`open_url lands an active web tab at ${url} with focus on its host, and its page loads ✓`);
 
     phase('background');
+    await page.evaluate(() => {
+      window.__focusBefore = document.activeElement;
+    });
     const bg = await callTool(page, a.sessionId, 'open_url', { url: `${url}x`, focus: false });
     assert(same(bg, { opened: `${url}x` }), `background: ${JSON.stringify(bg)}`);
     assert(
@@ -105,7 +114,11 @@ await runScenario(
       `no background tab: ${JSON.stringify(await webTabs())}`,
     );
     assert((await activeTab(page)) === web(url), 'focus:false changed the active tab');
-    log('focus:false adds the tab and keeps the active one ✓');
+    assert(
+      await page.evaluate(() => document.activeElement === window.__focusBefore),
+      `focus:false moved focus to ${await focusedNow(page)}`,
+    );
+    log('focus:false adds the tab and keeps the active one and focus ✓');
 
     phase('editor forward');
     await page.locator('.viewswitch__btn[title="Feature Board"]').click();
@@ -178,10 +191,31 @@ await runScenario(
     assert(same(await shownTabs(page), before), `a bad_url opened a tab: ${await shownTabs(page)}`);
     log('javascript:, file:, conduit-preview: and ftp: are bad_url, nothing opens ✓');
 
-    phase('A4 focus');
-    assert(focusAtOpen.same, `open_url moved DOM focus to ${focusAtOpen.after}`);
-    assert(focusAtLoad.same, `the loaded page took DOM focus: ${focusAtLoad.after}`);
-    log('open_url kept DOM focus where it was ✓');
+    phase('editor caret');
+    const file = await callTool(page, a.sessionId, 'open_file', { path: 'w.txt' });
+    assert(file?.opened, `open_file: ${JSON.stringify(file)}`);
+    await page.waitForSelector('.viewer__monaco .monaco-editor', { timeout: 15_000 });
+    await parkKeyboard(page, 'editor');
+    const fromEditor = await callTool(page, a.sessionId, 'open_url', { url: `${url}e` });
+    assert(same(fromEditor, { opened: `${url}e` }), `from editor: ${JSON.stringify(fromEditor)}`);
+    await waitActiveTab(web(`${url}e`), 'from editor');
+    await assertLanded(page, '.webview', `${a.handle} opened web page`, 'editor → open_url');
+    log('open_url from an editor caret lands focus on the web tab host ✓');
+
+    phase('visible control');
+    await page.evaluate(() => {
+      const el = document.querySelector('.footbtn[title^="Settings"]');
+      el?.focus();
+      window.__focusBefore = el;
+    });
+    const outside = await callTool(page, a.sessionId, 'open_url', { url: `${url}o` });
+    assert(same(outside, { opened: `${url}o` }), `outside: ${JSON.stringify(outside)}`);
+    await waitActiveTab(web(`${url}o`), 'outside');
+    assert(
+      await page.evaluate(() => document.activeElement === window.__focusBefore),
+      `an open that hid nothing moved focus to ${await focusedNow(page)}`,
+    );
+    log('open_url leaves focus on a control it does not hide ✓');
 
     phase('cleanup');
     // The sessions hold their folders as cwd; close them before removing the folders.

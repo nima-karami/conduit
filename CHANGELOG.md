@@ -22,6 +22,9 @@ All notable user-facing changes to Conduit. Format follows
   the session you're looking at. Only `focus_session`, and `open_session` / `open_terminal` with
   **Move** on, switch your view. A Review or History
   opened by the agent in your split pane moves to that agent's session.
+  When an agent's open hides the terminal or editor you were typing in, the keyboard moves to
+  what it opened (Review, History, the file, or the web tab — never into the page) and a screen
+  reader hears who opened what; otherwise focus stays where it was.
 - **MCP tool switches are now policies.** Each Conduit tool is **Off**, **Ask** or **On**, with
   conditions where they apply: **When** (while the agent's session is on screen, or always) and
   **Move** (whether it may switch your view). Set them for all CLIs, per CLI (Claude, Codex,

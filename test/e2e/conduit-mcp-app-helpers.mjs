@@ -6,6 +6,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { until } from './conduit-mcp-helpers.mjs';
 import { assert } from './harness.mjs';
 import { openPalette, paletteRow } from './middle-click-surfaces-helpers.mjs';
 
@@ -114,3 +115,55 @@ const slashed = (p) => p.replaceAll('\\', '/').toLowerCase();
  */
 export const namesFile = (idOrPath, abs) =>
   slashed(idOrPath).endsWith(`/${slashed(abs).split('/').slice(-2).join('/')}`);
+
+/**
+ * Put the keyboard where a user typing would have it in the shown session: its terminal (the
+ * Terminal tab activated first) or its active file's editor.
+ * @param {'terminal' | 'editor'} where
+ */
+export async function parkKeyboard(page, where) {
+  if (where === 'terminal') {
+    await page.locator('.tab[data-tabid="__terminal__"]').first().click();
+    await page.locator('.termhost:visible .xterm-helper-textarea').first().focus();
+  } else {
+    await page.locator('.viewer__monaco .monaco-editor').first().click();
+  }
+  const sel = where === 'terminal' ? '.xterm' : '.monaco-editor';
+  assert(
+    await page.evaluate((s) => !!document.activeElement?.closest(s), sel),
+    `the keyboard never reached the ${where}`,
+  );
+}
+
+/** What holds DOM focus, for a failure message. */
+export const focusedNow = (page) =>
+  page.evaluate(() => {
+    const el = document.activeElement;
+    return el ? `${el.tagName}.${el.className}` : 'null';
+  });
+
+/**
+ * After a tool-driven open hid the focused element, wait for focus to land inside `sel` (never
+ * the web guest itself) and for the polite announcement `said` (spec
+ * 2026-10-30-conduit-mcp-app-control §2.1, A4).
+ */
+export async function assertLanded(page, sel, said, what) {
+  const landed = () =>
+    page.evaluate(
+      (s) => !!document.activeElement?.closest(s) && document.activeElement?.tagName !== 'WEBVIEW',
+      sel,
+    );
+  assert(
+    await until(landed, 5_000),
+    `${what}: focus is on ${await focusedNow(page)}, not in ${sel}`,
+  );
+  const heard = () =>
+    page.evaluate(
+      (t) =>
+        Array.from(document.querySelectorAll('[role="status"]')).some((r) =>
+          r.textContent?.includes(t),
+        ),
+      said,
+    );
+  assert(await until(heard, 5_000), `${what}: nothing announced "${said}"`);
+}
