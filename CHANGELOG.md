@@ -35,6 +35,9 @@ All notable user-facing changes to Conduit. Format follows
   typing in a terminal can't answer it; the attention chip counts it and the agent's session
   card shows **Waiting for your approval**. Codex can no longer run a tool Conduit asks about
   without you.
+  Its buttons sit right under the title and never move when the next request takes the
+  card's place, so a double-click can't land on the app behind it; for a moment after that swap
+  they show as disabled.
 - **New defaults.** `open_file` is **On** (was off) and `open_session` is **Ask** (was off).
   `open_session`, `open_terminal` and `open_file` act only while the agent's session is on
   screen, unless set to **Always**.

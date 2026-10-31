@@ -117,9 +117,15 @@ outcome is unknown.
   - It never takes DOM focus, so keys typed into the terminal never answer it.
   - It adds 1 to the top-bar attention chip.
 - **Card content:**
-  - caller handle and tool;
+  - caller handle and tool, as one title line ("<handle> requests <tool>"), with the "1 of N"
+    pager at its right;
+  - the actions, directly under the title;
   - a one-line plain-language summary of the arguments, plus an expandable raw-arguments block;
   - the policy field that caused the ask.
+- **Layout:** the actions sit at a fixed offset from the card's top. The title is one line
+  (ellipsis) and the pager keeps its slot with a single ask, so a swap to the next ask (pager
+  gone, another summary length) never moves a button under a press already on its way, and no
+  press inside the card reaches the app behind it (runtime QA, part B).
 - **Actions:**
   - **Approve:** runs once.
   - **Deny:** returns `denied`.
@@ -146,13 +152,17 @@ outcome is unknown.
 - **Several waiting asks:**
   - they show as one card with a "1 of N" pager, oldest first;
   - at most 3 can wait per caller; a 4th returns `rate_limited`.
+  - when the shown ask changes without the user paging (answered, expired, cancelled), the
+    buttons ignore presses for 400 ms (a double-click's second press, a repeated Enter) and read
+    disabled (`aria-disabled`) for that time, re-enabling on their own (runtime QA, part B).
 
 ### 2.5 Primary flow (ask)
 
 1. The human asks "close codex-2".
 2. Claude calls `close_session({session:'codex-2'})`.
 3. Policy: `ask` / `viewing` / `window`. Gate and reach pass.
-4. The card shows "claude-1 wants to close codex-2". Approve → the renderer checks codex-2's
+4. The card's title reads "claude-1 requests close_session" and its summary "Close codex-2".
+   Approve → the renderer checks codex-2's
    dirty tabs and closes it in the same turn → `{closed}`.
 
 ### 2.6 Current behaviour this depends on
@@ -362,7 +372,7 @@ Feature: Tool policies
     Given close_session resolves to access "ask" for codex sessions
     And "codex-2" is on screen
     When codex-2 calls close_session for "claude-3"
-    Then a card in codex-2's window reads "codex-2 wants to close claude-3"
+    Then a card in codex-2's window reads "codex-2 requests close_session" and "Close claude-3"
     When the human denies
     Then the call returns "denied" and claude-3 is still running
 
