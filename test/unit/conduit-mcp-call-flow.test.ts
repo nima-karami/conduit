@@ -291,14 +291,17 @@ describe('createCallFlow', () => {
     expect(await c.promise).toBeNull();
   });
 
-  it('approve then cancel before run → run not called, released, null', async () => {
-    const t = setup();
-    const c = t.call({ requestId: 5 });
-    await t.flush();
-    answerLast(t, t.flow, 'approve');
-    t.flow.cancelled(1, 5);
-    expect(await c.promise).toBeNull();
-    expect(c.spies).toEqual({ run: 0, release: 1 });
+  it('approve then cancel before run → run not called, token kept, null', async () => {
+    // spec §3.3: a cancelled ask keeps its token, however late the cancel lands.
+    for (const a of ['approve', 'always'] as const) {
+      const t = setup();
+      const c = t.call({ requestId: 5 });
+      await t.flush();
+      answerLast(t, t.flow, a);
+      t.flow.cancelled(1, 5);
+      expect(await c.promise).toBeNull();
+      expect(c.spies).toEqual({ run: 0, release: 0 });
+    }
   });
 
   it('a prepare refusal is returned as is, with no ask', async () => {

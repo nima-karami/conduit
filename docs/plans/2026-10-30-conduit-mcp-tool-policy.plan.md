@@ -103,9 +103,9 @@ CALL  CLI ─tools/call{id}─► json-rpc core ─call(name,args,{requestId})�
               sendToOwner(caller, mcp:ask{askId,…}); waits.open({id:askId,…,windowId:w}, ASK_TIMEOUT_MS[kind])
               flashOwner(caller); onAwaitingChanged()
               ── await end ──
-              approve ⇒ f.cancelled ? release, null : run()
+              approve ⇒ f.cancelled ? null (token kept) : run()
               always  ⇒ setSessionPolicy(caller,tool,{access:'on'}) false ⇒ cancelled (no run)
-                        else onPolicyWritten(); f.cancelled ? release, null : run()
+                        else onPolicyWritten(); f.cancelled ? null (token kept) : run()
               deny ⇒ denied | expired ⇒ approval_timeout   (token kept; askClosed sent)
               cancelled reply:true ⇒ cancelled | reply:false ⇒ null
       finally f.end()
@@ -488,7 +488,8 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow;
    summary: prepared.summary, args, source})`; `end = waits.open({id: askId, callerSessionId,
    key, windowId: w, meta: {tool, handle}}, ASK_TIMEOUT_MS[kind])`; `flashOwner`;
    `onAwaitingChanged`. Then `await end`, `onAwaitingChanged`, and:
-   - `approve` → cancelled check (release, `null`) → run, then the step-2 tail;
+   - `approve` → cancelled check (`null`, token kept: a cancelled ask keeps its token, spec §3.3) →
+     run, then the step-2 tail;
    - `always` → `setSessionPolicy(caller, tool, {access:'on'})`; `false` → `cancelled` tool error
      (`'the session closed before the request ran'`), token kept, nothing runs; else
      `onPolicyWritten()`, then as `approve`;
@@ -1033,7 +1034,7 @@ Every task ends with both `tsc` projects green (additive cutover) plus its own v
   - 'deny → denied, token kept' (`release` not called); 'expired → approval_timeout + askClosed expired'; 'reply-true cancel → cancelled'; 'reply-false cancel → null';
   - **'cancel during prepare → no run, released, null'**;
   - **'cancel during run (on) → null'** (run resolves after the cancel);
-  - **'approve then cancel before run → run not called, released, null'**;
+  - **'approve then cancel before run → run not called, token kept, null'**;
   - 'always writes the session policy, calls onPolicyWritten, runs'; **'always after the session is gone → cancelled, run not called'**;
   - 'a 4th waiting ask → rate_limited, released, no mcp:ask';
   - 'no owner window → window_not_ready, released';

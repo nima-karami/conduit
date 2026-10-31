@@ -109,10 +109,6 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
   });
 
   async function runNow<T>(c: ControlCall<T>, p: PreparedCall<T>): Promise<Result<T> | null> {
-    if (c.inflight.cancelled) {
-      p.release();
-      return null;
-    }
     const r = await p.run();
     return c.inflight.cancelled ? null : r;
   }
@@ -185,6 +181,8 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         };
       deps.onPolicyWritten();
     }
+    // Approved, then cancelled before it ran: still a cancelled ask, so the token stays spent.
+    if (c.inflight.cancelled) return null;
     return runNow(c, p);
   }
 
