@@ -241,16 +241,13 @@ export const MCP_STR = {
       open_session: 'Lets an agent start sessions from your profiles.',
       open_terminal: 'Lets an agent run any program as you, outside its own sandbox.',
       open_file: 'Lets an agent open files in your editor.',
-      close_session:
-        'Close a Conduit session from list_sessions (handle or id), including your own.',
-      focus_session: 'Switch the human’s view to a session from list_sessions.',
-      attach_folder: 'Attach a folder to a session (yours by default) so its agent can work there.',
-      close_files: 'Close your session’s tabs for these paths (or all:true for every tab).',
-      open_review:
-        'Open Review in your session for the working tree, one commit, or a range (base…head; head may be "working").',
-      open_git_history:
-        'Open the commit history in your session, optionally selecting the commit at ref (branch, tag or sha).',
-      open_url: 'Open an http(s) URL in a Conduit web tab in your session.',
+      close_session: 'Lets an agent close sessions; a closed session loses its scrollback.',
+      focus_session: 'Lets an agent switch your view to another session.',
+      attach_folder: 'Lets an agent attach folders to sessions.',
+      close_files: 'Lets an agent close tabs in its own session.',
+      open_review: 'Lets an agent open Review at a commit, a range, or your working changes.',
+      open_git_history: 'Lets an agent open the commit history at a commit or branch.',
+      open_url: 'Lets an agent open web pages in a Conduit tab.',
     } satisfies Record<ToolName, string>,
     overrideNote: 'Sessions can override these from their menu (MCP tools…).',
     masterOffHint: `Turn on “${SETTINGS_TOGGLE}” to use tools`,
