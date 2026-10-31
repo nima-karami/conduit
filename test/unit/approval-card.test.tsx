@@ -26,7 +26,19 @@ beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
+/** Animation frames run only when a test flushes them. */
+let frames: FrameRequestCallback[] = [];
+const flushFrames = () =>
+  act(() => {
+    for (const f of frames.splice(0)) f(0);
+  });
+
 beforeEach(async () => {
+  frames = [];
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb));
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+    frames[id - 1] = () => undefined;
+  });
   vi.resetModules();
   bridge.listeners.length = 0;
   bridge.post.mockReset();
@@ -42,6 +54,7 @@ afterEach(async () => {
   if (current) await act(async () => current.unmount());
   host?.remove();
   document.body.innerHTML = '';
+  vi.unstubAllGlobals();
 });
 
 function emit(m: HostToWebview): void {
@@ -77,6 +90,27 @@ const rawToggle = () => document.querySelector<HTMLButtonElement>('.askcard butt
 const rawArgs = () => document.querySelector('.askcard pre.askcard__args');
 const button = (answer: string) =>
   document.querySelector<HTMLButtonElement>(`.askcard button[data-answer="${answer}"]`);
+const next = () =>
+  act(() =>
+    document.querySelector<HTMLButtonElement>('button[aria-label="Next request"]')?.click(),
+  );
+const closed = (askId: string) => emit({ type: 'mcp:askClosed', askId, outcome: 'expired' });
+const shownHandle = () => region()?.querySelector('.askcard__title')?.textContent;
+/** A real press: mousedown (click count `detail`) then click, on the button there now. */
+const press = (answer: string, detail = 1) =>
+  act(() => {
+    const b = button(answer);
+    b?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, detail }));
+    b?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail }));
+  });
+/** Enter on the focused element: its keydown, and the click a browser makes of it on a button. */
+const pressEnter = () =>
+  act(() => {
+    const el = document.activeElement;
+    el?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    if (el instanceof HTMLButtonElement) el.click();
+  });
+const answered = () => bridge.post.mock.calls.map(([m]) => (m as { askId: string }).askId);
 
 describe('ApprovalCard', () => {
   it('renders nothing with no asks', () => {
@@ -192,14 +226,127 @@ describe('ApprovalCard', () => {
     expect(region()).not.toBeNull();
   });
 
-  it('announces each new ask once', () => {
+  it('announces each new ask once, clearing the region first and saying N of M', () => {
     const announce = mount();
     emit(ask('a1'));
+    expect(announce.mock.calls).toEqual([['']]);
+    flushFrames();
     emit(ask('a2', { handle: 'codex-2' }));
+    flushFrames();
     act(() => store.answerAsk('a1', 'deny'));
+    flushFrames();
     expect(announce.mock.calls).toEqual([
-      ['fake-1 requests open_session'],
-      ['codex-2 requests open_session'],
+      [''],
+      ['fake-1 requests open_session, 1 of 1'],
+      [''],
+      ['codex-2 requests open_session, 2 of 2'],
     ]);
+  });
+
+  it('an identical repeat is announced again', () => {
+    const announce = mount();
+    emit(ask('a1'));
+    flushFrames();
+    act(() => store.answerAsk('a1', 'deny'));
+    emit(ask('a2'));
+    flushFrames();
+    expect(announce.mock.calls).toEqual([
+      [''],
+      ['fake-1 requests open_session, 1 of 1'],
+      [''],
+      ['fake-1 requests open_session, 1 of 1'],
+    ]);
+  });
+
+  describe('the shown ask is pinned by id (review r1-S2 C1)', () => {
+    it('an arrival after paging keeps the shown ask', () => {
+      mount();
+      emit(ask('a1'));
+      emit(ask('a2', { handle: 'codex-2' }));
+      next();
+      emit(ask('a3', { handle: 'cursor-3' }));
+      expect(shownHandle()).toBe('codex-2 requests open_session');
+      expect(region()?.textContent).toContain('2 of 3');
+    });
+
+    it('an older ask closing while on page 2 keeps the shown ask', () => {
+      mount();
+      emit(ask('a1'));
+      emit(ask('a2', { handle: 'codex-2' }));
+      emit(ask('a3', { handle: 'cursor-3' }));
+      next();
+      closed('a1');
+      expect(shownHandle()).toBe('codex-2 requests open_session');
+      expect(region()?.textContent).toContain('1 of 2');
+      press('approve');
+      expect(answered()).toEqual(['a2']);
+    });
+
+    it('when the shown ask closes, the oldest remaining shows', () => {
+      mount();
+      emit(ask('a1'));
+      emit(ask('a2', { handle: 'codex-2' }));
+      emit(ask('a3', { handle: 'cursor-3' }));
+      next();
+      closed('a2');
+      expect(shownHandle()).toBe('fake-1 requests open_session');
+    });
+  });
+
+  describe('one activation answers one ask (review r1-S2 C2)', () => {
+    it('two clicks → exactly one answer', () => {
+      mount();
+      emit(ask('a1'));
+      emit(ask('a2', { handle: 'codex-2' }));
+      act(() => button('approve')?.click());
+      act(() => button('approve')?.click());
+      expect(answered()).toEqual(['a1']);
+      expect(shownHandle()).toBe('codex-2 requests open_session');
+    });
+
+    it('a double-click answers only the first', () => {
+      mount();
+      emit(ask('a1'));
+      emit(ask('a2', { handle: 'codex-2' }));
+      press('approve', 1);
+      press('approve', 2);
+      expect(answered()).toEqual(['a1']);
+    });
+
+    it('Enter twice → one answer; focus moves to the region', () => {
+      mount();
+      emit(ask('a1'));
+      emit(ask('a2', { handle: 'codex-2' }));
+      act(() => button('approve')?.focus());
+      pressEnter();
+      expect(document.activeElement).toBe(region());
+      pressEnter();
+      expect(answered()).toEqual(['a1']);
+    });
+
+    it('a fresh press on the next ask answers it', () => {
+      mount();
+      emit(ask('a1'));
+      emit(ask('a2', { handle: 'codex-2' }));
+      press('approve');
+      press('deny');
+      expect(bridge.post.mock.calls.map(([m]) => m)).toEqual([
+        { type: 'mcp:askAnswer', askId: 'a1', answer: 'approve' },
+        { type: 'mcp:askAnswer', askId: 'a2', answer: 'deny' },
+      ]);
+    });
+  });
+
+  it('answering the last ask from inside the card returns focus (review r1-S2 C7)', () => {
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    outside.focus();
+    mount();
+    emit(ask('a1'));
+    act(() => store.requestAskFocus());
+    act(() => button('approve')?.focus());
+    press('approve');
+    expect(region()).toBeNull();
+    expect(document.activeElement).toBe(outside);
   });
 });

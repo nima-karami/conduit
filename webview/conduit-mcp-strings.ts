@@ -301,6 +301,8 @@ export const MCP_STR = {
     deny: 'Deny',
     always: 'Always for this session',
     pager: (i: number, n: number) => `${i} of ${n}`,
+    announce: (handle: string, tool: string, i: number, n: number) =>
+      `${handle} requests ${tool}, ${i} of ${n}`,
     prev: 'Previous request',
     next: 'Next request',
     expired: (handle: string) => `Request from ${handle} expired`,

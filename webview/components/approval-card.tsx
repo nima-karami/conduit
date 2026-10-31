@@ -37,21 +37,42 @@ function reasonText(a: PendingAskView): string {
  */
 export function ApprovalCard({ announce }: ApprovalCardProps) {
   const asks = useAsks();
-  const [index, setIndex] = useState(0);
+  // By id, not index: an arrival or another ask closing must never swap the ask under the
+  // pointer. null, or an ask that has closed, shows the oldest.
+  const [shownId, setShownId] = useState<string | null>(null);
   // Keyed by ask: paging to another request starts its arguments collapsed (spec §2.4).
   const [rawOpenFor, setRawOpenFor] = useState<string | null>(null);
   const rawId = useId();
   const regionRef = useRef<HTMLElement>(null);
   const returnTo = useRef<Element | null>(null);
   const announced = useRef(new Set<string>());
+  const announceFrame = useRef<number | null>(null);
+  // False from an answer until a fresh press on what replaced it: the second click of a
+  // double-click, or a repeated Enter, would otherwise answer the next ask.
+  const armed = useRef(true);
 
   useEffect(() => {
-    for (const a of asks) {
-      if (announced.current.has(a.askId)) continue;
-      announced.current.add(a.askId);
-      announce(STR.title(a.callerHandle, a.tool));
-    }
+    const fresh = asks.filter((a) => !announced.current.has(a.askId));
+    const last = fresh.at(-1);
+    if (!last) return;
+    for (const a of fresh) announced.current.add(a.askId);
+    const text = STR.announce(last.callerHandle, last.tool, asks.indexOf(last) + 1, asks.length);
+    // A live region speaks only on a change: cleared now and written a frame later, a repeat
+    // of the same text is still heard.
+    announce('');
+    if (announceFrame.current !== null) cancelAnimationFrame(announceFrame.current);
+    announceFrame.current = requestAnimationFrame(() => {
+      announceFrame.current = null;
+      announce(text);
+    });
   }, [asks, announce]);
+
+  useEffect(
+    () => () => {
+      if (announceFrame.current !== null) cancelAnimationFrame(announceFrame.current);
+    },
+    [],
+  );
 
   useEffect(
     () =>
@@ -65,17 +86,38 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
   );
 
   if (typeof document === 'undefined' || asks.length === 0) return null;
-  const at = Math.min(index, asks.length - 1);
+  const at = Math.max(
+    0,
+    asks.findIndex((a) => a.askId === shownId),
+  );
   const ask = asks[at];
   const rawOpen = rawOpenFor === ask.askId;
 
-  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key !== 'Escape') return;
-    e.stopPropagation();
+  const giveBackFocus = () => {
     const back = returnTo.current;
     returnTo.current = null;
     if (back instanceof HTMLElement && back.isConnected) back.focus();
     else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    if (!e.repeat) armed.current = true;
+    if (e.key !== 'Escape') return;
+    e.stopPropagation();
+    giveBackFocus();
+  };
+
+  const onAnswer = (answer: AskAnswer) => {
+    if (!armed.current) return;
+    armed.current = false;
+    const region = regionRef.current;
+    const focusInside = !!region && region.contains(document.activeElement);
+    const wasLast = asks.length === 1;
+    answerAsk(ask.askId, answer);
+    if (!focusInside) return;
+    // The answered ask's buttons are about to go; the next press must land on the new content.
+    if (wasLast) giveBackFocus();
+    else region.focus();
   };
 
   return createPortal(
@@ -86,6 +128,10 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
       aria-label={STR.region}
       tabIndex={-1}
       onKeyDown={onKeyDown}
+      onMouseDown={(e) => {
+        // detail is the click count: the second press of a double-click does not arm.
+        if (e.detail <= 1) armed.current = true;
+      }}
     >
       <div className="askcard__title">{STR.title(ask.callerHandle, ask.tool)}</div>
       <div className="askcard__summary">{summaryText(ask.summary)}</div>
@@ -113,7 +159,7 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
               className="btn btn--sm askcard__page"
               aria-label={STR.prev}
               disabled={at === 0}
-              onClick={() => setIndex(at - 1)}
+              onClick={() => setShownId(asks[at - 1].askId)}
             >
               <IconChevron size={12} className="askcard__prevglyph" />
             </button>
@@ -123,20 +169,20 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
               className="btn btn--sm askcard__page"
               aria-label={STR.next}
               disabled={at === asks.length - 1}
-              onClick={() => setIndex(at + 1)}
+              onClick={() => setShownId(asks[at + 1].askId)}
             >
               <IconChevron size={12} />
             </button>
           </div>
         )}
-        <div className="askcard__actions">
+        <div className="askcard__actions" key={ask.askId}>
           {ANSWERS.map((answer) => (
             <button
               key={answer}
               type="button"
               className={answer === 'approve' ? 'btn btn--sm btn--primary' : 'btn btn--sm'}
               data-answer={answer}
-              onClick={() => answerAsk(ask.askId, answer)}
+              onClick={() => onAnswer(answer)}
             >
               {STR[answer]}
             </button>
