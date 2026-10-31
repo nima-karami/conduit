@@ -148,6 +148,15 @@ await runScenario(
           return [b.getAttribute('data-answer'), r.x, r.y, r.width, r.height].join(' ');
         }),
       );
+    // The card's entrance animation moves its buttons; a rect read mid-animation compares nothing.
+    const settled = () =>
+      page.waitForFunction(
+        () => document.querySelector('.askcard')?.getAnimations().length === 0,
+        null,
+        {
+          timeout: 5_000,
+        },
+      );
     const disabledNow = () =>
       page.evaluate(() =>
         Array.from(document.querySelectorAll('.askcard button[data-answer]'), (b) =>
@@ -173,6 +182,7 @@ await runScenario(
         () => document.querySelector('.askcard__summary')?.getBoundingClientRect().height,
       );
     const tallSummary = await summaryHeight();
+    await settled();
     const atTwo = await rects();
     // Every press from the first on: what it reached outside the card, and how each button it
     // reached inside the card read at that moment.
@@ -191,6 +201,7 @@ await runScenario(
     });
     await page.locator('.askcard button[data-answer="deny"]').dblclick();
     await page.locator('.askcard', { hasNotText: '1 of 2' }).waitFor({ timeout: 5_000 });
+    await settled();
     const atOne = await rects();
     const shortSummary = await summaryHeight();
     const firstDenied = await resultAfter(a.sessionId, first, 10_000);
