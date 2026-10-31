@@ -9,6 +9,7 @@ import {
   type McpUiResult,
 } from '../src/conduit-mcp/ui-types';
 import type { CommitNode } from '../src/protocol';
+import type { CloseStep } from './auto-save-policy';
 import { post, subscribe } from './bridge';
 import type { OpenDoc } from './docs';
 
@@ -121,8 +122,8 @@ export interface CloseFilesOps {
   isDirty(path: string): boolean;
   /** forceCloseDoc: closes everywhere, pushes the reopen stack. */
   forceClose(id: string): void;
-  /** closeDoc's auto-save path without its confirm. */
-  closeDirtyUnprompted(id: string): Promise<'closed' | 'needsPrompt'>;
+  /** closeDoc's auto-save path without its confirm: where it ended, closed or wanting a prompt. */
+  closeDirtyUnprompted(id: string): Promise<Exclude<CloseStep, { type: 'save' }>>;
 }
 
 /** Never prompts: a dirty file the auto-save policy won't save stays open and is reported. */
@@ -142,7 +143,7 @@ export async function runCloseFiles(
     for (const id of group.ids) {
       const path = ops.kindOf(id) === 'file' ? ops.pathOf(id) : undefined;
       if (path !== undefined && ops.isDirty(path)) {
-        if ((await ops.closeDirtyUnprompted(id)) === 'needsPrompt') kept = true;
+        if ((await ops.closeDirtyUnprompted(id)).type === 'prompt') kept = true;
       } else {
         ops.forceClose(id);
       }

@@ -255,11 +255,11 @@ describe('runCloseFiles', () => {
       closeDirtyUnprompted: async (id) => {
         if (!autoSave) {
           log.push(`prompt:${id}`);
-          return 'needsPrompt';
+          return { type: 'prompt', reason: null };
         }
         log.push(`saved:${id}`);
         live.delete(id);
-        return 'closed';
+        return { type: 'close' };
       },
     };
     return { ops, log, live };

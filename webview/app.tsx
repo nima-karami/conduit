@@ -249,6 +249,7 @@ import {
   syncSkipCause,
 } from './lsp-sync';
 import { requestAskFocus, useAsks } from './mcp-ask-store';
+import { planCloseFiles, runCloseFiles, useMcpUi } from './mcp-ui';
 import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
 import { useMonacoNavKeybindings } from './monaco-nav-keybindings';
@@ -2218,6 +2219,39 @@ export function App() {
   // Close a doc tab. If the doc has unsaved changes, show a 3-way Save/Discard/Cancel
   // dialog. Save path invokes the registered save; tab closes only on success.
   // Discard path clears dirty state and closes immediately. Cancel is a no-op.
+  // D2's no-prompt half of a dirty close: with auto save on it saves first, then closes; it ends
+  // on 'prompt' (with closeDoc's reason) wherever closeDoc would ask. MCP close_files stops there.
+  const closeDirtyUnprompted = useCallback(
+    (id: string): Promise<Exclude<CloseStep, { type: 'save' }>> => {
+      const doc = docState.docs.find((d) => d.id === id);
+      if (!doc) return Promise.resolve({ type: 'close' });
+      const entry = getSaveEntry(doc.path);
+      return new Promise((resolve) => {
+        const run = (step: CloseStep) => {
+          if (step.type === 'close') {
+            forceCloseDoc(id);
+            resolve(step);
+          } else if (step.type === 'prompt') resolve(step);
+          else {
+            void entry
+              ?.save({ kind: 'auto' })
+              .then((ok) =>
+                run(
+                  afterCloseSave(
+                    ok,
+                    getDirtySnapshot().has(doc.path),
+                    fileSaves.getStatus(doc.path),
+                  ),
+                ),
+              );
+          }
+        };
+        run(dirtyCloseStep(settings.autoSave, fileSaves.getStatus(doc.path), entry !== undefined));
+      });
+    },
+    [docState.docs, forceCloseDoc, settings.autoSave],
+  );
+
   const closeDoc = useCallback(
     (id: string): Promise<boolean> => {
       const doc = docState.docs.find((d) => d.id === id);
@@ -2258,28 +2292,13 @@ export function App() {
           });
         };
         // D2: with auto save on, a dirty close saves first (with the on-disk precondition).
-        const entry = getSaveEntry(doc.path);
-        const run = (step: CloseStep) => {
-          if (step.type === 'close') close();
-          else if (step.type === 'prompt') prompt(step.reason);
-          else {
-            void entry
-              ?.save({ kind: 'auto' })
-              .then((ok) =>
-                run(
-                  afterCloseSave(
-                    ok,
-                    getDirtySnapshot().has(doc.path),
-                    fileSaves.getStatus(doc.path),
-                  ),
-                ),
-              );
-          }
-        };
-        run(dirtyCloseStep(settings.autoSave, fileSaves.getStatus(doc.path), entry !== undefined));
+        void closeDirtyUnprompted(id).then((step) => {
+          if (step.type === 'close') resolve(true);
+          else prompt(step.reason);
+        });
       });
     },
-    [docState.docs, dirtySet, forceCloseDoc, settings.autoSave, showConfirm],
+    [docState.docs, dirtySet, forceCloseDoc, closeDirtyUnprompted, showConfirm],
   );
 
   // One tab of a doc still shown in the other group closes alone: no prompt, and the buffer, its
@@ -2746,6 +2765,25 @@ export function App() {
   useEffect(() => {
     flushOsOpens();
   }, [flushOsOpens]);
+
+  // MCP app-control's renderer step (spec 2026-10-30-conduit-mcp-app-control §2.3): every open
+  // names the caller's session and never calls setActiveId or moves DOM focus.
+  useMcpUi({
+    hasSession: (id) => sessionsRef.current.some((s) => s.id === id),
+    dirtyPathsOf: (id) => sessionDirty([id]),
+    kill: (id) => post({ type: 'kill', id }),
+    closeFiles: (id, target) =>
+      runCloseFiles(planCloseFiles(docStateRef.current.docs, id, target), {
+        kindOf: (d) => docStateRef.current.docs.find((x) => x.id === d)?.kind,
+        pathOf: (d) => docStateRef.current.docs.find((x) => x.id === d)?.path,
+        isDirty: (p) => getDirtySnapshot().has(p),
+        forceClose: forceCloseDoc,
+        closeDirtyUnprompted,
+      }),
+    openReview: (id, source) => openReviewIn(id, source),
+    openGitHistory: (id, root, commit) => openGitHistoryIn(id, root, commit ?? undefined),
+    openUrl: (id, url, foreground) => openWeb(url, id, foreground ? undefined : 'background'),
+  });
 
   // editor-tabs-persist: apply the buffered `restoreDocs` once this window's sessions are known,
   // so each persisted doc attaches to its (restored, stale) session and orphans are dropped.
