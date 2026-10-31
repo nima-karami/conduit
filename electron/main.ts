@@ -1028,6 +1028,8 @@ function createWindow(opts: {
   primary?: boolean;
   onClose: (w: BrowserWindow, ev: Electron.Event) => void;
   onClosed: (windowId: number) => void;
+  /** Main-frame, cross-document navigation began: the renderer is about to be replaced. */
+  onNavigationStart: (windowId: number) => void;
   onGone: (windowId: number) => void;
   onUnresponsive: (windowId: number) => void;
   onSessionEnd: () => void;
@@ -1162,6 +1164,12 @@ function createWindow(opts: {
     if (decision.action !== 'reload') return;
     if (w.isDestroyed() || w.webContents.isDestroyed()) return;
     w.webContents.reload();
+  });
+
+  // Not did-start-loading: that also fires for subframe loads. A same-document navigation keeps
+  // the renderer and its asks (plan 2026-10-30-conduit-mcp-tool-policy, spec staleness r1 #8).
+  w.webContents.on('did-start-navigation', (e) => {
+    if (e.isMainFrame && !e.isSameDocument) opts.onNavigationStart(w.id);
   });
 
   w.on('close', (ev) => opts.onClose(w, ev));
@@ -2265,6 +2273,8 @@ app.whenReady().then(() => {
   // the source window. Shared by the `session:move` and `session:dragEnd` handlers.
   const moveSessionToWindow = (sessionId: string, targetId: number): void => {
     movingSessions.add(sessionId);
+    // Before the owner changes: the cancelled ask's askClosed must reach the window holding its card.
+    mcpHost.onSessionMoved(sessionId);
     assignOwner(sessionOwner, sessionId, targetId);
     postState(); // source drops the session; target gains it
     broadcastWinList?.(); // counts changed
@@ -2582,13 +2592,8 @@ app.whenReady().then(() => {
   }
 
   async function openMcpFile(req: McpFileRequest): Promise<{ sessionId: string }> {
-    const sessionId =
-      resolveOwningSession({
-        path: req.path,
-        sessions: mgr.list().map(({ id, home, roots }) => ({ id, home, roots })),
-        openDocs: [],
-        activeId: null,
-      }) ?? req.callerSessionId;
+    // The caller's session, not the path's owner (spec 2026-10-30-conduit-mcp-app-control §2.1).
+    const sessionId = req.callerSessionId;
     sendOpenFileInEditor({
       type: 'openFileInEditor',
       path: req.path,
@@ -2886,6 +2891,7 @@ app.whenReady().then(() => {
     try {
       switch (m.type) {
         case 'ready':
+          presence.markReady(senderId);
           postState();
           // A just-loaded window may have missed the create/focus win:list broadcasts (it
           // wasn't subscribed yet); send the current picker list now (Slice B).
@@ -3845,6 +3851,7 @@ app.whenReady().then(() => {
           // it and exempts it from arming; the sets are per window, so another window's
           // active session is not silenced. See the attention-signal-quality spec §4.
           if (activity.setVisible(senderId, m.ids)) scheduleActivityBroadcast();
+          presence.setVisible(senderId, m.ids);
           {
             // gitDemand's set decides which windows get a session's repo deltas.
             const ownIds = repoTrackerHost.ownedIds(senderId, m.ids);
@@ -4538,6 +4545,8 @@ app.whenReady().then(() => {
         case 'mcp:attachment:get':
         case 'mcp:retry':
         case 'mcp:setToolOverride':
+        case 'mcp:setToolPolicy':
+        case 'mcp:askAnswer':
           await mcpHost.handleRenderer(m, replyHere, senderId);
           break;
         case 'term:input':
@@ -5116,11 +5125,22 @@ app.whenReady().then(() => {
     const w = createWindow({
       primary: opts?.primary,
       onClose: onWindowClose,
-      onGone: (windowId) => closeGuard.onWindowGone(windowId),
+      onNavigationStart: (windowId) => {
+        presence.startLoading(windowId);
+        mcpHost.onWindowReset(windowId);
+      },
+      onGone: (windowId) => {
+        closeGuard.onWindowGone(windowId);
+        // A crashed renderer that is not reloaded fires no navigation, so reset here too.
+        presence.startLoading(windowId);
+        mcpHost.onWindowReset(windowId);
+      },
       onUnresponsive: (windowId) => closeGuard.onUnresponsive(windowId),
       onSessionEnd: flushStateSync,
       onClosed: (windowId) => {
         closeGuard.onWindowGone(windowId);
+        presence.drop(windowId);
+        mcpHost.onWindowReset(windowId);
         windowConfirmed.delete(windowId);
         // Its visible-session set dies with it, or sessions it was showing would stay
         // exempt from attention forever.
