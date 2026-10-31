@@ -6,7 +6,20 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Agents can arrange Conduit for you.** Seven new tools: close a session (`close_session`),
+  switch your view to a session (`focus_session`), attach a folder to a session
+  (`attach_folder`), close tabs (`close_files`), open Review for the working tree, a commit or a
+  range (`open_review`), open the commit history at a branch, tag or commit (`open_git_history`),
+  and open a web page in a Conduit tab (`open_url`, http and https only — never your browser).
+  Each has its own policy; `close_session` and `attach_folder` **Ask** by default. Closing a
+  session with unsaved files is refused and closes nothing; closing tabs never prompts — with
+  auto-save on, unsaved files are saved first, otherwise they stay open and are reported.
+
 ### Changed
+- **An agent's opens land in its own session.** `open_file` and the new tools open in the agent's
+  session and never switch the session you're looking at. A Review or History opened by the
+  agent in your split pane moves to that agent's session.
 - **MCP tool switches are now policies.** Each Conduit tool is **Off**, **Ask** or **On**, with
   conditions where they apply: **When** (while the agent's session is on screen, or always) and
   **Move** (whether it may switch your view). Set them for all CLIs, per CLI (Claude, Codex,
