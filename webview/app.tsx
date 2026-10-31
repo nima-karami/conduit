@@ -108,6 +108,7 @@ import {
   toClosedTab,
 } from './closed-tabs';
 import { AnimatedBg } from './components/animated-bg';
+import { ApprovalCard } from './components/approval-card';
 import { ArchitectureView } from './components/architecture-view';
 import { BoardView } from './components/board-view';
 import { BranchChip } from './components/branch-chip';
@@ -245,6 +246,7 @@ import {
   syncLanguageFor,
   syncSkipCause,
 } from './lsp-sync';
+import { requestAskFocus, useAsks } from './mcp-ask-store';
 import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
 import { useMonacoNavKeybindings } from './monaco-nav-keybindings';
@@ -807,6 +809,8 @@ export function App() {
   // rail and the topbar's aggregate chip can never disagree about who is waiting (D16).
   const { sessions, snooze, snoozed } = useSnooze(hostSessions);
   const mcp = useConduitMcp();
+  const asks = useAsks();
+  const awaiting = useMemo(() => new Set(mcp.state?.awaitingApproval ?? []), [mcp.state]);
   const agents: AgentDefinition[] = state?.agents ?? [];
 
   useEffect(() => {
@@ -4547,6 +4551,8 @@ export function App() {
             mcpBadges={mcp.state?.sessions ?? NO_MCP_BADGES}
             mcpNotConnected={mcp.state?.notConnected ?? NO_NOT_CONNECTED}
             mcpEnabled={mcp.state?.enabled ?? false}
+            awaitingApproval={awaiting}
+            onFocusAsk={requestAskFocus}
             renamingId={renamingId}
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
             onReorderSessions={(o) => post({ type: 'reorderSessions', order: o })}
@@ -4674,6 +4680,8 @@ export function App() {
         attentionItems={mcp.state?.attention}
         snoozed={snoozed}
         onOpenThread={(threadId) => openMessages(null, threadId)}
+        asks={asks}
+        onFocusAsk={requestAskFocus}
         onContextMenu={onPanelTogglesMenu}
       />
       <div className="workbench">{visibleOrder.map(renderRegion)}</div>
@@ -4819,6 +4827,11 @@ export function App() {
             />
           ) : null;
         })()}
+      <ApprovalCard
+        announce={(t) => {
+          if (navLiveRef.current) navLiveRef.current.textContent = t;
+        }}
+      />
       <Toasts />
     </div>
   );
