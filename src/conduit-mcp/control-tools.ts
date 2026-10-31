@@ -238,11 +238,11 @@ class Window {
 }
 
 /** One reservation: refunded at most once, and never after it was kept. */
-export interface Token {
+interface Token {
   refund(): void;
   keep(): void;
 }
-export type CheckResult<T> =
+type CheckResult<T> =
   | Fail
   | { summary: AskSummary; routesUi?: true; exec: (token: Token) => Promise<Result<T>> };
 

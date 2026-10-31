@@ -74,7 +74,7 @@ export interface CallFlowDeps {
   /** presence.isReady for a window id. */
   windowReady(windowId: number): boolean;
 }
-export interface UiRequest {
+interface UiRequest {
   inflight: InFlight;
   callerSessionId: string;
   /** closeSession's target, else the caller: its move or close ends the wait too. */

@@ -23,30 +23,30 @@ import type { Caller } from './tools';
 import type { Result } from './types';
 import type { CloseFilesOutcome, McpReviewScope, McpReviewSource, McpUiResult } from './ui-types';
 
-export interface CloseSessionOutput {
+interface CloseSessionOutput {
   closed: string;
 }
-export interface FocusSessionOutput {
+interface FocusSessionOutput {
   focused: string;
 }
-export interface AttachFolderOutput {
+interface AttachFolderOutput {
   attached: string;
   session_id: string;
   roots: string[];
 }
-export type ReviewSourceOut =
+type ReviewSourceOut =
   | { kind: 'working'; scope: McpReviewScope }
   | { kind: 'commit'; sha: string }
   | { kind: 'range'; base: RefEndpoint; head: RefEndpoint };
-export interface OpenReviewOutput {
+interface OpenReviewOutput {
   opened: 'review';
   source: ReviewSourceOut;
 }
-export interface OpenGitHistoryOutput {
+interface OpenGitHistoryOutput {
   opened: 'git-history';
   selected: string | null;
 }
-export interface OpenUrlOutput {
+interface OpenUrlOutput {
   opened: string;
 }
 export const MAX_CLOSE_PATHS = 50;
