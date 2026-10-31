@@ -104,7 +104,7 @@ const US = '\x1f';
  * %an author name · %ae author email · %at author unix SECONDS · %s subject · %b body.
  * `--decorate=full` yields fully-qualified ref names so prefixes are unambiguous to strip.
  */
-const PRETTY_FORMAT = `format:${RS}%H${US}%P${US}%D${US}%an${US}%ae${US}%at${US}%s${US}%b`;
+export const PRETTY_FORMAT = `format:${RS}%H${US}%P${US}%D${US}%an${US}%ae${US}%at${US}%s${US}%b`;
 
 const LOG_BASE_ARGS = ['log', '--all', '--parents', '--date-order', '--decorate=full'];
 
