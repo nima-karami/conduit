@@ -451,7 +451,12 @@ describe('createCallFlow', () => {
 
   it('begin with a null requestId is never cancelled', async () => {
     const t = setup();
-    const c = t.call({ requestId: null, policy: ON });
+    const g = gate();
+    const c = t.call({ requestId: null, policy: ON, runGate: g });
+    await t.flush();
+    expect(c.spies.run).toBe(1);
+    t.flow.connectionClosed(1);
+    g.go();
     expect(c.inflight.cancelled).toBe(false);
     expect(await c.promise).toEqual({ ok: true, value: 'opened' });
   });
