@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import * as path from 'node:path';
+import { type PermissionCli, permissionCli } from '../src/conduit-mcp/cli-permissions';
 import { type AgentCli, BACKUP_SUFFIX, type ProjectScope } from '../src/conduit-mcp/install-types';
 import type { JsonObject } from '../src/conduit-mcp/json-config';
 import { folderKey } from '../src/folder-key';
@@ -140,6 +141,31 @@ export function foundMarkers(cli: AgentCli, t: TargetEnv): string[] {
 
 export function openCodeJsoncPath(t: TargetEnv): string {
   return pathsFor(t).join(openCodeDir(t), 'opencode.jsonc');
+}
+
+export interface PermissionTarget {
+  cli: PermissionCli;
+  path: string;
+  backupPath: string;
+  /** Cursor writes cli-config.json itself with fields only it knows, so we only ever edit it. */
+  createIfAbsent: boolean;
+}
+
+/** Where the CLI reads its user permission rules (spec 2026-10-31-conduit-mcp-single-gate §2). */
+export function permissionTarget(cli: AgentCli, t: TargetEnv): PermissionTarget | null {
+  const which = permissionCli(cli);
+  if (which === null) return null;
+  const p = pathsFor(t);
+  const file =
+    which === 'claude'
+      ? p.join(claudeDir(t) ?? p.join(t.homeDir, '.claude'), 'settings.json')
+      : p.join(cursorDir(t), 'cli-config.json');
+  return {
+    cli: which,
+    path: file,
+    backupPath: `${file}${BACKUP_SUFFIX}`,
+    createIfAbsent: which === 'claude',
+  };
 }
 
 /** Cursor project install is out of scope (spec §6). */

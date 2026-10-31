@@ -6,6 +6,7 @@ import {
   deepEqualConfig,
   entryTargets,
   isConduitShaped,
+  legacyConduitEntry,
   SHIM_LEAF,
 } from '../../src/conduit-mcp/install-entries';
 import { AGENT_CLIS, type AgentCli } from '../../src/conduit-mcp/install-types';
@@ -36,17 +37,18 @@ describe('install-entries', () => {
     });
   });
 
-  it('codex entry forwards both names in env_vars and sets approval auto', () => {
+  it('codex entry forwards both names in env_vars, sets approval auto and a 180 s tool timeout', () => {
     expect(conduitEntry('codex', EXE, SHIM)).toEqual({
       command: EXE,
       args: [SHIM],
       env: { ELECTRON_RUN_AS_NODE: '1' },
       env_vars: ['CONDUIT_SESSION_TOKEN', 'CONDUIT_MCP_ENDPOINT'],
       default_tools_approval_mode: 'auto',
+      tool_timeout_sec: 180,
     });
   });
 
-  it('opencode entry command is [exe, shim] with {env:…} placeholders and enabled true', () => {
+  it('opencode entry command is [exe, shim] with {env:…} placeholders, enabled, 180 s timeout', () => {
     expect(conduitEntry('opencode', EXE, SHIM)).toEqual({
       type: 'local',
       command: [EXE, SHIM],
@@ -56,7 +58,41 @@ describe('install-entries', () => {
         CONDUIT_MCP_ENDPOINT: '{env:CONDUIT_MCP_ENDPOINT}',
       },
       enabled: true,
+      timeout: 180_000,
     });
+  });
+
+  it('legacy (v0.50) entries lack only the timeouts; claude and cursor are unchanged', () => {
+    expect(legacyConduitEntry('codex', EXE, SHIM)).toEqual({
+      command: EXE,
+      args: [SHIM],
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+      env_vars: ['CONDUIT_SESSION_TOKEN', 'CONDUIT_MCP_ENDPOINT'],
+      default_tools_approval_mode: 'auto',
+    });
+    expect(legacyConduitEntry('opencode', EXE, SHIM)).toEqual({
+      type: 'local',
+      command: [EXE, SHIM],
+      environment: {
+        ELECTRON_RUN_AS_NODE: '1',
+        CONDUIT_SESSION_TOKEN: '{env:CONDUIT_SESSION_TOKEN}',
+        CONDUIT_MCP_ENDPOINT: '{env:CONDUIT_MCP_ENDPOINT}',
+      },
+      enabled: true,
+    });
+    for (const cli of ['claude', 'cursor'] as const) {
+      expect(legacyConduitEntry(cli, EXE, SHIM)).toEqual(conduitEntry(cli, EXE, SHIM));
+    }
+  });
+
+  it.each(AGENT_CLIS)('classify: a v0.50 entry is ours, not another Conduit (%s)', (cli) => {
+    const expected = conduitEntry(cli, EXE, SHIM);
+    const legacy = legacyConduitEntry(cli, EXE, SHIM);
+    expect(classifyEntry(cli, clone(legacy), expected, legacy)).toBe('ours');
+    // Another build's v0.50 entry is still another Conduit.
+    expect(
+      classifyEntry(cli, legacyConduitEntry(cli, OTHER_EXE, OTHER_SHIM), expected, legacy),
+    ).toBe('other-conduit');
   });
 
   it('cursor entry equals cursorEntry()', () => {

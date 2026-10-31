@@ -14,6 +14,7 @@ const ENTRY: CodexEntry = {
   env: { ELECTRON_RUN_AS_NODE: '1' },
   env_vars: ['CONDUIT_SESSION_TOKEN', 'CONDUIT_MCP_ENDPOINT'],
   default_tools_approval_mode: 'auto',
+  tool_timeout_sec: 180,
 };
 
 const TABLE = [
@@ -23,6 +24,7 @@ const TABLE = [
   'env = { ELECTRON_RUN_AS_NODE = "1" }',
   'env_vars = ["CONDUIT_SESSION_TOKEN", "CONDUIT_MCP_ENDPOINT"]',
   'default_tools_approval_mode = "auto"',
+  'tool_timeout_sec = 180',
   '',
 ].join('\n');
 
@@ -283,7 +285,7 @@ describe('toml-config', () => {
     };
     const crlf = renderCodexTable(winEntry, '\r\n');
     expect(crlf.endsWith('\r\n')).toBe(true);
-    expect(crlf.split('\r\n')).toHaveLength(7);
+    expect(crlf.split('\r\n')).toHaveLength(8);
     expect(readCodexConduit(crlf)).toEqual(winEntry);
   });
 

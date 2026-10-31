@@ -1,5 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+  PERMISSION_RULES,
+  withAllowRule,
+  withoutAllowRule,
+} from '../src/conduit-mcp/cli-permissions';
 import { wiresLaunch } from '../src/conduit-mcp/cursor-config';
 import {
   type ConduitEntry,
@@ -8,6 +13,7 @@ import {
   deepEqualConfig,
   type EntryClass,
   entryTargets,
+  legacyConduitEntry,
   retargetEntry,
 } from '../src/conduit-mcp/install-entries';
 import {
@@ -52,6 +58,7 @@ import {
   foundMarkers,
   installableInProject,
   openCodeJsoncPath,
+  permissionTarget,
   projectTarget,
   type TargetEnv,
   userTarget,
@@ -72,7 +79,25 @@ export interface McpInstall {
   act(req: McpInstallRequest): McpInstallResult;
   userState(cli: AgentCli): UserInstallState;
   /** Rewrites dead other-conduit user entries (spec §14 D2); one row per rewrite or failure. */
-  repair(): { cli: AgentCli; path: string; errorCode?: string }[];
+  repair(): GateRow[];
+  /** Adds the permission rule for each CLI whose user entry is ours; one row per write or failure. */
+  ensureGateRules(): GateRow[];
+}
+
+// A type, not an interface: rows go to the logger as plain records.
+export type GateRow = { cli: AgentCli; path: string; errorCode?: string };
+
+/**
+ * The one-time startup pass (spec 2026-10-31-conduit-mcp-single-gate §3.5). Done only when every
+ * write succeeded: a failure retries next start, while a rule the user later deletes stays deleted.
+ */
+export function migrateGateOnce(
+  done: boolean,
+  install: Pick<McpInstall, 'ensureGateRules'>,
+): { done: boolean; rows: GateRow[] } {
+  if (done) return { done, rows: [] };
+  const rows = install.ensureGateRules();
+  return { done: rows.every((r) => r.errorCode === undefined), rows };
 }
 
 /** What an action writes: our entry, nothing (delete), or the user's entry repointed (Repair). */
@@ -102,6 +127,13 @@ class ActionError extends Error {
 export function createMcpInstall(deps: McpInstallDeps): McpInstall {
   const io = deps.io ?? fs;
   const expected = (cli: AgentCli): ConduitEntry => conduitEntry(cli, deps.execPath, deps.shimPath);
+  const classOf = (cli: AgentCli, loaded: { entry: unknown }) =>
+    classifyEntry(
+      cli,
+      loaded.entry,
+      expected(cli),
+      legacyConduitEntry(cli, deps.execPath, deps.shimPath),
+    );
 
   function parse(target: ConfigTarget, read: ConfigRead): Loaded {
     const text = read.text ?? '';
@@ -157,7 +189,7 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
     if ('error' in u)
       return { state: 'error', path: u.target.path, errorCode: errorCodeOf(u.error) };
     return {
-      state: USER_STATE[classifyEntry(cli, u.loaded.entry, expected(cli))],
+      state: USER_STATE[classOf(cli, u.loaded)],
       path: u.target.path,
     };
   }
@@ -178,7 +210,7 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
         errorCode: errorCodeOf(error),
       };
     }
-    const cls = classifyEntry(cli, loaded.entry, expected(cli));
+    const cls = classOf(cli, loaded);
     if (cls === 'absent') return null;
     return { scope: projectScopeOf(target), state: cls, path: target.path };
   }
@@ -272,9 +304,6 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
     return true;
   }
 
-  const classOf = (cli: AgentCli, loaded: Loaded) =>
-    classifyEntry(cli, loaded.entry, expected(cli));
-
   function userAction(req: McpInstallRequest): void {
     const target = userTarget(req.cli, deps);
     const first = loadUser(req.cli, target);
@@ -326,6 +355,47 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
     });
   }
 
+  // Same backup and re-read discipline as writeEntry; a running CLI may rewrite its own settings.
+  function writeRule(cli: AgentCli, mode: 'add' | 'remove'): string | null {
+    const target = permissionTarget(cli, deps);
+    if (target === null) return null;
+    const rule = PERMISSION_RULES[target.cli];
+    const edit = (read: ConfigRead): string | null => {
+      if (read.text === null && (mode === 'remove' || !target.createIfAbsent)) return null;
+      const text = read.text ?? '';
+      return mode === 'add' ? withAllowRule(text, rule) : withoutAllowRule(text, rule);
+    };
+    let read = readConfigFile(io, target.path);
+    let data = edit(read);
+    if (data === null) return null;
+    backupOnce(io, target.backupPath, read.raw);
+    if (!unchangedSince(read)) {
+      read = readConfigFile(io, target.path);
+      data = edit(read);
+      if (data === null) return null;
+      if (!unchangedSince(read)) throw new ActionError('EBUSY');
+    }
+    writeConfigAtomic(io, read.realPath, data, read.mode);
+    return target.path;
+  }
+
+  /** The rule follows the entry; a failure is reported, never fails the entry's own write. */
+  function ruleAfter(req: McpInstallRequest, root: string | null): string | undefined {
+    const mode =
+      req.action === 'install' || req.action === 'replace'
+        ? 'add'
+        : req.action === 'uninstall' && root === null
+          ? 'remove'
+          : null;
+    if (mode === null) return undefined;
+    try {
+      writeRule(req.cli, mode);
+      return undefined;
+    } catch (error) {
+      return errorCodeOf(error);
+    }
+  }
+
   function act(req: McpInstallRequest): McpInstallResult {
     const root = req.scope === 'project' ? rootOf(req.projectPath ?? null) : null;
     const statusRoot = rootOf(req.projectPath ?? null);
@@ -342,7 +412,12 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
     } catch (error) {
       return fail(errorCodeOf(error));
     }
-    return { ok: true, status: cliStatus(req.cli, statusRoot) };
+    const permissionErrorCode = ruleAfter(req, root);
+    return {
+      ok: true,
+      status: cliStatus(req.cli, statusRoot),
+      ...(permissionErrorCode === undefined ? {} : { permissionErrorCode }),
+    };
   }
 
   function userState(cli: AgentCli): UserInstallState {
@@ -357,14 +432,21 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
   // A bare command like "node" is resolved through PATH, not a file this build could have moved.
   const isDeadPath = (p: string | null) => p !== null && isAbsolutePath(p) && !io.existsSync(p);
 
-  function repair(): { cli: AgentCli; path: string; errorCode?: string }[] {
-    const rows: { cli: AgentCli; path: string; errorCode?: string }[] = [];
+  function repair(): GateRow[] {
+    const rows: GateRow[] = [];
     for (const cli of AGENT_CLIS) {
       if (!isFound(cli)) continue;
       const user = readUser(cli);
       if (!('loaded' in user)) continue;
       const decide = (loaded: Loaded): Edit | null => {
-        if (classOf(cli, loaded) !== 'other-conduit') return null;
+        const cls = classOf(cli, loaded);
+        // A v0.50 entry of this build is upgraded in place (spec 2026-10-31-conduit-mcp-single-gate).
+        if (cls === 'ours') {
+          return deepEqualConfig(loaded.entry, expected(cli))
+            ? null
+            : { kind: 'set', value: expected(cli) };
+        }
+        if (cls !== 'other-conduit') return null;
         const { command, shim } = entryTargets(cli, loaded.entry);
         if (!isDeadPath(command) && !isDeadPath(shim)) return null;
         const value = retargetEntry(cli, loaded.entry, {
@@ -388,6 +470,22 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
     return rows;
   }
 
+  function ensureGateRules(): GateRow[] {
+    const rows: GateRow[] = [];
+    for (const cli of AGENT_CLIS) {
+      const target = permissionTarget(cli, deps);
+      if (target === null || !isFound(cli)) continue;
+      const user = readUser(cli);
+      if (!('loaded' in user) || classOf(cli, user.loaded) !== 'ours') continue;
+      try {
+        if (writeRule(cli, 'add') !== null) rows.push({ cli, path: target.path });
+      } catch (error) {
+        rows.push({ cli, path: target.path, errorCode: errorCodeOf(error) });
+      }
+    }
+    return rows;
+  }
+
   return {
     status: (projectPath) => {
       const root = rootOf(projectPath);
@@ -396,6 +494,7 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
     act,
     userState,
     repair,
+    ensureGateRules,
   };
 }
 

@@ -60,7 +60,12 @@ export interface McpInstallRequest {
   entryScope?: ProjectScope;
 }
 export type McpInstallResult =
-  | { ok: true; status: CliInstallStatus }
+  | {
+      ok: true;
+      status: CliInstallStatus;
+      /** The entry was written but the CLI's permission rule was not (spec 2026-10-31-conduit-mcp-single-gate §3). */
+      permissionErrorCode?: string;
+    }
   | { ok: false; status: CliInstallStatus; errorCode: string };
 
 export type ConfigErrorCode = 'EJSON' | 'EJSONC' | 'ETOML' | 'EUNEDITABLE' | 'EGUARD';
@@ -81,14 +86,18 @@ export interface ClaudeEntry {
   args: string[];
   env: { ELECTRON_RUN_AS_NODE: '1'; CONDUIT_SESSION_TOKEN: string; CONDUIT_MCP_ENDPOINT: string };
 }
-export interface CodexEntry {
+/** The v0.50 shape: still ours, upgraded at startup (spec 2026-10-31-conduit-mcp-single-gate). */
+export interface V050CodexEntry {
   command: string;
   args: string[];
   env: { ELECTRON_RUN_AS_NODE: '1' };
   env_vars: string[];
   default_tools_approval_mode: 'auto';
 }
-export interface OpenCodeEntry {
+export interface CodexEntry extends V050CodexEntry {
+  tool_timeout_sec: number;
+}
+export interface V050OpenCodeEntry {
   type: 'local';
   command: string[];
   environment: {
@@ -97,6 +106,10 @@ export interface OpenCodeEntry {
     CONDUIT_MCP_ENDPOINT: string;
   };
   enabled: true;
+}
+export interface OpenCodeEntry extends V050OpenCodeEntry {
+  /** Milliseconds; OpenCode applies it to tool calls as well. */
+  timeout: number;
 }
 
 export type InstallDismissals = Partial<Record<AgentCli, true>>;

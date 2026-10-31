@@ -1,8 +1,19 @@
 import { type CursorEntry, cursorEntry, wiresLaunch } from './cursor-config';
-import type { AgentCli, ClaudeEntry, CodexEntry, OpenCodeEntry } from './install-types';
+import type {
+  AgentCli,
+  ClaudeEntry,
+  CodexEntry,
+  OpenCodeEntry,
+  V050CodexEntry,
+  V050OpenCodeEntry,
+} from './install-types';
 
 export type ConduitEntry = ClaudeEntry | CodexEntry | CursorEntry | OpenCodeEntry;
+export type LegacyConduitEntry = ClaudeEntry | V050CodexEntry | CursorEntry | V050OpenCodeEntry;
 export const SHIM_LEAF = 'conduit-mcp-shim.cjs';
+/** Longer than Conduit's ask budget, so the human's card decides, not the CLI's clock. */
+export const CODEX_TOOL_TIMEOUT_SEC = 180;
+export const OPENCODE_TIMEOUT_MS = 180_000;
 
 const TOKEN = 'CONDUIT_SESSION_TOKEN';
 const ENDPOINT = 'CONDUIT_MCP_ENDPOINT';
@@ -12,41 +23,65 @@ const claudeVar = (name: string, emptyDefault: boolean) =>
   `$${'{'}${name}${emptyDefault ? ':-' : ''}}`;
 const openCodeVar = (name: string) => `{env:${name}}`;
 
+const claudeEntry = (execPath: string, shimPath: string): ClaudeEntry => ({
+  type: 'stdio',
+  command: execPath,
+  args: [shimPath],
+  env: {
+    ELECTRON_RUN_AS_NODE: '1',
+    CONDUIT_SESSION_TOKEN: claudeVar(TOKEN, true),
+    CONDUIT_MCP_ENDPOINT: claudeVar(ENDPOINT, true),
+  },
+});
+
+const v050Codex = (execPath: string, shimPath: string): V050CodexEntry => ({
+  command: execPath,
+  args: [shimPath],
+  env: { ELECTRON_RUN_AS_NODE: '1' },
+  env_vars: [TOKEN, ENDPOINT],
+  default_tools_approval_mode: 'auto',
+});
+
+const v050OpenCode = (execPath: string, shimPath: string): V050OpenCodeEntry => ({
+  type: 'local',
+  command: [execPath, shimPath],
+  environment: {
+    ELECTRON_RUN_AS_NODE: '1',
+    CONDUIT_SESSION_TOKEN: openCodeVar(TOKEN),
+    CONDUIT_MCP_ENDPOINT: openCodeVar(ENDPOINT),
+  },
+  enabled: true,
+});
+
 // No --endpoint in any entry: the endpoint comes from env, so dev and installed builds share one (spec §3.4).
 export function conduitEntry(cli: AgentCli, execPath: string, shimPath: string): ConduitEntry {
   switch (cli) {
     case 'claude':
-      return {
-        type: 'stdio',
-        command: execPath,
-        args: [shimPath],
-        env: {
-          ELECTRON_RUN_AS_NODE: '1',
-          CONDUIT_SESSION_TOKEN: claudeVar(TOKEN, true),
-          CONDUIT_MCP_ENDPOINT: claudeVar(ENDPOINT, true),
-        },
-      };
+      return claudeEntry(execPath, shimPath);
     case 'codex':
-      return {
-        command: execPath,
-        args: [shimPath],
-        env: { ELECTRON_RUN_AS_NODE: '1' },
-        env_vars: [TOKEN, ENDPOINT],
-        default_tools_approval_mode: 'auto',
-      };
+      return { ...v050Codex(execPath, shimPath), tool_timeout_sec: CODEX_TOOL_TIMEOUT_SEC };
     case 'cursor':
       return cursorEntry(execPath, shimPath);
     case 'opencode':
-      return {
-        type: 'local',
-        command: [execPath, shimPath],
-        environment: {
-          ELECTRON_RUN_AS_NODE: '1',
-          CONDUIT_SESSION_TOKEN: openCodeVar(TOKEN),
-          CONDUIT_MCP_ENDPOINT: openCodeVar(ENDPOINT),
-        },
-        enabled: true,
-      };
+      return { ...v050OpenCode(execPath, shimPath), timeout: OPENCODE_TIMEOUT_MS };
+  }
+}
+
+/** What v0.50 installed; classifyEntry counts it as ours so it never reads as another Conduit. */
+export function legacyConduitEntry(
+  cli: AgentCli,
+  execPath: string,
+  shimPath: string,
+): LegacyConduitEntry {
+  switch (cli) {
+    case 'claude':
+      return claudeEntry(execPath, shimPath);
+    case 'codex':
+      return v050Codex(execPath, shimPath);
+    case 'cursor':
+      return cursorEntry(execPath, shimPath);
+    case 'opencode':
+      return v050OpenCode(execPath, shimPath);
   }
 }
 
@@ -144,9 +179,16 @@ export function isConduitShaped(cli: AgentCli, entry: unknown): boolean {
 
 export type EntryClass = 'absent' | 'ours' | 'other-conduit' | 'conflict';
 
-export function classifyEntry(cli: AgentCli, entry: unknown, expected: ConduitEntry): EntryClass {
+/** `legacy`: this build's v0.50 entry, also 'ours'; startup repair upgrades it in place. */
+export function classifyEntry(
+  cli: AgentCli,
+  entry: unknown,
+  expected: ConduitEntry,
+  legacy?: LegacyConduitEntry,
+): EntryClass {
   if (entry === undefined) return 'absent';
   if (deepEqualConfig(entry, expected)) return 'ours';
+  if (legacy !== undefined && deepEqualConfig(entry, legacy)) return 'ours';
   return isConduitShaped(cli, entry) ? 'other-conduit' : 'conflict';
 }
 

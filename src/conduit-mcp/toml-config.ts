@@ -36,6 +36,7 @@ export function renderCodexTable(e: CodexEntry, eol: '\n' | '\r\n'): string {
     `env = { ${env} }`,
     `env_vars = ${tomlStringArray(e.env_vars)}`,
     `default_tools_approval_mode = ${tomlBasicString(e.default_tools_approval_mode)}`,
+    `tool_timeout_sec = ${e.tool_timeout_sec}`,
     '',
   ].join(eol);
 }

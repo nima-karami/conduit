@@ -4,6 +4,7 @@ import {
   foundMarkers,
   installableInProject,
   openCodeJsoncPath,
+  permissionTarget,
   projectTarget,
   type TargetEnv,
   userTarget,
@@ -142,5 +143,33 @@ describe('markers and capabilities', () => {
     for (const cli of ['claude', 'codex', 'opencode'] as const) {
       expect(installableInProject(cli)).toBe(true);
     }
+  });
+});
+
+describe('permissionTarget', () => {
+  it('claude: settings.json in CLAUDE_CONFIG_DIR, else ~/.claude; created when absent', () => {
+    expect(permissionTarget('claude', base)).toEqual({
+      cli: 'claude',
+      path: '/h/.claude/settings.json',
+      backupPath: '/h/.claude/settings.json.conduit-backup',
+      createIfAbsent: true,
+    });
+    expect(permissionTarget('claude', withEnv({ CLAUDE_CONFIG_DIR: '/c' }))?.path).toBe(
+      '/c/settings.json',
+    );
+    expect(permissionTarget('claude', withEnv({ CLAUDE_CONFIG_DIR: '' }))?.path).toBe(
+      '/h/.claude/settings.json',
+    );
+  });
+
+  it('cursor: ~/.cursor/cli-config.json, never created; codex and opencode have none', () => {
+    expect(permissionTarget('cursor', base)).toEqual({
+      cli: 'cursor',
+      path: '/h/.cursor/cli-config.json',
+      backupPath: '/h/.cursor/cli-config.json.conduit-backup',
+      createIfAbsent: false,
+    });
+    expect(permissionTarget('codex', base)).toBeNull();
+    expect(permissionTarget('opencode', base)).toBeNull();
   });
 });

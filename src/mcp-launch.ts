@@ -1,7 +1,7 @@
 // Per-CLI launch wiring for the conduit MCP server (spec §3.1). Cursor is the opt-in exception:
 // it reads the user config and receives only its token and endpoint in the PTY env.
 import type { McpAdapter } from './conduit-mcp/adapters';
-import { MESSAGING_TOOL_NAMES } from './conduit-mcp/tool-policy';
+import { CODEX_TOOL_TIMEOUT_SEC } from './conduit-mcp/install-entries';
 import type { McpUnavailableReason } from './conduit-mcp/types';
 import { batchGuarded, firstCmdMetachar } from './launch-args';
 import type { HostPlatform } from './lsp-binary';
@@ -32,8 +32,8 @@ export function mcpServerCommand(
   };
 }
 
-// Control tools stay unapproved so Claude still prompts the human per call (control-tools plan T2.2).
-const CLAUDE_ALLOWED_TOOLS = MESSAGING_TOOL_NAMES.map((t) => `mcp__conduit__${t}`).join(',');
+// Every tool of server conduit: Conduit's own policy is the only gate (spec 2026-10-31-conduit-mcp-single-gate).
+const CLAUDE_ALLOWED_TOOLS = 'mcp__conduit';
 
 /** A TOML literal string has no escapes, so a quote or newline can't be represented at all. */
 const tomlLiteral = (v: string): string | undefined => (/['\r\n]/.test(v) ? undefined : `'${v}'`);
@@ -55,6 +55,7 @@ function codexArgs(server: McpServerCommand): string[] | undefined {
     "mcp_servers.conduit.env_vars=['CONDUIT_SESSION_TOKEN']",
     // Conduit's own tools only: no Codex approval prompt on every call.
     "mcp_servers.conduit.default_tools_approval_mode='auto'",
+    `mcp_servers.conduit.tool_timeout_sec=${CODEX_TOOL_TIMEOUT_SEC}`,
   ].flatMap((pair) => ['-c', pair]);
 }
 
@@ -69,8 +70,7 @@ export function mcpLaunchWiring(i: {
   let configJson: string | null = null;
   switch (i.adapter.wiring) {
     case 'mcp-config-flag':
-      // Pre-approves Conduit's own tools only, parity with codex's 'auto' (plan Decisions). Last:
-      // both flags are variadic, so a positional after them would be read as a value.
+      // Last: both flags are variadic, so a positional after them would be read as a value.
       args = ['--mcp-config', i.configFile, '--allowedTools', CLAUDE_ALLOWED_TOOLS];
       configJson = JSON.stringify({
         mcpServers: {

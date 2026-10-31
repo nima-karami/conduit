@@ -12,8 +12,8 @@ const EXE = 'C:\\Program Files\\Conduit\\Conduit.exe';
 const SHIM = 'C:\\Program Files\\Conduit\\resources\\conduit-mcp\\conduit-mcp-shim.cjs';
 const PIPE = '\\\\.\\pipe\\conduit-mcp-0123456789abcdef';
 const CONFIG = 'C:\\Users\\A\\AppData\\Roaming\\Conduit\\conduit-mcp\\launch\\s1.json';
-const ALLOWED =
-  'mcp__conduit__list_sessions,mcp__conduit__send_message,mcp__conduit__read_inbox,mcp__conduit__read_attachment';
+// Every tool of server conduit: Conduit's policy is the only gate (spec 2026-10-31-conduit-mcp-single-gate).
+const ALLOWED = 'mcp__conduit';
 
 describe('mcpServerCommand', () => {
   it('runs the shim with the exe as node, env only on the server entry', () => {
@@ -38,8 +38,7 @@ describe('mcpLaunchWiring', () => {
     });
     expect(w.ok).toBe(true);
     if (!w.ok) return;
-    // Exactly Conduit's four tools are pre-approved (parity with codex's approval mode 'auto'),
-    // and the list comes last: both flags are variadic, so nothing positional may follow.
+    // The rule comes last: both flags are variadic, so nothing positional may follow.
     expect(w.args).toEqual(['--mcp-config', CONFIG, '--allowedTools', ALLOWED]);
     const cfg = JSON.parse(w.configJson ?? 'null');
     expect(cfg.mcpServers.conduit).toEqual({
@@ -62,7 +61,7 @@ describe('mcpLaunchWiring', () => {
     expect(w.ok && w.args).toEqual(['--mcp-config', '/tmp/s1.json', '--allowedTools', ALLOWED]);
   });
 
-  it('codex: exactly five -c pairs in order, TOML literal quoting', () => {
+  it('codex: exactly six -c pairs in order, TOML literal quoting', () => {
     const w = mcpLaunchWiring({
       adapter: adapter('codex'),
       platform: 'win32',
@@ -84,6 +83,8 @@ describe('mcpLaunchWiring', () => {
       "mcp_servers.conduit.env_vars=['CONDUIT_SESSION_TOKEN']",
       '-c',
       "mcp_servers.conduit.default_tools_approval_mode='auto'",
+      '-c',
+      'mcp_servers.conduit.tool_timeout_sec=180',
     ]);
   });
 
