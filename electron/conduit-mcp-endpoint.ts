@@ -7,7 +7,7 @@ import type { Logger } from './logger';
 export const HELLO_MAX_BYTES = 4096;
 export const INBOUND_LINE_MAX_BYTES = 4 * 1024 * 1024;
 /** How long close() waits for queued replies to flush before destroying the socket anyway. */
-export const CLOSE_FLUSH_MS = 2_000;
+const CLOSE_FLUSH_MS = 2_000;
 
 export interface EndpointConnection {
   readonly id: number;
