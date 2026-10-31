@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.51.0] — 2026-10-31
+
 ### Added
 - **Agents can arrange Conduit for you.** Seven new tools: close a session (`close_session`),
   switch your view to a session (`focus_session`), attach a folder to a session
