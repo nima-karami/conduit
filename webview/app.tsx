@@ -165,6 +165,7 @@ import {
   REVIEW_DOC_ID,
   REVIEW_DOC_PATH,
   type ReviewSource,
+  shownKeepsDoc,
   toPersistedDocs,
 } from './docs';
 import { tabStateKey } from './editor-group-context';
@@ -2444,10 +2445,17 @@ export function App() {
         });
       }
       // Only the active doc is mounted, and a mounted viewer jumps on setReveal, so a background
-      // open leaves the active doc's position alone (spec 2026-09-22-middle-click-new-tab §3).
+      // open leaves the active doc's position alone (spec 2026-09-22-middle-click-new-tab §3); nor
+      // does an MCP open whose tab stays with the shown session move the human's cursor.
       if (
         nav?.reveal &&
-        !(background && `file:${path}` === groupActive(docStateRef.current, effectiveSessionId, g))
+        !(
+          background && `file:${path}` === groupActive(docStateRef.current, effectiveSessionId, g)
+        ) &&
+        !(
+          nav.keepActive &&
+          shownKeepsDoc(docStateRef.current, 'file', path, effectiveSessionId, shown)
+        )
       ) {
         setReveal(path, nav.reveal, g);
       }

@@ -9,6 +9,7 @@ import {
   initialDocs,
   type OpenMode,
   REVIEW_DOC_ID,
+  shownKeepsDoc,
   toPersistedDocs,
 } from '../../webview/docs';
 
@@ -1189,6 +1190,28 @@ describe('docsReducer — open into a session that is not shown', () => {
       expect([kind, remembered(s, 'B')]).toEqual([kind, remembered(s0, 'B')]);
       // Un-preview only: the human's tab is otherwise untouched.
       expect([kind, s.layouts.A.groups[0].tabs]).toEqual([kind, [{ id: `${kind}:${path}` }]]);
+    }
+  });
+
+  // The app stages an open's line/column reveal only when the open lands in the caller: a reveal
+  // on a tab the shown session keeps would move the human's cursor.
+  it('shownKeepsDoc is true exactly when the open leaves the tab with the shown session', () => {
+    let s = docsReducer(initialDocs, { type: 'open', kind: 'file', path: '/a.ts', sessionId: 'A' });
+    s = open(s, 'file', '/b.ts', 'B');
+    const cases = [
+      ['/a.ts', 'B', 'A', true],
+      ['/a.ts', 'A', 'A', false],
+      ['/a.ts', 'B', undefined, false],
+      ['/b.ts', 'A', 'B', true],
+      ['/b.ts', 'C', 'A', false],
+      ['/c.ts', 'B', 'A', false],
+    ] as const;
+    for (const [path, sessionId, shown, keeps] of cases) {
+      const c = [path, sessionId, shown];
+      expect([...c, shownKeepsDoc(s, 'file', path, sessionId, shown)]).toEqual([...c, keeps]);
+      const after = docsReducer(s, { type: 'open', kind: 'file', path, sessionId, shown });
+      const owner = after.docs.find((d) => d.id === `file:${path}`)?.sessionId;
+      expect([...c, owner === shown && owner !== sessionId]).toEqual([...c, keeps]);
     }
   });
 });

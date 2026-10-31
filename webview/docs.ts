@@ -198,6 +198,21 @@ export const initialDocs: DocsState = { docs: [], layouts: {}, activeId: null };
 
 const idOf = (kind: DocKind, path: string, diffScope?: DiffTabScope) =>
   kind === 'diff' && diffScope ? `diff@${diffScope}:${path}` : `${kind}:${path}`;
+
+/** A foreground open for `sessionId` while `shown` is on screen leaves the tab with `shown`
+ *  (the shown session already holds it): the open lands nowhere in the caller. */
+export function shownKeepsDoc(
+  state: DocsState,
+  kind: DocKind,
+  path: string,
+  sessionId: string,
+  shown: string | undefined,
+  diffScope?: DiffTabScope,
+): boolean {
+  if (shown === undefined || shown === sessionId) return false;
+  const id = idOf(kind, path, diffScope);
+  return state.docs.some((d) => d.id === id && d.sessionId === shown);
+}
 const scopeField = (kind: DocKind, diffScope: DiffTabScope | undefined) =>
   kind === 'diff' && diffScope ? { diffScope } : {};
 // A re-open that omits the key keeps the singleton's repo; one that names it (even as
@@ -586,11 +601,18 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       }
       // An open for a session nobody is looking at never takes the shown session's tab off its
       // screen: it keeps its owner and is only un-previewed (spec B §2.1, A4).
-      const shownOwns =
-        action.shown !== undefined &&
-        action.shown !== action.sessionId &&
-        state.docs.some((d) => d.id === id && d.sessionId === action.shown);
-      if (shownOwns) return openInBackground(state, spec);
+      if (
+        shownKeepsDoc(
+          state,
+          action.kind,
+          action.path,
+          action.sessionId,
+          action.shown,
+          action.diffScope,
+        )
+      ) {
+        return openInBackground(state, spec);
+      }
       const preview = isPreviewable(action.kind) && action.mode === 'preview';
       return openForeground(state, { ...spec, preview, patch, shown: action.shown });
     }
