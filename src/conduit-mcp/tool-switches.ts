@@ -1,15 +1,18 @@
 // Node-free: the renderer imports the catalog for Settings and the per-session dialog.
+// The catalog lives in tool-policy; this boolean API goes once every reader has moved (plan T1.14).
+import {
+  EDITOR_TOOL_NAMES,
+  isMessagingTool,
+  isToolName,
+  MESSAGING_TOOL_NAMES,
+  SESSION_TOOL_NAMES,
+  TOOL_NAMES,
+  type ToolName,
+} from './tool-policy';
 import { type ToolError, toolError } from './types';
 
-export const MESSAGING_TOOL_NAMES = [
-  'list_sessions',
-  'send_message',
-  'read_inbox',
-  'read_attachment',
-] as const;
-export const CONTROL_TOOL_NAMES = ['open_session', 'open_terminal', 'open_file'] as const;
-export const TOOL_NAMES = [...MESSAGING_TOOL_NAMES, ...CONTROL_TOOL_NAMES] as const;
-export type ToolName = (typeof TOOL_NAMES)[number];
+export { isMessagingTool, isToolName, MESSAGING_TOOL_NAMES, TOOL_NAMES, type ToolName };
+export const CONTROL_TOOL_NAMES = [...SESSION_TOOL_NAMES, ...EDITOR_TOOL_NAMES] as const;
 export type McpToolSwitches = Record<ToolName, boolean>;
 export type McpToolOverrides = Partial<Record<ToolName, boolean>>;
 export type ToolOverrideValue = boolean | 'inherit';
@@ -24,17 +27,6 @@ export const DEFAULT_MCP_TOOLS: Readonly<McpToolSwitches> = Object.freeze({
   open_terminal: false,
   open_file: false,
 });
-
-const NAMES: ReadonlySet<string> = new Set(TOOL_NAMES);
-const MESSAGING: ReadonlySet<ToolName> = new Set(MESSAGING_TOOL_NAMES);
-
-export function isToolName(v: unknown): v is ToolName {
-  return typeof v === 'string' && NAMES.has(v);
-}
-
-export function isMessagingTool(t: ToolName): boolean {
-  return MESSAGING.has(t);
-}
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);

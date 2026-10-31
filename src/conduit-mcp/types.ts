@@ -31,7 +31,12 @@ export type ToolErrorCode =
   | 'invalid_args'
   | 'command_not_found'
   | 'brief_unavailable'
-  | 'open_failed';
+  | 'open_failed'
+  | 'window_not_ready'
+  | 'caller_not_visible'
+  | 'denied'
+  | 'approval_timeout'
+  | 'cancelled';
 export interface ToolError {
   code: ToolErrorCode;
   message: string;
@@ -43,6 +48,7 @@ const RETRYABLE: ReadonlySet<ToolErrorCode> = new Set([
   'rate_limited',
   'store_unavailable',
   'host_unavailable',
+  'window_not_ready',
 ]);
 
 export function toolError(code: ToolErrorCode, message: string): ToolError {
