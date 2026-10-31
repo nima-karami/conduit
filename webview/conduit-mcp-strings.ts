@@ -350,7 +350,7 @@ export const MCP_STR = {
       'Adds Conduit to each CLI’s own MCP config, so agents you start in any Conduit terminal can message each other and you. Outside Conduit the server lists no tools. Uninstall here before removing Conduit.',
     // spec 2026-10-31-conduit-mcp-single-gate: installing also writes the CLI's allow rule.
     singleGate:
-      'Installing also lets Conduit’s tool policy approve Conduit’s tools in that CLI, so the CLI doesn’t ask again.',
+      'Installing also lets Conduit’s tool policy approve Conduit’s tools in that CLI, so the CLI doesn’t ask again (Cursor: once it has run once).',
     messagingNotices:
       'When a message arrives for an idle agent, Conduit types a short notice into its session. Pause notices for one session from its menu.',
     suggestToggle: 'Suggest setup when an agent CLI can’t connect',

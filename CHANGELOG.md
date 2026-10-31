@@ -50,9 +50,11 @@ All notable user-facing changes to Conduit. Format follows
   card, never a second CLI prompt (Cursor: once it has created `~/.cursor/cli-config.json`).
   Agents launched from Conduit get the same, and a Codex started from Conduit gives you
   170 s to answer the card (was 50 s). Existing installs are updated at the next start; a rule
-  you remove later stays removed.
+  you remove later stays removed, and Uninstall leaves the rule in place (it does nothing without
+  the server).
 - **Your v0.50 switches carry over.** A tool you turned on becomes On · Always; a messaging tool
-  you turned off stays off. Going back to v0.50 drops the policies and returns to its defaults.
+  you turned off stays off. Going back to v0.50 drops the policies and returns to its defaults,
+  and shows an updated Codex install as installed by another Conduit (Install fixes it).
 
 ## [0.50.0] — 2026-10-27
 
