@@ -2003,6 +2003,28 @@ app.whenReady().then(() => {
       resolveCommand: (c) => resolveCommand(c, hostPlatform),
       openSession: (req) => createMcpSession(req),
       openFile: (req) => openMcpFile(req),
+      foldersOf: (id) => {
+        const s = mgr.get(id);
+        return s ? { home: s.home, roots: [...s.roots] } : undefined;
+      },
+      // Declared after the host; read lazily, like createMcpSession / openMcpFile.
+      addRoot: (id, p) => sessionOps.addRoot(id, p),
+      activateSession: (id, raise) => {
+        const w = windowFor(id);
+        if (!w || w.isDestroyed() || w.webContents.isDestroyed()) return;
+        w.webContents.send('to-webview', { type: 'activateSession', sessionId: id });
+        // As moveSessionToWindow does: a session in another window would switch out of sight.
+        if (raise) {
+          if (process.env.CONDUIT_E2E !== '1') w.show();
+          w.focus();
+        }
+      },
+      git: (cwd, args) =>
+        runGit(args, { cwd, timeoutMs: GIT_TIMEOUT.metadata }).then((r) => ({
+          ok: r.ok,
+          stdout: r.stdout,
+          stderr: r.stderr,
+        })),
     },
     projectName: (projectId) =>
       projectId ? (projectStore.list().find((p) => p.id === projectId)?.name ?? null) : null,
@@ -4550,6 +4572,7 @@ app.whenReady().then(() => {
         case 'mcp:retry':
         case 'mcp:setToolPolicy':
         case 'mcp:askAnswer':
+        case 'mcp:uiResult':
           await mcpHost.handleRenderer(m, replyHere, senderId);
           break;
         case 'term:input':
