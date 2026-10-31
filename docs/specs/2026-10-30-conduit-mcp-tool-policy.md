@@ -132,7 +132,8 @@ outcome is unknown.
       timeout): **no reply is sent** for that request (MCP: the receiver should not respond
       after a cancellation);
     - the caller's connection closes (`conn.onClose`, host:842): there is no one to reply to;
-    - the caller session closes, or the window closes or reloads: the call returns `cancelled`.
+    - the caller session closes or moves to another window, or the window closes or reloads:
+      the call returns `cancelled`.
   - **Prerequisite:** today the JSON-RPC core drops every notification (json-rpc.ts:84), and
     `deps.call` sees neither the request id nor the connection (json-rpc.ts:96, host:806). Both
     get threaded through to the pending-ask map.
@@ -158,7 +159,7 @@ outcome is unknown.
 
 | Claim | How established | Status |
 |---|---|---|
-| A saved v0.50 settings file holds all 7 `mcpTools` keys, so a user-set `false` can't be told from the default | source: `updateSettings` persists the coerced object, main.ts:3869, settings.ts:540 | read from source |
+| A saved v0.50 settings file holds all 7 `mcpTools` keys, so a user-set `false` can't be told from the default for the control tools (default off); for the messaging tools (default on) a `false` is user-set | source: `updateSettings` persists the coerced object, main.ts:3869, settings.ts:540 | read from source |
 | Only successful opens are charged to the rate limit; `open_file` isn't limited | source: control-tools.ts:166-185, 223 | read from source |
 | CLIs' own MCP call timeouts (how long an `ask` may wait) | — | **ASSUMED**; measured at S0 (D3) |
 
@@ -188,8 +189,12 @@ resolvePolicy(tool, { session?: PolicyLayer, cli?: PolicyLayer, global: Record<T
 - **Migration (read-time, one way):**
   - `mcpTools[t] === true`, or an override `true`, → `{access:'on', when:'always'}`. That keeps
     v0.50 behaviour; an off-screen lead keeps working.
-  - `false` → the new default (§3.2). v0.50 can't tell a user-set `false` from the default, since
-    it persists the full object.
+  - `false` for a tool whose v0.50 default was off (the control tools) → the new default (§3.2).
+    v0.50 can't tell a user-set `false` from that default, since it persists the full object.
+  - `false` for a tool whose v0.50 default was on (the messaging tools), or an override `false`,
+    was set by the user → `{access:'off'}`.
+  - A session holding both the new and the old key (a downgrade to v0.50 and back) takes the old
+    key's values over the new ones: only v0.50 writes the old key.
   - Other fields → defaults.
   - Old keys are removed on the next write.
   - Downgrading to v0.50 loses the policies and falls back to v0.50's defaults (stated, accepted).
