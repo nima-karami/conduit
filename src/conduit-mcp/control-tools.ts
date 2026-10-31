@@ -314,7 +314,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
    */
   function failed(tool: string, caller: Caller, e: unknown, path?: string): Fail {
     const message = e instanceof Error ? e.message : String(e);
-    deps.info('control open failed', { tool, caller: caller.handle, path, error: message });
+    deps.info('control call failed', { tool, caller: caller.handle, path, error: message });
     return fail('open_failed', message);
   }
 

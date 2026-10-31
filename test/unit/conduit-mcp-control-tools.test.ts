@@ -315,7 +315,7 @@ describe('createControlHandlers', () => {
       });
     }
     expect(h.logs.at(-1)).toEqual({
-      message: 'control open failed',
+      message: 'control call failed',
       data: { tool: 'open_session', caller: 'claude-1', path: '/repo', error: 'boom' },
     });
     h.outcome = async () => ({ ok: true, sessionId: 's', label: 'x' });
@@ -335,7 +335,7 @@ describe('createControlHandlers', () => {
     });
     expect(h.logs).toEqual([
       {
-        message: 'control open failed',
+        message: 'control call failed',
         data: { tool: 'open_file', caller: 'claude-1', path: '/repo/a.ts', error: 'no window' },
       },
     ]);
