@@ -125,14 +125,14 @@ outcome is unknown.
   - **Deny:** returns `denied`.
   - **Always for this session:** writes `access:'on'` into that session's override, then runs.
 - **Ending the wait:**
-  - **Expiry:** the call returns `approval_timeout` after the ask timeout (§5; S0 measures the CLIs'
-    own MCP call timeouts, and the ask timeout sits below the smallest).
-  - **Cancelled:** the card is removed and the call returns `cancelled` when any of these happens:
+  - **Expiry:** the call returns `approval_timeout` after the ask timeout, which is per caller CLI
+    kind and sits below that CLI's documented MCP call timeout (§5).
+  - **Cancelled:** the card is removed when any of these happens:
     - the CLI sends `notifications/cancelled{requestId}` (Esc in the CLI, or the CLI's own
-      timeout);
-    - the caller's connection closes (`conn.onClose`, host:842);
-    - the caller session closes;
-    - the window closes or reloads.
+      timeout): **no reply is sent** for that request (MCP: the receiver should not respond
+      after a cancellation);
+    - the caller's connection closes (`conn.onClose`, host:842): there is no one to reply to;
+    - the caller session closes, or the window closes or reloads: the call returns `cancelled`.
   - **Prerequisite:** today the JSON-RPC core drops every notification (json-rpc.ts:84), and
     `deps.call` sees neither the request id nor the connection (json-rpc.ts:96, host:806). Both
     get threaded through to the pending-ask map.
@@ -293,7 +293,7 @@ A refusal at steps 1–5 reveals nothing about targets.
 |---|---|---|---|
 | Per-tool policy | §3.2 table | Global, per CLI, per session | Human ruling: tune later instead of fixing it in code |
 | `when` | `viewing` everywhere | Yes | Human ruling: act only for the session being viewed |
-| Ask timeout | 50 s (sits below the smallest CLI timeout, D3) | No | A card that outlives the CLI's call would run an action nobody waits for |
+| Ask timeout | Per caller CLI kind: claude 120 s, codex 50 s, cursor 50 s, opencode 25 s, agent 25 s (each below that CLI's documented MCP call timeout, D3) | No | A card that outlives the CLI's call would run an action nobody waits for |
 | Renderer reply timeout | 5 s | No | Every UI action is a single dispatch |
 | Max waiting asks | 3 per caller | No | Card spam guard |
 | Close confirms over MCP | None beyond the policy (`ask` is the confirm) | Via `access` | One consent mechanism |
@@ -429,8 +429,8 @@ three themes.
   `open_session` off→ask. The default taken is the table, as agreed in chat.
 - [normal] **D2:** "Always for this session" writes a persistent override. The alternative is
   in-memory until relaunch. Default: persistent, since it is visible and reversible in the dialog.
-- [normal] **D3:** The ask timeout. Default: 50 s, adjusted by S0 to sit below the smallest CLI
-  MCP timeout.
+- [normal] **D3:** The ask timeout. Resolved from the CLIs' documented limits (research
+  2026-10-30; documented, not measured): a per-CLI-kind table (§5), not one flat value.
 - [normal] **D4:** Whether the CLI layer ships in the MVP. It is about a third of Part A's UI
   surface, and it keys on a convenience signal. Default: **ship it**, because "who can access it"
   was part of the request. The alternative is global + session layers now and the CLI layer in v1.
