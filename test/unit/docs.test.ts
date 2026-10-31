@@ -1214,4 +1214,32 @@ describe('docsReducer — open into a session that is not shown', () => {
       expect([...c, owner === shown && owner !== sessionId]).toEqual([...c, keeps]);
     }
   });
+
+  it("a split partner's History open takes the singleton, at its own repo, off the shown session", () => {
+    let s0 = docsReducer(initialDocs, {
+      type: 'open',
+      kind: 'git-history',
+      path: '@git-history',
+      sessionId: 'A',
+      repoRoot: '/repo-a',
+    });
+    s0 = open(s0, 'file', '/a.ts', 'A');
+    s0 = open(s0, 'file', '/b.ts', 'B');
+    s0 = docsReducer(s0, { type: 'activate', id: 'file:/a.ts' });
+    const id = 'git-history:@git-history';
+    expect(shownKeepsDoc(s0, 'git-history', '@git-history', 'B', 'A')).toBe(false);
+    const s = docsReducer(s0, {
+      type: 'open',
+      kind: 'git-history',
+      path: '@git-history',
+      sessionId: 'B',
+      repoRoot: '/repo-b',
+      shown: 'A',
+    });
+    const doc = s.docs.find((d) => d.id === id);
+    expect([doc?.sessionId, doc?.repoRoot]).toEqual(['B', '/repo-b']);
+    expect(tabs(s, 'A').map((d) => d.id)).toEqual(['file:/a.ts']);
+    expect(remembered(s, 'B')).toBe(id);
+    expect(s.activeId).toBe(s0.activeId);
+  });
 });

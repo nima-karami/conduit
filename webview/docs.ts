@@ -199,8 +199,9 @@ export const initialDocs: DocsState = { docs: [], layouts: {}, activeId: null };
 const idOf = (kind: DocKind, path: string, diffScope?: DiffTabScope) =>
   kind === 'diff' && diffScope ? `diff@${diffScope}:${path}` : `${kind}:${path}`;
 
-/** A foreground open for `sessionId` while `shown` is on screen leaves the tab with `shown`
- *  (the shown session already holds it): the open lands nowhere in the caller. */
+/** A foreground file or web open for `sessionId` while `shown` is on screen leaves the tab with
+ *  `shown` (the shown session already holds it): the open lands nowhere in the caller. Review and
+ *  History are singletons that move to the opener (spec B §2.1). */
 export function shownKeepsDoc(
   state: DocsState,
   kind: DocKind,
@@ -210,6 +211,7 @@ export function shownKeepsDoc(
   diffScope?: DiffTabScope,
 ): boolean {
   if (shown === undefined || shown === sessionId) return false;
+  if (kind !== 'file' && kind !== 'web') return false;
   const id = idOf(kind, path, diffScope);
   return state.docs.some((d) => d.id === id && d.sessionId === shown);
 }
