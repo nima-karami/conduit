@@ -80,7 +80,7 @@ export interface ToolSpec {
   defaults: ToolPolicy;
 }
 
-// Messaging has no 'ask': a per-message prompt would make messaging unusable (spec §3.2).
+// Messaging has no 'ask': a card per read_inbox is noise (spec §3.2).
 const MESSAGING_SPEC: ToolSpec = {
   fields: ['access'],
   access: ['off', 'on'],
