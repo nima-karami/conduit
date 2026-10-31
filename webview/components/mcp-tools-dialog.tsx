@@ -1,48 +1,54 @@
 /**
- * Per-session MCP tool overrides (spec 2026-10-27-conduit-mcp-control-tools §8–§10): one
- * Inherit / On / Off group per tool, saved through the host as each one changes.
+ * The session layer of the MCP tool policy (spec 2026-10-30-conduit-mcp-tool-policy §8–§10):
+ * the shared editor over session > CLI > global, each change saved through the host as a
+ * one-field patch.
  */
 import { useEffect, useId, useRef, useState } from 'react';
+import { cliKindOfHandle } from '../../src/conduit-mcp/handles';
 import {
-  CONTROL_TOOL_NAMES,
-  type McpToolSwitches,
-  MESSAGING_TOOL_NAMES,
+  type CliPolicyLayers,
+  coercePolicyPatch,
+  type GlobalPolicy,
+  type PolicyLayer,
+  type PolicyLayers,
+  type PolicySource,
   type ToolName,
-  type ToolOverrideValue,
-  withOverride,
-} from '../../src/conduit-mcp/tool-switches';
+  type ToolPolicy,
+  type ToolPolicyPatch,
+  withPolicyPatch,
+} from '../../src/conduit-mcp/tool-policy';
 import type { Session } from '../../src/types';
 import { MCP_STR } from '../conduit-mcp-strings';
 import { IconClose } from '../icons';
 import { useFocusTrap } from '../use-focus-trap';
 import { ModalLayer } from './modal-layer';
-import { SegmentedRadios } from './segmented-radios';
+import { policyChoiceLabel, ToolPolicyEditor } from './tool-policy-editor';
 
 export interface McpToolsDialogProps {
   session: Session;
-  global: McpToolSwitches;
+  global: GlobalPolicy;
+  byCli: CliPolicyLayers;
   masterOn: boolean;
   connected: boolean;
-  /** Resolves false when the host didn't persist it; the control then reverts. */
-  onChange(tool: ToolName, value: ToolOverrideValue): Promise<boolean>;
+  /** Resolves false when the host didn't persist it; the row then reverts. */
+  onChange(tool: ToolName, patch: ToolPolicyPatch): Promise<boolean>;
   onRelaunch(): void;
   announce(text: string): void;
   onClose(): void;
 }
 
-type Seg = 'inherit' | 'on' | 'off';
-
-const toSeg = (v: boolean | undefined): Seg => (v === undefined ? 'inherit' : v ? 'on' : 'off');
-const fromSeg = (s: Seg): ToolOverrideValue => (s === 'inherit' ? 'inherit' : s === 'on');
-
-const GROUPS = [
-  { title: MCP_STR.tools.groupMessaging, tools: MESSAGING_TOOL_NAMES },
-  { title: MCP_STR.tools.groupControl, tools: CONTROL_TOOL_NAMES },
-] as const;
+/** Puts one tool's whole entry back: every field it lacks becomes 'inherit'. */
+const restorePatch = (entry: Partial<ToolPolicy> | undefined): ToolPolicyPatch => ({
+  access: entry?.access ?? 'inherit',
+  when: entry?.when ?? 'inherit',
+  reach: entry?.reach ?? 'inherit',
+  move: entry?.move ?? 'inherit',
+});
 
 export function McpToolsDialog({
   session,
   global,
+  byCli,
   masterOn,
   connected,
   onChange,
@@ -54,17 +60,27 @@ export function McpToolsDialog({
   const rootRef = useRef<HTMLDivElement>(null);
   useFocusTrap(rootRef);
 
-  // What the controls show: the persisted overrides plus picks not yet confirmed.
-  const [shown, setShown] = useState(session.mcpToolOverrides);
+  // What the controls show: the persisted session layer plus picks not yet confirmed.
+  const [shown, setShown] = useState<PolicyLayer | undefined>(session.mcpToolPolicy);
   const [failed, setFailed] = useState<ReadonlySet<ToolName>>(new Set());
   const [changed, setChanged] = useState(false);
-  // A revert goes to the last value the host confirmed in this dialog, else the persisted props:
-  // the broadcast carrying a confirmed pick can arrive after a later pick has already failed.
-  // Only the newest pick per tool may revert, so an older pick resolving late can't undo it.
-  const persistedRef = useRef(session.mcpToolOverrides);
-  persistedRef.current = session.mcpToolOverrides;
-  const confirmedRef = useRef(new Map<ToolName, ToolOverrideValue>());
+  // A revert goes to the tool's entry as the host last confirmed it in this dialog, else the
+  // persisted props: the broadcast carrying a confirmed pick can arrive after a later pick has
+  // already failed. Only the newest pick per tool may revert, so an older pick resolving late
+  // can't undo it.
+  const persistedRef = useRef(session.mcpToolPolicy);
+  persistedRef.current = session.mcpToolPolicy;
+  const confirmedRef = useRef(new Map<ToolName, Partial<ToolPolicy> | undefined>());
   const seqRef = useRef(new Map<ToolName, number>());
+
+  // The CLI layer follows the handle (spec §2.1); a session that never connected has none.
+  const kind = session.mcpHandle ? cliKindOfHandle(session.mcpHandle) : undefined;
+  const layers: PolicyLayers = { session: shown, cli: kind ? byCli[kind] : undefined, global };
+  const sourceName = (s: PolicySource): string => {
+    if (s !== 'cli') return MCP_STR.tools.layerName[s];
+    // Without a kind there is no CLI layer, so resolution never names it.
+    return kind ? MCP_STR.tools.cliName[kind] : MCP_STR.tools.layerName.global;
+  };
 
   useEffect(() => {
     const root = rootRef.current;
@@ -74,22 +90,28 @@ export function McpToolsDialog({
     first?.focus();
   }, []);
 
-  const pick = async (tool: ToolName, next: Seg) => {
+  const confirmedEntry = (tool: ToolName) =>
+    confirmedRef.current.has(tool) ? confirmedRef.current.get(tool) : persistedRef.current?.[tool];
+
+  const pick = async (tool: ToolName, patch: ToolPolicyPatch, what: string, value: string) => {
     const seq = (seqRef.current.get(tool) ?? 0) + 1;
     seqRef.current.set(tool, seq);
-    setShown((o) => withOverride(o, tool, fromSeg(next)));
+    setShown((o) => withPolicyPatch(o, tool, patch));
     setFailed((f) => withoutTool(f, tool));
-    const ok = await onChange(tool, fromSeg(next));
-    if (ok) confirmedRef.current.set(tool, fromSeg(next));
+    const ok = await onChange(tool, patch);
+    if (ok) {
+      const base: PolicyLayer = { [tool]: confirmedEntry(tool) };
+      confirmedRef.current.set(tool, withPolicyPatch(base, tool, patch)?.[tool]);
+    }
     if (seqRef.current.get(tool) !== seq) return;
     if (!ok) {
-      const revertTo = confirmedRef.current.get(tool) ?? persistedRef.current?.[tool] ?? 'inherit';
-      setShown((o) => withOverride(o, tool, revertTo));
+      const revertTo = restorePatch(confirmedEntry(tool));
+      setShown((o) => withPolicyPatch(o, tool, revertTo));
       setFailed((f) => new Set(f).add(tool));
       return;
     }
     setChanged(true);
-    announce(MCP_STR.tools.announce(tool, segLabel(next, global[tool]), session.name));
+    announce(MCP_STR.tools.announce(what, value, session.name));
   };
 
   return (
@@ -111,36 +133,27 @@ export function McpToolsDialog({
           </button>
         </div>
         {!masterOn && <p className="mcptools__hint">{MCP_STR.tools.masterOffHint}</p>}
-        {GROUPS.map((g) => (
-          <section key={g.title} className="mcptools__group">
-            <h3 className="mcptools__grouptitle">{g.title}</h3>
-            {g.tools.map((tool) => (
-              <div key={tool} className="mcptools__row">
-                <div className="mcptools__label">
-                  <code className="mcptools__name">{tool}</code>
-                  <span className="mcptools__desc">{MCP_STR.tools.description[tool]}</span>
-                </div>
-                <SegmentedRadios<Seg>
-                  label={tool}
-                  value={toSeg(shown?.[tool])}
-                  disabled={!masterOn}
-                  selectOnArrow={false}
-                  options={[
-                    { id: 'inherit', label: MCP_STR.tools.inherit(global[tool]) },
-                    { id: 'on', label: MCP_STR.tools.on },
-                    { id: 'off', label: MCP_STR.tools.off },
-                  ]}
-                  onChange={(next) => void pick(tool, next)}
-                />
-                {failed.has(tool) && (
-                  <p className="mcptools__error" role="status">
-                    {MCP_STR.tools.saveFailed}
-                  </p>
-                )}
-              </div>
-            ))}
-          </section>
-        ))}
+        <ToolPolicyEditor
+          layer="session"
+          layers={layers}
+          sourceName={sourceName}
+          disabled={!masterOn}
+          failed={failed}
+          onChange={(tool, field, value) => {
+            const patch = coercePolicyPatch(tool, { [field]: value });
+            const label = policyChoiceLabel(tool, field, value, {
+              layer: 'session',
+              layers,
+              sourceName,
+            });
+            if (!patch || label === null) return;
+            const what =
+              field === 'access'
+                ? MCP_STR.tools.accessLabel(tool)
+                : MCP_STR.tools.fieldAria(tool, field);
+            void pick(tool, patch, what, label);
+          }}
+        />
         {connected && changed && (
           <div className="mcptools__relaunch">
             <span className="mcptools__hint">{MCP_STR.tools.relaunchHint}</span>
@@ -152,11 +165,6 @@ export function McpToolsDialog({
       </div>
     </ModalLayer>
   );
-}
-
-function segLabel(s: Seg, inherited: boolean): string {
-  if (s === 'inherit') return MCP_STR.tools.inherit(inherited);
-  return s === 'on' ? MCP_STR.tools.on : MCP_STR.tools.off;
 }
 
 function withoutTool(set: ReadonlySet<ToolName>, tool: ToolName): ReadonlySet<ToolName> {

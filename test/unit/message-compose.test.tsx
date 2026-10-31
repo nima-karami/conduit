@@ -48,7 +48,7 @@ function fakeApi(o: Partial<ConduitMcpApi> = {}): ConduitMcpApi {
     allowMore: vi.fn(),
     pause: vi.fn(),
     retry: vi.fn(),
-    setToolOverride: vi.fn(async () => true),
+    setToolPolicy: vi.fn(async () => true),
     ...o,
   };
 }

@@ -123,7 +123,7 @@ function fakeApi(state: McpUiState | null, o: Partial<ConduitMcpApi> = {}): Cond
     allowMore: vi.fn(),
     pause: vi.fn(),
     retry: vi.fn(),
-    setToolOverride: vi.fn(async () => true),
+    setToolPolicy: vi.fn(async () => true),
     ...o,
   };
 }

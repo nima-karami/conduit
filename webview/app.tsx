@@ -4801,10 +4801,11 @@ export function App() {
             <McpToolsDialog
               key={target.id}
               session={target}
-              global={settings.mcpTools}
+              global={settings.mcpToolPolicy}
+              byCli={settings.mcpToolPolicyByCli}
               masterOn={settings.conduitMcp}
               connected={mcp.state?.sessions[target.id]?.connected === true}
-              onChange={(tool, value) => mcp.setToolOverride(target.id, tool, value)}
+              onChange={(tool, patch) => mcp.setToolPolicy(target.id, tool, patch)}
               onRelaunch={() => post({ type: 'relaunch', id: target.id })}
               announce={(text) => {
                 if (navLiveRef.current) navLiveRef.current.textContent = text;

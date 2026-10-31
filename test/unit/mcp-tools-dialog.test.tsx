@@ -3,10 +3,11 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
-  DEFAULT_MCP_TOOLS,
-  type McpToolOverrides,
+  type CliPolicyLayers,
+  coerceGlobalPolicy,
+  type PolicyLayer,
   TOOL_NAMES,
-} from '../../src/conduit-mcp/tool-switches';
+} from '../../src/conduit-mcp/tool-policy';
 import type { Session } from '../../src/types';
 import {
   McpToolsDialog,
@@ -18,7 +19,7 @@ beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
-const session = (overrides?: McpToolOverrides): Session => ({
+const session = (p: { policy?: PolicyLayer; handle?: string } = {}): Session => ({
   id: 's1',
   name: 'api',
   agentId: 'cli:claude',
@@ -27,7 +28,8 @@ const session = (overrides?: McpToolOverrides): Session => ({
   status: 'running',
   createdAt: 1,
   lastActiveAt: 1,
-  ...(overrides ? { mcpToolOverrides: overrides } : {}),
+  ...(p.policy ? { mcpToolPolicy: p.policy } : {}),
+  ...(p.handle ? { mcpHandle: p.handle } : {}),
 });
 
 let root: Root | null = null;
@@ -43,7 +45,8 @@ afterEach(async () => {
 function props(p: Partial<McpToolsDialogProps> = {}): McpToolsDialogProps {
   return {
     session: session(),
-    global: { ...DEFAULT_MCP_TOOLS },
+    global: coerceGlobalPolicy(undefined),
+    byCli: {},
     masterOn: true,
     connected: false,
     onChange: vi.fn(async () => true),
@@ -62,7 +65,9 @@ async function mount(p: McpToolsDialogProps) {
 }
 
 const group = (tool: string) =>
-  document.body.querySelector<HTMLElement>(`[role="radiogroup"][aria-label="${tool}"]`);
+  document.body.querySelector<HTMLElement>(
+    `[role="radiogroup"][aria-label="${MCP_STR.tools.accessLabel(tool)}"]`,
+  );
 const radio = (tool: string, label: string) =>
   group(tool)?.querySelector<HTMLButtonElement>(`[role="radio"][aria-label="${label}"]`) ?? null;
 const key = (k: string) =>
@@ -71,9 +76,13 @@ const key = (k: string) =>
   });
 const checked = (tool: string) =>
   group(tool)?.querySelector('[role="radio"][aria-checked="true"]')?.getAttribute('aria-label');
+const errorOf = (tool: string) =>
+  document.body.querySelector(`.policyrow[data-tool="${tool}"] .policyrow__error`);
+
+const ALL = MCP_STR.tools.layerName.global;
 
 describe('McpToolsDialog', () => {
-  it('renders a radiogroup per tool, labelled by the tool name', async () => {
+  it('renders an access radiogroup per tool and focuses the first', async () => {
     await mount(props());
     const dialog = document.body.querySelector('[role="dialog"]');
     expect(dialog?.getAttribute('aria-modal')).toBe('true');
@@ -81,90 +90,73 @@ describe('McpToolsDialog', () => {
     expect(title?.textContent).toBe(MCP_STR.tools.dialogTitle('api'));
     for (const t of TOOL_NAMES) expect(group(t)).not.toBeNull();
     expect(document.body.querySelectorAll('[role="radiogroup"]')).toHaveLength(TOOL_NAMES.length);
-    // Initial focus is the first radiogroup's selected option.
-    expect(document.activeElement).toBe(radio('list_sessions', 'Inherit (On)'));
+    expect(document.activeElement).toBe(radio('list_sessions', `Inherit (On · from ${ALL})`));
   });
 
-  it('Inherit label shows the global value', async () => {
-    await mount(props({ session: session({ open_file: true }) }));
-    expect(radio('list_sessions', 'Inherit (On)')).not.toBeNull();
-    expect(radio('open_session', 'Inherit (Off)')).not.toBeNull();
-    expect(checked('open_session')).toBe('Inherit (Off)');
-    expect(checked('open_file')).toBe('On');
+  it('inherit labels name the CLI from the handle', async () => {
+    const byCli: CliPolicyLayers = { codex: { open_session: { access: 'off' } } };
+    await mount(props({ session: session({ handle: 'codex-2' }), byCli }));
+    expect(checked('open_session')).toBe('Inherit (Off · from Codex)');
+    // A field the Codex layer leaves unset still comes from All CLIs.
+    expect(checked('open_file')).toBe(`Inherit (On · from ${ALL})`);
+    await act(async () => root?.unmount());
+    // No handle: no CLI layer applies, so even a Codex layer is not consulted.
+    await mount(props({ byCli }));
+    expect(checked('open_session')).toBe(`Inherit (Ask · from ${ALL})`);
   });
 
-  it('picking Off calls onChange(tool, false) and announces', async () => {
+  it('shows the session layer as set', async () => {
+    await mount(props({ session: session({ policy: { open_file: { access: 'off' } } }) }));
+    expect(checked('open_file')).toBe('Off');
+    expect(checked('open_session')).toBe(`Inherit (Ask · from ${ALL})`);
+  });
+
+  it('picking Ask posts a one-field patch and announces', async () => {
     const p = props();
+    await mount(p);
+    await act(async () => radio('open_session', 'Ask')?.click());
+    expect(p.onChange).toHaveBeenCalledTimes(1);
+    expect(p.onChange).toHaveBeenCalledWith('open_session', { access: 'ask' });
+    expect(checked('open_session')).toBe('Ask');
+    expect(p.announce).toHaveBeenCalledWith(
+      MCP_STR.tools.announce(MCP_STR.tools.accessLabel('open_session'), 'Ask', 'api'),
+    );
+    await act(async () => radio('open_session', `Inherit (Ask · from ${ALL})`)?.click());
+    expect(p.onChange).toHaveBeenLastCalledWith('open_session', { access: 'inherit' });
+    expect(checked('open_session')).toBe(`Inherit (Ask · from ${ALL})`);
+  });
+
+  it('a refused change reverts that tool only and shows saveFailed', async () => {
+    const onChange = vi.fn(async (tool: string) => tool !== 'open_file');
+    const p = props({
+      session: session({ policy: { open_file: { access: 'on', when: 'always' } } }),
+      onChange,
+    });
     await mount(p);
     await act(async () => radio('send_message', 'Off')?.click());
-    expect(p.onChange).toHaveBeenCalledWith('send_message', false);
-    expect(checked('send_message')).toBe('Off');
-    expect(p.announce).toHaveBeenCalledWith(MCP_STR.tools.announce('send_message', 'Off', 'api'));
-  });
-
-  it('onChange false reverts the selection and shows the save error', async () => {
-    const p = props({ session: session({ open_file: true }), onChange: vi.fn(async () => false) });
-    await mount(p);
     await act(async () => radio('open_file', 'Off')?.click());
-    expect(p.onChange).toHaveBeenCalledWith('open_file', false);
+    expect(onChange).toHaveBeenLastCalledWith('open_file', { access: 'off' });
     expect(checked('open_file')).toBe('On');
-    expect(document.body.textContent).toContain(MCP_STR.tools.saveFailed);
-    expect(p.announce).not.toHaveBeenCalled();
+    expect(errorOf('open_file')?.textContent).toBe(MCP_STR.tools.saveFailed);
+    expect(checked('send_message')).toBe('Off');
+    expect(errorOf('send_message')).toBeNull();
+    expect(p.announce).toHaveBeenCalledTimes(1);
+    // A later pick on that tool clears the error while it is in flight.
+    onChange.mockImplementation(async () => true);
+    await act(async () => radio('open_file', 'Ask')?.click());
+    expect(errorOf('open_file')).toBeNull();
+    expect(checked('open_file')).toBe('Ask');
   });
 
-  it('master off disables all groups and shows the hint', async () => {
-    await mount(props({ masterOn: false }));
-    for (const t of TOOL_NAMES) {
-      expect(group(t)?.getAttribute('aria-disabled')).toBe('true');
-      for (const b of group(t)?.querySelectorAll('button') ?? []) expect(b.disabled).toBe(true);
-    }
-    expect(document.body.textContent).toContain(MCP_STR.tools.masterOffHint);
-  });
-
-  // Spec §9: arrows move, Space selects. Arrow-select would persist every value walked through
-  // (Inherit → On → Off), briefly opening open_terminal.
-  it('arrows move focus without selecting; Space and Enter select the focused option', async () => {
-    const p = props();
-    await mount(p);
-    radio('open_terminal', 'Inherit (Off)')?.focus();
-    await key('ArrowRight');
-    expect(document.activeElement).toBe(radio('open_terminal', 'On'));
-    expect(p.onChange).not.toHaveBeenCalled();
-    expect(checked('open_terminal')).toBe('Inherit (Off)');
-    expect(radio('open_terminal', 'On')?.tabIndex).toBe(0);
-    expect(radio('open_terminal', 'Inherit (Off)')?.tabIndex).toBe(-1);
-    await key('ArrowRight');
-    await key('End');
-    expect(document.activeElement).toBe(radio('open_terminal', 'Off'));
-    expect(p.onChange).not.toHaveBeenCalled();
-    await key(' ');
-    expect(p.onChange).toHaveBeenCalledTimes(1);
-    expect(p.onChange).toHaveBeenCalledWith('open_terminal', false);
-    expect(checked('open_terminal')).toBe('Off');
-    await key('Home');
-    await key('Enter');
-    expect(p.onChange).toHaveBeenCalledTimes(2);
-    expect(p.onChange).toHaveBeenLastCalledWith('open_terminal', 'inherit');
-  });
-
-  it('focus leaving a group puts its tab stop back on the selected option', async () => {
-    await mount(props());
-    radio('open_terminal', 'Inherit (Off)')?.focus();
-    await key('ArrowRight');
-    await act(async () => radio('open_file', 'Inherit (Off)')?.focus());
-    expect(radio('open_terminal', 'Inherit (Off)')?.tabIndex).toBe(0);
-    expect(radio('open_terminal', 'On')?.tabIndex).toBe(-1);
-  });
-
-  it('only the newest pick per tool can revert', async () => {
+  it('a late older pick cannot undo a newer one', async () => {
     const pending: ((ok: boolean) => void)[] = [];
     const p = props({ onChange: vi.fn(() => new Promise<boolean>((r) => pending.push(r))) });
     await mount(p);
-    await act(async () => radio('open_file', 'On')?.click());
+    await act(async () => radio('open_file', 'Ask')?.click());
     await act(async () => radio('open_file', 'Off')?.click());
     await act(async () => pending[0](false));
     expect(checked('open_file')).toBe('Off');
-    expect(document.body.textContent).not.toContain(MCP_STR.tools.saveFailed);
+    expect(errorOf('open_file')).toBeNull();
     await act(async () => pending[1](true));
     expect(checked('open_file')).toBe('Off');
   });
@@ -173,13 +165,39 @@ describe('McpToolsDialog', () => {
     const pending: ((ok: boolean) => void)[] = [];
     const p = props({ onChange: vi.fn(() => new Promise<boolean>((r) => pending.push(r))) });
     await mount(p);
-    await act(async () => radio('open_file', 'On')?.click());
+    await act(async () => radio('open_file', 'Ask')?.click());
     await act(async () => pending[0](true));
     await act(async () => radio('open_file', 'Off')?.click());
     await act(async () => pending[1](false));
-    // Props still say Inherit: the state broadcast carrying On hasn't re-rendered the dialog.
-    expect(checked('open_file')).toBe('On');
-    expect(document.body.textContent).toContain(MCP_STR.tools.saveFailed);
+    // Props still say Inherit: the state broadcast carrying Ask hasn't re-rendered the dialog.
+    expect(checked('open_file')).toBe('Ask');
+    expect(errorOf('open_file')?.textContent).toBe(MCP_STR.tools.saveFailed);
+  });
+
+  it('master off disables every control and shows the hint', async () => {
+    await mount(props({ masterOn: false }));
+    for (const t of TOOL_NAMES) {
+      expect(group(t)?.getAttribute('aria-disabled')).toBe('true');
+      for (const b of group(t)?.querySelectorAll('button') ?? []) expect(b.disabled).toBe(true);
+    }
+    expect(document.body.textContent).toContain(MCP_STR.tools.masterOffHint);
+  });
+
+  // Arrow-select would persist every value walked through, briefly opening open_terminal.
+  it('arrows move focus without selecting; Space selects the focused option', async () => {
+    const p = props();
+    await mount(p);
+    const inherit = `Inherit (Off · from ${ALL})`;
+    radio('open_terminal', inherit)?.focus();
+    await key('ArrowRight');
+    expect(document.activeElement).toBe(radio('open_terminal', 'Off'));
+    await key('End');
+    expect(document.activeElement).toBe(radio('open_terminal', 'On'));
+    expect(p.onChange).not.toHaveBeenCalled();
+    expect(checked('open_terminal')).toBe(inherit);
+    await key(' ');
+    expect(p.onChange).toHaveBeenCalledTimes(1);
+    expect(p.onChange).toHaveBeenCalledWith('open_terminal', { access: 'on' });
   });
 
   it('Esc calls onClose', async () => {
@@ -197,18 +215,16 @@ describe('McpToolsDialog', () => {
         (b) => b.textContent === MCP_STR.tools.relaunch,
       );
 
-    const offline = props({ connected: false });
-    await mount(offline);
-    await act(async () => radio('open_file', 'On')?.click());
+    await mount(props({ connected: false }));
+    await act(async () => radio('open_file', 'Ask')?.click());
     expect(document.body.textContent).not.toContain(MCP_STR.tools.relaunchHint);
     await act(async () => root?.unmount());
     root = null;
 
     const p = props({ connected: true });
     await mount(p);
-    expect(document.body.textContent).not.toContain(MCP_STR.tools.relaunchHint);
     expect(relaunchButton()).toBeUndefined();
-    await act(async () => radio('open_file', 'On')?.click());
+    await act(async () => radio('open_file', 'Ask')?.click());
     expect(document.body.textContent).toContain(MCP_STR.tools.relaunchHint);
     await act(async () => relaunchButton()?.click());
     expect(p.onRelaunch).toHaveBeenCalledTimes(1);

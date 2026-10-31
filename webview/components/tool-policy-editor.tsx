@@ -65,6 +65,29 @@ function below(layer: PolicySource, layers: PolicyLayers): PolicyLayers | null {
     : { global: layers.global };
 }
 
+type LabelContext = Pick<ToolPolicyEditorProps, 'layer' | 'layers' | 'sourceName'>;
+
+/**
+ * The words a choice shows in the editor; the session dialog announces a change with them.
+ * null: Inherit isn't offered (the global layer, or a field the tool doesn't have).
+ */
+export function policyChoiceLabel(
+  tool: ToolName,
+  field: PolicyField,
+  choice: Choice,
+  c: LabelContext,
+): string | null {
+  if (choice !== 'inherit') return FIELD_LABELS[field][choice];
+  const from = below(c.layer, c.layers);
+  if (!from) return null;
+  const r = resolvePolicy(tool, from);
+  const v = r.policy[field];
+  const src = r.source[field];
+  return v === undefined || src === undefined
+    ? null
+    : S.inherited(FIELD_LABELS[field][v], c.sourceName(src));
+}
+
 export function ToolPolicyEditor(p: ToolPolicyEditorProps) {
   const idBase = useId();
   return (
@@ -99,8 +122,6 @@ function PolicyRow({
 }: ToolPolicyEditorProps & { tool: ToolName }) {
   const panelId = useId();
   const [open, setOpen] = useState(false);
-  const inheritFrom = below(layer, layers);
-  const inherited = inheritFrom && resolvePolicy(tool, inheritFrom);
   const conditions = TOOL_SPECS[tool].fields.filter((f): f is ConditionField => f !== 'access');
 
   const shown = (f: PolicyField): Choice | undefined =>
@@ -108,10 +129,8 @@ function PolicyRow({
 
   const options = (f: PolicyField): { id: Choice; label: string }[] => {
     const own = offeredValues(tool, f).map((v) => ({ id: v, label: FIELD_LABELS[f][v] }));
-    const v = inherited?.policy[f];
-    const src = inherited?.source[f];
-    if (v === undefined || src === undefined) return own;
-    return [{ id: 'inherit', label: S.inherited(FIELD_LABELS[f][v], sourceName(src)) }, ...own];
+    const inherit = policyChoiceLabel(tool, f, 'inherit', { layer, layers, sourceName });
+    return inherit === null ? own : [{ id: 'inherit', label: inherit }, ...own];
   };
 
   const warning = S.onWarning[tool];

@@ -102,7 +102,7 @@ async function render(
             allowMore: noop,
             pause: noop,
             retry: noop,
-            setToolOverride: async () => true,
+            setToolPolicy: async () => true,
           },
           sessions: [],
           onOpenSettings: noop,
