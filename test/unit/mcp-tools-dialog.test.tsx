@@ -63,6 +63,8 @@ async function mount(p: McpToolsDialogProps) {
   root = createRoot(host);
   await act(async () => root?.render(<McpToolsDialog {...p} />));
 }
+const rerender = (p: McpToolsDialogProps) =>
+  act(async () => root?.render(<McpToolsDialog {...p} />));
 
 const group = (tool: string) =>
   document.body.querySelector<HTMLElement>(
@@ -172,6 +174,41 @@ describe('McpToolsDialog', () => {
     // Props still say Inherit: the state broadcast carrying Ask hasn't re-rendered the dialog.
     expect(checked('open_file')).toBe('Ask');
     expect(errorOf('open_file')?.textContent).toBe(MCP_STR.tools.saveFailed);
+  });
+
+  it('follows the session layer when another writer changes it (Always)', async () => {
+    const p = props();
+    await mount(p);
+    expect(checked('open_session')).toBe(`Inherit (Ask · from ${ALL})`);
+    await rerender({ ...p, session: session({ policy: { open_session: { access: 'on' } } }) });
+    expect(checked('open_session')).toBe('On');
+    await rerender(p);
+    expect(checked('open_session')).toBe(`Inherit (Ask · from ${ALL})`);
+  });
+
+  it('a field with a pending pick keeps it while the rest follows props', async () => {
+    const pending: ((ok: boolean) => void)[] = [];
+    const p = props({ onChange: vi.fn(() => new Promise<boolean>((r) => pending.push(r))) });
+    await mount(p);
+    await act(async () => radio('open_session', 'Off')?.click());
+    const elsewhere: PolicyLayer = {
+      open_session: { access: 'on', when: 'always' },
+      open_file: { access: 'off' },
+    };
+    await rerender({ ...p, session: session({ policy: elsewhere }) });
+    expect(checked('open_session')).toBe('Off');
+    expect(checked('open_file')).toBe('Off');
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('.policyrow[data-tool="open_session"] .policyrow__cond')
+        ?.click(),
+    );
+    const when = MCP_STR.tools.fieldAria('open_session', 'when');
+    expect(document.body.querySelector(`[aria-label="${when}"]`)?.textContent).toBe(
+      MCP_STR.tools.when.always,
+    );
+    await act(async () => pending[0](true));
+    expect(checked('open_session')).toBe('Off');
   });
 
   it('master off disables every control and shows the hint', async () => {

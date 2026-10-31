@@ -72,6 +72,15 @@ export function McpToolsDialog({
   persistedRef.current = session.mcpToolPolicy;
   const confirmedRef = useRef(new Map<ToolName, Partial<ToolPolicy> | undefined>());
   const seqRef = useRef(new Map<ToolName, number>());
+  // Picks not yet answered, per tool and field: a session-layer change from elsewhere (Always,
+  // another window) re-seeds every other field, but must not flip a control mid-save.
+  const pendingRef = useRef(new Map<ToolName, ToolPolicyPatch>());
+
+  useEffect(() => {
+    let next = session.mcpToolPolicy;
+    for (const [tool, patch] of pendingRef.current) next = withPolicyPatch(next, tool, patch);
+    setShown(next);
+  }, [session.mcpToolPolicy]);
 
   // The CLI layer follows the handle (spec §2.1); a session that never connected has none.
   const kind = session.mcpHandle ? cliKindOfHandle(session.mcpHandle) : undefined;
@@ -96,6 +105,7 @@ export function McpToolsDialog({
   const pick = async (tool: ToolName, patch: ToolPolicyPatch, what: string, value: string) => {
     const seq = (seqRef.current.get(tool) ?? 0) + 1;
     seqRef.current.set(tool, seq);
+    pendingRef.current.set(tool, { ...pendingRef.current.get(tool), ...patch });
     setShown((o) => withPolicyPatch(o, tool, patch));
     setFailed((f) => withoutTool(f, tool));
     const ok = await onChange(tool, patch);
@@ -104,6 +114,7 @@ export function McpToolsDialog({
       confirmedRef.current.set(tool, withPolicyPatch(base, tool, patch)?.[tool]);
     }
     if (seqRef.current.get(tool) !== seq) return;
+    pendingRef.current.delete(tool);
     if (!ok) {
       const revertTo = restorePatch(confirmedEntry(tool));
       setShown((o) => withPolicyPatch(o, tool, revertTo));
