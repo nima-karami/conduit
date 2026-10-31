@@ -43,6 +43,7 @@ await runScenario(
     await tapMcp(page);
     const root = mkdtempSync(join(tmpdir(), 'conduit-mcp-app-git-'));
     const { dir: repo, shas } = gitFixture(join(root, 'repo'), { commits: 600 });
+    const { dir: outside } = gitFixture(join(root, 'outside'), { commits: 2 });
 
     const isActive = async (sessionId) => (await activeSessionId(page)) === sessionId;
     const makeActive = async (sessionId) => {
@@ -53,6 +54,12 @@ await runScenario(
       assert(
         await until(async () => (await activeTab(page)) === id, 10_000),
         `active tab is ${await activeTab(page)}, not ${id}`,
+      );
+    const sourceLabel = () =>
+      page.evaluate(
+        () =>
+          document.querySelector('.review .review__source .gh__reffilter-label')?.textContent ??
+          null,
       );
     const detail = () =>
       page.evaluate(() => ({
@@ -107,21 +114,36 @@ await runScenario(
     });
     log('open_review working activates Review ✓');
 
+    // Each open starts from the terminal tab, so the Review activating is the open's doing, and
+    // the header label is what Review rendered from the source it was handed.
+    const reviewShows = async (label, open) => {
+      await page.locator('.tab[data-tabid="__terminal__"]').first().click();
+      await waitActiveTab(null);
+      const r = await open();
+      await waitActiveTab(REVIEW);
+      assert(
+        await until(async () => (await sourceLabel()) === label, 10_000),
+        `Review shows "${await sourceLabel()}", not "${label}"`,
+      );
+      return r;
+    };
+
     phase('review commit');
-    const commit = await callTool(page, a.sessionId, 'open_review', {
-      source: { kind: 'commit', ref: shas[3] },
-    });
+    const commit = await reviewShows(`${shas[3].slice(0, 7)} c4`, () =>
+      callTool(page, a.sessionId, 'open_review', { source: { kind: 'commit', ref: shas[3] } }),
+    );
     assert(
       same(commit, { opened: 'review', source: { kind: 'commit', sha: shas[3] } }),
       `commit: ${JSON.stringify(commit)}`,
     );
-    await waitActiveTab(REVIEW);
-    log('open_review commit resolves the sha ✓');
+    log('open_review commit resolves the sha and Review shows c4 ✓');
 
     phase('review range');
-    const range = async (base, head) =>
-      callTool(page, a.sessionId, 'open_review', { source: { kind: 'range', base, head } });
-    const tagBranch = await range('v1', 'feature');
+    const range = (label, base, head) =>
+      reviewShows(label, () =>
+        callTool(page, a.sessionId, 'open_review', { source: { kind: 'range', base, head } }),
+      );
+    const tagBranch = await range('v1…feature', 'v1', 'feature');
     assert(
       same(tagBranch?.source, {
         kind: 'range',
@@ -130,7 +152,7 @@ await runScenario(
       }),
       `v1…feature: ${JSON.stringify(tagBranch)}`,
     );
-    const branches = await range('feature', 'main');
+    const branches = await range('feature…main', 'feature', 'main');
     assert(
       same(branches?.source, {
         kind: 'range',
@@ -139,7 +161,11 @@ await runScenario(
       }),
       `feature…main: ${JSON.stringify(branches)}`,
     );
-    const toWorking = await range(shas[5].slice(0, 10), 'working');
+    const toWorking = await range(
+      `${shas[5].slice(0, 7)}…Working tree`,
+      shas[5].slice(0, 10),
+      'working',
+    );
     assert(
       same(toWorking?.source, {
         kind: 'range',
@@ -148,16 +174,15 @@ await runScenario(
       }),
       `sha…working: ${JSON.stringify(toWorking)}`,
     );
-    await waitActiveTab(REVIEW);
-    log('ranges classify tag, branch, commit and working endpoints ✓');
+    log('ranges classify tag, branch, commit and working endpoints, and Review shows each ✓');
 
     phase('bad refs');
+    const labelBefore = await sourceLabel();
     const refusals = [
       ['open_review', { source: { kind: 'range', base: '-x', head: 'main' } }, 'bad_ref'],
       ['open_review', { source: { kind: 'commit', ref: '--all' } }, 'bad_ref'],
       ['open_review', { source: { kind: 'commit', ref: 'nope' } }, 'bad_ref'],
       ['open_review', { source: { kind: 'range', base: 'working', head: 'main' } }, 'bad_ref'],
-      ['open_review', { source: { kind: 'working' }, repo: '..' }, 'not_a_repo'],
       ['open_git_history', { ref: '-x' }, 'bad_ref'],
       ['open_git_history', { ref: 'nope' }, 'bad_ref'],
     ];
@@ -166,12 +191,27 @@ await runScenario(
       const r = await callTool(page, a.sessionId, tool, args);
       assert(errCode(r) === code, `${tool} ${JSON.stringify(args)}: ${JSON.stringify(r)}`);
     }
+    // A real repository outside the session's folders: only the confinement check refuses it.
+    for (const tool of ['open_review', 'open_git_history']) {
+      const args =
+        tool === 'open_review' ? { source: { kind: 'working' }, repo: outside } : { repo: outside };
+      const r = await callTool(page, a.sessionId, tool, args);
+      assert(
+        errCode(r) === 'not_a_repo' &&
+          r.error.message.includes('home folder or an attached folder'),
+        `${tool} outside repo: ${JSON.stringify(r)}`,
+      );
+    }
     assert(
       same(await shownTabs(page), tabsBefore),
       `a refusal opened a tab: ${await shownTabs(page)}`,
     );
     assert((await activeTab(page)) === REVIEW, 'a refusal moved the active tab');
-    log('leading "-", unknown refs, working as base and a foreign repo are refused ✓');
+    assert(
+      (await sourceLabel()) === labelBefore,
+      `a refusal changed Review to ${await sourceLabel()}`,
+    );
+    log('leading "-", unknown refs, working as base and a repo outside the session are refused ✓');
 
     phase('history at depth');
     await keepsFocus('open_git_history', async () => {
