@@ -782,6 +782,35 @@ describe('open_git_history', () => {
     expect(code(await app.prepareOpenGitHistory(caller(), { ref: '--all' }, ctx))).toBe('bad_ref');
     expect(code(await app.prepareOpenGitHistory(caller(), { ref: 3 }, ctx))).toBe('invalid_args');
   });
+
+  it('a throwing git (prepare) or a throwing run → open_failed, never a rejection; refunded', async () => {
+    const h = harness();
+    h.deps.git = async () => {
+      throw new Error('spawn EINVAL');
+    };
+    const app = build(h);
+    const { ctx } = context();
+    for (let i = 0; i < SHOW_RATE_PER_CALLER + 2; i++) {
+      const r = await app.prepareOpenGitHistory(caller(), { ref: 'v1' }, ctx);
+      expect(code(r)).toBe('open_failed');
+      expect(r.ok ? '' : r.error.message).toContain('spawn EINVAL');
+    }
+    await budgetIntact(app, 'show');
+    const app2 = build(harness());
+    const throwing: ControlCallContext = {
+      move: undefined,
+      reach: undefined,
+      ui: async () => {
+        throw new Error('send blew up');
+      },
+    };
+    for (let i = 0; i < SHOW_RATE_PER_CALLER + 2; i++) {
+      const r = await runIt(app2.prepareOpenGitHistory(caller(), {}, throwing));
+      expect(code(r)).toBe('open_failed');
+      expect(r.ok ? '' : r.error.message).toContain('send blew up');
+    }
+    await budgetIntact(app2, 'show');
+  });
 });
 
 describe('open_url', () => {

@@ -27,6 +27,14 @@ const firstLine = (s: string): string =>
     .map((l) => l.trim())
     .find((l) => l.length > 0) ?? '';
 
+const hasControlChar = (s: string): boolean => {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f) return true;
+  }
+  return false;
+};
+
 /** A leading '-' never reaches git: rev-parse has no --end-of-options on older git (plan r1). */
 function checkValue(value: string): Result<never> | null {
   if (value.length === 0 || value.length > MAX_REF_CHARS)
@@ -35,6 +43,8 @@ function checkValue(value: string): Result<never> | null {
       error: toolError('invalid_args', `a ref must be 1–${MAX_REF_CHARS} characters`),
     };
   if (value.startsWith('-')) return badRef('a ref may not start with "-"');
+  // A NUL in argv makes spawn throw synchronously; git refuses the rest anyway (git-check-ref-format).
+  if (hasControlChar(value)) return badRef('a ref may not contain control characters');
   return null;
 }
 

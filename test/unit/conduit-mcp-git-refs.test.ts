@@ -69,6 +69,21 @@ describe('git-refs input checks', () => {
     }
     expect(calls).toEqual([]);
   });
+
+  it('a control character (NUL, newline, DEL) is bad_ref without running git', async () => {
+    const { git, calls } = fakeGit({});
+    for (const v of ['main\0', 'a\nb', 'x\x7f', '\x1fy']) {
+      expect([v, await classifyRef(git, '/r', v)]).toMatchObject([
+        v,
+        { ok: false, error: { code: 'bad_ref' } },
+      ]);
+      expect([v, await lookupCommit(git, '/r', v)]).toMatchObject([
+        v,
+        { ok: false, error: { code: 'bad_ref' } },
+      ]);
+    }
+    expect(calls).toEqual([]);
+  });
 });
 
 describe('classifyRef', () => {

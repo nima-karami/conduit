@@ -308,12 +308,13 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
   }
 
   /**
-   * main's open path does real IO; a throw must still answer tools/call, because json-rpc awaits
-   * deps.call unguarded and an escaped rejection leaves the request unanswered.
+   * main's open path, git and the renderer step do real IO; a throw must still answer tools/call,
+   * because json-rpc awaits deps.call unguarded and an escaped rejection leaves the request
+   * unanswered.
    */
-  function failed(tool: string, caller: Caller, abs: string, e: unknown): Fail {
+  function failed(tool: string, caller: Caller, e: unknown, path?: string): Fail {
     const message = e instanceof Error ? e.message : String(e);
-    deps.info('control open failed', { tool, caller: caller.handle, path: abs, error: message });
+    deps.info('control open failed', { tool, caller: caller.handle, path, error: message });
     return fail('open_failed', message);
   }
 
@@ -342,8 +343,14 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     try {
       const who = home(caller);
       if (isFail(who)) return who;
-      const c = await check(who);
+      let c: CheckResult<T>;
+      try {
+        c = await check(who);
+      } catch (e) {
+        return failed(tool, caller, e);
+      }
       if (isFail(c)) return c;
+      const exec = c.exec;
       handed = true;
       return {
         ok: true,
@@ -352,7 +359,9 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
           routesUi: c.routesUi === true,
           async run() {
             try {
-              return await c.exec(token);
+              return await exec(token);
+            } catch (e) {
+              return failed(tool, caller, e);
             } finally {
               token.refund();
             }
@@ -409,7 +418,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
               launch,
             });
           } catch (e) {
-            return failed(tool, caller, abs, e);
+            return failed(tool, caller, e, abs);
           }
           if (!outcome.ok) return fail(outcome.code, outcome.message);
           token.keep();
@@ -482,7 +491,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
                 focus: a.focus,
               }));
             } catch (e) {
-              return failed('open_file', caller, abs, e);
+              return failed('open_file', caller, e, abs);
             }
             token.keep();
             deps.info('control open', {
