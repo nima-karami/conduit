@@ -115,6 +115,12 @@ describe('Settings → MCP tab', () => {
     ]);
   });
 
+  it('the Agent CLIs group says Conduit’s policy is the only gate once installed', async () => {
+    await mount();
+    const hints = [...document.body.querySelectorAll('.settools__hint')].map((p) => p.textContent);
+    expect(hints).toContain(S.singleGate);
+  });
+
   it('four rows in fixed order Claude Code, Codex, Cursor, OpenCode', async () => {
     await mount();
     const names = [...document.body.querySelectorAll('.mcp-install-row__name')].map(

@@ -1008,6 +1008,7 @@ function McpTab({
 
       <SetGroup title={S.clisTitle}>
         <p className="settools__hint">{S.clisDesc}</p>
+        <p className="settools__hint">{S.singleGate}</p>
         {!settings.conduitMcp && <p className="settools__hint">{S.masterOffHint}</p>}
         {AGENT_CLIS.map((cli) => (
           <McpInstallRow
