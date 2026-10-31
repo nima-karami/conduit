@@ -73,6 +73,8 @@ function mount(announce = vi.fn()): typeof announce {
 }
 
 const region = () => document.querySelector<HTMLElement>('.askcard');
+const rawToggle = () => document.querySelector<HTMLButtonElement>('.askcard button[aria-expanded]');
+const rawArgs = () => document.querySelector('.askcard pre.askcard__args');
 const button = (answer: string) =>
   document.querySelector<HTMLButtonElement>(`.askcard button[data-answer="${answer}"]`);
 
@@ -92,13 +94,35 @@ describe('ApprovalCard', () => {
     expect(r?.textContent).toContain('fake-1 requests open_session');
     expect(r?.textContent).toContain('Open a claude session in /w/a1');
     expect(r?.textContent).toContain('Ask: set for Other');
-    expect(r?.querySelector('pre.askcard__args')?.textContent).toBe(
-      JSON.stringify({ path: '/w/a1', agent: 'claude' }, null, 2),
-    );
     expect(
       [...(r?.querySelectorAll('button[data-answer]') ?? [])].map((b) => b.textContent),
     ).toEqual(['Deny', 'Approve', 'Always for this session']);
     expect(r?.textContent).not.toContain('1 of');
+  });
+
+  it('raw arguments start collapsed, expand on the button, and collapse again per ask', () => {
+    mount();
+    emit(ask('a1'));
+    emit(ask('a2', { handle: 'codex-2' }));
+    expect(rawToggle()?.getAttribute('aria-expanded')).toBe('false');
+    expect(rawToggle()?.textContent).toBe('Arguments');
+    expect(rawArgs()).toBeNull();
+    act(() => rawToggle()?.click());
+    expect(rawToggle()?.getAttribute('aria-expanded')).toBe('true');
+    const shown = rawArgs();
+    expect(shown?.textContent).toBe(JSON.stringify({ path: '/w/a1', agent: 'claude' }, null, 2));
+    expect(rawToggle()?.getAttribute('aria-controls')).toBe(shown?.parentElement?.id);
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>('.askcard button[aria-label="Next request"]')
+        ?.click(),
+    );
+    expect(rawToggle()?.getAttribute('aria-expanded')).toBe('false');
+    expect(rawArgs()).toBeNull();
+    act(() => rawToggle()?.click());
+    expect(rawArgs()?.textContent).toContain('/w/a2');
+    act(() => rawToggle()?.click());
+    expect(rawArgs()).toBeNull();
   });
 
   it('names the session and global layers in the reason', () => {

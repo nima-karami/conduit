@@ -7025,10 +7025,26 @@ body.gh-resizing {
   color: var(--text-dim);
   font-size: calc(12px * var(--font-scale));
 }
-.askcard__raw > summary {
+.askcard__rawtoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--text-dim);
+  font: inherit;
   font-size: calc(12px * var(--font-scale));
   cursor: pointer;
+}
+.askcard__rawtoggle:hover {
+  color: var(--text);
+}
+.askcard__rawchev {
+  transition: transform 0.12s ease;
+}
+.askcard__rawtoggle[aria-expanded="true"] .askcard__rawchev {
+  transform: rotate(180deg);
 }
 .askcard__args {
   margin: 6px 0 0;

@@ -1,9 +1,9 @@
-import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { cliKindOfHandle } from '../../src/conduit-mcp/handles';
 import type { AskAnswer, AskSummary } from '../../src/conduit-mcp/ui-types';
 import { MCP_STR } from '../conduit-mcp-strings';
-import { IconChevron } from '../icons';
+import { IconChevron, IconChevronDown } from '../icons';
 import { answerAsk, type PendingAskView, subscribeAskFocus, useAsks } from '../mcp-ask-store';
 
 export interface ApprovalCardProps {
@@ -38,6 +38,9 @@ function reasonText(a: PendingAskView): string {
 export function ApprovalCard({ announce }: ApprovalCardProps) {
   const asks = useAsks();
   const [index, setIndex] = useState(0);
+  // Keyed by ask: paging to another request starts its arguments collapsed (spec §2.4).
+  const [rawOpenFor, setRawOpenFor] = useState<string | null>(null);
+  const rawId = useId();
   const regionRef = useRef<HTMLElement>(null);
   const returnTo = useRef<Element | null>(null);
   const announced = useRef(new Set<string>());
@@ -64,6 +67,7 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
   if (typeof document === 'undefined' || asks.length === 0) return null;
   const at = Math.min(index, asks.length - 1);
   const ask = asks[at];
+  const rawOpen = rawOpenFor === ask.askId;
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.key !== 'Escape') return;
@@ -86,10 +90,21 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
       <div className="askcard__title">{STR.title(ask.callerHandle, ask.tool)}</div>
       <div className="askcard__summary">{summaryText(ask.summary)}</div>
       <div className="askcard__reason">{reasonText(ask)}</div>
-      <details className="askcard__raw">
-        <summary>{STR.rawArgs}</summary>
-        <pre className="askcard__args">{JSON.stringify(ask.args, null, 2)}</pre>
-      </details>
+      <div className="askcard__raw">
+        <button
+          type="button"
+          className="askcard__rawtoggle"
+          aria-expanded={rawOpen}
+          aria-controls={rawId}
+          onClick={() => setRawOpenFor(rawOpen ? null : ask.askId)}
+        >
+          <IconChevronDown size={12} className="askcard__rawchev" />
+          {STR.rawArgs}
+        </button>
+        <div id={rawId} hidden={!rawOpen}>
+          {rawOpen && <pre className="askcard__args">{JSON.stringify(ask.args, null, 2)}</pre>}
+        </div>
+      </div>
       <div className="askcard__foot">
         {asks.length > 1 && (
           <div className="askcard__pager">
