@@ -21,6 +21,11 @@ export interface PendingAskView {
 let asks: readonly PendingAskView[] = [];
 const listeners = new Set<() => void>();
 const focusListeners = new Set<() => void>();
+// Answered here but possibly ended at the host first (expiry or cancel racing the answer): the
+// askClosed that follows must still be told. An answer that won gets no askClosed, so the oldest
+// entries age out by count; a racing askClosed lands within one round trip of its answer.
+const answered = new Map<string, PendingAskView>();
+const ANSWERED_KEPT = 64;
 
 function setAsks(next: readonly PendingAskView[]): void {
   asks = next;
@@ -36,9 +41,11 @@ subscribe((m) => {
     return;
   }
   if (m.type !== 'mcp:askClosed') return;
-  const closed = asks.find((a) => a.askId === m.askId);
+  const waiting = asks.find((a) => a.askId === m.askId);
+  const closed = waiting ?? answered.get(m.askId);
   if (!closed) return;
-  setAsks(asks.filter((a) => a.askId !== m.askId));
+  answered.delete(m.askId);
+  if (waiting) setAsks(asks.filter((a) => a.askId !== m.askId));
   const message =
     m.outcome === 'expired'
       ? MCP_STR.ask.expired(closed.callerHandle)
@@ -64,8 +71,14 @@ export function useAsks(): readonly PendingAskView[] {
 
 /** Posts mcp:askAnswer and drops the ask locally. */
 export function answerAsk(askId: string, answer: AskAnswer): void {
-  if (!asks.some((a) => a.askId === askId)) return;
+  const ask = asks.find((a) => a.askId === askId);
+  if (!ask) return;
   post({ type: 'mcp:askAnswer', askId, answer });
+  answered.set(askId, ask);
+  if (answered.size > ANSWERED_KEPT) {
+    const oldest = answered.keys().next();
+    if (!oldest.done) answered.delete(oldest.value);
+  }
   setAsks(asks.filter((a) => a.askId !== askId));
 }
 

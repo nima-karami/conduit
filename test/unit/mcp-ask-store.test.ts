@@ -99,6 +99,19 @@ describe('mcp-ask-store', () => {
     });
   });
 
+  it('an answer that raced the expiry still toasts the expiry (review r1-S2 C8)', () => {
+    emit(ask('a1', 'codex-2'));
+    store.answerAsk('a1', 'approve');
+    emit({ type: 'mcp:askClosed', askId: 'a1', outcome: 'expired' });
+    expect(toast.pushToast).toHaveBeenCalledTimes(1);
+    expect(toast.pushToast).toHaveBeenCalledWith({
+      message: 'Request from codex-2 expired',
+      variant: 'info',
+    });
+    emit({ type: 'mcp:askClosed', askId: 'a1', outcome: 'expired' });
+    expect(toast.pushToast).toHaveBeenCalledTimes(1);
+  });
+
   it('askClosed for an unknown id is ignored', () => {
     emit(ask('a1'));
     const before = store.getAsksSnapshot();
