@@ -61,15 +61,18 @@ Paths are absolute or relative to the caller's persisted home. `session` takes a
 - **Session/split rule.** Tools never change which sessions are active or split, except
   `focus_session` and a `focus:true` session open (both governed by `move`). Show tools act on
   the caller's own session through **session-explicit** renderer entry points, never `activeIdRef`.
-  For a split-partner caller, the tab activates inside that pane.
+  A split partner has no editor pane of its own (only its terminal), so for a split-partner caller
+  the tab opens active in that session's own layout and shows when the human activates it. Review
+  and History are singletons, so opening one there takes it off the human's screen.
 - **`close_session`.**
   - It runs as the renderer action `closeSession`: the renderer checks the target's dirty tabs and
     posts `kill` in the same synchronous turn, which is the UI's teardown minus the confirm.
   - Dirty tabs → `unsaved_changes` (up to 20 paths); nothing is closed. Dirty state is keyed by
     path (app.tsx:2205), so a buffer dirty in another session also blocks.
   - When the caller closes itself, the result is written before `kill`.
-- **`focus_session`.** Sends `activateSession`. `{focused}` is returned once it is sent. A no-op if
-  the session is already active.
+- **`focus_session`.** Sends `activateSession` to the target's window. When that isn't the caller's
+  window, it also raises and focuses that window, as moving a session does. `{focused}` is returned
+  once it is sent. A no-op if the session is already active.
 - **`attach_folder`.**
   - It is `sessionOps.addRoot`, unchanged: checks, dedupe, persistence.
   - The home or an existing root gives success with `roots` unchanged.
@@ -87,9 +90,9 @@ Paths are absolute or relative to the caller's persisted home. `session` takes a
   - Always focuses the tab.
 - **`open_git_history`.**
   - With `ref`, the host resolves one `CommitNode` (`git log -1`), and the renderer selects it
-    the way a deep-search hit is selected (git-history-view.tsx:656), at any depth, with no
-    paging. The renderer replies on dispatch.
-  - The singleton moves to the caller's session, as the UI does (app.tsx:1003).
+    the way a deep-search hit is selected (components/git-history-view.tsx:655-659), at any
+    depth, with no paging. The renderer replies on dispatch.
+  - The singleton moves to the caller's session, as the UI does (app.tsx:1010, docs.ts:351-357).
   - Always focuses the tab.
 - **`open_url`.**
   - `normalizeUrl` moves from `webview/web-url.ts` to `src/`, so host and renderer share it:
@@ -105,7 +108,8 @@ Paths are absolute or relative to the caller's persisted home. `session` takes a
 
 - **Inputs:**
   - A value starting with `-` → `bad_ref`, before git runs.
-  - Every git call passes `--end-of-options`.
+  - `git log` gets `--end-of-options` before the value. `rev-parse` doesn't (older git echoes it
+    back); the leading-`-` check above already keeps options out.
 - **Classification:** `rev-parse --symbolic-full-name` decides the kind:
   - `refs/heads/x` → `branch{ref:x}`;
   - `refs/remotes/o/x` → `branch{ref:'o/x', remote:true}`;
@@ -121,7 +125,8 @@ Paths are absolute or relative to the caller's persisted home. `session` takes a
 |---|---|
 | Host→renderer | `{type:'mcp:ui', requestId, sessionId, action}`. `action`: `closeSession{target} \| closeFiles \| openReview \| openGitHistory{repoRoot, commit?: CommitNode} \| openUrl` |
 
-- **Routing:** everything goes to the caller's owner window. A window close or
+- **Routing:** everything goes to the caller's owner window, except `closeSession`, which goes to
+  the target's owner window (only that renderer holds the target's docs and unsaved buffers). A window close or
   `did-start-loading` fails its pending UI requests with `window_not_ready` and cancels its asks.
 - **Host-side tools:** `focus_session` and `attach_folder` need no UI reply.
 
@@ -159,8 +164,8 @@ policy spec §3.1 and §3.4, and §2.3 here, name both sides of every new flow. 
 
 - When `close_files` runs, every matching clean tab shall close and each dirty or unopened path
   shall be reported in `skipped`.
-- When `open_review` or `open_git_history` runs for a split-partner caller, the tab shall open in
-  that pane, with active and split unchanged.
+- When `open_review` or `open_git_history` runs for a split-partner caller, the tab shall open
+  active in that session's own layout, with active and split unchanged.
 - If a ref argument starts with `-`, then the host shall return `bad_ref` without running git.
 
 ## 6. State catalog (UI)
