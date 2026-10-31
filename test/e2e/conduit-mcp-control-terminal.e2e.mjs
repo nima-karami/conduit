@@ -14,6 +14,7 @@ import {
   fakeAgentProfile,
   openFake,
   sessions,
+  setSessionPolicy,
   sleep,
   tapMcp,
   until,
@@ -47,6 +48,9 @@ await runScenario(
     phase('setup');
     const main = await openFake(page, dirA);
     await enableToolViaDialog(page, main.sessionId, 'open_terminal', 'On');
+    // The phases below move the view off main; this scenario is about the command, not about
+    // visibility (tool-policy spec §2.3).
+    await setSessionPolicy(page, main.sessionId, 'open_terminal', { when: 'always' });
 
     phase('marker');
     const r = await callTool(page, main.sessionId, 'open_terminal', {

@@ -2,12 +2,14 @@
  * conduit-mcp-control — an agent opens sessions and files through the control tools (spec
  * docs/specs/2026-10-27-conduit-mcp-control-tools.md §7; plan T6.2). Sessions run the fake MCP
  * agent, so the real shim, gate and per-connection tool lists are in the path:
- *   - enabling open_session for main in its MCP tools dialog reaches main's live connection
- *     (list_changed + re-list) and not worker's;
- *   - a focused open lands in main's window and project, rooted at the dir, and becomes active;
- *   - worker, with default switches, is refused tool_disabled and nothing appears;
+ *   - main sets open_session On and worker sets it Off in their MCP tools dialogs; only worker's
+ *     live connection changes (list_changed + a re-list without it), since open_session's
+ *     default Ask is listed too (tool-policy spec §3.2);
+ *   - a focused open from main, on screen, lands in main's window and project, rooted at the dir,
+ *     and becomes active;
+ *   - worker is refused tool_disabled and nothing appears;
  *   - focus:false leaves main active;
- *   - open_file at line 40 shows the file's tab with the cursor on line 40.
+ *   - open_file, On by default, opens in main at line 40 with the cursor there.
  */
 import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -48,27 +50,34 @@ await runScenario(
     const main = await openFake(page, dirA, { projectId });
     const worker = await openFake(page, dirB);
     await enableToolViaDialog(page, main.sessionId, 'open_session', 'On');
+    await enableToolViaDialog(page, worker.sessionId, 'open_session', 'Off');
 
     phase('list_changed');
     assert(
-      await until(() => records(main.sessionId, 'LIST_CHANGED').length > 0, 15_000),
-      'main never received tools/list_changed',
+      await until(() => records(worker.sessionId, 'LIST_CHANGED').length > 0, 15_000),
+      'worker never received tools/list_changed',
     );
     assert(
-      await until(() => toolsSeen(main.sessionId).includes('open_session'), 10_000),
-      `main's re-list lacks open_session: ${JSON.stringify(toolsSeen(main.sessionId))}`,
+      await until(() => !toolsSeen(worker.sessionId).includes('open_session'), 10_000),
+      `worker's re-list still has open_session: ${JSON.stringify(toolsSeen(worker.sessionId))}`,
     );
     assert(
-      !toolsSeen(worker.sessionId).includes('open_session'),
-      `worker lists open_session: ${JSON.stringify(toolsSeen(worker.sessionId))}`,
+      toolsSeen(main.sessionId).includes('open_session'),
+      `main lacks open_session: ${JSON.stringify(toolsSeen(main.sessionId))}`,
     );
     assert(
-      records(worker.sessionId, 'LIST_CHANGED').length === 0,
-      'worker got a list_changed it had no reason for',
+      records(main.sessionId, 'LIST_CHANGED').length === 0,
+      'main got a list_changed it had no reason for',
     );
-    log('list_changed reached main only ✓');
+    log('list_changed reached worker only ✓');
 
     phase('focused open');
+    // open_session acts only while its caller is on screen (when: viewing).
+    await page.locator(`.session[data-sessionid="${main.sessionId}"]`).click();
+    assert(
+      await until(async () => (await activeSessionId(page)) === main.sessionId, 5_000),
+      'main never became active',
+    );
     const r = await callTool(page, main.sessionId, 'open_session', {
       path: opened[0],
       agent: FAKE_AGENT_ID,
@@ -130,7 +139,6 @@ await runScenario(
     log('background open kept main active ✓');
 
     phase('open_file');
-    await enableToolViaDialog(page, main.sessionId, 'open_file', 'On');
     writeFileSync(
       join(dirA, 'fixture.txt'),
       Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join('\n'),
