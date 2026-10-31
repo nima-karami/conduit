@@ -68,7 +68,8 @@ export interface ToolPolicyPatch {
 }
 
 type RateBudget = 'act' | 'show';
-export interface ToolSpec {
+type MessagingToolName = (typeof MESSAGING_TOOL_NAMES)[number];
+export interface ToolSpec<B extends RateBudget | null = RateBudget | null> {
   /** Applicable fields, 'access' first. */
   fields: readonly PolicyField[];
   /** Offered access values: messaging tools have no 'ask'. */
@@ -76,12 +77,12 @@ export interface ToolSpec {
   /** Offered reach values when 'reach' applies (Part B rows). */
   reach?: readonly Reach[];
   /** null: messaging, not budgeted. */
-  budget: RateBudget | null;
+  budget: B;
   defaults: ToolPolicy;
 }
 
 // Messaging has no 'ask': a card per read_inbox is noise (spec §3.2).
-const MESSAGING_SPEC: ToolSpec = {
+const MESSAGING_SPEC: ToolSpec<null> = {
   fields: ['access'],
   access: ['off', 'on'],
   budget: null,
@@ -89,7 +90,10 @@ const MESSAGING_SPEC: ToolSpec = {
 };
 const SESSION_FIELDS: readonly PolicyField[] = ['access', 'when', 'move'];
 
-export const TOOL_SPECS: Readonly<Record<ToolName, ToolSpec>> = {
+/** Typed per tool so a control tool's budget is never null. */
+export const TOOL_SPECS: Readonly<{
+  [K in ToolName]: ToolSpec<K extends MessagingToolName ? null : RateBudget>;
+}> = {
   list_sessions: MESSAGING_SPEC,
   send_message: MESSAGING_SPEC,
   read_inbox: MESSAGING_SPEC,

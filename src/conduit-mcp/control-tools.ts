@@ -231,8 +231,6 @@ class Budget {
   }
 }
 
-const UNBUDGETED: Token = { refund() {}, keep() {} };
-
 type ControlTool = Extract<ToolName, 'open_session' | 'open_terminal' | 'open_file'>;
 
 export function createControlHandlers(deps: ControlDeps): ControlHandlers {
@@ -242,8 +240,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
   };
 
   function reserve(tool: ControlTool, caller: Caller): Token | Fail {
-    const budget = TOOL_SPECS[tool].budget;
-    return budget === null ? UNBUDGETED : budgets[budget].reserve(caller.handle, deps.now());
+    return budgets[TOOL_SPECS[tool].budget].reserve(caller.handle, deps.now());
   }
 
   function home(caller: Caller): { sessionId: string; home: string } | Fail {
