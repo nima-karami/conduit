@@ -285,7 +285,7 @@ import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
 import { startLanguageServer } from './lsp-server';
 import { watchServerRoot } from './lsp-watcher';
-import { createMcpInstall } from './mcp-install';
+import { createMcpInstall, migrateGateOnce } from './mcp-install';
 import { NotesWatcher } from './notes-watcher';
 import { OpenFileWatcher } from './open-file-watcher';
 import { createOsFileClipboard, spawnPowerShell } from './os-file-clipboard';
@@ -1938,6 +1938,15 @@ app.whenReady().then(() => {
     for (const r of mcpInstall.repair()) {
       if (r.errorCode) log.warn('mcp-install', 'repair failed', r);
       else log.info('mcp-install', 'repaired', r);
+    }
+    const gate = migrateGateOnce(settings.mcpGateMigrated, mcpInstall);
+    for (const r of gate.rows) {
+      if (r.errorCode) log.warn('mcp-install', 'permission rule failed', r);
+      else log.info('mcp-install', 'permission rule added', r);
+    }
+    if (gate.done !== settings.mcpGateMigrated) {
+      settings = { ...settings, mcpGateMigrated: gate.done };
+      persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
     }
   }
 
@@ -3915,7 +3924,11 @@ app.whenReady().then(() => {
         case 'updateSettings':
           // Coerce before persisting: drops unknown keys, clamps ranges, whitelists
           // enum strings, and runs the legacy codeBg→surfaceColor migration.
-          settings = coerceSettings(m.settings as unknown as Record<string, unknown>);
+          // mcpGateMigrated is host-owned: a renderer's stale copy must not re-arm the migration.
+          settings = {
+            ...coerceSettings(m.settings as unknown as Record<string, unknown>),
+            mcpGateMigrated: settings.mcpGateMigrated,
+          };
           persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
           mcpHost.refresh();
           // Push the new diagnostics level to the live logger (no restart). Log AFTER the
@@ -5022,6 +5035,12 @@ app.whenReady().then(() => {
     if (!req) throw new Error('invalid mcpInstall request');
     const r = mcpInstall.act(req);
     if (r.ok) mcpHost.onInstallChanged();
+    if (r.ok && r.permissionErrorCode) {
+      log.warn('mcp-install', 'permission rule not written', {
+        cli: req.cli,
+        code: r.permissionErrorCode,
+      });
+    }
     return r;
   });
 

@@ -194,6 +194,8 @@ export interface AppSettings {
   // (docs/specs/2026-10-27-conduit-mcp-install.md §3.6).
   mcpInstallSuggest: boolean;
   mcpInstallPromptDismissed: InstallDismissals;
+  // Host-owned: the one-time pass that added the CLIs' permission rules ran (docs/specs/2026-10-31-conduit-mcp-single-gate.md §3.5).
+  mcpGateMigrated: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -258,6 +260,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   mcpToolPolicyByCli: {},
   mcpInstallSuggest: true,
   mcpInstallPromptDismissed: {},
+  mcpGateMigrated: false,
 };
 
 const LOG_LEVELS: LogLevel[] = ['off', 'error', 'warn', 'info', 'debug', 'trace'];
@@ -545,6 +548,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     mcpToolPolicyByCli: coerceCliLayers(payload.mcpToolPolicyByCli) ?? {},
     mcpInstallSuggest: bool(payload.mcpInstallSuggest, DEFAULT_SETTINGS.mcpInstallSuggest),
     mcpInstallPromptDismissed: coerceInstallDismissals(payload.mcpInstallPromptDismissed),
+    mcpGateMigrated: bool(payload.mcpGateMigrated, DEFAULT_SETTINGS.mcpGateMigrated),
   };
 }
 

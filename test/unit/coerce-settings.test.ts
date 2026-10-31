@@ -510,6 +510,13 @@ describe('coerceSettings — MCP install suggestions', () => {
     expect(back.mcpInstallPromptDismissed).toEqual({ codex: true });
     expect(back.mcpInstallSuggest).toBe(false);
   });
+
+  it('mcpGateMigrated: absent or non-boolean → false; true round-trips', () => {
+    expect(coerceSettings({}).mcpGateMigrated).toBe(false);
+    expect(coerceSettings({ mcpGateMigrated: 'yes' }).mcpGateMigrated).toBe(false);
+    const back = restoreSettings(serializeSettings(coerceSettings({ mcpGateMigrated: true })));
+    expect(back.mcpGateMigrated).toBe(true);
+  });
 });
 
 describe('coerceSettings — mcpToolPolicy (tool-policy spec §3.1)', () => {
