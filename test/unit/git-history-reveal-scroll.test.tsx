@@ -7,6 +7,7 @@ import type { CommitNode, HostToWebview, WebviewToHost } from '../../src/protoco
 import { GitHistoryView } from '../../webview/components/git-history-view';
 import { requestHistoryReveal } from '../../webview/history-reveal';
 import { SettingsProvider } from '../../webview/settings';
+import { setViewState } from '../../webview/view-state-store';
 
 // Reveal scroll (review B-S1 E9): an MCP open_git_history of a commit in the loaded pages brings
 // its row into the virtualized list's view; one beyond them leaves the scroll alone.
@@ -82,27 +83,27 @@ const commit = (i: number): CommitNode => ({
 });
 const LOADED = Array.from({ length: 300 }, (_, i) => commit(i));
 
-function mount() {
+const view = (repoRoot: string, viewStateId?: string) =>
+  createElement(
+    SettingsProvider,
+    null,
+    createElement(GitHistoryView, {
+      sessionId: 'S',
+      repoRoot,
+      repos: [],
+      onRetarget: () => {},
+      viewStateId,
+    }),
+  );
+
+function mount(repoRoot = '/r', viewStateId?: string) {
   host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
-  act(() =>
-    root?.render(
-      createElement(
-        SettingsProvider,
-        null,
-        createElement(GitHistoryView, {
-          sessionId: 'S',
-          repoRoot: '/r',
-          repos: [],
-          onRetarget: () => {},
-        }),
-      ),
-    ),
-  );
+  act(() => root?.render(view(repoRoot, viewStateId)));
 }
 
-function deliverHistory() {
+function deliverHistory(repoRoot = '/r') {
   const req = bridge.posted.filter((m) => m.type === 'git:history').at(-1);
   if (req?.type !== 'git:history') throw new Error('no git:history request');
   act(() => {
@@ -110,7 +111,7 @@ function deliverHistory() {
       l({
         type: 'git:historyResult',
         sessionId: 'S',
-        repoRoot: '/r',
+        repoRoot,
         requestId: req.requestId,
         commits: LOADED,
         layout: assignLanes(LOADED),
@@ -127,6 +128,15 @@ const list = () => {
 };
 
 describe('history reveal scroll', () => {
+  it('a reveal cleared by a retarget no longer suppresses the persisted-selection restore', () => {
+    setViewState('vs', { kind: 'scroll', top: 0, selectedSha: LOADED[3].sha });
+    requestHistoryReveal('S', '/r', LOADED[120]);
+    mount('/r', 'vs');
+    act(() => root?.render(view('/q', 'vs')));
+    deliverHistory('/q');
+    expect(list().querySelector('[aria-selected="true"]')?.textContent ?? 'none').toContain('c3');
+  });
+
   it('a revealed commit in the loaded pages is scrolled into view', () => {
     mount();
     deliverHistory();

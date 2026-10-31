@@ -271,15 +271,14 @@ export function GitHistoryView({
   }, [requestHistory, repoRoot, scheduleSearch]);
 
   // A commit an MCP open_git_history handed over for this (session, repo). Declared after the
-  // load effect so its retarget/request lands first; the persisted-selection restore yields to it.
-  const revealTakenRef = useRef(false);
+  // load effect so its retarget/request lands first; the persisted-selection restore yields to it
+  // while `state.revealed` holds it (a retarget clears it).
   /** The revealed sha still to be scrolled to, once the list has loaded and mounted. */
   const revealScrollRef = useRef<string | null>(null);
   useEffect(() => {
     const take = () => {
       const commit = takeHistoryReveal(sessionId, repoRoot);
       if (!commit) return;
-      revealTakenRef.current = true;
       revealScrollRef.current = commit.sha;
       dispatch({ type: 'reveal', commit });
     };
@@ -487,7 +486,7 @@ export function GitHistoryView({
         // Reopen the same commit's detail — but only if that sha survived into the loaded set;
         // a dangling sha would leave the detail lookup null (no crash, just no detail).
         if (
-          !revealTakenRef.current &&
+          state.revealed === null &&
           saved.selectedSha &&
           commitsRef.current.some((c) => c.sha === saved.selectedSha)
         ) {
@@ -523,12 +522,14 @@ export function GitHistoryView({
     revealScrollRef.current = null;
     const el = listRef.current;
     const index = indexBySha.get(sha);
-    if (!el || index === undefined || !state.commits.some((c) => c.sha === sha)) return;
+    // A retarget cleared the reveal: its sha may name a row in the new repo, but nothing asked for it.
+    if (!el || index === undefined || state.revealed?.sha !== sha) return;
+    if (!state.commits.some((c) => c.sha === sha)) return;
     const top = scrollTopToShow(index, ROW_HEIGHT, el.scrollTop, el.clientHeight);
     if (top === null) return;
     el.scrollTop = top;
     setScrollTop(top);
-  }, [state.phase, state.commits, indexBySha]);
+  }, [state.phase, state.commits, state.revealed, indexBySha]);
 
   // Capture the selected commit into the same per-doc entry on every change (select via click /
   // arrow keys, deselect via Esc / close, or a refresh that drops a vanished sha). Gated on
