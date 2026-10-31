@@ -20,6 +20,8 @@ All notable user-facing changes to Conduit. Format follows
 - **New defaults.** `open_file` is **On** (was off) and `open_session` is **Ask** (was off).
   `open_session`, `open_terminal` and `open_file` act only while the agent's session is on
   screen, unless set to **Always**.
+- **`open_file` is rate-limited.** Each agent can open up to 30 files a minute, on its own
+  budget, separate from the one for opening sessions and terminals.
 - **Your v0.50 switches carry over.** A tool you turned on becomes On · Always; a messaging tool
   you turned off stays off. Going back to v0.50 drops the policies and returns to its defaults.
 
