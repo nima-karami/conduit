@@ -1,4 +1,9 @@
-import { type HistoryPhase, isStaleHistory, phaseAfterResult } from '../src/git-search';
+import {
+  dedupeAndSortCommits,
+  type HistoryPhase,
+  isStaleHistory,
+  phaseAfterResult,
+} from '../src/git-search';
 import type { CommitNode, HistoryState as HistoryReadState } from '../src/protocol';
 
 export interface HistoryState {
@@ -15,6 +20,8 @@ export interface HistoryState {
   query: string;
   /** Active ref-name filter, or null = all refs. */
   refFilter: string | null;
+  /** A commit handed over by an MCP open; displayed and selectable at any depth (no paging). */
+  revealed: CommitNode | null;
 }
 
 export type HistoryAction =
@@ -31,6 +38,7 @@ export type HistoryAction =
   | { type: 'select'; sha: string | null }
   | { type: 'setQuery'; query: string }
   | { type: 'setRefFilter'; refName: string | null }
+  | { type: 'reveal'; commit: CommitNode }
   | { type: 'retarget' };
 
 export const initialHistoryState: HistoryState = {
@@ -41,6 +49,7 @@ export const initialHistoryState: HistoryState = {
   selectedSha: null,
   query: '',
   refFilter: null,
+  revealed: null,
 };
 
 // The host tags each result with a 3-state outcome (ok/empty/error), so a transient failure
@@ -57,6 +66,12 @@ export function historyReducer(state: HistoryState, action: HistoryAction): Hist
         query: state.query,
         refFilter: state.refFilter,
         searchCommits: state.searchCommits,
+        // The view's mount load is a hard request; a commit an MCP open revealed stays selected.
+        revealed: state.revealed,
+        selectedSha:
+          state.revealed !== null && state.selectedSha === state.revealed.sha
+            ? state.selectedSha
+            : null,
       };
     case 'requestMore':
       return { ...state, phase: 'loading-more' };
@@ -72,7 +87,9 @@ export function historyReducer(state: HistoryState, action: HistoryAction): Hist
       // Keep the selection only if the selected commit still exists after the refresh; else
       // clear it (and its in-flight diff) so the detail drawer doesn't point at a gone sha.
       const selectionAlive =
-        state.selectedSha !== null && commits.some((c) => c.sha === state.selectedSha);
+        state.selectedSha !== null &&
+        (state.selectedSha === state.revealed?.sha ||
+          commits.some((c) => c.sha === state.selectedSha));
       // A ref the user was filtering by may vanish on refresh (branch deleted) — drop the
       // filter back to "all" so the view doesn't strand them on an empty result.
       const refStillPresent =
@@ -91,6 +108,8 @@ export function historyReducer(state: HistoryState, action: HistoryAction): Hist
       return { ...state, searchCommits: action.commits };
     case 'select':
       return { ...state, selectedSha: action.sha };
+    case 'reveal':
+      return { ...state, revealed: action.commit, selectedSha: action.commit.sha };
     case 'setQuery':
       // Clearing the query drops the deep-history hits so the pristine paged graph returns.
       return {
@@ -103,6 +122,18 @@ export function historyReducer(state: HistoryState, action: HistoryAction): Hist
     case 'retarget':
       return { ...initialHistoryState, query: state.query };
   }
+}
+
+/** What the graph shows: the paged set, plus the deep-search hits while a query is active and a
+ *  revealed commit; the paged set itself when there is neither. */
+export function displayCommits(state: HistoryState): CommitNode[] {
+  const hits = state.query.trim() ? state.searchCommits : [];
+  if (hits.length === 0 && state.revealed === null) return state.commits;
+  return dedupeAndSortCommits([
+    ...state.commits,
+    ...hits,
+    ...(state.revealed ? [state.revealed] : []),
+  ]);
 }
 
 /** Drop a `git:historyResult` unless it is this view's session and repo (both undefined counts)

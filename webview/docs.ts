@@ -132,6 +132,9 @@ export type DocsAction =
       diffScope?: DiffTabScope;
       repoRoot?: string;
       group?: GroupIndex;
+      /** The session the window shows. A foreground open into another session lands active in
+       *  that session's layout and leaves `activeId` on the shown one; absent ⇒ `sessionId`. */
+      shown?: string;
     }
   // Update a doc's tab label. Used by the web view to adopt the live page <title>.
   | { type: 'setTitle'; id: string; title: string }
@@ -161,7 +164,15 @@ export type DocsAction =
     }
   // Open/retarget the singleton Review tab to a source (working tree or a commit). Keeps the
   // stable REVIEW_DOC_ID so it stays a singleton; transfers ownership to `sessionId`.
-  | { type: 'openReview'; sessionId: string; source: ReviewSource; group?: GroupIndex }
+  | {
+      type: 'openReview';
+      sessionId: string;
+      source: ReviewSource;
+      group?: GroupIndex;
+      /** The session the window shows. A foreground open into another session lands active in
+       *  that session's layout and leaves `activeId` on the shown one; absent ⇒ `sessionId`. */
+      shown?: string;
+    }
   // Promote a preview tab to a pinned one (double-click the tab).
   | { type: 'pinDoc'; id: string; group?: GroupIndex }
   | { type: 'reorder'; dragId: string; targetId: string | null; group?: GroupIndex }
@@ -341,7 +352,7 @@ interface OpenSpec {
 /** Foreground open: see docs/plans/2026-09-28-split-editor.plan.md "open, foreground" (P1b). */
 function openForeground(
   state: DocsState,
-  o: OpenSpec & { preview: boolean; patch: (doc: OpenDoc) => OpenDoc },
+  o: OpenSpec & { preview: boolean; patch: (doc: OpenDoc) => OpenDoc; shown?: string },
 ): DocsState {
   const s = o.sessionId;
   const g = o.group ?? openTargetGroup(state, s);
@@ -374,7 +385,7 @@ function openForeground(
     next = placeTab(target, o.id, o.preview && !(transferred && isPreviewable(o.kind)), docs);
   }
   layouts[s] = { ...setGroup(layout, g, { ...next, active: o.id }), activeGroup: g };
-  return finalize({ docs, layouts, activeId: state.activeId }, touched, s);
+  return finalize({ docs, layouts, activeId: state.activeId }, touched, o.shown ?? s);
 }
 
 /** Pinned and never activated; an existing tab keeps its place and its owner (unlike a
@@ -574,7 +585,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         return openInBackground(state, { ...spec, patch: changesDoc ? patch : undefined });
       }
       const preview = isPreviewable(action.kind) && action.mode === 'preview';
-      return openForeground(state, { ...spec, preview, patch });
+      return openForeground(state, { ...spec, preview, patch, shown: action.shown });
     }
     case 'setTitle': {
       const idx = state.docs.findIndex((d) => d.id === action.id);
@@ -682,6 +693,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
           reviewSource,
         }),
         patch: (d) => ({ ...d, reviewSource }),
+        shown: action.shown,
       });
     }
     case 'openCommitFile':

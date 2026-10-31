@@ -1098,3 +1098,69 @@ describe('docsReducer moveFiles', () => {
     expect(r.docs.filter((d) => d.id === 'file:/w/b.ts')).toHaveLength(1);
   });
 });
+
+// spec 2026-10-30-conduit-mcp-app-control §2.4 (plan T2.1): an MCP open into a session the window
+// doesn't show must not re-point the shown session's active tab.
+describe('docsReducer — open into a session that is not shown', () => {
+  const shownA = () => {
+    let s = open(initialDocs, 'file', '/a.ts', 'A');
+    s = open(s, 'file', '/b.ts', 'B');
+    return docsReducer(s, { type: 'activate', id: 'file:/a.ts' });
+  };
+
+  it('a foreground open into a non-shown session keeps the shown cache', () => {
+    const s0 = shownA();
+    expect(s0.activeId).toBe('file:/a.ts');
+    const s = docsReducer(s0, {
+      type: 'open',
+      kind: 'web',
+      path: 'https://x.test/',
+      sessionId: 'B',
+      shown: 'A',
+    });
+    expect(s.activeId).toBe('file:/a.ts');
+    expect(remembered(s, 'B')).toBe('web:https://x.test/');
+    expect(s.layouts.B.activeGroup).toBe(1);
+    expect(s.layouts.A).toBe(s0.layouts.A);
+  });
+
+  it('shown === sessionId behaves exactly like omitting it', () => {
+    const s0 = shownA();
+    const web = { type: 'open', kind: 'web', path: 'https://x.test/', sessionId: 'B' } as const;
+    expect(docsReducer(s0, { ...web, shown: 'B' })).toStrictEqual(docsReducer(s0, web));
+    const review = { type: 'openReview', sessionId: 'B', source: { kind: 'working' } } as const;
+    expect(docsReducer(s0, { ...review, shown: 'B' })).toStrictEqual(docsReducer(s0, review));
+  });
+
+  it("a split partner's openReview takes the Review singleton off the shown session", () => {
+    let s = shownA();
+    s = docsReducer(s, { type: 'openReview', sessionId: 'A', source: { kind: 'working' } });
+    expect(s.activeId).toBe(REVIEW_DOC_ID);
+    s = docsReducer(s, {
+      type: 'openReview',
+      sessionId: 'B',
+      source: { kind: 'working' },
+      shown: 'A',
+    });
+    expect(tabs(s, 'A').map((d) => d.id)).toEqual(['file:/a.ts']);
+    expect(s.activeId).toBe('file:/a.ts');
+    expect(remembered(s, 'B')).toBe(REVIEW_DOC_ID);
+    expect(s.docs.find((d) => d.id === REVIEW_DOC_ID)?.sessionId).toBe('B');
+  });
+
+  it("a split partner's openReview leaves a Review-only shown session with no active tab", () => {
+    let s = docsReducer(initialDocs, {
+      type: 'openReview',
+      sessionId: 'A',
+      source: { kind: 'working' },
+    });
+    s = docsReducer(s, {
+      type: 'openReview',
+      sessionId: 'B',
+      source: { kind: 'working' },
+      shown: 'A',
+    });
+    expect(s.activeId).toBeNull();
+    expect(remembered(s, 'B')).toBe(REVIEW_DOC_ID);
+  });
+});

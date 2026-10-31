@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CommitNode } from '../../src/protocol';
 import {
   acceptHistoryResult,
+  displayCommits,
   type HistoryState,
   historyReducer,
   initialHistoryState,
@@ -34,6 +35,7 @@ describe('historyReducer', () => {
       selectedSha: 'aaa',
       query: 'fix',
       refFilter: 'main',
+      revealed: commit('ddd'),
     };
     expect(historyReducer(loaded, { type: 'retarget' })).toEqual({
       phase: 'loading',
@@ -43,6 +45,7 @@ describe('historyReducer', () => {
       selectedSha: null,
       query: 'fix',
       refFilter: null,
+      revealed: null,
     });
   });
 
@@ -87,5 +90,58 @@ describe('acceptHistoryResult', () => {
     expect(acceptHistoryResult({ ...base, requestId: 7, query: 'fix' }, view)).toBe(true);
     expect(acceptHistoryResult({ ...base, requestId: 4, query: 'fix' }, view)).toBe(false);
     expect(acceptHistoryResult({ ...base, requestId: 7, query: '  ' }, view)).toBe(false);
+  });
+});
+
+describe('historyReducer — reveal (spec 2026-10-30-conduit-mcp-app-control §2.1)', () => {
+  const loaded = (): HistoryState => ({
+    ...initialHistoryState,
+    phase: 'ready',
+    commits: [
+      { ...commit('ccc'), date: 3 },
+      { ...commit('bbb'), date: 2 },
+    ],
+    hasMore: true,
+  });
+  const deep = { ...commit('aaa'), date: 1 };
+
+  it('reveal selects and displays a commit outside the loaded set', () => {
+    const s = historyReducer(loaded(), { type: 'reveal', commit: deep });
+    expect(s.selectedSha).toBe('aaa');
+    expect(s.revealed).toStrictEqual(deep);
+    expect(displayCommits(s).map((c) => c.sha)).toEqual(['ccc', 'bbb', 'aaa']);
+  });
+
+  it('displayCommits is the loaded set itself with no query and nothing revealed', () => {
+    const s = loaded();
+    expect(displayCommits(s)).toBe(s.commits);
+  });
+
+  it('a revealed commit already loaded is shown once', () => {
+    const s = historyReducer(loaded(), { type: 'reveal', commit: { ...commit('bbb'), date: 2 } });
+    expect(displayCommits(s).map((c) => c.sha)).toEqual(['ccc', 'bbb']);
+  });
+
+  it('a refresh result keeps a revealed selection', () => {
+    let s = historyReducer(loaded(), { type: 'reveal', commit: deep });
+    s = historyReducer(s, { type: 'request' });
+    expect(s.revealed).toStrictEqual(deep);
+    s = historyReducer(s, {
+      type: 'result',
+      commits: [{ ...commit('ccc'), date: 3 }],
+      hasMore: true,
+      append: false,
+      state: 'ok',
+    });
+    expect(s.selectedSha).toBe('aaa');
+    expect(displayCommits(s).map((c) => c.sha)).toEqual(['ccc', 'aaa']);
+  });
+
+  it('retarget clears revealed', () => {
+    const s = historyReducer(historyReducer(loaded(), { type: 'reveal', commit: deep }), {
+      type: 'retarget',
+    });
+    expect(s.revealed).toBeNull();
+    expect(s.selectedSha).toBeNull();
   });
 });
