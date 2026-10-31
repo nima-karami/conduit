@@ -5,6 +5,7 @@
  *   - off: the global layer drops open_session from A's live tool list, and a call is refused;
  *   - ask: the card shows in A's window without taking focus, the chip counts it, and Deny,
  *     Approve and Always for this session each end the call as they say;
+ *   - the chip focuses the card and Esc hands focus back, answering nothing;
  *   - viewing: open_file from A while B is on screen is refused and opens nothing;
  *   - move:no: a focus:true open leaves A on screen;
  *   - a CLI's notifications/cancelled removes the card and gets no reply;
@@ -98,6 +99,17 @@ await runScenario(
       await until(async () => (await chip())?.startsWith('1 needs you'), 5_000),
       `chip: ${await chip()}`,
     );
+    // The chip is the keyboard way in: it focuses the card, and Esc hands focus back.
+    const focusIn = (sel) => page.evaluate((s) => !!document.activeElement?.closest(s), sel);
+    await page.locator('.attnchip').click();
+    assert(await until(() => focusIn('.askcard'), 5_000), 'the chip did not focus the card');
+    await page.keyboard.press('Escape');
+    assert(
+      await until(async () => !(await focusIn('.askcard')) && (await focusIn('.attnchip')), 5_000),
+      'Esc did not return focus to the chip',
+    );
+    assert((await card.count()) === 1, 'Esc answered or closed the card');
+    log('chip → card → Esc ✓');
     await page
       .locator(`.session[data-sessionid="${a.sessionId}"] .session__ask`)
       .waitFor({ timeout: 5_000 });
