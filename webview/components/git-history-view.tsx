@@ -20,7 +20,7 @@ import {
   rowY,
   splitBadges,
 } from '../../src/git-graph-render';
-import { collectRefs, filterCommits, scrollTopToShow, visibleRange } from '../../src/git-search';
+import { collectRefs, scrollTopToShow, visibleRange } from '../../src/git-search';
 import type { CommitNode, GitRef, GraphLayout, HostToWebview } from '../../src/protocol';
 import { repoLabel, repoSub } from '../../src/repo-display';
 import { repoGitFingerprint } from '../../src/repo-git';
@@ -33,6 +33,7 @@ import {
   displayCommits,
   historyReducer,
   initialHistoryState,
+  visibleHistoryCommits,
 } from '../git-history-state';
 import { subscribeHistoryReveal, takeHistoryReveal } from '../history-reveal';
 import {
@@ -421,7 +422,7 @@ export function GitHistoryView({
   // While a query is active, fold the host's deep-history hits into the loaded page (loaded copy
   // first so its full ref badges win the dedupe) — this is what surfaces a match beyond the
   // loaded window. Empty query → the pristine paged set, so clearing restores the normal graph.
-  const { commits, searchCommits, query, revealed } = state;
+  const { commits, searchCommits, query, refFilter, revealed, selectedSha } = state;
   const searchable = useMemo(
     () => displayCommits({ commits, searchCommits, query, revealed }),
     [commits, searchCommits, query, revealed],
@@ -429,8 +430,9 @@ export function GitHistoryView({
   // Client-side narrowing: text query + ref filter, then RE-RUN assignLanes over the subset
   // so lanes/edges only reference visible commits (no dangling edges to filtered-out rows).
   const visibleCommits = useMemo(
-    () => filterCommits(searchable, state.query, state.refFilter),
-    [searchable, state.query, state.refFilter],
+    () =>
+      visibleHistoryCommits({ commits, searchCommits, query, refFilter, revealed, selectedSha }),
+    [commits, searchCommits, query, refFilter, revealed, selectedSha],
   );
   const layout: GraphLayout = useMemo(() => assignLanes(visibleCommits), [visibleCommits]);
 

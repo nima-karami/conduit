@@ -1,5 +1,6 @@
 import {
   dedupeAndSortCommits,
+  filterCommits,
   type HistoryPhase,
   isStaleHistory,
   phaseAfterResult,
@@ -107,7 +108,12 @@ export function historyReducer(state: HistoryState, action: HistoryAction): Hist
     case 'searchResult':
       return { ...state, searchCommits: action.commits };
     case 'select':
-      return { ...state, selectedSha: action.sha };
+      // The revealed commit was injected for its selection; selecting anything else retires it.
+      return {
+        ...state,
+        selectedSha: action.sha,
+        revealed: state.revealed?.sha === action.sha ? state.revealed : null,
+      };
     case 'reveal':
       return { ...state, revealed: action.commit, selectedSha: action.commit.sha };
     case 'setQuery':
@@ -136,6 +142,21 @@ export function displayCommits(
     ...hits,
     ...(state.revealed ? [state.revealed] : []),
   ]);
+}
+
+/** The rows the graph lays out: displayCommits narrowed by the query and ref filter. A revealed
+ *  commit the filter would hide stays while it is selected, so the reveal never selects a row
+ *  that isn't there. */
+export function visibleHistoryCommits(
+  state: Pick<
+    HistoryState,
+    'commits' | 'searchCommits' | 'query' | 'refFilter' | 'revealed' | 'selectedSha'
+  >,
+): CommitNode[] {
+  const shown = filterCommits(displayCommits(state), state.query, state.refFilter);
+  const r = state.revealed;
+  if (r === null || state.selectedSha !== r.sha || shown.some((c) => c.sha === r.sha)) return shown;
+  return dedupeAndSortCommits([...shown, r]);
 }
 
 /** Drop a `git:historyResult` unless it is this view's session and repo (both undefined counts)

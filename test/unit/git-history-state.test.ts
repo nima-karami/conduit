@@ -6,6 +6,7 @@ import {
   type HistoryState,
   historyReducer,
   initialHistoryState,
+  visibleHistoryCommits,
 } from '../../webview/git-history-state';
 
 const commit = (sha: string, refs: CommitNode['refs'] = []): CommitNode => ({
@@ -143,5 +144,25 @@ describe('historyReducer — reveal (spec 2026-10-30-conduit-mcp-app-control §2
     });
     expect(s.revealed).toBeNull();
     expect(s.selectedSha).toBeNull();
+  });
+
+  it('selecting another commit (or none) drops the injected revealed commit', () => {
+    const r = historyReducer(loaded(), { type: 'reveal', commit: deep });
+    for (const sha of ['ccc', null]) {
+      const s = historyReducer(r, { type: 'select', sha });
+      expect([sha, s.revealed]).toEqual([sha, null]);
+      expect(displayCommits(s).map((c) => c.sha)).toEqual(['ccc', 'bbb']);
+    }
+    expect(historyReducer(r, { type: 'select', sha: 'aaa' }).revealed).toStrictEqual(deep);
+  });
+
+  it('a filter keeps a revealed commit visible only while it is selected', () => {
+    let s = historyReducer(loaded(), { type: 'reveal', commit: deep });
+    s = historyReducer(s, { type: 'setQuery', query: 'ccc' });
+    expect(visibleHistoryCommits(s).map((c) => c.sha)).toEqual(['ccc', 'aaa']);
+    s = historyReducer(s, { type: 'setRefFilter', refName: 'refs/heads/none' });
+    expect(visibleHistoryCommits(s).map((c) => c.sha)).toEqual(['aaa']);
+    s = historyReducer(s, { type: 'select', sha: 'ccc' });
+    expect(visibleHistoryCommits(s).map((c) => c.sha)).toEqual([]);
   });
 });
