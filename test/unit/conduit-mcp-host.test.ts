@@ -2780,6 +2780,19 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(c.errorOf(c.lines.find((l) => l.id === 1))).toBe('cancelled');
   });
 
+  it('onSessionDeleted answers every waiting ask before it closes', async () => {
+    const { h, c } = await asking();
+    for (const id of [1, 2, 3]) c.call(id, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 3);
+    await h.host.onSessionDeleted('s1');
+    await until(() => c.isClosed());
+    expect([1, 2, 3].map((id) => c.errorOf(c.lines.find((l) => l.id === id)))).toEqual([
+      'cancelled',
+      'cancelled',
+      'cancelled',
+    ]);
+  });
+
   it('onWindowReset of another window leaves the ask waiting', async () => {
     const { h, c } = await asking();
     c.call(1, 'open_session', OPEN);

@@ -72,7 +72,7 @@ export function createMcpEndpoint(opts: {
         id,
         token,
         send(line: string) {
-          if (!socket.destroyed) socket.write(`${line}\n`);
+          if (socket.writable) socket.write(`${line}\n`);
         },
         onLine(cb: (l: string) => void) {
           lineCbs.push(cb);
@@ -81,7 +81,9 @@ export function createMcpEndpoint(opts: {
           closeCbs.push(cb);
         },
         close() {
-          socket.destroy();
+          // destroy() alone drops queued writes: replies sent just before close would be lost.
+          if (socket.writable) socket.end(() => socket.destroy());
+          else socket.destroy();
         },
         deliver(line: string) {
           for (const cb of lineCbs) cb(line);
@@ -95,7 +97,8 @@ export function createMcpEndpoint(opts: {
     socket.on('data', (chunk: Buffer) => {
       pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
       let nl = pending.indexOf(0x0a);
-      while (nl >= 0 && !socket.destroyed) {
+      // Not writable once closed: nothing read after close() reaches the host.
+      while (nl >= 0 && socket.writable) {
         const line = pending.subarray(0, nl).toString('utf8').replace(/\r$/, '');
         pending = pending.subarray(nl + 1);
         if (conn) {

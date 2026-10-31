@@ -935,7 +935,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             conn.send(reply);
             const sessionId = current();
             if (resolved && !sessionId) {
-              conn.close();
+              // A draining connection still owes replies; the drain closes it after the last one.
+              if (!draining.has(conn.id)) conn.close();
               return;
             }
             // Live only once the CLI has completed initialize: a shim that merely dialled in is
