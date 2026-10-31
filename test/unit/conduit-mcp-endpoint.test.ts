@@ -51,8 +51,12 @@ describe('createMcpEndpoint', () => {
     ep = undefined;
   });
 
-  async function serve(onConnection: (c: EndpointConnection) => void, path = testEndpoint()) {
-    ep = createMcpEndpoint({ path, onConnection, log: noLog });
+  async function serve(
+    onConnection: (c: EndpointConnection) => void,
+    path = testEndpoint(),
+    closeFlushMs?: number,
+  ) {
+    ep = createMcpEndpoint({ path, onConnection, log: noLog, closeFlushMs });
     const r = await ep.listen();
     expect(r.ok).toBe(true);
     return path;
@@ -177,6 +181,36 @@ describe('createMcpEndpoint', () => {
     conn?.close();
     await done;
     await expect.poll(() => closedSeen).toBe(true);
+  });
+
+  it('close() to a peer that stops reading destroys the socket after the bound', async () => {
+    let conn: EndpointConnection | undefined;
+    let closedSeen = false;
+    const path = await serve(
+      (c) => {
+        conn = c;
+        c.onClose(() => (closedSeen = true));
+      },
+      testEndpoint(),
+      200,
+    );
+    const a = await dial(path);
+    let got = '';
+    a.setEncoding('utf8');
+    a.on('data', (d: string) => {
+      got += d;
+      // Reads the first reply, then never again.
+      if (got.includes('\n')) a.pause();
+    });
+    a.write('{"conduit":1,"token":"t"}\n');
+    await expect.poll(() => conn).toBeDefined();
+    conn?.send('{"id":1}');
+    await expect.poll(() => got).toBe('{"id":1}\n');
+    const big = `{"pad":"${'x'.repeat(4 * 1024 * 1024)}"}`;
+    for (let i = 0; i < 8; i++) conn?.send(big);
+    conn?.close();
+    await expect.poll(() => closedSeen, { timeout: 3_000 }).toBe(true);
+    expect(got.startsWith('{"id":1}\n')).toBe(true);
   });
 
   it('close() right after several sends still delivers every line', async () => {

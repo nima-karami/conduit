@@ -6,6 +6,8 @@ import type { Logger } from './logger';
 
 export const HELLO_MAX_BYTES = 4096;
 export const INBOUND_LINE_MAX_BYTES = 4 * 1024 * 1024;
+/** How long close() waits for queued replies to flush before destroying the socket anyway. */
+export const CLOSE_FLUSH_MS = 2_000;
 
 export interface EndpointConnection {
   readonly id: number;
@@ -50,7 +52,9 @@ export function createMcpEndpoint(opts: {
   path: string;
   onConnection(conn: EndpointConnection): void;
   log: Pick<Logger, 'debug' | 'warn'>;
+  closeFlushMs?: number;
 }): McpEndpoint {
+  const closeFlushMs = opts.closeFlushMs ?? CLOSE_FLUSH_MS;
   const sockets = new Set<net.Socket>();
   let nextId = 1;
 
@@ -82,8 +86,14 @@ export function createMcpEndpoint(opts: {
         },
         close() {
           // destroy() alone drops queued writes: replies sent just before close would be lost.
-          if (socket.writable) socket.end(() => socket.destroy());
-          else socket.destroy();
+          // Bounded, so a peer that stops reading can't hold a closed connection open.
+          if (!socket.writable) {
+            socket.destroy();
+            return;
+          }
+          const bound = setTimeout(() => socket.destroy(), closeFlushMs);
+          socket.once('close', () => clearTimeout(bound));
+          socket.end(() => socket.destroy());
         },
         deliver(line: string) {
           for (const cb of lineCbs) cb(line);
