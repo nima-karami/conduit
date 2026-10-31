@@ -392,7 +392,7 @@ Feature: Tool policies
 | Component | Actions | Pointer | Keyboard | Context menu | ARIA |
 |---|---|---|---|---|---|
 | Access control | Set Off/Ask/On | Click a segment | Arrows within the radiogroup, Tab between rows | — | `radiogroup`, labelled "<tool> access" |
-| Conditions | Expand; set fields | Click | Enter/Space on the disclosure; selects are native | — | `button` with `aria-expanded`; `select` with labels |
+| Conditions | Expand; set fields | Click | Enter/Space on the disclosure; each field is the app's `SelectField` (Enter/Space opens its menu, arrows move, Enter picks) | — | `button` with `aria-expanded`; each field a labelled `button` with `aria-haspopup` opening a menu of its values |
 | CLI picker | Choose a layer | Click | Arrows | — | `tablist` (the layers are views of one list) |
 | Approval card | Approve / Deny / Always / page | Click | Reached via the chip or F6 pane cycling (never auto-focused). Enter activates the focused button. Esc moves focus back without answering. | — | `region` labelled "Agent request"; arrival announced through a polite live region |
 
