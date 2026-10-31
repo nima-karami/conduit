@@ -16,6 +16,8 @@ vi.mock('../../webview/bridge', () => ({
   },
   post: bridge.post,
 }));
+const terminals = vi.hoisted(() => ({ focus: vi.fn() }));
+vi.mock('../../webview/terminal-bus', () => ({ requestTerminalFocus: terminals.focus }));
 
 type Card = typeof import('../../webview/components/approval-card');
 type Store = typeof import('../../webview/mcp-ask-store');
@@ -51,6 +53,7 @@ beforeEach(async () => {
   vi.resetModules();
   bridge.listeners.length = 0;
   bridge.post.mockReset();
+  terminals.focus.mockReset();
   store = await import('../../webview/mcp-ask-store');
   card = await import('../../webview/components/approval-card');
 });
@@ -389,5 +392,33 @@ describe('ApprovalCard', () => {
     press('approve');
     expect(region()).toBeNull();
     expect(document.activeElement).toBe(outside);
+  });
+
+  it("with nowhere to return to, the last answer lands in the caller's terminal (QA)", () => {
+    const textarea = document.createElement('textarea');
+    textarea.className = 'xterm-helper-textarea';
+    document.body.appendChild(textarea);
+    terminals.focus.mockImplementation(() => textarea.focus());
+    mount();
+    emit(ask('a1'));
+    // Tabbed in, not sent by the chip: nothing recorded to go back to.
+    act(() => button('deny')?.focus());
+    pressEnter();
+    expect(region()).toBeNull();
+    expect(terminals.focus).toHaveBeenCalledWith('s-a1');
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it('a focus request from nowhere (body) also returns to the terminal', () => {
+    const textarea = document.createElement('textarea');
+    document.body.appendChild(textarea);
+    terminals.focus.mockImplementation(() => textarea.focus());
+    mount();
+    emit(ask('a1'));
+    act(() => store.requestAskFocus());
+    act(() => button('approve')?.focus());
+    pressEnter();
+    expect(terminals.focus).toHaveBeenCalledWith('s-a1');
+    expect(document.activeElement).toBe(textarea);
   });
 });

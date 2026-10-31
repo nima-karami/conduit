@@ -5,6 +5,7 @@ import type { AskAnswer, AskSummary } from '../../src/conduit-mcp/ui-types';
 import { MCP_STR } from '../conduit-mcp-strings';
 import { IconChevron, IconChevronDown } from '../icons';
 import { answerAsk, type PendingAskView, subscribeAskFocus, useAsks } from '../mcp-ask-store';
+import { requestTerminalFocus } from '../terminal-bus';
 
 export interface ApprovalCardProps {
   announce(text: string): void;
@@ -114,8 +115,15 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
   const giveBackFocus = () => {
     const back = returnTo.current;
     returnTo.current = null;
-    if (back instanceof HTMLElement && back.isConnected) back.focus();
-    else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    if (back instanceof HTMLElement && back.isConnected && back !== document.body) {
+      back.focus();
+      return;
+    }
+    // Nowhere recorded (tabbed in, or sent from nothing focused): the caller's terminal is where
+    // the user works, and body would leave the keyboard nowhere.
+    requestTerminalFocus(ask.callerSessionId);
+    const left = document.activeElement;
+    if (left instanceof HTMLElement && regionRef.current?.contains(left)) left.blur();
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
