@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { type RefObject, useEffect } from 'react';
 import { IconClose, IconSearch } from '../icons';
 import { matchCountLabel } from '../review-search';
 
@@ -20,6 +20,7 @@ export function ReviewFindBar({
   partial,
   loading,
   focusNonce,
+  inputRef,
   onQueryChange,
   onToggleCase,
   onNext,
@@ -38,8 +39,12 @@ export function ReviewFindBar({
   partial: string | null;
   /** "Search all files" is fetching the rest. */
   loading: boolean;
-  /** Bumped on every `/` or Mod+F so a re-press refocuses and reselects the input. */
+  /**
+   * Bumped on every `/` or Mod+F so a re-press refocuses and reselects the input. 0 is a bar
+   * restored open with its Review, which a tool's open can remount: it takes no focus by itself.
+   */
   focusNonce: number;
+  inputRef: RefObject<HTMLInputElement | null>;
   onQueryChange: (q: string) => void;
   onToggleCase: () => void;
   onNext: () => void;
@@ -47,12 +52,10 @@ export function ReviewFindBar({
   onSearchAll: () => void;
   onClose: () => void;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
   // biome-ignore lint/correctness/useExhaustiveDependencies: focusNonce is the re-focus trigger
   useEffect(() => {
     const el = inputRef.current;
-    if (!el) return;
+    if (!el || focusNonce === 0) return;
     el.focus();
     el.select();
   }, [focusNonce]);

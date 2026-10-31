@@ -232,6 +232,7 @@ import {
   IconTrash,
   SessionGlyph,
 } from './icons';
+import { createLiveAnnouncer } from './live-region';
 import { registerLspHoverProvider } from './lsp-nav';
 import {
   restartableLanguages,
@@ -301,7 +302,7 @@ import {
 import { THEMES } from './themes';
 import { cancelTimedMessage, renewTimedMessage, subscribeTimerEvents } from './timer-store';
 import { pushToast } from './toast-store';
-import { openHidesFocus } from './tool-open-focus';
+import { runToolOpen, useDrainAfterCommit } from './tool-open-focus';
 import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';
 import {
   applyProjectFiles,
@@ -1036,7 +1037,7 @@ export function App() {
   // transfers ownership to the now-active session). Without `repoRoot` it shows the active repo
   // (docs/specs/archive/2026-09-23-mf-changes.md §2.5).
   const openGitHistoryIn = useCallback(
-    (sessionId: string, repoRoot?: string, reveal?: CommitNode) => {
+    (sessionId: string, repoRoot?: string, reveal?: CommitNode, group?: GroupIndex) => {
       const shown = activeIdRef.current ?? '';
       if (sessionId === shown) {
         recordNav({ sessionId, doc: { kind: 'git-history', path: GIT_HISTORY_DOC_PATH } });
@@ -1053,6 +1054,7 @@ export function App() {
         sessionId,
         repoRoot: root,
         shown,
+        group,
       });
     },
     [recordNav],
@@ -1306,31 +1308,28 @@ export function App() {
   // who opened what (spec 2026-10-30-conduit-mcp-app-control §2.1 "Focus").
   const mcpSessionsRef = useRef(mcp.state?.sessions);
   mcpSessionsRef.current = mcp.state?.sessions;
+  const announceToolOpen = useMemo(() => createLiveAnnouncer(() => navLiveRef.current), []);
   const landToolOpen = useCallback(
     (
       sessionId: string,
       what: Parameters<typeof MCP_STR.opened>[1],
       opened: (d: OpenDoc) => boolean,
-      open: () => void,
+      open: (group: GroupIndex) => void,
     ) => {
+      // Board and Canvas cover the center pane; an open that brings the editor back hides them.
       const panes =
-        sessionId === activeIdRef.current ? document.querySelector('.centerpane') : null;
-      if (!openHidesFocus(panes, open)) return;
-      const state = docStateRef.current;
-      const layout = layoutOf(state, sessionId);
-      const at = layout.groups.findIndex((g) => {
-        const d = state.docs.find((x) => x.id === g.active);
-        return d !== undefined && opened(d);
-      });
-      if (at < 0) return;
-      focusView(sessionId, at === 0 ? 1 : 2, layout.groups[at].active);
+        sessionId === activeIdRef.current
+          ? Array.from(document.querySelectorAll('.centerpane, .board, .arch'))
+          : [];
+      const landed = runToolOpen(() => docStateRef.current, sessionId, panes, opened, open);
+      if (landed === null) return;
+      focusView(sessionId, landed.group, landed.id);
       const handle =
         mcpSessionsRef.current?.[sessionId]?.handle ??
-        sessionsRef.current.find((s) => s.id === sessionId)?.name ??
-        '';
-      if (navLiveRef.current) navLiveRef.current.textContent = MCP_STR.opened(handle, what);
+        sessionsRef.current.find((s) => s.id === sessionId)?.name;
+      announceToolOpen(MCP_STR.opened(handle, what));
     },
-    [],
+    [announceToolOpen],
   );
 
   // §10: arm, auto-arm, cancel, fire, miss and waiting are announced ONCE each; the countdown
@@ -2808,11 +2807,12 @@ export function App() {
             req.sessionId,
             'file',
             (d) => d.kind === 'file' && canonicalPath(d.path) === path,
-            () => {
+            (group) => {
               if (p.showEditor && req.sessionId === activeIdRef.current) setCenterView('editor');
               openFile(req.path, req.sessionId, p.mode, {
                 ...(p.reveal ? { reveal: p.reveal } : {}),
                 keepActive: true,
+                group,
               });
             },
           );
@@ -2828,9 +2828,7 @@ export function App() {
   }, [sessions, openFile, landToolOpen]);
   const flushOsOpensRef = useRef(flushOsOpens);
   flushOsOpensRef.current = flushOsOpens;
-  useEffect(() => {
-    flushOsOpens();
-  }, [flushOsOpens]);
+  useDrainAfterCommit(flushOsOpens);
 
   // MCP app-control's renderer step (spec 2026-10-30-conduit-mcp-app-control §2.3): every open
   // names the caller's session and never calls setActiveId; it moves DOM focus only to replace a
@@ -2852,24 +2850,24 @@ export function App() {
         id,
         'Review',
         (d) => d.kind === 'review',
-        () => openReviewIn(id, source),
+        (group) => openReviewIn(id, source, group),
       ),
     openGitHistory: (id, root, commit) =>
       landToolOpen(
         id,
         'History',
         (d) => d.kind === 'git-history',
-        () => openGitHistoryIn(id, root, commit ?? undefined),
+        (group) => openGitHistoryIn(id, root, commit ?? undefined, group),
       ),
     openUrl: (id, url, foreground) =>
       landToolOpen(
         id,
         'web page',
         (d) => d.kind === 'web' && d.path === url,
-        () => {
+        (group) => {
           // As open_file: a focused open into the shown session brings the editor forward.
           if (foreground && id === activeIdRef.current) setCenterView('editor');
-          openWeb(url, id, foreground ? undefined : 'background');
+          openWeb(url, id, foreground ? undefined : 'background', group);
         },
       ),
   });

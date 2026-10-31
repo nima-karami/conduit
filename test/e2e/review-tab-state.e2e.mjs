@@ -326,8 +326,8 @@ runScenario('review-tab-state', async ({ page, log }) => {
     });
     await page.waitForFunction((s) => !document.querySelector(s), leaving, { timeout: 8000 });
   };
-  // The open find bar focuses its own input when Review mounts; close it so the landing measured
-  // is the navigation's, not the find bar's.
+  // A landing asked of Review prefers its open find bar's input; close the bar so the landing
+  // measured is the scroller.
   await page.locator('.review .term-find__input').focus();
   await page.keyboard.press('Escape');
   await page.waitForSelector('.review .term-find__input', { state: 'detached', timeout: 5000 });

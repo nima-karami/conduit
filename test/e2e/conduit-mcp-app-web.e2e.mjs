@@ -19,6 +19,7 @@ import {
   activeTab,
   assertLanded,
   focusedNow,
+  hearLive,
   httpFixture,
   parkKeyboard,
   shownTabs,
@@ -68,6 +69,7 @@ await runScenario(
       page.evaluate(() => document.querySelector('.viewswitch__btn--on')?.getAttribute('title'));
 
     phase('setup');
+    await hearLive(page);
     const a = await openFake(page, dirA);
     const b = await openFake(page, dirB);
     const bName = (await sessions(page)).find((s) => s.id === b.sessionId)?.name;

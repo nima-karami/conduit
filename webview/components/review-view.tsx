@@ -417,7 +417,10 @@ export function ReviewView({
   const [fileFilter, setFileFilter] = useState(memory.filter);
 
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const scrollerFocusRef = useFocusTargetRef(viewStateId, scrollerRef);
+  // A focus asked of Review (a user's open, a tool's open that hid the keyboard) lands in an open
+  // find bar; the bar itself takes focus only when asked (see ReviewFindBar's focusNonce).
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const scrollerFocusRef = useFocusTargetRef(viewStateId, scrollerRef, findInputRef);
 
   // Note composer state lives HERE, not in the card: Esc must unwind composer → search → help
   // → Review in that order and `useEscapeKey` listens on window, so the state has to be visible
@@ -2191,6 +2194,7 @@ export function ReviewView({
           partial={preloaded ? null : partialLabel(results.loaded, results.total)}
           loading={searchAll}
           focusNonce={searchFocus}
+          inputRef={findInputRef}
           onQueryChange={setQuery}
           onToggleCase={() => setCaseSensitive((v) => !v)}
           onNext={() => stepSearch(1)}

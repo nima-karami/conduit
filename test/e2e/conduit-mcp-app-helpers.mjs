@@ -143,9 +143,30 @@ export const focusedNow = (page) =>
   });
 
 /**
+ * Records every text written to a status live region, so an announcement repeated word for word
+ * still counts as heard and one left over from an earlier open doesn't.
+ */
+export async function hearLive(page) {
+  await page.evaluate(() => {
+    window.__heard = [];
+    const record = (records) => {
+      for (const r of records) {
+        const region = r.target instanceof Element ? r.target : r.target.parentElement;
+        const text = region?.closest('[role="status"]')?.textContent;
+        if (text) window.__heard.push(text);
+      }
+    };
+    const observer = new MutationObserver(record);
+    for (const el of document.querySelectorAll('[role="status"]')) {
+      observer.observe(el, { childList: true, characterData: true, subtree: true });
+    }
+  });
+}
+
+/**
  * After a tool-driven open hid the focused element, wait for focus to land inside `sel` (never
- * the web guest itself) and for the polite announcement `said` (spec
- * 2026-10-30-conduit-mcp-app-control §2.1, A4).
+ * the web guest itself) and for the polite announcement `said`, written since the last landing
+ * (spec 2026-10-30-conduit-mcp-app-control §2.1, A4). Needs hearLive.
  */
 export async function assertLanded(page, sel, said, what) {
   const landed = () =>
@@ -157,13 +178,15 @@ export async function assertLanded(page, sel, said, what) {
     await until(landed, 5_000),
     `${what}: focus is on ${await focusedNow(page)}, not in ${sel}`,
   );
+  assert(
+    await page.evaluate(() => Array.isArray(window.__heard)),
+    'assertLanded needs hearLive(page) at setup',
+  );
   const heard = () =>
-    page.evaluate(
-      (t) =>
-        Array.from(document.querySelectorAll('[role="status"]')).some((r) =>
-          r.textContent?.includes(t),
-        ),
-      said,
-    );
+    page.evaluate((t) => {
+      if (!window.__heard.some((x) => x.includes(t))) return false;
+      window.__heard = [];
+      return true;
+    }, said);
   assert(await until(heard, 5_000), `${what}: nothing announced "${said}"`);
 }

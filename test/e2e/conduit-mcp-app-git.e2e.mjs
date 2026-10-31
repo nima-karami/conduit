@@ -12,7 +12,10 @@
  *     from a caret in the terminal or the editor, focus lands in History;
  *   - from split partner B, Review and History (singletons) open in B's own layout and leave A's
  *     screen; A stays active and B stays split, and A's caret stays in its editor, typing there;
- *   - an open while focus sits on a control it doesn't hide leaves focus there.
+ *   - an open while focus sits on a control it doesn't hide leaves focus there;
+ *   - a Review find bar the user left open comes back with a tool's open of Review without taking
+ *     the keyboard; from a hidden caret, focus lands in that bar;
+ *   - an open_file from a caret on the Board brings the editor back and lands focus in it.
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -22,6 +25,7 @@ import {
   assertLanded,
   focusedNow,
   gitFixture,
+  hearLive,
   parkKeyboard,
   shownTabs,
   splitName,
@@ -79,6 +83,7 @@ await runScenario(
       );
 
     phase('setup');
+    await hearLive(page);
     const a = await openFake(page, repo);
     const b = await openFake(page, repo);
     const bName = (await sessions(page)).find((s) => s.id === b.sessionId)?.name;
@@ -258,6 +263,53 @@ await runScenario(
       await waitDetail(shas[0], 'c1');
     });
     log('History selects c1 and c599; focus lands from either caret, stays on a visible control ✓');
+
+    phase('review find bar');
+    const reviewWorking = () =>
+      callTool(page, a.sessionId, 'open_review', { source: { kind: 'working' } });
+    const inFindBar = () =>
+      page.evaluate(() => !!document.activeElement?.closest('.term-find--review'));
+    await parkKeyboard(page, 'terminal');
+    await reviewWorking();
+    await waitActiveTab(REVIEW);
+    await assertLanded(page, '.review', `${a.handle} opened Review`, 'terminal → open_review');
+    await page.locator('.review .review__find').click();
+    assert(await until(inFindBar, 5_000), 'the find bar never took the keyboard');
+    await parkKeyboard(page, 'terminal');
+    await waitActiveTab(null);
+    await keepsFocus('open_review onto an open find bar', async () => {
+      await reviewWorking();
+      await waitActiveTab(REVIEW);
+      await page.waitForSelector('.review .term-find__input', { timeout: 10_000 });
+    });
+    await parkKeyboard(page, 'terminal');
+    await waitActiveTab(null);
+    await reviewWorking();
+    await waitActiveTab(REVIEW);
+    await assertLanded(
+      page,
+      '.term-find--review',
+      `${a.handle} opened Review`,
+      'terminal → open_review onto an open find bar',
+    );
+    log(
+      "Review's restored find bar leaves a visible control's focus alone; a hidden caret lands in it ✓",
+    );
+
+    phase('board');
+    await page.locator('.viewswitch__btn[title="Feature Board"]').click();
+    await page.waitForSelector('.board', { timeout: 10_000 });
+    await page.locator('.board__head button').first().focus();
+    assert(
+      await page.evaluate(() => !!document.activeElement?.closest('.board')),
+      'the keyboard never reached the Board',
+    );
+    const fromBoard = await callTool(page, a.sessionId, 'open_file', { path: FILE });
+    assert(fromBoard?.opened, `open_file from the Board: ${JSON.stringify(fromBoard)}`);
+    await page.waitForSelector('.board', { state: 'detached', timeout: 10_000 });
+    await page.waitForSelector('.viewer__monaco .monaco-editor', { timeout: 15_000 });
+    await assertLanded(page, '.monaco-editor', `${a.handle} opened file`, 'Board → open_file');
+    log('open_file from a caret on the Board brings the editor back and lands focus in it ✓');
 
     phase('split partner review');
     assert((await shownTabs(page)).includes(REVIEW), "A lost Review before B's open");

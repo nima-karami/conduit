@@ -65,20 +65,25 @@ export function dropDocFocusUnless(shown: (key: string) => boolean): void {
   if (pending && !shown(pending.key)) pending = null;
 }
 
+/** `prefer`, while mounted, takes a requested focus in place of the element itself. */
 export function useFocusTargetRef<T extends HTMLElement>(
   key: string | undefined,
   inner?: RefObject<T | null>,
+  prefer?: RefObject<HTMLElement | null>,
 ): (el: T | null) => (() => void) | undefined {
   return useCallback(
     (el: T | null) => {
       if (inner) inner.current = el;
       if (!el) return undefined;
-      const off = key === undefined ? undefined : registerFocusTarget(key, el);
+      const target: FocusTarget = prefer
+        ? { focus: (options) => (prefer.current ?? el).focus(options) }
+        : el;
+      const off = key === undefined ? undefined : registerFocusTarget(key, target);
       return () => {
         off?.();
         if (inner) inner.current = null;
       };
     },
-    [key, inner],
+    [key, inner, prefer],
   );
 }
