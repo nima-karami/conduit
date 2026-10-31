@@ -483,7 +483,8 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow;
    `c.inflight.cancelled ? null : r`.
 3. `access === 'ask'`, **one synchronous block**: `countFor(caller) >= MAX_ASKS_PER_CALLER` →
    release, `rate_limited` (`'more than 3 requests are waiting for the human'`);
-   `w = ownerWindowOf(caller)`; `null` → release, `window_not_ready`;
+   `w = ownerWindowOf(caller)` (the host answers `null` unless that window is ready now: the gate's
+   check is stale after the async prepare); `null` → release, `window_not_ready`;
    `sendToOwner(caller, {type:'mcp:ask', askId, callerSessionId, callerHandle, tool,
    summary: prepared.summary, args, source})`; `end = waits.open({id: askId, callerSessionId,
    key, windowId: w, meta: {tool, handle}}, ASK_TIMEOUT_MS[kind])`; `flashOwner`;
@@ -791,7 +792,7 @@ chipReason: (handle: string) => `${handle} is waiting for your approval`,
 | `tools/list` = resolved `access ≠ off`; `list_changed` | host (T1.9) | each CLI | Producer only, as in v0.50 |
 | `mcp:ask` / `mcp:askClosed` | call flow via host's `sendToOwner` (T1.8, T1.9) | ask store (T2.1) → card (T2.2), chip (T2.3/T2.5) | Both. Between S1 and S2 nothing subscribes: renderer `subscribe` callbacks switch on `type` (measured `webview/use-conduit-mcp.ts:39`) |
 | `mcp:askAnswer` | card → `answerAsk` (T2.2, T2.1) | main case (T1.10) → host → `flow.answer` (T1.9, T1.8) | Both |
-| `McpUiState.awaitingApproval` | host `uiState()` from `flow.awaitingApproval()` (T1.9) | sidebar → session card (T2.4, wired T2.5) | Both |
+| `McpUiState.awaitingApproval` | host `uiState()` from `flow.awaitingApproval()` (T1.9) | sidebar → session card (T2.4, wired T2.5); the fake shell's `McpUiState` literal (`webview/bridge.ts`, T1.6); `test/unit/conduit-mcp-view-model.test.ts` fixture (T1.6) | Both |
 | `mcp:setToolPolicy` / `mcp:toolPolicyResult` | `useConduitMcp().setToolPolicy` (T1.12) | main case (T1.10) → host (T1.9) | Both. `ConduitMcpApi` mocks in `test/unit/message-compose.test.tsx:51`, `messages-pane.test.tsx:125`, `right-pane-review-kebab.test.ts:105` rename (T1.12) |
 | `open_file` target session | `openMcpFile` → caller (T1.10) | renderer `openFileInEditor` handler + `planFileOpen` (unchanged) | Producer only: the handler takes any `sessionId` its window owns |
 | `focus` under `move:'no'` | control-tools prepare (T1.7) | `createMcpSession` → `openRepo` `mcp.focus` (unchanged) | Producer only |
@@ -837,10 +838,12 @@ call only messaging tools (grep), whose defaults stay `on` with no `when`: unaff
 | `webview/components/settings-modal.tsx` | modify | Global + CLI-layer editor replaces the switch rows |
 | `webview/components/top-bar.tsx`, `webview/components/sidebar.tsx`, `webview/components/session-card.tsx` | modify | Chip asks; "Waiting for your approval" button |
 | `webview/app.tsx` | modify | Dialog props (T1.12); card mount and wiring (T2.5) |
+| `webview/bridge.ts` | modify (T1.6) | Fake-shell `McpUiState` gains `awaitingApproval` |
+| `electron/conduit-mcp-endpoint.ts` | modify (review r1 F1) | `close()` flushes queued replies before destroying the socket, so a drained session's cancelled replies all arrive |
 | `webview/styles.css` | modify | Editor rows (T1.11); `--layer-ask`, card, badge (T2.2) |
 | `test/e2e/fixtures/fake-mcp-agent.mjs`, `test/e2e/conduit-mcp-helpers.mjs` | modify | `cancel` command, `CALL` record; policy helpers, dialog selector, non-blocking call |
 | `test/e2e/conduit-mcp-control.e2e.mjs`, `test/e2e/conduit-mcp-control-terminal.e2e.mjs` | modify | New defaults and visibility |
-| Existing tests: `test/unit/conduit-mcp-host.test.ts`, `conduit-mcp-json-rpc.test.ts`, `conduit-mcp-control-tools.test.ts`, `conduit-mcp-handles.test.ts`, `coerce-settings.test.ts`, `persistence.test.ts`, `session-manager.test.ts`, `mcp-tools-dialog.test.tsx`, `settings-mcp-tools.test.tsx`, `attention.test.ts`, `message-compose.test.tsx`, `messages-pane.test.tsx`, `right-pane-review-kebab.test.ts` | modify | Follow the changed contracts + new cases |
+| Existing tests: `test/unit/conduit-mcp-host.test.ts`, `conduit-mcp-json-rpc.test.ts`, `conduit-mcp-control-tools.test.ts`, `conduit-mcp-handles.test.ts`, `conduit-mcp-view-model.test.ts`, `conduit-mcp-endpoint.test.ts`, `coerce-settings.test.ts`, `persistence.test.ts`, `session-manager.test.ts`, `mcp-tools-dialog.test.tsx`, `settings-mcp-tools.test.tsx`, `attention.test.ts`, `message-compose.test.tsx`, `messages-pane.test.tsx`, `right-pane-review-kebab.test.ts` | modify | Follow the changed contracts + new cases |
 | `docs/specs/2026-10-30-conduit-mcp-tool-policy.md` | modify (done in planning) | §2.4, §2.6 row 1, §3.1 migration, §5, §13 D3 |
 | `CHANGELOG.md` | modify | Unreleased entry |
 
