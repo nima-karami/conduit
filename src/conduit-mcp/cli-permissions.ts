@@ -32,16 +32,3 @@ export function withAllowRule(text: string, rule: string): string | null {
   if (allow.includes(rule)) return null;
   return serializeJsonConfig({ ...json, permissions: { ...permissions, allow: [...allow, rule] } });
 }
-
-/**
- * The file without `rule` in permissions.allow; null when it isn't there. An emptied list stays:
- * the user may have created it, and `[]` means the same to the CLI. Throws EJSON on unparsable text.
- */
-export function withoutAllowRule(text: string, rule: string): string | null {
-  const json = parseJsonConfig(text);
-  const permissions = json.permissions;
-  if (!isObject(permissions) || !Array.isArray(permissions.allow)) return null;
-  if (!permissions.allow.includes(rule)) return null;
-  const allow = permissions.allow.filter((r) => r !== rule);
-  return serializeJsonConfig({ ...json, permissions: { ...permissions, allow } });
-}

@@ -3,7 +3,6 @@ import {
   PERMISSION_RULES,
   permissionCli,
   withAllowRule,
-  withoutAllowRule,
 } from '../../src/conduit-mcp/cli-permissions';
 
 const RULE = PERMISSION_RULES.claude;
@@ -57,31 +56,5 @@ describe('cli-permissions', () => {
     expect(codeOf(() => withAllowRule('{ // c\n}', RULE))).toBe('EJSON');
     expect(codeOf(() => withAllowRule('{"permissions":[]}', RULE))).toBe('EJSON');
     expect(codeOf(() => withAllowRule('{"permissions":{"allow":"x"}}', RULE))).toBe('EJSON');
-  });
-
-  it('remove drops only our exact rule; the emptied array and the rest stay', () => {
-    const text = JSON.stringify({
-      permissions: { allow: [RULE, 'mcp__conduit__send_message'], deny: [RULE] },
-      x: 1,
-    });
-    expect(JSON.parse(withoutAllowRule(text, RULE) ?? 'null')).toEqual({
-      permissions: { allow: ['mcp__conduit__send_message'], deny: [RULE] },
-      x: 1,
-    });
-    const only = withAllowRule('{}', RULE) ?? '';
-    expect(JSON.parse(withoutAllowRule(only, RULE) ?? 'null')).toEqual({
-      permissions: { allow: [] },
-    });
-  });
-
-  it('remove is null when there is nothing of ours, including odd shapes', () => {
-    expect(withoutAllowRule('', RULE)).toBeNull();
-    expect(withoutAllowRule('{"permissions":{"allow":["Bash"]}}', RULE)).toBeNull();
-    expect(withoutAllowRule('{"permissions":3}', RULE)).toBeNull();
-    expect(withoutAllowRule('{"permissions":{"allow":"mcp__conduit"}}', RULE)).toBeNull();
-  });
-
-  it('remove on a malformed file throws EJSON', () => {
-    expect(codeOf(() => withoutAllowRule('{,}', RULE))).toBe('EJSON');
   });
 });

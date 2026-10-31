@@ -1,10 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import {
-  PERMISSION_RULES,
-  withAllowRule,
-  withoutAllowRule,
-} from '../src/conduit-mcp/cli-permissions';
+import { PERMISSION_RULES, withAllowRule } from '../src/conduit-mcp/cli-permissions';
 import { wiresLaunch } from '../src/conduit-mcp/cursor-config';
 import {
   type ConduitEntry,
@@ -356,23 +352,26 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
   }
 
   // Same backup and re-read discipline as writeEntry; a running CLI may rewrite its own settings.
-  function writeRule(cli: AgentCli, mode: 'add' | 'remove'): string | null {
+  // Never removed on uninstall: a rule with no server is inert, and it may be the user's own or
+  // serve a project install (spec 2026-10-31-conduit-mcp-single-gate §2.4).
+  function addRule(cli: AgentCli): string | null {
     const target = permissionTarget(cli, deps);
     if (target === null) return null;
     const rule = PERMISSION_RULES[target.cli];
     const edit = (read: ConfigRead): string | null => {
-      if (read.text === null && (mode === 'remove' || !target.createIfAbsent)) return null;
-      const text = read.text ?? '';
-      return mode === 'add' ? withAllowRule(text, rule) : withoutAllowRule(text, rule);
+      if (read.text === null && !target.createIfAbsent) return null;
+      return withAllowRule(read.text ?? '', rule);
     };
     let read = readConfigFile(io, target.path);
     let data = edit(read);
     if (data === null) return null;
-    backupOnce(io, target.backupPath, read.raw);
+    // A file we create has nothing of the user's to back up.
+    if (read.raw !== null) backupOnce(io, target.backupPath, read.raw);
     if (!unchangedSince(read)) {
       read = readConfigFile(io, target.path);
       data = edit(read);
       if (data === null) return null;
+      if (read.raw !== null) backupOnce(io, target.backupPath, read.raw);
       if (!unchangedSince(read)) throw new ActionError('EBUSY');
     }
     writeConfigAtomic(io, read.realPath, data, read.mode);
@@ -380,16 +379,10 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
   }
 
   /** The rule follows the entry; a failure is reported, never fails the entry's own write. */
-  function ruleAfter(req: McpInstallRequest, root: string | null): string | undefined {
-    const mode =
-      req.action === 'install' || req.action === 'replace'
-        ? 'add'
-        : req.action === 'uninstall' && root === null
-          ? 'remove'
-          : null;
-    if (mode === null) return undefined;
+  function ruleAfter(req: McpInstallRequest): string | undefined {
+    if (req.action !== 'install' && req.action !== 'replace') return undefined;
     try {
-      writeRule(req.cli, mode);
+      addRule(req.cli);
       return undefined;
     } catch (error) {
       return errorCodeOf(error);
@@ -412,7 +405,7 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
     } catch (error) {
       return fail(errorCodeOf(error));
     }
-    const permissionErrorCode = ruleAfter(req, root);
+    const permissionErrorCode = ruleAfter(req);
     return {
       ok: true,
       status: cliStatus(req.cli, statusRoot),
@@ -478,7 +471,7 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
       const user = readUser(cli);
       if (!('loaded' in user) || classOf(cli, user.loaded) !== 'ours') continue;
       try {
-        if (writeRule(cli, 'add') !== null) rows.push({ cli, path: target.path });
+        if (addRule(cli) !== null) rows.push({ cli, path: target.path });
       } catch (error) {
         rows.push({ cli, path: target.path, errorCode: errorCodeOf(error) });
       }

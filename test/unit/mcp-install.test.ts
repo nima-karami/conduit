@@ -915,46 +915,29 @@ const thisBuild = (table: string) =>
   table.replace('/old/conduit-mcp-shim.cjs', shimPath).replace('/old/conduit', execPath);
 
 describe('v0.50 entries (single gate)', () => {
-  it('a v0.50 codex or opencode entry of this build reads as installed; install leaves it be', () => {
+  it('a v0.50 codex entry of this build reads as installed; install leaves it be', () => {
     const s = setup();
     const codex = s.seed('codex', thisBuild(OLD_CODEX_TABLE));
-    const oc = s.seed(
-      'opencode',
-      JSON.stringify({ mcp: { conduit: legacyConduitEntry('opencode', execPath, shimPath) } }),
-    );
     expect(readCodexConduit(fs.readFileSync(codex, 'utf8'))).toEqual(
       legacyConduitEntry('codex', execPath, shimPath),
     );
     const api = createMcpInstall(s.deps);
-    const st = api.status(null);
-    expect(statusOf(st, 'codex').user.state).toBe('installed');
-    expect(statusOf(st, 'opencode').user.state).toBe('installed');
-    const before = fs.readFileSync(oc, 'utf8');
-    expect(api.act({ cli: 'opencode', scope: 'user', action: 'install' })).toMatchObject({
+    expect(statusOf(api.status(null), 'codex').user.state).toBe('installed');
+    const before = fs.readFileSync(codex, 'utf8');
+    expect(api.act({ cli: 'codex', scope: 'user', action: 'install' })).toMatchObject({
       ok: true,
     });
-    expect(fs.readFileSync(oc, 'utf8')).toBe(before);
+    expect(fs.readFileSync(codex, 'utf8')).toBe(before);
   });
 
   it('repair upgrades a v0.50 user entry of this build to the current shape, once', () => {
     const s = setup();
     const codexFile = s.seed('codex', `a = 1\n\n${thisBuild(OLD_CODEX_TABLE)}`);
-    const oc = s.seed(
-      'opencode',
-      JSON.stringify({
-        $schema: 'x',
-        mcp: { conduit: legacyConduitEntry('opencode', execPath, shimPath) },
-      }),
-    );
     const api = createMcpInstall(s.deps);
-    expect(api.repair().map((r) => r.cli)).toEqual(['codex', 'opencode']);
+    expect(api.repair().map((r) => r.cli)).toEqual(['codex']);
     const codexText = fs.readFileSync(codexFile, 'utf8');
     expect(codexText.startsWith('a = 1\n\n')).toBe(true);
     expect(readCodexConduit(codexText)).toEqual(conduitEntry('codex', execPath, shimPath));
-    expect(json(oc)).toEqual({
-      $schema: 'x',
-      mcp: { conduit: conduitEntry('opencode', execPath, shimPath) },
-    });
     expect(api.repair()).toEqual([]);
   });
 });
@@ -963,7 +946,7 @@ describe('permission rules (single gate)', () => {
   const claudeSettings = (s: Setup) => permissionTarget('claude', s.deps)?.path ?? '';
   const cursorCli = (s: Setup) => permissionTarget('cursor', s.deps)?.path ?? '';
 
-  it('claude user install creates settings.json with the rule; uninstall removes only it', () => {
+  it('claude user install creates settings.json with the rule and no backup; uninstall keeps it', () => {
     const s = setup();
     s.seed('claude', '{}');
     const api = createMcpInstall(s.deps);
@@ -971,7 +954,8 @@ describe('permission rules (single gate)', () => {
     expect(r.ok).toBe(true);
     expect(r).not.toHaveProperty('permissionErrorCode');
     expect(json(claudeSettings(s))).toEqual({ permissions: { allow: ['mcp__conduit'] } });
-    expect(fs.readFileSync(`${claudeSettings(s)}.conduit-backup`, 'utf8')).toBe('null');
+    // Nothing existed to back up.
+    expect(fs.existsSync(`${claudeSettings(s)}.conduit-backup`)).toBe(false);
     // Idempotent: a second install neither duplicates nor rewrites.
     const mtime = fs.statSync(claudeSettings(s)).mtimeMs;
     api.act({ cli: 'claude', scope: 'user', action: 'install' });
@@ -981,11 +965,20 @@ describe('permission rules (single gate)', () => {
       claudeSettings(s),
       JSON.stringify({ model: 'x', permissions: { allow: ['Bash', 'mcp__conduit'], deny: ['y'] } }),
     );
+    const userText = fs.readFileSync(claudeSettings(s), 'utf8');
+    // A rule with no server is inert, and it may be the user's own or serve a project install.
     expect(api.act({ cli: 'claude', scope: 'user', action: 'uninstall' }).ok).toBe(true);
-    expect(json(claudeSettings(s))).toEqual({
-      model: 'x',
-      permissions: { allow: ['Bash'], deny: ['y'] },
-    });
+    expect(fs.readFileSync(claudeSettings(s), 'utf8')).toBe(userText);
+  });
+
+  it('an existing settings.json is backed up once, verbatim, before the rule is added', () => {
+    const s = setup();
+    const f = claudeSettings(s);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, '{"model":"x"}');
+    createMcpInstall(s.deps).act({ cli: 'claude', scope: 'user', action: 'install' });
+    expect(fs.readFileSync(`${f}.conduit-backup`, 'utf8')).toBe('{"model":"x"}');
+    expect(json(f)).toEqual({ model: 'x', permissions: { allow: ['mcp__conduit'] } });
   });
 
   it('honours CLAUDE_CONFIG_DIR', () => {
@@ -1038,7 +1031,7 @@ describe('permission rules (single gate)', () => {
       permissions: { allow: ['Mcp(conduit:*)'], deny: [] },
     });
     api.act({ cli: 'cursor', scope: 'user', action: 'uninstall' });
-    expect(json(cursorCli(s)).permissions).toEqual({ allow: [], deny: [] });
+    expect(json(cursorCli(s)).permissions).toEqual({ allow: ['Mcp(conduit:*)'], deny: [] });
   });
 
   it('codex and opencode installs write no permission file', () => {

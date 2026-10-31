@@ -12,7 +12,7 @@
  *      keeps it bound; Ctrl+Z unbinds it.
  *   5. Uninstall removes only conduit; the file and the backup stay.
  * Single gate (spec 2026-10-31-conduit-mcp-single-gate): Install adds mcp__conduit to the user
- * settings.json permissions.allow beside the user's own rule; Uninstall removes only it.
+ * settings.json permissions.allow beside the user's own rules; Uninstall leaves the file as is.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -199,11 +199,15 @@ await runScenario(
     assert(existsSync(`${configPath}.conduit-backup`), 'the backup stays');
     log('Uninstall removed only conduit; file and backup stay ✓');
     const settingsAfter = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    const wantAfter = {
+      ...USER_SETTINGS,
+      permissions: { ...USER_SETTINGS.permissions, allow: ['Bash(ls:*)', 'mcp__conduit'] },
+    };
     assert(
-      isDeepStrictEqual(settingsAfter, USER_SETTINGS),
+      isDeepStrictEqual(settingsAfter, wantAfter),
       `settings.json after uninstall: ${JSON.stringify(settingsAfter)}`,
     );
-    log('Uninstall removed only mcp__conduit from settings.json ✓');
+    log('Uninstall left settings.json alone: the rule stays, the user rules are untouched ✓');
   },
   { userDataDir, env: { ...homeEnv, ...pathWith(binDir) } },
 );
