@@ -1,3 +1,4 @@
+import type { CliKind } from './tool-policy';
 import type { Handle } from './types';
 
 // Handle rule: docs/specs/2026-10-25-conduit-mcp-server.md §3.1 (prefix = adapter id, see plan
@@ -39,4 +40,12 @@ export function parseHandleCounters(text: string | undefined): HandleCounters {
 
 export function serializeHandleCounters(c: HandleCounters): string {
   return `${JSON.stringify(c, null, 2)}\n`;
+}
+
+const NAMED_CLI_KINDS: readonly CliKind[] = ['claude', 'codex', 'cursor', 'opencode'];
+
+/** The prefix before the last '-'; claude|codex|cursor|opencode map to themselves, anything else to 'agent'. */
+export function cliKindOfHandle(handle: Handle): CliKind {
+  const prefix = handle.slice(0, Math.max(0, handle.lastIndexOf('-')));
+  return NAMED_CLI_KINDS.find((k) => k === prefix) ?? 'agent';
 }

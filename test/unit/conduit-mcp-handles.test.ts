@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   allocateHandle,
+  cliKindOfHandle,
   parseHandleCounters,
   serializeHandleCounters,
   slugHandlePrefix,
@@ -54,5 +55,21 @@ describe('parse/serialize', () => {
     expect(parseHandleCounters('{"claude":2,"bad":"x","neg":-1,"frac":1.5}')).toEqual({
       claude: 2,
     });
+  });
+});
+
+describe('cliKindOfHandle', () => {
+  it.each([
+    ['claude-1', 'claude'],
+    ['codex-12', 'codex'],
+    ['cursor-3', 'cursor'],
+    ['opencode-2', 'opencode'],
+    ['fake-1', 'agent'],
+    ['agent-4', 'agent'],
+    ['nodash', 'agent'],
+    ['', 'agent'],
+    ['claude-x-1', 'agent'],
+  ])('cliKindOfHandle maps the prefix: %s → %s', (handle, kind) => {
+    expect(cliKindOfHandle(handle)).toBe(kind);
   });
 });
