@@ -797,6 +797,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   type CallContext = ToolCallContext & { connId: number };
 
+  /** prepareLaunch put Conduit's server, with its timeouts, in this session's CLI args. */
+  const wiredAtLaunch = (sessionId: string): boolean => {
+    const r = runtime.get(sessionId);
+    return r?.defAdapter !== undefined && r.defAdapter.wiring !== 'cursor-global' && !r.unavailable;
+  };
+
   const callTool = async (
     sessionId: string | null,
     name: string,
@@ -855,6 +861,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           inflight,
           caller,
           kind: cliKindOfHandle(handle),
+          wiredAtLaunch: wiredAtLaunch(sessionId),
           tool: name,
           policy: resolved.policy,
           source: resolved.source.access,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ASK_TIMEOUT_MS,
+  askBudgetMs,
   type CallFlow,
   type ControlCall,
   createCallFlow,
@@ -115,6 +116,7 @@ function setup() {
       runGate?: ReturnType<typeof gate>;
       prepareResult?: Result<PreparedCall<string>>;
       kind?: CliKind;
+      wiredAtLaunch?: boolean;
       routesUi?: boolean;
       /** Replaces run's body; gets this call's in-flight entry (for flow.requestUi). */
       runBody?: (inflight: InFlight) => Promise<Result<string>>;
@@ -145,6 +147,7 @@ function setup() {
       inflight,
       caller: { sessionId: caller, handle: `claude-${caller}` },
       kind: o.kind ?? 'claude',
+      wiredAtLaunch: o.wiredAtLaunch ?? false,
       tool: 'open_session',
       policy: o.policy ?? policies.get(caller) ?? ASK,
       source: 'global',
@@ -254,6 +257,29 @@ describe('createCallFlow', () => {
     expect(c.out.done).toBe(false);
     t.advance(1);
     expect(errCode(await c.promise)).toBe('approval_timeout');
+  });
+
+  it('askBudgetMs: a launch-wired codex waits 170 s; everything else keeps its kind limit', () => {
+    expect(askBudgetMs('codex', true)).toBe(170_000);
+    expect(askBudgetMs('codex', false)).toBe(ASK_TIMEOUT_MS.codex);
+    expect(ASK_TIMEOUT_MS.codex).toBe(50_000);
+    for (const kind of ['claude', 'cursor', 'opencode', 'agent'] as const) {
+      expect(askBudgetMs(kind, true)).toBe(ASK_TIMEOUT_MS[kind]);
+    }
+  });
+
+  it('a launch-wired codex ask waits 170 s; a plain-shell codex ask 50 s', async () => {
+    const t = setup();
+    const wired = t.call({ kind: 'codex', wiredAtLaunch: true });
+    const shell = t.call({ kind: 'codex', wiredAtLaunch: false, caller: 'caller-2' });
+    await t.flush();
+    t.advance(50_000);
+    expect(errCode(await shell.promise)).toBe('approval_timeout');
+    t.advance(170_000 - 50_000 - 1);
+    await t.flush();
+    expect(wired.out.done).toBe(false);
+    t.advance(1);
+    expect(errCode(await wired.promise)).toBe('approval_timeout');
   });
 
   it('deny → denied, token kept', async () => {

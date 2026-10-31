@@ -32,6 +32,14 @@ export const ASK_TIMEOUT_MS: Readonly<Record<CliKind, number>> = {
   opencode: 25_000,
   agent: 25_000,
 };
+/**
+ * A Conduit launch gives codex tool_timeout_sec=180, so its card can wait longer; a plain-shell
+ * codex may be running a v0.50 entry with the 60 s default (spec 2026-10-31-conduit-mcp-single-gate).
+ */
+export const CODEX_WIRED_ASK_TIMEOUT_MS = 170_000;
+export function askBudgetMs(kind: CliKind, wiredAtLaunch: boolean): number {
+  return kind === 'codex' && wiredAtLaunch ? CODEX_WIRED_ASK_TIMEOUT_MS : ASK_TIMEOUT_MS[kind];
+}
 export const MAX_ASKS_PER_CALLER = 3;
 /** An app-control tool's renderer step (spec 2026-10-30-conduit-mcp-app-control §2.3). */
 export const UI_TIMEOUT_MS = 5_000;
@@ -46,6 +54,8 @@ export interface ControlCall<T> {
   inflight: InFlight;
   caller: { sessionId: string; handle: Handle };
   kind: CliKind;
+  /** The session runs a Conduit launch whose CLI args carry Conduit's MCP wiring. */
+  wiredAtLaunch: boolean;
   tool: ToolName;
   policy: ToolPolicy;
   /** The layer that set `access` (for the card's reason line). */
@@ -236,7 +246,10 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     // Ask + UI wait must both fit inside the CLI's own call timeout, which started at begin(), not
     // after prepare's git calls (plan B11).
     const askMs =
-      startOf(c.inflight) + ASK_TIMEOUT_MS[c.kind] - (p.routesUi ? UI_TIMEOUT_MS : 0) - deps.now();
+      startOf(c.inflight) +
+      askBudgetMs(c.kind, c.wiredAtLaunch) -
+      (p.routesUi ? UI_TIMEOUT_MS : 0) -
+      deps.now();
     if (askMs <= 0) {
       p.release();
       return { ok: false, error: approvalTimeout() };

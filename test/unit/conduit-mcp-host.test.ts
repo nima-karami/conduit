@@ -1196,7 +1196,7 @@ describe('createConduitMcpHost — notices', () => {
     const ca = await client(h.ep, a.token);
     h.sessions.set('s3', session('s3', { agentId: 'codex' }));
     const c = launch(h, 's3', CODEX, spec('/usr/bin/codex'));
-    expect(c.spec.args.filter((x) => x === '-c')).toHaveLength(5);
+    expect(c.spec.args.filter((x) => x === '-c')).toHaveLength(6);
     await client(h.ep, c.token);
     h.host.onOutput('s3', 'fake❯ ');
     settle(h);
@@ -3070,6 +3070,22 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
     h.advance(1);
     expect(c.errorOf(await c.reply(1))).toBe('approval_timeout');
     expect(uiOf(h)).toEqual([]);
+  });
+
+  it('a launch-wired codex ask waits 170 s less the UI step (single-gate spec)', async () => {
+    const h = harness({ manualTimers: true });
+    await h.host.start();
+    const a = launch(h, 's3', CODEX, spec('/usr/bin/codex'));
+    expect(a.spec.args).toContain('mcp_servers.conduit.tool_timeout_sec=180');
+    const c = await rawClient(h.ep, a.token);
+    allow(h, 's3', { open_url: { access: 'ask' } });
+    c.call(1, 'open_url', { url: 'http://x/' });
+    await until(() => h.toOwner.some((m) => m.msg.type === 'mcp:ask'));
+    h.advance(165_000 - 1);
+    await c.barrier(2);
+    expect(c.lines.some((l) => l.id === 1)).toBe(false);
+    h.advance(1);
+    expect(c.errorOf(await c.reply(1))).toBe('approval_timeout');
   });
 
   it('focus_session and attach_folder run host-side', async () => {
