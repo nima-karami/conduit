@@ -584,6 +584,13 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         const changesDoc = action.sideBySide !== undefined || 'repoRoot' in repo;
         return openInBackground(state, { ...spec, patch: changesDoc ? patch : undefined });
       }
+      // An open for a session nobody is looking at never takes the shown session's tab off its
+      // screen: it keeps its owner and is only un-previewed (spec B §2.1, A4).
+      const shownOwns =
+        action.shown !== undefined &&
+        action.shown !== action.sessionId &&
+        state.docs.some((d) => d.id === id && d.sessionId === action.shown);
+      if (shownOwns) return openInBackground(state, spec);
       const preview = isPreviewable(action.kind) && action.mode === 'preview';
       return openForeground(state, { ...spec, preview, patch, shown: action.shown });
     }

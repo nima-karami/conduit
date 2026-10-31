@@ -1163,4 +1163,32 @@ describe('docsReducer — open into a session that is not shown', () => {
     expect(s.activeId).toBeNull();
     expect(remembered(s, 'B')).toBe(REVIEW_DOC_ID);
   });
+
+  it("a foreground file or web open for another session never takes the shown session's tab", () => {
+    for (const [kind, path] of [
+      ['file', '/a.ts'],
+      ['web', 'https://x.test/'],
+    ] as const) {
+      let s0 = docsReducer(initialDocs, {
+        type: 'open',
+        kind,
+        path,
+        sessionId: 'A',
+        mode: 'preview',
+      });
+      s0 = open(s0, 'file', '/b.ts', 'B');
+      s0 = docsReducer(s0, { type: 'activate', id: `${kind}:${path}` });
+      const s = docsReducer(s0, { type: 'open', kind, path, sessionId: 'B', shown: 'A' });
+      expect([kind, s.docs.find((d) => d.id === `${kind}:${path}`)?.sessionId]).toEqual([
+        kind,
+        'A',
+      ]);
+      expect([kind, tabs(s, 'A').map((d) => d.id)]).toEqual([kind, [`${kind}:${path}`]]);
+      expect([kind, s.activeId]).toEqual([kind, `${kind}:${path}`]);
+      expect([kind, tabs(s, 'B').map((d) => d.id)]).toEqual([kind, ['file:/b.ts']]);
+      expect([kind, remembered(s, 'B')]).toEqual([kind, remembered(s0, 'B')]);
+      // Un-preview only: the human's tab is otherwise untouched.
+      expect([kind, s.layouts.A.groups[0].tabs]).toEqual([kind, [{ id: `${kind}:${path}` }]]);
+    }
+  });
 });

@@ -63,7 +63,9 @@ Paths are absolute or relative to the caller's persisted home. `session` takes a
   the caller's own session through **session-explicit** renderer entry points, never `activeIdRef`.
   A split partner has no editor pane of its own (only its terminal), so for a split-partner caller
   the tab opens active in that session's own layout and shows when the human activates it. Review
-  and History are singletons, so opening one there takes it off the human's screen.
+  and History are singletons, so opening one there takes it off the human's screen. A file or URL
+  open into a non-shown session never takes a tab off the shown session's screen: a tab the shown
+  session already holds stays with its owner (only un-previewed), and the caller's layout gets nothing.
 - **`close_session`.**
   - It runs as the renderer action `closeSession`: the renderer checks the target's dirty tabs and
     posts `kill` in the same synchronous turn, which is the UI's teardown minus the confirm.
