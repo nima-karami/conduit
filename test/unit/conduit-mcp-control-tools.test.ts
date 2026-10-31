@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ACT_RATE_GLOBAL,
   ACT_RATE_PER_CALLER,
+  type ControlCallContext,
   type ControlDeps,
   type ControlHandlers,
   createControlHandlers,
@@ -12,11 +13,16 @@ import {
   type PreparedCall,
   SHOW_RATE_PER_CALLER,
 } from '../../src/conduit-mcp/control-tools';
+import type { Move } from '../../src/conduit-mcp/tool-policy';
 import { toolSchemas } from '../../src/conduit-mcp/tool-schemas';
 import type { Caller } from '../../src/conduit-mcp/tools';
 import type { Result } from '../../src/conduit-mcp/types';
 
 const HOME = '/home/main';
+const noUi: ControlCallContext['ui'] = async () => {
+  throw new Error('the open tools never ask the renderer');
+};
+const ctxOf = (move?: Move): ControlCallContext => ({ move, reach: undefined, ui: noUi });
 
 interface Harness {
   deps: ControlDeps;
@@ -67,6 +73,28 @@ function harness(over: Partial<ControlDeps> = {}): Harness {
     claimHandle: (id) => `h-${id}`,
     now: () => h.clock.t,
     info: (message, data) => h.logs.push({ message, data }),
+    // The app-control tools' deps: the open tools never reach them.
+    foldersOf: () => {
+      throw new Error('foldersOf: not an open tool');
+    },
+    addRoot: () => {
+      throw new Error('addRoot: not an open tool');
+    },
+    activateSession: () => {
+      throw new Error('activateSession: not an open tool');
+    },
+    git: () => {
+      throw new Error('git: not an open tool');
+    },
+    targets: () => {
+      throw new Error('targets: not an open tool');
+    },
+    ownerWindowOf: () => {
+      throw new Error('ownerWindowOf: not an open tool');
+    },
+    windowReady: () => {
+      throw new Error('windowReady: not an open tool');
+    },
     ...over,
   };
   return h;
@@ -77,7 +105,7 @@ const code = <T>(r: Result<T>) => (r.ok ? 'ok' : r.error.code);
 /** The handlers as a call whose policy is on runs them: prepare, then run (call-flow step 2). */
 function whenOn(deps: ControlDeps) {
   const c: ControlHandlers = createControlHandlers(deps);
-  const NO_MOVE = { move: undefined };
+  const NO_MOVE = ctxOf();
   const run = async <T>(p: Promise<Result<PreparedCall<T>>>): Promise<Result<T>> => {
     const r = await p;
     return r.ok ? r.value.run() : r;
@@ -468,7 +496,7 @@ describe('prepare/run (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
     if (!r.ok) throw new Error(`expected ok, got ${r.error.code}`);
     return r.value;
   };
-  const NO_MOVE = { move: undefined };
+  const NO_MOVE = ctxOf();
 
   it('prepare resolves and summarises', async () => {
     const h = harness({ agentIds: () => ['a'] });
@@ -507,18 +535,16 @@ describe('prepare/run (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
   it('move no forces focus false', async () => {
     const h = harness();
     const c = createControlHandlers(h.deps);
-    const s = ok(
-      await c.prepareOpenSession(caller(), sessionArgs({ focus: true }), { move: 'no' }),
-    );
+    const s = ok(await c.prepareOpenSession(caller(), sessionArgs({ focus: true }), ctxOf('no')));
     const t = ok(
-      await c.prepareOpenTerminal(caller(), { path: '/repo', command: 'node' }, { move: 'no' }),
+      await c.prepareOpenTerminal(caller(), { path: '/repo', command: 'node' }, ctxOf('no')),
     );
     expect(s.summary).toMatchObject({ focus: false });
     expect(t.summary).toMatchObject({ focus: false });
     await s.run();
     await t.run();
     expect(h.opens.map((o) => o.focus)).toEqual([false, false]);
-    const y = ok(await c.prepareOpenSession(caller(), sessionArgs(), { move: 'yes' }));
+    const y = ok(await c.prepareOpenSession(caller(), sessionArgs(), ctxOf('yes')));
     expect(y.summary).toMatchObject({ focus: true });
     await y.run();
     expect(h.opens[2].focus).toBe(true);
@@ -538,7 +564,7 @@ describe('prepare/run (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
       ok(await c.prepareOpenSession(caller(2 + (i % 3)), sessionArgs(), NO_MOVE));
     const r = await c.prepareOpenSession(caller(99), sessionArgs(), NO_MOVE);
     expect(code(r)).toBe('rate_limited');
-    expect(r.ok ? '' : r.error.message).toBe('too many opens in Conduit this minute');
+    expect(r.ok ? '' : r.error.message).toBe('too many actions in Conduit this minute');
   });
 
   it('show budget', async () => {
@@ -600,6 +626,54 @@ describe('prepare/run (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
     held[0].release();
     expect(code(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE))).toBe('ok');
     expect(code(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE))).toBe('rate_limited');
+  });
+});
+
+describe('act budget label', () => {
+  it('the act budget says actions', async () => {
+    const h = harness();
+    const c = createControlHandlers(h.deps);
+    const NO_MOVE = ctxOf();
+    for (let i = 0; i < ACT_RATE_PER_CALLER; i++)
+      await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE);
+    const r = await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE);
+    expect(r.ok ? '' : r.error.message).toBe(
+      `more than ${ACT_RATE_PER_CALLER} actions in a minute`,
+    );
+  });
+});
+
+describe('tool schemas (plan B5)', () => {
+  // Flat JSON Schema only: no combinators or references a CLI's validator might reject.
+  const ALLOWED = new Set([
+    'type',
+    'properties',
+    'required',
+    'enum',
+    'items',
+    'minItems',
+    'maxItems',
+    'maxLength',
+    'minimum',
+    'maximum',
+    'default',
+    'additionalProperties',
+    'description',
+  ]);
+  const walk = (node: unknown, path: string, bad: string[]) => {
+    if (typeof node !== 'object' || node === null) return;
+    for (const [k, v] of Object.entries(node)) {
+      if (!ALLOWED.has(k)) bad.push(`${path}.${k}`);
+      if (k === 'properties' && typeof v === 'object' && v !== null) {
+        for (const [p, sub] of Object.entries(v)) walk(sub, `${path}.properties.${p}`, bad);
+      } else if (k === 'items') walk(v, `${path}.items`, bad);
+    }
+  };
+
+  it('schemas use only the allowed keywords', () => {
+    const bad: string[] = [];
+    for (const t of toolSchemas(['claude'])) walk(t.inputSchema, t.name, bad);
+    expect(bad).toEqual([]);
   });
 });
 

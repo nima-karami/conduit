@@ -1,11 +1,20 @@
-// The three control tools (spec 2026-10-27-conduit-mcp-control-tools §3.1). No IO here: stat,
-// registry, command resolution and session creation are deps, so tests run on POSIX fakes.
+// The three open tools (spec 2026-10-27-conduit-mcp-control-tools §3.1) and the pipeline every
+// control tool shares; the app-control tools live in app-control-tools.ts. No IO here: stat,
+// registry, command resolution, session creation and git are deps, so tests run on POSIX fakes.
 import { coerceSessionCommand, commandLabel } from '../session-command';
+import type { SessionOpResult } from '../session-ops';
 import type { SessionCommand, SessionOpener } from '../types';
-import { type Move, TOOL_SPECS, type ToolName } from './tool-policy';
+import type { GitCall } from './git-refs';
+import {
+  type MESSAGING_TOOL_NAMES,
+  type Move,
+  type Reach,
+  TOOL_SPECS,
+  type ToolName,
+} from './tool-policy';
 import type { Caller } from './tools';
-import { type Handle, type Result, type ToolErrorCode, toolError } from './types';
-import type { AskSummary } from './ui-types';
+import { type Handle, type Result, type ToolError, type ToolErrorCode, toolError } from './types';
+import type { AskSummary, McpUiAction, McpUiResult } from './ui-types';
 
 // spec 2026-10-30-conduit-mcp-tool-policy §3.3 "Rate"
 export const ACT_RATE_PER_CALLER = 10;
@@ -59,6 +68,20 @@ export interface ControlDeps {
   claimHandle(sessionId: string): Handle | null;
   now(): number;
   info(message: string, data: Record<string, unknown>): void;
+  foldersOf(sessionId: string): { home: string; roots: string[] } | undefined;
+  addRoot(sessionId: string, path: string): Promise<SessionOpResult>;
+  /** raise: the target's window isn't the caller's (show + focus it, as moveSessionToWindow does). */
+  activateSession(sessionId: string, raise: boolean): void;
+  git: GitCall;
+  /** list_sessions' sessions: the only ones a tool may target (tool-policy spec A7). */
+  targets(): readonly TargetSession[];
+  ownerWindowOf(sessionId: string): number | null;
+  windowReady(windowId: number): boolean;
+}
+export interface TargetSession {
+  sessionId: string;
+  handle: Handle;
+  openerSessionId: string | null;
 }
 export interface PreparedCall<T> {
   summary: AskSummary;
@@ -69,8 +92,12 @@ export interface PreparedCall<T> {
   /** Refunds the token for a refusal between prepare and run that isn't an ask outcome. Idempotent. */
   release(): void;
 }
-interface ControlCallContext {
+/** Built per call by the host from the caller's resolved policy. */
+export interface ControlCallContext {
   move: Move | undefined;
+  reach: Reach | undefined;
+  /** Bound by the host to flow.requestUi with this call's in-flight entry and caller. */
+  ui(windowId: number, routedSessionId: string, action: McpUiAction): Promise<Result<McpUiResult>>;
 }
 export interface ControlHandlers {
   prepareOpenSession(
@@ -88,14 +115,20 @@ export interface ControlHandlers {
     args: unknown,
     ctx: ControlCallContext,
   ): Promise<Result<PreparedCall<OpenFileOutput>>>;
+  /** reserve → home → check → refund unless the exec kept the token. */
+  prepared<T>(
+    tool: ControlTool,
+    caller: Caller,
+    check: (who: { sessionId: string; home: string }) => Promise<CheckResult<T>>,
+  ): Promise<Result<PreparedCall<T>>>;
 }
 
-type Fail = { ok: false; error: ReturnType<typeof toolError> };
-const fail = (code: ToolErrorCode, message: string): Fail => ({
+export type Fail = { ok: false; error: ToolError };
+export const fail = (code: ToolErrorCode, message: string): Fail => ({
   ok: false,
   error: toolError(code, message),
 });
-const isFail = (v: unknown): v is Fail =>
+export const isFail = (v: unknown): v is Fail =>
   typeof v === 'object' && v !== null && (v as { ok?: unknown }).ok === false;
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -107,10 +140,28 @@ interface Common {
   focus: boolean;
 }
 
-function parseObject(raw: unknown, allowed: readonly string[]): Record<string, unknown> | Fail {
+/** An object with no keys outside `allowed`. */
+export function parseKeys(
+  raw: unknown,
+  allowed: readonly string[],
+): Record<string, unknown> | Fail {
   if (!isRecord(raw)) return fail('invalid_args', 'arguments must be an object');
   const extra = Object.keys(raw).find((k) => !allowed.includes(k));
   if (extra !== undefined) return fail('invalid_args', `unknown argument: ${extra}`);
+  return raw;
+}
+
+/** parseKeys, plus a non-empty `path` and an optional boolean `focus`. */
+export function parseObject(
+  raw: unknown,
+  allowed: readonly string[],
+): Record<string, unknown> | Fail {
+  const o = parseKeys(raw, allowed);
+  if (isFail(o)) return o;
+  return checkPathFocus(o);
+}
+
+function checkPathFocus(raw: Record<string, unknown>): Record<string, unknown> | Fail {
   if (typeof raw.path !== 'string' || raw.path.length === 0)
     return fail('invalid_args', 'path must be a non-empty string');
   if (raw.focus !== undefined && typeof raw.focus !== 'boolean')
@@ -187,10 +238,13 @@ class Window {
 }
 
 /** One reservation: refunded at most once, and never after it was kept. */
-interface Token {
+export interface Token {
   refund(): void;
   keep(): void;
 }
+export type CheckResult<T> =
+  | Fail
+  | { summary: AskSummary; routesUi?: true; exec: (token: Token) => Promise<Result<T>> };
 
 class Budget {
   private readonly global = new Window();
@@ -233,11 +287,12 @@ class Budget {
   }
 }
 
-type ControlTool = Extract<ToolName, 'open_session' | 'open_terminal' | 'open_file'>;
+/** Every non-messaging tool. */
+export type ControlTool = Exclude<ToolName, (typeof MESSAGING_TOOL_NAMES)[number]>;
 
 export function createControlHandlers(deps: ControlDeps): ControlHandlers {
   const budgets = {
-    act: new Budget(ACT_RATE_PER_CALLER, ACT_RATE_GLOBAL, 'opens'),
+    act: new Budget(ACT_RATE_PER_CALLER, ACT_RATE_GLOBAL, 'actions'),
     show: new Budget(SHOW_RATE_PER_CALLER, null, 'view requests'),
   };
 
@@ -279,12 +334,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
   async function prepared<T>(
     tool: ControlTool,
     caller: Caller,
-    check: (who: {
-      sessionId: string;
-      home: string;
-    }) => Promise<
-      Fail | { summary: AskSummary; routesUi?: true; exec: (token: Token) => Promise<Result<T>> }
-    >,
+    check: (who: { sessionId: string; home: string }) => Promise<CheckResult<T>>,
   ): Promise<Result<PreparedCall<T>>> {
     const token = reserve(tool, caller);
     if (isFail(token)) return token;
@@ -388,6 +438,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     ctx.move === 'no' ? { ...a, focus: false } : a;
 
   return {
+    prepared,
     async prepareOpenSession(caller, raw, ctx) {
       const a = parseSessionArgs(raw);
       if (isFail(a)) return a;
