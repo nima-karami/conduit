@@ -173,7 +173,11 @@ export async function runCloseFiles(
     let kept = false;
     try {
       for (const id of group.ids) {
-        const path = ops.kindOf(id) === 'file' ? ops.pathOf(id) : undefined;
+        // Read live per id: an awaited auto-save yields, and the user may close a planned tab
+        // meanwhile; it is gone already, so closing it again would push a second reopen entry.
+        const kind = ops.kindOf(id);
+        if (kind === undefined) continue;
+        const path = kind === 'file' ? ops.pathOf(id) : undefined;
         if (path !== undefined && ops.isDirty(path)) {
           if ((await ops.closeDirtyUnprompted(id)).type === 'prompt') kept = true;
         } else {

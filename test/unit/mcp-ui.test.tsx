@@ -350,6 +350,21 @@ describe('runCloseFiles', () => {
     expect(log).toEqual(['force:diff:/w/a.ts']);
   });
 
+  it('a tab the user closed during an awaited auto-save is skipped, still counted closed', async () => {
+    const docs = [doc('file', '/w/a.ts'), doc('diff', '/w/a.ts'), doc('file', '/w/b.ts')];
+    const { ops, log, live } = fakeOps(docs, new Set(['/w/a.ts']), true);
+    const save = ops.closeDirtyUnprompted;
+    ops.closeDirtyUnprompted = async (id) => {
+      const r = await save(id);
+      live.delete('diff:/w/a.ts');
+      live.delete('file:/w/b.ts');
+      return r;
+    };
+    const out = await runCloseFiles(planCloseFiles(docs, 'A', 'all'), ops);
+    expect(out).toStrictEqual({ closed: ['/w/a.ts', '/w/b.ts'], skipped: [] });
+    expect(log).toEqual(['saved:file:/w/a.ts']);
+  });
+
   it('an auto-save close counts as closed', async () => {
     const docs = [doc('file', '/w/a.ts')];
     const { ops, log } = fakeOps(docs, new Set(['/w/a.ts']), true);

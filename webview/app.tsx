@@ -2199,22 +2199,21 @@ export function App() {
   );
 
   // Immediately close a doc — every tab of it — with no dirty check. Also drops any dirty- and
-  // view-state entry.
-  const forceCloseDoc = useCallback(
-    (id: string) => {
-      const doc = docState.docs.find((d) => d.id === id);
-      if (doc) {
-        // A diff tab shares its path with the file tab; only the file owns the dirty flag.
-        if (doc.kind === 'file') releaseFileTab(doc.path);
-        const closed = toClosedTab(doc, tabGroupsOf(docState, id)[0]);
-        if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
-        dropTabState(doc, 1);
-        dropTabState(doc, 2);
-      }
-      dispatchDocs({ type: 'close', id });
-    },
-    [docState],
-  );
+  // view-state entry. Reads the live docs: it also runs after an awaited save, by which time the
+  // user may have closed the doc (a render-time snapshot would push it on the reopen stack twice).
+  const forceCloseDoc = useCallback((id: string) => {
+    const live = docStateRef.current;
+    const doc = live.docs.find((d) => d.id === id);
+    if (doc) {
+      // A diff tab shares its path with the file tab; only the file owns the dirty flag.
+      if (doc.kind === 'file') releaseFileTab(doc.path);
+      const closed = toClosedTab(doc, tabGroupsOf(live, id)[0]);
+      if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
+      dropTabState(doc, 1);
+      dropTabState(doc, 2);
+    }
+    dispatchDocs({ type: 'close', id });
+  }, []);
 
   // Close a doc tab. If the doc has unsaved changes, show a 3-way Save/Discard/Cancel
   // dialog. Save path invokes the registered save; tab closes only on success.
