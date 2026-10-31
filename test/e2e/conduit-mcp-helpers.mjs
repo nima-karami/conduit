@@ -352,18 +352,29 @@ export async function setSessionPolicy(page, sessionId, tool, patch) {
 
 /**
  * `updateSettings` with `mcpToolPolicy[tool]` = `policy` merged over its current value; waits for
- * the host to broadcast it back.
+ * the host to broadcast it back, or throws after `ms`.
  * @param {Record<string, string>} policy e.g. `{ access: 'ask' }`
  */
-export function setGlobalPolicy(page, tool, policy) {
+export function setGlobalPolicy(page, tool, policy, ms = 10_000) {
   return page.evaluate(
-    ({ t, p }) =>
-      new Promise((resolve) => {
+    ({ t, p, ms }) =>
+      new Promise((resolve, reject) => {
         let sent = false;
+        let last = null;
         const matches = (s) =>
           Object.entries(p).every(([f, v]) => s?.mcpToolPolicy?.[t]?.[f] === v);
+        const timer = setTimeout(() => {
+          off();
+          const seen = JSON.stringify(last?.mcpToolPolicy?.[t] ?? null);
+          reject(
+            new Error(
+              `setGlobalPolicy ${t} ${JSON.stringify(p)}: not broadcast back in ${ms} ms (last: ${seen})`,
+            ),
+          );
+        }, ms);
         const off = window.agentDeck.subscribe((m) => {
           if (m.type !== 'state') return;
+          last = m.settings;
           if (!sent) {
             sent = true;
             const cur = m.settings.mcpToolPolicy;
@@ -373,13 +384,14 @@ export function setGlobalPolicy(page, tool, policy) {
             });
           }
           if (matches(m.settings)) {
+            clearTimeout(timer);
             off();
             resolve();
           }
         });
         window.agentDeck.post({ type: 'ready' });
       }),
-    { t: tool, p: policy },
+    { t: tool, p: policy, ms },
   );
 }
 
