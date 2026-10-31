@@ -17,9 +17,10 @@ All notable user-facing changes to Conduit. Format follows
   auto-save on, unsaved files are saved first, otherwise they stay open and are reported.
 
 ### Changed
-- **An agent's opens land in its own session.** `open_file` and the new tools open in the agent's
-  session and never switch the session you're looking at. A Review or History opened by the
-  agent in your split pane moves to that agent's session.
+- **An agent's opens land in its own session.** `open_file` and the new open tools
+  (`open_review`, `open_git_history`, `open_url`) open in the agent's session and never switch
+  the session you're looking at; only `focus_session` does that, by design. A Review or History
+  opened by the agent in your split pane moves to that agent's session.
 - **MCP tool switches are now policies.** Each Conduit tool is **Off**, **Ask** or **On**, with
   conditions where they apply: **When** (while the agent's session is on screen, or always) and
   **Move** (whether it may switch your view). Set them for all CLIs, per CLI (Claude, Codex,
@@ -33,8 +34,10 @@ All notable user-facing changes to Conduit. Format follows
 - **New defaults.** `open_file` is **On** (was off) and `open_session` is **Ask** (was off).
   `open_session`, `open_terminal` and `open_file` act only while the agent's session is on
   screen, unless set to **Always**.
-- **`open_file` is rate-limited.** Each agent can open up to 30 files a minute, on its own
-  budget, separate from the one for opening sessions and terminals.
+- **Agent tools are rate-limited in two shared budgets.** View tools (`open_file`,
+  `close_files`, `open_review`, `open_git_history`, `open_url`, `focus_session`) allow 30 calls a
+  minute per agent. Action tools (`open_session`, `open_terminal`, `close_session`,
+  `attach_folder`) allow 10 a minute per agent and 20 a minute across all agents.
 - **Your v0.50 switches carry over.** A tool you turned on becomes On · Always; a messaging tool
   you turned off stays off. Going back to v0.50 drops the policies and returns to its defaults.
 
