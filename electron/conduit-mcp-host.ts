@@ -934,6 +934,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             [...runtime].flatMap(([id, r]) => (r.notConnected ? [[id, r.notConnected]] : [])),
           )
         : {},
+      awaitingApproval: [],
     };
   }
 

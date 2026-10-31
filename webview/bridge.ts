@@ -658,6 +658,7 @@ function mockHost(msg: WebviewToHost) {
           youUrgent: 0,
           switchable: [],
           notConnected: {},
+          awaitingApproval: [],
         },
       });
     }, 20);

@@ -39,6 +39,7 @@ function state(o: Partial<McpUiState> = {}): McpUiState {
     youUrgent: 0,
     switchable: [],
     notConnected: {},
+    awaitingApproval: [],
     ...o,
   };
 }

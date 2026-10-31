@@ -1,8 +1,12 @@
 import type { AgentScopeReason } from './add-dir-delivery';
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
+import type { PolicySource, ToolName, ToolPolicyPatch } from './conduit-mcp/tool-policy';
 import type { Handle, MessageKind, Priority, ToolErrorCode } from './conduit-mcp/types';
 import type {
+  AskAnswer,
+  AskClosedOutcome,
+  AskSummary,
   McpAttachmentPayload,
   McpSendResult,
   McpThreadView,
@@ -570,6 +574,25 @@ export type HostToWebview =
       ok: false;
       error: 'unknown-session' | 'unknown-tool' | 'invalid-value';
     }
+  // Ask details go to the caller's owner window only (spec 2026-10-30-conduit-mcp-tool-policy §2.4).
+  | {
+      type: 'mcp:ask';
+      askId: string;
+      callerSessionId: string;
+      callerHandle: Handle;
+      tool: ToolName;
+      summary: AskSummary;
+      args: unknown;
+      source: PolicySource;
+    }
+  | { type: 'mcp:askClosed'; askId: string; outcome: AskClosedOutcome }
+  | { type: 'mcp:toolPolicyResult'; requestId: number; ok: true }
+  | {
+      type: 'mcp:toolPolicyResult';
+      requestId: number;
+      ok: false;
+      error: 'unknown-session' | 'unknown-tool' | 'invalid-value';
+    }
   | {
       type: 'mcp:attachment';
       requestId: number;
@@ -1076,6 +1099,17 @@ export type WebviewToHost =
       sessionId: string;
       tool: string;
       value: boolean | 'inherit';
+    }
+  // Answer from the approval card; counts only from the window the ask was sent to
+  // (spec 2026-10-30-conduit-mcp-tool-policy §2.4). The host re-validates every field.
+  | { type: 'mcp:askAnswer'; askId: string; answer: AskAnswer }
+  // Session policy layer edit (same spec §3.4); tool stays a string because the host validates it.
+  | {
+      type: 'mcp:setToolPolicy';
+      requestId: number;
+      sessionId: string;
+      tool: string;
+      patch: ToolPolicyPatch;
     }
   // CONDUIT_E2E=1 ONLY: shift the host's schedule clock and re-evaluate, so the smoke scenario
   // proves interval repeats and the expiry windows in milliseconds instead of hours (§7).

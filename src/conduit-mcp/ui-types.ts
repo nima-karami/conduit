@@ -15,6 +15,14 @@ import type {
 
 export type McpGateState = 'open' | 'pull-only' | GateClosedReason;
 
+export type AskAnswer = 'approve' | 'deny' | 'always';
+export type AskClosedOutcome = 'expired' | 'cancelled';
+/** Placeholder values for the card's per-tool summary template (MCP_STR.ask.summary). */
+export type AskSummary =
+  | { tool: 'open_session'; path: string; agent: string; focus: boolean }
+  | { tool: 'open_terminal'; path: string; command: string; focus: boolean }
+  | { tool: 'open_file'; path: string; line: number | null };
+
 export interface McpSessionBadge {
   handle: Handle;
   unread: number;
@@ -56,6 +64,8 @@ export interface McpUiState {
   switchable: string[];
   /** By sessionId; {} while messaging is off. */
   notConnected: Record<string, McpNotConnected>;
+  /** Caller session ids with at least one waiting ask (spec 2026-10-30-conduit-mcp-tool-policy §2.4, caller side). */
+  awaitingApproval: string[];
 }
 
 /** A session where an agent CLI was started but never reached this host (spec 2026-10-27-conduit-mcp-install §2.5). */
