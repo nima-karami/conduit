@@ -150,6 +150,21 @@ export function phaseAfterResult(resultState: HistoryState, append: boolean): Hi
   return 'ready';
 }
 
+/** The scrollTop that brings fixed-height row `index` fully into view with the least movement;
+ *  null when it already is. */
+export function scrollTopToShow(
+  index: number,
+  rowHeight: number,
+  scrollTop: number,
+  viewportHeight: number,
+): number | null {
+  const top = index * rowHeight;
+  const bottom = top + rowHeight;
+  if (top < scrollTop) return top;
+  if (bottom > scrollTop + viewportHeight) return bottom - viewportHeight;
+  return null;
+}
+
 export interface VisibleRange {
   /** First row index to render (inclusive). */
   start: number;

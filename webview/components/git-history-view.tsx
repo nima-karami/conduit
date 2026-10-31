@@ -20,7 +20,7 @@ import {
   rowY,
   splitBadges,
 } from '../../src/git-graph-render';
-import { collectRefs, filterCommits, visibleRange } from '../../src/git-search';
+import { collectRefs, filterCommits, scrollTopToShow, visibleRange } from '../../src/git-search';
 import type { CommitNode, GitRef, GraphLayout, HostToWebview } from '../../src/protocol';
 import { repoLabel, repoSub } from '../../src/repo-display';
 import { repoGitFingerprint } from '../../src/repo-git';
@@ -273,11 +273,14 @@ export function GitHistoryView({
   // A commit an MCP open_git_history handed over for this (session, repo). Declared after the
   // load effect so its retarget/request lands first; the persisted-selection restore yields to it.
   const revealTakenRef = useRef(false);
+  /** The revealed sha still to be scrolled to, once the list has loaded and mounted. */
+  const revealScrollRef = useRef<string | null>(null);
   useEffect(() => {
     const take = () => {
       const commit = takeHistoryReveal(sessionId, repoRoot);
       if (!commit) return;
       revealTakenRef.current = true;
+      revealScrollRef.current = commit.sha;
       dispatch({ type: 'reveal', commit });
     };
     take();
@@ -511,6 +514,22 @@ export function GitHistoryView({
     };
   }, [state.phase, viewStateId]);
 
+  // A revealed commit in the loaded pages is scrolled into view pre-paint, after the persisted
+  // restore above; one beyond them is shown by the detail pane alone. 'loading' keeps it pending:
+  // the list isn't mounted yet.
+  useLayoutEffect(() => {
+    const sha = revealScrollRef.current;
+    if (sha === null || state.phase === 'loading') return;
+    revealScrollRef.current = null;
+    const el = listRef.current;
+    const index = indexBySha.get(sha);
+    if (!el || index === undefined || !state.commits.some((c) => c.sha === sha)) return;
+    const top = scrollTopToShow(index, ROW_HEIGHT, el.scrollTop, el.clientHeight);
+    if (top === null) return;
+    el.scrollTop = top;
+    setScrollTop(top);
+  }, [state.phase, state.commits, indexBySha]);
+
   // Capture the selected commit into the same per-doc entry on every change (select via click /
   // arrow keys, deselect via Esc / close, or a refresh that drops a vanished sha). Gated on
   // `restoredRef` so the initial null selection can't clobber a persisted sha before the layout
@@ -542,12 +561,8 @@ export function GitHistoryView({
         // Keep the moved selection in view (it may be outside the current window) before
         // focusing the row — scrollIntoView nudges the scroller, the window recomputes.
         const el = listRef.current;
-        if (el) {
-          const top = clamped * ROW_HEIGHT;
-          const bottom = top + ROW_HEIGHT;
-          if (top < el.scrollTop) el.scrollTop = top;
-          else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
-        }
+        const top = el && scrollTopToShow(clamped, ROW_HEIGHT, el.scrollTop, el.clientHeight);
+        if (el && top !== null) el.scrollTop = top;
         requestAnimationFrame(() => {
           listRef.current?.querySelector<HTMLElement>(`[data-row="${clamped}"]`)?.focus();
         });
