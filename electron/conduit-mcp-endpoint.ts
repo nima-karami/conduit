@@ -72,6 +72,8 @@ export function createMcpEndpoint(opts: {
     const makeConn = (token: string | null) => {
       const lineCbs: Array<(l: string) => void> = [];
       const closeCbs: Array<() => void> = [];
+      // A repeat close() while flushing would find the socket unwritable and destroy it early.
+      let closing = false;
       return {
         id,
         token,
@@ -87,6 +89,8 @@ export function createMcpEndpoint(opts: {
         close() {
           // destroy() alone drops queued writes: replies sent just before close would be lost.
           // Bounded, so a peer that stops reading can't hold a closed connection open.
+          if (closing) return;
+          closing = true;
           if (!socket.writable) {
             socket.destroy();
             return;

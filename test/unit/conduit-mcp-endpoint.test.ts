@@ -234,6 +234,28 @@ describe('createMcpEndpoint', () => {
     expect(got).toBe([1, 2, 3].map((n) => `${line(n)}\n`).join(''));
   });
 
+  it('a second close() during the flush changes nothing', async () => {
+    let conn: EndpointConnection | undefined;
+    const path = await serve((c) => {
+      conn = c;
+    });
+    const a = await dial(path);
+    let got = '';
+    a.setEncoding('utf8');
+    a.on('data', (d: string) => {
+      got += d;
+    });
+    const done = closed(a);
+    a.write('{"conduit":1,"token":"t"}\n');
+    await expect.poll(() => conn).toBeDefined();
+    const line = (n: number) => `{"id":${n},"pad":"${'x'.repeat(64 * 1024)}"}`;
+    for (const n of [1, 2, 3]) conn?.send(line(n));
+    conn?.close();
+    conn?.close();
+    await done;
+    expect(got).toBe([1, 2, 3].map((n) => `${line(n)}\n`).join(''));
+  });
+
   it.skipIf(process.platform === 'win32')('stale posix socket file is unlinked', async () => {
     const path = testEndpoint();
     fs.writeFileSync(path, 'stale');
