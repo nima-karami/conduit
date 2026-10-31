@@ -106,7 +106,7 @@ export const activeTab = (page) =>
   );
 
 /** Forward-slashed and lower-cased, for comparing a host path with a fixture path on Windows. */
-export const slashed = (p) => p.replaceAll('\\', '/').toLowerCase();
+const slashed = (p) => p.replaceAll('\\', '/').toLowerCase();
 
 /**
  * True when a tab id or a result path names the fixture file `abs`, compared on its last two
