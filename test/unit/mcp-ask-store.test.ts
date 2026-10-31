@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostToWebview } from '../../src/protocol';
+import * as store from '../../webview/mcp-ask-store';
 
 const bridge = vi.hoisted(() => ({
   listeners: [] as ((m: HostToWebview) => void)[],
@@ -14,9 +15,6 @@ vi.mock('../../webview/bridge', () => ({
 }));
 const toast = vi.hoisted(() => ({ pushToast: vi.fn() }));
 vi.mock('../../webview/toast-store', () => toast);
-
-type Store = typeof import('../../webview/mcp-ask-store');
-let store: Store;
 
 function emit(m: HostToWebview): void {
   for (const l of bridge.listeners) l(m);
@@ -35,12 +33,11 @@ function ask(askId: string, handle = 'fake-1'): HostToWebview {
   };
 }
 
-beforeEach(async () => {
-  vi.resetModules();
-  bridge.listeners.length = 0;
+// The store is a module singleton subscribed once at import; each case starts from it emptied.
+beforeEach(() => {
+  for (const a of store.getAsksSnapshot()) store.answerAsk(a.askId, 'deny');
   bridge.post.mockReset();
   toast.pushToast.mockReset();
-  store = await import('../../webview/mcp-ask-store');
 });
 
 describe('mcp-ask-store', () => {
