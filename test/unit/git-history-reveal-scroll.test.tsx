@@ -2,7 +2,7 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { ROW_HEIGHT } from '../../src/git-graph-render';
+import { assignLanes, ROW_HEIGHT } from '../../src/git-graph-render';
 import type { CommitNode, HostToWebview, WebviewToHost } from '../../src/protocol';
 import { GitHistoryView } from '../../webview/components/git-history-view';
 import { requestHistoryReveal } from '../../webview/history-reveal';
@@ -113,6 +113,7 @@ function deliverHistory() {
         repoRoot: '/r',
         requestId: req.requestId,
         commits: LOADED,
+        layout: assignLanes(LOADED),
         hasMore: true,
         state: 'ok',
       });
