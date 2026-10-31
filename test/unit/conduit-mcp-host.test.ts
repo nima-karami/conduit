@@ -126,8 +126,8 @@ interface Harness {
   flashed: string[];
   /** Owner window per session; absent ⇒ window 1. */
   owners: Map<string, number | null>;
-  /** What the presence store answers for every window. */
-  presence: { ready: boolean; onScreen: boolean };
+  /** Ready windows, and what each shows; a window absent from `shown` shows every session. */
+  presence: { ready: Set<number>; shown: Map<number, Set<string>> };
 }
 
 const dirs: string[] = [];
@@ -200,7 +200,7 @@ function harness(
   const toOwner: Harness['toOwner'] = [];
   const flashed: string[] = [];
   const owners = new Map<string, number | null>();
-  const presence = { ready: true, onScreen: true };
+  const presence: Harness['presence'] = { ready: new Set([1, 2]), shown: new Map() };
   let askN = 0;
   let tokenN = 0;
   let host: ConduitMcpHost;
@@ -252,8 +252,8 @@ function harness(
     toolPolicy: opts.toolPolicy ?? (() => ({ global: DEFAULT_TOOL_POLICY, byCli: {} })),
     ownerWindowOf: (id) => (owners.has(id) ? (owners.get(id) ?? null) : 1),
     presence: {
-      isReady: () => presence.ready,
-      isOnScreen: () => presence.onScreen,
+      isReady: (w) => presence.ready.has(w),
+      isOnScreen: (w, id) => presence.shown.get(w)?.has(id) ?? true,
     },
     sendToOwner: (to, msg) => toOwner.push({ to, msg }),
     flashOwner: (id) => flashed.push(id),
@@ -2531,6 +2531,11 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
   const answer = (h: Harness, askId: string, a: 'approve' | 'deny' | 'always', senderId = 1) =>
     h.host.handleRenderer({ type: 'mcp:askAnswer', askId, answer: a }, () => undefined, senderId);
   const OPEN = { path: '/w', agent: 'e2e-fake-mcp' };
+  /** The call's error code, or 'asked' when a card went out instead of a reply. */
+  const replyOrAsk = async (h: Harness, c: Awaited<ReturnType<typeof rawClient>>, id: number) => {
+    await until(() => c.lines.some((l) => l.id === id) || asksOf(h).length > 0);
+    return asksOf(h).length > 0 ? 'asked' : c.errorOf(c.lines.find((l) => l.id === id));
+  };
   const setPolicy = (h: Harness, layer: PolicyLayer | undefined) => {
     const s = h.sessions.get('s1');
     if (!s) throw new Error('no session s1');
@@ -2547,14 +2552,14 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
 
   it('gate precedence', async () => {
     const { h, c } = await asking();
-    h.presence.ready = false;
+    h.presence.ready.delete(1);
     setPolicy(h, { open_terminal: { access: 'off' } });
     c.call(1, 'open_terminal', { path: '/w', command: 'node' });
     expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
     c.call(2, 'open_session', OPEN);
     expect(c.errorOf(await c.reply(2))).toBe('window_not_ready');
-    h.presence.ready = true;
-    h.presence.onScreen = false;
+    h.presence.ready.add(1);
+    h.presence.shown.set(1, new Set());
     c.call(3, 'open_session', OPEN);
     expect(c.errorOf(await c.reply(3))).toBe('caller_not_visible');
     h.owners.set('s1', null);
@@ -2567,9 +2572,22 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     setPolicy(h, { open_file: { when: 'always' } });
     c.call(5, 'open_file', { path: '/w/a.ts' });
     expect(c.errorOf(await c.reply(5))).toBe('ok');
-    h.presence.ready = false;
+    h.presence.ready.delete(1);
     c.call(6, 'list_sessions');
     expect(c.errorOf(await c.reply(6))).toBe('ok');
+  });
+
+  it("the gate asks about the caller's own window, not any window", async () => {
+    const { h, c } = await asking();
+    h.presence.shown.set(1, new Set());
+    h.presence.shown.set(2, new Set(['s1']));
+    c.call(1, 'open_session', OPEN);
+    expect(await replyOrAsk(h, c, 1)).toBe('caller_not_visible');
+    h.presence.shown.clear();
+    h.presence.ready.delete(1);
+    c.call(2, 'open_session', OPEN);
+    expect(await replyOrAsk(h, c, 2)).toBe('window_not_ready');
+    expect(h.toOwner).toEqual([]);
   });
 
   it('session layer beats the CLI layer', async () => {
