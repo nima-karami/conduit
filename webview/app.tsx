@@ -2554,7 +2554,8 @@ export function App() {
         dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId, mode, group: g, shown });
         return;
       }
-      recordNav({ sessionId, doc: { kind: 'web', path: url } });
+      // An open into a session nobody is looking at is not a navigation (as openReviewIn).
+      if (sessionId === shown) recordNav({ sessionId, doc: { kind: 'web', path: url } });
       dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId, group: g, shown });
     },
     [recordNav, reportBackgroundOpen],
