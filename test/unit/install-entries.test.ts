@@ -48,7 +48,7 @@ describe('install-entries', () => {
     });
   });
 
-  it('opencode entry command is [exe, shim] with {env:…} placeholders, enabled, 180 s timeout', () => {
+  it('opencode entry command is [exe, shim] with {env:…} placeholders and enabled true (unchanged since v0.50)', () => {
     expect(conduitEntry('opencode', EXE, SHIM)).toEqual({
       type: 'local',
       command: [EXE, SHIM],
@@ -58,11 +58,10 @@ describe('install-entries', () => {
         CONDUIT_MCP_ENDPOINT: '{env:CONDUIT_MCP_ENDPOINT}',
       },
       enabled: true,
-      timeout: 180_000,
     });
   });
 
-  it('legacy (v0.50) entries lack only the timeouts; claude and cursor are unchanged', () => {
+  it('legacy (v0.50) entries lack only the codex tool timeout; the others are unchanged', () => {
     expect(legacyConduitEntry('codex', EXE, SHIM)).toEqual({
       command: EXE,
       args: [SHIM],
@@ -70,17 +69,7 @@ describe('install-entries', () => {
       env_vars: ['CONDUIT_SESSION_TOKEN', 'CONDUIT_MCP_ENDPOINT'],
       default_tools_approval_mode: 'auto',
     });
-    expect(legacyConduitEntry('opencode', EXE, SHIM)).toEqual({
-      type: 'local',
-      command: [EXE, SHIM],
-      environment: {
-        ELECTRON_RUN_AS_NODE: '1',
-        CONDUIT_SESSION_TOKEN: '{env:CONDUIT_SESSION_TOKEN}',
-        CONDUIT_MCP_ENDPOINT: '{env:CONDUIT_MCP_ENDPOINT}',
-      },
-      enabled: true,
-    });
-    for (const cli of ['claude', 'cursor'] as const) {
+    for (const cli of ['claude', 'cursor', 'opencode'] as const) {
       expect(legacyConduitEntry(cli, EXE, SHIM)).toEqual(conduitEntry(cli, EXE, SHIM));
     }
   });

@@ -97,7 +97,7 @@ export interface V050CodexEntry {
 export interface CodexEntry extends V050CodexEntry {
   tool_timeout_sec: number;
 }
-export interface V050OpenCodeEntry {
+export interface OpenCodeEntry {
   type: 'local';
   command: string[];
   environment: {
@@ -106,10 +106,6 @@ export interface V050OpenCodeEntry {
     CONDUIT_MCP_ENDPOINT: string;
   };
   enabled: true;
-}
-export interface OpenCodeEntry extends V050OpenCodeEntry {
-  /** Milliseconds; OpenCode applies it to tool calls as well. */
-  timeout: number;
 }
 
 export type InstallDismissals = Partial<Record<AgentCli, true>>;

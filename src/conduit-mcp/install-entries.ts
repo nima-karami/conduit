@@ -5,15 +5,13 @@ import type {
   CodexEntry,
   OpenCodeEntry,
   V050CodexEntry,
-  V050OpenCodeEntry,
 } from './install-types';
 
 export type ConduitEntry = ClaudeEntry | CodexEntry | CursorEntry | OpenCodeEntry;
-export type LegacyConduitEntry = ClaudeEntry | V050CodexEntry | CursorEntry | V050OpenCodeEntry;
+export type LegacyConduitEntry = ClaudeEntry | V050CodexEntry | CursorEntry | OpenCodeEntry;
 export const SHIM_LEAF = 'conduit-mcp-shim.cjs';
 /** Longer than Conduit's ask budget, so the human's card decides, not the CLI's clock. */
 export const CODEX_TOOL_TIMEOUT_SEC = 180;
-const OPENCODE_TIMEOUT_MS = 180_000;
 
 const TOKEN = 'CONDUIT_SESSION_TOKEN';
 const ENDPOINT = 'CONDUIT_MCP_ENDPOINT';
@@ -42,7 +40,7 @@ const v050Codex = (execPath: string, shimPath: string): V050CodexEntry => ({
   default_tools_approval_mode: 'auto',
 });
 
-const v050OpenCode = (execPath: string, shimPath: string): V050OpenCodeEntry => ({
+const openCodeEntry = (execPath: string, shimPath: string): OpenCodeEntry => ({
   type: 'local',
   command: [execPath, shimPath],
   environment: {
@@ -63,7 +61,7 @@ export function conduitEntry(cli: AgentCli, execPath: string, shimPath: string):
     case 'cursor':
       return cursorEntry(execPath, shimPath);
     case 'opencode':
-      return { ...v050OpenCode(execPath, shimPath), timeout: OPENCODE_TIMEOUT_MS };
+      return openCodeEntry(execPath, shimPath);
   }
 }
 
@@ -73,16 +71,8 @@ export function legacyConduitEntry(
   execPath: string,
   shimPath: string,
 ): LegacyConduitEntry {
-  switch (cli) {
-    case 'claude':
-      return claudeEntry(execPath, shimPath);
-    case 'codex':
-      return v050Codex(execPath, shimPath);
-    case 'cursor':
-      return cursorEntry(execPath, shimPath);
-    case 'opencode':
-      return v050OpenCode(execPath, shimPath);
-  }
+  // Only the codex entry has changed since v0.50.
+  return cli === 'codex' ? v050Codex(execPath, shimPath) : conduitEntry(cli, execPath, shimPath);
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
