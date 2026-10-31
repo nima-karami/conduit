@@ -126,7 +126,9 @@ export function historyReducer(state: HistoryState, action: HistoryAction): Hist
 
 /** What the graph shows: the paged set, plus the deep-search hits while a query is active and a
  *  revealed commit; the paged set itself when there is neither. */
-export function displayCommits(state: HistoryState): CommitNode[] {
+export function displayCommits(
+  state: Pick<HistoryState, 'commits' | 'searchCommits' | 'query' | 'revealed'>,
+): CommitNode[] {
   const hits = state.query.trim() ? state.searchCommits : [];
   if (hits.length === 0 && state.revealed === null) return state.commits;
   return dedupeAndSortCommits([

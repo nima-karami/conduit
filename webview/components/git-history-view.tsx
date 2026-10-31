@@ -20,12 +20,7 @@ import {
   rowY,
   splitBadges,
 } from '../../src/git-graph-render';
-import {
-  collectRefs,
-  dedupeAndSortCommits,
-  filterCommits,
-  visibleRange,
-} from '../../src/git-search';
+import { collectRefs, filterCommits, visibleRange } from '../../src/git-search';
 import type { CommitNode, GitRef, GraphLayout, HostToWebview } from '../../src/protocol';
 import { repoLabel, repoSub } from '../../src/repo-display';
 import { repoGitFingerprint } from '../../src/repo-git';
@@ -33,7 +28,13 @@ import type { RepoInfo } from '../../src/repo-scan';
 import { post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
 import { registerFocusTarget } from '../focus-targets';
-import { acceptHistoryResult, historyReducer, initialHistoryState } from '../git-history-state';
+import {
+  acceptHistoryResult,
+  displayCommits,
+  historyReducer,
+  initialHistoryState,
+} from '../git-history-state';
+import { subscribeHistoryReveal, takeHistoryReveal } from '../history-reveal';
 import {
   IconBranch,
   IconChevronDown,
@@ -269,6 +270,20 @@ export function GitHistoryView({
     requestHistory();
   }, [requestHistory, repoRoot, scheduleSearch]);
 
+  // A commit an MCP open_git_history handed over for this (session, repo). Declared after the
+  // load effect so its retarget/request lands first; the persisted-selection restore yields to it.
+  const revealTakenRef = useRef(false);
+  useEffect(() => {
+    const take = () => {
+      const commit = takeHistoryReveal(sessionId, repoRoot);
+      if (!commit) return;
+      revealTakenRef.current = true;
+      dispatch({ type: 'reveal', commit });
+    };
+    take();
+    return subscribeHistoryReveal(take);
+  }, [sessionId, repoRoot]);
+
   // Subscribe to history results (filtered to this session + repo, newest-id-wins). A `state`
   // broadcast carrying this repo's changed git fingerprint is the refresh seam
   // (debounced below). Commit detail + diffs are fetched by the commit/commit-diff tabs.
@@ -404,12 +419,10 @@ export function GitHistoryView({
   // While a query is active, fold the host's deep-history hits into the loaded page (loaded copy
   // first so its full ref badges win the dedupe) — this is what surfaces a match beyond the
   // loaded window. Empty query → the pristine paged set, so clearing restores the normal graph.
+  const { commits, searchCommits, query, revealed } = state;
   const searchable = useMemo(
-    () =>
-      state.query.trim()
-        ? dedupeAndSortCommits([...state.commits, ...state.searchCommits])
-        : state.commits,
-    [state.commits, state.searchCommits, state.query],
+    () => displayCommits({ commits, searchCommits, query, revealed }),
+    [commits, searchCommits, query, revealed],
   );
   // Client-side narrowing: text query + ref filter, then RE-RUN assignLanes over the subset
   // so lanes/edges only reference visible commits (no dangling edges to filtered-out rows).
@@ -470,7 +483,11 @@ export function GitHistoryView({
         setScrollTop(el.scrollTop);
         // Reopen the same commit's detail — but only if that sha survived into the loaded set;
         // a dangling sha would leave the detail lookup null (no crash, just no detail).
-        if (saved.selectedSha && commitsRef.current.some((c) => c.sha === saved.selectedSha)) {
+        if (
+          !revealTakenRef.current &&
+          saved.selectedSha &&
+          commitsRef.current.some((c) => c.sha === saved.selectedSha)
+        ) {
           dispatch({ type: 'select', sha: saved.selectedSha });
         }
       }
