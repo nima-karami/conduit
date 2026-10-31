@@ -7,7 +7,16 @@ import type {
   ProjectScope,
   UserInstallState,
 } from '../src/conduit-mcp/install-types';
-import type { ToolName } from '../src/conduit-mcp/tool-switches';
+import type {
+  Access,
+  CliKind,
+  Move,
+  PolicyField,
+  Reach,
+  ToolGroup,
+  ToolName,
+  When,
+} from '../src/conduit-mcp/tool-policy';
 import type {
   McpAttentionReason,
   McpUnavailableReason,
@@ -18,6 +27,11 @@ import type {
 } from '../src/conduit-mcp/types';
 import type { McpGateState } from '../src/conduit-mcp/ui-types';
 import { countNoun } from '../src/menu-selection';
+
+// Only the tools whose On bypasses every prompt get a line under their row (spec §8).
+const ON_WARNING: Partial<Record<ToolName, string>> = {
+  open_terminal: 'Runs without asking. Codex never asks on its own.',
+};
 
 const UNAVAILABLE_CAUSE: Record<McpUnavailableReason, string> = {
   'cmd-metachar': 'its launch command can’t carry the server safely',
@@ -217,8 +231,7 @@ export const MCP_STR = {
       read_inbox: 'Lets an agent read the messages sent to it.',
       read_attachment: 'Lets an agent open files attached to its messages.',
       open_session: 'Lets an agent start sessions from your profiles.',
-      open_terminal:
-        'Lets an agent run any program as you, outside its own sandbox. Codex sessions run it without asking.',
+      open_terminal: 'Lets an agent run any program as you, outside its own sandbox.',
       open_file: 'Lets an agent open files in your editor.',
     } satisfies Record<ToolName, string>,
     overrideNote: 'Sessions can override these from their menu (MCP tools…).',
@@ -234,6 +247,44 @@ export const MCP_STR = {
     announce: (tool: string, value: string, label: string) =>
       `${tool} set to ${value} for ${label}`,
     openedBy: (handle: string) => `Opened by ${handle}`,
+    // The policy editor (spec 2026-10-30-conduit-mcp-tool-policy §8–§10).
+    group: {
+      messaging: 'Messaging',
+      sessions: 'Sessions',
+      editor: 'Editor & views',
+    } satisfies Record<ToolGroup, string>,
+    accessLabel: (tool: string) => `${tool} access`,
+    fieldAria: (tool: string, field: string) => `${tool} ${field}`,
+    access: { off: 'Off', ask: 'Ask', on: 'On' } satisfies Record<Access, string>,
+    when: { viewing: 'While on screen', always: 'Always' } satisfies Record<When, string>,
+    reach: {
+      self: 'Itself',
+      opened: 'Sessions it opened',
+      window: 'Its window',
+      any: 'Any session',
+    } satisfies Record<Reach, string>,
+    move: { yes: 'May switch your view', no: 'Never switch your view' } satisfies Record<
+      Move,
+      string
+    >,
+    fieldLabel: { when: 'When', reach: 'Reach', move: 'Move' } satisfies Record<
+      Exclude<PolicyField, 'access'>,
+      string
+    >,
+    conditions: 'Conditions',
+    inherited: (value: string, from: string) => `Inherit (${value} · from ${from})`,
+    layerName: { global: 'All CLIs', session: 'this session' },
+    cliName: {
+      claude: 'Claude',
+      codex: 'Codex',
+      cursor: 'Cursor',
+      opencode: 'OpenCode',
+      agent: 'Other',
+    } satisfies Record<CliKind, string>,
+    defaultsFor: 'Defaults for',
+    cliLayerNote:
+      'A session follows the CLI that connected first in it. A convenience, not a security boundary.',
+    onWarning: ON_WARNING,
   },
   // Settings → MCP, the card indicator, the setup banner and the Messages empty state
   // (spec 2026-10-27-conduit-mcp-install §2.3–§2.6, §8).

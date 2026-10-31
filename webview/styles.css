@@ -14517,6 +14517,99 @@ button.toggle--on .toggle__knob {
   color: var(--text-dim);
 }
 
+/* MCP tool policy editor, in Settings and the session dialog
+   (docs/specs/2026-10-30-conduit-mcp-tool-policy.md §8–§11): existing tokens only. */
+.policygroup {
+  margin-top: 12px;
+}
+.policygroup__title {
+  font-size: calc(11px * var(--font-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+.policyrow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.policyrow:last-child {
+  border-bottom: 0;
+}
+.policyrow__main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 16px;
+  align-self: stretch;
+  min-width: 0;
+}
+.policyrow__label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+/* A code identifier: never re-cased by a theme's --label-case. */
+.policyrow__name {
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-scale));
+  color: var(--text);
+}
+.policyrow__desc {
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-faint);
+}
+.policyrow__cond {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.policyrow__chev {
+  transition: transform 0.12s ease;
+}
+.policyrow__cond[aria-expanded="true"] .policyrow__chev {
+  transform: rotate(180deg);
+}
+.policyrow__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  min-width: 0;
+}
+.policyrow__fields[hidden] {
+  display: none;
+}
+.policyrow__field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.policyrow__fieldlabel {
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-dim);
+}
+.policyrow__warn,
+.policyrow__error {
+  margin: 0;
+  font-size: calc(11.5px * var(--font-scale));
+}
+.policyrow__warn {
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+}
+.policyrow__error {
+  color: var(--danger);
+}
+
 /* Settings → MCP agent CLI rows and project entries (docs/specs/2026-10-27-conduit-mcp-install.md §8, §10). */
 .mcp-install-row,
 .mcp-project__cli {
