@@ -2532,6 +2532,7 @@ body.resizing .panel__resize::after {
   grid-column: 2 / -1;
   justify-self: start;
   max-width: 100%;
+  text-align: left;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -7065,6 +7066,7 @@ body.gh-resizing {
 .askcard__actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
   margin-left: auto;
 }
