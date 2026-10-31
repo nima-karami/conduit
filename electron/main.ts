@@ -1964,7 +1964,6 @@ app.whenReady().then(() => {
     writer: ptyWriter,
     activity,
     messagingOn: () => settings.conduitMcp,
-    mcpTools: () => settings.mcpTools,
     toolPolicy: () => ({ global: settings.mcpToolPolicy, byCli: settings.mcpToolPolicyByCli }),
     ownerWindowOf: (id) => {
       const w = sessionOwner.get(id);
@@ -4544,7 +4543,6 @@ app.whenReady().then(() => {
         case 'mcp:pause':
         case 'mcp:attachment:get':
         case 'mcp:retry':
-        case 'mcp:setToolOverride':
         case 'mcp:setToolPolicy':
         case 'mcp:askAnswer':
           await mcpHost.handleRenderer(m, replyHere, senderId);

@@ -3,13 +3,13 @@ import {
   ACT_RATE_GLOBAL,
   ACT_RATE_PER_CALLER,
   type ControlDeps,
+  type ControlHandlers,
   createControlHandlers,
   type McpFileRequest,
   type McpOpenOutcome,
   type McpOpenRequest,
-  OPEN_RATE_GLOBAL,
-  OPEN_RATE_PER_CALLER,
   type PathKind,
+  type PreparedCall,
   SHOW_RATE_PER_CALLER,
 } from '../../src/conduit-mcp/control-tools';
 import { toolSchemas } from '../../src/conduit-mcp/tool-schemas';
@@ -74,6 +74,20 @@ function harness(over: Partial<ControlDeps> = {}): Harness {
 
 const caller = (n = 1): Caller => ({ handle: `claude-${n}`, sessionId: `caller-${n}` });
 const code = <T>(r: Result<T>) => (r.ok ? 'ok' : r.error.code);
+/** The handlers as a call whose policy is on runs them: prepare, then run (call-flow step 2). */
+function whenOn(deps: ControlDeps) {
+  const c: ControlHandlers = createControlHandlers(deps);
+  const NO_MOVE = { move: undefined };
+  const run = async <T>(p: Promise<Result<PreparedCall<T>>>): Promise<Result<T>> => {
+    const r = await p;
+    return r.ok ? r.value.run() : r;
+  };
+  return {
+    openSession: (who: Caller, args: unknown) => run(c.prepareOpenSession(who, args, NO_MOVE)),
+    openTerminal: (who: Caller, args: unknown) => run(c.prepareOpenTerminal(who, args, NO_MOVE)),
+    openFile: (who: Caller, args: unknown) => run(c.prepareOpenFile(who, args, NO_MOVE)),
+  };
+}
 const sessionArgs = (over: Record<string, unknown> = {}) => ({
   path: '/repo',
   agent: 'claude',
@@ -83,10 +97,7 @@ const sessionArgs = (over: Record<string, unknown> = {}) => ({
 describe('createControlHandlers', () => {
   it('open_session resolves a relative path against the caller home', async () => {
     const h = harness();
-    const r = await createControlHandlers(h.deps).openSession(
-      caller(),
-      sessionArgs({ path: '../wt/T1' }),
-    );
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ path: '../wt/T1' }));
     expect(code(r)).toBe('ok');
     expect(h.opens[0].home).toBe('/home/main/../wt/T1');
     expect(h.opens[0].launch).toEqual({ kind: 'agent', agentId: 'claude' });
@@ -95,7 +106,7 @@ describe('createControlHandlers', () => {
 
   it('missing path → path_missing, file → not_a_directory; openSession never called', async () => {
     const h = harness();
-    const c = createControlHandlers(h.deps);
+    const c = whenOn(h.deps);
     const missing = await c.openSession(caller(), sessionArgs({ path: '/gone' }));
     expect(code(missing)).toBe('path_missing');
     expect(code(await c.openSession(caller(), sessionArgs({ path: '/repo/a.ts' })))).toBe(
@@ -112,7 +123,7 @@ describe('createControlHandlers', () => {
 
   it('open_file on a dir → not_a_file; missing → path_missing', async () => {
     const h = harness();
-    const c = createControlHandlers(h.deps);
+    const c = whenOn(h.deps);
     expect(code(await c.openFile(caller(), { path: '/repo' }))).toBe('not_a_file');
     expect(code(await c.openFile(caller(), { path: '/repo/gone.ts' }))).toBe('path_missing');
     expect(h.files).toEqual([]);
@@ -125,7 +136,7 @@ describe('createControlHandlers', () => {
         return { sessionId: 'owner' };
       },
     });
-    const r = await createControlHandlers(h.deps).openFile(caller(), {
+    const r = await whenOn(h.deps).openFile(caller(), {
       path: 'src/a.ts',
       line: 3,
       column: 2,
@@ -145,10 +156,7 @@ describe('createControlHandlers', () => {
 
   it('unknown agent → unknown_agent listing the registered ids', async () => {
     const h = harness();
-    const r = await createControlHandlers(h.deps).openSession(
-      caller(),
-      sessionArgs({ agent: 'aider' }),
-    );
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'aider' }));
     expect(code(r)).toBe('unknown_agent');
     expect(!r.ok && r.error.message).toContain('claude, codex');
     expect(h.opens).toEqual([]);
@@ -156,7 +164,7 @@ describe('createControlHandlers', () => {
 
   it('command not resolving → command_not_found, nothing opened', async () => {
     const h = harness();
-    const r = await createControlHandlers(h.deps).openTerminal(caller(), {
+    const r = await whenOn(h.deps).openTerminal(caller(), {
       path: '/repo',
       command: 'nope',
     });
@@ -166,7 +174,7 @@ describe('createControlHandlers', () => {
 
   it('invalid args', async () => {
     const h = harness();
-    const c = createControlHandlers(h.deps);
+    const c = whenOn(h.deps);
     const bad = async (p: Promise<Result<unknown>>) => expect(code(await p)).toBe('invalid_args');
     await bad(c.openSession(caller(), sessionArgs({ extra: 1 })));
     await bad(c.openSession(caller(), sessionArgs({ label: 'x'.repeat(81) })));
@@ -192,17 +200,14 @@ describe('createControlHandlers', () => {
 
   it('label of 80 chars is accepted', async () => {
     const h = harness();
-    const r = await createControlHandlers(h.deps).openSession(
-      caller(),
-      sessionArgs({ label: 'x'.repeat(80) }),
-    );
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ label: 'x'.repeat(80) }));
     expect(code(r)).toBe('ok');
     expect(h.opens[0].label).toBe('x'.repeat(80));
   });
 
   it('focus defaults to true', async () => {
     const h = harness();
-    const c = createControlHandlers(h.deps);
+    const c = whenOn(h.deps);
     await c.openSession(caller(), sessionArgs());
     await c.openSession(caller(), sessionArgs({ focus: false }));
     await c.openFile(caller(), { path: '/repo/a.ts' });
@@ -213,7 +218,7 @@ describe('createControlHandlers', () => {
 
   it('open_terminal passes {kind:"command", command, args} and the default label is the command leaf', async () => {
     const h = harness();
-    const c = createControlHandlers(h.deps);
+    const c = whenOn(h.deps);
     const r = await c.openTerminal(caller(), {
       path: '/repo',
       command: '/usr/local/bin/cursor-agent',
@@ -234,10 +239,7 @@ describe('createControlHandlers', () => {
 
   it('success returns {session_id, handle: claimHandle(id), label, agent}', async () => {
     const h = harness();
-    const r = await createControlHandlers(h.deps).openSession(
-      caller(),
-      sessionArgs({ label: 'Worker' }),
-    );
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ label: 'Worker' }));
     expect(r).toEqual({
       ok: true,
       value: { session_id: 'new-1-0', handle: 'h-new-1-0', label: 'Worker', agent: 'claude' },
@@ -252,15 +254,15 @@ describe('createControlHandlers', () => {
 
   it('handle null when claimHandle is null', async () => {
     const h = harness({ claimHandle: () => null });
-    const r = await createControlHandlers(h.deps).openSession(caller(), sessionArgs());
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs());
     expect(r.ok && r.value.handle).toBeNull();
   });
 
   it('brief_unavailable from openSession maps to the error, rate window not charged', async () => {
     const h = harness();
     h.outcome = async () => ({ ok: false, code: 'brief_unavailable', message: 'brief-io' });
-    const c = createControlHandlers(h.deps);
-    for (let i = 0; i < OPEN_RATE_PER_CALLER + 2; i++) {
+    const c = whenOn(h.deps);
+    for (let i = 0; i < ACT_RATE_PER_CALLER + 2; i++) {
       const r = await c.openSession(caller(), sessionArgs());
       expect(r).toEqual({
         ok: false,
@@ -273,11 +275,11 @@ describe('createControlHandlers', () => {
 
   it('openSession throwing → open_failed (logged), the reservation released', async () => {
     const h = harness();
-    const c = createControlHandlers(h.deps);
+    const c = whenOn(h.deps);
     h.outcome = async () => {
       throw new Error('boom');
     };
-    for (let i = 0; i < OPEN_RATE_PER_CALLER; i++) {
+    for (let i = 0; i < ACT_RATE_PER_CALLER; i++) {
       const r = await c.openSession(caller(), sessionArgs());
       expect(r).toEqual({
         ok: false,
@@ -298,7 +300,7 @@ describe('createControlHandlers', () => {
         throw new Error('no window');
       },
     });
-    const r = await createControlHandlers(h.deps).openFile(caller(), { path: '/repo/a.ts' });
+    const r = await whenOn(h.deps).openFile(caller(), { path: '/repo/a.ts' });
     expect(r).toEqual({
       ok: false,
       error: { code: 'open_failed', message: 'no window', retryable: false },
@@ -313,9 +315,9 @@ describe('createControlHandlers', () => {
 
   it('rate: 10 successful opens by one caller in 60s → 11th rate_limited; at 60s+1 allowed again', async () => {
     const h = harness();
-    const c = createControlHandlers(h.deps);
+    const c = whenOn(h.deps);
     const start = h.clock.t;
-    for (let i = 0; i < OPEN_RATE_PER_CALLER; i++) {
+    for (let i = 0; i < ACT_RATE_PER_CALLER; i++) {
       expect(
         code(
           await (i % 2
@@ -336,8 +338,8 @@ describe('createControlHandlers', () => {
 
   it('failed validations are not charged', async () => {
     const h = harness();
-    const c = createControlHandlers(h.deps);
-    for (let i = 0; i < OPEN_RATE_PER_CALLER + 5; i++) {
+    const c = whenOn(h.deps);
+    for (let i = 0; i < ACT_RATE_PER_CALLER + 5; i++) {
       expect(code(await c.openSession(caller(), sessionArgs({ path: '/gone' })))).toBe(
         'path_missing',
       );
@@ -350,8 +352,8 @@ describe('createControlHandlers', () => {
 
   it('global: 20 across callers → 21st rate_limited for a fresh caller', async () => {
     const h = harness();
-    const c = createControlHandlers(h.deps);
-    for (let i = 0; i < OPEN_RATE_GLOBAL; i++)
+    const c = whenOn(h.deps);
+    for (let i = 0; i < ACT_RATE_GLOBAL; i++)
       expect(code(await c.openSession(caller(i % 4), sessionArgs()))).toBe('ok');
     expect(code(await c.openSession(caller(99), sessionArgs()))).toBe('rate_limited');
   });
@@ -363,16 +365,16 @@ describe('createControlHandlers', () => {
       new Promise((resolve) =>
         gates.push(() => resolve({ ok: true, sessionId: 's', label: req.label ?? 'x' })),
       );
-    const c = createControlHandlers(h.deps);
-    const pending = Array.from({ length: OPEN_RATE_PER_CALLER + 1 }, () =>
+    const c = whenOn(h.deps);
+    const pending = Array.from({ length: ACT_RATE_PER_CALLER + 1 }, () =>
       c.openSession(caller(), sessionArgs()),
     );
     await new Promise((r) => setTimeout(r, 0));
     for (const g of gates) g();
     const codes = (await Promise.all(pending)).map(code);
-    expect(codes.filter((x) => x === 'ok')).toHaveLength(OPEN_RATE_PER_CALLER);
+    expect(codes.filter((x) => x === 'ok')).toHaveLength(ACT_RATE_PER_CALLER);
     expect(codes.filter((x) => x === 'rate_limited')).toHaveLength(1);
-    expect(h.opens).toHaveLength(OPEN_RATE_PER_CALLER);
+    expect(h.opens).toHaveLength(ACT_RATE_PER_CALLER);
   });
 
   it('concurrent: the global cap holds across callers in flight together', async () => {
@@ -382,14 +384,14 @@ describe('createControlHandlers', () => {
       new Promise((resolve) =>
         gates.push(() => resolve({ ok: true, sessionId: 's', label: req.label ?? 'x' })),
       );
-    const c = createControlHandlers(h.deps);
-    const pending = Array.from({ length: OPEN_RATE_GLOBAL + 5 }, (_, i) =>
+    const c = whenOn(h.deps);
+    const pending = Array.from({ length: ACT_RATE_GLOBAL + 5 }, (_, i) =>
       c.openSession(caller(i % 5), sessionArgs()),
     );
     await new Promise((r) => setTimeout(r, 0));
     for (const g of gates) g();
     const codes = (await Promise.all(pending)).map(code);
-    expect(codes.filter((x) => x === 'ok')).toHaveLength(OPEN_RATE_GLOBAL);
+    expect(codes.filter((x) => x === 'ok')).toHaveLength(ACT_RATE_GLOBAL);
     expect(codes.filter((x) => x === 'rate_limited')).toHaveLength(5);
   });
 
@@ -397,8 +399,8 @@ describe('createControlHandlers', () => {
     const h = harness();
     const gates: Array<(o: McpOpenOutcome) => void> = [];
     h.outcome = () => new Promise((resolve) => gates.push(resolve));
-    const c = createControlHandlers(h.deps);
-    const pending = Array.from({ length: OPEN_RATE_PER_CALLER }, () =>
+    const c = whenOn(h.deps);
+    const pending = Array.from({ length: ACT_RATE_PER_CALLER }, () =>
       c.openSession(caller(), sessionArgs()),
     );
     await new Promise((r) => setTimeout(r, 0));
@@ -410,21 +412,21 @@ describe('createControlHandlers', () => {
     expect(code(await c.openSession(caller(), sessionArgs()))).toBe('rate_limited');
     for (const g of gates.slice(1)) g({ ok: true, sessionId: 's', label: 'x' });
     expect((await Promise.all([...pending.slice(1), retry])).map(code)).toEqual(
-      Array(OPEN_RATE_PER_CALLER).fill('ok'),
+      Array(ACT_RATE_PER_CALLER).fill('ok'),
     );
   });
 
   it('open_file does not spend the act budget', async () => {
     const h = harness();
-    const c = createControlHandlers(h.deps);
-    for (let i = 0; i < OPEN_RATE_GLOBAL + 5; i++)
+    const c = whenOn(h.deps);
+    for (let i = 0; i < ACT_RATE_GLOBAL + 5; i++)
       expect(code(await c.openFile(caller(), { path: '/repo/a.ts' }))).toBe('ok');
     expect(code(await c.openSession(caller(), sessionArgs()))).toBe('ok');
   });
 
   it('homeOf undefined → not_in_session', async () => {
     const h = harness();
-    const c = createControlHandlers(h.deps);
+    const c = whenOn(h.deps);
     const stranger: Caller = { handle: 'x-1', sessionId: 'gone' };
     expect(code(await c.openSession(stranger, sessionArgs()))).toBe('not_in_session');
     expect(code(await c.openTerminal(stranger, { path: '/repo', command: 'node' }))).toBe(
@@ -439,14 +441,14 @@ describe('createControlHandlers', () => {
 
   it('openedBy is {handle, sessionId} of the caller', async () => {
     const h = harness();
-    await createControlHandlers(h.deps).openTerminal(caller(3), { path: '/repo', command: 'node' });
+    await whenOn(h.deps).openTerminal(caller(3), { path: '/repo', command: 'node' });
     expect(h.opens[0].openedBy).toEqual({ handle: 'claude-3', sessionId: 'caller-3' });
   });
 
   it('check order: invalid_args before rate_limited before not_in_session before path checks', async () => {
     const h = harness();
-    const c = createControlHandlers(h.deps);
-    for (let i = 0; i < OPEN_RATE_PER_CALLER; i++) await c.openSession(caller(), sessionArgs());
+    const c = whenOn(h.deps);
+    for (let i = 0; i < ACT_RATE_PER_CALLER; i++) await c.openSession(caller(), sessionArgs());
     expect(code(await c.openSession(caller(), sessionArgs({ extra: 1 })))).toBe('invalid_args');
     expect(code(await c.openSession(caller(), sessionArgs({ path: '/gone' })))).toBe(
       'rate_limited',

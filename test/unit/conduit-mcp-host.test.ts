@@ -23,15 +23,10 @@ import {
   DEFAULT_TOOL_POLICY,
   type GlobalPolicy,
   type PolicyLayer,
+  TOOL_NAMES,
   type ToolName,
   withPolicyPatch,
 } from '../../src/conduit-mcp/tool-policy';
-import {
-  DEFAULT_MCP_TOOLS,
-  type McpToolSwitches,
-  TOOL_NAMES,
-  withOverride,
-} from '../../src/conduit-mcp/tool-switches';
 import { toolError } from '../../src/conduit-mcp/types';
 import type { HostToWebview } from '../../src/protocol';
 import { createPtyWriter } from '../../src/pty-writer';
@@ -176,7 +171,6 @@ function harness(
     tickMs?: number;
     log?: ConduitMcpHostDeps['log'];
     createEndpoint?: ConduitMcpHostDeps['createEndpoint'];
-    mcpTools?: () => McpToolSwitches;
     kinds?: Record<string, PathKind>;
     /** Records every line the host sends into `calls`, so ordering against setMcp is visible. */
     recordSends?: boolean;
@@ -246,14 +240,6 @@ function harness(
         Object.assign(s, patch);
         return true;
       },
-      setMcpToolOverride: (id, tool, value) => {
-        const s = sessions.get(id);
-        if (!s) return false;
-        const next = withOverride(s.mcpToolOverrides, tool, value);
-        if (next) s.mcpToolOverrides = next;
-        else delete s.mcpToolOverrides;
-        return true;
-      },
       setMcpToolPolicy: (id, tool, patch) => {
         const s = sessions.get(id);
         if (!s) return false;
@@ -275,7 +261,6 @@ function harness(
     // Asks never expire on their own here; host tests end them by answer or cancel.
     setTimer: () => undefined,
     clearTimer: () => undefined,
-    mcpTools: opts.mcpTools ?? (() => DEFAULT_MCP_TOOLS),
     installState: opts.installState ?? (() => 'not-installed'),
     detectGraceMs: GRACE,
     defOf: (id) => defOfSession(sessions.get(id)),
@@ -1555,41 +1540,6 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     expect(ca.notifications).toEqual(['notifications/tools/list_changed']);
     expect(cb.notifications).toEqual([]);
     expect(await ca.listed()).toEqual([...MESSAGING, ...CONTROL]);
-  });
-
-  it('mcp:setToolOverride replies unknown-session / unknown-tool / invalid-value / ok', async () => {
-    const h = harness();
-    await h.host.start();
-    h.sessions.set('s1', session('s1'));
-    const ask = async (m: { sessionId: string; tool: string; value: unknown }) => {
-      const replies: HostToWebview[] = [];
-      await h.host.handleRenderer(
-        {
-          type: 'mcp:setToolOverride',
-          requestId: 9,
-          sessionId: m.sessionId,
-          tool: m.tool,
-          value: m.value as boolean,
-        },
-        (r) => replies.push(r),
-        1,
-      );
-      return replies;
-    };
-    expect(await ask({ sessionId: 'nope', tool: 'open_file', value: true })).toEqual([
-      { type: 'mcp:toolOverrideResult', requestId: 9, ok: false, error: 'unknown-session' },
-    ]);
-    expect(await ask({ sessionId: 's1', tool: 'rm_rf', value: true })).toEqual([
-      { type: 'mcp:toolOverrideResult', requestId: 9, ok: false, error: 'unknown-tool' },
-    ]);
-    expect(await ask({ sessionId: 's1', tool: 'open_file', value: 'yes' })).toEqual([
-      { type: 'mcp:toolOverrideResult', requestId: 9, ok: false, error: 'invalid-value' },
-    ]);
-    expect(h.sessions.get('s1')?.mcpToolOverrides).toBeUndefined();
-    expect(await ask({ sessionId: 's1', tool: 'open_file', value: true })).toEqual([
-      { type: 'mcp:toolOverrideResult', requestId: 9, ok: true },
-    ]);
-    expect(h.sessions.get('s1')?.mcpToolOverrides).toEqual({ open_file: true });
   });
 
   it('uiState.switchable lists sessions whose defOf matches an adapter, before any launch', () => {

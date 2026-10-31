@@ -221,10 +221,8 @@ export const MCP_STR = {
   settingsToggle: SETTINGS_TOGGLE,
   settingsDesc:
     'Agents in your sessions can message each other and you through Conduit. Turning it off stops new launches from connecting.',
-  // Settings Tools group and the per-session dialog share these (control-tools spec §8, §10).
+  // Settings Tools group and the per-session dialog share these (tool-policy spec §8, §10).
   tools: {
-    groupMessaging: 'Messaging',
-    groupControl: 'Control',
     description: {
       list_sessions: 'Lets an agent see the other sessions it can message.',
       send_message: 'Lets an agent message other sessions and you.',
@@ -238,9 +236,6 @@ export const MCP_STR = {
     masterOffHint: `Turn on “${SETTINGS_TOGGLE}” to use tools`,
     menuItem: 'MCP tools…',
     dialogTitle: (label: string) => `MCP tools — ${label}`,
-    inherit: (on: boolean) => `Inherit (${on ? 'On' : 'Off'})`,
-    on: 'On',
-    off: 'Off',
     relaunchHint: 'Some agents only see newly enabled tools after Relaunch',
     relaunch: 'Relaunch',
     saveFailed: 'Couldn’t save. Change it again to retry.',

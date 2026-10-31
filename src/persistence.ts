@@ -5,7 +5,6 @@ import {
   TOOL_NAMES,
   withPolicyPatch,
 } from './conduit-mcp/tool-policy';
-import { coerceToolOverrides } from './conduit-mcp/tool-switches';
 import { folderKey } from './folder-key';
 import type { PersistedDoc } from './protocol';
 import { coerceOpenedBy, coerceSessionCommand } from './session-command';
@@ -99,6 +98,8 @@ export function parseSessions(blob: string | undefined): SessionsParse {
       projectPath,
       roots,
       projectId,
+      // v0.50 per-session switches: read once for the migration below, never written back.
+      mcpToolOverrides: legacyToolOverrides,
       ...rest
     } = entry as Record<string, unknown>;
     const legacy = !nonEmpty(rawHome);
@@ -117,18 +118,15 @@ export function parseSessions(blob: string | undefined): SessionsParse {
     const createdAt = s.createdAt ?? Date.now();
     if (s.brief !== 'pending' && s.brief !== 'sent') delete s.brief;
     // A command session whose command fails coercion is kept and refused at spawn (control-tools plan T1.3).
-    const mcpToolPolicy = sessionPolicyOf(s.mcpToolPolicy, s.mcpToolOverrides);
-    const mcpToolOverrides = coerceToolOverrides(s.mcpToolOverrides);
+    const mcpToolPolicy = sessionPolicyOf(s.mcpToolPolicy, legacyToolOverrides);
     const openedBy = coerceOpenedBy(s.openedBy);
     const command = coerceSessionCommand(s.command);
     delete s.mcpToolPolicy;
-    delete s.mcpToolOverrides;
     delete s.openedBy;
     delete s.command;
     sessions.push({
       ...s,
       ...(mcpToolPolicy ? { mcpToolPolicy } : {}),
-      ...(mcpToolOverrides ? { mcpToolOverrides } : {}),
       ...(openedBy ? { openedBy } : {}),
       ...(command ? { command } : {}),
       home,

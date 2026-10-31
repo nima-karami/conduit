@@ -567,13 +567,6 @@ export type HostToWebview =
   | { type: 'mcp:state'; state: McpUiState }
   | { type: 'mcp:thread'; requestId: number; thread: McpThreadView | null }
   | { type: 'mcp:sent'; requestId: number; result: McpSendResult }
-  | { type: 'mcp:toolOverrideResult'; requestId: number; ok: true }
-  | {
-      type: 'mcp:toolOverrideResult';
-      requestId: number;
-      ok: false;
-      error: 'unknown-session' | 'unknown-tool' | 'invalid-value';
-    }
   // Ask details go to the caller's owner window only (spec 2026-10-30-conduit-mcp-tool-policy §2.4).
   | {
       type: 'mcp:ask';
@@ -1091,15 +1084,6 @@ export type WebviewToHost =
   | { type: 'mcp:pause'; sessionId: string; paused: boolean }
   | { type: 'mcp:attachment:get'; requestId: number; messageId: string; attachmentId: string }
   | { type: 'mcp:retry' }
-  // Per-session tool override (spec 2026-10-27-conduit-mcp-control-tools §4); the host validates
-  // every field, so tool stays a string here.
-  | {
-      type: 'mcp:setToolOverride';
-      requestId: number;
-      sessionId: string;
-      tool: string;
-      value: boolean | 'inherit';
-    }
   // Answer from the approval card; counts only from the window the ask was sent to
   // (spec 2026-10-30-conduit-mcp-tool-policy §2.4). The host re-validates every field.
   | { type: 'mcp:askAnswer'; askId: string; answer: AskAnswer }

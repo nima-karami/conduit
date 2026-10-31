@@ -1,7 +1,11 @@
 import { resolveActiveRepo } from './active-repo';
 import type { AgentRegistry } from './agent-registry';
-import { type ToolPolicy, type ToolPolicyPatch, withPolicyPatch } from './conduit-mcp/tool-policy';
-import { type ToolName, type ToolOverrideValue, withOverride } from './conduit-mcp/tool-switches';
+import {
+  type ToolName,
+  type ToolPolicy,
+  type ToolPolicyPatch,
+  withPolicyPatch,
+} from './conduit-mcp/tool-policy';
 import { folderKey } from './folder-key';
 import type { RepoInfo } from './repo-scan';
 import { COMMAND_AGENT_ID, effectiveDef } from './session-command';
@@ -334,17 +338,6 @@ export class SessionManager {
     if (!s) return false;
     if ('mcpHandle' in patch) s.mcpHandle = patch.mcpHandle;
     if ('mcpNoticesPaused' in patch) s.mcpNoticesPaused = patch.mcpNoticesPaused;
-    this.emit();
-    return true;
-  }
-
-  setMcpToolOverride(id: string, tool: ToolName, value: ToolOverrideValue): boolean {
-    const s = this.sessions.get(id);
-    if (!s) return false;
-    const next = withOverride(s.mcpToolOverrides, tool, value);
-    if (next?.[tool] === s.mcpToolOverrides?.[tool]) return true;
-    if (next) s.mcpToolOverrides = next;
-    else delete s.mcpToolOverrides;
     this.emit();
     return true;
   }

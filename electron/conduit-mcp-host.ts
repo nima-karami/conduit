@@ -64,7 +64,6 @@ import {
   type ToolName,
 } from '../src/conduit-mcp/tool-policy';
 import { CONDUIT_INSTRUCTIONS, toolSchemas } from '../src/conduit-mcp/tool-schemas';
-import type { McpToolSwitches } from '../src/conduit-mcp/tool-switches';
 import {
   type Caller,
   createToolHandlers,
@@ -125,9 +124,7 @@ export interface ConduitMcpHostDeps {
   homeDir: string;
   platform: HostPlatform;
   e2e: boolean;
-  mgr: Pick<SessionManager, 'get' | 'list' | 'setMcp' | 'setMcpToolOverride' | 'setMcpToolPolicy'>;
-  /** settings.mcpTools: the global per-tool switches. */
-  mcpTools(): McpToolSwitches;
+  mgr: Pick<SessionManager, 'get' | 'list' | 'setMcp' | 'setMcpToolPolicy'>;
   /** settings.mcpToolPolicy and settings.mcpToolPolicyByCli, read per call. */
   toolPolicy(): { global: GlobalPolicy; byCli: CliPolicyLayers };
   /** The session's owner window id; null when it has none. */
@@ -1490,22 +1487,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         case 'mcp:allowMore': {
           const r = await store.allowMore(m.threadId);
           if (!r.ok) deps.log.warn('conduit-mcp', 'allowMore failed', { code: r.error.code });
-          return;
-        }
-        case 'mcp:setToolOverride': {
-          const refuse = (error: 'unknown-session' | 'unknown-tool' | 'invalid-value') =>
-            reply({ type: 'mcp:toolOverrideResult', requestId: m.requestId, ok: false, error });
-          if (!deps.mgr.get(m.sessionId)) return refuse('unknown-session');
-          if (!isToolName(m.tool)) return refuse('unknown-tool');
-          // The renderer is never load-bearing: the value is re-checked here.
-          const value: unknown = m.value;
-          if (value !== true && value !== false && value !== 'inherit') {
-            return refuse('invalid-value');
-          }
-          deps.mgr.setMcpToolOverride(m.sessionId, m.tool, value);
-          reply({ type: 'mcp:toolOverrideResult', requestId: m.requestId, ok: true });
-          syncToolLists();
-          scheduleBroadcast();
           return;
         }
         case 'mcp:setToolPolicy': {

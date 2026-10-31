@@ -270,13 +270,13 @@ export function toolsSeen(sessionId) {
   return records(sessionId, 'READY')[0]?.tools ?? [];
 }
 
-const SEG = { On: 'on', Off: 'off', Inherit: 'inherit' };
+const SEG = { On: 'on', Off: 'off', Ask: 'ask', Inherit: 'inherit' };
 
 /**
- * Set one tool's override through the session's MCP tools dialog (card menu → MCP tools…), and
- * wait for the host to persist it: the dialog only reverts on a refusal, so the click alone
- * proves nothing.
- * @param {'On' | 'Off' | 'Inherit'} value
+ * Set one tool's session-layer access through the session's MCP tools dialog (card menu → MCP
+ * tools…), and wait for the host to persist it: the dialog only reverts on a refusal, so the
+ * click alone proves nothing.
+ * @param {'On' | 'Off' | 'Ask' | 'Inherit'} value
  */
 export async function enableToolViaDialog(page, sessionId, tool, value) {
   await tapBridge(page);
@@ -285,13 +285,13 @@ export async function enableToolViaDialog(page, sessionId, tool, value) {
   const dialog = page.locator('.mcptools[role="dialog"]');
   await dialog.waitFor({ timeout: 5_000 });
   await dialog
-    .locator(`[role="radiogroup"][aria-label="${tool}"] [data-seg="${SEG[value]}"]`)
+    .locator(`[role="radiogroup"][aria-label="${tool} access"] [data-seg="${SEG[value]}"]`)
     .click();
-  const want = value === 'Inherit' ? null : value === 'On';
+  const want = value === 'Inherit' ? null : SEG[value];
   await page.waitForFunction(
     ({ id, t, w }) => {
       const s = (window.__sessions || []).find((x) => x.id === id);
-      return (s?.mcpToolOverrides?.[t] ?? null) === w;
+      return (s?.mcpToolPolicy?.[t]?.access ?? null) === w;
     },
     { id: sessionId, t: tool, w: want },
     { timeout: 10_000 },

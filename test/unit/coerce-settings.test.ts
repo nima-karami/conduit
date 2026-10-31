@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_TOOL_POLICY } from '../../src/conduit-mcp/tool-policy';
-import { DEFAULT_MCP_TOOLS } from '../../src/conduit-mcp/tool-switches';
 import {
   coerceSettings,
   DEFAULT_SETTINGS,
@@ -470,31 +469,16 @@ describe('coerceSettings — editorSplitRatio', () => {
   });
 });
 
-describe('coerceSettings — mcpTools (control tools spec §5)', () => {
-  it('mcpTools absent → defaults', () => {
-    expect(coerceSettings({}).mcpTools).toEqual(DEFAULT_MCP_TOOLS);
-    expect(DEFAULT_SETTINGS.mcpTools).toEqual(DEFAULT_MCP_TOOLS);
-  });
-
-  it('mcpTools partial → merged per key', () => {
-    expect(
-      coerceSettings({ mcpTools: { open_session: true, send_message: false } }).mcpTools,
-    ).toEqual({
-      ...DEFAULT_MCP_TOOLS,
-      open_session: true,
-      send_message: false,
-    });
-  });
-
-  it('mcpTools malformed → defaults', () => {
-    expect(coerceSettings({ mcpTools: 'on' }).mcpTools).toEqual(DEFAULT_MCP_TOOLS);
-    expect(coerceSettings({ mcpTools: [true] }).mcpTools).toEqual(DEFAULT_MCP_TOOLS);
-    expect(coerceSettings({ mcpTools: { open_file: 'yes' } }).mcpTools).toEqual(DEFAULT_MCP_TOOLS);
-  });
-
-  it('round-trip through serializeSettings/restoreSettings keeps open_session: true', () => {
-    const s = coerceSettings({ mcpTools: { open_session: true } });
-    expect(restoreSettings(serializeSettings(s)).mcpTools.open_session).toBe(true);
+describe('coerceSettings — v0.50 mcpTools (tool-policy spec §3.1)', () => {
+  it('is read once for the migration and never written back', () => {
+    const s = coerceSettings({ mcpTools: { open_session: true, send_message: false } });
+    expect('mcpTools' in s).toBe(false);
+    expect('mcpTools' in DEFAULT_SETTINGS).toBe(false);
+    const written = JSON.parse(serializeSettings(s)) as { settings: Record<string, unknown> };
+    expect('mcpTools' in written.settings).toBe(false);
+    const back = restoreSettings(serializeSettings(s));
+    expect(back.mcpToolPolicy.open_session).toEqual({ access: 'on', when: 'always', move: 'yes' });
+    expect(back.mcpToolPolicy.send_message).toEqual({ access: 'off' });
   });
 });
 

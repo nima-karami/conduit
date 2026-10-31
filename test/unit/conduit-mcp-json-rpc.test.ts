@@ -9,8 +9,8 @@ import {
   type ToolCallResult,
   type ToolSchema,
 } from '../../src/conduit-mcp/json-rpc';
+import { TOOL_NAMES } from '../../src/conduit-mcp/tool-policy';
 import { CONDUIT_INSTRUCTIONS, toolSchemas } from '../../src/conduit-mcp/tool-schemas';
-import { TOOL_NAMES } from '../../src/conduit-mcp/tool-switches';
 
 const AGENTS = ['claude', 'codex', 'shell:pwsh'] as const;
 const SCHEMAS = toolSchemas(AGENTS);

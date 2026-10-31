@@ -9,8 +9,8 @@ export const MESSAGING_TOOL_NAMES = [
   'read_inbox',
   'read_attachment',
 ] as const;
-export const SESSION_TOOL_NAMES = ['open_session', 'open_terminal'] as const;
-export const EDITOR_TOOL_NAMES = ['open_file'] as const;
+const SESSION_TOOL_NAMES = ['open_session', 'open_terminal'] as const;
+const EDITOR_TOOL_NAMES = ['open_file'] as const;
 export const TOOL_NAMES = [
   ...MESSAGING_TOOL_NAMES,
   ...SESSION_TOOL_NAMES,

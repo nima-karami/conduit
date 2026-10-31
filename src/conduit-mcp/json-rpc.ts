@@ -1,4 +1,4 @@
-import { TOOL_NAMES } from './tool-switches';
+import { TOOL_NAMES } from './tool-policy';
 
 /** Newest first: an unknown client version is answered with [0] (MCP version negotiation). */
 export const SUPPORTED_PROTOCOL_VERSIONS: readonly string[] = [

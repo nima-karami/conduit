@@ -5,11 +5,6 @@ import {
   coerceGlobalPolicy,
   type GlobalPolicy,
 } from './conduit-mcp/tool-policy';
-import {
-  coerceMcpTools,
-  DEFAULT_MCP_TOOLS,
-  type McpToolSwitches,
-} from './conduit-mcp/tool-switches';
 import { DEFAULT_LAYOUT, parseLayout, serializeLayout } from './layout';
 import type { LogLevel } from './logging';
 
@@ -192,8 +187,6 @@ export interface AppSettings {
   // Behaviour: the Conduit MCP server lets agent sessions message each other and you. Default ON;
   // off answers every tool call with messaging_off (docs/specs/2026-10-25-conduit-mcp-server.md §5).
   conduitMcp: boolean;
-  // Per-tool switches under the master; per-session overrides win (docs/specs/2026-10-27-conduit-mcp-control-tools.md §5).
-  mcpTools: McpToolSwitches;
   // Global and per-CLI tool policy layers (docs/specs/2026-10-30-conduit-mcp-tool-policy.md §3.1).
   mcpToolPolicy: GlobalPolicy;
   mcpToolPolicyByCli: CliPolicyLayers;
@@ -261,7 +254,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   logging: true,
   logLevel: 'info',
   conduitMcp: true,
-  mcpTools: { ...DEFAULT_MCP_TOOLS },
   mcpToolPolicy: coerceGlobalPolicy(undefined),
   mcpToolPolicyByCli: {},
   mcpInstallSuggest: true,
@@ -548,7 +540,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     logging: bool(payload.logging, DEFAULT_SETTINGS.logging),
     logLevel: oneOf(payload.logLevel, LOG_LEVELS, DEFAULT_SETTINGS.logLevel),
     conduitMcp: bool(payload.conduitMcp, DEFAULT_SETTINGS.conduitMcp),
-    mcpTools: coerceMcpTools(payload.mcpTools),
+    // A v0.50 file has only the boolean mcpTools; it migrates once and is never written back.
     mcpToolPolicy: coerceGlobalPolicy(payload.mcpToolPolicy, payload.mcpTools),
     mcpToolPolicyByCli: coerceCliLayers(payload.mcpToolPolicyByCli) ?? {},
     mcpInstallSuggest: bool(payload.mcpInstallSuggest, DEFAULT_SETTINGS.mcpInstallSuggest),

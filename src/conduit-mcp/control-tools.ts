@@ -11,8 +11,6 @@ import type { AskSummary } from './ui-types';
 export const ACT_RATE_PER_CALLER = 10;
 export const ACT_RATE_GLOBAL = 20;
 export const SHOW_RATE_PER_CALLER = 30;
-export const OPEN_RATE_PER_CALLER = ACT_RATE_PER_CALLER;
-export const OPEN_RATE_GLOBAL = ACT_RATE_GLOBAL;
 export const MAX_LABEL_CHARS = 80;
 const RATE_WINDOW_MS = 60_000;
 
@@ -88,9 +86,6 @@ export interface ControlHandlers {
     args: unknown,
     ctx: ControlCallContext,
   ): Promise<Result<PreparedCall<OpenFileOutput>>>;
-  openSession(caller: Caller, args: unknown): Promise<Result<OpenSessionOutput>>;
-  openTerminal(caller: Caller, args: unknown): Promise<Result<OpenSessionOutput>>;
-  openFile(caller: Caller, args: unknown): Promise<Result<OpenFileOutput>>;
 }
 
 type Fail = { ok: false; error: ReturnType<typeof toolError> };
@@ -390,7 +385,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
   const focusFor = (a: Common, ctx: ControlCallContext): Common =>
     ctx.move === 'no' ? { ...a, focus: false } : a;
 
-  const handlers: Omit<ControlHandlers, 'openSession' | 'openTerminal' | 'openFile'> = {
+  return {
     async prepareOpenSession(caller, raw, ctx) {
       const a = parseSessionArgs(raw);
       if (isFail(a)) return a;
@@ -448,19 +443,5 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         };
       });
     },
-  };
-
-  const NO_MOVE: ControlCallContext = { move: undefined };
-  async function prepareThenRun<T>(p: Promise<Result<PreparedCall<T>>>): Promise<Result<T>> {
-    const r = await p;
-    return r.ok ? r.value.run() : r;
-  }
-
-  return {
-    ...handlers,
-    openSession: (caller, raw) => prepareThenRun(handlers.prepareOpenSession(caller, raw, NO_MOVE)),
-    openTerminal: (caller, raw) =>
-      prepareThenRun(handlers.prepareOpenTerminal(caller, raw, NO_MOVE)),
-    openFile: (caller, raw) => prepareThenRun(handlers.prepareOpenFile(caller, raw, NO_MOVE)),
   };
 }

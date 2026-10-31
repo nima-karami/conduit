@@ -383,19 +383,19 @@ describe('persistence — MCP control fields (control-tools spec §3.3)', () => 
   const cmd = { command: 'node', args: ['-e', 'x'] };
   const opener = { handle: 'claude-1', sessionId: 'caller' };
 
-  it('parseSessions keeps valid mcpToolOverrides/command/openedBy', () => {
+  it('parseSessions keeps valid mcpToolPolicy/command/openedBy', () => {
     const [x] = sessionsOf(
       v1([
         {
           ...s,
           agentId: COMMAND_AGENT_ID,
-          mcpToolOverrides: { open_file: true },
+          mcpToolPolicy: { open_file: { access: 'on' } },
           command: cmd,
           openedBy: opener,
         },
       ]),
     );
-    expect(x.mcpToolOverrides).toEqual({ open_file: true });
+    expect(x.mcpToolPolicy).toEqual({ open_file: { access: 'on' } });
     expect(x.command).toEqual(cmd);
     expect(x.openedBy).toEqual(opener);
   });
@@ -404,12 +404,12 @@ describe('persistence — MCP control fields (control-tools spec §3.3)', () => 
     const live: Session = {
       ...s,
       agentId: COMMAND_AGENT_ID,
-      mcpToolOverrides: { send_message: false },
+      mcpToolPolicy: { send_message: { access: 'off' } },
       command: cmd,
       openedBy: opener,
     };
     const [x] = sessionsOf(serializeSessions([live]));
-    expect(x.mcpToolOverrides).toEqual({ send_message: false });
+    expect(x.mcpToolPolicy).toEqual({ send_message: { access: 'off' } });
     expect(x.command).toEqual(cmd);
     expect(x.openedBy).toEqual(opener);
   });
@@ -420,7 +420,7 @@ describe('persistence — MCP control fields (control-tools spec §3.3)', () => 
         {
           ...s,
           id: 'a',
-          mcpToolOverrides: { bogus: true, open_file: 'yes' },
+          mcpToolPolicy: { bogus: {}, open_file: { access: 'yes' } },
           openedBy: { handle: 'h' },
           command: 'node',
         },
@@ -439,8 +439,10 @@ describe('persistence — MCP control fields (control-tools spec §3.3)', () => 
     expect(r.kind === 'ok' && r.dropped).toBe(0);
     for (const k of ['command', 'openedBy'] as const)
       for (const x of list) expect(k in x).toBe(false);
-    expect('mcpToolOverrides' in list[0]).toBe(false);
-    expect(list[1].mcpToolOverrides).toEqual({ open_session: false });
+    expect('mcpToolPolicy' in list[0]).toBe(false);
+    // b carries the v0.50 key: migrated, and the raw key is not kept.
+    expect(list[1].mcpToolPolicy).toEqual({ open_session: { access: 'off' } });
+    expect('mcpToolOverrides' in list[1]).toBe(false);
   });
 
   it('command session with invalid command loads stale with agentId conduit:command and no command', () => {
@@ -470,6 +472,9 @@ describe('persistence — mcpToolPolicy (tool-policy spec §3.1)', () => {
       open_session: { access: 'on', when: 'always' },
       send_message: { access: 'off' },
     });
+    // Read once, never written back (only v0.50 writes the old key).
+    expect('mcpToolOverrides' in x).toBe(false);
+    expect(serializeSessions([x])).not.toContain('mcpToolOverrides');
   });
 
   it('both keys: the old key overlays the new', () => {

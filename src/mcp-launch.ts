@@ -1,7 +1,7 @@
 // Per-CLI launch wiring for the conduit MCP server (spec §3.1). Cursor is the opt-in exception:
 // it reads the user config and receives only its token and endpoint in the PTY env.
 import type { McpAdapter } from './conduit-mcp/adapters';
-import { MESSAGING_TOOL_NAMES } from './conduit-mcp/tool-switches';
+import { MESSAGING_TOOL_NAMES } from './conduit-mcp/tool-policy';
 import type { McpUnavailableReason } from './conduit-mcp/types';
 import { batchGuarded, firstCmdMetachar } from './launch-args';
 import type { HostPlatform } from './lsp-binary';
