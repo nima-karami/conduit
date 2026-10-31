@@ -2734,7 +2734,7 @@ export function App() {
   );
 
   // Drain queued file-open requests whose target session now exists in state; planFileOpen
-  // decides activation, center view and tab mode per source. Requests for not-yet-present
+  // decides center view and tab mode per source; no open activates a session. Requests for not-yet-present
   // sessions stay queued and are retried when `sessions` next changes (a just-created
   // session's state arrives).
   const flushOsOpens = useCallback(() => {
@@ -2751,7 +2751,6 @@ export function App() {
             keepActive: true,
           });
         } else {
-          if (p.activate) setActiveId(req.sessionId);
           if (p.showEditor) setCenterView('editor');
           openFile(req.path, req.sessionId, p.mode, p.reveal ? { reveal: p.reveal } : undefined);
         }

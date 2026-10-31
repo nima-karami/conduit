@@ -6,12 +6,11 @@ const base = { type: 'openFileInEditor', path: '/p/a.ts', sessionId: 's1' } as c
 describe('planFileOpen', () => {
   it('a request without source (an untyped IPC sender) opens like an OS open', () => {
     const legacy: FileOpenRequest = JSON.parse(JSON.stringify(base));
-    expect(planFileOpen(legacy)).toEqual({ activate: false, showEditor: true, mode: 'permanent' });
+    expect(planFileOpen(legacy)).toEqual({ showEditor: true, mode: 'permanent' });
   });
 
   it('an OS open shows the editor as a permanent tab without activating the session', () => {
     expect(planFileOpen({ ...base, source: 'os' })).toEqual({
-      activate: false,
       showEditor: true,
       mode: 'permanent',
     });
@@ -23,7 +22,6 @@ describe('planFileOpen', () => {
     expect(
       planFileOpen({ ...base, source: 'mcp', focus: true, line: 12, column: 4 }),
     ).toStrictEqual({
-      activate: false,
       showEditor: true,
       mode: 'preview',
       reveal: { line: 12, column: 4 },
@@ -32,7 +30,6 @@ describe('planFileOpen', () => {
 
   it('an MCP open without focus opens in the background and leaves the center view alone', () => {
     expect(planFileOpen({ ...base, source: 'mcp', focus: false, line: 3, column: 2 })).toEqual({
-      activate: false,
       showEditor: false,
       mode: 'background',
       reveal: { line: 3, column: 2 },
