@@ -986,6 +986,7 @@ export function App() {
       subject?: string,
       repoRoot?: string,
       group?: GroupIndex,
+      byUser = false,
     ) => {
       const sessionId = targetSessionId ?? activeIdRef.current ?? '';
       const g = group ?? openTargetGroup(docStateRef.current, sessionId);
@@ -1011,8 +1012,8 @@ export function App() {
         },
         group: g,
       });
-      // Every caller is a user's click (terminal commit link, History, blame, the breadcrumb).
-      if (!wasShown) focusView(sessionId, g, REVIEW_DOC_ID);
+      // As openReviewIn: only a user's open lands keyboard focus in Review.
+      if (byUser && !wasShown) focusView(sessionId, g, REVIEW_DOC_ID);
     },
     [recordNav, reviewShownIn],
   );
@@ -1021,7 +1022,8 @@ export function App() {
   const setReviewSource = useCallback(
     (s: ReviewSource) => {
       if (s.kind === 'working') return openReviewScoped(s.scope ?? 'all', s.repoRoot);
-      if (s.kind === 'commit') return openReviewForCommit(s.sha, undefined, s.subject, s.repoRoot);
+      if (s.kind === 'commit')
+        return openReviewForCommit(s.sha, undefined, s.subject, s.repoRoot, undefined, true);
       // range: a two-ref comparison rides the singleton review doc like any other source.
       openReviewIn(activeIdRef.current ?? '', s, undefined, true);
     },
@@ -3748,8 +3750,14 @@ export function App() {
       // An active doc whose editor is still mounting (the previous landing of a burst) has nothing
       // to reveal into yet, so it takes the staged path too; that replaces the earlier landing's
       // pending reveal instead of letting the mount consume the stale one.
-      if (doc.kind === 'file' && !(e.pos && wasActive && revealInNavEditor(doc.path, e.pos, g))) {
-        if (e.pos) setReveal(doc.path, e.pos, g);
+      if (doc.kind === 'file') {
+        if (!(e.pos && wasActive && revealInNavEditor(doc.path, e.pos, g))) {
+          if (e.pos) setReveal(doc.path, e.pos, g);
+          focusView(doc.sessionId, g, doc.id);
+        }
+      } else {
+        // Back/Forward is the user's navigation: it lands keyboard focus in the view, which Review
+        // no longer takes for itself on mount (spec 2026-10-30-conduit-mcp-app-control A4).
         focusView(doc.sessionId, g, doc.id);
       }
       // An entry left without a record (a session switch) has no pos; its view state restores the
@@ -4563,7 +4571,7 @@ export function App() {
             flashTab={backgroundFeedback.flashTab}
             onRevealFolder={(path) => post({ type: 'revealInExplorer', path })}
             onOpenCommitReview={(sha, sid, repoRoot) =>
-              openReviewForCommit(sha, sid, undefined, repoRoot)
+              openReviewForCommit(sha, sid, undefined, repoRoot, undefined, true)
             }
             reviewRepos={reviewRepos}
             reviewRepoChanges={reviewRepoChanges}
@@ -4580,7 +4588,7 @@ export function App() {
             onOpenCommitFile={openCommitFile}
             onRetargetHistory={retargetGitHistory}
             onReviewCommit={(sha, subject, repoRoot, sessionId) =>
-              openReviewForCommit(sha, sessionId, subject, repoRoot)
+              openReviewForCommit(sha, sessionId, subject, repoRoot, undefined, true)
             }
             onDocTitle={(id, title) => dispatchDocs({ type: 'setTitle', id, title })}
             paneTab={paneTab}

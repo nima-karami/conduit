@@ -298,5 +298,62 @@ runScenario('review-tab-state', async ({ page, log }) => {
     `${COLLAPSE} was mounted across the source change and kept the commit review's collapse (aria-expanded=${JSON.stringify(backOnWorking.collapse?.expanded)})`,
   );
 
+  // ── 7. Back/Forward lands keyboard focus in the view ─────────────────────────────────────
+  // Review takes no focus on mount (an agent's open must leave DOM focus alone), so a user's
+  // Back onto it has to ask for it, as it does for a file (spec 2026-10-30-conduit-mcp-app-control A4).
+  const focusedIn = () =>
+    page.evaluate(() => {
+      const el = document.activeElement;
+      if (el?.closest('.review__scroll')) return 'review';
+      if (el?.closest('.viewer__monaco')) return 'editor';
+      if (el?.closest('.gh')) return `history (${el.className})`;
+      return `${el?.tagName}.${el?.className}`;
+    });
+  const SEL = { review: '.review__scroll', editor: '.viewer__monaco' };
+  const waitFocus = async (want, what) => {
+    await page
+      .waitForFunction((sel) => !!document.activeElement?.closest(sel), SEL[want], {
+        timeout: 10000,
+      })
+      .catch(async () => assert(false, `${what}: focus is on ${await focusedIn()}, not ${want}`));
+  };
+  const openFromFiles = async (n, leaving) => {
+    await page.click('.rtab:has-text("Files")');
+    await page.locator('.filerow', { hasText: n }).first().dblclick();
+    await page.waitForSelector('.viewer__monaco .view-lines', {
+      state: 'attached',
+      timeout: 25000,
+    });
+    await page.waitForFunction((s) => !document.querySelector(s), leaving, { timeout: 8000 });
+  };
+  // The open find bar focuses its own input when Review mounts; close it so the landing measured
+  // is the navigation's, not the find bar's.
+  await page.locator('.review .term-find__input').focus();
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.review .term-find__input', { state: 'detached', timeout: 5000 });
+  await openFromFiles(name(3), '.review');
+  await page.keyboard.press('Alt+ArrowLeft');
+  await page.waitForSelector('.review', { state: 'visible', timeout: 15000 });
+  await waitFocus('review', 'Back onto Review');
+  await page.keyboard.press('Alt+ArrowRight');
+  await page.waitForSelector('.viewer__monaco .view-lines', { state: 'attached', timeout: 25000 });
+  await waitFocus('editor', `Forward onto ${name(3)}`);
+  log('Back onto Review focuses its scroller; Forward lands back in the editor ✓');
+
+  // History, the other self-contained view: Back lands on its selected row.
+  await openHistory(page);
+  await page.waitForSelector('.gh__row', { state: 'visible', timeout: 20000 });
+  await openFromFiles(name(4), '.gh');
+  await page.keyboard.press('Alt+ArrowLeft');
+  await page.waitForSelector('.gh', { state: 'visible', timeout: 15000 });
+  await page
+    .waitForFunction(() => !!document.activeElement?.closest('.gh__row--selected'), null, {
+      timeout: 10000,
+    })
+    .catch(async () =>
+      assert(false, `Back onto History: focus is on ${await focusedIn()}, not its selected row`),
+    );
+  log('Back onto History focuses its selected row ✓');
+
   log('PASS ✓ review-tab-state: state survives a tab round-trip and resets on a source change');
 });
