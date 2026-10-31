@@ -51,6 +51,8 @@ export type McpUiAction =
   | { kind: 'openUrl'; url: string; focus: boolean };
 
 export const MAX_CLOSE_RESULTS = 500;
+/** A closeSession refusal names at most this many unsaved paths. */
+export const MAX_UNSAVED_PATHS = 20;
 export interface CloseFilesOutcome {
   closed: string[];
   skipped: { path: string; reason: 'unsaved' | 'not_open' }[];
@@ -59,7 +61,7 @@ export interface CloseFilesOutcome {
 }
 export type McpUiResult =
   | { kind: 'closeSession'; ok: true }
-  /** At most 20 paths. */
+  /** At most MAX_UNSAVED_PATHS paths. */
   | { kind: 'closeSession'; ok: false; unsaved: string[] }
   | ({ kind: 'closeFiles' } & CloseFilesOutcome)
   /** openReview | openGitHistory | openUrl. */

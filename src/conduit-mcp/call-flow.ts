@@ -14,7 +14,13 @@ import {
   windowNotReady,
 } from './tool-policy';
 import { type Handle, type Result, toolError } from './types';
-import { type AskAnswer, MAX_CLOSE_RESULTS, type McpUiAction, type McpUiResult } from './ui-types';
+import {
+  type AskAnswer,
+  MAX_CLOSE_RESULTS,
+  MAX_UNSAVED_PATHS,
+  type McpUiAction,
+  type McpUiResult,
+} from './ui-types';
 import { type CallKey, createWindowWaits } from './window-waits';
 
 /** Below each CLI's documented MCP call timeout (spec §5, research 2026-10-30). */
@@ -28,7 +34,6 @@ export const ASK_TIMEOUT_MS: Readonly<Record<CliKind, number>> = {
 export const MAX_ASKS_PER_CALLER = 3;
 /** An app-control tool's renderer step (spec 2026-10-30-conduit-mcp-app-control §2.3). */
 export const UI_TIMEOUT_MS = 5_000;
-const MAX_UNSAVED_PATHS = 20;
 
 export interface InFlight {
   /** True once notifications/cancelled named this request. Never true for a null requestId. */
