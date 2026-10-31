@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteFileSync } from '../src/atomic-write';
 import { adapterFor, MCP_ADAPTERS, type McpAdapter, notifiable } from '../src/conduit-mcp/adapters';
+import { createAppControlHandlers } from '../src/conduit-mcp/app-control-tools';
 import { snapshotAttachment } from '../src/conduit-mcp/attachments';
 import {
   type AttentionEvent,
@@ -17,7 +18,12 @@ import {
   initializeClientName,
   pickNoticeAdapterId,
 } from '../src/conduit-mcp/client-info';
-import { type ControlDeps, createControlHandlers } from '../src/conduit-mcp/control-tools';
+import {
+  type ControlCallContext,
+  type ControlDeps,
+  createControlHandlers,
+  type PreparedCall,
+} from '../src/conduit-mcp/control-tools';
 import {
   isCountedInput,
   nextDraftState,
@@ -57,7 +63,6 @@ import {
   gateToolCall,
   isMessagingTool,
   isToolName,
-  type Move,
   type ResolvedPolicy,
   resolvePolicy,
   TOOL_NAMES,
@@ -144,7 +149,10 @@ export interface ConduitMcpHostDeps {
   /** Registered agent ids, for the open_session schema enum. */
   agentIds(): string[];
   /** Main's side of the control tools: paths, commands, and creating sessions/opening files. */
-  control: Omit<ControlDeps, 'claimHandle' | 'now' | 'info' | 'agentIds'>;
+  control: Omit<
+    ControlDeps,
+    'claimHandle' | 'now' | 'info' | 'agentIds' | 'targets' | 'ownerWindowOf' | 'windowReady'
+  >;
   pty: Pick<PtyHost, 'isAlive' | 'generation'>;
   writer: PtyWriter;
   activity: Pick<SessionActivity, 'statusOf' | 'lastOutputAt'>;
@@ -677,7 +685,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return a.handle;
   };
 
-  const control = createControlHandlers({
+  const controlDeps: ControlDeps = {
     ...deps.control,
     agentIds: () => deps.agentIds(),
     claimHandle: (sessionId) => {
@@ -687,7 +695,18 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
     now,
     info: (message, data) => deps.log.info('conduit-mcp', message, data),
-  });
+    // Listed sessions only: a tool never reaches a session list_sessions doesn't show (spec A7).
+    targets: () =>
+      listedSessions().map(({ session: s, handle }) => ({
+        sessionId: s.id,
+        handle,
+        openerSessionId: s.openedBy?.sessionId ?? null,
+      })),
+    ownerWindowOf: (sessionId) => deps.ownerWindowOf(sessionId),
+    windowReady: (windowId) => deps.presence.isReady(windowId),
+  };
+  const control = createControlHandlers(controlDeps);
+  const app = createAppControlHandlers(controlDeps, control.prepared);
 
   /** Session > CLI kind (the persisted handle's prefix) > global, per field (spec §3.1). */
   const resolveFor = (sessionId: string, tool: ToolName): ResolvedPolicy => {
@@ -820,7 +839,18 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           }
           return runMessaging(caller, name, args);
         }
-        const move = { move: resolved.policy.move };
+        const controlCtx: ControlCallContext = {
+          move: resolved.policy.move,
+          reach: resolved.policy.reach,
+          ui: (windowId, routedSessionId, action) =>
+            flow.requestUi({
+              inflight,
+              callerSessionId: sessionId,
+              routedSessionId,
+              windowId,
+              action,
+            }),
+        };
         return flow.runControl<unknown>({
           inflight,
           caller,
@@ -829,7 +859,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           policy: resolved.policy,
           source: resolved.source.access,
           args,
-          prepare: () => prepareControl(caller, name, args, move),
+          prepare: () => prepareControl(caller, name, args, controlCtx),
         });
       })();
       // spec 2026-10-30-conduit-mcp-tool-policy §2.4: no reply after notifications/cancelled.
@@ -865,8 +895,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     caller: Caller,
     name: ToolName,
     args: unknown,
-    ctx: { move: Move | undefined },
-  ) => {
+    ctx: ControlCallContext,
+  ): Promise<Result<PreparedCall<unknown>>> => {
     switch (name) {
       case 'open_session':
         return control.prepareOpenSession(caller, args, ctx);
@@ -874,6 +904,20 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return control.prepareOpenTerminal(caller, args, ctx);
       case 'open_file':
         return control.prepareOpenFile(caller, args, ctx);
+      case 'close_session':
+        return app.prepareCloseSession(caller, args, ctx);
+      case 'focus_session':
+        return app.prepareFocusSession(caller, args, ctx);
+      case 'attach_folder':
+        return app.prepareAttachFolder(caller, args, ctx);
+      case 'close_files':
+        return app.prepareCloseFiles(caller, args, ctx);
+      case 'open_review':
+        return app.prepareOpenReview(caller, args, ctx);
+      case 'open_git_history':
+        return app.prepareOpenGitHistory(caller, args, ctx);
+      case 'open_url':
+        return app.prepareOpenUrl(caller, args, ctx);
     }
     throw new Error(`prepareControl: ${name} is not a control tool`);
   };
@@ -1525,6 +1569,14 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             deps.log.info('conduit-mcp', 'ask answer ignored', { askId: m.askId, senderId });
           return;
         }
+        case 'mcp:uiResult':
+          // Re-parsed against the wait's kind and bound to the window it was sent to.
+          if (typeof m.requestId !== 'string' || !flow.answerUi(m.requestId, senderId, m.result))
+            deps.log.debug('conduit-mcp', 'ui result ignored', {
+              requestId: m.requestId,
+              senderId,
+            });
+          return;
         case 'mcp:pause':
           deps.mgr.setMcp(m.sessionId, { mcpNoticesPaused: m.paused });
           scheduleBroadcast();

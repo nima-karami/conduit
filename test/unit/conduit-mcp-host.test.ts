@@ -129,6 +129,10 @@ interface Harness {
   owners: Map<string, number | null>;
   /** Ready windows, and what each shows; a window absent from `shown` shows every session. */
   presence: { ready: Set<number>; shown: Map<number, Set<string>> };
+  /** With opts.manualTimers: runs every timer due within `ms` from now. */
+  advance(ms: number): void;
+  addRoots: Array<{ id: string; path: string }>;
+  activations: Array<{ id: string; raise: boolean }>;
 }
 
 const dirs: string[] = [];
@@ -178,6 +182,8 @@ function harness(
     installState?: ConduitMcpHostDeps['installState'];
     toolPolicy?: () => { global: GlobalPolicy; byCli: CliPolicyLayers };
     kindOf?: (abs: string) => Promise<PathKind>;
+    /** Timers fire only through advance(); otherwise asks and UI waits never expire. */
+    manualTimers?: boolean;
   } = {},
 ): Harness {
   const dir = opts.dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'cmcp-host-'));
@@ -198,6 +204,18 @@ function harness(
   const files: McpFileRequest[] = [];
   const lagged: Array<[string, string]> = [];
   const screens = createSessionScreens();
+  const timers = new Map<number, { fn: () => void; at: number }>();
+  let timerN = 0;
+  const advance = (ms: number) => {
+    clock.t += ms;
+    for (const [id, t] of [...timers])
+      if (t.at <= clock.t) {
+        timers.delete(id);
+        t.fn();
+      }
+  };
+  const addRoots: Harness['addRoots'] = [];
+  const activations: Harness['activations'] = [];
   const toOwner: Harness['toOwner'] = [];
   const toWindow: Harness['toWindow'] = [];
   const flashed: string[] = [];
@@ -262,8 +280,14 @@ function harness(
     flashOwner: (id) => flashed.push(id),
     newAskId: () => `ask-${++askN}`,
     // Asks never expire on their own here; host tests end them by answer or cancel.
-    setTimer: () => undefined,
-    clearTimer: () => undefined,
+    setTimer: (fn, ms) => {
+      if (!opts.manualTimers) return undefined;
+      timers.set(++timerN, { fn, at: clock.t + ms });
+      return timerN;
+    },
+    clearTimer: (h) => {
+      timers.delete(h as number);
+    },
     installState: opts.installState ?? (() => 'not-installed'),
     detectGraceMs: GRACE,
     defOf: (id) => defOfSession(sessions.get(id)),
@@ -291,6 +315,17 @@ function harness(
         files.push(req);
         return { sessionId: req.callerSessionId };
       },
+      foldersOf: (id) => {
+        const s = sessions.get(id);
+        return s ? { home: s.home, roots: [...s.roots] } : undefined;
+      },
+      addRoot: async (id, p) => {
+        addRoots.push({ id, path: p });
+        sessions.get(id)?.roots.push(p);
+        return { ok: true };
+      },
+      activateSession: (id, raise) => activations.push({ id, raise }),
+      git: async () => ({ ok: false, stdout: '', stderr: 'not a git repository' }),
     },
     pty: {
       isAlive: (id) => alive.has(id),
@@ -362,6 +397,9 @@ function harness(
     flashed,
     owners,
     presence,
+    advance,
+    addRoots,
+    activations,
   };
 }
 
@@ -1430,7 +1468,8 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
 
 describe('control tools: gate, effective tool list, list_changed, session layer (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
   const MESSAGING = ['list_sessions', 'send_message', 'read_inbox', 'read_attachment'];
-  const CONTROL = ['open_session', 'open_terminal', 'open_file'];
+  // Every tool but open_terminal defaults to ask or on (tool-policy spec §3.2).
+  const DEFAULT_LIST = TOOL_NAMES.filter((t) => t !== 'open_terminal');
   const policyOf = (h: Harness, id: string, layer: PolicyLayer | undefined) => {
     const s = h.sessions.get(id);
     if (!s) throw new Error(`no session ${id}`);
@@ -1438,7 +1477,7 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
   };
   const settleNotes = () => new Promise((r) => setTimeout(r, 30));
 
-  it('master off → messaging_off for open_session and send_message; tools/list lists all 7', async () => {
+  it('master off → messaging_off for open_session and send_message; tools/list lists every tool', async () => {
     // A launch with the master off is unwired, so this is a CLI started before it was turned off.
     let on = true;
     const h = harness({ messagingOn: () => on });
@@ -1460,7 +1499,7 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     await h.host.start();
     const a = launch(h, 's1');
     const c = await client(h.ep, a.token);
-    expect(await c.listed()).toEqual([...MESSAGING, 'open_session', 'open_file']);
+    expect(await c.listed()).toEqual(DEFAULT_LIST);
     const r = await c.call('open_terminal', { path: '/w', command: 'node' });
     expect(r.body.error.code).toBe('tool_disabled');
   });
@@ -1488,8 +1527,8 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     policyOf(h, 's1', { open_terminal: { access: 'ask' } });
     const ca = await client(h.ep, a.token);
     const cb = await client(h.ep, b.token);
-    expect(await ca.listed()).toEqual([...MESSAGING, ...CONTROL]);
-    expect(await cb.listed()).toEqual([...MESSAGING, 'open_session', 'open_file']);
+    expect(await ca.listed()).toEqual([...TOOL_NAMES]);
+    expect(await cb.listed()).toEqual(DEFAULT_LIST);
   });
 
   it('a policy change sends list_changed once to an initialized connection, not an uninitialized one, not again when unchanged', async () => {
@@ -1543,7 +1582,7 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     await settleNotes();
     expect(ca.notifications).toEqual(['notifications/tools/list_changed']);
     expect(cb.notifications).toEqual([]);
-    expect(await ca.listed()).toEqual([...MESSAGING, ...CONTROL]);
+    expect(await ca.listed()).toEqual([...TOOL_NAMES]);
   });
 
   it('uiState.switchable lists sessions whose defOf matches an adapter, before any launch', () => {
@@ -2885,5 +2924,169 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     });
     await until(() => c.notifications.length === 1);
     expect(c.notifications).toEqual(['notifications/tools/list_changed']);
+  });
+});
+
+describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control §2.3)', () => {
+  type UiMsg = Extract<HostToWebview, { type: 'mcp:ui' }>;
+  const uiOf = (h: Harness) =>
+    h.toWindow.flatMap((s) =>
+      s.msg.type === 'mcp:ui' ? [{ windowId: s.windowId, ...s.msg }] : [],
+    );
+  const lastUi = async (h: Harness, n = 1): Promise<UiMsg & { windowId: number }> => {
+    const all = await until(() => uiOf(h).length >= n && uiOf(h));
+    return all[n - 1];
+  };
+  const uiResult = (h: Harness, requestId: string, result: unknown, senderId: number) =>
+    h.host.handleRenderer({ type: 'mcp:uiResult', requestId, result }, () => undefined, senderId);
+  const resultOf = (l: Record<string, unknown> | undefined) => {
+    const r = l?.result as { content: Array<{ text: string }> } | undefined;
+    return r ? JSON.parse(r.content[0].text) : undefined;
+  };
+  const allow = (h: Harness, id: string, layer: PolicyLayer) => {
+    const s = h.sessions.get(id);
+    if (!s) throw new Error(`no session ${id}`);
+    s.mcpToolPolicy = layer;
+  };
+
+  /** s1 calls; s2 is a listed peer (window 2 unless told otherwise); both have handles. */
+  async function twoSessions(over: Parameters<typeof harness>[0] = {}) {
+    const h = harness(over);
+    await h.host.start();
+    const a = launch(h, 's1');
+    const c = await rawClient(h.ep, a.token);
+    const b = launch(h, 's2');
+    const peer = await client(h.ep, b.token);
+    await peer.listed();
+    h.owners.set('s2', 2);
+    return { h, c };
+  }
+
+  it('targets are listed sessions only', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', { close_session: { access: 'on', reach: 'any' } });
+    h.sessions.set('s3', session('s3'));
+    c.call(1, 'close_session', { session: 's3' });
+    expect(c.errorOf(await c.reply(1))).toBe('unknown_session');
+    expect(uiOf(h)).toEqual([]);
+  });
+
+  it('close_session end to end', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', { close_session: { access: 'on', reach: 'any' } });
+    const handle = h.sessions.get('s2')?.mcpHandle;
+    c.call(1, 'close_session', { session: handle });
+    const ui = await lastUi(h);
+    expect(ui).toEqual({
+      windowId: 2,
+      type: 'mcp:ui',
+      requestId: ui.requestId,
+      sessionId: 's1',
+      action: { kind: 'closeSession', target: 's2' },
+    });
+    await uiResult(h, ui.requestId, { kind: 'closeSession', ok: true }, 2);
+    expect(resultOf(await c.reply(1))).toEqual({ closed: 's2' });
+  });
+
+  it('self close: the reply is written before the drained connection closes', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', { close_session: { access: 'on' } });
+    c.call(1, 'close_session', { session: 's1' });
+    const ui = await lastUi(h);
+    expect(ui.windowId).toBe(1);
+    // As the renderer does: the answer, then the kill, in separate tasks.
+    await new Promise<void>((r) =>
+      setTimeout(() => {
+        void uiResult(h, ui.requestId, { kind: 'closeSession', ok: true }, 1);
+        setTimeout(() => {
+          void h.host.onSessionDeleted('s1').then(() => r());
+        }, 0);
+      }, 0),
+    );
+    await until(() => c.isClosed());
+    expect(resultOf(c.lines.find((l) => l.id === 1))).toEqual({ closed: 's1' });
+  });
+
+  it('uiResult from a different window is ignored', async () => {
+    const { h, c } = await twoSessions({ manualTimers: true });
+    allow(h, 's1', { open_url: { access: 'on' } });
+    c.call(1, 'open_url', { url: 'http://x/' });
+    const ui = await lastUi(h);
+    expect(ui.windowId).toBe(1);
+    await uiResult(h, ui.requestId, { kind: 'opened' }, 2);
+    await c.barrier(2);
+    expect(c.lines.some((l) => l.id === 1)).toBe(false);
+    h.advance(5_000);
+    expect(c.errorOf(await c.reply(1))).toBe('ui_timeout');
+  });
+
+  it('onWindowReset during a UI wait → window_not_ready', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', { open_url: { access: 'on' } });
+    c.call(1, 'open_url', { url: 'http://x/' });
+    await lastUi(h);
+    h.host.onWindowReset(1);
+    expect(c.errorOf(await c.reply(1))).toBe('window_not_ready');
+  });
+
+  it('onSessionMoved(target) during a close_session wait → window_not_ready', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', { close_session: { access: 'on', reach: 'any' } });
+    c.call(1, 'close_session', { session: h.sessions.get('s2')?.mcpHandle });
+    await lastUi(h);
+    h.host.onSessionMoved('s2');
+    expect(c.errorOf(await c.reply(1))).toBe('window_not_ready');
+  });
+
+  it('notifications/cancelled during a UI wait → no reply line', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', { open_url: { access: 'on' } });
+    c.call(1, 'open_url', { url: 'http://x/' });
+    const ui = await lastUi(h);
+    c.cancel(1);
+    await c.barrier(2);
+    // Answered after the cancel: the wait is gone, so nothing reaches the CLI.
+    await uiResult(h, ui.requestId, { kind: 'opened' }, 1);
+    await c.barrier(3);
+    expect(c.lines.map((l) => l.id)).toEqual([2, 3]);
+  });
+
+  it('reach refusal at the host', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', { close_session: { access: 'on', reach: 'self' } });
+    c.call(1, 'close_session', { session: h.sessions.get('s2')?.mcpHandle });
+    expect(c.errorOf(await c.reply(1))).toBe('out_of_reach');
+    expect(uiOf(h)).toEqual([]);
+  });
+
+  it('an ask for a UI tool expires 5 s early', async () => {
+    const { h, c } = await twoSessions({ manualTimers: true });
+    allow(h, 's1', { open_url: { access: 'ask' } });
+    c.call(1, 'open_url', { url: 'http://x/' });
+    await until(() => h.toOwner.some((m) => m.msg.type === 'mcp:ask'));
+    h.advance(20_000 - 1);
+    await c.barrier(2);
+    expect(c.lines.some((l) => l.id === 1)).toBe(false);
+    h.advance(1);
+    expect(c.errorOf(await c.reply(1))).toBe('approval_timeout');
+    expect(uiOf(h)).toEqual([]);
+  });
+
+  it('focus_session and attach_folder run host-side', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', {
+      focus_session: { access: 'on', reach: 'any' },
+      attach_folder: { access: 'on' },
+    });
+    c.call(1, 'focus_session', { session: h.sessions.get('s2')?.mcpHandle });
+    expect(resultOf(await c.reply(1))).toEqual({ focused: 's2' });
+    expect(h.activations).toEqual([{ id: 's2', raise: true }]);
+    c.call(2, 'attach_folder', { path: 'sub' });
+    expect(resultOf(await c.reply(2))).toEqual({
+      attached: '/w/sub',
+      session_id: 's1',
+      roots: ['/w/sub'],
+    });
+    expect(uiOf(h)).toEqual([]);
   });
 });
