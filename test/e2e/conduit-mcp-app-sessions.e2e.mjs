@@ -74,6 +74,7 @@ await runScenario(
     const extra = temp('extra');
     mkdirSync(join(dirA, 'sub'));
     writeFileSync(join(dirC, 'fixture.txt'), 'close fixture\n');
+    writeFileSync(join(dirF, 'far.txt'), 'far fixture\n');
 
     const isActive = async (p, sessionId) => (await activeSessionId(p)) === sessionId;
     const makeActive = async (sessionId) => {
@@ -252,6 +253,18 @@ await runScenario(
     const e = await openFake(w2.page, dirE);
     const fw = await openFake(w2.page, dirF);
     assert(await until(() => isActive(w2.page, fw.sessionId), 5_000), 'F not active in window 2');
+    // F's unsaved buffer lives only in window 2's renderer, so a refusal proves the dirty check
+    // ran there (spec §2.3 routing).
+    const fOpen = await callTool(w2.page, fw.sessionId, 'open_file', { path: 'far.txt' });
+    assert(fOpen?.opened, `F's open_file: ${JSON.stringify(fOpen)}`);
+    await tab(w2.page, 'far.txt').waitFor({ timeout: 15_000 });
+    await w2.page.waitForSelector('.viewer__monaco .monaco-editor', { timeout: 15_000 });
+    await typeAtStart(w2.page, 'FAR ');
+    assert(await until(() => isDirty(w2.page, 'far.txt'), 5_000), 'far.txt never went dirty');
+    assert(
+      (await tab(page, 'far.txt').count()) === 0,
+      "window 1 holds F's far.txt, so the check could have run there",
+    );
     const far = await callTool(page, a.sessionId, 'focus_session', { session: e.handle });
     assert(errCode(far) === 'out_of_reach', `reach window, other window: ${JSON.stringify(far)}`);
     await sleep(1_000);
@@ -262,10 +275,28 @@ await runScenario(
     assert(await until(() => isActive(w2.page, e.sessionId), 5_000), 'E never became active');
     assert(await isActive(page, a.sessionId), "focusing window 2's E moved window 1's view");
     await setSessionPolicy(page, a.sessionId, 'close_session', { reach: 'any' });
+    const farDirty = await callTool(page, a.sessionId, 'close_session', { session: fw.handle });
+    assert(
+      errCode(farDirty) === 'unsaved_changes' && errMessage(farDirty).includes('far.txt'),
+      `cross-window dirty close: ${JSON.stringify(farDirty)}`,
+    );
+    await sleep(1_000);
+    assert(await exists(w2.page, fw.sessionId), 'a dirty cross-window close still closed F');
+    await w2.page.locator(`.session[data-sessionid="${fw.sessionId}"]`).click();
+    assert(await until(() => isActive(w2.page, fw.sessionId), 5_000), 'F never became active');
+    await tab(w2.page, 'far.txt').click();
+    await w2.page.locator('.viewer__monaco .monaco-editor').first().click();
+    await w2.page.keyboard.press('Control+s');
+    assert(
+      await until(async () => !(await isDirty(w2.page, 'far.txt')), 10_000),
+      'far.txt never saved',
+    );
     const closedF = await callTool(page, a.sessionId, 'close_session', { session: fw.handle });
     assert(closedF?.closed === fw.sessionId, `cross-window close: ${JSON.stringify(closedF)}`);
     assert(await until(async () => !(await exists(w2.page, fw.sessionId)), 5_000), 'F survived');
-    log('reach window refuses window 2; reach any focuses E there and closes F in its window ✓');
+    log(
+      'reach window refuses window 2; reach any focuses E there; F is refused unsaved_changes from its own window, then closes ✓',
+    );
 
     phase('self close');
     await setSessionPolicy(page, a.sessionId, 'close_session', { reach: 'self' });
