@@ -238,18 +238,17 @@ export function createAppControlHandlers(
         // Relative to the caller's home, whichever session it attaches to (spec §2.1).
         const abs = deps.resolvePath(who.home, o.path as string);
         const named = o.session !== undefined;
-        const t = named
-          ? resolveTarget(o.session)
-          : { sessionId: who.sessionId, handle: caller.handle };
-        if (isFail(t)) return t;
+        let target: { sessionId: string; handle: string } = {
+          sessionId: who.sessionId,
+          handle: caller.handle,
+        };
         if (named) {
-          const out = inReach('attach_folder', ctx.reach, who.sessionId, {
-            openerSessionId: null,
-            ...t,
-          });
+          const t = resolveTarget(o.session);
+          if (isFail(t)) return t;
+          const out = inReach('attach_folder', ctx.reach, who.sessionId, t);
           if (out) return out;
+          target = t;
         }
-        const target = t;
         return {
           summary: { tool: 'attach_folder', path: abs, target: target.handle },
           exec: async (token) => {
