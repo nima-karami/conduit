@@ -4,7 +4,8 @@ import type { JsonRpcId } from './json-rpc';
 
 export interface CallKey {
   connId: number;
-  requestId: JsonRpcId;
+  /** null: the JSON-RPC request had a null id, so no notifications/cancelled can name it. */
+  requestId: JsonRpcId | null;
 }
 export interface Wait<M> {
   id: string;

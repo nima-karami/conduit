@@ -311,6 +311,14 @@ export function coercePolicyPatch(tool: ToolName, v: unknown): ToolPolicyPatch |
   return invalid ? null : out;
 }
 
+/** Also the call flow's fail-closed answer for a policy that reached it as 'off'. */
+export const toolDisabled = (tool: ToolName): ToolError =>
+  toolError('tool_disabled', `${tool} is not enabled for this session`);
+
+/** Also the call flow's refusal when an ask finds no owner window. */
+export const windowNotReady = (): ToolError =>
+  toolError('window_not_ready', "this session's Conduit window isn't ready; try again shortly");
+
 /** Spec §3.3 steps 1–5; null ⇒ proceed. Steps 4–5 only for non-messaging tools; thunks run lazily. */
 export function gateToolCall(i: {
   sessionId: string | null;
@@ -324,15 +332,10 @@ export function gateToolCall(i: {
     return toolError('not_in_session', 'this MCP connection is not a Conduit session');
   if (!i.messagingOn) return toolError('messaging_off', 'Conduit messaging is turned off');
   // Deliberately silent on how to enable it (spec 2026-10-27-conduit-mcp-control-tools §3.2).
-  if (i.policy.access === 'off')
-    return toolError('tool_disabled', `${i.tool} is not enabled for this session`);
+  if (i.policy.access === 'off') return toolDisabled(i.tool);
   if (isMessagingTool(i.tool)) return null;
   // Fail closed: without a ready window there is no card to ask on and no visibility to trust.
-  if (!i.ownerReady())
-    return toolError(
-      'window_not_ready',
-      "this session's Conduit window isn't ready; try again shortly",
-    );
+  if (!i.ownerReady()) return windowNotReady();
   if (i.policy.when === 'viewing' && !i.onScreen())
     return toolError('caller_not_visible', `${i.tool} only runs while your session is on screen`);
   return null;
