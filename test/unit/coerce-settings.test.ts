@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_TOOL_POLICY } from '../../src/conduit-mcp/tool-policy';
 import { DEFAULT_MCP_TOOLS } from '../../src/conduit-mcp/tool-switches';
 import {
   coerceSettings,
@@ -524,5 +525,58 @@ describe('coerceSettings — MCP install suggestions', () => {
     const back = restoreSettings(serializeSettings(s));
     expect(back.mcpInstallPromptDismissed).toEqual({ codex: true });
     expect(back.mcpInstallSuggest).toBe(false);
+  });
+});
+
+describe('coerceSettings — mcpToolPolicy (tool-policy spec §3.1)', () => {
+  it('mcpToolPolicy absent → defaults; byCli absent → {}', () => {
+    const s = coerceSettings({});
+    expect(s.mcpToolPolicy).toEqual(DEFAULT_TOOL_POLICY);
+    expect(s.mcpToolPolicyByCli).toEqual({});
+    expect(DEFAULT_SETTINGS.mcpToolPolicy).toEqual(DEFAULT_TOOL_POLICY);
+    expect(DEFAULT_SETTINGS.mcpToolPolicy).not.toBe(DEFAULT_TOOL_POLICY);
+    expect(DEFAULT_SETTINGS.mcpToolPolicy.open_file).not.toBe(DEFAULT_TOOL_POLICY.open_file);
+  });
+
+  it('v0.50 mcpTools open_session true → {access:on, when:always, move:yes}', () => {
+    expect(coerceSettings({ mcpTools: { open_session: true } }).mcpToolPolicy.open_session).toEqual(
+      {
+        access: 'on',
+        when: 'always',
+        move: 'yes',
+      },
+    );
+  });
+
+  it('v0.50 send_message false → {access:off}', () => {
+    expect(
+      coerceSettings({ mcpTools: { send_message: false } }).mcpToolPolicy.send_message,
+    ).toEqual({
+      access: 'off',
+    });
+  });
+
+  it('byCli keeps known kinds only', () => {
+    expect(
+      coerceSettings({
+        mcpToolPolicyByCli: {
+          codex: { open_terminal: { access: 'ask' } },
+          fake: { open_file: { access: 'off' } },
+          bogus: { open_file: { access: 'off' } },
+        },
+      }).mcpToolPolicyByCli,
+    ).toEqual({ codex: { open_terminal: { access: 'ask' } } });
+  });
+
+  it('round-trip keeps a CLI layer', () => {
+    const s = coerceSettings({
+      mcpToolPolicy: { open_file: { access: 'off' } },
+      mcpToolPolicyByCli: { claude: { open_session: { access: 'on', when: 'always' } } },
+    });
+    const r = restoreSettings(serializeSettings(s));
+    expect(r.mcpToolPolicyByCli).toEqual({
+      claude: { open_session: { access: 'on', when: 'always' } },
+    });
+    expect(r.mcpToolPolicy.open_file).toEqual({ access: 'off', when: 'viewing' });
   });
 });

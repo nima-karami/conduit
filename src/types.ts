@@ -1,3 +1,4 @@
+import type { PolicyLayer } from './conduit-mcp/tool-policy';
 import type { McpToolOverrides } from './conduit-mcp/tool-switches';
 import type { RepoInfo } from './repo-scan';
 
@@ -118,6 +119,8 @@ export interface Session {
   brief?: BriefState;
   /** Absent key = inherit the global switch; never inherited from an opener or copied (control-tools spec §3.1). Persisted. */
   mcpToolOverrides?: McpToolOverrides;
+  /** Session layer, per field; never copied by create/duplicate (spec 2026-10-30-conduit-mcp-tool-policy §3.1). Persisted. */
+  mcpToolPolicy?: PolicyLayer;
   /** Only when agentId === COMMAND_AGENT_ID (src/session-command.ts). Persisted. */
   command?: SessionCommand;
   /** The MCP caller that opened this session. Persisted. */

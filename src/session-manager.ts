@@ -1,5 +1,6 @@
 import { resolveActiveRepo } from './active-repo';
 import type { AgentRegistry } from './agent-registry';
+import { type ToolPolicy, type ToolPolicyPatch, withPolicyPatch } from './conduit-mcp/tool-policy';
 import { type ToolName, type ToolOverrideValue, withOverride } from './conduit-mcp/tool-switches';
 import { folderKey } from './folder-key';
 import type { RepoInfo } from './repo-scan';
@@ -15,6 +16,16 @@ import type {
   SessionOpener,
   SessionStatus,
 } from './types';
+
+/** Field equality for one tool's session-layer entry so setMcpToolPolicy only emits on a change. */
+function samePolicyEntry(
+  a: Partial<ToolPolicy> | undefined,
+  b: Partial<ToolPolicy> | undefined,
+): boolean {
+  return (
+    a?.access === b?.access && a?.when === b?.when && a?.reach === b?.reach && a?.move === b?.move
+  );
+}
 
 /** Shallow value-equality for GitInfo so setRepoGit only emits on a real change. */
 function sameGit(a: GitInfo | undefined, b: GitInfo | undefined): boolean {
@@ -172,7 +183,7 @@ export class SessionManager {
       roots: src.roots,
       missingRoots: src.missingRoots,
       projectId: src.projectId,
-      // Overrides and openedBy are deliberately not copied (control-tools spec §3.1).
+      // Tool policy, overrides and openedBy are deliberately not copied (control-tools spec §3.1).
       ...(src.command ? { command: src.command } : {}),
       ...(opts.id !== undefined ? { id: opts.id } : {}),
       ...(opts.brief ? { brief: opts.brief } : {}),
@@ -334,6 +345,18 @@ export class SessionManager {
     if (next?.[tool] === s.mcpToolOverrides?.[tool]) return true;
     if (next) s.mcpToolOverrides = next;
     else delete s.mcpToolOverrides;
+    this.emit();
+    return true;
+  }
+
+  /** false for an unknown id; no emit when the tool's entry is unchanged. */
+  setMcpToolPolicy(id: string, tool: ToolName, patch: ToolPolicyPatch): boolean {
+    const s = this.sessions.get(id);
+    if (!s) return false;
+    const next = withPolicyPatch(s.mcpToolPolicy, tool, patch);
+    if (samePolicyEntry(s.mcpToolPolicy?.[tool], next?.[tool])) return true;
+    if (next) s.mcpToolPolicy = next;
+    else delete s.mcpToolPolicy;
     this.emit();
     return true;
   }

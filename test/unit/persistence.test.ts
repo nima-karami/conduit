@@ -452,3 +452,52 @@ describe('persistence — MCP control fields (control-tools spec §3.3)', () => 
     expect('command' in x).toBe(false);
   });
 });
+
+describe('persistence — mcpToolPolicy (tool-policy spec §3.1)', () => {
+  it('keeps a valid mcpToolPolicy', () => {
+    const policy = { open_session: { access: 'on', when: 'always' }, open_file: { access: 'off' } };
+    const [x] = sessionsOf(v1([{ ...s, mcpToolPolicy: policy }]));
+    expect(x.mcpToolPolicy).toEqual(policy);
+    const [y] = sessionsOf(serializeSessions([x]));
+    expect(y.mcpToolPolicy).toEqual(policy);
+  });
+
+  it('migrates v0.50 mcpToolOverrides', () => {
+    const [x] = sessionsOf(
+      v1([{ ...s, mcpToolOverrides: { open_session: true, send_message: false } }]),
+    );
+    expect(x.mcpToolPolicy).toEqual({
+      open_session: { access: 'on', when: 'always' },
+      send_message: { access: 'off' },
+    });
+  });
+
+  it('both keys: the old key overlays the new', () => {
+    const [x] = sessionsOf(
+      v1([
+        {
+          ...s,
+          mcpToolPolicy: { open_file: { access: 'off' }, open_session: { when: 'viewing' } },
+          mcpToolOverrides: { open_session: true },
+        },
+      ]),
+    );
+    expect(x.mcpToolPolicy).toEqual({
+      open_file: { access: 'off' },
+      open_session: { access: 'on', when: 'always' },
+    });
+  });
+
+  it('malformed policy dropped without dropping the session', () => {
+    const r = parseSessions(
+      v1([
+        { ...s, id: 'a', mcpToolPolicy: { open_file: { access: 'maybe' }, bogus: {} } },
+        { ...s, id: 'b', mcpToolPolicy: 'on' },
+      ]),
+    );
+    expect(r.kind).toBe('ok');
+    const list = r.kind === 'ok' ? r.sessions : [];
+    expect(list.map((x) => x.id)).toEqual(['a', 'b']);
+    for (const x of list) expect('mcpToolPolicy' in x).toBe(false);
+  });
+});

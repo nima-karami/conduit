@@ -1,3 +1,10 @@
+import {
+  coercePolicyLayer,
+  migrateToolOverrides,
+  type PolicyLayer,
+  TOOL_NAMES,
+  withPolicyPatch,
+} from './conduit-mcp/tool-policy';
 import { coerceToolOverrides } from './conduit-mcp/tool-switches';
 import { folderKey } from './folder-key';
 import type { PersistedDoc } from './protocol';
@@ -5,6 +12,20 @@ import { coerceOpenedBy, coerceSessionCommand } from './session-command';
 import type { Session } from './types';
 
 const VERSION = 1;
+
+/**
+ * The old v0.50 key overlays the new one: only v0.50 writes it, so a file holding both was edited
+ * by v0.50 last (spec 2026-10-30-conduit-mcp-tool-policy §3.1).
+ */
+function sessionPolicyOf(policy: unknown, legacy: unknown): PolicyLayer | undefined {
+  let layer = coercePolicyLayer(policy);
+  const old = migrateToolOverrides(legacy);
+  for (const t of TOOL_NAMES) {
+    const fields = old?.[t];
+    if (fields) layer = withPolicyPatch(layer, t, fields);
+  }
+  return layer;
+}
 
 export function serializeSessions(sessions: Session[]): string {
   // `repoGit`, `lastLine`, `completedRun`, the repo-* fields and the missing-folder marks are
@@ -96,14 +117,17 @@ export function parseSessions(blob: string | undefined): SessionsParse {
     const createdAt = s.createdAt ?? Date.now();
     if (s.brief !== 'pending' && s.brief !== 'sent') delete s.brief;
     // A command session whose command fails coercion is kept and refused at spawn (control-tools plan T1.3).
+    const mcpToolPolicy = sessionPolicyOf(s.mcpToolPolicy, s.mcpToolOverrides);
     const mcpToolOverrides = coerceToolOverrides(s.mcpToolOverrides);
     const openedBy = coerceOpenedBy(s.openedBy);
     const command = coerceSessionCommand(s.command);
+    delete s.mcpToolPolicy;
     delete s.mcpToolOverrides;
     delete s.openedBy;
     delete s.command;
     sessions.push({
       ...s,
+      ...(mcpToolPolicy ? { mcpToolPolicy } : {}),
       ...(mcpToolOverrides ? { mcpToolOverrides } : {}),
       ...(openedBy ? { openedBy } : {}),
       ...(command ? { command } : {}),

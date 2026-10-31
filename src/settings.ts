@@ -1,5 +1,11 @@
 import { coerceInstallDismissals, type InstallDismissals } from './conduit-mcp/install-types';
 import {
+  type CliPolicyLayers,
+  coerceCliLayers,
+  coerceGlobalPolicy,
+  type GlobalPolicy,
+} from './conduit-mcp/tool-policy';
+import {
   coerceMcpTools,
   DEFAULT_MCP_TOOLS,
   type McpToolSwitches,
@@ -188,6 +194,9 @@ export interface AppSettings {
   conduitMcp: boolean;
   // Per-tool switches under the master; per-session overrides win (docs/specs/2026-10-27-conduit-mcp-control-tools.md §5).
   mcpTools: McpToolSwitches;
+  // Global and per-CLI tool policy layers (docs/specs/2026-10-30-conduit-mcp-tool-policy.md §3.1).
+  mcpToolPolicy: GlobalPolicy;
+  mcpToolPolicyByCli: CliPolicyLayers;
   // Discovery banner switch; dismissals are permanent per CLI until this is turned back on
   // (docs/specs/2026-10-27-conduit-mcp-install.md §3.6).
   mcpInstallSuggest: boolean;
@@ -253,6 +262,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   logLevel: 'info',
   conduitMcp: true,
   mcpTools: { ...DEFAULT_MCP_TOOLS },
+  mcpToolPolicy: coerceGlobalPolicy(undefined),
+  mcpToolPolicyByCli: {},
   mcpInstallSuggest: true,
   mcpInstallPromptDismissed: {},
 };
@@ -538,6 +549,8 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     logLevel: oneOf(payload.logLevel, LOG_LEVELS, DEFAULT_SETTINGS.logLevel),
     conduitMcp: bool(payload.conduitMcp, DEFAULT_SETTINGS.conduitMcp),
     mcpTools: coerceMcpTools(payload.mcpTools),
+    mcpToolPolicy: coerceGlobalPolicy(payload.mcpToolPolicy, payload.mcpTools),
+    mcpToolPolicyByCli: coerceCliLayers(payload.mcpToolPolicyByCli) ?? {},
     mcpInstallSuggest: bool(payload.mcpInstallSuggest, DEFAULT_SETTINGS.mcpInstallSuggest),
     mcpInstallPromptDismissed: coerceInstallDismissals(payload.mcpInstallPromptDismissed),
   };

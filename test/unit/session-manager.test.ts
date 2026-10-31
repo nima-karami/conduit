@@ -651,3 +651,39 @@ describe('SessionManager MCP control fields (control-tools spec §3.1, §3.3)', 
     expect(calls).toBe(4);
   });
 });
+
+describe('SessionManager mcpToolPolicy (tool-policy spec §3.1)', () => {
+  let m: SessionManager;
+  beforeEach(() => {
+    m = new SessionManager(new AgentRegistry([claude]), seqIds());
+  });
+
+  it('create and duplicate never carry mcpToolPolicy', () => {
+    const s = m.create('claude', '/w');
+    expect('mcpToolPolicy' in s).toBe(false);
+    m.setMcpToolPolicy(s.id, 'open_file', { access: 'off' });
+    const d = m.duplicate(s.id);
+    expect(d && 'mcpToolPolicy' in d).toBe(false);
+  });
+
+  it('setMcpToolPolicy sets, inherit deletes, unknown id → false, no emit when unchanged', () => {
+    const s = m.create('claude', '/w');
+    let calls = 0;
+    m.onChange(() => calls++);
+    expect(m.setMcpToolPolicy(s.id, 'open_session', { access: 'on', when: 'always' })).toBe(true);
+    expect(m.get(s.id)?.mcpToolPolicy).toEqual({ open_session: { access: 'on', when: 'always' } });
+    expect(calls).toBe(1);
+    expect(m.setMcpToolPolicy(s.id, 'open_session', { when: 'always' })).toBe(true);
+    expect(calls).toBe(1);
+    expect(m.setMcpToolPolicy(s.id, 'open_session', { when: 'inherit' })).toBe(true);
+    expect(m.get(s.id)?.mcpToolPolicy).toEqual({ open_session: { access: 'on' } });
+    expect(calls).toBe(2);
+    expect(m.setMcpToolPolicy(s.id, 'open_session', { access: 'inherit' })).toBe(true);
+    expect('mcpToolPolicy' in (m.get(s.id) ?? {})).toBe(false);
+    expect(calls).toBe(3);
+    expect(m.setMcpToolPolicy(s.id, 'open_file', { access: 'inherit' })).toBe(true);
+    expect(calls).toBe(3);
+    expect(m.setMcpToolPolicy('nope', 'open_file', { access: 'off' })).toBe(false);
+    expect(calls).toBe(3);
+  });
+});
