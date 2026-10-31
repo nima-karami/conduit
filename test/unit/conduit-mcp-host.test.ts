@@ -774,6 +774,19 @@ describe('createConduitMcpHost — tools over the endpoint', () => {
     expect(st.threads).toHaveLength(1);
   });
 
+  it('list_sessions omits a session that has no handle', async () => {
+    const h = harness();
+    await h.host.start();
+    const a = launch(h, 's1');
+    h.sessions.set('s2', session('s2'));
+    h.alive.add('s2');
+    const c = await client(h.ep, a.token);
+    const sessions: unknown[] = (await c.call('list_sessions')).body.sessions;
+    expect(h.sessions.get('s2')?.mcpHandle).toBeUndefined();
+    expect(sessions).toHaveLength(1);
+    expect(JSON.stringify(sessions)).not.toContain('S s2');
+  });
+
   it('invalid token → tools/list [] and not_in_session', async () => {
     const h = harness();
     await h.host.start();
