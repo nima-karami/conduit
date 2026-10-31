@@ -45,6 +45,12 @@ All notable user-facing changes to Conduit. Format follows
   `close_files`, `open_review`, `open_git_history`, `open_url`, `focus_session`) allow 30 calls a
   minute per agent. Action tools (`open_session`, `open_terminal`, `close_session`,
   `attach_folder`) allow 10 a minute per agent and 20 a minute across all agents.
+- **Conduit asks once.** Installing Conduit into Claude Code or Cursor also tells that CLI to
+  leave Conduit's tools to Conduit's own policy, so a tool set to **Ask** shows only Conduit's
+  card, never a second CLI prompt (Cursor: once it has created `~/.cursor/cli-config.json`).
+  Agents launched from Conduit get the same, and a Codex started from Conduit gives you
+  170 s to answer the card (was 50 s). Existing installs are updated at the next start; a rule
+  you remove later stays removed.
 - **Your v0.50 switches carry over.** A tool you turned on becomes On · Always; a messaging tool
   you turned off stays off. Going back to v0.50 drops the policies and returns to its defaults.
 
