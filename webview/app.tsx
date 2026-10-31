@@ -42,6 +42,7 @@ import { sessionPaletteFields } from '../src/palette-state';
 import { PLANS_DIR } from '../src/plan-path';
 import type {
   ChangeDTO,
+  CommitNode,
   DiffTabScope,
   FileContentDTO,
   FileDiffDTO,
@@ -198,6 +199,7 @@ import {
   redoActions,
 } from './fs-undo';
 import type { BulkTarget, GitActionIntent } from './git-intent';
+import { requestHistoryReveal } from './history-reveal';
 import { bumpHtmlReload, getHtmlView, toggleHtmlView } from './html-view-store';
 import { type HunkActionHost, setHunkActionHost } from './hunk-actions';
 import {
@@ -323,6 +325,8 @@ interface FileOpenNav {
   reveal?: CursorPos;
   record?: boolean;
   group?: GroupIndex;
+  /** Open in targetSessionId without switching the shown session (MCP). */
+  keepActive?: true;
 }
 
 const joinPath = (base: string, rel: string) =>
@@ -927,19 +931,29 @@ export function App() {
   // open/activate the review doc. Opening it again just re-activates the one tab.
   // `openReviewTab` stays argument-less: it is wired straight to onClick in several places,
   // where an extra parameter would be handed a MouseEvent.
-  const openReviewScoped = useCallback(
-    (scope: ReviewScope, repoRoot?: string, group?: GroupIndex) => {
-      const sessionId = activeIdRef.current ?? '';
-      recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
-      setCenterView('editor');
+  // Session-explicit: an MCP open names its caller, which may not be the shown session; only an
+  // open into the shown session navigates or changes the center view.
+  const openReviewIn = useCallback(
+    (sessionId: string, source: ReviewSource, group?: GroupIndex) => {
+      const shown = activeIdRef.current ?? '';
+      if (sessionId === shown) {
+        recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
+        setCenterView('editor');
+      }
       dispatchDocs({
         type: 'openReview',
         sessionId,
-        source: workingSource(scope, repoRoot),
+        source,
         group: group ?? openTargetGroup(docStateRef.current, sessionId),
+        shown,
       });
     },
     [recordNav],
+  );
+  const openReviewScoped = useCallback(
+    (scope: ReviewScope, repoRoot?: string, group?: GroupIndex) =>
+      openReviewIn(activeIdRef.current ?? '', workingSource(scope, repoRoot), group),
+    [openReviewIn],
   );
   const openReviewTab = useCallback(() => openReviewScoped('all'), [openReviewScoped]);
 
@@ -990,38 +1004,40 @@ export function App() {
       if (s.kind === 'working') return openReviewScoped(s.scope ?? 'all', s.repoRoot);
       if (s.kind === 'commit') return openReviewForCommit(s.sha, undefined, s.subject, s.repoRoot);
       // range: a two-ref comparison rides the singleton review doc like any other source.
-      const sessionId = activeIdRef.current ?? '';
-      recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
-      setCenterView('editor');
-      dispatchDocs({
-        type: 'openReview',
-        sessionId,
-        source: s,
-        group: openTargetGroup(docStateRef.current, sessionId),
-      });
+      openReviewIn(activeIdRef.current ?? '', s);
     },
-    [openReviewScoped, openReviewForCommit, recordNav],
+    [openReviewScoped, openReviewForCommit, openReviewIn],
   );
 
   // git-history Slice A: open the commit-graph as a singleton center-pane doc for the
   // active session, mirroring openReviewTab. Re-opening just re-activates the one tab (and
   // transfers ownership to the now-active session). Without `repoRoot` it shows the active repo
   // (docs/specs/archive/2026-09-23-mf-changes.md §2.5).
-  const openGitHistoryTab = useCallback(
-    (repoRoot?: string) => {
-      const sessionId = activeIdRef.current ?? '';
-      recordNav({ sessionId, doc: { kind: 'git-history', path: GIT_HISTORY_DOC_PATH } });
-      setCenterView('editor');
+  const openGitHistoryIn = useCallback(
+    (sessionId: string, repoRoot?: string, reveal?: CommitNode) => {
+      const shown = activeIdRef.current ?? '';
+      if (sessionId === shown) {
+        recordNav({ sessionId, doc: { kind: 'git-history', path: GIT_HISTORY_DOC_PATH } });
+        setCenterView('editor');
+      }
       const session = sessionsRef.current.find((s) => s.id === sessionId);
+      const root = repoRoot ?? historyRepoFor(undefined, session);
+      // Before the dispatch: a view that mounts on this open takes the reveal at mount.
+      if (reveal && root !== undefined) requestHistoryReveal(sessionId, root, reveal);
       dispatchDocs({
         type: 'open',
         kind: 'git-history',
         path: GIT_HISTORY_DOC_PATH,
         sessionId,
-        repoRoot: repoRoot ?? historyRepoFor(undefined, session),
+        repoRoot: root,
+        shown,
       });
     },
     [recordNav],
+  );
+  const openGitHistoryTab = useCallback(
+    (repoRoot?: string) => openGitHistoryIn(activeIdRef.current ?? '', repoRoot),
+    [openGitHistoryIn],
   );
   const retargetGitHistory = useCallback((repoRoot: string) => {
     dispatchDocs({
@@ -2397,10 +2413,12 @@ export function App() {
       // If a target session is provided and differs from the active one, switch first.
       const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
       const g = nav?.group ?? openTargetGroup(docStateRef.current, effectiveSessionId);
+      const shown = activeIdRef.current ?? '';
+      const intoShown = effectiveSessionId === shown;
       // Record BEFORE staging the reveal: setReveal moves a mounted editor's cursor
       // synchronously, which would corrupt the "from" side (nav-history plan, Settled decisions).
-      // A background open is not a navigation.
-      if (!background && nav?.record !== false) {
+      // A background open is not a navigation, nor is one into a session nobody is looking at.
+      if (!background && nav?.record !== false && (intoShown || !nav?.keepActive)) {
         recordNav({
           sessionId: effectiveSessionId,
           doc: { kind: 'file', path },
@@ -2417,7 +2435,7 @@ export function App() {
       }
       if (background) {
         reportBackgroundOpen('file', path, effectiveSessionId, g);
-      } else if (targetSessionId && targetSessionId !== activeIdRef.current) {
+      } else if (!nav?.keepActive && targetSessionId && targetSessionId !== activeIdRef.current) {
         setActiveId(targetSessionId);
         dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
       }
@@ -2433,11 +2451,12 @@ export function App() {
         sessionId: effectiveSessionId,
         mode,
         group: g,
+        ...(nav?.keepActive ? { shown } : {}),
       });
       pushRecent('file', path, effectiveSessionId);
       // Surface the file in the explorer wherever it was opened from (tree click, search,
       // palette, go-to-definition, terminal link): switch to the Files tab and reveal it.
-      if (!background) rightPaneRef.current?.revealInTree(path);
+      if (!background && (intoShown || !nav?.keepActive)) rightPaneRef.current?.revealInTree(path);
       // Usually already running (indexing starts when a session becomes active). This covers
       // the case where a file is opened in a project that hasn't been indexed yet, and seeds
       // the priority wave with the file the user is actually looking at.
@@ -2510,13 +2529,14 @@ export function App() {
     (url: string, targetSessionId?: string, mode?: OpenMode, group?: GroupIndex) => {
       const sessionId = targetSessionId ?? activeIdRef.current ?? '';
       const g = group ?? openTargetGroup(docStateRef.current, sessionId);
+      const shown = activeIdRef.current ?? '';
       if (mode === 'background') {
         reportBackgroundOpen('web', url, sessionId, g);
-        dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId, mode, group: g });
+        dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId, mode, group: g, shown });
         return;
       }
       recordNav({ sessionId, doc: { kind: 'web', path: url } });
-      dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId, group: g });
+      dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId, group: g, shown });
     },
     [recordNav, reportBackgroundOpen],
   );
@@ -2704,9 +2724,17 @@ export function App() {
     for (const req of pendingOsOpensRef.current) {
       if (known.has(req.sessionId)) {
         const p = planFileOpen(req);
-        if (p.activate) setActiveId(req.sessionId);
-        if (p.showEditor) setCenterView('editor');
-        openFile(req.path, req.sessionId, p.mode, p.reveal ? { reveal: p.reveal } : undefined);
+        if (req.source === 'mcp') {
+          if (p.showEditor && req.sessionId === activeIdRef.current) setCenterView('editor');
+          openFile(req.path, req.sessionId, p.mode, {
+            ...(p.reveal ? { reveal: p.reveal } : {}),
+            keepActive: true,
+          });
+        } else {
+          if (p.activate) setActiveId(req.sessionId);
+          if (p.showEditor) setCenterView('editor');
+          openFile(req.path, req.sessionId, p.mode, p.reveal ? { reveal: p.reveal } : undefined);
+        }
       } else {
         remaining.push(req);
       }

@@ -17,9 +17,13 @@ describe('planFileOpen', () => {
     });
   });
 
-  it('an MCP open with focus activates the session and opens a preview tab at the position', () => {
-    expect(planFileOpen({ ...base, source: 'mcp', focus: true, line: 12, column: 4 })).toEqual({
-      activate: true,
+  // spec 2026-10-30-conduit-mcp-app-control §2.1: open_file lands in the caller's session and
+  // never switches the session the human is looking at.
+  it('a focused MCP open never activates; it opens a preview tab at the position', () => {
+    expect(
+      planFileOpen({ ...base, source: 'mcp', focus: true, line: 12, column: 4 }),
+    ).toStrictEqual({
+      activate: false,
       showEditor: true,
       mode: 'preview',
       reveal: { line: 12, column: 4 },
