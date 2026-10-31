@@ -13,7 +13,7 @@ export type LegacyConduitEntry = ClaudeEntry | V050CodexEntry | CursorEntry | V0
 export const SHIM_LEAF = 'conduit-mcp-shim.cjs';
 /** Longer than Conduit's ask budget, so the human's card decides, not the CLI's clock. */
 export const CODEX_TOOL_TIMEOUT_SEC = 180;
-export const OPENCODE_TIMEOUT_MS = 180_000;
+const OPENCODE_TIMEOUT_MS = 180_000;
 
 const TOKEN = 'CONDUIT_SESSION_TOKEN';
 const ENDPOINT = 'CONDUIT_MCP_ENDPOINT';

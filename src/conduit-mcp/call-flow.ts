@@ -36,7 +36,7 @@ export const ASK_TIMEOUT_MS: Readonly<Record<CliKind, number>> = {
  * A Conduit launch gives codex tool_timeout_sec=180, so its card can wait longer; a plain-shell
  * codex may be running a v0.50 entry with the 60 s default (spec 2026-10-31-conduit-mcp-single-gate).
  */
-export const CODEX_WIRED_ASK_TIMEOUT_MS = 170_000;
+const CODEX_WIRED_ASK_TIMEOUT_MS = 170_000;
 export function askBudgetMs(kind: CliKind, wiredAtLaunch: boolean): number {
   return kind === 'codex' && wiredAtLaunch ? CODEX_WIRED_ASK_TIMEOUT_MS : ASK_TIMEOUT_MS[kind];
 }
