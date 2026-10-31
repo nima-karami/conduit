@@ -12,7 +12,9 @@
 //   FAKE-MCP READY {"seq":n,"tools":[…]}
 //   FAKE-MCP INPUT {"seq":n,"line":"…"}            every submitted line
 //   FAKE-MCP INBOX {"seq":n,"result":…}             after a `[conduit] …` line, its read_inbox
+//   FAKE-MCP CALL {"seq":n,"tool":"…","id":n}       a `call` was sent, before its result is awaited
 //   FAKE-MCP RESULT {"seq":n,"tool":"…","result":…} for `call <tool> <json>`
+//   FAKE-MCP CANCEL {"seq":n,"id":n}                `cancel`: notifications/cancelled for the last call
 //   FAKE-MCP PROMPT-ENTER {"seq":n}                 Enter while the permission prompt is up
 //   FAKE-MCP ARGV {"seq":n,"argv":[…]}              once at startup: the launch args, so a scenario sees what the host appended
 //   FAKE-MCP LIST_CHANGED {"seq":n}                 a notifications/tools/list_changed arrived; then it re-lists:
@@ -64,18 +66,22 @@ let nextId = 0;
 const waiting = new Map();
 let rx = '';
 
-function rpc(method, params) {
+function rpc(method, params, onSent) {
   if (!server) return Promise.resolve({ error: { message: 'no conduit server configured' } });
   nextId += 1;
   const id = nextId;
+  onSent?.(id);
   server.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
   return new Promise((resolve) => waiting.set(id, resolve));
 }
 const notify = (method) => server?.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method })}\n`);
 
+/** The id of the last `call`, which `cancel` names. */
+let lastCallId = null;
+
 /** A tool result's payload: the structured JSON of its first text block. */
-async function callTool(name, args) {
-  const r = await rpc('tools/call', { name, arguments: args });
+async function callTool(name, args, onSent) {
+  const r = await rpc('tools/call', { name, arguments: args }, onSent);
   if (r.error) return { rpcError: r.error };
   const text = r.result?.content?.find((c) => c.type === 'text')?.text;
   try {
@@ -183,7 +189,23 @@ async function submit() {
       prompt();
       return;
     }
-    record('RESULT', { tool: call[1], result: await callTool(call[1], args) });
+    const tool = call[1];
+    const result = await callTool(tool, args, (id) => {
+      lastCallId = id;
+      record('CALL', { tool, id });
+    });
+    record('RESULT', { tool, result });
+    prompt();
+    return;
+  }
+  if (got === 'cancel') {
+    if (lastCallId !== null) {
+      const params = { requestId: lastCallId, reason: 'e2e' };
+      server?.stdin.write(
+        `${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params })}\n`,
+      );
+      record('CANCEL', { id: lastCallId });
+    }
     prompt();
     return;
   }

@@ -309,3 +309,106 @@ export const activeSessionId = (page) =>
     () =>
       document.querySelector('.session.session--active')?.getAttribute('data-sessionid') ?? null,
   );
+
+/**
+ * Patch one tool's session layer through the host's `mcp:setToolPolicy`, as the dialog does, and
+ * wait for the session to reflect it (`'inherit'` = the field is gone).
+ * @param {Record<string, string>} patch e.g. `{ when: 'always' }`
+ */
+export async function setSessionPolicy(page, sessionId, tool, patch) {
+  await tapBridge(page);
+  const ok = await page.evaluate(
+    ({ s, t, p }) =>
+      new Promise((resolve) => {
+        window.__policyReq = (window.__policyReq ?? 900_000) + 1;
+        const requestId = window.__policyReq;
+        const off = window.agentDeck.subscribe((m) => {
+          if (m.type !== 'mcp:toolPolicyResult' || m.requestId !== requestId) return;
+          off();
+          resolve(m.ok);
+        });
+        window.agentDeck.post({
+          type: 'mcp:setToolPolicy',
+          requestId,
+          sessionId: s,
+          tool: t,
+          patch: p,
+        });
+      }),
+    { s: sessionId, t: tool, p: patch },
+  );
+  if (!ok) throw new Error(`mcp:setToolPolicy refused ${tool} ${JSON.stringify(patch)}`);
+  await page.waitForFunction(
+    ({ id, t, p }) => {
+      const layer = (window.__sessions || []).find((x) => x.id === id)?.mcpToolPolicy?.[t] ?? {};
+      return Object.entries(p).every(([f, v]) =>
+        v === 'inherit' ? !(f in layer) : layer[f] === v,
+      );
+    },
+    { id: sessionId, t: tool, p: patch },
+    { timeout: 10_000 },
+  );
+}
+
+/**
+ * `updateSettings` with `mcpToolPolicy[tool]` = `policy` merged over its current value; waits for
+ * the host to broadcast it back.
+ * @param {Record<string, string>} policy e.g. `{ access: 'ask' }`
+ */
+export function setGlobalPolicy(page, tool, policy) {
+  return page.evaluate(
+    ({ t, p }) =>
+      new Promise((resolve) => {
+        let sent = false;
+        const matches = (s) =>
+          Object.entries(p).every(([f, v]) => s?.mcpToolPolicy?.[t]?.[f] === v);
+        const off = window.agentDeck.subscribe((m) => {
+          if (m.type !== 'state') return;
+          if (!sent) {
+            sent = true;
+            const cur = m.settings.mcpToolPolicy;
+            window.agentDeck.post({
+              type: 'updateSettings',
+              settings: { ...m.settings, mcpToolPolicy: { ...cur, [t]: { ...cur[t], ...p } } },
+            });
+          }
+          if (matches(m.settings)) {
+            off();
+            resolve();
+          }
+        });
+        window.agentDeck.post({ type: 'ready' });
+      }),
+    { t: tool, p: policy },
+  );
+}
+
+/**
+ * Type `call <tool> <json>` without waiting for its result: resolves, once the fake has sent it
+ * (its CALL record), the RESULT count before it, for `resultAfter`.
+ */
+export async function startCall(page, sessionId, tool, args = {}) {
+  const before = records(sessionId, 'RESULT').length;
+  const calls = records(sessionId, 'CALL').length;
+  await typeLine(page, sessionId, `call ${tool} ${JSON.stringify(args)}`);
+  const sent = await until(() => records(sessionId, 'CALL').length > calls, 20_000);
+  if (!sent) throw new Error(`the fake in ${sessionId} never sent ${tool}`);
+  return before;
+}
+
+/** The first RESULT payload after the first `before` ones, or null after `ms`. */
+export async function resultAfter(sessionId, before, ms) {
+  let result = null;
+  await until(() => {
+    const recs = records(sessionId, 'RESULT');
+    if (recs.length <= before) return false;
+    result = recs[before].result;
+    return true;
+  }, ms);
+  return result;
+}
+
+/** Answer the shown approval card. @param {'approve' | 'deny' | 'always'} answer */
+export function clickAskAnswer(page, answer) {
+  return page.locator(`.askcard button[data-answer="${answer}"]`).click();
+}
