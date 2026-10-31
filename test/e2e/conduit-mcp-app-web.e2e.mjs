@@ -76,11 +76,26 @@ await runScenario(
     const fg = await callTool(page, a.sessionId, 'open_url', { url });
     assert(same(fg, { opened: url }), `foreground: ${JSON.stringify(fg)}`);
     await waitActiveTab(web(url), 'foreground');
-    const focus = await page.evaluate(() => ({
-      same: document.activeElement === window.__focusBefore,
-      after: `${document.activeElement?.tagName}.${document.activeElement?.className}`,
-    }));
-    log(`open_url lands an active web tab at ${url} ✓`);
+    const focusNow = () =>
+      page.evaluate(() => ({
+        same: document.activeElement === window.__focusBefore,
+        after: `${document.activeElement?.tagName}.${document.activeElement?.className}`,
+      }));
+    const focusAtOpen = await focusNow();
+    // A guest page can take focus as it loads, after the tab activates: sample again once the
+    // page's <title> has reached the tab.
+    const tabTitle = () =>
+      page.evaluate(
+        (id) =>
+          document.querySelector(`.tabbar [data-tabid="${CSS.escape(id)}"]`)?.textContent ?? '',
+        web(url),
+      );
+    assert(
+      await until(async () => (await tabTitle()).includes('ok'), 15_000),
+      `the loopback page never loaded: tab says "${await tabTitle()}"`,
+    );
+    const focusAtLoad = await focusNow();
+    log(`open_url lands an active web tab at ${url}, and its page loads ✓`);
 
     phase('background');
     const bg = await callTool(page, a.sessionId, 'open_url', { url: `${url}x`, focus: false });
@@ -164,7 +179,8 @@ await runScenario(
     log('javascript:, file:, conduit-preview: and ftp: are bad_url, nothing opens ✓');
 
     phase('A4 focus');
-    assert(focus.same, `open_url moved DOM focus to ${focus.after}`);
+    assert(focusAtOpen.same, `open_url moved DOM focus to ${focusAtOpen.after}`);
+    assert(focusAtLoad.same, `the loaded page took DOM focus: ${focusAtLoad.after}`);
     log('open_url kept DOM focus where it was ✓');
 
     phase('cleanup');
