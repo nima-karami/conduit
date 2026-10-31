@@ -25,7 +25,7 @@ import type {
   RecipientStatus,
   ToolErrorCode,
 } from '../src/conduit-mcp/types';
-import type { McpGateState } from '../src/conduit-mcp/ui-types';
+import type { AskSummary, McpGateState } from '../src/conduit-mcp/ui-types';
 import { countNoun } from '../src/menu-selection';
 
 // Only the tools whose On bypasses every prompt get a line under their row (spec §8).
@@ -280,6 +280,33 @@ export const MCP_STR = {
     cliLayerNote:
       'A session follows the CLI that connected first in it. A convenience, not a security boundary.',
     onWarning: ON_WARNING,
+  },
+  // The approval card, its toasts and the caller-side badge (tool-policy spec §2.4, §8, §10).
+  ask: {
+    region: 'Agent request',
+    title: (handle: string, tool: string) => `${handle} requests ${tool}`,
+    summary: {
+      open_session: (s) =>
+        `Open a ${s.agent} session in ${s.path}${s.focus ? '' : ', in the background'}`,
+      open_terminal: (s) => `Run ${s.command} in ${s.path}${s.focus ? '' : ', in the background'}`,
+      open_file: (s) => `Open ${s.path}${s.line === null ? '' : ` at line ${s.line}`}`,
+    } satisfies { [K in AskSummary['tool']]: (s: Extract<AskSummary, { tool: K }>) => string },
+    reason: {
+      session: 'Ask: set for this session',
+      global: 'Ask: the default for all CLIs',
+      cli: (cli: string) => `Ask: set for ${cli}`,
+    },
+    rawArgs: 'Arguments',
+    approve: 'Approve',
+    deny: 'Deny',
+    always: 'Always for this session',
+    pager: (i: number, n: number) => `${i} of ${n}`,
+    prev: 'Previous request',
+    next: 'Next request',
+    expired: (handle: string) => `Request from ${handle} expired`,
+    cancelled: (handle: string) => `Request from ${handle} was cancelled`,
+    waiting: 'Waiting for your approval',
+    chipReason: (handle: string) => `${handle} is waiting for your approval`,
   },
   // Settings → MCP, the card indicator, the setup banner and the Messages empty state
   // (spec 2026-10-27-conduit-mcp-install §2.3–§2.6, §8).
