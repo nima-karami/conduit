@@ -827,6 +827,10 @@ describe('open_url', () => {
     const long = `http://x/${'é'.repeat((MAX_URL_BYTES - 8) / 2)}`;
     expect(Buffer.byteLength(long)).toBeGreaterThan(MAX_URL_BYTES);
     expect(code(await app.prepareOpenUrl(caller(), { url: long }, ctx))).toBe('invalid_args');
+    // Under the cap as typed; percent-encoding triples each é past it.
+    const grows = `http://x/${'é'.repeat(500)}`;
+    expect(Buffer.byteLength(grows)).toBeLessThanOrEqual(MAX_URL_BYTES);
+    expect(code(await app.prepareOpenUrl(caller(), { url: grows }, ctx))).toBe('invalid_args');
     for (const a of [{}, { url: 1 }, { url: 'http://x/', focus: 'no' }, { url: 'http://x/', y: 1 }])
       expect(code(await app.prepareOpenUrl(caller(), a, ctx))).toBe('invalid_args');
     const p = ok(await app.prepareOpenUrl(caller(), { url: 'localhost:5173' }, ctx));

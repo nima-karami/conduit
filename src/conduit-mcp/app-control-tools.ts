@@ -51,6 +51,9 @@ export interface OpenUrlOutput {
 }
 export const MAX_CLOSE_PATHS = 50;
 export const MAX_URL_BYTES = 2048;
+const tooLong = (url: string): boolean => new TextEncoder().encode(url).length > MAX_URL_BYTES;
+const urlTooLong = (): Fail =>
+  fail('invalid_args', `url must be a string of up to ${MAX_URL_BYTES} bytes`);
 
 type Prepare<T> = (
   caller: Caller,
@@ -465,13 +468,14 @@ export function createAppControlHandlers(
       prepared('open_url', caller, async (who) => {
         const o = parseKeys(raw, ['url', 'focus']);
         if (isFail(o)) return o;
-        if (typeof o.url !== 'string' || new TextEncoder().encode(o.url).length > MAX_URL_BYTES)
-          return fail('invalid_args', `url must be a string of up to ${MAX_URL_BYTES} bytes`);
+        if (typeof o.url !== 'string' || tooLong(o.url)) return urlTooLong();
         if (o.focus !== undefined && typeof o.focus !== 'boolean')
           return fail('invalid_args', 'focus must be a boolean');
         // The renderer's own validator, so the host never hands it a URL it would refuse.
         const url = normalizeUrl(o.url);
         if (url === null) return fail('bad_url', 'only http and https URLs can be opened');
+        // Normalizing percent-encodes, which can triple a URL's bytes.
+        if (tooLong(url)) return urlTooLong();
         const w = routeWindow(who.sessionId);
         if (isFail(w)) return w;
         return {
