@@ -133,13 +133,13 @@ const isStrings = (v: unknown): v is string[] =>
 const approvalTimeout = () => toolError('approval_timeout', 'the human did not answer in time');
 const SKIP_REASONS: ReadonlySet<unknown> = new Set(['unsaved', 'not_open']);
 
-/** A renderer failure message reaches an agent's terminal: no escape sequences or C0 controls
- *  (tab and newline stay readable). */
+/** A renderer failure message reaches an agent's terminal: no escape sequences, C0 or C1
+ *  controls (tab and newline stay readable). */
 function withoutControls(s: string): string {
   let out = '';
   for (const ch of s) {
     const c = ch.codePointAt(0) ?? 0;
-    if ((c < 0x20 && c !== 0x09 && c !== 0x0a) || c === 0x7f) continue;
+    if ((c < 0x20 && c !== 0x09 && c !== 0x0a) || (c >= 0x7f && c <= 0x9f)) continue;
     out += ch;
   }
   return out;

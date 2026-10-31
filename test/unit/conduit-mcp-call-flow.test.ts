@@ -659,6 +659,12 @@ describe('mcp:ui waits (spec 2026-10-30-conduit-mcp-app-control §2.3)', () => {
         { kind: 'failed', message: 'a\x1b[2Jb\x00c\x7fd\te\nf\x08' },
         { kind: 'failed', message: 'a[2Jbcd\te\nf' },
       ],
+      // C1 too: \u009b is a one-byte CSI.
+      [
+        OPEN,
+        { kind: 'failed', message: 'x\u009b2Jy\u0080z\u009f! ' },
+        { kind: 'failed', message: 'x2Jyz! ' },
+      ],
     ];
     for (const [action, raw, want] of good) {
       const t = setup();
