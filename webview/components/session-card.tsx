@@ -63,6 +63,8 @@ export function SessionCard({
   dropTarget,
   mcp,
   mcpLink,
+  awaitingApproval,
+  onFocusAsk,
 }: {
   session: Session;
   agentLabel: string;
@@ -84,6 +86,9 @@ export function SessionCard({
   mcp?: McpSessionBadge;
   /** Whether the agent reached Conduit's MCP server (mcp-install spec §2.4). */
   mcpLink?: CardMcpStatus | null;
+  /** One of its tool calls waits on the approval card (tool-policy spec §2.4 caller side). */
+  awaitingApproval?: boolean;
+  onFocusAsk?: () => void;
 }) {
   const [draft, setDraft] = useState(session.name);
   useEffect(() => {
@@ -268,6 +273,19 @@ export function SessionCard({
           </button>
         )}
       </div>
+
+      {awaitingApproval && !editing && (
+        <button
+          type="button"
+          className="session__ask"
+          onClick={(e) => {
+            e.stopPropagation();
+            onFocusAsk?.();
+          }}
+        >
+          {MCP_STR.ask.waiting}
+        </button>
+      )}
 
       {state === 'attention' && (
         <div className="session__actions">

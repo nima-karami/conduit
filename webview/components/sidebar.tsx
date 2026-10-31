@@ -68,6 +68,8 @@ export function Sidebar({
   mcpBadges,
   mcpNotConnected,
   mcpEnabled,
+  awaitingApproval,
+  onFocusAsk,
   renamingId,
   onSetRenaming,
   onReorderSessions,
@@ -107,6 +109,10 @@ export function Sidebar({
   /** Sessions whose agent CLI never reached the host, by session id (mcp-install spec §2.5). */
   mcpNotConnected: Readonly<Record<string, McpNotConnected>>;
   mcpEnabled: boolean;
+  /** Caller sessions with a waiting ask (McpUiState.awaitingApproval). */
+  awaitingApproval?: ReadonlySet<string>;
+  /** Their card's button focuses this window's approval card. */
+  onFocusAsk?: () => void;
   renamingId?: string;
   onSetRenaming: (id: string | null) => void;
   onReorderSessions: (order: string[]) => void;
@@ -414,6 +420,8 @@ export function Sidebar({
       dropTarget={overId === s.id}
       mcp={mcpBadges[s.id]}
       mcpLink={cardMcpStatus(mcpBadges[s.id], mcpNotConnected[s.id], mcpEnabled)}
+      awaitingApproval={awaitingApproval?.has(s.id)}
+      onFocusAsk={onFocusAsk}
     />
   );
 
