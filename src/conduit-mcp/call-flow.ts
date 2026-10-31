@@ -129,6 +129,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStrings = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((x) => typeof x === 'string');
+const approvalTimeout = () => toolError('approval_timeout', 'the human did not answer in time');
 const SKIP_REASONS: ReadonlySet<unknown> = new Set(['unsaved', 'not_open']);
 
 /** The renderer is never load-bearing: its answer is rebuilt field by field for the wait's kind. */
@@ -210,6 +211,14 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       p.release();
       return { ok: false, error: windowNotReady() };
     }
+    // Ask + UI wait must both fit inside the CLI's own call timeout, which started at begin(), not
+    // after prepare's git calls (plan B11).
+    const askMs =
+      startOf(c.inflight) + ASK_TIMEOUT_MS[c.kind] - (p.routesUi ? UI_TIMEOUT_MS : 0) - deps.now();
+    if (askMs <= 0) {
+      p.release();
+      return { ok: false, error: approvalTimeout() };
+    }
     const askId = deps.newAskId();
     deps.sendToOwner(caller, {
       type: 'mcp:ask',
@@ -229,8 +238,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         windowId,
         meta: { tool: c.tool, handle: c.caller.handle },
       },
-      // Ask + UI wait must both fit inside the CLI's own call timeout (plan B11).
-      ASK_TIMEOUT_MS[c.kind] - (p.routesUi ? UI_TIMEOUT_MS : 0),
+      askMs,
     );
     deps.flashOwner(caller);
     deps.onAwaitingChanged();
@@ -240,10 +248,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     // Unanswered ends keep the rate token: it caps card spam (spec §3.3 "Rate").
     switch (end.kind) {
       case 'expired':
-        return {
-          ok: false,
-          error: toolError('approval_timeout', 'the human did not answer in time'),
-        };
+        return { ok: false, error: approvalTimeout() };
       case 'cancelled':
         return end.reply
           ? { ok: false, error: toolError('cancelled', 'the request was cancelled') }
@@ -267,13 +272,15 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     return runNow(c, p);
   }
 
-  /** The wait's key; begin() registered it, so the in-flight object knows its own key. */
-  const keys = new WeakMap<InFlight, CallKey>();
-  const keyOf = (f: InFlight): CallKey => {
+  /** The wait's key and start; begin() registered them, so the in-flight object knows its own. */
+  const keys = new WeakMap<InFlight, { key: CallKey; startedAt: number }>();
+  const begun = (f: InFlight) => {
     const k = keys.get(f);
     if (!k) throw new Error('call-flow: an InFlight from another flow');
     return k;
   };
+  const keyOf = (f: InFlight): CallKey => begun(f).key;
+  const startOf = (f: InFlight): number => begun(f).startedAt;
 
   const cancelWaits = (match: (w: { callerSessionId: string; windowId: number }) => boolean) =>
     waits.cancel(match, true);
@@ -351,7 +358,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
           if (byId.size === 0) inflight.delete(key.connId);
         },
       };
-      keys.set(entry, key);
+      keys.set(entry, { key, startedAt: deps.now() });
       if (key.requestId !== null) {
         let byId = inflight.get(key.connId);
         if (!byId) {

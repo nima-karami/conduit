@@ -780,4 +780,37 @@ describe('mcp:ui waits (spec 2026-10-30-conduit-mcp-app-control §2.3)', () => {
     t.advance(5_000);
     expect(errCode(await plain.promise)).toBe('approval_timeout');
   });
+
+  it('the ask deadline counts from the call’s begin, so a slow prepare shortens it', async () => {
+    const t = setup();
+    const slow = gate();
+    const ui = t.call({ kind: 'agent', routesUi: true, prepareGate: slow });
+    await t.flush();
+    t.advance(8_000);
+    slow.go();
+    await t.flush();
+    expect(t.asks()).toHaveLength(1);
+    t.advance(12_000 - 1);
+    await t.flush();
+    expect(ui.out.done).toBe(false);
+    t.advance(1);
+    await t.flush();
+    expect(ui.out.done).toBe(true);
+    expect(errCode(await ui.promise)).toBe('approval_timeout');
+  });
+
+  it('a prepare that used the whole ask budget → approval_timeout, no card, token released', async () => {
+    const t = setup();
+    const slow = gate();
+    const ui = t.call({ kind: 'agent', routesUi: true, prepareGate: slow });
+    await t.flush();
+    t.advance(20_000);
+    slow.go();
+    await t.flush();
+    expect(ui.out.done).toBe(true);
+    expect(errCode(await ui.promise)).toBe('approval_timeout');
+    expect(t.asks()).toHaveLength(0);
+    expect(ui.spies.release).toBe(1);
+    expect(t.timers.size).toBe(0);
+  });
 });
