@@ -36,7 +36,16 @@ export type ToolErrorCode =
   | 'caller_not_visible'
   | 'denied'
   | 'approval_timeout'
-  | 'cancelled';
+  | 'cancelled'
+  | 'unknown_session'
+  | 'out_of_reach'
+  | 'move_not_allowed'
+  | 'bad_ref'
+  | 'bad_url'
+  | 'not_a_repo'
+  | 'attach_refused'
+  | 'unsaved_changes'
+  | 'ui_timeout';
 export interface ToolError {
   code: ToolErrorCode;
   message: string;

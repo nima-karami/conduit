@@ -10,6 +10,7 @@ import type {
   McpAttachmentPayload,
   McpSendResult,
   McpThreadView,
+  McpUiAction,
   McpUiState,
 } from './conduit-mcp/ui-types';
 import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-search';
@@ -579,6 +580,9 @@ export type HostToWebview =
       source: PolicySource;
     }
   | { type: 'mcp:askClosed'; askId: string; outcome: AskClosedOutcome }
+  // An app-control tool's UI step (spec 2026-10-30-conduit-mcp-app-control §2.3). sessionId is
+  // always the caller; closeSession names its target in the action.
+  | { type: 'mcp:ui'; requestId: string; sessionId: string; action: McpUiAction }
   | { type: 'mcp:toolPolicyResult'; requestId: number; ok: true }
   | {
       type: 'mcp:toolPolicyResult';
@@ -1087,6 +1091,8 @@ export type WebviewToHost =
   // Answer from the approval card; counts only from the window the ask was sent to
   // (spec 2026-10-30-conduit-mcp-tool-policy §2.4). The host re-validates every field.
   | { type: 'mcp:askAnswer'; askId: string; answer: AskAnswer }
+  // The host re-parses result against the wait's action kind and its window.
+  | { type: 'mcp:uiResult'; requestId: string; result: unknown }
   // Session policy layer edit (same spec §3.4); tool stays a string because the host validates it.
   | {
       type: 'mcp:setToolPolicy';

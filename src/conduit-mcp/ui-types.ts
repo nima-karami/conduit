@@ -1,6 +1,9 @@
-// Renderer aggregates for the Messages tab, card badges and the attention chip. Imports only
-// node-free modules (./types, ./install-types), so the renderer never reaches a node-backed one
-// (plan ruling 8).
+// Renderer aggregates for the Messages tab, card badges and the attention chip. Imports are
+// type-only, from node-free modules (./types, ./install-types, ../git-range, ../protocol), so the
+// renderer never reaches a node-backed one (plan ruling 8). The ../protocol ↔ ui-types cycle is
+// type-only and erased at build.
+import type { RefEndpoint } from '../git-range';
+import type { CommitNode } from '../protocol';
 import type { AgentCli, UserInstallState } from './install-types';
 import type {
   GateClosedReason,
@@ -21,7 +24,48 @@ export type AskClosedOutcome = 'expired' | 'cancelled';
 export type AskSummary =
   | { tool: 'open_session'; path: string; agent: string; focus: boolean }
   | { tool: 'open_terminal'; path: string; command: string; focus: boolean }
-  | { tool: 'open_file'; path: string; line: number | null };
+  | { tool: 'open_file'; path: string; line: number | null }
+  | { tool: 'close_session'; target: Handle }
+  | { tool: 'focus_session'; target: Handle }
+  | { tool: 'attach_folder'; path: string; target: Handle }
+  | { tool: 'close_files'; count: number; all: boolean }
+  /** 'working', a short sha, or 'base…head'. */
+  | { tool: 'open_review'; what: string }
+  | { tool: 'open_git_history'; ref: string | null }
+  | { tool: 'open_url'; url: string };
+
+/** Structurally webview ReviewScope. */
+export type McpReviewScope = 'all' | 'staged' | 'unstaged';
+/** Assignable to webview/docs.ts ReviewSource; repoRoot is always set by the host. */
+export type McpReviewSource =
+  | { kind: 'working'; scope: McpReviewScope; repoRoot: string }
+  | { kind: 'commit'; sha: string; subject: string; repoRoot: string }
+  | { kind: 'range'; base: RefEndpoint; head: RefEndpoint; repoRoot: string };
+
+/** Host → renderer UI request (spec 2026-10-30-conduit-mcp-app-control §2.3). */
+export type McpUiAction =
+  | { kind: 'closeSession'; target: string }
+  | { kind: 'closeFiles'; paths: string[] | 'all' }
+  | { kind: 'openReview'; source: McpReviewSource }
+  | { kind: 'openGitHistory'; repoRoot: string; commit: CommitNode | null }
+  | { kind: 'openUrl'; url: string; focus: boolean };
+
+export const MAX_CLOSE_RESULTS = 500;
+export interface CloseFilesOutcome {
+  closed: string[];
+  skipped: { path: string; reason: 'unsaved' | 'not_open' }[];
+  /** closed + skipped hit MAX_CLOSE_RESULTS; later entries weren't recorded (their tabs still closed). */
+  truncated?: true;
+}
+export type McpUiResult =
+  | { kind: 'closeSession'; ok: true }
+  /** At most 20 paths. */
+  | { kind: 'closeSession'; ok: false; unsaved: string[] }
+  | ({ kind: 'closeFiles' } & CloseFilesOutcome)
+  /** openReview | openGitHistory | openUrl. */
+  | { kind: 'opened' }
+  /** The session isn't in this window. */
+  | { kind: 'unknownSession' };
 
 export interface McpSessionBadge {
   handle: Handle;

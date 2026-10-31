@@ -27,6 +27,20 @@ function summaryText(s: AskSummary): string {
       return STR.summary.open_terminal(s);
     case 'open_file':
       return STR.summary.open_file(s);
+    case 'close_session':
+      return STR.summary.close_session(s);
+    case 'focus_session':
+      return STR.summary.focus_session(s);
+    case 'attach_folder':
+      return STR.summary.attach_folder(s);
+    case 'close_files':
+      return STR.summary.close_files(s);
+    case 'open_review':
+      return STR.summary.open_review(s);
+    case 'open_git_history':
+      return STR.summary.open_git_history(s);
+    case 'open_url':
+      return STR.summary.open_url(s);
   }
 }
 

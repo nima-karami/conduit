@@ -262,3 +262,68 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
     ).toBeNull();
   });
 });
+
+describe('Part B catalog rows (app-control spec, tool-policy spec §3.2)', () => {
+  it('Part B defaults match spec A §3.2', () => {
+    expect(DEFAULT_TOOL_POLICY.close_session).toStrictEqual({
+      access: 'ask',
+      when: 'viewing',
+      reach: 'window',
+    });
+    expect(DEFAULT_TOOL_POLICY.focus_session).toStrictEqual({
+      access: 'on',
+      when: 'viewing',
+      reach: 'window',
+      move: 'yes',
+    });
+    expect(DEFAULT_TOOL_POLICY.attach_folder).toStrictEqual({
+      access: 'ask',
+      when: 'viewing',
+      reach: 'self',
+    });
+    for (const t of ['close_files', 'open_review', 'open_git_history', 'open_url'] as const)
+      expect(DEFAULT_TOOL_POLICY[t]).toStrictEqual({ access: 'on', when: 'viewing' });
+    expect(TOOL_SPECS.close_session.budget).toBe('act');
+    expect(TOOL_SPECS.attach_folder.budget).toBe('act');
+    for (const t of [
+      'focus_session',
+      'close_files',
+      'open_review',
+      'open_git_history',
+      'open_url',
+    ] as const)
+      expect(TOOL_SPECS[t].budget).toBe('show');
+  });
+
+  it('reach any only for focus and close', () => {
+    expect(isValidField('attach_folder', 'reach', 'any')).toBe(false);
+    expect(isValidField('attach_folder', 'reach', 'window')).toBe(true);
+    expect(isValidField('close_session', 'reach', 'any')).toBe(true);
+    expect(isValidField('focus_session', 'reach', 'any')).toBe(true);
+    expect(coercePolicyLayer({ attach_folder: { reach: 'any' } })).toBeUndefined();
+    expect(coercePolicyLayer({ open_url: { reach: 'self' } })).toBeUndefined();
+    expect(coercePolicyLayer({ open_session: { reach: 'self' } })).toBeUndefined();
+    expect(coercePolicyLayer({ close_session: { move: 'no' } })).toBeUndefined();
+    expect(coercePolicyLayer({ focus_session: { move: 'no' } })).toStrictEqual({
+      focus_session: { move: 'no' },
+    });
+  });
+
+  it('groups', () => {
+    const of = (g: string) => TOOL_GROUPS.find((x) => x.group === g)?.tools;
+    expect(of('sessions')).toEqual([
+      'open_session',
+      'open_terminal',
+      'close_session',
+      'focus_session',
+      'attach_folder',
+    ]);
+    expect(of('editor')).toEqual([
+      'open_file',
+      'close_files',
+      'open_review',
+      'open_git_history',
+      'open_url',
+    ]);
+  });
+});

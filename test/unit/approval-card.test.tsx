@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PolicySource } from '../../src/conduit-mcp/tool-policy';
+import type { AskSummary } from '../../src/conduit-mcp/ui-types';
 import type { HostToWebview } from '../../src/protocol';
 
 const bridge = vi.hoisted(() => ({
@@ -76,7 +77,8 @@ function emit(m: HostToWebview): void {
   });
 }
 
-function ask(askId: string, p: { handle?: string; source?: PolicySource } = {}): HostToWebview {
+type AskMsg = Extract<HostToWebview, { type: 'mcp:ask' }>;
+function ask(askId: string, p: { handle?: string; source?: PolicySource } = {}): AskMsg {
   return {
     type: 'mcp:ask',
     askId,
@@ -145,6 +147,27 @@ describe('ApprovalCard', () => {
       [...(r?.querySelectorAll('button[data-answer]') ?? [])].map((b) => b.textContent),
     ).toEqual(['Deny', 'Approve', 'Always for this session']);
     expect(r?.textContent).not.toContain('1 of');
+  });
+
+  it('summarises each app-control tool', () => {
+    const cases: [AskSummary, string][] = [
+      [{ tool: 'close_session', target: 'fake-2' }, 'Close fake-2'],
+      [{ tool: 'focus_session', target: 'fake-2' }, 'Switch your view to fake-2'],
+      [{ tool: 'attach_folder', path: '/w/sub', target: 'fake-1' }, 'Attach /w/sub to fake-1'],
+      [{ tool: 'close_files', count: 3, all: false }, 'Close 3 tabs'],
+      [{ tool: 'close_files', count: 1, all: false }, 'Close 1 tab'],
+      [{ tool: 'close_files', count: 0, all: true }, 'Close all of its tabs'],
+      [{ tool: 'open_review', what: 'v1…feature' }, 'Open Review for v1…feature'],
+      [{ tool: 'open_git_history', ref: null }, 'Open the commit history'],
+      [{ tool: 'open_git_history', ref: 'main' }, 'Open the commit history at main'],
+      [{ tool: 'open_url', url: 'http://x/' }, 'Open http://x/ in a Conduit tab'],
+    ];
+    mount();
+    cases.forEach(([summary, text], i) => {
+      emit({ ...ask(`b${i}`), tool: summary.tool, summary });
+      expect(document.querySelector('.askcard__summary')?.textContent).toBe(text);
+      closed(`b${i}`);
+    });
   });
 
   it('raw arguments start collapsed, expand on the button, and collapse again per ask', () => {

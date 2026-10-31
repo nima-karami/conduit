@@ -31,6 +31,7 @@ import { countNoun } from '../src/menu-selection';
 // Only the tools whose On bypasses every prompt get a line under their row (spec §8).
 const ON_WARNING: Partial<Record<ToolName, string>> = {
   open_terminal: 'Runs without asking. Codex never asks on its own.',
+  close_session: 'Runs without asking. Codex never asks on its own.',
 };
 
 const UNAVAILABLE_CAUSE: Record<McpUnavailableReason, string> = {
@@ -206,6 +207,15 @@ export const MCP_STR = {
     denied: 'you declined the request',
     approval_timeout: 'the request timed out waiting for you',
     cancelled: 'the request was cancelled',
+    unknown_session: 'no such session',
+    out_of_reach: 'that session is outside what this tool may reach',
+    move_not_allowed: 'this tool may not switch your view',
+    bad_ref: 'that git ref could not be resolved',
+    bad_url: 'only http and https URLs can be opened',
+    not_a_repo: 'that folder is not a git repository of the session',
+    attach_refused: 'that folder could not be attached',
+    unsaved_changes: 'the session has unsaved files',
+    ui_timeout: 'Conduit’s window didn’t answer in time',
   } satisfies Record<ToolErrorCode, string>,
   noResponse: 'Conduit didn’t answer. Try again.',
   you: 'you',
@@ -231,6 +241,16 @@ export const MCP_STR = {
       open_session: 'Lets an agent start sessions from your profiles.',
       open_terminal: 'Lets an agent run any program as you, outside its own sandbox.',
       open_file: 'Lets an agent open files in your editor.',
+      close_session:
+        'Close a Conduit session from list_sessions (handle or id), including your own.',
+      focus_session: 'Switch the human’s view to a session from list_sessions.',
+      attach_folder: 'Attach a folder to a session (yours by default) so its agent can work there.',
+      close_files: 'Close your session’s tabs for these paths (or all:true for every tab).',
+      open_review:
+        'Open Review in your session for the working tree, one commit, or a range (base…head; head may be "working").',
+      open_git_history:
+        'Open the commit history in your session, optionally selecting the commit at ref (branch, tag or sha).',
+      open_url: 'Open an http(s) URL in a Conduit web tab in your session.',
     } satisfies Record<ToolName, string>,
     overrideNote: 'Sessions can override these from their menu (MCP tools…).',
     masterOffHint: `Turn on “${SETTINGS_TOGGLE}” to use tools`,
@@ -290,6 +310,15 @@ export const MCP_STR = {
         `Open a ${s.agent} session in ${s.path}${s.focus ? '' : ', in the background'}`,
       open_terminal: (s) => `Run ${s.command} in ${s.path}${s.focus ? '' : ', in the background'}`,
       open_file: (s) => `Open ${s.path}${s.line === null ? '' : ` at line ${s.line}`}`,
+      close_session: (s) => `Close ${s.target}`,
+      focus_session: (s) => `Switch your view to ${s.target}`,
+      attach_folder: (s) => `Attach ${s.path} to ${s.target}`,
+      close_files: (s) =>
+        s.all ? 'Close all of its tabs' : s.count === 1 ? 'Close 1 tab' : `Close ${s.count} tabs`,
+      open_review: (s) => `Open Review for ${s.what}`,
+      open_git_history: (s) =>
+        s.ref === null ? 'Open the commit history' : `Open the commit history at ${s.ref}`,
+      open_url: (s) => `Open ${s.url} in a Conduit tab`,
     } satisfies { [K in AskSummary['tool']]: (s: Extract<AskSummary, { tool: K }>) => string },
     reason: {
       session: 'Ask: set for this session',

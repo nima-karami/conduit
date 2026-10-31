@@ -9,8 +9,20 @@ export const MESSAGING_TOOL_NAMES = [
   'read_inbox',
   'read_attachment',
 ] as const;
-const SESSION_TOOL_NAMES = ['open_session', 'open_terminal'] as const;
-const EDITOR_TOOL_NAMES = ['open_file'] as const;
+const SESSION_TOOL_NAMES = [
+  'open_session',
+  'open_terminal',
+  'close_session',
+  'focus_session',
+  'attach_folder',
+] as const;
+const EDITOR_TOOL_NAMES = [
+  'open_file',
+  'close_files',
+  'open_review',
+  'open_git_history',
+  'open_url',
+] as const;
 export const TOOL_NAMES = [
   ...MESSAGING_TOOL_NAMES,
   ...SESSION_TOOL_NAMES,
@@ -89,6 +101,16 @@ const MESSAGING_SPEC: ToolSpec<null> = {
   defaults: { access: 'on' },
 };
 const SESSION_FIELDS: readonly PolicyField[] = ['access', 'when', 'move'];
+// Every reach row lists its values: offered() would otherwise fall back to all of REACH_VALUES.
+// reach:any only for focus_session and close_session (spec §3.2).
+const REACH_TO_ANY: readonly Reach[] = ['self', 'opened', 'window', 'any'];
+const REACH_TO_WINDOW: readonly Reach[] = ['self', 'opened', 'window'];
+const VIEW_SPEC: ToolSpec<RateBudget> = {
+  fields: ['access', 'when'],
+  access: ACCESS_VALUES,
+  budget: 'show',
+  defaults: { access: 'on', when: 'viewing' },
+};
 
 /** Typed per tool so a control tool's budget is never null. */
 export const TOOL_SPECS: Readonly<{
@@ -110,12 +132,32 @@ export const TOOL_SPECS: Readonly<{
     budget: 'act',
     defaults: { access: 'off', when: 'viewing', move: 'yes' },
   },
-  open_file: {
-    fields: ['access', 'when'],
+  open_file: VIEW_SPEC,
+  close_session: {
+    fields: ['access', 'when', 'reach'],
     access: ACCESS_VALUES,
-    budget: 'show',
-    defaults: { access: 'on', when: 'viewing' },
+    reach: REACH_TO_ANY,
+    budget: 'act',
+    defaults: { access: 'ask', when: 'viewing', reach: 'window' },
   },
+  focus_session: {
+    fields: ['access', 'when', 'reach', 'move'],
+    access: ACCESS_VALUES,
+    reach: REACH_TO_ANY,
+    budget: 'show',
+    defaults: { access: 'on', when: 'viewing', reach: 'window', move: 'yes' },
+  },
+  attach_folder: {
+    fields: ['access', 'when', 'reach'],
+    access: ACCESS_VALUES,
+    reach: REACH_TO_WINDOW,
+    budget: 'act',
+    defaults: { access: 'ask', when: 'viewing', reach: 'self' },
+  },
+  close_files: VIEW_SPEC,
+  open_review: VIEW_SPEC,
+  open_git_history: VIEW_SPEC,
+  open_url: VIEW_SPEC,
 };
 
 const defaultsCopy = (): GlobalPolicy => {
