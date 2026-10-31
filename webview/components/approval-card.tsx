@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useId, useRef, useState } from 'react';
+import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { cliKindOfHandle } from '../../src/conduit-mcp/handles';
 import type { AskAnswer, AskSummary } from '../../src/conduit-mcp/ui-types';
@@ -12,6 +12,11 @@ export interface ApprovalCardProps {
 
 const STR = MCP_STR.ask;
 const ANSWERS: readonly AskAnswer[] = ['deny', 'approve', 'always'];
+// After the shown ask changes without the user paging (answered, expired, cancelled), a press
+// this soon was aimed at the ask that left: the second click of a double-click, a repeated
+// Enter, or a click already on its way. Time, not a fresh-press rule, because a screen reader's
+// browse mode activates with a bare click that no keydown or mousedown precedes.
+const SWAP_GUARD_MS = 400;
 
 function summaryText(s: AskSummary): string {
   switch (s.tool) {
@@ -47,9 +52,21 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
   const returnTo = useRef<Element | null>(null);
   const announced = useRef(new Set<string>());
   const announceFrame = useRef<number | null>(null);
-  // False from an answer until a fresh press on what replaced it: the second click of a
-  // double-click, or a repeated Enter, would otherwise answer the next ask.
-  const armed = useRef(true);
+  const lastShown = useRef<string | null>(null);
+  const pagedTo = useRef<string | null>(null);
+  const guardUntil = useRef(0);
+
+  const shown = asks.find((a) => a.askId === shownId) ?? asks[0];
+  const shownAskId = shown?.askId ?? null;
+  useLayoutEffect(() => {
+    const prev = lastShown.current;
+    lastShown.current = shownAskId;
+    const paged = pagedTo.current === shownAskId;
+    pagedTo.current = null;
+    // The first ask to appear replaces nothing, so no press can have been aimed elsewhere.
+    if (shownAskId === null || prev === null || prev === shownAskId || paged) return;
+    guardUntil.current = Date.now() + SWAP_GUARD_MS;
+  }, [shownAskId]);
 
   useEffect(() => {
     const fresh = asks.filter((a) => !announced.current.has(a.askId));
@@ -85,12 +102,13 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
     [],
   );
 
-  if (typeof document === 'undefined' || asks.length === 0) return null;
-  const at = Math.max(
-    0,
-    asks.findIndex((a) => a.askId === shownId),
-  );
-  const ask = asks[at];
+  if (typeof document === 'undefined' || !shown) return null;
+  const ask = shown;
+  const at = asks.indexOf(ask);
+  const pageTo = (askId: string) => {
+    pagedTo.current = askId;
+    setShownId(askId);
+  };
   const rawOpen = rawOpenFor === ask.askId;
 
   const giveBackFocus = () => {
@@ -101,15 +119,13 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (!e.repeat) armed.current = true;
     if (e.key !== 'Escape') return;
     e.stopPropagation();
     giveBackFocus();
   };
 
   const onAnswer = (answer: AskAnswer) => {
-    if (!armed.current) return;
-    armed.current = false;
+    if (Date.now() < guardUntil.current) return;
     const region = regionRef.current;
     const focusInside = !!region && region.contains(document.activeElement);
     const wasLast = asks.length === 1;
@@ -128,10 +144,6 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
       aria-label={STR.region}
       tabIndex={-1}
       onKeyDown={onKeyDown}
-      onMouseDown={(e) => {
-        // detail is the click count: the second press of a double-click does not arm.
-        if (e.detail <= 1) armed.current = true;
-      }}
     >
       <div className="askcard__title">{STR.title(ask.callerHandle, ask.tool)}</div>
       <div className="askcard__summary">{summaryText(ask.summary)}</div>
@@ -159,7 +171,7 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
               className="btn btn--sm askcard__page"
               aria-label={STR.prev}
               disabled={at === 0}
-              onClick={() => setShownId(asks[at - 1].askId)}
+              onClick={() => pageTo(asks[at - 1].askId)}
             >
               <IconChevron size={12} className="askcard__prevglyph" />
             </button>
@@ -169,7 +181,7 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
               className="btn btn--sm askcard__page"
               aria-label={STR.next}
               disabled={at === asks.length - 1}
-              onClick={() => setShownId(asks[at + 1].askId)}
+              onClick={() => pageTo(asks[at + 1].askId)}
             >
               <IconChevron size={12} />
             </button>

@@ -28,6 +28,13 @@ beforeAll(() => {
 
 /** Animation frames run only when a test flushes them. */
 let frames: FrameRequestCallback[] = [];
+/** Date.now, moved only by the test (the swap guard reads it). */
+const clock = {
+  t: 1_000_000,
+  advance(ms: number) {
+    clock.t += ms;
+  },
+};
 const flushFrames = () =>
   act(() => {
     for (const f of frames.splice(0)) f(0);
@@ -35,6 +42,8 @@ const flushFrames = () =>
 
 beforeEach(async () => {
   frames = [];
+  clock.t = 1_000_000;
+  vi.spyOn(Date, 'now').mockImplementation(() => clock.t);
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb));
   vi.stubGlobal('cancelAnimationFrame', (id: number) => {
     frames[id - 1] = () => undefined;
@@ -55,6 +64,7 @@ afterEach(async () => {
   host?.remove();
   document.body.innerHTML = '';
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function emit(m: HostToWebview): void {
@@ -293,7 +303,7 @@ describe('ApprovalCard', () => {
     });
   });
 
-  describe('one activation answers one ask (review r1-S2 C2)', () => {
+  describe('a swap the user did not cause guards the buttons for 400 ms (review r1-S3 D1)', () => {
     it('two clicks → exactly one answer', () => {
       mount();
       emit(ask('a1'));
@@ -309,6 +319,7 @@ describe('ApprovalCard', () => {
       emit(ask('a1'));
       emit(ask('a2', { handle: 'codex-2' }));
       press('approve', 1);
+      clock.advance(150);
       press('approve', 2);
       expect(answered()).toEqual(['a1']);
     });
@@ -324,16 +335,46 @@ describe('ApprovalCard', () => {
       expect(answered()).toEqual(['a1']);
     });
 
-    it('a fresh press on the next ask answers it', () => {
+    it('a bare click on the next ask after the guard answers it (screen-reader browse mode)', () => {
       mount();
       emit(ask('a1'));
       emit(ask('a2', { handle: 'codex-2' }));
-      press('approve');
-      press('deny');
+      act(() => button('approve')?.click());
+      clock.advance(400);
+      act(() => button('deny')?.click());
       expect(bridge.post.mock.calls.map(([m]) => m)).toEqual([
         { type: 'mcp:askAnswer', askId: 'a1', answer: 'approve' },
         { type: 'mcp:askAnswer', askId: 'a2', answer: 'deny' },
       ]);
+    });
+
+    it('a click within 400 ms of the shown ask expiring is ignored', () => {
+      mount();
+      emit(ask('a1'));
+      emit(ask('a2', { handle: 'codex-2' }));
+      closed('a1');
+      clock.advance(399);
+      press('approve');
+      expect(answered()).toEqual([]);
+      clock.advance(1);
+      press('approve');
+      expect(answered()).toEqual(['a2']);
+    });
+
+    it('paging is not a swap: a click right after it answers', () => {
+      mount();
+      emit(ask('a1'));
+      emit(ask('a2', { handle: 'codex-2' }));
+      next();
+      press('approve');
+      expect(answered()).toEqual(['a2']);
+    });
+
+    it('the first ask to appear is not a swap', () => {
+      mount();
+      emit(ask('a1'));
+      press('approve');
+      expect(answered()).toEqual(['a1']);
     });
   });
 
