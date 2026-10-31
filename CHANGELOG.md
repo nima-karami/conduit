@@ -19,7 +19,8 @@ All notable user-facing changes to Conduit. Format follows
 ### Changed
 - **An agent's opens land in its own session.** `open_file` and the new open tools
   (`open_review`, `open_git_history`, `open_url`) open in the agent's session and never switch
-  the session you're looking at; only `focus_session` does that, by design. A Review or History
+  the session you're looking at. Only `focus_session`, and `open_session` / `open_terminal` with
+  **Move** on, switch your view. A Review or History
   opened by the agent in your split pane moves to that agent's session.
 - **MCP tool switches are now policies.** Each Conduit tool is **Off**, **Ask** or **On**, with
   conditions where they apply: **When** (while the agent's session is on screen, or always) and
