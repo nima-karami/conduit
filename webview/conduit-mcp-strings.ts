@@ -31,7 +31,7 @@ import { countNoun } from '../src/menu-selection';
 // Only the tools whose On bypasses every prompt get a line under their row (spec §8).
 const ON_WARNING: Partial<Record<ToolName, string>> = {
   open_terminal: 'Runs without asking. Codex never asks on its own.',
-  close_session: 'Runs without asking. Codex never asks on its own.',
+  close_session: 'Runs without asking: closes sessions and deletes their scrollback.',
 };
 
 const UNAVAILABLE_CAUSE: Record<McpUnavailableReason, string> = {

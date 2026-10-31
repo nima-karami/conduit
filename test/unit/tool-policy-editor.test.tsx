@@ -221,6 +221,12 @@ describe('ToolPolicyEditor', () => {
     expect(document.body.querySelectorAll('.policyrow__warn')).toHaveLength(1);
   });
 
+  it('close_session warns about what it destroys, not with open_terminal’s line', () => {
+    expect(MCP_STR.tools.onWarning.close_session).toBe(
+      'Runs without asking: closes sessions and deletes their scrollback.',
+    );
+  });
+
   it('disabled disables every control; failed tools show the save error', async () => {
     await mount(props({ disabled: true, failed: new Set(['open_file'] as const) }));
     for (const t of TOOL_NAMES) {
