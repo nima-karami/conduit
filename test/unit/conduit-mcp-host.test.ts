@@ -2590,6 +2590,29 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(h.toOwner).toEqual([]);
   });
 
+  it('a window reset during a held prepare → window_not_ready, no card', async () => {
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    let entered = false;
+    const { h, c } = await asking({
+      kindOf: async () => {
+        entered = true;
+        await held;
+        return 'dir';
+      },
+    });
+    c.call(1, 'open_session', OPEN);
+    await until(() => entered);
+    h.presence.ready.delete(1);
+    h.host.onWindowReset(1);
+    release();
+    expect(await replyOrAsk(h, c, 1)).toBe('window_not_ready');
+    expect(h.toOwner).toEqual([]);
+    expect(h.host.uiState().awaitingApproval).toEqual([]);
+  });
+
   it('session layer beats the CLI layer', async () => {
     const byCli: CliPolicyLayers = { agent: { open_file: { access: 'off' } } };
     const { h, c } = await asking({ toolPolicy: () => ({ global: DEFAULT_TOOL_POLICY, byCli }) });

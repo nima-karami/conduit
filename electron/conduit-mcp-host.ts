@@ -705,7 +705,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     clearTimer:
       deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout> | undefined)),
     newAskId: deps.newAskId ?? (() => randomBytes(12).toString('hex')),
-    ownerWindowOf: (sessionId) => deps.ownerWindowOf(sessionId),
+    // Re-checked here, not trusted from the gate: the window may have reloaded during prepare.
+    ownerWindowOf: (sessionId) => {
+      const w = deps.ownerWindowOf(sessionId);
+      return w !== null && deps.presence.isReady(w) ? w : null;
+    },
     sendToOwner: (sessionId, msg) => deps.sendToOwner(sessionId, msg),
     flashOwner: (sessionId) => deps.flashOwner(sessionId),
     resolve: (sessionId, tool) =>
