@@ -14,7 +14,7 @@ import {
   windowNotReady,
 } from './tool-policy';
 import { type Handle, type Result, toolError } from './types';
-import type { AskAnswer } from './ui-types';
+import { type AskAnswer, MAX_CLOSE_RESULTS, type McpUiAction, type McpUiResult } from './ui-types';
 import { type CallKey, createWindowWaits } from './window-waits';
 
 /** Below each CLI's documented MCP call timeout (spec §5, research 2026-10-30). */
@@ -26,6 +26,9 @@ export const ASK_TIMEOUT_MS: Readonly<Record<CliKind, number>> = {
   agent: 25_000,
 };
 export const MAX_ASKS_PER_CALLER = 3;
+/** An app-control tool's renderer step (spec 2026-10-30-conduit-mcp-app-control §2.3). */
+export const UI_TIMEOUT_MS = 5_000;
+const MAX_UNSAVED_PATHS = 20;
 
 export interface InFlight {
   /** True once notifications/cancelled named this request. Never true for a null requestId. */
@@ -61,6 +64,18 @@ export interface CallFlowDeps {
   onPolicyWritten(): void;
   /** The waiting set changed: the host re-broadcasts mcp:state. */
   onAwaitingChanged(): void;
+  /** Sends to one window by id; main guards isDestroyed. May still throw. */
+  sendToWindow(windowId: number, msg: HostToWebview): void;
+  /** presence.isReady for a window id. */
+  windowReady(windowId: number): boolean;
+}
+export interface UiRequest {
+  inflight: InFlight;
+  callerSessionId: string;
+  /** closeSession's target, else the caller: its move or close ends the wait too. */
+  routedSessionId: string;
+  windowId: number;
+  action: McpUiAction;
 }
 export interface CallFlow {
   /** Synchronous; must run before the caller's first await. A null requestId is not tracked. */
@@ -81,6 +96,14 @@ export interface CallFlow {
   recheck(): void;
   /** false unless the ask exists, is waiting, and `fromWindowId` is its window. */
   answer(askId: string, fromWindowId: number, answer: AskAnswer): boolean;
+  /**
+   * Sends mcp:ui to `windowId` and waits ≤ UI_TIMEOUT_MS for that window's answer. Keyed by the
+   * in-flight's call key, so every cancel path ends it. An unready window or a throwing send ⇒
+   * window_not_ready with no wait left pending; expired ⇒ ui_timeout; cancelled ⇒ window_not_ready.
+   */
+  requestUi(r: UiRequest): Promise<Result<McpUiResult>>;
+  /** false unless the request is waiting, `fromWindowId` is its window, and `raw` parses for its kind. */
+  answerUi(requestId: string, fromWindowId: number, raw: unknown): boolean;
   awaitingApproval(): string[];
   dispose(): void;
 }
@@ -91,6 +114,50 @@ interface AskMeta {
 }
 interface Entry extends InFlight {
   cancelled: boolean;
+}
+interface UiMeta {
+  kind: McpUiAction['kind'];
+  routedSessionId: string;
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+const isStrings = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.every((x) => typeof x === 'string');
+const SKIP_REASONS: ReadonlySet<unknown> = new Set(['unsaved', 'not_open']);
+
+/** The renderer is never load-bearing: its answer is rebuilt field by field for the wait's kind. */
+function parseUiResult(kind: McpUiAction['kind'], v: unknown): McpUiResult | null {
+  if (!isRecord(v)) return null;
+  if (v.kind === 'unknownSession') return { kind: 'unknownSession' };
+  switch (kind) {
+    case 'closeSession':
+      if (v.kind !== 'closeSession') return null;
+      if (v.ok === true) return { kind: 'closeSession', ok: true };
+      if (v.ok === false && isStrings(v.unsaved) && v.unsaved.length <= MAX_UNSAVED_PATHS)
+        return { kind: 'closeSession', ok: false, unsaved: [...v.unsaved] };
+      return null;
+    case 'closeFiles': {
+      if (v.kind !== 'closeFiles' || !isStrings(v.closed) || !Array.isArray(v.skipped)) return null;
+      const skipped: { path: string; reason: 'unsaved' | 'not_open' }[] = [];
+      for (const x of v.skipped) {
+        if (!isRecord(x) || typeof x.path !== 'string' || !SKIP_REASONS.has(x.reason)) return null;
+        skipped.push({ path: x.path, reason: x.reason === 'unsaved' ? 'unsaved' : 'not_open' });
+      }
+      if (v.closed.length + skipped.length > MAX_CLOSE_RESULTS) return null;
+      if (v.truncated !== undefined && v.truncated !== true) return null;
+      return {
+        kind: 'closeFiles',
+        closed: [...v.closed],
+        skipped,
+        ...(v.truncated ? { truncated: true as const } : {}),
+      };
+    }
+    case 'openReview':
+    case 'openGitHistory':
+    case 'openUrl':
+      return v.kind === 'opened' ? { kind: 'opened' } : null;
+  }
 }
 
 export function createCallFlow(deps: CallFlowDeps): CallFlow {
@@ -106,6 +173,14 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         askId: w.id,
         outcome: end.kind,
       }),
+  });
+
+  const waitsUi = createWindowWaits<McpUiResult, UiMeta>({
+    now: deps.now,
+    setTimer: deps.setTimer,
+    clearTimer: deps.clearTimer,
+    // The renderer keeps no per-request state to clear.
+    onUnanswered: () => {},
   });
 
   async function runNow<T>(c: ControlCall<T>, p: PreparedCall<T>): Promise<Result<T> | null> {
@@ -149,7 +224,8 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         windowId,
         meta: { tool: c.tool, handle: c.caller.handle },
       },
-      ASK_TIMEOUT_MS[c.kind],
+      // Ask + UI wait must both fit inside the CLI's own call timeout (plan B11).
+      ASK_TIMEOUT_MS[c.kind] - (p.routesUi ? UI_TIMEOUT_MS : 0),
     );
     deps.flashOwner(caller);
     deps.onAwaitingChanged();
@@ -196,6 +272,67 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
 
   const cancelWaits = (match: (w: { callerSessionId: string; windowId: number }) => boolean) =>
     waits.cancel(match, true);
+  const cancelSessionWaits = (sessionId: string) => {
+    cancelWaits((w) => w.callerSessionId === sessionId);
+    waitsUi.cancel(
+      (w) => w.callerSessionId === sessionId || w.meta.routedSessionId === sessionId,
+      true,
+    );
+  };
+  const sameCall =
+    (key: { connId: number; requestId: JsonRpcId }) =>
+    (w: { key: { connId: number; requestId: JsonRpcId | null } }) =>
+      w.key.connId === key.connId && w.key.requestId === key.requestId;
+
+  async function requestUi(r: UiRequest): Promise<Result<McpUiResult>> {
+    if (!deps.windowReady(r.windowId)) return { ok: false, error: windowNotReady() };
+    const requestId = deps.newAskId();
+    const ended = waitsUi.open(
+      {
+        id: requestId,
+        callerSessionId: r.callerSessionId,
+        key: keyOf(r.inflight),
+        windowId: r.windowId,
+        meta: { kind: r.action.kind, routedSessionId: r.routedSessionId },
+      },
+      UI_TIMEOUT_MS,
+    );
+    try {
+      deps.sendToWindow(r.windowId, {
+        type: 'mcp:ui',
+        requestId,
+        sessionId: r.callerSessionId,
+        action: r.action,
+      });
+    } catch {
+      // A window torn down between the ready check and the send: nothing reached it, so the call
+      // is refused like an unready window rather than left to time out (plan, Global constraints).
+      waitsUi.cancel((w) => w.id === requestId, true);
+      await ended;
+      return { ok: false, error: windowNotReady() };
+    }
+    const end = await ended;
+    switch (end.kind) {
+      case 'answered':
+        return { ok: true, value: end.answer };
+      case 'expired':
+        return {
+          ok: false,
+          error: toolError(
+            'ui_timeout',
+            "Conduit's window didn't answer within 5 s; the outcome is unknown",
+          ),
+        };
+      case 'cancelled':
+        return {
+          ok: false,
+          error: toolError(
+            'window_not_ready',
+            "Conduit's window closed or reloaded before answering; the outcome is unknown",
+          ),
+        };
+    }
+  }
 
   return {
     begin(key) {
@@ -244,23 +381,23 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       const entry = inflight.get(connId)?.get(requestId);
       if (!entry) return;
       entry.cancelled = true;
-      waits.cancel((w) => w.key.connId === connId && w.key.requestId === requestId, false);
+      const match = sameCall({ connId, requestId });
+      waits.cancel(match, false);
+      waitsUi.cancel(match, false);
     },
 
     connectionClosed(connId) {
       for (const entry of inflight.get(connId)?.values() ?? []) entry.cancelled = true;
       inflight.delete(connId);
       waits.cancel((w) => w.key.connId === connId, false);
+      waitsUi.cancel((w) => w.key.connId === connId, false);
     },
 
-    sessionGone: (sessionId) => {
-      cancelWaits((w) => w.callerSessionId === sessionId);
-    },
-    sessionMoved: (sessionId) => {
-      cancelWaits((w) => w.callerSessionId === sessionId);
-    },
+    sessionGone: cancelSessionWaits,
+    sessionMoved: cancelSessionWaits,
     windowReset: (windowId) => {
       cancelWaits((w) => w.windowId === windowId);
+      waitsUi.cancel((w) => w.windowId === windowId, true);
     },
 
     recheck() {
@@ -276,10 +413,21 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
 
     answer: (askId, fromWindowId, answer) => waits.answer(askId, fromWindowId, answer),
 
+    requestUi,
+
+    answerUi(requestId, fromWindowId, raw) {
+      const w = waitsUi.pending().find((x) => x.id === requestId);
+      if (!w) return false;
+      const parsed = parseUiResult(w.meta.kind, raw);
+      if (parsed === null) return false;
+      return waitsUi.answer(requestId, fromWindowId, parsed);
+    },
+
     awaitingApproval: () => [...new Set(waits.pending().map((w) => w.callerSessionId))],
 
     dispose() {
       waits.dispose();
+      waitsUi.dispose();
       inflight.clear();
     },
   };

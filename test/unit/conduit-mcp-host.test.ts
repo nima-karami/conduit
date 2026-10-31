@@ -123,6 +123,7 @@ interface Harness {
   screens: SessionScreens;
   /** Every host → owner-window message, in order. */
   toOwner: Array<{ to: string; msg: HostToWebview }>;
+  toWindow: Array<{ windowId: number; msg: HostToWebview }>;
   flashed: string[];
   /** Owner window per session; absent ⇒ window 1. */
   owners: Map<string, number | null>;
@@ -198,6 +199,7 @@ function harness(
   const lagged: Array<[string, string]> = [];
   const screens = createSessionScreens();
   const toOwner: Harness['toOwner'] = [];
+  const toWindow: Harness['toWindow'] = [];
   const flashed: string[] = [];
   const owners = new Map<string, number | null>();
   const presence: Harness['presence'] = { ready: new Set([1, 2]), shown: new Map() };
@@ -256,6 +258,7 @@ function harness(
       isOnScreen: (w, id) => presence.shown.get(w)?.has(id) ?? true,
     },
     sendToOwner: (to, msg) => toOwner.push({ to, msg }),
+    sendToWindow: (windowId, msg) => toWindow.push({ windowId, msg }),
     flashOwner: (id) => flashed.push(id),
     newAskId: () => `ask-${++askN}`,
     // Asks never expire on their own here; host tests end them by answer or cancel.
@@ -355,6 +358,7 @@ function harness(
     files,
     screens,
     toOwner,
+    toWindow,
     flashed,
     owners,
     presence,

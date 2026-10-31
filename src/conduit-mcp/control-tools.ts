@@ -62,6 +62,8 @@ export interface ControlDeps {
 }
 export interface PreparedCall<T> {
   summary: AskSummary;
+  /** Its run waits on a renderer (mcp:ui): the ask budget shrinks by UI_TIMEOUT_MS. */
+  routesUi: boolean;
   /** Executes; refunds the rate token itself when the open fails (step 9). */
   run(): Promise<Result<T>>;
   /** Refunds the token for a refusal between prepare and run that isn't an ask outcome. Idempotent. */
@@ -280,7 +282,9 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     check: (who: {
       sessionId: string;
       home: string;
-    }) => Promise<Fail | { summary: AskSummary; exec: (token: Token) => Promise<Result<T>> }>,
+    }) => Promise<
+      Fail | { summary: AskSummary; routesUi?: true; exec: (token: Token) => Promise<Result<T>> }
+    >,
   ): Promise<Result<PreparedCall<T>>> {
     const token = reserve(tool, caller);
     if (isFail(token)) return token;
@@ -295,6 +299,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         ok: true,
         value: {
           summary: c.summary,
+          routesUi: c.routesUi === true,
           async run() {
             try {
               return await c.exec(token);

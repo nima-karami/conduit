@@ -1971,6 +1971,11 @@ app.whenReady().then(() => {
     },
     presence,
     sendToOwner,
+    sendToWindow: (wid, msg) => {
+      const w = windows.get(wid);
+      if (w && !w.isDestroyed() && !w.webContents.isDestroyed())
+        w.webContents.send('to-webview', msg);
+    },
     flashOwner: (id) => {
       const w = windowFor(id);
       if (w && settings.osAttention && !w.isFocused()) w.flashFrame(true);

@@ -131,6 +131,8 @@ export interface ConduitMcpHostDeps {
   ownerWindowOf(sessionId: string): number | null;
   presence: Pick<WindowPresence, 'isReady' | 'isOnScreen'>;
   sendToOwner(sessionId: string, msg: HostToWebview): void;
+  /** One window by id; main checks isDestroyed. */
+  sendToWindow(windowId: number, msg: HostToWebview): void;
   /** Taskbar flash unless the owner window is focused (main gates it on settings.osAttention). */
   flashOwner(sessionId: string): void;
   /** The CLI's user-scope install state, shown with a not-connected session (spec §2.4). */
@@ -721,6 +723,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       scheduleBroadcast();
     },
     onAwaitingChanged: () => scheduleBroadcast(),
+    sendToWindow: (windowId, msg) => deps.sendToWindow(windowId, msg),
+    windowReady: (windowId) => deps.presence.isReady(windowId),
   });
 
   const notifierSessions = () =>
