@@ -2,11 +2,17 @@
 // registry, command resolution and session creation are deps, so tests run on POSIX fakes.
 import { coerceSessionCommand, commandLabel } from '../session-command';
 import type { SessionCommand, SessionOpener } from '../types';
+import { type Move, TOOL_SPECS, type ToolName } from './tool-policy';
 import type { Caller } from './tools';
 import { type Handle, type Result, type ToolErrorCode, toolError } from './types';
+import type { AskSummary } from './ui-types';
 
-export const OPEN_RATE_PER_CALLER = 10;
-export const OPEN_RATE_GLOBAL = 20;
+// spec 2026-10-30-conduit-mcp-tool-policy §3.3 "Rate"
+export const ACT_RATE_PER_CALLER = 10;
+export const ACT_RATE_GLOBAL = 20;
+export const SHOW_RATE_PER_CALLER = 30;
+export const OPEN_RATE_PER_CALLER = ACT_RATE_PER_CALLER;
+export const OPEN_RATE_GLOBAL = ACT_RATE_GLOBAL;
 export const MAX_LABEL_CHARS = 80;
 const RATE_WINDOW_MS = 60_000;
 
@@ -56,7 +62,32 @@ export interface ControlDeps {
   now(): number;
   info(message: string, data: Record<string, unknown>): void;
 }
+export interface PreparedCall<T> {
+  summary: AskSummary;
+  /** Executes; refunds the rate token itself when the open fails (step 9). */
+  run(): Promise<Result<T>>;
+  /** Refunds the token for a refusal between prepare and run that isn't an ask outcome. Idempotent. */
+  release(): void;
+}
+interface ControlCallContext {
+  move: Move | undefined;
+}
 export interface ControlHandlers {
+  prepareOpenSession(
+    caller: Caller,
+    args: unknown,
+    ctx: ControlCallContext,
+  ): Promise<Result<PreparedCall<OpenSessionOutput>>>;
+  prepareOpenTerminal(
+    caller: Caller,
+    args: unknown,
+    ctx: ControlCallContext,
+  ): Promise<Result<PreparedCall<OpenSessionOutput>>>;
+  prepareOpenFile(
+    caller: Caller,
+    args: unknown,
+    ctx: ControlCallContext,
+  ): Promise<Result<PreparedCall<OpenFileOutput>>>;
   openSession(caller: Caller, args: unknown): Promise<Result<OpenSessionOutput>>;
   openTerminal(caller: Caller, args: unknown): Promise<Result<OpenSessionOutput>>;
   openFile(caller: Caller, args: unknown): Promise<Result<OpenFileOutput>>;
@@ -142,7 +173,7 @@ function parseFileArgs(
   return { ...common(o, undefined), line: o.line, column: o.column };
 }
 
-/** Times of reserved or completed opens, oldest first. */
+/** Times of reserved or completed calls, oldest first. */
 class Window {
   private times: number[] = [];
   count(now: number): number {
@@ -158,32 +189,66 @@ class Window {
   }
 }
 
-export function createControlHandlers(deps: ControlDeps): ControlHandlers {
-  const global = new Window();
-  const perCaller = new Map<Handle, Window>();
+/** One reservation: refunded at most once, and never after it was kept. */
+interface Token {
+  refund(): void;
+  keep(): void;
+}
+
+class Budget {
+  private readonly global = new Window();
+  private readonly perCaller = new Map<Handle, Window>();
+  constructor(
+    private readonly perCallerMax: number,
+    private readonly globalMax: number | null,
+    private readonly what: string,
+  ) {}
 
   /**
-   * Reserves a slot synchronously, before any await, so concurrent calls can't all pass the
-   * check; the returned release undoes it when the open then fails (only successes are charged).
+   * Synchronous, before any await, so concurrent calls can't all pass the check; the token
+   * undoes it when the call is then refused or fails (only successes are charged).
    */
-  function reserve(caller: Caller): (() => void) | Fail {
-    const now = deps.now();
-    let mine = perCaller.get(caller.handle);
+  reserve(handle: Handle, now: number): Token | Fail {
+    let mine = this.perCaller.get(handle);
     if (!mine) {
       mine = new Window();
-      perCaller.set(caller.handle, mine);
+      this.perCaller.set(handle, mine);
     }
-    if (mine.count(now) >= OPEN_RATE_PER_CALLER)
-      return fail('rate_limited', `more than ${OPEN_RATE_PER_CALLER} opens in a minute`);
-    if (global.count(now) >= OPEN_RATE_GLOBAL)
-      return fail('rate_limited', 'too many opens in Conduit this minute');
+    if (mine.count(now) >= this.perCallerMax)
+      return fail('rate_limited', `more than ${this.perCallerMax} ${this.what} in a minute`);
+    if (this.globalMax !== null && this.global.count(now) >= this.globalMax)
+      return fail('rate_limited', `too many ${this.what} in Conduit this minute`);
     mine.add(now);
-    global.add(now);
+    this.global.add(now);
     const w = mine;
-    return () => {
-      w.release(now);
-      global.release(now);
+    let settled = false;
+    return {
+      refund: () => {
+        if (settled) return;
+        settled = true;
+        w.release(now);
+        this.global.release(now);
+      },
+      keep: () => {
+        settled = true;
+      },
     };
+  }
+}
+
+const UNBUDGETED: Token = { refund() {}, keep() {} };
+
+type ControlTool = Extract<ToolName, 'open_session' | 'open_terminal' | 'open_file'>;
+
+export function createControlHandlers(deps: ControlDeps): ControlHandlers {
+  const budgets = {
+    act: new Budget(ACT_RATE_PER_CALLER, ACT_RATE_GLOBAL, 'opens'),
+    show: new Budget(SHOW_RATE_PER_CALLER, null, 'view requests'),
+  };
+
+  function reserve(tool: ControlTool, caller: Caller): Token | Fail {
+    const budget = TOOL_SPECS[tool].budget;
+    return budget === null ? UNBUDGETED : budgets[budget].reserve(caller.handle, deps.now());
   }
 
   function home(caller: Caller): { sessionId: string; home: string } | Fail {
@@ -213,19 +278,54 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     return null;
   }
 
-  async function open(
+  /**
+   * Holds the reservation across the caller's checks: any refusal (or throw) before a
+   * PreparedCall is handed out refunds it.
+   */
+  async function prepared<T>(
+    tool: ControlTool,
+    caller: Caller,
+    check: (who: {
+      sessionId: string;
+      home: string;
+    }) => Promise<Fail | { summary: AskSummary; exec: (token: Token) => Promise<Result<T>> }>,
+  ): Promise<Result<PreparedCall<T>>> {
+    const token = reserve(tool, caller);
+    if (isFail(token)) return token;
+    let handed = false;
+    try {
+      const who = home(caller);
+      if (isFail(who)) return who;
+      const c = await check(who);
+      if (isFail(c)) return c;
+      handed = true;
+      return {
+        ok: true,
+        value: {
+          summary: c.summary,
+          async run() {
+            try {
+              return await c.exec(token);
+            } finally {
+              token.refund();
+            }
+          },
+          release: token.refund,
+        },
+      };
+    } finally {
+      if (!handed) token.refund();
+    }
+  }
+
+  function prepareOpen(
     tool: 'open_session' | 'open_terminal',
     caller: Caller,
     a: Common,
     launch: McpLaunch,
     agent: string,
-  ): Promise<Result<OpenSessionOutput>> {
-    const release = reserve(caller);
-    if (isFail(release)) return release;
-    let opened = false;
-    try {
-      const who = home(caller);
-      if (isFail(who)) return who;
+  ): Promise<Result<PreparedCall<OpenSessionOutput>>> {
+    return prepared(tool, caller, async (who) => {
       const abs = deps.resolvePath(who.home, a.path);
       const bad = await checkKind(abs, 'dir');
       if (bad) return bad;
@@ -239,81 +339,128 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
       } else if (deps.resolveCommand(launch.command.command) === undefined) {
         return fail('command_not_found', `command not found: ${launch.command.command}`);
       }
-      let outcome: McpOpenOutcome;
-      try {
-        outcome = await deps.openSession({
-          callerSessionId: who.sessionId,
-          openedBy: { handle: caller.handle, sessionId: who.sessionId },
-          home: abs,
-          label: a.label,
-          focus: a.focus,
-          launch,
-        });
-      } catch (e) {
-        return failed(tool, caller, abs, e);
-      }
-      if (!outcome.ok) return fail(outcome.code, outcome.message);
-      opened = true;
-      deps.info('control open', {
-        tool,
-        caller: caller.handle,
-        sessionId: outcome.sessionId,
-        path: abs,
-      });
+      const summary: AskSummary =
+        launch.kind === 'agent'
+          ? { tool: 'open_session', path: abs, agent, focus: a.focus }
+          : {
+              tool: 'open_terminal',
+              path: abs,
+              command: [launch.command.command, ...launch.command.args].join(' '),
+              focus: a.focus,
+            };
       return {
-        ok: true,
-        value: {
-          session_id: outcome.sessionId,
-          handle: deps.claimHandle(outcome.sessionId),
-          label: outcome.label,
-          agent,
+        summary,
+        exec: async (token) => {
+          let outcome: McpOpenOutcome;
+          try {
+            outcome = await deps.openSession({
+              callerSessionId: who.sessionId,
+              openedBy: { handle: caller.handle, sessionId: who.sessionId },
+              home: abs,
+              label: a.label,
+              focus: a.focus,
+              launch,
+            });
+          } catch (e) {
+            return failed(tool, caller, abs, e);
+          }
+          if (!outcome.ok) return fail(outcome.code, outcome.message);
+          token.keep();
+          deps.info('control open', {
+            tool,
+            caller: caller.handle,
+            sessionId: outcome.sessionId,
+            path: abs,
+          });
+          return {
+            ok: true,
+            value: {
+              session_id: outcome.sessionId,
+              handle: deps.claimHandle(outcome.sessionId),
+              label: outcome.label,
+              agent,
+            },
+          };
         },
       };
-    } finally {
-      if (!opened) release();
-    }
+    });
   }
 
-  return {
-    async openSession(caller, raw) {
+  // spec 2026-10-30-conduit-mcp-tool-policy §3.2: move:no runs a focus:true open as focus:false.
+  const focusFor = (a: Common, ctx: ControlCallContext): Common =>
+    ctx.move === 'no' ? { ...a, focus: false } : a;
+
+  const handlers: Omit<ControlHandlers, 'openSession' | 'openTerminal' | 'openFile'> = {
+    async prepareOpenSession(caller, raw, ctx) {
       const a = parseSessionArgs(raw);
       if (isFail(a)) return a;
-      return open('open_session', caller, a, { kind: 'agent', agentId: a.agent }, a.agent);
+      return prepareOpen(
+        'open_session',
+        caller,
+        focusFor(a, ctx),
+        { kind: 'agent', agentId: a.agent },
+        a.agent,
+      );
     },
-    async openTerminal(caller, raw) {
+    async prepareOpenTerminal(caller, raw, ctx) {
       const a = parseTerminalArgs(raw);
       if (isFail(a)) return a;
       const leaf = commandLabel(a.command);
-      return open(
+      return prepareOpen(
         'open_terminal',
         caller,
-        { ...a, label: a.label ?? leaf },
+        focusFor({ ...a, label: a.label ?? leaf }, ctx),
         { kind: 'command', command: a.command },
         leaf,
       );
     },
-    async openFile(caller, raw) {
+    async prepareOpenFile(caller, raw) {
       const a = parseFileArgs(raw);
       if (isFail(a)) return a;
-      const who = home(caller);
-      if (isFail(who)) return who;
-      const abs = deps.resolvePath(who.home, a.path);
-      const bad = await checkKind(abs, 'file');
-      if (bad) return bad;
-      let sessionId: string;
-      try {
-        ({ sessionId } = await deps.openFile({
-          callerSessionId: who.sessionId,
-          path: abs,
-          line: a.line,
-          column: a.column,
-          focus: a.focus,
-        }));
-      } catch (e) {
-        return failed('open_file', caller, abs, e);
-      }
-      deps.info('control open', { tool: 'open_file', caller: caller.handle, sessionId, path: abs });
-      return { ok: true, value: { opened: abs, session_id: sessionId } };
+      return prepared('open_file', caller, async (who) => {
+        const abs = deps.resolvePath(who.home, a.path);
+        const bad = await checkKind(abs, 'file');
+        if (bad) return bad;
+        return {
+          summary: { tool: 'open_file', path: abs, line: a.line ?? null },
+          exec: async (token) => {
+            let sessionId: string;
+            try {
+              ({ sessionId } = await deps.openFile({
+                callerSessionId: who.sessionId,
+                path: abs,
+                line: a.line,
+                column: a.column,
+                focus: a.focus,
+              }));
+            } catch (e) {
+              return failed('open_file', caller, abs, e);
+            }
+            token.keep();
+            deps.info('control open', {
+              tool: 'open_file',
+              caller: caller.handle,
+              sessionId,
+              path: abs,
+            });
+            return { ok: true, value: { opened: abs, session_id: sessionId } };
+          },
+        };
+      });
     },
+  };
+
+  const NO_MOVE: ControlCallContext = { move: undefined };
+  async function prepareThenRun<T>(p: Promise<Result<PreparedCall<T>>>): Promise<Result<T>> {
+    const r = await p;
+    return r.ok ? r.value.run() : r;
+  }
+
+  return {
+    ...handlers,
+    openSession: (caller, raw) => prepareThenRun(handlers.prepareOpenSession(caller, raw, NO_MOVE)),
+    openTerminal: (caller, raw) =>
+      prepareThenRun(handlers.prepareOpenTerminal(caller, raw, NO_MOVE)),
+    openFile: (caller, raw) => prepareThenRun(handlers.prepareOpenFile(caller, raw, NO_MOVE)),
   };
 }

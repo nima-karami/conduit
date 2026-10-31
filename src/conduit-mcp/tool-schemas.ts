@@ -98,7 +98,7 @@ function controlSchemas(agentIds: readonly string[]): ToolSchema[] {
     {
       name: 'open_session',
       description:
-        "Open a new Conduit session running a registered agent in a folder (absolute, or relative to your session's home folder).",
+        "Open a new Conduit session running a registered agent in a folder (absolute, or relative to your session's home folder). focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.",
       inputSchema: {
         ...OBJECT,
         properties: {
@@ -113,7 +113,7 @@ function controlSchemas(agentIds: readonly string[]): ToolSchema[] {
     {
       name: 'open_terminal',
       description:
-        "Open a new Conduit terminal running a command in a folder (absolute, or relative to your session's home folder); argv, not a shell: use command 'pwsh' with args ['-c', …] for pipes.",
+        "Open a new Conduit terminal running a command in a folder (absolute, or relative to your session's home folder); argv, not a shell: use command 'pwsh' with args ['-c', …] for pipes. focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.",
       inputSchema: {
         ...OBJECT,
         properties: {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ACT_RATE_GLOBAL,
+  ACT_RATE_PER_CALLER,
   type ControlDeps,
   createControlHandlers,
   type McpFileRequest,
@@ -8,7 +10,9 @@ import {
   OPEN_RATE_GLOBAL,
   OPEN_RATE_PER_CALLER,
   type PathKind,
+  SHOW_RATE_PER_CALLER,
 } from '../../src/conduit-mcp/control-tools';
+import { toolSchemas } from '../../src/conduit-mcp/tool-schemas';
 import type { Caller } from '../../src/conduit-mcp/tools';
 import type { Result } from '../../src/conduit-mcp/types';
 
@@ -410,7 +414,7 @@ describe('createControlHandlers', () => {
     );
   });
 
-  it('open_file not rate limited', async () => {
+  it('open_file does not spend the act budget', async () => {
     const h = harness();
     const c = createControlHandlers(h.deps);
     for (let i = 0; i < OPEN_RATE_GLOBAL + 5; i++)
@@ -454,5 +458,156 @@ describe('createControlHandlers', () => {
     expect(
       code(await c.openSession(caller(2), sessionArgs({ path: '/repo/a.ts', agent: 'aider' }))),
     ).toBe('not_a_directory');
+  });
+});
+
+describe('prepare/run (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
+  const ok = <T>(r: Result<T>): T => {
+    if (!r.ok) throw new Error(`expected ok, got ${r.error.code}`);
+    return r.value;
+  };
+  const NO_MOVE = { move: undefined };
+
+  it('prepare resolves and summarises', async () => {
+    const h = harness({ agentIds: () => ['a'] });
+    h.kinds['/home/main/w'] = 'dir';
+    const c = createControlHandlers(h.deps);
+    const s = ok(await c.prepareOpenSession(caller(), { path: 'w', agent: 'a' }, NO_MOVE));
+    expect(s.summary).toEqual({
+      tool: 'open_session',
+      path: '/home/main/w',
+      agent: 'a',
+      focus: true,
+    });
+    const s2 = ok(await c.prepareOpenSession(caller(), { path: 'w', agent: 'a' }, NO_MOVE));
+    expect(h.opens).toEqual([]);
+    expect(code(await s2.run())).toBe('ok');
+    expect(h.opens).toHaveLength(1);
+    const t = ok(
+      await c.prepareOpenTerminal(
+        caller(),
+        { path: '/repo', command: 'node', args: ['-e', '1'], focus: false },
+        NO_MOVE,
+      ),
+    );
+    expect(t.summary).toEqual({
+      tool: 'open_terminal',
+      path: '/repo',
+      command: 'node -e 1',
+      focus: false,
+    });
+    const f = ok(await c.prepareOpenFile(caller(), { path: 'src/a.ts', line: 4 }, NO_MOVE));
+    expect(f.summary).toEqual({ tool: 'open_file', path: '/home/main/src/a.ts', line: 4 });
+    const f2 = ok(await c.prepareOpenFile(caller(), { path: '/repo/a.ts' }, NO_MOVE));
+    expect(f2.summary).toEqual({ tool: 'open_file', path: '/repo/a.ts', line: null });
+  });
+
+  it('move no forces focus false', async () => {
+    const h = harness();
+    const c = createControlHandlers(h.deps);
+    const s = ok(
+      await c.prepareOpenSession(caller(), sessionArgs({ focus: true }), { move: 'no' }),
+    );
+    const t = ok(
+      await c.prepareOpenTerminal(caller(), { path: '/repo', command: 'node' }, { move: 'no' }),
+    );
+    expect(s.summary).toMatchObject({ focus: false });
+    expect(t.summary).toMatchObject({ focus: false });
+    await s.run();
+    await t.run();
+    expect(h.opens.map((o) => o.focus)).toEqual([false, false]);
+    const y = ok(await c.prepareOpenSession(caller(), sessionArgs(), { move: 'yes' }));
+    expect(y.summary).toMatchObject({ focus: true });
+    await y.run();
+    expect(h.opens[2].focus).toBe(true);
+  });
+
+  it('act budget', async () => {
+    const h = harness();
+    const c = createControlHandlers(h.deps);
+    for (let i = 0; i < ACT_RATE_PER_CALLER; i++)
+      ok(
+        await (i % 2
+          ? c.prepareOpenTerminal(caller(), { path: '/repo', command: 'node' }, NO_MOVE)
+          : c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE)),
+      );
+    expect(code(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE))).toBe('rate_limited');
+    for (let i = ACT_RATE_PER_CALLER; i < ACT_RATE_GLOBAL; i++)
+      ok(await c.prepareOpenSession(caller(2 + (i % 3)), sessionArgs(), NO_MOVE));
+    const r = await c.prepareOpenSession(caller(99), sessionArgs(), NO_MOVE);
+    expect(code(r)).toBe('rate_limited');
+    expect(r.ok ? '' : r.error.message).toBe('too many opens in Conduit this minute');
+  });
+
+  it('show budget', async () => {
+    const h = harness();
+    const c = createControlHandlers(h.deps);
+    for (let i = 0; i < SHOW_RATE_PER_CALLER; i++)
+      ok(await c.prepareOpenFile(caller(), { path: '/repo/a.ts' }, NO_MOVE));
+    expect(code(await c.prepareOpenFile(caller(), { path: '/repo/a.ts' }, NO_MOVE))).toBe(
+      'rate_limited',
+    );
+    expect(code(await c.prepareOpenFile(caller(2), { path: '/repo/a.ts' }, NO_MOVE))).toBe('ok');
+    expect(code(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE))).toBe('ok');
+  });
+
+  it('a refusal after the reservation refunds', async () => {
+    const h = harness();
+    const c = createControlHandlers(h.deps);
+    for (let i = 0; i < ACT_RATE_PER_CALLER + 5; i++) {
+      expect(
+        code(await c.prepareOpenSession(caller(), sessionArgs({ path: '/gone' }), NO_MOVE)),
+      ).toBe('path_missing');
+      expect(
+        code(await c.prepareOpenTerminal(caller(), { path: '/repo', command: 'nope' }, NO_MOVE)),
+      ).toBe('command_not_found');
+    }
+    for (let i = 0; i < SHOW_RATE_PER_CALLER + 5; i++)
+      expect(code(await c.prepareOpenFile(caller(), { path: '/repo' }, NO_MOVE))).toBe(
+        'not_a_file',
+      );
+    expect(code(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE))).toBe('ok');
+    expect(code(await c.prepareOpenFile(caller(), { path: '/repo/a.ts' }, NO_MOVE))).toBe('ok');
+  });
+
+  it('run failure refunds; success keeps', async () => {
+    const h = harness();
+    h.outcome = async () => ({ ok: false, code: 'brief_unavailable', message: 'x' });
+    const c = createControlHandlers(h.deps);
+    for (let i = 0; i < ACT_RATE_PER_CALLER + 5; i++) {
+      const p = ok(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE));
+      expect(code(await p.run())).toBe('brief_unavailable');
+    }
+    h.outcome = async (req) => ({ ok: true, sessionId: 's', label: req.label ?? 'x' });
+    for (let i = 0; i < ACT_RATE_PER_CALLER; i++) {
+      const p = ok(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE));
+      expect(code(await p.run())).toBe('ok');
+      p.release();
+    }
+    expect(code(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE))).toBe('rate_limited');
+  });
+
+  it('release is idempotent', async () => {
+    const h = harness();
+    const c = createControlHandlers(h.deps);
+    const held = [];
+    for (let i = 0; i < ACT_RATE_PER_CALLER; i++)
+      held.push(ok(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE)));
+    held[0].release();
+    held[0].release();
+    held[0].release();
+    expect(code(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE))).toBe('ok');
+    expect(code(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE))).toBe('rate_limited');
+  });
+});
+
+describe('session tool descriptions', () => {
+  it('state that focus:true can end on-screen access', () => {
+    const sentence =
+      " focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.";
+    const byName = new Map(toolSchemas(['claude']).map((t) => [t.name, t.description]));
+    for (const name of ['open_session', 'open_terminal'])
+      expect(byName.get(name)?.endsWith(sentence)).toBe(true);
+    expect(byName.get('open_file')).not.toContain('on-screen access');
   });
 });
