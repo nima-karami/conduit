@@ -167,8 +167,9 @@ export async function runCloseFiles(
     if (closed.length + skipped.length < MAX_CLOSE_RESULTS) into();
     else truncated = true;
   };
-  /** Paths with at least one tab closed, uncapped by MAX_CLOSE_RESULTS: a mid-run throw reports
-   *  the real count, including the path whose tab threw after its other tabs closed. */
+  /** Paths reported closed, uncapped by MAX_CLOSE_RESULTS: a mid-run throw reports the real
+   *  count, plus the path whose tab threw after its other tabs closed. A skipped path never
+   *  counts, though its diff tabs closed. */
   let closedCount = 0;
   for (const group of plan.groups) {
     let kept = false;
@@ -191,14 +192,16 @@ export async function runCloseFiles(
     } catch (e) {
       // The paths already closed stay closed; the failure answer is the only place they surface.
       const message = e instanceof Error ? e.message : String(e);
-      const count = closedCount + (closedAny ? 1 : 0);
+      const count = closedCount + (closedAny && !kept ? 1 : 0);
       throw new Error(`stopped after closing ${count} of ${plan.groups.length} paths: ${message}`, {
         cause: e,
       });
     }
-    if (closedAny) closedCount++;
     if (kept) record(() => skipped.push({ path: group.path, reason: 'unsaved' }));
-    else record(() => closed.push(group.path));
+    else {
+      closedCount++;
+      record(() => closed.push(group.path));
+    }
   }
   for (const path of plan.notOpen) record(() => skipped.push({ path, reason: 'not_open' }));
   return truncated ? { closed, skipped, truncated: true } : { closed, skipped };

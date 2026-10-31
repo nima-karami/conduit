@@ -406,6 +406,19 @@ describe('runCloseFiles', () => {
     expect(live.has('diff:/w/a.ts')).toBe(false);
   });
 
+  it('a path reported skipped is not counted closed when a later path throws', async () => {
+    const docs = [doc('diff', '/w/a.ts'), doc('file', '/w/a.ts'), doc('file', '/w/b.ts')];
+    const { ops, live } = fakeOps(docs, new Set(['/w/a.ts', '/w/b.ts']), false);
+    ops.closeDirtyUnprompted = async (id) => {
+      if (id === 'file:/w/b.ts') throw new Error('write EPERM');
+      return { type: 'prompt', reason: null };
+    };
+    await expect(runCloseFiles(planCloseFiles(docs, 'A', 'all'), ops)).rejects.toThrow(
+      'stopped after closing 0 of 2 paths: write EPERM',
+    );
+    expect(live.has('diff:/w/a.ts')).toBe(false);
+  });
+
   it('exactly 500 entries are not truncated', async () => {
     const docs = Array.from({ length: MAX_CLOSE_RESULTS }, (_, i) => doc('file', `/w/f${i}`));
     const { ops } = fakeOps(docs, new Set(), false);
