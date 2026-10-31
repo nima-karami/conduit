@@ -2558,7 +2558,7 @@ body.resizing .panel__resize::after {
   background: var(--amber);
 }
 .session__ask:hover {
-  background: color-mix(in srgb, var(--amber) 16%, var(--raise));
+  --notch-line: color-mix(in srgb, var(--amber) 75%, transparent);
 }
 .session__btn {
   /* Its own edge, so it never inherits the card or menu it sits inside (see the chamfer block). */
