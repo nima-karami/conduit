@@ -185,7 +185,7 @@ const APP_CONTROL_SCHEMAS: readonly ToolSchema[] = [
   {
     name: 'close_files',
     description:
-      "Close your session's tabs for these paths (or all:true for every tab). Unsaved files are saved first when auto-save is on, otherwise skipped.",
+      "Close your session's tabs for these paths (or all:true for every tab, which also reports Review, History and web tabs by their pseudo-path @review / @git-history or URL). Unsaved files are saved first when auto-save is on, otherwise skipped.",
     inputSchema: {
       ...OBJECT,
       properties: {
