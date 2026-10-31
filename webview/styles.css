@@ -14517,6 +14517,22 @@ button.toggle--on .toggle__knob {
   color: var(--text-dim);
 }
 
+/* Settings → MCP: which policy layer the editor below shows (tool-policy spec §8–§9). */
+.policycli__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 8px 0 4px;
+}
+.policycli__label {
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-dim);
+}
+.policycli {
+  flex-wrap: wrap;
+}
+
 /* MCP tool policy editor, in Settings and the session dialog
    (docs/specs/2026-10-30-conduit-mcp-tool-policy.md §8–§11): existing tokens only. */
 .policygroup {

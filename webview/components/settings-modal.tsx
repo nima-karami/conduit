@@ -1,6 +1,22 @@
-import { Fragment, useCallback, useEffect, useId, useState } from 'react';
+import {
+  Fragment,
+  type KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
+  useEffect,
+  useId,
+  useState,
+} from 'react';
 import { AGENT_CLIS, type AgentCli } from '../../src/conduit-mcp/install-types';
-import { CONTROL_TOOL_NAMES, MESSAGING_TOOL_NAMES } from '../../src/conduit-mcp/tool-switches';
+import {
+  CLI_KINDS,
+  type CliKind,
+  coerceGlobalPolicy,
+  coercePolicyPatch,
+  type PolicyField,
+  type PolicyValue,
+  type ToolName,
+  withPolicyPatch,
+} from '../../src/conduit-mcp/tool-policy';
 import type { LogLevel } from '../../src/logging';
 import type { AboutInfo } from '../../src/protocol';
 import type {
@@ -43,6 +59,7 @@ import { ModalLayer } from './modal-layer';
 import { SelectField } from './select-field';
 import { SessionCardPreview } from './session-card';
 import { ShortcutsTab } from './shortcuts-tab';
+import { ToolPolicyEditor } from './tool-policy-editor';
 import type { UpdateStatus } from './update-card';
 
 type Tab = 'general' | 'mcp' | 'appearance' | 'shortcuts' | 'skills' | 'about';
@@ -852,14 +869,13 @@ function Toggle({
   );
 }
 
-const TOOL_GROUPS = [
-  { key: 'messaging', title: MCP_STR.tools.groupMessaging, tools: MESSAGING_TOOL_NAMES },
-  { key: 'control', title: MCP_STR.tools.groupControl, tools: CONTROL_TOOL_NAMES },
-] as const;
+type PolicyTab = 'all' | CliKind;
+const POLICY_TABS: readonly PolicyTab[] = ['all', ...CLI_KINDS];
 
-/** The per-tool switches under the MCP master (control-tools spec §8). Disabled, not hidden,
- *  while the master is off so the user can see what turning it on would allow. */
-function McpToolSwitchRows({
+/** The tool policy under the MCP master: the global layer, or one CLI's layer over it
+ *  (tool-policy spec §8–§9). Disabled, not hidden, while the master is off so the user can
+ *  see what turning it on would allow. */
+function McpToolPolicyRows({
   settings,
   update,
 }: {
@@ -867,38 +883,94 @@ function McpToolSwitchRows({
   update: (p: Partial<AppSettings>) => void;
 }) {
   const idBase = useId();
+  const [tab, setTab] = useState<PolicyTab>('all');
   const off = !settings.conduitMcp;
+  const global = settings.mcpToolPolicy;
+  const byCli = settings.mcpToolPolicyByCli;
+  const tabId = (t: PolicyTab) => `${idBase}-tab-${t}`;
+  const panelId = `${idBase}-panel`;
+
+  const select = (t: PolicyTab) => {
+    setTab(t);
+    document.getElementById(tabId(t))?.focus();
+  };
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const i = POLICY_TABS.indexOf(tab);
+    const n = POLICY_TABS.length;
+    if (e.key === 'ArrowRight') select(POLICY_TABS[(i + 1) % n]);
+    else if (e.key === 'ArrowLeft') select(POLICY_TABS[(i - 1 + n) % n]);
+    else if (e.key === 'Home') select(POLICY_TABS[0]);
+    else if (e.key === 'End') select(POLICY_TABS[n - 1]);
+    else return;
+    e.preventDefault();
+  };
+
+  const onChange = (tool: ToolName, field: PolicyField, value: PolicyValue | 'inherit') => {
+    if (tab === 'all') {
+      // The global layer is complete: it has no Inherit to write.
+      if (value === 'inherit') return;
+      update({
+        mcpToolPolicy: coerceGlobalPolicy({
+          ...global,
+          [tool]: { ...global[tool], [field]: value },
+        }),
+      });
+      return;
+    }
+    const patch = coercePolicyPatch(tool, { [field]: value });
+    if (!patch) return;
+    const next = { ...byCli };
+    const layer = withPolicyPatch(byCli[tab], tool, patch);
+    if (layer) next[tab] = layer;
+    else delete next[tab];
+    update({ mcpToolPolicyByCli: next });
+  };
+
   return (
     <>
       {off && <p className="settools__hint">{MCP_STR.tools.masterOffHint}</p>}
-      {TOOL_GROUPS.map((g) => (
-        <div key={g.key} className="settools" role="group" aria-labelledby={`${idBase}-${g.key}`}>
-          <h4 className="settools__title" id={`${idBase}-${g.key}`}>
-            {g.title}
-          </h4>
-          {g.tools.map((tool) => (
-            <section key={tool} className="set">
-              <div className="set__label">
-                <code className="settools__name" id={`${idBase}-${tool}`}>
-                  {tool}
-                </code>
-                <span className="set__desc" id={`${idBase}-${tool}-desc`}>
-                  {MCP_STR.tools.description[tool]}
-                </span>
-              </div>
-              <div className="set__control">
-                <Toggle
-                  value={settings.mcpTools[tool]}
-                  labelledBy={`${idBase}-${tool}`}
-                  describedBy={`${idBase}-${tool}-desc`}
-                  disabled={off}
-                  onChange={(v) => update({ mcpTools: { ...settings.mcpTools, [tool]: v } })}
-                />
-              </div>
-            </section>
+      <div className="policycli__bar">
+        <span className="policycli__label" aria-hidden="true">
+          {MCP_STR.tools.defaultsFor}
+        </span>
+        <div
+          className="seg policycli"
+          role="tablist"
+          aria-label={MCP_STR.tools.defaultsFor}
+          onKeyDown={onKeyDown}
+        >
+          {POLICY_TABS.map((t) => (
+            <button
+              key={t}
+              id={tabId(t)}
+              type="button"
+              role="tab"
+              data-cli={t}
+              aria-selected={t === tab}
+              aria-controls={panelId}
+              tabIndex={t === tab ? 0 : -1}
+              className={t === tab ? 'seg__btn seg__btn--active' : 'seg__btn'}
+              onClick={() => setTab(t)}
+            >
+              {t === 'all' ? MCP_STR.tools.layerName.global : MCP_STR.tools.cliName[t]}
+            </button>
           ))}
         </div>
-      ))}
+      </div>
+      <div id={panelId} role="tabpanel" aria-labelledby={tabId(tab)}>
+        {tab !== 'all' && <p className="settools__hint">{MCP_STR.tools.cliLayerNote}</p>}
+        <ToolPolicyEditor
+          layer={tab === 'all' ? 'global' : 'cli'}
+          layers={tab === 'all' ? { global } : { cli: byCli[tab], global }}
+          sourceName={(s) =>
+            s === 'cli' && tab !== 'all'
+              ? MCP_STR.tools.cliName[tab]
+              : MCP_STR.tools.layerName.global
+          }
+          disabled={off}
+          onChange={onChange}
+        />
+      </div>
       <p className="settools__hint">{MCP_STR.tools.overrideNote}</p>
     </>
   );
@@ -958,7 +1030,7 @@ function McpTab({
       </SetGroup>
 
       <SetGroup title={S.toolsTitle}>
-        <McpToolSwitchRows settings={settings} update={update} />
+        <McpToolPolicyRows settings={settings} update={update} />
       </SetGroup>
 
       <SetGroup title={S.suggestTitle}>

@@ -2,11 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  CONTROL_TOOL_NAMES,
-  MESSAGING_TOOL_NAMES,
-  TOOL_NAMES,
-} from '../../src/conduit-mcp/tool-switches';
+import { CLI_KINDS, TOOL_NAMES } from '../../src/conduit-mcp/tool-policy';
 import type { WebviewToHost } from '../../src/protocol';
 import { SettingsModal } from '../../webview/components/settings-modal';
 import { MCP_STR } from '../../webview/conduit-mcp-strings';
@@ -58,15 +54,6 @@ async function mount() {
   );
 }
 
-/** A switch by the text of the element its aria-labelledby names. */
-function switchFor(name: string): HTMLButtonElement | null {
-  for (const el of document.body.querySelectorAll<HTMLButtonElement>('[role="switch"]')) {
-    const id = el.getAttribute('aria-labelledby');
-    if (id && document.getElementById(id)?.textContent === name) return el;
-  }
-  return null;
-}
-
 function masterSwitch(): HTMLButtonElement {
   for (const row of document.body.querySelectorAll('.set')) {
     if (row.querySelector('.set__title')?.textContent === MCP_STR.settingsToggle) {
@@ -77,6 +64,34 @@ function masterSwitch(): HTMLButtonElement {
   throw new Error('master switch not found');
 }
 
+const tablist = () =>
+  document.body.querySelector<HTMLElement>(
+    `.policycli[role="tablist"][aria-label="${MCP_STR.tools.defaultsFor}"]`,
+  );
+const tab = (cli: string) =>
+  tablist()?.querySelector<HTMLButtonElement>(`[role="tab"][data-cli="${cli}"]`) ?? null;
+const group = (tool: string) =>
+  document.body.querySelector<HTMLElement>(
+    `[role="radiogroup"][aria-label="${MCP_STR.tools.accessLabel(tool)}"]`,
+  );
+const radio = (tool: string, label: string) =>
+  group(tool)?.querySelector<HTMLButtonElement>(`[role="radio"][aria-label="${label}"]`) ?? null;
+const checked = (tool: string) =>
+  group(tool)?.querySelector('[role="radio"][aria-checked="true"]')?.getAttribute('aria-label');
+const click = (el: HTMLElement | null) =>
+  act(async () => {
+    if (!el) throw new Error('nothing to click');
+    el.click();
+  });
+const key = (k: string) =>
+  act(async () => {
+    document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+  });
+const flush = () =>
+  act(async () => {
+    vi.advanceTimersByTime(300);
+  });
+
 const posted = (): Extract<WebviewToHost, { type: 'updateSettings' }>[] =>
   bridge.post.mock.calls
     .map(([m]) => m as WebviewToHost)
@@ -84,55 +99,96 @@ const posted = (): Extract<WebviewToHost, { type: 'updateSettings' }>[] =>
       (m): m is Extract<WebviewToHost, { type: 'updateSettings' }> => m.type === 'updateSettings',
     );
 
+const ALL = MCP_STR.tools.layerName.global;
+
 describe('Settings → MCP tools', () => {
-  it('fresh settings show control switches off', async () => {
+  it('shows the global layer by default under a CLI tablist', async () => {
     await mount();
-    for (const t of MESSAGING_TOOL_NAMES)
-      expect(switchFor(t)?.getAttribute('aria-checked')).toBe('true');
-    for (const t of CONTROL_TOOL_NAMES)
-      expect(switchFor(t)?.getAttribute('aria-checked')).toBe('false');
-    const s = switchFor('open_terminal');
-    const desc = document.getElementById(s?.getAttribute('aria-describedby') ?? '');
-    expect(desc?.textContent).toBe(MCP_STR.tools.description.open_terminal);
+    const tabs = [...(tablist()?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])];
+    expect(tabs.map((t) => t.dataset.cli)).toEqual(['all', ...CLI_KINDS]);
+    expect(tabs.map((t) => t.textContent)).toEqual([
+      ALL,
+      ...CLI_KINDS.map((k) => MCP_STR.tools.cliName[k]),
+    ]);
+    expect(tab('all')?.getAttribute('aria-selected')).toBe('true');
+    expect(tab('codex')?.getAttribute('aria-selected')).toBe('false');
+    expect(tab('all')?.tabIndex).toBe(0);
+    expect(tab('codex')?.tabIndex).toBe(-1);
+    const panel = document.getElementById(tab('all')?.getAttribute('aria-controls') ?? '');
+    expect(panel?.getAttribute('role')).toBe('tabpanel');
+    expect(panel?.contains(group('open_session'))).toBe(true);
+    for (const t of TOOL_NAMES) expect(group(t)).not.toBeNull();
+    expect(checked('open_session')).toBe('Ask');
+    expect(checked('open_file')).toBe('On');
+    expect(checked('open_terminal')).toBe('Off');
     expect(document.body.textContent).toContain(MCP_STR.tools.overrideNote);
+    expect(document.body.textContent).not.toContain(MCP_STR.tools.cliLayerNote);
   });
 
-  it('toggling open_session posts updateSettings with mcpTools.open_session true', async () => {
+  it('All CLIs: On for open_terminal posts mcpToolPolicy.open_terminal.access on', async () => {
     await mount();
-    await act(async () => switchFor('open_session')?.click());
-    expect(switchFor('open_session')?.getAttribute('aria-checked')).toBe('true');
-    await act(async () => {
-      vi.advanceTimersByTime(300);
-    });
+    await click(radio('open_terminal', 'On'));
+    expect(checked('open_terminal')).toBe('On');
+    await flush();
     const last = posted().at(-1);
-    expect(last?.settings.mcpTools.open_session).toBe(true);
-    expect(last?.settings.mcpTools.open_terminal).toBe(false);
-    expect(last?.settings.mcpTools.send_message).toBe(true);
+    expect(last?.settings.mcpToolPolicy.open_terminal).toEqual({
+      access: 'on',
+      when: 'viewing',
+      move: 'yes',
+    });
+    expect(last?.settings.mcpToolPolicy.open_session.access).toBe('ask');
+    expect(last?.settings.mcpToolPolicyByCli).toEqual({});
   });
 
-  it('master off disables tool switches', async () => {
+  it('Codex tab: Off for open_file posts mcpToolPolicyByCli.codex.open_file.access off', async () => {
+    await mount();
+    await click(tab('codex'));
+    expect(tab('codex')?.getAttribute('aria-selected')).toBe('true');
+    expect(document.body.textContent).toContain(MCP_STR.tools.cliLayerNote);
+    expect(checked('open_file')).toBe(`Inherit (On · from ${ALL})`);
+    await click(radio('open_file', 'Off'));
+    expect(checked('open_file')).toBe('Off');
+    await flush();
+    const last = posted().at(-1);
+    expect(last?.settings.mcpToolPolicyByCli).toEqual({ codex: { open_file: { access: 'off' } } });
+    // The global layer is untouched by a CLI-layer edit.
+    expect(last?.settings.mcpToolPolicy.open_file.access).toBe('on');
+  });
+
+  it('Codex tab: Inherit drops an empty kind', async () => {
+    await mount();
+    await click(tab('codex'));
+    await click(radio('open_file', 'Off'));
+    await click(radio('open_file', `Inherit (On · from ${ALL})`));
+    await flush();
+    expect(posted().at(-1)?.settings.mcpToolPolicyByCli).toStrictEqual({});
+  });
+
+  it('arrows move between CLI tabs and select', async () => {
+    await mount();
+    tab('all')?.focus();
+    await key('ArrowRight');
+    expect(document.activeElement).toBe(tab('claude'));
+    expect(tab('claude')?.getAttribute('aria-selected')).toBe('true');
+    await key('ArrowLeft');
+    await key('ArrowLeft');
+    expect(document.activeElement).toBe(tab('agent'));
+    expect(tab('agent')?.textContent).toBe(MCP_STR.tools.cliName.agent);
+    await key('Home');
+    expect(tab('all')?.getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('master off disables every control', async () => {
     await mount();
     expect(document.body.textContent).not.toContain(MCP_STR.tools.masterOffHint);
-    for (const t of TOOL_NAMES) expect(switchFor(t)?.disabled).toBe(false);
-    await act(async () => masterSwitch().click());
-    for (const t of TOOL_NAMES) expect(switchFor(t)?.disabled).toBe(true);
+    for (const t of TOOL_NAMES) expect(group(t)?.getAttribute('aria-disabled')).toBeNull();
+    await click(masterSwitch());
+    for (const t of TOOL_NAMES) {
+      expect(group(t)?.getAttribute('aria-disabled')).toBe('true');
+      for (const b of group(t)?.querySelectorAll('button') ?? []) expect(b.disabled).toBe(true);
+    }
     expect(document.body.textContent).toContain(MCP_STR.tools.masterOffHint);
     // The hint names the master switch by the label the user actually sees.
     expect(MCP_STR.tools.masterOffHint).toContain(MCP_STR.settingsToggle);
-  });
-
-  // Ids built from copy would break the IDREF once a translation contains a space.
-  it('tool group headings are keyed on stable ids, not their copy', async () => {
-    await mount();
-    const groups = [...document.body.querySelectorAll('.settools[role="group"]')];
-    expect(groups).toHaveLength(2);
-    for (const [g, key, title] of [
-      [groups[0], 'messaging', MCP_STR.tools.groupMessaging],
-      [groups[1], 'control', MCP_STR.tools.groupControl],
-    ] as const) {
-      const id = g.getAttribute('aria-labelledby') ?? '';
-      expect(id.endsWith(`-${key}`)).toBe(true);
-      expect(document.getElementById(id)?.textContent).toBe(title);
-    }
   });
 });
