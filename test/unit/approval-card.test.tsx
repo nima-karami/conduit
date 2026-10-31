@@ -67,6 +67,7 @@ afterEach(async () => {
   if (current) await act(async () => current.unmount());
   host?.remove();
   document.body.innerHTML = '';
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -402,6 +403,54 @@ describe('ApprovalCard', () => {
       press('approve');
       expect(answered()).toEqual(['a1']);
     });
+  });
+
+  it('the title row holds the pager and the actions sit right under it, above the text (QA L2)', () => {
+    mount();
+    emit(ask('a1'));
+    emit(ask('a2', { handle: 'codex-2' }));
+    const order = () => [...(region()?.children ?? [])].map((c) => c.className);
+    const want = [
+      'askcard__head',
+      'askcard__actions',
+      'askcard__summary',
+      'askcard__reason',
+      'askcard__raw',
+    ];
+    expect(order()).toEqual(want);
+    expect(region()?.querySelector('.askcard__head .askcard__pager')?.textContent).toContain(
+      '1 of 2',
+    );
+    closed('a1');
+    const pager = region()?.querySelector('.askcard__head .askcard__pager');
+    expect(pager?.classList.contains('askcard__pager--idle')).toBe(true);
+    expect(pager?.textContent).toBe('');
+    expect(order()).toEqual(want);
+  });
+
+  it('the buttons read disabled for the swap guard and re-enable on their own (QA L3)', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const disabled = () =>
+      ['deny', 'approve', 'always'].map((a) => button(a)?.getAttribute('aria-disabled'));
+    const wait = (ms: number) =>
+      act(() => {
+        clock.advance(ms);
+        vi.advanceTimersByTime(ms);
+      });
+    mount();
+    emit(ask('a1'));
+    emit(ask('a2', { handle: 'codex-2' }));
+    expect(disabled()).toEqual(['false', 'false', 'false']);
+    press('approve');
+    expect(disabled()).toEqual(['true', 'true', 'true']);
+    press('deny');
+    expect(answered()).toEqual(['a1']);
+    wait(399);
+    expect(disabled()).toEqual(['true', 'true', 'true']);
+    wait(1);
+    expect(disabled()).toEqual(['false', 'false', 'false']);
+    press('deny');
+    expect(answered()).toEqual(['a1', 'a2']);
   });
 
   it('answering the last ask from inside the card returns focus (review r1-S2 C7)', () => {

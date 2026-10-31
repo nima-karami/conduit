@@ -7018,8 +7018,22 @@ body.gh-resizing {
   outline-offset: 2px;
   box-shadow: var(--focus-ring), var(--elev-3);
 }
+/* The action row sits at a fixed offset from the card's top: a swap to the next ask (pager gone,
+   another summary length) never moves a button under a press already on its way (QA L2). So the
+   head is one line and the pager keeps its slot with one ask, and everything that varies goes
+   below. */
+.askcard__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .askcard__title {
+  flex: 1;
+  min-width: 0;
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .askcard__reason {
   color: var(--text-dim);
@@ -7058,19 +7072,15 @@ body.gh-resizing {
   background: color-mix(in srgb, currentColor 8%, transparent);
   border-radius: 3px;
 }
-.askcard__foot {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 4px;
-}
 .askcard__pager {
   display: flex;
   align-items: center;
   gap: 4px;
   color: var(--text-dim);
   font-size: calc(12px * var(--font-scale));
+}
+.askcard__pager--idle {
+  visibility: hidden;
 }
 .askcard__page {
   display: inline-grid;
@@ -7084,7 +7094,6 @@ body.gh-resizing {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
-  margin-left: auto;
 }
 @media (forced-colors: active) {
   .askcard {

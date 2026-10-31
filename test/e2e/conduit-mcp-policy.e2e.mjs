@@ -5,6 +5,9 @@
  *   - off: the global layer drops open_session from A's live tool list, and a call is refused;
  *   - ask: the card shows in A's window without taking focus, the chip counts it, and Deny,
  *     Approve and Always for this session each end the call as they say;
+ *   - a double-click on Deny over two asks answers one: the buttons stay put as the card swaps
+ *     to the next ask (no pager, shorter summary), read disabled for the guard, and no click
+ *     reaches the app behind the card (QA L2, L3);
  *   - the chip focuses the card and Esc hands focus back, answering nothing;
  *   - viewing: open_file from A while B is on screen is refused and opens nothing;
  *   - move:no: a focus:true open leaves A on screen;
@@ -44,6 +47,8 @@ await runScenario(
     const dirA = temp('a');
     const dirB = temp('b');
     const target = temp('target');
+    // Long enough that its summary wraps where the short one doesn't (QA L2).
+    const longTarget = temp(`target-${'long-summary-'.repeat(6)}`);
     writeFileSync(join(dirA, 'fixture.txt'), 'policy fixture\n');
 
     const makeActive = async (sessionId) => {
@@ -134,6 +139,104 @@ await runScenario(
       'the approved session never reached the renderer',
     );
     log('ask → approve ✓');
+
+    phase('double-click two asks');
+    const rects = () =>
+      page.evaluate(() =>
+        Array.from(document.querySelectorAll('.askcard button[data-answer]'), (b) => {
+          const r = b.getBoundingClientRect();
+          return [b.getAttribute('data-answer'), r.x, r.y, r.width, r.height].join(' ');
+        }),
+      );
+    const disabledNow = () =>
+      page.evaluate(() =>
+        Array.from(document.querySelectorAll('.askcard button[data-answer]'), (b) =>
+          b.getAttribute('aria-disabled'),
+        ),
+      );
+    const tabBefore = await page.evaluate(
+      () =>
+        document
+          .querySelector('.tabbar [role="tab"][aria-selected="true"]')
+          ?.getAttribute('data-tabid') ?? null,
+    );
+    const first = await startCall(page, a.sessionId, 'open_session', {
+      path: longTarget,
+      agent: FAKE_AGENT_ID,
+      focus: false,
+    });
+    await waitCard(a.handle);
+    await startCall(page, a.sessionId, 'open_session', openArgs(false));
+    await page.locator('.askcard', { hasText: '1 of 2' }).waitFor({ timeout: 10_000 });
+    const summaryHeight = () =>
+      page.evaluate(
+        () => document.querySelector('.askcard__summary')?.getBoundingClientRect().height,
+      );
+    const tallSummary = await summaryHeight();
+    const atTwo = await rects();
+    // Every press from the first on: what it reached outside the card, and how each button it
+    // reached inside the card read at that moment.
+    await page.evaluate(() => {
+      window.__behindCard = [];
+      window.__cardPresses = [];
+      window.__pressProbe = (e) => {
+        const t = e.target instanceof Element ? e.target : null;
+        if (t?.closest('.askcard')) {
+          window.__cardPresses.push(t.closest('button')?.getAttribute('aria-disabled') ?? 'none');
+          return;
+        }
+        window.__behindCard.push(t ? `${t.tagName}.${t.className}` : 'null');
+      };
+      document.addEventListener('click', window.__pressProbe, { capture: true });
+    });
+    await page.locator('.askcard button[data-answer="deny"]').dblclick();
+    await page.locator('.askcard', { hasNotText: '1 of 2' }).waitFor({ timeout: 5_000 });
+    const atOne = await rects();
+    const shortSummary = await summaryHeight();
+    const firstDenied = await resultAfter(a.sessionId, first, 10_000);
+    assert(errCode(firstDenied) === 'denied', `double-click: ${JSON.stringify(firstDenied)}`);
+    assert(
+      tallSummary > shortSummary,
+      `the summaries are the same height (${tallSummary}, ${shortSummary}): the swap tests nothing`,
+    );
+    assert(
+      JSON.stringify(atTwo) === JSON.stringify(atOne),
+      `the buttons moved on the swap: ${JSON.stringify(atTwo)} → ${JSON.stringify(atOne)}`,
+    );
+    const presses = await page.evaluate(() => window.__cardPresses);
+    assert(
+      JSON.stringify(presses) === JSON.stringify(['false', 'true']),
+      `the double-click's presses read aria-disabled ${JSON.stringify(presses)}, want false then true`,
+    );
+    assert(
+      await until(
+        async () =>
+          JSON.stringify(await disabledNow()) === JSON.stringify(['false', 'false', 'false']),
+        2_000,
+      ),
+      `the buttons never re-enabled: ${JSON.stringify(await disabledNow())}`,
+    );
+    const behind = await page.evaluate(() => {
+      document.removeEventListener('click', window.__pressProbe, { capture: true });
+      return window.__behindCard;
+    });
+    assert(
+      behind.length === 0,
+      `a press reached the app behind the card: ${JSON.stringify(behind)}`,
+    );
+    const tabAfter = await page.evaluate(
+      () =>
+        document
+          .querySelector('.tabbar [role="tab"][aria-selected="true"]')
+          ?.getAttribute('data-tabid') ?? null,
+    );
+    assert(tabAfter === tabBefore, `the active tab changed: ${tabBefore} → ${tabAfter}`);
+    assert((await card.count()) === 1, 'the second click answered the next ask');
+    await clickAskAnswer(page, 'deny');
+    await card.waitFor({ state: 'detached', timeout: 5_000 });
+    const secondDenied = await resultAfter(a.sessionId, first + 1, 10_000);
+    assert(errCode(secondDenied) === 'denied', `second ask: ${JSON.stringify(secondDenied)}`);
+    log('a double-click answers one ask; the buttons hold still, read disabled, nothing behind ✓');
 
     phase('always');
     await makeActive(a.sessionId);

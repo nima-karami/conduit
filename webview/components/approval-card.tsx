@@ -70,6 +70,9 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
   const lastShown = useRef<string | null>(null);
   const pagedTo = useRef<string | null>(null);
   const guardUntil = useRef(0);
+  const guardTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Shows the guard: a press it ignores reads as disabled rather than as a dead button.
+  const [guarded, setGuarded] = useState(false);
 
   const shown = asks.find((a) => a.askId === shownId) ?? asks[0];
   const shownAskId = shown?.askId ?? null;
@@ -81,7 +84,12 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
     // The first ask to appear replaces nothing, so no press can have been aimed elsewhere.
     if (shownAskId === null || prev === null || prev === shownAskId || paged) return;
     guardUntil.current = Date.now() + SWAP_GUARD_MS;
+    setGuarded(true);
+    clearTimeout(guardTimer.current);
+    guardTimer.current = setTimeout(() => setGuarded(false), SWAP_GUARD_MS);
   }, [shownAskId]);
+
+  useEffect(() => () => clearTimeout(guardTimer.current), []);
 
   useEffect(() => {
     const fresh = asks.filter((a) => !announced.current.has(a.askId));
@@ -167,7 +175,47 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
       tabIndex={-1}
       onKeyDown={onKeyDown}
     >
-      <div className="askcard__title">{STR.title(ask.callerHandle, ask.tool)}</div>
+      <div className="askcard__head">
+        <div className="askcard__title" title={STR.title(ask.callerHandle, ask.tool)}>
+          {STR.title(ask.callerHandle, ask.tool)}
+        </div>
+        {/* With one ask the pager keeps its slot, unseen, so the head's height never changes. */}
+        <div className={asks.length > 1 ? 'askcard__pager' : 'askcard__pager askcard__pager--idle'}>
+          <button
+            type="button"
+            className="btn btn--sm askcard__page"
+            aria-label={STR.prev}
+            disabled={at === 0}
+            onClick={() => pageTo(asks[at - 1].askId)}
+          >
+            <IconChevron size={12} className="askcard__prevglyph" />
+          </button>
+          <span>{asks.length > 1 ? STR.pager(at + 1, asks.length) : ''}</span>
+          <button
+            type="button"
+            className="btn btn--sm askcard__page"
+            aria-label={STR.next}
+            disabled={at === asks.length - 1}
+            onClick={() => pageTo(asks[at + 1].askId)}
+          >
+            <IconChevron size={12} />
+          </button>
+        </div>
+      </div>
+      <div className="askcard__actions" key={ask.askId}>
+        {ANSWERS.map((answer) => (
+          <button
+            key={answer}
+            type="button"
+            className={answer === 'approve' ? 'btn btn--sm btn--primary' : 'btn btn--sm'}
+            data-answer={answer}
+            aria-disabled={guarded}
+            onClick={() => onAnswer(answer)}
+          >
+            {STR[answer]}
+          </button>
+        ))}
+      </div>
       <div className="askcard__summary">{summaryText(ask.summary)}</div>
       <div className="askcard__reason">{reasonText(ask)}</div>
       <div className="askcard__raw">
@@ -183,44 +231,6 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
         </button>
         <div id={rawId} hidden={!rawOpen}>
           {rawOpen && <pre className="askcard__args">{JSON.stringify(ask.args, null, 2)}</pre>}
-        </div>
-      </div>
-      <div className="askcard__foot">
-        {asks.length > 1 && (
-          <div className="askcard__pager">
-            <button
-              type="button"
-              className="btn btn--sm askcard__page"
-              aria-label={STR.prev}
-              disabled={at === 0}
-              onClick={() => pageTo(asks[at - 1].askId)}
-            >
-              <IconChevron size={12} className="askcard__prevglyph" />
-            </button>
-            <span>{STR.pager(at + 1, asks.length)}</span>
-            <button
-              type="button"
-              className="btn btn--sm askcard__page"
-              aria-label={STR.next}
-              disabled={at === asks.length - 1}
-              onClick={() => pageTo(asks[at + 1].askId)}
-            >
-              <IconChevron size={12} />
-            </button>
-          </div>
-        )}
-        <div className="askcard__actions" key={ask.askId}>
-          {ANSWERS.map((answer) => (
-            <button
-              key={answer}
-              type="button"
-              className={answer === 'approve' ? 'btn btn--sm btn--primary' : 'btn btn--sm'}
-              data-answer={answer}
-              onClick={() => onAnswer(answer)}
-            >
-              {STR[answer]}
-            </button>
-          ))}
         </div>
       </div>
     </section>,
