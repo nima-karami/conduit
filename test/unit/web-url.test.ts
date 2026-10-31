@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { displayTitleForUrl, normalizeUrl } from '../../webview/web-url';
+import { displayTitleForUrl, normalizeUrl } from '../../src/web-url';
 
 describe('normalizeUrl', () => {
   it('prefixes a bare host with https://', () => {

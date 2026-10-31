@@ -1,6 +1,7 @@
 import type { RefEndpoint } from '../src/git-range';
 import type { DiffTabScope, PersistedDoc } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
+import { displayTitleForUrl } from '../src/web-url';
 import { diffTabTitle } from './diff-tab-scope';
 import {
   type EditorGroup,
@@ -15,7 +16,6 @@ import {
   tabPreview,
 } from './doc-groups';
 import type { ReviewScope } from './review-scope';
-import { displayTitleForUrl } from './web-url';
 
 // 'web' is an in-app browser tab; its `path` is the URL (id = `web:<url>`). It has no
 // backing file — the viewer renders straight from the URL — so it reuses the doc

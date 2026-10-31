@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { normalizeUrl } from '../web-url';
+import { normalizeUrl } from '../../src/web-url';
 import { ModalLayer } from './modal-layer';
 
 /** Tiny URL prompt for "Open Web Page…". Submits a `normalizeUrl`-validated http(s)

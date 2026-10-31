@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { normalizeUrl } from '../../src/web-url';
 import { openExternal, subscribe } from '../bridge';
 import { IconChevron, IconClose, IconExternal, IconRefreshCw } from '../icons';
-import { normalizeUrl } from '../web-url';
 
 /** The subset of Electron's `<webview>` element API this component drives. */
 interface WebviewElement extends HTMLElement {
