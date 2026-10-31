@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { groundForTheme } from '../../src/theme-ground';
@@ -137,6 +137,28 @@ describe('the Neon chamfer is one continuous edge', () => {
     expect(CSS).toMatch(
       /\.session \{[^}]*--notch-line:[^}]*border: 1px solid var\(--notch-line\)/s,
     );
+  });
+
+  // The diagonal is an absolutely positioned ::after that pokes past the corner it redraws: on a
+  // scroll container that is scrollable overflow (a 2 px sideways scrollbar on the MCP tools
+  // dialog), and the cut lands at the bottom of the content, not the visible corner. A chamfered
+  // frame keeps its corner; an inner element scrolls (.ctxmenu__scroll, .mcptools__scroll).
+  it('a chamfered frame never scrolls itself', () => {
+    const dir = join(__dirname, '..', '..', 'webview');
+    const tsx = readdirSync(dir, { recursive: true, encoding: 'utf8' })
+      .filter((f) => f.endsWith('.tsx'))
+      .map((f) => readFileSync(join(dir, f), 'utf8'))
+      .join('\n');
+    const frames = [...tsx.matchAll(/className="([a-z0-9_-]+) chamfer(?:--sm)?"/g)].map(
+      (m) => m[1],
+    );
+    expect(frames).toContain('mcptools');
+    for (const cls of new Set(frames)) {
+      const rules = [...CSS.matchAll(new RegExp(`(?:^|\\n)\\.${cls} \\{([^}]*)\\}`, 'g'))];
+      expect(rules.length, cls).toBeGreaterThan(0);
+      for (const [, body] of rules)
+        expect(body, `.${cls}`).not.toMatch(/overflow(?:-[xy])?:\s*(?:auto|scroll)/);
+    }
   });
 
   it('never notches a full-bleed panel — those ARE the window edge at Neon', () => {

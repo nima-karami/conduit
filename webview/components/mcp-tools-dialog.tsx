@@ -143,36 +143,38 @@ export function McpToolsDialog({
             <IconClose size={12} />
           </button>
         </div>
-        {!masterOn && <p className="mcptools__hint">{MCP_STR.tools.masterOffHint}</p>}
-        <ToolPolicyEditor
-          layer="session"
-          layers={layers}
-          sourceName={sourceName}
-          disabled={!masterOn}
-          failed={failed}
-          onChange={(tool, field, value) => {
-            const patch = coercePolicyPatch(tool, { [field]: value });
-            const label = policyChoiceLabel(tool, field, value, {
-              layer: 'session',
-              layers,
-              sourceName,
-            });
-            if (!patch || label === null) return;
-            const what =
-              field === 'access'
-                ? MCP_STR.tools.accessLabel(tool)
-                : MCP_STR.tools.fieldAria(tool, field);
-            void pick(tool, patch, what, label);
-          }}
-        />
-        {connected && changed && (
-          <div className="mcptools__relaunch">
-            <span className="mcptools__hint">{MCP_STR.tools.relaunchHint}</span>
-            <button type="button" className="btn btn--sm" onClick={onRelaunch}>
-              {MCP_STR.tools.relaunch}
-            </button>
-          </div>
-        )}
+        <div className="mcptools__scroll">
+          {!masterOn && <p className="mcptools__hint">{MCP_STR.tools.masterOffHint}</p>}
+          <ToolPolicyEditor
+            layer="session"
+            layers={layers}
+            sourceName={sourceName}
+            disabled={!masterOn}
+            failed={failed}
+            onChange={(tool, field, value) => {
+              const patch = coercePolicyPatch(tool, { [field]: value });
+              const label = policyChoiceLabel(tool, field, value, {
+                layer: 'session',
+                layers,
+                sourceName,
+              });
+              if (!patch || label === null) return;
+              const what =
+                field === 'access'
+                  ? MCP_STR.tools.accessLabel(tool)
+                  : MCP_STR.tools.fieldAria(tool, field);
+              void pick(tool, patch, what, label);
+            }}
+          />
+          {connected && changed && (
+            <div className="mcptools__relaunch">
+              <span className="mcptools__hint">{MCP_STR.tools.relaunchHint}</span>
+              <button type="button" className="btn btn--sm" onClick={onRelaunch}>
+                {MCP_STR.tools.relaunch}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </ModalLayer>
   );
