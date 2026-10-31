@@ -140,7 +140,12 @@ function parseUiResult(kind: McpUiAction['kind'], v: unknown): McpUiResult | nul
     case 'closeSession':
       if (v.kind !== 'closeSession') return null;
       if (v.ok === true) return { kind: 'closeSession', ok: true };
-      if (v.ok === false && isStrings(v.unsaved) && v.unsaved.length <= MAX_UNSAVED_PATHS)
+      if (
+        v.ok === false &&
+        isStrings(v.unsaved) &&
+        v.unsaved.length >= 1 &&
+        v.unsaved.length <= MAX_UNSAVED_PATHS
+      )
         return { kind: 'closeSession', ok: false, unsaved: [...v.unsaved] };
       return null;
     case 'closeFiles': {

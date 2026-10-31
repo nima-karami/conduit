@@ -583,6 +583,7 @@ describe('mcp:ui waits (spec 2026-10-30-conduit-mcp-app-control §2.3)', () => {
       [CLOSE_ALL, { kind: 'closeFiles' }],
       [CLOSE_B, { kind: 'closeSession', ok: false, unsaved: files(21) }],
       [CLOSE_B, { kind: 'closeSession', ok: false, unsaved: [1] }],
+      [CLOSE_B, { kind: 'closeSession', ok: false, unsaved: [] }],
       [CLOSE_B, { kind: 'closeSession', ok: 'yes' }],
       [CLOSE_B, { kind: 'opened' }],
       [OPEN, { kind: 'closeSession', ok: true }],
