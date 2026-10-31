@@ -167,10 +167,12 @@ export async function runCloseFiles(
     if (closed.length + skipped.length < MAX_CLOSE_RESULTS) into();
     else truncated = true;
   };
-  /** Uncapped by MAX_CLOSE_RESULTS: a mid-run throw reports the real count. */
+  /** Paths with at least one tab closed, uncapped by MAX_CLOSE_RESULTS: a mid-run throw reports
+   *  the real count, including the path whose tab threw after its other tabs closed. */
   let closedCount = 0;
   for (const group of plan.groups) {
     let kept = false;
+    let closedAny = false;
     try {
       for (const id of group.ids) {
         // Read live per id: an awaited auto-save yields, and the user may close a planned tab
@@ -180,23 +182,23 @@ export async function runCloseFiles(
         const path = kind === 'file' ? ops.pathOf(id) : undefined;
         if (path !== undefined && ops.isDirty(path)) {
           if ((await ops.closeDirtyUnprompted(id)).type === 'prompt') kept = true;
+          else closedAny = true;
         } else {
           ops.forceClose(id);
+          closedAny = true;
         }
       }
     } catch (e) {
       // The paths already closed stay closed; the failure answer is the only place they surface.
       const message = e instanceof Error ? e.message : String(e);
-      throw new Error(
-        `stopped after closing ${closedCount} of ${plan.groups.length} paths: ${message}`,
-        { cause: e },
-      );
+      const count = closedCount + (closedAny ? 1 : 0);
+      throw new Error(`stopped after closing ${count} of ${plan.groups.length} paths: ${message}`, {
+        cause: e,
+      });
     }
+    if (closedAny) closedCount++;
     if (kept) record(() => skipped.push({ path: group.path, reason: 'unsaved' }));
-    else {
-      closedCount++;
-      record(() => closed.push(group.path));
-    }
+    else record(() => closed.push(group.path));
   }
   for (const path of plan.notOpen) record(() => skipped.push({ path, reason: 'not_open' }));
   return truncated ? { closed, skipped, truncated: true } : { closed, skipped };

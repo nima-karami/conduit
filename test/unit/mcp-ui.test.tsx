@@ -394,6 +394,18 @@ describe('runCloseFiles', () => {
     );
   });
 
+  it('a path whose diff tab closed before its file tab threw counts as closed', async () => {
+    const docs = [doc('diff', '/w/a.ts'), doc('file', '/w/a.ts'), doc('file', '/w/b.ts')];
+    const { ops, live } = fakeOps(docs, new Set(['/w/a.ts']), false);
+    ops.closeDirtyUnprompted = async () => {
+      throw new Error('write EPERM');
+    };
+    await expect(runCloseFiles(planCloseFiles(docs, 'A', 'all'), ops)).rejects.toThrow(
+      'stopped after closing 1 of 2 paths: write EPERM',
+    );
+    expect(live.has('diff:/w/a.ts')).toBe(false);
+  });
+
   it('exactly 500 entries are not truncated', async () => {
     const docs = Array.from({ length: MAX_CLOSE_RESULTS }, (_, i) => doc('file', `/w/f${i}`));
     const { ops } = fakeOps(docs, new Set(), false);
