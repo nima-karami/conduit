@@ -6,6 +6,23 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **MCP tool switches are now policies.** Each Conduit tool is **Off**, **Ask** or **On**, with
+  conditions where they apply: **When** (while the agent's session is on screen, or always) and
+  **Move** (whether it may switch your view). Set them for all CLIs, per CLI (Claude, Codex,
+  Cursor, OpenCode, Other) in Settings → **MCP**, and per session from its menu (**MCP tools…**);
+  the most specific setting wins.
+- **Ask shows a card in the agent's window.** It names the agent, the tool and what it will do,
+  and offers **Deny**, **Approve** and **Always for this session**. It never takes focus, so
+  typing in a terminal can't answer it; the attention chip counts it and the agent's session
+  card shows **Waiting for your approval**. Codex can no longer run a tool Conduit asks about
+  without you.
+- **New defaults.** `open_file` is **On** (was off) and `open_session` is **Ask** (was off).
+  `open_session`, `open_terminal` and `open_file` act only while the agent's session is on
+  screen, unless set to **Always**.
+- **Your v0.50 switches carry over.** A tool you turned on becomes On · Always; a messaging tool
+  you turned off stays off. Going back to v0.50 drops the policies and returns to its defaults.
+
 ## [0.50.0] — 2026-10-27
 
 ### Added
