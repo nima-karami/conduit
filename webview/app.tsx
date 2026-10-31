@@ -2783,7 +2783,11 @@ export function App() {
       }),
     openReview: (id, source) => openReviewIn(id, source),
     openGitHistory: (id, root, commit) => openGitHistoryIn(id, root, commit ?? undefined),
-    openUrl: (id, url, foreground) => openWeb(url, id, foreground ? undefined : 'background'),
+    openUrl: (id, url, foreground) => {
+      // As open_file: a focused open into the shown session brings the editor forward.
+      if (foreground && id === activeIdRef.current) setCenterView('editor');
+      openWeb(url, id, foreground ? undefined : 'background');
+    },
   });
 
   // editor-tabs-persist: apply the buffered `restoreDocs` once this window's sessions are known,
