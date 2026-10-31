@@ -53,6 +53,7 @@ export type McpUiAction =
 export const MAX_CLOSE_RESULTS = 500;
 /** A closeSession refusal names at most this many unsaved paths. */
 export const MAX_UNSAVED_PATHS = 20;
+export const MAX_UI_FAILURE_CHARS = 500;
 export interface CloseFilesOutcome {
   closed: string[];
   skipped: { path: string; reason: 'unsaved' | 'not_open' }[];
@@ -67,7 +68,9 @@ export type McpUiResult =
   /** openReview | openGitHistory | openUrl. */
   | { kind: 'opened' }
   /** The session isn't in this window. */
-  | { kind: 'unknownSession' };
+  | { kind: 'unknownSession' }
+  /** The renderer threw mid-action; at most MAX_UI_FAILURE_CHARS, naming the step. */
+  | { kind: 'failed'; message: string };
 
 export interface McpSessionBadge {
   handle: Handle;

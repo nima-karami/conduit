@@ -3,6 +3,7 @@ import { canonicalPath } from '../src/canonical-path';
 import {
   type CloseFilesOutcome,
   MAX_CLOSE_RESULTS,
+  MAX_UI_FAILURE_CHARS,
   MAX_UNSAVED_PATHS,
   type McpReviewSource,
   type McpUiAction,
@@ -12,6 +13,7 @@ import type { CommitNode } from '../src/protocol';
 import type { CloseStep } from './auto-save-policy';
 import { post, subscribe } from './bridge';
 import type { OpenDoc } from './docs';
+import { log } from './log';
 
 // The renderer half of mcp:ui (spec 2026-10-30-conduit-mcp-app-control §2.3). The host has
 // already applied policy, reach and routing; this only does what the matching UI action does,
@@ -27,20 +29,49 @@ export interface McpUiHandlers {
   openUrl(sessionId: string, url: string, focus: boolean): void;
 }
 
-function answer(requestId: string, result: McpUiResult): void {
-  post({ type: 'mcp:uiResult', requestId, result });
+/** Every request is answered exactly once, a throw included: unanswered, the host can only
+ *  report ui_timeout with the outcome unknown. */
+async function handle(
+  h: McpUiHandlers,
+  requestId: string,
+  sessionId: string,
+  action: McpUiAction,
+): Promise<void> {
+  let answered = false;
+  const answer = (result: McpUiResult) => {
+    answered = true;
+    post({ type: 'mcp:uiResult', requestId, result });
+  };
+  try {
+    await perform(h, sessionId, action, answer);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (answered) {
+      log.error('mcp-ui', `${action.kind} failed after answering`, { error: message });
+      return;
+    }
+    answer({
+      kind: 'failed',
+      message: `${action.kind} failed: ${message}`.slice(0, MAX_UI_FAILURE_CHARS),
+    });
+  }
 }
 
-function handle(h: McpUiHandlers, requestId: string, sessionId: string, action: McpUiAction) {
+async function perform(
+  h: McpUiHandlers,
+  sessionId: string,
+  action: McpUiAction,
+  answer: (result: McpUiResult) => void,
+): Promise<void> {
   if (!h.hasSession(action.kind === 'closeSession' ? action.target : sessionId)) {
-    answer(requestId, { kind: 'unknownSession' });
+    answer({ kind: 'unknownSession' });
     return;
   }
   switch (action.kind) {
     case 'closeSession': {
       const dirty = h.dirtyPathsOf(action.target);
       if (dirty.length > 0) {
-        answer(requestId, {
+        answer({
           kind: 'closeSession',
           ok: false,
           unsaved: dirty.slice(0, MAX_UNSAVED_PATHS),
@@ -49,14 +80,12 @@ function handle(h: McpUiHandlers, requestId: string, sessionId: string, action: 
       }
       // The answer goes first: a session closing itself loses its MCP connection with the kill,
       // and the host only writes a reply it already holds (plan "SELF CLOSE").
-      answer(requestId, { kind: 'closeSession', ok: true });
+      answer({ kind: 'closeSession', ok: true });
       h.kill(action.target);
       return;
     }
     case 'closeFiles':
-      void h
-        .closeFiles(sessionId, action.paths)
-        .then((outcome) => answer(requestId, { kind: 'closeFiles', ...outcome }));
+      answer({ kind: 'closeFiles', ...(await h.closeFiles(sessionId, action.paths)) });
       return;
     case 'openReview':
       h.openReview(sessionId, action.source);
@@ -68,7 +97,7 @@ function handle(h: McpUiHandlers, requestId: string, sessionId: string, action: 
       h.openUrl(sessionId, action.url, action.focus);
       break;
   }
-  answer(requestId, { kind: 'opened' });
+  answer({ kind: 'opened' });
 }
 
 export function useMcpUi(h: McpUiHandlers): void {
@@ -77,7 +106,7 @@ export function useMcpUi(h: McpUiHandlers): void {
   useEffect(
     () =>
       subscribe((m) => {
-        if (m.type === 'mcp:ui') handle(ref.current, m.requestId, m.sessionId, m.action);
+        if (m.type === 'mcp:ui') void handle(ref.current, m.requestId, m.sessionId, m.action);
       }),
     [],
   );
@@ -138,18 +167,32 @@ export async function runCloseFiles(
     if (closed.length + skipped.length < MAX_CLOSE_RESULTS) into();
     else truncated = true;
   };
+  /** Uncapped by MAX_CLOSE_RESULTS: a mid-run throw reports the real count. */
+  let closedCount = 0;
   for (const group of plan.groups) {
     let kept = false;
-    for (const id of group.ids) {
-      const path = ops.kindOf(id) === 'file' ? ops.pathOf(id) : undefined;
-      if (path !== undefined && ops.isDirty(path)) {
-        if ((await ops.closeDirtyUnprompted(id)).type === 'prompt') kept = true;
-      } else {
-        ops.forceClose(id);
+    try {
+      for (const id of group.ids) {
+        const path = ops.kindOf(id) === 'file' ? ops.pathOf(id) : undefined;
+        if (path !== undefined && ops.isDirty(path)) {
+          if ((await ops.closeDirtyUnprompted(id)).type === 'prompt') kept = true;
+        } else {
+          ops.forceClose(id);
+        }
       }
+    } catch (e) {
+      // The paths already closed stay closed; the failure answer is the only place they surface.
+      const message = e instanceof Error ? e.message : String(e);
+      throw new Error(
+        `stopped after closing ${closedCount} of ${plan.groups.length} paths: ${message}`,
+        { cause: e },
+      );
     }
     if (kept) record(() => skipped.push({ path: group.path, reason: 'unsaved' }));
-    else record(() => closed.push(group.path));
+    else {
+      closedCount++;
+      record(() => closed.push(group.path));
+    }
   }
   for (const path of plan.notOpen) record(() => skipped.push({ path, reason: 'not_open' }));
   return truncated ? { closed, skipped, truncated: true } : { closed, skipped };

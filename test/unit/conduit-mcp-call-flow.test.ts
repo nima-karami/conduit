@@ -17,7 +17,11 @@ import type {
   ToolPolicyPatch,
 } from '../../src/conduit-mcp/tool-policy';
 import type { Result } from '../../src/conduit-mcp/types';
-import { MAX_CLOSE_RESULTS, type McpUiAction } from '../../src/conduit-mcp/ui-types';
+import {
+  MAX_CLOSE_RESULTS,
+  MAX_UI_FAILURE_CHARS,
+  type McpUiAction,
+} from '../../src/conduit-mcp/ui-types';
 import type { HostToWebview } from '../../src/protocol';
 
 const CALLER = 'caller-1';
@@ -585,6 +589,8 @@ describe('mcp:ui waits (spec 2026-10-30-conduit-mcp-app-control §2.3)', () => {
       [CLOSE_B, { kind: 'closeSession', ok: false, unsaved: [1] }],
       [CLOSE_B, { kind: 'closeSession', ok: false, unsaved: [] }],
       [CLOSE_B, { kind: 'closeSession', ok: 'yes' }],
+      [OPEN, { kind: 'failed' }],
+      [OPEN, { kind: 'failed', message: 3 }],
       [CLOSE_B, { kind: 'opened' }],
       [OPEN, { kind: 'closeSession', ok: true }],
       [OPEN, null],
@@ -641,6 +647,12 @@ describe('mcp:ui waits (spec 2026-10-30-conduit-mcp-app-control §2.3)', () => {
       [OPEN, { kind: 'opened' }, { kind: 'opened' }],
       [CLOSE_B, { kind: 'unknownSession' }, { kind: 'unknownSession' }],
       [OPEN, { kind: 'unknownSession' }, { kind: 'unknownSession' }],
+      [OPEN, { kind: 'failed', message: 'm' }, { kind: 'failed', message: 'm' }],
+      [
+        CLOSE_ALL,
+        { kind: 'failed', message: 'x'.repeat(MAX_UI_FAILURE_CHARS + 5) },
+        { kind: 'failed', message: 'x'.repeat(MAX_UI_FAILURE_CHARS) },
+      ],
     ];
     for (const [action, raw, want] of good) {
       const t = setup();

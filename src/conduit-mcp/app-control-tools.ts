@@ -147,7 +147,10 @@ export function createAppControlHandlers(
   const wrongAnswer = (r: McpUiResult): Fail =>
     r.kind === 'unknownSession'
       ? fail('unknown_session', 'that session is not in its window any more')
-      : fail('open_failed', `Conduit's window answered ${r.kind}`);
+      : fail(
+          'open_failed',
+          r.kind === 'failed' ? r.message : `Conduit's window answered ${r.kind}`,
+        );
 
   const logged = (tool: ControlTool, caller: Caller, data: Record<string, unknown>) =>
     deps.info('control app', { tool, caller: caller.handle, ...data });

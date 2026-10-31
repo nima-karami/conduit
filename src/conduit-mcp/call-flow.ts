@@ -17,6 +17,7 @@ import { type Handle, type Result, toolError } from './types';
 import {
   type AskAnswer,
   MAX_CLOSE_RESULTS,
+  MAX_UI_FAILURE_CHARS,
   MAX_UNSAVED_PATHS,
   type McpUiAction,
   type McpUiResult,
@@ -136,6 +137,10 @@ const SKIP_REASONS: ReadonlySet<unknown> = new Set(['unsaved', 'not_open']);
 function parseUiResult(kind: McpUiAction['kind'], v: unknown): McpUiResult | null {
   if (!isRecord(v)) return null;
   if (v.kind === 'unknownSession') return { kind: 'unknownSession' };
+  if (v.kind === 'failed')
+    return typeof v.message === 'string'
+      ? { kind: 'failed', message: v.message.slice(0, MAX_UI_FAILURE_CHARS) }
+      : null;
   switch (kind) {
     case 'closeSession':
       if (v.kind !== 'closeSession') return null;

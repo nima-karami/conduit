@@ -843,6 +843,24 @@ describe('open_url', () => {
     ]);
   });
 
+  it('a renderer failed answer → open_failed with its message, for open and close tools', async () => {
+    const failed = context({
+      reach: 'any',
+      answer: () => ({ ok: true, value: { kind: 'failed', message: 'step failed: boom' } }),
+    }).ctx;
+    const app = build(harness());
+    const runs: Promise<Result<unknown>>[] = [
+      runIt(app.prepareOpenUrl(caller(), { url: 'http://x/' }, failed)),
+      runIt(app.prepareCloseFiles(caller(), { all: true }, failed)),
+      runIt(app.prepareCloseSession(caller(), { session: 'claude-2' }, failed)),
+    ];
+    for (const r of await Promise.all(runs))
+      expect(r.ok ? null : r.error).toMatchObject({
+        code: 'open_failed',
+        message: 'step failed: boom',
+      });
+  });
+
   it('run failure refunds; success keeps (show)', async () => {
     const h = harness();
     const app = build(h);

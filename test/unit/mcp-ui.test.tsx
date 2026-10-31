@@ -24,6 +24,8 @@ const bridge = vi.hoisted(() => ({
   posted: [] as WebviewToHost[],
 }));
 vi.mock('../../webview/bridge', () => ({
+  isHosted: false,
+  logToHost: () => {},
   subscribe: (cb: (m: HostToWebview) => void) => {
     bridge.listeners.push(cb);
     return () => {
@@ -170,6 +172,60 @@ describe('useMcpUi', () => {
     expect(first.openUrl).not.toHaveBeenCalled();
     expect(next.openUrl).toHaveBeenCalledOnce();
   });
+
+  it('a throwing handler still answers: failed, naming the step and the error', async () => {
+    const h = fakeHandlers({
+      openUrl: vi.fn(() => {
+        throw new Error('no web tab');
+      }),
+      hasSession: () => {
+        throw new Error('registry gone');
+      },
+    });
+    mount(h);
+    send({ kind: 'openReview', source: { kind: 'working', scope: 'all', repoRoot: '/w' } });
+    h.hasSession = () => true;
+    send({ kind: 'openUrl', url: 'https://x.test/', focus: true }, 'A', 'r2');
+    await act(async () => {});
+    expect(results()).toStrictEqual([
+      ['r1', { kind: 'failed', message: 'openReview failed: registry gone' }],
+      ['r2', { kind: 'failed', message: 'openUrl failed: no web tab' }],
+    ]);
+  });
+
+  it('a rejecting closeFiles answers failed with its message', async () => {
+    const h = fakeHandlers({
+      closeFiles: vi.fn(async () => {
+        throw new Error('stopped after closing 1 of 2 paths: EPERM');
+      }),
+    });
+    mount(h);
+    send({ kind: 'closeFiles', paths: 'all' });
+    await act(async () => {});
+    expect(results()).toStrictEqual([
+      [
+        'r1',
+        { kind: 'failed', message: 'closeFiles failed: stopped after closing 1 of 2 paths: EPERM' },
+      ],
+    ]);
+  });
+
+  it('a throw after closeSession answered posts nothing more and is logged', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const h = fakeHandlers({
+      kill: vi.fn(() => {
+        throw new Error('pty gone');
+      }),
+    });
+    mount(h);
+    send({ kind: 'closeSession', target: 'B' });
+    await act(async () => {});
+    expect(results()).toStrictEqual([['r1', { kind: 'closeSession', ok: true }]]);
+    expect(logged).toHaveBeenCalledWith('[mcp-ui] closeSession failed after answering', {
+      error: 'pty gone',
+    });
+    logged.mockRestore();
+  });
 });
 
 type Doc = Pick<OpenDoc, 'id' | 'kind' | 'path' | 'sessionId'>;
@@ -310,6 +366,17 @@ describe('runCloseFiles', () => {
     expect(out.skipped).toEqual([]);
     expect(out.truncated).toBe(true);
     expect(live.size).toBe(0);
+  });
+
+  it('a throwing op mid-run rejects naming how many paths were closed', async () => {
+    const docs = [doc('file', '/w/a.ts'), doc('file', '/w/b.ts'), doc('file', '/w/c.ts')];
+    const { ops } = fakeOps(docs, new Set(['/w/b.ts']), false);
+    ops.closeDirtyUnprompted = async () => {
+      throw new Error('write EPERM');
+    };
+    await expect(runCloseFiles(planCloseFiles(docs, 'A', 'all'), ops)).rejects.toThrow(
+      'stopped after closing 1 of 3 paths: write EPERM',
+    );
   });
 
   it('exactly 500 entries are not truncated', async () => {
