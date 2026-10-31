@@ -11,6 +11,8 @@
  *      is pull-only — its message queues and nothing is typed; a prompt typed into the bound CLI
  *      keeps it bound; Ctrl+Z unbinds it.
  *   5. Uninstall removes only conduit; the file and the backup stay.
+ * Single gate (spec 2026-10-31-conduit-mcp-single-gate): Install adds mcp__conduit to the user
+ * settings.json permissions.allow beside the user's own rule; Uninstall removes only it.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -42,6 +44,9 @@ const PULL_ONLY_WAIT_MS = 12_000;
 const userDataDir = profileDir('mcp-install');
 const { homeDir, env: homeEnv } = isolatedHome(userDataDir);
 const configPath = join(homeDir, '.claude.json');
+const settingsPath = join(homeDir, '.claude', 'settings.json');
+const USER_SETTINGS = { model: 'x', permissions: { allow: ['Bash(ls:*)'], deny: ['WebFetch'] } };
+const allowOf = () => JSON.parse(readFileSync(settingsPath, 'utf8')).permissions?.allow;
 const recordsDir = join(userDataDir, 'cli-records');
 const binDir = join(userDataDir, 'bin');
 // Inside the profile: the shells keep it as their cwd until the app quits.
@@ -53,6 +58,8 @@ await runScenario(
   'conduit-mcp-install',
   async ({ app, page, log }) => {
     writeFileSync(configPath, JSON.stringify({ mcpServers: { other: { command: 'x' } } }));
+    mkdirSync(join(homeDir, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify(USER_SETTINGS));
     const runtimeHome = await app.evaluate(() => process.getBuiltinModule('node:os').homedir());
     assert(
       normalizePath(runtimeHome) === normalizePath(homeDir),
@@ -85,6 +92,11 @@ await runScenario(
     assert(isDeepStrictEqual(config.mcpServers?.other, { command: 'x' }), 'other kept');
     assert(existsSync(`${configPath}.conduit-backup`), 'first write backs the file up');
     log('Install wrote the exact Claude entry, kept other, backed up ✓');
+    assert(
+      isDeepStrictEqual(allowOf(), ['Bash(ls:*)', 'mcp__conduit']),
+      `settings.json allow after install: ${JSON.stringify(allowOf())}`,
+    );
+    log('Install added mcp__conduit to the user settings allow list ✓');
     await page.keyboard.press('Escape');
     await page.locator('.modal.settings').waitFor({ state: 'detached', timeout: 5_000 });
 
@@ -186,6 +198,12 @@ await runScenario(
     assert(isDeepStrictEqual(after.mcpServers?.other, { command: 'x' }), 'other kept');
     assert(existsSync(`${configPath}.conduit-backup`), 'the backup stays');
     log('Uninstall removed only conduit; file and backup stay ✓');
+    const settingsAfter = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    assert(
+      isDeepStrictEqual(settingsAfter, USER_SETTINGS),
+      `settings.json after uninstall: ${JSON.stringify(settingsAfter)}`,
+    );
+    log('Uninstall removed only mcp__conduit from settings.json ✓');
   },
   { userDataDir, env: { ...homeEnv, ...pathWith(binDir) } },
 );
