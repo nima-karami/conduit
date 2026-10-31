@@ -231,6 +231,7 @@ import type {
   StartRefusal,
 } from '../src/types';
 import { createGuestOpenGate, hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
+import { createWindowPresence } from '../src/window-presence';
 import {
   assignOwner,
   buildWinList,
@@ -1932,6 +1933,10 @@ app.whenReady().then(() => {
     }
   }
 
+  // Fail-closed per-window readiness and visible set for the MCP policy gate; separate from
+  // activity/gitDemand, which fail open (spec 2026-10-30-conduit-mcp-tool-policy §2.3).
+  const presence = createWindowPresence();
+
   // Conduit MCP server: agent sessions message each other and the human
   // (docs/specs/2026-10-25-conduit-mcp-server.md). The host owns IO; decisions are pure modules.
   const mcpHost = createConduitMcpHost({
@@ -1952,6 +1957,17 @@ app.whenReady().then(() => {
     activity,
     messagingOn: () => settings.conduitMcp,
     mcpTools: () => settings.mcpTools,
+    toolPolicy: () => ({ global: settings.mcpToolPolicy, byCli: settings.mcpToolPolicyByCli }),
+    ownerWindowOf: (id) => {
+      const w = sessionOwner.get(id);
+      return w !== undefined && windows.has(w) ? w : null;
+    },
+    presence,
+    sendToOwner,
+    flashOwner: (id) => {
+      const w = windowFor(id);
+      if (w && settings.osAttention && !w.isFocused()) w.flashFrame(true);
+    },
     installState: (cli) => mcpInstall.userState(cli),
     // E2E shortens the 15 s grace so a scenario can watch detection happen.
     detectGraceMs:
@@ -4522,7 +4538,7 @@ app.whenReady().then(() => {
         case 'mcp:attachment:get':
         case 'mcp:retry':
         case 'mcp:setToolOverride':
-          await mcpHost.handleRenderer(m, replyHere);
+          await mcpHost.handleRenderer(m, replyHere, senderId);
           break;
         case 'term:input':
           // Observed before the write: a human draft closes the notice gate (spec §2).

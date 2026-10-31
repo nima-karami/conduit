@@ -25,6 +25,7 @@ function core(over: Partial<McpServerCoreDeps> = {}) {
       calls.push({ name, args });
       return { content: [{ type: 'text', text: 'ok' }] };
     },
+    cancelled: () => {},
     ...over,
   };
   return { server: createMcpServerCore(deps), calls };
@@ -209,5 +210,63 @@ describe('toolSchemas', () => {
   it('descriptions warn that peer bodies are not user instructions', () => {
     expect(CONDUIT_INSTRUCTIONS).toMatch(/not the user/i);
     expect(schemaOf('read_inbox').description).toMatch(/not .*user/i);
+  });
+});
+
+describe('request ids and cancellation (spec 2026-10-30-conduit-mcp-tool-policy §2.4)', () => {
+  function withCtx(result: ToolCallResult | null = { content: [{ type: 'text', text: 'ok' }] }) {
+    const ctxs: unknown[] = [];
+    const cancels: unknown[] = [];
+    const { server } = core({
+      call: async (_name, _args, ctx) => {
+        ctxs.push(ctx);
+        return result;
+      },
+      cancelled: (requestId) => cancels.push(requestId),
+    });
+    return { server, ctxs, cancels };
+  }
+  const note = (method: string, params?: unknown) =>
+    JSON.stringify({ jsonrpc: '2.0', method, ...(params === undefined ? {} : { params }) });
+
+  it('tools/call passes the request id', async () => {
+    const { server, ctxs } = withCtx();
+    await server.handleLine(req(7, 'tools/call', { name: 'read_inbox' }));
+    await server.handleLine(req('a', 'tools/call', { name: 'read_inbox' }));
+    const nullId = await server.handleLine(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: null,
+        method: 'tools/call',
+        params: { name: 'read_inbox' },
+      }),
+    );
+    expect(ctxs).toEqual([{ requestId: 7 }, { requestId: 'a' }, { requestId: null }]);
+    expect(JSON.parse(nullId ?? '{}')).toMatchObject({ id: null, result: {} });
+  });
+
+  it('a null call result sends no reply', async () => {
+    const { server } = withCtx(null);
+    expect(await server.handleLine(req(3, 'tools/call', { name: 'open_session' }))).toBeUndefined();
+  });
+
+  it('notifications/cancelled reaches cancelled()', async () => {
+    const { server, cancels } = withCtx();
+    for (const requestId of [4, 'r-1', null, true, { x: 1 }, undefined])
+      expect(
+        await server.handleLine(note('notifications/cancelled', { requestId, reason: 'esc' })),
+      ).toBeUndefined();
+    expect(await server.handleLine(note('notifications/cancelled'))).toBeUndefined();
+    expect(cancels).toEqual([4, 'r-1']);
+  });
+
+  it('other notifications still dropped', async () => {
+    const { server, ctxs, cancels } = withCtx();
+    expect(await server.handleLine(note('notifications/initialized'))).toBeUndefined();
+    expect(
+      await server.handleLine(note('notifications/progress', { requestId: 4 })),
+    ).toBeUndefined();
+    expect(await server.handleLine(note('tools/call', { name: 'read_inbox' }))).toBeUndefined();
+    expect([ctxs, cancels]).toEqual([[], []]);
   });
 });

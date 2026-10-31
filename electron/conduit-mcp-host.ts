@@ -9,6 +9,7 @@ import {
   reduceAttention,
   youAttention,
 } from '../src/conduit-mcp/attention-items';
+import { createCallFlow } from '../src/conduit-mcp/call-flow';
 import {
   bindsTypedLine,
   type ClientKind,
@@ -24,12 +25,18 @@ import {
   stripTerminalReplies,
 } from '../src/conduit-mcp/draft-input';
 import {
+  cliKindOfHandle,
   type HandleCounters,
   parseHandleCounters,
   serializeHandleCounters,
 } from '../src/conduit-mcp/handles';
 import type { AgentCli, UserInstallState } from '../src/conduit-mcp/install-types';
-import { createMcpServerCore, TOOLS_LIST_CHANGED } from '../src/conduit-mcp/json-rpc';
+import {
+  createMcpServerCore,
+  TOOLS_LIST_CHANGED,
+  type ToolCallContext,
+  type ToolCallResult,
+} from '../src/conduit-mcp/json-rpc';
 import {
   awaitEnterVerdict,
   ECHO_POLL_MS,
@@ -43,17 +50,21 @@ import { type ScreenSnapshot, screenVerdict } from '../src/conduit-mcp/screen-ve
 import { assignHandle, createSessionRegistry } from '../src/conduit-mcp/session-registry';
 import { createMessageStore, type StoreIo } from '../src/conduit-mcp/store';
 import { createFsStoreIo } from '../src/conduit-mcp/store-fs';
-import { CONDUIT_INSTRUCTIONS, toolSchemas } from '../src/conduit-mcp/tool-schemas';
 import {
-  effectiveTool,
-  effectiveTools,
+  type CliPolicyLayers,
+  coercePolicyPatch,
+  type GlobalPolicy,
   gateToolCall,
   isMessagingTool,
   isToolName,
-  type McpToolSwitches,
+  type Move,
+  type ResolvedPolicy,
+  resolvePolicy,
   TOOL_NAMES,
   type ToolName,
-} from '../src/conduit-mcp/tool-switches';
+} from '../src/conduit-mcp/tool-policy';
+import { CONDUIT_INSTRUCTIONS, toolSchemas } from '../src/conduit-mcp/tool-schemas';
+import type { McpToolSwitches } from '../src/conduit-mcp/tool-switches';
 import {
   type Caller,
   createToolHandlers,
@@ -72,6 +83,7 @@ import {
   type McpAttentionItem,
   type McpUnavailableReason,
   type Presence,
+  type Result,
   type ScreenVerdict,
   THREAD_AGENT_LIMIT,
   toolError,
@@ -94,6 +106,7 @@ import type { SessionActivity } from '../src/session-activity';
 import type { SessionManager } from '../src/session-manager';
 import { PTY_SETTLE_MS } from '../src/timed-messages';
 import type { AgentDefinition, SpawnSpec } from '../src/types';
+import type { WindowPresence } from '../src/window-presence';
 import {
   createMcpEndpoint,
   type EndpointConnection,
@@ -112,9 +125,17 @@ export interface ConduitMcpHostDeps {
   homeDir: string;
   platform: HostPlatform;
   e2e: boolean;
-  mgr: Pick<SessionManager, 'get' | 'list' | 'setMcp' | 'setMcpToolOverride'>;
+  mgr: Pick<SessionManager, 'get' | 'list' | 'setMcp' | 'setMcpToolOverride' | 'setMcpToolPolicy'>;
   /** settings.mcpTools: the global per-tool switches. */
   mcpTools(): McpToolSwitches;
+  /** settings.mcpToolPolicy and settings.mcpToolPolicyByCli, read per call. */
+  toolPolicy(): { global: GlobalPolicy; byCli: CliPolicyLayers };
+  /** The session's owner window id; null when it has none. */
+  ownerWindowOf(sessionId: string): number | null;
+  presence: Pick<WindowPresence, 'isReady' | 'isOnScreen'>;
+  sendToOwner(sessionId: string, msg: HostToWebview): void;
+  /** Taskbar flash unless the owner window is focused (main gates it on settings.osAttention). */
+  flashOwner(sessionId: string): void;
   /** The CLI's user-scope install state, shown with a not-connected session (spec §2.4). */
   installState(cli: AgentCli): UserInstallState;
   /** Default DETECT_GRACE_MS. */
@@ -141,6 +162,11 @@ export interface ConduitMcpHostDeps {
   listen?: boolean;
   tickMs?: number;
   createEndpoint?: typeof createMcpEndpoint;
+  /** Default randomBytes(12).toString('hex'). */
+  newAskId?: () => string;
+  /** Default setTimeout / clearTimeout. */
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
 }
 
 export type McpRendererMessage = Extract<WebviewToHost, { type: `mcp:${string}` }>;
@@ -164,9 +190,18 @@ export interface ConduitMcpHost {
   /** Input the host writes outside the PTY writer (the add-dir paste): it is a draft too. */
   noteHostInput(sessionId: string, data: string): void;
   onSessionDeleted(sessionId: string): Promise<void>;
+  /** Navigation start, renderer gone, or closed: that window's asks end `cancelled`. */
+  onWindowReset(windowId: number): void;
+  /** The session now belongs to another window: its asks end `cancelled`. */
+  onSessionMoved(sessionId: string): void;
   refresh(): void;
   uiState(): McpUiState;
-  handleRenderer(m: McpRendererMessage, reply: (msg: HostToWebview) => void): Promise<void>;
+  /** `senderId`: the window the message came from; an ask answer counts only from its own window. */
+  handleRenderer(
+    m: McpRendererMessage,
+    reply: (msg: HostToWebview) => void,
+    senderId: number,
+  ): Promise<void>;
   tick(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -253,6 +288,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const conns = new Map<number, EndpointConnection>();
   /** Every connection whose hello token resolved, initialized or not: revoke closes them all. */
   const connSession = new Map<number, string>();
+  /** Requests each connection is still answering, and the ones to close once that reaches 0. */
+  const answering = new Map<number, number>();
+  const draining = new Set<number>();
   /** The tool-name key each connection last listed; list_changed fires only when it moves. */
   const lastListed = new Map<number, string>();
   const launchDir = path.join(deps.dir, LAUNCH_DIR);
@@ -652,6 +690,38 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     info: (message, data) => deps.log.info('conduit-mcp', message, data),
   });
 
+  /** Session > CLI kind (the persisted handle's prefix) > global, per field (spec §3.1). */
+  const resolveFor = (sessionId: string, tool: ToolName): ResolvedPolicy => {
+    const { global, byCli } = deps.toolPolicy();
+    const session = deps.mgr.get(sessionId);
+    const handle = session?.mcpHandle;
+    return resolvePolicy(tool, {
+      session: session?.mcpToolPolicy,
+      cli: handle ? byCli[cliKindOfHandle(handle)] : undefined,
+      global,
+    });
+  };
+
+  const flow = createCallFlow({
+    now,
+    setTimer: deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
+    clearTimer:
+      deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout> | undefined)),
+    newAskId: deps.newAskId ?? (() => randomBytes(12).toString('hex')),
+    ownerWindowOf: (sessionId) => deps.ownerWindowOf(sessionId),
+    sendToOwner: (sessionId, msg) => deps.sendToOwner(sessionId, msg),
+    flashOwner: (sessionId) => deps.flashOwner(sessionId),
+    resolve: (sessionId, tool) =>
+      deps.mgr.get(sessionId) ? resolveFor(sessionId, tool).policy : null,
+    messagingOn: () => deps.messagingOn(),
+    setSessionPolicy: (sessionId, tool, patch) => deps.mgr.setMcpToolPolicy(sessionId, tool, patch),
+    onPolicyWritten: () => {
+      syncToolLists();
+      scheduleBroadcast();
+    },
+    onAwaitingChanged: () => scheduleBroadcast(),
+  });
+
   const notifierSessions = () =>
     deps.mgr.list().flatMap((s) => {
       const r = runtime.get(s.id);
@@ -698,50 +768,81 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
    */
   const listedTools = (sessionId: string): readonly ToolName[] =>
     deps.messagingOn()
-      ? effectiveTools(deps.mgr.get(sessionId)?.mcpToolOverrides, deps.mcpTools())
+      ? TOOL_NAMES.filter((t) => resolveFor(sessionId, t).policy.access !== 'off')
       : TOOL_NAMES;
 
-  const callTool = async (sessionId: string | null, name: string, args: unknown) => {
-    const handle = sessionId ? handleOf(sessionId) : undefined;
-    const result = await (async () => {
-      // The core refused names outside the catalog already; this only narrows the type.
-      if (!isToolName(name)) {
-        return {
-          ok: false as const,
-          error: toolError('invalid_argument', `unknown tool: ${name}`),
-        };
-      }
-      if (!sessionId || !handle) {
-        return {
-          ok: false as const,
-          error: toolError('not_in_session', 'this MCP connection is not a Conduit session'),
-        };
-      }
-      const refused = gateToolCall({
-        sessionId,
-        messagingOn: deps.messagingOn(),
-        enabled: effectiveTool(deps.mgr.get(sessionId)?.mcpToolOverrides, deps.mcpTools(), name),
+  type CallContext = ToolCallContext & { connId: number };
+
+  const callTool = async (
+    sessionId: string | null,
+    name: string,
+    args: unknown,
+    ctx: CallContext,
+  ): Promise<ToolCallResult | null> => {
+    // Before the first await: a notifications/cancelled read right after this line must find it.
+    const inflight = flow.begin({ connId: ctx.connId, requestId: ctx.requestId });
+    try {
+      const handle = sessionId ? handleOf(sessionId) : undefined;
+      const result = await (async (): Promise<Result<unknown> | null> => {
+        // The core refused names outside the catalog already; this only narrows the type.
+        if (!isToolName(name)) {
+          return { ok: false, error: toolError('invalid_argument', `unknown tool: ${name}`) };
+        }
+        if (!sessionId || !handle) {
+          return {
+            ok: false,
+            error: toolError('not_in_session', 'this MCP connection is not a Conduit session'),
+          };
+        }
+        const resolved = resolveFor(sessionId, name);
+        const windowId = deps.ownerWindowOf(sessionId);
+        const refused = gateToolCall({
+          sessionId,
+          messagingOn: deps.messagingOn(),
+          tool: name,
+          policy: resolved.policy,
+          ownerReady: () => windowId !== null && deps.presence.isReady(windowId),
+          onScreen: () => windowId !== null && deps.presence.isOnScreen(windowId, sessionId),
+        });
+        if (refused) return { ok: false, error: refused };
+        const caller = { handle, sessionId };
+        if (isMessagingTool(name)) {
+          if (!store.available()) {
+            return {
+              ok: false,
+              error: toolError('store_unavailable', storeError ?? 'message store unavailable'),
+            };
+          }
+          return runMessaging(caller, name, args);
+        }
+        const move = { move: resolved.policy.move };
+        return flow.runControl<unknown>({
+          inflight,
+          caller,
+          kind: cliKindOfHandle(handle),
+          tool: name,
+          policy: resolved.policy,
+          source: resolved.source.access,
+          args,
+          prepare: () => prepareControl(caller, name, args, move),
+        });
+      })();
+      // spec 2026-10-30-conduit-mcp-tool-policy §2.4: no reply after notifications/cancelled.
+      const cancelled = result === null || inflight.cancelled;
+      deps.log.info('conduit-mcp', 'tool call', {
         tool: name,
+        handle,
+        ...(cancelled
+          ? { cancelled: true }
+          : { ok: result.ok, ...(result.ok ? {} : { code: result.error.code }) }),
       });
-      if (refused) return { ok: false as const, error: refused };
-      if (isMessagingTool(name) && !store.available()) {
-        return {
-          ok: false as const,
-          error: toolError('store_unavailable', storeError ?? 'message store unavailable'),
-        };
-      }
-      return runTool({ handle, sessionId }, name, args);
-    })();
-    deps.log.info('conduit-mcp', 'tool call', {
-      tool: name,
-      handle,
-      ok: result.ok,
-      ...(result.ok ? {} : { code: result.error.code }),
-    });
-    return toToolCallResult(result);
+      return cancelled ? null : toToolCallResult(result);
+    } finally {
+      inflight.end();
+    }
   };
 
-  const runTool = async (caller: Caller, name: ToolName, args: unknown) => {
+  const runMessaging = async (caller: Caller, name: ToolName, args: unknown) => {
     switch (name) {
       case 'list_sessions':
         return tools.listSessions(caller);
@@ -751,13 +852,25 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return tools.readInbox(caller, args);
       case 'read_attachment':
         return tools.readAttachment(caller, args);
-      case 'open_session':
-        return control.openSession(caller, args);
-      case 'open_terminal':
-        return control.openTerminal(caller, args);
-      case 'open_file':
-        return control.openFile(caller, args);
     }
+    throw new Error(`runMessaging: ${name} is not a messaging tool`);
+  };
+
+  const prepareControl = (
+    caller: Caller,
+    name: ToolName,
+    args: unknown,
+    ctx: { move: Move | undefined },
+  ) => {
+    switch (name) {
+      case 'open_session':
+        return control.prepareOpenSession(caller, args, ctx);
+      case 'open_terminal':
+        return control.prepareOpenTerminal(caller, args, ctx);
+      case 'open_file':
+        return control.prepareOpenFile(caller, args, ctx);
+    }
+    throw new Error(`prepareControl: ${name} is not a control tool`);
   };
 
   /**
@@ -804,37 +917,48 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         lastListed.set(conn.id, names.join(','));
         return toolSchemas(deps.agentIds()).filter((t) => names.some((n) => n === t.name));
       },
-      call: (name, args) => callTool(current(), name, args),
+      call: (name, args, ctx) => callTool(current(), name, args, { ...ctx, connId: conn.id }),
+      cancelled: (requestId) => flow.cancelled(conn.id, requestId),
     });
     conn.onLine((line) => {
       const initFor = current();
       const initName = initFor === null ? undefined : initializeClientName(line);
       const initializing = initName !== undefined;
       if (initFor !== null && initName !== undefined) onInitialize(conn.id, initFor, initName);
-      void core.handleLine(line).then(
-        (reply) => {
-          if (reply === undefined) return;
-          conn.send(reply);
-          const sessionId = current();
-          if (resolved && !sessionId) {
-            conn.close();
-            return;
-          }
-          // Live only once the CLI has completed initialize: a shim that merely dialled in is
-          // not yet a CLI that can take a turn (spec §2 gate, "MCP connection is live").
-          if (sessionId && initializing) {
-            registry.connect(conn.id, sessionId);
-            connectedAs = sessionId;
-            deps.log.info('conduit-mcp', 'mcp connected', {
-              connId: conn.id,
-              sessionId,
-              handle: handleOf(sessionId),
-            });
-            scheduleBroadcast();
-          }
-        },
-        (err) => deps.log.error('conduit-mcp', 'request failed', { err: String(err) }),
-      );
+      answering.set(conn.id, (answering.get(conn.id) ?? 0) + 1);
+      void core
+        .handleLine(line)
+        .then(
+          (reply) => {
+            if (reply === undefined) return;
+            conn.send(reply);
+            const sessionId = current();
+            if (resolved && !sessionId) {
+              conn.close();
+              return;
+            }
+            // Live only once the CLI has completed initialize: a shim that merely dialled in is
+            // not yet a CLI that can take a turn (spec §2 gate, "MCP connection is live").
+            if (sessionId && initializing) {
+              registry.connect(conn.id, sessionId);
+              connectedAs = sessionId;
+              deps.log.info('conduit-mcp', 'mcp connected', {
+                connId: conn.id,
+                sessionId,
+                handle: handleOf(sessionId),
+              });
+              scheduleBroadcast();
+            }
+          },
+          (err) => deps.log.error('conduit-mcp', 'request failed', { err: String(err) }),
+        )
+        .finally(() => {
+          const n = answering.get(conn.id);
+          // undefined: the connection closed meanwhile, so there is nothing left to drain.
+          if (n === undefined) return;
+          answering.set(conn.id, n - 1);
+          if (n === 1 && draining.has(conn.id)) conn.close();
+        });
     });
     conn.onClose(() => {
       if (connectedAs) {
@@ -844,6 +968,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           handle: handleOf(connectedAs),
         });
       }
+      flow.connectionClosed(conn.id);
       const owner = connSession.get(conn.id);
       const r = owner === undefined ? undefined : runtime.get(owner);
       if (r?.bound === conn.id) unbind(r);
@@ -851,6 +976,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       connSession.delete(conn.id);
       connKinds.delete(conn.id);
       lastListed.delete(conn.id);
+      answering.delete(conn.id);
+      draining.delete(conn.id);
       registry.disconnect(conn.id);
       scheduleBroadcast();
     });
@@ -934,7 +1061,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             [...runtime].flatMap(([id, r]) => (r.notConnected ? [[id, r.notConnected]] : [])),
           )
         : {},
-      awaitingApproval: [],
+      awaitingApproval: flow.awaitingApproval(),
     };
   }
 
@@ -949,6 +1076,19 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   const closeConnectionsOf = (sessionId: string) => {
     for (const [id, s] of connSession) if (s === sessionId) conns.get(id)?.close();
+  };
+
+  /**
+   * Closes once each connection has written the replies it still owes: a deleted session's
+   * cancelled asks are answered a few microtasks after flow.sessionGone, and close() destroys the
+   * socket at once (spec 2026-10-30-conduit-mcp-tool-policy §2.4: session closed → cancelled).
+   */
+  const drainConnectionsOf = (sessionId: string) => {
+    for (const [id, s] of connSession) {
+      if (s !== sessionId) continue;
+      if (answering.get(id)) draining.add(id);
+      else conns.get(id)?.close();
+    }
   };
 
   const loadStore = async () => {
@@ -1244,9 +1384,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     async onSessionDeleted(sessionId) {
+      // Before the drain: the session's waiting asks end now, so their cancelled replies are owed.
+      flow.sessionGone(sessionId);
       const handle = handleOf(sessionId);
       registry.revoke(sessionId);
-      closeConnectionsOf(sessionId);
+      drainConnectionsOf(sessionId);
       screens.dispose(sessionId);
       notifier?.forget(sessionId);
       deps.writer.forget(sessionId);
@@ -1261,14 +1403,23 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       scheduleBroadcast();
     },
 
+    onWindowReset(windowId) {
+      flow.windowReset(windowId);
+    },
+
+    onSessionMoved(sessionId) {
+      flow.sessionMoved(sessionId);
+    },
+
     refresh() {
       syncToolLists();
+      flow.recheck();
       scheduleBroadcast();
     },
 
     uiState,
 
-    async handleRenderer(m, reply) {
+    async handleRenderer(m, reply, senderId) {
       switch (m.type) {
         case 'mcp:compose': {
           const result = await tools.sendMessage(
@@ -1357,6 +1508,33 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           scheduleBroadcast();
           return;
         }
+        case 'mcp:setToolPolicy': {
+          const refuse = (error: 'unknown-session' | 'unknown-tool' | 'invalid-value') =>
+            reply({ type: 'mcp:toolPolicyResult', requestId: m.requestId, ok: false, error });
+          if (!deps.mgr.get(m.sessionId)) return refuse('unknown-session');
+          if (!isToolName(m.tool)) return refuse('unknown-tool');
+          // The renderer is never load-bearing: the patch is re-checked here.
+          const patch = coercePolicyPatch(m.tool, m.patch);
+          if (!patch) return refuse('invalid-value');
+          deps.mgr.setMcpToolPolicy(m.sessionId, m.tool, patch);
+          reply({ type: 'mcp:toolPolicyResult', requestId: m.requestId, ok: true });
+          syncToolLists();
+          flow.recheck();
+          scheduleBroadcast();
+          return;
+        }
+        case 'mcp:askAnswer': {
+          const answer: unknown = m.answer;
+          if (
+            typeof m.askId !== 'string' ||
+            (answer !== 'approve' && answer !== 'deny' && answer !== 'always')
+          )
+            return;
+          // Only the window holding the card may answer it (spec §2.4, plan r1 #3).
+          if (!flow.answer(m.askId, senderId, answer))
+            deps.log.info('conduit-mcp', 'ask answer ignored', { askId: m.askId, senderId });
+          return;
+        }
         case 'mcp:pause':
           deps.mgr.setMcp(m.sessionId, { mcpNoticesPaused: m.paused });
           scheduleBroadcast();
@@ -1381,6 +1559,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       if (retentionTimer) clearInterval(retentionTimer);
       if (broadcastTimer) clearTimeout(broadcastTimer);
       broadcastTimer = undefined;
+      flow.dispose();
       for (const c of conns.values()) c.close();
       await endpoint?.close();
     },

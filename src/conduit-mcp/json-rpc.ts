@@ -21,12 +21,18 @@ export interface ToolSchema {
   description: string;
   inputSchema: Record<string, unknown>;
 }
+export interface ToolCallContext {
+  requestId: JsonRpcId | null;
+}
 export interface McpServerCoreDeps {
   serverInfo: { name: 'conduit'; version: string };
   instructions: string;
   /** [] for a connection without a valid token. */
   tools(): readonly ToolSchema[];
-  call(name: string, args: unknown): Promise<ToolCallResult>;
+  /** null: the client cancelled this request; no reply is sent (MCP cancellation). */
+  call(name: string, args: unknown, ctx: ToolCallContext): Promise<ToolCallResult | null>;
+  /** notifications/cancelled with a string or number requestId; anything else is ignored. */
+  cancelled(requestId: JsonRpcId): void;
 }
 export interface McpServerCore {
   /** undefined = no reply (a notification). */
@@ -81,7 +87,13 @@ export function createMcpServerCore(deps: McpServerCoreDeps): McpServerCore {
     const id = replyId(msg);
     const method = msg.method;
     if (typeof method !== 'string') return fail(id, INVALID_REQUEST, 'missing method');
-    if (!('id' in msg)) return undefined;
+    if (!('id' in msg)) {
+      if (method === 'notifications/cancelled' && isRecord(msg.params)) {
+        const target = msg.params.requestId;
+        if (typeof target === 'string' || typeof target === 'number') deps.cancelled(target);
+      }
+      return undefined;
+    }
     const params = isRecord(msg.params) ? msg.params : {};
     switch (method) {
       case 'initialize':
@@ -98,7 +110,8 @@ export function createMcpServerCore(deps: McpServerCoreDeps): McpServerCore {
       case 'tools/call': {
         const name = params.name;
         if (typeof name !== 'string' || !KNOWN_TOOLS.has(name)) return ok(id, unknownTool(name));
-        return ok(id, await deps.call(name, params.arguments ?? {}));
+        const result = await deps.call(name, params.arguments ?? {}, { requestId: id });
+        return result === null ? undefined : ok(id, result);
       }
       default:
         return fail(id, METHOD_NOT_FOUND, `method not found: ${method}`);

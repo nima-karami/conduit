@@ -56,8 +56,8 @@ export interface PolicyLayers {
 }
 export interface ResolvedPolicy {
   policy: ToolPolicy;
-  /** One entry per applicable field. */
-  source: Partial<Record<PolicyField, PolicySource>>;
+  /** One entry per applicable field; access always applies. */
+  source: Partial<Record<PolicyField, PolicySource>> & { access: PolicySource };
 }
 /** Per field; 'inherit' deletes that field from the layer. */
 export interface ToolPolicyPatch {
@@ -246,20 +246,22 @@ export function resolvePolicy(tool: ToolName, layers: PolicyLayers): ResolvedPol
     ['global', layers.global[tool]],
   ];
   const fields = TOOL_SPECS[tool].fields;
-  const source: Partial<Record<PolicyField, PolicySource>> = {};
-  const field = <F extends PolicyField>(f: F): ToolPolicy[F] => {
+  const pick = <F extends PolicyField>(f: F): [ToolPolicy[F], PolicySource] => {
     for (const [src, entry] of order) {
       const v = isRecord(entry) ? entry[f] : undefined;
-      if (isValidField(tool, f, v)) {
-        source[f] = src;
-        return v;
-      }
+      if (isValidField(tool, f, v)) return [v, src];
     }
     // The global layer is complete once coerced; a corrupt one still resolves to the default.
-    source[f] = 'global';
-    return TOOL_SPECS[tool].defaults[f];
+    return [TOOL_SPECS[tool].defaults[f], 'global'];
   };
-  const policy: ToolPolicy = { access: field('access') };
+  const [access, accessSource] = pick('access');
+  const policy: ToolPolicy = { access };
+  const source: ResolvedPolicy['source'] = { access: accessSource };
+  const field = <F extends PolicyField>(f: F): ToolPolicy[F] => {
+    const [v, src] = pick(f);
+    source[f] = src;
+    return v;
+  };
   if (fields.includes('when')) policy.when = field('when');
   if (fields.includes('reach')) policy.reach = field('reach');
   if (fields.includes('move')) policy.move = field('move');
