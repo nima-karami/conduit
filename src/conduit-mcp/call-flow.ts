@@ -133,13 +133,25 @@ const isStrings = (v: unknown): v is string[] =>
 const approvalTimeout = () => toolError('approval_timeout', 'the human did not answer in time');
 const SKIP_REASONS: ReadonlySet<unknown> = new Set(['unsaved', 'not_open']);
 
+/** A renderer failure message reaches an agent's terminal: no escape sequences or C0 controls
+ *  (tab and newline stay readable). */
+function withoutControls(s: string): string {
+  let out = '';
+  for (const ch of s) {
+    const c = ch.codePointAt(0) ?? 0;
+    if ((c < 0x20 && c !== 0x09 && c !== 0x0a) || c === 0x7f) continue;
+    out += ch;
+  }
+  return out;
+}
+
 /** The renderer is never load-bearing: its answer is rebuilt field by field for the wait's kind. */
 function parseUiResult(kind: McpUiAction['kind'], v: unknown): McpUiResult | null {
   if (!isRecord(v)) return null;
   if (v.kind === 'unknownSession') return { kind: 'unknownSession' };
   if (v.kind === 'failed')
     return typeof v.message === 'string'
-      ? { kind: 'failed', message: v.message.slice(0, MAX_UI_FAILURE_CHARS) }
+      ? { kind: 'failed', message: withoutControls(v.message).slice(0, MAX_UI_FAILURE_CHARS) }
       : null;
   switch (kind) {
     case 'closeSession':

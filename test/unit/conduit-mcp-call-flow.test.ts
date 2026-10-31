@@ -653,6 +653,12 @@ describe('mcp:ui waits (spec 2026-10-30-conduit-mcp-app-control §2.3)', () => {
         { kind: 'failed', message: 'x'.repeat(MAX_UI_FAILURE_CHARS + 5) },
         { kind: 'failed', message: 'x'.repeat(MAX_UI_FAILURE_CHARS) },
       ],
+      // Control characters never reach the agent; tab and newline stay.
+      [
+        OPEN,
+        { kind: 'failed', message: 'a\x1b[2Jb\x00c\x7fd\te\nf\x08' },
+        { kind: 'failed', message: 'a[2Jbcd\te\nf' },
+      ],
     ];
     for (const [action, raw, want] of good) {
       const t = setup();
