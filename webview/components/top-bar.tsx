@@ -1,6 +1,11 @@
 import type { JSX as ReactJSX } from 'react';
 import { useEffect, useState } from 'react';
-import { attentionChipLabel, attentionEntries, type SnoozeMap } from '../../src/attention';
+import {
+  type AttentionAsk,
+  attentionChipLabel,
+  attentionEntries,
+  type SnoozeMap,
+} from '../../src/attention';
 import type { McpAttentionItem } from '../../src/conduit-mcp/types';
 import type { Session } from '../../src/types';
 import { win } from '../bridge';
@@ -27,6 +32,7 @@ const VIEW_ICON: Record<CenterView, ReactJSX.Element> = {
 
 const NO_ITEMS: readonly McpAttentionItem[] = [];
 const NO_SNOOZE: SnoozeMap = new Map();
+const NO_ASKS: readonly AttentionAsk[] = [];
 
 export function TopBar({
   isDev,
@@ -42,6 +48,8 @@ export function TopBar({
   attentionItems = NO_ITEMS,
   snoozed = NO_SNOOZE,
   onOpenThread,
+  asks = NO_ASKS,
+  onFocusAsk,
   onContextMenu,
 }: {
   isDev?: boolean;
@@ -63,6 +71,10 @@ export function TopBar({
   snoozed?: SnoozeMap;
   /** The chip's message entry opens its thread. */
   onOpenThread?: (threadId: string) => void;
+  /** This window's waiting asks; they lead the count (tool-policy spec §2.4). */
+  asks?: readonly AttentionAsk[];
+  /** The chip's ask entry focuses the approval card. */
+  onFocusAsk?: () => void;
   // Right-click the top bar to open the panel show/hide menu.
   onContextMenu?: (e: React.MouseEvent) => void;
 }) {
@@ -74,18 +86,24 @@ export function TopBar({
     return win.onMaximizeChange(setMaxed);
   }, []);
 
-  const entries = attentionEntries(sessions, attentionItems, snoozed, Date.now());
+  const entries = attentionEntries(sessions, attentionItems, snoozed, Date.now(), asks);
   const chipLabel = attentionChipLabel(entries.length);
   const first = entries[0];
   const reason =
-    first?.reason && first.handle ? MCP_STR.attention[first.reason](first.handle) : null;
+    first?.kind === 'ask' && first.handle
+      ? MCP_STR.ask.chipReason(first.handle)
+      : first?.reason && first.handle
+        ? MCP_STR.attention[first.reason](first.handle)
+        : null;
   const firstName = first?.sessionId
     ? sessions.find((s) => s.id === first.sessionId)?.name
     : undefined;
   const chipTitle = reason ?? (firstName ? `Go to ${firstName}` : undefined);
   const onChip = () => {
     if (!first) return;
-    if (first.kind === 'message' && first.threadId && onOpenThread) onOpenThread(first.threadId);
+    if (first.kind === 'ask' && onFocusAsk) onFocusAsk();
+    else if (first.kind === 'message' && first.threadId && onOpenThread)
+      onOpenThread(first.threadId);
     else if (first.sessionId) onFocusAttention(first.sessionId);
   };
 

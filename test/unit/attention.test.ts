@@ -172,3 +172,29 @@ describe('attentionEntries (conduit-mcp §8 chip)', () => {
     );
   });
 });
+
+describe('attentionEntries with asks', () => {
+  const NOW = 1_000_000;
+  const ask = { askId: 'a1', callerSessionId: 's1', callerHandle: 'fake-1' };
+
+  it('asks come first and are not snoozable', () => {
+    const sessions = [s('s1', { needsAttention: true }), s('s2', { needsAttention: true })];
+    const snoozed = new Map([['s1', NOW + SNOOZE_MS]]);
+    const entries = attentionEntries(sessions, [], snoozed, NOW, [ask]);
+    expect(entries.map((e) => e.key)).toEqual(['ask:a1', 'session:s2']);
+    expect(entries[0]).toEqual({
+      key: 'ask:a1',
+      kind: 'ask',
+      sessionId: 's1',
+      threadId: null,
+      reason: null,
+      handle: 'fake-1',
+    });
+  });
+
+  it('chip label counts asks', () => {
+    const sessions = [s('s2', { needsAttention: true })];
+    const entries = attentionEntries(sessions, [], new Map(), NOW, [ask, { ...ask, askId: 'a2' }]);
+    expect(attentionChipLabel(entries.length)).toBe('3 need you');
+  });
+});

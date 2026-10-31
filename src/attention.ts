@@ -82,10 +82,17 @@ export function nextSnoozeExpiry(snoozed: SnoozeMap): number | undefined {
   return earliest;
 }
 
-/** One reason the topbar chip counts: a session waiting on you, or a message item. */
+/** A tool call waiting on the approval card (spec 2026-10-30-conduit-mcp-tool-policy §2.4). */
+export interface AttentionAsk {
+  askId: string;
+  callerSessionId: string;
+  callerHandle: Handle;
+}
+
+/** One reason the topbar chip counts: a waiting ask, a session waiting on you, or a message item. */
 export interface AttentionEntry {
   key: string;
-  kind: 'session' | 'message';
+  kind: 'session' | 'message' | 'ask';
   sessionId: string | null;
   threadId: string | null;
   reason: McpAttentionReason | null;
@@ -93,17 +100,27 @@ export interface AttentionEntry {
 }
 
 /**
- * The chip's entries: sessions that need you first (rail order), then the host's message items
- * by time (docs/specs/2026-10-25-conduit-mcp-server.md §8 Attention chip). An item tied to a
- * snoozed session is hidden with it, so Snooze silences the whole session. Pure.
+ * The chip's entries: waiting asks first (oldest first), then sessions that need you (rail order),
+ * then the host's message items by time (docs/specs/2026-10-25-conduit-mcp-server.md §8 Attention
+ * chip). An item tied to a snoozed session is hidden with it, so Snooze silences the whole
+ * session; an ask is not, because its call times out unanswered. Pure.
  */
 export function attentionEntries<T extends SessionStateFields & { id: string }>(
   sessions: readonly T[],
   items: readonly McpAttentionItem[],
   snoozed: SnoozeMap,
   now: number,
+  asks: readonly AttentionAsk[] = [],
 ): AttentionEntry[] {
   const live = pruneSnoozed(snoozed, now);
+  const fromAsks: AttentionEntry[] = asks.map((a) => ({
+    key: `ask:${a.askId}`,
+    kind: 'ask',
+    sessionId: a.callerSessionId,
+    threadId: null,
+    reason: null,
+    handle: a.callerHandle,
+  }));
   const fromSessions: AttentionEntry[] = attentionSessions(applySnooze(sessions, live, now)).map(
     (s) => ({
       key: `session:${s.id}`,
@@ -125,5 +142,5 @@ export function attentionEntries<T extends SessionStateFields & { id: string }>(
       reason: i.reason,
       handle: i.handle,
     }));
-  return [...fromSessions, ...fromItems];
+  return [...fromAsks, ...fromSessions, ...fromItems];
 }
