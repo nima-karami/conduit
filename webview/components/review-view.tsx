@@ -1866,10 +1866,6 @@ export function ReviewView({
     ],
   );
 
-  useEffect(() => {
-    scrollerRef.current?.focus({ preventScroll: true });
-  }, []);
-
   const progress = computeReviewProgress(files, reviewed);
 
   // Nothing to accept or discard in a commit or a comparison — the action bar's overflow and
@@ -2207,8 +2203,9 @@ export function ReviewView({
       <div
         ref={scrollerFocusRef}
         className="review__scroll"
-        // The keymap is scoped to focus inside this element, and opening Review from a tab click
-        // leaves focus on the tab — so the scroller is focusable and claims it once (Lane B plan, assumption 11).
+        // The keymap is scoped to focus inside this element, so it is focusable; it is the focus
+        // target a user's open or tab activation lands on, and a tool-driven open never focuses it
+        // (Lane B plan, assumption 11; spec 2026-10-30-conduit-mcp-app-control A4).
         tabIndex={-1}
         onKeyDown={onKeyDown}
         onScroll={() => {

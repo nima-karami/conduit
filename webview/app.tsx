@@ -149,6 +149,7 @@ import {
   layoutOf,
   openTargetGroup,
   resolveActivateGroup,
+  showsDoc,
   splitBehavior,
   tabGroupsOf,
   tabPreview,
@@ -935,26 +936,39 @@ export function App() {
   // where an extra parameter would be handed a MouseEvent.
   // Session-explicit: an MCP open names its caller, which may not be the shown session; only an
   // open into the shown session navigates or changes the center view.
+  // A Review already on screen doesn't remount when reopened, so it only takes focus when newly
+  // shown — what its own mount focus once did.
+  const reviewShownIn = useCallback(
+    (sessionId: string, g: GroupIndex) =>
+      showsDoc(
+        docStateRef.current,
+        centerViewRef.current === 'editor' ? (activeIdRef.current ?? null) : null,
+        sessionId,
+        g,
+        REVIEW_DOC_ID,
+      ),
+    [],
+  );
+  // `byUser`: a user's open lands keyboard focus in Review, as its mount did; a tool-driven one
+  // never moves DOM focus (spec 2026-10-30-conduit-mcp-app-control A4).
   const openReviewIn = useCallback(
-    (sessionId: string, source: ReviewSource, group?: GroupIndex) => {
+    (sessionId: string, source: ReviewSource, group?: GroupIndex, byUser = false) => {
       const shown = activeIdRef.current ?? '';
+      const g = group ?? openTargetGroup(docStateRef.current, sessionId);
+      const wasShown = reviewShownIn(sessionId, g);
       if (sessionId === shown) {
         recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
         setCenterView('editor');
       }
-      dispatchDocs({
-        type: 'openReview',
-        sessionId,
-        source,
-        group: group ?? openTargetGroup(docStateRef.current, sessionId),
-        shown,
-      });
+      dispatchDocs({ type: 'openReview', sessionId, source, group: g, shown });
+      // After recordNav, which cancels any focus request still waiting to mount.
+      if (byUser && !wasShown) focusView(sessionId, g, REVIEW_DOC_ID);
     },
-    [recordNav],
+    [recordNav, reviewShownIn],
   );
   const openReviewScoped = useCallback(
     (scope: ReviewScope, repoRoot?: string, group?: GroupIndex) =>
-      openReviewIn(activeIdRef.current ?? '', workingSource(scope, repoRoot), group),
+      openReviewIn(activeIdRef.current ?? '', workingSource(scope, repoRoot), group, true),
     [openReviewIn],
   );
   const openReviewTab = useCallback(() => openReviewScoped('all'), [openReviewScoped]);
@@ -979,6 +993,7 @@ export function App() {
       // a detected one: with none, the unstamped source already reads the session's git root.
       const owner = sessionsRef.current.find((s) => s.id === sessionId);
       const root = repoRoot ?? (owner?.repos?.length ? gitRootForSession(owner) : undefined);
+      const wasShown = reviewShownIn(sessionId, g);
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
       setCenterView('editor');
       if (targetSessionId && targetSessionId !== activeIdRef.current) {
@@ -996,8 +1011,10 @@ export function App() {
         },
         group: g,
       });
+      // Every caller is a user's click (terminal commit link, History, blame, the breadcrumb).
+      if (!wasShown) focusView(sessionId, g, REVIEW_DOC_ID);
     },
-    [recordNav],
+    [recordNav, reviewShownIn],
   );
 
   // Retarget the open Review tab from its breadcrumb selector (working ⇄ a commit ⇄ a compare).
@@ -1006,7 +1023,7 @@ export function App() {
       if (s.kind === 'working') return openReviewScoped(s.scope ?? 'all', s.repoRoot);
       if (s.kind === 'commit') return openReviewForCommit(s.sha, undefined, s.subject, s.repoRoot);
       // range: a two-ref comparison rides the singleton review doc like any other source.
-      openReviewIn(activeIdRef.current ?? '', s);
+      openReviewIn(activeIdRef.current ?? '', s, undefined, true);
     },
     [openReviewScoped, openReviewForCommit, openReviewIn],
   );

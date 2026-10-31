@@ -10,6 +10,7 @@ import {
   openTargetGroup,
   previewIdsOf,
   resolveActivateGroup,
+  showsDoc,
   splitBehavior,
   tabGroupsOf,
   tabPreview,
@@ -912,5 +913,21 @@ describe('group moveFiles', () => {
     expect(groupActive(r, 'S1', 1)).toBe('file:/w/b.ts');
     expect(groupActive(r, 'S1', 2)).toBe('file:/w/z.ts');
     expect(r.activeId).toBe('file:/w/z.ts');
+  });
+});
+
+// A view mounted in a group doesn't remount when its doc is opened again, so an open that should
+// land keyboard focus in it must know whether it was already on screen (Review, spec B A4).
+describe('showsDoc', () => {
+  const review = { type: 'openReview', sessionId: 'S1', source: { kind: 'working' } } as const;
+  it('is true only for the shown session, its group, and the doc that group shows', () => {
+    let s = docsReducer(initialDocs, review);
+    s = docsReducer(s, { type: 'open', kind: 'file', path: '/w/b.ts', sessionId: 'S2' });
+    expect(showsDoc(s, 'S1', 'S1', 1, 'review:@review')).toBe(true);
+    expect(showsDoc(s, null, 'S1', 1, 'review:@review')).toBe(false);
+    expect(showsDoc(s, 'S2', 'S1', 1, 'review:@review')).toBe(false);
+    expect(showsDoc(s, 'S1', 'S1', 2, 'review:@review')).toBe(false);
+    s = docsReducer(s, { type: 'open', kind: 'file', path: '/w/a.ts', sessionId: 'S1' });
+    expect(showsDoc(s, 'S1', 'S1', 1, 'review:@review')).toBe(false);
   });
 });

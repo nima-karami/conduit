@@ -43,6 +43,18 @@ export function groupActive(state: DocsState, sessionId: string, group: GroupInd
   return groupOf(state, sessionId, group)?.active ?? null;
 }
 
+/** Group `group` of `sessionId` shows doc `id` on screen; `shown` is the session the editor
+ *  shows, or null while it shows none. A view mounted there doesn't remount when reopened. */
+export function showsDoc(
+  state: DocsState,
+  shown: string | null,
+  sessionId: string,
+  group: GroupIndex,
+  id: string,
+): boolean {
+  return shown !== null && sessionId === shown && groupActive(state, sessionId, group) === id;
+}
+
 export function tabPreview(
   state: DocsState,
   sessionId: string,
