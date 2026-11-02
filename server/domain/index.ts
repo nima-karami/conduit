@@ -56,7 +56,7 @@ import { createCwdReportGate } from '../../src/cwd-report-gate';
 import { cwdReportingAugmentation } from '../../src/cwd-reporting';
 import { folderKey } from '../../src/folder-key';
 import { probeFolders } from '../../src/folder-probe';
-import { type FolderProbeDeps, probeFolder } from '../../src/folder-validation';
+import { type DroppedRoot, type FolderProbeDeps, probeFolder } from '../../src/folder-validation';
 import { GIT_TIMEOUT, runGit } from '../../src/git-exec';
 import { getGitInfo } from '../../src/git-info';
 import { lastNonEmptyLine } from '../../src/last-line';
@@ -950,7 +950,7 @@ export function createDomain(deps: DomainDeps): Domain {
 
   async function create(
     i: CreateInput,
-  ): Promise<{ sessionId: string; droppedRoots: string[] } | { error: string }> {
+  ): Promise<{ sessionId: string; droppedRoots: DroppedRoot[] } | { error: string }> {
     const def = effectiveDef({ agentId: i.agentId, command: i.command }, registry);
     if (!def) return { error: 'unknown_agent' };
     const { home, initial, projectId } = await prepareOpen(i.home, i.roots, i.projectId);
@@ -982,7 +982,7 @@ export function createDomain(deps: DomainDeps): Domain {
       focus: i.opener.focus,
     });
     void folders.check(id);
-    return { sessionId: id, droppedRoots: initial.dropped.map((d) => d.path) };
+    return { sessionId: id, droppedRoots: initial.dropped };
   }
 
   async function createFromApp(
@@ -1176,7 +1176,7 @@ export function createDomain(deps: DomainDeps): Domain {
         mgr.setIconOverride(id, typeof m.icon === 'string' ? m.icon : null);
         return { ok: true };
       case 'setHome':
-        return op(await sessionOps.setHome(id, m.path));
+        return op(await sessionOps.setHome(id, m.path, m.keepOldHome !== false));
       case 'addRoot':
         return op(await sessionOps.addRoot(id, m.path));
       case 'removeRoot':

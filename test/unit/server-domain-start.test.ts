@@ -575,8 +575,8 @@ describe('server domain: exit codes and dropped roots', () => {
       agentId: 'sh',
       home: h.home,
       roots: [h.home, dir, dir, gone],
-    })) as { sessionId: string; droppedRoots?: string[] };
-    expect(r.droppedRoots).toEqual([h.home, dir]);
+    })) as { sessionId: string; droppedRoots?: { path: string }[] };
+    expect(r.droppedRoots?.map((d) => d.path)).toEqual([h.home, dir]);
     expect(h.domain.sessions.get(r.sessionId)).toMatchObject({
       roots: [dir, gone],
       missingRoots: [gone],

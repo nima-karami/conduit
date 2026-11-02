@@ -14,6 +14,7 @@ import type {
   McpInstallStatus,
 } from '../conduit-mcp/install-types';
 import type { McpUiState } from '../conduit-mcp/ui-types';
+import type { DroppedRoot } from '../folder-validation';
 import type { LauncherDTO } from '../launchers';
 import type { HostToWebview, TermGeometry, WebviewToHost } from '../protocol';
 import type { AppSettings } from '../settings';
@@ -192,7 +193,8 @@ export type ServerLogging = Pick<AppSettings, 'logging' | 'logLevel'>;
 export type SessionMutation =
   | { op: 'rename'; name: string }
   | { op: 'setIconOverride'; icon: string | null }
-  | { op: 'setHome'; path: string }
+  /** `keepOldHome: false` is Locate-home: the missing old home is replaced, not kept as a root. */
+  | { op: 'setHome'; path: string; keepOldHome?: boolean }
   | { op: 'addRoot'; path: string }
   | { op: 'removeRoot'; path: string }
   | { op: 'replaceRoot'; from: string; to: string }
@@ -379,8 +381,8 @@ export interface ServerMethods {
       placement?: { nearSessionId?: string; focus: boolean };
       cardId?: string;
     };
-    /** `droppedRoots`: requested roots that were missing or duplicates (today's openRepo:result toast). */
-    result: { sessionId: string; droppedRoots?: string[] };
+    /** Requested roots that were dropped, with why (today's openRepo:result toast). */
+    result: { sessionId: string; droppedRoots?: DroppedRoot[] };
   };
   /**
    * Spawns if not live; concurrent calls for one session share one spawn (F2). Resolves on hc's
