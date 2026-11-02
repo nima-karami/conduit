@@ -14,7 +14,15 @@ import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installGitProbe, readGitProbe, resetGitProbe } from './git-probe.mjs';
-import { assert, closeApp, openSession, removeDir, runScenario, tapBridge } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  openSession,
+  removeDir,
+  runScenario,
+  stopServer,
+  tapBridge,
+} from './harness.mjs';
 
 /** Long enough for the watcher, the renderer's incremental-index debounce and the host's build. */
 const RELIST_BUDGET_MS = 15000;
@@ -164,6 +172,8 @@ runScenario('nonrepo-index', async ({ app, page, log }) => {
     );
   } finally {
     await closeApp(app, page);
+    // A quit leaves the sessions' shells running in hc (F4), their cwd pinning the fixture.
+    await stopServer(app);
     await removeDir(root);
   }
 });

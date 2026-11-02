@@ -89,15 +89,22 @@ runScenario('os-file-open', async ({ app, page, log }) => {
   const hookPresent = await app.evaluate(() => !!global.__osOpenColdHook);
   assert(hookPresent, 'expected the CONDUIT_E2E cold buffer/flush hook to be installed');
 
-  const buffered = await app.evaluate(
+  // The file has no session yet, so its doc message waits for the server's create: poll for it.
+  const depthBefore = await app.evaluate(
     (electron, { exe, p }) => {
       global.__osOpenColdHook.setRendererReady(false);
-      const depthBefore = global.__osOpenColdHook.pendingCount();
+      const depth = global.__osOpenColdHook.pendingCount();
       electron.app.emit('second-instance', null, [exe, p]);
-      return { depthBefore, depthAfter: global.__osOpenColdHook.pendingCount() };
+      return depth;
     },
     { exe: exePath, p: coldFile },
   );
+  const depthOf = () => app.evaluate(() => global.__osOpenColdHook.pendingCount());
+  const deadline = Date.now() + 20000;
+  while ((await depthOf()) === depthBefore && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const buffered = { depthBefore, depthAfter: await depthOf() };
   log('cold open buffered', JSON.stringify(buffered));
   assert(
     buffered.depthAfter === buffered.depthBefore + 1,

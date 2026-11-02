@@ -22,6 +22,7 @@ import {
   openSession,
   removeDir,
   runScenario,
+  stopServer,
 } from './harness.mjs';
 
 const SEEN_MS = 3000;
@@ -153,6 +154,8 @@ runScenario('worktree-commit-seen', async ({ app, page, log }) => {
     log(`branch switch seen after ${Date.now() - switchedAt} ms, no UI action`);
   } finally {
     await closeApp(app, page);
+    // A quit leaves the sessions' shells running in hc (F4), their cwd pinning the fixture.
+    await stopServer(app);
     await removeDir(root);
   }
 });

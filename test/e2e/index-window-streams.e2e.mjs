@@ -23,6 +23,7 @@ import {
   openSession,
   removeDir,
   runScenario,
+  stopServer,
   tapBridge,
 } from './harness.mjs';
 
@@ -213,6 +214,8 @@ runScenario('index-window-streams', async ({ app, page, log }) => {
     await release(app, 'index');
     await release(app, 'closure');
     await closeApp(app, page);
+    // A quit leaves the sessions' shells running in hc (F4), their cwd pinning the fixture.
+    await stopServer(app);
     await removeDir(root);
   }
 });

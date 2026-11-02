@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, removeDir, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, removeDir, runScenario, stopServer } from './harness.mjs';
 
 const NEEDLE = 'NEEDLE_42';
 const slash = (p) => p.replace(/\\/g, '/');
@@ -216,6 +216,8 @@ runScenario('search-scope', async ({ app, page, log }) => {
     assert(ariaOk, 'the chip is a menu button (aria-haspopup="menu")');
   } finally {
     await closeApp(app, page);
+    // A quit leaves the sessions' shells running in hc (F4), their cwd pinning the fixture.
+    await stopServer(app);
     await removeDir(root);
   }
 });

@@ -132,6 +132,25 @@ describe('server domain: persisted formats', () => {
     expect(read(h.userData, 'launchers.json')).toBe(newer);
   });
 
+  it("a person's sessions.create pushes the bumped launcher usage; an MCP open pushes none", async () => {
+    const h = harness();
+    h.events.length = 0;
+    await h.call('sessions.create', { agentId: 'sh', home: h.home });
+    const pushed = h.events
+      .filter((e) => e.type === 'data.changed')
+      .map((e) => e.data as { store: string; value: { id: string; uses: number }[] })
+      .filter((d) => d.store === 'launchers');
+    expect(pushed.at(-1)?.value.find((l) => l.id === 'sh')?.uses).toBe(1);
+
+    h.events.length = 0;
+    await h.call('sessions.create', {
+      agentId: 'sh',
+      home: h.home,
+      openedBy: { handle: 'fake-1', sessionId: 'opener' },
+    });
+    expect(h.events.filter((e) => e.type === 'data.changed')).toEqual([]);
+  });
+
   it('restoreSessions:false keeps live and unconfirmed sessions with their lastGeneration, drops the rest', async () => {
     const a = harness({
       files: {

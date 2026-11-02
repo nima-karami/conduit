@@ -12,12 +12,13 @@ export interface RuntimeLayout {
 }
 
 /**
- * The first `node` on the app's PATH, as an absolute path: a bare name would be resolved by hc,
- * whose spelling (`node.EXE`) the server then writes into every CLI's MCP entry.
+ * The first `name` on the app's PATH, as an absolute path. A bare node would be resolved by hc,
+ * whose spelling (`node.EXE`) the server then writes into every CLI's MCP entry; a bare hc is
+ * resolved inside an hc terminal, whose PATH hc rebuilds rather than taking the app's.
  */
-function nodeOnPath(env: NodeJS.ProcessEnv): string | undefined {
+function onPath(env: NodeJS.ProcessEnv, name: 'node' | 'hc'): string | undefined {
   const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH');
-  const exe = process.platform === 'win32' ? 'node.exe' : 'node';
+  const exe = process.platform === 'win32' ? `${name}.exe` : name;
   return (key ? (env[key] ?? '') : '')
     .split(delimiter)
     .filter(Boolean)
@@ -51,9 +52,9 @@ export function runtimeLayout(i: {
     };
   }
   return {
-    nodeExe: i.env.CONDUIT_NODE_BINARY ?? nodeOnPath(i.env) ?? 'node',
+    nodeExe: i.env.CONDUIT_NODE_BINARY ?? onPath(i.env, 'node') ?? 'node',
     superviseJs: join(i.appPath, 'out', 'server', 'supervise.js'),
-    hcExe: i.env.CONDUIT_HC_BINARY ?? 'hc',
+    hcExe: i.env.CONDUIT_HC_BINARY ?? onPath(i.env, 'hc') ?? 'hc',
     hcVersion,
     coreCwd,
   };

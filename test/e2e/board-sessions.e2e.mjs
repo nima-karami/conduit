@@ -23,6 +23,7 @@ import {
   openSession,
   removeDir,
   runScenario,
+  stopServer,
   tapBridge,
 } from './harness.mjs';
 
@@ -375,8 +376,9 @@ runScenario('board-sessions', async ({ app, page, log }) => {
     log('scenario 5: mouse and synthesized drags from the pill move the card; ticket kept ✓');
     passed = true;
   } finally {
-    // The sessions' shells run with H as their cwd, which pins it on Windows until the app is gone.
     await closeApp(app, page);
+    // A quit leaves the sessions' shells running in hc (F4), their cwd pinning the fixture.
+    await stopServer(app);
     for (const dir of [H, R]) {
       // On a failure path, a leftover temp dir must not mask the assertion that failed.
       await removeDir(dir).catch((e) => {

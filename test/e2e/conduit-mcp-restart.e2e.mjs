@@ -85,7 +85,8 @@ await runScenario(
     saved.sessions = [byId.get(a.sessionId), byId.get(b.sessionId)];
     writeFileSync(sessionsPath, JSON.stringify(saved));
 
-    const second = await launchApp({ userDataDir });
+    // No folder arg: its session would land after the restore and take the startup selection.
+    const second = await launchApp({ userDataDir, openFolder: false });
     try {
       const p2 = second.page;
       await tapMcp(p2);

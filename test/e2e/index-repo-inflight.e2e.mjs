@@ -17,7 +17,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, removeDir, runScenario, tapBridge } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  openSession,
+  removeDir,
+  runScenario,
+  stopServer,
+  tapBridge,
+} from './harness.mjs';
 
 const BUDGET_MS = 30000;
 
@@ -114,6 +122,8 @@ runScenario('index-repo-inflight', async ({ app, page, log }) => {
   } finally {
     for (const at of ['scan', 'index', 'topup']) await release(app, at);
     await closeApp(app, page);
+    // A quit leaves the sessions' shells running in hc (F4), their cwd pinning the fixture.
+    await stopServer(app);
     await removeDir(root);
   }
 });

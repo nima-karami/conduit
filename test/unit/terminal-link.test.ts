@@ -87,9 +87,13 @@ const factory = () =>
 const attachChannel = () => attached.at(-1) ?? -1;
 const creditFrames = () =>
   fake.frames.filter((f) => f.kind === FrameKind.Credit && f.channel === attachChannel()).length;
-/** Polls on setImmediate: vi.waitFor advances fake timers, which would end a paint early. */
+/**
+ * Polls on setImmediate: vi.waitFor advances fake timers, which would end a paint early. Bounded
+ * by wall time (Date is not faked), not a turn count: how long a turn takes is the machine's.
+ */
 async function io(check: () => boolean): Promise<void> {
-  for (let i = 0; i < 5_000 && !check(); i++) await new Promise((r) => setImmediate(r));
+  const deadline = Date.now() + 2_000;
+  while (!check() && Date.now() < deadline) await new Promise((r) => setImmediate(r));
   expect(check()).toBe(true);
 }
 const settled = async (p: Promise<unknown>) =>

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, runScenario, stopServer } from './harness.mjs';
 
 runScenario('large-folder-tree', async ({ app, page, log }) => {
   const root = mkdtempSync(join(tmpdir(), 'conduit-large-tree-'));
@@ -58,6 +58,8 @@ runScenario('large-folder-tree', async ({ app, page, log }) => {
     log(`24 nested repos and 24 source files found; largest host timer gap ${pulse.gap}ms`);
   } finally {
     await closeApp(app, page);
+    // A quit leaves the sessions' shells running in hc (F4), their cwd pinning the fixture.
+    await stopServer(app);
     await app.close();
     rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }

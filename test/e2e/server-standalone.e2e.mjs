@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { FAKE_AGENT, sleep, until } from './conduit-mcp-helpers.mjs';
-import { assert, finishScenario, makeLog, phase, REPO } from './harness.mjs';
+import { assert, finishScenario, makeLog, onPath, phase, REPO } from './harness.mjs';
 import { assertOwnSession, hcEnv, stopHc, teardownNames } from './harness-server-teardown.mjs';
 
 // The integration lane's walking skeleton on real hc, with no Electron: the built supervisor runs
@@ -19,7 +19,9 @@ const execFile = promisify(execFileCallback);
 const requireFromRepo = createRequire(join(REPO, 'package.json'));
 const requireFromHere = createRequire(import.meta.url);
 const log = makeLog('server-standalone');
-const HC = process.env.CONDUIT_HC_BINARY || 'hc';
+// Absolute, as the app passes it (runtime-layout.ts): the supervisor's terminal gets the PATH hc
+// rebuilds, not ours, so a bare `--hc hc` would not resolve there.
+const HC = process.env.CONDUIT_HC_BINARY || onPath('hc') || 'hc';
 const HC_VERSION = '0.1.16';
 /** The app's own version: an older one may not restart the server (versionOrder, D26). */
 const APP_VERSION = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version;

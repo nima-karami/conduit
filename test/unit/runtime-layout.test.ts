@@ -91,4 +91,20 @@ describe('runtimeLayout', () => {
     });
     expect(layout.nodeExe).toBe(exe);
   });
+
+  it('unpackaged hc is the first one on PATH, absolute: an hc terminal never sees our PATH', () => {
+    const u = fresh();
+    const bin = join(u, 'bin');
+    mkdirSync(bin);
+    const exe = join(bin, process.platform === 'win32' ? 'hc.exe' : 'hc');
+    writeFileSync(exe, '');
+    const layout = runtimeLayout({
+      packaged: false,
+      userData: u,
+      appVersion: '0.52.0',
+      appPath: join(u, 'repo'),
+      env: { Path: [join(u, 'missing'), bin].join(delimiter) },
+    });
+    expect(layout.hcExe).toBe(exe);
+  });
 });

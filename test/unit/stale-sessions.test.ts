@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { canRelaunch, relaunchableSessionIds, staleSessionIds } from '../../src/stale-sessions';
+import {
+  autoRelaunchTargets,
+  canRelaunch,
+  relaunchableSessionIds,
+  staleSessionIds,
+} from '../../src/stale-sessions';
 import type { Session } from '../../src/types';
 
 function makeSession(id: string, status: Session['status']): Session {
@@ -77,5 +82,19 @@ describe('relaunch gating (mf-live-edits AC-4)', () => {
 
   it(`closing stays allowed: staleSessionIds still lists a can't-start session`, () => {
     expect(staleSessionIds([missing('b', 'stale')])).toEqual(['b']);
+  });
+});
+
+describe('autoRelaunchTargets', () => {
+  const stale = [makeSession('a', 'stale'), makeSession('b', 'running')];
+
+  it('decides nothing before the server sessions have loaded, so the startup pass waits for them', () => {
+    expect(autoRelaunchTargets({ sessionsLoaded: false, sessions: [] }, true)).toBeUndefined();
+    expect(autoRelaunchTargets({ sessionsLoaded: false, sessions: stale }, true)).toBeUndefined();
+  });
+
+  it('once loaded: the relaunchable sessions when the setting is on, none when off', () => {
+    expect(autoRelaunchTargets({ sessionsLoaded: true, sessions: stale }, true)).toEqual(['a']);
+    expect(autoRelaunchTargets({ sessionsLoaded: true, sessions: stale }, false)).toEqual([]);
   });
 });

@@ -102,7 +102,9 @@ export class FakeHc {
 
   async listen(): Promise<number> {
     if (this.server) throw new Error('FakeHc is already listening');
-    const server = createServer((socket) => this.accept(socket));
+    // hc speaks over a pipe or a unix socket, which have no Nagle: over loopback TCP a small frame
+    // can sit out a delayed ACK (~40 ms on Linux), longer than a test's polling budget.
+    const server = createServer({ noDelay: true }, (socket) => this.accept(socket));
     this.server = server;
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => reject(error);
@@ -121,7 +123,7 @@ export class FakeHc {
   /** After close() it still dials the last port, so a client sees a refused connection, like a downed core. */
   connect = (): Socket => {
     if (this.port === undefined) throw new Error('FakeHc has never listened');
-    return openSocket({ host: '127.0.0.1', port: this.port });
+    return openSocket({ host: '127.0.0.1', port: this.port, noDelay: true });
   };
 
   onCall(method: string, handler: CallHandler): void {
