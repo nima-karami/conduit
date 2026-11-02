@@ -1,3 +1,4 @@
+import { judgePersistedVersion } from './contracts/session-identity';
 import type { ReplayRun, TermGeometry } from './protocol';
 
 /**
@@ -209,7 +210,12 @@ function restoreSegments(raw: unknown): ScrollbackRing | null {
   return ring;
 }
 
-export function restoreScrollback(blob: string | undefined): PersistedScrollback | null {
+export function restoreScrollback(
+  blob: string | undefined,
+):
+  | (PersistedScrollback & { kind?: never })
+  | { kind: 'newer'; sessionId?: string; segments?: never }
+  | null {
   if (!blob) return null;
   let parsed: unknown;
   try {
@@ -224,6 +230,11 @@ export function restoreScrollback(blob: string | undefined): PersistedScrollback
     data?: unknown;
     segments?: unknown;
   };
+  if (judgePersistedVersion('scrollback-<id>.json', p.version) === 'newer')
+    return {
+      kind: 'newer',
+      ...(typeof p.sessionId === 'string' ? { sessionId: p.sessionId } : {}),
+    };
   if (typeof p.sessionId !== 'string') return null;
   if (p.version === 1) {
     return typeof p.data === 'string'

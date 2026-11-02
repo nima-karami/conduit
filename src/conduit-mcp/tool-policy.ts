@@ -170,6 +170,12 @@ export const DEFAULT_TOOL_POLICY: Readonly<GlobalPolicy> = Object.freeze(default
 
 const NAMES: ReadonlySet<string> = new Set(TOOL_NAMES);
 const MESSAGING: ReadonlySet<ToolName> = new Set(MESSAGING_TOOL_NAMES);
+const SERVER_ACTIONS: ReadonlySet<ToolName> = new Set([
+  'open_session',
+  'open_terminal',
+  'close_session',
+  'attach_folder',
+]);
 
 export function isToolName(v: unknown): v is ToolName {
   return typeof v === 'string' && NAMES.has(v);
@@ -382,8 +388,10 @@ export function gateToolCall(i: {
   // Deliberately silent on how to enable it (spec 2026-10-27-conduit-mcp-control-tools §3.2).
   if (i.policy.access === 'off') return toolDisabled(i.tool);
   if (isMessagingTool(i.tool)) return null;
-  // Fail closed: without a ready window there is no card to ask on and no visibility to trust.
-  if (!i.ownerReady()) return windowNotReady();
+  // Without a ready window there is no card to ask on and no visibility to trust; an `on` server
+  // action needs neither (architecture D8).
+  if (!i.ownerReady())
+    return i.policy.access === 'on' && SERVER_ACTIONS.has(i.tool) ? null : windowNotReady();
   if (i.policy.when === 'viewing' && !i.onScreen())
     return toolError('caller_not_visible', `${i.tool} only runs while your session is on screen`);
   return null;

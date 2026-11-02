@@ -73,6 +73,7 @@ interface Harness {
   addResult: (id: string, p: string) => SessionOpResult;
   activations: Array<{ id: string; raise: boolean }>;
   gitCalls: string[];
+  closes: string[];
 }
 
 function harness(): Harness {
@@ -90,6 +91,7 @@ function harness(): Harness {
     addResult: () => ({ ok: true }),
     activations: [],
     gitCalls: [],
+    closes: [],
   } as unknown as Harness;
   const git: GitCall = async (cwd, args) => {
     const key = `${cwd}|${args.join(' ')}`;
@@ -105,6 +107,10 @@ function harness(): Harness {
     resolveCommand: () => undefined,
     openSession: async () => {
       throw new Error('not used');
+    },
+    closeSession: async (id) => {
+      h.closes.push(id);
+      return { ok: true };
     },
     openFile: async () => {
       throw new Error('not used');
@@ -310,7 +316,6 @@ describe('window routing', () => {
     (app: AppControlHandlers, ctx: ControlCallContext) => Promise<Result<unknown>>,
     number,
   ][] = [
-    ['close_session', (a, c) => a.prepareCloseSession(caller(), { session: 'codex-2' }, c), 2],
     ['close_files', (a, c) => a.prepareCloseFiles(caller(), { all: true }, c), 1],
     ['open_review', (a, c) => a.prepareOpenReview(caller(), { source: { kind: 'working' } }, c), 1],
     ['open_git_history', (a, c) => a.prepareOpenGitHistory(caller(), {}, c), 1],
@@ -318,7 +323,7 @@ describe('window routing', () => {
     ['focus_session', (a, c) => a.prepareFocusSession(caller(), { session: 'codex-2' }, c), 2],
   ];
 
-  it('every UI-routed tool refuses a null or unready window with window_not_ready', async () => {
+  it('every window-only tool refuses a null or unready window with window_not_ready', async () => {
     for (const [name, prep, w] of cases) {
       for (const breakIt of ['null', 'unready'] as const) {
         const h = harness();
@@ -382,7 +387,8 @@ describe('window routing', () => {
         breakIt(h);
         const r = await (p.run() as Promise<Result<unknown>>);
         // attach_folder is host-side: a gone window doesn't stop it.
-        const expected = tool === 'attach' && want === 'window_not_ready' ? 'ok' : want;
+        const expected =
+          (tool === 'attach' || tool === 'close') && want === 'window_not_ready' ? 'ok' : want;
         expect([label, tool, code(r)]).toEqual([label, tool, expected]);
         if (expected !== 'ok') {
           expect(calls).toEqual([]);
@@ -417,6 +423,17 @@ describe('window routing', () => {
 });
 
 describe('close_session', () => {
+  it('closes through the domain when the owner window is unavailable', async () => {
+    const h = harness();
+    h.windows.set('other-1', null);
+    const app = build(h);
+    const { ctx, calls } = context({ reach: 'any' });
+    const p = ok(await app.prepareCloseSession(caller(), { session: 'codex-2' }, ctx));
+    expect(await p.run()).toStrictEqual({ ok: true, value: { closed: 'other-1' } });
+    expect(h.closes).toEqual(['other-1']);
+    expect(calls).toEqual([]);
+  });
+
   it('to a target in another window routes to that window with routedSessionId = target', async () => {
     const h = harness();
     const app = build(h);

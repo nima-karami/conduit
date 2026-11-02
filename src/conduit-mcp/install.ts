@@ -1,7 +1,15 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { PERMISSION_RULES, withAllowRule } from '../src/conduit-mcp/cli-permissions';
-import { wiresLaunch } from '../src/conduit-mcp/cursor-config';
+import { PERMISSION_RULES, withAllowRule } from './cli-permissions';
+import {
+  backupOnce,
+  type ConfigIo,
+  type ConfigRead,
+  errorCodeOf,
+  readConfigFile,
+  writeConfigAtomic,
+} from './config-file-io';
+import { wiresLaunch } from './cursor-config';
 import {
   type ConduitEntry,
   classifyEntry,
@@ -11,7 +19,18 @@ import {
   entryTargets,
   legacyConduitEntry,
   retargetEntry,
-} from '../src/conduit-mcp/install-entries';
+} from './install-entries';
+import {
+  type ConfigTarget,
+  claudeLocalTarget,
+  foundMarkers,
+  installableInProject,
+  openCodeJsoncPath,
+  permissionTarget,
+  projectTarget,
+  type TargetEnv,
+  userTarget,
+} from './install-targets';
 import {
   AGENT_CLIS,
   type AgentCli,
@@ -25,7 +44,7 @@ import {
   type ProjectInstall,
   type UserInstall,
   type UserInstallState,
-} from '../src/conduit-mcp/install-types';
+} from './install-types';
 import {
   deletePath,
   getPath,
@@ -33,32 +52,13 @@ import {
   parseJsonConfig,
   serializeJsonConfig,
   setPath,
-} from '../src/conduit-mcp/json-config';
+} from './json-config';
 import {
   locateConduitTable,
   readCodexConduit,
   spliceConduitTable,
   spliceRepairedTable,
-} from '../src/conduit-mcp/toml-config';
-import {
-  backupOnce,
-  type ConfigIo,
-  type ConfigRead,
-  errorCodeOf,
-  readConfigFile,
-  writeConfigAtomic,
-} from './config-file-io';
-import {
-  type ConfigTarget,
-  claudeLocalTarget,
-  foundMarkers,
-  installableInProject,
-  openCodeJsoncPath,
-  permissionTarget,
-  projectTarget,
-  type TargetEnv,
-  userTarget,
-} from './mcp-install-targets';
+} from './toml-config';
 
 export interface McpInstallDeps extends TargetEnv {
   execPath: string;

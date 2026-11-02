@@ -1,48 +1,49 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { atomicWriteFileSync } from '../src/atomic-write';
-import { adapterFor, MCP_ADAPTERS, type McpAdapter, notifiable } from '../src/conduit-mcp/adapters';
-import { createAppControlHandlers } from '../src/conduit-mcp/app-control-tools';
-import { snapshotAttachment } from '../src/conduit-mcp/attachments';
-import {
-  type AttentionEvent,
-  reduceAttention,
-  youAttention,
-} from '../src/conduit-mcp/attention-items';
-import { createCallFlow } from '../src/conduit-mcp/call-flow';
+import { atomicWriteFileSync } from '../atomic-write';
+import type { DraftPort, LaunchPort, McpHostDeps } from '../contracts/server-ports';
+import type { LaunchIds } from '../contracts/terminal-runtime';
+import { inputBoxTop } from '../input-box-rows';
+import type { HostPlatform } from '../lsp-binary';
+import { mcpLaunchWiring, mcpServerCommand } from '../mcp-launch';
+import type { HostToWebview, WebviewToHost } from '../protocol';
+import type { SubmitOutcome } from '../pty-writer';
+import { PTY_SETTLE_MS } from '../timed-messages';
+import type { SpawnSpec } from '../types';
+import { adapterFor, MCP_ADAPTERS, type McpAdapter, notifiable } from './adapters';
+import { createAppControlHandlers } from './app-control-tools';
+import { snapshotAttachment } from './attachments';
+import { type AttentionEvent, reduceAttention, youAttention } from './attention-items';
+import { createCallFlow } from './call-flow';
 import {
   bindsTypedLine,
   type ClientKind,
   clientKindOf,
   initializeClientName,
   pickNoticeAdapterId,
-} from '../src/conduit-mcp/client-info';
+} from './client-info';
 import {
   type ControlCallContext,
   type ControlDeps,
   createControlHandlers,
   type PreparedCall,
-} from '../src/conduit-mcp/control-tools';
-import {
-  isCountedInput,
-  nextDraftState,
-  settleDraft,
-  stripTerminalReplies,
-} from '../src/conduit-mcp/draft-input';
+} from './control-tools';
+import { isCountedInput, nextDraftState, settleDraft, stripTerminalReplies } from './draft-input';
 import {
   cliKindOfHandle,
   type HandleCounters,
   parseHandleCounters,
   serializeHandleCounters,
-} from '../src/conduit-mcp/handles';
-import type { AgentCli, UserInstallState } from '../src/conduit-mcp/install-types';
+} from './handles';
+import { readCursorLaunchEntry } from './install';
+import type { AgentCli, UserInstallState } from './install-types';
 import {
   createMcpServerCore,
   TOOLS_LIST_CHANGED,
   type ToolCallContext,
   type ToolCallResult,
-} from '../src/conduit-mcp/json-rpc';
+} from './json-rpc';
 import {
   awaitEnterVerdict,
   ECHO_POLL_MS,
@@ -50,16 +51,14 @@ import {
   evaluateGate,
   type GateVerdict,
   IDLE_QUIET_MS,
-} from '../src/conduit-mcp/notice-gate';
-import { type AttentionRaise, createNotifier, type Notifier } from '../src/conduit-mcp/notifier';
-import { type ScreenSnapshot, screenVerdict } from '../src/conduit-mcp/screen-verdict';
-import { assignHandle, createSessionRegistry } from '../src/conduit-mcp/session-registry';
-import { createMessageStore, type StoreIo } from '../src/conduit-mcp/store';
-import { createFsStoreIo } from '../src/conduit-mcp/store-fs';
+} from './notice-gate';
+import { type AttentionRaise, createNotifier, type Notifier } from './notifier';
+import { type ScreenSnapshot, screenVerdict } from './screen-verdict';
+import { assignHandle, createSessionRegistry } from './session-registry';
+import { createMessageStore, type StoreIo } from './store';
+import { createFsStoreIo } from './store-fs';
 import {
-  type CliPolicyLayers,
   coercePolicyPatch,
-  type GlobalPolicy,
   gateToolCall,
   isMessagingTool,
   isToolName,
@@ -67,20 +66,15 @@ import {
   resolvePolicy,
   TOOL_NAMES,
   type ToolName,
-} from '../src/conduit-mcp/tool-policy';
-import { CONDUIT_INSTRUCTIONS, toolSchemas } from '../src/conduit-mcp/tool-schemas';
-import {
-  type Caller,
-  createToolHandlers,
-  type DirectoryEntry,
-  toToolCallResult,
-} from '../src/conduit-mcp/tools';
+} from './tool-policy';
+import { CONDUIT_INSTRUCTIONS, toolSchemas } from './tool-schemas';
+import { type Caller, createToolHandlers, type DirectoryEntry, toToolCallResult } from './tools';
 import {
   createTypedLineTracker,
   DETECT_GRACE_MS,
   type TypedLineTracker,
   UNTYPED_ENTER_KEEP_MS,
-} from '../src/conduit-mcp/typed-command';
+} from './typed-command';
 import {
   type Handle,
   HUMAN_HANDLE,
@@ -91,7 +85,7 @@ import {
   type ScreenVerdict,
   THREAD_AGENT_LIMIT,
   toolError,
-} from '../src/conduit-mcp/types';
+} from './types';
 import type {
   McpGateState,
   McpNotConnected,
@@ -99,29 +93,29 @@ import type {
   McpThreadMessage,
   McpThreadSummary,
   McpUiState,
-} from '../src/conduit-mcp/ui-types';
-import { inputBoxTop } from '../src/input-box-rows';
-import type { HostPlatform } from '../src/lsp-binary';
-import { mcpLaunchWiring, mcpServerCommand } from '../src/mcp-launch';
-import type { HostToWebview, WebviewToHost } from '../src/protocol';
-import type { PtyHost } from '../src/pty-host';
-import type { PtyWriter, SubmitOutcome } from '../src/pty-writer';
-import type { SessionActivity } from '../src/session-activity';
-import type { SessionManager } from '../src/session-manager';
-import { PTY_SETTLE_MS } from '../src/timed-messages';
-import type { AgentDefinition, SpawnSpec } from '../src/types';
-import type { WindowPresence } from '../src/window-presence';
-import {
-  createMcpEndpoint,
-  type EndpointConnection,
-  type McpEndpoint,
-} from './conduit-mcp-endpoint';
-import type { Logger } from './logger';
-import { readCursorLaunchEntry } from './mcp-install';
-import { createSessionScreens, type SessionScreens } from './session-screens';
+} from './ui-types';
 
-export interface ConduitMcpHostDeps {
-  /** userData/conduit-mcp */
+export interface EndpointConnection {
+  readonly id: number;
+  readonly token: string | null;
+  send(line: string): void;
+  onLine(cb: (line: string) => void): void;
+  onClose(cb: () => void): void;
+  close(): void;
+}
+
+export interface McpEndpoint {
+  listen(): Promise<Result<void>>;
+  close(): Promise<void>;
+}
+
+type HostLog = Record<
+  'debug' | 'info' | 'warn' | 'error',
+  (scope: string, message: string, data?: Record<string, unknown>) => void
+>;
+
+export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
+  attention: Pick<McpHostDeps['attention'], 'statusOf' | 'lastOutputAt'>;
   dir: string;
   endpointPath: string;
   execPath: string;
@@ -129,56 +123,28 @@ export interface ConduitMcpHostDeps {
   homeDir: string;
   platform: HostPlatform;
   e2e: boolean;
-  mgr: Pick<SessionManager, 'get' | 'list' | 'setMcp' | 'setMcpToolPolicy'>;
-  /** settings.mcpToolPolicy and settings.mcpToolPolicyByCli, read per call. */
-  toolPolicy(): { global: GlobalPolicy; byCli: CliPolicyLayers };
-  /** The session's owner window id; null when it has none. */
   ownerWindowOf(sessionId: string): number | null;
-  presence: Pick<WindowPresence, 'isReady' | 'isOnScreen'>;
-  sendToOwner(sessionId: string, msg: HostToWebview): void;
-  /** One window by id; main checks isDestroyed. */
-  sendToWindow(windowId: number, msg: HostToWebview): void;
-  /** Taskbar flash unless the owner window is focused (main gates it on settings.osAttention). */
-  flashOwner(sessionId: string): void;
-  /** The CLI's user-scope install state, shown with a not-connected session (spec §2.4). */
-  installState(cli: AgentCli): UserInstallState;
-  /** Default DETECT_GRACE_MS. */
+  windowReady(windowId: number): boolean;
+  onScreen(windowId: number, sessionId: string): boolean;
   detectGraceMs?: number;
-  /** effectiveDef(session, registry), bound in main. */
-  defOf(sessionId: string): AgentDefinition | undefined;
-  /** Registered agent ids, for the open_session schema enum. */
-  agentIds(): string[];
-  /** Main's side of the control tools: paths, commands, and creating sessions/opening files. */
-  control: Omit<
-    ControlDeps,
-    'claimHandle' | 'now' | 'info' | 'agentIds' | 'targets' | 'ownerWindowOf' | 'windowReady'
-  >;
-  pty: Pick<PtyHost, 'isAlive' | 'generation'>;
-  writer: PtyWriter;
-  activity: Pick<SessionActivity, 'statusOf' | 'lastOutputAt'>;
-  messagingOn(): boolean;
-  projectName(projectId: string | undefined): string | null;
-  broadcast(msg: HostToWebview): void;
-  log: Pick<Logger, 'debug' | 'info' | 'warn' | 'error'>;
-  // tests only
+  log: HostLog;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
-  randomToken?: () => string;
   storeIo?: StoreIo;
-  screens?: SessionScreens;
   listen?: boolean;
   tickMs?: number;
-  createEndpoint?: typeof createMcpEndpoint;
-  /** Default randomBytes(12).toString('hex'). */
+  createEndpoint(opts: {
+    path: string;
+    onConnection(conn: EndpointConnection): void;
+    log: Pick<HostLog, 'debug' | 'warn'>;
+  }): McpEndpoint;
   newAskId?: () => string;
-  /** Default setTimeout / clearTimeout. */
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
 }
-
 export type McpRendererMessage = Extract<WebviewToHost, { type: `mcp:${string}` }>;
 
-export interface ConduitMcpHost {
+export interface ConduitMcpHost extends LaunchPort, DraftPort {
   start(): Promise<void>;
   /**
    * Resolves once a launch of `def` can be wired: at once for an agent with no adapter, else when
@@ -186,11 +152,6 @@ export interface ConduitMcpHost {
    * start launches before start() has listened; without the wait it would read endpoint-down.
    */
   whenLaunchReady(): Promise<void>;
-  prepareLaunch(sessionId: string, def: AgentDefinition, spec: SpawnSpec): SpawnSpec;
-  onSpawn(sessionId: string, cols: number, rows: number): void;
-  onOutput(sessionId: string, data: string): void;
-  onResize(sessionId: string, cols: number, rows: number): void;
-  onExit(sessionId: string): void;
   onRendererInput(sessionId: string, data: string): void;
   /** After an install action: re-reads the install state behind every notConnected entry. */
   onInstallChanged(): void;
@@ -283,13 +244,29 @@ function base32(bytes: Uint8Array): string {
 const handlePrefix = (h: Handle) => h.replace(/-\d+$/, '');
 
 export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
+  const sendToOwner = (sessionId: string, message: HostToWebview) =>
+    deps.emit('ui.post', { route: { kind: 'owner', sessionId }, message });
+  const sendToWindow = (windowId: number, message: HostToWebview) =>
+    deps.emit('ui.post', { route: { kind: 'window', windowId }, message });
+  const broadcast = (message: HostToWebview) =>
+    deps.emit('ui.post', { route: { kind: 'broadcast' }, message });
+  const flashOwner = (sessionId: string) => deps.emit('attention.flash', { sessionId });
+  const resolveToken = (token: string | null): string | null => {
+    if (token === null) return null;
+    const result = deps.tokens.rows();
+    if (result.state !== 'loaded') return null;
+    const hash = createHash('sha256').update(token).digest('hex');
+    return (
+      result.rows.find((row) => row.sha256 === hash && row.state !== 'superseded')?.sessionId ??
+      null
+    );
+  };
   const now = deps.now ?? (() => Date.now());
   const sleep =
     deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const randomToken = deps.randomToken ?? (() => randomBytes(32).toString('hex'));
   const detectGraceMs = deps.detectGraceMs ?? DETECT_GRACE_MS;
   const store = createMessageStore(deps.storeIo ?? createFsStoreIo(deps.dir));
-  const screens = deps.screens ?? createSessionScreens();
+  const screens = deps.screens;
   const registry = createSessionRegistry();
   const runtime = new Map<string, Runtime>();
   const conns = new Map<number, EndpointConnection>();
@@ -349,7 +326,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return r;
   };
 
-  const handleOf = (sessionId: string): Handle | undefined => deps.mgr.get(sessionId)?.mcpHandle;
+  const handleOf = (sessionId: string): Handle | undefined =>
+    deps.sessions.get(sessionId)?.mcpHandle;
   /** Initialized connections' client kinds; seq is initialize order. */
   const connKinds = new Map<number, { kind: ClientKind; seq: number }>();
   let connSeq = 0;
@@ -382,7 +360,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     scheduleBroadcast();
   };
   const hasDefAdapter = (sessionId: string): boolean => {
-    const def = deps.defOf(sessionId);
+    const def = deps.domain.defOf(sessionId);
     return def !== undefined && adapterFor(def, { e2e: deps.e2e }) !== undefined;
   };
   /**
@@ -395,7 +373,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       talked ??= new Set(store.available() ? store.threads().flatMap((t) => t.participants) : []);
       return talked.has(h);
     };
-    return deps.mgr.list().flatMap((s) => {
+    return deps.sessions.list().flatMap((s) => {
       const handle = s.mcpHandle;
       if (!handle) return [];
       const listed = hasDefAdapter(s.id) || registry.isLive(s.id) || hasHistory(handle);
@@ -403,13 +381,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     });
   };
   const sessionOfHandle = (h: Handle): string | null =>
-    deps.mgr.list().find((s) => s.mcpHandle === h)?.id ?? null;
+    deps.sessions.list().find((s) => s.mcpHandle === h)?.id ?? null;
 
   const scheduleBroadcast = () => {
     if (stopped || broadcastTimer) return;
     broadcastTimer = setTimeout(() => {
       broadcastTimer = undefined;
-      deps.broadcast({ type: 'mcp:state', state: uiState() });
+      broadcast({ type: 'mcp:state', state: uiState() });
     }, BROADCAST_COALESCE_MS);
   };
 
@@ -460,8 +438,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   };
 
   const presenceOf = (sessionId: string): Presence => {
-    if (!deps.pty.isAlive(sessionId)) return 'exited';
-    return deps.activity.statusOf(sessionId).busy ? 'busy' : 'idle';
+    if (!(deps.runtime.get(sessionId)?.state === 'live')) return 'exited';
+    return deps.attention.statusOf(sessionId).busy ? 'busy' : 'idle';
   };
 
   const directory = (): DirectoryEntry[] =>
@@ -471,7 +449,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       label: s.name,
       // A profile session is its definition's agent whatever client name it sends, as for notices.
       agent: (hasDefAdapter(s.id) ? undefined : liveKinds(s.id).at(-1)) ?? handlePrefix(handle),
-      project: deps.projectName(s.projectId),
+      project: deps.domain.projectName(s.projectId),
       home: s.home,
       roots: [...s.roots],
       presence: presenceOf(s.id),
@@ -481,7 +459,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const tools = createToolHandlers({
     store,
     directory,
-    messagingOn: () => deps.messagingOn(),
+    messagingOn: () => deps.domain.messagingOn(),
     now: () => new Date(now()),
     newId: (prefix) => `${prefix}_${base32(randomBytes(10))}`,
     snapshot: (sender, p) => snapshotAttachment(sender, p),
@@ -503,7 +481,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     expect?: string,
     ruledBoxCols?: number,
   ) => {
-    const snap = await screens.snapshot(sessionId);
+    const snap = await deps.runtime.screen(sessionId);
     const verdict: ScreenVerdict = snap ? screenVerdict(adapter.screen, snap, expect) : 'unknown';
     if (verdict !== 'empty-input' || ruledBoxCols === undefined) return verdict;
     return snap && ruledBoxOnScreen(snap, ruledBoxCols) ? verdict : 'unknown';
@@ -526,7 +504,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     forNotice = false,
   ): Promise<{ verdict: GateVerdict; adapter: McpAdapter | null }> => {
     const r = rt(sessionId);
-    const session = deps.mgr.get(sessionId);
+    const session = deps.sessions.get(sessionId);
     const adapter = noticeAdapterOf(sessionId);
     if (!adapter || !session) return { verdict: { open: false, reason: 'not-running' }, adapter };
     const screen = await screenOf(sessionId, adapter, undefined, ruledBoxColsOf(sessionId, r));
@@ -541,13 +519,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const verdict = evaluateGate({
       now: t,
       settleMs: PTY_SETTLE_MS,
-      messagingOn: deps.messagingOn(),
+      messagingOn: deps.domain.messagingOn(),
       paused: session.mcpNoticesPaused === true,
-      running: deps.pty.isAlive(sessionId),
+      running: deps.runtime.get(sessionId)?.state === 'live',
       spawnedAt: r.spawnedAt,
       connectionLive: registry.isLive(sessionId),
-      busy: deps.activity.statusOf(sessionId).busy,
-      lastOutputAt: deps.activity.lastOutputAt(sessionId),
+      busy: deps.attention.statusOf(sessionId).busy,
+      lastOutputAt: deps.attention.lastOutputAt(sessionId),
       screen,
       hasDraft: r.hasDraft,
       lastNoticeAt: r.lastNoticeAt,
@@ -584,7 +562,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         deps.log.info('conduit-mcp', 'notice submit confirmed', { sessionId, handle, waitedMs });
         return;
       }
-      if (waitedMs >= SUBMIT_CONFIRM_WAIT_MS || !deps.pty.isAlive(sessionId)) {
+      if (waitedMs >= SUBMIT_CONFIRM_WAIT_MS || !(deps.runtime.get(sessionId)?.state === 'live')) {
         deps.log.warn('conduit-mcp', 'notice submit unconfirmed', { sessionId, handle, waitedMs });
         return;
       }
@@ -600,22 +578,22 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     /** The adapter whose screen admitted the text; its echo decides the Enter, whoever connects since. */
     let typedFor: McpAdapter | null = null;
     const recheck = async (adapter: McpAdapter): Promise<GateVerdict> => {
-      const session = deps.mgr.get(sessionId);
+      const session = deps.sessions.get(sessionId);
       if (!session) return { open: false, reason: 'not-running' };
       return evaluateEnterRecheck({
-        messagingOn: deps.messagingOn(),
+        messagingOn: deps.domain.messagingOn(),
         paused: session.mcpNoticesPaused === true,
-        running: deps.pty.isAlive(sessionId),
-        sameGeneration: gen !== undefined && deps.pty.generation(sessionId) === gen,
+        running: deps.runtime.get(sessionId)?.state === 'live',
+        sameGeneration: gen !== undefined && deps.runtime.get(sessionId)?.generation === gen,
         connectionLive: registry.isLive(sessionId),
         screen: await screenOf(sessionId, adapter, text),
         inputSinceText: r.inputSeq !== seq,
       });
     };
-    const outcome = await deps.writer.submit(sessionId, text, {
+    const outcome = await deps.typing.submit(sessionId, text, {
       beforeText: async () => {
         const { verdict, adapter } = await evaluateWith(sessionId, true);
-        gen = deps.pty.generation(sessionId);
+        gen = deps.runtime.get(sessionId)?.generation;
         seq = r.inputSeq;
         typedFor = adapter;
         return verdict.open;
@@ -654,10 +632,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
    * Null on a handles.json write failure, which marks the session launch-io.
    */
   const claimHandle = (sessionId: string, prefix: string): Handle | null => {
-    const session = deps.mgr.get(sessionId);
+    const session = deps.sessions.get(sessionId);
     if (!session) return null;
     const takenByOthers = new Set(
-      deps.mgr
+      deps.sessions
         .list()
         .filter((s) => s.id !== sessionId && s.mcpHandle)
         .map((s) => s.mcpHandle as Handle),
@@ -680,16 +658,35 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       return null;
     }
     counters = a.counters;
-    deps.mgr.setMcp(sessionId, { mcpHandle: a.handle });
+    deps.sessions.setMcp(sessionId, { mcpHandle: a.handle });
     scheduleBroadcast();
     return a.handle;
   };
 
   const controlDeps: ControlDeps = {
-    ...deps.control,
-    agentIds: () => deps.agentIds(),
+    ...deps.domain,
+    activateSession: (sessionId, raise) =>
+      deps.emit('ui.post', {
+        route: { kind: 'owner', sessionId },
+        message: { type: 'activateSession', sessionId },
+        raise,
+      }),
+    openFile: async (req) => {
+      const sessionId = req.callerSessionId;
+      sendToOwner(sessionId, {
+        type: 'openFileInEditor',
+        sessionId,
+        path: req.path,
+        source: 'mcp',
+        ...(req.line !== undefined ? { line: req.line } : {}),
+        ...(req.column !== undefined ? { column: req.column } : {}),
+        focus: req.focus,
+      });
+      return { sessionId };
+    },
+    agentIds: () => deps.domain.agentIds(),
     claimHandle: (sessionId) => {
-      const def = deps.defOf(sessionId);
+      const def = deps.domain.defOf(sessionId);
       const adapter = def && adapterFor(def, { e2e: deps.e2e });
       return adapter ? claimHandle(sessionId, adapter.id) : null;
     },
@@ -703,15 +700,15 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         openerSessionId: s.openedBy?.sessionId ?? null,
       })),
     ownerWindowOf: (sessionId) => deps.ownerWindowOf(sessionId),
-    windowReady: (windowId) => deps.presence.isReady(windowId),
+    windowReady: (windowId) => deps.windowReady(windowId),
   };
   const control = createControlHandlers(controlDeps);
   const app = createAppControlHandlers(controlDeps, control.prepared);
 
   /** Session > CLI kind (the persisted handle's prefix) > global, per field (spec §3.1). */
   const resolveFor = (sessionId: string, tool: ToolName): ResolvedPolicy => {
-    const { global, byCli } = deps.toolPolicy();
-    const session = deps.mgr.get(sessionId);
+    const { global, byCli } = deps.domain.toolPolicy();
+    const session = deps.sessions.get(sessionId);
     const handle = session?.mcpHandle;
     return resolvePolicy(tool, {
       session: session?.mcpToolPolicy,
@@ -729,29 +726,30 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     // Re-checked here, not trusted from the gate: the window may have reloaded during prepare.
     ownerWindowOf: (sessionId) => {
       const w = deps.ownerWindowOf(sessionId);
-      return w !== null && deps.presence.isReady(w) ? w : null;
+      return w !== null && deps.windowReady(w) ? w : null;
     },
-    sendToOwner: (sessionId, msg) => deps.sendToOwner(sessionId, msg),
-    flashOwner: (sessionId) => deps.flashOwner(sessionId),
+    sendToOwner: (sessionId, msg) => sendToOwner(sessionId, msg),
+    flashOwner: (sessionId) => flashOwner(sessionId),
     resolve: (sessionId, tool) =>
-      deps.mgr.get(sessionId) ? resolveFor(sessionId, tool).policy : null,
-    messagingOn: () => deps.messagingOn(),
-    setSessionPolicy: (sessionId, tool, patch) => deps.mgr.setMcpToolPolicy(sessionId, tool, patch),
+      deps.sessions.get(sessionId) ? resolveFor(sessionId, tool).policy : null,
+    messagingOn: () => deps.domain.messagingOn(),
+    setSessionPolicy: (sessionId, tool, patch) =>
+      deps.sessions.setMcpToolPolicy(sessionId, tool, patch),
     onPolicyWritten: () => {
       syncToolLists();
       scheduleBroadcast();
     },
     onAwaitingChanged: () => scheduleBroadcast(),
-    sendToWindow: (windowId, msg) => deps.sendToWindow(windowId, msg),
-    windowReady: (windowId) => deps.presence.isReady(windowId),
+    sendToWindow: (windowId, msg) => sendToWindow(windowId, msg),
+    windowReady: (windowId) => deps.windowReady(windowId),
   });
 
   const notifierSessions = () =>
-    deps.mgr.list().flatMap((s) => {
+    deps.sessions.list().flatMap((s) => {
       const r = runtime.get(s.id);
       const adapter = noticeAdapterOf(s.id);
       if (!s.mcpHandle || !r || !adapter || !notifiable(adapter) || r.unavailable) return [];
-      return [{ sessionId: s.id, handle: s.mcpHandle, busy: deps.activity.statusOf(s.id).busy }];
+      return [{ sessionId: s.id, handle: s.mcpHandle, busy: deps.attention.statusOf(s.id).busy }];
     });
 
   const raise = (item: AttentionRaise) => {
@@ -791,7 +789,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
    * master off, everything, so the CLI's calls get messaging_off rather than an unknown tool.
    */
   const listedTools = (sessionId: string): readonly ToolName[] =>
-    deps.messagingOn()
+    deps.domain.messagingOn()
       ? TOOL_NAMES.filter((t) => resolveFor(sessionId, t).policy.access !== 'off')
       : TOOL_NAMES;
 
@@ -828,11 +826,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         const windowId = deps.ownerWindowOf(sessionId);
         const refused = gateToolCall({
           sessionId,
-          messagingOn: deps.messagingOn(),
+          messagingOn: deps.domain.messagingOn(),
           tool: name,
           policy: resolved.policy,
-          ownerReady: () => windowId !== null && deps.presence.isReady(windowId),
-          onScreen: () => windowId !== null && deps.presence.isOnScreen(windowId, sessionId),
+          ownerReady: () => windowId !== null && deps.windowReady(windowId),
+          onScreen: () => windowId !== null && deps.onScreen(windowId, sessionId),
         });
         if (refused) return { ok: false, error: refused };
         const caller = { handle, sessionId };
@@ -939,7 +937,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     if (!handleOf(sessionId)) claimHandle(sessionId, kind);
     // D6 ruling: a shell's screen model costs memory, so it starts only once a CLI shows up.
     const r = runtime.get(sessionId);
-    if (r?.size && !screens.has(sessionId)) screens.start(sessionId, r.size.cols, r.size.rows);
+    if (r?.size) screens.ensure(sessionId, { seedTail: true });
     // One binding per typed line: a second client (`code .` from inside the CLI) never takes it.
     if (r && !r.defAdapter && r.bound === undefined && bindsTypedLine(kind, r.lastLine?.cli)) {
       r.bound = connId;
@@ -955,13 +953,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   };
 
   const onConnection = (conn: EndpointConnection) => {
-    const resolved = registry.resolve(conn.token);
+    const resolved = resolveToken(conn.token);
     conns.set(conn.id, conn);
     if (resolved) connSession.set(conn.id, resolved);
     // The token is checked on every use, not once at hello: it dies with the PTY (spec §3.1),
     // and a connection that outlived it speaks for nobody.
     const current = (): string | null =>
-      resolved && registry.resolve(conn.token) === resolved ? resolved : null;
+      resolved && resolveToken(conn.token) === resolved ? resolved : null;
     let connectedAs: string | null = null;
     const core = createMcpServerCore({
       serverInfo: { name: 'conduit', version: VERSION },
@@ -971,7 +969,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         if (!sessionId) return [];
         const names = listedTools(sessionId);
         lastListed.set(conn.id, names.join(','));
-        return toolSchemas(deps.agentIds()).filter((t) => names.some((n) => n === t.name));
+        return toolSchemas(deps.domain.agentIds()).filter((t) => names.some((n) => n === t.name));
       },
       call: (name, args, ctx) => callTool(current(), name, args, { ...ctx, connId: conn.id }),
       cancelled: (requestId) => flow.cancelled(conn.id, requestId),
@@ -1045,7 +1043,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
    * only: an agent-enum change alone is ignored, since open_session validates agents live (A6).
    */
   const syncToolLists = () => {
-    for (const s of deps.mgr.list()) {
+    for (const s of deps.sessions.list()) {
       for (const connId of registry.connectionsOf(s.id)) {
         const key = listedTools(s.id).join(',');
         if (lastListed.get(connId) === key) continue;
@@ -1071,14 +1069,14 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         ? null
         : adapter === null || !notifiable(adapter)
           ? 'pull-only'
-          : deps.mgr.get(sessionId)?.mcpNoticesPaused
+          : deps.sessions.get(sessionId)?.mcpNoticesPaused
             ? 'paused'
             : (r?.gate ?? null);
     return {
       handle,
       unread: pending.length,
       urgent: pending.filter((m) => m.priority === 'urgent').length,
-      paused: deps.mgr.get(sessionId)?.mcpNoticesPaused === true,
+      paused: deps.sessions.get(sessionId)?.mcpNoticesPaused === true,
       unavailable,
       connected: registry.isLive(sessionId),
       gate,
@@ -1100,7 +1098,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     }));
     const youPending = store.available() ? store.pending(HUMAN_HANDLE) : [];
     return {
-      enabled: deps.messagingOn(),
+      enabled: deps.domain.messagingOn(),
       storeError,
       loading,
       sessions,
@@ -1110,10 +1108,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       youUrgent: youPending.filter((m) => m.priority === 'urgent').length,
       // A listed shell gets per-session tool overrides too (plan amendment S1); one B2 hides has
       // no badge to hang the menu on.
-      switchable: deps.mgr
+      switchable: deps.sessions
         .list()
         .flatMap((s) => (hasDefAdapter(s.id) || listed.has(s.id) ? [s.id] : [])),
-      notConnected: deps.messagingOn()
+      notConnected: deps.domain.messagingOn()
         ? Object.fromEntries(
             [...runtime].flatMap(([id, r]) => (r.notConnected ? [[id, r.notConnected]] : [])),
           )
@@ -1211,7 +1209,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       r.detect = undefined;
       r.notConnected = {
         cli,
-        install: deps.installState(cli),
+        install: deps.domain.installState(cli),
         launch: r.launch,
         reason: 'no-initialize',
       };
@@ -1233,10 +1231,17 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
    * Any session may run a CLI the user installed Conduit into: it gets identity env, but a handle
    * only when a CLI initializes (spec 2026-10-27-conduit-mcp-install §3.1).
    */
-  const wireWithoutAdapter = (sessionId: string, r: Runtime, spec: SpawnSpec): SpawnSpec => {
-    if (!deps.messagingOn() || !endpointReady) return spec;
-    const token = randomToken();
-    registry.mint(sessionId, token);
+  const wireWithoutAdapter = async (
+    sessionId: string,
+    r: Runtime,
+    spec: SpawnSpec,
+    ids: LaunchIds,
+  ): Promise<SpawnSpec> => {
+    if (!deps.domain.messagingOn() || !endpointReady) {
+      await deps.tokens.revoke({ sessionId });
+      return spec;
+    }
+    const { token } = await deps.tokens.reserve(sessionId, ids);
     r.tracker = createTypedLineTracker();
     return {
       ...spec,
@@ -1244,6 +1249,36 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     };
   };
 
+  const stopRuntime = deps.runtime.on((event) => {
+    const sessionId = 'sessionId' in event ? event.sessionId : undefined;
+    if (sessionId === undefined) return;
+    const r = runtime.get(sessionId);
+    if (event.type === 'spawned') {
+      if (!r) return;
+      r.size = event.size;
+      r.spawnedAt = now();
+      r.hasDraft = false;
+      r.lastInputAt = undefined;
+      // A CLI paints its UI before it initializes and never fully repaints (spec §2.4 D6).
+      if (r.tracker) screens.keepTail(sessionId);
+      if (r.defAdapter && !r.unavailable) screens.ensure(sessionId, { seedTail: false });
+    } else if (event.type === 'size') {
+      if (r) r.size = event.size;
+    } else if (event.type === 'exit') {
+      if (!r) return;
+      void deps.tokens.revoke({ sessionId });
+      closeConnectionsOf(sessionId);
+      void removeConfig(sessionId);
+      screens.release(sessionId);
+      r.spawnedAt = undefined;
+      r.tracker = undefined;
+      r.lastLine = undefined;
+      r.bound = undefined;
+      r.detect = undefined;
+      r.notConnected = undefined;
+      scheduleBroadcast();
+    }
+  });
   return {
     async start() {
       try {
@@ -1259,7 +1294,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       // waiting on it go now, as endpoint-down, rather than at the bound.
       try {
         if (deps.listen !== false) {
-          const create = deps.createEndpoint ?? createMcpEndpoint;
+          const create = deps.createEndpoint;
           endpoint = create({ path: deps.endpointPath, onConnection, log: deps.log });
           const r = await endpoint.listen();
           endpointReady = r.ok;
@@ -1291,7 +1326,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     // Every definition waits, not only adapters: a shell restored at start would otherwise launch
     // tokenless before the endpoint listens (plan amendment B1).
     whenLaunchReady() {
-      if (endpointSettled || !deps.messagingOn()) return Promise.resolve();
+      if (endpointSettled || !deps.domain.messagingOn()) return Promise.resolve();
       return new Promise<void>((resolve) => {
         const timer = setTimeout(done, ENDPOINT_READY_WAIT_MS);
         function done() {
@@ -1303,14 +1338,14 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       });
     },
 
-    prepareLaunch(sessionId, def, spec) {
+    async prepareLaunch(sessionId, def, spec, ids) {
       const adapter = adapterFor(def, { e2e: deps.e2e });
-      const session = deps.mgr.get(sessionId);
+      const session = deps.sessions.get(sessionId);
       if (!session) return spec;
       const r = rt(sessionId);
       r.defAdapter = adapter;
       r.unavailable = null;
-      r.launch += 1;
+      r.launch = ids.generation;
       r.tracker = undefined;
       r.lastLine = undefined;
       r.bound = undefined;
@@ -1319,21 +1354,24 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         r.notConnected = undefined;
         scheduleBroadcast();
       }
-      registry.revoke(sessionId);
-      if (!adapter) return wireWithoutAdapter(sessionId, r, spec);
-      if (claimHandle(sessionId, adapter.id) === null) return spec;
+      if (!adapter) return wireWithoutAdapter(sessionId, r, spec, ids);
+      if (claimHandle(sessionId, adapter.id) === null) {
+        await deps.tokens.revoke({ sessionId });
+        return spec;
+      }
 
-      const unavailable = (reason: McpUnavailableReason) => {
+      const unavailable = async (reason: McpUnavailableReason) => {
         r.unavailable = reason;
         scheduleBroadcast();
+        await deps.tokens.revoke({ sessionId });
         return spec;
       };
-      if (!deps.messagingOn()) return unavailable('messaging-off');
+      if (!deps.domain.messagingOn()) return unavailable('messaging-off');
       if (!endpointReady) return unavailable('endpoint-down');
       if (adapter.wiring === 'cursor-global' && !readCursorLaunchEntry(deps.homeDir)) {
         r.notConnected = {
           cli: 'cursor',
-          install: deps.installState('cursor'),
+          install: deps.domain.installState('cursor'),
           launch: r.launch,
           reason: 'cursor-not-connected',
         };
@@ -1357,8 +1395,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           return unavailable('launch-io');
         }
       }
-      const token = randomToken();
-      registry.mint(sessionId, token);
+      const { token } = await deps.tokens.reserve(sessionId, ids);
       scheduleBroadcast();
       return {
         ...spec,
@@ -1369,45 +1406,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           CONDUIT_MCP_ENDPOINT: deps.endpointPath,
         },
       };
-    },
-
-    onSpawn(sessionId, cols, rows) {
-      const r = runtime.get(sessionId);
-      if (!r) return;
-      r.size = { cols, rows };
-      r.spawnedAt = now();
-      r.hasDraft = false;
-      r.lastInputAt = undefined;
-      // A CLI paints its UI before it initializes and never fully repaints (spec §2.4 D6).
-      if (r.tracker) screens.keepTail(sessionId, cols, rows);
-      if (!r.defAdapter || r.unavailable) return;
-      screens.start(sessionId, cols, rows);
-    },
-
-    onOutput(sessionId, data) {
-      screens.feed(sessionId, data);
-    },
-
-    onResize(sessionId, cols, rows) {
-      const r = runtime.get(sessionId);
-      if (r) r.size = { cols, rows };
-      screens.resize(sessionId, cols, rows);
-    },
-
-    onExit(sessionId) {
-      if (!runtime.has(sessionId)) return;
-      registry.revoke(sessionId);
-      closeConnectionsOf(sessionId);
-      void removeConfig(sessionId);
-      screens.dispose(sessionId);
-      const r = rt(sessionId);
-      r.spawnedAt = undefined;
-      r.tracker = undefined;
-      r.lastLine = undefined;
-      r.bound = undefined;
-      r.detect = undefined;
-      r.notConnected = undefined;
-      scheduleBroadcast();
     },
 
     onRendererInput(sessionId, data) {
@@ -1426,7 +1424,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         if (!nc) continue;
         let install = read.get(nc.cli);
         if (install === undefined) {
-          install = deps.installState(nc.cli);
+          install = deps.domain.installState(nc.cli);
           read.set(nc.cli, install);
         }
         if (install !== nc.install) {
@@ -1444,12 +1442,14 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       // Before the drain: the session's waiting asks end now, so their cancelled replies are owed.
       flow.sessionGone(sessionId);
       const handle = handleOf(sessionId);
-      registry.revoke(sessionId);
+      // Awaited after the teardown: the caller removes the session as soon as this yields.
+      const revoked = deps.tokens.revoke({ sessionId });
       drainConnectionsOf(sessionId);
-      screens.dispose(sessionId);
+      screens.release(sessionId);
       notifier?.forget(sessionId);
-      deps.writer.forget(sessionId);
+      deps.typing.forget(sessionId);
       runtime.delete(sessionId);
+      await revoked;
       await removeConfig(sessionId);
       if (!handle) return;
       for (const m of store.pending(handle)) {
@@ -1552,12 +1552,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         case 'mcp:setToolPolicy': {
           const refuse = (error: 'unknown-session' | 'unknown-tool' | 'invalid-value') =>
             reply({ type: 'mcp:toolPolicyResult', requestId: m.requestId, ok: false, error });
-          if (!deps.mgr.get(m.sessionId)) return refuse('unknown-session');
+          if (!deps.sessions.get(m.sessionId)) return refuse('unknown-session');
           if (!isToolName(m.tool)) return refuse('unknown-tool');
           // The renderer is never load-bearing: the patch is re-checked here.
           const patch = coercePolicyPatch(m.tool, m.patch);
           if (!patch) return refuse('invalid-value');
-          deps.mgr.setMcpToolPolicy(m.sessionId, m.tool, patch);
+          deps.sessions.setMcpToolPolicy(m.sessionId, m.tool, patch);
           reply({ type: 'mcp:toolPolicyResult', requestId: m.requestId, ok: true });
           syncToolLists();
           flow.recheck();
@@ -1585,7 +1585,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             });
           return;
         case 'mcp:pause':
-          deps.mgr.setMcp(m.sessionId, { mcpNoticesPaused: m.paused });
+          deps.sessions.setMcp(m.sessionId, { mcpNoticesPaused: m.paused });
           scheduleBroadcast();
           return;
         case 'mcp:retry':
@@ -1603,6 +1603,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     async stop() {
       stopped = true;
+      stopRuntime();
       settleEndpoint();
       if (tickTimer) clearInterval(tickTimer);
       if (retentionTimer) clearInterval(retentionTimer);

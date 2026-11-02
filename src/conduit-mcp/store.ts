@@ -1,3 +1,4 @@
+import { judgePersistedVersion } from '../contracts/session-identity';
 import {
   type Handle,
   HUMAN_HANDLE,
@@ -127,13 +128,19 @@ function isLogRecord(v: unknown): v is StoreLogRecord {
  * Splits the log into records. A final line without '\n' or that isn't a record is a torn
  * write (plan ruling 2) and is reported so load can rewrite the log before any append.
  */
-function parseLog(text: string): { records: StoreLogRecord[]; valid: string[]; torn: boolean } {
+function parseLog(text: string): {
+  records: StoreLogRecord[];
+  valid: string[];
+  torn: boolean;
+  newer: boolean;
+} {
   const lines = text.split('\n');
   let torn = false;
   if (lines[lines.length - 1] === '') lines.pop();
   else torn = true;
   const records: StoreLogRecord[] = [];
   const valid: string[] = [];
+  let newer = false;
   lines.forEach((line, i) => {
     let parsed: unknown;
     try {
@@ -141,13 +148,20 @@ function parseLog(text: string): { records: StoreLogRecord[]; valid: string[]; t
     } catch {
       parsed = undefined;
     }
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      'v' in parsed &&
+      judgePersistedVersion('conduit-mcp/messages.log', parsed.v) === 'newer'
+    )
+      newer = true;
     if (isLogRecord(parsed)) {
       if (i === lines.length - 1 && torn) return;
       records.push(parsed);
       valid.push(line);
     } else if (i === lines.length - 1) torn = true;
   });
-  return { records, valid, torn };
+  return { records, valid, torn, newer };
 }
 
 function applyRecord(s: State, rec: StoreLogRecord): void {
@@ -284,6 +298,7 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
   const maxAgeMs = opts?.maxAgeMs ?? RETENTION_MAX_AGE_MS;
   let state = emptyState();
   let isAvailable = false;
+  let refusedNewerVersion = false;
   const listeners = new Set<() => void>();
   let chain: Promise<unknown> = Promise.resolve();
 
@@ -317,8 +332,14 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
   return {
     load: () =>
       enqueue(async () => {
+        if (refusedNewerVersion) return unavailable('messages.log has a newer record version');
         try {
-          const { records, valid, torn } = parseLog((await io.readLog()) ?? '');
+          const { records, valid, torn, newer } = parseLog((await io.readLog()) ?? '');
+          if (newer) {
+            refusedNewerVersion = true;
+            isAvailable = false;
+            return unavailable('messages.log has a newer record version');
+          }
           if (torn) await io.rewriteLog(valid.map((l) => `${l}\n`).join(''));
           const next = emptyState();
           for (const rec of records) applyRecord(next, rec);

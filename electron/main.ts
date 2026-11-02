@@ -31,16 +31,21 @@ import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
 import { createCloseGuard, createQuitGrant, GRANT_TTL_MS, openWindowIds } from '../src/close-guard';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
-import type {
-  McpFileRequest,
-  McpOpenOutcome,
-  McpOpenRequest,
-} from '../src/conduit-mcp/control-tools';
+import type { McpOpenOutcome, McpOpenRequest } from '../src/conduit-mcp/control-tools';
 import { endpointPath } from '../src/conduit-mcp/endpoint-path';
+import { createConduitMcpHost } from '../src/conduit-mcp/host';
+import { createMcpInstall, migrateGateOnce } from '../src/conduit-mcp/install';
 import { CLI_BINARIES, coerceInstallRequest } from '../src/conduit-mcp/install-types';
+import { createTokenStore } from '../src/conduit-mcp/token-store';
 import { loadAgentsConfig, readBlob, readFileState } from '../src/config';
 import type { TruncatedBy } from '../src/content-search';
 import { searchContentFs } from '../src/content-search-fs';
+import type {
+  DraftPort,
+  ServerEventSink,
+  SessionStorePort,
+  TypingPort,
+} from '../src/contracts/server-ports';
 import { decideCrashRecovery } from '../src/crash-recovery';
 import { createCwdReportGate } from '../src/cwd-report-gate';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
@@ -134,13 +139,7 @@ import { isInsideAnyRoot, isInsideRoot, realPathLeaf } from '../src/path-guard';
 import { hostRealPathLeaf } from '../src/path-link-confine';
 import { userRootsOf } from '../src/path-link-roots';
 import type { IndexedFile } from '../src/path-resolve';
-import {
-  parseDocs,
-  parseSessions,
-  serializeDocs,
-  serializeSessions,
-  shouldPersistSessions,
-} from '../src/persistence';
+import { parseDocs, parseSessions, serializeDocs, serializeSessions } from '../src/persistence';
 import { buildQueueEntry } from '../src/pipeline';
 import { applyPlanCommentPatch, commentsFingerprint } from '../src/plan-comments';
 import { buildPreviewUrl, isPreviewUrl } from '../src/preview-url';
@@ -185,7 +184,7 @@ import {
 } from '../src/review-marks';
 import { applyNotePatch, notesFingerprint, type ReviewNotesData } from '../src/review-notes';
 import { orphanScrollbackFiles, scrollbackFileName } from '../src/scrollback-files';
-import { restoreScrollback, spawnPrelude } from '../src/scrollback-persistence';
+import { spawnPrelude } from '../src/scrollback-persistence';
 import { ScrollbackStore } from '../src/scrollback-store';
 import { isIndexScope, searchRootAllowed } from '../src/search-scope';
 import { SessionActivity } from '../src/session-activity';
@@ -276,7 +275,8 @@ import {
   writeReviewNotesArtifactFile,
   writeSpec,
 } from './conduit-fs';
-import { createConduitMcpHost } from './conduit-mcp-host';
+import { createMcpEndpoint } from './conduit-mcp-endpoint';
+import { createMcpRuntimePorts } from './conduit-mcp-runtime-ports';
 import { createDragOutHost } from './drag-out-host';
 import { execFileBounded } from './exec-bounded';
 import { createFolderPicker } from './folder-picker';
@@ -285,11 +285,15 @@ import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
 import { startLanguageServer } from './lsp-server';
 import { watchServerRoot } from './lsp-watcher';
-import { createMcpInstall, migrateGateOnce } from './mcp-install';
 import { NotesWatcher } from './notes-watcher';
 import { OpenFileWatcher } from './open-file-watcher';
 import { createOsFileClipboard, spawnPowerShell } from './os-file-clipboard';
 import { createPathLinkResolver } from './path-link-resolver';
+import {
+  ScrollbackWriteGate,
+  sessionWriteGate,
+  timedMessagesWriteGate,
+} from './persistence-write-gates';
 import { PlanWatcher } from './plan-watcher';
 import {
   PREVIEW_PARTITION,
@@ -305,6 +309,7 @@ import { ProposalWatcher } from './proposal-watcher';
 import { createRepoTrackerHost } from './repo-tracker-host';
 import { briefKeepIds, createRoleBriefHost, parseBriefRequest } from './role-brief-host';
 import { SessionFolderRuntime } from './session-folder-runtime';
+import { createSessionScreens } from './session-screens';
 import { installSkill, listSkills } from './skills-service';
 import { checkForUpdate, initUpdater, quitAndInstall } from './updater';
 
@@ -1581,7 +1586,7 @@ app.whenReady().then(() => {
       if (msg.type === 'term:data' || msg.type === 'term:exit') sendToOwner(msg.sessionId, msg);
       if (msg.type === 'term:data') {
         // The notice gate's screen model (docs/specs/2026-10-25-conduit-mcp-server.md §2).
-        mcpHost.onOutput(msg.sessionId, msg.data);
+        mcpRuntime.output(msg.sessionId, msg.data);
         // Output activity drives the busy/needs-attention machine; byte count and bare
         // bells are the evidence it weighs (see the attention-signal-quality spec).
         // The scanner's state rides across chunks — an escape sequence straddling two
@@ -1641,12 +1646,19 @@ app.whenReady().then(() => {
     (m) => log.debug('pty', m),
   );
 
+  const mcpRuntime = createMcpRuntimePorts({ pty, screens: createSessionScreens() });
+
   // Per-terminal-session scrollback ring (T2): the recent output, capped to a trailing 256 KiB
   // window in memory and debounced to scrollback-<id>.json. Fed from the PtyHost output callback.
+  const scrollbackWriteGate = new ScrollbackWriteGate((name) =>
+    readBlob(path.join(userData(), name)),
+  );
   const scrollbacks = new ScrollbackStore(
     (sessionId, blob) => {
-      log.debug('scrollback', 'persist', { sessionId, bytes: blob.length });
-      persistFile(scrollbackFile(sessionId), blob, `scrollback-${sessionId}.json`);
+      scrollbackWriteGate.run(scrollbackFileName(sessionId), () => {
+        log.debug('scrollback', 'persist', { sessionId, bytes: blob.length });
+        persistFile(scrollbackFile(sessionId), blob, `scrollback-${sessionId}.json`);
+      });
     },
     {
       send: (sessionId, data) => sendToOwner(sessionId, { type: 'term:data', sessionId, data }),
@@ -1659,7 +1671,7 @@ app.whenReady().then(() => {
     // so the quiet after its last output can't be read as "finished, needs you".
     activity.recordExit(sessionId);
     // The exited child's token dies with it; a relaunch mints a new one (spec §3.1).
-    mcpHost.onExit(sessionId);
+    mcpRuntime.exit(sessionId);
     // Clean up the scanners for this session (E2a + the bell-scan carry).
     cwdScanners.delete(sessionId);
     cwdGate.drop(sessionId);
@@ -1685,6 +1697,8 @@ app.whenReady().then(() => {
   // ── Timed messages (spec 2026-08-28-timed-messages) ────────────────────────
   // Host-owned schedules and ONE timer. Declared up here because flushStateSync reads the dirty
   // gate and disposeSession drops a session's schedules.
+  const timedMessagesParse = parseTimedMessagesFile(readBlob(timedMessagesFile()));
+  const timedWriteGate = timedMessagesWriteGate(timedMessagesParse);
   let timersDirty = false;
   let limitOffer: LimitOffer | null = null;
   let timersPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1698,14 +1712,17 @@ app.whenReady().then(() => {
    * is the fix, and flushStateSync still covers quit.
    */
   const persistTimers = () => {
+    if (!timedWriteGate.writable) return;
     timersDirty = true;
     if (timersPersistTimer) return;
     timersPersistTimer = setTimeout(() => {
       timersPersistTimer = null;
-      persistFile(
-        timedMessagesFile(),
-        serializeTimedMessagesFile({ version: 1, schedules: timers.list() }),
-        'timed-messages.json',
+      timedWriteGate.run(() =>
+        persistFile(
+          timedMessagesFile(),
+          serializeTimedMessagesFile({ version: 1, schedules: timers.list() }),
+          'timed-messages.json',
+        ),
       );
     }, 150);
   };
@@ -1871,7 +1888,11 @@ app.whenReady().then(() => {
 
   // Startup migration + projects load (mf-model spec §2.3): every write here is synchronous and
   // lands before the first postState.
-  const sessionsParse = settings.restoreSessions ? parseSessions(readBlob(sessionsFile())) : null;
+  const sessionsDiskParse = parseSessions(readBlob(sessionsFile()));
+  const sessionsParse = settings.restoreSessions ? sessionsDiskParse : null;
+  const sessionsWriteGate = sessionWriteGate(settings, sessionsDiskParse);
+  if (sessionsDiskParse.kind === 'newer')
+    log.warn('persist', 'sessions.json has a newer version; writes blocked this run');
   if (sessionsParse?.kind === 'ok' && sessionsParse.dropped > 0)
     log.warn('persist', 'dropped sessions with no folder', { dropped: sessionsParse.dropped });
   const startup = buildStartupModel({
@@ -1899,13 +1920,14 @@ app.whenReady().then(() => {
     }
   }
   // Without the projects write the next launch re-migrates; see mf-model spec §2.3.
-  if (startup.writeSessions && !projectsWriteFailed) {
-    try {
-      atomicWriteFileSync(sessionsFile(), serializeSessions(startup.sessions));
-    } catch (err) {
-      log.error('persist', `sessions.json migration write failed: ${String(err)}`);
-    }
-  }
+  if (startup.writeSessions && !projectsWriteFailed)
+    sessionsWriteGate.run(() => {
+      try {
+        atomicWriteFileSync(sessionsFile(), serializeSessions(startup.sessions));
+      } catch (err) {
+        log.error('persist', `sessions.json migration write failed: ${String(err)}`);
+      }
+    });
   let projectsWritable = startup.projectsWritable;
   let projectsDirty = startup.writeProjects;
   const projectStore = new ProjectStore(
@@ -1956,6 +1978,61 @@ app.whenReady().then(() => {
 
   // Conduit MCP server: agent sessions message each other and the human
   // (docs/specs/2026-10-25-conduit-mcp-server.md). The host owns IO; decisions are pure modules.
+  const launchGenerations = new Map<string, number>();
+  const sessionPort: SessionStorePort = {
+    get: (id) => mgr.get(id),
+    list: () => mgr.list(),
+    setMcp: (id, patch) => mgr.setMcp(id, patch),
+    setMcpToolPolicy: (id, tool, patch) => mgr.setMcpToolPolicy(id, tool, patch),
+    touch: (id, minIntervalMs) => mgr.touch(id, minIntervalMs),
+    setStatus: (id, value) => mgr.setStatus(id, value),
+    onChange: (listener) => mgr.onChange(listener),
+    // Per app run, like the host's old launch counter: the persisted counter is the server's (C4).
+    allocateLaunch: (id) => {
+      const generation = (launchGenerations.get(id) ?? 0) + 1;
+      launchGenerations.set(id, generation);
+      return { generation, launchId: crypto.randomBytes(16).toString('hex') };
+    },
+  };
+  const emitMcpEvent: ServerEventSink = (type, data) => {
+    if (type === 'ui.post' && 'route' in data) {
+      const { route, message } = data;
+      if (message.type === 'openFileInEditor') {
+        sendOpenFileInEditor(message);
+        return;
+      }
+      if (route.kind === 'broadcast') broadcast(message);
+      else if (route.kind === 'owner') sendToOwner(route.sessionId, message);
+      else {
+        const window = windows.get(route.windowId);
+        if (window && !window.isDestroyed() && !window.webContents.isDestroyed())
+          window.webContents.send('to-webview', message);
+      }
+      if (data.raise) {
+        const window =
+          route.kind === 'owner'
+            ? windowFor(route.sessionId)
+            : route.kind === 'window'
+              ? windows.get(route.windowId)
+              : undefined;
+        if (window && !window.isDestroyed()) {
+          if (process.env.CONDUIT_E2E !== '1') window.show();
+          window.focus();
+        }
+      }
+    } else if (type === 'attention.flash' && 'sessionId' in data) {
+      const window = windowFor(data.sessionId);
+      if (window && settings.osAttention && !window.isFocused()) window.flashFrame(true);
+    }
+  };
+  const typingPort: TypingPort = {
+    submit: (id, text, hooks) => ptyWriter.submit(id, text, hooks),
+    forget: (id) => ptyWriter.forget(id),
+    write: (id, data, opts) =>
+      (opts?.generation === undefined ||
+        mcpRuntime.runtime.get(id)?.generation === opts.generation) &&
+      pty.input(id, data),
+  };
   const mcpHost = createConduitMcpHost({
     dir: path.join(userData(), 'conduit-mcp'),
     homeDir: os.homedir(),
@@ -1968,78 +2045,66 @@ app.whenReady().then(() => {
     shimPath: mcpShimPath(),
     platform: hostPlatform,
     e2e: process.env.CONDUIT_E2E === '1',
-    mgr,
-    pty,
-    writer: ptyWriter,
-    activity,
-    messagingOn: () => settings.conduitMcp,
-    toolPolicy: () => ({ global: settings.mcpToolPolicy, byCli: settings.mcpToolPolicyByCli }),
+    sessions: sessionPort,
+    runtime: mcpRuntime.runtime,
+    screens: mcpRuntime.screens,
+    tokens: createTokenStore(),
+    typing: typingPort,
+    attention: activity,
+    emit: emitMcpEvent,
+    createEndpoint: createMcpEndpoint,
     ownerWindowOf: (id) => {
-      const w = sessionOwner.get(id);
-      return w !== undefined && windows.has(w) ? w : null;
+      const windowId = sessionOwner.get(id);
+      return windowId !== undefined && windows.has(windowId) ? windowId : null;
     },
-    presence,
-    sendToOwner,
-    sendToWindow: (wid, msg) => {
-      const w = windows.get(wid);
-      if (w && !w.isDestroyed() && !w.webContents.isDestroyed())
-        w.webContents.send('to-webview', msg);
-    },
-    flashOwner: (id) => {
-      const w = windowFor(id);
-      if (w && settings.osAttention && !w.isFocused()) w.flashFrame(true);
-    },
-    installState: (cli) => mcpInstall.userState(cli),
-    // E2E shortens the 15 s grace so a scenario can watch detection happen.
+    windowReady: (id) => presence.isReady(id),
+    onScreen: (windowId, id) => presence.isOnScreen(windowId, id),
     detectGraceMs:
       process.env.CONDUIT_E2E === '1' && process.env.CONDUIT_E2E_DETECT_GRACE_MS
         ? Number(process.env.CONDUIT_E2E_DETECT_GRACE_MS)
         : undefined,
-    defOf: (id) => {
-      const s = mgr.get(id);
-      return s ? effectiveDef(s, registry) : undefined;
-    },
-    agentIds: () => registry.list().map((d) => d.id),
-    control: {
+    domain: {
+      messagingOn: () => settings.conduitMcp,
+      toolPolicy: () => ({ global: settings.mcpToolPolicy, byCli: settings.mcpToolPolicyByCli }),
+      installState: (cli) => mcpInstall.userState(cli),
+      defOf: (id) => {
+        const session = mgr.get(id);
+        return session ? effectiveDef(session, registry) : undefined;
+      },
+      agentIds: () => registry.list().map((def) => def.id),
       homeOf: (id) => mgr.get(id)?.home,
-      resolvePath: (home, p) => path.resolve(home, p),
-      // Not probeDeps.kind: its 'not-dir' can't tell a file from a socket or device.
-      kindOf: (p) =>
-        fs.promises.stat(p).then(
-          (st) => (st.isDirectory() ? 'dir' : st.isFile() ? 'file' : 'other'),
+      resolvePath: (home, target) => path.resolve(home, target),
+      kindOf: (target) =>
+        fs.promises.stat(target).then(
+          (stat) => (stat.isDirectory() ? 'dir' : stat.isFile() ? 'file' : 'other'),
           () => 'missing' as const,
         ),
-      resolveCommand: (c) => resolveCommand(c, hostPlatform),
+      resolveCommand: (command) => resolveCommand(command, hostPlatform),
       openSession: (req) => createMcpSession(req),
-      openFile: (req) => openMcpFile(req),
+      closeSession: async (id, opts) => {
+        if (!mgr.get(id))
+          return { ok: false, code: 'unknown_session', message: 'session no longer exists' };
+        log.info('session', 'MCP close', { sessionId: id, closedBy: opts.closedBy });
+        await disposeSession(id);
+        return { ok: true };
+      },
       foldersOf: (id) => {
-        const s = mgr.get(id);
-        return s ? { home: s.home, roots: [...s.roots] } : undefined;
+        const session = mgr.get(id);
+        return session ? { home: session.home, roots: [...session.roots] } : undefined;
       },
-      // Declared after the host; read lazily, like createMcpSession / openMcpFile.
-      addRoot: (id, p) => sessionOps.addRoot(id, p),
-      activateSession: (id, raise) => {
-        const w = windowFor(id);
-        if (!w || w.isDestroyed() || w.webContents.isDestroyed()) return;
-        w.webContents.send('to-webview', { type: 'activateSession', sessionId: id });
-        // As moveSessionToWindow does: a session in another window would switch out of sight.
-        if (raise) {
-          if (process.env.CONDUIT_E2E !== '1') w.show();
-          w.focus();
-        }
-      },
+      addRoot: (id, target) => sessionOps.addRoot(id, target),
       git: (cwd, args) =>
-        runGit(args, { cwd, timeoutMs: GIT_TIMEOUT.metadata }).then((r) => ({
-          ok: r.ok,
-          stdout: r.stdout,
-          stderr: r.stderr,
+        runGit(args, { cwd, timeoutMs: GIT_TIMEOUT.metadata }).then((result) => ({
+          ok: result.ok,
+          stdout: result.stdout,
+          stderr: result.stderr,
         })),
+      projectName: (id) =>
+        id ? (projectStore.list().find((project) => project.id === id)?.name ?? null) : null,
     },
-    projectName: (projectId) =>
-      projectId ? (projectStore.list().find((p) => p.id === projectId)?.name ?? null) : null,
-    broadcast,
     log,
   });
+  const mcpDrafts: DraftPort = mcpHost;
 
   // Restore previously persisted sessions (as stale) + save on every change.
   if (settings.restoreSessions) {
@@ -2049,7 +2114,7 @@ app.whenReady().then(() => {
   // AFTER the session set, because a schedule whose session is gone is dropped at load and never
   // re-persisted (§4). Every restored session is `stale` with no PTY, so anything already due
   // lands in `waiting` — nothing is written and nothing is spawned (§2 "Lifecycle").
-  timers.load(parseTimedMessagesFile(readBlob(timedMessagesFile())).schedules);
+  timers.load(timedMessagesParse.schedules);
 
   const roleBriefs = createRoleBriefHost({
     userData: userData(),
@@ -2064,7 +2129,8 @@ app.whenReady().then(() => {
   // see docs/specs/2026-10-26-conduit-role-brief.md §3.3
   {
     const onDisk = parseSessions(readBlob(sessionsFile()));
-    roleBriefs.sweep(briefKeepIds(mgr.list(), onDisk.kind === 'ok' ? onDisk.sessions : []));
+    if (onDisk.kind !== 'newer')
+      roleBriefs.sweep(briefKeepIds(mgr.list(), onDisk.kind === 'ok' ? onDisk.sessions : []));
   }
 
   // Scrollback files are only deleted on session dispose; a session that was never restored
@@ -2076,13 +2142,13 @@ app.whenReady().then(() => {
   // would look orphaned and get deleted — wiping the scrollback of the very sessions the
   // persist gate deliberately preserves (a restore-off run keeps sessions.json intact, so its
   // scrollback must survive too, or toggling restore back on restores sessions with no history).
-  if (shouldPersistSessions(settings)) {
+  if (sessionsWriteGate.writable) {
     try {
       const dir = userData();
       const live = mgr.list().map((s) => s.id);
       for (const name of orphanScrollbackFiles(fs.readdirSync(dir), live)) {
         try {
-          fs.rmSync(path.join(dir, name));
+          scrollbackWriteGate.run(name, () => fs.rmSync(path.join(dir, name)));
         } catch (err) {
           log.warn('scrollback', 'orphan sweep unlink failed', { name, err: String(err) });
         }
@@ -2095,7 +2161,7 @@ app.whenReady().then(() => {
   // never loaded the saved sessions, so its (empty) state must never overwrite them — even if the
   // user toggles restore back ON mid-run (that takes effect next launch). Gating on the live
   // setting would let a mid-run re-enable + quit wipe the preserved list. See persistence.ts.
-  const sessionsPersistGate = shouldPersistSessions(settings);
+  const sessionsPersistGate = sessionsWriteGate;
   mgr.onChange(() => {
     if (deferredIndexes.size || pendingFsByWindow.size) {
       const sessions = mgr.list();
@@ -2113,8 +2179,10 @@ app.whenReady().then(() => {
     // on top of the good snapshot — leaving sessions.json empty, so the next launch restored
     // nothing and the multi-window layout collapsed to one window (planLayoutRestore drops a
     // window that owns no restored session).
-    if (sessionsPersistGate && !isQuitting)
-      persistFile(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
+    if (!isQuitting)
+      sessionsPersistGate.run(() =>
+        persistFile(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json'),
+      );
     postState();
   });
 
@@ -2259,7 +2327,9 @@ app.whenReady().then(() => {
     write(settingsFile(), serializeSettings(settings), 'settings.json');
     // Startup-snapshot gate (see sessionsPersistGate note) so a restore-off run — even one that
     // toggled restore back on — never overwrites the saved session set on quit.
-    if (sessionsPersistGate) write(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
+    sessionsPersistGate.run(() =>
+      write(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json'),
+    );
     // Not gated on restoreSessions; blocked for a run whose projects.json was unreadable (B2).
     if (projectsWritable && projectsDirty)
       write(projectsFile(), serializeProjects(projectStore.list()), 'projects.json');
@@ -2278,10 +2348,12 @@ app.whenReady().then(() => {
     // change this run — readBlob swallows every read error, so an unconditional flush could
     // overwrite an intact file with nothing (the 0.11.1 durability class of bug).
     if (timersDirty)
-      write(
-        timedMessagesFile(),
-        serializeTimedMessagesFile({ version: 1, schedules: timers.list() }),
-        'timed-messages.json',
+      timedWriteGate.run(() =>
+        write(
+          timedMessagesFile(),
+          serializeTimedMessagesFile({ version: 1, schedules: timers.list() }),
+          'timed-messages.json',
+        ),
       );
     if (settings.restoreSessions) {
       const snapshot = buildLayoutSnapshot();
@@ -2626,21 +2698,6 @@ app.whenReady().then(() => {
     };
   }
 
-  async function openMcpFile(req: McpFileRequest): Promise<{ sessionId: string }> {
-    // The caller's session, not the path's owner (spec 2026-10-30-conduit-mcp-app-control §2.1).
-    const sessionId = req.callerSessionId;
-    sendOpenFileInEditor({
-      type: 'openFileInEditor',
-      path: req.path,
-      sessionId,
-      source: 'mcp',
-      ...(req.line !== undefined ? { line: req.line } : {}),
-      ...(req.column !== undefined ? { column: req.column } : {}),
-      focus: req.focus,
-    });
-    return { sessionId };
-  }
-
   async function openRepoRequest(
     m: Extract<WebviewToHost, { type: 'openRepo' }>,
     ownerWindowId: number,
@@ -2877,7 +2934,7 @@ app.whenReady().then(() => {
     const planRoot = mgr.get(id)?.home;
     pty.dispose(id);
     // Before mgr.remove: its unread messages are marked undelivered under its handle.
-    void mcpHost.onSessionDeleted(id);
+    const mcpDeleted = mcpHost.onSessionDeleted(id);
     void roleBriefs.onSessionDeleted(id);
     mgr.remove(id);
     scopes.ended(id);
@@ -2911,7 +2968,8 @@ app.whenReady().then(() => {
     repoTrackerHost.tracker.dropSession(id);
     afterReposChanged();
     removeOwner(sessionOwner, id);
-    fs.unlink(scrollbackFile(id), () => {});
+    scrollbackWriteGate.run(scrollbackFileName(id), () => fs.unlink(scrollbackFile(id), () => {}));
+    return mcpDeleted;
   };
 
   async function handle(m: WebviewToHost, e: IpcMainEvent) {
@@ -3016,8 +3074,8 @@ app.whenReady().then(() => {
               bracketedPaste: () => !!pasteModes.get(sessionId)?.on,
               write: (d) => {
                 // A paste the human still has to submit: a draft to the notice gate (spec §2).
-                mcpHost.noteHostInput(sessionId, d);
-                return pty.input(sessionId, d);
+                mcpDrafts.noteHostInput(sessionId, d);
+                return typingPort.write(sessionId, d);
               },
               onPasted: (p) => scopes.pasted(sessionId, p),
             });
@@ -4386,7 +4444,7 @@ app.whenReady().then(() => {
               // follow. See docs/specs/archive/2026-08-20-scrollback-replay-neutralizer.md.
               const replay = scrollbacks.replayForColdStart(
                 m.sessionId,
-                () => restoreScrollback(readBlob(scrollbackFile(m.sessionId)))?.segments,
+                () => scrollbackWriteGate.restore(scrollbackFileName(m.sessionId))?.segments,
               );
               if (replay?.data) {
                 didReplay = true;
@@ -4480,7 +4538,16 @@ app.whenReady().then(() => {
               }
             }
             // Messaging wiring goes on last: per-launch args + the session token (spec §3.1).
-            if (launchDef) spec = mcpHost.prepareLaunch(m.sessionId, launchDef, spec);
+            const launchIds = sessionPort.allocateLaunch(m.sessionId);
+            mcpRuntime.prepared(m.sessionId, launchIds);
+            if (launchDef)
+              spec = await mcpHost.prepareLaunch(m.sessionId, launchDef, spec, launchIds);
+            // prepareLaunch awaits the token store (C7 LaunchPort): re-check as after the health check.
+            if (!mgr.get(m.sessionId)) break;
+            if (pty.isAlive(m.sessionId)) {
+              attach();
+              break;
+            }
             // brief --add-dir is not a session root (docs/specs/2026-10-26-conduit-role-brief.md §3.2)
             const scopeArgs = spec.args;
             // Synchronous through pty.start: nothing may await after the isAlive re-check above.
@@ -4497,7 +4564,7 @@ app.whenReady().then(() => {
             for (const b of brief.banners) scrollbacks.show(m.sessionId, b, size);
             pty.start(m.sessionId, size.cols, size.rows, spec);
             brief.commit(pty.isAlive(m.sessionId));
-            mcpHost.onSpawn(m.sessionId, size.cols, size.rows);
+            mcpRuntime.spawned(m.sessionId);
             startRefusals.delete(m.sessionId);
             // Claude's visible scope is read off the FINAL args, so a user's own --add-dir counts
             // (mf-live-edits spec §2.1; no session field, L12 S7).
@@ -4600,7 +4667,7 @@ app.whenReady().then(() => {
           log.debug('pty', 'resize', { sessionId: m.sessionId, cols: m.cols, rows: m.rows });
           if (pty.isAlive(m.sessionId)) {
             pty.resize(m.sessionId, m.cols, m.rows);
-            mcpHost.onResize(m.sessionId, m.cols, m.rows);
+            mcpRuntime.resize(m.sessionId, m.cols, m.rows);
           } else preSpawnSizes.set(m.sessionId, { cols: m.cols, rows: m.rows });
           break;
         case 'term:dispose':

@@ -10,6 +10,11 @@ import {
 import type { AgentDefinition } from '../../src/types';
 
 const empty = (): LaunchersFile => ({ version: 1, usage: {}, custom: [] });
+const parsed = (blob: string | undefined): LaunchersFile => {
+  const result = parseLaunchers(blob);
+  if ('kind' in result) throw new Error('newer launcher file');
+  return result;
+};
 
 const custom = (id: string, label = id): AgentDefinition => ({
   id,
@@ -30,12 +35,12 @@ const deps = (over: Partial<Parameters<typeof addCustomLauncher>[2]> = {}) => ({
 });
 
 describe('parseLaunchers', () => {
-  it('undefined / not JSON / version 2 → empty file', () => {
+  it('undefined / not JSON → empty file; version 2 is explicitly refused', () => {
     expect(parseLaunchers(undefined)).toEqual(empty());
     expect(parseLaunchers('{nope')).toEqual(empty());
     expect(
       parseLaunchers(JSON.stringify({ version: 2, usage: { a: { count: 1, lastUsed: 1 } } })),
-    ).toEqual(empty());
+    ).toEqual({ kind: 'newer' });
     expect(parseLaunchers(JSON.stringify([1, 2]))).toEqual(empty());
   });
 
@@ -50,16 +55,14 @@ describe('parseLaunchers', () => {
       },
       custom: [custom('custom:a'), custom('shell:pwsh'), { id: 'custom:b' }, custom('custom:c')],
     });
-    const f = parseLaunchers(blob);
+    const f = parsed(blob);
     expect(f.usage).toEqual({ good: { count: 2, lastUsed: 5 } });
     expect(f.custom.map((d) => d.id)).toEqual(['custom:a', 'custom:c']);
   });
 
   it('custom capped at 50', () => {
     const list = Array.from({ length: 55 }, (_, i) => custom(`custom:c${i}`));
-    expect(
-      parseLaunchers(JSON.stringify({ version: 1, usage: {}, custom: list })).custom,
-    ).toHaveLength(50);
+    expect(parsed(JSON.stringify({ version: 1, usage: {}, custom: list })).custom).toHaveLength(50);
   });
 
   it('serialize → parse round-trips', () => {
@@ -68,7 +71,7 @@ describe('parseLaunchers', () => {
       usage: { 'cli:claude': { count: 3, lastUsed: 99 } },
       custom: [custom('custom:aider', 'aider')],
     };
-    expect(parseLaunchers(serializeLaunchers(f))).toEqual(f);
+    expect(parsed(serializeLaunchers(f))).toEqual(f);
   });
 });
 

@@ -192,13 +192,19 @@ describe('scrollback-persistence', () => {
   it('returns null on missing or garbage input', () => {
     expect(restoreScrollback(undefined)).toBeNull();
     expect(restoreScrollback('not json')).toBeNull();
-    expect(restoreScrollback('{"version":3,"sessionId":"s","segments":[]}')).toBeNull();
     expect(restoreScrollback('{"version":2,"sessionId":"s"}')).toBeNull();
     expect(restoreScrollback('{"version":2,"sessionId":"s","segments":[{"cols":80}]}')).toBeNull();
     expect(restoreScrollback('{"version":2,"sessionId":"s","segments":[null]}')).toBeNull();
     expect(restoreScrollback('{"version":2,"segments":[]}')).toBeNull();
     expect(restoreScrollback('{"version":1,"sessionId":"s"}')).toBeNull();
     expect(restoreScrollback('[]')).toBeNull();
+  });
+
+  it('explicitly refuses a newer scrollback format', () => {
+    expect(restoreScrollback('{"version":3,"sessionId":"s","segments":[]}')).toMatchObject({
+      kind: 'newer',
+      sessionId: 's',
+    });
   });
 
   describe('scrollbackReplayPadding', () => {

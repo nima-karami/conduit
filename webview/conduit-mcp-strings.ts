@@ -215,6 +215,8 @@ export const MCP_STR = {
     not_a_repo: 'that folder is not a git repository of the session',
     attach_refused: 'that folder could not be attached',
     unsaved_changes: 'the session has unsaved files',
+    spawn_unconfirmed: 'the launch could not be confirmed; close this session before trying again',
+    server_stopping: 'Conduit is stopping; try again after it restarts',
     ui_timeout: 'Conduit’s window didn’t answer in time',
   } satisfies Record<ToolErrorCode, string>,
   noResponse: 'Conduit didn’t answer. Try again.',

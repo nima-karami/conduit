@@ -144,6 +144,41 @@ describe('createMessageStore', () => {
     expect((m.state.log ?? '').split('\n').filter(Boolean)).toHaveLength(1);
   });
 
+  it('a newer log record makes the store unavailable without repair, compaction, or append', async () => {
+    const m = memIo();
+    const future = JSON.stringify({ v: 2, t: 'msg', msg: msg() });
+    m.state.log = `${future}\n{"v":1,"t":"msg","ms`;
+    const store = createMessageStore(m.io, { maxAgeMs: 0 });
+    expect(await store.load()).toMatchObject({
+      ok: false,
+      error: { code: 'store_unavailable' },
+    });
+    expect(store.available()).toBe(false);
+    expect(await store.append(msg(), [])).toMatchObject({
+      ok: false,
+      error: { code: 'store_unavailable' },
+    });
+    expect(await store.enforceRetention(new Date())).toMatchObject({
+      ok: false,
+      error: { code: 'store_unavailable' },
+    });
+    expect(m.calls).not.toContain('rewriteLog');
+    expect(m.calls).not.toContain('appendLog');
+    expect(m.state.log).toBe(`${future}\n{"v":1,"t":"msg","ms`);
+  });
+
+  it('refuses a newer log for the rest of the run even after a retry sees different bytes', async () => {
+    const m = memIo();
+    m.state.log = `${JSON.stringify({ v: 2, t: 'msg' })}\n`;
+    const store = createMessageStore(m.io);
+    expect((await store.load()).ok).toBe(false);
+    m.state.log = '';
+    expect((await store.load()).ok).toBe(false);
+    expect((await store.append(msg(), [])).ok).toBe(false);
+    expect(m.calls).not.toContain('appendLog');
+    expect(m.state.log).toBe('');
+  });
+
   it('IO calls never overlap', async () => {
     const { store, m } = await loaded(memIo({ delayMs: 2 }));
     const a = msg();
