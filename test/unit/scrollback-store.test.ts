@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PtyHost } from '../../src/pty-host';
 import { restoreScrollback } from '../../src/scrollback-persistence';
 import { ScrollbackStore } from '../../src/scrollback-store';
 
@@ -7,25 +6,6 @@ const restored = (blob: string | undefined) => {
   const r = restoreScrollback(blob);
   return r.kind === 'ok' ? r.scrollback : undefined;
 };
-
-// node-pty is a native addon built against Electron's ABI; PtyHost's bookkeeping is the subject.
-let emit: ((data: string) => void) | null = null;
-let onExitCb: ((e: { exitCode: number }) => void) | null = null;
-vi.mock('@lydell/node-pty', () => ({
-  spawn: () => ({
-    onData: (cb: (data: string) => void) => {
-      emit = cb;
-    },
-    onExit: (cb: (e: { exitCode: number }) => void) => {
-      onExitCb = cb;
-    },
-    write: () => {},
-    resize: () => {},
-    kill: () => {},
-  }),
-}));
-
-const spec = { command: 'cmd.exe', args: [] as string[], cwd: '.' };
 
 function harness() {
   const writes: string[] = [];
@@ -41,18 +21,12 @@ describe('ScrollbackStore', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('keeps the geometry when a session exits and is disposed inside the debounce window', () => {
+  it('keeps the geometry when a session exits inside the debounce window', () => {
     const { store, writes, lastWrite } = harness();
-    // Wired the way main.ts wires it: output is stamped with the live PTY's size on arrival,
-    // the exit flushes, and the exited pane's term:dispose disposes the PTY.
-    const host = new PtyHost((msg) => {
-      if (msg.type === 'term:data') store.append(msg.sessionId, msg.data, host.size(msg.sessionId));
-      if (msg.type === 'term:exit') store.flush(msg.sessionId);
-    });
-    host.start('s1', 144, 73, spec);
-    emit?.('last words\r\n');
-    onExitCb?.({ exitCode: 0 });
-    host.dispose('s1');
+    // Wired the way the server ring is: output stamped with the size it arrived at, and the
+    // exit flushes.
+    store.append('s1', 'last words\r\n', { cols: 144, rows: 73 });
+    store.flush('s1');
     vi.advanceTimersByTime(1000);
 
     expect(writes).toHaveLength(1);

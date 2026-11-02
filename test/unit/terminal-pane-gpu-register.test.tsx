@@ -26,6 +26,11 @@ vi.mock('@xterm/xterm', () => ({
     element: HTMLElement | undefined;
     options: Record<string, unknown> = {};
     modes = { bracketedPasteMode: false };
+    parser = {
+      registerCsiHandler: () => ({ dispose() {} }),
+      registerOscHandler: () => ({ dispose() {} }),
+      registerDcsHandler: () => ({ dispose() {} }),
+    };
     unicode = { activeVersion: '6' };
     loadAddon() {}
     open(parent: HTMLElement) {

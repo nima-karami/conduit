@@ -12,7 +12,7 @@ const main = {
   outfile: 'out/main.js',
   platform: 'node',
   format: 'cjs',
-  external: ['electron', '@lydell/node-pty'],
+  external: ['electron'],
 };
 
 // Electron preload (runs in the renderer with Node access, bridges via contextBridge).

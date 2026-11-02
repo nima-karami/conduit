@@ -1,5 +1,4 @@
-import { spawn } from 'node:child_process';
-import * as crypto from 'node:crypto';
+import { execFile, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -20,36 +19,30 @@ import {
   type WebContents,
   webContents,
 } from 'electron';
+import { hcClient } from '../server/hc-cli';
+import { CURRENT_SHIM_GENERATION, prepareRuntime } from '../server/runtime-dir/prepare';
 import { activeCwd, sessionGitRoot } from '../src/active-cwd';
 import { repoForPath, requestGitRoot, resolveRequestRepoRoot } from '../src/active-repo';
-import { type AgentScopeReason, runAddDir } from '../src/add-dir-delivery';
-import { AgentRegistry } from '../src/agent-registry';
-import { scopeFromSpawnArgs } from '../src/agent-scope';
-import { AgentScopeTracker } from '../src/agent-scope-tracker';
 import { isAppIndexUrl } from '../src/app-navigation';
 import { asyncSingleFlight } from '../src/async-singleflight';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
 import { createCloseGuard, createQuitGrant, GRANT_TTL_MS, openWindowIds } from '../src/close-guard';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
-import type { McpOpenOutcome, McpOpenRequest } from '../src/conduit-mcp/control-tools';
-import { endpointPath } from '../src/conduit-mcp/endpoint-path';
-import { createConduitMcpHost } from '../src/conduit-mcp/host';
-import { createMcpInstall, migrateGateOnce } from '../src/conduit-mcp/install';
-import { CLI_BINARIES, coerceInstallRequest } from '../src/conduit-mcp/install-types';
-import { createTokenStore } from '../src/conduit-mcp/token-store';
-import { loadAgentsConfig, readBlob, readFileState } from '../src/config';
+import { coerceInstallRequest } from '../src/conduit-mcp/install-types';
+import { readBlob } from '../src/config';
 import type { TruncatedBy } from '../src/content-search';
 import { searchContentFs } from '../src/content-search-fs';
+import { HC_PINNED_VERSION } from '../src/contracts/hc';
 import type {
-  DraftPort,
-  ServerEventSink,
-  SessionStorePort,
-  TypingPort,
-} from '../src/contracts/server-ports';
+  WindowPresence as C2WindowPresence,
+  DataStores,
+  ServerEvents,
+  ServerMethods,
+  SessionMutation,
+} from '../src/contracts/server-protocol';
+import { coreStartEnv, SERVER_EXHAUSTED_FILE } from '../src/contracts/session-identity';
 import { decideCrashRecovery } from '../src/crash-recovery';
-import { createCwdReportGate } from '../src/cwd-report-gate';
-import { cwdReportingAugmentation } from '../src/cwd-reporting';
 import { ExpiringCache } from '../src/expiring-cache';
 import { indexToSearchHits, walkFilesAsync } from '../src/file-search';
 import {
@@ -61,11 +54,9 @@ import {
   type Unmerged,
   writeFile,
 } from '../src/file-service';
-import { FolderHealth } from '../src/folder-health';
 import { folderKey } from '../src/folder-key';
 import { locateFolder } from '../src/folder-locate';
-import { probeFolders } from '../src/folder-probe';
-import { type FolderProbeDeps, probeFolder } from '../src/folder-validation';
+import type { SessionOpReason } from '../src/folder-validation';
 import { type DndOpts, fsCopy, fsMove } from '../src/fs-dnd';
 import { fsImport, type ImportConflictPolicy } from '../src/fs-import';
 import {
@@ -87,7 +78,7 @@ import {
   getRangeDiff,
   searchHistory,
 } from '../src/git-history';
-import { getGitInfo, isDirty, listBranches, listRefs, switchBranch } from '../src/git-info';
+import { isDirty, listBranches, listRefs, switchBranch } from '../src/git-info';
 import { resolveLfsImage } from '../src/git-lfs';
 import { gitIgnoredNames, gitListedFiles, LISTING_MAX_BUFFER } from '../src/git-listing';
 import { createAsyncMemo } from '../src/git-memo';
@@ -105,17 +96,7 @@ import {
   takeChunks,
   wantsFullIndex,
 } from '../src/index-streams';
-import { type BellScanState, countBareBells } from '../src/last-line';
-import { previewLaunch } from '../src/launch-preview';
-import { buildLaunchSpec } from '../src/launch-spec';
-import { LauncherHost } from '../src/launcher-host';
-import {
-  decideLimitAction,
-  type LimitEpisode,
-  looksLikeLimitLine,
-  scanLimitNotice,
-  TAIL_LINES,
-} from '../src/limit-notice';
+import { instanceNames } from '../src/instance-names';
 import { type HostPlatform, resolveServerBinary, type SearchContext } from '../src/lsp-binary';
 import { compileRootMarkers, compileWatchGlobs, LANGUAGE_SERVERS } from '../src/lsp-registry';
 import { resolveServerRoot } from '../src/lsp-root';
@@ -129,8 +110,6 @@ import {
   touchResolution,
 } from '../src/module-resolver-fs';
 import { openWithCommand } from '../src/open-with';
-import { shouldRaiseOsAttention } from '../src/os-attention';
-import { CwdScanner } from '../src/osc-cwd';
 import {
   nodeOutgoingPathDeps,
   outgoingFoldersFor,
@@ -139,31 +118,20 @@ import {
 import { resolveOwningSession } from '../src/owning-session';
 import { isInsideAnyRoot, isInsideRoot, realPathLeaf } from '../src/path-guard';
 import { hostRealPathLeaf } from '../src/path-link-confine';
-import { userRootsOf } from '../src/path-link-roots';
 import type { IndexedFile } from '../src/path-resolve';
-import { parseDocs, parseSessions, serializeDocs, serializeSessions } from '../src/persistence';
-import {
-  ScrollbackWriteGate,
-  sessionsWritable,
-  timedMessagesWritable,
-} from '../src/persistence-write-gates';
+import { parseDocs, serializeDocs } from '../src/persistence';
 import { buildQueueEntry } from '../src/pipeline';
 import { applyPlanCommentPatch, commentsFingerprint } from '../src/plan-comments';
 import { buildPreviewUrl, isPreviewUrl } from '../src/preview-url';
 import { createProjectFileIndex, repoSetOf } from '../src/project-file-index';
-import { ProjectStore, parseProjects, serializeProjects } from '../src/project-store';
 import type {
   AboutInfo,
   DiffBase,
   HostToWebview,
-  LimitOffer,
   PersistedDoc,
   RepoDTO,
-  TermGeometry,
   WebviewToHost,
 } from '../src/protocol';
-import { PtyHost } from '../src/pty-host';
-import { createPtyWriter } from '../src/pty-writer';
 import { summarizeQueue } from '../src/queue-summary';
 import { busySessions, runningSessions } from '../src/quit-guard';
 import { resolveRangePreset } from '../src/range-preset';
@@ -190,17 +158,8 @@ import {
   setMark as setReviewMark,
 } from '../src/review-marks';
 import { applyNotePatch, notesFingerprint, type ReviewNotesData } from '../src/review-notes';
-import { briefKeepIds, createRoleBriefHost, parseBriefRequest } from '../src/role-brief-host';
-import { orphanScrollbackFiles, scrollbackFileName } from '../src/scrollback-files';
-import { spawnPrelude } from '../src/scrollback-persistence';
-import { ScrollbackStore } from '../src/scrollback-store';
 import { isIndexScope, searchRootAllowed } from '../src/search-scope';
-import { SessionActivity } from '../src/session-activity';
-import { COMMAND_AGENT_ID, effectiveDef } from '../src/session-command';
 import { presentRoots, sessionContains } from '../src/session-folders';
-import { SessionManager } from '../src/session-manager';
-import { buildStartupModel } from '../src/session-migration';
-import { createSessionOps, type SessionOpResult } from '../src/session-ops';
 import { createSessionResourceDemand } from '../src/session-resource-demand';
 import {
   type AppSettings,
@@ -208,35 +167,14 @@ import {
   restoreSettings,
   serializeSettings,
 } from '../src/settings';
-import { detectAgentClis, detectShells, hostCliScanEnv, resolveCommand } from '../src/shells';
+import { mirrorServerKeys, serverPatchOf, uiOnly } from '../src/settings-mirror';
 import { expandShortNames, hasShortComponent, hostShortNameDeps } from '../src/short-names';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 import { INDEX_FILE_CAP, isOversizedForIndex, selectIndexCandidates } from '../src/source-index';
-import {
-  PASTE_MODE_OFF,
-  type PasteModeState,
-  scanInertOutput,
-  trackBracketedPaste,
-} from '../src/terminal-output';
 import { groundForTheme } from '../src/theme-ground';
-import {
-  MIN_DELAY_MS,
-  MIN_INTERVAL_MS,
-  parseTimedMessagesFile,
-  SUBMIT_GAP_MS,
-  serializeTimedMessagesFile,
-} from '../src/timed-messages';
-import { TimerScheduler } from '../src/timer-scheduler';
 import { loadTsconfigChain } from '../src/tsconfig-discovery';
 import { type TsconfigDTO, toTsconfigDTO } from '../src/tsconfig-map';
-import type {
-  BriefError,
-  BriefRequest,
-  Session,
-  SessionCommand,
-  SessionOpener,
-  StartRefusal,
-} from '../src/types';
+import type { BriefRequest, Session } from '../src/types';
 import { createGuestOpenGate, hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import { createWindowPresence } from '../src/window-presence';
 import {
@@ -255,6 +193,7 @@ import {
 } from '../src/window-registry';
 import { currentWindowsPty } from '../src/windows-pty-info';
 import { parseTrustStore, serializeTrustStore } from '../src/workspace-trust';
+import { AppSessionStore, type SessionFolderDiff } from './app-session-store';
 import { extractOpenTarget, gitRootOf } from './arg-utils';
 import { BoardWatcher } from './board-watcher';
 import {
@@ -283,12 +222,11 @@ import {
   writeReviewNotesArtifactFile,
   writeSpec,
 } from './conduit-fs';
-import { createMcpEndpoint } from './conduit-mcp-endpoint';
-import { createMcpRuntimePorts } from './conduit-mcp-runtime-ports';
 import { createDragOutHost } from './drag-out-host';
 import { execFileBounded } from './exec-bounded';
 import { createFolderPicker } from './folder-picker';
-import { createLaunchClaims } from './launch-claims';
+import type { HcCliDeps } from './hc-cli';
+import { createHcEvents } from './hc-events';
 import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
 import { startLanguageServer } from './lsp-server';
@@ -310,9 +248,22 @@ import { defaultTreeKillDeps } from './process-tree';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
 import { createRepoTrackerHost } from './repo-tracker-host';
+import { collectRuntimeGarbage } from './runtime-gc';
+import { runtimeLayout } from './runtime-layout';
+import {
+  createServerCalls,
+  installDownResult,
+  installDownStatus,
+  serverDownReply,
+  waitForServerSnapshot,
+} from './server-calls';
+import { type AppLog, ServerCallError, ServerClient } from './server-client';
+import { createPendingAppCreateMatcher, createServerEventRouter } from './server-events';
+import { createServerLifecycle } from './server-lifecycle';
 import { SessionFolderRuntime } from './session-folder-runtime';
-import { createSessionScreens } from './session-screens';
 import { installSkill, listSkills } from './skills-service';
+import { createTerminalHost } from './terminal-host';
+import { createTerminalLinkFactory } from './terminal-link';
 import { checkForUpdate, initUpdater, quitAndInstall } from './updater';
 
 function readAboutInfo(): AboutInfo {
@@ -427,6 +378,7 @@ const focusedWindow = (): BrowserWindow | undefined =>
 // against an external `git checkout` made while the app was unfocused (Slice A refresh), and the
 // active session's folders are health-checked (mf-model spec §2.6).
 let onWindowFocus: (() => void) | null = null;
+let onWindowPresenceChanged: (() => void) | null = null;
 
 // Set by the app-ready closure; broadcasts the `win:list` picker payload (needs the engine
 // to count owned sessions). Called on window create/close/focus + after a session move
@@ -434,35 +386,17 @@ let onWindowFocus: (() => void) | null = null;
 let broadcastWinList: (() => void) | null = null;
 
 const userData = () => app.getPath('userData');
-/** The shim every CLI spawns as its MCP server: `extraResources` when packaged, the repo copy in
- *  dev (the bundledSkillsDir pattern, electron/skills-service.ts). */
-const mcpShimPath = () =>
-  app.isPackaged
-    ? path.join(process.resourcesPath, 'conduit-mcp', 'conduit-mcp-shim.cjs')
-    : path.join(__dirname, '..', 'resources', 'conduit-mcp', 'conduit-mcp-shim.cjs');
-const sessionsFile = () => path.join(userData(), 'sessions.json');
-const projectsFile = () => path.join(userData(), 'projects.json');
-const agentsFile = () => path.join(userData(), 'agents.json');
-// Launch-row usage + custom launchers (mf-new-session spec §3.3); host-owned, never agents.json.
-const launchersFile = () => path.join(userData(), 'launchers.json');
 const reposFile = () => path.join(userData(), 'repos.json');
 // Per-file "I've reviewed this" marks (spec 2026-08-27-review-supercharge §2 Lane B). Lives in
 // userData beside sessions.json — never in the reviewed repo, where it would read as a change.
 const reviewMarksFile = () => path.join(userData(), 'review-marks.json');
-// Armed timed messages (spec 2026-08-28-timed-messages §3). Per-user runtime state, so it lives
-// in userData beside sessions.json — never in the project, where an armed timer would read as a
-// change in the tree the user is reviewing.
-const timedMessagesFile = () => path.join(userData(), 'timed-messages.json');
 const settingsFile = () => path.join(userData(), 'settings.json');
 // Persisted multi-window layout (geometry + per-window owned sessions) for restore-across-
-// restart (Slice C). Mirrors sessionsFile(); gated on the same `restoreSessions` setting.
+// restart (Slice C). Gated on the `restoreSessions` setting.
 const windowsLayoutFile = () => path.join(userData(), 'windows.json');
 // Persisted editor tabs (editor-tabs-persist), a SIBLING of sessions.json so a corrupt tab
 // blob can never break session restore (spec §3.2 D3). Restore is gated on `restoreSessions`.
 const docsFile = () => path.join(userData(), 'docs.json');
-// Per-terminal-session scrollback (T2). One file per session; naming + sanitize live in
-// src/scrollback-files.ts so the startup orphan sweep matches the exact same filenames.
-const scrollbackFile = (sessionId: string) => path.join(userData(), scrollbackFileName(sessionId));
 
 /** Write `data` to `filePath`, surfacing disk/permission errors that empty callbacks would swallow. */
 function persistFile(filePath: string, data: string, label: string): void {
@@ -976,23 +910,6 @@ function broadcast(msg: HostToWebview) {
 
 type OpenFileInEditor = Extract<HostToWebview, { type: 'openFileInEditor' }>;
 
-/** openRepo's optional parts; `mcp` marks an MCP open (spec 2026-10-27-conduit-mcp-control-tools §3.1). */
-interface OpenRepoOptions {
-  /** Stamps the new session with the board card it was started for (N2). */
-  cardId?: string;
-  extras?: {
-    roots: string[];
-    missingRoots: string[];
-    projectId?: string;
-    name?: string;
-    command?: SessionCommand;
-    openedBy?: SessionOpener;
-  };
-  brief?: { request: BriefRequest | undefined; dialog: boolean };
-  /** Skips launcher usage and recents; focus picks activateSession or suppressAutoSwitch. */
-  mcp?: { focus: boolean };
-}
-
 function reply(e: IpcMainEvent, msg: HostToWebview) {
   // An async handler (.then/.catch) may resolve after the sender's window closed; sending
   // to a destroyed webContents throws. Guard it (multi-window Slice A).
@@ -1105,6 +1022,7 @@ function createWindow(opts: {
   w.on('move', () => schedulePersistLayout?.());
   // Stop taskbar flash when the window regains focus (T1A). Track most-recently-focused
   // for launch-target routing when no window currently holds OS focus.
+  w.on('blur', () => onWindowPresenceChanged?.());
   w.on('focus', () => {
     lastFocusedWindowId = w.id;
     w.flashFrame(false);
@@ -1278,7 +1196,7 @@ app.whenReady().then(() => {
     systemRoot: process.env.SystemRoot,
     appWindowIdFor: (cid) => [...windows.values()].find((w) => w.webContents.id === cid)?.id,
     sessionFolders: (sid, wid) => {
-      const s = mgr.get(sid);
+      const s = store.get(sid);
       return s && sessionOwner.get(sid) === wid ? outgoingFoldersFor(s) : undefined;
     },
     validate: (p, f) => validateOutgoingPaths(p, f, outgoingPathDeps),
@@ -1292,7 +1210,7 @@ app.whenReady().then(() => {
     },
     log: (lvl, msg, d) => log[lvl]('fs', msg, d),
     windowFolders: (wid) => {
-      const each = sessionsOwnedBy(sessionOwner, wid, mgr.list()).map(outgoingFoldersFor);
+      const each = sessionsOwnedBy(sessionOwner, wid, store.list()).map(outgoingFoldersFor);
       return {
         present: each.flatMap((f) => f.present),
         missing: each.flatMap((f) => f.missing),
@@ -1319,70 +1237,12 @@ app.whenReady().then(() => {
       dragOutHost.allowDownload(url, cid);
   }
 
-  // Shells stay first in the registry so `registry.list()[0]` (OS-open, openRepo's fallback)
-  // is still a shell, never an agent.
-  const registry = new AgentRegistry([]);
-  // The logger is built later in this closure, so load-time warnings are replayed once it exists.
-  const agentsWarnings: { message: string; data?: Record<string, unknown> }[] = [];
-  const agentsConfig = loadAgentsConfig(agentsFile(), {
-    homeDir: os.homedir(),
-    e2e: process.env.CONDUIT_E2E === '1',
-    warn: (message, data) => agentsWarnings.push({ message, data }),
-  });
-  const launcherHost = new LauncherHost({
-    registry,
-    config: agentsConfig.defs,
-    detectShells,
-    detectClis: () => detectAgentClis(hostCliScanEnv()),
-    readFile: () => {
-      const read = readFileState(launchersFile());
-      if (read.kind === 'unreadable') {
-        log.warn('persist', 'launchers.json unreadable; not writing it this run', {
-          code: read.code,
-        });
-      }
-      return read;
-    },
-    persist: (t) => persistFile(launchersFile(), t, 'launchers.json'),
-    backupCorrupt: () => {
-      try {
-        fs.copyFileSync(launchersFile(), path.join(userData(), 'launchers.corrupt.json'));
-      } catch (e) {
-        log.error('persist', `launchers.json backup failed: ${String(e)}`);
-      }
-    },
-    resolveCommand: (c) => resolveCommand(c, hostPlatform),
-    platform: hostPlatform,
-    now: Date.now,
-  });
-  const mgr = new SessionManager(registry);
-
-  // Runtime busy/needs-attention tracker (output-activity heuristic). Pure; the
-  // host owns the wall clock + the sweep loop below.
-  const activity = new SessionActivity();
-
-  // Per-session CWD scanners: parse OSC cwd-report sequences from terminal output
-  // to track the live working directory (E2a).
-  const cwdScanners = new Map<string, CwdScanner>();
-  // Reported cwds are untrusted output: UNC refused without fs, the rest stat'ed off-thread.
-  const cwdGate = createCwdReportGate({
-    stat: statKindAsync,
-    userRoots: (id) => {
-      const s = mgr.get(id);
-      return s ? userRootsOf(s, PATH_LINK_OPTS) : null;
-    },
-    accept: (id, cwd) => {
-      const s = mgr.get(id);
-      if (!s || cwd === s.cwd) return;
-      mgr.setCwd(id, cwd);
-      // Multi-repo: a cd inside a detected sub-repo auto-follows (SessionManager ignores this
-      // while pinned).
-      mgr.setAutoRepo(id, repoForPath(s.repos ?? [], cwd));
-    },
-    ...PATH_LINK_OPTS,
-  });
+  // The server's sessions with the app's repo overlay (D39): every session read in the app.
+  const store = new AppSessionStore();
+  // Server-owned lists, from the snapshot and `data.changed`.
+  let stores: DataStores = { agents: [], launchers: [], projects: [] };
   const pathLinks = createPathLinkResolver({
-    getSession: (id) => mgr.get(id),
+    getSession: (id) => store.get(id),
     // sessionGitRoot's semantics through the memoised toplevel: a git spawn per resolve was the
     // largest share of a warm resolve (plan 2026-10-16-terminal-path-links Slice 6 profile).
     gitRoot: async (s) => {
@@ -1405,15 +1265,6 @@ app.whenReady().then(() => {
     ...PATH_LINK_OPTS,
   });
 
-  // Per-session carry for the bare-bell scanner: where the previous term:data chunk left
-  // the escape-sequence walk. Same lifecycle as cwdScanners.
-  const bellScanState = new Map<string, BellScanState>();
-  // Per-session bracketed-paste mode as a claude child last set it; Run /add-dir writes only
-  // while it is on (mf-live-edits spec §2.3). Same lifecycle as bellScanState.
-  const pasteModes = new Map<string, PasteModeState>();
-  // Per-session escape carry for the inert-output check (review N2). Same lifecycle too.
-  const inertTails = new Map<string, string>();
-
   // ── Git: the host-wide repo tracker ───────────────────────────────────────
   // One refresh per dirty repo, fanned out to every session containing it; GitInfo rides the
   // `state` broadcast via Session.repoGit. See docs/plans/2026-10-16-multi-repo-tracking.plan.md.
@@ -1424,7 +1275,7 @@ app.whenReady().then(() => {
         const shown = ids
           .filter((id) => gitDemand.isVisibleInWindow(w.id, id))
           .flatMap((id) => {
-            const s = mgr.get(id);
+            const s = store.get(id);
             return s ? [s.home, ...presentRoots(s)] : [];
           });
         const stale = shown.filter((root) => pendingFsByWindow.get(w.id)?.has(root));
@@ -1444,7 +1295,7 @@ app.whenReady().then(() => {
       for (const [key, request] of deferredIndexes) {
         if (
           !ids.some((id) => {
-            const s = mgr.get(id);
+            const s = store.get(id);
             return s && sessionContains(s, request.root);
           })
         )
@@ -1467,7 +1318,7 @@ app.whenReady().then(() => {
   const deferredIndexes = new Map<string, { root: string; windowId: number; run: () => void }>();
 
   const repoTrackerHost = createRepoTrackerHost({
-    mgr,
+    mgr: store,
     demand: gitDemand,
     owns: (windowId, sessionId) => sessionOwner.get(sessionId) === windowId,
     windows: () =>
@@ -1501,7 +1352,7 @@ app.whenReady().then(() => {
   trackedReposUnder = (rootKey) => repoTrackerHost.tracker.reposUnder(rootKey);
 
   const pruneFileIndexes = () => {
-    const sessions = mgr.list();
+    const sessions = store.list();
     repoFileIndex.retain(
       new Set(sessions.flatMap((s) => [s.home, ...s.roots]).map(folderKey)),
       new Set(sessions.flatMap((s) => s.repos ?? []).map((r) => folderKey(r.root))),
@@ -1527,18 +1378,18 @@ app.whenReady().then(() => {
   const repoScanner = createRepoScanScheduler({
     scan: async (sessionId) => {
       await e2eHold?.('scan');
-      const s = mgr.get(sessionId);
+      const s = store.get(sessionId);
       return s ? scanSessionRepos(s, { detect: detectShared, enclosing: enclosingShared }) : [];
     },
     apply: (sessionId, repos) => {
-      if (!mgr.setRepos(sessionId, repos)) return;
+      if (!store.setRepos(sessionId, repos)) return;
       repoTrackerHost.tracker.setSessionRepos(sessionId, repos);
       afterReposChanged();
     },
     onError: (sessionId, e) => log.error('repo', `scan failed for ${sessionId}: ${String(e)}`),
   });
   const scheduleRepoScan = (sessionId: string, force = false) => {
-    if (!force && mgr.get(sessionId)?.repos !== undefined && !gitDemand.isVisible(sessionId)) {
+    if (!force && store.get(sessionId)?.repos !== undefined && !gitDemand.isVisible(sessionId)) {
       deferredRepoScans.add(sessionId);
       return;
     }
@@ -1556,314 +1407,12 @@ app.whenReady().then(() => {
       }),
     );
 
-  // Session ids that have been relaunched and are waiting for their next term:start
-  // so we can write a brief "— session relaunched —" marker to the fresh terminal.
-  const pendingRelaunchMarker = new Set<string>();
-
   // Sessions mid-move between windows (multi-window Slice B). When ownership is reassigned,
   // the SOURCE window's TerminalPane unmounts and fires `term:dispose` — which would KILL the
   // live PTY we are trying to hand to the target window. A session in this set has its next
   // `term:dispose` swallowed (the flag is one-shot, cleared on consume) so the PTY survives the
   // hand-off. The target's fresh pane keeps the SAME sessionId, so no remount kills it.
   const movingSessions = new Set<string>();
-
-  // Coalesce activity-driven broadcasts: the first change arms a trailing timer,
-  // further changes within the window are absorbed, then one postState fires.
-  // Bounds IPC under an output firehose (recordOutput is O(1) per chunk).
-  let activityTimer: ReturnType<typeof setTimeout> | null = null;
-  const ACTIVITY_COALESCE_MS = 120;
-  const scheduleActivityBroadcast = () => {
-    if (activityTimer) return;
-    activityTimer = setTimeout(() => {
-      activityTimer = null;
-      postState();
-    }, ACTIVITY_COALESCE_MS);
-  };
-
-  const pty = new PtyHost(
-    (msg) => {
-      // PtyHost only ever emits term:data / term:exit, both session-scoped — route only to
-      // the owner window so a session's output never crosses into another window
-      // (multi-window isolation). The narrowing makes `sessionId` available for routing.
-      if (msg.type === 'term:data' || msg.type === 'term:exit') sendToOwner(msg.sessionId, msg);
-      if (msg.type === 'term:data') {
-        // The notice gate's screen model (docs/specs/2026-10-25-conduit-mcp-server.md §2).
-        mcpRuntime.output(msg.sessionId, msg.data);
-        // Output activity drives the busy/needs-attention machine; byte count and bare
-        // bells are the evidence it weighs (see the attention-signal-quality spec).
-        // The scanner's state rides across chunks — an escape sequence straddling two
-        // `onData` chunks would otherwise fabricate or swallow a bell.
-        // Only an idle->busy edge is a change worth broadcasting.
-        const scan = countBareBells(msg.data, bellScanState.get(msg.sessionId));
-        bellScanState.set(msg.sessionId, scan.state);
-        // A chunk that draws nothing (a focus-change answer, a mode re-assert) is not work: it
-        // must not make an idle claude read busy (mf-live-edits QA F1).
-        const inert = scanInertOutput(inertTails.get(msg.sessionId) ?? '', msg.data);
-        inertTails.set(msg.sessionId, inert.tail);
-        if (
-          !inert.inert &&
-          activity.recordOutput(msg.sessionId, Date.now(), msg.data.length, scan.bells)
-        )
-          scheduleActivityBroadcast();
-
-        if (scopes.tracks(msg.sessionId)) {
-          pasteModes.set(
-            msg.sessionId,
-            trackBracketedPaste(pasteModes.get(msg.sessionId) ?? PASTE_MODE_OFF, msg.data),
-          );
-          scopes.output(msg.sessionId, msg.data);
-        }
-
-        // The fourth scanner. Unlike its three neighbours it does not read `msg.data` — it
-        // re-reads the session's trailing lines now that the chunk has landed.
-        if (settings.autoResumeOnLimit !== 'off') scanForLimitNotice(msg.sessionId);
-
-        // T2: accumulate the session's recent output into its scrollback ring and
-        // debounce a write to disk. This callback only fires for genuine PTY output;
-        // replayed history is sent via sendToOwner() in term:start and never re-enters here.
-        if (settings.scrollbackPersistence) {
-          scrollbacks.append(msg.sessionId, msg.data, pty.size(msg.sessionId));
-        }
-
-        // CWD tracking (E2a): when trackCwd is enabled, scan terminal output for
-        // OSC cwd-report sequences and update the session's live cwd.
-        if (settings.trackCwd) {
-          let scanner = cwdScanners.get(msg.sessionId);
-          if (!scanner) {
-            scanner = new CwdScanner();
-            cwdScanners.set(msg.sessionId, scanner);
-          }
-          const newCwd = scanner.push(msg.data);
-          // Every report goes through the gate, even one equal to the current cwd: it must
-          // supersede an older report still being stat'ed (plan T2.4, A→B(slow)→A).
-          if (newCwd !== null) cwdGate.report(msg.sessionId, newCwd);
-        }
-      } else if (msg.type === 'term:exit') {
-        log.info('pty', 'exit', { sessionId: msg.sessionId, code: msg.code });
-        mgr.setStatus(msg.sessionId, 'exited');
-        endProcessEpisode(msg.sessionId);
-        scopes.ended(msg.sessionId);
-      }
-    },
-    (m) => log.debug('pty', m),
-  );
-
-  const mcpRuntime = createMcpRuntimePorts({ pty, screens: createSessionScreens() });
-
-  // Per-terminal-session scrollback ring (T2): the recent output, capped to a trailing 256 KiB
-  // window in memory and debounced to scrollback-<id>.json. Fed from the PtyHost output callback.
-  const scrollbackWriteGate = new ScrollbackWriteGate((name) =>
-    readBlob(path.join(userData(), name)),
-  );
-  const scrollbacks = new ScrollbackStore(
-    (sessionId, blob) => {
-      scrollbackWriteGate.run(scrollbackFileName(sessionId), () => {
-        log.debug('scrollback', 'persist', { sessionId, bytes: blob.length });
-        persistFile(scrollbackFile(sessionId), blob, `scrollback-${sessionId}.json`);
-      });
-    },
-    {
-      send: (sessionId, data) => sendToOwner(sessionId, { type: 'term:data', sessionId, data }),
-      recording: () => settings.scrollbackPersistence,
-    },
-  );
-  // Per-child teardown, shared by a real exit and a restart's retire (mf-live-edits §2.4).
-  const endProcessEpisode = (sessionId: string) => {
-    // A dead child is not waiting for anyone (spec contract 6) — drop its evidence
-    // so the quiet after its last output can't be read as "finished, needs you".
-    activity.recordExit(sessionId);
-    // The exited child's token dies with it; a relaunch mints a new one (spec §3.1).
-    mcpRuntime.exit(sessionId);
-    // Clean up the scanners for this session (E2a + the bell-scan carry).
-    cwdScanners.delete(sessionId);
-    cwdGate.drop(sessionId);
-    bellScanState.delete(sessionId);
-    pasteModes.delete(sessionId);
-    inertTails.delete(sessionId);
-    // The episode described a live moment; a dead child is not asking to be resumed.
-    limitEpisodes.delete(sessionId);
-    // T2: flush the last screenful now (the process ended); keep the file so the
-    // user can still see the final output until the session is killed.
-    if (settings.scrollbackPersistence) scrollbacks.flush(sessionId);
-  };
-
-  // Cold starts that have sent their replay but not yet spawned (term:start awaits the folder
-  // health check in between). A second term:start racing that await must not replay — and record
-  // — the history again; it attaches once the first one has spawned.
-  const coldStartsInFlight = new Set<string>();
-  const launchClaims = createLaunchClaims();
-  // The pane's size reported while a cold start awaits its spawn (term:start → pty.start spans the
-  // health-check await). pty.resize drops it — there's no child yet — so the spawn takes it instead
-  // of term:start's older measurement, or the PTY is born a different size than the xterm.
-  const preSpawnSizes = new Map<string, TermGeometry>();
-
-  // ── Timed messages (spec 2026-08-28-timed-messages) ────────────────────────
-  // Host-owned schedules and ONE timer. Declared up here because flushStateSync reads the dirty
-  // gate and disposeSession drops a session's schedules.
-  const timedMessagesParse = parseTimedMessagesFile(readBlob(timedMessagesFile()));
-  const timersWritable = timedMessagesWritable(timedMessagesParse);
-  let timersDirty = false;
-  let limitOffer: LimitOffer | null = null;
-  let timersPersistTimer: ReturnType<typeof setTimeout> | null = null;
-
-  /**
-   * One write per burst. A single mutation raises onChange twice (the mutator, then the re-arm
-   * that follows it), and atomicWriteFile shares one `<file>.tmp-<pid>` per path — so two
-   * overlapping writes interleave in that temp file and race to rename. A shorter payload landing
-   * after a longer one leaves trailing bytes, the JSON no longer parses, and the next launch
-   * restores nothing. That is the 0.11.1 durability shape; the dirty flag plus a trailing debounce
-   * is the fix, and flushStateSync still covers quit.
-   */
-  const persistTimers = () => {
-    if (!timersWritable) return;
-    timersDirty = true;
-    if (timersPersistTimer) return;
-    timersPersistTimer = setTimeout(() => {
-      timersPersistTimer = null;
-      persistFile(
-        timedMessagesFile(),
-        serializeTimedMessagesFile({ version: 1, schedules: timers.list() }),
-        'timed-messages.json',
-      );
-    }, 150);
-  };
-
-  const broadcastTimers = () => {
-    // Every window: either may be showing the session, and the offer LEAVING this payload is
-    // what dismisses a sibling window's toast (§3, §4).
-    broadcast({ type: 'timer:state', schedules: timers.list(), offer: limitOffer });
-  };
-
-  // Every host-originated PTY write goes through this one per-session writer, so a notice can
-  // never land inside a timed message's submit gap. See docs/plans/2026-10-25-conduit-mcp-server.plan.md T6.1.
-  const ptyWriter = createPtyWriter({
-    generation: (id) => pty.generation(id),
-    input: (id, data) => pty.input(id, data),
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    gapMs: SUBMIT_GAP_MS,
-  });
-
-  /**
-   * THE fire path for timed messages. Liveness and generation are checked by the writer on both
-   * sides of the submit gap (mf-live-edits §2.4 R1).
-   *
-   * Deliberately does NOT call mgr.touch: a 3am robot keystroke is not the user at the keyboard,
-   * and lastActiveAt drives card age, the rail's recency sort and board linkage (§2 "Delivery").
-   */
-  const deliverTimedMessage = (sessionId: string, message: string): Promise<boolean> =>
-    ptyWriter.submit(sessionId, message).then((o) => o === 'submitted');
-
-  const timers = new TimerScheduler({
-    now: () => Date.now(),
-    setTimer: (ms, fn) => setTimeout(fn, ms),
-    clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
-    isAlive: (id) => pty.isAlive(id),
-    deliver: deliverTimedMessage,
-    sessionExists: (id) => !!mgr.get(id),
-    onChange: () => {
-      persistTimers();
-      broadcastTimers();
-    },
-    onFired: (ev) => {
-      log.info('timer', 'fired', { ...ev });
-      broadcast({ type: 'timer:fired', ...ev });
-    },
-    // The floor drops to 0 under CONDUIT_E2E so the smoke scenario can arm at +800 ms (§7).
-    minDelayMs: process.env.CONDUIT_E2E === '1' ? 0 : MIN_DELAY_MS,
-    minIntervalMs: process.env.CONDUIT_E2E === '1' ? 0 : MIN_INTERVAL_MS,
-  });
-
-  // setTimeout does not advance across a Windows suspend, so a timer due at 3am is simply late
-  // by however long the lid was shut. `nextAt` is the authority, so re-evaluating on wake is the
-  // entire fix — there is nothing to reschedule (§2 "The timer").
-  powerMonitor.on('resume', () => timers.evaluate());
-  powerMonitor.on('unlock-screen', () => timers.evaluate());
-
-  // Per-session limit episode: the reset time currently on screen and whether it has been acted
-  // on. Host memory only — it describes a live moment, and after a restart the notice is gone.
-  const limitEpisodes = new Map<string, LimitEpisode>();
-
-  /**
-   * Read the session's TRAILING output for a usage-limit notice. Not the chunk: requiring the
-   * notice to be what the session is currently SHOWING is what makes arming-by-default
-   * defensible — a limit string inside a `git log` or a diff has already scrolled away
-   * (spec 2026-08-28-timed-messages §2 "Limit-aware").
-   */
-  const scanForLimitNotice = (sessionId: string): void => {
-    const at = Date.now();
-    // Read the tail ONCE: this runs on every term:data chunk, and each read walks 4 KiB through
-    // stripAnsi. The no-notice path is the common one, so it must not pay for a second walk.
-    const tail = pty.tailLines(sessionId, TAIL_LINES);
-    const notice = scanLimitNotice(tail, at);
-    if (!notice) {
-      const last = tail[tail.length - 1];
-      // A notice with no readable time is silence plus one debug line, never a guess (§4).
-      if (last && looksLikeLimitLine(last))
-        log.debug('timer', 'limit-notice-unparsed', { sessionId, line: last });
-      return;
-    }
-    const action = decideLimitAction(
-      limitEpisodes.get(sessionId),
-      notice,
-      settings.autoResumeOnLimit,
-      at,
-    );
-    if (action === 'ignore') return;
-    // Resolved immediately for an arm: the schedule IS the resolution, and a redrawing footer
-    // must not produce a second one.
-    limitEpisodes.set(sessionId, { resetAt: notice.resetAt, resolved: action === 'arm', at });
-    if (action === 'arm') {
-      const armed = timers.armLimit(sessionId, notice.resetAt);
-      log.info('timer', armed ? 'limit-armed' : 'limit-arm-refused', {
-        sessionId,
-        resetAt: notice.resetAt,
-      });
-      return;
-    }
-    limitOffer = { sessionId, resetAt: notice.resetAt, line: notice.line };
-    broadcastTimers();
-  };
-
-  // Low-frequency sweep detects busy->idle (task finished) and arms attention where the
-  // evidence justifies it. Interval is <= half the busy window so detection latency stays
-  // bounded; cheap (a Map scan). The machine emits an edge at most once per episode, so
-  // there is no separate "already notified" guard here — a repainting TUI cannot re-ping.
-  const sweepTimer = setInterval(() => {
-    const { changed, edges } = activity.sweep(Date.now());
-    if (!changed) return;
-    scheduleActivityBroadcast();
-    for (const edge of edges) {
-      const session = mgr.get(edge.id);
-      if (!session) continue;
-      if (
-        shouldRaiseOsAttention({
-          becameNeedsAttention: true,
-          // Any focused Conduit window counts as "the user is looking"; only raise OS
-          // attention when none is focused.
-          windowFocused: BrowserWindow.getFocusedWindow() !== null,
-          enabled: settings.osAttention,
-        })
-      ) {
-        const owner = windowFor(session.id);
-        owner?.flashFrame(true);
-        if (Notification.isSupported()) {
-          const notif = new Notification({
-            title: 'Conduit',
-            body: edge.kind === 'bell' ? `${session.name} is waiting` : `${session.name} finished`,
-          });
-          notif.on('click', () => {
-            const w = windowFor(session.id);
-            if (w) {
-              w.show();
-              w.focus();
-              sendToOwner(session.id, { type: 'activateSession', sessionId: session.id });
-            }
-          });
-          notif.show();
-        }
-      }
-    }
-  }, 750);
 
   // User settings (theme/fonts/layout/behaviour), persisted to settings.json.
   let settings: AppSettings = restoreSettings(readBlob(settingsFile()));
@@ -1873,7 +1422,6 @@ app.whenReady().then(() => {
   // updated live on a settings change. `off` (via logLevel) or logging=false silences it.
   const log = new Logger(settings.logging ? settings.logLevel : 'off');
   hostLog = log;
-  for (const w of agentsWarnings) log.warn('agents', w.message, w.data);
   log.info('app', 'ready', { version: aboutInfo.version, e2e: process.env.CONDUIT_E2E === '1' });
   // The only record of a GPU-process restart, which blanks WebGL terminals (webview/terminal-gpu.ts)
   // and is the leading suspect for the unexplained green flash.
@@ -1887,295 +1435,16 @@ app.whenReady().then(() => {
     });
   });
 
-  // Startup migration + projects load (mf-model spec §2.3): every write here is synchronous and
-  // lands before the first postState.
-  const sessionsDiskParse = parseSessions(readBlob(sessionsFile()));
-  const sessionsParse = settings.restoreSessions ? sessionsDiskParse : null;
-  const sessionsWritableThisRun = sessionsWritable(settings, sessionsDiskParse);
-  if (sessionsDiskParse.kind === 'newer')
-    log.warn('persist', 'sessions.json has a newer version; writes blocked this run');
-  if (sessionsParse?.kind === 'ok' && sessionsParse.dropped > 0)
-    log.warn('persist', 'dropped sessions with no folder', { dropped: sessionsParse.dropped });
-  const startup = buildStartupModel({
-    sessions: sessionsParse,
-    projects: parseProjects(readFileState(projectsFile())),
-  });
-  for (const warning of startup.warnings) log.warn('persist', warning);
-  const startupSources = { 'sessions.json': sessionsFile(), 'projects.json': projectsFile() };
-  for (const backup of startup.backups) {
-    const to = path.join(userData(), backup.to);
-    if (!backup.overwrite && fs.existsSync(to)) continue;
-    try {
-      atomicWriteFileSync(to, fs.readFileSync(startupSources[backup.from]));
-    } catch (err) {
-      log.warn('persist', `backup to ${backup.to} failed`, { err: String(err) });
-    }
-  }
-  let projectsWriteFailed = false;
-  if (startup.writeProjects) {
-    try {
-      atomicWriteFileSync(projectsFile(), serializeProjects(startup.projects));
-    } catch (err) {
-      projectsWriteFailed = true;
-      log.error('persist', `projects.json write failed: ${String(err)}`);
-    }
-  }
-  // Without the projects write the next launch re-migrates; see mf-model spec §2.3.
-  if (startup.writeSessions && !projectsWriteFailed && sessionsWritableThisRun) {
-    try {
-      atomicWriteFileSync(sessionsFile(), serializeSessions(startup.sessions));
-    } catch (err) {
-      log.error('persist', `sessions.json migration write failed: ${String(err)}`);
-    }
-  }
-  let projectsWritable = startup.projectsWritable;
-  let projectsDirty = startup.writeProjects;
-  const projectStore = new ProjectStore(
-    startup.projects,
-    () => `p-${crypto.randomBytes(6).toString('hex')}`,
-  );
-
-  // Installs Conduit's entry into agent CLIs' own configs (spec 2026-10-27-conduit-mcp-install).
-  const mcpInstall = createMcpInstall({
-    homeDir: os.homedir(),
-    env: process.env,
-    userDataDir: userData(),
-    platform: hostPlatform,
-    execPath: process.execPath,
-    shimPath: mcpShimPath(),
-    onPath: (cli) => CLI_BINARIES[cli].some((b) => resolveCommand(b, hostPlatform) !== undefined),
-    // Any folder of an open session, never an arbitrary path (spec §3.6; plan amendment N1).
-    knownHome: (p) => {
-      const k = folderKey(p);
-      for (const s of mgr.list()) {
-        const hit = [s.home, ...s.roots].find((f) => folderKey(f) === k);
-        if (hit !== undefined) return hit;
-      }
-      return null;
-    },
-  });
-  // A dev build would point entries at its own worktree, and e2e must never touch real configs
-  // (plan amendment S3; spec §14 D2).
-  if (app.isPackaged && process.env.CONDUIT_E2E !== '1') {
-    for (const r of mcpInstall.repair()) {
-      if (r.errorCode) log.warn('mcp-install', 'repair failed', r);
-      else log.info('mcp-install', 'repaired', r);
-    }
-    const gate = migrateGateOnce(settings.mcpGateMigrated, mcpInstall);
-    for (const r of gate.rows) {
-      if (r.errorCode) log.warn('mcp-install', 'permission rule failed', r);
-      else log.info('mcp-install', 'permission rule added', r);
-    }
-    if (gate.done !== settings.mcpGateMigrated) {
-      settings = { ...settings, mcpGateMigrated: gate.done };
-      persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
-    }
-  }
+  // The latest renderer-wide server state, so a window that loads after the snapshot still gets it.
+  let lastTimers: Extract<HostToWebview, { type: 'timer:state' }> | null = null;
+  let lastMcp: Extract<HostToWebview, { type: 'mcp:state' }> | null = null;
 
   // Fail-closed per-window readiness and visible set for the MCP policy gate; separate from
   // activity/gitDemand, which fail open (spec 2026-10-30-conduit-mcp-tool-policy §2.3).
   const presence = createWindowPresence();
 
-  // Conduit MCP server: agent sessions message each other and the human
-  // (docs/specs/2026-10-25-conduit-mcp-server.md). The host owns IO; decisions are pure modules.
-  const launchGenerations = new Map<string, number>();
-  const sessionPort: SessionStorePort = {
-    get: (id) => mgr.get(id),
-    list: () => mgr.list(),
-    setMcp: (id, patch) => mgr.setMcp(id, patch),
-    setMcpToolPolicy: (id, tool, patch) => mgr.setMcpToolPolicy(id, tool, patch),
-    touch: (id, minIntervalMs) => mgr.touch(id, minIntervalMs),
-    setStatus: (id, value) => mgr.setStatus(id, value),
-    onChange: (listener) => mgr.onChange(listener),
-    // Per app run, like the host's old launch counter: the persisted counter is the server's (C4).
-    allocateLaunch: (id) => {
-      const generation = (launchGenerations.get(id) ?? 0) + 1;
-      launchGenerations.set(id, generation);
-      return { generation, launchId: crypto.randomBytes(16).toString('hex') };
-    },
-  };
-  const emitMcpEvent: ServerEventSink = (type, data) => {
-    if (type === 'ui.post' && 'route' in data) {
-      const { route, message } = data;
-      // A file open arriving before the renderer is ready would be dropped; it queues like an OS open.
-      if (message.type === 'openFileInEditor') {
-        sendOpenFileInEditor(message);
-        return;
-      }
-      if (route.kind === 'broadcast') {
-        broadcast(message);
-        return;
-      }
-      const window =
-        route.kind === 'owner' ? windowFor(route.sessionId) : windows.get(route.windowId);
-      if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
-      window.webContents.send('to-webview', message);
-      if (data.raise) {
-        if (process.env.CONDUIT_E2E !== '1') window.show();
-        window.focus();
-      }
-    } else if (type === 'attention.flash' && 'sessionId' in data) {
-      const window = windowFor(data.sessionId);
-      if (window && settings.osAttention && !window.isFocused()) window.flashFrame(true);
-    }
-  };
-  const typingPort: TypingPort = {
-    submit: (id, text, hooks) => ptyWriter.submit(id, text, hooks),
-    forget: (id) => ptyWriter.forget(id),
-    write: (id, data, opts) =>
-      (opts?.generation === undefined ||
-        mcpRuntime.runtime.get(id)?.generation === opts.generation) &&
-      pty.input(id, data),
-  };
-  const mcpHost = createConduitMcpHost({
-    dir: path.join(userData(), 'conduit-mcp'),
-    homeDir: os.homedir(),
-    endpointPath: endpointPath(
-      userData(),
-      process.platform === 'win32' ? 'win32' : 'posix',
-      os.tmpdir(),
-    ),
-    execPath: process.execPath,
-    shimPath: mcpShimPath(),
-    platform: hostPlatform,
-    e2e: process.env.CONDUIT_E2E === '1',
-    sessions: sessionPort,
-    runtime: mcpRuntime.runtime,
-    screens: mcpRuntime.screens,
-    tokens: createTokenStore(),
-    typing: typingPort,
-    attention: activity,
-    emit: emitMcpEvent,
-    createEndpoint: createMcpEndpoint,
-    ownerWindowOf: (id) => {
-      const windowId = sessionOwner.get(id);
-      return windowId !== undefined && windows.has(windowId) ? windowId : null;
-    },
-    windowReady: (id) => presence.isReady(id),
-    onScreen: (windowId, id) => presence.isOnScreen(windowId, id),
-    detectGraceMs:
-      process.env.CONDUIT_E2E === '1' && process.env.CONDUIT_E2E_DETECT_GRACE_MS
-        ? Number(process.env.CONDUIT_E2E_DETECT_GRACE_MS)
-        : undefined,
-    domain: {
-      messagingOn: () => settings.conduitMcp,
-      toolPolicy: () => ({ global: settings.mcpToolPolicy, byCli: settings.mcpToolPolicyByCli }),
-      installState: (cli) => mcpInstall.userState(cli),
-      defOf: (id) => {
-        const session = mgr.get(id);
-        return session ? effectiveDef(session, registry) : undefined;
-      },
-      agentIds: () => registry.list().map((def) => def.id),
-      homeOf: (id) => mgr.get(id)?.home,
-      resolvePath: (home, target) => path.resolve(home, target),
-      kindOf: (target) =>
-        fs.promises.stat(target).then(
-          (stat) => (stat.isDirectory() ? 'dir' : stat.isFile() ? 'file' : 'other'),
-          () => 'missing' as const,
-        ),
-      resolveCommand: (command) => resolveCommand(command, hostPlatform),
-      openSession: (req) => createMcpSession(req),
-      closeSession: async (id, opts) => {
-        if (!mgr.get(id))
-          return { ok: false, code: 'unknown_session', message: 'session no longer exists' };
-        log.info('session', 'MCP close', { sessionId: id, closedBy: opts.closedBy });
-        await disposeSession(id);
-        return { ok: true };
-      },
-      foldersOf: (id) => {
-        const session = mgr.get(id);
-        return session ? { home: session.home, roots: [...session.roots] } : undefined;
-      },
-      addRoot: (id, target) => sessionOps.addRoot(id, target),
-      git: (cwd, args) =>
-        runGit(args, { cwd, timeoutMs: GIT_TIMEOUT.metadata }).then((result) => ({
-          ok: result.ok,
-          stdout: result.stdout,
-          stderr: result.stderr,
-        })),
-      projectName: (id) =>
-        id ? (projectStore.list().find((project) => project.id === id)?.name ?? null) : null,
-    },
-    log,
-  });
-  const mcpDrafts: DraftPort = mcpHost;
-
-  // Restore previously persisted sessions (as stale) + save on every change.
-  if (settings.restoreSessions) {
-    mgr.restore(startup.sessions);
-  }
-  void mcpHost.start();
-  // AFTER the session set, because a schedule whose session is gone is dropped at load and never
-  // re-persisted (§4). Every restored session is `stale` with no PTY, so anything already due
-  // lands in `waiting` — nothing is written and nothing is spawned (§2 "Lifecycle").
-  timers.load(timedMessagesParse.schedules);
-
-  const roleBriefs = createRoleBriefHost({
-    userData: userData(),
-    agentBriefs: agentsConfig.briefs,
-    mgr,
-    platform: hostPlatform,
-    e2e: process.env.CONDUIT_E2E === '1',
-    log,
-  });
-  // Before any window or second-instance handler can create a session, and not gated on restore:
-  // a restore-off run keeps sessions.json, so its briefs must survive (plan Decisions Needed).
-  // see docs/specs/2026-10-26-conduit-role-brief.md §3.3
-  {
-    const onDisk = parseSessions(readBlob(sessionsFile()));
-    if (onDisk.kind !== 'newer')
-      roleBriefs.sweep(briefKeepIds(mgr.list(), onDisk.kind === 'ok' ? onDisk.sessions : []));
-  }
-
-  // Scrollback files are only deleted on session dispose; a session that was never restored
-  // would leak its scrollback-<id>.json forever. Sweep any that belong to no live/restored
-  // session now that the manager reflects the startup set. Best-effort: a read/unlink failure
-  // must never block launch.
-  //
-  // ONLY when restore is on: with restore off the manager starts empty, so every scrollback
-  // would look orphaned and get deleted — wiping the scrollback of the very sessions the
-  // persist gate deliberately preserves (a restore-off run keeps sessions.json intact, so its
-  // scrollback must survive too, or toggling restore back on restores sessions with no history).
-  if (sessionsWritableThisRun) {
-    try {
-      const dir = userData();
-      const live = mgr.list().map((s) => s.id);
-      for (const name of orphanScrollbackFiles(fs.readdirSync(dir), live)) {
-        try {
-          scrollbackWriteGate.run(name, () => fs.rmSync(path.join(dir, name)));
-        } catch (err) {
-          log.warn('scrollback', 'orphan sweep unlink failed', { name, err: String(err) });
-        }
-      }
-    } catch (err) {
-      log.warn('scrollback', 'orphan sweep skipped', { err: String(err) });
-    }
-  }
-  // Snapshot the persist gate at STARTUP, not per-write: if restore was off at launch the manager
-  // never loaded the saved sessions, so its (empty) state must never overwrite them — even if the
-  // user toggles restore back ON mid-run (that takes effect next launch). Gating on the live
-  // setting would let a mid-run re-enable + quit wipe the preserved list. See persistence.ts.
-  mgr.onChange(() => {
-    if (deferredIndexes.size || pendingFsByWindow.size) {
-      const sessions = mgr.list();
-      const owned = (root: string) => sessions.some((s) => sessionContains(s, root));
-      for (const [key, request] of deferredIndexes)
-        if (!owned(request.root)) deferredIndexes.delete(key);
-      for (const [windowId, roots] of pendingFsByWindow) {
-        for (const root of roots) if (!owned(root)) roots.delete(root);
-        if (roots.size === 0) pendingFsByWindow.delete(windowId);
-      }
-    }
-    // Never persist once the quit has flushed: `before-quit` writes the final snapshot
-    // synchronously and THEN calls pty.disposeAll(), whose exits drop every session from the
-    // manager (exit-closes-session). That churn fired this handler and its async write landed
-    // on top of the good snapshot — leaving sessions.json empty, so the next launch restored
-    // nothing and the multi-window layout collapsed to one window (planLayoutRestore drops a
-    // window that owns no restored session).
-    if (!isQuitting && sessionsWritableThisRun)
-      persistFile(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
-    postState();
-  });
+  // The overlay's own mutators (repo scans, pins, cwd follow) re-post; server lists post themselves.
+  store.onChange(() => postState());
 
   // Latest editor-tab payload the renderer sent (editor-tabs-persist). Seeded from disk so the
   // before-quit sync flush re-writes the last good blob even if no `persistDocs` arrived this
@@ -2226,42 +1495,38 @@ app.whenReady().then(() => {
     return sorted;
   };
 
-  // Per-window state (multi-window Slice A): each window receives only the sessions it
-  // owns (filtered + grouped from the global model); shared fields (agents/repos/settings/
-  // about) are identical per window. Merges runtime busy/needs-attention flags in-band.
+  // Per-window state (multi-window Slice A): each window receives only the sessions it owns;
+  // shared fields (agents/repos/settings/about) are identical per window. Status, busy and
+  // needs-attention come in-band from the server (sessions.changed).
   const postState = () => {
-    const all = mgr.list();
-    const agents = registry.list();
+    const all = store.list();
     const repos = reposForState();
-    const projects = projectStore.list();
-    const launchers = launcherHost.dtos();
-    // D6: the card subtitle. Reads the PtyHost's tail (memoized between broadcasts), so it
-    // rides this already-coalesced post rather than a timer or a round trip of its own.
-    const runtimeFields = (id: string): Partial<Session> => {
-      const agentScope = scopes.view(id);
-      const seq = restartSeq.get(id);
-      const startRefusal = startRefusals.get(id);
-      return {
-        lastLine: pty.lastLine(id),
-        ...(agentScope ? { agentScope } : {}),
-        ...(seq === undefined ? {} : { restartSeq: seq }),
-        ...(startRefusal ? { startRefusal } : {}),
-      };
-    };
     for (const [windowId, w] of windows) {
-      const owned = sessionsOwnedBy(sessionOwner, windowId, all);
-      const sessions = activity.apply(owned, runtimeFields);
       w.webContents.send('to-webview', {
         type: 'state',
-        agents,
-        sessions,
-        projects,
+        agents: stores.agents,
+        sessions: sessionsOwnedBy(sessionOwner, windowId, all),
+        projects: stores.projects,
         repos,
-        launchers,
+        launchers: stores.launchers,
         settings,
         about: aboutInfo,
         windowId,
-      });
+      } satisfies HostToWebview);
+    }
+    flushPendingActivations();
+  };
+
+  // MCP opens with focus: activated once the session is in its owner's state, never before.
+  const pendingActivate = new Set<string>();
+  const flushPendingActivations = () => {
+    for (const id of pendingActivate) {
+      if (!store.get(id)) continue;
+      pendingActivate.delete(id);
+      windowFor(id)?.webContents.send('to-webview', {
+        type: 'activateSession',
+        sessionId: id,
+      } satisfies HostToWebview);
     }
   };
 
@@ -2272,7 +1537,7 @@ app.whenReady().then(() => {
     const list = buildWinList(
       [...windows.keys()],
       sessionOwner,
-      mgr.list(),
+      store.list(),
       (id) => windowOrdinal.get(id) ?? 0,
     );
     broadcast({ type: 'win:list', windows: list });
@@ -2286,7 +1551,7 @@ app.whenReady().then(() => {
   // The current multi-window layout (bounds + owned session ids). Shared by the debounced
   // async persist and the synchronous quit-flush so the snapshot shape lives in one place.
   const buildLayoutSnapshot = (): WindowLayout[] => {
-    const all = mgr.list();
+    const all = store.list();
     return [...windows.values()].map((w) => ({
       bounds: w.getBounds(),
       sessionIds: sessionsOwnedBy(sessionOwner, w.id, all).map((s) => s.id),
@@ -2294,19 +1559,18 @@ app.whenReady().then(() => {
   };
 
   const persistLayout = () => {
-    if (!settings.restoreSessions || isQuitting) return; // see the mgr.onChange note
+    // A quit has already written the final snapshot synchronously (flushStateSync).
+    if (!settings.restoreSessions || isQuitting) return;
     const snapshot = buildLayoutSnapshot();
     if (snapshot.length === 0) return;
     log.debug('window', 'layout-persist', { windows: snapshot.length });
     persistFile(windowsLayoutFile(), serializeWindowLayout(snapshot), 'windows.json');
   };
 
-  // Durable, SYNCHRONOUS flush of the critical state on quit. The async persistFile writes are
-  // fine for a graceful exit (Node drains them), but an auto-update REPLACES the app by
-  // force-killing the running exe — cutting off any in-flight async write mid-stream. This runs
-  // in before-quit, before the PTY teardown churns the model, so sessions/settings/layout are on
-  // disk via an atomic rename before the installer can kill us. Without it, an interrupted write
-  // truncated these files and the next launch lost all sessions + reset settings to defaults.
+  // Durable, SYNCHRONOUS flush of the app's own files on quit: an auto-update REPLACES the app by
+  // force-killing the running exe, cutting off any in-flight async write, and an interrupted write
+  // truncated these files once (update-durability fix). Sessions, projects, launchers and timers
+  // are the server's files and outlive the app.
   const flushStateSync = () => {
     const write = (file: string, data: string, label: string) => {
       try {
@@ -2316,33 +1580,11 @@ app.whenReady().then(() => {
       }
     };
     write(settingsFile(), serializeSettings(settings), 'settings.json');
-    // Startup-snapshot gate (see the sessionsWritableThisRun note) so a restore-off run — even one that
-    // toggled restore back on — never overwrites the saved session set on quit.
-    if (sessionsWritableThisRun)
-      write(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
-    // Not gated on restoreSessions; blocked for a run whose projects.json was unreadable (B2).
-    if (projectsWritable && projectsDirty)
-      write(projectsFile(), serializeProjects(projectStore.list()), 'projects.json');
-    // Editor tabs are low-stakes vs. sessions, but the same force-kill-on-update hazard applies,
-    // so flush the last-known payload atomically alongside sessions (spec §3.2 durability).
+    // Editor tabs are low-stakes, but the same force-kill-on-update hazard applies (spec §3.2).
     write(docsFile(), serializeDocs(lastDocs), 'docs.json');
-    // Same force-kill-on-update hazard as sessions.json: an interrupted async write would leave
-    // the marks file truncated and the next launch would show a finished review as unread. Gated
-    // on an actual change this run — see reviewMarksDirty.
+    // Gated on an actual change this run — see reviewMarksDirty.
     if (reviewMarksDirty)
       write(reviewMarksFile(), serializeMarksFile(reviewMarks), 'review-marks.json');
-    const launchersText = launcherHost.pendingFlush();
-    if (launchersText) write(launchersFile(), launchersText, 'launchers.json');
-    // Same force-kill-on-update hazard as sessions.json: an interrupted async write would leave
-    // an armed timer half-written and the next launch would silently lose it. Gated on an actual
-    // change this run — readBlob swallows every read error, so an unconditional flush could
-    // overwrite an intact file with nothing (the 0.11.1 durability class of bug).
-    if (timersDirty && timersWritable)
-      write(
-        timedMessagesFile(),
-        serializeTimedMessagesFile({ version: 1, schedules: timers.list() }),
-        'timed-messages.json',
-      );
     if (settings.restoreSessions) {
       const snapshot = buildLayoutSnapshot();
       if (snapshot.length > 0)
@@ -2360,17 +1602,14 @@ app.whenReady().then(() => {
     }, LAYOUT_PERSIST_MS);
   };
 
-  // Reassign a live session's owner window WITHOUT restarting its PTY (multi-window
-  // Slice B/C). The sessionId/React key never changes, so the target's TerminalPane mounts
-  // (no remount that would kill ConPTY) and fires term:start → the attach path replays the
-  // buffer. The `movingSessions` guard protects the live PTY from the source pane's unmount
-  // teardown (term:dispose) that the postState below triggers by dropping the session from
-  // the source window. Shared by the `session:move` and `session:dragEnd` handlers.
+  // Reassign a live session's owner window (multi-window Slice B/C). The program keeps running in
+  // hc; the target's pane mounts and its term:start attaches a fresh observer. The `movingSessions`
+  // guard keeps the source pane's unmount (term:dispose) from detaching the target's link.
   const moveSessionToWindow = (sessionId: string, targetId: number): void => {
     movingSessions.add(sessionId);
-    // Before the owner changes: the cancelled ask's askClosed must reach the window holding its card.
-    mcpHost.onSessionMoved(sessionId);
     assignOwner(sessionOwner, sessionId, targetId);
+    // The server rebinds an ask to the new owner from presence (W5).
+    schedulePresence();
     postState(); // source drops the session; target gains it
     broadcastWinList?.(); // counts changed
     schedulePersistLayout?.(); // ownership changed → re-snapshot the layout (Slice C)
@@ -2383,71 +1622,47 @@ app.whenReady().then(() => {
     }
   };
 
-  // Open a folder in the chosen terminal and remember it in history. `cardId` (N2),
-  // when present, stamps the new session with the feature-board card it was started for.
-  // `ownerWindowId` (multi-window Slice A) is the window the new session belongs to.
-  function openRepo(
-    p: string,
+  // Open a folder in the chosen terminal (C2 sessions.create) and remember it in history. `cardId`
+  // (N2) stamps the session with the board card it was started for; `ownerWindowId` is the window
+  // the new session belongs to (multi-window Slice A).
+  async function openRepo(
+    home: string,
     agentId: string,
     ownerWindowId: number,
-    opts: OpenRepoOptions = {},
-  ): { sessionId: string } | { error: BriefError } | undefined {
-    if (!p) return undefined;
-    const { cardId, extras, mcp } = opts;
-    const brief = opts.brief ?? { request: undefined, dialog: false };
-    // An MCP open names its agent exactly: no first-terminal fallback (spec §3.1 unknown_agent).
-    const agent =
-      effectiveDef({ agentId, command: extras?.command }, registry) ??
-      (mcp ? undefined : registry.list()[0]);
-    if (!agent) {
-      if (!mcp) dialog.showErrorBox('Conduit', 'No terminals available.');
-      return undefined;
-    }
-    const c = roleBriefs.beginCreate({ def: agent, request: brief.request, dialog: brief.dialog });
-    if (!c.ok) return { error: c.error };
-    let id: string;
+    opts: { roots?: string[]; projectId?: string; cardId?: string; brief?: BriefRequest } = {},
+  ): Promise<ServerMethods['sessions.create']['result']> {
+    const pending = pendingCreates.begin(ownerWindowId);
     try {
-      // emits change -> postState
-      id = mgr.create(agent.id, p, {
-        cardId,
-        ...extras,
-        id: c.id,
-        ...(c.brief ? { brief: c.brief } : {}),
-      }).id;
-    } catch (err) {
-      c.rollback();
-      throw err;
+      const r = await callServer('sessions.create', {
+        agentId,
+        home,
+        ...(opts.roots ? { roots: opts.roots } : {}),
+        ...(opts.projectId ? { projectId: opts.projectId } : {}),
+        ...(opts.cardId ? { cardId: opts.cardId } : {}),
+        ...(opts.brief ? { brief: opts.brief } : {}),
+      });
+      assignOwner(sessionOwner, r.sessionId, ownerWindowId);
+      pendingCreates.resolve(pending, r.sessionId);
+      rememberOpen(
+        agentId,
+        home,
+        opts.roots ?? [],
+        (r.droppedRoots ?? []).map((d) => d.path),
+      );
+      postState();
+      schedulePresence();
+      return r;
+    } catch (error) {
+      pendingCreates.cancel(pending);
+      throw error;
     }
-    if (!mcp) rememberOpen(agent.id, p, extras);
-    // Before the owner's first sight of the session (assignOwner + postState below), so its
-    // autoSwitch already knows to leave it in the background (spec §3.1, focus).
-    if (mcp && !mcp.focus) {
-      windows.get(ownerWindowId)?.webContents.send('to-webview', {
-        type: 'suppressAutoSwitch',
-        sessionId: id,
-      } satisfies HostToWebview);
-    }
-    // mgr.create's change fired postState BEFORE this assignment, so no window saw the new
-    // session yet (it had no owner). Assign ownership, then re-post so the owner window
-    // gets it immediately.
-    assignOwner(sessionOwner, id, ownerWindowId);
-    postState();
-    if (mcp?.focus) {
-      windows.get(ownerWindowId)?.webContents.send('to-webview', {
-        type: 'activateSession',
-        sessionId: id,
-      } satisfies HostToWebview);
-    }
-    folders.created(id);
-    return { sessionId: id };
   }
 
-  /** Launcher usage + recents for a human open; MCP opens never touch them (spec §3.1). */
-  function rememberOpen(agentId: string, p: string, extras: OpenRepoOptions['extras']) {
-    launcherHost.bump(agentId);
+  /** Recents for a person's open; the server counts the launcher use. */
+  function rememberOpen(agentId: string, p: string, roots: string[], dropped: string[]) {
     const now = Date.now();
-    const missing = new Set(extras?.missingRoots ?? []);
-    const attached = (extras?.roots ?? []).filter((r) => !missing.has(r));
+    const missing = new Set(dropped);
+    const attached = roots.filter((r) => !missing.has(r));
     // Reverse, then home last: the home ends up first and attached folders keep their order (D14).
     for (const r of [...attached].reverse()) {
       repos = upsertAttachedRepo(repos, { path: r, name: path.basename(r) || r, lastOpened: now });
@@ -2460,8 +1675,6 @@ app.whenReady().then(() => {
     });
     persistFile(reposFile(), serializeRepos(repos), 'repos.json');
   }
-  const sessionIdOf = (r: ReturnType<typeof openRepo>): string | undefined =>
-    r && 'sessionId' in r ? r.sessionId : undefined;
 
   // Read-grant store (K2): the set of exact files the host has served via readFile this
   // session. A write to one of these is allowed even when it falls outside every write
@@ -2495,28 +1708,13 @@ app.whenReady().then(() => {
     }
   });
 
-  // Host-owned lexical key → realpath key of every folder seen present (mf-model spec §3.3). A path
-  // cache, never pruned per session: two sessions can hold one folder, and a re-probe overwrites.
-  const realKeys = new Map<string, string>();
-  const probeDeps: FolderProbeDeps = {
-    path,
-    kind: async (p) => {
-      try {
-        return (await fs.promises.stat(p)).isDirectory() ? 'dir' : 'not-dir';
-      } catch {
-        return 'missing';
-      }
-    },
-    realpath: (p) => fs.promises.realpath(p),
-    longName: (p) => expandShortNames(p, hostShortNameDeps),
-  };
   const folders = new SessionFolderRuntime({
-    mgr,
+    store,
     scheduleRepoScan,
     reconcilePlans: (homes) => planWatcher.reconcile(homes.map(normalizeRoot)),
     broadcastFsChanged: (fire) => {
       for (const w of windows.values()) {
-        const needed = mgr
+        const needed = store
           .list()
           .some(
             (s) =>
@@ -2527,7 +1725,9 @@ app.whenReady().then(() => {
         else {
           const pending = pendingFsByWindow.get(w.id) ?? new Set<string>();
           for (const root of fire.folders)
-            if (mgr.list().some((s) => sessionOwner.get(s.id) === w.id && sessionContains(s, root)))
+            if (
+              store.list().some((s) => sessionOwner.get(s.id) === w.id && sessionContains(s, root))
+            )
               pending.add(root);
           pendingFsByWindow.set(w.id, pending);
         }
@@ -2546,58 +1746,22 @@ app.whenReady().then(() => {
         onLost: (f) => repoTrackerHost.lostFolders(f),
         onLive: (r) => repoTrackerHost.setLiveRoots(r),
       }),
-    createHealth: (apply) =>
-      new FolderHealth({
-        isDir: (p) =>
-          fs.promises.stat(p).then(
-            (st) => st.isDirectory(),
-            () => false,
-          ),
-        get: (id) => mgr.get(id),
-        sessions: () => mgr.list(),
-        apply,
-      }),
-    revalidate: (id, folder) => sessionOps.revalidate(id, folder),
-    realpath: (p) => fs.promises.realpath(p),
-    realKeys,
+    // Dropped while the service is down, like any C2 notification (D29).
+    suspect: (sessionId, folder) =>
+      serverClient()?.notify('folders.suspect', { sessionId, path: folder }),
     visibleSessionIds: () => gitDemand.visibleIds(),
     log: (level, msg, data) => log[level]('folders', msg, data),
   });
-  const sessionOps = createSessionOps({
-    mgr,
-    projects: projectStore,
-    probe: (raw) => probeFolder(raw, probeDeps),
-    realKeys,
-    onFoldersChanged: (id, change) => folders.foldersChanged(id, change),
-  });
-  const scopes = new AgentScopeTracker({
-    get: (id) => mgr.get(id),
-    exists: (p) =>
-      fs.promises.stat(p).then(
-        (st) => st.isDirectory(),
-        () => false,
-      ),
-    onChange: () => postState(),
-  });
-  folders.onFoldersChanged((id) => scopes.recompute(id));
   folders.onFoldersChanged(() => pruneFileIndexes());
-  // Runtime-only (never persisted): keys the terminal pane so a restart remounts it (R2).
-  const restartSeq = new Map<string, number>();
-  // Runtime-only: why the last term:start refused, so the centre can say it (review B1).
-  const startRefusals = new Map<string, StartRefusal>();
-  const launchersChanged = () => {
-    startRefusals.clear();
-    postState();
-  };
-  folders.restored();
   onWindowFocus = () => {
     repoTrackerHost.windowFocused();
-    folders.focused();
+    // The server rechecks the focused window's visible session's folders on a focus change (W4).
+    schedulePresence();
   };
   const replyOp = (
     dispatch: Dispatch,
     m: { type: string; requestId?: number },
-    r: SessionOpResult,
+    r: Omit<Extract<HostToWebview, { type: 'session:opResult' }>, 'type' | 'requestId'>,
   ) => {
     if (typeof m.requestId === 'number') {
       dispatch({
@@ -2610,81 +1774,28 @@ app.whenReady().then(() => {
       log.info('session', `${m.type} refused`, { reason: r.reason });
     }
   };
+  const mutateSession = (sessionId: string, mutation: SessionMutation) =>
+    callServer('sessions.mutate', { sessionId, mutation });
+  /** The C2 reply's reason is optional on the wire; a refusal without one is an unknown session. */
+  const opResultOf = (
+    r: ServerMethods['sessions.mutate']['result'],
+  ): { ok: true } | { ok: false; reason: SessionOpReason } =>
+    r.ok ? { ok: true } : { ok: false, reason: r.reason ?? 'unknown-session' };
 
-  // B2: a blocked projects.json is re-read before each project mutation; a clean read unblocks it.
-  const projectsAvailable = (): boolean => {
-    if (projectsWritable) return true;
-    const load = parseProjects(readFileState(projectsFile()));
-    if (load.kind !== 'ok' && load.kind !== 'absent') return false;
-    projectsWritable = true;
-    projectStore.replaceAll(load.kind === 'ok' ? load.projects : []);
-    return true;
-  };
-  // project:delete posts once, from the manager's clearProject emit (N3).
-  let projectPostSuppressed = false;
-  projectStore.onChange(() => {
-    projectsDirty = true;
-    if (projectsWritable)
-      persistFile(projectsFile(), serializeProjects(projectStore.list()), 'projects.json');
-    if (!projectPostSuppressed) postState();
-  });
-
-  /**
-   * The folder half of a create, shared by the dialog and MCP opens so they can't drift (spec
-   * 2026-10-27-conduit-mcp-control-tools A3): long name, realpath key, initial roots, project.
-   */
-  async function prepareOpen(rawHome: string, roots: unknown, projectId: unknown) {
-    const home = await probeDeps.longName(rawHome);
-    try {
-      realKeys.set(folderKey(home), folderKey(await probeDeps.realpath(home)));
-    } catch {
-      // Gone again after the stat: its key stays lexical-only, like a folder first seen missing.
-    }
-    const initial = await sessionOps.resolveInitialRoots(home, roots);
-    return {
-      home,
-      initial,
-      projectId:
-        typeof projectId === 'string' && projectStore.has(projectId) ? projectId : undefined,
-    };
-  }
-
-  /** The caller's window, else the primary, else the focused one (spec §3.1 placement). */
-  const mcpOwnerWindow = (callerSessionId: string): number => {
-    const callerWindow = sessionOwner.get(callerSessionId);
-    if (callerWindow !== undefined && windows.has(callerWindow)) return callerWindow;
-    if (windows.has(primaryWindowId)) return primaryWindowId;
-    return focusedWindow()?.id ?? -1;
-  };
-
-  async function createMcpSession(req: McpOpenRequest): Promise<McpOpenOutcome> {
-    const caller = mgr.get(req.callerSessionId);
-    const { home, initial, projectId } = await prepareOpen(req.home, undefined, caller?.projectId);
-    const command = req.launch.kind === 'command' ? req.launch.command : undefined;
-    const agentId = req.launch.kind === 'agent' ? req.launch.agentId : COMMAND_AGENT_ID;
-    const opened = openRepo(home, agentId, mcpOwnerWindow(req.callerSessionId), {
-      extras: {
-        roots: initial.roots,
-        missingRoots: initial.missing,
-        projectId,
-        ...(req.label !== undefined ? { name: req.label } : {}),
-        ...(command ? { command } : {}),
-        openedBy: req.openedBy,
-      },
-      // A command has no brief to deliver; an agent gets its definition's default (spec §3.1).
-      brief: { request: command ? { kind: 'none' } : undefined, dialog: true },
-      mcp: { focus: req.focus },
-    });
-    if (!opened) {
-      return { ok: false, code: 'unknown_agent', message: `unknown agent: ${agentId}` };
-    }
-    if ('error' in opened) return { ok: false, code: 'brief_unavailable', message: opened.error };
-    return {
-      ok: true,
-      sessionId: opened.sessionId,
-      label: mgr.get(opened.sessionId)?.name ?? '',
-    };
-  }
+  type OpenRepoError = NonNullable<Extract<HostToWebview, { type: 'openRepo:result' }>['error']>;
+  const OPEN_REPO_ERRORS: ReadonlySet<string> = new Set<OpenRepoError>([
+    'home-missing',
+    'invalid-path',
+    'unknown-agent',
+    'brief-unreadable',
+    'brief-too-large',
+    'brief-invalid',
+    'brief-io',
+  ]);
+  /** sessions.create refuses as an RPC error whose message is today's openRepo:result error. */
+  const isOpenRepoError = (m: string): m is OpenRepoError => OPEN_REPO_ERRORS.has(m);
+  const openRepoErrorOf = (err: unknown): OpenRepoError | undefined =>
+    err instanceof ServerCallError && isOpenRepoError(err.message) ? err.message : undefined;
 
   async function openRepoRequest(
     m: Extract<WebviewToHost, { type: 'openRepo' }>,
@@ -2702,34 +1813,19 @@ app.whenReady().then(() => {
       answer({ droppedRoots: [], error: 'invalid-path' });
       return;
     }
-    if (requestId !== undefined && !registry.get(m.agentId)) {
-      answer({ droppedRoots: [], error: 'unknown-agent' });
-      return;
+    try {
+      const r = await openRepo(m.path, m.agentId, ownerWindowId, {
+        ...(Array.isArray(m.roots) ? { roots: m.roots } : {}),
+        ...(typeof m.projectId === 'string' ? { projectId: m.projectId } : {}),
+        ...(m.cardId ? { cardId: m.cardId } : {}),
+        ...(m.brief !== undefined ? { brief: m.brief } : {}),
+      });
+      answer({ sessionId: r.sessionId, droppedRoots: r.droppedRoots ?? [] });
+    } catch (err) {
+      const error = openRepoErrorOf(err);
+      if (!error) throw err;
+      answer({ droppedRoots: [], error });
     }
-    // Only existence is checked: a filesystem-root home stays openable (mf-model spec D12).
-    const kind = await probeDeps.kind(m.path);
-    if (kind !== 'dir') {
-      answer({ droppedRoots: [], error: kind === 'missing' ? 'home-missing' : 'invalid-path' });
-      return;
-    }
-    // A present but malformed brief is refused, not read as absent: absent means "the agent's
-    // brief", which the user didn't pick.
-    const brief = parseBriefRequest(m.brief);
-    if (m.brief !== undefined && brief === undefined) {
-      answer({ droppedRoots: [], error: 'brief-invalid' });
-      return;
-    }
-    const { home, initial, projectId } = await prepareOpen(m.path, m.roots, m.projectId);
-    const opened = openRepo(home, m.agentId, ownerWindowId, {
-      cardId: m.cardId,
-      extras: { roots: initial.roots, missingRoots: initial.missing, projectId },
-      brief: { request: brief, dialog: true },
-    });
-    if (opened && 'error' in opened) {
-      answer({ droppedRoots: [], error: opened.error });
-      return;
-    }
-    answer({ sessionId: opened?.sessionId, droppedRoots: initial.dropped });
   }
 
   // The renderer keys read-only off `EACCES`/`EPERM` in this text, so the errno has to survive.
@@ -2799,7 +1895,7 @@ app.whenReady().then(() => {
     },
     focus: (id) => liveWindow(id)?.focus(),
     counts: (id) => {
-      const sessions = activity.apply(sessionsOwnedBy(sessionOwner, id, mgr.list()));
+      const sessions = sessionsOwnedBy(sessionOwner, id, store.list());
       return { running: runningSessions(sessions).length, busy: busySessions(sessions).length };
     },
     ask: (id, ask) =>
@@ -2840,7 +1936,7 @@ app.whenReady().then(() => {
         return;
       }
       windowConfirmed.add(id);
-      for (const s of sessionsOwnedBy(sessionOwner, id, mgr.list())) disposeSession(s.id);
+      for (const s of sessionsOwnedBy(sessionOwner, id, store.list())) void removeSession(s.id);
       w.close();
     },
     resumeWindowClose: (id) => {
@@ -2914,52 +2010,364 @@ app.whenReady().then(() => {
     folders.requestProject(p, sessionId, windowId, !auto);
   }
 
-  // Fully tear down a session: kill its PTY, drop it from the model + every per-session
-  // map, delete its scrollback file, and release its window ownership. Shared by the `kill`
-  // handler and the per-window close guard (multi-window Slice A disposes all of a closing
-  // window's sessions through this).
-  const disposeSession = (id: string) => {
-    const planRoot = mgr.get(id)?.home;
-    pty.dispose(id);
-    // Before mgr.remove: its unread messages are marked undelivered under its handle.
-    const mcpDeleted = mcpHost.onSessionDeleted(id);
-    void roleBriefs.onSessionDeleted(id);
-    mgr.remove(id);
-    scopes.ended(id);
-    restartSeq.delete(id);
-    startRefusals.delete(id);
-    launchGenerations.delete(id);
+  // ── Conduit server (C2) and hc observer (C5) ──────────────────────────────
+  // The server owns sessions, PTYs (in hc), projects, launchers, timers and MCP; the app is a
+  // client of it. See docs/plans/2026-11-02-three-process-w7-app-client.plan.md.
+  const e2e = process.env.CONDUIT_E2E === '1';
+  const appLog: AppLog = (level, msg, data) => log[level]('server', msg, data);
+  const names = instanceNames(
+    userData(),
+    process.platform === 'win32' ? 'win32' : 'posix',
+    os.tmpdir(),
+  );
+  // M22: isolated XDG for our core; every app hc call goes through this env (our HC_SESSION).
+  const hcEnv = coreStartEnv(process.env, names, true);
+  const hc = hcClient(names, hcEnv, (m) => log.warn('hc', m));
+  // Before the lifecycle: the start rule and its F6/F9 waits read this one subscription.
+  const hcEvents = createHcEvents(hc, { 'conduit.instance': names.instance }, appLog);
+  let lifecycle: ReturnType<typeof createServerLifecycle> | null = null;
+  const serverClient = () => lifecycle?.client() ?? null;
+  const serverCalls = createServerCalls(() => lifecycle);
+  const callServer = serverCalls.call;
+  let resolveFirstSnapshot = () => {};
+  /** OS opens wait for it: they need the server's agents. */
+  const firstSnapshot = new Promise<void>((resolve) => {
+    resolveFirstSnapshot = resolve;
+  });
+
+  const terminals = createTerminalHost({
+    client: serverClient,
+    links: createTerminalLinkFactory({ hc, hcSession: names.hcSession, hcEvents, log: appLog }),
+    store,
+    sendToOwner,
+    log: appLog,
+  });
+  hc.onConnection((state) => {
+    if (state === 'reconnected') terminals.hcReconnected();
+  });
+
+  /** timers.renew/sendNow/sendOnce refuse as an RPC error whose message is the toast. */
+  const timerCall = async <M extends 'timers.renew' | 'timers.sendNow' | 'timers.sendOnce'>(
+    dispatch: Dispatch,
+    m: M,
+    p: ServerMethods[M]['params'],
+  ) => {
+    try {
+      await callServer(m, p);
+    } catch (err) {
+      if (!(err instanceof ServerCallError) || err.kind !== 'refused') throw err;
+      dispatch({ type: 'timer:error', message: err.message });
+    }
+  };
+
+  const removeSession = (id: string): Promise<void> =>
+    callServer('sessions.remove', { sessionId: id }).then(
+      () => {},
+      (err: unknown) => log.warn('session', 'remove failed', { sessionId: id, err: String(err) }),
+    );
+
+  // ── Presence (C2 ui.presence): visible, ready, focus and owners, coalesced per tick ──
+  let presenceQueued = false;
+  const pushPresence = () => {
+    const focusedId = BrowserWindow.getFocusedWindow()?.id;
+    const windowsNow: C2WindowPresence[] = [...windows.keys()].map((windowId) => ({
+      windowId,
+      focused: focusedId === windowId,
+      ready: presence.isReady(windowId),
+      visibleSessionIds: store
+        .list()
+        .filter((s) => presence.isOnScreen(windowId, s.id))
+        .map((s) => s.id),
+      ownedSessionIds: [...sessionOwner].filter(([, w]) => w === windowId).map(([id]) => id),
+    }));
+    serverClient()
+      ?.call('ui.presence', { windows: windowsNow })
+      .catch((err: unknown) => log.warn('server', 'ui.presence failed', { err: String(err) }));
+  };
+  const schedulePresence = () => {
+    if (presenceQueued) return;
+    presenceQueued = true;
+    setImmediate(() => {
+      presenceQueued = false;
+      pushPresence();
+    });
+  };
+
+  onWindowPresenceChanged = schedulePresence;
+
+  /** Created with no app, restored without a layout, or its window is gone. */
+  const fallbackWindow = (): number =>
+    focusedWindow()?.id ?? (windows.has(primaryWindowId) ? primaryWindowId : -1);
+
+  const applyPlacement = (e: ServerEvents['sessions.opened'], appWindowId?: number) => {
+    const openerWindow =
+      e.openerSessionId !== undefined ? sessionOwner.get(e.openerSessionId) : undefined;
+    const windowId =
+      appWindowId !== undefined && windows.has(appWindowId)
+        ? appWindowId
+        : openerWindow !== undefined && windows.has(openerWindow)
+          ? openerWindow
+          : fallbackWindow();
+    assignOwner(sessionOwner, e.sessionId, windowId);
+    if (!e.focus)
+      windows.get(windowId)?.webContents.send('to-webview', {
+        type: 'suppressAutoSwitch',
+        sessionId: e.sessionId,
+      } satisfies HostToWebview);
+    // An app open focuses through its own openRepo:result; an MCP open is activated here.
+    else if (e.openerSessionId !== undefined) pendingActivate.add(e.sessionId);
+    if (store.get(e.sessionId)) {
+      postState();
+      broadcastWinList?.();
+      schedulePersistLayout?.();
+    }
+    schedulePresence();
+  };
+
+  const pendingCreates = createPendingAppCreateMatcher(applyPlacement);
+  const place = (e: ServerEvents['sessions.opened']) => {
+    if (e.openerSessionId === undefined) pendingCreates.opened(e);
+    else applyPlacement(e);
+  };
+
+  /** Each session's last home, for the plan watch a removed session may have held alone. */
+  const homes = new Map<string, string>();
+  const forgetSession = (id: string) => {
+    const planRoot = homes.get(id);
+    homes.delete(id);
     // The project is closed once its last session goes; the plans watch would otherwise hold an
     // fs.watch handle (and a poll interval) on a folder nothing is showing any more.
     if (planRoot) {
       const key = normalizeRoot(planRoot);
-      if (!mgr.list().some((s) => normalizeRoot(s.home) === key)) planWatcher.unwatch(key);
+      if (!store.list().some((s) => normalizeRoot(s.home) === key)) planWatcher.unwatch(key);
     }
-    activity.forget(id);
     gitDemand.forget(id);
     for (const [windowId, request] of deferredProjectRequests)
       if (request.sessionId === id) deferredProjectRequests.delete(windowId);
-    cwdScanners.delete(id);
-    cwdGate.drop(id);
-    bellScanState.delete(id);
-    pasteModes.delete(id);
-    inertTails.delete(id);
-    // A session's schedules die WITH it, here — not lazily at some later mutation (§2).
-    timers.onSessionDisposed(id);
-    limitEpisodes.delete(id);
-    if (limitOffer?.sessionId === id) limitOffer = null;
     repoScanner.forget(id);
-    // T2: the session is gone — drop its scrollback ring/timer and delete the file so
-    // userData doesn't accumulate orphans. Best-effort, ENOENT-tolerant.
-    scrollbacks.drop(id);
-    coldStartsInFlight.delete(id);
-    preSpawnSizes.delete(id);
     repoTrackerHost.tracker.dropSession(id);
-    afterReposChanged();
     removeOwner(sessionOwner, id);
-    scrollbackWriteGate.run(scrollbackFileName(id), () => fs.unlink(scrollbackFile(id), () => {}));
-    return mcpDeleted;
+    pendingActivate.delete(id);
   };
+
+  /** The app's side of every server list: owners, cwd auto-follow, folder runtime, indexes. */
+  const sessionsApplied = (diffs: SessionFolderDiff[]) => {
+    let membership = false;
+    for (const d of diffs) {
+      if (d.kind === 'removed') {
+        forgetSession(d.sessionId);
+        membership = true;
+        continue;
+      }
+      const s = store.get(d.sessionId);
+      if (!s) continue;
+      homes.set(s.id, s.home);
+      if (d.kind === 'added') {
+        membership = true;
+        if (!sessionOwner.has(s.id) && !pendingCreates.isHeld(s.id))
+          assignOwner(sessionOwner, s.id, fallbackWindow());
+      }
+      // Multi-repo: a cd inside a detected sub-repo auto-follows (the store ignores it while pinned).
+      if (d.cwdChanged && s.cwd) store.setAutoRepo(s.id, repoForPath(s.repos ?? [], s.cwd));
+    }
+    folders.applied(diffs);
+    if (!membership) return;
+    afterReposChanged();
+    if (deferredIndexes.size || pendingFsByWindow.size) {
+      const sessions = store.list();
+      const owned = (root: string) => sessions.some((s) => sessionContains(s, root));
+      for (const [key, request] of deferredIndexes)
+        if (!owned(request.root)) deferredIndexes.delete(key);
+      for (const [windowId, roots] of pendingFsByWindow) {
+        for (const root of roots) if (!owned(root)) roots.delete(root);
+        if (roots.size === 0) pendingFsByWindow.delete(windowId);
+      }
+    }
+    broadcastWinList?.();
+    schedulePersistLayout?.();
+    schedulePresence();
+  };
+
+  const attentionBody = (name: string, kind: ServerEvents['attention.edge']['kind']) =>
+    kind === 'run-end' ? `${name} finished` : `${name} is waiting`;
+
+  const notifyAttention = (sessionId: string, kind: ServerEvents['attention.edge']['kind']) => {
+    const session = store.get(sessionId);
+    if (!session) return;
+    windowFor(sessionId)?.flashFrame(true);
+    if (!Notification.isSupported()) return;
+    const notif = new Notification({ title: 'Conduit', body: attentionBody(session.name, kind) });
+    notif.on('click', () => {
+      const w = windowFor(sessionId);
+      if (w) {
+        w.show();
+        w.focus();
+        sendToOwner(sessionId, { type: 'activateSession', sessionId });
+      }
+    });
+    notif.show();
+  };
+
+  const router = createServerEventRouter({
+    store,
+    terminals,
+    broadcastState: () => postState(),
+    broadcast: (m) => {
+      if (m.type === 'timer:state') lastTimers = m;
+      if (m.type === 'mcp:state') lastMcp = m;
+      broadcast(m);
+    },
+    sendToWindow: (id, m) => {
+      const w = windows.get(id);
+      if (w && !w.isDestroyed() && !w.webContents.isDestroyed())
+        w.webContents.send('to-webview', m);
+    },
+    ownerWindowOf: (id) => {
+      const w = sessionOwner.get(id);
+      return w !== undefined && windows.has(w) ? w : undefined;
+    },
+    raiseWindow: (id) => {
+      const w = windows.get(id);
+      if (!w || w.isDestroyed()) return;
+      if (!e2e) w.show();
+      w.focus();
+    },
+    openFileInEditor: sendOpenFileInEditor,
+    sessionsApplied,
+    onServerSettings: (s) => {
+      const next = mirrorServerKeys(settings, s);
+      if (JSON.stringify(next) === JSON.stringify(settings)) return;
+      settings = next;
+      persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
+      postState();
+    },
+    onStores: (s) => {
+      stores = { ...stores, ...s };
+      postState();
+    },
+    onRuntime: (h) => log.info('server', 'runtime', { ...h }),
+    osAttention: () => settings.osAttention,
+    anyWindowFocused: () => BrowserWindow.getFocusedWindow() !== null,
+    notifyAttention,
+    flash: (sessionId) => {
+      const w = windowFor(sessionId);
+      if (w && !w.isFocused()) w.flashFrame(true);
+    },
+    place,
+    log: appLog,
+  });
+
+  /** HcCliDeps.execFile: a non-zero exit is a result, never a throw. */
+  const execHc: HcCliDeps['execFile'] = (file, args, o) =>
+    new Promise((resolve) => {
+      execFile(
+        file,
+        args,
+        { env: o.env, cwd: o.cwd, timeout: o.timeoutMs, windowsHide: true },
+        (err, stdout, stderr) => {
+          const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
+          resolve({
+            code,
+            stdout: String(stdout),
+            stderr: String(stderr) || (err ? err.message : ''),
+          });
+        },
+      );
+    });
+
+  async function startServer(): Promise<void> {
+    const appVersion = aboutInfo.version;
+    // W9: a packaged app runs its server from copies outside the install dir (D2).
+    if (app.isPackaged)
+      await prepareRuntime({
+        resourcesDir: process.resourcesPath,
+        userData: userData(),
+        appVersion,
+        hcVersion: HC_PINNED_VERSION,
+        shimVersion: CURRENT_SHIM_GENERATION,
+      });
+    const layout = runtimeLayout({
+      packaged: app.isPackaged,
+      userData: userData(),
+      appVersion,
+      appPath: app.getAppPath(),
+      env: process.env,
+    });
+    // D23: under the single-instance lock, before the start rule.
+    try {
+      const gc = await collectRuntimeGarbage(
+        names.runtimeRoot,
+        { appVersion, hcVersion: layout.hcVersion },
+        {
+          readdir: (d) => fs.promises.readdir(d),
+          rename: (a, b) => fs.promises.rename(a, b),
+          rmrf: (d) => fs.promises.rm(d, { recursive: true, force: true }),
+        },
+      );
+      if (gc.removed.length || gc.inUse.length) log.info('runtime', 'gc', { ...gc });
+    } catch (err) {
+      log.warn('runtime', 'gc failed', { err: String(err) });
+    }
+    // E2e hooks reach the server as argv: hc may refresh the env on Windows (M10).
+    const serverArgs = ['--hc', layout.hcExe, ...(e2e ? ['--e2e'] : [])];
+    const marker = path.join(userData(), SERVER_EXHAUSTED_FILE);
+    lifecycle = createServerLifecycle({
+      names,
+      layout,
+      userData: userData(),
+      appVersion,
+      serverArgs,
+      client: () => new ServerClient({ endpoint: names.serverEndpoint, appVersion, log: appLog }),
+      hc,
+      hcEvents,
+      cli: { hcExe: layout.hcExe, env: hcEnv, coreCwd: layout.coreCwd, execFile: execHc },
+      markerExists: () =>
+        fs.promises.access(marker).then(
+          () => true,
+          () => false,
+        ),
+      deleteMarker: () => fs.promises.rm(marker, { force: true }),
+      spawnDetachedSupervisor: () => {
+        const child = spawn(
+          layout.nodeExe,
+          [layout.superviseJs, '--user-data', userData(), ...serverArgs],
+          {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+            env: hcEnv,
+            cwd: path.dirname(layout.superviseJs),
+          },
+        );
+        child.on('error', (err) =>
+          log.error('server', 'supervisor spawn failed', { err: String(err) }),
+        );
+        child.unref();
+      },
+      now: Date.now,
+      log: appLog,
+    });
+    // S4 renders these; until then they are logged and terminals show "starting".
+    lifecycle.onState((s) => {
+      log.info('server', `state ${s.state}`, { ...s });
+      serverCalls.stateChanged(s);
+    });
+    lifecycle.onConnected((c) => {
+      serverCalls.connected(c);
+      c.call('server.setLogging', { logging: settings.logging, logLevel: settings.logLevel }).catch(
+        (err: unknown) => log.warn('server', 'setLogging failed', { err: String(err) }),
+      );
+      c.subscribe(router).then(resolveFirstSnapshot, (err: unknown) =>
+        log.warn('server', 'subscribe failed', { err: String(err) }),
+      );
+      pushPresence();
+      terminals.serverConnected();
+    });
+    await lifecycle.start();
+  }
+
+  powerMonitor.on('resume', () => serverClient()?.notify('system.resumed', {}));
+  powerMonitor.on('unlock-screen', () => serverClient()?.notify('system.resumed', {}));
 
   async function handle(m: WebviewToHost, e: IpcMainEvent) {
     const senderWin = BrowserWindow.fromWebContents(e.sender);
@@ -2974,6 +2382,7 @@ app.whenReady().then(() => {
       switch (m.type) {
         case 'ready':
           presence.markReady(senderId);
+          schedulePresence();
           postState();
           // A just-loaded window may have missed the create/focus win:list broadcasts (it
           // wasn't subscribed yet); send the current picker list now (Slice B).
@@ -2989,10 +2398,9 @@ app.whenReady().then(() => {
           // Reviewed marks, to the window that just loaded (like restoreDocs above). An EMPTY
           // list is a real answer: it is what opens the renderer's mark controls (§4).
           replyHere({ type: 'review:marks', repos: allMarkRepos() });
-          // Timed messages, to the window that just loaded. An empty list is a real answer: it is
-          // what opens the renderer's load gate (§3).
-          replyHere({ type: 'timer:state', schedules: timers.list(), offer: limitOffer });
-          replyHere({ type: 'mcp:state', state: mcpHost.uiState() });
+          // Before the first snapshot these arrive with it, as broadcasts.
+          if (lastTimers) replyHere(lastTimers);
+          if (lastMcp) replyHere(lastMcp);
           break;
         case 'log': {
           // Back-compatible: a bare {type:'log', message} defaults to info / scope 'renderer'.
@@ -3007,13 +2415,17 @@ app.whenReady().then(() => {
           await openRepoRequest(m, senderId, replyHere);
           break;
         case 'session:addRoot':
-          replyOp(replyHere, m, await sessionOps.addRoot(m.sessionId, m.path));
+          replyOp(replyHere, m, await mutateSession(m.sessionId, { op: 'addRoot', path: m.path }));
           break;
         case 'session:removeRoot':
-          replyOp(replyHere, m, sessionOps.removeRoot(m.sessionId, m.path));
+          replyOp(
+            replyHere,
+            m,
+            await mutateSession(m.sessionId, { op: 'removeRoot', path: m.path }),
+          );
           break;
         case 'session:setHome':
-          replyOp(replyHere, m, await sessionOps.setHome(m.sessionId, m.path));
+          replyOp(replyHere, m, await mutateSession(m.sessionId, { op: 'setHome', path: m.path }));
           break;
         case 'session:locateFolder': {
           const { requestId } = m;
@@ -3022,7 +2434,7 @@ app.whenReady().then(() => {
             break;
           }
           const outcome = await locateFolder(m.sessionId, m.path, {
-            get: (id) => mgr.get(id),
+            get: (id) => store.get(id),
             pick: (d) => folderPicker.pick(senderWin, 'Locate folder', d),
             isDir: (p) =>
               fs.promises.stat(p).then(
@@ -3030,7 +2442,15 @@ app.whenReady().then(() => {
                 () => false,
               ),
             dirname: path.dirname,
-            ops: sessionOps,
+            ops: {
+              // Locate replaces a missing home; it doesn't keep it as a root (session-ops keepOldHome).
+              setHome: (sessionId, p) =>
+                mutateSession(sessionId, { op: 'setHome', path: p, keepOldHome: false }).then(
+                  opResultOf,
+                ),
+              replaceRoot: (sessionId, from, to) =>
+                mutateSession(sessionId, { op: 'replaceRoot', from, to }).then(opResultOf),
+            },
           });
           replyHere({ type: 'session:locateResult', requestId, ...outcome });
           break;
@@ -3042,149 +2462,83 @@ app.whenReady().then(() => {
             log.warn('agentScope', `${m.type} without a requestId`);
             break;
           }
-          const answer = (r: { ok: boolean; reason?: AgentScopeReason }) =>
+          // Only the window showing the session may act on it (review N1).
+          if (typeof sessionId !== 'string' || sessionOwner.get(sessionId) !== senderId) {
             replyHere({
               type: 'agentScope:result',
               requestId,
               sessionId: typeof sessionId === 'string' ? sessionId : '',
-              ...r,
+              ok: false,
+              reason: 'noSession',
             });
-          // Only the window showing the session may act on it (review N1).
-          if (typeof sessionId !== 'string' || sessionOwner.get(sessionId) !== senderId) {
-            answer({ ok: false, reason: 'noSession' });
             break;
           }
-          if (m.type === 'session:addDirsToAgent') {
-            const r = runAddDir({
-              sessionExists: () => !!mgr.get(sessionId),
-              isAlive: () => pty.isAlive(sessionId),
-              isBusy: () => !!activity.statusOf(sessionId).busy,
-              typeable: () => scopes.typeable(sessionId),
-              bracketedPaste: () => !!pasteModes.get(sessionId)?.on,
-              write: (d) => {
-                // A paste the human still has to submit: a draft to the notice gate (spec §2).
-                mcpDrafts.noteHostInput(sessionId, d);
-                return typingPort.write(sessionId, d);
-              },
-              onPasted: (p) => scopes.pasted(sessionId, p),
-            });
-            log.info('agentScope', r.ok ? 'add-dir pasted' : r.reason, { sessionId });
-            answer(r.ok ? { ok: true } : { ok: false, reason: r.reason });
-            break;
-          }
-          const healthPending = folders.pending(sessionId);
-          if (healthPending) await healthPending;
-          const s = mgr.get(sessionId);
-          if (!s || s.homeMissing) {
-            const reason = s ? 'homeMissing' : 'noSession';
-            log.info('agentScope', `restart refused: ${reason}`, { sessionId });
-            answer({ ok: false, reason });
-            break;
-          }
-          // Kill without the dispose teardown: the session stays, and the remounted pane's cold
-          // term:start spawns with the current folders (spec §2.4 R1–R3).
-          if (pty.isAlive(sessionId)) {
-            pty.retire(sessionId);
-            endProcessEpisode(sessionId);
-            scopes.ended(sessionId);
-            restartSeq.set(sessionId, (restartSeq.get(sessionId) ?? 0) + 1);
-          }
-          log.info('session', 'restart', { sessionId });
-          mgr.setStatus(sessionId, 'running');
-          pendingRelaunchMarker.add(sessionId);
-          postState();
-          answer({ ok: true });
+          const r = await callServer(
+            m.type === 'session:addDirsToAgent' ? 'sessions.addDirs' : 'sessions.restart',
+            { sessionId },
+          );
+          replyHere({ type: 'agentScope:result', requestId, ...r });
           break;
         }
         case 'session:dismissAgentScope':
           if (typeof m.sessionId === 'string' && sessionOwner.get(m.sessionId) === senderId)
-            scopes.dismiss(m.sessionId);
+            await callServer('sessions.dismissScope', { sessionId: m.sessionId });
           break;
         case 'session:setProject':
-          replyOp(replyHere, m, sessionOps.setProject(m.sessionId, m.projectId));
+          replyOp(
+            replyHere,
+            m,
+            await mutateSession(m.sessionId, { op: 'setProject', projectId: m.projectId }),
+          );
           break;
         case 'project:create': {
           if (typeof m.requestId !== 'number' || typeof m.name !== 'string') {
             log.warn('project', 'project:create: bad payload');
             break;
           }
-          if (!projectsAvailable()) {
-            replyHere({
-              type: 'project:opResult',
-              requestId: m.requestId,
-              ok: false,
-              reason: 'store-unavailable',
-            });
-            break;
+          try {
+            const created = await callServer('projects.create', { name: m.name });
+            replyHere({ type: 'project:created', requestId: m.requestId, id: created.id });
+          } catch (err) {
+            const reason = err instanceof ServerCallError ? err.message : '';
+            if (reason !== 'invalid-name' && reason !== 'store-unavailable') throw err;
+            replyHere({ type: 'project:opResult', requestId: m.requestId, ok: false, reason });
           }
-          const created = projectStore.create(m.name);
-          replyHere(
-            created
-              ? { type: 'project:created', requestId: m.requestId, id: created.id }
-              : {
-                  type: 'project:opResult',
-                  requestId: m.requestId,
-                  ok: false,
-                  reason: 'invalid-name',
-                },
-          );
           break;
         }
         case 'project:rename':
-          if (typeof m.id !== 'string' || typeof m.name !== 'string') {
-            log.warn('project', 'project:rename: bad payload');
-          } else if (!projectsAvailable()) {
-            log.warn('project', 'project:rename: store unavailable');
-          } else if (!projectStore.rename(m.id, m.name)) {
-            log.info('project', 'project:rename refused', { id: m.id });
-          }
+          await callServer('projects.rename', { id: m.id, name: m.name }).catch((err: unknown) =>
+            log.info('project', 'project:rename refused', { id: m.id, err: String(err) }),
+          );
           break;
-        case 'project:delete': {
-          if (typeof m.id !== 'string') {
-            log.warn('project', 'project:delete: bad payload');
-            break;
-          }
-          if (!projectsAvailable()) {
-            log.warn('project', 'project:delete: store unavailable');
-            break;
-          }
-          projectPostSuppressed = true;
-          let deleted: boolean;
-          try {
-            deleted = projectStore.delete(m.id);
-          } finally {
-            projectPostSuppressed = false;
-          }
-          // With no holder the manager never emits, so the store change still needs its post.
-          if (deleted && mgr.clearProject(m.id) === 0) postState();
+        case 'project:delete':
+          await callServer('projects.delete', { id: m.id }).catch((err: unknown) =>
+            log.warn('project', 'project:delete failed', { id: m.id, err: String(err) }),
+          );
           break;
-        }
         case 'project:reorder':
-          if (!projectsAvailable()) {
-            log.warn('project', 'project:reorder: store unavailable');
-          } else if (!projectStore.reorder(m.ids)) {
-            log.warn('project', 'project:reorder: bad payload');
-          }
+          await callServer('projects.reorder', { ids: m.ids }).catch((err: unknown) =>
+            log.warn('project', 'project:reorder failed', { err: String(err) }),
+          );
           break;
         case 'launchers:rescan':
-          if (launcherHost.rescan()) launchersChanged();
+          await callServer('launchers.rescan', {});
           break;
         case 'launcher:addCustom': {
           if (typeof m.requestId !== 'number') {
             log.warn('launcher', 'launcher:addCustom without a requestId');
             break;
           }
-          const r = launcherHost.addCustom(m.commandLine, m.label);
-          if (r.ok) {
-            launchersChanged();
-            replyHere({ type: 'launcher:added', requestId: m.requestId, id: r.id });
-          } else {
-            replyHere({ type: 'launcher:added', requestId: m.requestId, error: r.error });
-          }
+          // The data.changed carrying the launcher precedes this reply on the one pipe.
+          const r = await callServer('launchers.addCustom', {
+            commandLine: m.commandLine,
+            ...(m.label !== undefined ? { label: m.label } : {}),
+          });
+          replyHere({ type: 'launcher:added', requestId: m.requestId, ...r });
           break;
         }
         case 'launcher:removeCustom':
-          if (launcherHost.removeCustom(m.id)) launchersChanged();
+          await callServer('launchers.removeCustom', { id: m.id });
           break;
         case 'folder:pick':
           if (typeof m.requestId !== 'number') {
@@ -3208,19 +2562,17 @@ app.whenReady().then(() => {
             path: await folderPicker.pickFile(senderWin, m.title),
           });
           break;
-        case 'brief:probe': {
+        case 'brief:probe':
           if (typeof m.requestId !== 'number') {
             log.warn('brief', 'brief:probe without a requestId');
             break;
           }
-          const r = await roleBriefs.probe(m.path);
           replyHere({
             type: 'brief:probed',
             requestId: m.requestId,
-            ...(r.ok ? { ok: true, bytes: r.bytes } : { ok: false, error: r.error }),
+            ...(await callServer('briefs.probe', { path: m.path })),
           });
           break;
-        }
         case 'brief:agentPreview':
           if (typeof m.requestId !== 'number') {
             log.warn('brief', 'brief:agentPreview without a requestId');
@@ -3229,7 +2581,7 @@ app.whenReady().then(() => {
           replyHere({
             type: 'brief:agentPreviewed',
             requestId: m.requestId,
-            ...(await roleBriefs.agentPreview(registry.get(m.agentId))),
+            ...(await callServer('briefs.agentPreview', { agentId: m.agentId })),
           });
           break;
         case 'folder:probe':
@@ -3240,10 +2592,7 @@ app.whenReady().then(() => {
           replyHere({
             type: 'folder:probeResult',
             requestId: m.requestId,
-            results: await probeFolders(m.paths, {
-              probe: (raw) => probeFolder(raw, probeDeps),
-              gitInfo: (d) => getGitInfo(d, { timeoutMs: GIT_TIMEOUT.metadata }),
-            }),
+            ...(await callServer('sessions.probeFolders', { paths: m.paths })),
           });
           break;
         case 'fs:copyToOsClipboard':
@@ -3255,26 +2604,19 @@ app.whenReady().then(() => {
         case 'fs:armDragDownload':
           dragOutHost.armDragDownload(m, e.sender.id);
           break;
-        case 'launch:preview':
+        case 'launch:preview': {
           if (typeof m.requestId !== 'number') {
             log.warn('launcher', 'launch:preview without a requestId');
             break;
           }
+          const { type: _type, requestId, ...params } = m;
           replyHere({
             type: 'launch:previewResult',
-            requestId: m.requestId,
-            ...(await previewLaunch(m, {
-              registry,
-              probe: (raw) => probeFolder(raw, probeDeps),
-              resolveInitialRoots: (h, r) => sessionOps.resolveInitialRoots(h, r),
-              exists: fs.existsSync,
-              resolveCommand: (c) => resolveCommand(c, hostPlatform),
-              platform: hostPlatform,
-              userData: userData(),
-              e2e: process.env.CONDUIT_E2E === '1',
-            })),
+            requestId,
+            ...(await callServer('launchers.preview', params)),
           });
           break;
+        }
         case 'requestProject':
           requestProject(senderId, m.path, m.sessionId, m.auto === true);
           break;
@@ -3382,7 +2724,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'git:history': {
-          const session = mgr.get(m.sessionId);
+          const session = store.get(m.sessionId);
           if (!session) break;
           const cwd = await requestRepoRoot(session, m.repoRoot);
           const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
@@ -3427,7 +2769,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'git:commitDiff': {
-          const session = mgr.get(m.sessionId);
+          const session = store.get(m.sessionId);
           // A silent break here stranded the Review pane on "Loading commit changes…" forever —
           // see docs/specs/archive/2026-08-20-commit-review-memory-bounds.md §4.
           if (!session) {
@@ -3475,7 +2817,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'git:blame': {
-          const session = mgr.get(m.sessionId);
+          const session = store.get(m.sessionId);
           if (!session) break;
           // Resolve the repo from the FILE's own directory, not the session's pinned repo: in a
           // multi-repo workspace the open file often lives in a different repo than the pin, and
@@ -3537,7 +2879,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'git:rangeDiff': {
-          const session = mgr.get(m.sessionId);
+          const session = store.get(m.sessionId);
           if (!session) break;
           const key = rangeKey(m.base, m.head);
           const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
@@ -3726,7 +3068,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'git:resolveRange': {
-          const session = mgr.get(m.sessionId);
+          const session = store.get(m.sessionId);
           if (!session) break;
           const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
           const cwd = await requestRepoRoot(session, m.repoRoot);
@@ -3778,7 +3120,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'git:refs': {
-          const session = mgr.get(m.sessionId);
+          const session = store.get(m.sessionId);
           if (!session) break;
           const cwd = await requestRepoRoot(session, m.repoRoot);
           const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
@@ -3815,7 +3157,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'git:switch': {
-          const session = mgr.get(m.sessionId);
+          const session = store.get(m.sessionId);
           if (!session) break;
           const cwd = requestGitRoot(session, m.repoRoot);
           const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
@@ -3846,7 +3188,7 @@ app.whenReady().then(() => {
             });
             break;
           }
-          const busy = activity.statusOf(m.sessionId).busy;
+          const busy = !!store.get(m.sessionId)?.busy;
           const dirty = busy ? false : await isDirty(cwd);
           const gate = decideSwitch({ busy, dirty });
           if (!gate.ok) {
@@ -3883,57 +3225,37 @@ app.whenReady().then(() => {
         }
         case 'repo:pin':
           // Validate against the detected set before pinning (the renderer's root is untrusted).
-          if (mgr.get(m.sessionId)?.repos?.some((r) => r.root === m.repoRoot)) {
-            mgr.pinRepo(m.sessionId, m.repoRoot);
+          if (store.get(m.sessionId)?.repos?.some((r) => r.root === m.repoRoot)) {
+            store.pinRepo(m.sessionId, m.repoRoot);
           }
           break;
         case 'repo:unpin':
-          mgr.unpinRepo(m.sessionId);
+          store.unpinRepo(m.sessionId);
           break;
         case 'repo:context': {
-          const s = mgr.get(m.sessionId);
+          const s = store.get(m.sessionId);
           if (s) {
-            mgr.setAutoRepo(m.sessionId, repoForPath(s.repos ?? [], m.path));
+            store.setAutoRepo(m.sessionId, repoForPath(s.repos ?? [], m.path));
           }
           break;
         }
         case 'rename':
           log.info('session', 'rename', { sessionId: m.id });
-          mgr.rename(m.id, m.name);
+          await mutateSession(m.id, { op: 'rename', name: m.name });
           break;
         case 'setSessionIcon':
-          mgr.setIconOverride(m.id, m.icon);
+          await mutateSession(m.id, { op: 'setIconOverride', icon: m.icon });
           break;
-        case 'term:title':
-          mgr.applyTitle(m.sessionId, m.title);
+        case 'relaunch':
+          await callServer('sessions.relaunch', { sessionIds: [m.id] });
           break;
-        case 'relaunch': {
-          const healthPending = folders.pending(m.id);
-          if (healthPending) await healthPending;
-          const s = mgr.get(m.id);
-          // A homeMissing session never spawns; the renderer is not trusted (spec §2.6, D11).
-          if (!s || s.homeMissing) {
-            log.info('session', 'relaunch refused', {
-              sessionId: m.id,
-              reason: s ? 'homeMissing' : 'noSession',
-            });
-            break;
-          }
-          mgr.setStatus(m.id, 'running');
-          // Remember this session needs a "relaunched" marker the next time its
-          // terminal starts (the renderer will send term:start once it remounts).
-          pendingRelaunchMarker.add(m.id);
-          break;
-        }
         case 'kill':
-          disposeSession(m.id);
+          await removeSession(m.id);
           break;
         case 'visible':
-          // What this window has on screen (active + split). Seeing a session acknowledges
-          // it and exempts it from arming; the sets are per window, so another window's
-          // active session is not silenced. See the attention-signal-quality spec §4.
-          if (activity.setVisible(senderId, m.ids)) scheduleActivityBroadcast();
           presence.setVisible(senderId, m.ids);
+          // What this window has on screen: the server's attention exemptions and ask gate read it.
+          schedulePresence();
           {
             // gitDemand's set decides which windows get a session's repo deltas.
             const ownIds = repoTrackerHost.ownedIds(senderId, m.ids);
@@ -3953,31 +3275,25 @@ app.whenReady().then(() => {
           break;
         case 'duplicate': {
           log.info('session', 'duplicate', { sessionId: m.id });
-          const d = roleBriefs.beginDuplicate(m.id);
-          // emits change -> postState
-          const dup = mgr.duplicate(m.id, { id: d.id, ...(d.brief ? { brief: d.brief } : {}) });
-          if (!dup) d.rollback();
-          if (dup) {
-            // Owner = the source session's owner (same window), falling back to the sender.
-            assignOwner(sessionOwner, dup.id, sessionOwner.get(m.id) ?? senderId);
-            postState();
-            folders.created(dup.id);
-          }
+          const dup = await callServer('sessions.duplicate', { sessionId: m.id });
+          // Owner = the source session's owner (same window), falling back to the sender.
+          assignOwner(sessionOwner, dup.sessionId, sessionOwner.get(m.id) ?? senderId);
+          postState();
+          schedulePresence();
           break;
         }
         case 'reorderSessions':
-          mgr.reorder(m.order); // emits change -> postState (+ persists order)
+          await callServer('sessions.reorder', { order: m.order });
           break;
-        case 'updateSettings':
-          // Coerce before persisting: drops unknown keys, clamps ranges, whitelists
-          // enum strings, and runs the legacy codeBg→surfaceColor migration.
-          // mcpGateMigrated is host-owned: a renderer's stale copy must not re-arm the migration.
-          settings = {
-            ...coerceSettings(m.settings as unknown as Record<string, unknown>),
-            mcpGateMigrated: settings.mcpGateMigrated,
-          };
+        case 'updateSettings': {
+          // Coerce before persisting: drops unknown keys, clamps ranges, whitelists enum strings,
+          // and runs the legacy codeBg→surfaceColor migration. Server keys are not this message's.
+          const before = { logging: settings.logging, logLevel: settings.logLevel };
+          settings = uiOnly(
+            coerceSettings(m.settings as unknown as Record<string, unknown>),
+            settings,
+          );
           persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
-          mcpHost.refresh();
           // Push the new diagnostics level to the live logger (no restart). Log AFTER the
           // level update so a just-enabled level captures its own enabling.
           log.setLevel(settings.logging ? settings.logLevel : 'off');
@@ -3985,11 +3301,29 @@ app.whenReady().then(() => {
             logging: settings.logging,
             logLevel: settings.logLevel,
           });
-          // Broadcast the settings the host actually kept. The sender already applied its own
-          // change optimistically, but nothing else had: every OTHER window, and any writer
-          // that isn't the settings provider, learned about it only when some unrelated
-          // broadcast (terminal output, a git refresh) happened to fire next — which for an
-          // idle session can be never.
+          if (before.logging !== settings.logging || before.logLevel !== settings.logLevel)
+            serverClient()
+              ?.call('server.setLogging', {
+                logging: settings.logging,
+                logLevel: settings.logLevel,
+              })
+              .catch((err: unknown) =>
+                log.warn('server', 'setLogging failed', { err: String(err) }),
+              );
+          // Broadcast the settings the host actually kept: every OTHER window learns of the
+          // change only from a broadcast, which for an idle session can be never otherwise.
+          postState();
+          break;
+        }
+        case 'updateServerSettings':
+          try {
+            const r = await callServer('serverSettings.patch', { patch: serverPatchOf(m.patch) });
+            settings = mirrorServerKeys(settings, r.settings);
+            persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
+          } catch (err) {
+            log.warn('settings', 'server settings patch failed', { err: String(err) });
+          }
+          // On a failure this re-broadcasts the mirror, reverting the window's optimistic edit.
           postState();
           break;
         case 'revealInExplorer':
@@ -4022,7 +3356,7 @@ app.whenReady().then(() => {
         }
         case 'indexProject': {
           if (m.incremental) await e2eHold?.('topup');
-          const owners = mgr.list().filter((s) => sessionContains(s, m.root));
+          const owners = store.list().filter((s) => sessionContains(s, m.root));
           if (owners.length && !owners.some((s) => gitDemand.isVisible(s.id))) {
             const key = `${senderId}\0${folderKey(m.root)}`;
             deferredIndexes.set(key, {
@@ -4049,7 +3383,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'resolveModule': {
-          const root = mgr.get(m.sessionId)?.home;
+          const root = store.get(m.sessionId)?.home;
           if (!root) {
             replyHere({
               type: 'resolveModuleResult',
@@ -4285,7 +3619,7 @@ app.whenReady().then(() => {
           // gitignore-respecting, uncapped) so files past walkFiles' BFS cap surface and
           // ignored trees (vendor/, target/, .venv/, …) don't. A non-git root gets its repos'
           // listings plus loose files the same way (projectFileIndexMeta).
-          const session = mgr.get(m.sessionId);
+          const session = store.get(m.sessionId);
           if (!session || !searchRootAllowed(session, m.root) || !isIndexScope(m.scope)) {
             log.warn('search', 'files-refused', { sessionId: m.sessionId, root: m.root });
             break;
@@ -4309,7 +3643,7 @@ app.whenReady().then(() => {
           // binary/large-file skips still apply. `requestId` is echoed back so a newer query
           // supersedes this (stale) reply in the renderer. Wrapped so a throw (e.g. a vanished
           // root) surfaces as an inline error.
-          const session = mgr.get(m.sessionId);
+          const session = store.get(m.sessionId);
           if (!session || !searchRootAllowed(session, m.root) || !isIndexScope(m.scope)) {
             log.warn('search', 'content-refused', { sessionId: m.sessionId, root: m.root });
             replyHere({
@@ -4369,275 +3703,40 @@ app.whenReady().then(() => {
           });
           break;
         }
-        case 'term:start': {
-          // Guard against a kill-race: a `kill` (pty.dispose + mgr.remove) that
-          // races a late `term:start` from a remounting TerminalPane would spawn a
-          // process for a session the manager no longer knows about — nothing would
-          // ever dispose it until app quit. Bail early if the session is gone.
-          if (!mgr.get(m.sessionId)) break;
-          // ATTACH path (multi-window Slice B): the PTY is already running, so this term:start
-          // is a window mounting a pane for a session that just moved here — NOT a cold start.
-          // pty.start is idempotent (it would no-op), but we must replay the scrollback ring to
-          // THIS attaching window (e.sender) so its terminal shows history, then fit the PTY to
-          // the new window's size. Skipping the spawn path avoids re-running the relaunch
-          // marker / padding logic.
-          const attach = () => {
-            const replay = scrollbacks.attachReplay(m.sessionId);
-            if (settings.scrollbackPersistence && replay.data) {
-              // Not recorded: it heads this window's fresh pane, before the ring; the session's
-              // own stream has no break here, so later replays must not show one.
-              reply(e, {
-                type: 'term:data',
-                sessionId: m.sessionId,
-                data: '\r\n\x1b[2m— attached —\x1b[0m\r\n',
-              });
-              // Run by run at each segment's size, like a cold replay: the ring spans every size
-              // the session had, and a pane that came back at another size garbles it otherwise.
-              reply(e, {
-                type: 'term:data',
-                sessionId: m.sessionId,
-                data: replay.data,
-                replay: replay.runs,
-              });
-            }
-            // A resize to the size the PTY already has: ConPTY repaints the live screen. Not the
-            // pane's measurement — on a reload that comes in taller than where layout settles, and a
-            // real resize there loses live lines and records a size the xterm never had. The pane's
-            // settled size reaches the PTY through its own term:resize.
-            const current = pty.size(m.sessionId);
-            if (current) pty.resize(m.sessionId, current.cols, current.rows);
-            mgr.touch(m.sessionId);
-            log.info('pty', 'attach', { sessionId: m.sessionId, windowId: senderId });
-          };
-          if (pty.isAlive(m.sessionId)) {
-            attach();
-            break;
-          }
-          // T2: replay the history BEFORE pty.start, so it precedes any live output and the
-          // (later) `— session relaunched —` banner. Every cold start replays — this is always a
-          // fresh pane (each TerminalPane mount builds a new xterm and sends one term:start), and
-          // a remount over a live PTY took the attach path above.
-          preSpawnSizes.delete(m.sessionId);
-          const ownsColdStart =
-            settings.scrollbackPersistence && !coldStartsInFlight.has(m.sessionId);
-          if (ownsColdStart) coldStartsInFlight.add(m.sessionId);
-          let releaseLaunch: (() => void) | undefined;
-          // Released on every way out, a throw included (a rejected health check, a launch spec
-          // that can't be built), or the session would never replay again this app run.
-          try {
-            let didReplay = false;
-            let recordedRows: number | undefined;
-            if (ownsColdStart) {
-              // Neutralized because the child below this history is a NEW process: modes a
-              // dead TUI left set (mouse tracking above all) would otherwise apply to it.
-              // It joins the ring with the replay, after which the live child's own mode sets
-              // follow. See docs/specs/archive/2026-08-20-scrollback-replay-neutralizer.md.
-              const replay = scrollbacks.replayForColdStart(
-                m.sessionId,
-                () => scrollbackWriteGate.restore(scrollbackFileName(m.sessionId))?.segments,
-              );
-              if (replay?.data) {
-                didReplay = true;
-                recordedRows = replay.runs.findLast((r) => r.geometry)?.geometry?.rows;
-                log.debug('scrollback', 'restore', {
-                  sessionId: m.sessionId,
-                  bytes: replay.data.length,
-                  runs: replay.runs.length,
-                });
-                sendToOwner(m.sessionId, {
-                  type: 'term:data',
-                  sessionId: m.sessionId,
-                  data: replay.data,
-                  replay: replay.runs,
-                });
-              }
-            }
-            // A restored session's first health check may still be marking missing folders; a
-            // launch built before it lands could pass a missing root (mf-model spec §2.5).
-            const healthPending = folders.pending(m.sessionId);
-            if (healthPending) await healthPending;
-            // A session restored at app start launches before the messaging endpoint listens;
-            // it waits (bounded) rather than launching unwired (plan amendment B1).
-            if (mgr.get(m.sessionId)) await mcpHost.whenLaunchReady();
-            const s = mgr.get(m.sessionId);
-            if (!s) break;
-            if (pty.isAlive(m.sessionId)) {
-              attach();
-              break;
-            }
-            const claim = launchClaims.claim(m.sessionId);
-            if (claim.kind === 'joined') {
-              await claim.settled;
-              if (mgr.get(m.sessionId) && pty.isAlive(m.sessionId)) attach();
-              break;
-            }
-            releaseLaunch = claim.release;
-            if (s.agentId === COMMAND_AGENT_ID && !s.command) {
-              // A saved open_terminal command that failed coercion: never guess what to run.
-              scrollbacks.show(
-                m.sessionId,
-                "\r\n\x1b[2m— can't start: the saved command is invalid —\x1b[0m\r\n",
-                { cols: m.cols, rows: m.rows },
-              );
-              log.warn('pty', 'refused', { sessionId: m.sessionId, reason: 'command-invalid' });
-              pendingRelaunchMarker.delete(m.sessionId);
-              mgr.setStatus(m.sessionId, 'stale');
-              break;
-            }
-            const launchDef = effectiveDef(s, registry);
-            const plan = buildLaunchSpec({
-              def: launchDef,
-              cwd: m.cwd,
-              home: s.home,
-              homeMissing: !!s.homeMissing,
-              roots: presentRoots(s),
-              exists: fs.existsSync,
-              resolveCommand: (c) => resolveCommand(c, hostPlatform),
-              platform: hostPlatform,
-            });
-            if (!plan.ok) {
-              const why =
-                plan.reason === 'unresolvable'
-                  ? `${plan.command} not found`
-                  : `home folder ${s.home} is missing`;
-              scrollbacks.show(m.sessionId, `\r\n\x1b[2m— can't start: ${why} —\x1b[0m\r\n`, {
-                cols: m.cols,
-                rows: m.rows,
-              });
-              log.warn('pty', 'refused', {
-                sessionId: m.sessionId,
-                reason: plan.reason,
-                home: s.home,
-              });
-              // Re-checks the folders, so a home that has come back clears and the next start works.
-              if (plan.reason === 'home-missing') folders.created(m.sessionId);
-              else startRefusals.set(m.sessionId, { reason: plan.reason, command: plan.command });
-              // Nothing runs, so the session must not read as running; 'stale', never 'exited' —
-              // app.tsx's exit effect auto-closes an exited shell (mf-live-edits plan §Host).
-              pendingRelaunchMarker.delete(m.sessionId);
-              mgr.setStatus(m.sessionId, 'stale');
-              break;
-            }
-            let spec = plan.spec;
-            for (const root of plan.skippedAddDirRoots) {
-              log.warn('pty', 'add-dir skipped', { sessionId: m.sessionId, root });
-            }
-            // E2b: inject a prompt-preserving cwd-emit hook for recognized shells when
-            // trackCwd is enabled. The augmentation is purely ADDITIVE — it only appends
-            // args and/or shallow-merges env; it never removes or reorders anything.
-            // A shell whose id is not recognized (or trackCwd is off) launches exactly
-            // as before (fail-safe: null augmentation → no change).
-            if (settings.trackCwd) {
-              const aug = cwdReportingAugmentation(launchDef?.id ?? s.agentId, spec.args);
-              if (aug) {
-                if (aug.args) spec.args = [...spec.args, ...aug.args];
-                if (aug.env) spec.env = { ...spec.env, ...aug.env };
-              }
-            }
-            // Messaging wiring goes on last: per-launch args + the session token (spec §3.1).
-            const launchIds = sessionPort.allocateLaunch(m.sessionId);
-            if (launchDef)
-              spec = await mcpHost.prepareLaunch(m.sessionId, launchDef, spec, launchIds);
-            // prepareLaunch awaits the token store (C7 LaunchPort); the claim rules out a second
-            // spawn meanwhile, but not a close.
-            if (!mgr.get(m.sessionId)) break;
-            // brief --add-dir is not a session root (docs/specs/2026-10-26-conduit-role-brief.md §3.2)
-            const scopeArgs = spec.args;
-            // Synchronous through pty.start: nothing may await after the re-check above.
-            const brief = roleBriefs.prepareSpawn(m.sessionId, launchDef, spec);
-            spec = brief.spec;
-            log.info('pty', 'spawn', {
-              sessionId: m.sessionId,
-              agentId: s.agentId,
-              command: spec.command,
-              cwd: spec.cwd,
-            });
-            const size = preSpawnSizes.get(m.sessionId) ?? { cols: m.cols, rows: m.rows };
-            preSpawnSizes.delete(m.sessionId);
-            for (const b of brief.banners) scrollbacks.show(m.sessionId, b, size);
-            mcpRuntime.prepared(m.sessionId, launchIds);
-            pty.start(m.sessionId, size.cols, size.rows, spec);
-            brief.commit(pty.isAlive(m.sessionId));
-            mcpRuntime.spawned(m.sessionId);
-            startRefusals.delete(m.sessionId);
-            // Claude's visible scope is read off the FINAL args, so a user's own --add-dir counts
-            // (mf-live-edits spec §2.1; no session field, L12 S7).
-            if (plan.addDir && pty.isAlive(m.sessionId)) {
-              scopes.captured(
-                m.sessionId,
-                scopeFromSpawnArgs(spec.cwd, scopeArgs, path.resolve, s),
-              );
-            }
-            // Opens the spawn grace: shell banners, the relaunch marker's follow-on repaint
-            // and autoRelaunchStale's startup bursts are not evidence (spec contract 5).
-            activity.recordSpawn(m.sessionId, Date.now());
-            // A new child starts mid-nothing: never resume the dead one's escape-walk.
-            bellScanState.delete(m.sessionId);
-            mgr.touch(m.sessionId); // session became active
-            // Anything waiting on this session delivers PTY_SETTLE_MS from now: a message written
-            // into a shell that has not printed its prompt is lost (§2 "Lifecycle"). The ATTACH
-            // branch above deliberately does not call this — that PTY has been alive all along,
-            // so nothing can be waiting on it.
-            timers.onPtyStart(m.sessionId);
-            // Must be the LAST thing sent before ConPTY's spawn output arrives (next tick).
-            const prelude = spawnPrelude(process.platform, size.rows, {
-              relaunched: pendingRelaunchMarker.delete(m.sessionId),
-              replayed: didReplay,
-              recordedRows,
-            });
-            if (prelude) {
-              scrollbacks.show(m.sessionId, prelude, pty.size(m.sessionId) ?? size);
-            }
-          } finally {
-            if (ownsColdStart) coldStartsInFlight.delete(m.sessionId);
-            releaseLaunch?.();
-          }
+        case 'term:start':
+          log.info('pty', 'start', { sessionId: m.sessionId, windowId: senderId });
+          await terminals.start(m);
           break;
-        }
         case 'timer:set': {
-          // The renderer is not trusted: the scheduler re-sanitizes, revalidates, re-caps and
-          // RECOMPUTES nextAt from the trigger. A rejection is a toast, never a silent drop (§3).
-          const res = timers.set(m.schedule);
-          if (!res.ok) replyHere({ type: 'timer:error', message: res.error });
+          // The server re-sanitizes and recomputes; a rejection is a toast, never a silent drop (§3).
+          const res = await callServer('timers.set', { schedule: m.schedule });
+          if (res.error) replyHere({ type: 'timer:error', ...res.error });
           break;
         }
-        case 'timer:offer': {
-          // Resolved ONCE, in the host: two windows clicking "Resume then" produce one schedule,
-          // and a message for an episode already resolved is a no-op (§3, §4).
-          const episode = limitEpisodes.get(m.sessionId);
-          if (!episode || episode.resolved) break;
-          limitEpisodes.set(m.sessionId, { ...episode, resolved: true, at: Date.now() });
-          if (limitOffer?.sessionId === m.sessionId) limitOffer = null;
-          if (m.action === 'arm') timers.armLimit(m.sessionId, episode.resetAt);
-          broadcastTimers();
+        case 'timer:offer':
+          await callServer('timers.offer', { sessionId: m.sessionId, action: m.action });
           break;
-        }
         case 'timer:cancel':
-          timers.cancel(m.id);
+          await callServer('timers.cancel', { id: m.id });
           break;
-        case 'timer:renew': {
-          const res = timers.renewSchedule(m.id);
-          if (!res.ok) replyHere({ type: 'timer:error', message: res.error });
+        case 'timer:renew':
+          await timerCall(replyHere, 'timers.renew', { id: m.id });
+          break;
+        case 'timer:sendNow':
+          await timerCall(replyHere, 'timers.sendNow', { id: m.id });
+          break;
+        case 'timer:sendOnce':
+          await timerCall(replyHere, 'timers.sendOnce', {
+            sessionId: m.sessionId,
+            message: m.message,
+          });
+          break;
+        case 'timer:test': {
+          // Smoke-only seam: the server refuses it unless started with --e2e (§7).
+          const { type: _type, ...params } = m;
+          if (e2e) await callServer('timers.test', params);
           break;
         }
-        case 'timer:sendNow': {
-          const sent = await timers.sendNow(m.id);
-          if (!sent) replyHere({ type: 'timer:error', message: "That session isn't running." });
-          break;
-        }
-        case 'timer:sendOnce': {
-          const sent = await timers.sendOnce(m.sessionId, m.message);
-          if (!sent)
-            replyHere({
-              type: 'timer:error',
-              message: "Nothing sent — that session isn't running.",
-            });
-          break;
-        }
-        case 'timer:test':
-          // Smoke-only seam, gated so it never exists in a shipped build (§7).
-          if (process.env.CONDUIT_E2E === '1' && m.op === 'advance') timers.advanceClock(m.ms);
-          break;
         case 'mcp:compose':
         case 'mcp:thread:get':
         case 'mcp:markRead':
@@ -4647,34 +3746,30 @@ app.whenReady().then(() => {
         case 'mcp:retry':
         case 'mcp:setToolPolicy':
         case 'mcp:askAnswer':
-        case 'mcp:uiResult':
-          await mcpHost.handleRenderer(m, replyHere, senderId);
+        case 'mcp:uiResult': {
+          const r = await callServer('mcp.fromRenderer', { windowId: senderId, message: m });
+          if (r.reply) replyHere(r.reply);
           break;
+        }
         case 'term:input':
-          // Observed before the write: a human draft closes the notice gate (spec §2).
-          mcpHost.onRendererInput(m.sessionId, m.data);
-          pty.input(m.sessionId, m.data);
-          // Throttle: input fires per keystroke; avoid a disk write + state
-          // broadcast on every character (30s is well under minute granularity).
-          mgr.touch(m.sessionId, 30_000); // user interaction = activity
+          terminals.input(m.sessionId, m.data);
           break;
         case 'term:resize':
           log.debug('pty', 'resize', { sessionId: m.sessionId, cols: m.cols, rows: m.rows });
-          if (pty.isAlive(m.sessionId)) {
-            pty.resize(m.sessionId, m.cols, m.rows);
-            mcpRuntime.resize(m.sessionId, m.cols, m.rows);
-          } else preSpawnSizes.set(m.sessionId, { cols: m.cols, rows: m.rows });
+          terminals.resize(m.sessionId, m);
+          break;
+        case 'term:facts':
+          terminals.facts(m.sessionId, m.facts);
           break;
         case 'term:dispose':
-          // Slice B: a session mid-move keeps its live PTY — the dispose comes from the source
-          // window's pane unmounting, not a real teardown. Swallow it once; the target window's
-          // pane (same sessionId) attaches to the surviving process.
+          // Slice B: the source window's pane unmounting mid-move must not detach the target's
+          // fresh link (same sessionId). Swallowed once.
           if (movingSessions.delete(m.sessionId)) {
             log.debug('pty', 'dispose-skipped-moving', { sessionId: m.sessionId });
             break;
           }
           log.debug('pty', 'dispose', { sessionId: m.sessionId });
-          pty.dispose(m.sessionId);
+          terminals.dispose(m.sessionId);
           break;
         case 'pathExists': {
           // D11: cheap existence check for terminal path-link validation. Intentionally
@@ -4725,7 +3820,7 @@ app.whenReady().then(() => {
           // would false-negative (or, with a colliding short-sha, link the wrong repo's commit)
           // when the pin differs from cwd. `root` rides the reply so a click can scope Review to
           // this same repo. Unknown session / failure → empty results (renderer renders plain).
-          const session = mgr.get(m.sessionId);
+          const session = store.get(m.sessionId);
           let results: CommitValidation[] = [];
           let root: string | undefined;
           if (session) {
@@ -4749,7 +3844,7 @@ app.whenReady().then(() => {
           // Multi-window Slice B: reassign a live session's owner window via the shared
           // moveSessionToWindow helper (no PTY restart; the engine is process-global and
           // untouched). `kind:'new'` spawns a fresh window as the target.
-          if (!mgr.get(m.sessionId)) break;
+          if (!store.get(m.sessionId)) break;
           let targetId: number;
           if (m.target.kind === 'new') {
             targetId = spawnWindow().id;
@@ -4770,7 +3865,7 @@ app.whenReady().then(() => {
         case 'session:dragEnd': {
           // Multi-window Slice C: a session tab's drag ended at global SCREEN coords. HTML5 DnD
           // doesn't cross BrowserWindow bounds, so we hit-test the drop point here.
-          if (!mgr.get(m.sessionId)) break;
+          if (!store.get(m.sessionId)) break;
           const point = { x: m.screenX, y: m.screenY };
           // Drop back over the SOURCE window → no-op (an in-strip reorder, if any, already
           // applied client-side). windowAtPoint excludes the source, so without this guard a
@@ -4811,6 +3906,11 @@ app.whenReady().then(() => {
           break;
       }
     } catch (err: unknown) {
+      const refusal = serverDownReply(m, err);
+      if (refusal) {
+        replyHere(refusal);
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       log.error('ipc', `handler failed: ${m.type}`, { message });
       replyHere({ type: 'error', message });
@@ -4825,7 +3925,7 @@ app.whenReady().then(() => {
   // lets the editor save what it opened while rejecting anything outside the tree.
   const writeRoots = (): string[] => {
     const set = new Set<string>();
-    for (const s of mgr.list()) {
+    for (const s of store.list()) {
       if (s.home) set.add(s.home);
       for (const r of s.roots) set.add(r);
     }
@@ -5090,13 +4190,16 @@ app.whenReady().then(() => {
 
   // MCP install (spec 2026-10-27-conduit-mcp-install §3.6): nothing is written without a click.
   ipcMain.handle('mcpInstall:status', (_e, p: unknown) =>
-    mcpInstall.status(typeof p === 'string' ? p : null),
+    callServer('mcp.installStatus', { projectPath: typeof p === 'string' ? p : null }).catch(
+      installDownStatus,
+    ),
   );
-  ipcMain.handle('mcpInstall:act', (_e, v: unknown) => {
+  ipcMain.handle('mcpInstall:act', async (_e, v: unknown) => {
     const req = coerceInstallRequest(v);
     if (!req) throw new Error('invalid mcpInstall request');
-    const r = mcpInstall.act(req);
-    if (r.ok) mcpHost.onInstallChanged();
+    const r = await callServer('mcp.installAct', { request: req }).catch((err: unknown) =>
+      installDownResult(req, err),
+    );
     if (r.ok && r.permissionErrorCode) {
       log.warn('mcp-install', 'permission rule not written', {
         cli: req.cli,
@@ -5179,22 +4282,14 @@ app.whenReady().then(() => {
     // dispose branch (Slice C).
     isQuitting = true;
     log.info('app', 'quit');
-    // Capture the final state SYNCHRONOUSLY + atomically while windows + ownership are intact and
-    // BEFORE pty.disposeAll() kills the PTYs. Synchronous so it completes before the auto-update
-    // installer can force-kill the process (async writes would be truncated → data loss). Covers
-    // settings, sessions, and the multi-window layout. Session RECORDS survive in `mgr` (the quit
-    // branch in onWindowClose doesn't dispose them), so they restore next launch.
+    // Capture the final state SYNCHRONOUSLY + atomically while windows + ownership are intact.
+    // Synchronous so it completes before the auto-update installer can force-kill the process
+    // (async writes would be truncated → data loss). Agents keep running in hc (F4).
     flushStateSync();
-    clearInterval(sweepTimer);
-    void mcpHost.stop();
-    // The armed setTimeout would otherwise keep the main process alive past quit; the pending
-    // persist would also fire AFTER flushStateSync has already written the same file.
-    timers.stop();
-    if (timersPersistTimer) {
-      clearTimeout(timersPersistTimer);
-      timersPersistTimer = null;
-    }
-    if (activityTimer) clearTimeout(activityTimer);
+    terminals.closeAll();
+    lifecycle?.dispose();
+    hcEvents.close();
+    hc.close();
     if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
     boardWatcher.stop();
     notesWatcher.stop();
@@ -5203,9 +4298,6 @@ app.whenReady().then(() => {
     proposalWatcher.stop();
     openFileWatcher.stop();
     stopUpdater();
-    // T2: flush any pending scrollback so the last screenful survives a clean shutdown
-    // (the debounce timer may not have fired yet).
-    scrollbacks.flushPending();
     // Close every git-dir watch and cancel pending refreshes so
     // no fs.watch handle or timer keeps the main process alive past quit.
     gitDemand.stop();
@@ -5214,7 +4306,6 @@ app.whenReady().then(() => {
     pendingFsByWindow.clear();
     repoTrackerHost.stop();
     lspManager.killAllSync();
-    pty.disposeAll();
   });
 
   // Every close of a window (custom ✕, Alt+F4, taskbar) goes through the guard; the close re-fires
@@ -5234,24 +4325,23 @@ app.whenReady().then(() => {
       onClose: onWindowClose,
       onNavigationStart: (windowId) => {
         presence.startLoading(windowId);
-        mcpHost.onWindowReset(windowId);
+        schedulePresence();
       },
       onGone: (windowId) => {
         closeGuard.onWindowGone(windowId);
         // A crashed renderer that is not reloaded fires no navigation, so reset here too.
         presence.startLoading(windowId);
-        mcpHost.onWindowReset(windowId);
+        schedulePresence();
       },
       onUnresponsive: (windowId) => closeGuard.onUnresponsive(windowId),
       onSessionEnd: flushStateSync,
       onClosed: (windowId) => {
         closeGuard.onWindowGone(windowId);
         presence.drop(windowId);
-        mcpHost.onWindowReset(windowId);
-        windowConfirmed.delete(windowId);
         // Its visible-session set dies with it, or sessions it was showing would stay
         // exempt from attention forever.
-        activity.dropWindow(windowId);
+        schedulePresence();
+        windowConfirmed.delete(windowId);
         gitDemand.dropWindow(windowId);
         repoTrackerHost.dropWindow(windowId);
         deferredProjectRequests.delete(windowId);
@@ -5290,19 +4380,16 @@ app.whenReady().then(() => {
 
   Menu.setApplicationMenu(null);
 
-  // Restore the multi-window LAYOUT (Slice C, overrides Slice A D-4). Sessions were already
-  // restored as stale into `mgr` above (gated on restoreSessions); here we recreate the
-  // windows at their saved bounds and put each session back in its window, instead of
-  // collapsing everything into one window. With no windows.json (first run / restore-off),
-  // planLayoutRestore returns a single primary window owning all (or zero) restored sessions
-  // — exactly the pre-Slice-C behavior. The first planned window is the primary (sets
-  // primaryWindowId, the cold-launch OS-open + second-instance fallback target).
+  // Restore the multi-window LAYOUT (Slice C, overrides Slice A D-4): the windows at their saved
+  // bounds, each owning its saved sessions. The server's list arrives once connected; a session
+  // the layout doesn't name goes to the focused window then (sessionsApplied). The first planned
+  // window is the primary (the cold-launch OS-open + second-instance fallback target).
   const savedLayout = settings.restoreSessions
     ? parseWindowLayout(readBlob(windowsLayoutFile()))
     : [];
   const restorePlan = planLayoutRestore(
     savedLayout,
-    mgr.list().map((s) => s.id),
+    savedLayout.flatMap((w) => w.sessionIds),
   );
   const workAreas = screen.getAllDisplays().map((d) => d.workArea);
   for (let i = 0; i < restorePlan.length; i++) {
@@ -5388,8 +4475,8 @@ app.whenReady().then(() => {
 
   // The OS integrations launch `Conduit.exe "<path>"`. "Open in Conduit" passes a folder;
   // "Open with Conduit" / a default-editor association passes a file. Classify the launch
-  // target and route accordingly (openRepo falls back to registry.list()[0] when the agent
-  // id is unknown). Used for both a second launch and this first launch.
+  // target and route accordingly; a new session runs the server's first agent, a shell. Used for
+  // both a second launch and this first launch.
   const classifyPath = (p: string): 'dir' | 'file' | 'none' => {
     try {
       const st = fs.statSync(p);
@@ -5411,14 +4498,38 @@ app.whenReady().then(() => {
     const root = gitRootOf(filePath, (p) => fs.existsSync(p)) ?? path.dirname(filePath);
     const existing = resolveOwningSession({
       path: filePath,
-      sessions: mgr.list().map((s) => ({ id: s.id, home: s.home, roots: s.roots })),
+      sessions: store.list().map((s) => ({ id: s.id, home: s.home, roots: s.roots })),
       openDocs: [],
       activeId: null,
     });
-    const sessionId =
-      existing ?? sessionIdOf(openRepo(root, registry.list()[0]?.id ?? '', ownerWindowId));
-    if (sessionId)
+    const send = (sessionId: string) =>
       sendOpenFileInEditor({ type: 'openFileInEditor', path: filePath, sessionId, source: 'os' });
+    if (existing) send(existing);
+    else void openFromOS(root, ownerWindowId).then((id) => id && send(id));
+  };
+
+  /** A new session for an OS open, once the server's agents are known. */
+  const openFromOS = async (home: string, ownerWindowId: number): Promise<string | undefined> => {
+    try {
+      await serverCalls.whenConnected();
+      if (!lifecycle) throw new ServerCallError('disconnected', 'Background service unavailable');
+      await waitForServerSnapshot(firstSnapshot, lifecycle);
+    } catch (err) {
+      log.warn('app', 'os-open unavailable', { home, err: String(err) });
+      dialog.showErrorBox('Conduit', 'No terminals available.');
+      return undefined;
+    }
+    const agentId = stores.agents[0]?.id;
+    if (!agentId) {
+      dialog.showErrorBox('Conduit', 'No terminals available.');
+      return undefined;
+    }
+    try {
+      return (await openRepo(home, agentId, ownerWindowId)).sessionId;
+    } catch (err) {
+      log.warn('app', 'os-open failed', { home, err: String(err) });
+      return undefined;
+    }
   };
 
   // OS opens are owned by the given window (multi-window Slice A): the focused window for a
@@ -5430,7 +4541,7 @@ app.whenReady().then(() => {
     if (!target) return;
     log.info('app', 'os-open', { kind: target.kind, path: target.path });
     const open = (p: string) => {
-      if (target.kind === 'dir') openRepo(p, registry.list()[0]?.id ?? '', ownerWindowId);
+      if (target.kind === 'dir') void openFromOS(p, ownerWindowId);
       else openFileFromOS(p, ownerWindowId);
     };
     // Synchronous unless there is an alias to expand: a smoke seam asserts the cold-launch
@@ -5454,6 +4565,10 @@ app.whenReady().then(() => {
 
   // First launch opened via the context menu while the app was closed → primary window.
   openArg(process.argv, primaryWindowId);
+
+  startServer().catch((err: unknown) =>
+    log.error('server', 'start failed', { err: err instanceof Error ? err.message : String(err) }),
+  );
 });
 
 app.on('window-all-closed', () => {

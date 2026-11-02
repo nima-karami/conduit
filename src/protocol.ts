@@ -14,6 +14,8 @@ import type {
   McpUiState,
 } from './conduit-mcp/ui-types';
 import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-search';
+import type { DisplayFacts } from './contracts/frames';
+import type { ServerSettings } from './contracts/server-protocol';
 import type { DroppedRoot, SessionOpReason } from './folder-validation';
 import type { GitFailure } from './git-exec';
 import type { RefEndpoint } from './git-range';
@@ -1118,10 +1120,6 @@ export type WebviewToHost =
   // `icon` is a Lucide icon name in kebab-case (e.g. "rocket"); null clears the
   // override so the session falls back to its appIcon / agent-derived icon.
   | { type: 'setSessionIcon'; id: string; icon: string | null }
-  // The terminal's window title changed (OSC 0/2, via xterm onTitleChange). The host
-  // adopts it as the session name while the session is still auto-tracking — this is
-  // how an app inside the terminal (e.g. Claude Code, incl. /rename) names the session.
-  | { type: 'term:title'; sessionId: string; title: string }
   | { type: 'relaunch'; id: string }
   | { type: 'kill'; id: string }
   | { type: 'duplicate'; id: string } // clone a session (same agent + folder)
@@ -1135,6 +1133,9 @@ export type WebviewToHost =
   // Explicit Retry of one repo's read; the host checks `root` against the session's repos.
   | { type: 'repo:refresh'; sessionId: string; root: string }
   | { type: 'updateSettings'; settings: AppSettings }
+  // Key-scoped and sent at once, so a stale window can't revert another window's change (D7). The
+  // host forwards only the server's keys (SERVER_SETTINGS_KEYS); C2 imports this file, not the reverse.
+  | { type: 'updateServerSettings'; patch: Partial<ServerSettings> }
   // Quick-open corpus: every file under root. `root` must be one of the session's folders or
   // registered repos (host-checked). `fresh` skips the host's short-lived index cache: the
   // renderer sends it after a `fileIndexChanged`, when that cache may predate the change.
@@ -1212,6 +1213,9 @@ export type WebviewToHost =
       cwd?: string;
     }
   | { type: 'term:input'; sessionId: string; data: string }
+  // The pane's colours and cell size, sent before term:start and on a theme or font change: the
+  // server passes them to hc on every attach so it can answer a program's display queries.
+  | { type: 'term:facts'; sessionId: string; facts: DisplayFacts }
   | { type: 'term:resize'; sessionId: string; cols: number; rows: number }
   | { type: 'term:dispose'; sessionId: string }
   | { type: 'updateCheck' }

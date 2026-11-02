@@ -1,17 +1,11 @@
-import {
-  applyHealthReport,
-  type Bounded,
-  type FolderHealth,
-  type FolderHealthReport,
-} from '../src/folder-health';
 import { folderKey } from '../src/folder-key';
-import type { SessionOpReason } from '../src/folder-validation';
 import { sessionContains, sessionHasFolderKey, watchFoldersFor } from '../src/session-folders';
-import type { SessionManager } from '../src/session-manager';
+import type { Session } from '../src/types';
+import type { SessionFolderDiff } from './app-session-store';
 import type { FsFire, ProjectWatcher } from './project-watcher';
 
 export interface SessionFolderRuntimeDeps {
-  mgr: Pick<SessionManager, 'get' | 'list' | 'setFolderHealth'>;
+  store: { get(id: string): Session | undefined; list(): Session[] };
   visibleSessionIds: () => readonly string[];
   scheduleRepoScan: (sessionId: string, force?: boolean) => void;
   reconcilePlans: (homes: string[]) => void;
@@ -21,53 +15,62 @@ export interface SessionFolderRuntimeDeps {
     onFire: (f: FsFire) => void,
     onSuspect: (folders: string[]) => void,
   ) => Pick<ProjectWatcher, 'setFolders' | 'stop'>;
-  createHealth: (
-    apply: (r: FolderHealthReport, bounded: Bounded) => Promise<void>,
-  ) => Pick<FolderHealth, 'check' | 'pending' | 'dispose'>;
-  revalidate: (sessionId: string, folder: string) => Promise<SessionOpReason | null>;
-  realpath: (p: string) => Promise<string>;
-  realKeys: Map<string, string>;
+  /** The server owns folder health (W4); a lost or renamed watch is its only signal (C2 folders.suspect). */
+  suspect: (sessionId: string, path: string) => void;
   log: (level: 'info' | 'warn', msg: string, data?: Record<string, unknown>) => void;
 }
 
-/** The host's one owner of a session's folder lifecycle (L12 S1; mf-model plan Contracts). */
+/** The server's health marks, compared per list so a returning folder rescans its repos. */
+const healthOf = (s: Session) => `${s.homeMissing ? 1 : 0}|${(s.missingRoots ?? []).join('\n')}`;
+
+/**
+ * The app's half of a session's folder lifecycle: watchers, repo scans and plan reconcile, driven
+ * by the server's session list (L12 S1; mf-model plan Contracts).
+ */
 export class SessionFolderRuntime {
   private listeners: ((sessionId: string) => void)[] = [];
   private readonly watcher: Pick<ProjectWatcher, 'setFolders' | 'stop'>;
-  private readonly health: Pick<FolderHealth, 'check' | 'pending' | 'dispose'>;
-  private readonly loggedRejections = new Map<string, SessionOpReason>();
-  // Latest request supplies focus health checks; directory watches cover every window's view.
-  private watched: { p: string; sessionId: string | undefined } | null = null;
+  private readonly health = new Map<string, string>();
   private readonly projectsByWindow = new Map<
     number,
     { p: string; sessionId: string | undefined }
   >();
-  // A switch is per window: two windows on different sessions alternate requestProject on every
-  // fire, so against `watched` each call would read as a switch and health-check (review R1).
-  private readonly shownBy = new Map<number, string | undefined>();
 
   constructor(private readonly deps: SessionFolderRuntimeDeps) {
     this.watcher = deps.createWatcher(
       (f) => this.fired(f),
       (folders) => this.suspect(folders),
     );
-    this.health = deps.createHealth((r, bounded) => this.applyHealth(r, bounded));
   }
 
-  restored(): void {
-    // Scan after the marks land, or detectRepos walks a hung root first (spec §2.2 "Restore").
-    for (const s of this.deps.mgr.list()) {
-      void this.health.check(s.id).then(() => this.deps.scheduleRepoScan(s.id));
+  /** Every server list, with the store's diff against the previous one. */
+  applied(diffs: readonly SessionFolderDiff[]): void {
+    let removed = false;
+    for (const d of diffs) {
+      if (d.kind === 'added') this.created(d.sessionId);
+      else if (d.kind === 'changed') this.foldersChanged(d.sessionId, d);
+      else {
+        this.health.delete(d.sessionId);
+        removed = true;
+      }
     }
-  }
-
-  pending(sessionId: string): Promise<void> | undefined {
-    return this.health.pending(sessionId);
+    for (const s of this.deps.store.list()) {
+      const h = healthOf(s);
+      const before = this.health.get(s.id);
+      this.health.set(s.id, h);
+      if (before === undefined || before === h) continue;
+      this.deps.scheduleRepoScan(s.id);
+      if (this.armsFor(s.id)) this.arm();
+      this.emit(s.id);
+    }
+    if (removed) {
+      this.arm();
+      this.reconcilePlans();
+    }
   }
 
   created(sessionId: string): void {
     this.deps.scheduleRepoScan(sessionId);
-    this.check(sessionId);
   }
 
   foldersChanged(sessionId: string, change: { homeChanged: boolean }): void {
@@ -75,30 +78,22 @@ export class SessionFolderRuntime {
     if (change.homeChanged) this.reconcilePlans();
     if (this.armsFor(sessionId)) this.arm();
     this.emit(sessionId);
-    this.check(sessionId);
   }
 
   requestProject(p: string, sessionId: string | undefined, windowId: number, force = false): void {
     if (!p) return;
-    const id = sessionId ? this.deps.mgr.get(sessionId)?.id : undefined;
-    const switched = this.shownBy.get(windowId) !== id;
-    this.shownBy.set(windowId, id);
-    this.watched = { p, sessionId: id };
-    this.projectsByWindow.set(windowId, this.watched);
+    const id = sessionId ? this.deps.store.get(sessionId)?.id : undefined;
+    this.projectsByWindow.set(windowId, { p, sessionId: id });
     this.arm();
-    // Only on a switch: every fsChanged comes back as a requestProject (spec §2.6, L12 S4).
-    if (id && switched) this.check(id);
     this.reconcilePlans();
     // A repo created outside every watched folder is only ever found by these refreshes.
-    for (const s of this.deps.mgr.list()) {
+    for (const s of this.deps.store.list()) {
       if (sessionContains(s, p)) this.deps.scheduleRepoScan(s.id, force && (!id || id === s.id));
     }
   }
 
   windowClosed(windowId: number): void {
-    this.shownBy.delete(windowId);
     this.projectsByWindow.delete(windowId);
-    this.watched = [...this.projectsByWindow.values()].at(-1) ?? null;
     this.arm();
   }
 
@@ -111,10 +106,6 @@ export class SessionFolderRuntime {
     this.arm();
   }
 
-  focused(): void {
-    if (this.watched?.sessionId) this.check(this.watched.sessionId);
-  }
-
   onFoldersChanged(cb: (sessionId: string) => void): { dispose(): void } {
     this.listeners.push(cb);
     return { dispose: () => (this.listeners = this.listeners.filter((l) => l !== cb)) };
@@ -122,33 +113,32 @@ export class SessionFolderRuntime {
 
   stop(): void {
     this.watcher.stop();
-    this.health.dispose();
     this.listeners = [];
   }
 
   /** Whether the session's folders are in the armed set: shown in a window, or tracking repos. */
   private armsFor(sessionId: string): boolean {
     return (
-      !!this.deps.mgr.get(sessionId)?.repos?.length ||
+      !!this.deps.store.get(sessionId)?.repos?.length ||
       [...this.projectsByWindow.values()].some((p) => p.sessionId === sessionId)
     );
   }
 
   private arm() {
     const visible = this.deps.visibleSessionIds().flatMap((id) => {
-      const s = this.deps.mgr.get(id);
+      const s = this.deps.store.get(id);
       return s ? watchFoldersFor(s.home, s) : [];
     });
     // Hidden too: a write then marks only its repo, and switching back runs git for that repo
     // alone (multi-repo-tracking spec §2 "no catch-up git"). Bounded by open sessions; the
     // watcher folds nested roots into their ancestor's watch.
-    const tracking = this.deps.mgr
+    const tracking = this.deps.store
       .list()
       .flatMap((s) => (s.repos?.length ? watchFoldersFor(s.home, s) : []));
     this.watcher.setFolders([
       ...new Set([
         ...[...this.projectsByWindow.values()].flatMap(({ p, sessionId }) =>
-          watchFoldersFor(p, sessionId ? this.deps.mgr.get(sessionId) : undefined),
+          watchFoldersFor(p, sessionId ? this.deps.store.get(sessionId) : undefined),
         ),
         ...visible,
         ...tracking,
@@ -157,20 +147,16 @@ export class SessionFolderRuntime {
   }
 
   private reconcilePlans() {
-    this.deps.reconcilePlans(this.deps.mgr.list().map((s) => s.home));
+    this.deps.reconcilePlans(this.deps.store.list().map((s) => s.home));
   }
 
   private fired(f: FsFire) {
     this.deps.broadcastFsChanged(f);
     for (const folder of f.folders) this.deps.dropResolutionsForRoot(folder);
     const keys = f.folders.map(folderKey);
-    for (const s of this.deps.mgr.list()) {
+    for (const s of this.deps.store.list()) {
       if (keys.some((k) => sessionHasFolderKey(s, k))) this.deps.scheduleRepoScan(s.id);
     }
-  }
-
-  private check(sessionId: string, only?: readonly string[]) {
-    void this.health.check(sessionId, only);
   }
 
   private suspect(folders: string[]) {
@@ -179,65 +165,13 @@ export class SessionFolderRuntime {
     const affected = new Set(
       [...this.projectsByWindow.values()].flatMap(({ p, sessionId }) =>
         sessionId &&
-        watchFoldersFor(p, this.deps.mgr.get(sessionId)).some((root) => keys.has(folderKey(root)))
+        watchFoldersFor(p, this.deps.store.get(sessionId)).some((root) => keys.has(folderKey(root)))
           ? [sessionId]
           : [],
       ),
     );
-    for (const id of affected) this.check(id, folders);
-  }
-
-  // FolderHealth awaits this, so it must not reject.
-  private async applyHealth(r: FolderHealthReport, bounded: Bounded): Promise<void> {
-    try {
-      await this.reconcileHealth(r, bounded);
-    } catch (e) {
-      this.deps.log('warn', `health apply failed: ${String(e)}`, { sessionId: r.sessionId });
-    }
-  }
-
-  private async reconcileHealth(r: FolderHealthReport, bounded: Bounded) {
-    const s = this.deps.mgr.get(r.sessionId);
-    if (!s) return;
-    const { realKeys } = this.deps;
-    const present = (key: string) => r.states.get(key) === 'present';
-    const marked = new Set((s.missingRoots ?? []).map(folderKey));
-    if (s.homeMissing && r.homeKey === folderKey(s.home)) marked.add(r.homeKey);
-    const rejected = new Set<string>();
-    for (const folder of [s.home, ...s.roots]) {
-      const key = folderKey(folder);
-      if (!present(key) || !marked.has(key)) continue;
-      const reason = await bounded(() => this.deps.revalidate(s.id, folder));
-      // Not revalidated in time: the mark stays until a later check finishes it.
-      if (reason !== null) rejected.add(key);
-      if (reason !== undefined) this.noteRejection(key, folder, reason);
-    }
-    for (const folder of [s.home, ...s.roots]) {
-      const key = folderKey(folder);
-      if (!present(key) || rejected.has(key) || realKeys.has(key)) continue;
-      try {
-        const real = await bounded(() => this.deps.realpath(folder));
-        if (real !== undefined) realKeys.set(key, folderKey(real));
-      } catch {
-        // Gone again since its stat: the next check marks it, and its key stays lexical-only.
-      }
-    }
-    const cur = this.deps.mgr.get(r.sessionId);
-    if (!cur || !this.deps.mgr.setFolderHealth(cur.id, applyHealthReport(cur, r, rejected))) return;
-    this.deps.scheduleRepoScan(cur.id);
-    if (this.armsFor(cur.id)) this.arm();
-    this.emit(cur.id);
-  }
-
-  // Re-probed every poll tick, so only a new reason is worth a line (mf-model plan, Decisions).
-  private noteRejection(key: string, folder: string, reason: SessionOpReason | null) {
-    if (!reason) {
-      this.loggedRejections.delete(key);
-      return;
-    }
-    if (this.loggedRejections.get(key) === reason) return;
-    this.loggedRejections.set(key, reason);
-    this.deps.log('warn', 'returning folder failed revalidation', { folder, reason });
+    // The server rechecks only a path that is one of that session's own folders.
+    for (const id of affected) for (const folder of folders) this.deps.suspect(id, folder);
   }
 
   private emit(sessionId: string) {

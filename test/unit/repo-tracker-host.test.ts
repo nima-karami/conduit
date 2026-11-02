@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createRepoTrackerHost } from '../../electron/repo-tracker-host';
 import type { watchDirWhilePresent } from '../../electron/watch-dir';
+import type { AppSessionView } from '../../src/contracts/server-protocol';
 import type { GitInterrogation } from '../../src/git-info';
 import type { HostToWebview } from '../../src/protocol';
 import { RepoPathMap } from '../../src/repo-path-map';
 import type { RepoInfo } from '../../src/repo-scan';
-import type { GitInfo, Session } from '../../src/types';
+import type { GitInfo } from '../../src/types';
 
 type Delta = Extract<HostToWebview, { type: 'repoDelta' }>;
 
@@ -23,7 +24,7 @@ interface FakeWatch {
 }
 
 function harness(opts: { git?: Record<string, GitInterrogation> } = {}) {
-  const sessions = new Map<string, Session>();
+  const sessions = new Map<string, AppSessionView>();
   const shown = new Map<number, Set<string>>();
   const suspended = new Set<number>();
   const owner = new Map<string, number>();
@@ -94,6 +95,7 @@ function harness(opts: { git?: Record<string, GitInterrogation> } = {}) {
       home: '/w',
       roots: [],
       status: 'running',
+      runtime: { generation: 1, spawn: 'live', reportedStatus: null, lastSize: null },
       createdAt: 0,
       lastActiveAt: 0,
       repos,

@@ -854,6 +854,8 @@ function mockHost(msg: WebviewToHost) {
   }
   if (
     msg.type === 'updateSettings' ||
+    msg.type === 'updateServerSettings' ||
+    msg.type === 'term:facts' ||
     msg.type === 'revealInExplorer' ||
     msg.type === 'openExternalPath' ||
     msg.type === 'openWith' ||

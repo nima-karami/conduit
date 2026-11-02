@@ -3,6 +3,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { type ILinkProvider, Terminal } from '@xterm/xterm';
 import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
+import type { DisplayFacts } from '../../src/contracts/frames';
 import { FILE_INDEX_TTL_MS } from '../../src/file-index-ttl';
 import { folderKey } from '../../src/folder-key';
 import {
@@ -75,6 +76,10 @@ import {
   pathTokenKey,
   type TokenLine,
 } from '../terminal-path-links-at';
+import {
+  normalizeDisplayColor,
+  registerTerminalQuerySwallowHandlers,
+} from '../terminal-query-replies';
 import { isViewportAtBottom, shouldHandleWheelLocally, wheelScrollLines } from '../terminal-scroll';
 import { attachScrollDiagnostics } from '../terminal-scroll-diagnostics';
 import { createTerminalTokenCache } from '../terminal-token-cache';
@@ -182,6 +187,31 @@ function tellHostSize(sent: { current: TermGeometry | null }, sessionId: string,
   post({ type: 'term:resize', sessionId, cols: term.cols, rows: term.rows });
 }
 
+/** hc answers a program's colour and cell-size queries from these (C2 term.facts). */
+function displayFactsOf(term: Terminal): DisplayFacts {
+  const theme = term.options.theme ?? {};
+  const wrap = term.element?.closest<HTMLElement>('.termwrap');
+  const surfaceCss = wrap ? getComputedStyle(wrap).backgroundColor : '';
+  const ground =
+    typeof document === 'undefined' ? '' : getComputedStyle(document.body).backgroundColor;
+  const surface = normalizeDisplayColor(surfaceCss, ground) ?? '#000000';
+  const screen = term.element?.querySelector<HTMLElement>('.xterm-screen');
+  const cell: [number, number] | null =
+    screen && term.cols > 0 && term.rows > 0 && screen.clientWidth > 0
+      ? [Math.round(screen.clientWidth / term.cols), Math.round(screen.clientHeight / term.rows)]
+      : null;
+  return {
+    fg: normalizeDisplayColor(theme.foreground, surface),
+    bg: normalizeDisplayColor(theme.background, surface),
+    cursor: normalizeDisplayColor(theme.cursor, surface),
+    cell,
+  };
+}
+
+function tellHostFacts(sessionId: string, term: Terminal) {
+  post({ type: 'term:facts', sessionId, facts: displayFactsOf(term) });
+}
+
 /** True while a cold replay is queued: the fit is skipped and owed to the replay's end. */
 function deferWhileReplaying(r: ReplayState): boolean {
   if (r.active) r.resyncDue = true;
@@ -244,6 +274,7 @@ export function TerminalPane({
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const factsAfterFitRef = useRef<() => void>(() => {});
   // While a cold replay is queued its runs own the terminal's size: a fit landing between a run's
   // resize and its bytes would write them at the wrong width. Deferred fits rerun when it ends.
   const replayRef = useRef<ReplayState>({ active: false, resyncDue: false });
@@ -541,6 +572,7 @@ export function TerminalPane({
         },
       });
       termRef.current = term;
+      registerTerminalQuerySwallowHandlers(term);
       // Test observability (opt-in): when a harness has pre-created window.__terms,
       // expose the live terminal so e2e can assert on RENDERED buffer content — not
       // just the term:data byte stream. The scrollback-restore bug shipped precisely
@@ -965,6 +997,20 @@ export function TerminalPane({
     }
 
     let started = false;
+    let factsFrame: number | null = null;
+    let fontsAlive = true;
+    const scheduleFactsAfterFit = () => {
+      if (!started || !fontsAlive) return;
+      if (factsFrame !== null) cancelAnimationFrame(factsFrame);
+      // xterm measures glyphs during the fit; wait a paint so facts use the settled cell box.
+      factsFrame = requestAnimationFrame(() => {
+        factsFrame = requestAnimationFrame(() => {
+          factsFrame = null;
+          if (fontsAlive && started) tellHostFacts(sessionId, term);
+        });
+      });
+    };
+    factsAfterFitRef.current = scheduleFactsAfterFit;
 
     // Fit only when the container has a real laid-out size — fitting a hidden pane
     // yields a garbage column count that wraps the PTY at ~2 columns (mangled output).
@@ -976,12 +1022,11 @@ export function TerminalPane({
       } catch {
         return false;
       }
+      scheduleFactsAfterFit();
       return true;
     };
 
     const onData = term.onData((data) => post({ type: 'term:input', sessionId, data }));
-    // Forward OSC 0/2 title changes so the host can sync the session label (incl. /rename).
-    const onTitle = term.onTitleChange((title) => post({ type: 'term:title', sessionId, title }));
     // Capture the at-bottom state BEFORE the write: a large/chunked write can defeat
     // xterm's own auto-follow and strand a following user mid-scroll, so re-pin after.
     // If the user had scrolled up, leave their position alone.
@@ -1020,6 +1065,8 @@ export function TerminalPane({
       if (!started) {
         started = true;
         sentSizeRef.current = { cols: term.cols, rows: term.rows };
+        tellHostFacts(sessionId, term);
+        scheduleFactsAfterFit();
         post({
           type: 'term:start',
           sessionId,
@@ -1034,6 +1081,16 @@ export function TerminalPane({
       }
     };
 
+    const onFontsLoaded = () => {
+      if (!fontsAlive || !started) return;
+      if (ref.current && !deferWhileReplaying(replayRef.current)) {
+        if (fitIfVisible()) tellHostSize(sentSizeRef, sessionId, term);
+      }
+      scheduleFactsAfterFit();
+    };
+    document.fonts?.addEventListener('loadingdone', onFontsLoaded);
+    void document.fonts?.ready.then(onFontsLoaded);
+
     const ro = new ResizeObserver(() => sync());
     ro.observe(ref.current);
     sync(); // attempt immediately for the already-visible (active) pane
@@ -1047,11 +1104,6 @@ export function TerminalPane({
         onData.dispose();
         term.element?.removeEventListener('mousedown', suppressLinkMiddleDown, true);
         term.element?.removeEventListener('webglcontextlost', reportGpuLoss, true);
-      } catch {
-        /* listener may already be gone */
-      }
-      try {
-        onTitle.dispose();
       } catch {
         /* listener may already be gone */
       }
@@ -1084,6 +1136,10 @@ export function TerminalPane({
         /* no-op */
       }
       ro.disconnect();
+      fontsAlive = false;
+      document.fonts?.removeEventListener('loadingdone', onFontsLoaded);
+      if (factsFrame !== null) cancelAnimationFrame(factsFrame);
+      factsAfterFitRef.current = () => {};
       disposeLinkCaches();
       if (started) post({ type: 'term:dispose', sessionId });
       unregisterGpu?.();
@@ -1114,6 +1170,7 @@ export function TerminalPane({
     try {
       fitRef.current?.fit();
       tellHostSize(sentSizeRef, sessionId, term);
+      factsAfterFitRef.current();
     } catch {
       /* not visible yet */
     }
@@ -1130,9 +1187,10 @@ export function TerminalPane({
       term.options.theme = buildXtermTheme(settings.surfaceColor);
       term.options.fontFamily = monoStack(settings.fontMono);
       refitVisibleTerminal();
+      tellHostFacts(sessionId, term);
     });
     return () => cancelAnimationFrame(id);
-  }, [settings.theme, settings.fontMono, settings.surfaceColor, refitVisibleTerminal]);
+  }, [settings.theme, settings.fontMono, settings.surfaceColor, refitVisibleTerminal, sessionId]);
 
   // Live-apply zoom and refit so the PTY's col/row tracks the new glyph size. Separate
   // from init so a zoom never recreates the terminal (which would kill the PTY).
@@ -1141,7 +1199,8 @@ export function TerminalPane({
     if (!term) return;
     term.options.fontSize = settings.terminalFontSize;
     refitVisibleTerminal();
-  }, [settings.terminalFontSize, refitVisibleTerminal]);
+    tellHostFacts(sessionId, term);
+  }, [settings.terminalFontSize, refitVisibleTerminal, sessionId]);
 
   // Re-run the search on every query/direction change so typing live-searches and the
   // arrows step matches.

@@ -19,7 +19,7 @@ describe('role brief provenance', () => {
   it('MCP modules other than adapters.ts do not mention the role brief', () => {
     const files = [
       'src/conduit-mcp/host.ts',
-      'electron/conduit-mcp-endpoint.ts',
+      'server/mcp/endpoint.ts',
       ...walk('src/conduit-mcp').filter((f) => !f.endsWith('/adapters.ts')),
     ];
     expect(files.length).toBeGreaterThan(2);

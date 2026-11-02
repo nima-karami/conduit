@@ -1,4 +1,5 @@
 import type { PolicyLayer } from './conduit-mcp/tool-policy';
+import type { SessionRuntime } from './contracts/session-identity';
 import type { RepoInfo } from './repo-scan';
 
 export type CwdStrategy = 'workspaceFolder' | 'gitWorktree' | 'prompt';
@@ -149,6 +150,8 @@ export interface Session {
   /** Runtime-only postState decoration: the last `term:start` was refused, and why (mf-live-edits
    *  spec §2.6). Cleared by a successful spawn, dispose, or a launcher change. */
   startRefusal?: StartRefusal;
+  /** Runtime-only, from the server (C2 SessionView): the launch generation and spawn state. */
+  runtime?: SessionRuntime;
 }
 
 /** A missing home is `homeMissing`; this is the other reason a start is refused. */

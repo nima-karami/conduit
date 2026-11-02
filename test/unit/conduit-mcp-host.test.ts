@@ -3,8 +3,8 @@ import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createMcpEndpoint } from '../../electron/conduit-mcp-endpoint';
-import { createSessionScreens, type SessionScreens } from '../../electron/session-screens';
+import { createShimEndpoint } from '../../server/mcp/endpoint';
+import { createSessionScreens, type SessionScreens } from '../../server/runtime/session-screens';
 import { MCP_ADAPTERS } from '../../src/conduit-mcp/adapters';
 import type { McpFileRequest, McpOpenRequest, PathKind } from '../../src/conduit-mcp/control-tools';
 import {
@@ -481,8 +481,9 @@ function harness(
       opts.createEndpoint ??
       (opts.recordSends
         ? (o) =>
-            createMcpEndpoint({
+            createShimEndpoint({
               ...o,
+              tokens,
               onConnection: (conn) =>
                 o.onConnection({
                   id: conn.id,
@@ -496,7 +497,7 @@ function harness(
                   close: () => conn.close(),
                 }),
             })
-        : (o) => createMcpEndpoint(o)),
+        : (o) => createShimEndpoint({ ...o, tokens })),
   });
   hosts.push(host);
   return {
