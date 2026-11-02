@@ -6,6 +6,58 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **Agents keep running when Conduit quits or updates.** Terminals now run in a background service
+  (Conduit's own copy of herdr-core), not in the app. Quit Conduit, let it update, or end it from
+  Task Manager, and your agents carry on; the next launch reattaches to them with their screens
+  intact. Messaging and Conduit tools set to **On** keep working with no window open; a tool set to
+  **Ask** with no window open is denied after 5 seconds, and the denial is recorded in the thread.
+  Closing a window or a session still stops its agents. After a reboot nothing is running:
+  sessions come back stopped with their scrollback, as before.
+- **Quit, or Quit and stop all agents.** The quit dialog now says your agents will keep running.
+  **Quit and stop all agents** (in the quit dialog and the command palette) ends them as well.
+  Uninstalling Conduit asks first, then stops its agents; an update never stops them.
+- **Exited sessions keep their output.** When an agent exits, its pane stays with the last output
+  and the exit line instead of being cleared.
+- **"Restore sessions" off now only skips sessions that aren't running.** A session with a live
+  agent is always kept.
+- **Settings are split between the app and the background service.** The service keeps its own
+  keys (MCP, tool policies, auto-resume, auto-relaunch, restore sessions, scrollback, cwd tracking)
+  in `server-settings.json`. Conduit also keeps writing them to `settings.json`, so an older
+  version still reads your current values.
+- **OS notifications are unchanged.** They still appear only while Conduit is open.
+
+### Added
+- **A banner when the background service has a problem.** It sits under the top bar when the
+  service isn't running, has stopped (with the reason), can't run agents or is degraded, and names
+  the log file. **Retry** starts it again. If a newer Conduit is already running your agents, the
+  banner says so and offers **Stop all agents and continue**. While the service is down the editor
+  and UI settings still work; actions that need the service say "Conduit's background service
+  isn't running — Retry from the banner."
+- **"Reconnecting — input paused".** While the app reconnects to the service, each terminal shows
+  this and drops keystrokes; output keeps arriving.
+- **Retry launch / Discard for an agent that didn't confirm.** If Conduit loses track of a launch
+  before it confirms, the pane says "Conduit couldn't confirm this agent started. It may still come
+  up on its own." If it does come up, Conduit picks it up. Otherwise **Retry launch** starts it
+  again and **Discard** drops it.
+
+### Known limitations
+- **Agents with a shell can reach Conduit's terminal service directly.** Conduit's Off / Ask / On
+  policy covers its MCP tools, not the shell: an agent can use `hc` to type into or kill other
+  sessions, or `hc kill` the service's supervisor. An `hc run` it starts lands in Conduit's
+  session and keeps the service from exiting while idle.
+- **The pipe between the app and the service isn't authenticated.** Like the MCP pipe in earlier
+  versions, it accepts any process running as you, including a client on another machine that has
+  your (or an administrator's) credentials over SMB, and any local user can open it read-only.
+- **Background processes a session starts now end with that session.** Before, a detached process
+  could outlive the terminal that started it.
+- **Launching Conduit from a tool that kills its whole process tree when it closes** (a Windows job
+  without breakaway) can take the background service down with it.
+- **Downgrading:** before installing v0.51 or older, quit Conduit with **Quit and stop all
+  agents**. Those versions can't stop a newer service.
+- **Signing:** the bundled third-party binaries (`node.exe`, `hc.exe`) aren't code-signed by
+  Conduit yet.
+
 ## [0.51.0] — 2026-10-31
 
 ### Added

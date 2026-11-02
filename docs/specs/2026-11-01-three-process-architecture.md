@@ -6,6 +6,11 @@ revision: 9.2 (review history in §Changelog)
 
 # Three-process architecture — boundaries, flows, decisions
 
+**Implementation status (2026-11-02):** built on `feat/three-process`, unreleased; ADR 0007 §As
+built lists the deviations. Entry points: `server/main.ts` (server entry), `server/supervise.ts`
+(supervisor), `server/services.ts` (service composition), `electron/server-lifecycle.ts` (the
+app's start rule and reconnects), `electron/terminal-host.ts` (the app's observer panes).
+
 This is the design behind ADR 0007. Workstreams are in `2026-11-01-three-process-program.md`, the
 contracts in `src/contracts/`. It says **who owns what, how the flows cross the boundaries, and why**.
 Every decision lists its trade-off.
