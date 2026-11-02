@@ -59,7 +59,7 @@ export interface ServerLifecycleDeps {
 export const VANISHED_RESTART_BUDGET = { attempts: 3, windowMs: 60 * 60_000 } as const;
 
 const RECONNECT_BACKOFF_MS = { first: 500, max: 5_000 } as const;
-export const SUPERVISOR_LOOKUP_TIMEOUT_MS = 5_000;
+const SUPERVISOR_LOOKUP_TIMEOUT_MS = 5_000;
 const ENDED: ReadonlySet<HcEvent['type']> = new Set(['finished', 'lost', 'removed']);
 
 class SupervisorLookupTimeout extends Error {}
