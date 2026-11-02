@@ -48,21 +48,57 @@ export interface FontDef {
   id: string;
   label: string;
   stack: string;
+  /** Has a face in fonts.css, so the boot load can expect one (an empty load is a failure). */
+  bundled: boolean;
 }
 
 export const UI_FONTS: FontDef[] = [
-  { id: 'hanken', label: 'Hanken Grotesk', stack: "'Hanken Grotesk', system-ui, sans-serif" },
-  { id: 'inter', label: 'Inter', stack: "'Inter', system-ui, sans-serif" },
-  { id: 'plexsans', label: 'IBM Plex Sans', stack: "'IBM Plex Sans', system-ui, sans-serif" },
-  { id: 'system', label: 'System UI', stack: 'system-ui, -apple-system, sans-serif' },
-  { id: 'figtree', label: 'Figtree', stack: "'Figtree', system-ui, sans-serif" },
-  { id: 'chakra', label: 'Chakra Petch', stack: "'Chakra Petch', system-ui, sans-serif" },
+  {
+    id: 'hanken',
+    label: 'Hanken Grotesk',
+    stack: "'Hanken Grotesk', system-ui, sans-serif",
+    bundled: true,
+  },
+  { id: 'inter', label: 'Inter', stack: "'Inter', system-ui, sans-serif", bundled: true },
+  {
+    id: 'plexsans',
+    label: 'IBM Plex Sans',
+    stack: "'IBM Plex Sans', system-ui, sans-serif",
+    bundled: true,
+  },
+  {
+    id: 'system',
+    label: 'System UI',
+    stack: 'system-ui, -apple-system, sans-serif',
+    bundled: false,
+  },
+  { id: 'figtree', label: 'Figtree', stack: "'Figtree', system-ui, sans-serif", bundled: true },
+  {
+    id: 'chakra',
+    label: 'Chakra Petch',
+    stack: "'Chakra Petch', system-ui, sans-serif",
+    bundled: true,
+  },
 ];
 
+// Bundled Cascadia Mono fills ❯ ● and braille the chosen face may lack; Segoe UI Symbol then wins
+// over the colour-emoji face Chromium would otherwise pick for ✔ ⚠ ⏺ ⎿ ✻ (spec 2026-11-02 §8).
+export const TERMINAL_FALLBACK = "'Cascadia Mono', 'Segoe UI Symbol', ui-monospace, monospace";
+
 export const MONO_FONTS: FontDef[] = [
-  { id: 'jetbrains', label: 'JetBrains Mono', stack: "'JetBrains Mono', ui-monospace, monospace" },
-  { id: 'firacode', label: 'Fira Code', stack: "'Fira Code', ui-monospace, monospace" },
-  { id: 'plexmono', label: 'IBM Plex Mono', stack: "'IBM Plex Mono', ui-monospace, monospace" },
+  {
+    id: 'jetbrains',
+    label: 'JetBrains Mono',
+    stack: `'JetBrains Mono', ${TERMINAL_FALLBACK}`,
+    bundled: true,
+  },
+  { id: 'firacode', label: 'Fira Code', stack: `'Fira Code', ${TERMINAL_FALLBACK}`, bundled: true },
+  {
+    id: 'plexmono',
+    label: 'IBM Plex Mono',
+    stack: `'IBM Plex Mono', ${TERMINAL_FALLBACK}`,
+    bundled: true,
+  },
 ];
 
 /**

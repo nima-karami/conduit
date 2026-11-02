@@ -59,6 +59,7 @@ import {
 } from '../terminal-conpty';
 import { CONTEXT_WINDOW_LINES, inferContextRoot } from '../terminal-context-root';
 import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
+import { applyTerminalFontChange } from '../terminal-fonts';
 import { terminalGpu } from '../terminal-gpu';
 import { lastPick, notePick } from '../terminal-link-picks';
 import {
@@ -517,6 +518,8 @@ export function TerminalPane({
     let fit: FitAddon;
     let search: SearchAddon;
     let unregisterGpu: (() => void) | null = null;
+    // Assigned once the fit/facts helpers below exist; a font refresh only arrives after that.
+    let refitAfterFonts = () => {};
     const reportGpuLoss = () => terminalGpu.reportLoss(term);
     try {
       term = new Terminal({
@@ -525,6 +528,9 @@ export function TerminalPane({
         // Must be 1.0 so box-drawing characters (│ ┌ └) connect vertically; extra
         // leading breaks them into dashes.
         lineHeight: 1.0,
+        // A fallback-face glyph wider than the cell (✔ ⏺ from the symbol font) is scaled into it
+        // instead of overlapping its neighbour.
+        rescaleOverlappingGlyphs: true,
         cursorBlink: true,
         // xterm's default ring is 1000 lines — roughly eight seconds of a working agent.
         // Once the ring is full, a scrolled-up reader is pushed AWAY from the bottom on
@@ -625,7 +631,7 @@ export function TerminalPane({
       });
       // Last in the try: a throw before it would return from the effect with no cleanup, leaking
       // the terminal's WebGL slot. The renderer draws box/block glyphs to fill the cell (crisper).
-      unregisterGpu = terminalGpu.register(term);
+      unregisterGpu = terminalGpu.register(term, () => refitAfterFonts());
     } catch (e) {
       logToHost(`xterm init failed: ${e instanceof Error ? e.message : String(e)}`);
       return;
@@ -1083,15 +1089,13 @@ export function TerminalPane({
       }
     };
 
-    const onFontsLoaded = () => {
+    refitAfterFonts = () => {
       if (!fontsAlive || !started) return;
       if (ref.current && !deferWhileReplaying(replayRef.current)) {
         if (fitIfVisible()) tellHostSize(sentSizeRef, sessionId, term);
       }
       scheduleFactsAfterFit();
     };
-    document.fonts?.addEventListener('loadingdone', onFontsLoaded);
-    void document.fonts?.ready.then(onFontsLoaded);
 
     const ro = new ResizeObserver(() => sync());
     ro.observe(ref.current);
@@ -1139,7 +1143,6 @@ export function TerminalPane({
       }
       ro.disconnect();
       fontsAlive = false;
-      document.fonts?.removeEventListener('loadingdone', onFontsLoaded);
       if (factsFrame !== null) cancelAnimationFrame(factsFrame);
       factsAfterFitRef.current = () => {};
       disposeLinkCaches();
@@ -1178,8 +1181,8 @@ export function TerminalPane({
     }
   }, [sessionId]);
 
-  // Re-theme/re-font the live terminal on theme/mono-font/surface-colour change so its
-  // background recolours in place to keep matching the code block (wishlist I1).
+  // Re-theme the live terminal on theme/surface-colour change so its background recolours in
+  // place to keep matching the code block (wishlist I1).
   // rAF so SettingsProvider's data-theme attribute is applied before we read CSS vars.
   // biome-ignore lint/correctness/useExhaustiveDependencies: settings.theme is the re-theme trigger — the palette is read off <html>'s CSS vars, not from the value.
   useEffect(() => {
@@ -1187,12 +1190,20 @@ export function TerminalPane({
     if (!term) return;
     const id = requestAnimationFrame(() => {
       term.options.theme = buildXtermTheme(settings.surfaceColor);
-      term.options.fontFamily = monoStack(settings.fontMono);
       refitVisibleTerminal();
       tellHostFacts(sessionId, term);
     });
     return () => cancelAnimationFrame(id);
-  }, [settings.theme, settings.fontMono, settings.surfaceColor, refitVisibleTerminal, sessionId]);
+  }, [settings.theme, settings.surfaceColor, refitVisibleTerminal, sessionId]);
+
+  // A mono-font change loads the face before any terminal switches to it, then the service
+  // applies it to every terminal at once; the one this pane was built with needs nothing.
+  const builtFontRef = useRef(settings.fontMono);
+  useEffect(() => {
+    if (settings.fontMono === builtFontRef.current) return;
+    builtFontRef.current = settings.fontMono;
+    void applyTerminalFontChange(settings.fontMono, termFontRef.current);
+  }, [settings.fontMono]);
 
   // Live-apply zoom and refit so the PTY's col/row tracks the new glyph size. Separate
   // from init so a zoom never recreates the terminal (which would kill the PTY).

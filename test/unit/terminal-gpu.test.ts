@@ -19,6 +19,8 @@ function harness({ failAttach = new Set<string>() } = {}) {
   const handles: Handle[] = [];
   const events: string[] = [];
   const attempts: string[] = [];
+  // Every font-side call in order, e.g. 'clear:a', 'refresh:a', 'family:a=X'.
+  const fontCalls: string[] = [];
   const gpu = createGpuCoordinator<string>({
     now: () => now,
     setTimer: (fn, ms) => {
@@ -38,6 +40,9 @@ function harness({ failAttach = new Set<string>() } = {}) {
       return h;
     },
     log: (event) => events.push(event),
+    clearFontAtlas: (term) => fontCalls.push(`clear:${term}`),
+    refreshTerminal: (term) => fontCalls.push(`refresh:${term}`),
+    applyFontFamily: (term, family) => fontCalls.push(`family:${term}=${family}`),
   });
   const advance = (ms: number) => {
     const until = now + ms;
@@ -53,7 +58,7 @@ function harness({ failAttach = new Set<string>() } = {}) {
   };
   const live = (term?: string) =>
     handles.filter((h) => !h.disposed && (term === undefined || h.term === term));
-  return { gpu, handles, events, attempts, advance, live };
+  return { gpu, handles, events, attempts, fontCalls, advance, live };
 }
 
 describe('terminal GPU coordinator', () => {
@@ -382,6 +387,66 @@ describe('terminal GPU coordinator', () => {
       const logged = events.length;
       advance(GPU_UNAVAILABLE_RETRY_MS[0]);
       expect(events).toHaveLength(logged);
+    });
+  });
+
+  describe('font refresh', () => {
+    it('clears every live terminal before any repaints, then refits each pane', () => {
+      const { gpu, fontCalls } = harness();
+      gpu.register('a', () => fontCalls.push('fit:a'));
+      gpu.register('b', () => fontCalls.push('fit:b'));
+      gpu.refreshFonts();
+      expect(fontCalls).toEqual(['clear:a', 'clear:b', 'refresh:a', 'refresh:b', 'fit:a', 'fit:b']);
+    });
+
+    it('a second late event for the same family clears the atlas again', () => {
+      const { gpu, fontCalls } = harness();
+      gpu.register('a');
+      gpu.refreshFonts();
+      gpu.refreshFonts();
+      expect(fontCalls.filter((c) => c === 'clear:a')).toHaveLength(2);
+      expect(fontCalls.some((c) => c.startsWith('family:'))).toBe(false);
+    });
+
+    it('skips a terminal once it unregisters, callback included', () => {
+      const { gpu, fontCalls } = harness();
+      const offA = gpu.register('a', () => fontCalls.push('fit:a'));
+      gpu.register('b', () => fontCalls.push('fit:b'));
+      offA();
+      gpu.refreshFonts();
+      expect(fontCalls).toEqual(['clear:b', 'refresh:b', 'fit:b']);
+    });
+
+    it('refreshes terminals on the DOM renderer too, without touching the loss budget', () => {
+      const { gpu, fontCalls, events, live } = harness({ failAttach: new Set(['b']) });
+      gpu.register('a');
+      gpu.register('b');
+      const logged = events.length;
+      gpu.refreshFonts();
+      expect(fontCalls).toEqual(['clear:a', 'clear:b', 'refresh:a', 'refresh:b']);
+      expect(events).toHaveLength(logged);
+      expect(live().map((h) => h.term)).toEqual(['a']);
+    });
+
+    it('refreshes never spend the loss budget the reset policy allows', () => {
+      const { gpu, live, advance, events } = harness();
+      gpu.register('a');
+      for (let i = 0; i < GPU_GIVE_UP_LOSSES; i++) {
+        gpu.refreshFonts();
+        gpu.reportLoss('a');
+        advance(GPU_REATTACH_DELAY_MS);
+        gpu.refreshFonts();
+      }
+      expect(events).not.toContain('give-up');
+      expect(live()).toHaveLength(1);
+    });
+
+    it('applies a family to every terminal, then repaints and refits them', () => {
+      const { gpu, fontCalls } = harness();
+      gpu.register('a', () => fontCalls.push('fit:a'));
+      gpu.register('b');
+      gpu.applyFontFamily('X');
+      expect(fontCalls).toEqual(['family:a=X', 'family:b=X', 'refresh:a', 'refresh:b', 'fit:a']);
     });
   });
 });

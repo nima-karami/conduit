@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdirSync, writeFileSync } from 'node:fs';
 import * as esbuild from 'esbuild';
 import { monacoDompurify } from './tools/monaco-dompurify.mjs';
 
@@ -50,8 +50,8 @@ const web = {
   format: 'iife',
   jsx: 'automatic',
   plugins: [monacoDompurify],
-  // .ttf = Monaco's codicon font; .woff/.woff2 = KaTeX math fonts (referenced by
-  // katex.min.css). Without these loaders esbuild errors on the font url()s.
+  // .ttf = Monaco's codicon font and our bundled faces (webview/fonts.css); .woff/.woff2 = KaTeX
+  // math fonts (referenced by katex.min.css). Without these loaders esbuild errors on the url()s.
   loader: { '.ttf': 'file', '.woff': 'file', '.woff2': 'file' },
 };
 
@@ -85,7 +85,7 @@ const indexHtml = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; worker-src 'self'; connect-src 'self';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; worker-src 'self'; connect-src 'self';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" type="image/png" href="./icon.png">
 <link rel="stylesheet" href="./webview.css">
@@ -104,6 +104,9 @@ function writeHtml() {
   // builds) ./icon-dev.png — the top bar swaps to the dev-badged logo when about.isDev.
   copyFileSync('assets/icon.png', 'out/icon.png');
   copyFileSync('assets/icon-dev.png', 'out/icon-dev.png');
+  // The OFL travels with the font files esbuild emits into out/ (and so into app.asar).
+  copyFileSync('THIRD_PARTY_NOTICES.txt', 'out/THIRD_PARTY_NOTICES.txt');
+  cpSync('assets/fonts/licenses', 'out/licenses/fonts', { recursive: true });
 }
 
 if (watch) {

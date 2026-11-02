@@ -1,6 +1,6 @@
 import type { ITheme } from '@xterm/xterm';
 import { cssVar } from './css-var';
-import { MONO_FONTS } from './themes';
+import { MONO_FONTS, TERMINAL_FALLBACK } from './themes';
 
 /** "#rrggbb" + alpha → "rgba(...)". Returns the input unchanged if not a hex colour. */
 function withAlpha(hex: string, a: number): string {
@@ -57,5 +57,5 @@ export function buildXtermTheme(_surfaceColor?: string): ITheme {
 
 /** Resolve a mono-font CSS stack from a settings font id. */
 export function monoStack(id: string): string {
-  return MONO_FONTS.find((f) => f.id === id)?.stack ?? "'JetBrains Mono', ui-monospace, monospace";
+  return MONO_FONTS.find((f) => f.id === id)?.stack ?? `'JetBrains Mono', ${TERMINAL_FALLBACK}`;
 }

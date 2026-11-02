@@ -61,6 +61,10 @@
       {
         "from": "resources/conduit-mcp",
         "to": "conduit-mcp"
+      },
+      {
+        "from": "assets/fonts/licenses",
+        "to": "licenses/fonts"
       }
     ],
     "npmRebuild": false,
