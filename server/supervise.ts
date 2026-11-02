@@ -16,7 +16,14 @@ import {
   SUPERVISOR_MARKER_POLL_MS,
 } from '../src/contracts/session-identity';
 import { instanceNames } from '../src/instance-names';
-import { hcBinaryOf, hcClient, serverChildEnv, stopCore, supervisorCore } from './hc-cli';
+import {
+  hcBinaryOf,
+  hcClient,
+  serverChildEnv,
+  serverProcessEnv,
+  stopCore,
+  supervisorCore,
+} from './hc-cli';
 import { argValue, requireUserData } from './lifecycle/cli-args';
 
 export { serverChildEnv } from './hc-cli';
@@ -211,7 +218,13 @@ async function runCli(): Promise<void> {
   await supervise({
     userData,
     logPath: path.join(userData, 'server.log'),
-    spawnChild: () => spawnServerChild(process.execPath, childArgs, env, __dirname),
+    spawnChild: () =>
+      spawnServerChild(
+        process.execPath,
+        childArgs,
+        serverProcessEnv(process.env, names),
+        __dirname,
+      ),
     // Without an hc terminal of our own we run as a plain spawn and there is no core of ours.
     ...(supervisorTerminal
       ? {

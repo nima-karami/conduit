@@ -19,7 +19,7 @@ import {
   type WebContents,
   webContents,
 } from 'electron';
-import { hcClient } from '../server/hc-cli';
+import { hcClient, startCore } from '../server/hc-cli';
 import { CURRENT_SHIM_GENERATION, prepareRuntime } from '../server/runtime-dir/prepare';
 import { activeCwd, sessionGitRoot } from '../src/active-cwd';
 import { repoForPath, requestGitRoot, resolveRequestRepoRoot } from '../src/active-repo';
@@ -225,7 +225,7 @@ import {
 import { createDragOutHost } from './drag-out-host';
 import { execFileBounded } from './exec-bounded';
 import { createFolderPicker } from './folder-picker';
-import type { HcCliDeps } from './hc-cli';
+import { type HcCliDeps, supervisorEnv } from './hc-cli';
 import { createHcEvents } from './hc-events';
 import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
@@ -348,6 +348,9 @@ let nextWindowOrdinal = 1;
 // Most-recently-focused window id, tracked on each window's `focus` event. Used to
 // route launch targets when no window currently holds OS focus.
 let lastFocusedWindowId = -1;
+// The window holding focus by its own focus/blur events: getFocusedWindow() is null for a hidden
+// window, which still gets 'focus' (e2e drives it), and presence must report that change.
+let focusedWindowId: number | null = null;
 // Set true at the top of `before-quit` (Slice C). The per-window close guard reads it to
 // distinguish "the app is quitting" (preserve owned sessions so they restore next launch)
 // from "deliberately closing one window among several" (dispose its sessions, as Slice A).
@@ -1022,8 +1025,12 @@ function createWindow(opts: {
   w.on('move', () => schedulePersistLayout?.());
   // Stop taskbar flash when the window regains focus (T1A). Track most-recently-focused
   // for launch-target routing when no window currently holds OS focus.
-  w.on('blur', () => onWindowPresenceChanged?.());
+  w.on('blur', () => {
+    if (focusedWindowId === w.id) focusedWindowId = null;
+    onWindowPresenceChanged?.();
+  });
   w.on('focus', () => {
+    focusedWindowId = w.id;
     lastFocusedWindowId = w.id;
     w.flashFrame(false);
     onWindowFocus?.();
@@ -1102,6 +1109,7 @@ function createWindow(opts: {
   // OS shutdown/logoff is not guarded (dirty-quit-guard D8), but the state snapshot still lands.
   w.on('session-end', () => opts.onSessionEnd());
   w.on('closed', () => {
+    if (focusedWindowId === w.id) focusedWindowId = null;
     windows.delete(w.id);
     windowOrdinal.delete(w.id);
     opts.onClosed(w.id);
@@ -2069,7 +2077,7 @@ app.whenReady().then(() => {
   // ── Presence (C2 ui.presence): visible, ready, focus and owners, coalesced per tick ──
   let presenceQueued = false;
   const pushPresence = () => {
-    const focusedId = BrowserWindow.getFocusedWindow()?.id;
+    const focusedId = focusedWindowId;
     const windowsNow: C2WindowPresence[] = [...windows.keys()].map((windowId) => ({
       windowId,
       focused: focusedId === windowId,
@@ -2320,7 +2328,14 @@ app.whenReady().then(() => {
       client: () => new ServerClient({ endpoint: names.serverEndpoint, appVersion, log: appLog }),
       hc,
       hcEvents,
-      cli: { hcExe: layout.hcExe, env: hcEnv, coreCwd: layout.coreCwd, execFile: execHc },
+      cli: {
+        hcExe: layout.hcExe,
+        env: hcEnv,
+        coreCwd: layout.coreCwd,
+        execFile: execHc,
+        startCore: () => startCore(layout.hcExe, names, hcEnv),
+        connect: () => hcClient(names, hcEnv, (m) => log.warn('hc', m)),
+      },
       markerExists: () =>
         fs.promises.access(marker).then(
           () => true,
@@ -2335,7 +2350,7 @@ app.whenReady().then(() => {
             detached: true,
             stdio: 'ignore',
             windowsHide: true,
-            env: hcEnv,
+            env: supervisorEnv(hcEnv, names),
             cwd: path.dirname(layout.superviseJs),
           },
         );

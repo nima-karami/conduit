@@ -22,6 +22,11 @@ interface Pane {
   /** A program ended under this generation: no re-attach until the session runs a new one. */
   endedGeneration: number | null;
   starting: boolean;
+  /**
+   * term.show bytes that arrived while sessions.start was in flight: the server shows its
+   * can't-start line before it replies, but the reply's prelude (the replayed history) goes first.
+   */
+  heldShow: string[] | null;
   /** restartSeq bumped: the renderer remounts this pane, so it attaches nothing more. */
   retired: boolean;
   exitShown: boolean;
@@ -68,6 +73,13 @@ export function createTerminalHost(d: TerminalHostDeps) {
   };
 
   const current = (sessionId: string, pane: Pane) => panes.get(sessionId) === pane;
+
+  const releaseShow = (sessionId: string, pane: Pane) => {
+    const held = pane.heldShow;
+    pane.heldShow = null;
+    if (!held || !current(sessionId, pane)) return;
+    for (const data of held) d.sendToOwner(sessionId, { type: 'term:data', sessionId, data });
+  };
 
   async function attach(
     sessionId: string,
@@ -119,6 +131,7 @@ export function createTerminalHost(d: TerminalHostDeps) {
     const c = d.client();
     if (!c || pane.starting || pane.retired) return;
     pane.starting = true;
+    pane.heldShow = [];
     try {
       // One ordered pipe: these shape the server's first attach (term.facts doc, C2).
       c.notify('term.resize', { sessionId, ...pane.size });
@@ -134,17 +147,21 @@ export function createTerminalHost(d: TerminalHostDeps) {
       if (!current(sessionId, pane)) return;
       if (!r.ok) {
         if (r.prelude) writePaint(sessionId, r.prelude);
+        releaseShow(sessionId, pane);
         d.log('info', 'start refused', { sessionId, reason: r.refusal.reason });
         return;
       }
       if ('finished' in r) {
         writePaint(sessionId, r.prelude);
+        releaseShow(sessionId, pane);
         showExit(sessionId, pane, r.finished.exitCode);
         return;
       }
       if (r.prelude) writePaint(sessionId, r.prelude);
+      releaseShow(sessionId, pane);
       await attach(sessionId, pane, r.target, r.generation, APP_ATTACH_HISTORY_LINES);
     } finally {
+      releaseShow(sessionId, pane);
       pane.starting = false;
     }
   }
@@ -169,6 +186,7 @@ export function createTerminalHost(d: TerminalHostDeps) {
         generation: null,
         endedGeneration: null,
         starting: false,
+        heldShow: null,
         retired: false,
         exitShown: false,
       };
@@ -206,6 +224,11 @@ export function createTerminalHost(d: TerminalHostDeps) {
 
     /** Host-composed bytes (C7 ScrollbackPort.show), already in the server's ring. */
     show(sessionId: string, data: string): void {
+      const held = panes.get(sessionId)?.heldShow;
+      if (held) {
+        held.push(data);
+        return;
+      }
       d.sendToOwner(sessionId, { type: 'term:data', sessionId, data });
     },
 

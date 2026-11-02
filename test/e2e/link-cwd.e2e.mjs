@@ -69,7 +69,7 @@ runScenario('link-cwd', async ({ page, log }) => {
   log('using agent', psAgent);
 
   await page.evaluate(() =>
-    window.agentDeck.post({ type: 'updateSettings', settings: { trackCwd: true } }),
+    window.agentDeck.post({ type: 'updateServerSettings', patch: { trackCwd: true } }),
   );
   await page.waitForTimeout(300);
 

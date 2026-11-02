@@ -219,7 +219,7 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
       if (!live(e)) return;
       // name_taken: a supervisor of this name is live after all (D21's rule for any hc name).
       if (!run.ok && !/name_taken|already named/i.test(run.reason)) {
-        d.log('warn', 'hc run of the supervisor failed; spawning it directly', {
+        d.log('warn', 'starting the supervisor in hc failed; spawning it directly', {
           reason: run.reason,
         });
         d.spawnDetachedSupervisor(

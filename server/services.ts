@@ -190,6 +190,10 @@ export function createServices(o: ServicesOptions) {
     homeDir: o.homeDir,
     platform: hostPlatform,
     e2e: o.e2e,
+    // v0.51's e2e seam; the app's env reaches the server through its supervisor start.
+    ...(o.e2e && o.env.CONDUIT_E2E_DETECT_GRACE_MS
+      ? { host: { detectGraceMs: Number(o.env.CONDUIT_E2E_DETECT_GRACE_MS) } }
+      : {}),
     log,
     install: {
       env: o.env,

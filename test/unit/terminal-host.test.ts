@@ -123,17 +123,42 @@ describe('terminal-host', () => {
     ]);
   });
 
-  it('cold start writes term.show then prelude as term:data{replay} then attaches', async () => {
+  it('cold start holds term.show until the prelude is written, then attaches', async () => {
     const r = rig([live({ spawned: true, prelude: paint('HISTORY') })], { firstPaint: '' });
     const started = r.host.start(START);
-    // The server's can't-start/banner bytes arrive as term.show before the start reply.
+    // The server's banner bytes arrive as term.show before the start reply.
     r.host.show('s1', 'BANNER');
     await started;
     expect(r.trace.filter((t) => !t.startsWith('notify'))).toEqual([
       'call:sessions.start',
-      'data:BANNER',
       'data:HISTORY:replay',
+      'data:BANNER',
       `attach:${APP_ATTACH_HISTORY_LINES}`,
+    ]);
+  });
+
+  it("a refused start writes its can't-start line after the replayed history", async () => {
+    const r = rig([{ ok: false, refusal: { reason: 'home-missing' }, prelude: paint('OLD') }]);
+    const started = r.host.start(START);
+    r.host.show('s1', 'CANT');
+    await started;
+    r.host.show('s1', 'LATER');
+    expect(r.trace.filter((t) => !t.startsWith('notify'))).toEqual([
+      'call:sessions.start',
+      'data:OLD:replay',
+      'data:CANT',
+      'data:LATER',
+    ]);
+  });
+
+  it('a failed sessions.start still releases the held term.show bytes', async () => {
+    const r = rig([]);
+    const started = r.host.start(START);
+    r.host.show('s1', 'CANT');
+    await started;
+    expect(r.trace.filter((t) => !t.startsWith('notify'))).toEqual([
+      'call:sessions.start',
+      'data:CANT',
     ]);
   });
 

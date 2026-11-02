@@ -1,6 +1,6 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runtimeLayout } from '../../electron/runtime-layout';
 import { prepareRuntime } from '../../server/runtime-dir/prepare';
@@ -74,5 +74,21 @@ describe('runtimeLayout', () => {
     });
     expect([bare.nodeExe, bare.hcExe]).toEqual(['node', 'hc']);
     expect(existsSync(bare.coreCwd)).toBe(true);
+  });
+
+  it('unpackaged node is the first one on PATH, absolute, so hc never picks its spelling', () => {
+    const u = fresh();
+    const bin = join(u, 'bin');
+    mkdirSync(bin);
+    const exe = join(bin, process.platform === 'win32' ? 'node.exe' : 'node');
+    writeFileSync(exe, '');
+    const layout = runtimeLayout({
+      packaged: false,
+      userData: u,
+      appVersion: '0.52.0',
+      appPath: join(u, 'repo'),
+      env: { Path: [join(u, 'missing'), bin].join(delimiter) },
+    });
+    expect(layout.nodeExe).toBe(exe);
   });
 });

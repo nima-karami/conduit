@@ -55,7 +55,7 @@ import { GIT_TIMEOUT, runGit } from '../../src/git-exec';
 import { getGitInfo } from '../../src/git-info';
 import { lastNonEmptyLine } from '../../src/last-line';
 import { previewLaunch } from '../../src/launch-preview';
-import { buildLaunchSpec } from '../../src/launch-spec';
+import { buildLaunchSpec, sanitizeChildEnv } from '../../src/launch-spec';
 import { LauncherHost } from '../../src/launcher-host';
 import {
   decideLimitAction,
@@ -104,6 +104,7 @@ import type {
   SpawnSpec,
   StartRefusal,
 } from '../../src/types';
+import { HC_XDG_ISOLATED_ENV } from '../hc-cli';
 import { type RpcAnswer, RpcFault, type RpcRequest } from '../transport/pipe';
 import { ServerFolderHealth } from './folder-health';
 import { ServerSettingsStore } from './server-settings';
@@ -121,7 +122,7 @@ export interface DomainDeps {
   /** The `conduit.instance` label (InstanceNames.instance). */
   instance: string;
   e2e: boolean;
-  /** The server's own env (process.env): only the user's captured XDG values are read (D24). */
+  /** The server's own env (process.env): every session's base env (withServerEnv). */
   env: Readonly<Record<string, string | undefined>>;
   runtime: TerminalRuntime;
   launch: LaunchPort;
@@ -215,18 +216,26 @@ function viewFields(s: Session): Omit<Session, AppSessionField> {
   return record;
 }
 
+const isOwnEnvKey = (upper: string) =>
+  upper.startsWith('HC_') || upper.startsWith('CONDUIT_USER_XDG_') || upper === HC_XDG_ISOLATED_ENV;
+
 /**
- * The server runs under our core's isolated XDG; its sessions get the user's own values back, an
- * empty one included, since terminal.run.env can only set (D24, M22).
+ * A session's env starts from the server's, as node-pty's did from the app's: a pane gets the
+ * core's env with hc's fresh registry values over it (M10), which drops the PATH the app was
+ * started with. Our core runs under its isolated XDG, so sessions get the user's own values back,
+ * an empty one included, since terminal.run.env can only set (D24, M22).
  */
-function withUserXdg(spec: SpawnSpec, env: DomainDeps['env']): SpawnSpec {
-  if (env[USER_XDG_CAPTURED_ENV] === undefined) return spec;
+function withServerEnv(spec: SpawnSpec, env: DomainDeps['env']): SpawnSpec {
+  const base: Record<string, string> = {};
+  for (const [k, v] of Object.entries(sanitizeChildEnv({ ...env })))
+    if (v !== undefined && !isOwnEnvKey(k.toUpperCase())) base[k] = v;
   const restored: Record<string, string> = {};
-  for (const [xdg, passthrough] of Object.entries(USER_XDG_PASSTHROUGH)) {
-    const value = env[passthrough];
-    if (value !== undefined) restored[xdg] = value;
-  }
-  return { ...spec, env: { ...spec.env, ...restored } };
+  if (env[USER_XDG_CAPTURED_ENV] !== undefined)
+    for (const [xdg, passthrough] of Object.entries(USER_XDG_PASSTHROUGH)) {
+      const value = env[passthrough];
+      if (value !== undefined) restored[xdg] = value;
+    }
+  return { ...spec, env: { ...base, ...spec.env, ...restored } };
 }
 
 /** `prelude` with `more` appended as its own run, at the pane's size. */
@@ -495,6 +504,7 @@ export function createDomain(deps: DomainDeps): Domain {
     revalidate: (id, folder) => sessionOps.revalidate(id, folder),
     realKeys,
     log,
+    healthChanged: (id) => scopes.recompute(id),
   });
 
   const timedParse = parseTimedMessagesFile(readBlob(file('timed-messages.json')));
@@ -814,7 +824,7 @@ export function createDomain(deps: DomainDeps): Domain {
     }
     for (const root of plan.skippedAddDirRoots)
       log.warn('pty', 'add-dir skipped', { sessionId: id, root });
-    let spec = withUserXdg(plan.spec, deps.env);
+    let spec = withServerEnv(plan.spec, deps.env);
     if (settings().trackCwd) {
       const aug = cwdReportingAugmentation(def?.id ?? s.agentId, spec.args);
       if (aug?.args) spec = { ...spec, args: [...spec.args, ...aug.args] };
