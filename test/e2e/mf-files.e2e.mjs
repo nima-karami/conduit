@@ -283,7 +283,14 @@ async function phaseActions({ app, page, log, sid }) {
     'Remove',
   );
   const toast = await waitToast(page, 'Removed ci-image from session', 'Remove');
-  await toast.locator('.toast__action', { hasText: 'Undo' }).click();
+  // A hidden e2e window paints ~1 frame/s: the toast-in animation (~2 frames) plus a locator
+  // click's two-frame stability check and its retry outlast the 5 s toast. Wait the animation
+  // out, then send a real pointer click to the settled button (still hit-tested).
+  const undo = toast.locator('.toast__action', { hasText: 'Undo' });
+  await toast.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
+  const box = await undo.boundingBox();
+  assert(box, 'Remove: the Undo button has a box');
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await waitBars(
     page,
     [

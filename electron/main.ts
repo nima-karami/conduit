@@ -1897,11 +1897,13 @@ app.whenReady().then(() => {
     const w = windows.get(id);
     return w && !w.isDestroyed() ? w : undefined;
   };
+  // A window still ending its sessions has answered its close too: a sibling's queued close must
+  // see itself as the last window and quit, keeping its sessions (S4).
   const openWindows = () =>
     openWindowIds(
       windows.keys(),
       (id) => !!liveWindow(id),
-      windowConfirmed,
+      new Set([...windowConfirmed, ...windowClosing]),
       BrowserWindow.getFocusedWindow()?.id,
     );
   const openWindowCount = () => openWindows().length;
