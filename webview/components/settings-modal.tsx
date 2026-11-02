@@ -24,7 +24,6 @@ import type {
   AutoSaveMode,
   Background,
   BgIntensity,
-  CardField,
   ChangesViewMode,
   Density,
   FontSize,
@@ -45,7 +44,6 @@ import {
   readLogTail,
   revealLogs,
 } from '../bridge';
-import { CARD_FIELD_LABELS } from '../card-fields';
 import { MCP_STR } from '../conduit-mcp-strings';
 import { IconCheck, IconClose, IconDownload, IconRefreshCw } from '../icons';
 import { useSettings } from '../settings';
@@ -57,18 +55,12 @@ import { McpInstallRow } from './mcp-install-row';
 import { McpProjectEntries } from './mcp-project-entries';
 import { ModalLayer } from './modal-layer';
 import { SelectField } from './select-field';
-import { SessionCardPreview } from './session-card';
+import { AgentRowPreview } from './session-card';
 import { ShortcutsTab } from './shortcuts-tab';
 import { ToolPolicyEditor } from './tool-policy-editor';
 import type { UpdateStatus } from './update-card';
 
 type Tab = 'general' | 'mcp' | 'appearance' | 'shortcuts' | 'skills' | 'about';
-
-const CARD_ROLES: { key: 'cardTitle' | 'cardSubtitle' | 'cardDetail'; label: string }[] = [
-  { key: 'cardTitle', label: 'Title' },
-  { key: 'cardSubtitle', label: 'Subtitle' },
-  { key: 'cardDetail', label: 'Detail' },
-];
 
 const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'none', label: 'None' },
@@ -644,7 +636,7 @@ function Appearance({
           </Section>
         );
       case 'sessionCard':
-        return <SessionCardSection key={id} settings={settings} update={update} />;
+        return <AgentRowSection key={id} />;
     }
   };
 
@@ -675,46 +667,18 @@ function ColorField({ value, onChange }: { value: string; onChange: (v: string) 
   );
 }
 
-function SessionCardSection({
-  settings,
-  update,
-}: {
-  settings: AppSettings;
-  update: (p: Partial<AppSettings>) => void;
-}) {
+/** The agent row has no configurable fields any more (spec §6); this shows what one looks like. */
+function AgentRowSection() {
   return (
     <section className="set set--col">
       <div className="set__label">
-        <span className="set__title">Session card</span>
-        <span className="set__desc">
-          Choose which field shows as the title, subtitle and detail
-        </span>
+        <span className="set__title">Agent row</span>
+        <span className="set__desc">Status, age and actions follow each agent in the sidebar</span>
       </div>
       <div className="cardcfg">
-        <div className="cardcfg__toggles">
-          {CARD_ROLES.map((r) => (
-            <div className="cardcfg__row" key={r.key}>
-              <span>{r.label}</span>
-              <SelectField
-                ariaLabel={r.label}
-                value={settings[r.key]}
-                options={CARD_FIELD_LABELS.filter(
-                  (f) => f.id !== 'none' || r.key !== 'cardTitle', // title can't be none
-                ).map((f) => ({ value: f.id, label: f.label }))}
-                onChange={(v) => update({ [r.key]: v as CardField } as Partial<AppSettings>)}
-              />
-            </div>
-          ))}
-        </div>
         <div className="cardcfg__preview">
           <span className="cardcfg__previewlabel">Preview</span>
-          <SessionCardPreview
-            roles={{
-              title: settings.cardTitle,
-              subtitle: settings.cardSubtitle,
-              detail: settings.cardDetail,
-            }}
-          />
+          <AgentRowPreview />
         </div>
       </div>
     </section>

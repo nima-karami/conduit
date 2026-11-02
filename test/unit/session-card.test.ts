@@ -3,17 +3,16 @@ import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { McpSessionBadge } from '../../src/conduit-mcp/ui-types';
 import type { Session } from '../../src/types';
 import {
-  type CardRoles,
-  SessionCard,
-  SessionCardPreview,
+  AgentMark,
+  AgentRow,
+  type AgentRowModel,
+  AgentRowPreview,
 } from '../../webview/components/session-card';
-import type { CardMcpStatus } from '../../webview/mcp-card-status';
 
 const noop = () => {};
-const ROLES: CardRoles = { title: 'name', subtitle: 'agent', detail: 'none' };
+const NOW = 10 * 60_000;
 
 function session(o: Partial<Session> = {}): Session {
   return {
@@ -23,296 +22,245 @@ function session(o: Partial<Session> = {}): Session {
     home: 'G:/work/api',
     roots: [],
     status: 'running',
-    createdAt: Date.now() - 600_000,
-    lastActiveAt: Date.now() - 600_000,
-    lastLine: 'Edit src/main.ts',
+    createdAt: 0,
+    lastActiveAt: 0,
     ...o,
   };
 }
 
-const card = (
-  s: Session,
-  roles: CardRoles = ROLES,
-  mcp?: McpSessionBadge,
-  mcpLink?: CardMcpStatus | null,
-) =>
-  renderToStaticMarkup(
-    createElement(SessionCard, {
-      session: s,
-      agentLabel: 'claude',
-      resolvedIcon: { type: 'kind', kind: 'claude' },
-      active: false,
-      onSelect: noop,
-      onKill: noop,
-      onRename: noop,
-      onRelaunch: noop,
-      onSnooze: noop,
-      editing: false,
+const ROW: AgentRowModel = {
+  depth: 0,
+  state: 'idle',
+  effectiveState: 'idle',
+  stateSince: NOW - 3 * 60_000,
+  childIds: [],
+  descendantCount: 0,
+  childState: null,
+  folded: false,
+};
+
+function row(
+  o: {
+    s?: Partial<Session>;
+    row?: Partial<AgentRowModel>;
+    selected?: boolean;
+    pinned?: boolean;
+    space?: string;
+    editing?: boolean;
+    guides?: boolean[];
+    lastChild?: boolean;
+  } = {},
+) {
+  return renderToStaticMarkup(
+    createElement(AgentRow, {
+      session: session(o.s),
+      row: { ...ROW, ...o.row },
+      icon: { type: 'kind', kind: 'claude' },
+      label: 'api fix, Idle',
+      tooltip: 'api fix\nIdle',
+      space: o.space,
+      now: NOW,
+      selected: o.selected ?? false,
+      tabbable: true,
+      pinned: o.pinned ?? false,
+      guides: o.guides ?? [],
+      lastChild: o.lastChild ?? true,
+      editing: o.editing ?? false,
       onEditStart: noop,
       onEditEnd: noop,
-      roles,
-      mcp,
-      mcpLink,
+      onRename: noop,
+      onSelect: noop,
+      onPin: noop,
+      onClose: noop,
+      onRelaunch: noop,
+      onFold: noop,
     }),
   );
+}
 
-describe('SessionCard (9b)', () => {
-  it('idle card: glyph, name, agent subtitle by default, pill "Idle", no age/meter/diffstat', () => {
-    const html = card(session());
-    expect(html).toContain('session--idle');
-    expect(html).toContain('session__icon');
-    expect(html).toContain('>api fix<');
-    expect(html).toContain('session__metaitem">claude<');
-    expect(html).toContain('session__state">Idle');
-    expect(html).not.toContain('session__age');
-    expect(html).not.toContain('session__meter');
-    expect(html).not.toContain('session__diffstat');
-    expect(html).not.toContain('Edit src/main.ts');
+const attr = (html: string, name: string) => new RegExp(`${name}="([^"]*)"`).exec(html)?.[1];
+
+describe('AgentRow — the selector contract', () => {
+  it('is a .session treeitem keyed by data-sessionid with level, selection and label', () => {
+    const html = row();
+    expect(html).toMatch(/^<div class="session session--root"/);
+    expect(attr(html, 'role')).toBe('treeitem');
+    expect(attr(html, 'data-sessionid')).toBe('s1');
+    // Level 1 is the group header of the flat tree.
+    expect(attr(html, 'aria-level')).toBe('2');
+    expect(attr(html, 'aria-selected')).toBe('false');
+    expect(attr(html, 'aria-label')).toBe('api fix, Idle');
+    expect(html).not.toContain('aria-expanded');
   });
 
-  it('busy card has no meter', () => {
-    const html = card(session({ busy: true }));
-    expect(html).toContain('session__state">Busy');
-    expect(html).not.toContain('session__meter');
-    expect(html).not.toContain('progressbar');
+  it('a child is one level deeper and carries the child class', () => {
+    const html = row({ row: { depth: 2 } });
+    expect(html).toContain('session session--child');
+    expect(attr(html, 'aria-level')).toBe('4');
   });
 
-  it('× is labelled Close session', () => {
-    const html = card(session());
-    const kill = html.match(/<button[^>]*class="session__kill"[^>]*>/)?.[0] ?? '';
-    expect(kill).toContain('aria-label="Close session"');
-    expect(kill).toContain('title="Close session"');
-    expect(html).not.toContain('✕');
+  it('the select button is labelled Go to and holds the name; no button nests in a button', () => {
+    const html = row();
+    expect(html).toMatch(
+      /<button type="button" class="session__select" data-agent-action="select" aria-label="Go to api fix" tabindex="-1">/,
+    );
+    expect(html).toContain('<span class="session__name">api fix</span>');
+    expect(html).not.toMatch(/<button[^>]*>(?:(?!<\/button>).)*<button/s);
   });
 
-  it('attention card shows Go to and Snooze', () => {
-    const html = card(session({ needsAttention: true }));
-    expect(html).toContain('session__state">Needs you');
-    expect(html).toContain('>Go to<');
-    expect(html).toContain('>Snooze<');
+  it('pin, close and relaunch carry their actions and labels', () => {
+    const stale = row({ s: { status: 'stale' } });
+    expect(stale).toMatch(/data-agent-action="relaunch" aria-label="Relaunch api fix"/);
+    expect(stale).toMatch(/data-agent-action="pin" aria-label="Pin to top"/);
+    expect(stale).toMatch(
+      /class="session__kill" data-agent-action="close" aria-label="Close api fix"/,
+    );
+    expect(row({ pinned: true })).toMatch(/data-agent-action="pin" aria-label="Unpin"/);
+    // Running, or a home that is gone, offers no relaunch.
+    expect(row()).not.toContain('data-agent-action="relaunch"');
+    expect(row({ s: { status: 'stale', homeMissing: true } })).not.toContain('session__relaunch');
   });
 
-  it('stale card shows ↻', () => {
-    const html = card(session({ status: 'stale' }));
-    expect(html).toContain('session__state">Stale');
-    expect(html).toContain('session__relaunch');
-    expect(html).toContain('↻');
-    expect(card(session())).not.toContain('session__relaunch');
+  it('a row with children has a fold control and aria-expanded on both', () => {
+    const open = row({ row: { childIds: ['c'], descendantCount: 1, childState: 'working' } });
+    expect(attr(open, 'aria-expanded')).toBe('true');
+    expect(open).toMatch(
+      /data-agent-action="fold" aria-expanded="true" aria-label="Hide sub-agents"/,
+    );
+    const folded = row({
+      row: { childIds: ['c'], descendantCount: 3, childState: 'blocked', folded: true },
+    });
+    expect(attr(folded, 'aria-expanded')).toBe('false');
+    expect(folded).toMatch(/aria-label="Show sub-agents" title="3 hidden sub-agents"/);
+    expect(folded).toContain('<span class="session__kids session__kids--blocked">3</span>');
   });
 
-  it(`can't-start card shows the "Can't start" pill and no ↻`, () => {
-    for (const status of ['stale', 'exited'] as const) {
-      const html = card(session({ status, homeMissing: true }));
-      expect(html, status).toContain('session__state">Can&#x27;t start');
-      expect(html, status).toContain('session--cantStart');
-      expect(html, status).not.toContain('session__relaunch');
+  it('shows the Space only when given, and the own age', () => {
+    expect(row({ space: 'Conduit' })).toContain('<span class="session__space"> · Conduit</span>');
+    expect(row()).not.toContain('session__space');
+    expect(row()).toContain('<span class="session__age" aria-hidden="true">3m</span>');
+  });
+
+  it('selection and attention are distinct classes, and selection wins outright', () => {
+    expect(row({ selected: true })).toContain('session--active');
+    expect(attr(row({ selected: true }), 'aria-selected')).toBe('true');
+    expect(row({ row: { effectiveState: 'blocked' } })).toContain('session--attention');
+    const both = row({ selected: true, row: { effectiveState: 'blocked' } });
+    expect(both).toContain('session--active');
+    expect(both).not.toContain('session--attention');
+  });
+
+  it('renaming swaps the select button for the .session__edit input', () => {
+    const html = row({ editing: true });
+    expect(html).toContain('class="session__edit"');
+    expect(html).not.toContain('data-agent-action="select"');
+    expect(html).not.toContain('session__kill');
+  });
+
+  it('draws a guide per continuing ancestor level and an elbow into a child', () => {
+    const html = row({ row: { depth: 2 }, guides: [true], lastChild: false });
+    expect(html.match(/session__guide/g)).toHaveLength(1);
+    expect(html).toContain('session__elbow session__elbow--through');
+    expect(row({ row: { depth: 1 } })).toContain('class="session__elbow"');
+    expect(row()).not.toContain('session__elbow');
+  });
+});
+
+describe('AgentMark', () => {
+  it('Working spins; every other state is a dot with its own modifier and tooltip', () => {
+    const working = renderToStaticMarkup(createElement(AgentMark, { state: 'working' }));
+    expect(working).toContain('agentmark__spin');
+    expect(working).toContain('title="Working"');
+    for (const state of ['blocked', 'done', 'idle', 'stopped'] as const) {
+      const html = renderToStaticMarkup(createElement(AgentMark, { state }));
+      expect(html, state).toContain(`agentmark__dot agentmark__dot--${state}`);
     }
-  });
-
-  it(`a can't-start card is dimmed and its pill unfilled, exactly like a stale one`, () => {
-    const css = readFileSync(join(__dirname, '../../webview/styles.css'), 'utf8');
-    expect(css).toMatch(/\.session--stale,\s*\.session--cantStart\s*\{\s*opacity:\s*0\.72;/);
-    expect(css).toMatch(
-      /\.session--stale:hover,\s*\.session--cantStart:hover\s*\{\s*opacity:\s*1;/,
+    expect(renderToStaticMarkup(createElement(AgentMark, { state: 'done' }))).toContain(
+      'title="Done, not seen yet"',
     );
-    expect(css).toMatch(
-      /\.session--stale \.session__state,\s*\.session--cantStart \.session__state\s*\{\s*background:\s*transparent;/,
-    );
-  });
-
-  it('review card shows the Review pill and no diffstat button', () => {
-    const html = card(
-      session({
-        completedRun: true,
-        repoGit: {
-          'G:/work/api': { kind: 'branch', branch: 'main', dirty: true },
-        },
-      }),
-    );
-    expect(html).toContain('session__state">Review');
-    expect(html).not.toContain('session__diffstat');
-    expect(html).not.toContain('Review changes');
-  });
-
-  it('three columns: glyph | name with the subtitle directly under it | pill (10a)', () => {
-    const html = card(session({ busy: true }));
-    const glyph = html.indexOf('class="session__icon"');
-    const text = html.indexOf('class="session__text"');
-    const side = html.indexOf('class="session__side"');
-    expect(glyph).toBeGreaterThan(-1);
-    expect(text).toBeGreaterThan(glyph);
-    expect(side).toBeGreaterThan(text);
-    const textCol = html.slice(text, side);
-    expect(textCol).toMatch(/session__name[\s\S]*session__metaitem">claude</);
-    expect(textCol).not.toContain('session__state');
-    expect(html.slice(side)).toContain('session__state">Busy');
   });
 });
 
-/** Comments blanked so prose can't be read as a declaration. */
-const CSS = readFileSync(join(__dirname, '..', '..', 'webview', 'styles.css'), 'utf8').replace(
-  /\/\*[\s\S]*?\*\//g,
-  ' ',
-);
-const ruleBody = (selector: string) =>
-  [...CSS.matchAll(/([^{}]*)\{([^{}]*)\}/g)].find((m) => m[1].trim() === selector)?.[2] ?? '';
-
-describe('session card surface (10a)', () => {
-  it('every card at rest is a drawn surface: raised fill, hairline edge, card radius', () => {
-    const body = ruleBody('.session');
-    expect(body).toMatch(/background:\s*var\(--raise\)/);
-    expect(body).toMatch(/--notch-line:\s*var\(--border\)/);
-    expect(body).toMatch(/border-radius:\s*var\(--r-card\)/);
-  });
-
-  it('selected is an accent edge on the same surface, not a wash', () => {
-    const body = ruleBody('.session--active');
-    expect(body).toMatch(/--notch-line:\s*var\(--accent\)/);
-    expect(body).not.toMatch(/background:\s*var\(--state-sel-bg\)/);
-  });
-});
-
-describe('SessionCardPreview', () => {
-  it('SessionCardPreview renders a session__state pill and the agent line for roles {name, agent, none}', () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionCardPreview, {
-        roles: { title: 'name', subtitle: 'agent', detail: 'none' },
-      }),
-    );
+describe('AgentRowPreview', () => {
+  it('is a real, inert, selected agent row', () => {
+    const html = renderToStaticMarkup(createElement(AgentRowPreview));
     expect(html).toMatch(/^<div class="cardcfg__card" inert="">/);
     expect(html).toContain('session--active');
-    expect(html).toContain('>Portfolio Redesign<');
-    expect(html).toContain('session__metaitem">PowerShell 7<');
-    expect(html).toContain('session__state">Idle');
-    expect(html).toContain('session__icon');
-    expect(html).not.toContain('session__meter');
-    expect(html).not.toContain('session__path');
-  });
-
-  it('follows the roles it is given', () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionCardPreview, {
-        roles: { title: 'folder', subtitle: 'live', detail: 'worktree' },
-      }),
-    );
-    expect(html).toContain('>nextjs-portfolio<');
-    expect(html).toContain('session__metaitem">Edit webview/styles.css<');
-    expect(html).toContain('session__path');
-    expect(html).toContain('feature/auth');
+    expect(html).toContain('Portfolio Redesign');
+    expect(html).toContain('agentmark__spin');
   });
 });
 
-describe('SessionCard messaging badge (conduit-mcp §8)', () => {
-  const mcp = (o: Partial<McpSessionBadge> = {}): McpSessionBadge => ({
-    handle: 'claude-1',
-    unread: 0,
-    urgent: 0,
-    paused: false,
-    unavailable: null,
-    connected: true,
-    gate: 'open',
-    ...o,
-  });
-  const srText = (html: string) =>
-    [...html.matchAll(/<span class="sr-only">([^<]*)<\/span>/g)].map((m) => m[1]);
+const CSS = readFileSync(join(__dirname, '..', '..', 'webview', 'styles.css'), 'utf8');
+const rule = (selector: string) => {
+  const at = CSS.indexOf(`\n${selector} {`);
+  expect(at, selector).toBeGreaterThan(-1);
+  return CSS.slice(at, CSS.indexOf('}', at));
+};
 
-  // Each sr-only part leads with ", " so the row's text reads as separate phrases (top-bar's
-  // attnchip__reason precedent).
-  it('unread count in the accessible text', () => {
-    const html = card(session(), ROLES, mcp({ unread: 3 }));
-    expect(html).toContain('session__mcp');
-    expect(srText(html)).toContain(', 3 unread messages');
-    expect(html).not.toContain('session__mcp--urgent');
-  });
-
-  it('urgent shows icon + word', () => {
-    const html = card(session(), ROLES, mcp({ unread: 2, urgent: 1 }));
-    expect(html).toContain('session__mcp session__mcp--urgent');
-    expect(html).toContain('session__mcp-word">Urgent<');
-    expect(html).toMatch(/session__mcp--urgent[^>]*><svg/);
-    expect(srText(html)).toContain(', 2 unread messages, 1 urgent message');
+describe('agent row CSS', () => {
+  it('defines the row, elbow and tile tokens it reads, per density and per theme', () => {
+    const block = (head: string) => {
+      const at = CSS.indexOf(head);
+      expect(at, head).toBeGreaterThan(-1);
+      return CSS.slice(at, CSS.indexOf('\n}', at));
+    };
+    const compact = block(':root[data-density="compact"] {');
+    const neon = block(':root[data-theme="neon"] {');
+    expect(CSS).toContain('\n  --density-agent-row-h: 30px;');
+    expect(CSS).toContain('\n  --density-agent-child-h: 26px;');
+    expect(compact).toContain('--density-agent-row-h: 26px;');
+    expect(compact).not.toContain('--density-agent-child-h');
+    expect(CSS).toContain('\n  --r-space-tile: 5px;');
+    expect(CSS).toContain('\n  --r-tree-elbow: 6px;');
+    expect(neon).toContain('--r-space-tile: 0px;');
+    expect(neon).toContain('--r-tree-elbow: 0px;');
   });
 
-  it('paused glyph labelled', () => {
-    const html = card(session(), ROLES, mcp({ paused: true }));
-    expect(html).toContain('session__mcp-paused');
-    expect(srText(html)).toContain(', Notices paused');
+  it('rows and Spaces take their heights from density, never a theme block', () => {
+    expect(rule('.session')).toContain('height: var(--density-agent-row-h)');
+    expect(rule('.session--child')).toContain('height: var(--density-agent-child-h)');
+    expect(rule('.space')).toContain('height: var(--density-agent-row-h)');
+    const themed = [...CSS.matchAll(/([^{}]*)\{([^}]*)\}/g)].filter(
+      ([, sel, body]) =>
+        sel.includes('[data-theme') &&
+        !sel.includes('.chamfer') &&
+        /\.(session|space)\b/.test(sel) &&
+        /(^|[\s;])height:/.test(body),
+    );
+    expect(themed.map(([, sel]) => sel.trim())).toEqual([]);
   });
 
-  it('the subtitle names the handle, so a chip naming it maps to this card', () => {
-    const html = card(session(), ROLES, mcp({ handle: 'claude-1' }));
-    expect(html).toContain('session__metaitem">claude · claude-1<');
-    expect(html).toContain('session__meta" title="claude · claude-1"');
-    const bare = card(session(), { ...ROLES, subtitle: 'none' }, mcp({ handle: 'fake-2' }));
-    expect(bare).toContain('session__metaitem">fake-2<');
-    expect(card(session())).toContain('session__metaitem">claude<');
+  it('flat at rest, selection is the selection fill and accent edge', () => {
+    expect(rule('.session')).toContain('background: transparent');
+    expect(rule('.session--active')).toContain('--notch-line: var(--accent)');
+    expect(rule('.session--active')).toContain('background: var(--state-sel-bg)');
   });
 
-  it('unavailable tooltip "Messaging unavailable: …"', () => {
-    const html = card(session(), ROLES, mcp({ unavailable: 'endpoint-down', gate: null }));
-    expect(html).toMatch(/data-sessionid="s1" title="Messaging unavailable: [^"]+"/);
+  it('Neon chamfers only selected and attention rows', () => {
+    const chamfer = CSS.slice(CSS.indexOf('the Neon chamfer'), CSS.indexOf('Neon shell:'));
+    expect(chamfer).not.toMatch(/[(,\s]\.session[,\s)]/);
+    expect(chamfer).toContain('.session--active');
+    expect(chamfer).toContain('.session--attention');
   });
 
-  it('gate reason tooltip, e.g. "Notices held: prompt on screen"', () => {
-    const html = card(session(), ROLES, mcp({ gate: 'blocking-prompt' }));
-    expect(html).toContain('title="Notices held: prompt on screen"');
-    expect(card(session(), ROLES, mcp({ gate: 'open' }))).not.toMatch(/data-sessionid="s1" title=/);
-  });
-
-  it('an MCP-opened session names its opener in the tooltip, after the gate reason', () => {
-    const opened = session({ openedBy: { handle: 'codex-2', sessionId: 's9' } });
-    expect(card(opened)).toMatch(/data-sessionid="s1" title="Opened by codex-2"/);
-    expect(card(opened, ROLES, mcp({ gate: 'blocking-prompt' }))).toContain(
-      'title="Notices held: prompt on screen\nOpened by codex-2"',
+  it('reduced motion stills the Working spinner', () => {
+    expect(CSS).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{\s*\.agentmark__spin \{\s*animation: none;/,
     );
   });
 
-  it('no badge without mcp', () => {
-    const html = card(session());
-    expect(html).not.toContain('session__mcp');
-    expect(html).not.toMatch(/data-sessionid="s1" title=/);
-  });
-});
-
-describe('SessionCard connection indicator (mcp-install §2.4, §9)', () => {
-  // Each glyph is told apart by a path fragment unique to it; icons carry no name attribute.
-  const PLUG = 'M8 14.7v-3.4';
-  const UNPLUG = 'M12.7 3.3l2-2';
-  const indicator = (html: string) =>
-    html.match(/<span class="session__mcp-link"[^>]*>/)?.[0] ?? '';
-
-  it('connected renders Plug with tooltip "Connected to Conduit as claude-3"', () => {
-    const html = card(session(), ROLES, undefined, { kind: 'connected', handle: 'claude-3' });
-    expect(indicator(html)).toContain('title="Connected to Conduit as claude-3"');
-    expect(html).toContain(PLUG);
-    expect(html).not.toContain(UNPLUG);
-  });
-
-  it('not-connected renders Unplug; installed → restart copy, else install copy', () => {
-    const nc = (install: 'installed' | 'not-installed'): CardMcpStatus => ({
-      kind: 'not-connected',
-      cli: 'codex',
-      install,
-    });
-    const installed = card(session(), ROLES, undefined, nc('installed'));
-    expect(installed).toContain(UNPLUG);
-    expect(installed).not.toContain(PLUG);
-    expect(indicator(installed)).toContain('Restart it in this terminal');
-    expect(indicator(card(session(), ROLES, undefined, nc('not-installed')))).toContain(
-      'install Conduit for Codex in Settings',
-    );
-  });
-
-  it('the indicator is role img with an aria-label and is not focusable', () => {
-    const tag = indicator(
-      card(session(), ROLES, undefined, { kind: 'connected', handle: 'claude-3' }),
-    );
-    expect(tag).toContain('role="img"');
-    expect(tag).toContain('aria-label="Connected to Conduit as claude-3"');
-    expect(tag).not.toContain('tabindex');
-  });
-
-  it('renders nothing without a status', () => {
-    expect(card(session(), ROLES, undefined, null)).not.toContain('session__mcp-link');
+  it('the old card surfaces are gone', () => {
+    for (const gone of [
+      '.session__state',
+      '.session__meta',
+      '.session__ask',
+      '.session__btn',
+      '.session__timer',
+      '.session__mcp',
+      '.sidebar__update',
+      '.proj__add',
+    ])
+      expect(CSS, gone).not.toContain(`\n${gone} {`);
   });
 });

@@ -3,15 +3,23 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { WebviewToHost } from '../../src/protocol';
+import { defaultSidebarUi } from '../../src/sidebar-state';
 import type { Project, Session } from '../../src/types';
 import type { ConfirmState } from '../../webview/components/confirm-dialog';
 import { Sidebar } from '../../webview/components/sidebar';
-import { SettingsProvider } from '../../webview/settings';
+import { SidebarTreeProvider } from '../../webview/sidebar-tree-state';
 
 const posted = vi.hoisted((): WebviewToHost[] => []);
+const requests = vi.hoisted(() => [] as unknown[]);
 vi.mock('../../webview/bridge', async (orig) => ({
   ...(await orig<typeof import('../../webview/bridge')>()),
   post: (m: WebviewToHost) => posted.push(m),
+}));
+vi.mock('../../webview/host-request', () => ({
+  requestHost: (build: (id: number) => unknown) => {
+    requests.push(build(7));
+    return Promise.resolve(null);
+  },
 }));
 
 beforeAll(() => {
@@ -32,6 +40,7 @@ afterEach(async () => {
   root = null;
   document.body.innerHTML = '';
   posted.length = 0;
+  requests.length = 0;
 });
 
 const projects: Project[] = [
@@ -39,7 +48,7 @@ const projects: Project[] = [
   { id: 'p-b', name: 'Beta', order: 1 },
 ];
 
-function session(id: string, projectId: string): Session {
+function session(id: string, projectId?: string): Session {
   return {
     id,
     name: id,
@@ -55,103 +64,178 @@ function session(id: string, projectId: string): Session {
 
 const noop = () => {};
 
-async function render(onConfirm: (c: ConfirmState) => void) {
+async function render(
+  o: {
+    onConfirm?: (c: ConfirmState) => void;
+    onNewInProject?: (id: string | null) => void;
+    onOpenBoard?: (id: string) => void;
+    onCloseAll?: () => void;
+  } = {},
+) {
   const host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
   await act(async () => {
     root?.render(
       createElement(
-        SettingsProvider,
-        null,
+        SidebarTreeProvider,
+        {
+          value: {
+            ui: defaultSidebarUi(),
+            runtime: { seen: {}, stateSince: {} },
+            askSessionIds: new Set<string>(),
+            bindings: {},
+            lastFocusedId: undefined,
+            filterRequest: 0,
+            requestFilter: noop,
+            updateUi: noop,
+            reportVisibleIds: noop,
+          },
+        },
         createElement(Sidebar, {
-          sessions: [session('s1', 'p-a'), session('s2', 'p-b')],
+          sessions: [session('s1', 'p-a'), session('s2', 'p-b'), session('s3')],
           projects,
           windowCount: 1,
-          onNewInProject: noop,
-          onOpenBoard: noop,
-          onConfirm,
+          onNewInProject: o.onNewInProject ?? noop,
+          onOpenBoard: o.onOpenBoard ?? noop,
+          onConfirm: o.onConfirm ?? noop,
           agents: [],
           activeId: undefined,
           onSelect: noop,
           onNew: noop,
           onKill: noop,
-          onCloseAll: noop,
+          onCloseAll: o.onCloseAll ?? noop,
           onCloseAllStale: noop,
           onRename: noop,
           onRelaunch: noop,
           onOpenSettings: noop,
-          onSnooze: noop,
           mcpBadges: {},
           mcpNotConnected: {},
           mcpEnabled: false,
           onSetRenaming: noop,
-          onReorderSessions: noop,
         }),
       ),
     );
   });
 }
 
-const lastPersisted = () =>
-  posted.filter((m) => m.type === 'updateSettings').at(-1) as
-    | Extract<WebviewToHost, { type: 'updateSettings' }>
-    | undefined;
+const space = (id: string) =>
+  document.querySelector(`button[data-space-id="${id}"]`) as HTMLElement;
+const menuLabels = () =>
+  [...document.querySelectorAll<HTMLElement>('.ctxmenu__item')].map((el) => el.textContent);
+const menuItem = (label: string) =>
+  [...document.querySelectorAll<HTMLElement>('.ctxmenu__item')].find(
+    (el) => el.textContent === label,
+  );
+async function contextMenu(el: Element) {
+  await act(async () => {
+    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  });
+}
 
-describe('Sidebar: Delete project', () => {
-  it('confirming the delete prunes the id from collapsedProjects and keeps the others', async () => {
-    vi.useFakeTimers();
-    try {
-      let confirm: ConfirmState | undefined;
-      await render((c) => {
+describe('Sidebar: Space menus', () => {
+  it('a Space offers New agent in Space, Open board, Rename and Delete', async () => {
+    const onNewInProject = vi.fn();
+    const onOpenBoard = vi.fn();
+    await render({ onNewInProject, onOpenBoard });
+    await contextMenu(space('p-a'));
+    expect(menuLabels()).toEqual(['New agent in space', 'Open board', 'Rename…', 'Delete space…']);
+    await act(async () => menuItem('New agent in space')?.click());
+    expect(onNewInProject).toHaveBeenCalledWith('p-a');
+    await contextMenu(space('p-a'));
+    await act(async () => menuItem('Open board')?.click());
+    expect(onOpenBoard).toHaveBeenCalledWith('s1');
+  });
+
+  it('confirming Delete space posts the delete with the Space copy', async () => {
+    let confirm: ConfirmState | undefined;
+    await render({
+      onConfirm: (c) => {
         confirm = c;
-      });
-      for (const name of ['Alpha', 'Beta']) {
-        const chevron = document.querySelector(`button[aria-label="Collapse ${name}"]`);
-        await act(async () => (chevron as HTMLButtonElement).click());
-      }
-      await act(async () => vi.advanceTimersByTime(300));
-      expect(lastPersisted()?.settings.collapsedProjects).toEqual(['p-a', 'p-b']);
+      },
+    });
+    await contextMenu(space('p-a'));
+    await act(async () => menuItem('Delete space…')?.click());
+    expect(confirm?.confirmLabel).toBe('Delete space');
+    expect(confirm?.danger).toBe(true);
+    await act(async () => confirm?.onConfirm());
+    expect(posted).toContainEqual({ type: 'project:delete', id: 'p-a' });
+  });
 
-      const header = document.querySelector('button[aria-label="Expand Alpha"]')?.parentElement;
-      await act(async () => {
-        header?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-      });
-      const del = [...document.querySelectorAll<HTMLElement>('.ctxmenu__item')].find((el) =>
-        el.textContent?.includes('Delete project'),
-      );
-      await act(async () => del?.click());
-      expect(confirm?.confirmLabel).toBe('Delete project');
-      await act(async () => confirm?.onConfirm());
-      await act(async () => vi.advanceTimersByTime(300));
+  it('Rename… opens the inline input; Enter posts the rename', async () => {
+    await render();
+    await contextMenu(space('p-b'));
+    await act(async () => menuItem('Rename…')?.click());
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Rename Beta"]');
+    expect(input).not.toBeNull();
+    if (!input) return;
+    input.value = 'Beta 2';
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(posted).toContainEqual({ type: 'project:rename', id: 'p-b', name: 'Beta 2' });
+  });
 
-      expect(posted).toContainEqual({ type: 'project:delete', id: 'p-a' });
-      expect(lastPersisted()?.settings.collapsedProjects).toEqual(['p-b']);
-    } finally {
-      vi.useRealTimers();
-    }
+  it('No space offers New agent without a Space', async () => {
+    const onNewInProject = vi.fn();
+    await render({ onNewInProject });
+    await contextMenu(space('no-space'));
+    expect(menuLabels()).toEqual(['New agent without a space']);
+    await act(async () => menuItem('New agent without a space')?.click());
+    expect(onNewInProject).toHaveBeenCalledWith(null);
   });
 });
 
-describe('Sidebar: sort button aria-expanded', () => {
-  it('reads its own menu only — a header menu open is not the sort menu open', async () => {
-    await render(noop);
-    const sortBtn = () =>
-      document.querySelector<HTMLButtonElement>('button[aria-label="Sort & filter sessions"]');
-    expect(sortBtn()?.getAttribute('aria-expanded')).toBe('false');
+describe('Sidebar: pane menu', () => {
+  it('empty list space offers New agent and the bulk closes', async () => {
+    const onCloseAll = vi.fn();
+    await render({ onCloseAll });
+    await contextMenu(document.querySelector('.sidebar__scroll') as Element);
+    expect(menuLabels()).toEqual(['New agent', 'Close all sessions', 'Close all stale sessions']);
+    await act(async () => menuItem('Close all sessions')?.click());
+    expect(onCloseAll).toHaveBeenCalledTimes(1);
+  });
 
-    const header = document.querySelector('button[aria-label="Collapse Alpha"]')?.parentElement;
-    await act(async () => {
-      header?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    });
-    expect(document.querySelector('.ctxmenu')).not.toBeNull();
-    expect(sortBtn()?.getAttribute('aria-expanded')).toBe('false');
+  it('the sort and group-by-project controls are gone', async () => {
+    await render();
+    expect(document.querySelector('button[aria-label="Sort & filter sessions"]')).toBeNull();
+    expect(document.querySelector('.proj__add')).toBeNull();
+  });
+});
 
+describe('Sidebar: drag a row onto a Space', () => {
+  const drag = async (el: Element, type: string) => {
+    const ev = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, 'dataTransfer', { value: { effectAllowed: '' } });
     await act(async () => {
-      sortBtn()?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-      sortBtn()?.click();
+      el.dispatchEvent(ev);
     });
-    expect(document.querySelector('.ctxmenu')?.textContent).toContain('Close all sessions');
-    expect(sortBtn()?.getAttribute('aria-expanded')).toBe('true');
+    return ev;
+  };
+
+  it('moves only that session; its own Space and All refuse the drop', async () => {
+    await render();
+    const row = document.querySelector('.session[data-sessionid="s1"]') as Element;
+    await drag(row, 'dragstart');
+    expect((await drag(space('all'), 'dragover')).defaultPrevented).toBe(false);
+    expect((await drag(space('p-a'), 'dragover')).defaultPrevented).toBe(false);
+    const over = await drag(space('p-b'), 'dragover');
+    expect(over.defaultPrevented).toBe(true);
+    expect(space('p-b').className).toContain('space--drop');
+    await drag(space('p-b'), 'drop');
+    expect(requests).toEqual([
+      { type: 'session:setProject', sessionId: 's1', projectId: 'p-b', requestId: 7 },
+    ]);
+    expect(space('p-b').className).not.toContain('space--drop');
+  });
+
+  it('No space takes a session out of its Space', async () => {
+    await render();
+    await drag(document.querySelector('.session[data-sessionid="s2"]') as Element, 'dragstart');
+    await drag(space('no-space'), 'dragover');
+    await drag(space('no-space'), 'drop');
+    expect(requests).toEqual([
+      { type: 'session:setProject', sessionId: 's2', projectId: null, requestId: 7 },
+    ]);
   });
 });

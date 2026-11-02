@@ -103,6 +103,10 @@
      three rules already asked for by name — it was never defined, so their `var(--r-md, 8px)`
      fallback always won and those corners stayed round in Neon. */
   --r-md: 8px;
+  /* A Space's letter tile and the agent tree's connector elbow: small corners that still square
+     off in Neon (sidebar-agent-tree spec §10). */
+  --r-space-tile: 5px;
+  --r-tree-elbow: 6px;
   /* Fully-round controls — anything drawn as a pill. A step of its own because a pill is not
      --r-ctl's 13px at any height, but it still has to square off in Neon, so it belongs on
      the shape axis rather than being written as a literal 999px. A pill nested in a pill (the
@@ -404,6 +408,8 @@
      straight to border-radius, where a bare 0 is legal. */
   --r-badge: 0px;
   --r-md: 0px;
+  --r-space-tile: 0px;
+  --r-tree-elbow: 0px;
   --r-round: 0px;
   /* Units matter: these are read inside calc() by the fixed board/canvas overlays, and a
      unitless 0 there invalidates the whole declaration. */
@@ -519,14 +525,35 @@
 [data-theme="neon"] :is(.btn, .chamfer--sm, .term-follow) {
   --notch: var(--notch-sm);
 }
-[data-theme="neon"] :is(.chamfer, .chamfer--sm, .session, .modal, .btn, .rcard) {
+[data-theme="neon"]
+  :is(
+    .chamfer,
+    .chamfer--sm,
+    .session--active,
+    .session--attention,
+    .space--on,
+    .modal,
+    .btn,
+    .rcard
+  ) {
   position: relative;
 }
 /* .term-follow rides with .ctxmenu here and NOT in the position:relative rule above: both
    are absolutely positioned against their own container, and re-pointing them at relative
    would drop them out of that placement. */
 [data-theme="neon"]
-:is(.chamfer, .chamfer--sm, .session, .modal, .btn, .ctxmenu, .rcard, .term-follow) {
+:is(
+  .chamfer,
+  .chamfer--sm,
+  .session--active,
+  .session--attention,
+  .space--on,
+  .modal,
+  .btn,
+  .ctxmenu,
+  .rcard,
+  .term-follow
+) {
   clip-path: polygon(
     0 0,
     100% 0,
@@ -536,7 +563,18 @@
   );
 }
 [data-theme="neon"]
-  :is(.chamfer, .chamfer--sm, .session, .modal, .btn, .ctxmenu, .rcard, .term-follow)::after {
+  :is(
+    .chamfer,
+    .chamfer--sm,
+    .session--active,
+    .session--attention,
+    .space--on,
+    .modal,
+    .btn,
+    .ctxmenu,
+    .rcard,
+    .term-follow
+  )::after {
   content: "";
   position: absolute;
   /* Half the bar's thickness measured along the box axes: the diagonal runs at 45°, so an
@@ -971,13 +1009,10 @@ body.resizing .panel__resize::after {
   --density-topctl-h: 30px; /* topbar controls: view switcher, omnibar, attention chip */
   --density-tab-inset: 3px; /* breathing room above/below a doc tab inside the tab row */
   --density-crumb-h: 32px; /* breadcrumb / diff-controls band INSIDE the doc panel */
-  --density-row-pad-v: 8px; /* session row vertical padding */
-  --density-row-pad-h: 12px; /* session row horizontal padding */
-  --density-row-gap: 9px; /* session row icon gap */
-  --density-card-gap: 6px; /* session card: name row -> live line -> state footer */
+  --density-agent-row-h: 30px; /* agent tree root row and Space row */
+  --density-agent-child-h: 26px; /* agent tree sub-agent row, at every density */
   --density-item-pad-v: 7px; /* cust/list item vertical padding */
   --density-item-pad-h: 8px; /* cust/list item horizontal padding */
-  --density-sidebar-head-pad: 14px 14px 10px;
   --density-rtabs-pad: 12px 16px 0;
   --density-rtab-pad: 4px 0 10px;
   --density-btn-pad: 6px 14px; /* the parts sheet's button box (5c/5f) */
@@ -1024,13 +1059,9 @@ body.resizing .panel__resize::after {
   --density-topctl-h: 25px;
   --density-tab-inset: 2px;
   --density-crumb-h: 26px;
-  --density-row-pad-v: 4px;
-  --density-row-pad-h: 7px;
-  --density-row-gap: 7px;
-  --density-card-gap: 4px;
+  --density-agent-row-h: 26px;
   --density-item-pad-v: 3px;
   --density-item-pad-h: 7px;
-  --density-sidebar-head-pad: 8px 10px 6px;
   --density-rtabs-pad: 6px 12px 0;
   --density-rtab-pad: 2px 0 6px;
   --density-btn-pad: 4px 11px;
@@ -1420,17 +1451,16 @@ body.resizing .panel__resize::after {
   user-select: none;
 }
 
+/* The Spaces and Agents bands. Their dividers belong to the Spaces list between them
+   (.spaces), so the Spaces band sits between the same two lines as the editor tabs — the panel
+   is barless and this band IS its top bar and drag surface. */
 .sidebar__head {
   display: flex;
   align-items: center;
   gap: 8px;
   flex: 0 0 auto;
-  /* Match the center tab strip's height + bottom border so the "SESSIONS Â·Â·Â· +" band
-     sits between the same two dividers as the editor tabs (the panel is rendered
-     barless — this header IS the panel's top bar / drag surface). */
   height: var(--density-tabbar-h);
   padding: 0 6px 0 14px;
-  border-bottom: 1px solid var(--border);
 }
 .sidebar__head[draggable="true"]:hover {
   cursor: grab;
@@ -2249,57 +2279,146 @@ body.resizing .panel__resize::after {
 .sidebar__scroll--empty {
   padding: 0;
 }
-.proj {
+/* ---------- Spaces (sidebar-agent-tree spec §3) ----------
+   A Space row is a filter button. Its tile takes a hue slot hashed from the immutable project
+   id (src/agent-tree.ts), so a rename or reorder never repaints it. */
+.spaces {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: var(--density-proj-gap);
-  margin-bottom: var(--density-proj-mb);
+  gap: 2px;
+  max-height: 40%;
+  overflow-y: auto;
+  padding: 6px 8px 8px;
+  border-block: 1px solid var(--border);
+}
+.space {
+  --space-hue: var(--text-dim);
+  --notch-line: transparent;
+  width: 100%;
+  height: var(--density-agent-row-h);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 8px;
+  border: 1px solid var(--notch-line);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: calc(12.5px * var(--font-scale));
+  text-align: start;
+  cursor: pointer;
+}
+.space--green {
+  --space-hue: var(--green);
+}
+.space--violet {
+  --space-hue: var(--violet);
+}
+.space--blue {
+  --space-hue: var(--blue);
+}
+.space--accent {
+  --space-hue: var(--accent);
+}
+.space--on {
+  --notch-line: var(--accent);
+  background: var(--state-sel-bg);
+}
+/* A row dragged over a Space files it there — an outline and a fill, so the cue is shape as
+   well as colour (mf-sidebar spec §2.8). */
+.space--drop {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.space__tile {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--r-space-tile);
+  background: color-mix(in srgb, var(--space-hue) 18%, transparent);
+  color: var(--space-hue);
+  font-size: calc(10.5px * var(--font-scale));
+  font-weight: 700;
+}
+/* Neon draws its tiles as outlines — material, not structure. */
+[data-theme="neon"] .space__tile {
+  border-color: var(--space-hue);
+}
+.space__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.space--on .space__name {
+  font-weight: 600;
+}
+/* Branch names are source text: isolated, so a right-to-left name never reorders them. */
+.space__detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 112px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: isolate;
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
+  color: var(--text-faint);
+}
+.spaces__hint {
+  margin: 2px 8px 0;
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-faint);
+}
+/* ---------- the agent tree (sidebar-agent-tree spec §4–§6) ----------
+   One flat, keyed list: group headers and rows are sibling treeitems with aria-level, so a
+   parent's box never contains its children, a click on a row is always that row, and a row
+   changing group keeps its node. Depth
+   indents the select button; connectors are drawn per row from the same three lengths. */
+.agents {
+  --agent-pad: 8px;
+  --agent-step: 22px;
+  --agent-stem: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 .proj__label {
   display: flex;
   align-items: center;
   gap: 4px;
+  width: 100%;
+  border: 0;
+  background: transparent;
   font-family: var(--font-mono);
   font-size: calc(10px * var(--font-scale));
   letter-spacing: 0.04em;
   color: var(--text-faint);
+  text-align: start;
   padding: 6px 8px 4px;
+  cursor: pointer;
 }
-.proj__label[draggable="true"] {
-  cursor: grab;
-}
-.proj__label[draggable="true"]:active {
-  cursor: grabbing;
-}
-.proj__label--dropbefore {
-  box-shadow: inset 0 2px 0 var(--accent);
-}
-/* A card dragged over another group's header files it there — an outline and a fill, so the
-   cue is shape as well as colour (mf-sidebar spec §2.8). */
-.proj__label--dropinto {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
-  border-radius: var(--r-ctl);
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
+/* Needs you's header takes the attention chip's ink: pure --amber misses 4.5:1 on a panel. */
+.proj__label--attn {
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
 }
 .proj__chevron {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  padding: 0 1px;
-  color: inherit;
-  font-size: inherit;
-  line-height: 1;
-  cursor: pointer;
   opacity: 0.7;
-  /* Separate hit target from the draggable header surface */
-  pointer-events: auto;
-}
-.proj__chevron:hover {
-  opacity: 1;
 }
 .proj__name {
   flex: 1 1 auto;
@@ -2319,167 +2438,87 @@ body.resizing .panel__resize::after {
   font: inherit;
   letter-spacing: inherit;
 }
-/* The count and the + share one cell so revealing the + never reflows the row (spec §2.2). */
-.proj__slot {
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  min-width: 20px;
-  min-height: 20px;
-}
-.proj__slot > * {
-  grid-area: 1 / 1;
-}
 .proj__count {
   font-size: calc(9.5px * var(--font-scale));
   opacity: 0.65;
 }
-.proj__add {
-  --focus-ring: var(--focus-ring-on-fill);
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-round);
-  background: var(--accent);
-  color: var(--on-accent);
-  cursor: pointer;
-  opacity: 0;
-  /* Invisible must mean untouchable — it sits on the count. */
-  pointer-events: none;
-  transition: opacity 0.12s;
-}
-.proj__label:hover .proj__add,
-.proj__label:focus-within .proj__add {
-  opacity: 1;
-  pointer-events: auto;
-}
-.proj__label:hover .proj__count,
-.proj__label:focus-within .proj__count {
-  visibility: hidden;
-}
-/* Attention rollup on a collapsed header: pulse to match the icon state */
-.proj__count--attn {
-  opacity: 1;
-  color: var(--amber);
-}
-/* ---------- the session card + the five-state status system ----------
-   Every state carries a glyph AND a word — the dot's fill/outline/dash pattern plus
-   .session__state — so no state is ever expressed by colour alone and the rail needs no
-   separate accessibility path. States are derived once, in src/session-icon.ts; the topbar's
-   aggregate chip reads that same function, so the two cannot disagree.
-
-   Theme moves only shape and material here (radius, glow, filled-vs-outlined badges);
-   every height, pad and gap below comes from a --density-* token or the font scale. */
-/* Three columns — glyph | name over subtitle | pill and row actions — so the subtitle stays
-   aligned under the name however many lines the text column has (10a). Needs-you's buttons
-   take a second row under the text. */
+/* Flat at rest; hover comes from the shared quiet ladder. Selection is the accent edge and the
+   selection fill; Needs you (own or a descendant's) is the attention wash and edge. The
+   component never renders both, so neither has to out-rank the other. */
 .session {
-  container: session-card / inline-size;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  position: relative;
+  display: flex;
   align-items: center;
-  column-gap: var(--density-row-gap);
-  row-gap: var(--density-card-gap);
-  width: 100%;
-  text-align: left;
-  background: var(--raise);
-  /* One name for the card's edge colour, so the five session states each set a single value
-     instead of repeating a border shorthand. Neon's cut corner follows on its own — it
-     inherits border-top-color (see the chamfer block). */
-  --notch-line: var(--border);
+  gap: 4px;
+  height: var(--density-agent-row-h);
+  box-sizing: border-box;
+  padding: 0 8px 0 0;
+  /* One name for the row's edge colour, so each state sets a single value. Neon's cut corner
+     follows on its own — it inherits border-top-color (see the chamfer block). */
+  --notch-line: transparent;
   border: 1px solid var(--notch-line);
-  border-radius: var(--r-card);
-  padding: var(--density-row-pad-v) var(--density-row-pad-h);
-  cursor: pointer;
-  color: inherit;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text);
   font: inherit;
-  transition:
-    background 0.12s,
-    opacity 0.12s;
 }
-/* Busy — the card is quiet; the pill and the glow carry it. */
-.session--busy {
-  --notch-line: color-mix(in srgb, var(--accent) 26%, transparent);
-  box-shadow: var(--glow-accent);
+.session--child {
+  height: var(--density-agent-child-h);
+  color: var(--text-dim);
 }
-/* Needs you — a warm card wash, not a spine: on a light ground a 2px bar is too quiet
-   (5a's note), and this is the one state that is asking for something. */
+.session--active {
+  --notch-line: var(--accent);
+  background: var(--state-sel-bg);
+  color: var(--text);
+}
 .session--attention {
-  background: color-mix(in srgb, var(--amber) 12%, var(--raise));
   --notch-line: color-mix(in srgb, var(--amber) 45%, transparent);
-  box-shadow: var(--glow-attention);
+  background: color-mix(in srgb, var(--amber) 12%, var(--raise));
+  --rest-shadow: var(--glow-attention);
 }
 .session--attention:hover {
   background: color-mix(in srgb, var(--amber) 18%, var(--raise));
 }
-/* Review — the same family one step back: it finished and left something, it isn't waiting. */
-.session--review {
-  background: color-mix(in srgb, var(--amber) 6%, var(--raise));
-  --notch-line: color-mix(in srgb, var(--amber) 28%, transparent);
-}
-.session--review:hover {
-  background: color-mix(in srgb, var(--amber) 11%, var(--raise));
-}
-/* Stale — dimmed to 72%; the dashed dot and the word carry the rest. */
-.session--stale,
-.session--cantStart {
-  opacity: 0.72;
-}
-.session--stale:hover,
-.session--cantStart:hover {
-  opacity: 1;
-}
-/* R4.4: the accent selection cue is EXCLUSIVE to the selected card, so exactly one card
-   ever reads as selected — and it comes LAST so it wins outright over whichever state edge
-   the card also carries. Selection is the edge alone (10a); the fill stays the state's. */
-.session--active {
-  --notch-line: var(--accent);
-  opacity: 1;
-}
-
-.session__text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+.session__select {
+  flex: 1 1 auto;
   min-width: 0;
-}
-.session__side {
+  align-self: stretch;
   display: flex;
   align-items: center;
-  gap: 6px;
-}
-.session__actions {
-  grid-column: 2 / -1;
-}
-/* The state glyph. --r-badge makes it a circle in Aero (9px on an 8px box) and a square
-   in Neon, so the dot follows the theme's shape axis instead of forking per theme. */
-.dot {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  box-sizing: border-box;
-  border-radius: var(--r-badge);
+  gap: 9px;
+  padding: 0 0 0 calc(var(--agent-pad) + var(--agent-depth) * var(--agent-step));
+  border: 0;
   background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: calc(12.5px * var(--font-scale));
+  text-align: start;
+  cursor: pointer;
 }
-.dot--busy {
-  background: var(--accent);
-  box-shadow: var(--glow-accent);
+.session--child .session__select {
+  gap: 8px;
+  font-size: calc(12px * var(--font-scale));
 }
-.dot--attention,
-.dot--review {
-  background: var(--amber);
-  box-shadow: var(--glow-attention);
+.session__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.dot--idle {
-  border: 1.5px solid var(--text-faint);
+.session__name {
+  font-family: var(--font-ui);
+  font-weight: 500;
 }
-.dot--stale,
-.dot--cantStart {
-  border: 1px dashed var(--text-faint);
+.session--active .session__name {
+  font-weight: 600;
+}
+.session__space {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+/* Stopped is the resting end of the list: the dashed mark carries it, the name steps back. */
+.session--stopped .session__label {
+  color: var(--text-dim);
 }
 .session__icon {
   display: flex;
@@ -2490,154 +2529,163 @@ body.resizing .panel__resize::after {
 .session--active .session__icon {
   color: var(--accent);
 }
-.session__name {
-  font-family: var(--font-ui);
-  font-weight: 600;
-  font-size: calc(12.5px * var(--font-scale));
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
+/* Connectors: a vertical stroke under each ancestor's glyph that still has rows to come, and a
+   rounded elbow into this row's glyph; the last child ends its stroke at the elbow (spec §5). */
+.session__guide,
+.session__elbow {
+  position: absolute;
+  pointer-events: none;
+  border-inline-start: 1.5px solid var(--border-2);
 }
-/* The word half of "glyph and a word". One string set for all themes; Neon shouts through
-   --label-case, it does not say something different (D14). */
-.session__state {
+.session__guide {
+  inset-block: -1px;
+  inset-inline-start: calc(
+    var(--agent-pad) +
+    var(--guide-level) *
+    var(--agent-step) +
+    var(--agent-stem)
+  );
+}
+.session__elbow {
+  top: -1px;
+  height: 50%;
+  width: 9px;
+  inset-inline-start: calc(
+    var(--agent-pad) +
+    (var(--agent-depth) - 1) *
+    var(--agent-step) +
+    var(--agent-stem)
+  );
+  border-block-end: 1.5px solid var(--border-2);
+  border-end-start-radius: var(--r-tree-elbow);
+}
+.session__elbow--through::before {
+  content: "";
+  position: absolute;
+  top: 100%;
+  height: calc(100% + 2px);
+  inset-inline-start: -1.5px;
+  border-inline-start: 1.5px solid var(--border-2);
+}
+/* The fold control: the hidden descendants' count, coloured by their most urgent state with
+   Done read as Idle (spec §5), and a chevron. */
+.session__fold {
   flex: 0 0 auto;
-  padding: 3px 8px;
-  border: 1px solid transparent;
-  border-radius: var(--r-round);
-  background: rgba(var(--overlay), 0.07);
-  color: var(--text-faint);
-  font-size: calc(9.5px * var(--font-scale));
-  font-weight: 700;
-  letter-spacing: var(--label-track);
-  text-transform: var(--label-case);
-  white-space: nowrap;
-}
-/* Idle and Stale are the resting states: the word alone, no fill (10a). */
-.session--idle .session__state,
-.session--stale .session__state,
-.session--cantStart .session__state {
-  background: transparent;
-}
-.session--busy .session__state {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.session--attention .session__state,
-.session--review .session__state {
-  background: color-mix(in srgb, var(--amber) 22%, transparent);
-  color: color-mix(in srgb, var(--amber) 72%, var(--text));
-}
-/* Neon's badges are outlined instead of filled — material, not structure. */
-[data-theme="neon"] .session__state {
-  background: transparent;
-  border-color: currentColor;
-}
-/* The name is what tells cards apart, so on a narrow card the pill yields: it collapses to its
-   dot (fill, outline and dash still tell the states apart; the word stays as the dot's tooltip
-   and as the accessible text). Below this width the pill left the name 1–3 characters. */
-.session__statedot {
-  display: none;
-}
-@container session-card (max-width: 210px) {
-  .session__statedot {
-    display: block;
-  }
-  .session__state {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
-}
-
-/* The subtitle field under the name — the agent label by default (mf-sidebar spec §2.3). */
-.session__meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-faint);
-  font-family: var(--font-mono);
-  font-size: calc(10px * var(--font-scale));
-  overflow: hidden;
-}
-
-/* Needs you — Go to focuses the session, Snooze silences it for ten minutes (D16). Neither
-   answers the prompt; the agent is still waiting either way. */
-.session__actions {
-  display: flex;
-  gap: 6px;
-}
-/* The caller side of an ask (tool-policy spec §2.4, §8): its own row under the name, since the
-   side column is too narrow for the words; the attention chip's amber, always with its text. */
-.session__ask {
-  grid-column: 2 / -1;
-  justify-self: start;
-  max-width: 100%;
-  text-align: left;
+  height: 20px;
+  min-width: 18px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  --notch-line: color-mix(in srgb, var(--amber) 45%, transparent);
-  border: 1px solid var(--notch-line);
-  border-radius: var(--r-ctl);
-  background: color-mix(in srgb, var(--amber) 9%, var(--raise));
-  color: color-mix(in srgb, var(--amber) 70%, var(--text));
-  padding: 3px 10px;
-  font: inherit;
-  font-size: calc(11px * var(--font-scale));
-  font-weight: 600;
-  letter-spacing: var(--label-track);
-  text-transform: var(--label-case);
-  cursor: pointer;
-}
-.session__ask::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--amber);
-}
-.session__ask:hover {
-  --notch-line: color-mix(in srgb, var(--amber) 75%, transparent);
-}
-.session__btn {
-  /* Its own edge, so it never inherits the card or menu it sits inside (see the chamfer block). */
-  --notch-line: var(--border-2);
-  border: 1px solid var(--notch-line);
-  border-radius: var(--r-ctl);
-  background: rgba(var(--overlay), 0.06);
+  justify-content: center;
+  gap: 3px;
+  padding: 0 3px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
   color: var(--text-dim);
-  padding: 3px 10px;
-  font: inherit;
-  font-size: calc(11px * var(--font-scale));
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
   font-weight: 600;
-  letter-spacing: var(--label-track);
-  text-transform: var(--label-case);
   cursor: pointer;
 }
-.session__btn--primary {
-  --focus-ring: var(--focus-ring-on-fill);
-  background: var(--amber);
-  border-color: var(--amber);
-  color: var(--on-accent);
-  --rest-shadow: var(--glow-attention);
+.session__chev {
+  transition: transform 0.12s;
 }
-.session__btn--primary:hover {
-  background: var(--amber);
-  color: var(--on-accent);
-  filter: brightness(1.08);
+.session__chev--open {
+  transform: rotate(90deg);
 }
-.session__folder {
-  opacity: 0.7;
+.session__kids--blocked {
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
 }
-.session__time {
+.session__kids--working {
+  color: var(--accent);
+}
+/* Age and the hover actions share one cell, so revealing the actions never reflows the name. */
+.session__trail {
+  flex: 0 0 auto;
+  display: grid;
+  justify-items: end;
+  align-items: center;
+  min-width: 24px;
+}
+.session__trail > * {
+  grid-area: 1 / 1;
+}
+.session__age {
+  padding: 0 2px;
   font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--font-scale));
+  font-size: calc(10px * var(--font-scale));
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.session:hover .session__age,
+.session:focus-within .session__age {
+  visibility: hidden;
+}
+.session__acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* ---------- status marks ----------
+   Shape tells every state apart, so none is colour or motion alone: a ring for Idle, a dashed
+   ring for Stopped, filled dots for Needs you and Done, a spinner for Working. --r-badge makes a
+   dot a circle in Aero and a square in Neon. */
+.agentmark {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.agentmark__dot {
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border-radius: var(--r-badge);
+}
+.agentmark__dot--blocked {
+  background: var(--amber);
+  box-shadow: var(--glow-attention);
+}
+.agentmark__dot--working {
+  background: var(--accent);
+  box-shadow: var(--glow-accent);
+}
+.agentmark__dot--done {
+  background: var(--blue);
+}
+.agentmark__dot--idle {
+  border: 1.5px solid var(--text-faint);
+}
+.agentmark__dot--stopped {
+  border: 1px dashed var(--text-faint);
+}
+.agentmark__track,
+.agentmark__arc {
+  fill: none;
+  stroke-width: 2.2;
+}
+.agentmark__track {
+  stroke: var(--accent-soft);
+}
+.agentmark__arc {
+  stroke: var(--accent);
+  stroke-linecap: round;
+}
+.agentmark__spin {
+  animation: agentmark-spin 0.9s linear infinite;
+}
+@keyframes agentmark-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* A still arc still reads as Working beside the dots; the motion was never the only cue. */
+@media (prefers-reduced-motion: reduce) {
+  .agentmark__spin {
+    animation: none;
+  }
 }
 .diffstat {
   font-family: var(--font-mono);
@@ -4676,17 +4724,6 @@ body.gh-resizing {
   color: var(--text);
   border-color: var(--border-2);
 }
-/* An INDEPENDENT indicator, deliberately not a sixth session state: the five in
-   src/session-icon.ts are mutually exclusive lifecycle states with a precedence order three
-   consumers read, and "has a timer waiting" is orthogonal to all of them (§12.10). */
-.session__timer {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--font-scale));
-}
 .center-empty__title {
   margin: 0;
   display: flex;
@@ -4842,18 +4879,16 @@ body.gh-resizing {
   vertical-align: bottom;
 }
 
-/* sessions toolbar: filter + sort + group toggle */
-/* Breathing room between the SESSIONS header band and the filter box (mirrors the
-   Search panel's .search__bar top padding). The box itself is a .searchbox, so it
-   reads exactly as low-profile as the "Search in files" input. */
+/* Search agents reveals the filter (spec §6). Breathing room between the Agents band and the
+   box; the box itself is a .searchbox, so it reads as low-profile as "Search in files". */
 .sessbar {
-  padding-top: 10px;
+  padding-top: 6px;
 }
 /* The sidebar stacks its searchbox, so it owns the inset + bottom gap (the base has none). */
 .sessbar .searchbox {
   margin: 0 14px var(--density-searchbox-mb);
 }
-/* The clear (âœ•) is a flex child of the .searchbox (after the input), not absolutely
+/* The clear (✕) is a flex child of the .searchbox (after the input), not absolutely
    positioned — the searchbox provides the border/background/padding. */
 .sessbar__clear {
   flex: 0 0 auto;
@@ -4868,26 +4903,8 @@ body.gh-resizing {
   font-size: calc(11px * var(--font-scale));
   border-radius: 4px;
 }
-.proj--flat {
-  /* Grouping OFF: replace display:contents with a flex column so the per-card
-     gap applies here too, matching the look inside grouped .proj blocks.
-     margin-bottom is 0 because there is only ever one flat container. */
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin-bottom: 0;
-}
 
-/* sidebar session extras */
-.session {
-  position: relative;
-}
-.session__agent {
-  color: var(--text-dim);
-}
-.session__dotsep {
-  color: var(--text-faint);
-}
+/* agent row extras */
 .session__edit {
   flex: 1;
   min-width: 0;
@@ -4899,49 +4916,42 @@ body.gh-resizing {
   font: inherit;
   font-size: calc(13px * var(--font-scale));
 }
-/* Row actions hold their slot at all times and only fade in: revealing them by display
-   would reflow the name (and the state word beside it) on every hover. */
+/* Row actions replace the age on hover or focus and are untouchable while hidden — they sit
+   in the age's own cell. Keyboard and touch reach the same actions through the menu. */
 .session__relaunch,
+.session__pin,
 .session__kill {
   flex: 0 0 auto;
-  border: 0;
-  cursor: pointer;
-  opacity: 0;
-  /* Invisible must mean untouchable — `kill` sits at the resting card's right edge. */
-  pointer-events: none;
-  line-height: 1;
-}
-.session__relaunch {
-  background: transparent;
-  color: var(--accent);
-  padding: 1px 4px;
-  border-radius: var(--r-badge);
-  font-size: calc(11px * var(--font-scale));
-}
-.session__kill {
   width: 20px;
   height: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
+  border: 0;
   border-radius: var(--r-md);
-  background: rgba(var(--overlay), 0.07);
+  background: transparent;
   color: var(--text-faint);
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+}
+.session__relaunch {
+  color: var(--accent);
+  font-size: calc(11px * var(--font-scale));
+}
+.session__pin--on {
+  color: var(--accent);
 }
 .session:hover .session__relaunch,
+.session:hover .session__pin,
 .session:hover .session__kill,
 .session:focus-within .session__relaunch,
+.session:focus-within .session__pin,
 .session:focus-within .session__kill {
-  opacity: 0.6;
-  pointer-events: auto;
-}
-/* Keyboard: when the button itself takes focus, fully reveal it (M1). */
-.session__relaunch:hover,
-.session__relaunch:focus-visible,
-.session__kill:hover,
-.session__kill:focus-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 /* Relaunch keeps its accent glyph under the pointer: the colour is what tells it apart
    from the kill button beside it, and the quiet role would flatten both to --text. */
@@ -7421,12 +7431,6 @@ body.gh-resizing {
 }
 
 /* ---------- sidebar footer + static customizations ---------- */
-/* Update card now lives in the fixed bottom area, just above the Settings divider,
-   instead of scrolling with the sessions list. The card carries its own surface bg, so
-   no background here keeps it consistent with the translucent foot over a shader. */
-.sidebar__update {
-  padding: 8px;
-}
 .sidebar__foot {
   border-top: 1px solid var(--border);
   padding: 8px;
@@ -8414,16 +8418,6 @@ body.gh-resizing {
   color: var(--text-faint);
 }
 
-/* ---------- session card variants ---------- */
-.session__path {
-  font-family: var(--font-mono);
-  font-size: calc(10px * var(--font-scale));
-  color: var(--text-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* ---------- animated background ---------- */
 .bgfx {
   position: fixed;
@@ -8885,19 +8879,6 @@ button.toggle--on .toggle__knob {
   gap: 20px;
   align-items: flex-start;
 }
-.cardcfg__toggles {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 220px;
-}
-.cardcfg__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: calc(12.5px * var(--font-scale));
-  color: var(--text);
-}
 .cardcfg__preview {
   flex: 1;
   display: flex;
@@ -8913,11 +8894,6 @@ button.toggle--on .toggle__knob {
 .cardcfg__card {
   cursor: default;
 }
-.session__metaitem {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 /* ---------- drag & drop reordering ---------- */
 .tab--dropbefore {
@@ -8932,9 +8908,6 @@ button.toggle--on .toggle__knob {
 }
 .tabbar__tail--over {
   box-shadow: inset 2px 0 0 var(--accent);
-}
-.session--dropbefore {
-  box-shadow: inset 0 2px 0 var(--accent);
 }
 .session[draggable="true"] {
   cursor: grab;
@@ -14665,48 +14638,6 @@ button.toggle--on .toggle__knob {
   margin: 0;
   color: var(--text-dim);
 }
-/* An INDEPENDENT indicator like .session__timer: messaging is orthogonal to the five session
-   states, so it is never a sixth one. */
-.session__mcp {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--font-scale));
-}
-.session__mcp--urgent {
-  color: color-mix(in srgb, var(--amber) 70%, var(--text));
-}
-.session__mcp-word {
-  font-family: var(--font-ui);
-  font-size: calc(10px * var(--font-scale));
-  font-weight: 600;
-  letter-spacing: var(--label-track);
-  text-transform: var(--label-case);
-}
-/* At rail width the word cost the name all but two characters (S10 shots). The warning glyph
-   still tells urgent from the mail glyph without colour, and the word stays in the accessible
-   text and the tooltip — the same trade .session__statedot makes. */
-@container session-card (max-width: 320px) {
-  .session__mcp-word {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
-}
-.session__mcp-paused {
-  display: inline-flex;
-  color: var(--text-dim);
-}
-/* Shape carries the meaning (plug vs unplug), so colour stays muted (install spec §10–§11). */
-.session__mcp-link {
-  display: inline-flex;
-  color: var(--text-dim);
-}
 
 /* Settings → MCP tool switches (docs/specs/2026-10-27-conduit-mcp-control-tools.md §8). */
 .settools {
@@ -15063,6 +14994,9 @@ button.toggle--on .toggle__knob {
     .session,
     .session__kill,
     .session__relaunch,
+    .session__pin,
+    .session__fold,
+    .space,
     .ns-pill,
     .ns-more,
     .ns-more__remove,
@@ -15144,7 +15078,7 @@ button.toggle--on .toggle__knob {
     .ns-pill--on,
     .session--active,
     .session--attention,
-    .session--review,
+    .space--on,
     .filerow--selected,
     .filerow--revealed,
     .change--active,
@@ -15187,6 +15121,7 @@ button.toggle--on .toggle__knob {
     .topbar__toggle,
     .footbtn,
     .session,
+    .space,
     .ns-pill,
     .ns-more,
     .ns-more__remove,

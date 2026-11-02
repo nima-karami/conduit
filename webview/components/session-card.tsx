@@ -1,360 +1,389 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
-import type { McpSessionBadge } from '../../src/conduit-mcp/ui-types';
-import { sessionRowClass } from '../../src/session-dot';
-import {
-  type ResolvedSessionIcon,
-  resolveSessionIcon,
-  SESSION_STATE_WORD,
-  sessionIconState,
-} from '../../src/session-icon';
-import type { CardField } from '../../src/settings';
+import { useEffect, useRef, useState } from 'react';
+import type { AgentTreeRow } from '../../src/agent-tree';
+import type { ResolvedSessionIcon } from '../../src/session-icon';
+import { type AgentState, formatStateAge } from '../../src/sidebar-state';
 import { canRelaunch } from '../../src/stale-sessions';
 import type { Session } from '../../src/types';
-import { fieldValue } from '../card-fields';
-import { MCP_STR } from '../conduit-mcp-strings';
-import {
-  IconClock,
-  IconClose,
-  IconMail,
-  IconPause,
-  IconPlug,
-  IconUnplug,
-  IconWarning,
-  SessionGlyph,
-} from '../icons';
-import type { CardMcpStatus } from '../mcp-card-status';
-import { getTimerSnapshot, subscribeTimers, waitingCountFor } from '../timer-store';
+import { IconChevron, IconClose, IconPin, SessionGlyph } from '../icons';
+import { SIDEBAR_STR } from '../sidebar-strings';
 
-export interface CardRoles {
-  title: CardField;
-  subtitle: CardField;
-  detail: CardField;
-}
-
-export interface SessionDragProps {
+interface AgentRowDragProps {
   onDragStart: (e: React.DragEvent) => void;
-  onDragOver: (e: React.DragEvent) => void;
-  onDrop: (e: React.DragEvent) => void;
   onDragEnd: (e: React.DragEvent) => void;
 }
 
 /**
- * One session card in the rail (the 9b card, mf-sidebar spec §2.3): glyph, name, the
- * subtitle/detail fields, the status pill and a hover ×. Every state carries the glyph AND
- * a word, so no state is colour alone. The only per-state extras are the ones that are
- * actions: Go to / Snooze while it needs you, ↻ while stale, and the timer chip.
+ * A status mark: shape plus accessible state text, so no state is colour or motion alone
+ * (spec §6). Working spins; reduced motion stills it in CSS.
  */
-export function SessionCard({
+/** A Space row shows its most urgent member as a still dot, Working included (mockup). */
+export function AgentMark({
+  state,
+  className,
+  still = false,
+}: {
+  state: AgentState;
+  className?: string;
+  still?: boolean;
+}) {
+  return (
+    <span
+      className={`agentmark${className ? ` ${className}` : ''}`}
+      title={SIDEBAR_STR.markTip(state)}
+      aria-hidden
+    >
+      {state === 'working' && !still ? (
+        <svg className="agentmark__spin" width="12" height="12" viewBox="0 0 16 16">
+          <circle className="agentmark__track" cx="8" cy="8" r="6" />
+          <path className="agentmark__arc" d="M8 2a6 6 0 0 1 6 6" />
+        </svg>
+      ) : (
+        <span className={`agentmark__dot agentmark__dot--${state}`} />
+      )}
+    </span>
+  );
+}
+
+/** One indent guide per ancestor level: does the vertical stroke carry on past this row? */
+export type RowGuides = readonly boolean[];
+
+export type AgentRowModel = Pick<
+  AgentTreeRow,
+  | 'depth'
+  | 'state'
+  | 'effectiveState'
+  | 'stateSince'
+  | 'childIds'
+  | 'descendantCount'
+  | 'childState'
+  | 'folded'
+>;
+
+/**
+ * One agent row of the tree (spec §6). It is the treeitem itself; the select button and the
+ * action buttons are siblings inside it, never nested, and none of them takes a tab stop — the
+ * tree's roving focus lands on the row and the menu reaches every action.
+ */
+export function AgentRow({
   session,
-  agentLabel,
-  resolvedIcon,
-  active,
-  onSelect,
-  onKill,
-  onRename,
-  onRelaunch,
-  onContextMenu,
-  onSnooze,
+  row,
+  icon,
+  label,
+  tooltip,
+  space,
+  now,
+  selected,
+  tabbable,
+  pinned,
+  guides,
+  lastChild,
   editing,
   onEditStart,
   onEditEnd,
-  roles,
+  onRename,
+  onSelect,
+  onPin,
+  onClose,
+  onRelaunch,
+  onFold,
+  onContextMenu,
+  onFocus,
   drag,
-  dropTarget,
-  mcp,
-  mcpLink,
-  awaitingApproval,
-  onFocusAsk,
 }: {
   session: Session;
-  agentLabel: string;
-  resolvedIcon: ResolvedSessionIcon;
-  active: boolean;
-  onSelect: () => void;
-  onKill: () => void;
-  onRename: (name: string) => void;
-  onRelaunch: () => void;
-  onContextMenu?: (e: React.MouseEvent) => void;
-  onSnooze: () => void;
+  row: AgentRowModel;
+  icon: ResolvedSessionIcon;
+  label: string;
+  tooltip: string;
+  /** Shown dim after the name, only under All. */
+  space?: string;
+  now: number;
+  selected: boolean;
+  tabbable: boolean;
+  pinned: boolean;
+  guides: RowGuides;
+  lastChild: boolean;
   editing: boolean;
   onEditStart: () => void;
   onEditEnd: () => void;
-  roles: CardRoles;
-  drag?: SessionDragProps;
-  dropTarget?: boolean;
-  /** Messaging state (docs/specs/2026-10-25-conduit-mcp-server.md §8 Session card). */
-  mcp?: McpSessionBadge;
-  /** Whether the agent reached Conduit's MCP server (mcp-install spec §2.4). */
-  mcpLink?: CardMcpStatus | null;
-  /** One of its tool calls waits on the approval card (tool-policy spec §2.4 caller side). */
-  awaitingApproval?: boolean;
-  onFocusAsk?: () => void;
+  onRename: (name: string) => void;
+  onSelect: () => void;
+  onPin: () => void;
+  onClose: () => void;
+  onRelaunch: () => void;
+  onFold: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
+  onFocus?: () => void;
+  drag?: AgentRowDragProps;
 }) {
-  const [draft, setDraft] = useState(session.name);
-  useEffect(() => {
-    if (editing) setDraft(session.name);
-  }, [editing, session.name]);
-  const commit = () => {
-    if (draft.trim() && draft.trim() !== session.name) onRename(draft.trim());
+  const endRename = (draft: string | null) => {
+    const next = draft?.trim();
+    if (next && next !== session.name) onRename(next);
     onEditEnd();
   };
 
-  const state = sessionIconState(session);
-  const titleText = fieldValue(session, agentLabel, roles.title) || session.name;
-  const subtitle = roles.subtitle !== 'none' ? fieldValue(session, agentLabel, roles.subtitle) : '';
-  const meta = mcp ? MCP_STR.cardMeta(subtitle, mcp.handle) : subtitle;
-  const detail = roles.detail !== 'none' ? fieldValue(session, agentLabel, roles.detail) : '';
-  const timerSnap = useSyncExternalStore(subscribeTimers, getTimerSnapshot, getTimerSnapshot);
-  const waitingTimers = waitingCountFor(timerSnap, session.id);
-
-  const stop = (e: React.MouseEvent) => e.stopPropagation();
-  // Why messaging is down, else why notices are held (plan ruling 4).
-  const mcpTitle = !mcp
-    ? undefined
-    : mcp.unavailable
-      ? MCP_STR.unavailable[mcp.unavailable]
-      : mcp.gate && mcp.gate !== 'open'
-        ? MCP_STR.gate[mcp.gate]
-        : undefined;
-  const rowTitle =
-    [mcpTitle, session.openedBy && MCP_STR.tools.openedBy(session.openedBy.handle)]
-      .filter(Boolean)
-      .join('\n') || undefined;
-  const mcpLinkTip = !mcpLink
-    ? ''
-    : mcpLink.kind === 'connected'
-      ? MCP_STR.install.connectedTip(mcpLink.handle)
-      : mcpLink.install === 'installed'
-        ? MCP_STR.install.notConnectedInstalledTip(mcpLink.cli)
-        : MCP_STR.install.notConnectedTip(mcpLink.cli);
-  const mcpBadgeText =
-    mcp && mcp.unread > 0
-      ? [MCP_STR.unread(mcp.unread), mcp.urgent > 0 ? MCP_STR.urgentBadge(mcp.urgent) : '']
-          .filter(Boolean)
-          .join(', ')
-      : '';
-
+  const hasKids = row.childIds.length > 0;
+  const child = row.depth > 0;
+  const attention = row.effectiveState === 'blocked';
+  const relaunchable = session.status !== 'running' && canRelaunch(session);
+  const cls = [
+    'session',
+    child ? 'session--child' : 'session--root',
+    selected && 'session--active',
+    // Selection wins over the attention wash outright (spec §6), so the two never compete in CSS.
+    attention && !selected && 'session--attention',
+    row.state === 'stopped' && 'session--stopped',
+  ]
+    .filter(Boolean)
+    .join(' ');
   return (
     <div
-      className={sessionRowClass({ selected: active, state, dropTarget: !!dropTarget })}
+      className={cls}
+      role="treeitem"
       data-sessionid={session.id}
-      title={rowTitle}
-      onClick={() => !editing && onSelect()}
+      // Level 1 is the status group header: the tree is one flat list (see Sidebar).
+      aria-level={row.depth + 2}
+      aria-selected={selected}
+      aria-expanded={hasKids ? !row.folded : undefined}
+      aria-label={label}
+      title={tooltip}
+      tabIndex={tabbable ? 0 : -1}
+      style={{ '--agent-depth': row.depth } as React.CSSProperties}
+      onFocus={(e) => {
+        if (e.target === e.currentTarget) onFocus?.();
+      }}
       onContextMenu={onContextMenu}
       draggable={!!drag && !editing}
       onDragStart={drag?.onDragStart}
-      onDragOver={drag?.onDragOver}
-      onDrop={drag?.onDrop}
       onDragEnd={drag?.onDragEnd}
     >
-      <SessionGlyph icon={resolvedIcon} size={15} />
-      <div className="session__text">
-        {editing ? (
-          <input
-            className="session__edit"
-            autoFocus
-            value={draft}
-            onClick={stop}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commit();
-              else if (e.key === 'Escape') onEditEnd();
-            }}
-          />
-        ) : (
+      {guides.map((on, level) =>
+        on ? (
           <span
-            className="session__name"
-            onDoubleClick={(e) => {
-              e.stopPropagation();
-              onEditStart();
-            }}
-          >
-            {titleText}
-          </span>
-        )}
-        {meta && (
-          <span className="session__meta" title={meta}>
-            <span className="session__metaitem">{meta}</span>
-          </span>
-        )}
-        {detail && (
-          <span className="session__path" title={session.cwd ?? session.home}>
-            {detail}
-          </span>
-        )}
-      </div>
-      <div className="session__side">
-        {!editing && (
-          <>
-            {/* Stands in for the pill on a narrow card (styles.css, session-card container). */}
-            <span
-              className={`dot dot--${state} session__statedot`}
-              title={SESSION_STATE_WORD[state]}
-              aria-hidden
-            />
-            <span className="session__state">{SESSION_STATE_WORD[state]}</span>
-          </>
-        )}
-        {!editing && waitingTimers > 0 && (
-          <>
-            {/* The glyph is decorative; the accessible name is carried in text, because the card
-                row is a div and an aria-label on it would not be exposed (§9). */}
-            <span
-              className="session__timer"
-              aria-hidden
-              title={`${waitingTimers} timed message${waitingTimers === 1 ? '' : 's'} waiting`}
-            >
-              <IconClock size={11} />
-              {waitingTimers}
-            </span>
-            <span className="sr-only">
-              {`, ${waitingTimers} timed message${waitingTimers === 1 ? '' : 's'} waiting`}
-            </span>
-          </>
-        )}
-        {!editing && mcp && mcp.unread > 0 && (
-          <>
-            <span
-              className={`session__mcp${mcp.urgent > 0 ? ' session__mcp--urgent' : ''}`}
-              aria-hidden
-              title={mcpBadgeText}
-            >
-              {mcp.urgent > 0 ? <IconWarning size={11} /> : <IconMail size={11} />}
-              {mcp.unread}
-              {mcp.urgent > 0 && (
-                <span className="session__mcp-word">{MCP_STR.priority.urgent}</span>
-              )}
-            </span>
-            <span className="sr-only">{`, ${mcpBadgeText}`}</span>
-          </>
-        )}
-        {!editing && mcpLink && (
-          // role=img with a label is read inside the row's name; no sr-only twin or it is said twice.
-          <span className="session__mcp-link" role="img" aria-label={mcpLinkTip} title={mcpLinkTip}>
-            {mcpLink.kind === 'connected' ? <IconPlug size={12} /> : <IconUnplug size={12} />}
-          </span>
-        )}
-        {!editing && mcp?.paused && (
-          <>
-            <span className="session__mcp-paused" aria-hidden title={MCP_STR.noticesPaused}>
-              <IconPause size={11} />
-            </span>
-            <span className="sr-only">{`, ${MCP_STR.noticesPaused}`}</span>
-          </>
-        )}
-        {/* Row actions keep their slot at all times and only fade in — revealing them by
-            display would reflow the name on every hover. */}
-        {session.status === 'stale' && canRelaunch(session) && (
-          <button
-            type="button"
-            className="session__relaunch"
-            title="Relaunch"
-            onClick={(e) => {
-              stop(e);
-              onRelaunch();
-            }}
-          >
-            ↻
-          </button>
-        )}
-        {!editing && (
-          <button
-            type="button"
-            className="session__kill"
-            title="Close session"
-            aria-label="Close session"
-            onClick={(e) => {
-              stop(e);
-              onKill();
-            }}
-          >
-            <IconClose size={12} />
-          </button>
-        )}
-      </div>
-
-      {awaitingApproval && !editing && (
+            // biome-ignore lint/suspicious/noArrayIndexKey: one guide per ancestor level, fixed by depth
+            key={level}
+            className="session__guide"
+            style={{ '--guide-level': level } as React.CSSProperties}
+            aria-hidden
+          />
+        ) : null,
+      )}
+      {child && (
+        <span
+          className={`session__elbow${lastChild ? '' : ' session__elbow--through'}`}
+          aria-hidden
+        />
+      )}
+      {editing ? (
+        <span className="session__select">
+          <SessionGlyph icon={icon} size={child ? 13 : 15} />
+          <RenameInput
+            name={session.name}
+            label={SIDEBAR_STR.menu.rename}
+            className="session__edit"
+            onEnd={endRename}
+          />
+        </span>
+      ) : (
         <button
           type="button"
-          className="session__ask"
-          onClick={(e) => {
-            e.stopPropagation();
-            onFocusAsk?.();
-          }}
+          className="session__select"
+          data-agent-action="select"
+          aria-label={SIDEBAR_STR.goTo(session.name)}
+          tabIndex={-1}
+          onClick={onSelect}
         >
-          {MCP_STR.ask.waiting}
+          <SessionGlyph icon={icon} size={child ? 13 : 15} />
+          <span className="session__label">
+            <span
+              className="session__name"
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                onEditStart();
+              }}
+            >
+              {session.name}
+            </span>
+            {space !== undefined && <span className="session__space">{` · ${space}`}</span>}
+          </span>
         </button>
       )}
-
-      {state === 'attention' && (
-        <div className="session__actions">
-          <button
-            type="button"
-            className="session__btn session__btn--primary"
-            onClick={(e) => {
-              stop(e);
-              onSelect();
-            }}
-          >
-            Go to
-          </button>
-          {/* Snooze silences the card for 10 minutes (D16). It never answers or kills the
-              prompt — the agent is still waiting, you have just said "not now". */}
-          <button
-            type="button"
-            className="session__btn"
-            title="Silence this session for 10 minutes"
-            onClick={(e) => {
-              stop(e);
-              onSnooze();
-            }}
-          >
-            Snooze
-          </button>
-        </div>
+      {hasKids && (
+        <button
+          type="button"
+          className="session__fold"
+          data-agent-action="fold"
+          aria-expanded={!row.folded}
+          aria-label={row.folded ? SIDEBAR_STR.showKids : SIDEBAR_STR.hideKids}
+          title={row.folded ? SIDEBAR_STR.hiddenKids(row.descendantCount) : SIDEBAR_STR.hideKids}
+          tabIndex={-1}
+          onClick={onFold}
+        >
+          {row.folded && (
+            <span className={`session__kids session__kids--${row.childState ?? 'idle'}`}>
+              {row.descendantCount}
+            </span>
+          )}
+          <IconChevron
+            size={9}
+            className={`session__chev${row.folded ? '' : ' session__chev--open'}`}
+          />
+        </button>
       )}
+      {!editing && (
+        <span className="session__trail">
+          <span className="session__age" aria-hidden>
+            {formatStateAge(row.stateSince, now)}
+          </span>
+          <span className="session__acts">
+            {relaunchable && (
+              <button
+                type="button"
+                className="session__relaunch"
+                data-agent-action="relaunch"
+                aria-label={SIDEBAR_STR.relaunch(session.name)}
+                title={SIDEBAR_STR.relaunch(session.name)}
+                tabIndex={-1}
+                onClick={onRelaunch}
+              >
+                ↻
+              </button>
+            )}
+            <button
+              type="button"
+              className={`session__pin${pinned ? ' session__pin--on' : ''}`}
+              data-agent-action="pin"
+              aria-label={pinned ? SIDEBAR_STR.unpin : SIDEBAR_STR.pin}
+              title={pinned ? SIDEBAR_STR.unpin : SIDEBAR_STR.pin}
+              tabIndex={-1}
+              onClick={onPin}
+            >
+              <IconPin size={12} />
+            </button>
+            <button
+              type="button"
+              className="session__kill"
+              data-agent-action="close"
+              aria-label={SIDEBAR_STR.close(session.name)}
+              title={SIDEBAR_STR.close(session.name)}
+              tabIndex={-1}
+              onClick={onClose}
+            >
+              <IconClose size={12} />
+            </button>
+          </span>
+        </span>
+      )}
+      <AgentMark state={row.state} className="session__mark" />
     </div>
   );
 }
 
-const PREVIEW_AGENT_LABEL = 'PowerShell 7';
+const PREVIEW_ROW: AgentRowModel = {
+  depth: 0,
+  state: 'working',
+  effectiveState: 'working',
+  stateSince: 0,
+  childIds: [],
+  descendantCount: 0,
+  childState: null,
+  folded: false,
+};
 
-/** The Settings "Session card" preview: a real SessionCard over a fixed sample session (AC 13). */
-export function SessionCardPreview({ roles }: { roles: CardRoles }) {
-  const [sample] = useState<Session>(() => {
+/** The Settings preview: a real AgentRow over a fixed sample session (spec §6). */
+export function AgentRowPreview() {
+  const [sample] = useState(() => {
     const now = Date.now();
-    return {
+    const session: Session = {
       id: 'preview',
       name: 'Portfolio Redesign',
       agentId: 'preview',
       home: 'G:/awby/projects/nextjs-portfolio',
       roots: [],
       status: 'running',
+      busy: true,
       createdAt: now - 4 * 60_000,
       lastActiveAt: now - 2 * 60_000,
-      lastLine: 'Edit webview/styles.css',
-      worktree: 'feature/auth',
     };
+    return { session, now, row: { ...PREVIEW_ROW, stateSince: now - 2 * 60_000 } };
   });
   const noop = () => {};
   return (
     <div className="cardcfg__card" inert>
-      <SessionCard
-        session={sample}
-        agentLabel={PREVIEW_AGENT_LABEL}
-        resolvedIcon={resolveSessionIcon(sample, [])}
-        active
-        onSelect={noop}
-        onKill={noop}
-        onRename={noop}
-        onRelaunch={noop}
-        onSnooze={noop}
+      <AgentRow
+        session={sample.session}
+        row={sample.row}
+        icon={{ type: 'kind', kind: 'claude' }}
+        label={SIDEBAR_STR.rowLabel({
+          name: sample.session.name,
+          state: 'working',
+          descendantNeedsYou: false,
+        })}
+        tooltip=""
+        now={sample.now}
+        selected
+        tabbable={false}
+        pinned={false}
+        guides={[]}
+        lastChild
         editing={false}
         onEditStart={noop}
         onEditEnd={noop}
-        roles={roles}
+        onRename={noop}
+        onSelect={noop}
+        onPin={noop}
+        onClose={noop}
+        onRelaunch={noop}
+        onFold={noop}
       />
     </div>
+  );
+}
+
+/** Rename in place: a Space, a new Space's name, or an agent row (spec §3, §6). */
+export function RenameInput({
+  name,
+  label,
+  className = 'proj__rename',
+  onEnd,
+}: {
+  name: string;
+  label?: string;
+  className?: string;
+  onEnd: (draft: string | null) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  // Enter unmounts the input, and a blur may follow; the first end wins.
+  const ended = useRef(false);
+  const end = (draft: string | null) => {
+    if (ended.current) return;
+    ended.current = true;
+    onEnd(draft);
+  };
+  useEffect(() => {
+    ref.current?.select();
+  }, []);
+  return (
+    <input
+      ref={ref}
+      className={className}
+      aria-label={label ?? SIDEBAR_STR.renameSpaceLabel(name)}
+      defaultValue={name}
+      autoFocus
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onBlur={(e) => end(e.currentTarget.value)}
+      onKeyDown={(e) => {
+        // The tree's own keys must not see typing.
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          end(e.currentTarget.value);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          end(null);
+        }
+      }}
+    />
   );
 }
