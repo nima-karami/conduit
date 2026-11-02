@@ -130,8 +130,8 @@ try {
     `Replayed history left mouse tracking armed against the fresh shell (mouseTrackingMode=${modes.mouseTrackingMode})`,
   );
   // Only mouse tracking is asserted: the other neutralized modes can legitimately be re-set
-  // by the fresh shell itself (PSReadLine turns bracketed paste on), so they aren't stable.
-  assert(!modes.sendFocusMode, `Replayed focus reporting leaked onto the fresh shell`);
+  // by the fresh shell itself (PSReadLine turns bracketed paste on; hc's ConPTY sends
+  // ESC[?1004h at every spawn, so focus reporting is on in a fresh cmd too), so they aren't stable.
 
   const buf = await page.evaluate((id) => {
     const b = window.__terms[id].buffer.active;

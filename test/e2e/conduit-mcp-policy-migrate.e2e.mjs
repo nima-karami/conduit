@@ -6,7 +6,8 @@
  *   - open_file `false` (a control tool) → its new default, On · While on screen: refused off
  *     screen, runs without a card on screen;
  *   - send_message `false` (a messaging tool, v0.50 default on) → Off: refused;
- *   - the next settings write drops `mcpTools` and stores the migrated policy.
+ *   - the server seeds server-settings.json from it with the migrated policy (D7), and the next
+ *     settings write drops `mcpTools` from the app's settings.json mirror.
  * Its sessions.json holds v0.50 per-session `mcpToolOverrides` (true → On · Always, false → Off),
  * one session also holding a `mcpToolPolicy` the old keys overlay: the sessions restore with the
  * migrated layer, and the next sessions write drops `mcpToolOverrides`.
@@ -155,6 +156,8 @@ await runScenario(
     phase('old keys gone on write');
     await setMessaging(page, true);
     const stored = () => JSON.parse(readFileSync(settingsFile, 'utf8')).settings;
+    const serverStored = () =>
+      JSON.parse(readFileSync(join(userDataDir, 'server-settings.json'), 'utf8')).settings;
     const migrated = (s) =>
       !('mcpTools' in s) &&
       isDeepStrictEqual(s.mcpToolPolicy?.open_session, {
@@ -169,6 +172,8 @@ await runScenario(
       `settings.json after a write: ${JSON.stringify(stored())}`,
     );
     log('settings.json holds mcpToolPolicy, no mcpTools ✓');
+    assert(migrated(serverStored()), `server-settings.json: ${JSON.stringify(serverStored())}`);
+    log('server-settings.json holds the migrated mcpToolPolicy, no mcpTools ✓');
     // Opening A and B wrote sessions.json since the restore.
     const savedSeeded = () =>
       (JSON.parse(readFileSync(sessionsFile, 'utf8')).sessions ?? []).filter(

@@ -800,10 +800,9 @@ const PHASES = [
       const metaRoot = join(work, 'R&D');
       for (const d of [bin, home, root, metaRoot]) mkdirSync(d);
       const claudeCmd = join(bin, 'claude.cmd');
-      writeFileSync(
-        claudeCmd,
-        ['@echo off', 'echo CLAUDE-ARGS %*', 'ping -n 60 127.0.0.1 >nul', ''].join('\r\n'),
-      );
+      // Ends on the first line it reads: a pane's term:dispose only detaches (the agent runs on in
+      // hc), so the scenario ends the program by typing to it.
+      writeFileSync(claudeCmd, ['@echo off', 'echo CLAUDE-ARGS %*', 'set /p _=', ''].join('\r\n'));
       // loadAgents reads agents.json once, at launch.
       writeFileSync(
         file('agents.json'),
@@ -869,7 +868,7 @@ const PHASES = [
 
           const s = sessionIn(await state(), sid);
           await page.evaluate(
-            (id) => window.agentDeck.post({ type: 'term:dispose', sessionId: id }),
+            (id) => window.agentDeck.post({ type: 'term:input', sessionId: id, data: '\r' }),
             sid,
           );
           await waitState(
@@ -913,9 +912,13 @@ const PHASES = [
           // CLAUDE-ARGS) ahead of the refusal, so only what follows the refusal can be a spawn.
           const after = await output(page, sid);
           assert(
-            !after.slice(after.indexOf(line)).includes('CLAUDE-ARGS') &&
+            after.split('CLAUDE-ARGS').length <= 2 &&
               sessionIn(await state(), sid)?.status !== 'running',
             `launch: nothing spawned for a missing home (got ${JSON.stringify(after)})`,
+          );
+          assert(
+            !after.slice(after.indexOf(line)).includes('CLAUDE-ARGS'),
+            `launch: the refusal line lands below the replayed history (got ${JSON.stringify(after)})`,
           );
           log('launch: missing home → no spawn, refusal line');
           await page.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), sid);

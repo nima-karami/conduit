@@ -90,14 +90,26 @@ export const normalizePath = (value) => {
 
 /** The command and shim this build writes into a CLI's entry (spec §3.4). */
 export function conduitCommand(app) {
+  // The server writes the entry with its own node (process.execPath), which the unpackaged layout
+  // (electron/runtime-layout.ts) takes from CONDUIT_NODE_BINARY or else the first node on PATH.
   return app.evaluate(({ app: electronApp }) => {
-    const separator = process.platform === 'win32' ? '\\' : '/';
-    const shim = electronApp.isPackaged
-      ? [process.resourcesPath, 'conduit-mcp', 'conduit-mcp-shim.cjs'].join(separator)
-      : [electronApp.getAppPath(), 'resources', 'conduit-mcp', 'conduit-mcp-shim.cjs'].join(
-          separator,
-        );
-    return { command: process.execPath, shim };
+    const { existsSync } = process.getBuiltinModule('node:fs');
+    const path = process.getBuiltinModule('node:path');
+    const exe = process.platform === 'win32' ? 'node.exe' : 'node';
+    const command =
+      process.env.CONDUIT_NODE_BINARY ??
+      (process.env.PATH ?? '')
+        .split(path.delimiter)
+        .filter(Boolean)
+        .map((dir) => path.join(dir, exe))
+        .find((candidate) => existsSync(candidate));
+    const shim = path.join(
+      electronApp.getAppPath(),
+      'resources',
+      'conduit-mcp',
+      'conduit-mcp-shim.cjs',
+    );
+    return { command, shim };
   });
 }
 
@@ -237,7 +249,7 @@ export function pauseNotices(page, sessionId, paused) {
   );
 }
 
-/** Flip `conduitMcp` over `updateSettings` and wait for the host to broadcast it back. */
+/** Flip `conduitMcp` (a server key, D7) and wait for the host to broadcast it back. */
 export function setMessaging(page, on) {
   return page.evaluate(
     (want) =>
@@ -247,10 +259,7 @@ export function setMessaging(page, on) {
           if (m.type !== 'state') return;
           if (!sent) {
             sent = true;
-            window.agentDeck.post({
-              type: 'updateSettings',
-              settings: { ...m.settings, conduitMcp: want },
-            });
+            window.agentDeck.post({ type: 'updateServerSettings', patch: { conduitMcp: want } });
           }
           if (m.settings?.conduitMcp === want) {
             off();
@@ -351,8 +360,8 @@ export async function setSessionPolicy(page, sessionId, tool, patch) {
 }
 
 /**
- * `updateSettings` with `mcpToolPolicy[tool]` = `policy` merged over its current value; waits for
- * the host to broadcast it back, or throws after `ms`.
+ * `updateServerSettings` with `mcpToolPolicy[tool]` = `policy` merged over its current value;
+ * waits for the host to broadcast it back, or throws after `ms`.
  * @param {Record<string, string>} policy e.g. `{ access: 'ask' }`
  */
 export function setGlobalPolicy(page, tool, policy, ms = 10_000) {
@@ -379,8 +388,8 @@ export function setGlobalPolicy(page, tool, policy, ms = 10_000) {
             sent = true;
             const cur = m.settings.mcpToolPolicy;
             window.agentDeck.post({
-              type: 'updateSettings',
-              settings: { ...m.settings, mcpToolPolicy: { ...cur, [t]: { ...cur[t], ...p } } },
+              type: 'updateServerSettings',
+              patch: { mcpToolPolicy: { ...cur, [t]: { ...cur[t], ...p } } },
             });
           }
           if (matches(m.settings)) {

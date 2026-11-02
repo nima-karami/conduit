@@ -20,11 +20,11 @@ import { join } from 'node:path';
 import { installGitProbe, readGitProbe, resetGitProbe, statusCalls } from './git-probe.mjs';
 import {
   assert,
-  closeApp,
   openChangesTab,
   openSession,
   removeDir,
   runScenario,
+  shutdownApp,
 } from './harness.mjs';
 
 const WRITE_WINDOW_MS = 3000;
@@ -286,7 +286,9 @@ runScenario('repo-tracker-fanout', async ({ app, page, log }) => {
     );
     log('reload → list restored from cache, 0 new status');
   } finally {
-    await closeApp(app, page);
+    // shutdownApp, not closeApp: a quit leaves the agents running in the fixture (F4), and their
+    // cwd pins it against the delete below.
+    await shutdownApp(app, page);
     await removeDir(root);
   }
 });

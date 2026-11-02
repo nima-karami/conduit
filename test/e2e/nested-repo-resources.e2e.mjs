@@ -9,7 +9,7 @@ import {
   resetGitProbe,
   statusCalls,
 } from './git-probe.mjs';
-import { assert, closeApp, openChangesTab, openSession, runScenario } from './harness.mjs';
+import { assert, openChangesTab, openSession, runScenario, shutdownApp } from './harness.mjs';
 
 runScenario('nested-repo-resources', async ({ app, page, log }) => {
   const fixture = mkdtempSync(join(tmpdir(), 'conduit-nested-resources-'));
@@ -331,8 +331,9 @@ runScenario('nested-repo-resources', async ({ app, page, log }) => {
       writeFileSync(process.env.CONDUIT_NESTED_METRICS, JSON.stringify(measurements, null, 2));
   } finally {
     await app.evaluate(() => clearInterval(globalThis.__nestedProbe?.timer)).catch(() => {});
-    await closeApp(app, page);
-    await app.close();
+    // shutdownApp, not closeApp: a quit leaves the agents running in the fixture (F4), and their
+    // cwd pins it against the delete below.
+    await shutdownApp(app, page);
     rmSync(fixture, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });

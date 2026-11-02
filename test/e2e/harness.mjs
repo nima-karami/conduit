@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { markCoverageIncomplete, startCoverage, stopCoverage } from './coverage-capture.mjs';
 import { attemptDir, screenshotWindows, startCapture, stopTrace } from './failure-artifacts.mjs';
@@ -73,13 +73,16 @@ export function loadPlaywright() {
 /** How long the polite quit path gets before cleanup force-kills the Electron tree. */
 const CLEANUP_GRACE_MS = 15000;
 
+/** Captured at launch: Playwright's `app.process()` throws once the app has closed. */
+const appProcess = new WeakMap();
+
 /**
  * Force-terminate an Electron app's whole process tree. Playwright's `app.close()` only
  * resolves once the app exits of its own accord, so a wedged host needs the OS. `taskkill /T`
  * takes the renderer/GPU children with it; without `/T` they outlive the main process.
  */
 function killAppTree(app) {
-  const pid = app.process?.()?.pid;
+  const pid = appProcess.get(app)?.pid;
   if (!pid) return;
   try {
     if (process.platform === 'win32') {
@@ -117,9 +120,48 @@ export async function shutdownApp(app, page) {
       /* already closed */
     }
   })();
-  const timer = new Promise((r) => setTimeout(() => r('timeout'), CLEANUP_GRACE_MS));
-  if ((await Promise.race([graceful.then(() => 'closed'), timer])) === 'timeout') {
-    killAppTree(app);
+  const timer = new Promise((r) => setTimeout(r, CLEANUP_GRACE_MS));
+  await Promise.race([graceful, timer]);
+  await endApp(app);
+  await teardownServerFor(app);
+}
+
+/** How long a force-killed Electron gets to actually leave before teardown goes on regardless. */
+const EXIT_WAIT_MS = 10000;
+
+/** @returns {Promise<boolean>} whether the app's main process has exited within `ms` */
+function appExited(app, ms) {
+  const proc = appProcess.get(app);
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), ms);
+    proc.once('exit', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+/**
+ * Electron must be gone before its server is stopped: a live app sees its supervisor vanish and
+ * starts a new one (F9), which then outlives the scenario.
+ */
+async function endApp(app) {
+  if (await appExited(app, 0)) return;
+  killAppTree(app);
+  if (!(await appExited(app, EXIT_WAIT_MS))) {
+    console.error(`[${scenarioName()}] app still running ${EXIT_WAIT_MS}ms after a kill`);
+  }
+}
+
+/**
+ * Stop the server and agents of an app the scenario already closed (closeApp/shutdownApp). A quit
+ * leaves agents running (F4), so a relaunch whose subject is a cold restore needs this first, and
+ * so does deleting a fixture dir an agent's cwd still pins.
+ */
+export async function stopServer(app) {
+  if (!(await appExited(app, EXIT_WAIT_MS))) {
+    throw new Error('stopServer: the app is still running (F9 would restart its server)');
   }
   await teardownServerFor(app);
 }
@@ -252,6 +294,7 @@ export async function launchElectron(launchOpts) {
     args: [...(launchOpts.args ?? []), `${RUN_MARKER}=${runId()}`],
   });
   liveApps.add(app);
+  appProcess.set(app, app.process());
   pendingTeardown.set(app, launchOpts.args.find((a) => a.startsWith('--user-data-dir=')).slice(16));
   app.once('close', () => liveApps.delete(app));
   if (local) {
@@ -322,6 +365,7 @@ export function finishScenario(code) {
     } catch (e) {
       console.error('[harness] artifact capture failed:', e?.message || e);
     }
+    await Promise.all([...pendingTeardown.keys()].map(endApp));
     for (const app of [...pendingTeardown.keys()]) {
       try {
         await teardownServerFor(app);
@@ -332,6 +376,30 @@ export function finishScenario(code) {
     process.exit(code);
   })();
   return finishing;
+}
+
+/** `name` as the first PATH entry holding it, the way the app's spawn of a bare name finds it. */
+function onPath(name) {
+  const exe = process.platform === 'win32' ? `${name}.exe` : name;
+  return (process.env.PATH ?? '')
+    .split(delimiter)
+    .filter(Boolean)
+    .map((dir) => join(dir, exe))
+    .find((candidate) => existsSync(candidate));
+}
+
+/**
+ * A caller that replaces PATH (stub CLIs, a bare System32) would leave the unpackaged server
+ * without its node and hc (electron/runtime-layout.ts), so pin both to this process's.
+ */
+function serverRuntimeEnv(env) {
+  if (!Object.keys(env).some((k) => k.toUpperCase() === 'PATH')) return {};
+  const pinned = {};
+  const node = process.env.CONDUIT_NODE_BINARY ?? onPath('node');
+  const hc = process.env.CONDUIT_HC_BINARY ?? onPath('hc');
+  if (node) pinned.CONDUIT_NODE_BINARY = node;
+  if (hc) pinned.CONDUIT_HC_BINARY = hc;
+  return pinned;
 }
 
 /**
@@ -350,7 +418,7 @@ export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
     args: [`--user-data-dir=${udd}`, REPO, ...extraArgs],
     cwd: REPO,
     // A caller may override the child env (e.g. prepend a stub `git` to PATH to prove timeouts).
-    ...(env ? { env: { ...process.env, ...env } } : {}),
+    ...(env ? { env: { ...process.env, ...serverRuntimeEnv(env), ...env } } : {}),
   });
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');

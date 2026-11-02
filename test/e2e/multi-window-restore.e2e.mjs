@@ -6,8 +6,9 @@
  *   Launch 1: a session A in the primary window; win:new → window-2 (resized so a bounds
  *     round-trip is observable); a session B in window-2. Then QUIT (app.close) so
  *     before-quit persists windows.json with the final layout.
- *   Launch 2 (same userData): assert TWO windows restored — window-1 owns A (stale),
- *     window-2 owns B (stale), NOT collapsed into one window; window-2's bounds ≈ saved.
+ *   Launch 2 (same userData): assert TWO windows restored — window-1 owns A, window-2 owns B,
+ *     NOT collapsed into one window; window-2's bounds ≈ saved. A quit leaves both agents
+ *     running (F4), so A and B re-attach live (running).
  *
  * The no-layout fallback (first launch with no windows.json → single window) is implicitly
  * covered by launch 1 starting clean.
@@ -274,12 +275,12 @@ try {
     assert(!pageA.owned.some((s) => s.id === sidB), 'RESTORE: window owning A must NOT also own B');
     assert(!pageB.owned.some((s) => s.id === sidA), 'RESTORE: window owning B must NOT also own A');
 
-    // Sessions come back STALE (this feature only adds placement on top of session restore).
+    // This feature only adds placement on top of the live re-attach.
     const aRec = pageA.owned.find((s) => s.id === sidA);
     const bRec = pageB.owned.find((s) => s.id === sidB);
-    assert(aRec?.status === 'stale', `RESTORE: A should restore as stale, got ${aRec?.status}`);
-    assert(bRec?.status === 'stale', `RESTORE: B should restore as stale, got ${bRec?.status}`);
-    log('launch2: A in one window (stale), B in the other (stale), isolated ✓');
+    assert(aRec?.status === 'running', `RESTORE: A should re-attach running, got ${aRec?.status}`);
+    assert(bRec?.status === 'running', `RESTORE: B should re-attach running, got ${bRec?.status}`);
+    log('launch2: A in one window, B in the other, both re-attached live, isolated ✓');
 
     // Bounds round-trip: the window owning B should be ≈ the resized WIN2_BOUNDS.
     const win2Id = await pageB.page.evaluate(() => window.__winId);
