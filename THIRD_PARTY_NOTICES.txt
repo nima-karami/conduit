@@ -15,3 +15,37 @@ ConPTY under the MIT License.
 Source: https://github.com/herdrdev/herdr-core/tree/v0.1.16
 License: resources/runtime/hc/LICENSE
 Notices: resources/runtime/hc/THIRD-PARTY-NOTICES/
+
+==== Fonts
+
+Conduit bundles the following fonts, unmodified upstream files under local file names. Each is
+licensed under the SIL Open Font License, Version 1.1; the full license text with each font's
+copyright notice is installed in resources/licenses/fonts, and beside the fonts in the app bundle.
+
+JetBrains Mono 2.304 (variable), Copyright 2020 The JetBrains Mono Project Authors.
+Source: https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304
+License: resources/licenses/fonts/jetbrains-mono-OFL.txt
+
+Fira Code 6.2 (variable), Copyright (c) 2014, The Fira Code Project Authors.
+Source: https://github.com/tonsky/FiraCode/releases/tag/6.2
+License: resources/licenses/fonts/fira-code-OFL.txt
+
+IBM Plex Mono 2.5.0 (Regular, Medium, SemiBold, Bold), Copyright 2017 IBM Corp., with Reserved
+Font Name "Plex".
+Source: https://github.com/IBM/plex/releases/tag/%40ibm%2Fplex-mono%402.5.0
+License: resources/licenses/fonts/ibm-plex-mono-OFL.txt
+
+Cascadia Mono 2407.24 (variable), Copyright (c) 2019 - Present, Microsoft Corporation, with
+Reserved Font Name Cascadia Code.
+Source: https://github.com/microsoft/cascadia-code/releases/tag/v2407.24
+License: resources/licenses/fonts/cascadia-mono-OFL.txt
+
+Figtree 2.002 (variable), Copyright 2022 The Figtree Project Authors.
+Hanken Grotesk 3.013 (variable), Copyright 2021 The Hanken Grotesk Project Authors.
+Inter 4.001 (variable), Copyright 2020 The Inter Project Authors.
+IBM Plex Sans 3.201 (variable), Copyright 2017 IBM Corp., with Reserved Font Name "Plex".
+Chakra Petch 1.000 (Regular, Medium, SemiBold, Bold), Copyright 2018 The Chakra Petch Project
+Authors.
+Source: https://github.com/google/fonts/tree/2fe1e8c6b137fb13041a7cfca6fdcd8a910ea4dc/ofl
+License: resources/licenses/fonts/figtree-OFL.txt, hanken-grotesk-OFL.txt, inter-OFL.txt,
+ibm-plex-sans-OFL.txt, chakra-petch-OFL.txt

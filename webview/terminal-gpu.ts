@@ -36,16 +36,30 @@ export interface GpuCoordinatorDeps<T> {
     event: 'context-lost' | 'reattach' | 'unavailable' | 'give-up',
     data: Record<string, unknown>,
   ): void;
+  /** Re-measure the cell in the faces now loaded (see remeasureFont). */
+  remeasureFont(term: T): void;
+  /** Drop every rasterised glyph, so the next paint re-draws in the faces now loaded. */
+  clearFontAtlas(term: T): void;
+  refreshTerminal(term: T): void;
+  /** Changed-only: an identical family assignment is a no-op in xterm, never an atlas clear. */
+  applyFontFamily(term: T, family: string): void;
 }
 
 export interface GpuCoordinator<T> {
-  /** Returns the unregister, which disposes the terminal's WebGL addon if it has one. */
-  register(term: T): () => void;
+  /**
+   * Returns the unregister, which disposes the terminal's WebGL addon if it has one.
+   * `onFontRefresh` re-fits the pane and re-reports its facts after a font refresh.
+   */
+  register(term: T, onFontRefresh?: () => void): () => void;
   reportLoss(term: T): void;
+  /** A face finished loading: every live terminal re-rasterises (spec 2026-11-02 §8). */
+  refreshFonts(): void;
+  applyFontFamily(family: string): void;
 }
 
 export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordinator<T> {
   const entries = new Map<T, WebglHandle | null>();
+  const fontRefresh = new Map<T, () => void>();
   let mode: 'webgl' | 'fallback' | 'dom' = 'webgl';
   let losses: number[] = [];
   let live = 0;
@@ -90,6 +104,11 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
     fill();
   };
 
+  const refreshAll = () => {
+    for (const term of entries.keys()) deps.refreshTerminal(term);
+    for (const term of entries.keys()) fontRefresh.get(term)?.();
+  };
+
   const promoteOldestWaiting = () => {
     for (const [term, handle] of entries) {
       if (!handle && !failed.has(term) && attach(term)) return;
@@ -97,10 +116,12 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
   };
 
   return {
-    register(term) {
+    register(term, onFontRefresh) {
       entries.set(term, null);
+      if (onFontRefresh) fontRefresh.set(term, onFontRefresh);
       if (mode === 'webgl' && live < MAX_WEBGL_TERMINALS) attach(term);
       return () => {
+        fontRefresh.delete(term);
         if (!entries.has(term)) return;
         const handle = entries.get(term);
         entries.delete(term);
@@ -132,7 +153,30 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
       deps.log('context-lost', { terminals: entries.size, lossesInWindow: losses.length });
       deps.setTimer(reattach, GPU_REATTACH_DELAY_MS);
     },
+    refreshFonts() {
+      // Glyphs cached in a fallback face stay in every atlas holding them, and the WebGL atlas is
+      // shared between terminals, so all are cleared before any repaints.
+      for (const term of entries.keys()) {
+        deps.remeasureFont(term);
+        deps.clearFontAtlas(term);
+      }
+      refreshAll();
+    },
+    applyFontFamily(family) {
+      for (const term of entries.keys()) deps.applyFontFamily(term, family);
+      refreshAll();
+    },
   };
+}
+
+/**
+ * xterm measures its cell only when a font option's value changes, so a face that lands after the
+ * terminal was built leaves the fallback face's cell size; an identical assignment is a no-op.
+ */
+export function remeasureFont(term: { options: { fontFamily?: string } }): void {
+  const family = term.options.fontFamily ?? 'monospace';
+  term.options.fontFamily = family === 'monospace' ? 'serif' : 'monospace';
+  term.options.fontFamily = family;
 }
 
 export const terminalGpu: GpuCoordinator<Terminal> = createGpuCoordinator<Terminal>({
@@ -153,4 +197,10 @@ export const terminalGpu: GpuCoordinator<Terminal> = createGpuCoordinator<Termin
     }
   },
   log: (event, data) => log.warn('terminal', `webgl ${event}`, data),
+  remeasureFont,
+  clearFontAtlas: (term) => term.clearTextureAtlas(),
+  refreshTerminal: (term) => term.refresh(0, term.rows - 1),
+  applyFontFamily: (term, family) => {
+    if (term.options.fontFamily !== family) term.options.fontFamily = family;
+  },
 });
