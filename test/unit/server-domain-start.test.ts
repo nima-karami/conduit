@@ -90,9 +90,28 @@ describe('server domain: sessions.start', () => {
     h.domain.resized(sized, { cols: 80, rows: 7 });
     const r = (await start(h, sized)) as Started;
     expect(r.prelude?.data.endsWith(`—\x1b[0m\r\n${'\r\n'.repeat(7)}`)).toBe(true);
+    // No term.resize: the runtime's last size of the session's terminal.
+    const known = await h.create();
+    h.lastSizes.set(known, { cols: 80, rows: 9 });
+    const k = (await start(h, known)) as Started;
+    expect(k.prelude?.data.endsWith(`—\x1b[0m\r\n${'\r\n'.repeat(9)}`)).toBe(true);
     const unsized = await h.create();
     const w = (await start(h, unsized)) as Started;
     expect(w.prelude?.data.endsWith(`—\x1b[0m\r\n${'\r\n'.repeat(120)}`)).toBe(true);
+  });
+
+  it('a start queued before the first reconcile refuses a launch reconcile left unconfirmed', async () => {
+    const h = harness({ reconciled: false });
+    const id = await h.create();
+    const pending = start(h, id);
+    await new Promise((r) => setTimeout(r, 20));
+    h.runtime.fire({ type: 'unconfirmed', sessionId: id, generation: 3, launchId: 'e'.repeat(32) });
+    h.domain.adopted([]);
+    expect(await pending).toEqual({
+      ok: false,
+      refusal: { reason: 'spawn_unconfirmed', launchId: 'e'.repeat(32) },
+    });
+    expect(h.runtime.spawns).toHaveLength(0);
   });
 
   it('takes no replay with scrollback persistence off, on the live and the finished path', async () => {
@@ -520,5 +539,47 @@ describe('server domain: request validation', () => {
     h.runtime.fire({ type: 'status', sessionId: id, status: { state: 'working' } });
     await new Promise((r) => setTimeout(r, 200));
     expect(h.types().slice(before)).toEqual([]);
+  });
+});
+
+describe('server domain: exit codes and dropped roots', () => {
+  it('sets exitCode with the transition to exited, from exit and from a finished spawn', async () => {
+    const runtime = new FakeRuntime();
+    const h = harness({ runtime });
+    const id = await h.create();
+    await start(h, id);
+    const view = () => h.domain.snapshot().sessions.find((s) => s.id === id);
+    expect(view()).not.toHaveProperty('exitCode');
+    h.runtime.terminals.delete(id);
+    h.runtime.fire({ type: 'exit', sessionId: id, generation: 1, code: 7, reason: 'exited' });
+    expect(view()).toMatchObject({ status: 'exited', exitCode: 7 });
+    // The next run clears it; a finished spawn sets it.
+    runtime.nextSpawn = async (c) => ({
+      ok: true,
+      launchId: c.ids.launchId,
+      finished: { exitCode: null, reason: 'killed', output: '' },
+    });
+    await start(h, id);
+    expect(view()).toMatchObject({ status: 'exited', exitCode: null });
+    runtime.nextSpawn = undefined;
+    await start(h, id);
+    expect(view()).not.toHaveProperty('exitCode');
+  });
+
+  it('returns the requested roots it dropped from sessions.create, keeping a missing one', async () => {
+    const h = harness();
+    const dir = join(h.userData, 'dir');
+    mkdirSync(dir);
+    const gone = join(h.userData, 'gone');
+    const r = (await h.call('sessions.create', {
+      agentId: 'sh',
+      home: h.home,
+      roots: [h.home, dir, dir, gone],
+    })) as { sessionId: string; droppedRoots?: string[] };
+    expect(r.droppedRoots).toEqual([h.home, dir]);
+    expect(h.domain.sessions.get(r.sessionId)).toMatchObject({
+      roots: [dir, gone],
+      missingRoots: [gone],
+    });
   });
 });

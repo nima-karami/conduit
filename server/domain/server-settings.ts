@@ -1,3 +1,4 @@
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteFileSync } from '../../src/atomic-write';
 import { readBlob } from '../../src/config';
@@ -7,6 +8,8 @@ import { type AppSettings, coerceSettings, restoreSettings } from '../../src/set
 
 const FILE = 'server-settings.json';
 const CORRUPT_FILE = 'server-settings.corrupt.json';
+
+const isFile = (p: string): boolean => statSync(p, { throwIfNoEntry: false })?.isFile() ?? false;
 
 const serverPart = (all: AppSettings): ServerSettings =>
   Object.fromEntries(SERVER_SETTINGS_KEYS.map((k) => [k, all[k]])) as ServerSettings;
@@ -67,8 +70,14 @@ export class ServerSettingsStore {
 
   /** A corrupt file is kept for the person to recover from; one that can't be is never replaced. */
   private backUp(userData: string, blob: string): boolean {
+    const backup = join(userData, CORRUPT_FILE);
+    // The first corruption is the one worth recovering from; a later one never replaces it.
+    if (isFile(backup)) {
+      this.onError(`${FILE} is corrupt; ${CORRUPT_FILE} already holds an earlier one; re-seeded`);
+      return true;
+    }
     try {
-      atomicWriteFileSync(join(userData, CORRUPT_FILE), blob);
+      atomicWriteFileSync(backup, blob);
       this.onError(`${FILE} is corrupt; backed up to ${CORRUPT_FILE} and re-seeded`);
       return true;
     } catch (e) {

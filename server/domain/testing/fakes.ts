@@ -175,6 +175,8 @@ export function harness(opts: HarnessOptions = {}) {
   const events: RecordedEvent[] = [];
   const shown: { sessionId: string; data: string }[] = [];
   const recorded: { sessionId: string; data: string }[] = [];
+  /** W6's runtime.lastSizeOf, which C1 does not carry. */
+  const lastSizes = new Map<string, TermGeometry>();
   const written: { sessionId: string; data: string; generation?: number }[] = [];
   const drafts: { sessionId: string; data: string }[] = [];
   const submitted: { sessionId: string; text: string }[] = [];
@@ -244,6 +246,7 @@ export function harness(opts: HarnessOptions = {}) {
     detectShells: () => [SHELL],
     detectClis: () => [CLAUDE],
     resolveCommand: opts.resolveCommand ?? ((c) => c),
+    lastSizeOf: (id) => lastSizes.get(id),
     log: { debug: log('debug'), info: log('info'), warn: log('warn'), error: log('error') },
   };
   const domain: Domain = createDomain(deps);
@@ -274,6 +277,7 @@ export function harness(opts: HarnessOptions = {}) {
     types,
     shown,
     recorded,
+    lastSizes,
     written,
     drafts,
     submitted,

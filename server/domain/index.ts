@@ -141,6 +141,8 @@ export interface DomainDeps {
   detectShells(): AgentDefinition[];
   detectClis(): AgentDefinition[];
   resolveCommand(command: string): string | undefined;
+  /** W6's last known size of the session's terminal, kept after it exits (runtime.lastSizeOf). */
+  lastSizeOf(sessionId: string): TermGeometry | undefined;
   log: DomainLog;
 }
 
@@ -151,7 +153,11 @@ export interface Domain {
   handle(request: RpcRequest): Promise<RpcAnswer> | undefined;
   sessions: SessionStorePort;
   domain: DomainPort;
-  /** After C1 reconcile (F1.4.5): adopted sessions become live, then D40 decides what reopens. */
+  /**
+   * After C1 reconcile (F1.4.5): adopted sessions become live, then D40 decides what reopens.
+   * Compose MUST call it after the first reconcile even when that reconcile fails (with `[]`):
+   * every cold start waits for the first call, with no timeout.
+   */
   adopted(terminals: readonly AdoptedTerminal[]): void;
   /** Every `ui.presence`; W4 reads only the focus part (folder health recheck). */
   presence(windows: readonly WindowPresence[]): void;
@@ -350,6 +356,8 @@ export function createDomain(deps: DomainDeps): Domain {
   const pendingRelaunchMarker = new Set<string>();
   const starts = new Map<string, Promise<SessionStartResult>>();
   const lastLines = new Map<string, string>();
+  /** The last run's exit code, from its transition to exited until the next run starts. */
+  const exitCodes = new Map<string, number | null>();
   const pasteModes = new Map<string, PasteModeState>();
   const cwdScanners = new Map<string, CwdScanner>();
   const limitEpisodes = new Map<string, LimitEpisode>();
@@ -446,6 +454,7 @@ export function createDomain(deps: DomainDeps): Domain {
       return {
         ...rest,
         lastLine: lastLines.get(s.id) ?? '',
+        ...(exitCodes.has(s.id) ? { exitCode: exitCodes.get(s.id) ?? null } : {}),
         ...(agentScope ? { agentScope } : {}),
         ...(seq === undefined ? {} : { restartSeq: seq }),
         ...(startRefusal ? { startRefusal } : {}),
@@ -670,6 +679,7 @@ export function createDomain(deps: DomainDeps): Domain {
       case 'exit':
         if (!current(e.sessionId, e.generation)) return;
         log.info('pty', 'exit', { sessionId: e.sessionId, code: e.code, reason: e.reason });
+        exitCodes.set(e.sessionId, e.code);
         setFacts(e.sessionId, { spawn: 'none' });
         mgr.setStatus(e.sessionId, 'exited');
         endEpisode(e.sessionId);
@@ -707,22 +717,25 @@ export function createDomain(deps: DomainDeps): Domain {
       : undefined;
   };
 
+  /** What answers a start without spawning; run again after the first reconcile, which may change it. */
+  const preflight = (id: string, retry: boolean): SessionStartResult | undefined => {
+    // A live session still attaches while stopping: a restart's settle leaves it running.
+    const live = attachResult(id);
+    if (live) return live;
+    if (deps.stopping()) return { ok: false, refusal: { reason: 'server_stopping' } };
+    const f = factsOf(id);
+    if (f.spawn === 'unconfirmed' && f.launchId && !retry)
+      return { ok: false, refusal: { reason: 'spawn_unconfirmed', launchId: f.launchId } };
+    return undefined;
+  };
+
   function start(id: string, retry: boolean): Promise<SessionStartResult> {
     const inFlight = starts.get(id);
     if (inFlight) return inFlight.then((r) => attachResult(id) ?? r);
     if (!mgr.get(id)) return Promise.reject(new RpcFault('not_found', 'Session no longer exists'));
-    // A live session still attaches while stopping: a restart's settle leaves it running.
-    const live = attachResult(id);
-    if (live) return Promise.resolve(live);
-    if (deps.stopping())
-      return Promise.resolve({ ok: false, refusal: { reason: 'server_stopping' } });
-    const f = factsOf(id);
-    if (f.spawn === 'unconfirmed' && f.launchId && !retry)
-      return Promise.resolve({
-        ok: false,
-        refusal: { reason: 'spawn_unconfirmed', launchId: f.launchId },
-      });
-    const run = coldStart(id).finally(() => starts.delete(id));
+    const early = preflight(id, retry);
+    if (early) return Promise.resolve(early);
+    const run = coldStart(id, retry).finally(() => starts.delete(id));
     starts.set(id, run);
     return run;
   }
@@ -734,12 +747,13 @@ export function createDomain(deps: DomainDeps): Domain {
     mgr.setStatus(id, 'stale');
   };
 
-  async function coldStart(id: string): Promise<SessionStartResult> {
-    // Until the first reconcile a running terminal of this session is not adopted yet, and
-    // spawning would start a second run of it.
+  async function coldStart(id: string, retry: boolean): Promise<SessionStartResult> {
+    // Until the first reconcile a running terminal or an unconfirmed launch of this session is not
+    // known yet, and spawning would start a second run of it.
     await reconciledReady;
-    const adoptedLive = attachResult(id);
-    if (adoptedLive) return adoptedLive;
+    if (!mgr.get(id)) throw new RpcFault('not_found', 'Session no longer exists');
+    const early = preflight(id, retry);
+    if (early) return early;
     // A restored session's first health check may still be marking missing folders.
     await folders.pending(id);
     // A session restored at start launches before the MCP endpoint listens; it waits, bounded.
@@ -821,11 +835,12 @@ export function createDomain(deps: DomainDeps): Domain {
     setFacts(id, { generation: ids.generation, launchId: ids.launchId });
     endEpisode(id);
     lastLines.delete(id);
+    exitCodes.delete(id);
     // Claude's visible scope is read off the final args, so a user's own --add-dir counts.
     if (plan.addDir) scopes.captured(id, scopeFromSpawnArgs(spec.cwd, scopeArgs, resolve, s));
     // Composed before the spawn: the child's first output may reach the ring before the reply.
     const recordedRows = history?.replay.findLast((r) => r.geometry)?.geometry?.rows;
-    const rows = requestedSizes.get(id)?.rows ?? factsOf(id).lastSize?.rows ?? HC_DEFAULT_ROWS;
+    const rows = (requestedSizes.get(id) ?? deps.lastSizeOf(id))?.rows ?? HC_DEFAULT_ROWS;
     const marker = spawnPrelude(deps.platform, rows, {
       relaunched: pendingRelaunchMarker.delete(id),
       replayed: !!history,
@@ -833,6 +848,8 @@ export function createDomain(deps: DomainDeps): Domain {
     });
     const prelude = composePrelude(history, marker);
     // In the ring before the child's first output; the app writes it from the prelude, so no show.
+    // A refused spawn leaves it there too, and every refusal below returns it in the prelude, so
+    // ring and pane agree (lead decision, w4 round 3 SF2).
     if (marker) scrollback.record(id, marker);
     const result = await runtime.spawn(id, spec, labels, ids);
     brief.commit(result.ok && 'terminal' in result);
@@ -874,6 +891,7 @@ export function createDomain(deps: DomainDeps): Domain {
       return refused(refusal, prelude);
     }
     if ('finished' in result) {
+      exitCodes.set(id, result.finished.exitCode);
       setFacts(id, { spawn: 'none' });
       mgr.setStatus(id, 'exited');
       endEpisode(id);
@@ -930,7 +948,9 @@ export function createDomain(deps: DomainDeps): Domain {
     opener: { sessionId?: string; focus: boolean };
   }
 
-  async function create(i: CreateInput): Promise<{ sessionId: string } | { error: string }> {
+  async function create(
+    i: CreateInput,
+  ): Promise<{ sessionId: string; droppedRoots: string[] } | { error: string }> {
     const def = effectiveDef({ agentId: i.agentId, command: i.command }, registry);
     if (!def) return { error: 'unknown_agent' };
     const { home, initial, projectId } = await prepareOpen(i.home, i.roots, i.projectId);
@@ -962,10 +982,12 @@ export function createDomain(deps: DomainDeps): Domain {
       focus: i.opener.focus,
     });
     void folders.check(id);
-    return { sessionId: id };
+    return { sessionId: id, droppedRoots: initial.dropped.map((d) => d.path) };
   }
 
-  async function createFromApp(p: Record<string, unknown>): Promise<{ sessionId: string }> {
+  async function createFromApp(
+    p: Record<string, unknown>,
+  ): Promise<ServerMethods['sessions.create']['result']> {
     if (deps.stopping()) throw new RpcFault('server_stopping', 'Conduit is stopping');
     const agentId = str(p, 'agentId');
     const home = str(p, 'home');
@@ -1060,7 +1082,8 @@ export function createDomain(deps: DomainDeps): Domain {
     mgr.remove(id);
     scopes.ended(id);
     endEpisode(id);
-    for (const m of [facts, restartSeq, startRefusals, lastLines, requestedSizes]) m.delete(id);
+    for (const m of [facts, restartSeq, startRefusals, lastLines, requestedSizes, exitCodes])
+      m.delete(id);
     pendingRelaunchMarker.delete(id);
     timers.onSessionDisposed(id);
     if (limitOffer?.sessionId === id) {

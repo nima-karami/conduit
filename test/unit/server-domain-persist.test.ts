@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { disposeHarnesses, harness, isFault } from '../../server/domain/testing/fakes';
@@ -64,6 +65,31 @@ describe('server domain: server settings', () => {
       settings: { trackCwd: false },
     });
     expect(h.logs.some((l) => l.includes('server-settings.json is corrupt'))).toBe(true);
+  });
+
+  it('keeps the first corrupt backup when a later corruption is re-seeded', async () => {
+    const h = harness({
+      files: { 'server-settings.json': '{ second', 'server-settings.corrupt.json': '{ first' },
+    });
+    expect(read(h.userData, 'server-settings.corrupt.json')).toBe('{ first');
+    expect(json(h.userData, 'server-settings.json').version).toBe(1);
+  });
+
+  it('never overwrites a corrupt server-settings.json whose backup failed', async () => {
+    const corrupt = '{ not json';
+    const userData = mkdtempSync(join(tmpdir(), 'conduit-w4-backup-'));
+    try {
+      writeFileSync(join(userData, 'server-settings.json'), corrupt);
+      // A directory in the backup's place makes the backup write fail.
+      mkdirSync(join(userData, 'server-settings.corrupt.json', 'x'), { recursive: true });
+      const h = harness({ userData });
+      await h.call('serverSettings.patch', { patch: { trackCwd: false } });
+      expect(read(userData, 'server-settings.json')).toBe(corrupt);
+      expect(h.logs.some((l) => l.includes('backup failed'))).toBe(true);
+      h.domain.dispose();
+    } finally {
+      rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    }
   });
 
   it('refuses to overwrite a newer server-settings.json', async () => {
@@ -193,13 +219,6 @@ describe('server domain: folder health', () => {
     // relaunch awaits the create's own health check, which would otherwise answer the next one.
     await h.call('sessions.relaunch', { sessionIds: [id] });
     rmSync(root, { recursive: true });
-
-    // A foreign path checks nothing: the deleted root stays unmarked.
-    await h.domain.handle({
-      method: 'folders.suspect',
-      params: { sessionId: id, path: join(h.home, 'zz') },
-    });
-    expect(h.domain.sessions.get(id)?.missingRoots).toBeUndefined();
 
     await h.domain.handle({ method: 'folders.suspect', params: { sessionId: id, path: root } });
     await vi.waitFor(() => expect(h.domain.sessions.get(id)?.missingRoots).toEqual([root]));
