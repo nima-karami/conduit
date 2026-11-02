@@ -21,7 +21,7 @@ export function serverChildEnv(
 /** `--hc <path>`: the bundled hc of this runtime version; dev and e2e use the one on PATH. */
 export const hcBinaryOf = (value: string | undefined) => value ?? 'hc';
 
-export function runHc(
+function runHc(
   bin: string,
   args: string[],
   env: Record<string, string>,

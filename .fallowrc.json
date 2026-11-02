@@ -14,7 +14,8 @@
     "test/unit/*.test.tsx",
     "test/e2e/*.mjs",
     "test/e2e/stress/*.mjs",
-    "resources/conduit-mcp/*.cjs"
+    "resources/conduit-mcp/*.cjs",
+    "test/e2e/fixtures/*.cjs"
   ],
   "ignoreDependencies": ["electron-updater", "dompurify"],
   "ignorePatterns": ["out/**", "dist/**", "designs/**", "node_modules/**"],
@@ -34,6 +35,38 @@
     {
       "file": "src/contracts/*.ts",
       "exports": ["*"]
+    },
+    {
+      "file": "src/hc-client/index.ts",
+      "exports": ["resolveHcEndpoint"]
     }
+  ],
+  "usedClassMembers": [
+    {
+      "implements": "TerminalRuntime",
+      "members": [
+        "reconcile",
+        "spawn",
+        "discardLaunch",
+        "beginStopping",
+        "input",
+        "resize",
+        "facts",
+        "get",
+        "screen",
+        "tailLines",
+        "kill",
+        "retire",
+        "close",
+        "on",
+        "onHealth",
+        "liveTerminals",
+        "killSessions"
+      ]
+    },
+    { "implements": "ScreenPort", "members": ["ensure", "keepTail", "release"] },
+    { "implements": "AttentionPort", "members": ["forgetSession"] },
+    { "extends": "Error", "members": ["reason"] },
+    { "implements": "HcStream", "members": ["facts", "receive"] }
   ]
 }

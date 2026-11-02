@@ -37,7 +37,7 @@ export type { AppConnection } from './presence';
 /** As main.ts today: input fires per keystroke, a touch per keystroke would write per character. */
 const INPUT_TOUCH_INTERVAL_MS = 30_000;
 /** D8: how long waiting asks outlive the last app connection before ui_unavailable. */
-export const APP_GRACE_MS = 5_000;
+const APP_GRACE_MS = 5_000;
 /** The sender of a renderer message from a window no presence named: owns nothing, never ready. */
 const NO_WINDOW = 0;
 

@@ -9,7 +9,7 @@ import { type ActivitySnapshot, SessionActivity } from '../../src/session-activi
 import { scanInertOutput } from '../../src/terminal-output';
 
 /** Today's sweep cadence: at most half the busy window, so idle detection lags ≤ 750 ms. */
-export const ATTENTION_SWEEP_MS = 750;
+const ATTENTION_SWEEP_MS = 750;
 
 interface Reported {
   status: Exclude<ReportedStatus, null>;

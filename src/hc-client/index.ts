@@ -70,7 +70,7 @@ export class HcDisconnectedError extends Error {
   }
 }
 
-export class HcProtocolError extends Error {
+class HcProtocolError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = 'HcProtocolError';
