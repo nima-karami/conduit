@@ -7,11 +7,12 @@
  *   (a) a well-formed JSONL record is written to the active log file (ts/level/scope/msg), and the
  *       session spawn lands in the server's own `<userData>/server.log`;
  *   (b) a renderer-injected record carrying a sensitive key is persisted MASKED;
- *   (c) the `revealLogs` IPC opens the logs folder (shell.openPath spy).
+ *   (c) the `revealLogs` IPC opens the userData folder — the parent of logs/ and server.log
+ *       (shell.openPath spy).
  *   Slice B
  *   (d) a renderer `log.<level>(scope, msg)` call lands as a JSONL record with that level+scope;
- *   (e) `copyDiagnostics` writes a bundle (version header + log content) and reveals it
- *       (shell.showItemInFolder spy);
+ *   (e) `copyDiagnostics` writes a bundle (version header + app log + server.log tail) and
+ *       reveals it (shell.showItemInFolder spy);
  *   (f) `readLogTail` returns recent lines.
  *
  * Windows only (matches the rest of the suite).
@@ -19,7 +20,7 @@
 
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   assert,
   assertCall,
@@ -121,13 +122,19 @@ try {
   assert(probe.data.path === 'G:/awby/projects/conduit', 'path (repo data) must be kept intact');
   log('PASS: sensitive key redacted, path preserved ✓');
 
-  // (c) revealLogs opens the logs folder via shell.openPath.
+  // (c) revealLogs opens userData — the one folder holding both logs/ and the server's
+  // server.log (the e2e app log is redirected to temp, so server.log is the observable child).
   await clearSpyCalls(app);
   await page.evaluate(() => window.agentDeck.revealLogs());
   await page.waitForTimeout(400);
   const calls = await getSpyCalls(app);
-  assertCall(calls, 'openPath', (c) => String(c.args[0]).includes('conduit-e2e-logs'));
-  log('PASS: revealLogs → shell.openPath(logsDir) ✓');
+  const samePath = (a, b) => resolve(String(a)).toLowerCase() === resolve(String(b)).toLowerCase();
+  assertCall(
+    calls,
+    'openPath',
+    (c) => samePath(c.args[0], launched.userDataDir) && existsSync(join(c.args[0], 'server.log')),
+  );
+  log('PASS: revealLogs → shell.openPath(userData containing server.log) ✓');
 
   // ── Slice B ──────────────────────────────────────────────────────────────
 
@@ -158,11 +165,17 @@ try {
   assert(bundle.includes('=== Conduit diagnostics ==='), 'bundle missing the version header');
   assert(/app:\s+\d/.test(bundle), 'bundle header missing an app version');
   assert(bundle.includes('parity-probe'), 'bundle missing recent log content');
+  const serverSection = bundle.split('=== server.log ===')[1];
+  assert(serverSection !== undefined, 'bundle missing the server.log section');
+  assert(
+    serverSection.includes('"scope":"pty"') && serverSection.includes('"msg":"spawn"'),
+    'bundle server.log section missing the pty/spawn record',
+  );
   const diagCalls = await getSpyCalls(app);
   assertCall(diagCalls, 'showItemInFolder', (c) =>
     String(c.args[0]).includes('conduit-diagnostics-'),
   );
-  log('PASS: copyDiagnostics → bundle (header + logs) + shell.showItemInFolder ✓');
+  log('PASS: copyDiagnostics → bundle (header + logs + server.log) + shell.showItemInFolder ✓');
 
   // (f) readLogTail: returns recent lines (not off, with content).
   const tail = await page.evaluate(() => window.agentDeck.readLogTail(100));

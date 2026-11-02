@@ -563,6 +563,35 @@ describe('openWindowIds', () => {
   it('a focused window that is closing does not come back', () => {
     expect(openWindowIds([1, 2], live, new Set([2]), 2)).toEqual([1]);
   });
+
+  it('a queued close behind a window still ending its sessions finds itself the last window', () => {
+    // Mirrors the host: proceedWindow only marks the window closing (its removals are in flight),
+    // so it is still live when the guard drains its sibling's queued close.
+    const ending = new Set<number>();
+    const seen: number[][] = [];
+    const asked: [number, GuardAsk][] = [];
+    const windowIds = () => openWindowIds([1, 2], live, ending);
+    const guard = createCloseGuard({
+      windowIds,
+      prepare: () => {},
+      focus: () => {},
+      counts: () => ({ running: 0, busy: 0 }),
+      ask: (id, ask) => asked.push([id, ask]),
+      abort: () => {},
+      confirmUnresponsive: async () => true,
+      proceedApp: () => {},
+      proceedWindow: (id) => ending.add(id),
+      resumeWindowClose: () => seen.push(windowIds()),
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+      log: () => {},
+    });
+    guard.requestWindowClose(1);
+    guard.requestWindowClose(2);
+    expect(asked.map(([id]) => id)).toEqual([1]);
+    guard.onDecision(1, asked[0]?.[1].requestId ?? -1, true);
+    expect(seen).toEqual([[2]]);
+  });
 });
 
 describe('createQuitGrant', () => {
