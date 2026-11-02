@@ -1,19 +1,4 @@
-import type { SessionsParse } from './persistence';
-import { shouldPersistSessions } from './persistence';
 import { type PersistedScrollback, restoreScrollback } from './scrollback-persistence';
-import type { TimedMessagesFile } from './timed-messages';
-
-// A file a newer version wrote is never overwritten this run (architecture §Persisted formats).
-export function sessionsWritable(
-  settings: { restoreSessions: boolean },
-  parsed: SessionsParse,
-): boolean {
-  return shouldPersistSessions(settings) && parsed.kind !== 'newer';
-}
-
-export function timedMessagesWritable(parsed: TimedMessagesFile): boolean {
-  return parsed.kind !== 'newer';
-}
 
 /**
  * Judges each scrollback file once, on first touch, so a persist doesn't re-read its own file:

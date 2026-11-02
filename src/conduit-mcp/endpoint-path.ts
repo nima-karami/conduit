@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { instanceDigest } from '../instance-digest';
 
 /** sun_path is 104–108 bytes depending on the OS; stay under the smallest with margin. */
 const MAX_SOCKET_PATH_BYTES = 100;
@@ -12,10 +12,7 @@ export function endpointPath(
   platform: 'win32' | 'posix',
   tmpdir: string,
 ): string {
-  const h = createHash('sha256')
-    .update(platform === 'win32' ? userData.toLowerCase() : userData)
-    .digest('hex')
-    .slice(0, 16);
+  const h = instanceDigest(userData, platform);
   if (platform === 'win32') return `\\\\.\\pipe\\conduit-mcp-${h}`;
   const inProfile = `${userData}/conduit-mcp/mcp.sock`;
   return Buffer.byteLength(inProfile) > MAX_SOCKET_PATH_BYTES

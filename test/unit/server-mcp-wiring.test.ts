@@ -15,6 +15,7 @@ import type {
 } from '../../src/contracts/terminal-runtime';
 import type { SubmitHooks } from '../../src/pty-writer';
 import type { AgentDefinition, Session, SpawnSpec } from '../../src/types';
+import { onLines, writeJsonLine } from '../helpers/line-socket';
 import { allowPeerReset } from '../helpers/peer-socket';
 import { testEndpoint } from '../helpers/test-endpoint';
 
@@ -299,23 +300,12 @@ async function client(
   };
   const sock = allowPeerReset(net.connect(ep));
   sockets.push(sock);
-  sock.setEncoding('utf8');
   const lines: Array<Record<string, unknown>> = [];
-  let buf = '';
-  sock.on('data', (d: string) => {
-    buf += d;
-    let i = buf.indexOf('\n');
-    while (i >= 0) {
-      lines.push(JSON.parse(buf.slice(0, i)));
-      buf = buf.slice(i + 1);
-      i = buf.indexOf('\n');
-    }
-  });
+  onLines(sock, (line) => lines.push(JSON.parse(line)));
   const resume = opts.resume ? { initialize: params, initialized: true } : null;
-  sock.write(`${JSON.stringify({ conduit: 2, token, shim: 'test', resume })}\n`);
+  writeJsonLine(sock, { conduit: 2, token, shim: 'test', resume });
   await expect.poll(() => lines[0]).toEqual({ conduit: 2, ok: true });
-  const send = (m: Record<string, unknown>) =>
-    sock.write(`${JSON.stringify({ jsonrpc: '2.0', ...m })}\n`);
+  const send = (m: Record<string, unknown>) => writeJsonLine(sock, { jsonrpc: '2.0', ...m });
   if (resume) {
     await expect
       .poll(() => lines.some((l) => l.method === 'notifications/tools/list_changed'))

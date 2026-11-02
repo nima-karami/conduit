@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  parseDocs,
-  parseSessions,
-  serializeDocs,
-  serializeSessions,
-  shouldPersistSessions,
-} from '../../src/persistence';
+import { parseDocs, parseSessions, serializeDocs, serializeSessions } from '../../src/persistence';
 import type { PersistedDoc } from '../../src/protocol';
 import { COMMAND_AGENT_ID } from '../../src/session-command';
 import type { Session } from '../../src/types';
@@ -230,16 +224,6 @@ describe('persistence', () => {
       legacyIds: ['1'],
       dropped: 0,
     });
-  });
-});
-
-describe('shouldPersistSessions', () => {
-  // Data-loss guard: with restore OFF the app must NOT overwrite the saved session set —
-  // otherwise the next persist/quit writes [] over sessions.json and toggling restore back
-  // on brings back nothing.
-  it('permits writing the session list only when restore is on', () => {
-    expect(shouldPersistSessions({ restoreSessions: true })).toBe(true);
-    expect(shouldPersistSessions({ restoreSessions: false })).toBe(false);
   });
 });
 

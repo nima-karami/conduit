@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createShimEndpoint } from '../../server/mcp/endpoint';
 import { createSessionScreens, type SessionScreens } from '../../server/runtime/session-screens';
+import { createTokenStore } from '../../server/runtime/testing/token-store';
 import { MCP_ADAPTERS } from '../../src/conduit-mcp/adapters';
 import type { McpFileRequest, McpOpenRequest, PathKind } from '../../src/conduit-mcp/control-tools';
 import {
@@ -18,7 +19,6 @@ import { ECHO_POLL_MS } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
 import { screenVerdict } from '../../src/conduit-mcp/screen-verdict';
 import type { StoreIo } from '../../src/conduit-mcp/store';
-import { createTokenStore } from '../../src/conduit-mcp/token-store';
 import {
   type CliPolicyLayers,
   DEFAULT_TOOL_POLICY,

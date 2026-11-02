@@ -12,6 +12,7 @@ import { NodeHcClient } from '../../src/hc-client';
 import { FakeHc } from '../../src/hc-client/testing/fake-hc';
 import { instanceNames } from '../../src/instance-names';
 import type { AgentDefinition } from '../../src/types';
+import { onLines, writeJsonLine } from '../helpers/line-socket';
 import { allowPeerReset } from '../helpers/peer-socket';
 import { testEndpoint } from '../helpers/test-endpoint';
 
@@ -263,16 +264,9 @@ describe('compose: per-peer events', () => {
   function client(endpoint: string) {
     const lines: Array<{ method?: string; params?: { type: string } }> = [];
     const socket: Socket = allowPeerReset(createConnection(endpoint));
-    let buffer = '';
-    socket.on('data', (c) => {
-      buffer += c.toString('utf8');
-      for (let i = buffer.indexOf('\n'); i >= 0; i = buffer.indexOf('\n')) {
-        lines.push(JSON.parse(buffer.slice(0, i)));
-        buffer = buffer.slice(i + 1);
-      }
-    });
+    onLines(socket, (line) => lines.push(JSON.parse(line)));
     const send = (id: number, method: string, params: unknown = {}) =>
-      socket.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
+      writeJsonLine(socket, { jsonrpc: '2.0', id, method, params });
     return { socket, lines, send };
   }
 

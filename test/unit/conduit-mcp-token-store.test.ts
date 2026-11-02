@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { createTokenStore } from '../../src/conduit-mcp/token-store';
+import { createTokenStore } from '../../server/runtime/testing/token-store';
 import type { TokenRecord } from '../../src/contracts/session-identity';
 
 const ids = (generation: number) => ({

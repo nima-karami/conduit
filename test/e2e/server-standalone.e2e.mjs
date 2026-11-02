@@ -2,10 +2,10 @@ import { execFile as execFileCallback, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { C2 } from './c2-peer.mjs';
 import { FAKE_AGENT, sleep, until } from './conduit-mcp-helpers.mjs';
 import { assert, finishScenario, makeLog, onPath, phase, REPO } from './harness.mjs';
 import { assertOwnSession, hcEnv, stopHc, teardownNames } from './harness-server-teardown.mjs';
@@ -29,60 +29,6 @@ const ECHO_AGENT = 'e2e-echo';
 const FAKE_AGENT_ID = 'e2e-fake-mcp';
 const ECHO_PROGRAM = String.raw`process.stdout.write('E2E-READY\n');process.stdin.on('data',d=>{const s=d.toString().trim();if(s==='exit-23'){process.exitCode=23;process.stdin.destroy();process.stdout.write('E2E-EXITING\n')}else process.stdout.write('ECHO:'+s+'\n')})`;
 const SIZE = { cols: 100, rows: 30 };
-
-/** One C2 connection: newline-delimited JSON-RPC, with every `event` notification kept in order. */
-class C2 {
-  static open(endpoint) {
-    return new Promise((resolve, reject) => {
-      const socket = connect(endpoint);
-      socket.once('connect', () => resolve(new C2(socket)));
-      socket.once('error', reject);
-    });
-  }
-  constructor(socket) {
-    this.socket = socket;
-    this.events = [];
-    this.pending = new Map();
-    this.nextId = 0;
-    this.closed = false;
-    let buffer = '';
-    socket.setEncoding('utf8');
-    socket.on('data', (chunk) => {
-      buffer += chunk;
-      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
-        const message = JSON.parse(buffer.slice(0, end));
-        buffer = buffer.slice(end + 1);
-        if (message.method === 'event') this.events.push(message.params);
-        const waiter = this.pending.get(message.id);
-        if (waiter && message.method === undefined) {
-          this.pending.delete(message.id);
-          if (message.error)
-            waiter.reject(new Error(`${message.error.message} (${JSON.stringify(message.error)})`));
-          else waiter.resolve(message.result);
-        }
-      }
-    });
-    socket.on('error', () => {});
-    socket.on('close', () => {
-      this.closed = true;
-      for (const waiter of this.pending.values()) waiter.reject(new Error('C2 closed'));
-      this.pending.clear();
-    });
-  }
-  call(method, params = {}) {
-    const id = ++this.nextId;
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.socket.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
-    });
-  }
-  notify(method, params) {
-    this.socket.write(`${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`);
-  }
-  close() {
-    this.socket.destroy();
-  }
-}
 
 /** The app's connect: hello, logging, subscribe, a ready window and its panes' sizes. */
 async function attachApp(endpoint, sessionIds) {

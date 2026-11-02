@@ -1,64 +1,13 @@
 import type { HcClient } from '../../../src/contracts/hc';
-import type { TokenRows, TokenStorePort } from '../../../src/contracts/server-ports';
-import type { ConduitLabels, TokenRecord } from '../../../src/contracts/session-identity';
+import type { ConduitLabels } from '../../../src/contracts/session-identity';
 import type { LaunchIds, RuntimeEvent } from '../../../src/contracts/terminal-runtime';
 import { NodeHcClient } from '../../../src/hc-client';
 import { FakeHc } from '../../../src/hc-client/testing/fake-hc';
 import type { TermGeometry } from '../../../src/protocol';
 import { type HcRuntimeDeps, HcTerminalRuntime } from '../runtime';
+import { createTokenStore, type MemTokenStore } from './token-store';
 
 export const INSTANCE = 'inst';
-
-/** TokenStorePort over an in-memory row list, recording every call in order. */
-class MemTokens implements TokenStorePort {
-  list: TokenRecord[] = [];
-  state: TokenRows['state'] = 'loaded';
-  readonly calls: string[] = [];
-
-  row(launchId: string): TokenRecord | undefined {
-    return this.list.find((r) => r.launchId === launchId);
-  }
-  add(sessionId: string, ids: LaunchIds, state: TokenRecord['state'], hcAddress: string | null) {
-    this.list.push({
-      sessionId,
-      sha256: 'hash',
-      generation: ids.generation,
-      launchId: ids.launchId,
-      state,
-      hcAddress,
-      createdAt: '2026-11-02T00:00:00.000Z',
-    });
-  }
-  async reserve(sessionId: string, ids: LaunchIds) {
-    this.add(sessionId, ids, 'reserved', null);
-    return { token: 'token' };
-  }
-  async resolveAddress(launchId: string, hcAddress: string) {
-    this.calls.push(`resolve ${launchId} ${hcAddress}`);
-    const row = this.row(launchId);
-    if (row) Object.assign(row, { state: 'live', hcAddress });
-  }
-  async markUnconfirmed(launchId: string) {
-    this.calls.push(`unconfirmed ${launchId}`);
-    const row = this.row(launchId);
-    if (row) row.state = 'unconfirmed';
-  }
-  async markSuperseded(launchId: string) {
-    this.calls.push(`superseded ${launchId}`);
-    const row = this.row(launchId);
-    if (row) row.state = 'superseded';
-  }
-  rows(): TokenRows {
-    if (this.state === 'loaded') return { state: 'loaded', rows: this.list.map((r) => ({ ...r })) };
-    return { state: this.state };
-  }
-  async revoke(key: { sessionId: string } | { launchId: string }) {
-    this.calls.push(`revoke ${'launchId' in key ? key.launchId : key.sessionId}`);
-    this.list = this.list.filter((r) =>
-      'launchId' in key ? r.launchId !== key.launchId : r.sessionId !== key.sessionId,
-    );
-  }
-}
 
 export const launch = (n: number): LaunchIds => ({
   generation: n,
@@ -102,7 +51,7 @@ class Ring {
 export interface Harness {
   fake: FakeHc;
   hc: NodeHcClient;
-  tokens: MemTokens;
+  tokens: MemTokenStore;
   ring: Ring;
   runtime: HcTerminalRuntime;
   events: RuntimeEvent[];
@@ -122,7 +71,7 @@ export async function harness(overrides: Partial<HcRuntimeDeps> = {}): Promise<H
     if (method === 'terminal.attach') attachChannels.push((result as { channel: number }).channel);
   };
   const hc = new NodeHcClient({ connect: fake.connect, reconnectDelayMs: 10, log: () => {} });
-  const tokens = new MemTokens();
+  const tokens = createTokenStore({ randomToken: () => 'token' });
   const ring = new Ring();
   const logs: string[] = [];
   let h: Harness | undefined;

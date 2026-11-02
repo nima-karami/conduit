@@ -6,7 +6,6 @@ import {
   type SessionView,
 } from '../src/contracts/server-protocol';
 import type { RepoInfo } from '../src/repo-scan';
-import { sameRepoGit } from '../src/session-manager';
 import type { GitInfo } from '../src/types';
 
 export interface SessionFolderDiff {
@@ -14,6 +13,35 @@ export interface SessionFolderDiff {
   kind: 'added' | 'removed' | 'changed';
   homeChanged: boolean;
   cwdChanged: boolean;
+}
+
+/** Shallow value-equality for GitInfo so setRepoGit only emits on a real change. */
+function sameGit(a: GitInfo | undefined, b: GitInfo | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.kind === b.kind &&
+    a.branch === b.branch &&
+    a.unborn === b.unborn &&
+    a.sha === b.sha &&
+    a.isWorktree === b.isWorktree &&
+    a.worktreeName === b.worktreeName &&
+    a.dirty === b.dirty &&
+    a.operation === b.operation
+  );
+}
+
+function sameRepoGit(
+  a: Record<string, GitInfo> | undefined,
+  b: Record<string, GitInfo> | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keys = Object.keys(a);
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every((k) => Object.hasOwn(b, k) && sameGit(a[k], b[k]))
+  );
 }
 
 const sameList = (a: readonly string[], b: readonly string[]) =>
@@ -28,7 +56,7 @@ const sameRepos = (a: RepoInfo[] | undefined, b: RepoInfo[]) =>
 
 /**
  * The app's session list: the server's views with the D39 overlay (repo fields the app derives)
- * merged on. Repo logic ported from SessionManager's setRepos…unpinRepo.
+ * merged on.
  */
 export class AppSessionStore {
   private views: SessionView[] = [];

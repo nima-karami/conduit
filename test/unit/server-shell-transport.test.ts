@@ -9,6 +9,7 @@ import { STOP_FAILED_EXIT } from '../../server/lifecycle/shell';
 import { PipeTransport, type RpcHandler } from '../../server/transport/pipe';
 import { APP_HELLO_TIMEOUT_MS } from '../../src/contracts/server-protocol';
 import { instanceNames } from '../../src/instance-names';
+import { onLines, writeJsonLine } from '../helpers/line-socket';
 
 const sockets: Socket[] = [];
 const transports: PipeTransport[] = [];
@@ -66,19 +67,13 @@ async function client(endpoint: string) {
     socket.once('connect', resolve);
     socket.once('error', reject);
   });
-  let buffer = '';
   const inbox: unknown[] = [];
   const waiting: ((value: unknown) => void)[] = [];
-  socket.setEncoding('utf8');
-  socket.on('data', (chunk) => {
-    buffer += chunk;
-    for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
-      const value: unknown = JSON.parse(buffer.slice(0, end));
-      buffer = buffer.slice(end + 1);
-      const waiter = waiting.shift();
-      if (waiter) waiter(value);
-      else inbox.push(value);
-    }
+  onLines(socket, (line) => {
+    const value: unknown = JSON.parse(line);
+    const waiter = waiting.shift();
+    if (waiter) waiter(value);
+    else inbox.push(value);
   });
   let id = 0;
   const next = () =>
@@ -87,7 +82,7 @@ async function client(endpoint: string) {
     socket,
     next,
     send(method: string, params: unknown = {}) {
-      socket.write(`${JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params })}\n`);
+      writeJsonLine(socket, { jsonrpc: '2.0', id: ++id, method, params });
     },
     async call(method: string, params: unknown = {}) {
       this.send(method, params);

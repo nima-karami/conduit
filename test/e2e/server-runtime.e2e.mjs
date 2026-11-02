@@ -27,43 +27,6 @@ function privateHcEnvironment(directory, session) {
 const ECHO_PROGRAM = String.raw`process.stdout.write('E2E-READY\n');process.stdin.on('data',d=>process.stdout.write('ECHO:'+d.toString().trim()+'\n'))`;
 const FAST_PROGRAM = String.raw`process.stdout.write('FAST-OUT\n',()=>{process.exitCode=4})`;
 
-/** TokenStorePort over memory: W5 owns the real one; the runtime only needs the port. */
-class MemTokens {
-  list = [];
-  rows() {
-    return { state: 'loaded', rows: this.list.map((r) => ({ ...r })) };
-  }
-  row(launchId) {
-    return this.list.find((r) => r.launchId === launchId);
-  }
-  async reserve(sessionId, ids) {
-    this.list.push({
-      sessionId,
-      sha256: 'e2e',
-      generation: ids.generation,
-      launchId: ids.launchId,
-      state: 'reserved',
-      hcAddress: null,
-      createdAt: new Date().toISOString(),
-    });
-    return { token: 'e2e' };
-  }
-  async resolveAddress(launchId, hcAddress) {
-    Object.assign(this.row(launchId) ?? {}, { state: 'live', hcAddress });
-  }
-  async markUnconfirmed(launchId) {
-    Object.assign(this.row(launchId) ?? {}, { state: 'unconfirmed' });
-  }
-  async markSuperseded(launchId) {
-    Object.assign(this.row(launchId) ?? {}, { state: 'superseded' });
-  }
-  async revoke(key) {
-    this.list = this.list.filter((r) =>
-      key.launchId ? r.launchId !== key.launchId : r.sessionId !== key.sessionId,
-    );
-  }
-}
-
 async function settleCleanup(actions) {
   const errors = [];
   for (const action of actions) {
@@ -105,6 +68,7 @@ runScenario('server-runtime', async ({ log }) => {
         contents: [
           "export { createRuntimeServices } from './server/runtime/index.ts';",
           "export { NodeHcClient } from './src/hc-client/index.ts';",
+          "export { createTokenStore } from './server/runtime/testing/token-store.ts';",
         ].join('\n'),
         resolveDir: REPO,
         loader: 'ts',
@@ -114,7 +78,7 @@ runScenario('server-runtime', async ({ log }) => {
       platform: 'node',
       format: 'cjs',
     });
-    const { createRuntimeServices, NodeHcClient } = requireFromHere(bundlePath);
+    const { createRuntimeServices, createTokenStore, NodeHcClient } = requireFromHere(bundlePath);
 
     startAttempted = true;
     await execFile(hc, ['server', 'start'], hcOptions);
@@ -131,7 +95,7 @@ runScenario('server-runtime', async ({ log }) => {
       onConnection: (listener) => client.onConnection(listener),
       close: () => client.close(),
     };
-    const tokens = new MemTokens();
+    const tokens = createTokenStore({ randomToken: () => 'e2e' });
     const shown = [];
     const services = createRuntimeServices({
       hc: hcPort,

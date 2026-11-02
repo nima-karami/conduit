@@ -2,13 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { parseSessions } from '../../src/persistence';
-import {
-  ScrollbackWriteGate,
-  sessionsWritable,
-  timedMessagesWritable,
-} from '../../src/persistence-write-gates';
-import { parseTimedMessagesFile } from '../../src/timed-messages';
+import { ScrollbackWriteGate } from '../../src/persistence-write-gates';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -30,25 +24,6 @@ const readIn = (dir: string) => (name: string) => {
 };
 
 describe('persisted write gates', () => {
-  it('a newer sessions.json is not writable', () => {
-    const parsed = parseSessions('{"version":2,"sessions":["newer bytes"]}');
-    expect(parsed.kind).toBe('newer');
-    expect(sessionsWritable({ restoreSessions: true }, parsed)).toBe(false);
-  });
-
-  it('a current sessions.json stays writable, and restore-off still blocks it', () => {
-    const parsed = parseSessions('{"version":1,"sessions":[]}');
-    expect(sessionsWritable({ restoreSessions: true }, parsed)).toBe(true);
-    expect(sessionsWritable({ restoreSessions: false }, parsed)).toBe(false);
-  });
-
-  it('a newer timed-messages.json is not writable', () => {
-    const parsed = parseTimedMessagesFile('{"version":2,"schedules":["newer bytes"]}');
-    expect(parsed.kind).toBe('newer');
-    expect(timedMessagesWritable(parsed)).toBe(false);
-    expect(timedMessagesWritable(parseTimedMessagesFile(undefined))).toBe(true);
-  });
-
   it('a newer scrollback file is neither replayed, persisted over nor deleted', () => {
     const dir = scratchDir();
     const newer = JSON.stringify({ version: 3, sessionId: 's1', segments: [] });
