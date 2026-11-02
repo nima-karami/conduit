@@ -1,6 +1,6 @@
 import type { Project, Session } from './types';
 
-/** Group key of the standalone group; project ids are never this string (mf-model mints `p-…`). */
+/** Legacy key stays stable for No space; project ids are never this string (mf-model mints `p-…`). */
 export const STANDALONE_KEY = 'standalone';
 
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;

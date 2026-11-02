@@ -255,9 +255,9 @@ export function Sidebar({
         sessions,
         runtime,
         askSessionIds,
-        lastFocusedId: tree.lastFocusedId,
+        lastFocusedBySpace: tree.lastFocusedBySpace,
       }),
-    [projects, sessions, runtime, askSessionIds, tree.lastFocusedId],
+    [projects, sessions, runtime, askSessionIds, tree.lastFocusedBySpace],
   );
   const spaceName = (row: SpaceRowModel) =>
     row.key === SPACE_KEY_ALL

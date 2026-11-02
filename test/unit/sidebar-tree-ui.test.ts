@@ -2,6 +2,7 @@
 import { act, createElement, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { needYouEntries, presentationSessions } from '../../src/attention';
 import { defaultSidebarUi, type SidebarUiState } from '../../src/sidebar-state';
 import type { Project, Session } from '../../src/types';
 import { Sidebar } from '../../webview/components/sidebar';
@@ -36,6 +37,20 @@ afterEach(async () => {
 });
 
 const NOW = 100 * 60_000;
+
+it('App presentation suppresses snoozed reasons in Sidebar and footer while preserving asks', async () => {
+  const raw = [session('blocked', { attentionReason: 'blocked', needsAttention: true })];
+  const snoozed = new Map([['blocked', NOW + 1000]]);
+  const sessions = presentationSessions(raw, snoozed, NOW);
+  await render({ sessions });
+  expect(rowEl('blocked').getAttribute('aria-label')).toBe('blocked, Idle');
+  expect(needYouEntries(raw, [], snoozed, NOW)).toEqual([]);
+  expect(raw[0].attentionReason).toBe('blocked');
+  await act(async () => root?.unmount());
+  root = null;
+  await render({ sessions, tree: { askSessionIds: new Set(['blocked']) } });
+  expect(rowEl('blocked').getAttribute('aria-label')).toBe('blocked, Needs you');
+});
 
 function session(id: string, o: Partial<Session> = {}): Session {
   return {
@@ -92,7 +107,7 @@ async function render(s: Setup) {
       runtime: { seen: {}, stateSince: {} },
       askSessionIds: new Set(),
       bindings: {},
-      lastFocusedId: undefined,
+      lastFocusedBySpace: {},
       filterRequest,
       requestFilter: () => {},
       updateUi: (next) => {

@@ -53,6 +53,13 @@ function harness(loadImpl: LoadImpl = () => Promise.resolve([{ ...FACE }])) {
 const BOOT = { fontUi: 'figtree', fontMono: 'jetbrains', terminalFontSize: 14 };
 
 describe('loadBootFonts', () => {
+  it('the App owner reuses boot readiness for the unchanged selection', async () => {
+    const { svc, loads, calls } = harness();
+    await svc.loadBootFonts(BOOT);
+    await svc.applyTerminalFontChange(BOOT.fontMono, BOOT.terminalFontSize);
+    expect(loads).toHaveLength(4);
+    expect(calls.filter((c) => c.startsWith('apply:'))).toEqual([]);
+  });
   it('loads the selected UI and mono faces at 400 and 700 with the symbol sample', async () => {
     const { svc, loads, warnings } = harness();
     await svc.loadBootFonts(BOOT);
@@ -184,6 +191,27 @@ describe('applyTerminalFontChange', () => {
     });
     return { promise, resolve };
   };
+
+  it('owns selection in an empty window and gives a delayed first terminal the loaded face', async () => {
+    const d = deferred();
+    const { svc, calls, listeners } = harness((font) =>
+      font.includes('Fira') ? d.promise : Promise.resolve([{ ...FACE }]),
+    );
+    await svc.loadBootFonts(BOOT);
+    calls.length = 0;
+    const selected = svc.applyTerminalFontChange('firacode', 14);
+    // A first terminal arriving during the load must start with the loaded stack.
+    expect(svc.terminalFontFamily()).toBe(monoStack('jetbrains'));
+    d.resolve([{ family: 'Fira Code' }]);
+    await selected;
+    expect(svc.terminalFontFamily()).toBe(monoStack('firacode'));
+    const loads = calls.filter((c) => c.startsWith('load:')).length;
+    await svc.applyTerminalFontChange('firacode', 14);
+    expect(calls.filter((c) => c.startsWith('load:'))).toHaveLength(loads);
+    calls.length = 0;
+    listeners[0]({ fontfaces: [{ family: 'Fira Code' }] });
+    expect(calls).toEqual(['refreshFonts']);
+  });
 
   it('loads the new face before the option changes', async () => {
     const d = deferred();

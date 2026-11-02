@@ -161,8 +161,12 @@ describe('changesBadgeCount', () => {
   });
 });
 
-function rightPane(paneRef?: { current: RightPaneHandle | null }) {
+function rightPane(
+  paneRef?: { current: RightPaneHandle | null },
+  onMoveMenu?: (anchor: DOMRect) => void,
+) {
   return createElement(RightPane, {
+    onMoveMenu,
     sessionId: undefined,
     activeTarget: null,
     sections: [],
@@ -215,6 +219,26 @@ function rightPane(paneRef?: { current: RightPaneHandle | null }) {
 const pane = () => document.querySelector<HTMLElement>('aside#right-pane');
 
 describe('right panel (selector contract: Right panel)', () => {
+  it('opens the panel move menu from its focusable grip with the keyboard', async () => {
+    const open = vi.fn();
+    await render(chrome(), rightPane(undefined, open));
+    const grip = document.querySelector<HTMLElement>('.rightpane__grip');
+    expect(grip?.tabIndex).toBe(0);
+    expect(grip?.getAttribute('aria-label')).toBe('Move side panel');
+    for (const key of ['Enter', ' ', 'ContextMenu', 'F10']) {
+      await act(async () => {
+        grip?.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key,
+            shiftKey: key === 'F10',
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+    }
+    expect(open).toHaveBeenCalledTimes(4);
+  });
   it('names its effective view and has no tab row', async () => {
     await render(chrome({ rightTab: 'changes' }), rightPane());
     expect(pane()?.dataset.rightView).toBe('changes');

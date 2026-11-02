@@ -85,7 +85,7 @@ async function render(
             runtime: { seen: {}, stateSince: {} },
             askSessionIds: new Set<string>(),
             bindings: {},
-            lastFocusedId: undefined,
+            lastFocusedBySpace: {},
             filterRequest: 0,
             requestFilter: noop,
             updateUi: noop,

@@ -12,8 +12,8 @@ import {
 import { activeCwd, gitRootForSession } from '../src/active-cwd';
 import { repoForPath } from '../src/active-repo';
 import type { AttentionEntry } from '../src/attention';
-import { needYouEntries, pruneSnoozed, visibleSessionIds } from '../src/attention';
-import { routeAttention } from '../src/attention-route';
+import { needYouEntries, presentationSessions, visibleSessionIds } from '../src/attention';
+import { activateSessionTerminal, routeAttention } from '../src/attention-route';
 import type { BoardCard } from '../src/board';
 import { cardSessionPrefill } from '../src/board-linkage';
 import { canonicalPath, pathBelow, renamedPath } from '../src/canonical-path';
@@ -333,6 +333,7 @@ import {
   shouldFocusActiveTerminal,
   subscribeTerminalBus,
 } from './terminal-bus';
+import { applyTerminalFontChange } from './terminal-fonts';
 import { THEMES } from './themes';
 import {
   cancelTimedMessage,
@@ -857,7 +858,7 @@ export function App() {
         }
       } else if (msg.type === 'updateStatus') {
         setUpdateStatus(msg);
-        // A freshly-staged update un-dismisses the sidebar card (the user may have
+        // A freshly-staged update un-dismisses the update toast (the user may have
         // dismissed it during a prior download). The Settings → About row reflects the
         // rest of the lifecycle inline, so no toast is needed.
         if (msg.status === 'ready') setUpdateDismissed(false);
@@ -1897,31 +1898,45 @@ export function App() {
 
   // The agent tree's inputs (sidebar-agent-tree plan T1.2). Snooze hides a session's reason on
   // these presentation clones only; raw facts, counters and asks are untouched.
-  const treeSessions = useMemo(() => {
-    const live = pruneSnoozed(snoozed, Date.now());
-    if (live.size === 0) return sessions;
-    return sessions.map((s) =>
-      s.attentionReason != null && live.has(s.id) ? { ...s, attentionReason: null } : s,
-    );
-  }, [sessions, snoozed]);
+  const treeSessions = useMemo(
+    () => presentationSessions(hostSessions, snoozed, Date.now()),
+    [hostSessions, snoozed],
+  );
+  useEffect(() => {
+    void applyTerminalFontChange(settings.fontMono, settings.terminalFontSize);
+  }, [settings.fontMono, settings.terminalFontSize]);
   const askSessionIds = useMemo(() => new Set(asks.map((a) => a.callerSessionId)), [asks]);
   // The strict viewed rule (spec §4): only the focused, visible terminal in a focused window
   // clears Done; loose active+split presence still drives the server's Needs-you arming.
   const [windowLooking, setWindowLooking] = useState(
     () => document.hasFocus() && document.visibilityState === 'visible',
   );
+  const lookingOverride = useRef<boolean | null>(null);
   useEffect(() => {
     const sync = () =>
-      setWindowLooking(document.hasFocus() && document.visibilityState === 'visible');
+      setWindowLooking(
+        lookingOverride.current ?? (document.hasFocus() && document.visibilityState === 'visible'),
+      );
+    const seamWindow = window as Window & {
+      __conduitWindowLooking?: (looking: boolean | null) => void;
+    };
+    if (state?.about?.e2e === true) {
+      seamWindow.__conduitWindowLooking = (looking) => {
+        lookingOverride.current = looking;
+        sync();
+      };
+    }
     window.addEventListener('focus', sync);
     window.addEventListener('blur', sync);
     document.addEventListener('visibilitychange', sync);
     return () => {
+      delete seamWindow.__conduitWindowLooking;
+      lookingOverride.current = null;
       window.removeEventListener('focus', sync);
       window.removeEventListener('blur', sync);
       document.removeEventListener('visibilitychange', sync);
     };
-  }, []);
+  }, [state?.about?.e2e]);
   // Which terminal holds keyboard focus: a background split does not count as viewed.
   const [focusedHostId, setFocusedHostId] = useState<string | null>(null);
   useEffect(() => {
@@ -1973,9 +1988,18 @@ export function App() {
     setAgentRuntime(next);
   }, [sessionsLoaded, treeSessions, askSessionIds, viewedTerminalIds]);
   const [lastFocusedId, setLastFocusedId] = useState<string | undefined>(undefined);
+  const [lastFocusedBySpace, setLastFocusedBySpace] = useState<Readonly<Record<string, string>>>(
+    {},
+  );
+  const activeSpace = active?.projectId ?? 'no-space';
   useEffect(() => {
-    if (activeId !== undefined) setLastFocusedId(activeId);
-  }, [activeId]);
+    if (activeId === undefined) return;
+    setLastFocusedId(activeId);
+    if (active)
+      setLastFocusedBySpace((cur) =>
+        cur[activeSpace] === activeId ? cur : { ...cur, [activeSpace]: activeId },
+      );
+  }, [activeId, activeSpace, active]);
   const sidebarUi = sidebarSync.ui;
   // Prune only against an authoritative list: before the first snapshot every id looks vanished.
   const projectsList = state?.projects;
@@ -2016,7 +2040,7 @@ export function App() {
       runtime: agentRuntime,
       askSessionIds,
       bindings,
-      lastFocusedId,
+      lastFocusedBySpace,
       filterRequest,
       requestFilter,
       updateUi: updateSidebarUi,
@@ -2027,7 +2051,7 @@ export function App() {
       agentRuntime,
       askSessionIds,
       bindings,
-      lastFocusedId,
+      lastFocusedBySpace,
       filterRequest,
       requestFilter,
       updateSidebarUi,
@@ -2044,14 +2068,26 @@ export function App() {
     () => buildStatusBarModel({ sessions, activeId, entries: needYou }),
     [sessions, activeId, needYou],
   );
+  const goToTerminal = useCallback((sessionId: string) => {
+    activateSessionTerminal(sessionId, {
+      select: setActiveId,
+      showWorkspace: () => setCenterView('editor'),
+      activateTerminal: (id) =>
+        dispatchDocs({ type: 'activate', id: null, sessionId: id, group: 1 }),
+      afterVisible: (focus) => {
+        requestAnimationFrame(focus);
+      },
+      focus: requestTerminalFocus,
+    });
+  }, []);
   const focusAttention = useCallback(
     (entry: AttentionEntry) =>
       routeAttention(entry, {
         focusAsk: requestAskFocus,
         openThread: (threadId) => openMessages(null, threadId),
-        focusSession: setActiveId,
+        focusSession: goToTerminal,
       }),
-    [openMessages],
+    [openMessages, goToTerminal],
   );
   const chrome = useMemo<WorkbenchChromeContextValue>(
     () => ({
@@ -3390,7 +3426,7 @@ export function App() {
       pinned,
       hasApproval: askSessionIds.has(s.id),
       ...sessionSnoozeInput(
-        sessions.find((x) => x.id === s.id) ?? s,
+        hostSessions.find((x) => x.id === s.id) ?? s,
         askSessionIds.has(s.id),
         snoozed,
         Date.now(),
@@ -3410,7 +3446,7 @@ export function App() {
       windowMoves: moveMenuItems(s.id),
       icons: SESSION_MENU_ICONS,
       actions: {
-        select: () => setActiveId(s.id),
+        select: () => goToTerminal(s.id),
         split: () => setSplitId(s.id),
         relaunch: () => post({ type: 'relaunch' as const, id: s.id }),
         snooze: () => snooze(s.id),
@@ -4037,17 +4073,34 @@ export function App() {
   // menus win: file/change/session/tab handlers call preventDefault and set their
   // own menu, so by the time the event bubbles here `defaultPrevented` is set and
   // this no-ops — no hijack of the existing item menus.
-  const onPanelTogglesMenu = (e: React.MouseEvent) => {
+  const panelMenuItems = (region?: Region): MenuItem[] => {
+    const dockOrder = parseLayout(settings.layout);
+    return [
+      ...buildPanelToggleItems({ sidebarCollapsed, explorerCollapsed }).map((spec) => ({
+        label: spec.label,
+        icon: spec.visible ? <IconCheck size={14} /> : undefined,
+        onClick: () => togglePanel(spec.panel),
+      })),
+      ...(region === 'explorer'
+        ? dockOrder
+            .filter((r) => r !== region)
+            .map((target) => ({
+              label: `Move side panel ${dockOrder.indexOf(region) < dockOrder.indexOf(target) ? 'after' : 'before'} ${target === 'center' ? 'workspace' : 'agents'}`,
+              onClick: () =>
+                update({
+                  layout: serializeLayout(reorderDock(dockOrder, region, target)),
+                }),
+            }))
+        : []),
+    ];
+  };
+  const onPanelTogglesMenu = (e: React.MouseEvent, region?: Region) => {
     if (e.defaultPrevented) return;
     e.preventDefault();
     setMenu({
       x: e.clientX,
       y: e.clientY,
-      items: buildPanelToggleItems({ sidebarCollapsed, explorerCollapsed }).map((spec) => ({
-        label: spec.label,
-        icon: spec.visible ? <IconCheck size={14} /> : undefined,
-        onClick: () => togglePanel(spec.panel),
-      })),
+      items: panelMenuItems(region),
     });
   };
 
@@ -4999,7 +5052,7 @@ export function App() {
           barless
         >
           <Sidebar
-            sessions={sessions}
+            sessions={treeSessions}
             projects={state?.projects ?? []}
             windowCount={Math.max(1, winList.length)}
             onNewInProject={(projectId) => setNewSession({ projectId })}
@@ -5011,7 +5064,7 @@ export function App() {
             agents={agents}
             activeId={activeId}
             moveGrip={{ onDragStart: sdock.onDragStart, onDragEnd: sdock.onDragEnd }}
-            onSelect={setActiveId}
+            onSelect={goToTerminal}
             onNew={() => newAgentRef.current()}
             onKill={requestKill}
             onCloseAll={() =>
@@ -5063,10 +5116,19 @@ export function App() {
         edge={centerFacingEdge(visibleOrder, 'explorer')}
         onWidthCommit={(w) => commitWidth('explorer', w)}
         dock={edock}
-        onPanelContextMenu={onPanelTogglesMenu}
+        onPanelContextMenu={(e) => onPanelTogglesMenu(e, 'explorer')}
         barless
       >
         <RightPane
+          onMoveMenu={(anchor) =>
+            setMenu({
+              x: anchor.left,
+              y: anchor.bottom,
+              anchor,
+              keyboard: true,
+              items: panelMenuItems('explorer'),
+            })
+          }
           sessionId={active?.id}
           activeTarget={activeTargetValue}
           sections={sections}

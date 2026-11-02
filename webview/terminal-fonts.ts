@@ -46,6 +46,8 @@ export function createFontService(deps: FontServiceDeps) {
   let boot: Promise<void> | null = null;
   let pending: { key: string; done: Promise<void> } | null = null;
   let latestKey: string | null = null;
+  let readyKey: string | null = null;
+  let activeFamily: string | null = null;
   // The stack the terminals are drawn in: only its faces arriving can change their cells.
   let activeFamilies = new Set<string>();
   // Faces that were loaded before the terminals used them; their loadingdone needs no refresh.
@@ -90,34 +92,45 @@ export function createFontService(deps: FontServiceDeps) {
   };
 
   return {
+    terminalFontFamily(): string | null {
+      return activeFamily;
+    },
     loadBootFonts(settings: BootSettings): Promise<void> {
       if (boot) return boot;
+      const mono = monoStack(settings.fontMono);
+      const key = `${settings.fontMono}|${settings.terminalFontSize}`;
+      activeFamily = mono;
+      activeFamilies = stackFamilies(mono);
       const fonts = deps.fonts;
       if (!fonts) {
+        readyKey = key;
         boot = Promise.resolve();
         return boot;
       }
-      const mono = monoStack(settings.fontMono);
-      activeFamilies = stackFamilies(mono);
       fonts.addEventListener('loadingdone', onLoadingDone);
       const ui = UI_FONTS.find((f) => f.id === settings.fontUi);
       const specs = [
         ...(ui?.bundled ? requests(ui.stack, UI_SAMPLE_PX) : []),
         ...requests(mono, settings.terminalFontSize),
       ];
-      boot = loadAll(fonts, specs);
+      boot = loadAll(fonts, specs).then(() => {
+        if (latestKey === null) readyKey = key;
+      });
       return boot;
     },
 
     applyTerminalFontChange(fontId: string, sizePx: number): Promise<void> {
       const key = `${fontId}|${sizePx}`;
       latestKey = key;
+      if (readyKey === key) return Promise.resolve();
       if (pending?.key === key) return pending.done;
       const family = monoStack(fontId);
       const loaded = deps.fonts ? loadAll(deps.fonts, requests(family, sizePx)) : Promise.resolve();
       const done = loaded.then(() => {
         if (pending?.key === key) pending = null;
         if (latestKey !== key) return;
+        readyKey = key;
+        activeFamily = family;
         activeFamilies = stackFamilies(family);
         deps.gpu.applyFontFamily(family);
       });
@@ -139,3 +152,4 @@ const service = createFontService({
 
 export const loadBootFonts = service.loadBootFonts;
 export const applyTerminalFontChange = service.applyTerminalFontChange;
+export const terminalFontFamily = service.terminalFontFamily;

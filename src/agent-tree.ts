@@ -254,7 +254,7 @@ export function buildSpaceRows(input: {
   sessions: readonly Session[];
   runtime: AgentRuntime;
   askSessionIds: ReadonlySet<string>;
-  lastFocusedId: string | undefined;
+  lastFocusedBySpace: Readonly<Record<string, string>>;
 }): SpaceRowModel[] {
   const { sessions, runtime, askSessionIds } = input;
   const stateOf = (members: readonly Session[]): AgentState | null => {
@@ -286,7 +286,7 @@ export function buildSpaceRows(input: {
       name: p.name,
       letter: letterOf(p.name),
       hue: hueOf(p.id),
-      branch: branchOf(branchSource(members, input.lastFocusedId)),
+      branch: branchOf(branchSource(members, input.lastFocusedBySpace[p.id])),
       state: stateOf(members),
       count: members.length,
     });
@@ -299,7 +299,7 @@ export function buildSpaceRows(input: {
       name: 'No space',
       letter: '',
       hue: 'neutral',
-      branch: branchOf(branchSource(loose, input.lastFocusedId)),
+      branch: branchOf(branchSource(loose, input.lastFocusedBySpace['no-space'])),
       state: stateOf(loose),
       count: loose.length,
     });

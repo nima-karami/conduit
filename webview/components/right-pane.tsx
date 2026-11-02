@@ -60,6 +60,7 @@ export function RightPane({
   onReviewScope,
   reviewMode,
   moveGrip,
+  onMoveMenu,
   paneRef,
   recordFsOp,
   onContextPath,
@@ -101,6 +102,7 @@ export function RightPane({
   reviewMode: boolean;
   // Barless panel: the top-edge grip is the panel-move drag surface.
   moveGrip?: MoveGrip;
+  onMoveMenu?: (anchor: DOMRect) => void;
   paneRef?: React.MutableRefObject<RightPaneHandle | null>;
   /** Record a successful fs op into the app-level undo stack. */
   recordFsOp?: (op: FsOp) => void;
@@ -172,6 +174,21 @@ export function RightPane({
       <div
         className="rightpane__grip"
         title={CHROME_STR.movePanel}
+        role="button"
+        tabIndex={0}
+        aria-label={CHROME_STR.movePanel}
+        onClick={(e) => onMoveMenu?.(e.currentTarget.getBoundingClientRect())}
+        onKeyDown={(e) => {
+          if (
+            e.key === 'Enter' ||
+            e.key === ' ' ||
+            e.key === 'ContextMenu' ||
+            (e.shiftKey && e.key === 'F10')
+          ) {
+            e.preventDefault();
+            onMoveMenu?.(e.currentTarget.getBoundingClientRect());
+          }
+        }}
         {...panelMoveDragProps(moveGrip)}
       >
         <span className="rightpane__grip-bar" aria-hidden />

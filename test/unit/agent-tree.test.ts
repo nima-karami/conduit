@@ -259,13 +259,45 @@ describe('buildSpaceRows', () => {
     activeRepoRoot: '/r',
   });
 
+  it('retains focused branches independently for each Space including No space', () => {
+    const sessions = [
+      S('a', { projectId: 'p1', lastActiveAt: 1, ...git('a-focused') }),
+      S('a2', { projectId: 'p1', lastActiveAt: 9, ...git('a-output') }),
+      S('b', { projectId: 'p2', ...git('b-focused') }),
+      S('n', { lastActiveAt: 1, ...git('loose-focused') }),
+      S('n2', { lastActiveAt: 9, ...git('loose-output') }),
+    ];
+    const input = {
+      projects,
+      sessions,
+      runtime: runtimeOf(sessions),
+      askSessionIds: new Set<string>(),
+      lastFocusedBySpace: { p1: 'a', p2: 'b', 'no-space': 'n' },
+    };
+    const r = buildSpaceRows(input);
+    expect(r.find((x) => x.key === 'p1')?.branch).toBe('a-focused');
+    expect(r.find((x) => x.key === 'p2')?.branch).toBe('b-focused');
+    expect(r.find((x) => x.key === 'no-space')?.branch).toBe('loose-focused');
+    expect(
+      buildSpaceRows({ ...input, sessions: sessions.filter((s) => s.id !== 'a') }).find(
+        (x) => x.key === 'p1',
+      )?.branch,
+    ).toBe('a-output');
+  });
+
   function rows(sessions: Session[], lastFocusedId?: string, asks: string[] = []) {
     return buildSpaceRows({
       projects,
       sessions,
       runtime: runtimeOf(sessions),
       askSessionIds: new Set(asks),
-      lastFocusedId,
+      lastFocusedBySpace: lastFocusedId
+        ? Object.fromEntries(
+            sessions
+              .filter((s) => s.id === lastFocusedId)
+              .map((s) => [s.projectId ?? 'no-space', s.id]),
+          )
+        : {},
     });
   }
 
@@ -290,7 +322,7 @@ describe('buildSpaceRows', () => {
       sessions: [],
       runtime: { seen: {}, stateSince: {} },
       askSessionIds: new Set(),
-      lastFocusedId: undefined,
+      lastFocusedBySpace: {},
     });
     expect(renamed.find((x) => x.key === 'p1')?.hue).toBe(r.find((x) => x.key === 'p1')?.hue);
     for (const x of r) expect(['green', 'violet', 'blue', 'accent', 'neutral']).toContain(x.hue);

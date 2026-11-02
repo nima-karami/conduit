@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AttentionEntry } from '../../src/attention';
-import { routeAttention } from '../../src/attention-route';
+import { activateSessionTerminal, routeAttention } from '../../src/attention-route';
 import type { Handle } from '../../src/conduit-mcp/types';
+import { groupActive } from '../../webview/doc-groups';
+import { docsReducer, initialDocs } from '../../webview/docs';
 
 const entry = (over: Partial<AttentionEntry>): AttentionEntry => ({
   key: 'k',
@@ -16,6 +18,47 @@ const entry = (over: Partial<AttentionEntry>): AttentionEntry => ({
 function routes() {
   return { focusAsk: vi.fn(), openThread: vi.fn(), focusSession: vi.fn() };
 }
+
+it('Go to shows the workspace and Terminal even for the already selected agent, then focuses', () => {
+  for (const initial of ['board', 'canvas', 'editor']) {
+    for (const target of ['s1', 's2']) {
+      let active = 's1';
+      let center = initial;
+      let docs = docsReducer(initialDocs, {
+        type: 'open',
+        kind: 'file',
+        path: '/s1.ts',
+        sessionId: 's1',
+      });
+      docs = docsReducer(docs, { type: 'open', kind: 'file', path: '/s2.ts', sessionId: 's2' });
+      let focus: (() => void) | undefined;
+      const focused: string[] = [];
+      activateSessionTerminal(target, {
+        select: (id) => {
+          active = id;
+        },
+        showWorkspace: () => {
+          center = 'editor';
+        },
+        activateTerminal: (id) => {
+          docs = docsReducer(docs, { type: 'activate', id: null, sessionId: id, group: 1 });
+        },
+        afterVisible: (fn) => {
+          focus = fn;
+        },
+        focus: (id) => {
+          focused.push(id);
+        },
+      });
+      expect([active, center, groupActive(docs, target, 1)]).toEqual([target, 'editor', null]);
+      expect(docs.docs).toHaveLength(2);
+      expect(focused).toEqual([]);
+      expect(focus).toBeTypeOf('function');
+      focus?.();
+      expect(focused).toEqual([target]);
+    }
+  }
+});
 
 // Ported from the removed header chip's test (tool-policy spec §2.4; review r1-S2 C5).
 describe('routeAttention', () => {

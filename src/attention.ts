@@ -65,6 +65,17 @@ export function applySnooze<T extends { id: string; needsAttention?: boolean }>(
   });
 }
 
+/** Sidebar/runtime presentation only; server facts and pending asks stay independent (spec §4). */
+export function presentationSessions<
+  T extends { id: string; needsAttention?: boolean; attentionReason?: AttentionReason },
+>(sessions: readonly T[], snoozed: SnoozeMap, now: number): T[] {
+  return applySnooze(sessions, snoozed, now).map((s) =>
+    s.attentionReason != null && (snoozed.get(s.id) ?? 0) > now
+      ? { ...s, attentionReason: null }
+      : s,
+  );
+}
+
 /**
  * Drop lapsed entries. Returns the SAME map when nothing expired, so a caller holding it
  * in state can skip the re-render (and stop its timer once the map empties).

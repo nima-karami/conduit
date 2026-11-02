@@ -1,4 +1,4 @@
-﻿# Spaces and agent tree: implementation plan
+# Spaces and agent tree: implementation plan
 
 **Status:** active, Revisions 1–2 (2026-11-02).
 **Spec:** `docs/specs/2026-11-02-sidebar-agent-tree.md`.

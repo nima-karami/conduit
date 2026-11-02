@@ -7,7 +7,7 @@
  *  - checking / up-to-date / error show no card; available → downloading → ready update ONE
  *    `.update-card[data-update-toast]` node in place inside the one `[data-toast-stack]` portal;
  *  - the card keeps one bottom/right anchor for every state, with the sidebar collapsed, the
- *    right panel hidden, and the board / canvas center views; it sits above the status bar;
+ *    right panel hidden, and the board / canvas center views; it overlays the status bar;
  *  - showing it moves no workbench rectangle (topbar, sidebar, center, right panel, status bar);
  *  - no card inside `.sidebar`; the percent is a clamped number with a matching progressbar;
  *  - a generic toast shares the same stack, above the update item;
@@ -108,7 +108,6 @@ const cardFacts = (page) =>
       const cards = document.querySelectorAll(card);
       const el = cards[0];
       const stacks = document.querySelectorAll(stack);
-      const footer = document.querySelector('footer[data-status-bar]')?.getBoundingClientRect();
       if (!el) return { count: 0, stacks: stacks.length };
       const r = el.getBoundingClientRect();
       const bar = el.querySelector('[role="progressbar"]');
@@ -127,8 +126,9 @@ const cardFacts = (page) =>
         inSidebar: document.querySelectorAll(`.sidebar ${card}, .sidebar .update-card`).length,
         right: Math.round((window.innerWidth - r.right) * 10) / 10,
         bottom: Math.round((window.innerHeight - r.bottom) * 10) / 10,
-        cardBottom: r.bottom,
-        footerTop: footer ? footer.top : null,
+        inset: parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue('--toast-inset'),
+        ),
         onTop: !!top && el.contains(top),
         status: el.querySelector('[role="status"]')?.textContent ?? null,
         percent: el.querySelector('.update-card__percent')?.textContent ?? null,
@@ -181,7 +181,7 @@ runScenario('update-toast', async ({ app, page, log }) => {
   assert(stackFacts.label === 'Notifications', 'the stack is labelled "Notifications"');
   assert(
     await page.locator('footer[data-status-bar]').isVisible(),
-    'the status bar (footer[data-status-bar]) is mounted — the card anchors above it',
+    'the status bar (footer[data-status-bar]) is mounted beneath the toast outlet',
   );
 
   // ── Non-card states ───────────────────────────────────────────────────────
@@ -213,8 +213,9 @@ runScenario('update-toast', async ({ app, page, log }) => {
   assert(available.dismiss, 'available has Dismiss update');
   assert(available.onTop, 'the card is the topmost element at its centre');
   assert(
-    available.footerTop !== null && available.cardBottom <= available.footerTop + 0.5,
-    `the card sits above the status bar (card bottom ${available.cardBottom}, footer top ${available.footerTop})`,
+    Math.abs(available.right - available.inset) <= 1 &&
+      Math.abs(available.bottom - available.inset) <= 1,
+    `the card uses equal window insets (right ${available.right}, bottom ${available.bottom}, inset ${available.inset})`,
   );
   assertNoShift(baseline, await workbenchRects(page), 'showing the available card');
   const anchor = { right: available.right, bottom: available.bottom };
@@ -350,8 +351,8 @@ runScenario('update-toast', async ({ app, page, log }) => {
   assert(ready.inSidebar === 0, 'ready: no update card inside the sidebar');
   sameAnchor(ready, 'ready (taller card grows upward)');
   assert(
-    ready.footerTop !== null && ready.cardBottom <= ready.footerTop + 0.5,
-    'ready: the card sits above the status bar',
+    Math.abs(ready.right - ready.inset) <= 1 && Math.abs(ready.bottom - ready.inset) <= 1,
+    'ready: the card uses equal window insets',
   );
   assertNoShift(baseline, await workbenchRects(page), 'the ready card');
 

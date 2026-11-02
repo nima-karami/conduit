@@ -59,7 +59,7 @@ import {
 } from '../terminal-conpty';
 import { CONTEXT_WINDOW_LINES, inferContextRoot } from '../terminal-context-root';
 import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
-import { applyTerminalFontChange } from '../terminal-fonts';
+import { terminalFontFamily } from '../terminal-fonts';
 import { terminalGpu } from '../terminal-gpu';
 import { lastPick, notePick } from '../terminal-link-picks';
 import {
@@ -523,7 +523,8 @@ export function TerminalPane({
     const reportGpuLoss = () => terminalGpu.reportLoss(term);
     try {
       term = new Terminal({
-        fontFamily: monoStack(fontMonoRef.current),
+        // A new pane may mount while the App's selected face is still loading (spec §8).
+        fontFamily: terminalFontFamily() ?? monoStack(fontMonoRef.current),
         fontSize: termFontRef.current,
         // Must be 1.0 so box-drawing characters (│ ┌ └) connect vertically; extra
         // leading breaks them into dashes.
@@ -1195,15 +1196,6 @@ export function TerminalPane({
     });
     return () => cancelAnimationFrame(id);
   }, [settings.theme, settings.surfaceColor, refitVisibleTerminal, sessionId]);
-
-  // A mono-font change loads the face before any terminal switches to it, then the service
-  // applies it to every terminal at once; the one this pane was built with needs nothing.
-  const builtFontRef = useRef(settings.fontMono);
-  useEffect(() => {
-    if (settings.fontMono === builtFontRef.current) return;
-    builtFontRef.current = settings.fontMono;
-    void applyTerminalFontChange(settings.fontMono, termFontRef.current);
-  }, [settings.fontMono]);
 
   // Live-apply zoom and refit so the PTY's col/row tracks the new glyph size. Separate
   // from init so a zoom never recreates the terminal (which would kill the PTY).
