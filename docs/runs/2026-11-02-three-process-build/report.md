@@ -13,8 +13,9 @@ Luna subagents), Claude Opus and Sonnet subagents. Ledger: `.autoloop/` (gitigno
 
 ## Evidence
 - `npm run verify` on the integration tip: exit 0 (637 files, 9732 tests; check, typecheck, build, fallow, audit, gitleaks).
-- Remote e2e, full suite on GitHub Windows runners: 230 PASS / 3 FAIL / 1 QUARANTINED (final run 41484301423; the 3 are
-  being fixed — see the summary in the session). `scrollback-inrun` is quarantined on an hc residual (below).
+- Remote e2e, full suite on GitHub Windows runners: 230 PASS / 3 FAIL / 1 QUARANTINED (run 41484301423); the 3 were
+  fixed and pass remotely (dirty-quit-windows, logging, mf-files + neighbours dirty-quit, quit-guard). Net: every
+  scenario passes except `scrollback-inrun`, quarantined on an hc residual (below). Remote verify job: success.
 - New real-hc scenarios: server-standalone (walking skeleton), server-runtime, hc-client, adopt-on-relaunch,
   server-restart-supervisor, hc-core-restart, fast-exit-shown, notice-visible-session, mcp-open-windowless,
   typing-through-server.
