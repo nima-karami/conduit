@@ -4,6 +4,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Toasts } from '../../webview/components/toasts';
 import { __resetToastsForTest, pushToast } from '../../webview/toast-store';
+import {
+  type WorkbenchChromeContextValue,
+  WorkbenchChromeProvider,
+} from '../../webview/workbench-chrome-state';
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -17,11 +21,32 @@ afterEach(() => {
   __resetToastsForTest();
 });
 
+const noop = () => {};
+const chrome: WorkbenchChromeContextValue = {
+  rightOpen: false,
+  rightTab: 'files',
+  togglePanel: noop,
+  openPanel: noop,
+  status: {
+    branch: null,
+    worktree: null,
+    liveCount: 0,
+    attentionCount: 0,
+    firstAttention: null,
+    showCommandHint: false,
+  },
+  commandHint: '',
+  focusAttention: noop,
+  update: { status: null, dismissed: false, dismiss: noop },
+};
+
 function mount(): void {
   const host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
-  act(() => root?.render(createElement(Toasts)));
+  act(() =>
+    root?.render(createElement(WorkbenchChromeProvider, { value: chrome }, createElement(Toasts))),
+  );
 }
 
 describe('Toasts', () => {

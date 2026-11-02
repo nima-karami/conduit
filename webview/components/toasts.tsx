@@ -1,17 +1,24 @@
-import { useSyncExternalStore } from 'react';
+import { type ReactNode, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { IconClose } from '../icons';
 import { dismissToast, getToastsSnapshot, subscribeToasts } from '../toast-store';
+import { useWorkbenchChromeState } from '../workbench-chrome-state';
+import { UpdateCard } from './update-card';
 
 /**
- * Toast outlet (K2). Portals to document.body so it floats above everything. Surfaces a
- * save FAILURE unmissably — a success raises no toast (the dirty dot clearing is the signal).
+ * The window's one floating stack (K2; sidebar-agent-tree spec §7 floating updates). Portals to
+ * document.body so it floats above everything and never shifts layout. Docked cards (`children`,
+ * e.g. the approval card) sit on top, transient toasts below them, and the persistent update item
+ * last, nearest the anchor. The outlet stays mounted even when empty: a live region that exists
+ * before its message arrives is the one assistive tech reliably announces.
  */
-export function Toasts() {
+export function Toasts({ children }: { children?: ReactNode }) {
   const toasts = useSyncExternalStore(subscribeToasts, getToastsSnapshot, getToastsSnapshot);
-  if (typeof document === 'undefined' || toasts.length === 0) return null;
+  const { update } = useWorkbenchChromeState();
+  if (typeof document === 'undefined') return null;
   return createPortal(
-    <div className="toasts" role="region" aria-label="Notifications">
+    <div className="toasts" role="region" aria-label="Notifications" data-toast-stack>
+      {children}
       {toasts.map((t) => (
         <div
           key={t.id}
@@ -49,6 +56,14 @@ export function Toasts() {
           </button>
         </div>
       ))}
+      {update.status && (
+        <UpdateCard
+          key="update"
+          status={update.status}
+          dismissed={update.dismissed}
+          onDismiss={update.dismiss}
+        />
+      )}
     </div>,
     document.body,
   );

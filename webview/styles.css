@@ -584,12 +584,6 @@
   height: 2px;
   background: var(--accent);
 }
-[data-theme="neon"] .viewswitch__btn--on {
-  --focus-ring: var(--focus-ring-on-fill);
-  background: var(--accent);
-  color: var(--on-accent);
-  --rest-shadow: var(--glow-accent);
-}
 
 /* ---------- chrome glyphs (webview/icons.tsx) ----------
    The hand-authored 16px set. Stroke shape is CSS rather than an SVG presentation attribute,
@@ -785,8 +779,8 @@ body {
 .tab:focus-visible {
   border-radius: var(--r-round);
 }
-.rtab:focus-visible {
-  border-radius: 0;
+.topbar__toggle:focus-visible {
+  border-radius: var(--r-ctl);
 }
 .session__kill:focus-visible {
   border-radius: var(--r-md);
@@ -1130,20 +1124,17 @@ body.resizing .panel__resize::after {
   -webkit-app-region: drag; /* drag the window by the top bar */
 }
 /* macOS: clear the native traffic lights (drawn at top-left by titleBarStyle:'hidden',
-   nudged via trafficLightPosition in main.ts). Logo + tabs + attention chip move to
-   topbar__right on mac (see top-bar.tsx); padding-right balances the right edge
-   against the traffic lights' left-edge margin so the bar reads symmetric (tuned
-   visually, real hardware). Back/forward is the only thing in topbar__left on mac and sits
-   at its inner end, beside the search pill. The lights' clearance is padding on that
-   column rather than on the bar, so the bar's own padding stays symmetric and the pill
-   stays on the window's centre line (the side tracks are equal only within the bar's
-   padding box). 16px + 76px is the 92px the lights need. */
+   nudged via trafficLightPosition in main.ts). The left group keeps the same identity and
+   navigation, just after the lights; padding-right balances the right edge against the
+   lights' left-edge margin so the bar reads symmetric (tuned visually, real hardware). The
+   lights' clearance is padding on that column rather than on the bar, so the bar's own
+   padding stays symmetric and the pill stays on the window's centre line (the side tracks
+   are equal only within the bar's padding box). 16px + 76px is the 92px the lights need. */
 .topbar--mac {
   padding-left: 16px;
   padding-right: 16px;
 }
 .topbar--mac .topbar__left {
-  justify-content: flex-end;
   padding-left: 76px;
 }
 .topbar button,
@@ -1172,7 +1163,13 @@ body.resizing .panel__resize::after {
 .topbar__left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  min-width: 0;
+}
+.topbar__identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
 }
 .topbar__logo {
@@ -1182,6 +1179,13 @@ body.resizing .panel__resize::after {
   flex-shrink: 0;
   margin-left: 4px;
   -webkit-app-region: no-drag;
+}
+.topbar__wordmark {
+  font-size: calc(14px * var(--font-scale));
+  font-weight: 600;
+  letter-spacing: var(--label-track);
+  color: var(--text);
+  white-space: nowrap;
 }
 /* Center omni-search bar (R4.13): a moderate pill that replaces the static crumb.
    The container stays draggable (R5.1) so the empty space on either side of the pill
@@ -1237,85 +1241,57 @@ body.resizing .panel__resize::after {
   justify-content: flex-end;
   gap: 10px;
 }
-/* Segmented control switching the center pane between editor / board / canvas.
-   Exactly one is active at a time — mutually exclusive, never stacked. */
-.viewswitch {
+/* Files / Changes / Messages: icon-only toggles that open the right panel on that view, or close
+   it when the view is already showing (sidebar-agent-tree spec §7). */
+.topbar__toggles {
   display: flex;
   align-items: center;
   gap: 2px;
-  height: var(--density-topctl-h);
-  padding: 2px;
-  border-radius: var(--r-round);
-  background: rgba(var(--overlay), 0.05);
 }
-.viewswitch__btn {
+.topbar__toggle {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 100%;
-  padding: 0 10px;
+  gap: 4px;
+  height: var(--density-topctl-h);
+  padding: 0 8px;
   border: 0;
-  border-radius: var(--r-round);
+  border-radius: var(--r-ctl);
   background: transparent;
   color: var(--text-dim);
   font-family: inherit;
-  font-size: calc(12px * var(--font-scale));
-  font-weight: 500;
-  letter-spacing: var(--label-track);
-  text-transform: var(--label-case);
-  white-space: nowrap;
   cursor: pointer;
   transition:
     background 0.12s,
     color 0.12s;
 }
-/* The active chip of a segmented control — same widget as .seg__btn--active, so the two
-   read from the same tokens rather than each picking its own fill (spec §mechanism). */
-.viewswitch__btn--on {
+.topbar__toggle[aria-pressed="true"] {
   background: var(--state-sel-bg);
-  color: var(--state-on-fg);
+  color: var(--text);
 }
-/* Sidebar toggle + back/forward. They lost the left edge to the switcher, which the frames
-   put immediately after the app mark, so they join the chrome on the right instead. */
+.topbar__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
+  font-weight: 600;
+  line-height: 1;
+  padding: 1px 6px;
+  border-radius: var(--r-badge);
+  background: var(--badge-bg, var(--accent-soft));
+  color: var(--badge-fg, var(--accent));
+}
+/* Urgent messages take the attention ink (pure --amber misses 4.5:1 on its own wash). Set as
+   the badge's inputs, so it never competes with the base rule on order. */
+.topbar__badge--urgent {
+  --badge-bg: color-mix(in srgb, var(--amber) 14%, transparent);
+  --badge-fg: color-mix(in srgb, var(--amber) 70%, var(--text));
+}
+/* Back/forward sit beside the identity on the left, as in the frames. */
 .topbar__nav {
   display: flex;
   align-items: center;
   gap: 2px;
-}
-/* Aggregate attention chip: the whole rail's "needs you" count, without the sessions panel
-   open. Suppressed entirely at zero rather than rendered as "0". Copy is identical in every
-   theme; Neon changes only case and tracking (decision D14). */
-.attnchip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: var(--density-topctl-h);
-  padding: 0 11px;
-  border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
-  border-radius: var(--r-ctl);
-  background: color-mix(in srgb, var(--amber) 9%, var(--raise));
-  /* Pure --amber misses 4.5:1 on its own wash, so the text tier is mixed toward the theme's
-     ink: one declaration that darkens on Aero and lightens on the two dark themes. */
-  color: color-mix(in srgb, var(--amber) 70%, var(--text));
-  --rest-shadow: var(--glow-attention);
-  font-family: inherit;
-  font-size: calc(11.5px * var(--font-scale));
-  font-weight: 600;
-  letter-spacing: var(--label-track);
-  text-transform: var(--label-case);
-  white-space: nowrap;
-  cursor: pointer;
-}
-.attnchip:hover {
-  background: color-mix(in srgb, var(--amber) 16%, var(--raise));
-}
-.attnchip__dot {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--amber);
 }
 .winctl {
   display: flex;
@@ -1338,6 +1314,71 @@ body.resizing .panel__resize::after {
 .winctl__btn--close:hover {
   background: var(--red);
   color: #fff;
+}
+
+/* ---------- status bar ----------
+   The center column's footer (sidebar-agent-tree spec §7). Its height is the shared
+   --status-bar-h the update toast anchors on. Aero floats it as a panel card; Neon lays it flush
+   with one hairline above, since the side panels' own rings already draw its other edges. */
+.statusbar {
+  flex: 0 0 var(--status-bar-h);
+  height: var(--status-bar-h);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+  padding: 0 12px;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-dim);
+  background: var(--surface-panel);
+  border-radius: var(--r-panel);
+  box-shadow:
+    var(--elev-1),
+    inset 0 0 0 1px var(--border);
+}
+[data-theme="neon"] .statusbar {
+  box-shadow: none;
+  border-top: 1px solid var(--border);
+}
+.statusbar__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.statusbar__text {
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.statusbar__dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: var(--r-badge);
+  background: var(--accent);
+}
+.statusbar__dot--attn {
+  background: var(--amber);
+}
+/* The attention ink tier: pure --amber misses 4.5:1 on the panel, so it is mixed toward the
+   theme's text (the recipe the removed header chip used). */
+.statusbar__attn {
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-ctl);
+  background: transparent;
+  font: inherit;
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+  cursor: pointer;
+}
+.statusbar__hint {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-faint);
 }
 
 /* ---------- sidebar ---------- */
@@ -5138,65 +5179,25 @@ body.gh-resizing {
   width: 100%;
   background: var(--panel);
 }
-.rightpane__tabs {
-  display: flex;
-  align-items: stretch;
+/* The panel's move surface now that the header toggles replaced its tab row (spec §7): a small
+   strip at the top edge, grabbable only where it is draggable. */
+.rightpane__grip {
   flex: 0 0 auto;
-  /* The gap lives on the tabs (see .rtab), so each one owns a hoverable box. */
-  gap: 0;
-  /* The right rail's own band token: it wants a taller row than the centre tab strip,
-     which is why the two are no longer coupled (token contract, density section). */
-  height: var(--density-rtab-h);
-  padding: 0 5px;
-  border-bottom: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  height: 10px;
 }
-.rightpane__tabs[draggable="true"]:hover {
+.rightpane__grip[draggable="true"]:hover {
   cursor: grab;
 }
-.rightpane__tabs[draggable="true"]:active {
+.rightpane__grip[draggable="true"]:active {
   cursor: grabbing;
 }
-.rtab {
-  display: inline-flex;
-  align-items: center;
-  background: transparent;
-  border: 0;
-  color: var(--text-dim);
-  font: inherit;
-  font-weight: 600;
-  font-size: calc(var(--density-band-font) * var(--font-scale));
-  /* D14: one string set for every theme — Neon uppercases and tracks it out. */
-  text-transform: var(--label-case);
-  letter-spacing: var(--label-track);
-  /* Half the row gap each side: the tab is the target, not the word inside it. */
-  padding: 0 9px;
-  /* Square at the foot so the active underline stays a straight edge. */
-  border-radius: var(--r-badge) var(--r-badge) 0 0;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-}
-.rtab--active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-}
-/* D8: count badge on the Changes tab. Sits inline after the label text. */
-.rtab__badge {
-  font-family: var(--font-mono);
-  font-size: calc(10px * var(--font-scale));
-  font-weight: 600;
-  line-height: 1;
-  color: var(--accent);
-  background: var(--accent-soft);
+.rightpane__grip-bar {
+  width: 28px;
+  height: 3px;
   border-radius: var(--r-badge);
-  padding: 1px 6px;
-  margin-left: 7px;
-}
-/* Extra weight when the Changes tab is NOT the active tab (D8). 8b and 8c draw the badge
-   the same way in both states, so the escalation stays inside the accent family rather
-   than reaching for a second colour. */
-.rtab__badge--attention {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  background: var(--border-2);
 }
 
 /* Folded header: summary + kebab — replaces old button-row (.right__actions removed). */
@@ -6926,18 +6927,21 @@ body.gh-resizing {
   margin: 0;
 }
 
-/* ---- Toasts (K2): unmissable failure surfacing. Bottom-right, above modals, below menus,
-   no layout shift (fixed, pointer-events on the panels only). Matches the design
-   language — dark panel, subtle border. Silence = success; only failures toast. */
+/* ---- Toasts (K2) and the window's one floating stack (sidebar-agent-tree spec §7): docked
+   cards, transient toasts and the persistent update item share it, so nothing overlaps another
+   outlet. Fixed at the window's bottom-right with one equal inset on both sides, derived from
+   the window inset; it overlays content and never moves for a state, a panel or a view. Above
+   modals, below menus; pointer-events on the cards only. Silence = success; only failures toast. */
 .toasts {
+  --toast-inset: calc(var(--win-pad) * 2);
   position: fixed;
-  right: 16px;
-  bottom: 16px;
+  right: var(--toast-inset);
+  bottom: var(--toast-inset);
   z-index: var(--layer-toast);
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: min(420px, calc(100vw - 32px));
+  max-width: min(420px, calc(100vw - 2 * var(--toast-inset)));
   pointer-events: none;
 }
 .toast {
@@ -7449,16 +7453,18 @@ body.gh-resizing {
   border-color: var(--state-edge-hover);
 }
 
-/* ---------- update card (sticky footer of the session scroll list) ---------- */
+/* ---------- update card (the persistent item at the foot of the floating stack) ----------
+   The toast material, for the same reason: it floats over live text with no blur of its own. It
+   grows upward from the stack's anchor, so a taller ready card never moves its bottom edge. */
 .update-card {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
   margin: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-2);
   border-radius: var(--r-sm);
-  background: var(--surface);
+  background: var(--raise);
+  box-shadow: var(--elev-3);
   overflow: hidden;
+  pointer-events: auto;
+  animation: toast-in 140ms ease-out;
 }
 .update-card__body {
   display: flex;
@@ -7474,6 +7480,13 @@ body.gh-resizing {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.update-card__percent {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
 }
 .update-card__dismiss {
   flex: 0 0 auto;
@@ -14692,23 +14705,6 @@ button.toggle--on .toggle__knob {
   display: inline-flex;
   color: var(--text-dim);
 }
-.rtab__badge--urgent {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  background: color-mix(in srgb, var(--amber) 14%, transparent);
-  color: color-mix(in srgb, var(--amber) 70%, var(--text));
-}
-/* The first message entry's reason rides the chip; the title carries it whole when cut. */
-.attnchip__reason {
-  min-width: 0;
-  max-width: 30ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding-left: 7px;
-  border-left: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
-  font-weight: 500;
-}
 
 /* Settings → MCP tool switches (docs/specs/2026-10-27-conduit-mcp-control-tools.md §8). */
 .settools {
@@ -15056,7 +15052,7 @@ button.toggle--on .toggle__knob {
     .editorgroups__divider,
     .tab,
     .tab__close,
-    .rtab,
+    .topbar__toggle,
     .toast__close,
     .termhost__close,
     .update-card__dismiss,
@@ -15080,7 +15076,7 @@ button.toggle--on .toggle__knob {
     .palette__row,
     .ctxmenu__item,
     .seg__btn,
-    .viewswitch__btn,
+    .statusbar__attn,
     .settings__navitem,
     .searchgroup__head,
     .searchmatch,
@@ -15160,7 +15156,7 @@ button.toggle--on .toggle__knob {
     .iconpicker__cell--selected,
     .markdown-toc__item--active,
     .seg__btn--active,
-    .viewswitch__btn--on,
+    .topbar__toggle[aria-pressed="true"],
     .search__toggle--on,
     .pdfview__btn.is-active,
     .planflow__node--selected,
@@ -15186,7 +15182,7 @@ button.toggle--on .toggle__knob {
     .editorgroups__divider,
     .tab,
     .tab__close,
-    .rtab,
+    .topbar__toggle,
     .footbtn,
     .session,
     .ns-pill,
@@ -15204,7 +15200,7 @@ button.toggle--on .toggle__knob {
     .palette__row,
     .ctxmenu__item,
     .seg__btn,
-    .viewswitch__btn,
+    .statusbar__attn,
     .settings__navitem,
     .searchgroup__head,
     .searchmatch,

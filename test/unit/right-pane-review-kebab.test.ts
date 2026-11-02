@@ -8,6 +8,10 @@ import { RightPane } from '../../webview/components/right-pane';
 import type { GitActionIntent } from '../../webview/git-intent';
 import { publishReviewNav } from '../../webview/review-nav-store';
 import { SettingsProvider } from '../../webview/settings';
+import {
+  type WorkbenchChromeContextValue,
+  WorkbenchChromeProvider,
+} from '../../webview/workbench-chrome-state';
 
 /**
  * Review mode's navigator kebab acts on the session's git root even when no repo is detected
@@ -18,6 +22,24 @@ import { SettingsProvider } from '../../webview/settings';
 const change: ChangeDTO = { path: 'a.txt', added: 1, removed: 0, kind: 'M', staged: false };
 const cwdRepo = '/work/cwd-repo';
 const noop = () => {};
+// The panel is controlled: App's chrome state shows it on Changes.
+const changesChrome: WorkbenchChromeContextValue = {
+  rightOpen: true,
+  rightTab: 'changes',
+  togglePanel: noop,
+  openPanel: noop,
+  status: {
+    branch: null,
+    worktree: null,
+    liveCount: 0,
+    attentionCount: 0,
+    firstAttention: null,
+    showCommandHint: false,
+  },
+  commandHint: '',
+  focusAttention: noop,
+  update: { status: null, dismissed: false, dismiss: noop },
+};
 
 let host: HTMLDivElement;
 let root: Root | null = null;
@@ -61,52 +83,56 @@ async function render(
       createElement(
         SettingsProvider,
         null,
-        createElement(RightPane, {
-          sessionId: 's1',
-          activeTarget: null,
-          sections: [],
-          rowChanges: new Map(),
-          osDropSeam: false,
-          reviewRepoChanges: repoChanges,
-          changesModel,
-          onOpenFile: noop,
-          onOpenMatch: noop,
-          setMenu: noop,
-          revealPath: noop,
-          openExternalApp: noop,
-          openWithChooser: noop,
-          openAsSession: noop,
-          copyToClipboard: noop,
-          onDeleteFiles: noop,
-          onFileRenamed: noop,
-          onReviewScope: noop,
-          reviewMode: true,
-          reviewTitle: 'Review changes',
-          onReview: noop,
-          onRefresh: noop,
-          onRetryRepo: noop,
-          onSetView: noop,
-          onOpenDiff: noop,
-          onAction: async (i) => onAction(i),
-          onChangeContextMenu: noop,
-          onRepoHeadContextMenu: noop,
-          onRepoContext: noop,
-          onPickActiveRepo: noop,
-          renderChip: () => null,
-          mcp: {
-            state: null,
-            getThread: async () => null,
-            send: async () => null,
-            getAttachment: async () => null,
-            markRead: noop,
-            allowMore: noop,
-            pause: noop,
-            retry: noop,
-            setToolPolicy: async () => true,
-          },
-          sessions: [],
-          onOpenSettings: noop,
-        }),
+        createElement(
+          WorkbenchChromeProvider,
+          { value: changesChrome },
+          createElement(RightPane, {
+            sessionId: 's1',
+            activeTarget: null,
+            sections: [],
+            rowChanges: new Map(),
+            osDropSeam: false,
+            reviewRepoChanges: repoChanges,
+            changesModel,
+            onOpenFile: noop,
+            onOpenMatch: noop,
+            setMenu: noop,
+            revealPath: noop,
+            openExternalApp: noop,
+            openWithChooser: noop,
+            openAsSession: noop,
+            copyToClipboard: noop,
+            onDeleteFiles: noop,
+            onFileRenamed: noop,
+            onReviewScope: noop,
+            reviewMode: true,
+            reviewTitle: 'Review changes',
+            onReview: noop,
+            onRefresh: noop,
+            onRetryRepo: noop,
+            onSetView: noop,
+            onOpenDiff: noop,
+            onAction: async (i) => onAction(i),
+            onChangeContextMenu: noop,
+            onRepoHeadContextMenu: noop,
+            onRepoContext: noop,
+            onPickActiveRepo: noop,
+            renderChip: () => null,
+            mcp: {
+              state: null,
+              getThread: async () => null,
+              send: async () => null,
+              getAttachment: async () => null,
+              markRead: noop,
+              allowMore: noop,
+              pause: noop,
+              retry: noop,
+              setToolPolicy: async () => true,
+            },
+            sessions: [],
+            onOpenSettings: noop,
+          }),
+        ),
       ),
     );
   });
@@ -133,10 +159,6 @@ afterEach(async () => {
 });
 
 async function openKebab(): Promise<Map<string, HTMLButtonElement>> {
-  const tab = [...document.body.querySelectorAll<HTMLButtonElement>('.rtab')].find((b) =>
-    b.textContent?.startsWith('Changes'),
-  );
-  await act(async () => tab?.click());
   const kebab = document.body.querySelector<HTMLButtonElement>('.rnav .changes__kebab');
   expect(kebab, 'the navigator kebab is rendered').not.toBeNull();
   await act(async () => kebab?.click());
@@ -158,10 +180,6 @@ const repoOf = (root: string, changes: ChangeDTO[]): RepoChanges => ({
 });
 
 async function stageAllFromKebab(): Promise<void> {
-  const tab = [...document.body.querySelectorAll<HTMLButtonElement>('.rtab')].find((b) =>
-    b.textContent?.startsWith('Changes'),
-  );
-  await act(async () => tab?.click());
   const kebab = document.body.querySelector<HTMLButtonElement>('.rnav .changes__kebab');
   expect(kebab, 'the navigator kebab is rendered').not.toBeNull();
   await act(async () => kebab?.click());
