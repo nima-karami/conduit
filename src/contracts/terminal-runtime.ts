@@ -82,6 +82,8 @@ export type RuntimeExitReason = 'exited' | 'killed' | 'lost';
 export interface SpawnFinished {
   exitCode: number | null;
   reason: RuntimeExitReason;
+  /** The program's final output (`terminal.read`), already in the ring; the domain adds it to the prelude. */
+  output: string;
 }
 
 export type SpawnResult =
