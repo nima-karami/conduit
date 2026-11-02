@@ -402,3 +402,11 @@ If a task's assumption turns out wrong, that task **stops**, and fixing the misa
 #6 Producer/consumer: ok — server sides pinned by C2, owned by W4–W6, verified by the S2 e2e set
 #7 Handoff arithmetic: ok — 4 slices; groups G1–G7 plus S3∥S4 = 9; 6 claims; 1 script
 ```
+
+## Lead decisions on the Decisions Needed (2026-11-02)
+- Runtime GC: W7 builds `electron/runtime-gc.ts`; the packaged layout assumes W9's runtime-dir preparation. Unpackaged layout first.
+- W8 lands the per-userData teardown in `test/e2e/harness.mjs` before S2's e2e check; W8 owns `harness.mjs` and new scenarios; W7 edits existing scenario files (S3/S4).
+- Supervisor cwd (D23): `server/supervise.ts` chdirs to its own runtime dir at startup (lead's compose integration), so `hc run` can stay at `coreStartCwd`.
+- W4/W5/W6 merge and compose is wired before S2; S2's e2e set plus `server-standalone.e2e.mjs` stand in for W3b.
+- `term:exit` reads `SessionView.exitCode` (contract added); no CLOSE caching. `sessions.create` returns `droppedRoots` (contract added).
+- Re-attach after an hc core reconnect uses `history: 0`. `src/mcp-launch.ts` keeps ELECTRON_RUN_AS_NODE. W6's spawn env must apply `sanitizeChildEnv` (checked at integration). E2e knobs reach the server as argv (`--e2e`; W5's detect grace as argv). Quit-and-stop in the quit dialog + palette. Logs include server.log. S2 is one atomic cut-over.
