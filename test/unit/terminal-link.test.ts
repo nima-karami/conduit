@@ -19,6 +19,8 @@ let hcEvents: ReturnType<typeof createHcEvents>;
 /** Everything the link did, in order: its hand-offs to the app and its calls on the stream. */
 let trace: string[];
 let streamCalls: { write: number; resize: number; facts: number };
+/** The link's attach channels, recorded as each attach resolves: the link wires its paint in the same turn. */
+let attached: number[];
 let hc: HcClient;
 
 beforeEach(async () => {
@@ -30,6 +32,7 @@ beforeEach(async () => {
   await hcEvents.ready();
   trace = [];
   streamCalls = { write: 0, resize: 0, facts: 0 };
+  attached = [];
   hc = {
     call: (m, p) => real.call(m, p),
     subscribe: (p, n) => real.subscribe(p, n),
@@ -38,6 +41,7 @@ beforeEach(async () => {
     attach: async (p) => {
       const r = await real.attach(p);
       const { stream } = r;
+      attached.push(stream.channel);
       const credit = stream.credit.bind(stream);
       stream.credit = (n) => {
         trace.push(`credit:${n}`);
@@ -80,7 +84,7 @@ function events() {
 
 const factory = () =>
   createTerminalLinkFactory({ hc, hcSession: TARGET.hcSession, hcEvents, log: () => {} });
-const attachChannel = () => fake.channels.at(-1) ?? -1;
+const attachChannel = () => attached.at(-1) ?? -1;
 const creditFrames = () =>
   fake.frames.filter((f) => f.kind === FrameKind.Credit && f.channel === attachChannel()).length;
 /** Polls on setImmediate: vi.waitFor advances fake timers, which would end a paint early. */
@@ -134,7 +138,9 @@ describe('createTerminalLinkFactory', () => {
   it('first paint capped at PAINT_MAX_MS', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const linked = factory().attach('s1', TARGET, SIZE, 2000, events().handlers);
-    await io(() => vi.getTimerCount() > 0);
+    // The cap is armed in the turn the attach resolves; a timer count would also count any other.
+    await io(() => attached.length === 1);
+    expect(vi.getTimerCount()).toBe(1);
     const step = PAINT_QUIET_MS - 5;
     let sent = 0;
     for (let at = 0; at + step < PAINT_MAX_MS; at += step) {

@@ -11,6 +11,7 @@ import { FakeHc } from '../../src/hc-client/testing/fake-hc';
 import { instanceNames } from '../../src/instance-names';
 import { SessionActivity } from '../../src/session-activity';
 import type { AgentDefinition } from '../../src/types';
+import { allowPeerReset } from '../helpers/peer-socket';
 import { testEndpoint } from '../helpers/test-endpoint';
 
 const shell: AgentDefinition = {
@@ -141,7 +142,7 @@ it('restores MCP adoption after held restore-off records and before listening', 
   expect(terminal).toBeDefined();
   if (!terminal) throw new Error('adopted terminal missing');
   h.services.mcp.termInput({ sessionId: id, generation: terminal.generation, data: 'codex\r' });
-  const socket = net.connect(h.names.mcpEndpoint);
+  const socket = allowPeerReset(net.connect(h.names.mcpEndpoint));
   cleanup.push(() => {
     socket.destroy();
   });

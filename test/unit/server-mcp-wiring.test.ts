@@ -15,6 +15,7 @@ import type {
 } from '../../src/contracts/terminal-runtime';
 import type { SubmitHooks } from '../../src/pty-writer';
 import type { AgentDefinition, Session, SpawnSpec } from '../../src/types';
+import { allowPeerReset } from '../helpers/peer-socket';
 import { testEndpoint } from '../helpers/test-endpoint';
 
 const FAKE: AgentDefinition = {
@@ -296,7 +297,7 @@ async function client(
     capabilities: {},
     clientInfo: { name: opts.name ?? 'fake' },
   };
-  const sock = net.connect(ep);
+  const sock = allowPeerReset(net.connect(ep));
   sockets.push(sock);
   sock.setEncoding('utf8');
   const lines: Array<Record<string, unknown>> = [];
@@ -363,7 +364,7 @@ describe('LaunchPort', () => {
     expect(rows.state === 'loaded' && rows.rows.map((r) => r.launchId)).toEqual([
       second.ids.launchId,
     ]);
-    const sock = net.connect(h.ep);
+    const sock = allowPeerReset(net.connect(h.ep));
     sockets.push(sock);
     const got: string[] = [];
     sock.setEncoding('utf8');

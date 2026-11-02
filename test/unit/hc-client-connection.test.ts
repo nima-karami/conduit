@@ -109,11 +109,21 @@ describe('hc connection lifecycle', () => {
   });
 
   it('reports lost once while the core stays down, then reconnected when it returns', async () => {
+    client.close();
+    let dials = 0;
+    client = new NodeHcClient({
+      connect: () => {
+        dials++;
+        return fake.connect();
+      },
+      reconnectDelayMs: 10,
+    });
     const states: string[] = [];
     client.onConnection((state) => states.push(state));
     await client.call('server.status', {});
     await fake.close();
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    const before = dials;
+    await expect.poll(() => dials - before).toBeGreaterThanOrEqual(3);
     expect(states).toEqual(['connected', 'lost']);
     await fake.listen();
     await expect.poll(() => states).toEqual(['connected', 'lost', 'reconnected']);
@@ -135,15 +145,24 @@ describe('hc connection lifecycle', () => {
   it('rejects pending calls with a protocol error when hello is refused, backing off between attempts', async () => {
     client.close();
     fake.hello.framed = false;
-    client = new NodeHcClient({ connect: fake.connect, reconnectDelayMs: 10 });
+    const dialedAt: number[] = [];
+    client = new NodeHcClient({
+      connect: () => {
+        dialedAt.push(performance.now());
+        return fake.connect();
+      },
+      reconnectDelayMs: 10,
+    });
     await expect(client.call('server.status', {})).rejects.toMatchObject({
       name: 'HcProtocolError',
     });
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    // 10 ms doubling reaches attempt 6 at 630 ms; a fixed 10 ms retry would be near 40 by now.
-    const attempts = fake.calls.filter((call) => call.method === 'hello').length;
-    expect(attempts).toBeGreaterThanOrEqual(3);
-    expect(attempts).toBeLessThanOrEqual(7);
+    await expect.poll(() => dialedAt.length).toBeGreaterThanOrEqual(5);
+    // A timer never fires before its delay (less libuv's 1 ms clock), so these lower bounds hold
+    // under any load; a fixed 10 ms retry fails the later ones.
+    const gaps = dialedAt.slice(1, 5).map((at, i) => at - dialedAt[i]);
+    gaps.forEach((gap, i) => {
+      expect(gap).toBeGreaterThanOrEqual(10 * 2 ** i - 1);
+    });
     fake.hello.framed = true;
     await expect(client.call('server.status', {})).resolves.toMatchObject({ live: 1 });
   });

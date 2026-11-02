@@ -307,6 +307,8 @@ describe('createServerLifecycle versions (F6, D26)', () => {
     const continued = h.lifecycle.stopAllAndContinue();
     await until(() => h.c2.calls('server.stopAll').length === 1, 'stopAll');
     h.c2.dropClients();
+    await until(() => h.state() === 'connecting', 'connecting');
+    // A dwell for the negative: the continuation must not run while the supervisor lives.
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(h.state()).toBe('connecting');
     expect(h.runs()).toBe(0);

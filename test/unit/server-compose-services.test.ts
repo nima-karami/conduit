@@ -12,6 +12,7 @@ import { NodeHcClient } from '../../src/hc-client';
 import { FakeHc } from '../../src/hc-client/testing/fake-hc';
 import { instanceNames } from '../../src/instance-names';
 import type { AgentDefinition } from '../../src/types';
+import { allowPeerReset } from '../helpers/peer-socket';
 import { testEndpoint } from '../helpers/test-endpoint';
 
 const SHELL: AgentDefinition = {
@@ -261,7 +262,7 @@ describe('compose: persist and stop reach every service', () => {
 describe('compose: per-peer events', () => {
   function client(endpoint: string) {
     const lines: Array<{ method?: string; params?: { type: string } }> = [];
-    const socket: Socket = createConnection(endpoint);
+    const socket: Socket = allowPeerReset(createConnection(endpoint));
     let buffer = '';
     socket.on('data', (c) => {
       buffer += c.toString('utf8');

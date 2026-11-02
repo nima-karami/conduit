@@ -63,19 +63,18 @@ describe('TerminalRuntime screen()', () => {
       observe: true,
     });
     const observer = h.attachChannels.at(-1);
-    await expect
-      .poll(() =>
-        h.events.filter((e) => e.type === 'paint').map((e) => e.type === 'paint' && e.cause),
-      )
-      .toEqual(['attach']);
-    const snap = await h.runtime.screen('s1');
-    expect(snap?.lines[0]).toBe('reseeded');
-    expect(h.events.filter((e) => e.type === 'paint')).toHaveLength(1);
-    expect(h.ring.text('s1')).not.toContain('reseeded');
-    // The observer is gone and the active stream still carries everything, exactly once.
+    // The reseed closes its observer in the same turn it feeds the screen its paint, so that CLOSE
+    // is the reseed's completion; reading the screen any earlier races PAINT_QUIET_MS.
     await expect
       .poll(() => h.fake.frames.some((f) => f.channel === observer && f.kind === FrameKind.Close))
       .toBe(true);
+    const snap = await h.runtime.screen('s1');
+    expect(snap?.lines[0]).toBe('reseeded');
+    expect(
+      h.events.filter((e) => e.type === 'paint').map((e) => e.type === 'paint' && e.cause),
+    ).toEqual(['attach']);
+    expect(h.ring.text('s1')).not.toContain('reseeded');
+    // The active stream still carries everything, exactly once.
     h.fake.send(channel, Buffer.from('after'));
     await expect.poll(dataCount).toBe(2);
     expect(h.ring.text('s1').split('after')).toHaveLength(2);
