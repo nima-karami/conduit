@@ -206,6 +206,10 @@ describe('compose: dispatch routing', () => {
     expect(domainPresence).toHaveBeenCalledWith(windows);
     expect(mcpPresence).toHaveBeenCalledWith(peer, windows);
 
+    const reload = vi.spyOn(domain, 'reloadAgents');
+    h.services.connected();
+    expect(reload).toHaveBeenCalledOnce();
+
     const appDisconnected = vi.spyOn(mcp, 'appDisconnected');
     h.services.disconnected(peer);
     expect(appDisconnected).toHaveBeenCalledWith(peer);
@@ -278,6 +282,7 @@ describe('compose: per-peer events', () => {
     );
     const peers: Peer[] = [];
     const gone: Peer[] = [];
+    const joined: Peer[] = [];
     const shell = compose({
       transport,
       core: {
@@ -303,6 +308,7 @@ describe('compose: per-peer events', () => {
         peers.push(peer);
         return { result: {} };
       },
+      connected: (peer) => joined.push(peer),
       disconnected: (peer) => gone.push(peer),
     });
     await transport.listen(shell.handle);
@@ -318,6 +324,7 @@ describe('compose: per-peer events', () => {
       c.send(3, 'ping');
     }
     await vi.waitFor(() => expect(peers).toHaveLength(2));
+    expect(joined).toHaveLength(2);
     transport.emitTo(peers[0], 'attention.flash', { sessionId: 's' });
     transport.emit('attention.flash', { sessionId: 'all' });
     await vi.waitFor(() => expect(b.lines.filter((l) => l.method === 'event')).toHaveLength(1));

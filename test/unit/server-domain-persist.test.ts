@@ -269,3 +269,34 @@ describe('server domain: folder health', () => {
     await vi.waitFor(() => expect(h.domain.sessions.get(id)?.homeMissing).toBeUndefined());
   });
 });
+
+describe('server domain: reloadAgents', () => {
+  const agent = (id: string, command: string) => ({
+    id,
+    label: id,
+    command,
+    args: [],
+    icon: 'terminal',
+    color: 'green',
+    cwdStrategy: 'workspaceFolder',
+  });
+
+  it('re-reads agents.json, shows the new definition and emits data.changed for agents and launchers', () => {
+    const h = harness({ files: { 'agents.json': JSON.stringify([agent('my-a', 'a')]) } });
+    const ids = () => (h.domain.snapshot().stores.agents as { id: string }[]).map((d) => d.id);
+    expect(ids()).toContain('my-a');
+    h.events.length = 0;
+
+    h.domain.reloadAgents();
+    expect(h.events.filter((e) => e.type === 'data.changed')).toEqual([]);
+
+    writeFileSync(join(h.userData, 'agents.json'), JSON.stringify([agent('my-b', 'b')]));
+    h.domain.reloadAgents();
+    expect(ids()).toContain('my-b');
+    expect(ids()).not.toContain('my-a');
+    const stores = h.events
+      .filter((e) => e.type === 'data.changed')
+      .map((e) => (e.data as { store: string }).store);
+    expect(stores).toEqual(expect.arrayContaining(['agents', 'launchers']));
+  });
+});

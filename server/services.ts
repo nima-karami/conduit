@@ -348,6 +348,7 @@ export function createServices(o: ServicesOptions) {
     mcp: server,
     attention,
     scrollback,
+    connected: () => domain.reloadAgents(),
     disconnected: (peer: object) => server.appDisconnected(peer),
     /** Idempotent: both the stop paths and the exit handler reach it. */
     close(): Promise<void> {
