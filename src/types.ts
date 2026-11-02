@@ -45,7 +45,24 @@ export type SessionStatus = 'running' | 'exited' | 'stale';
  * (agent spec or the terminal-reported title) — never live process-tree inspection
  * (fragile on Windows; see docs/specs/archive/2026-06-11-runtime-icon.md).
  */
-export type SessionIconKind = 'claude' | 'powershell' | 'terminal';
+export type SessionIconKind =
+  | 'claude'
+  | 'powershell'
+  | 'terminal'
+  | 'codex'
+  | 'opencode'
+  | 'cursor'
+  | 'gemini';
+
+/** Why a session needs the human now; see docs/specs/2026-11-02-sidebar-agent-tree.md §4. */
+export type AttentionReason = 'blocked' | 'bell' | null;
+
+/** The server's runtime attention facts (ServerAttention); never persisted. */
+export interface SessionAttentionFacts {
+  attentionReason: AttentionReason;
+  /** Qualifying run ends this server lifetime; monotonic per session until it is forgotten. */
+  completions: number;
+}
 
 export interface Project {
   id: string;
@@ -91,6 +108,10 @@ export interface Session {
   // Half of the Review-state test (conductor decision D15); the other half is a dirty
   // active repo. Runtime-only, host-derived; never persisted.
   completedRun?: boolean;
+  /** Runtime-only server fact; an absent value on a legacy record reads as null. */
+  attentionReason?: AttentionReason;
+  /** Runtime-only server fact; an absent value on a legacy record reads as 0. */
+  completions?: number;
   /**
    * The last non-empty line this session printed, ANSI-stripped and capped (D6). The one
    * live line under a card's name in every state. Runtime-only: derived from the PTY tail

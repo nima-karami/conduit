@@ -210,3 +210,17 @@ describe('server domain: internal subscribers on C1 data', () => {
     expect(viewOf(h, id)?.runtime).toMatchObject({ spawn: 'live', generation: 4 });
   });
 });
+
+describe('server domain: attention facts', () => {
+  it('every sessions.changed view carries the neutral facts the services layer overrides', async () => {
+    const h = harness();
+    const id = await h.create();
+    await vi.waitFor(() => expect(h.types()).toContain('sessions.changed'));
+    const views = h.events
+      .filter((e) => e.type === 'sessions.changed')
+      .flatMap((e) => (e.data as { sessions: SessionView[] }).sessions)
+      .filter((s) => s.id === id);
+    expect(views.length).toBeGreaterThan(0);
+    for (const v of views) expect(v).toMatchObject({ attentionReason: null, completions: 0 });
+  });
+});

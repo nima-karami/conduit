@@ -200,6 +200,8 @@ describe('compose: sessions.changed carries attention', () => {
       busy: true,
       needsAttention: true,
       completedRun: false,
+      attentionReason: 'blocked',
+      completions: 3,
     });
     await vi.waitFor(() =>
       expect(
@@ -212,9 +214,21 @@ describe('compose: sessions.changed carries attention', () => {
       of(h.sent, 'sessions.changed')
         .at(-1)
         ?.sessions.find((s) => s.id === id);
-    expect(last()).toMatchObject({ busy: true, needsAttention: true });
+    expect(last()).toMatchObject({
+      busy: true,
+      needsAttention: true,
+      attentionReason: 'blocked',
+      completions: 3,
+    });
     expect(h.services.core.snapshot().sessions.find((s) => s.id === id)).toMatchObject({
       busy: true,
+      attentionReason: 'blocked',
+      completions: 3,
+    });
+    // The domain's neutral pre-decoration facts never reach the wire in place of the producer's.
+    expect(h.services.domain.snapshot().sessions.find((s) => s.id === id)).toMatchObject({
+      attentionReason: null,
+      completions: 0,
     });
     const before = of(h.sent, 'sessions.changed').length;
     const changed = onChange.mock.calls[0]?.[0];
@@ -223,6 +237,38 @@ describe('compose: sessions.changed carries attention', () => {
     changed?.();
     // Coalesced: two flips within the window are one re-send.
     await vi.waitFor(() => expect(of(h.sent, 'sessions.changed').length).toBe(before + 1));
+  });
+
+  it('a counter-only change re-sends, and the coalesced event carries the final count', async () => {
+    const onChange = vi.spyOn(ServerAttention.prototype, 'onChange');
+    const h = await harness();
+    await h.services.core.start();
+    const created = await answer(h.services, 'sessions.create', {
+      agentId: SHELL.id,
+      home: h.userData,
+    });
+    const id = 'result' in created ? (created.result as { sessionId: string }).sessionId : '';
+    const status = vi.spyOn(h.services.attention, 'statusOf');
+    const facts = (completions: number) => ({
+      busy: false,
+      needsAttention: false,
+      completedRun: true,
+      attentionReason: null,
+      completions,
+    });
+    await vi.waitFor(() => expect(of(h.sent, 'sessions.changed').length).toBeGreaterThan(0));
+    const before = of(h.sent, 'sessions.changed').length;
+    const changed = onChange.mock.calls[0]?.[0];
+    status.mockReturnValue(facts(1));
+    changed?.();
+    status.mockReturnValue(facts(2));
+    changed?.();
+    await vi.waitFor(() => expect(of(h.sent, 'sessions.changed').length).toBe(before + 1));
+    expect(
+      of(h.sent, 'sessions.changed')
+        .at(-1)
+        ?.sessions.find((s) => s.id === id),
+    ).toMatchObject({ completions: 2 });
   });
 });
 

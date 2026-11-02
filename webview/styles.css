@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Figtree:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Fira+Code:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
-
 /* Design tokens — docs/design-handoff/revamp/spec/Conduit Token Contract.txt.
    Theme owns COLOUR, SHAPE and MATERIAL. Density owns SPACING and SIZE: a theme block
    that sets a height, padding, gap or font-size is a defect, not a shortcut.
@@ -112,6 +110,9 @@
   --r-round: 999px;
   --win-pad: 12px; /* 0 = panels flush to the window */
   --gutter: 11px; /* gap between panels */
+  /* The center footer's height, and the update toast's anchor above it: one geometry, so the
+     toast never needs an offset of its own (sidebar-agent-tree spec §7). */
+  --status-bar-h: 32px;
   /* Does a tab FLOAT inside its row or fill it? Same question --win-pad answers for panels,
      and the same axis: Aero insets the tab so it reads as a pill on open ground; Neon is a
      flush language, so a tab that stops short of its own band just looks unfinished. Density

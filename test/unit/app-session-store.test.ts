@@ -12,6 +12,8 @@ const view = (id: string, over: Partial<SessionView> = {}): SessionView => ({
   status: 'running',
   createdAt: 0,
   lastActiveAt: 0,
+  attentionReason: null,
+  completions: 0,
   runtime: { generation: 3, spawn: 'live', reportedStatus: null, lastSize: null },
   ...over,
 });

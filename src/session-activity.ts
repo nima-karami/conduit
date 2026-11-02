@@ -56,6 +56,11 @@ export interface AttentionEdge {
 export interface SweepResult {
   changed: boolean;
   edges: AttentionEdge[];
+  /**
+   * One id per qualifying run that ended this sweep, whatever the visibility or the legacy
+   * episode latch: the server's completion counter (docs/specs/2026-11-02-sidebar-agent-tree.md §4).
+   */
+  completedIds: string[];
 }
 
 interface Entry {
@@ -66,6 +71,12 @@ interface Entry {
   /** Start of the run in flight; undefined once the run has been consumed or reset. */
   runStartAt: number | undefined;
   runBytes: number;
+  /**
+   * The same run evidence for the completion counter, kept apart because the legacy copy is wiped
+   * by visibility and acknowledgment, which must not hide a finished run.
+   */
+  doneStartAt: number | undefined;
+  doneBytes: number;
   pendingBell: boolean;
   /** Episode latch: an armed session cannot arm again until it is acknowledged. */
   armed: boolean;
@@ -82,6 +93,8 @@ const newEntry = (at: number): Entry => ({
   completedRun: false,
   runStartAt: undefined,
   runBytes: 0,
+  doneStartAt: undefined,
+  doneBytes: 0,
   pendingBell: false,
   armed: false,
   spawnAt: undefined,
@@ -93,6 +106,11 @@ function clearRun(e: Entry): void {
   e.runStartAt = undefined;
   e.runBytes = 0;
   e.pendingBell = false;
+}
+
+function clearDone(e: Entry): void {
+  e.doneStartAt = undefined;
+  e.doneBytes = 0;
 }
 
 export class SessionActivity {
@@ -129,9 +147,19 @@ export class SessionActivity {
     const wasBusy = e.busy;
     e.busy = true;
 
-    // Startup noise, and a session the user is already watching, are not evidence — so
-    // neither accumulates a run (contracts 4 and 5).
-    if (this.inSpawnGrace(e, now) || this.isVisible(id)) {
+    if (this.inSpawnGrace(e, now)) {
+      clearRun(e);
+      clearDone(e);
+      return !wasBusy;
+    }
+    if (e.doneStartAt === undefined || sinceLast >= this.busyWindowMs) {
+      e.doneStartAt = now;
+      e.doneBytes = 0;
+    }
+    e.doneBytes += bytes;
+    // A session the user is already watching is not attention evidence (contract 4); it still
+    // completes runs, above.
+    if (this.isVisible(id)) {
       clearRun(e);
       return !wasBusy;
     }
@@ -153,6 +181,7 @@ export class SessionActivity {
   recordSpawn(id: string, now: number): void {
     const e = this.entries.get(id) ?? newEntry(now);
     clearRun(e);
+    clearDone(e);
     e.needsAttention = false;
     e.armed = false;
     e.exited = false;
@@ -171,6 +200,7 @@ export class SessionActivity {
     const e = this.entries.get(id);
     if (!e) return;
     clearRun(e);
+    clearDone(e);
     e.needsAttention = false;
     e.armed = false;
     e.exited = true;
@@ -209,11 +239,20 @@ export class SessionActivity {
   sweep(now: number): SweepResult {
     let changed = false;
     const edges: AttentionEdge[] = [];
+    const completedIds: string[] = [];
     for (const [id, e] of this.entries) {
       if (e.busy && now - e.lastOutputAt >= this.busyWindowMs) {
         e.busy = false;
         e.completedRun = true;
         changed = true;
+      }
+      if (
+        !e.exited &&
+        !this.inSpawnGrace(e, now) &&
+        this.quietQualified(e.doneStartAt, e.doneBytes, e.lastOutputAt, now)
+      ) {
+        completedIds.push(id);
+        clearDone(e);
       }
       // A watched session is continuously acknowledged, so a run that finishes while the
       // user is looking can never arm later, once they switch away.
@@ -230,7 +269,7 @@ export class SessionActivity {
       edges.push({ id, kind });
       changed = true;
     }
-    return { changed, edges };
+    return { changed, edges, completedIds };
   }
 
   /** The output clock the notice gate reads (plan ruling 9): one clock, not a second copy. */
@@ -257,11 +296,19 @@ export class SessionActivity {
   /** Which evidence, if any, arms this session right now. */
   private armingEvidence(e: Entry, now: number): AttentionEdge['kind'] | null {
     if (e.pendingBell) return 'bell';
-    if (e.runStartAt === undefined) return null;
-    const qualified =
-      e.lastOutputAt - e.runStartAt >= this.minRunMs || e.runBytes >= this.minRunBytes;
-    if (!qualified) return null;
-    return now - e.lastOutputAt >= this.attentionQuietMs ? 'run-end' : null;
+    return this.quietQualified(e.runStartAt, e.runBytes, e.lastOutputAt, now) ? 'run-end' : null;
+  }
+
+  /** A run long or large enough to be evidence, followed by the attention quiet gap. */
+  private quietQualified(
+    startAt: number | undefined,
+    bytes: number,
+    lastOutputAt: number,
+    now: number,
+  ): boolean {
+    if (startAt === undefined) return false;
+    const qualified = lastOutputAt - startAt >= this.minRunMs || bytes >= this.minRunBytes;
+    return qualified && now - lastOutputAt >= this.attentionQuietMs;
   }
 
   /** The user has seen this session: end the episode and start counting evidence over. */

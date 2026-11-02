@@ -65,6 +65,8 @@ describe('ServerAttention', () => {
       busy: false,
       needsAttention: true,
       completedRun: true,
+      attentionReason: null,
+      completions: 1,
     });
     status({ state: 'idle' });
     expect(edges).toEqual([{ sessionId: 'a', kind: 'run-end' }]);
@@ -162,5 +164,170 @@ describe('ServerAttention', () => {
       cause: 'gap',
     });
     expect(attention.statusOf('a').busy).toBe(false);
+  });
+});
+
+describe('ServerAttention — completions and reasons (sidebar-agent-tree spec §4)', () => {
+  const big = () => data('x'.repeat(2000));
+  const facts = () => {
+    const s = attention.statusOf('a');
+    return { attentionReason: s.attentionReason, completions: s.completions };
+  };
+
+  it('an untracked session reads neutral facts', () => {
+    setup();
+    expect(attention.statusOf('nobody')).toEqual({
+      busy: false,
+      needsAttention: false,
+      completedRun: false,
+      attentionReason: null,
+      completions: 0,
+    });
+  });
+
+  it('a heuristic run counts while visible, with no legacy edge', () => {
+    setup();
+    attention.setVisible(1, ['a']);
+    at(10_000);
+    big();
+    at(20_000);
+    attention.sweep();
+    expect(facts()).toEqual({ attentionReason: null, completions: 1 });
+    expect(edges).toEqual([]);
+    expect(attention.statusOf('a').needsAttention).toBe(false);
+  });
+
+  it('every qualifying heuristic run counts, even with the legacy episode armed', () => {
+    setup();
+    at(10_000);
+    big();
+    at(20_000);
+    attention.sweep();
+    at(30_000);
+    big();
+    at(40_000);
+    attention.sweep();
+    expect(facts().completions).toBe(2);
+    expect(edges).toEqual([{ sessionId: 'a', kind: 'run-end' }]);
+  });
+
+  it('a reported Working -> Done/Idle counts once; Blocked and repeats do not', () => {
+    setup();
+    status({ state: 'working' });
+    status({ state: 'done' });
+    status({ state: 'done' });
+    expect(facts().completions).toBe(1);
+    status({ state: 'working' });
+    status({ state: 'blocked', kind: 'permission' });
+    expect(facts().completions).toBe(1);
+    status({ state: 'working' });
+    status({ state: 'idle' });
+    expect(facts().completions).toBe(2);
+    status({ state: 'working' });
+    status({ state: 'error' });
+    expect(facts().completions).toBe(2);
+  });
+
+  it('a reporting program’s output is not also counted by the heuristic', () => {
+    setup();
+    status({ state: 'working' });
+    at(10_000);
+    big();
+    status({ state: 'done' });
+    at(30_000);
+    attention.sweep();
+    expect(facts().completions).toBe(1);
+  });
+
+  it('the counter survives spawn and exit, and resets on forget and a new server', () => {
+    setup();
+    status({ state: 'working' });
+    status({ state: 'done' });
+    emit({ type: 'exit', sessionId: 'a', generation: 1, code: 0, reason: 'exited' });
+    emit({ type: 'spawned', sessionId: 'a', generation: 2, size: { cols: 80, rows: 24 } });
+    expect(facts().completions).toBe(1);
+    attention.forgetSession('a');
+    expect(facts().completions).toBe(0);
+    status({ state: 'working' });
+    status({ state: 'done' });
+    expect(facts().completions).toBe(1);
+    attention.dispose();
+    setup();
+    expect(facts().completions).toBe(0);
+  });
+
+  it('entering Blocked while hidden is the blocked reason; Working, visibility and exit clear it', () => {
+    setup();
+    status({ state: 'blocked', kind: 'question' });
+    expect(facts().attentionReason).toBe('blocked');
+    status({ state: 'working' });
+    expect(facts().attentionReason).toBeNull();
+    status({ state: 'blocked', kind: 'question' });
+    attention.setVisible(1, ['a']);
+    expect(facts().attentionReason).toBeNull();
+    attention.dropWindow(1);
+    status({ state: 'working' });
+    status({ state: 'blocked', kind: null });
+    expect(facts().attentionReason).toBe('blocked');
+    emit({ type: 'exit', sessionId: 'a', generation: 1, code: 0, reason: 'exited' });
+    expect(facts().attentionReason).toBeNull();
+  });
+
+  it('leaving Blocked for Done clears the reason and is not a completion', () => {
+    setup();
+    status({ state: 'blocked', kind: 'permission' });
+    status({ state: 'done' });
+    expect(facts()).toEqual({ attentionReason: null, completions: 0 });
+  });
+
+  it('Blocked on a visible session is no reason, as the legacy episode', () => {
+    setup();
+    attention.setVisible(1, ['a']);
+    status({ state: 'blocked', kind: 'permission' });
+    expect(facts().attentionReason).toBeNull();
+  });
+
+  it('a genuine bell while hidden is the bell reason and no completion; seeing it clears it', () => {
+    setup();
+    at(10_000);
+    data('\x07');
+    at(11_000);
+    attention.sweep();
+    expect(facts()).toEqual({ attentionReason: 'bell', completions: 0 });
+    attention.setVisible(1, ['a']);
+    expect(facts().attentionReason).toBeNull();
+  });
+
+  it('a bell on a visible session is no reason', () => {
+    setup();
+    attention.setVisible(1, ['a']);
+    at(10_000);
+    data('\x07');
+    at(11_000);
+    attention.sweep();
+    expect(facts().attentionReason).toBeNull();
+  });
+
+  it('a counter-only or reason-only change notifies onChange and raises no edge', () => {
+    setup();
+    let changes = 0;
+    attention.onChange(() => changes++);
+    attention.setVisible(1, ['a']);
+    at(10_000);
+    big();
+    at(12_000);
+    attention.sweep(); // busy -> idle
+    changes = 0;
+    at(20_000);
+    attention.sweep();
+    expect(facts().completions).toBe(1);
+    expect(changes).toBe(1);
+    attention.dropWindow(1);
+    status({ state: 'blocked', kind: 'permission' });
+    changes = 0;
+    status({ state: 'working' });
+    status({ state: 'done' });
+    expect(changes).toBeGreaterThanOrEqual(2);
+    expect(edges.map((e) => e.kind)).toEqual(['run-end', 'run-end']);
   });
 });

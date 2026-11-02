@@ -1,3 +1,4 @@
+import { agentIconKindFromText } from './agent-icon';
 import { anyRepoDirty } from './repo-git';
 import type { AgentDefinition, Session, SessionIconKind } from './types';
 
@@ -78,11 +79,6 @@ function basenameLower(s: string): string {
   return base.replace(/\.(exe|cmd|bat|com)$/i, '').toLowerCase();
 }
 
-// Known AI / coding-agent command keywords → the Claude (AI/sparkle) glyph. These
-// match anywhere in the agent's command, id, or args so wrappers like `npx claude`
-// or `cmd /c claude` still resolve. Matched as whole tokens, case-insensitively.
-const AI_AGENTS = ['claude', 'aider', 'cursor', 'copilot', 'gemini', 'codex', 'goose'];
-const POWERSHELL = new Set(['powershell', 'pwsh']);
 const SHELLS = new Set([
   'bash',
   'zsh',
@@ -97,21 +93,9 @@ const SHELLS = new Set([
   'ksh',
 ]);
 
-/**
- * Detect an icon kind from free-form text (an agent command line, or a terminal
- * title). Tokenises on common separators and matches whole tokens, so `npx claude`,
- * `claude-code`, or a title like "claude — fixing x" resolve to the Claude glyph
- * without a flag like `--cursor-shape` mis-mapping. Returns null when nothing matches
- * (so callers can fall back). Pure.
- */
+/** Kept for its existing callers; the detector itself lives in src/agent-icon.ts. */
 export function iconKindFromText(...parts: string[]): SessionIconKind | null {
-  const tokens = parts
-    .filter((t): t is string => typeof t === 'string' && t.length > 0)
-    .flatMap((t) => basenameLower(t).split(/[\s\-_:=.]+/))
-    .filter(Boolean);
-  if (tokens.some((t) => AI_AGENTS.includes(t))) return 'claude';
-  if (tokens.some((t) => POWERSHELL.has(t))) return 'powershell';
-  return null;
+  return agentIconKindFromText(...parts);
 }
 
 /**

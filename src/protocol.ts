@@ -34,6 +34,7 @@ import type { RepoTag } from './repo-scan';
 import type { ReviewMark, ReviewMarksRepo } from './review-marks';
 import type { ReviewNote, ReviewNotePatch } from './review-notes';
 import type { AppSettings } from './settings';
+import type { SidebarUiState } from './sidebar-state';
 import type { FireFailure, TimedMessage, TimedMessageInput } from './timed-messages';
 import type { TsconfigDTO } from './tsconfig-map';
 import type { AgentDefinition, BriefError, BriefRequest, Project, Session } from './types';
@@ -891,6 +892,9 @@ export type HostToWebview =
   // Broadcast on window open/close/focus change and after a session move. Each window
   // excludes its own id (from `state.windowId`) when listing move targets.
   | { type: 'win:list'; windows: { id: number; title: string; sessionCount: number }[] }
+  // This window's sidebar UI, once per document after `ready` (create, restore, reload); never
+  // a recurring state field, so a later edit is never overwritten by a broadcast.
+  | { type: 'window:sidebarInit'; sidebarUi: SidebarUiState }
   // The branch switcher's dropdown source (git-indicator Slice B): local branches for the
   // session's activeCwd, with the checked-out branch marked. Replied to the requesting
   // window only (request/response), not broadcast. `remotes`/`tags` are ADDITIVE for the
@@ -1300,6 +1304,9 @@ export type WebviewToHost =
   // Multi-window (Slice A): open a new, empty Conduit window. The host owns the window
   // registry; the new window owns no sessions until the user starts one in it.
   | { type: 'win:new' }
+  // The sender window's sidebar UI changed; the host validates it and persists it with that
+  // window's layout entry.
+  | { type: 'window:sidebar'; sidebarUi: SidebarUiState }
   // Multi-window (Slice B): move a live session to another window WITHOUT restarting its
   // PTY. The host reassigns ownership (the sessionId/React key never changes, so no remount
   // kills the ConPTY child); `kind:'new'` spawns a fresh window as the target.

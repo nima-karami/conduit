@@ -571,3 +571,27 @@ describe('coerceSettings — mcpToolPolicy (tool-policy spec §3.1)', () => {
     expect(r.mcpToolPolicy.open_file).toEqual({ access: 'off', when: 'viewing' });
   });
 });
+
+describe('coerceSettings — agent tree compatibility', () => {
+  it('keeps every legacy card field and sort value rather than resetting it', () => {
+    for (const cardTitle of [
+      'name',
+      'live',
+      'agent',
+      'folder',
+      'path',
+      'worktree',
+      'time',
+      'active',
+    ])
+      expect(coerce({ cardTitle }).cardTitle).toBe(cardTitle);
+    for (const sessionSort of ['manual', 'name', 'recent', 'active', 'status', 'project'])
+      expect(coerce({ sessionSort }).sessionSort).toBe(sessionSort);
+  });
+
+  it('a bad remembered view falls back without touching the open state', () => {
+    const r = coerce({ rightPaneTab: 'tabs', explorerCollapsed: true });
+    expect(r.rightPaneTab).toBe(DEFAULT_SETTINGS.rightPaneTab);
+    expect(r.explorerCollapsed).toBe(true);
+  });
+});

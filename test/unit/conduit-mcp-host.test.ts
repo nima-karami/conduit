@@ -381,7 +381,13 @@ function harness(
   };
   const attentionListeners = new Set<Parameters<McpHostDeps['attention']['onEdge']>[0]>();
   const attention: McpHostDeps['attention'] = {
-    statusOf: (id) => ({ busy: busy.has(id), needsAttention: false, completedRun: false }),
+    statusOf: (id) => ({
+      busy: busy.has(id),
+      needsAttention: false,
+      completedRun: false,
+      attentionReason: null,
+      completions: 0,
+    }),
     lastOutputAt: (id) => lastOut.get(id),
     setVisible: () => false,
     dropWindow: () => undefined,

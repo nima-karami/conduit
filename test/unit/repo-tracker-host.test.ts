@@ -95,6 +95,8 @@ function harness(opts: { git?: Record<string, GitInterrogation> } = {}) {
       home: '/w',
       roots: [],
       status: 'running',
+      attentionReason: null,
+      completions: 0,
       runtime: { generation: 1, spawn: 'live', reportedStatus: null, lastSize: null },
       createdAt: 0,
       lastActiveAt: 0,

@@ -493,14 +493,31 @@ const IconPowerShell = glyph(
   </>,
 );
 
-// Generic AI/sparkle mark for Claude-like agents — NOT an official logo.
+// Agent identity marks are our own simple drawings, never vendor logos (sidebar-agent-tree spec §6).
 const IconClaude = glyph(
   'claude',
+  <path d="M8 2.2v3M8 10.8v3M2.2 8h3M10.8 8h3M3.9 3.9L6 6M10 10l2.1 2.1M12.1 3.9L10 6M6 10l-2.1 2.1" />,
+  HAIR,
+);
+const IconCodex = glyph(
+  'codex',
   <>
-    <path d="M7 2.2l1.1 2.9L11 6.2 8.1 7.3 7 10.2 5.9 7.3 3 6.2l2.9-1.1z" />
-    <path d="M11.6 9.4l.5 1.4 1.4.5-1.4.5-.5 1.4-.5-1.4-1.4-.5 1.4-.5z" />
+    <rect x="2.5" y="2.5" width="11" height="11" rx="3" />
+    <path d="M5.4 6.2L7.4 8l-2 1.8M8.6 10h2.2" />
+  </>,
+);
+const IconOpenCode = glyph('opencode', <path d="M6.2 3H4.5v10h1.7M9.8 3h1.7v10H9.8" />);
+const IconCursor = glyph(
+  'cursor',
+  <>
+    <path d="M8 1.8l5.4 3.1v6.2L8 14.2l-5.4-3.1V4.9z" />
+    <path d="M2.6 4.9L8 8l5.4-3.1M8 8v6.2" />
   </>,
   HAIR,
+);
+const IconGemini = glyph(
+  'gemini',
+  <path d="M8 1.8C8.4 5.4 10.6 7.6 14.2 8 10.6 8.4 8.4 10.6 8 14.2 7.6 10.6 5.4 8.4 1.8 8 5.4 7.6 7.6 5.4 8 1.8z" />,
 );
 
 const _customIcon: Record<string, (p: P) => ReactJSX.Element> = {
@@ -521,6 +538,10 @@ const SESSION_ICON: Record<SessionIconKind, (p: P) => ReactJSX.Element> = {
   claude: IconClaude,
   powershell: IconPowerShell,
   terminal: IconTerminal,
+  codex: IconCodex,
+  opencode: IconOpenCode,
+  cursor: IconCursor,
+  gemini: IconGemini,
 };
 
 /**

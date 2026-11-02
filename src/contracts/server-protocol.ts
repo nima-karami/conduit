@@ -23,6 +23,7 @@ import type {
   BriefRequest,
   Project,
   Session,
+  SessionAttentionFacts,
   SessionCommand,
   SessionOpener,
 } from '../types';
@@ -101,11 +102,12 @@ export type AppSessionField = (typeof APP_SESSION_FIELDS)[number];
 export type AppSessionOverlay = Partial<Pick<Session, AppSessionField>>;
 
 /** What the server sends for a session: its record plus runtime facts, never the app's fields. */
-export type SessionView = Omit<Session, AppSessionField> & {
-  runtime: SessionRuntime;
-  /** The last run's exit code, set with the transition to `exited` (the pane's exit line reads it). */
-  exitCode?: number | null;
-};
+export type SessionView = Omit<Session, AppSessionField> &
+  SessionAttentionFacts & {
+    runtime: SessionRuntime;
+    /** The last run's exit code, set with the transition to `exited` (the pane's exit line reads it). */
+    exitCode?: number | null;
+  };
 /** What the app renders: a server view with the app's overlay merged on. */
 export type AppSessionView = SessionView & AppSessionOverlay;
 

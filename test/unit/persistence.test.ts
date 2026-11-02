@@ -23,6 +23,28 @@ function sessionsOf(blob: string | undefined): Session[] {
   return r.kind === 'ok' ? r.sessions : [];
 }
 
+describe('persistence — attention facts (sidebar-agent-tree plan T0.2)', () => {
+  it('never writes the server facts', () => {
+    const blob = serializeSessions([{ ...s, attentionReason: 'blocked', completions: 4 }]);
+    expect(blob).not.toContain('attentionReason');
+    expect(blob).not.toContain('completions');
+  });
+
+  it('drops facts a hand-edited or foreign file carries, with no version change', () => {
+    const blob = v1([
+      { ...s, attentionReason: 'bell', completions: 9 },
+      { ...s, id: '2', attentionReason: 'nonsense', completions: -1 },
+    ]);
+    const restored = sessionsOf(blob);
+    expect(restored).toHaveLength(2);
+    for (const r of restored) {
+      expect(r).not.toHaveProperty('attentionReason');
+      expect(r).not.toHaveProperty('completions');
+    }
+    expect(JSON.parse(serializeSessions(restored)).version).toBe(1);
+  });
+});
+
 describe('persistence', () => {
   it('round-trips sessions, forcing restored ones to stale', () => {
     const blob = serializeSessions([s]);

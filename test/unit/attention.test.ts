@@ -4,6 +4,7 @@ import {
   attentionChipLabel,
   attentionEntries,
   attentionSessions,
+  needYouEntries,
   nextSnoozeExpiry,
   pruneSnoozed,
   SNOOZE_MS,
@@ -12,7 +13,9 @@ import {
 import type { McpAttentionItem } from '../../src/conduit-mcp/types';
 import type { Session } from '../../src/types';
 
-type Flags = Pick<Session, 'status' | 'busy' | 'needsAttention'> & { id: string };
+type Flags = Pick<Session, 'status' | 'busy' | 'needsAttention' | 'attentionReason'> & {
+  id: string;
+};
 
 const s = (id: string, over: Partial<Flags> = {}): Flags => ({
   id,
@@ -196,5 +199,78 @@ describe('attentionEntries with asks', () => {
     const sessions = [s('s2', { needsAttention: true })];
     const entries = attentionEntries(sessions, [], new Map(), NOW, [ask, { ...ask, askId: 'a2' }]);
     expect(attentionChipLabel(entries.length)).toBe('3 need you');
+  });
+});
+
+describe('needYouEntries (sidebar-agent-tree spec §4 footer projection)', () => {
+  const NOW = 1_000_000;
+  const msg = (id: string, at: string, sessionId: string | null = null): McpAttentionItem => ({
+    id,
+    reason: 'message-to-you',
+    handle: 'codex-2',
+    sessionId,
+    threadId: 't1',
+    messageId: id,
+    at,
+  });
+  const ask = { askId: 'k1', callerSessionId: 'c', callerHandle: 'fake-1' };
+
+  it('counts reason-bearing sessions, even busy, and drops legacy finished-unseen ones', () => {
+    const sessions = [
+      s('legacy', { needsAttention: true }),
+      s('blocked', { attentionReason: 'blocked', busy: true }),
+      s('bell', { attentionReason: 'bell' }),
+      s('quiet'),
+    ];
+    expect(needYouEntries(sessions, [], new Map(), NOW).map((e) => e.key)).toEqual([
+      'session:blocked',
+      'session:bell',
+    ]);
+  });
+
+  it('keeps asks first, reason sessions in input order, then messages by time', () => {
+    const sessions = [s('b', { attentionReason: 'bell' }), s('a', { attentionReason: 'blocked' })];
+    const items = [
+      msg('late', '2026-10-25T11:00:00.000Z'),
+      msg('early', '2026-10-25T09:00:00.000Z'),
+    ];
+    const entries = needYouEntries(sessions, items, new Map(), NOW, [ask]);
+    expect(entries.map((e) => e.key)).toEqual([
+      'ask:k1',
+      'session:b',
+      'session:a',
+      'early',
+      'late',
+    ]);
+    expect(entries[0]).toMatchObject({ kind: 'ask', sessionId: 'c', handle: 'fake-1' });
+  });
+
+  it('an ask alone adds no session entry', () => {
+    const entries = needYouEntries([s('c')], [], new Map(), NOW, [ask]);
+    expect(entries.map((e) => e.key)).toEqual(['ask:k1']);
+  });
+
+  it('snooze hides a reason session and its items, never its ask', () => {
+    const sessions = [s('c', { attentionReason: 'blocked' })];
+    const snoozed = new Map([['c', NOW + SNOOZE_MS]]);
+    const entries = needYouEntries(
+      sessions,
+      [msg('tied', '2026-10-25T09:00:00.000Z', 'c')],
+      snoozed,
+      NOW,
+      [ask],
+    );
+    expect(entries.map((e) => e.key)).toEqual(['ask:k1']);
+  });
+
+  it('never mutates the input sessions, and the legacy aggregator still reads needsAttention', () => {
+    const sessions = [
+      s('a', { attentionReason: 'blocked', busy: true }),
+      s('l', { needsAttention: true }),
+    ];
+    const copy = structuredClone(sessions);
+    needYouEntries(sessions, [], new Map(), NOW);
+    expect(sessions).toEqual(copy);
+    expect(attentionEntries(sessions, [], new Map(), NOW).map((e) => e.key)).toEqual(['session:l']);
   });
 });

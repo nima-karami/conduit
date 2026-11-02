@@ -177,6 +177,7 @@ import {
 } from '../src/settings';
 import { mirrorServerKeys, serverPatchOf, uiOnly } from '../src/settings-mirror';
 import { expandShortNames, hasShortComponent, hostShortNameDeps } from '../src/short-names';
+import { defaultSidebarUi, parseSidebarUi, type SidebarUiState } from '../src/sidebar-state';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 import { INDEX_FILE_CAP, isOversizedForIndex, selectIndexCandidates } from '../src/source-index';
 import { groundForTheme } from '../src/theme-ground';
@@ -349,6 +350,9 @@ if (!app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
 // launch is the `primaryWindowId` (restore + cold-launch OS-open ownership target).
 const windows = new Map<number, BrowserWindow>();
 const sessionOwner: OwnerMap = new Map();
+// Each window's sidebar UI (Space selection, folds, pins), persisted with its layout entry; a
+// window without one starts at defaults (sidebar-agent-tree spec §3).
+const sidebarUiByWindow = new Map<number, SidebarUiState>();
 let primaryWindowId = -1;
 // Stable 1-based display ordinal per window id, assigned in creation order. Used as the
 // fallback `win:list` title ("Window 2") for a window that owns no named session yet, so
@@ -1573,10 +1577,14 @@ app.whenReady().then(() => {
   // async persist and the synchronous quit-flush so the snapshot shape lives in one place.
   const buildLayoutSnapshot = (): WindowLayout[] => {
     const all = store.list();
-    return [...windows.values()].map((w) => ({
-      bounds: w.getBounds(),
-      sessionIds: sessionsOwnedBy(sessionOwner, w.id, all).map((s) => s.id),
-    }));
+    return [...windows.values()].map((w) => {
+      const sidebarUi = sidebarUiByWindow.get(w.id);
+      return {
+        bounds: w.getBounds(),
+        sessionIds: sessionsOwnedBy(sessionOwner, w.id, all).map((s) => s.id),
+        ...(sidebarUi ? { sidebarUi } : {}),
+      };
+    });
   };
 
   const persistLayout = () => {
@@ -2536,6 +2544,11 @@ app.whenReady().then(() => {
           // Reviewed marks, to the window that just loaded (like restoreDocs above). An EMPTY
           // list is a real answer: it is what opens the renderer's mark controls (§4).
           replyHere({ type: 'review:marks', repos: allMarkRepos() });
+          // Once per loaded document: a reload re-hydrates; no state broadcast ever carries it.
+          replyHere({
+            type: 'window:sidebarInit',
+            sidebarUi: sidebarUiByWindow.get(senderId) ?? defaultSidebarUi(),
+          });
           // Before the first snapshot these arrive with it, as broadcasts.
           if (lastTimers) replyHere(lastTimers);
           if (lastMcp) replyHere(lastMcp);
@@ -2548,6 +2561,11 @@ app.whenReady().then(() => {
         }
         case 'revealLogs':
           void shell.openPath(userData());
+          break;
+        case 'window:sidebar':
+          // Sender-scoped: a window only ever writes its own entry, validated like a restore.
+          sidebarUiByWindow.set(senderId, parseSidebarUi(m.sidebarUi));
+          schedulePersistLayout?.();
           break;
         case 'openRepo':
           await openRepoRequest(m, senderId, replyHere);
@@ -4521,6 +4539,7 @@ app.whenReady().then(() => {
       onClosed: (windowId) => {
         closeGuard.onWindowGone(windowId);
         presence.drop(windowId);
+        sidebarUiByWindow.delete(windowId);
         // Its visible-session set dies with it, or sessions it was showing would stay
         // exempt from attention forever.
         schedulePresence();
@@ -4579,6 +4598,7 @@ app.whenReady().then(() => {
     const planned = restorePlan[i];
     const w = spawnWindow({ primary: i === 0 });
     w.setBounds(clampBoundsToDisplays(planned.bounds, workAreas));
+    if (planned.sidebarUi) sidebarUiByWindow.set(w.id, planned.sidebarUi);
     for (const id of planned.sessionIds) assignOwner(sessionOwner, id, w.id);
   }
   // planLayoutRestore always yields ≥1 window, but guard against an empty plan defensively.

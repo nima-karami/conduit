@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { agentIconKindFromText } from '../../src/agent-icon';
 import {
   iconForAgent,
   iconForSession,
@@ -29,10 +30,17 @@ describe('iconForAgent', () => {
     expect(iconForAgent(def({ command: 'npx', args: ['claude'] }))).toBe('claude');
   });
 
-  it('maps other known AI agents to the claude glyph', () => {
-    for (const cmd of ['aider', 'cursor', 'copilot', 'gemini', 'codex', 'goose']) {
+  it('maps other AI agents without a mark of their own to the claude glyph', () => {
+    for (const cmd of ['aider', 'copilot', 'goose']) {
       expect(iconForAgent(def({ id: cmd, command: cmd }))).toBe('claude');
     }
+  });
+
+  it('gives codex, opencode, cursor and gemini their own glyphs', () => {
+    for (const cmd of ['codex', 'opencode', 'cursor', 'gemini'] as const) {
+      expect(iconForAgent(def({ id: cmd, command: cmd }))).toBe(cmd);
+    }
+    expect(iconForAgent(def({ command: 'cursor-agent' }))).toBe('cursor');
   });
 
   it('maps PowerShell to the powershell glyph (powershell / pwsh, path + .exe + case)', () => {
@@ -117,6 +125,11 @@ describe('iconKindFromText', () => {
 
   it('detects PowerShell', () => {
     expect(iconKindFromText('Windows PowerShell')).toBe('powershell');
+  });
+
+  it('is the agent-icon detector, not a second implementation', () => {
+    for (const t of ['codex', 'OpenCode', 'gemini — plan', 'cursor-agent', 'pwsh', 'claude', 'x'])
+      expect(iconKindFromText(t)).toBe(agentIconKindFromText(t));
   });
 
   it('returns null when nothing matches (so callers fall back)', () => {

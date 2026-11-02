@@ -406,3 +406,39 @@ describe('conduit MCP settings', () => {
     expect(restoreSettings(blob).rightPaneTab).toBe('messages');
   });
 });
+
+describe('settings under the agent tree (sidebar-agent-tree plan T1.2/T1.3)', () => {
+  it('legacy card and sort settings are still read, unchanged, with no layout rev bump', () => {
+    const legacy = {
+      cardTitle: 'folder',
+      cardSubtitle: 'live',
+      cardDetail: 'time',
+      cardLayoutRev: 2,
+      sessionSort: 'name',
+    } as const;
+    const restored = restoreSettings(JSON.stringify({ version: 1, settings: legacy }));
+    expect(restored).toMatchObject(legacy);
+    expect(DEFAULT_SETTINGS.cardLayoutRev).toBe(2);
+  });
+
+  it('open state and remembered view stay the two persisted panel facts', () => {
+    const blob = serializeSettings({
+      ...DEFAULT_SETTINGS,
+      explorerCollapsed: true,
+      rightPaneTab: 'changes',
+    });
+    expect(restoreSettings(blob)).toMatchObject({
+      explorerCollapsed: true,
+      rightPaneTab: 'changes',
+    });
+  });
+
+  it('no selected Space or seen state is ever a global setting', () => {
+    const keys = Object.keys(DEFAULT_SETTINGS);
+    for (const k of ['sidebarUi', 'selectedSpace', 'selection', 'seen', 'stateSince', 'pinnedIds'])
+      expect(keys).not.toContain(k);
+    expect(
+      coerceSettings({ sidebarUi: { selection: { kind: 'all' } }, seen: { a: 1 } }),
+    ).not.toHaveProperty('sidebarUi');
+  });
+});

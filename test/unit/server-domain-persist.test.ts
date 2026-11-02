@@ -220,6 +220,21 @@ describe('server domain: persisted formats', () => {
     for (const k of [...APP_SESSION_FIELDS, 'lastGeneration']) expect(k in view).toBe(false);
   });
 
+  it('views carry neutral attention facts, and sessions.json never stores them', async () => {
+    const h = harness();
+    const id = await h.create();
+    expect(h.domain.snapshot().sessions.find((s) => s.id === id)).toMatchObject({
+      attentionReason: null,
+      completions: 0,
+    });
+    const record = h.domain.sessions.get(id);
+    if (record) Object.assign(record, { attentionReason: 'blocked', completions: 2 });
+    await h.domain.persist();
+    const stored = json(h.userData, 'sessions.json').sessions[0];
+    expect(stored).not.toHaveProperty('attentionReason');
+    expect(stored).not.toHaveProperty('completions');
+  });
+
   it('restoreSessions:true reopens every session as stale', async () => {
     const a = harness();
     const id = await a.create();

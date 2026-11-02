@@ -1,12 +1,17 @@
-import type { AttentionEdge, AttentionPort } from '../../src/contracts/server-ports';
+import type {
+  AttentionEdge,
+  AttentionPort,
+  ServerAttentionSnapshot,
+} from '../../src/contracts/server-ports';
 import type {
   ReportedStatus,
   RuntimeEvent,
   TerminalRuntime,
 } from '../../src/contracts/terminal-runtime';
 import { type BellScanState, countBareBells } from '../../src/last-line';
-import { type ActivitySnapshot, SessionActivity } from '../../src/session-activity';
+import { SessionActivity } from '../../src/session-activity';
 import { scanInertOutput } from '../../src/terminal-output';
+import type { AttentionReason } from '../../src/types';
 
 /** Today's sweep cadence: at most half the busy window, so idle detection lags ≤ 750 ms. */
 const ATTENTION_SWEEP_MS = 750;
@@ -34,6 +39,12 @@ export class ServerAttention implements AttentionPort {
   private readonly reported = new Map<string, Reported>();
   private readonly bells = new Map<string, BellScanState>();
   private readonly inertTails = new Map<string, string>();
+  /**
+   * The sidebar's facts (docs/specs/2026-11-02-sidebar-agent-tree.md §4). Completions outlive
+   * spawn/exit resets on purpose, so a relaunch never resurrects an unseen run as new.
+   */
+  private readonly completions = new Map<string, number>();
+  private readonly reasons = new Map<string, Exclude<AttentionReason, null>>();
   /** Window ids presence reported, so clearAll can drop every one of them. */
   private readonly windows = new Set<number>();
   private readonly edgeListeners = new Set<(edge: AttentionEdge) => void>();
@@ -49,14 +60,19 @@ export class ServerAttention implements AttentionPort {
     this.timer.unref();
   }
 
-  statusOf(sessionId: string): ActivitySnapshot {
+  statusOf(sessionId: string): ServerAttentionSnapshot {
+    const facts = {
+      attentionReason: this.reasons.get(sessionId) ?? null,
+      completions: this.completions.get(sessionId) ?? 0,
+    };
     const base = this.activity.statusOf(sessionId);
     const r = this.reported.get(sessionId);
-    if (!r) return base;
+    if (!r) return { ...base, ...facts };
     return {
       busy: r.status.state === 'working',
       needsAttention: r.needsAttention,
       completedRun: base.completedRun || r.completedRun,
+      ...facts,
     };
   }
 
@@ -67,7 +83,10 @@ export class ServerAttention implements AttentionPort {
   setVisible(windowId: number, ids: readonly string[]): boolean {
     this.windows.add(windowId);
     let changed = this.activity.setVisible(windowId, ids);
-    for (const id of ids) if (this.acknowledgeReported(id)) changed = true;
+    for (const id of ids) {
+      if (this.acknowledgeReported(id)) changed = true;
+      if (this.reasons.delete(id)) changed = true;
+    }
     if (changed) this.changed();
     return changed;
   }
@@ -105,13 +124,28 @@ export class ServerAttention implements AttentionPort {
 
   forgetSession(sessionId: string): void {
     this.reset(sessionId);
+    this.completions.delete(sessionId);
     this.activity.forget(sessionId);
   }
 
   sweep(): void {
-    const { changed, edges } = this.activity.sweep(this.now());
-    for (const edge of edges)
-      if (!this.reported.has(edge.id)) this.edge({ sessionId: edge.id, kind: edge.kind });
+    const swept = this.activity.sweep(this.now());
+    let changed = swept.changed;
+    for (const edge of swept.edges) {
+      if (this.reported.has(edge.id)) continue;
+      // Edges only arm off-screen, so a bell edge is exactly a genuine unseen bell.
+      if (edge.kind === 'bell' && this.reasons.get(edge.id) !== 'bell') {
+        this.reasons.set(edge.id, 'bell');
+        changed = true;
+      }
+      this.edge({ sessionId: edge.id, kind: edge.kind });
+    }
+    // A reporting program's report is authoritative, so its output never counts twice.
+    for (const id of swept.completedIds)
+      if (!this.reported.has(id)) {
+        this.complete(id);
+        changed = true;
+      }
     if (changed) this.changed();
   }
 
@@ -143,13 +177,19 @@ export class ServerAttention implements AttentionPort {
     const before = this.statusOf(sessionId);
     this.applyStatus(sessionId, status);
     const after = this.statusOf(sessionId);
-    if (before.busy !== after.busy || before.needsAttention !== after.needsAttention)
+    if (
+      before.busy !== after.busy ||
+      before.needsAttention !== after.needsAttention ||
+      before.attentionReason !== after.attentionReason ||
+      before.completions !== after.completions
+    )
       this.changed();
   }
 
   private applyStatus(sessionId: string, status: ReportedStatus): void {
     if (!status) {
       this.reported.delete(sessionId);
+      this.reasons.delete(sessionId);
       return;
     }
     const prev = this.reported.get(sessionId);
@@ -160,8 +200,14 @@ export class ServerAttention implements AttentionPort {
       completedRun: false,
     };
     const wasWorking = prev?.status.state === 'working';
+    const wasBlocked = prev?.status.state === 'blocked';
     r.status = status;
     this.reported.set(sessionId, r);
+    if (status.state !== 'blocked') this.reasons.delete(sessionId);
+    else if (!wasBlocked && !this.activity.isVisible(sessionId))
+      this.reasons.set(sessionId, 'blocked');
+    if (wasWorking && (status.state === 'done' || status.state === 'idle'))
+      this.complete(sessionId);
     if (status.state === 'working') {
       r.needsAttention = false;
       r.armed = false;
@@ -187,8 +233,13 @@ export class ServerAttention implements AttentionPort {
     return true;
   }
 
+  private complete(sessionId: string): void {
+    this.completions.set(sessionId, (this.completions.get(sessionId) ?? 0) + 1);
+  }
+
   private reset(sessionId: string): void {
     this.reported.delete(sessionId);
+    this.reasons.delete(sessionId);
     this.bells.delete(sessionId);
     this.inertTails.delete(sessionId);
   }

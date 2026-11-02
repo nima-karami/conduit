@@ -135,7 +135,13 @@ function harness(opts: { manualTimers?: boolean } = {}) {
       toolPolicy: () => ({ global: DEFAULT_TOOL_POLICY, byCli: {} }),
     },
     attention: {
-      statusOf: () => ({ busy: false, needsAttention: false, completedRun: false }),
+      statusOf: () => ({
+        busy: false,
+        needsAttention: false,
+        completedRun: false,
+        attentionReason: null,
+        completions: 0,
+      }),
       lastOutputAt: () => undefined,
       setVisible: (w: number, ids: readonly string[]) => {
         log.push(`visible ${w} ${ids.join(',')}`);

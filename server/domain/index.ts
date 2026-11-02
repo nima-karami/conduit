@@ -471,6 +471,9 @@ export function createDomain(deps: DomainDeps): Domain {
       const startRefusal = startRefusals.get(s.id);
       return {
         ...rest,
+        // Neutral until services decorates with ServerAttention's authoritative facts.
+        attentionReason: null,
+        completions: 0,
         lastLine: lastLines.get(s.id) ?? '',
         ...(exitCodes.has(s.id) ? { exitCode: exitCodes.get(s.id) ?? null } : {}),
         ...(agentScope ? { agentScope } : {}),

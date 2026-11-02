@@ -19,6 +19,7 @@ import type {
   LaunchPort,
   McpHostDeps,
   ScrollbackPort,
+  ServerAttentionSnapshot,
   SessionStorePort,
   TokenStorePort,
   TypingPort,
@@ -72,9 +73,9 @@ import type { LaunchIds, TerminalRuntime } from '../../src/contracts/terminal-ru
 import * as terminalRuntime from '../../src/contracts/terminal-runtime';
 import { coreStartCwd } from '../../src/instance-names';
 import type { PtyWriter } from '../../src/pty-writer';
-import type { SessionActivity } from '../../src/session-activity';
+import type { ActivitySnapshot, SessionActivity, SweepResult } from '../../src/session-activity';
 import type { AppSettings } from '../../src/settings';
-import type { SpawnSpec } from '../../src/types';
+import type { AttentionReason, Session, SessionAttentionFacts, SpawnSpec } from '../../src/types';
 
 type Fields<T> = T extends unknown ? keyof T : never;
 type RequiredKeys<T> = { [K in keyof T]-?: object extends Pick<T, K> ? never : K }[keyof T];
@@ -258,6 +259,20 @@ describe('server ports', () => {
     expectTypeOf<AttentionPort['dropWindow']>().toEqualTypeOf<SessionActivity['dropWindow']>();
   });
 
+  // Sidebar-agent-tree plan Contracts: the richer status is explicit, not inherited.
+  it('return the legacy flags plus the attention facts from statusOf', () => {
+    expectTypeOf<ReturnType<AttentionPort['statusOf']>>().toEqualTypeOf<ServerAttentionSnapshot>();
+    expectTypeOf<ServerAttentionSnapshot>().toEqualTypeOf<
+      ActivitySnapshot & SessionAttentionFacts
+    >();
+    expectTypeOf<SessionAttentionFacts>().toEqualTypeOf<{
+      attentionReason: AttentionReason;
+      completions: number;
+    }>();
+    expectTypeOf<AttentionReason>().toEqualTypeOf<'blocked' | 'bell' | null>();
+    expectTypeOf<SweepResult['completedIds']>().toEqualTypeOf<string[]>();
+  });
+
   // The ids have one producer (W4) and travel explicitly; the reserve behind prepareLaunch persists.
   it('pass launch ids explicitly through an async launch seam', () => {
     expectTypeOf<SessionStorePort['allocateLaunch']>().returns.toEqualTypeOf<LaunchIds>();
@@ -357,6 +372,17 @@ describe('server protocol', () => {
     expect(STOP_ALL_ANSWER_TIMEOUT_MS).toBeGreaterThan(STOP_TRANSITION_BUDGET_MS);
     expect(STOP_TRANSITION_BUDGET_MS).toBeGreaterThan(terminalRuntime.LAUNCH_SETTLE_ON_STOP_MS);
     expect(STOP_ALL_CONNECT_TIMEOUT_MS).toBeLessThan(STOP_ALL_ANSWER_TIMEOUT_MS);
+  });
+
+  it('require the attention facts on every SessionView, optional on the legacy Session', () => {
+    expectTypeOf<SessionView['attentionReason']>().toEqualTypeOf<AttentionReason>();
+    expectTypeOf<SessionView['completions']>().toEqualTypeOf<number>();
+    expectTypeOf<Session['completions']>().toEqualTypeOf<number | undefined>();
+    const view = { id: 's1', attentionReason: 'bell', completions: 2 } as unknown as SessionView;
+    expect(mergeAppOverlay(view, { repoPinned: true })).toMatchObject({
+      attentionReason: 'bell',
+      completions: 2,
+    });
   });
 
   // B3: repo state is the app's; a server snapshot must never clobber it.

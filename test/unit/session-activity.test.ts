@@ -403,3 +403,90 @@ describe('SessionActivity — output clock accessor', () => {
     expect(a.lastOutputAt('s')).toBe(5000);
   });
 });
+
+describe('SessionActivity — completion evidence (sidebar-agent-tree spec §4)', () => {
+  it('a qualifying run reports one completion after the quiet gap, alongside the legacy edge', () => {
+    const a = make();
+    const end = runByDuration(a, 's', 0);
+    expect(a.sweep(quietAfter(end) - 1).completedIds).toEqual([]);
+    const r = a.sweep(quietAfter(end));
+    expect(r.completedIds).toEqual(['s']);
+    expect(r.edges).toEqual([{ id: 's', kind: 'run-end' }]);
+    expect(a.sweep(quietAfter(end) + 10_000).completedIds).toEqual([]);
+  });
+
+  it('a run on a VISIBLE session still completes, while the legacy flags stay acknowledged', () => {
+    const a = make();
+    a.setVisible(1, ['s']);
+    const end = runByDuration(a, 's', 0);
+    const r = a.sweep(quietAfter(end));
+    expect(r.completedIds).toEqual(['s']);
+    expect(r.edges).toEqual([]);
+    expect(a.statusOf('s').needsAttention).toBe(false);
+  });
+
+  it('an already-armed episode still counts every further qualifying run', () => {
+    const a = make();
+    const end = runByDuration(a, 's', 0);
+    expect(a.sweep(quietAfter(end)).completedIds).toEqual(['s']);
+    const end2 = runByDuration(a, 's', quietAfter(end) + 20_000);
+    const r = a.sweep(quietAfter(end2));
+    expect(r.completedIds).toEqual(['s']);
+    expect(r.edges).toEqual([]);
+    const end3 = runByDuration(a, 's', quietAfter(end2) + 20_000);
+    expect(a.sweep(quietAfter(end3)).completedIds).toEqual(['s']);
+  });
+
+  it('a byte-qualified burst completes; a short, small run never does', () => {
+    const a = make();
+    a.recordOutput('big', 0, MIN_RUN_BYTES, 0);
+    a.recordOutput('small', 0, 10, 0);
+    expect(a.sweep(quietAfter(0)).completedIds).toEqual(['big']);
+    expect(a.sweep(60_000).completedIds).toEqual([]);
+  });
+
+  it('a bell alone is not a completion', () => {
+    const a = make();
+    a.recordOutput('s', 0, 12, 1);
+    const r = a.sweep(quietAfter(0));
+    expect(r.edges).toEqual([{ id: 's', kind: 'bell' }]);
+    expect(r.completedIds).toEqual([]);
+  });
+
+  it('startup noise inside the spawn grace is not a completion', () => {
+    const a = make();
+    a.recordSpawn('s', 0);
+    a.recordOutput('s', 50, 4096, 0);
+    expect(a.sweep(quietAfter(50)).completedIds).toEqual([]);
+    expect(a.sweep(60_000).completedIds).toEqual([]);
+  });
+
+  it('an exit drops the run in flight; a fresh spawn counts again after its grace', () => {
+    const a = make();
+    const end = runByDuration(a, 's', 0);
+    a.recordExit('s');
+    expect(a.sweep(quietAfter(end)).completedIds).toEqual([]);
+    a.recordSpawn('s', 20_000);
+    const end2 = runByDuration(a, 's', 20_000 + SPAWN_GRACE_MS + 1000);
+    expect(a.sweep(quietAfter(end2)).completedIds).toEqual(['s']);
+  });
+
+  it('switching visibility mid-run does not reset completion evidence', () => {
+    const a = make();
+    a.recordOutput('s', 0, 40, 0);
+    a.setVisible(1, ['s']);
+    for (let t = 500; t <= MIN_RUN_MS; t += 500) a.recordOutput('s', t, 40, 0);
+    a.setVisible(1, []);
+    expect(a.sweep(quietAfter(MIN_RUN_MS)).completedIds).toEqual(['s']);
+  });
+
+  it('completion is not a public flag change on its own', () => {
+    const a = make();
+    a.setVisible(1, ['s']);
+    const end = runByDuration(a, 's', 0);
+    a.sweep(end + WINDOW); // busy -> idle already reported
+    const r = a.sweep(quietAfter(end));
+    expect(r.completedIds).toEqual(['s']);
+    expect(r.changed).toBe(false);
+  });
+});

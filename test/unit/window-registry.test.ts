@@ -369,3 +369,61 @@ describe('pointWellInside', () => {
     expect(pointWellInside(r, { x: 300, y: 250 }, 200)).toBe(false);
   });
 });
+
+describe('window layout sidebarUi (sidebar-agent-tree plan T1.1)', () => {
+  const bounds = { x: 0, y: 0, width: 800, height: 600 };
+  const ui = (projectId: string) => ({
+    selection: { kind: 'space' as const, projectId },
+    foldedGroups: ['stopped' as const],
+    foldedSessions: [],
+    pinnedIds: ['a'],
+  });
+
+  it('round-trips each window its own sidebarUi', () => {
+    const layout = [
+      { bounds, sessionIds: ['a'], sidebarUi: ui('p1') },
+      { bounds, sessionIds: ['b'], sidebarUi: ui('p2') },
+    ];
+    expect(parseWindowLayout(serializeWindowLayout(layout))).toEqual(layout);
+  });
+
+  it('a v1 layout without it parses unchanged, with no sidebarUi', () => {
+    const old = JSON.stringify({ version: 1, windows: [{ bounds, sessionIds: ['a'] }] });
+    const [w] = parseWindowLayout(old);
+    expect(w).toEqual({ bounds, sessionIds: ['a'] });
+    expect(w).not.toHaveProperty('sidebarUi');
+  });
+
+  it('validates a malformed sidebarUi to defaults without dropping the window', () => {
+    const blob = JSON.stringify({
+      version: 1,
+      windows: [{ bounds, sessionIds: ['a'], sidebarUi: { selection: 7, pinnedIds: ['x', 'x'] } }],
+    });
+    expect(parseWindowLayout(blob)[0].sidebarUi).toEqual({
+      selection: { kind: 'all' },
+      foldedGroups: ['stopped'],
+      foldedSessions: [],
+      pinnedIds: ['x'],
+    });
+  });
+
+  it('restore keeps each surviving window its sidebarUi; a dropped empty window loses it', () => {
+    const plan = planLayoutRestore(
+      [
+        { bounds, sessionIds: ['a'], sidebarUi: ui('p1') },
+        { bounds, sessionIds: ['gone'], sidebarUi: ui('p2') },
+        { bounds, sessionIds: ['b'], sidebarUi: ui('p3') },
+      ],
+      ['a', 'b'],
+    );
+    expect(plan.map((w) => w.sidebarUi?.selection)).toEqual([
+      { kind: 'space', projectId: 'p1' },
+      { kind: 'space', projectId: 'p3' },
+    ]);
+    // The restored copy is not the persisted object.
+    const src = ui('p1');
+    expect(
+      planLayoutRestore([{ bounds, sessionIds: ['a'], sidebarUi: src }], ['a'])[0].sidebarUi,
+    ).not.toBe(src);
+  });
+});

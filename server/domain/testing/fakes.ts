@@ -232,7 +232,13 @@ export function harness(opts: HarnessOptions = {}) {
       forget: (id) => calls.push(`forget:${id}`),
     },
     attention: {
-      statusOf: () => ({ busy: state.busy, needsAttention: false, completedRun: false }),
+      statusOf: () => ({
+        busy: state.busy,
+        needsAttention: false,
+        completedRun: false,
+        attentionReason: null,
+        completions: 0,
+      }),
     },
     typing: {
       submit: async (sessionId, text): Promise<SubmitOutcome> => {

@@ -9,9 +9,9 @@ import type { ControlDeps, McpOpenRequest } from '../conduit-mcp/control-tools';
 import type { AgentCli, UserInstallState } from '../conduit-mcp/install-types';
 import type { CliPolicyLayers, GlobalPolicy } from '../conduit-mcp/tool-policy';
 import type { PtyWriter } from '../pty-writer';
-import type { SessionActivity } from '../session-activity';
+import type { ActivitySnapshot, SessionActivity } from '../session-activity';
 import type { SessionManager } from '../session-manager';
-import type { AgentDefinition, SessionOpener, SpawnSpec } from '../types';
+import type { AgentDefinition, SessionAttentionFacts, SessionOpener, SpawnSpec } from '../types';
 import type { ServerEvent, ServerEvents } from './server-protocol';
 import type { TokenRecord } from './session-identity';
 import type { FirstPaint } from './terminal-link';
@@ -138,12 +138,16 @@ export type AttentionEdge = ServerEvents['attention.edge'];
  * program's OSC 7501 report outranks the output heuristics wherever it reports (D34). Activity and
  * attention only: the limit-notice scan is W4's.
  */
+/** The legacy flags plus the new Needs-you reason and completion counter. */
+export type ServerAttentionSnapshot = ActivitySnapshot & SessionAttentionFacts;
+
 export interface AttentionPort
-  extends Pick<SessionActivity, 'statusOf' | 'lastOutputAt' | 'setVisible' | 'dropWindow'> {
+  extends Pick<SessionActivity, 'lastOutputAt' | 'setVisible' | 'dropWindow'> {
+  statusOf(sessionId: string): ServerAttentionSnapshot;
   recordInput(sessionId: string, now: number): void;
   clearAll(): void;
   onEdge(listener: (edge: AttentionEdge) => void): () => void;
-  /** busy or needsAttention flipped for some session: compose re-sends `sessions.changed`. */
+  /** Any statusOf field changed for some session: compose re-sends `sessions.changed`. */
   onChange(listener: () => void): () => void;
 }
 

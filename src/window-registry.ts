@@ -2,6 +2,7 @@
 // `electron`/`BrowserWindow` so it unit-tests without an Electron runtime; the host
 // (electron/main.ts) holds the live `Map<windowId, BrowserWindow>` and calls these.
 
+import { parseSidebarUi, type SidebarUiState } from './sidebar-state';
 import type { Session } from './types';
 
 /** Mutable map of sessionId → owning window id. */
@@ -143,7 +144,11 @@ export function tearOutBounds(
 export interface WindowLayout {
   bounds: Rect;
   sessionIds: string[];
+  /** Absent in layouts written before the agent tree; the renderer then starts at defaults. */
+  sidebarUi?: SidebarUiState;
 }
+
+const cloneUi = (ui: SidebarUiState): SidebarUiState => parseSidebarUi(ui);
 
 const LAYOUT_VERSION = 1;
 
@@ -181,6 +186,7 @@ export function parseWindowLayout(raw: string | undefined): WindowLayout[] {
       out.push({
         bounds: { x: w.bounds.x, y: w.bounds.y, width: w.bounds.width, height: w.bounds.height },
         sessionIds: w.sessionIds.filter((id: unknown): id is string => typeof id === 'string'),
+        ...(w.sidebarUi === undefined ? {} : { sidebarUi: parseSidebarUi(w.sidebarUi) }),
       });
     }
     return out;
@@ -216,7 +222,11 @@ export function planLayoutRestore(
         sessionIds.push(id);
       }
     }
-    return { bounds: { ...w.bounds }, sessionIds };
+    return {
+      bounds: { ...w.bounds },
+      sessionIds,
+      ...(w.sidebarUi ? { sidebarUi: cloneUi(w.sidebarUi) } : {}),
+    };
   });
 
   // Orphans: restored sessions the layout never mentioned → primary (first) window.

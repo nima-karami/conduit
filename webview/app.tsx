@@ -11,7 +11,8 @@ import {
 } from 'react';
 import { activeCwd, gitRootForSession } from '../src/active-cwd';
 import { repoForPath } from '../src/active-repo';
-import { visibleSessionIds } from '../src/attention';
+import type { AttentionEntry } from '../src/attention';
+import { needYouEntries, pruneSnoozed, visibleSessionIds } from '../src/attention';
 import type { BoardCard } from '../src/board';
 import { cardSessionPrefill } from '../src/board-linkage';
 import { canonicalPath, pathBelow, renamedPath } from '../src/canonical-path';
@@ -79,12 +80,20 @@ import {
 } from '../src/session-sections';
 import type { ChangesViewMode, RightPaneTab } from '../src/settings';
 import {
+  type AgentRuntime,
+  advanceAgentRuntime,
+  defaultNewAgentProject,
+  parseSidebarUi,
+  type SidebarUiState,
+} from '../src/sidebar-state';
+import {
   autoRelaunchTargets,
   canRelaunch,
   relaunchableSessionIds,
   staleSessionIds,
 } from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
+import { buildStatusBarModel } from '../src/status-bar-model';
 import { formatDuration } from '../src/timed-messages';
 import type { AgentDefinition, Session } from '../src/types';
 import { DRAG_STAY_INSET_PX, pointWellInside } from '../src/window-registry';
@@ -228,6 +237,7 @@ import {
   IconMail,
   IconPause,
   IconPencil,
+  IconPin,
   IconPlus,
   IconRefresh,
   IconReview,
@@ -236,7 +246,9 @@ import {
   IconSidebar,
   IconSparkle,
   IconSplit,
+  IconTerminal,
   IconTrash,
+  IconWarning,
   SessionGlyph,
 } from './icons';
 import { createLiveAnnouncer } from './live-region';
@@ -293,8 +305,16 @@ import {
 } from './save-registry';
 import { selectionInActiveDoc } from './selection-registry';
 import { selectionSourceFor } from './selection-source';
+import { buildSessionMenu, type SessionMenuAction } from './session-menu';
 import { useSettings } from './settings';
 import { comboLabel, effectiveCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
+import {
+  INITIAL_SIDEBAR_UI_SYNC,
+  pruneSidebarUi,
+  type SidebarTreeContextValue,
+  SidebarTreeProvider,
+  stepSidebarUi,
+} from './sidebar-tree-state';
 import { SPLIT_COPY } from './split-editor-copy';
 import { closeTabSelection } from './tab-close-selection';
 import { endTabDrag } from './tab-drag';
@@ -308,7 +328,13 @@ import {
   subscribeTerminalBus,
 } from './terminal-bus';
 import { THEMES } from './themes';
-import { cancelTimedMessage, renewTimedMessage, subscribeTimerEvents } from './timer-store';
+import {
+  cancelTimedMessage,
+  getTimerSnapshot,
+  renewTimedMessage,
+  subscribeTimerEvents,
+  waitingCountFor,
+} from './timer-store';
 import { pushToast } from './toast-store';
 import { runToolOpen, useDrainAfterCommit } from './tool-open-focus';
 import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';
@@ -328,6 +354,10 @@ import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-histo
 import { useReviewModeLayout } from './use-review-mode-layout';
 import { useSnooze } from './use-snooze';
 import { fileViewStateIds, renameViewState } from './view-state-store';
+import {
+  type WorkbenchChromeContextValue,
+  WorkbenchChromeProvider,
+} from './workbench-chrome-state';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type SettingsTab = 'general' | 'mcp' | 'appearance' | 'shortcuts' | 'skills' | 'about';
@@ -454,6 +484,32 @@ function moveFileTab(from: string, to: string): boolean {
   return true;
 }
 
+// Icons for the pure session menu builder (webview/session-menu.ts); onSessionContextMenu binds
+// every action to its session.
+const SESSION_MENU_ICONS: Record<SessionMenuAction, React.ReactNode> = {
+  select: <IconTerminal size={14} />,
+  split: <IconSidebar size={14} />,
+  relaunch: <IconSparkle size={14} />,
+  snooze: <IconClock size={14} />,
+  approval: <IconWarning size={14} />,
+  timed: <IconClock size={14} />,
+  messages: <IconMail size={14} />,
+  pauseMcp: <IconPause size={14} />,
+  mcpTools: <IconSettings size={14} />,
+  setupMcp: <IconSettings size={14} />,
+  pin: <IconPin size={14} />,
+  rename: <IconPencil size={14} />,
+  setIcon: <IconSparkle size={14} />,
+  duplicate: <IconDuplicate size={14} />,
+  moveSpace: <IconFolder size={14} />,
+  copyHome: <IconCopy size={14} />,
+  copyName: <IconCopy size={14} />,
+  reveal: <IconExternal size={14} />,
+  close: <IconTrash size={14} />,
+  closeOthers: <IconTrash size={14} />,
+  closeAll: <IconTrash size={14} />,
+};
+
 export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
   const [serverState, setServerState] = useState<ServerUiState>({ state: 'connecting' });
@@ -465,6 +521,10 @@ export function App() {
   // callers pass (mf-new-session spec §3.1).
   const [newSession, setNewSession] = useState<NewSessionPrefill | null>(null);
   const openNewSession = useCallback((home?: string) => setNewSession(home ? { home } : {}), []);
+  // The implicit New agent (sidebar, Mod+N, palette) defaults to the selected Space; explicit
+  // contexts (board card, MCP caller, folder menu) keep their own (sidebar-agent-tree spec §3).
+  // Assigned once the sidebar state exists, below.
+  const newAgentRef = useRef<() => void>(() => openNewSession());
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [webPromptOpen, setWebPromptOpen] = useState(false);
@@ -509,6 +569,21 @@ export function App() {
   );
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateDismissed, setUpdateDismissed] = useState(false);
+  const dismissUpdate = useCallback(() => setUpdateDismissed(true), []);
+  // This window's sidebar UI: hydrated once from the host, edits persisted back
+  // (sidebar-tree-state.tsx). The ref is the authority so a step never reads a stale render.
+  const [sidebarSync, setSidebarSync] = useState(INITIAL_SIDEBAR_UI_SYNC);
+  const sidebarSyncRef = useRef(sidebarSync);
+  const applySidebarUi = useCallback((event: { kind: 'init' | 'edit'; ui: SidebarUiState }) => {
+    const step = stepSidebarUi(sidebarSyncRef.current, event);
+    sidebarSyncRef.current = step.sync;
+    setSidebarSync(step.sync);
+    if (step.persist) post({ type: 'window:sidebar', sidebarUi: step.persist });
+  }, []);
+  const updateSidebarUi = useCallback(
+    (next: SidebarUiState) => applySidebarUi({ kind: 'edit', ui: next }),
+    [applySidebarUi],
+  );
   // D3: session icon-picker modal state. `null` = closed; non-null = picker open for session.id.
   const [iconPickerSessionId, setIconPickerSessionId] = useState<string | null>(null);
   const [movePicker, setMovePicker] = useState<{
@@ -700,6 +775,8 @@ export function App() {
         setState(msg);
         hydrate(msg.settings);
       } else if (msg.type === 'win:list') setWinList(msg.windows);
+      else if (msg.type === 'window:sidebarInit')
+        applySidebarUi({ kind: 'init', ui: parseSidebarUi(msg.sidebarUi) });
       else if (msg.type === 'repoDelta') {
         setSnapshots((prev) => applyRepoDelta(prev, msg, visibleIdsRef.current));
       } else if (msg.type === 'fileContent') {
@@ -796,7 +873,7 @@ export function App() {
         responder.onQuitAborted(msg.requestId);
       }
     });
-  }, [hydrate, showConfirm, responder, settleServerPatch]);
+  }, [hydrate, showConfirm, responder, settleServerPatch, applySidebarUi]);
 
   // `ready` is the handshake the host answers with the whole startup burst (state, win:list,
   // restoreDocs, review:marks), so it must not be posted before this subscription exists. It used
@@ -934,22 +1011,40 @@ export function App() {
   // Imperative bridge to the Explorer's RightPane so Mod+Shift+F can switch it to the
   // Search tab and focus the query input (L5).
   const rightPaneRef = useRef<RightPaneHandle | null>(null);
-  // Open global search: ensure the Explorer panel is visible, then focus the Search tab.
-  // `update` persists the un-collapse; the focus call is deferred a frame inside openSearch.
-  const openGlobalSearch = useCallback(
-    (seed?: string) => {
-      if (settings.explorerCollapsed) update({ explorerCollapsed: false });
-      requestAnimationFrame(() => rightPaneRef.current?.openSearch(seed));
+  // The one effective right-panel view (sidebar-agent-tree plan T1.3): header, panel and the
+  // Changes subscription all read it. A transient imperative view sets it without touching the
+  // remembered rightPaneTab; a changed preference (hydration, explicit pick) is adopted.
+  const [rightTab, setRightTab] = useState<RightPaneTab>(settings.rightPaneTab);
+  useEffect(() => setRightTab(settings.rightPaneTab), [settings.rightPaneTab]);
+  // Imperative panel work waits for the mounted handle: the panel may be opening in this very
+  // commit, and the layout effect below drains the queue once the child has set its ref.
+  const paneQueueRef = useRef<((pane: RightPaneHandle) => void)[]>([]);
+  const [paneQueueSeq, setPaneQueueSeq] = useState(0);
+  const runInPane = useCallback(
+    (tab: RightPaneTab, action: (pane: RightPaneHandle) => void, open: boolean) => {
+      setRightTab(tab);
+      if (open && settingsRef.current.explorerCollapsed) update({ explorerCollapsed: false });
+      paneQueueRef.current.push(action);
+      setPaneQueueSeq((n) => n + 1);
     },
-    [settings.explorerCollapsed, update],
+    [update],
   );
-  // The Messages tab lives in the Explorer panel: un-collapse it first, as openGlobalSearch does.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the deps are the drain triggers.
+  useLayoutEffect(() => {
+    const pane = rightPaneRef.current;
+    if (!pane || settings.explorerCollapsed) return;
+    for (const action of paneQueueRef.current.splice(0)) action(pane);
+  }, [paneQueueSeq, settings.explorerCollapsed]);
+  // Open global search: ensure the Explorer panel is visible, then focus the Search tab.
+  const openGlobalSearch = useCallback(
+    (seed?: string) => runInPane('files', (pane) => pane.openSearch(seed), true),
+    [runInPane],
+  );
+  // The Messages tab lives in the Explorer panel: it opens first, as openGlobalSearch does.
   const openMessages = useCallback(
-    (filterHandle: Handle | null, threadId?: string) => {
-      if (settings.explorerCollapsed) update({ explorerCollapsed: false });
-      requestAnimationFrame(() => rightPaneRef.current?.showMessages(filterHandle, threadId));
-    },
-    [settings.explorerCollapsed, update],
+    (filterHandle: Handle | null, threadId?: string) =>
+      runInPane('messages', (pane) => pane.showMessages(filterHandle, threadId), true),
+    [runInPane],
   );
 
   // Declared ahead of every producer so each can record; the deps are assigned once `applyNav`
@@ -1470,7 +1565,7 @@ export function App() {
       openGlobalSearch: openGlobalSearchSeeded,
       toggleSidebar,
       toggleExplorer,
-      newSession: () => openNewSession(),
+      newSession: () => newAgentRef.current(),
       // The empty state's other two routes, reachable from anywhere. Refs keep actionMap
       // off the state broadcast (same reason as doUndoRef); both no-op when the route has
       // no honest target, which is also when the empty state hides the row.
@@ -1552,7 +1647,6 @@ export function App() {
     toggleSidebar,
     toggleExplorer,
     openGlobalSearchSeeded,
-    openNewSession,
     openReviewTab,
     openGitHistoryTab,
     settings.htmlDefaultView,
@@ -1745,16 +1839,15 @@ export function App() {
     (groupActive(docState, activeId ?? '', 1) === REVIEW_DOC_ID ||
       groupActive(docState, activeId ?? '', 2) === REVIEW_DOC_ID);
   const reviewDocOpen = docState.docs.some((d) => d.kind === 'review');
-  const [paneTab, setPaneTab] = useState<RightPaneTab>(settings.rightPaneTab);
-  const wantsLines = reviewDocOpen || (paneTab === 'changes' && !settings.explorerCollapsed);
+  const wantsLines = reviewDocOpen || (rightTab === 'changes' && !settings.explorerCollapsed);
   useEffect(() => {
     post({ type: 'changes:subscribe', sessionIds: activeId && wantsLines ? [activeId] : [] });
   }, [activeId, wantsLines]);
-  // A frame late on purpose: the pane may be mounting in this very render (auto-open, or the
-  // header toggle opening it), and the ref is null until it has.
-  const showChangesInPane = useCallback(() => {
-    requestAnimationFrame(() => rightPaneRef.current?.showChanges());
-  }, []);
+  // Review mode opens the panel itself (useReviewModeLayout), so this only queues the switch.
+  const showChangesInPane = useCallback(
+    () => runInPane('changes', (pane) => pane.showChanges(), false),
+    [runInPane],
+  );
   const setExplorerCollapsedSetting = useCallback(
     (v: boolean) => update({ explorerCollapsed: v }),
     [update],
@@ -1767,6 +1860,196 @@ export function App() {
     showChanges: showChangesInPane,
   });
   userToggledExplorerRef.current = userToggledExplorer;
+
+  // Header toggles (sidebar-agent-tree spec §7): an explicit pick is remembered, the active
+  // view closes the panel. Review mode tracks either as a user toggle.
+  const openPanel = useCallback(
+    (tab: RightPaneTab, remember: boolean) => {
+      setRightTab(tab);
+      if (settingsRef.current.explorerCollapsed) {
+        userToggledExplorerRef.current();
+        update({ explorerCollapsed: false });
+      }
+      if (remember && tab !== settingsRef.current.rightPaneTab) update({ rightPaneTab: tab });
+    },
+    [update],
+  );
+  const toggleRightView = useCallback(
+    (tab: RightPaneTab) => {
+      if (!settingsRef.current.explorerCollapsed && rightTab === tab) {
+        userToggledExplorerRef.current();
+        update({ explorerCollapsed: true });
+      } else openPanel(tab, true);
+    },
+    [rightTab, openPanel, update],
+  );
+
+  // The agent tree's inputs (sidebar-agent-tree plan T1.2). Snooze hides a session's reason on
+  // these presentation clones only; raw facts, counters and asks are untouched.
+  const treeSessions = useMemo(() => {
+    const live = pruneSnoozed(snoozed, Date.now());
+    if (live.size === 0) return sessions;
+    return sessions.map((s) =>
+      s.attentionReason != null && live.has(s.id) ? { ...s, attentionReason: null } : s,
+    );
+  }, [sessions, snoozed]);
+  const askSessionIds = useMemo(() => new Set(asks.map((a) => a.callerSessionId)), [asks]);
+  // The strict viewed rule (spec §4): only the focused, visible terminal in a focused window
+  // clears Done; loose active+split presence still drives the server's Needs-you arming.
+  const [windowLooking, setWindowLooking] = useState(
+    () => document.hasFocus() && document.visibilityState === 'visible',
+  );
+  useEffect(() => {
+    const sync = () =>
+      setWindowLooking(document.hasFocus() && document.visibilityState === 'visible');
+    window.addEventListener('focus', sync);
+    window.addEventListener('blur', sync);
+    document.addEventListener('visibilitychange', sync);
+    return () => {
+      window.removeEventListener('focus', sync);
+      window.removeEventListener('blur', sync);
+      document.removeEventListener('visibilitychange', sync);
+    };
+  }, []);
+  const viewedTerminalId =
+    windowLooking &&
+    centerView === 'editor' &&
+    activeId !== undefined &&
+    layout.activeGroup === 1 &&
+    layout.groups[0]?.activeDocId === null
+      ? activeId
+      : undefined;
+  const viewedTerminalIds = useMemo(
+    () => new Set(viewedTerminalId === undefined ? [] : [viewedTerminalId]),
+    [viewedTerminalId],
+  );
+  const [agentRuntime, setAgentRuntime] = useState<AgentRuntime>({ seen: {}, stateSince: {} });
+  const runtimeStepRef = useRef<{
+    previous: AgentRuntime | null;
+    before: readonly Session[];
+    asks: ReadonlySet<string>;
+  }>({ previous: null, before: [], asks: new Set() });
+  const sessionsLoaded = state?.sessionsLoaded === true;
+  useEffect(() => {
+    // Until the first authoritative snapshot there is nothing to baseline against.
+    if (!sessionsLoaded) return;
+    const step = runtimeStepRef.current;
+    const next = advanceAgentRuntime({
+      previous: step.previous,
+      before: step.before,
+      sessions: treeSessions,
+      previousAskSessionIds: step.asks,
+      askSessionIds,
+      viewedTerminalIds,
+      now: Date.now(),
+    });
+    runtimeStepRef.current = { previous: next, before: treeSessions, asks: askSessionIds };
+    setAgentRuntime(next);
+  }, [sessionsLoaded, treeSessions, askSessionIds, viewedTerminalIds]);
+  const [lastFocusedId, setLastFocusedId] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (activeId !== undefined) setLastFocusedId(activeId);
+  }, [activeId]);
+  const sidebarUi = sidebarSync.ui;
+  // Prune only against an authoritative list: before the first snapshot every id looks vanished.
+  const projectsList = state?.projects;
+  useEffect(() => {
+    if (!sessionsLoaded || !sidebarSync.hydrated) return;
+    const ui = sidebarSyncRef.current.ui;
+    const next = pruneSidebarUi(
+      ui,
+      new Set(hostSessions.map((s) => s.id)),
+      new Set((projectsList ?? []).map((p) => p.id)),
+    );
+    if (next !== ui) updateSidebarUi(next);
+  }, [sessionsLoaded, sidebarSync, hostSessions, projectsList, updateSidebarUi]);
+  newAgentRef.current = () =>
+    setNewSession({
+      projectId: defaultNewAgentProject(sidebarUi.selection, sessions, lastFocusedId),
+    });
+  const bindings = useMemo(() => {
+    const out: Record<string, { cli?: string; handle?: string }> = {};
+    for (const [id, badge] of Object.entries(mcp.state?.sessions ?? {}))
+      out[id] = { handle: badge.handle };
+    for (const [id, nc] of Object.entries(mcp.state?.notConnected ?? {}))
+      out[id] = { ...out[id], cli: nc.cli };
+    return out;
+  }, [mcp.state]);
+  const [filterRequest, setFilterRequest] = useState(0);
+  const requestFilter = useCallback(() => setFilterRequest((n) => n + 1), []);
+  // Next/previous agent read this; a ref, so a report never re-renders the App.
+  const visibleAgentIdsRef = useRef<readonly string[]>([]);
+  const reportVisibleIds = useCallback((ids: readonly string[]) => {
+    const cur = visibleAgentIdsRef.current;
+    if (cur.length === ids.length && cur.every((id, i) => id === ids[i])) return;
+    visibleAgentIdsRef.current = [...ids];
+  }, []);
+  const sidebarTree = useMemo<SidebarTreeContextValue>(
+    () => ({
+      ui: sidebarUi,
+      runtime: agentRuntime,
+      askSessionIds,
+      bindings,
+      lastFocusedId,
+      filterRequest,
+      requestFilter,
+      updateUi: updateSidebarUi,
+      reportVisibleIds,
+    }),
+    [
+      sidebarUi,
+      agentRuntime,
+      askSessionIds,
+      bindings,
+      lastFocusedId,
+      filterRequest,
+      requestFilter,
+      updateSidebarUi,
+      reportVisibleIds,
+    ],
+  );
+
+  // The footer reads only the reason projection (spec §4), never the legacy aggregator.
+  const needYou = useMemo(
+    () => needYouEntries(hostSessions, mcp.state?.attention ?? [], snoozed, Date.now(), asks),
+    [hostSessions, mcp.state, snoozed, asks],
+  );
+  const statusModel = useMemo(
+    () => buildStatusBarModel({ sessions, activeId, entries: needYou }),
+    [sessions, activeId, needYou],
+  );
+  const focusAttention = useCallback(
+    (entry: AttentionEntry) => {
+      if (entry.kind === 'ask') requestAskFocus();
+      else if (entry.kind === 'message' && entry.threadId) openMessages(null, entry.threadId);
+      else if (entry.sessionId) setActiveId(entry.sessionId);
+    },
+    [openMessages],
+  );
+  const chrome = useMemo<WorkbenchChromeContextValue>(
+    () => ({
+      rightOpen: !settings.explorerCollapsed,
+      rightTab,
+      togglePanel: toggleRightView,
+      openPanel,
+      status: statusModel,
+      commandHint: comboLabel('openCommands', settings.shortcuts) ?? '',
+      focusAttention,
+      update: { status: updateStatus, dismissed: updateDismissed, dismiss: dismissUpdate },
+    }),
+    [
+      settings.explorerCollapsed,
+      settings.shortcuts,
+      rightTab,
+      toggleRightView,
+      openPanel,
+      statusModel,
+      focusAttention,
+      updateStatus,
+      updateDismissed,
+      dismissUpdate,
+    ],
+  );
   // A layout effect, so no commit the user (or the Back button) can observe has the new session's
   // tabs from `centerLayout` beside the old session's cached `activeId` (split-editor plan
   // "Architecture": activeId is a cache).
@@ -2571,7 +2854,9 @@ export function App() {
       pushRecent('file', path, effectiveSessionId);
       // Surface the file in the explorer wherever it was opened from (tree click, search,
       // palette, go-to-definition, terminal link): switch to the Files tab and reveal it.
-      if (!background && (intoShown || !nav?.keepActive)) rightPaneRef.current?.revealInTree(path);
+      // A follow, not an explicit reveal: it never opens a panel the user closed.
+      if (!background && (intoShown || !nav?.keepActive) && !settingsRef.current.explorerCollapsed)
+        runInPane('files', (pane) => pane.revealInTree(path), false);
       // Usually already running (indexing starts when a session becomes active). This covers
       // the case where a file is opened in a project that hasn't been indexed yet, and seeds
       // the priority wave with the file the user is actually looking at.
@@ -2582,7 +2867,7 @@ export function App() {
         indexProjectOnce(owner, isCodeFile(path) ? [path] : []);
       }
     },
-    [active, sessions, pushRecent, indexProjectOnce, recordNav, reportBackgroundOpen],
+    [active, sessions, pushRecent, indexProjectOnce, recordNav, reportBackgroundOpen, runInPane],
   );
   const openDiff = useCallback(
     (
@@ -3064,150 +3349,79 @@ export function App() {
       s.id,
     );
     const all = closeAllIds(sessions.map((x) => x.id));
-    // Primary/lifecycle group — present only for the relevant session state, so it can be empty
-    // (e.g. the active running session); the edit group's separator is gated on it below to avoid
-    // a leading divider.
-    const lifecycle: MenuItem[] = [];
-    if (s.status === 'running' && s.id !== activeId) {
-      lifecycle.push({
-        label: 'Open in split pane',
-        icon: <IconSidebar size={14} />,
-        onClick: () => setSplitId(s.id),
-      });
-    }
-    if (canRelaunch(s)) {
-      lifecycle.push({
-        label: 'Relaunch',
-        icon: <IconSparkle size={14} />,
-        onClick: () => post({ type: 'relaunch' as const, id: s.id }),
-      });
-    }
     // Messaging (spec §9 card menu): only a session with a handle can be messaged or paused.
     const badge = mcp.state?.sessions[s.id];
-    const messaging: MenuItem[] = badge
-      ? [
-          {
-            label: MCP_STR.openMessages,
-            icon: <IconMail size={14} />,
-            separatorBefore: lifecycle.length > 0,
-            onClick: () => openMessages(badge.handle),
-          },
-          {
-            label: badge.paused
-              ? MCP_STR.resumeNotices(badge.handle)
-              : MCP_STR.pauseNotices(badge.handle),
-            icon: <IconPause size={14} />,
-            onClick: () => mcp.pause(s.id, !badge.paused),
-          },
-        ]
-      : [];
-    // Offered before any launch: a switchable session may not have a handle yet (spec §4).
-    if (mcp.state?.switchable.includes(s.id)) {
-      messaging.push({
-        label: MCP_STR.tools.menuItem,
-        icon: <IconSettings size={14} />,
-        separatorBefore: messaging.length === 0 && lifecycle.length > 0,
-        onClick: () => setMcpToolsFor(s.id),
-      });
-    }
     // The banner's actions, reachable by keyboard while focus sits in xterm (spec 2026-10-27-conduit-mcp-install §2.5).
     const notConnected = mcp.state?.notConnected[s.id];
-    if (notConnected) {
-      messaging.push({
-        label: MCP_STR.install.setupCommand,
-        icon: <IconSettings size={14} />,
-        separatorBefore: messaging.length === 0 && lifecycle.length > 0,
-        onClick: () => openSettingsAt('mcp', notConnected.cli),
-      });
-    }
+    const pinned = sidebarUi.pinnedIds.includes(s.id);
     setMenu({
       x: e.clientX,
       y: e.clientY,
-      items: [
-        ...lifecycle,
-        ...messaging,
-        {
-          label: 'Rename',
-          icon: <IconPencil size={14} />,
-          separatorBefore: lifecycle.length + messaging.length > 0,
-          onClick: () => {
+      items: buildSessionMenu({
+        name: s.name,
+        maySplit: s.status === 'running' && s.id !== activeId,
+        canRelaunch: canRelaunch(s),
+        pinned,
+        hasApproval: askSessionIds.has(s.id),
+        waitingTimers: waitingCountFor(getTimerSnapshot(), s.id),
+        hasMcp: badge !== undefined,
+        mcpHandle: badge?.handle ?? null,
+        mcpPaused: badge?.paused === true,
+        // Offered before any launch: a switchable session may not have a handle yet (spec §4).
+        mcpSwitchable: mcp.state?.switchable.includes(s.id) === true,
+        mcpSetupNeeded: notConnected !== undefined,
+        otherCount: others.length,
+        allCount: all.length,
+        windowMoves: moveMenuItems(s.id),
+        icons: SESSION_MENU_ICONS,
+        actions: {
+          select: () => setActiveId(s.id),
+          split: () => setSplitId(s.id),
+          relaunch: () => post({ type: 'relaunch' as const, id: s.id }),
+          snooze: () => snooze(s.id),
+          approval: () => requestAskFocus(),
+          timed: () => openTimedMessages(s.id),
+          messages: () => openMessages(badge?.handle ?? null),
+          pauseMcp: () => mcp.pause(s.id, badge?.paused !== true),
+          mcpTools: () => setMcpToolsFor(s.id),
+          setupMcp: () => openSettingsAt('mcp', notConnected?.cli),
+          pin: () =>
+            updateSidebarUi({
+              ...sidebarUi,
+              pinnedIds: pinned
+                ? sidebarUi.pinnedIds.filter((id) => id !== s.id)
+                : [...sidebarUi.pinnedIds, s.id],
+            }),
+          rename: () => {
             setActiveId(s.id);
             setRenamingId(s.id);
           },
-        },
-        {
-          label: 'Set icon…',
-          icon: <IconSparkle size={14} />,
-          onClick: () => setIconPickerSessionId(s.id),
-        },
-        {
-          label: 'Timed message…',
-          icon: <IconClock size={14} />,
-          onClick: () => openTimedMessages(s.id),
-        },
-        {
-          label: 'Duplicate session',
-          icon: <IconDuplicate size={14} />,
-          onClick: () => post({ type: 'duplicate', id: s.id }),
-        },
-        {
-          label: 'Move to project…',
-          icon: <IconFolder size={14} />,
+          setIcon: () => setIconPickerSessionId(s.id),
+          duplicate: () => post({ type: 'duplicate', id: s.id }),
           // Beside the row it was picked from (12e); a bare call has only the right-click point.
-          onClick: (a) =>
+          moveSpace: (a) =>
             setMovePicker({
               sessionId: s.id,
               at: a ? { x: a.rect.right, y: a.rect.top } : { x: e.clientX, y: e.clientY },
             }),
-        },
-        ...moveMenuItems(s.id),
-        {
-          label: 'Copy home path',
-          icon: <IconCopy size={14} />,
-          separatorBefore: true,
-          onClick: () => copyToClipboard(s.home),
-        },
-        {
-          label: 'Copy name',
-          icon: <IconCopy size={14} />,
-          onClick: () => copyToClipboard(s.name),
-        },
-        {
-          label: 'Reveal in Explorer',
-          icon: <IconExternal size={14} />,
-          onClick: () => post({ type: 'revealInExplorer', path: s.home }),
-        },
-        {
-          label: 'Close',
-          icon: <IconTrash size={14} />,
-          danger: true,
-          separatorBefore: true,
-          onClick: () => requestKill(s.id),
-        },
-        {
-          label: 'Close others',
-          icon: <IconTrash size={14} />,
-          danger: true,
-          disabled: others.length === 0,
-          onClick: () =>
+          copyHome: () => copyToClipboard(s.home),
+          copyName: () => copyToClipboard(s.name),
+          reveal: () => post({ type: 'revealInExplorer', path: s.home }),
+          close: () => requestKill(s.id),
+          closeOthers: () =>
             closeSessions(
               others,
               'Close other sessions',
               `Close ${others.length} other session${others.length === 1 ? '' : 's'}? Running terminals will be terminated.`,
             ),
-        },
-        {
-          label: 'Close all',
-          icon: <IconTrash size={14} />,
-          danger: true,
-          onClick: () =>
+          closeAll: () =>
             closeSessions(
               all,
               'Close all sessions',
               `Close all ${all.length} session${all.length === 1 ? '' : 's'}? Running terminals will be terminated.`,
             ),
         },
-      ],
+      }),
     });
   };
 
@@ -4019,7 +4233,7 @@ export function App() {
         group: 'Commands',
         icon: <IconPlus size={14} />,
         combo: comboFor('newSession'),
-        run: () => openNewSession(),
+        run: () => newAgentRef.current(),
       },
       {
         id: 'cmd:newWindow',
@@ -4589,7 +4803,6 @@ export function App() {
     toggleExplorer,
     closeTab,
     dirtySet,
-    openNewSession,
     relaunchAllStale,
     closeAllStale,
     openTimedMessages,
@@ -4706,7 +4919,7 @@ export function App() {
               openReviewForCommit(sha, sessionId, subject, repoRoot, undefined, true)
             }
             onDocTitle={(id, title) => dispatchDocs({ type: 'setTitle', id, title })}
-            paneTab={paneTab}
+            paneTab={rightTab}
             explorerCollapsed={settings.explorerCollapsed}
             onTogglePanel={toggleExplorer}
             onShowChanges={showChangesInPane}
@@ -4750,7 +4963,7 @@ export function App() {
             activeId={activeId}
             moveGrip={{ onDragStart: sdock.onDragStart, onDragEnd: sdock.onDragEnd }}
             onSelect={setActiveId}
-            onNew={() => openNewSession()}
+            onNew={() => newAgentRef.current()}
             onKill={requestKill}
             onCloseAll={() =>
               closeSessions(
@@ -4862,7 +5075,7 @@ export function App() {
           onChangeContextMenu={onChangeContextMenu}
           onReviewScope={openReviewScoped}
           reviewMode={reviewMode}
-          onTabShown={setPaneTab}
+          onTabShown={setRightTab}
           recordFsOp={recordFsOp}
           onContextPath={(p) =>
             active && post({ type: 'repo:context', sessionId: active.id, path: p })
@@ -4874,199 +5087,210 @@ export function App() {
 
   const modal = slot.current;
   return (
-    <div className="shell">
-      <AnimatedBg />
-      <div ref={navLiveRef} className="sr-only" aria-live="polite" role="status" />
-      <div
-        ref={backgroundFeedback.statusRef}
-        className="sr-only bg-open-status"
-        aria-live="polite"
-        role="status"
-      />
-      <TopBar
-        isDev={!!state?.about?.isDev}
-        onOpenSearch={() => setPalette({ initialQuery: '' })}
-        onBack={goBack}
-        onForward={goForward}
-        canBack={canNavigate(navState, navDepsRef.current, -1)}
-        canForward={canNavigate(navState, navDepsRef.current, 1)}
-        centerView={centerView}
-        onSelectView={setCenterView}
-        sessions={sessions}
-        onFocusAttention={setActiveId}
-        attentionItems={mcp.state?.attention}
-        snoozed={snoozed}
-        onOpenThread={(threadId) => openMessages(null, threadId)}
-        asks={asks}
-        onFocusAsk={requestAskFocus}
-        onContextMenu={onPanelTogglesMenu}
-      />
-      <ServerBanner
-        state={serverState}
-        onRetry={() => post({ type: 'server:retry' })}
-        onStopAllAndContinue={() => post({ type: 'server:stopAllAndContinue' })}
-        onRestartAgentsToUpdate={() =>
-          showConfirm({
-            title: 'Restart agents to update the terminal engine?',
-            message:
-              'This stops all running agents and restarts the terminal engine. You can relaunch agents afterward.',
-            confirmLabel: 'Restart agents',
-            danger: true,
-            focusCancel: true,
-            onConfirm: () => post({ type: 'server:restartAgentsToUpdate' }),
-          })
-        }
-      />
-      <div className="workbench">{visibleOrder.map(renderRegion)}</div>
-      {newSession && (
-        <NewSessionModal
-          prefill={newSession}
-          ctx={{
-            active,
-            sessions,
-            projects: state?.projects ?? [],
-            repos: state?.repos ?? [],
-            agents,
-            launchers: state?.launchers ?? [],
-            defaultAgentId: settings.defaultAgentId,
-          }}
-          onClose={() => {
-            setNewSession(null);
-            if (newSessionReturnFocus.current?.isConnected) newSessionReturnFocus.current.focus();
-            newSessionReturnFocus.current = null;
-          }}
-          onStarted={(_id, dropped) => {
-            newSessionReturnFocus.current = null;
-            // The knownIds effect activates the new session; nothing else to do here.
-            setNewSession(null);
-            for (const d of dropped) {
-              pushToast({
-                message: `Skipped ${sessionNameFromPath(d.path)}: not a valid folder`,
-                variant: 'error',
-              });
+    <SidebarTreeProvider value={sidebarTree}>
+      <WorkbenchChromeProvider value={chrome}>
+        <div className="shell">
+          <AnimatedBg />
+          <div ref={navLiveRef} className="sr-only" aria-live="polite" role="status" />
+          <div
+            ref={backgroundFeedback.statusRef}
+            className="sr-only bg-open-status"
+            aria-live="polite"
+            role="status"
+          />
+          <TopBar
+            isDev={!!state?.about?.isDev}
+            onOpenSearch={() => setPalette({ initialQuery: '' })}
+            onBack={goBack}
+            onForward={goForward}
+            canBack={canNavigate(navState, navDepsRef.current, -1)}
+            canForward={canNavigate(navState, navDepsRef.current, 1)}
+            centerView={centerView}
+            onSelectView={setCenterView}
+            sessions={sessions}
+            onFocusAttention={setActiveId}
+            attentionItems={mcp.state?.attention}
+            snoozed={snoozed}
+            onOpenThread={(threadId) => openMessages(null, threadId)}
+            asks={asks}
+            onFocusAsk={requestAskFocus}
+            onContextMenu={onPanelTogglesMenu}
+          />
+          <ServerBanner
+            state={serverState}
+            onRetry={() => post({ type: 'server:retry' })}
+            onStopAllAndContinue={() => post({ type: 'server:stopAllAndContinue' })}
+            onRestartAgentsToUpdate={() =>
+              showConfirm({
+                title: 'Restart agents to update the terminal engine?',
+                message:
+                  'This stops all running agents and restarts the terminal engine. You can relaunch agents afterward.',
+                confirmLabel: 'Restart agents',
+                danger: true,
+                focusCancel: true,
+                onConfirm: () => post({ type: 'server:restartAgentsToUpdate' }),
+              })
             }
-          }}
-        />
-      )}
-      {settingsOpen && (
-        <SettingsModal
-          agents={agents}
-          initialTab={settingsTab}
-          initialCli={settingsFocusCli}
-          about={state?.about}
-          projectPath={active?.home || null}
-          onClose={() => setSettingsOpen(false)}
-          onCheckUpdate={() => post({ type: 'updateCheck' })}
-          onRelaunch={() => post({ type: 'updateRelaunch' })}
-          updateStatus={updateStatus}
-          serverConnected={serverState.state === 'connected'}
-          onSetChangesView={onSetChangesView}
-        />
-      )}
-      {webPromptOpen && (
-        <WebPromptModal onClose={() => setWebPromptOpen(false)} onSubmit={openWeb} />
-      )}
-      {palette && (
-        <CommandPalette
-          key={palette.initialQuery}
-          items={searchItems}
-          commandItems={commandItems}
-          recentItems={recentItems}
-          initialQuery={palette.initialQuery}
-          placeholder="Search files & sessions, or type > for commands…"
-          onClose={() => setPalette(null)}
-        />
-      )}
-      {centerView === 'board' && (
-        <BoardView
-          home={active?.home}
-          sessions={sessions}
-          agents={agents}
-          onStartSessionForCard={startSessionForCard}
-          onActivateSession={(id) => {
-            setActiveId(id);
-            setCenterView('editor');
-          }}
-          onClose={() => setCenterView('editor')}
-        />
-      )}
-      {centerView === 'canvas' && (
-        <ArchitectureView
-          projectPath={active?.home}
-          projectName={activeProject}
-          onClose={() => setCenterView('editor')}
-        />
-      )}
-      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
-      {modal?.kind === 'dirty' && <DirtyCloseDialog key={modal.key} {...modal.props} />}
-      {quitLocked && <QuitScrim />}
-      {modal?.kind === 'confirm' && (
-        <ConfirmDialog key={modal.key} state={modal.state} onClose={() => slot.close(modal.key)} />
-      )}
-      {movePicker && (
-        <ProjectPicker
-          session={sessions.find((x) => x.id === movePicker.sessionId)}
-          projects={state?.projects ?? []}
-          at={movePicker.at}
-          onClose={closeMovePicker}
-        />
-      )}
-      {iconPickerSessionId &&
-        (() => {
-          const pickerSession = sessions.find((s) => s.id === iconPickerSessionId);
-          return pickerSession ? (
-            <IconPickerModal
-              currentIcon={pickerSession.iconOverride}
-              onSelect={(name) =>
-                post({ type: 'setSessionIcon', id: pickerSession.id, icon: name })
-              }
-              onClear={() => post({ type: 'setSessionIcon', id: pickerSession.id, icon: null })}
-              onClose={() => setIconPickerSessionId(null)}
-            />
-          ) : null;
-        })()}
-      {timedMessageFor &&
-        (() => {
-          const target = sessions.find((s) => s.id === timedMessageFor);
-          return target ? (
-            <TimedMessageDialog
-              session={target}
-              onClose={() => setTimedMessageFor(null)}
-              requestConfirm={showConfirm}
-            />
-          ) : null;
-        })()}
-      {mcpToolsFor &&
-        (() => {
-          const target = sessions.find((s) => s.id === mcpToolsFor);
-          return target ? (
-            <McpToolsDialog
-              key={target.id}
-              session={target}
-              global={settings.mcpToolPolicy}
-              byCli={settings.mcpToolPolicyByCli}
-              masterOn={settings.conduitMcp}
-              connected={mcp.state?.sessions[target.id]?.connected === true}
-              onChange={(tool, patch) => mcp.setToolPolicy(target.id, tool, patch)}
-              onRelaunch={() => post({ type: 'relaunch', id: target.id })}
-              announce={(text) => {
-                if (navLiveRef.current) navLiveRef.current.textContent = text;
+          />
+          <div className="workbench">{visibleOrder.map(renderRegion)}</div>
+          {newSession && (
+            <NewSessionModal
+              prefill={newSession}
+              ctx={{
+                active,
+                sessions,
+                projects: state?.projects ?? [],
+                repos: state?.repos ?? [],
+                agents,
+                launchers: state?.launchers ?? [],
+                defaultAgentId: settings.defaultAgentId,
               }}
               onClose={() => {
-                setMcpToolsFor(null);
-                document
-                  .querySelector<HTMLElement>(`.session[data-sessionid="${CSS.escape(target.id)}"]`)
-                  ?.focus();
+                setNewSession(null);
+                if (newSessionReturnFocus.current?.isConnected)
+                  newSessionReturnFocus.current.focus();
+                newSessionReturnFocus.current = null;
+              }}
+              onStarted={(_id, dropped) => {
+                newSessionReturnFocus.current = null;
+                // The knownIds effect activates the new session; nothing else to do here.
+                setNewSession(null);
+                for (const d of dropped) {
+                  pushToast({
+                    message: `Skipped ${sessionNameFromPath(d.path)}: not a valid folder`,
+                    variant: 'error',
+                  });
+                }
               }}
             />
-          ) : null;
-        })()}
-      <ApprovalCard
-        announce={(t) => {
-          if (navLiveRef.current) navLiveRef.current.textContent = t;
-        }}
-      />
-      <Toasts />
-    </div>
+          )}
+          {settingsOpen && (
+            <SettingsModal
+              agents={agents}
+              initialTab={settingsTab}
+              initialCli={settingsFocusCli}
+              about={state?.about}
+              projectPath={active?.home || null}
+              onClose={() => setSettingsOpen(false)}
+              onCheckUpdate={() => post({ type: 'updateCheck' })}
+              onRelaunch={() => post({ type: 'updateRelaunch' })}
+              updateStatus={updateStatus}
+              serverConnected={serverState.state === 'connected'}
+              onSetChangesView={onSetChangesView}
+            />
+          )}
+          {webPromptOpen && (
+            <WebPromptModal onClose={() => setWebPromptOpen(false)} onSubmit={openWeb} />
+          )}
+          {palette && (
+            <CommandPalette
+              key={palette.initialQuery}
+              items={searchItems}
+              commandItems={commandItems}
+              recentItems={recentItems}
+              initialQuery={palette.initialQuery}
+              placeholder="Search files & sessions, or type > for commands…"
+              onClose={() => setPalette(null)}
+            />
+          )}
+          {centerView === 'board' && (
+            <BoardView
+              home={active?.home}
+              sessions={sessions}
+              agents={agents}
+              onStartSessionForCard={startSessionForCard}
+              onActivateSession={(id) => {
+                setActiveId(id);
+                setCenterView('editor');
+              }}
+              onClose={() => setCenterView('editor')}
+            />
+          )}
+          {centerView === 'canvas' && (
+            <ArchitectureView
+              projectPath={active?.home}
+              projectName={activeProject}
+              onClose={() => setCenterView('editor')}
+            />
+          )}
+          {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+          {modal?.kind === 'dirty' && <DirtyCloseDialog key={modal.key} {...modal.props} />}
+          {quitLocked && <QuitScrim />}
+          {modal?.kind === 'confirm' && (
+            <ConfirmDialog
+              key={modal.key}
+              state={modal.state}
+              onClose={() => slot.close(modal.key)}
+            />
+          )}
+          {movePicker && (
+            <ProjectPicker
+              session={sessions.find((x) => x.id === movePicker.sessionId)}
+              projects={state?.projects ?? []}
+              at={movePicker.at}
+              onClose={closeMovePicker}
+            />
+          )}
+          {iconPickerSessionId &&
+            (() => {
+              const pickerSession = sessions.find((s) => s.id === iconPickerSessionId);
+              return pickerSession ? (
+                <IconPickerModal
+                  currentIcon={pickerSession.iconOverride}
+                  onSelect={(name) =>
+                    post({ type: 'setSessionIcon', id: pickerSession.id, icon: name })
+                  }
+                  onClear={() => post({ type: 'setSessionIcon', id: pickerSession.id, icon: null })}
+                  onClose={() => setIconPickerSessionId(null)}
+                />
+              ) : null;
+            })()}
+          {timedMessageFor &&
+            (() => {
+              const target = sessions.find((s) => s.id === timedMessageFor);
+              return target ? (
+                <TimedMessageDialog
+                  session={target}
+                  onClose={() => setTimedMessageFor(null)}
+                  requestConfirm={showConfirm}
+                />
+              ) : null;
+            })()}
+          {mcpToolsFor &&
+            (() => {
+              const target = sessions.find((s) => s.id === mcpToolsFor);
+              return target ? (
+                <McpToolsDialog
+                  key={target.id}
+                  session={target}
+                  global={settings.mcpToolPolicy}
+                  byCli={settings.mcpToolPolicyByCli}
+                  masterOn={settings.conduitMcp}
+                  connected={mcp.state?.sessions[target.id]?.connected === true}
+                  onChange={(tool, patch) => mcp.setToolPolicy(target.id, tool, patch)}
+                  onRelaunch={() => post({ type: 'relaunch', id: target.id })}
+                  announce={(text) => {
+                    if (navLiveRef.current) navLiveRef.current.textContent = text;
+                  }}
+                  onClose={() => {
+                    setMcpToolsFor(null);
+                    document
+                      .querySelector<HTMLElement>(
+                        `.session[data-sessionid="${CSS.escape(target.id)}"]`,
+                      )
+                      ?.focus();
+                  }}
+                />
+              ) : null;
+            })()}
+          <ApprovalCard
+            announce={(t) => {
+              if (navLiveRef.current) navLiveRef.current.textContent = t;
+            }}
+          />
+          <Toasts />
+        </div>
+      </WorkbenchChromeProvider>
+    </SidebarTreeProvider>
   );
 }

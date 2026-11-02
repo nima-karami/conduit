@@ -42,6 +42,8 @@ export function serializeSessions(sessions: Session[]): string {
       autoRepoRoot: _autoRepoRoot,
       lastLine: _lastLine,
       completedRun: _completedRun,
+      attentionReason: _attentionReason,
+      completions: _completions,
       missingRoots: _missingRoots,
       homeMissing: _homeMissing,
       agentScope: _agentScope,
@@ -103,6 +105,9 @@ export function parseSessions(blob: string | undefined): SessionsParse {
       projectId,
       // v0.50 per-session switches: read once for the migration below, never written back.
       mcpToolOverrides: legacyToolOverrides,
+      // Server runtime facts: a restored record starts without them, whatever the file says.
+      attentionReason: _attentionReason,
+      completions: _completions,
       ...rest
     } = entry as Record<string, unknown>;
     const legacy = !nonEmpty(rawHome);

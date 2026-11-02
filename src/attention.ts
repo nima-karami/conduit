@@ -1,5 +1,6 @@
 import type { Handle, McpAttentionItem, McpAttentionReason } from './conduit-mcp/types';
 import { type SessionStateFields, sessionIconState } from './session-icon';
+import type { AttentionReason } from './types';
 
 /**
  * Sessions in the "needs you" state, in list order. One derivation shared by the session
@@ -143,4 +144,27 @@ export function attentionEntries<T extends SessionStateFields & { id: string }>(
       handle: i.handle,
     }));
   return [...fromAsks, ...fromSessions, ...fromItems];
+}
+
+/**
+ * The footer's entries under the new model (docs/specs/2026-11-02-sidebar-agent-tree.md §4): the
+ * legacy aggregator fed clones whose needsAttention is the server's attentionReason, so a
+ * finished-but-unseen session is no longer counted and a blocked one counts while busy. Order,
+ * keys, snooze and click targets are attentionEntries' own.
+ */
+export function needYouEntries<
+  T extends SessionStateFields & { id: string; attentionReason?: AttentionReason },
+>(
+  sessions: readonly T[],
+  items: readonly McpAttentionItem[],
+  snoozed: SnoozeMap,
+  now: number,
+  asks?: readonly AttentionAsk[],
+): AttentionEntry[] {
+  const projected = sessions.map((s) =>
+    s.attentionReason != null
+      ? { ...s, needsAttention: true, busy: false }
+      : { ...s, needsAttention: false },
+  );
+  return attentionEntries(projected, items, snoozed, now, asks);
 }

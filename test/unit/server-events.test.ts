@@ -20,6 +20,8 @@ const view = (id: string): SessionView => ({
   status: 'running',
   createdAt: 0,
   lastActiveAt: 0,
+  attentionReason: null,
+  completions: 0,
   runtime: { generation: 1, spawn: 'live', reportedStatus: null, lastSize: null },
 });
 
