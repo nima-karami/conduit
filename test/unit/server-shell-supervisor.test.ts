@@ -1,23 +1,42 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { supervise } from '../../server/supervise';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { serverChildEnv, spawnServerChild, supervise } from '../../server/supervise';
 import {
   SERVER_EXHAUSTED_FILE,
   SERVER_FILE_VERSION,
   SUPERVISOR_EXHAUSTED_COOLDOWN_MS,
+  SUPERVISOR_MARKER_POLL_MS,
 } from '../../src/contracts/session-identity';
+import { instanceNames } from '../../src/instance-names';
+
+const fsHooks = vi.hoisted(() => ({ renameError: undefined as Error | undefined }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    rename: async (...args: Parameters<typeof actual.rename>) => {
+      if (fsHooks.renameError) throw fsHooks.renameError;
+      return actual.rename(...args);
+    },
+  };
+});
+afterEach(() => {
+  fsHooks.renameError = undefined;
+});
 
 const MINUTE = 60_000;
 
-function harness(exitCodes: Array<number | null>) {
+function harness(exitCodes: Array<number | null | Error>) {
   let time = Date.UTC(2026, 0, 1);
   const sleeps: number[] = [];
+  const logs: string[] = [];
   const spawnCount = { value: 0 };
   const spawnChild = async () => {
     const code = exitCodes[spawnCount.value++];
     if (code === undefined) throw new Error('unexpected child spawn');
+    if (code instanceof Error) throw code;
     return code;
   };
   const sleep = async (ms: number) => {
@@ -31,8 +50,12 @@ function harness(exitCodes: Array<number | null>) {
       spawnChild,
       sleep,
       now: () => time,
+      log: (message: string) => {
+        logs.push(message);
+      },
     },
     sleeps,
+    logs,
     spawnCount,
     advance: (ms: number) => {
       time += ms;
@@ -41,9 +64,7 @@ function harness(exitCodes: Array<number | null>) {
 }
 
 async function withScratch<T>(run: (userData: string) => Promise<T>): Promise<T> {
-  const scratchRoot = path.join(tmpdir(), 'Codex-scratch');
-  await mkdir(scratchRoot, { recursive: true });
-  const userData = await mkdtemp(path.join(scratchRoot, 'supervisor-marker-'));
+  const userData = await mkdtemp(path.join(tmpdir(), 'w3-test-supervisor-'));
   try {
     return await run(userData);
   } finally {
@@ -51,9 +72,11 @@ async function withScratch<T>(run: (userData: string) => Promise<T>): Promise<T>
   }
 }
 
+const crashRun = [1, 2, 4, 5, 6, 0];
+
 describe('server supervisor', () => {
-  it('uses the capped backoff sequence for crashes spaced outside the exhaustion window', async () => {
-    const h = harness([1, 2, 4, 5, 6, 0]);
+  it('restarts the backoff for crashes spaced outside the exhaustion window', async () => {
+    const h = harness(crashRun);
     const spawn = h.options.spawnChild;
     h.options.spawnChild = async () => {
       const code = await spawn();
@@ -63,8 +86,49 @@ describe('server supervisor', () => {
 
     await expect(supervise(h.options)).resolves.toBe(0);
 
-    expect(h.sleeps).toEqual([1_000, 2_000, 5_000, 10_000, 30_000]);
+    expect(h.sleeps).toEqual([1_000, 1_000, 1_000, 1_000, 1_000]);
     expect(h.spawnCount.value).toBe(6);
+  });
+
+  it('indexes the backoff by the crashes still inside the window', async () => {
+    const h = harness([1, 2, 4, 5, 0]);
+    const spawn = h.options.spawnChild;
+    h.options.spawnChild = async () => {
+      const code = await spawn();
+      if (h.spawnCount.value === 3) h.advance(11 * MINUTE);
+      return code;
+    };
+
+    await expect(supervise(h.options)).resolves.toBe(0);
+
+    expect(h.sleeps).toEqual([1_000, 2_000, 1_000, 2_000]);
+  });
+
+  it('counts a failed spawn as a crash instead of exiting', async () => {
+    const h = harness([new Error('spawn EACCES'), 0]);
+
+    await expect(supervise(h.options)).resolves.toBe(0);
+
+    expect(h.sleeps).toEqual([1_000]);
+    expect(h.spawnCount.value).toBe(2);
+    expect(h.logs.join('\n')).toContain('spawn EACCES');
+  });
+
+  it('logs a failed marker write and still cools down before trying again', async () => {
+    const h = harness(crashRun);
+    const marker = {
+      write: async () => {
+        throw new Error('EPERM marker');
+      },
+      exists: async () => false,
+      remove: async () => {},
+    };
+
+    await expect(supervise({ ...h.options, marker })).resolves.toBe(0);
+
+    expect(h.sleeps.slice(4).reduce((a, b) => a + b, 0)).toBe(SUPERVISOR_EXHAUSTED_COOLDOWN_MS);
+    expect(h.spawnCount.value).toBe(6);
+    expect(h.logs.join('\n')).toContain('EPERM marker');
   });
 
   it('writes exhaustion on the fifth crash and polls only at the cooldown interval', async () => {
@@ -80,6 +144,7 @@ describe('server supervisor', () => {
       write: async (value: unknown) => {
         markerExists = true;
         written = value;
+        return 'written' as const;
       },
       exists: async () => markerExists,
       remove: async () => {
@@ -100,6 +165,7 @@ describe('server supervisor', () => {
     const marker = {
       write: async () => {
         markerExists = true;
+        return 'written' as const;
       },
       exists: async () => markerExists,
       remove: async () => {
@@ -125,6 +191,7 @@ describe('server supervisor', () => {
     const marker = {
       write: async () => {
         markerExists = true;
+        return 'written' as const;
       },
       exists: async () => markerExists,
       remove: async () => {
@@ -179,33 +246,140 @@ describe('server supervisor', () => {
     });
   });
 
-  it('never overwrites a newer filesystem marker version', async () => {
+  it('treats a newer marker as its own: never touches it, cools down, then carries on', async () => {
     await withScratch(async (userData) => {
       const markerPath = path.join(userData, SERVER_EXHAUSTED_FILE);
-      const newerMarker = {
+      const newerMarker = JSON.stringify({
         version: SERVER_FILE_VERSION[SERVER_EXHAUSTED_FILE] + 1,
         payload: 'preserve',
-      };
-      await writeFile(markerPath, JSON.stringify(newerMarker));
+      });
+      await writeFile(markerPath, newerMarker);
       let spawnCount = 0;
       let time = Date.UTC(2026, 0, 1);
+      const sleeps: number[] = [];
 
       await expect(
         supervise({
           userData,
           logPath: path.join(userData, 'server.log'),
-          spawnChild: async () => [1, 2, 4, 5, 6, 0][spawnCount++],
+          spawnChild: async () => crashRun[spawnCount++],
           sleep: async (ms) => {
+            sleeps.push(ms);
             time += ms;
-            if (spawnCount === 5) await rm(markerPath, { force: true });
           },
           now: () => time,
+          log: () => {},
         }),
-      ).rejects.toThrow(`Refusing to overwrite newer ${SERVER_EXHAUSTED_FILE}`);
+      ).resolves.toBe(0);
 
-      await expect(readFile(markerPath, 'utf8')).resolves.toBe(JSON.stringify(newerMarker));
-      expect(spawnCount).toBe(5);
+      await expect(readFile(markerPath, 'utf8')).resolves.toBe(newerMarker);
+      expect(spawnCount).toBe(6);
+      expect(sleeps.slice(4)).toEqual(
+        Array(SUPERVISOR_EXHAUSTED_COOLDOWN_MS / SUPERVISOR_MARKER_POLL_MS).fill(
+          SUPERVISOR_MARKER_POLL_MS,
+        ),
+      );
     });
+  });
+
+  it('retries now when the app deletes a newer marker it is polling', async () => {
+    await withScratch(async (userData) => {
+      const markerPath = path.join(userData, SERVER_EXHAUSTED_FILE);
+      await writeFile(
+        markerPath,
+        JSON.stringify({ version: SERVER_FILE_VERSION[SERVER_EXHAUSTED_FILE] + 1 }),
+      );
+      let spawnCount = 0;
+      const sleeps: number[] = [];
+
+      await expect(
+        supervise({
+          userData,
+          logPath: path.join(userData, 'server.log'),
+          spawnChild: async () => crashRun[spawnCount++],
+          sleep: async (ms) => {
+            sleeps.push(ms);
+            if (spawnCount === 5) await rm(markerPath, { force: true });
+          },
+          now: () => Date.UTC(2026, 0, 1),
+          log: () => {},
+        }),
+      ).resolves.toBe(0);
+
+      expect(spawnCount).toBe(6);
+      expect(sleeps.slice(4)).toEqual([SUPERVISOR_MARKER_POLL_MS]);
+    });
+  });
+
+  it.each(['EPERM', 'EBUSY'])(
+    'logs a %s marker rename, removes its temp file and still cools down',
+    async (code) => {
+      await withScratch(async (userData) => {
+        fsHooks.renameError = Object.assign(new Error(`${code}: rename`), { code });
+        let spawnCount = 0;
+        let time = Date.UTC(2026, 0, 1);
+        const sleeps: number[] = [];
+        const logs: string[] = [];
+
+        await expect(
+          supervise({
+            userData,
+            logPath: path.join(userData, 'server.log'),
+            spawnChild: async () => crashRun[spawnCount++],
+            sleep: async (ms) => {
+              sleeps.push(ms);
+              time += ms;
+            },
+            now: () => time,
+            log: (message) => {
+              logs.push(message);
+            },
+          }),
+        ).resolves.toBe(0);
+
+        expect(spawnCount).toBe(6);
+        expect(sleeps.slice(4).reduce((a, b) => a + b, 0)).toBe(SUPERVISOR_EXHAUSTED_COOLDOWN_MS);
+        expect(logs.join('\n')).toContain(`${code}: rename`);
+        expect(await readdir(userData)).toEqual([]);
+      });
+    },
+  );
+
+  it('resolves a spawn error as a crash exit instead of rejecting', async () => {
+    const missing = path.join(tmpdir(), 'w3-test-no-such-binary', 'node');
+    const logs: string[] = [];
+    await expect(
+      spawnServerChild(missing, [], {}, tmpdir(), (message) => {
+        logs.push(message);
+      }),
+    ).resolves.toBeNull();
+    expect(logs.join('\n')).toContain('ENOENT');
+  });
+
+  it('keeps the XDG isolation decided at the supervisor start (C4 coreStartEnv)', () => {
+    const names = instanceNames('/profile', 'posix', '/tmp');
+    const isolated = serverChildEnv(
+      {
+        PATH: '/bin',
+        HC_SESSION: 'other',
+        XDG_CONFIG_HOME: names.hcConfigHome,
+        XDG_STATE_HOME: '/home/u/.local/state',
+        CONDUIT_USER_XDG_CAPTURED: '1',
+        CONDUIT_USER_XDG_CONFIG_HOME: '/home/u/.config',
+        CONDUIT_USER_XDG_STATE_HOME: '/home/u/.local/state',
+      },
+      names,
+    );
+    expect(isolated).toMatchObject({
+      XDG_CONFIG_HOME: names.hcConfigHome,
+      XDG_STATE_HOME: names.hcStateHome,
+      CONDUIT_USER_XDG_CONFIG_HOME: '/home/u/.config',
+      CONDUIT_USER_XDG_STATE_HOME: '/home/u/.local/state',
+      HC_SESSION: names.hcSession,
+    });
+    const shared = serverChildEnv({ PATH: '/bin', XDG_CONFIG_HOME: '/home/u/.config' }, names);
+    expect(shared.XDG_CONFIG_HOME).toBe('/home/u/.config');
+    expect(shared.XDG_STATE_HOME).toBeUndefined();
   });
 
   it('returns normally on SERVER_EXIT.done without stopping the core', async () => {

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -13,9 +13,7 @@ afterEach(async () => {
   for (const dir of directories.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 async function profile() {
-  const scratch = path.join(tmpdir(), 'Codex-scratch');
-  await mkdir(scratch, { recursive: true });
-  const dir = await mkdtemp(path.join(scratch, 'w3-entry-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'w3-test-entry-'));
   directories.push(dir);
   return dir;
 }
@@ -58,6 +56,22 @@ describe('server entry wiring', () => {
     expect(stopped.code).toBe(0);
     expect(directFallback).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(3));
+  });
+
+  it('ends the real process with process.exit once the reply is flushed and the pipe closed', async () => {
+    const dir = await profile();
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    try {
+      const server = await runServer(['--user-data', dir], { core: core() });
+      closes.push(() => server.close?.() ?? Promise.resolve());
+      const stopped = await runServer(['--user-data', dir, '--stop-all'], {
+        directFallback: vi.fn(async () => 0),
+      });
+      expect(stopped).toEqual({ code: 0 });
+      await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(3));
+    } finally {
+      exit.mockRestore();
+    }
   });
 
   it('rejects launches without the explicit profile required for instance isolation', async () => {

@@ -1,11 +1,12 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createConnection, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { compose, emptySnapshot } from '../../server/compose';
 import type { ShellCore } from '../../server/lifecycle/shell';
-import { PipeTransport } from '../../server/transport/pipe';
+import { STOP_FAILED_EXIT } from '../../server/lifecycle/shell';
+import { PipeTransport, type RpcHandler } from '../../server/transport/pipe';
 import { APP_HELLO_TIMEOUT_MS } from '../../src/contracts/server-protocol';
 import { instanceNames } from '../../src/instance-names';
 
@@ -20,15 +21,16 @@ afterEach(async () => {
   for (const dir of directories.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
-async function setup() {
-  const scratch = path.join(tmpdir(), 'Codex-scratch');
-  await mkdir(scratch, { recursive: true });
-  const dir = await mkdtemp(path.join(scratch, 'w3-pipe-'));
+async function setup(options: { dispatch?: RpcHandler; eventBufferBound?: number } = {}) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'w3-test-pipe-'));
   directories.push(dir);
   const names = instanceNames(dir, process.platform === 'win32' ? 'win32' : 'posix', tmpdir());
+  const onError = vi.fn();
   const transport = new PipeTransport(
     names.serverEndpoint,
     process.platform === 'win32' ? 'win32' : 'posix',
+    onError,
+    ...(options.eventBufferBound === undefined ? [] : [options.eventBufferBound]),
   );
   transports.push(transport);
   const core: ShellCore = {
@@ -49,11 +51,12 @@ async function setup() {
     logPath: '/log',
     exit,
     writeLog,
+    ...(options.dispatch ? { dispatch: options.dispatch } : {}),
   });
   disposers.push(() => shell.lifecycle.dispose());
   expect(await transport.listen(shell.handle)).toBe(true);
   shell.lifecycle.start();
-  return { names, core, transport, shell, exit, writeLog };
+  return { names, core, transport, shell, exit, writeLog, onError };
 }
 
 async function client(endpoint: string) {
@@ -223,5 +226,85 @@ describe('server shell on the real C2 pipe', () => {
     c.socket.write(line.subarray(split));
     expect(await c.next()).toMatchObject({ id: 'utf8', result: { serverVersion: '0.52.0' } });
     expect(await c.call('unknown.method')).toMatchObject({ error: { code: -32601 } });
+  });
+
+  it('replies a failed stop with its error, then exits with a crash code', async () => {
+    const x = await setup();
+    vi.mocked(x.core.persist).mockRejectedValueOnce(new Error('persist failed'));
+    const c = await client(x.names.serverEndpoint);
+    await c.call('hello', hello);
+    expect(await c.call('server.stopAll')).toMatchObject({
+      error: { code: -32603, message: 'persist failed' },
+    });
+    await vi.waitFor(() => expect(x.exit).toHaveBeenCalledWith(STOP_FAILED_EXIT));
+  });
+
+  it('leaves a stopAll that arrives during a restart persist unanswered until the exit closes it', async () => {
+    const x = await setup();
+    x.exit.mockImplementation(() => x.transport.close());
+    let persisted: () => void = () => {};
+    vi.mocked(x.core.persist).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          persisted = resolve;
+        }),
+    );
+    const app = await client(x.names.serverEndpoint);
+    await app.call('hello', hello);
+    app.send('server.restart', { reason: 'update' });
+    await vi.waitFor(() => expect(x.core.persist).toHaveBeenCalled());
+    const uninstall = await client(x.names.serverEndpoint);
+    await uninstall.call('hello', hello);
+    const closed = new Promise<void>((resolve) => uninstall.socket.once('close', () => resolve()));
+    let answered: unknown;
+    void uninstall.call('server.stopAll').then((value) => {
+      answered = value;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    persisted();
+    expect(await app.next()).toMatchObject({ result: {} });
+    await closed;
+    expect(answered).toBeUndefined();
+    expect(x.core.killSessions).not.toHaveBeenCalled();
+    expect(x.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('reports notification handler failures instead of swallowing them', async () => {
+    const x = await setup({
+      dispatch: () => {
+        throw new Error('term.input broke');
+      },
+    });
+    const c = await client(x.names.serverEndpoint);
+    await c.call('hello', hello);
+    c.socket.write(
+      `${JSON.stringify({ jsonrpc: '2.0', method: 'term.input', params: { data: 'x' } })}\n`,
+    );
+    await vi.waitFor(() => expect(x.onError).toHaveBeenCalledWith(new Error('term.input broke')));
+  });
+
+  it('drops a stalled subscriber with missed {seq} and resumes only after events.subscribe', async () => {
+    const x = await setup({ eventBufferBound: 64 * 1024 });
+    const c = await client(x.names.serverEndpoint);
+    await c.call('hello', hello);
+    await c.call('events.subscribe');
+    c.socket.pause();
+    const chunk = 'x'.repeat(64 * 1024);
+    for (let i = 0; i < 200; i += 1)
+      x.transport.emit('runtime.changed', { state: 'unavailable', reason: chunk, logPath: '' });
+    const lastSeq = x.transport.seq;
+    c.socket.resume();
+    const received: { params: { seq: number; type: string; data: unknown } }[] = [];
+    while (received.length < 200 && received.at(-1)?.params.type !== 'missed')
+      received.push((await c.next()) as (typeof received)[number]);
+    const missed = received.at(-1)?.params;
+    expect(missed?.type).toBe('missed');
+    expect(missed?.data).toEqual({ seq: missed?.seq });
+    x.transport.emit('runtime.changed', { state: 'ready', hcVersion: 'dropped' });
+    expect(await c.call('events.subscribe')).toMatchObject({ result: { seq: lastSeq + 1 } });
+    x.transport.emit('runtime.changed', { state: 'ready', hcVersion: 'after' });
+    expect(await c.next()).toMatchObject({
+      params: { type: 'runtime.changed', data: { hcVersion: 'after' } },
+    });
   });
 });

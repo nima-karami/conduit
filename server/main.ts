@@ -4,6 +4,7 @@ import path from 'node:path';
 import { version } from '../package.json';
 import { instanceNames } from '../src/instance-names';
 import { compose, emptyCore } from './compose';
+import { argValue, requireUserData } from './lifecycle/cli-args';
 import type { ShellCore } from './lifecycle/shell';
 import { stopAll } from './lifecycle/stop-all';
 import { PipeTransport, type RpcHandler } from './transport/pipe';
@@ -22,14 +23,7 @@ export async function runServer(
   transport?: PipeTransport;
   close?(): Promise<void>;
 }> {
-  const value = (flag: string) => {
-    const index = args.indexOf(flag);
-    return index >= 0
-      ? args[index + 1]
-      : args.find((arg) => arg.startsWith(`${flag}=`))?.slice(flag.length + 1);
-  };
-  const userData = value('--user-data');
-  if (!userData || userData.startsWith('--')) throw new Error('Missing required --user-data');
+  const userData = requireUserData(args);
   const platform = process.platform === 'win32' ? 'win32' : 'posix';
   const names = instanceNames(userData, platform, tmpdir());
   if (args.includes('--stop-all')) {
@@ -52,7 +46,7 @@ export async function runServer(
   };
   if (!(await transport.listen((request, peer) => handle(request, peer)))) return { code: 0 };
   const logPath = path.join(userData, 'server.log');
-  const supervisorTerminal = value('--supervisor-terminal');
+  const supervisorTerminal = argValue(args, '--supervisor-terminal');
   const shell = compose({
     transport,
     core: dependencies.core ?? emptyCore(logPath),
@@ -66,8 +60,9 @@ export async function runServer(
     exit: async (code) => {
       shell.lifecycle.dispose();
       await transport.close();
+      // A handle a service left open must not keep a stopped server alive; the supervisor waits on it.
       if (dependencies.exit) await dependencies.exit(code);
-      else process.exitCode = code;
+      else process.exit(code);
     },
   });
   handle = shell.handle;

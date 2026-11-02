@@ -18,14 +18,14 @@ export interface RpcRequest {
   params: unknown;
 }
 export interface Peer {
-  id: number;
   subscribed: boolean;
   order?: VersionOrder;
 }
-export interface RpcAnswer {
-  result: unknown;
-  afterReply?(): Promise<void> | void;
-}
+type AfterReply = () => Promise<void> | void;
+export type RpcAnswer =
+  | { result: unknown; afterReply?: AfterReply }
+  | { error: unknown; afterReply?: AfterReply }
+  | { reply: false };
 export type RpcHandler = (request: RpcRequest, peer: Peer) => RpcAnswer | Promise<RpcAnswer>;
 
 export class RpcFault extends Error {
@@ -49,19 +49,35 @@ export class RpcProtocolFault extends Error {
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 const codeOf = (error: unknown) => (record(error) ? error.code : undefined);
+const expectedRefusal = (error: unknown) =>
+  error instanceof RpcFault || (error instanceof RpcProtocolFault && error.code === -32601);
+
+/**
+ * Per-peer bound on unflushed event bytes. Past it a stalled app would grow the server's memory
+ * without limit, so its stream is dropped with C2 `missed` until it calls events.subscribe again.
+ */
+export const EVENT_BUFFER_BOUND_BYTES = 8 * 1024 * 1024;
+
+function rpcError(error: unknown): ServerRpcError | { code: number; message: string } {
+  if (error instanceof RpcFault)
+    return { code: SERVER_ERROR_RPC_CODE, message: error.message, data: { kind: error.kind } };
+  return {
+    code: error instanceof RpcProtocolFault ? error.code : -32603,
+    message: error instanceof Error ? error.message : String(error),
+  };
+}
 
 export class PipeTransport {
   seq = 0;
-  readonly peers = new Map<number, Peer>();
-  private readonly sockets = new Map<Peer, Socket>();
+  readonly peers = new Map<Socket, Peer>();
   private server?: Server;
-  private nextId = 0;
   onConnect: () => void = () => {};
-  onDisconnect: (peer: Peer) => void = () => {};
+  onDisconnect: () => void = () => {};
   constructor(
     readonly endpoint: string,
     readonly platform: 'win32' | 'posix',
     readonly onError: (error: unknown) => void = (error) => console.error(error),
+    readonly eventBufferBound = EVENT_BUFFER_BOUND_BYTES,
   ) {}
 
   async listen(handler: RpcHandler): Promise<boolean> {
@@ -114,10 +130,10 @@ export class PipeTransport {
   }
 
   private accept(socket: Socket, handler: RpcHandler): void {
-    const peer: Peer = { id: ++this.nextId, subscribed: false };
-    this.peers.set(peer.id, peer);
-    this.sockets.set(peer, socket);
+    const peer: Peer = { subscribed: false };
+    this.peers.set(socket, peer);
     this.onConnect();
+    // C2 names no server-side hello bound; the app's own is reused so a silent peer can't hold a slot.
     const helloTimer = setTimeout(() => socket.destroy(), APP_HELLO_TIMEOUT_MS);
     const decoder = new StringDecoder('utf8');
     let buffer = '';
@@ -135,9 +151,8 @@ export class PipeTransport {
     });
     socket.once('close', () => {
       clearTimeout(helloTimer);
-      this.sockets.delete(peer);
-      this.peers.delete(peer.id);
-      this.onDisconnect(peer);
+      this.peers.delete(socket);
+      this.onDisconnect();
     });
   }
 
@@ -189,20 +204,18 @@ export class PipeTransport {
       const pending = handler(request, peer);
       answer = pending instanceof Promise ? await pending : pending;
     } catch (error) {
-      if (!('id' in request)) return;
-      const rpcError: ServerRpcError | { code: number; message: string } =
-        error instanceof RpcFault
-          ? { code: SERVER_ERROR_RPC_CODE, message: error.message, data: { kind: error.kind } }
-          : {
-              code: error instanceof RpcProtocolFault ? error.code : -32603,
-              message: error instanceof Error ? error.message : String(error),
-            };
-      await this.send(socket, { jsonrpc: '2.0', id: request.id, error: rpcError });
-      return;
+      answer = { error };
     }
-    if (request.method === 'hello') helloDone();
-    if ('id' in request)
+    if ('reply' in answer) return;
+    if ('result' in answer && request.method === 'hello') helloDone();
+    if (!('id' in request)) {
+      // A notification has nobody to answer, so only an expected refusal may go unreported.
+      if ('error' in answer && !expectedRefusal(answer.error)) this.onError(answer.error);
+    } else if ('error' in answer) {
+      await this.send(socket, { jsonrpc: '2.0', id: request.id, error: rpcError(answer.error) });
+    } else {
       await this.send(socket, { jsonrpc: '2.0', id: request.id, result: answer.result });
+    }
     try {
       await answer.afterReply?.();
     } catch (error) {
@@ -211,7 +224,7 @@ export class PipeTransport {
   }
 
   async close(): Promise<void> {
-    for (const socket of this.sockets.values()) socket.end(() => socket.destroy());
+    for (const socket of this.peers.keys()) socket.end(() => socket.destroy());
     const server = this.server;
     if (!server?.listening) return;
     await new Promise<void>((resolve, reject) =>
@@ -220,12 +233,25 @@ export class PipeTransport {
   }
 
   emit: ServerEventSink = (type, data) => {
+    const seq = ++this.seq;
     const notification: ServerEventNotification = {
       jsonrpc: '2.0',
       method: SERVER_EVENT_METHOD,
-      params: { seq: ++this.seq, type, data },
+      params: { seq, type, data },
     };
-    for (const [peer, socket] of this.sockets)
-      if (peer.subscribed) void this.send(socket, notification);
+    const missed: ServerEventNotification = {
+      jsonrpc: '2.0',
+      method: SERVER_EVENT_METHOD,
+      params: { seq, type: 'missed', data: { seq } },
+    };
+    for (const [socket, peer] of this.peers) {
+      if (!peer.subscribed) continue;
+      if (socket.writableLength <= this.eventBufferBound) {
+        void this.send(socket, notification);
+        continue;
+      }
+      peer.subscribed = false;
+      void this.send(socket, missed);
+    }
   };
 }

@@ -25,18 +25,18 @@ export function stopAll(options: StopAllOptions): Promise<StopAllResult> {
     let accepted = false;
     let socket: Socket | undefined;
     let timer: ReturnType<typeof setTimeout>;
-    const finish = (result: StopAllResult) => {
-      if (finished) return;
+    const teardown = () => {
+      if (finished) return false;
       finished = true;
       clearTimeout(timer);
       socket?.destroy();
-      resolve(result);
+      return true;
+    };
+    const finish = (result: StopAllResult) => {
+      if (teardown()) resolve(result);
     };
     const fallback = () => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      socket?.destroy();
+      if (!teardown()) return;
       void Promise.resolve()
         .then(options.directFallback)
         .then(

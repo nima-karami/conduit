@@ -10,7 +10,23 @@ import {
 import { formatRecord, type LogLevel, levelEnabled } from '../src/logging';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import { ServerLifecycle, type ShellCore } from './lifecycle/shell';
-import { type PipeTransport, RpcFault, type RpcHandler, RpcProtocolFault } from './transport/pipe';
+import {
+  type PipeTransport,
+  type RpcAnswer,
+  RpcFault,
+  type RpcHandler,
+  RpcProtocolFault,
+} from './transport/pipe';
+
+/** Keyed by LogLevel so a level added to src/logging.ts fails to compile here instead of being refused. */
+const LOG_LEVELS = {
+  off: true,
+  error: true,
+  warn: true,
+  info: true,
+  debug: true,
+  trace: true,
+} as const satisfies Record<LogLevel, true>;
 
 export function emptySnapshot(): Omit<ServerSnapshot, 'seq' | 'runtime'> {
   return {
@@ -61,7 +77,6 @@ export interface ComposeOptions {
 }
 
 export function compose(options: ComposeOptions) {
-  const lifecycle = new ServerLifecycle({ ...options, emit: options.transport.emit });
   const logging: ServerLogging = {
     logging: DEFAULT_SETTINGS.logging,
     logLevel: DEFAULT_SETTINGS.logLevel,
@@ -71,6 +86,11 @@ export function compose(options: ComposeOptions) {
       options.writeLog?.(formatRecord({ ts: Date.now(), level, scope: 'server', msg: message }));
     }
   };
+  const lifecycle = new ServerLifecycle({
+    ...options,
+    emit: options.transport.emit,
+    onError: (error) => log('error', String(error)),
+  });
   options.transport.onConnect = () => lifecycle.connected();
   options.transport.onDisconnect = () => lifecycle.disconnected();
   const handle: RpcHandler = (request, peer) => {
@@ -96,7 +116,6 @@ export function compose(options: ComposeOptions) {
     }
     if (!peer.order) throw new RpcFault('invalid', 'hello required');
     if (request.method === 'events.subscribe') {
-      peer.subscribed = false;
       const result: ServerSnapshot = {
         ...options.core.snapshot(),
         seq: options.transport.seq,
@@ -108,7 +127,8 @@ export function compose(options: ComposeOptions) {
     if (request.method === 'server.setLogging') {
       if (
         typeof p.logging !== 'boolean' ||
-        !['off', 'debug', 'info', 'warn', 'error', 'trace'].includes(String(p.logLevel))
+        typeof p.logLevel !== 'string' ||
+        !Object.hasOwn(LOG_LEVELS, p.logLevel)
       )
         throw new RpcFault('invalid', 'Invalid logging settings');
       logging.logging = p.logging;
@@ -126,10 +146,17 @@ export function compose(options: ComposeOptions) {
           stopAll ? 'stopAll' : 'restart',
           stopAll ? 'stopAll' : (p.reason as 'update' | 'user'),
         )
-        .then((stopped) => ({
-          result: stopAll ? { killed: stopped.killed } : {},
-          afterReply: stopped.afterReply,
-        }));
+        .then((stopped): RpcAnswer => {
+          if (stopped.kind === 'late') return { reply: false };
+          if (stopped.kind === 'failed') {
+            log('error', `${request.method} failed: ${String(stopped.error)}`);
+            return { error: stopped.error, afterReply: stopped.afterReply };
+          }
+          return {
+            result: stopAll ? { killed: stopped.killed } : {},
+            afterReply: stopped.afterReply,
+          };
+        });
     }
     if (lifecycle.stopping) {
       if (request.method === 'sessions.create')
