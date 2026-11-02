@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type Harness, harness, labelsFor, launch } from '../../server/runtime/testing/harness';
+import { FrameKind } from '../../src/contracts/frames';
 
 let h: Harness;
 afterEach(async () => {
@@ -43,7 +44,7 @@ describe('TerminalRuntime screen()', () => {
     expect(snap?.lines).toHaveLength(5);
   });
 
-  it('past the backlog bound reads unknown; the re-taken attach paint reseeds it', async () => {
+  it('past the backlog bound reads unknown; an observer paint reseeds it, the stream untouched', async () => {
     const channel = await live({ screenBacklogMaxBytes: 1000 });
     const attaches = calls('terminal.attach').length;
     h.fake.paint = Buffer.from('\x1b[2J\x1b[Hreseeded');
@@ -59,7 +60,9 @@ describe('TerminalRuntime screen()', () => {
       terminal: h.runtime.get('s1')?.target.terminal,
       cols: 40,
       rows: 5,
+      observe: true,
     });
+    const observer = h.attachChannels.at(-1);
     await expect
       .poll(() =>
         h.events.filter((e) => e.type === 'paint').map((e) => e.type === 'paint' && e.cause),
@@ -68,6 +71,16 @@ describe('TerminalRuntime screen()', () => {
     const snap = await h.runtime.screen('s1');
     expect(snap?.lines[0]).toBe('reseeded');
     expect(h.ring.text('s1')).not.toContain('reseeded');
+    // The observer is gone and the active stream still carries everything, exactly once.
+    await expect
+      .poll(() => h.fake.frames.some((f) => f.channel === observer && f.kind === FrameKind.Close))
+      .toBe(true);
+    h.fake.send(channel, Buffer.from('after'));
+    await expect.poll(dataCount).toBe(2);
+    expect(h.ring.text('s1').split('after')).toHaveLength(2);
     expect(h.runtime.input('s1', 1, 'k')).toBe(true);
+    await expect
+      .poll(() => h.fake.frames.filter((f) => f.kind === FrameKind.Data && f.channel === channel))
+      .toHaveLength(1);
   });
 });

@@ -40,7 +40,7 @@ export interface SessionScreens {
   dispose(sessionId: string): void;
   snapshot(sessionId: string): Promise<ScreenSnapshot | undefined>;
   has(sessionId: string): boolean;
-  /** Fed UTF-16 units the model hasn't parsed yet; the runtime bounds it (C1 SCREEN_BACKLOG_MAX_BYTES). */
+  /** Fed UTF-8 bytes the model hasn't parsed yet; the runtime bounds it (C1 SCREEN_BACKLOG_MAX_BYTES). */
   backlog(sessionId: string): number;
 }
 
@@ -200,8 +200,9 @@ export function createSessionScreens(
         tails.get(sessionId)?.push(data);
         return;
       }
-      unparsed.set(term, (unparsed.get(term) ?? 0) + data.length);
-      term.write(data, () => unparsed.set(term, (unparsed.get(term) ?? 0) - data.length));
+      const bytes = Buffer.byteLength(data);
+      unparsed.set(term, (unparsed.get(term) ?? 0) + bytes);
+      term.write(data, () => unparsed.set(term, (unparsed.get(term) ?? 0) - bytes));
     },
     resize(sessionId, cols, rows) {
       const term = terms.get(sessionId);

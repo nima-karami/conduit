@@ -264,8 +264,11 @@ export class SessionActivity {
     return now - e.lastOutputAt >= this.attentionQuietMs ? 'run-end' : null;
   }
 
-  /** The user has seen this session: end the episode and start counting evidence over. */
-  private acknowledge(id: string): boolean {
+  /**
+   * The user has seen this session, or typed into it: end the episode and start counting evidence
+   * over. Returns true if public flags changed.
+   */
+  acknowledge(id: string): boolean {
     const e = this.entries.get(id);
     if (!e) return false;
     clearRun(e);
@@ -279,7 +282,8 @@ export class SessionActivity {
     return e.spawnAt !== undefined && now - e.spawnAt < this.spawnGraceMs;
   }
 
-  private isVisible(id: string): boolean {
+  /** On some window's screen right now. */
+  isVisible(id: string): boolean {
     for (const ids of this.visibleByWindow.values()) if (ids.has(id)) return true;
     return false;
   }

@@ -1,11 +1,12 @@
-import { readFileSync, unlink } from 'node:fs';
+import { unlink } from 'node:fs';
 import { join } from 'node:path';
+import { ScrollbackWriteGate } from '../../electron/persistence-write-gates';
 import { atomicWriteFile } from '../../src/atomic-write';
+import { readBlob } from '../../src/config';
 import type { ScrollbackPort, ServerEventSink } from '../../src/contracts/server-ports';
 import type { FirstPaint } from '../../src/contracts/terminal-link';
 import type { TermGeometry } from '../../src/protocol';
 import { scrollbackFileName } from '../../src/scrollback-files';
-import { restoreScrollback } from '../../src/scrollback-persistence';
 import { ScrollbackStore } from '../../src/scrollback-store';
 
 /**
@@ -22,13 +23,7 @@ export interface ScrollbackFiles {
 
 export function diskScrollbackFiles(dir: string, log: (message: string) => void): ScrollbackFiles {
   return {
-    read(fileName) {
-      try {
-        return readFileSync(join(dir, fileName), 'utf8');
-      } catch {
-        return undefined;
-      }
-    },
+    read: (fileName) => readBlob(join(dir, fileName)),
     write(fileName, blob) {
       atomicWriteFile(join(dir, fileName), blob, (error) => {
         if (error) log(`scrollback: write ${fileName} failed: ${String(error)}`);
@@ -43,7 +38,7 @@ export function diskScrollbackFiles(dir: string, log: (message: string) => void)
 export interface ServerScrollbackDeps {
   files: ScrollbackFiles;
   emit: ServerEventSink;
-  /** The session's current PTY size: host-composed bytes are recorded at it. */
+  /** The session's current PTY size, else its last requested one: host bytes are recorded at it. */
   sizeOf(sessionId: string): TermGeometry | undefined;
   /** `scrollbackPersistence`: the ring is kept in memory regardless, only the file is gated. */
   recording(): boolean;
@@ -52,13 +47,16 @@ export interface ServerScrollbackDeps {
 /** The ring + files (D18). The runtime appends on its credit path; W4 uses the ScrollbackPort half. */
 export class ServerScrollback implements ScrollbackPort {
   private readonly store: ScrollbackStore;
-  /** File name → written by a newer version: never read back or overwritten this run. */
-  private readonly refused = new Map<string, boolean>();
+  /** A file a newer version wrote is never read back or overwritten this run. */
+  private readonly gate: ScrollbackWriteGate;
 
   constructor(private readonly deps: ServerScrollbackDeps) {
+    this.gate = new ScrollbackWriteGate((name) => deps.files.read(name));
     this.store = new ScrollbackStore(
       (sessionId, blob) => {
-        if (deps.recording()) this.guarded(sessionId, (name) => deps.files.write(name, blob));
+        if (!deps.recording()) return;
+        const name = scrollbackFileName(sessionId);
+        this.gate.run(name, () => deps.files.write(name, blob));
       },
       {
         send: (sessionId, data) => deps.emit('term.show', { sessionId, data }),
@@ -80,7 +78,7 @@ export class ServerScrollback implements ScrollbackPort {
   replayForColdStart(sessionId: string): FirstPaint | null {
     const replay = this.store.replayForColdStart(
       sessionId,
-      () => this.restore(scrollbackFileName(sessionId))?.segments,
+      () => this.gate.restore(scrollbackFileName(sessionId))?.segments,
     );
     return replay?.data ? { data: replay.data, replay: replay.runs } : null;
   }
@@ -94,24 +92,17 @@ export class ServerScrollback implements ScrollbackPort {
     }
   }
 
+  record(sessionId: string, data: string): void {
+    this.store.append(sessionId, data, this.deps.sizeOf(sessionId));
+  }
+
   forget(sessionId: string): void {
     this.store.drop(sessionId);
-    this.guarded(sessionId, (name) => this.deps.files.remove(name));
+    const name = scrollbackFileName(sessionId);
+    this.gate.run(name, () => this.deps.files.remove(name));
   }
 
   flushPending(): void {
     this.store.flushPending();
-  }
-
-  private restore(fileName: string) {
-    const restored = restoreScrollback(this.deps.files.read(fileName));
-    this.refused.set(fileName, restored.kind === 'newer');
-    return restored.kind === 'ok' ? restored.scrollback : null;
-  }
-
-  private guarded(sessionId: string, act: (fileName: string) => void): void {
-    const name = scrollbackFileName(sessionId);
-    if (!this.refused.has(name)) this.restore(name);
-    if (!this.refused.get(name)) act(name);
   }
 }

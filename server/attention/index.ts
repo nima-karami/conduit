@@ -11,12 +11,6 @@ import { scanInertOutput } from '../../src/terminal-output';
 /** Today's sweep cadence: at most half the busy window, so idle detection lags ≤ 750 ms. */
 export const ATTENTION_SWEEP_MS = 750;
 
-/**
- * SessionActivity acknowledges only through visibility; an input is a one-shot look, so it shows
- * the session to a window no presence id can take, then drops that window.
- */
-const INPUT_ACK_WINDOW = -1;
-
 interface Reported {
   status: Exclude<ReportedStatus, null>;
   needsAttention: boolean;
@@ -40,7 +34,8 @@ export class ServerAttention implements AttentionPort {
   private readonly reported = new Map<string, Reported>();
   private readonly bells = new Map<string, BellScanState>();
   private readonly inertTails = new Map<string, string>();
-  private readonly windows = new Map<number, ReadonlySet<string>>();
+  /** Window ids presence reported, so clearAll can drop every one of them. */
+  private readonly windows = new Set<number>();
   private readonly edgeListeners = new Set<(edge: AttentionEdge) => void>();
   private readonly changeListeners = new Set<() => void>();
   private readonly now: () => number;
@@ -70,7 +65,7 @@ export class ServerAttention implements AttentionPort {
   }
 
   setVisible(windowId: number, ids: readonly string[]): boolean {
-    this.windows.set(windowId, new Set(ids));
+    this.windows.add(windowId);
     let changed = this.activity.setVisible(windowId, ids);
     for (const id of ids) if (this.acknowledgeReported(id)) changed = true;
     if (changed) this.changed();
@@ -83,14 +78,13 @@ export class ServerAttention implements AttentionPort {
   }
 
   recordInput(sessionId: string, _now: number): void {
-    let changed = this.activity.setVisible(INPUT_ACK_WINDOW, [sessionId]);
-    this.activity.dropWindow(INPUT_ACK_WINDOW);
+    let changed = this.activity.acknowledge(sessionId);
     if (this.acknowledgeReported(sessionId)) changed = true;
     if (changed) this.changed();
   }
 
   clearAll(): void {
-    for (const windowId of [...this.windows.keys()]) this.dropWindow(windowId);
+    for (const windowId of [...this.windows]) this.dropWindow(windowId);
   }
 
   onEdge(listener: (edge: AttentionEdge) => void): () => void {
@@ -141,8 +135,16 @@ export class ServerAttention implements AttentionPort {
   }
 
   private status(sessionId: string, status: ReportedStatus): void {
+    const before = this.statusOf(sessionId);
+    this.applyStatus(sessionId, status);
+    const after = this.statusOf(sessionId);
+    if (before.busy !== after.busy || before.needsAttention !== after.needsAttention)
+      this.changed();
+  }
+
+  private applyStatus(sessionId: string, status: ReportedStatus): void {
     if (!status) {
-      if (this.reported.delete(sessionId)) this.changed();
+      this.reported.delete(sessionId);
       return;
     }
     const prev = this.reported.get(sessionId);
@@ -163,13 +165,12 @@ export class ServerAttention implements AttentionPort {
       // Only an entry into waiting arms: a repeated `blocked` report is the same episode.
       const waiting =
         wasWorking || (status.state === 'blocked' && prev?.status.state !== 'blocked');
-      if (waiting && !r.armed && !this.visible(sessionId)) {
+      if (waiting && !r.armed && !this.activity.isVisible(sessionId)) {
         r.needsAttention = true;
         r.armed = true;
         this.edge({ sessionId, kind: 'run-end' });
       }
     }
-    this.changed();
   }
 
   private acknowledgeReported(sessionId: string): boolean {
@@ -185,11 +186,6 @@ export class ServerAttention implements AttentionPort {
     this.reported.delete(sessionId);
     this.bells.delete(sessionId);
     this.inertTails.delete(sessionId);
-  }
-
-  private visible(sessionId: string): boolean {
-    for (const ids of this.windows.values()) if (ids.has(sessionId)) return true;
-    return false;
   }
 
   private edge(edge: AttentionEdge): void {

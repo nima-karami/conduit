@@ -259,7 +259,10 @@ runScenario('server-runtime', async ({ log }) => {
     );
     attachDelayMs = 0;
     harnessAssert(
-      fast.ok && fast.finished?.exitCode === 4 && fast.finished.reason === 'exited',
+      fast.ok &&
+        fast.finished?.exitCode === 4 &&
+        fast.finished.reason === 'exited' &&
+        fast.finished.output.includes('FAST-OUT'),
       `fast spawn: ${JSON.stringify(fast)}`,
     );
     harnessAssert((await ringFile('fast')).includes('FAST-OUT'), 'fast output not in the ring');

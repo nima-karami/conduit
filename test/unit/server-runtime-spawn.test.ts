@@ -164,7 +164,7 @@ describe('TerminalRuntime spawn', () => {
     expect(result).toEqual({
       ok: true,
       launchId: ids.launchId,
-      finished: { exitCode: 3, reason: 'exited' },
+      finished: { exitCode: 3, reason: 'exited', output: 'bye\r\nnow' },
     });
     expect(h.ring.text('s1')).toBe('bye\r\nnow');
     expect(h.events).toContainEqual({
@@ -193,7 +193,7 @@ describe('TerminalRuntime spawn', () => {
     expect(result).toEqual({
       ok: true,
       launchId: ids.launchId,
-      finished: { exitCode: 4, reason: 'exited' },
+      finished: { exitCode: 4, reason: 'exited', output: 'FAST-OUT' },
     });
     expect(h.ring.text('s1')).toBe('FAST-OUT');
   });
@@ -222,7 +222,7 @@ describe('TerminalRuntime spawn', () => {
     await expect(pending).resolves.toEqual({
       ok: true,
       launchId: ids.launchId,
-      finished: { exitCode: 4, reason: 'exited' },
+      finished: { exitCode: 4, reason: 'exited', output: 'FAST-OUT' },
     });
     expect(h.ring.text('s1')).toBe('FAST-OUT');
     expect(h.events.filter((e) => e.type === 'exit')).toEqual([
@@ -339,17 +339,19 @@ describe('TerminalRuntime spawn', () => {
     expect(h.tokens.row(ids.launchId)?.state).toBe('unconfirmed');
   });
 
-  it('a refused run revokes its row and rethrows', async () => {
+  it('a refused run revokes its row and returns spawn_failed', async () => {
     await started();
     h.fake.onCall('terminal.run', () => {
-      throw new FakeRpcError('spawn_failed');
+      throw new FakeRpcError('spawn_failed', 'no such program');
     });
     const ids = launch(4);
     await h.tokens.reserve('s1', ids);
-    await expect(h.runtime.spawn('s1', spec, labelsFor('s1', ids), ids)).rejects.toMatchObject({
-      kind: 'spawn_failed',
+    await expect(h.runtime.spawn('s1', spec, labelsFor('s1', ids), ids)).resolves.toEqual({
+      ok: false,
+      refusal: { reason: 'spawn_failed', message: 'no such program' },
     });
     expect(h.tokens.row(ids.launchId)).toBeUndefined();
+    expect(h.events.some((e) => e.type === 'unconfirmed')).toBe(false);
   });
 
   it('forwards hc status (mapped), title, size and foreground for a tracked terminal', async () => {

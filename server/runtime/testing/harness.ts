@@ -1,3 +1,4 @@
+import type { HcClient } from '../../../src/contracts/hc';
 import type { TokenRows, TokenStorePort } from '../../../src/contracts/server-ports';
 import type { ConduitLabels, TokenRecord } from '../../../src/contracts/session-identity';
 import type { LaunchIds, RuntimeEvent } from '../../../src/contracts/terminal-runtime';
@@ -99,6 +100,8 @@ export interface Harness {
   logs: string[];
   /** Channels of every terminal.attach reply, in order. */
   attachChannels: number[];
+  /** Runs before each terminal.attach leaves the runtime: holds or reorders it against hc events. */
+  beforeAttach?: () => Promise<void>;
   close(): Promise<void>;
 }
 
@@ -113,8 +116,19 @@ export async function harness(overrides: Partial<HcRuntimeDeps> = {}): Promise<H
   const tokens = new MemTokens();
   const ring = new Ring();
   const logs: string[] = [];
+  let h: Harness | undefined;
+  const port: HcClient = {
+    call: (method, params) => hc.call(method, params),
+    attach: async (params) => {
+      await h?.beforeAttach?.();
+      return hc.attach(params);
+    },
+    subscribe: (params, notify) => hc.subscribe(params, notify),
+    onConnection: (listener) => hc.onConnection(listener),
+    close: () => hc.close(),
+  };
   const runtime = new HcTerminalRuntime({
-    hc,
+    hc: port,
     tokens,
     ring,
     instance: INSTANCE,
@@ -127,7 +141,7 @@ export async function harness(overrides: Partial<HcRuntimeDeps> = {}): Promise<H
   });
   const events: RuntimeEvent[] = [];
   runtime.on((e) => events.push(e));
-  return {
+  h = {
     fake,
     hc,
     tokens,
@@ -141,6 +155,7 @@ export async function harness(overrides: Partial<HcRuntimeDeps> = {}): Promise<H
       await fake.close();
     },
   };
+  return h;
 }
 
 /** The same labels as hc reports them on a terminal record. */

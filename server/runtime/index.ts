@@ -29,7 +29,7 @@ export function createRuntimeServices(deps: RuntimeServicesDeps) {
   const scrollback = new ServerScrollback({
     files: deps.files ?? diskScrollbackFiles(deps.userData, deps.log),
     emit: deps.emit,
-    sizeOf: (id) => runtime?.get(id)?.size,
+    sizeOf: (id) => runtime?.get(id)?.size ?? runtime?.lastSizeOf(id),
     recording: deps.recording,
   });
   runtime = new HcTerminalRuntime({
