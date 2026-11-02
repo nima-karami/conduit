@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { restoreScrollback } from '../../src/scrollback-persistence';
+import { RELAUNCH_MARKER, restoreScrollback } from '../../src/scrollback-persistence';
 import { ScrollbackStore } from '../../src/scrollback-store';
 
 const restored = (blob: string | undefined) => {
@@ -112,5 +112,66 @@ describe('ScrollbackStore', () => {
     store.flush('s1');
     expect(writes).toHaveLength(0);
     expect(store.attachReplay('s1').data).toBe('');
+  });
+
+  describe('replayBeforeLaunch', () => {
+    const A = { cols: 80, rows: 24 };
+    const B = { cols: 40, rows: 12 };
+
+    it('is the ring before the current launch, run by run, recording nothing', () => {
+      const { store } = harness();
+      store.append('s1', 'run1', A);
+      store.append('s1', 'marker', B);
+      store.markLaunch('s1');
+      store.append('s1', 'run2', B);
+      expect(store.replayBeforeLaunch('s1')).toEqual({
+        data: 'run1marker',
+        runs: [
+          { length: 4, geometry: A },
+          { length: 6, geometry: B },
+        ],
+      });
+      expect(store.attachReplay('s1').data).toBe('run1markerrun2');
+    });
+
+    it('is nothing for a first launch, and follows the latest mark', () => {
+      const { store } = harness();
+      store.markLaunch('s1');
+      store.append('s1', 'run1', A);
+      expect(store.replayBeforeLaunch('s1')).toBeUndefined();
+      store.markLaunch('s1');
+      store.append('s1', 'run2', A);
+      expect(store.replayBeforeLaunch('s1')?.data).toBe('run1');
+    });
+
+    it('moves with the ring as its head is trimmed', () => {
+      const writes: string[] = [];
+      const store = new ScrollbackStore((_id, blob) => writes.push(blob), {
+        send: () => {},
+        recording: () => true,
+        cap: 8,
+      });
+      store.append('s1', 'abcdef', A);
+      store.markLaunch('s1');
+      store.append('s1', 'XYZ', A);
+      expect(store.replayBeforeLaunch('s1')?.data).toBe('bcdef');
+      store.append('s1', 'QRSTUV', A);
+      expect(store.replayBeforeLaunch('s1')).toBeUndefined();
+    });
+
+    it('persists the mark, and without one stops before the last relaunch marker', () => {
+      const { store, lastWrite } = harness();
+      store.append('s1', 'run1', A);
+      store.markLaunch('s1');
+      store.append('s1', 'run2', A);
+      store.flush('s1');
+      expect(lastWrite()?.beforeLaunch).toBe(4);
+      // A file written without a mark: everything before the last cold start's marker line.
+      const unmarked = harness().store;
+      unmarked.append('s2', 'run1', A);
+      unmarked.append('s2', RELAUNCH_MARKER, A);
+      unmarked.append('s2', 'run2', A);
+      expect(unmarked.replayBeforeLaunch('s2')?.data).toBe(`run1${RELAUNCH_MARKER.slice(0, 2)}`);
+    });
   });
 });

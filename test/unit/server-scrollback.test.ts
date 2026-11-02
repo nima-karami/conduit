@@ -127,6 +127,22 @@ describe('ServerScrollback', () => {
     }
   });
 
+  it('replays the ring before the launch, and a fresh instance reads the mark from disk', () => {
+    const s = make();
+    s.append('a', 'run1', SIZE);
+    s.launchStarted('a');
+    s.append('a', 'run2', SIZE);
+    expect(s.replayBeforeLaunch('a')).toEqual({
+      data: 'run1',
+      replay: [{ length: 4, geometry: SIZE }],
+    });
+    s.flushPending();
+    const after = make();
+    after.gap('a', 'PAINT', SIZE);
+    expect(after.replayBeforeLaunch('a')?.data).toBe('run1');
+    expect(make().replayBeforeLaunch('none')).toBeNull();
+  });
+
   it('flushPending waits for a delayed disk write', async () => {
     let release!: () => void;
     let written = false;

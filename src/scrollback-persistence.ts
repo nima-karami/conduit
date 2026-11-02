@@ -18,6 +18,11 @@ export interface PersistedScrollback {
   version: 2;
   sessionId: string;
   segments: ScrollbackRing;
+  /**
+   * Characters of `segments` recorded before the session's current launch. Optional, so a file
+   * without it still reads as version 2 (v0.51 never wrote it, and ignores it).
+   */
+  beforeLaunch?: number;
 }
 
 // Far beyond any real pane; only here so a corrupt file can't ask xterm for a huge buffer.
@@ -175,6 +180,31 @@ export function attachReplay(ring: ScrollbackRing): { data: string; runs: Replay
 }
 
 /**
+ * The ring's first `chars` characters, segment geometry kept. A resize recorded exactly at the
+ * cut belongs to what follows it, so it is left out.
+ */
+export function ringPrefix(ring: ScrollbackRing, chars: number): ScrollbackRing {
+  const out: ScrollbackRing = [];
+  let at = 0;
+  for (const s of ring) {
+    if (at >= chars) break;
+    const data = s.data.slice(0, chars - at);
+    out.push(s.geometry ? { data, geometry: s.geometry } : { data });
+    at += data.length;
+  }
+  return out;
+}
+
+/** Where the last cold start's relaunch marker begins, for a ring with no recorded launch mark. */
+export function lastRelaunchAt(ring: ScrollbackRing): number | undefined {
+  const at = ring
+    .map((s) => s.data)
+    .join('')
+    .lastIndexOf(RELAUNCH_LINE);
+  return at < 0 ? undefined : at;
+}
+
+/**
  * What a cold start writes right after spawning — in the same tick, so it precedes the child's
  * first output: the relaunch marker, then (when history was replayed) the padding that lifts
  * that history clear of ConPTY's spawn clear. A replay always gets the marker — the new child
@@ -201,6 +231,7 @@ export function serializeScrollback(p: PersistedScrollback): string {
     segments: p.segments.map((s) =>
       s.geometry ? { ...s.geometry, data: s.data } : { data: s.data },
     ),
+    ...(p.beforeLaunch === undefined ? {} : { beforeLaunch: p.beforeLaunch }),
   });
 }
 
@@ -237,6 +268,7 @@ export function restoreScrollback(blob: string | undefined): ScrollbackRestore {
     sessionId?: unknown;
     data?: unknown;
     segments?: unknown;
+    beforeLaunch?: unknown;
   };
   if (judgePersistedVersion('scrollback-<id>.json', p.version) === 'newer')
     return { kind: 'newer' };
@@ -251,7 +283,20 @@ export function restoreScrollback(blob: string | undefined): ScrollbackRestore {
   }
   if (p.version !== 2) return empty;
   const segments = restoreSegments(p.segments);
-  return segments
-    ? { kind: 'ok', scrollback: { version: 2, sessionId: p.sessionId, segments } }
-    : empty;
+  if (!segments) return empty;
+  const total = segments.reduce((n, s) => n + s.data.length, 0);
+  const before = p.beforeLaunch;
+  const beforeLaunch =
+    typeof before === 'number' && Number.isInteger(before) && before >= 0 && before <= total
+      ? before
+      : undefined;
+  return {
+    kind: 'ok',
+    scrollback: {
+      version: 2,
+      sessionId: p.sessionId,
+      segments,
+      ...(beforeLaunch === undefined ? {} : { beforeLaunch }),
+    },
+  };
 }

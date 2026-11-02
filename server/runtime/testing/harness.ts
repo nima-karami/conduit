@@ -85,6 +85,12 @@ class Ring {
   resized(sessionId: string, size: TermGeometry) {
     this.appended.push({ sessionId, data: '', size });
   }
+  readonly launches: string[] = [];
+  onLaunch?: () => void;
+  launchStarted(sessionId: string) {
+    this.launches.push(sessionId);
+    this.onLaunch?.();
+  }
   text(sessionId: string) {
     return this.appended
       .filter((a) => a.sessionId === sessionId)

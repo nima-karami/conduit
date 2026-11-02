@@ -249,7 +249,7 @@ describe('server domain: sessions.start', () => {
     expect(leaked).toEqual([]);
   });
 
-  it('returns spawned:false for a live session: no prelude, no second run', async () => {
+  it('returns spawned:false for a live session with nothing before its launch: no prelude, no second run', async () => {
     const h = harness({ replay: { data: 'x', replay: [{ length: 1 }] } });
     const id = await h.create();
     await start(h, id);
@@ -257,6 +257,40 @@ describe('server domain: sessions.start', () => {
     expect(again).toMatchObject({ ok: true, spawned: false, generation: 1 });
     expect(again.prelude).toBeUndefined();
     expect(h.runtime.spawns).toHaveLength(1);
+  });
+
+  it('a live start replays the ring before the launch, then a screen of padding', async () => {
+    const geometry = { cols: 90, rows: 20 };
+    const h = harness({
+      platform: 'win32',
+      before: { data: 'R1 marker', replay: [{ length: 9, geometry }] },
+    });
+    const id = await h.create();
+    h.domain.resized(id, { cols: 50, rows: 3 });
+    await start(h, id);
+    const again = (await start(h, id)) as Started;
+    expect(again).toMatchObject({ ok: true, spawned: false });
+    expect(again.prelude).toEqual({
+      data: `R1 marker${'\r\n'.repeat(3)}`,
+      replay: [{ length: 9, geometry }, { length: 6 }],
+    });
+    expect(h.runtime.spawns).toHaveLength(1);
+  });
+
+  it('a live start replays nothing before the launch with scrollback persistence off', async () => {
+    const h = harness({
+      before: { data: 'R1', replay: [{ length: 2 }] },
+      files: {
+        'server-settings.json': JSON.stringify({
+          version: 1,
+          settings: { scrollbackPersistence: false },
+        }),
+      },
+    });
+    const id = await h.create();
+    await start(h, id);
+    const again = (await start(h, id)) as Started;
+    expect(again.prelude).toBeUndefined();
   });
 
   it('shares one spawn between concurrent starts', async () => {

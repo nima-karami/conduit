@@ -71,6 +71,17 @@ describe('TerminalRuntime spawn', () => {
     ]);
   });
 
+  it('marks the launch in the ring before the run, so a live attach replays only what came before', async () => {
+    await started();
+    let runsAtMark = -1;
+    h.ring.onLaunch = () => {
+      runsAtMark = calls('terminal.run').length;
+    };
+    await spawned();
+    expect(h.ring.launches).toEqual(['s1']);
+    expect(runsAtMark).toBe(0);
+  });
+
   it('runs with the fixed flags, name = launch id, TERM_PROGRAM=conduit and no HC_* in env', async () => {
     await started();
     const ids = launch(7);

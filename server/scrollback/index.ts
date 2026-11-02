@@ -89,6 +89,18 @@ export class ServerScrollback implements ScrollbackPort {
     this.append(sessionId, '', size);
   }
 
+  /** A launch is about to run: what the ring holds now precedes it (`replayBeforeLaunch`). */
+  launchStarted(sessionId: string): void {
+    this.hydrate(sessionId);
+    this.store.markLaunch(sessionId);
+  }
+
+  replayBeforeLaunch(sessionId: string): FirstPaint | null {
+    this.hydrate(sessionId);
+    const replay = this.store.replayBeforeLaunch(sessionId);
+    return replay ? { data: replay.data, replay: replay.runs } : null;
+  }
+
   replayForColdStart(sessionId: string): FirstPaint | null {
     this.hydrate(sessionId);
     const replay = this.store.replayForColdStart(sessionId, () => undefined);
@@ -125,9 +137,11 @@ export class ServerScrollback implements ScrollbackPort {
   private hydrate(sessionId: string): void {
     if (this.hydrated.has(sessionId)) return;
     this.hydrated.add(sessionId);
-    const segments = this.gate.restore(scrollbackFileName(sessionId))?.segments;
-    for (const segment of segments ?? [])
+    const restored = this.gate.restore(scrollbackFileName(sessionId));
+    for (const segment of restored?.segments ?? [])
       this.store.append(sessionId, segment.data, segment.geometry);
+    if (restored?.beforeLaunch !== undefined)
+      this.store.markLaunch(sessionId, restored.beforeLaunch);
   }
 
   private trackWrite(write: () => void | Promise<void>): void {

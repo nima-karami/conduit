@@ -139,6 +139,8 @@ export interface HarnessOptions {
   userData?: string;
   runtime?: FakeRuntime;
   replay?: FirstPaint | null;
+  /** ScrollbackPort.replayBeforeLaunch's answer. */
+  before?: FirstPaint | null;
   stopping?: boolean;
   e2e?: boolean;
   env?: Record<string, string>;
@@ -180,7 +182,12 @@ export function harness(opts: HarnessOptions = {}) {
   const written: { sessionId: string; data: string; generation?: number }[] = [];
   const drafts: { sessionId: string; data: string }[] = [];
   const submitted: { sessionId: string; text: string }[] = [];
-  const state = { stopping: opts.stopping ?? false, busy: false, replay: opts.replay ?? null };
+  const state = {
+    stopping: opts.stopping ?? false,
+    busy: false,
+    replay: opts.replay ?? null,
+    before: opts.before ?? null,
+  };
   const logs: string[] = [];
   const log = (level: string) => (scope: string, msg: string) =>
     logs.push(`${level} ${scope} ${msg}`);
@@ -209,6 +216,10 @@ export function harness(opts: HarnessOptions = {}) {
       replayForColdStart: (id) => {
         calls.push(`replay:${id}`);
         return state.replay;
+      },
+      replayBeforeLaunch: (id) => {
+        calls.push(`before:${id}`);
+        return state.before ?? null;
       },
       show: (sessionId, data) => {
         calls.push('show');
