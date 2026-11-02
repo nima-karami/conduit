@@ -121,6 +121,8 @@ export interface CallFlow {
   /** false unless the request is waiting, `fromWindowId` is its window, and `raw` parses for its kind. */
   answerUi(requestId: string, fromWindowId: number, raw: unknown): boolean;
   awaitingApproval(): string[];
+  /** No app is left to answer (D8 grace): every waiting ask ends ui_unavailable; returns them. */
+  denyUnavailable(): Array<{ askId: string; sessionId: string; tool: ToolName }>;
   dispose(): void;
 }
 
@@ -201,6 +203,8 @@ function parseUiResult(kind: McpUiAction['kind'], v: unknown): McpUiResult | nul
 export function createCallFlow(deps: CallFlowDeps): CallFlow {
   /** By connId, then requestId: a Map keeps 1 and '1' apart, as JSON-RPC does. */
   const inflight = new Map<number, Map<JsonRpcId, Entry>>();
+  /** Asks ended by denyUnavailable: their cancelled end reads as ui_unavailable. */
+  const unavailable = new Set<string>();
   const waits = createWindowWaits<AskAnswer, AskMeta>({
     now: deps.now,
     setTimer: deps.setTimer,
@@ -285,6 +289,11 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       case 'expired':
         return { ok: false, error: approvalTimeout() };
       case 'cancelled':
+        if (unavailable.delete(askId))
+          return {
+            ok: false,
+            error: toolError('ui_unavailable', 'no Conduit window was open to answer the request'),
+          };
         return end.reply
           ? { ok: false, error: toolError('cancelled', 'the request was cancelled') }
           : null;
@@ -471,6 +480,15 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     },
 
     awaitingApproval: () => [...new Set(waits.pending().map((w) => w.callerSessionId))],
+
+    denyUnavailable() {
+      const ended = waits.pending().map((w) => {
+        unavailable.add(w.id);
+        return { askId: w.id, sessionId: w.callerSessionId, tool: w.meta.tool };
+      });
+      waits.cancel((w) => unavailable.has(w.id), true);
+      return ended;
+    },
 
     dispose() {
       waits.dispose();

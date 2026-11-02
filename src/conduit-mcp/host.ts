@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteFileSync } from '../atomic-write';
 import type { DraftPort, LaunchPort, McpHostDeps } from '../contracts/server-ports';
+import type { CliBindingRecord } from '../contracts/session-identity';
 import type { LaunchIds } from '../contracts/terminal-runtime';
 import { inputBoxTop } from '../input-box-rows';
 import type { HostPlatform } from '../lsp-binary';
@@ -10,7 +11,7 @@ import { mcpLaunchWiring, mcpServerCommand } from '../mcp-launch';
 import type { HostToWebview, WebviewToHost } from '../protocol';
 import type { SubmitOutcome } from '../pty-writer';
 import { PTY_SETTLE_MS } from '../timed-messages';
-import type { SpawnSpec } from '../types';
+import type { AgentDefinition, SpawnSpec } from '../types';
 import { adapterFor, MCP_ADAPTERS, type McpAdapter, notifiable } from './adapters';
 import { createAppControlHandlers } from './app-control-tools';
 import { snapshotAttachment } from './attachments';
@@ -139,6 +140,11 @@ export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
     log: Pick<HostLog, 'debug' | 'warn'>;
   }): McpEndpoint;
   newAskId?: () => string;
+  /**
+   * D28: a shell's admitted typed-CLI binding, or null once it ends, so the embedder can persist it
+   * and hand it back to resumeLaunch after a server restart. Not called while the host stops.
+   */
+  onBindingChanged?(sessionId: string, binding: Omit<CliBindingRecord, 'sessionId'> | null): void;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
 }
@@ -162,6 +168,19 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
   onWindowReset(windowId: number): void;
   /** The session now belongs to another window: its asks end `cancelled`. */
   onSessionMoved(sessionId: string): void;
+  /**
+   * An adopted launch (C1 `spawned` with no prepareLaunch in this run): restores the per-launch
+   * state prepareLaunch would have set, without reserving a token. With a binding of this
+   * generation, the first connection whose initialize clientInfo.name matches is bound (D28).
+   */
+  resumeLaunch(
+    sessionId: string,
+    def: AgentDefinition,
+    ids: LaunchIds,
+    binding: CliBindingRecord | null,
+  ): void;
+  /** No app for the grace (D8): every waiting ask ends `ui_unavailable`. */
+  denyAsksUnavailable(): void;
   refresh(): void;
   uiState(): McpUiState;
   /** `senderId`: the window the message came from; an ask answer counts only from its own window. */
@@ -204,6 +223,10 @@ interface Runtime {
   lastLine: { cli: AgentCli | null; at: number } | undefined;
   /** The connection a shell's notices are bound to; typed lines are its prompts while it lives. */
   bound: number | undefined;
+  /** What the bound connection was admitted as, for onBindingChanged. */
+  boundAs: { cli: AgentCli; clientInfoName: string } | undefined;
+  /** A resumed binding waiting for its client's initialize (D28). */
+  rebind: CliBindingRecord | undefined;
   detect: { cli: AgentCli; at: number } | undefined;
   notConnected: McpNotConnected | undefined;
   hasDraft: boolean;
@@ -312,6 +335,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         tracker: undefined,
         lastLine: undefined,
         bound: undefined,
+        boundAs: undefined,
+        rebind: undefined,
         detect: undefined,
         notConnected: undefined,
         hasDraft: false,
@@ -354,8 +379,27 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const id = pickNoticeAdapterId(r?.defAdapter?.id, boundKinds(sessionId, r));
     return MCP_ADAPTERS.find((a) => a.id === id) ?? null;
   };
-  const unbind = (r: Runtime) => {
-    r.bound = undefined;
+  /** Every change of a binding goes through here, so the embedder's copy never drifts. */
+  const setBound = (
+    sessionId: string,
+    r: Runtime,
+    next: { connId: number; cli: AgentCli; clientInfoName: string } | undefined,
+  ) => {
+    const had = r.bound !== undefined;
+    r.bound = next?.connId;
+    r.boundAs = next && { cli: next.cli, clientInfoName: next.clientInfoName };
+    // A stopping host closes every connection; the binding must outlive that for the resume.
+    if (stopped) return;
+    if (next)
+      deps.onBindingChanged?.(sessionId, {
+        generation: r.launch,
+        cli: next.cli,
+        clientInfoName: next.clientInfoName,
+      });
+    else if (had) deps.onBindingChanged?.(sessionId, null);
+  };
+  const unbind = (sessionId: string, r: Runtime) => {
+    setBound(sessionId, r, undefined);
     r.lastLine = undefined;
     scheduleBroadcast();
   };
@@ -939,9 +983,16 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const r = runtime.get(sessionId);
     if (r?.size) screens.ensure(sessionId, { seedTail: true });
     // One binding per typed line: a second client (`code .` from inside the CLI) never takes it.
-    if (r && !r.defAdapter && r.bound === undefined && bindsTypedLine(kind, r.lastLine?.cli)) {
-      r.bound = connId;
-      r.lastLine = undefined;
+    const lineCli = r?.lastLine?.cli;
+    if (r && !r.defAdapter && r.bound === undefined) {
+      if (lineCli && bindsTypedLine(kind, lineCli)) {
+        setBound(sessionId, r, { connId, cli: lineCli, clientInfoName: name ?? '' });
+        r.lastLine = undefined;
+        r.rebind = undefined;
+      } else if (name !== null && r.rebind?.clientInfoName === name) {
+        setBound(sessionId, r, { connId, cli: r.rebind.cli, clientInfoName: name });
+        r.rebind = undefined;
+      }
     }
     if (r) {
       r.detect = undefined;
@@ -1026,7 +1077,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       flow.connectionClosed(conn.id);
       const owner = connSession.get(conn.id);
       const r = owner === undefined ? undefined : runtime.get(owner);
-      if (r?.bound === conn.id) unbind(r);
+      if (owner !== undefined && r?.bound === conn.id) unbind(owner, r);
       conns.delete(conn.id);
       connSession.delete(conn.id);
       connKinds.delete(conn.id);
@@ -1174,7 +1225,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     if (!r?.tracker) return;
     // Focus reports and device-attribute replies would mark the line unknown (plan amendment N2).
     // Ctrl+Z hands the prompt back to the shell while the CLI's connection stays open.
-    if (r.bound !== undefined && data.includes('\x1a')) unbind(r);
+    if (r.bound !== undefined && data.includes('\x1a')) unbind(sessionId, r);
     const lines = r.tracker.feed(stripTerminalReplies(data));
     // While bound, a typed line is a prompt to that CLI, not a command line. An Enter with nothing
     // typed answers the starting CLI's own dialog only while that CLI is fresh; later it may be a
@@ -1279,7 +1330,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       r.spawnedAt = undefined;
       r.tracker = undefined;
       r.lastLine = undefined;
-      r.bound = undefined;
+      setBound(sessionId, r, undefined);
+      r.rebind = undefined;
       r.detect = undefined;
       r.notConnected = undefined;
       scheduleBroadcast();
@@ -1354,7 +1406,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       r.launch = ids.generation;
       r.tracker = undefined;
       r.lastLine = undefined;
-      r.bound = undefined;
+      setBound(sessionId, r, undefined);
+      r.rebind = undefined;
       r.detect = undefined;
       if (r.notConnected) {
         r.notConnected = undefined;
@@ -1472,6 +1525,48 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     onSessionMoved(sessionId) {
       flow.sessionMoved(sessionId);
+    },
+
+    resumeLaunch(sessionId, def, ids, binding) {
+      if (!deps.sessions.get(sessionId)) return;
+      const adapter = adapterFor(def, { e2e: deps.e2e });
+      const rows = deps.tokens.rows();
+      const tokenBearing =
+        rows.state === 'loaded' &&
+        rows.rows.some(
+          (row) =>
+            row.sessionId === sessionId &&
+            row.generation === ids.generation &&
+            row.state !== 'superseded',
+        );
+      const r = rt(sessionId);
+      r.defAdapter = adapter;
+      r.unavailable = null;
+      r.launch = ids.generation;
+      // As wireWithoutAdapter: only a shell that got identity env runs a CLI that can connect.
+      r.tracker = !adapter && tokenBearing ? createTypedLineTracker() : undefined;
+      r.lastLine = undefined;
+      r.bound = undefined;
+      r.boundAs = undefined;
+      r.detect = undefined;
+      r.rebind =
+        binding &&
+        !adapter &&
+        binding.sessionId === sessionId &&
+        binding.generation === ids.generation
+          ? binding
+          : undefined;
+      scheduleBroadcast();
+    },
+
+    denyAsksUnavailable() {
+      for (const ask of flow.denyUnavailable())
+        deps.log.info('conduit-mcp', 'ask denied: no app', {
+          askId: ask.askId,
+          sessionId: ask.sessionId,
+          tool: ask.tool,
+          code: 'ui_unavailable',
+        });
     },
 
     refresh() {

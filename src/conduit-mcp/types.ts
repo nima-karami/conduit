@@ -47,7 +47,8 @@ export type ToolErrorCode =
   | 'not_a_repo'
   | 'attach_refused'
   | 'unsaved_changes'
-  | 'ui_timeout';
+  | 'ui_timeout'
+  | 'ui_unavailable';
 export interface ToolError {
   code: ToolErrorCode;
   message: string;
