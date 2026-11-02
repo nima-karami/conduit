@@ -73,7 +73,10 @@ export interface McpServerDeps extends Omit<McpHostDeps, 'tokens'> {
   install: Pick<McpInstallDeps, 'env' | 'userDataDir' | 'onPath' | 'knownHome' | 'io'>;
   host?: HostTestSeams;
   randomToken?: PersistentTokenStoreOptions['randomToken'];
-  /** Window-routed ui.post goes to the window's own app connection, under its own window id. */
+  /**
+   * Window-routed ui.post goes to the window's own app connection, under its own window id.
+   * Compose provides it from the transport's per-peer send (PipeTransport.emitTo).
+   */
   emitTo: AppEventSink;
 }
 
@@ -214,7 +217,9 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
   const prepared = new Map<string, number>();
   // Subscribed before the host, so the adopted session's state exists when its spawned handler runs.
   const stopAdopt = deps.runtime.on((e) => {
-    if (e.type === 'exit') prepared.delete(e.sessionId);
+    // An older generation's late exit must not make the live one's next `spawned` read as an adopt.
+    if (e.type === 'exit' && prepared.get(e.sessionId) === e.generation)
+      prepared.delete(e.sessionId);
     if (e.type !== 'spawned' || prepared.get(e.sessionId) === e.generation) return;
     prepared.set(e.sessionId, e.generation);
     const def = deps.domain.defOf(e.sessionId);
@@ -292,8 +297,8 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     },
 
     presence(conn, windows) {
-      // Only a window can answer an ask: an app with none is still away.
-      if (windows.length > 0) cancelGrace();
+      // Only a ready window can answer an ask: an app with none is still away.
+      if (windows.some((w) => w.ready)) cancelGrace();
       presence.update(conn, windows);
     },
     appDisconnected(conn) {

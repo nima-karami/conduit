@@ -1320,7 +1320,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     } else if (event.type === 'size') {
       if (r) r.size = event.size;
     } else if (event.type === 'exit') {
-      if (!r) return;
+      // A late exit of an older generation would revoke the live launch's token and binding.
+      if (!r || event.generation !== r.launch) return;
       deps.tokens.revoke({ sessionId }).catch((err: unknown) => {
         deps.log.warn('conduit-mcp', 'token not revoked', { sessionId, err: String(err) });
       });

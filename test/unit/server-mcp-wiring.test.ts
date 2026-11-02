@@ -227,6 +227,11 @@ function harness(opts: { manualTimers?: boolean } = {}) {
     for (const l of listeners)
       l({ type: 'spawned', sessionId: id, generation: t.generation, size: t.size });
   };
+  /** C1 `exit` of a given generation, without touching the live terminal record. */
+  const exit = (id: string, generation: number) => {
+    for (const l of listeners)
+      l({ type: 'exit', sessionId: id, generation, code: 0, reason: 'exited' });
+  };
   const spawn = (id: string, generation: number) => {
     terminals.set(id, {
       sessionId: id,
@@ -263,6 +268,7 @@ function harness(opts: { manualTimers?: boolean } = {}) {
     },
     restart,
     adopt,
+    exit,
     advance,
     dir,
     ep,
@@ -632,6 +638,25 @@ describe('D28 bindings across a server restart', () => {
     expect(h.submits).toEqual([]);
   });
 
+  it('a stale exit of an older generation leaves the live launch alone', async () => {
+    const h = harness();
+    await h.mcp.start();
+    await h.launch('s1', SHELL);
+    const { token, ids } = await h.launch('s1', SHELL);
+    h.mcp.termInput({ sessionId: 's1', generation: ids.generation, data: 'codex\r' });
+    await client(h.ep, token, { name: 'codex-mcp-client' });
+    await expect.poll(() => bindingsOf(h)?.length).toBe(1);
+    h.exit('s1', ids.generation - 1);
+    // A repeated `spawned` of the live generation (a re-attach) is not an adopt either.
+    h.adopt('s1');
+    expect(bindingsOf(h)).toHaveLength(1);
+    const rows = h.mcp.tokens.rows();
+    expect(rows.state === 'loaded' && rows.rows.map((r) => r.generation)).toEqual([ids.generation]);
+    await notice(h);
+    void h.mcp.tick();
+    await expect.poll(() => h.submits.map((x) => x.sessionId)).toEqual(['s1']);
+  });
+
   it('a new launch drops the binding', async () => {
     const { h } = await typedCodexThenRestart();
     await h.launch('s1', SHELL);
@@ -679,15 +704,27 @@ describe('D8 grace: no app for 5 s', () => {
     await expect.poll(() => errorOf(c.lines.find((l) => l.id === 5))).toBe('ui_unavailable');
   });
 
-  it('a renderer message from a window no presence named answers nothing', async () => {
-    const { h, app } = await askingManual();
+  it('a renderer message from a connection no presence named answers nothing and is no app', async () => {
+    const { h, c, app } = await askingManual();
     const askId = h.mcp.pendingAsks()[0]?.askId ?? '';
-    await h.mcp.fromRenderer(app, {
-      windowId: 99,
-      message: { type: 'mcp:askAnswer', askId, answer: 'approve' },
-    });
+    await h.mcp.fromRenderer(
+      {},
+      { windowId: 1, message: { type: 'mcp:askAnswer', askId, answer: 'approve' } },
+    );
     expect(h.opens).toEqual([]);
     expect(h.mcp.pendingAsks()).toHaveLength(1);
+    // Had the lookup allocated that connection, the grace would never start.
+    h.mcp.appDisconnected(app);
+    h.advance(5_100);
+    await expect.poll(() => errorOf(c.lines.find((l) => l.id === 5))).toBe('ui_unavailable');
+  });
+
+  it('an app back whose windows are all not ready does not end the grace', async () => {
+    const { h, c, app } = await askingManual();
+    h.mcp.appDisconnected(app);
+    h.mcp.presence({}, [win(1, { ready: false, ownedSessionIds: ['s1'] })]);
+    h.advance(5_100);
+    await expect.poll(() => errorOf(c.lines.find((l) => l.id === 5))).toBe('ui_unavailable');
   });
 
   it('an app back within the grace keeps the asks', async () => {
