@@ -66,8 +66,8 @@ export type ShimInitPhase = 'idle' | 'init-pending' | 'init-done';
  * FALLBACK answers locally until the first successful connect; PERMANENT_FALLBACK never retries.
  * The initial-connect deadline applies to the first CONNECTING and to RECONNECTING in `init-pending`;
  * RECONNECTING after `init-done` keeps buffering, since its client already has a handshake.
- * Snapshot rule: a hello carries the init snapshot (phase, cached initialize) at the moment it is
- * sent. If the phase changes before that attempt's welcome, e.g. the local fallback answers
+ * Snapshot rule: a hello carries the init snapshot (phase, cached initialize, `initialized`) at the moment it is
+ * sent. If any of it changes before that attempt's welcome, e.g. the local fallback answers
  * `initialize`, the attempt is abandoned: close its socket and send a new hello with the new snapshot
  * (`resume` present). A connection is promoted to RELAYING only when its welcome answers the hello
  * carrying the current snapshot, so exactly one `initialize` response ever reaches the client.
