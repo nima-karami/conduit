@@ -2563,7 +2563,9 @@ app.whenReady().then(() => {
           void shell.openPath(userData());
           break;
         case 'window:sidebar':
-          // Sender-scoped: a window only ever writes its own entry, validated like a restore.
+          // Sender-scoped: a window only ever writes its own entry, validated like a restore. A
+          // sender outside the registry (closing, or a guest) would leave an entry no close drops.
+          if (!windows.has(senderId)) break;
           sidebarUiByWindow.set(senderId, parseSidebarUi(m.sidebarUi));
           schedulePersistLayout?.();
           break;

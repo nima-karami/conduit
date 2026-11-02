@@ -131,15 +131,8 @@ export class ServerAttention implements AttentionPort {
   sweep(): void {
     const swept = this.activity.sweep(this.now());
     let changed = swept.changed;
-    for (const edge of swept.edges) {
-      if (this.reported.has(edge.id)) continue;
-      // Edges only arm off-screen, so a bell edge is exactly a genuine unseen bell.
-      if (edge.kind === 'bell' && this.reasons.get(edge.id) !== 'bell') {
-        this.reasons.set(edge.id, 'bell');
-        changed = true;
-      }
-      this.edge({ sessionId: edge.id, kind: edge.kind });
-    }
+    for (const edge of swept.edges)
+      if (!this.reported.has(edge.id)) this.edge({ sessionId: edge.id, kind: edge.kind });
     // A reporting program's report is authoritative, so its output never counts twice.
     for (const id of swept.completedIds)
       if (!this.reported.has(id)) {
@@ -170,7 +163,20 @@ export class ServerAttention implements AttentionPort {
     const inert = scanInertOutput(this.inertTails.get(sessionId) ?? '', data);
     this.inertTails.set(sessionId, inert.tail);
     if (inert.inert) return;
-    if (this.activity.recordOutput(sessionId, this.now(), data.length, scan.bells)) this.changed();
+    const becameBusy = this.activity.recordOutput(sessionId, this.now(), data.length, scan.bells);
+    // The bell reason has no episode latch, unlike the legacy edge: every unseen bell raises it,
+    // and the next run of output (Working again) puts it down. Heuristics only (D34).
+    let reasonChanged = false;
+    if (!this.reported.has(sessionId)) {
+      if (scan.bells > 0 && !this.activity.isVisible(sessionId)) {
+        reasonChanged = this.reasons.get(sessionId) !== 'bell';
+        this.reasons.set(sessionId, 'bell');
+      } else if (becameBusy && this.reasons.get(sessionId) === 'bell') {
+        this.reasons.delete(sessionId);
+        reasonChanged = true;
+      }
+    }
+    if (becameBusy || reasonChanged) this.changed();
   }
 
   private status(sessionId: string, status: ReportedStatus): void {
@@ -187,12 +193,16 @@ export class ServerAttention implements AttentionPort {
   }
 
   private applyStatus(sessionId: string, status: ReportedStatus): void {
+    const prev = this.reported.get(sessionId);
+    // Evidence gathered under the other authority must not complete a run under this one, or a
+    // program that stops reporting right after a reported Done would count that run twice.
+    if ((prev === undefined) !== (status === null))
+      this.activity.resetCompletionEvidence(sessionId);
     if (!status) {
       this.reported.delete(sessionId);
       this.reasons.delete(sessionId);
       return;
     }
-    const prev = this.reported.get(sessionId);
     const r: Reported = prev ?? {
       status,
       needsAttention: false,

@@ -60,6 +60,12 @@ function inSelection(s: Session, selection: SpaceSelection): boolean {
   return s.projectId === selection.projectId;
 }
 
+/** A row the runtime has not seen yet ages from lastActiveAt, never from the future. */
+function sinceFallback(s: Session): number {
+  const now = Date.now();
+  return Number.isFinite(s.lastActiveAt) ? Math.min(s.lastActiveAt, now) : now;
+}
+
 /** Without a seen entry the id is baselined, so it can never read as Done. */
 function ownState(s: Session, runtime: AgentRuntime, asks: ReadonlySet<string>): AgentState {
   return agentOwnState(s, runtime.seen[s.id] ?? Number.POSITIVE_INFINITY, asks.has(s.id));
@@ -158,7 +164,7 @@ export function buildAgentTree(input: {
       depth: d,
       state,
       effectiveState: below === null ? state : maxState(state, below),
-      stateSince: runtime.stateSince[id] ?? s.lastActiveAt,
+      stateSince: runtime.stateSince[id] ?? sinceFallback(s),
       childIds: kids,
       descendantCount: descCount.get(id) ?? 0,
       childState: below,

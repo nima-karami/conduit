@@ -222,6 +222,12 @@ export class SessionActivity {
     this.visibleByWindow.delete(windowId);
   }
 
+  /** Drop the completion run in flight; the legacy evidence and public flags are untouched. */
+  resetCompletionEvidence(id: string): void {
+    const e = this.entries.get(id);
+    if (e) clearDone(e);
+  }
+
   /** Stop tracking a removed session. */
   forget(id: string): void {
     this.entries.delete(id);

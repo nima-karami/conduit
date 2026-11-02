@@ -277,6 +277,7 @@ import { setMentionSink } from './mention-bus';
 import { useMonacoNavKeybindings } from './monaco-nav-keybindings';
 import { registerConduitEditorOpener } from './monaco-opener';
 import { lastCursor, liveCursor, revealInNavEditor, setCursorJumpSink } from './nav-editors';
+import { createPaneQueue } from './pane-queue';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { probePathExists } from './path-probe';
 import { planExternalChanges } from './plan-store';
@@ -1016,24 +1017,22 @@ export function App() {
   // remembered rightPaneTab; a changed preference (hydration, explicit pick) is adopted.
   const [rightTab, setRightTab] = useState<RightPaneTab>(settings.rightPaneTab);
   useEffect(() => setRightTab(settings.rightPaneTab), [settings.rightPaneTab]);
-  // Imperative panel work waits for the mounted handle: the panel may be opening in this very
-  // commit, and the layout effect below drains the queue once the child has set its ref.
-  const paneQueueRef = useRef<((pane: RightPaneHandle) => void)[]>([]);
+  const [paneQueue] = useState(() => createPaneQueue<RightPaneHandle>());
   const [paneQueueSeq, setPaneQueueSeq] = useState(0);
   const runInPane = useCallback(
     (tab: RightPaneTab, action: (pane: RightPaneHandle) => void, open: boolean) => {
       setRightTab(tab);
       if (open && settingsRef.current.explorerCollapsed) update({ explorerCollapsed: false });
-      paneQueueRef.current.push(action);
+      paneQueue.push(action);
       setPaneQueueSeq((n) => n + 1);
     },
-    [update],
+    [update, paneQueue],
   );
+  // Passive, not layout: child passive effects run first, so a pane mounting in this commit has
+  // already adopted its remembered tab and the queued action's switch lands after it, not under it.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the deps are the drain triggers.
-  useLayoutEffect(() => {
-    const pane = rightPaneRef.current;
-    if (!pane || settings.explorerCollapsed) return;
-    for (const action of paneQueueRef.current.splice(0)) action(pane);
+  useEffect(() => {
+    paneQueue.drain(rightPaneRef.current, !settings.explorerCollapsed);
   }, [paneQueueSeq, settings.explorerCollapsed]);
   // Open global search: ensure the Explorer panel is visible, then focus the Search tab.
   const openGlobalSearch = useCallback(
@@ -1911,13 +1910,28 @@ export function App() {
       document.removeEventListener('visibilitychange', sync);
     };
   }, []);
+  // Which of the two terminals (active, split) holds keyboard focus: a background split does not
+  // count as viewed. Read off center-pane's termstack, where the split host alone carries a bar.
+  const [focusedTerminal, setFocusedTerminal] = useState<'active' | 'split' | null>(null);
+  useEffect(() => {
+    const read = () => {
+      const host = document.activeElement?.closest('.termstack > .termhost');
+      setFocusedTerminal(
+        host ? (host.querySelector(':scope > .termhost__bar') ? 'split' : 'active') : null,
+      );
+    };
+    document.addEventListener('focusin', read);
+    document.addEventListener('focusout', read);
+    return () => {
+      document.removeEventListener('focusin', read);
+      document.removeEventListener('focusout', read);
+    };
+  }, []);
+  const focusedTerminalId =
+    focusedTerminal === 'active' ? activeId : focusedTerminal === 'split' ? splitId : null;
   const viewedTerminalId =
-    windowLooking &&
-    centerView === 'editor' &&
-    activeId !== undefined &&
-    layout.activeGroup === 1 &&
-    layout.groups[0]?.activeDocId === null
-      ? activeId
+    windowLooking && centerView === 'editor' && layout.groups[0]?.activeDocId === null
+      ? (focusedTerminalId ?? undefined)
       : undefined;
   const viewedTerminalIds = useMemo(
     () => new Set(viewedTerminalId === undefined ? [] : [viewedTerminalId]),
@@ -3349,9 +3363,7 @@ export function App() {
       s.id,
     );
     const all = closeAllIds(sessions.map((x) => x.id));
-    // Messaging (spec §9 card menu): only a session with a handle can be messaged or paused.
     const badge = mcp.state?.sessions[s.id];
-    // The banner's actions, reachable by keyboard while focus sits in xterm (spec 2026-10-27-conduit-mcp-install §2.5).
     const notConnected = mcp.state?.notConnected[s.id];
     const pinned = sidebarUi.pinnedIds.includes(s.id);
     setMenu({
@@ -3364,11 +3376,13 @@ export function App() {
         pinned,
         hasApproval: askSessionIds.has(s.id),
         waitingTimers: waitingCountFor(getTimerSnapshot(), s.id),
+        // Messaging (spec §9 card menu): only a session with a handle can be messaged or paused.
         hasMcp: badge !== undefined,
         mcpHandle: badge?.handle ?? null,
         mcpPaused: badge?.paused === true,
         // Offered before any launch: a switchable session may not have a handle yet (spec §4).
         mcpSwitchable: mcp.state?.switchable.includes(s.id) === true,
+        // The banner's actions, reachable by keyboard while focus sits in xterm (spec 2026-10-27-conduit-mcp-install §2.5).
         mcpSetupNeeded: notConnected !== undefined,
         otherCount: others.length,
         allCount: all.length,
@@ -3385,13 +3399,16 @@ export function App() {
           pauseMcp: () => mcp.pause(s.id, badge?.paused !== true),
           mcpTools: () => setMcpToolsFor(s.id),
           setupMcp: () => openSettingsAt('mcp', notConnected?.cli),
-          pin: () =>
+          // From the live value: the menu may outlive a sidebar edit made while it was open.
+          pin: () => {
+            const ui = sidebarSyncRef.current.ui;
             updateSidebarUi({
-              ...sidebarUi,
-              pinnedIds: pinned
-                ? sidebarUi.pinnedIds.filter((id) => id !== s.id)
-                : [...sidebarUi.pinnedIds, s.id],
-            }),
+              ...ui,
+              pinnedIds: ui.pinnedIds.includes(s.id)
+                ? ui.pinnedIds.filter((id) => id !== s.id)
+                : [...ui.pinnedIds, s.id],
+            });
+          },
           rename: () => {
             setActiveId(s.id);
             setRenamingId(s.id);

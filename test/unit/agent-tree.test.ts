@@ -326,3 +326,20 @@ describe('buildSpaceRows', () => {
     expect(rows(sessions).find((x) => x.key === 'all')?.branch).toBeNull();
   });
 });
+
+describe('buildAgentTree — age fallback', () => {
+  it('a row the runtime has not seen ages from lastActiveAt clamped to now', () => {
+    const sessions = [S('past', { lastActiveAt: 5 }), S('future', { lastActiveAt: 9e15 })];
+    const before = Date.now();
+    const t = buildAgentTree({
+      sessions,
+      runtime: { seen: {}, stateSince: {} },
+      ui: defaultSidebarUi(),
+      matchingIds: new Set(['past', 'future']),
+      askSessionIds: new Set(),
+    });
+    expect(t.rows.past.stateSince).toBe(5);
+    expect(t.rows.future.stateSince).toBeGreaterThanOrEqual(before);
+    expect(t.rows.future.stateSince).toBeLessThanOrEqual(Date.now());
+  });
+});

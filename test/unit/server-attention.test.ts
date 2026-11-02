@@ -331,3 +331,68 @@ describe('ServerAttention — completions and reasons (sidebar-agent-tree spec �
     expect(edges.map((e) => e.kind)).toEqual(['run-end', 'run-end']);
   });
 });
+
+describe('ServerAttention — review round (authority switch, bell latch)', () => {
+  const facts = () => {
+    const s = attention.statusOf('a');
+    return { attentionReason: s.attentionReason, completions: s.completions };
+  };
+
+  it('a program that stops reporting right after a reported Done counts that run once', () => {
+    setup();
+    status({ state: 'working' });
+    at(10_000);
+    data('x'.repeat(2000));
+    status({ state: 'done' });
+    status(null);
+    at(30_000);
+    attention.sweep();
+    expect(facts().completions).toBe(1);
+  });
+
+  it('heuristic evidence from before a program starts reporting never completes later', () => {
+    setup();
+    at(10_000);
+    data('x'.repeat(2000));
+    status({ state: 'idle' });
+    status(null);
+    at(30_000);
+    attention.sweep();
+    expect(facts().completions).toBe(0);
+  });
+
+  it('every unseen bell raises the reason, even with the legacy episode already armed', () => {
+    setup();
+    at(10_000);
+    data('x'.repeat(2000));
+    at(20_000);
+    attention.sweep();
+    expect(attention.statusOf('a').needsAttention).toBe(true);
+    expect(facts().attentionReason).toBeNull();
+    at(25_000);
+    data('\x07');
+    expect(facts().attentionReason).toBe('bell');
+  });
+
+  it('the bell reason survives output inside the same run and clears when Working resumes', () => {
+    setup();
+    at(10_000);
+    data('ask?\x07');
+    at(10_500);
+    data('statusline');
+    expect(facts().attentionReason).toBe('bell');
+    at(13_000);
+    attention.sweep(); // quiet: no longer busy
+    data('working again');
+    expect(facts().attentionReason).toBeNull();
+  });
+
+  it('seeing the session clears the bell reason', () => {
+    setup();
+    at(10_000);
+    data('\x07');
+    expect(facts().attentionReason).toBe('bell');
+    attention.setVisible(1, ['a']);
+    expect(facts().attentionReason).toBeNull();
+  });
+});

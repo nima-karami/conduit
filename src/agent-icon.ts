@@ -7,7 +7,6 @@ import type { AgentDefinition, Session, SessionIconKind } from './types';
  * iconKindFromText delegates here. Glyph identity only, never MCP CliKind.
  */
 
-/** Strip directory and a trailing executable extension, lowercased. */
 function basenameLower(s: string): string {
   const base = s.split(/[\\/]/).filter(Boolean).pop() ?? s;
   return base.replace(/\.(exe|cmd|bat|com)$/i, '').toLowerCase();
