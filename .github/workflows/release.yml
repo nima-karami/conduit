@@ -40,6 +40,8 @@ jobs:
       - run: npm ci
 
       - run: npm run build
+      # The pinned node.exe and hc the installer bundles (ADR 0007); build/runtime-pins.json checks them.
+      - run: node build/fetch-runtime.mjs
 
       # Build the installer + update metadata (latest.yml, blockmap) into dist/, but do
       # NOT let electron-builder publish. Its GitHub publisher uploads assets concurrently

@@ -25,7 +25,7 @@ function privateHcEnvironment(directory, session) {
 }
 
 const ECHO_PROGRAM = String.raw`process.stdout.write('E2E-READY\n');process.stdin.on('data',d=>process.stdout.write('ECHO:'+d.toString().trim()+'\n'))`;
-const FAST_PROGRAM = String.raw`process.stdout.write('FAST-OUT\n',()=>process.exit(4))`;
+const FAST_PROGRAM = String.raw`process.stdout.write('FAST-OUT\n',()=>{process.exitCode=4})`;
 
 /** TokenStorePort over memory: W5 owns the real one; the runtime only needs the port. */
 class MemTokens {
