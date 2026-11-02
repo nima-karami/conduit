@@ -8,6 +8,7 @@ import type { EndpointConnection, McpEndpoint } from '../../src/conduit-mcp/host
 import type { TokenRows } from '../../src/contracts/server-ports';
 import type { TokenRecord } from '../../src/contracts/session-identity';
 import { RESUME_NOTIFICATION } from '../../src/contracts/shim-protocol';
+import { onLines } from '../helpers/line-socket';
 import { testEndpoint } from '../helpers/test-endpoint';
 
 const FIXTURES = JSON.parse(
@@ -69,18 +70,8 @@ function dial(p: string) {
   const socket = net.connect(p);
   sockets.push(socket);
   const got: string[] = [];
-  let buf = '';
   let closed = false;
-  socket.setEncoding('utf8');
-  socket.on('data', (d: string) => {
-    buf += d;
-    let i = buf.indexOf('\n');
-    while (i >= 0) {
-      got.push(buf.slice(0, i));
-      buf = buf.slice(i + 1);
-      i = buf.indexOf('\n');
-    }
-  });
+  onLines(socket, (l) => got.push(l));
   socket.on('error', () => undefined);
   socket.on('close', () => {
     closed = true;

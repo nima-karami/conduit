@@ -1,5 +1,6 @@
 // C4 — how a Conduit session is recognised across the server, hc and MCP.
 // The token is the only identity an agent can present; labels only let the server find its terminals.
+import { isChildEnvNoise, isEditorKey } from '../child-env-noise';
 import type { AgentCli } from '../conduit-mcp/install-types';
 import type { TermGeometry } from '../protocol';
 import type { ReportedStatus } from './terminal-runtime';
@@ -228,20 +229,6 @@ export const CORE_START_RUN_FLAGS = ['--bg', '--no-parent'] as const;
  * captured the user's originals). HC_* is stripped case-insensitively, since Windows env names are;
  * `isolateXdg` is false when M22 fails, and then our core shares the user's hc config (D24).
  */
-/**
- * Panes inherit the core's env and terminal.run.env can only set, never unset (M22), so what
- * today's sanitizeChildEnv strips per spawn has to be left out of the core's env instead: editor
- * identity (a CLI would think it runs inside VS Code/Cursor), our own MCP wiring, and an editor's
- * GIT_ASKPASS that would prompt in the wrong window.
- */
-const isEditorKey = (upper: string) => upper.startsWith('VSCODE_') || upper.startsWith('CURSOR_');
-function isChildEnvNoise(upper: string, fromEditor: boolean): boolean {
-  if (isEditorKey(upper)) return true;
-  if (upper === 'TERM_PROGRAM' || upper === 'TERM_PROGRAM_VERSION') return true;
-  if (upper === 'CONDUIT_SESSION_TOKEN' || upper === 'CONDUIT_MCP_ENDPOINT') return true;
-  return upper === 'GIT_ASKPASS' && fromEditor;
-}
-
 export function coreStartEnv(
   parent: Readonly<Record<string, string | undefined>>,
   names: Pick<InstanceNames, 'hcSession' | 'hcConfigHome' | 'hcStateHome'>,
@@ -257,6 +244,8 @@ export function coreStartEnv(
     // hc's only outbound host is its release server, reached by `hc update`/`machine add`, which Conduit
     // never runs; a stray override must not redirect one run by hand (herdr-core audit, 2026-11-02).
     if (upper === 'HERDR_RELEASES_URL') continue;
+    // Panes inherit the core's env and terminal.run.env can only set (M22), so what
+    // sanitizeChildEnv strips per spawn is left out of the core's env instead.
     if (isChildEnvNoise(upper, fromEditor)) continue;
     byUpper.set(upper, v);
     if (upper !== USER_XDG_CAPTURED_ENV) env[k] = v;

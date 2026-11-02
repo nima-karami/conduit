@@ -239,26 +239,27 @@ export class PipeTransport {
     );
   }
 
-  emit: ServerEventSink = (type, data) => {
-    const seq = ++this.seq;
+  /** A peer over its buffer bound is unsubscribed and told once what it missed, at this seq. */
+  private deliver(
+    socket: Socket,
+    peer: Peer,
+    seq: number,
+    ...[type, data]: Parameters<ServerEventSink>
+  ): void {
+    const over = socket.writableLength > this.eventBufferBound;
+    if (over) peer.subscribed = false;
     const notification: ServerEventNotification = {
       jsonrpc: '2.0',
       method: SERVER_EVENT_METHOD,
-      params: { seq, type, data },
+      params: over ? { seq, type: 'missed', data: { seq } } : { seq, type, data },
     };
-    const missed: ServerEventNotification = {
-      jsonrpc: '2.0',
-      method: SERVER_EVENT_METHOD,
-      params: { seq, type: 'missed', data: { seq } },
-    };
+    void this.send(socket, notification);
+  }
+
+  emit: ServerEventSink = (type, data) => {
+    const seq = ++this.seq;
     for (const [socket, peer] of this.peers) {
-      if (!peer.subscribed) continue;
-      if (socket.writableLength <= this.eventBufferBound) {
-        void this.send(socket, notification);
-        continue;
-      }
-      peer.subscribed = false;
-      void this.send(socket, missed);
+      if (peer.subscribed) this.deliver(socket, peer, seq, type, data);
     }
   };
 
@@ -269,21 +270,7 @@ export class PipeTransport {
   emitTo: (peer: object, ...event: Parameters<ServerEventSink>) => void = (peer, type, data) => {
     for (const [socket, p] of this.peers) {
       if (p !== peer || !p.subscribed) continue;
-      const seq = ++this.seq;
-      if (socket.writableLength <= this.eventBufferBound) {
-        void this.send(socket, {
-          jsonrpc: '2.0',
-          method: SERVER_EVENT_METHOD,
-          params: { seq, type, data },
-        });
-        return;
-      }
-      p.subscribed = false;
-      void this.send(socket, {
-        jsonrpc: '2.0',
-        method: SERVER_EVENT_METHOD,
-        params: { seq, type: 'missed', data: { seq } },
-      });
+      this.deliver(socket, p, ++this.seq, type, data);
       return;
     }
   };

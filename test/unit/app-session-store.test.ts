@@ -108,7 +108,6 @@ describe('AppSessionStore D39 overlay', () => {
   });
 });
 
-// Ported from session-manager.test.ts "SessionManager repo state".
 describe('AppSessionStore repo state', () => {
   it('derives activeRepoRoot from repos with opened-root fallback', () => {
     const { store } = storeWith();

@@ -1,4 +1,3 @@
-import { resolveActiveRepo } from './active-repo';
 import type { AgentRegistry } from './agent-registry';
 import {
   type ToolName,
@@ -7,19 +6,11 @@ import {
   withPolicyPatch,
 } from './conduit-mcp/tool-policy';
 import { folderKey } from './folder-key';
-import type { RepoInfo } from './repo-scan';
 import { COMMAND_AGENT_ID, effectiveDef } from './session-command';
 import { iconKindFromText } from './session-icon';
 import { sessionNameFromPath } from './session-name';
 import { resolveTitleSync } from './session-title';
-import type {
-  BriefState,
-  GitInfo,
-  Session,
-  SessionCommand,
-  SessionOpener,
-  SessionStatus,
-} from './types';
+import type { BriefState, Session, SessionCommand, SessionOpener, SessionStatus } from './types';
 
 /** Field equality for one tool's session-layer entry so setMcpToolPolicy only emits on a change. */
 function samePolicyEntry(
@@ -28,35 +19,6 @@ function samePolicyEntry(
 ): boolean {
   return (
     a?.access === b?.access && a?.when === b?.when && a?.reach === b?.reach && a?.move === b?.move
-  );
-}
-
-/** Shallow value-equality for GitInfo so setRepoGit only emits on a real change. */
-function sameGit(a: GitInfo | undefined, b: GitInfo | undefined): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return (
-    a.kind === b.kind &&
-    a.branch === b.branch &&
-    a.unborn === b.unborn &&
-    a.sha === b.sha &&
-    a.isWorktree === b.isWorktree &&
-    a.worktreeName === b.worktreeName &&
-    a.dirty === b.dirty &&
-    a.operation === b.operation
-  );
-}
-
-export function sameRepoGit(
-  a: Record<string, GitInfo> | undefined,
-  b: Record<string, GitInfo> | undefined,
-): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  const keys = Object.keys(a);
-  return (
-    keys.length === Object.keys(b).length &&
-    keys.every((k) => Object.hasOwn(b, k) && sameGit(a[k], b[k]))
   );
 }
 
@@ -398,100 +360,6 @@ export class SessionManager {
       s.cwd = cwd;
       this.emit();
     }
-  }
-
-  setRepoGit(id: string, repoGit: Record<string, GitInfo> | undefined) {
-    const s = this.sessions.get(id);
-    if (!s || sameRepoGit(s.repoGit, repoGit)) return;
-    s.repoGit = repoGit;
-    this.emit();
-  }
-
-  /** One emit for the whole batch; skips unchanged entries (sameRepoGit per root). */
-  mergeRepoGit(patches: ReadonlyArray<{ sessionId: string; root: string; info: GitInfo }>): void {
-    let changed = false;
-    for (const { sessionId, root, info } of patches) {
-      const s = this.sessions.get(sessionId);
-      if (!s) continue;
-      const next = { ...s.repoGit, [root]: info };
-      if (sameRepoGit(s.repoGit, next)) continue;
-      s.repoGit = next;
-      changed = true;
-    }
-    if (changed) this.emit();
-  }
-
-  /** Recompute derived active-repo fields from repos+pin+auto. Returns whether they changed. */
-  private recomputeActiveRepo(s: Session): boolean {
-    const next = resolveActiveRepo({
-      repos: s.repos ?? [],
-      pinnedRoot: s.pinnedRepoRoot,
-      autoRoot: s.autoRepoRoot,
-      openedRoot: s.home,
-    });
-    // resolveActiveRepo returns the pinned root only when it still exists, so the pin is in
-    // effect iff it won. A pin whose repo vanished didn't win → drop it. (No second scan.)
-    const pinned = next !== undefined && next === s.pinnedRepoRoot;
-    if (s.pinnedRepoRoot && !pinned) delete s.pinnedRepoRoot;
-    let changed = false;
-    if (s.activeRepoRoot !== next) {
-      s.activeRepoRoot = next;
-      changed = true;
-    }
-    if (s.repoPinned !== pinned) {
-      s.repoPinned = pinned;
-      changed = true;
-    }
-    return changed;
-  }
-
-  /** Returns whether it emitted. */
-  setRepos(id: string, repos: RepoInfo[]): boolean {
-    const s = this.sessions.get(id);
-    if (!s) return false;
-    // The scan re-runs on every fsChanged tick; skip the broadcast + persist when the detected
-    // repo list is identical (same entries, same order) and nothing derived changed.
-    const sameList =
-      (s.repos?.length ?? 0) === repos.length &&
-      repos.every((r, i) => {
-        const o = s.repos?.[i];
-        return o?.root === r.root && o.tag === r.tag && o.folder === r.folder;
-      });
-    s.repos = repos;
-    let pruned = false;
-    if (s.repoGit) {
-      const roots = new Set(repos.map((r) => r.root));
-      const kept = Object.entries(s.repoGit).filter(([root]) => roots.has(root));
-      if (kept.length !== Object.keys(s.repoGit).length) {
-        s.repoGit = Object.fromEntries(kept);
-        pruned = true;
-      }
-    }
-    const derivedChanged = this.recomputeActiveRepo(s);
-    if (sameList && !derivedChanged && !pruned) return false;
-    this.emit();
-    return true;
-  }
-
-  setAutoRepo(id: string, root: string | undefined) {
-    const s = this.sessions.get(id);
-    if (!s || s.autoRepoRoot === root) return;
-    s.autoRepoRoot = root;
-    if (this.recomputeActiveRepo(s)) this.emit();
-  }
-
-  pinRepo(id: string, root: string) {
-    const s = this.sessions.get(id);
-    if (!s || s.pinnedRepoRoot === root) return;
-    s.pinnedRepoRoot = root;
-    if (this.recomputeActiveRepo(s)) this.emit();
-  }
-
-  unpinRepo(id: string) {
-    const s = this.sessions.get(id);
-    if (!s?.pinnedRepoRoot) return;
-    delete s.pinnedRepoRoot;
-    if (this.recomputeActiveRepo(s)) this.emit();
   }
 
   remove(id: string) {

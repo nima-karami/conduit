@@ -1,5 +1,6 @@
 // The one spawn resolution `term:start` launches from (mf-model spec §2.5).
 import * as path from 'node:path';
+import { isChildEnvNoise, isEditorKey } from './child-env-noise';
 import { launchArgsFor } from './launch-args';
 import type { HostPlatform } from './lsp-binary';
 import type { AgentDefinition, SpawnSpec } from './types';
@@ -46,9 +47,6 @@ export function buildLaunchSpec(req: LaunchRequest): LaunchPlan {
   return { ok: true, spec: { ...spec, command, args }, ...lists };
 }
 
-// Prefixes that identify editor-injected environment variables.
-const EDITOR_PREFIXES = ['VSCODE_', 'CURSOR_'];
-
 /**
  * Return a copy of `parentEnv` with editor-identity vars removed so that child
  * PTY processes do not inherit them and mistakenly believe they are running
@@ -74,16 +72,10 @@ const EDITOR_PREFIXES = ['VSCODE_', 'CURSOR_'];
  * Everything else (PATH, HOME, user-set vars, etc.) is kept intact.
  */
 export function sanitizeChildEnv(parentEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const hasEditorVars = Object.keys(parentEnv).some((k) =>
-    EDITOR_PREFIXES.some((p) => k.startsWith(p)),
-  );
+  const hasEditorVars = Object.keys(parentEnv).some(isEditorKey);
   const result: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(parentEnv)) {
-    if (EDITOR_PREFIXES.some((p) => key.startsWith(p))) continue;
-    if (key === 'TERM_PROGRAM' || key === 'TERM_PROGRAM_VERSION') continue;
-    if (key === 'CONDUIT_SESSION_TOKEN') continue;
-    if (key === 'CONDUIT_MCP_ENDPOINT') continue;
-    if (key === 'GIT_ASKPASS' && hasEditorVars) continue;
+    if (isChildEnvNoise(key, hasEditorVars)) continue;
     result[key] = value;
   }
   return result;

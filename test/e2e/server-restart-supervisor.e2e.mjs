@@ -8,9 +8,9 @@
  *   - the agent's terminal survives: same hc terminal, same program, no second launch.
  */
 import { mkdtempSync, readFileSync } from 'node:fs';
-import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { C2 } from './c2-peer.mjs';
 import { sleep, until } from './conduit-mcp-helpers.mjs';
 import {
   assert,
@@ -35,31 +35,17 @@ const session = (page, id) =>
   page.evaluate((s) => (window.__sessions || []).find((x) => x.id === s) ?? null, id);
 
 /** One C2 request after hello on a fresh connection; resolves once the connection has closed. */
-function restartServer(endpoint) {
-  return new Promise((resolve, reject) => {
-    const sock = connect(endpoint);
-    let buf = '';
-    let replied = null;
-    const send = (id, method, params) =>
-      sock.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
-    sock.setEncoding('utf8');
-    sock.on('error', reject);
-    sock.on('connect', () =>
-      send(1, 'hello', { appVersion: APP_VERSION, generation: SERVER_PROTOCOL_GENERATION }),
-    );
-    sock.on('data', (chunk) => {
-      buf += chunk;
-      for (let nl = buf.indexOf('\n'); nl >= 0; nl = buf.indexOf('\n')) {
-        const msg = JSON.parse(buf.slice(0, nl));
-        buf = buf.slice(nl + 1);
-        if (msg.id === 1) {
-          if (msg.error) reject(new Error(`hello: ${msg.error.message}`));
-          else send(2, 'server.restart', { reason: 'user' });
-        } else if (msg.id === 2) replied = msg;
-      }
-    });
-    sock.on('close', () => resolve(replied));
-  });
+async function restartServer(endpoint) {
+  const c2 = await C2.open(endpoint);
+  const closed = new Promise((resolve) => c2.socket.once('close', resolve));
+  await c2.call('hello', { appVersion: APP_VERSION, generation: SERVER_PROTOCOL_GENERATION });
+  // The server may drop the connection before it answers, which C2 reports as a rejection.
+  const outcome = c2.call('server.restart', { reason: 'user' }).then(
+    (result) => ({ result }),
+    (error) => ({ error: error.message }),
+  );
+  await closed;
+  return outcome;
 }
 
 /** What the app shows of a paused input: anywhere in the window's text or in the session's pane. */

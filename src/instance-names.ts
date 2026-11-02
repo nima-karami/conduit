@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
 import { join, posix, win32 } from 'node:path';
 import { endpointPath } from './conduit-mcp/endpoint-path';
 import type { InstanceNames } from './contracts/session-identity';
+import { instanceDigest } from './instance-digest';
 
 const MAX_SOCKET_PATH_BYTES = 100;
 
@@ -10,8 +10,7 @@ export function instanceNames(
   platform: 'win32' | 'posix',
   tmpdir: string,
 ): InstanceNames {
-  const identity = platform === 'win32' ? userData.toLowerCase() : userData;
-  const instance = createHash('sha256').update(identity).digest('hex').slice(0, 16);
+  const instance = instanceDigest(userData, platform);
   const path = platform === 'win32' ? win32 : posix;
   const profileServerEndpoint = path.join(userData, 'conduit-server.sock');
 
