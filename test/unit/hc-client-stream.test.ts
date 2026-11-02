@@ -87,13 +87,52 @@ describe('hc attach streams', () => {
     expect(() => stream.facts({ bg: '#000000' })).toThrow(/observer/i);
   });
 
+  it('drops data that arrives while detaching', async () => {
+    const { stream } = await attach();
+    const got: (string | HcStreamEnd)[] = [];
+    stream.onData((bytes) => got.push(Buffer.from(bytes).toString()));
+    stream.onClose((end) => got.push(end));
+    fake.send(stream.channel, Buffer.from('before'));
+    await expect.poll(() => got).toEqual(['before']);
+    stream.close();
+    fake.sendFrame({ channel: stream.channel, kind: FrameKind.Data, payload: Buffer.from('late') });
+    await barrier();
+    expect(got).toEqual(['before', { reason: 'detached' }]);
+  });
+
+  it('ends a detach at once, discarding paint the consumer never read', async () => {
+    fake.paint = Buffer.from('first paint');
+    const { stream } = await attach(true);
+    await barrier();
+    const got: (string | HcStreamEnd)[] = [];
+    stream.onClose((end) => got.push(end));
+    stream.close();
+    expect(got).toEqual([{ reason: 'detached' }]);
+    stream.onData((bytes) => got.push(Buffer.from(bytes).toString()));
+    expect(got).toEqual([{ reason: 'detached' }]);
+  });
+
+  it('ends a detached stream locally when the core does not echo CLOSE', async () => {
+    fake.echoDetach = false;
+    const { stream } = await attach(true);
+    const ends: HcStreamEnd[] = [];
+    stream.onClose((end) => ends.push(end));
+    stream.close();
+    expect(ends).toEqual([{ reason: 'detached' }]);
+    await barrier();
+    expect(
+      fake.frames.filter((f) => f.channel === stream.channel && f.kind === FrameKind.Close),
+    ).toHaveLength(1);
+  });
+
   it('detaches with an empty CLOSE and rejects later writes', async () => {
     const { stream } = await attach();
     const ends: HcStreamEnd[] = [];
     stream.onClose((end) => ends.push(end));
     stream.close();
     stream.close();
-    await expect.poll(() => ends).toEqual([{ reason: 'detached' }]);
+    expect(ends).toEqual([{ reason: 'detached' }]);
+    await barrier();
     expect(
       fake.frames
         .filter((frame) => frame.channel === stream.channel && frame.kind === FrameKind.Close)

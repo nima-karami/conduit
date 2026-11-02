@@ -132,6 +132,76 @@ describe('hc connection lifecycle', () => {
     expect(fake.calls.filter((call) => call.method === 'hello')).toHaveLength(1);
   });
 
+  it('rejects pending calls with a protocol error when hello is refused, backing off between attempts', async () => {
+    client.close();
+    fake.hello.framed = false;
+    client = new NodeHcClient({ connect: fake.connect, reconnectDelayMs: 10 });
+    await expect(client.call('server.status', {})).rejects.toMatchObject({
+      name: 'HcProtocolError',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    // 10 ms doubling reaches attempt 6 at 630 ms; a fixed 10 ms retry would be near 40 by now.
+    const attempts = fake.calls.filter((call) => call.method === 'hello').length;
+    expect(attempts).toBeGreaterThanOrEqual(3);
+    expect(attempts).toBeLessThanOrEqual(7);
+    fake.hello.framed = true;
+    await expect(client.call('server.status', {})).resolves.toMatchObject({ live: 1 });
+  });
+
+  it('turns a hello error reply into a protocol error carrying the core error', async () => {
+    client.close();
+    fake.helloError = { code: -32000, message: 'generation 1 unsupported', data: { kind: 'x' } };
+    client = new NodeHcClient({ connect: fake.connect, reconnectDelayMs: 10 });
+    await expect(client.call('server.status', {})).rejects.toMatchObject({
+      name: 'HcProtocolError',
+      cause: { name: 'HcRpcError', message: 'generation 1 unsupported' },
+    });
+  });
+
+  it('treats an unsupported generation in the hello reply as a refusal', async () => {
+    client.close();
+    fake.hello.generation = 2;
+    client = new NodeHcClient({ connect: fake.connect, reconnectDelayMs: 10 });
+    await expect(client.call('server.status', {})).rejects.toMatchObject({
+      name: 'HcProtocolError',
+    });
+  });
+
+  it('reports throwing connection and stream consumers without tearing down the transport', async () => {
+    client.close();
+    const logged: string[] = [];
+    client = new NodeHcClient({
+      connect: fake.connect,
+      reconnectDelayMs: 10,
+      log: (msg) => logged.push(msg),
+    });
+    const states: string[] = [];
+    client.onConnection(() => {
+      throw new Error('listener bug');
+    });
+    client.onConnection((state) => states.push(state));
+    const { stream } = await client.attach({ terminal: 't1', cols: 80, rows: 24 });
+    const got: string[] = [];
+    stream.onData((bytes) => {
+      got.push(Buffer.from(bytes).toString());
+      if (got.length === 1) throw new Error('data bug');
+    });
+    const ends: HcStreamEnd[] = [];
+    stream.onClose((end) => {
+      ends.push(end);
+      throw new Error('close bug');
+    });
+    fake.send(stream.channel, Buffer.from('a'));
+    await expect.poll(() => got).toEqual(['a']);
+    fake.send(stream.channel, Buffer.from('b'));
+    fake.end(stream.channel, { reason: 'exited', exit_code: 0 });
+    await expect.poll(() => ends).toEqual([{ reason: 'exited', exit_code: 0 }]);
+    expect(got).toEqual(['a', 'b']);
+    await client.call('server.status', {});
+    expect(states).toEqual(['connected']);
+    expect(logged).toHaveLength(3);
+  });
+
   it('handles a fragmented plain hello and fragmented framed response', async () => {
     client.close();
     const socket = fake.connect();

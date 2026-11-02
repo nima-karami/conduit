@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { posix, win32 } from 'node:path';
 import { parse } from 'smol-toml';
 
@@ -10,41 +10,39 @@ export interface EndpointOptions {
   uid?: number;
 }
 
+/**
+ * herdr-core v0.1.16 docs/security.md "State and endpoints" (HC_SOCKET, config `socket`, the Unix
+ * runtime/state fallbacks); the Windows pipe name is measured (`herdr-core-<account>-<session>.sock`).
+ */
 export function resolveHcEndpoint(options: EndpointOptions = {}): string {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
-  const session = (options.session ?? env.HC_SESSION)?.trim() || 'default';
-  const unsafe = [...session].some((char) => {
-    const code = char.codePointAt(0) ?? 0;
-    return code < 32 || (code >= 127 && code <= 159) || '/\\:*?"<>|'.includes(char);
-  });
-  if (session === '.' || session === '..' || unsafe) {
+  const session = options.session ?? env.HC_SESSION ?? 'default';
+  // The session names a path segment; refuse one that would leave its directory.
+  if (!session || session === '.' || session === '..' || /[/\\\0]/u.test(session))
     throw new Error(`Invalid HC_SESSION: ${JSON.stringify(session)}`);
-  }
   if (env.HC_SOCKET) return env.HC_SOCKET;
-  const paths = platform === 'win32' ? win32 : posix;
-  const home = env.HOME || homedir();
-  const profile = env.USERPROFILE || 'C:\\';
   const configHome =
     env.XDG_CONFIG_HOME ||
     (platform === 'win32'
-      ? env.APPDATA || win32.join(profile, 'AppData', 'Roaming')
-      : posix.join(home, '.config'));
-  const configPath = paths.join(configHome, 'herdr-core', 'config.toml');
+      ? env.APPDATA || win32.join(homedir(), 'AppData', 'Roaming')
+      : posix.join(env.HOME || homedir(), '.config'));
+  const configPath = (platform === 'win32' ? win32 : posix).join(
+    configHome,
+    'herdr-core',
+    'config.toml',
+  );
   if (existsSync(configPath)) {
     const config = parse(readFileSync(configPath, 'utf8'));
     if (typeof config.socket === 'string') return config.socket;
   }
-  if (platform === 'win32') {
-    const user = (env.USERNAME || '').replace(/[^a-z0-9]/giu, '');
-    return `\\\\.\\pipe\\herdr-core-${user}-${session}.sock`;
-  }
+  if (platform === 'win32')
+    return `\\\\.\\pipe\\herdr-core-${env.USERNAME || userInfo().username}-${session}.sock`;
   const uid = options.uid ?? process.getuid?.();
-  const fallbackRuntime = uid === undefined ? undefined : `/run/user/${uid}`;
+  const userRuntime = uid === undefined ? undefined : `/run/user/${uid}`;
   const runtime =
-    env.XDG_RUNTIME_DIR ||
-    (fallbackRuntime && existsSync(fallbackRuntime) ? fallbackRuntime : undefined);
-  const stateHome = env.XDG_STATE_HOME || posix.join(home, '.local', 'state');
+    env.XDG_RUNTIME_DIR || (userRuntime && existsSync(userRuntime) ? userRuntime : undefined);
+  const stateHome = env.XDG_STATE_HOME || posix.join(env.HOME || homedir(), '.local', 'state');
   const directory = runtime
     ? posix.join(runtime, 'herdr-core')
     : posix.join(stateHome, 'herdr-core', session);

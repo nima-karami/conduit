@@ -13,18 +13,26 @@ import {
 } from '../contracts/hc';
 import { resolveHcEndpoint } from './endpoint';
 import { encodeFrame, FrameDecoder } from './framing';
-import { AttachedStream } from './stream';
+import { AttachedStream, type HcLog } from './stream';
 import { EventSubscription } from './subscription';
+
+export { resolveHcEndpoint } from './endpoint';
+export type { HcLog } from './stream';
 
 export interface HcClientOptions {
   endpoint?: string;
   session?: string;
   env?: NodeJS.ProcessEnv;
   connect?: () => Duplex;
+  /** First retry delay; consecutive failures double it up to RECONNECT_MAX_DELAY_MS. */
   reconnectDelayMs?: number;
+  /** Where consumer callback exceptions go; they never reach the transport. */
+  log?: HcLog;
 }
 
-const knownKinds: readonly HcErrorKind[] = [
+const RECONNECT_MAX_DELAY_MS = 30_000;
+
+export const HC_ERROR_KINDS = [
   'not_found',
   'blocked',
   'unavailable',
@@ -33,9 +41,9 @@ const knownKinds: readonly HcErrorKind[] = [
   'finished',
   'spawn_failed',
   'name_taken',
-];
+] as const satisfies readonly HcErrorKind[];
 const isKnownKind = (kind: string | undefined): kind is HcErrorKind =>
-  knownKinds.some((known) => known === kind);
+  HC_ERROR_KINDS.some((known) => known === kind);
 
 export class HcRpcError extends Error {
   readonly kind: HcErrorKind | undefined;
@@ -61,8 +69,8 @@ export class HcDisconnectedError extends Error {
 }
 
 export class HcProtocolError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'HcProtocolError';
   }
 }
@@ -70,6 +78,9 @@ export class HcProtocolError extends Error {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
+
+const asError = (error: unknown): Error =>
+  error instanceof Error ? error : new HcProtocolError(String(error));
 
 type Hello = HcMethods['hello']['result'];
 type ConnectionListener = (state: 'connected' | 'lost' | 'reconnected', hello?: Hello) => void;
@@ -89,16 +100,18 @@ export class NodeHcClient implements HcClient {
   private nextId = 0;
   private everConnected = false;
   private closed = false;
+  private failures = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly pending = new Map<number, Pending>();
   private readonly listeners = new Set<ConnectionListener>();
   private readonly streams = new Map<number, AttachedStream>();
-  private readonly subscriptions = new Set<EventSubscription>();
   private readonly open: () => Duplex;
+  private readonly log: HcLog;
 
   constructor(private readonly options: HcClientOptions = {}) {
     this.open =
       options.connect ?? (() => openSocket(options.endpoint ?? resolveHcEndpoint(options)));
+    this.log = options.log ?? ((message, error) => console.error(message, error));
     queueMicrotask(() => this.connect());
   }
 
@@ -123,55 +136,16 @@ export class NodeHcClient implements HcClient {
     onNotification: (n: HcNotification) => void,
   ): Promise<{ snapshot: HcTerminal[]; close(): void }> {
     return this.request('events.subscribe', params, (result) => {
-      const socket = this.socket;
-      const fail = (error: unknown) => {
-        if (socket && this.socket === socket)
-          this.lost(socket, error instanceof Error ? error : new HcProtocolError(String(error)));
-      };
-      const bind = (
-        sub: EventSubscription,
-        snapshot: HcMethods['events.subscribe']['result'],
-        missed = false,
-      ) => {
-        if (typeof snapshot.channel !== 'number')
-          throw new HcProtocolError('Missing framed event channel');
-        sub.bind(
-          snapshot.seq,
-          this.stream(snapshot.channel, true),
-          missed ? snapshot.terminals : undefined,
-        );
-      };
+      if (typeof result.channel !== 'number')
+        throw new HcProtocolError('Missing framed event channel');
       const sub = new EventSubscription(
+        result.seq,
+        this.stream(result.channel, true),
         onNotification,
-        (current) => {
-          void this.request('events.subscribe', params, (snapshot) =>
-            bind(current, snapshot, true),
-          ).catch(fail);
-        },
-        () => this.subscriptions.delete(sub),
-        fail,
+        this.log,
       );
-      bind(sub, result);
-      this.subscriptions.add(sub);
       return { snapshot: result.terminals, close: () => sub.close() };
     });
-  }
-
-  private stream(channel: number, observe: boolean): AttachedStream {
-    if (
-      !Number.isInteger(channel) ||
-      channel <= CONTROL_CHANNEL ||
-      channel > 0xffffffff ||
-      this.streams.has(channel)
-    )
-      throw new HcProtocolError('Invalid or duplicate stream channel');
-    const socket = this.socket;
-    const stream = new AttachedStream(channel, observe, (frame) => {
-      if (this.socket !== socket) throw new HcDisconnectedError();
-      this.send(frame);
-    });
-    this.streams.set(channel, stream);
-    return stream;
   }
 
   onConnection(listener: ConnectionListener): () => void {
@@ -187,6 +161,31 @@ export class NodeHcClient implements HcClient {
     if (socket) this.lost(socket, new HcDisconnectedError('hc client closed'));
     else this.rejectPending(new HcDisconnectedError('hc client closed'));
     this.listeners.clear();
+  }
+
+  private stream(channel: number, observe: boolean): AttachedStream {
+    if (
+      !Number.isInteger(channel) ||
+      channel <= CONTROL_CHANNEL ||
+      channel > 0xffffffff ||
+      this.streams.has(channel)
+    )
+      throw new HcProtocolError('Invalid or duplicate stream channel');
+    const socket = this.socket;
+    const stream = new AttachedStream(
+      channel,
+      observe,
+      (frame) => {
+        if (this.socket !== socket) throw new HcDisconnectedError();
+        this.send(frame);
+      },
+      this.log,
+      () => {
+        if (this.streams.get(channel) === stream) this.streams.delete(channel);
+      },
+    );
+    this.streams.set(channel, stream);
+    return stream;
   }
 
   private request<M extends HcMethod, T>(
@@ -226,7 +225,7 @@ export class NodeHcClient implements HcClient {
       try {
         this.receive(bytes);
       } catch (error) {
-        this.lost(socket, error instanceof Error ? error : new HcProtocolError(String(error)));
+        this.lost(socket, asError(error));
       }
     });
     socket.on('error', (error) =>
@@ -252,15 +251,23 @@ export class NodeHcClient implements HcClient {
       const reply: unknown = JSON.parse(this.line.subarray(0, newline).toString('utf8'));
       if (!isRecord(reply) || reply.jsonrpc !== '2.0' || reply.id !== this.helloId)
         throw new HcProtocolError('Invalid hello response');
-      if (isRecord(reply.error)) throw this.rpcError(reply.error);
-      if (!isRecord(reply.result) || reply.result.framed !== true)
-        throw new HcProtocolError('Core refused framed mode');
+      if (isRecord(reply.error))
+        throw new HcProtocolError('hc refused hello', { cause: this.rpcError(reply.error) });
+      if (
+        !isRecord(reply.result) ||
+        reply.result.framed !== true ||
+        reply.result.generation !== HC_PROTOCOL_GENERATION
+      )
+        throw new HcProtocolError(
+          `hc core does not speak framed protocol generation ${HC_PROTOCOL_GENERATION}`,
+        );
       const rest = this.line.subarray(newline + 1);
       this.line = Buffer.alloc(0);
       this.hello = reply.result as Hello;
+      this.failures = 0;
       const state = this.everConnected ? 'reconnected' : 'connected';
       this.everConnected = true;
-      for (const listener of this.listeners) listener(state, this.hello);
+      this.emit(state, this.hello);
       for (const pending of this.pending.values()) if (!pending.sent) this.sendRequest(pending);
       bytes = rest;
     }
@@ -269,9 +276,7 @@ export class NodeHcClient implements HcClient {
 
   private receiveFrame(frame: Frame): void {
     if (frame.channel !== CONTROL_CHANNEL) {
-      const stream = this.streams.get(frame.channel);
-      stream?.receive(frame);
-      if (frame.kind === FrameKind.Close) this.streams.delete(frame.channel);
+      this.streams.get(frame.channel)?.receive(frame);
       return;
     }
     if (frame.kind !== FrameKind.Data) return;
@@ -287,7 +292,7 @@ export class NodeHcClient implements HcClient {
       try {
         pending.resolve(reply.result);
       } catch (error) {
-        pending.reject(error instanceof Error ? error : new HcProtocolError(String(error)));
+        pending.reject(asError(error));
       }
     } else pending.reject(new HcProtocolError('Response has neither result nor error'));
   }
@@ -300,6 +305,16 @@ export class NodeHcClient implements HcClient {
     );
   }
 
+  private emit(state: 'connected' | 'lost' | 'reconnected', hello?: Hello): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(state, hello);
+      } catch (error) {
+        this.log(`hc client: ${state} listener threw`, error);
+      }
+    }
+  }
+
   private sendRequest(pending: Pending): void {
     const payload = Buffer.from(JSON.stringify(pending.message));
     try {
@@ -307,7 +322,7 @@ export class NodeHcClient implements HcClient {
       pending.sent = true;
     } catch (error) {
       this.pending.delete(pending.message.id);
-      pending.reject(error instanceof Error ? error : new HcProtocolError(String(error)));
+      pending.reject(asError(error));
     }
   }
 
@@ -330,16 +345,18 @@ export class NodeHcClient implements HcClient {
     this.hello = undefined;
     socket.destroy();
     this.rejectPending(error);
-    for (const sub of [...this.subscriptions]) sub.disconnected();
-    for (const stream of this.streams.values()) stream.disconnected();
+    for (const stream of [...this.streams.values()]) stream.disconnected();
     this.streams.clear();
-    if (wasConnected) for (const listener of this.listeners) listener('lost');
+    if (wasConnected) this.emit('lost');
     this.scheduleReconnect();
   }
 
   private scheduleReconnect(): void {
     if (this.closed) return;
-    this.timer = setTimeout(() => this.connect(), this.options.reconnectDelayMs ?? 250);
+    const base = this.options.reconnectDelayMs ?? 250;
+    const delay = Math.min(base * 2 ** this.failures, RECONNECT_MAX_DELAY_MS);
+    this.failures++;
+    this.timer = setTimeout(() => this.connect(), delay);
     this.timer.unref();
   }
 }

@@ -18,6 +18,16 @@ import { encodeFrame, FrameDecoder } from '../framing';
 type RpcCall = { id: number; method: string; params: Record<string, unknown> };
 type CallHandler = (params: Record<string, unknown>) => unknown | Promise<unknown>;
 
+/** A JSON-RPC level failure without an hc error kind, e.g. -32601 for an unknown method. */
+class FakeJsonRpcError extends Error {
+  constructor(
+    readonly code: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 export class FakeRpcError extends Error {
   constructor(
     readonly kind: string,
@@ -37,7 +47,11 @@ type Connection = {
   queues: Map<number, Buffer[]>;
   pendingClose: Map<number, Buffer>;
   channels: Set<number>;
+  /** Attach channel -> terminal address, so a kill can close its viewers. */
+  attachments: Map<number, string>;
+  subscriptions: Map<number, Filter>;
 };
+type Filter = { labels: unknown; terminal: unknown };
 
 const jsonBytes = (value: unknown): Buffer => Buffer.from(`${JSON.stringify(value)}\n`, 'utf8');
 // Measured on hc 0.1.16: control replies are one JSON message per DATA frame, with no newline.
@@ -74,6 +88,10 @@ export class FakeHc {
   seq = 0;
   paint: Uint8Array = Buffer.alloc(0);
   afterReply?: (method: string, result: unknown) => void;
+  /** hc 0.1.16 answers a viewer's CLOSE with an empty CLOSE (schema/README.md "Attach streams"). */
+  echoDetach = true;
+  /** Answer hello with this JSON-RPC error and stay in plain mode, as a core refusing our generation. */
+  helloError?: { code: number; message: string; data?: unknown };
 
   private server?: Server;
   private readonly connections = new Set<Connection>();
@@ -149,6 +167,7 @@ export class FakeHc {
     }
   }
 
+  /** CLOSE after any data still waiting for credit, as hc ends a stream. */
   end(channel: number, end?: CloseReason): void {
     const payload = end ? frameJson(end) : Buffer.alloc(0);
     for (const connection of this.connections) {
@@ -158,9 +177,22 @@ export class FakeHc {
         connection.pendingClose.set(channel, payload);
       } else {
         this.writeFrame(connection, { channel, kind: FrameKind.Close, payload });
-        connection.channels.delete(channel);
+        this.forget(connection, channel);
       }
     }
+  }
+
+  /** One event, numbered from the core-wide seq, to every subscription whose filter matches. */
+  emit(terminal: HcTerminal, type: string, data: unknown): void {
+    const seq = ++this.seq;
+    for (const connection of this.connections)
+      for (const [channel, filter] of connection.subscriptions)
+        if (this.matches(terminal, filter))
+          this.notify(channel, {
+            jsonrpc: '2.0',
+            method: 'event',
+            params: { seq, type, terminal: terminal.address, data },
+          });
   }
 
   notify(channel: number, notification: HcNotification | unknown): void {
@@ -186,9 +218,17 @@ export class FakeHc {
       queues: new Map(),
       pendingClose: new Map(),
       channels: new Set(),
+      attachments: new Map(),
+      subscriptions: new Map(),
     };
     this.connections.add(connection);
-    socket.on('data', (chunk: Buffer) => this.receive(connection, chunk));
+    socket.on('data', (chunk: Buffer) => {
+      try {
+        this.receive(connection, chunk);
+      } catch {
+        socket.destroy();
+      }
+    });
     socket.on('error', () => {
       socket.destroy();
       this.connections.delete(connection);
@@ -216,6 +256,12 @@ export class FakeHc {
         return;
       }
       this.calls.push({ id: request.id ?? 0, method: 'hello', params: request.params ?? {} });
+      if (this.helloError) {
+        connection.socket.write(
+          jsonBytes({ jsonrpc: '2.0', id: request.id, error: this.helloError }),
+        );
+        return;
+      }
       connection.framed = true;
       connection.socket.write(jsonBytes({ jsonrpc: '2.0', id: request.id, result: this.hello }));
       if (remainder.length) this.receiveFrames(connection, remainder);
@@ -240,14 +286,14 @@ export class FakeHc {
         );
         this.flush(connection, frame.channel);
       } else if (frame.kind === FrameKind.Close) {
-        connection.channels.delete(frame.channel);
-        connection.queues.delete(frame.channel);
-        connection.pendingClose.delete(frame.channel);
-        this.writeFrame(connection, {
-          channel: frame.channel,
-          kind: FrameKind.Close,
-          payload: Buffer.alloc(0),
-        });
+        const open = connection.channels.has(frame.channel);
+        this.forget(connection, frame.channel);
+        if (open && this.echoDetach)
+          this.writeFrame(connection, {
+            channel: frame.channel,
+            kind: FrameKind.Close,
+            payload: Buffer.alloc(0),
+          });
       }
     }
   }
@@ -274,7 +320,9 @@ export class FakeHc {
       const rpc =
         error instanceof FakeRpcError
           ? { code: -32000, message: error.message, data: { kind: error.kind } }
-          : { code: -32603, message: error instanceof Error ? error.message : String(error) };
+          : error instanceof FakeJsonRpcError
+            ? { code: error.code, message: error.message }
+            : { code: -32603, message: error instanceof Error ? error.message : String(error) };
       this.writeFrame(connection, {
         channel: CONTROL_CHANNEL,
         kind: FrameKind.Data,
@@ -306,11 +354,12 @@ export class FakeHc {
         state: 'live',
         created_ms: Date.now(),
         screen: 'exact',
-        cols: 80,
-        rows: 24,
+        cols: 200,
+        rows: 120,
         pid: this.nextAddress,
       };
       this.terminals.push(record);
+      this.emit(record, 'created', record);
       return record;
     }
     if (method === 'terminal.list') {
@@ -335,19 +384,29 @@ export class FakeHc {
       if (!terminal) throw new FakeRpcError('not_found');
       if (terminal.state === 'finished') throw new FakeRpcError('finished');
       const channel = this.allocateChannel(connection);
+      connection.attachments.set(channel, terminal.address);
       return { channel, terminal };
     }
     if (method === 'terminal.kill') {
       if (!terminal) throw new FakeRpcError('not_found');
+      if (terminal.state === 'finished') return terminal;
       terminal.state = 'finished';
-      terminal.exit_code = 0;
+      terminal.exit_code = 1;
+      terminal.signal = null;
       terminal.finished_ms = Date.now();
       terminal.reason = 'killed';
+      const end = { reason: 'killed', exit_code: 1, signal: null } as const;
+      for (const connection of this.connections)
+        for (const [channel, address] of connection.attachments)
+          if (address === terminal.address) this.end(channel, end);
+      this.emit(terminal, 'finished', { ...end, finished_ms: terminal.finished_ms });
       return terminal;
     }
     if (method === 'terminal.rm') {
       if (!terminal) throw new FakeRpcError('not_found');
+      if (terminal.state === 'live') throw new FakeRpcError('live', `${terminal.address} is live`);
       this.terminals.splice(this.terminals.indexOf(terminal), 1);
+      this.emit(terminal, 'removed', {});
       return { removed: terminal.address };
     }
     if (method === 'terminal.label') {
@@ -356,15 +415,15 @@ export class FakeHc {
       return terminal;
     }
     if (method === 'events.subscribe') {
+      if (params.terminal !== undefined && !terminal) throw new FakeRpcError('not_found');
+      const filter: Filter = { labels: params.labels, terminal: params.terminal };
       const channel = this.allocateChannel(connection);
-      const terminals = this.terminals.filter(
-        (item) =>
-          this.matchesLabels(item, params.labels) &&
-          (params.terminal === undefined ||
-            item.address === params.terminal ||
-            item.name === params.terminal),
-      );
-      return { seq: this.seq, terminals, channel };
+      connection.subscriptions.set(channel, filter);
+      return {
+        seq: this.seq,
+        terminals: this.terminals.filter((item) => this.matches(item, filter)),
+        channel,
+      };
     }
     if (method === 'server.status')
       return {
@@ -373,7 +432,24 @@ export class FakeHc {
         live: this.terminals.filter((item) => item.state === 'live').length,
         finished: this.terminals.filter((item) => item.state === 'finished').length,
       };
-    throw new FakeRpcError('not_found', `Unknown method: ${method}`);
+    throw new FakeJsonRpcError(-32601, `Method not found: ${method}`);
+  }
+
+  private matches(terminal: HcTerminal, filter: Filter): boolean {
+    return (
+      this.matchesLabels(terminal, filter.labels) &&
+      (filter.terminal === undefined ||
+        terminal.address === filter.terminal ||
+        terminal.name === filter.terminal)
+    );
+  }
+
+  private forget(connection: Connection, channel: number): void {
+    connection.channels.delete(channel);
+    connection.queues.delete(channel);
+    connection.pendingClose.delete(channel);
+    connection.attachments.delete(channel);
+    connection.subscriptions.delete(channel);
   }
 
   private matchesLabels(terminal: HcTerminal, labels: unknown): boolean {
@@ -414,7 +490,7 @@ export class FakeHc {
       if (closePayload) {
         connection.pendingClose.delete(channel);
         this.writeFrame(connection, { channel, kind: FrameKind.Close, payload: closePayload });
-        connection.channels.delete(channel);
+        this.forget(connection, channel);
       }
     }
   }

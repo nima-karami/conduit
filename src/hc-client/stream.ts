@@ -7,13 +7,14 @@ import {
 } from '../contracts/frames';
 import type { HcStream, HcStreamEnd } from '../contracts/hc';
 
+export type HcLog = (message: string, error: unknown) => void;
+
 export class AttachedStream implements HcStream {
   private dataHandler: ((bytes: Uint8Array) => void) | undefined;
   private closeHandler: ((end: HcStreamEnd) => void) | undefined;
   private readonly queue: Uint8Array[] = [];
   private end: HcStreamEnd | undefined;
   private closeDelivered = false;
-  private detaching = false;
   private flushing = false;
   private allowance = INITIAL_STREAM_CREDIT;
   private handedOff = 0;
@@ -22,6 +23,9 @@ export class AttachedStream implements HcStream {
     readonly channel: number,
     private readonly observe: boolean,
     private readonly send: (frame: Frame) => void,
+    private readonly log: HcLog,
+    /** Frees the channel in the client's mux once the stream has ended, from either side. */
+    private readonly release: () => void,
   ) {}
 
   onData(handler: (bytes: Uint8Array) => void): void {
@@ -41,19 +45,18 @@ export class AttachedStream implements HcStream {
         throw new Error('Stream exceeds granted credit');
       this.allowance -= frame.payload.byteLength;
       this.queue.push(frame.payload);
+      this.flush();
     } else if (frame.kind === FrameKind.Close) {
       const end: CloseReason = frame.payload.byteLength
         ? JSON.parse(Buffer.from(frame.payload).toString('utf8'))
         : { reason: 'detached' };
       if (!end || typeof end.reason !== 'string') throw new Error('Invalid stream CLOSE reason');
-      this.end = end;
+      this.finish(end);
     }
-    this.flush();
   }
 
   disconnected(): void {
-    this.end ??= { reason: 'disconnected' };
-    this.flush();
+    if (!this.end) this.finish({ reason: 'disconnected' });
   }
 
   write(bytes: Uint8Array): void {
@@ -85,22 +88,34 @@ export class AttachedStream implements HcStream {
       throw new RangeError('Invalid stream credit');
     if (n === 0) return;
     this.handedOff -= n;
-    if (this.end || this.detaching) return;
+    if (this.end) return;
     this.allowance += n;
     const payload = Buffer.alloc(4);
     payload.writeUInt32LE(n);
     this.send({ channel: this.channel, kind: FrameKind.Credit, payload });
   }
 
+  /**
+   * Ends locally rather than on the core's empty CLOSE: anything the core sends meanwhile is for a
+   * viewer that already left, and a missing echo can't strand the consumer. Bytes not yet handed
+   * off are dropped for the same reason; holding them would hold the end for a reader that left.
+   */
   close(): void {
-    if (this.detaching || this.end) return;
-    this.detaching = true;
+    if (this.end) return;
     this.send({ channel: this.channel, kind: FrameKind.Close, payload: Buffer.alloc(0) });
+    this.queue.length = 0;
+    this.finish({ reason: 'detached' });
   }
 
   private active(): void {
-    if (this.end || this.detaching) throw new Error('hc stream is closed');
+    if (this.end) throw new Error('hc stream is closed');
     if (this.observe) throw new Error('An observer stream cannot control the terminal');
+  }
+
+  private finish(end: HcStreamEnd): void {
+    this.end = end;
+    this.release();
+    this.flush();
   }
 
   private flush(): void {
@@ -111,11 +126,19 @@ export class AttachedStream implements HcStream {
         const bytes = this.queue.shift();
         if (!bytes) break;
         this.handedOff += bytes.byteLength;
-        this.dataHandler(bytes);
+        try {
+          this.dataHandler(bytes);
+        } catch (error) {
+          this.log(`hc stream ${this.channel}: onData handler threw`, error);
+        }
       }
       if (!this.queue.length && this.end && this.closeHandler && !this.closeDelivered) {
         this.closeDelivered = true;
-        this.closeHandler(this.end);
+        try {
+          this.closeHandler(this.end);
+        } catch (error) {
+          this.log(`hc stream ${this.channel}: onClose handler threw`, error);
+        }
       }
     } finally {
       this.flushing = false;

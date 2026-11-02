@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FrameKind, INITIAL_STREAM_CREDIT } from '../../src/contracts/frames';
 import type { HcNotification } from '../../src/contracts/hc';
 import { NodeHcClient } from '../../src/hc-client';
@@ -33,21 +33,56 @@ describe('hc event subscriptions', () => {
     expect(seen).toEqual([title(1)]);
   });
 
-  it('turns malformed buffered event JSON into connection loss instead of an uncaught exception', async () => {
+  it('ends only the subscription with missed on malformed event JSON, keeping the connection', async () => {
     const states: string[] = [];
     client.onConnection((state) => states.push(state));
-    fake.afterReply = (method, result) => {
-      if (
-        method === 'events.subscribe' &&
-        result &&
-        typeof result === 'object' &&
-        'channel' in result &&
-        typeof result.channel === 'number'
-      )
-        fake.send(result.channel, Buffer.from('{invalid\n'));
-    };
-    await client.subscribe({}, () => {});
-    await expect.poll(() => states.includes('lost')).toBe(true);
+    const seen: HcNotification[] = [];
+    await client.subscribe({}, (n) => seen.push(n));
+    const channel = fake.channels[0];
+    fake.send(channel, Buffer.from('{"jsonrpc":"2.0","method":"event","params":}\n'));
+    await expect
+      .poll(() => seen)
+      .toEqual([{ method: 'missed', params: { seq: 0, terminals: [] } }]);
+    await expect
+      .poll(() => fake.frames.some((f) => f.channel === channel && f.kind === FrameKind.Close))
+      .toBe(true);
+    fake.sendFrame({
+      channel,
+      kind: FrameKind.Data,
+      payload: Buffer.from(JSON.stringify({ jsonrpc: '2.0', ...title(1) })),
+    });
+    await barrier();
+    expect(seen).toHaveLength(1);
+    expect(states).toEqual(['connected']);
+  });
+
+  it('ends the subscription with missed when hc closes its event channel', async () => {
+    const states: string[] = [];
+    client.onConnection((state) => states.push(state));
+    const seen: HcNotification[] = [];
+    await client.subscribe({}, (n) => seen.push(n));
+    fake.notify(fake.channels[0], { jsonrpc: '2.0', ...title(3) });
+    fake.end(fake.channels[0], { reason: 'server_stop' });
+    await expect
+      .poll(() => seen)
+      .toEqual([title(3), { method: 'missed', params: { seq: 3, terminals: [] } }]);
+    await barrier();
+    expect(states).toEqual(['connected']);
+  });
+
+  it('reports a throwing notification consumer and keeps delivering', async () => {
+    const logged: string[] = [];
+    client.close();
+    client = new NodeHcClient({ connect: fake.connect, log: (msg) => logged.push(msg) });
+    const seen: HcNotification[] = [];
+    await client.subscribe({}, (n) => {
+      seen.push(n);
+      if (seen.length === 1) throw new Error('consumer bug');
+    });
+    fake.notify(fake.channels[0], { jsonrpc: '2.0', ...title(1) });
+    fake.notify(fake.channels[0], { jsonrpc: '2.0', ...title(2) });
+    await expect.poll(() => seen).toEqual([title(1), title(2)]);
+    expect(logged).toHaveLength(1);
   });
 
   it('exposes the snapshot before ordered notifications and ignores snapshot-era events', async () => {
@@ -103,21 +138,34 @@ describe('hc event subscriptions', () => {
     await expect.poll(() => seen).toEqual([title(1), title(2)]);
   });
 
-  it('surfaces a sequence gap with an atomic fresh missed snapshot before later events', async () => {
+  it('passes non-contiguous sequence numbers through without re-subscribing', async () => {
+    const seen: HcNotification[] = [];
+    await client.subscribe({ labels: { lane: 'a' } }, (n) => seen.push(n));
+    fake.notify(fake.channels[0], { jsonrpc: '2.0', ...title(4) });
+    fake.notify(fake.channels[0], { jsonrpc: '2.0', ...title(9) });
+    await expect.poll(() => seen).toEqual([title(4), title(9)]);
+    expect(fake.calls.filter((call) => call.method === 'events.subscribe')).toHaveLength(1);
+  });
+
+  it('parses a large event split across many DATA frames once', async () => {
     const seen: HcNotification[] = [];
     await client.subscribe({}, (n) => seen.push(n));
-    fake.seq = 4;
-    fake.terminals[0].title = 'latest';
-    fake.notify(fake.channels[0], { jsonrpc: '2.0', ...title(4) });
-    await expect
-      .poll(() => seen[0])
-      .toMatchObject({
-        method: 'missed',
-        params: { seq: 4, terminals: [{ address: 't1', title: 'latest' }] },
-      });
-    expect(fake.calls.filter((call) => call.method === 'events.subscribe')).toHaveLength(2);
-    fake.notify(fake.channels[1], { jsonrpc: '2.0', ...title(5) });
-    await expect.poll(() => seen[1]).toEqual(title(5));
+    const big = {
+      jsonrpc: '2.0',
+      method: 'event',
+      params: { seq: 1, type: 'title', terminal: 't1', data: { title: 'x{"\\}'.repeat(20000) } },
+    } as const;
+    const bytes = Buffer.from(JSON.stringify(big));
+    const parse = vi.spyOn(JSON, 'parse');
+    for (let i = 0; i < bytes.byteLength; i += 1000)
+      fake.send(fake.channels[0], bytes.subarray(i, i + 1000));
+    await expect.poll(() => seen).toHaveLength(1);
+    const eventParses = parse.mock.calls.filter(([text]) =>
+      String(text).startsWith('{"jsonrpc":"2.0","method":"event"'),
+    );
+    parse.mockRestore();
+    expect(eventParses).toHaveLength(1);
+    expect(seen[0]).toEqual({ method: 'event', params: big.params });
   });
 
   it('accepts wire missed snapshots, drops older events, and forwards heartbeats', async () => {

@@ -10,14 +10,23 @@ afterEach(() => {
 });
 
 describe('hc endpoint resolution', () => {
-  it('resolves a trimmed session under XDG_RUNTIME_DIR independently of host platform', () => {
+  it('resolves the session socket under XDG_RUNTIME_DIR independently of host platform', () => {
     expect(
       resolveHcEndpoint({
-        session: ' mine ',
+        session: 'mine',
         platform: 'linux',
         env: { XDG_RUNTIME_DIR: '/runtime', XDG_CONFIG_HOME: '/no-hc-config' },
       }),
     ).toBe('/runtime/herdr-core/mine.sock');
+  });
+
+  it('names the Windows pipe after the account and session, as measured on hc 0.1.16', () => {
+    expect(
+      resolveHcEndpoint({
+        platform: 'win32',
+        env: { USERNAME: 'karam', APPDATA: '/no-hc-config' },
+      }),
+    ).toBe('\\\\.\\pipe\\herdr-core-karam-default.sock');
   });
 
   it('uses HC_SESSION and the state fallback when no runtime directory exists', () => {
@@ -43,7 +52,7 @@ describe('hc endpoint resolution', () => {
   });
 
   it('rejects sessions that could escape their state or endpoint directory', () => {
-    for (const session of ['..', '.', 'a/b', 'a\\b', 'a:b', 'a\tb']) {
+    for (const session of ['..', '.', '', 'a/b', 'a\\b', 'a\0b']) {
       expect(() => resolveHcEndpoint({ session, env: {} })).toThrow(/session/i);
     }
   });

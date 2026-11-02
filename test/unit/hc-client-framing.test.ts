@@ -41,4 +41,11 @@ describe('hc framing', () => {
       /kind/i,
     );
   });
+
+  it('refuses a channel that is not a u32', () => {
+    for (const channel of [-1, 1.5, 2 ** 32])
+      expect(() =>
+        encodeFrame({ channel, kind: FrameKind.Data, payload: Buffer.alloc(0) }),
+      ).toThrow(/u32/);
+  });
 });
