@@ -247,6 +247,8 @@ export type SessionStartResult =
         | { reason: 'command-invalid' }
         | SpawnUnconfirmed
         | ServerStopping;
+      /** The stored history, written before the can't-start line as today, when there is one. */
+      prelude?: FirstPaint;
     };
 
 /** The supervisor as the server knows it: its unique hc name and the address hc gave it (D17). */
@@ -487,6 +489,11 @@ export interface ServerNotifications {
    * a root), else ignores it. W7 sends it, W4 consumes it.
    */
   'folders.suspect': { sessionId: string; path: string };
+  /**
+   * The OS resumed from suspend or unlocked (Electron powerMonitor, which the server can't see): the
+   * server re-evaluates due timers at once, as main.ts does today. W7 sends it, W4 consumes it.
+   */
+  'system.resumed': Empty;
 }
 export type ServerNotification = keyof ServerNotifications;
 
