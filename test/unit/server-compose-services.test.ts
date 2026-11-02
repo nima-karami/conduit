@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ServerAttention } from '../../server/attention';
 import { compose } from '../../server/compose';
-import { createServices, type Services } from '../../server/services';
+import { createServices, type Services, type ServicesOptions } from '../../server/services';
 import { type Peer, PipeTransport, type RpcAnswer } from '../../server/transport/pipe';
 import type { ServerEvent, ServerEvents, SessionView } from '../../src/contracts/server-protocol';
 import { NodeHcClient } from '../../src/hc-client';
@@ -34,11 +34,11 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function harness() {
+async function harness(options: Partial<ServicesOptions> = {}, userDataOf?: string) {
   const fake = new FakeHc();
   await fake.listen();
   const hc = new NodeHcClient({ connect: fake.connect, reconnectDelayMs: 10, log: () => {} });
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-'));
+  const userData = userDataOf ?? fs.mkdtempSync(path.join(os.tmpdir(), 'compose-'));
   const names = {
     ...instanceNames(userData, process.platform === 'win32' ? 'win32' : 'posix', os.tmpdir()),
     mcpEndpoint: testEndpoint(),
@@ -66,6 +66,7 @@ async function harness() {
     detectShells: () => [SHELL],
     detectClis: () => [],
     resolveCommand: (c) => c,
+    ...options,
   });
   cleanups.push(async () => {
     await services.close();
@@ -89,6 +90,51 @@ async function answer(
 }
 
 describe('compose: startup order (F1.4)', () => {
+  it('runs the packaged install pass once, persists its gate result, and reuses it after restart', async () => {
+    const previousShims = [
+      { execPath: '/install/Conduit.exe', shimPath: '/install/resources/shim.cjs' },
+    ];
+    const h = await harness({ packaged: true, e2e: false, previousShims });
+    const startup = vi.spyOn(h.services.mcp, 'installStartup').mockReturnValue({
+      gateMigrated: true,
+      rows: [],
+    });
+    const adopted = vi.spyOn(h.services.domain, 'adopted');
+    await h.services.core.start();
+    await h.services.core.start();
+    expect(startup).toHaveBeenCalledExactlyOnceWith({
+      previous: previousShims,
+      gateMigrated: false,
+    });
+    expect(startup.mock.invocationCallOrder[0]).toBeLessThan(adopted.mock.invocationCallOrder[0]);
+    expect(h.services.domain.settings().mcpGateMigrated).toBe(true);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(h.userData, 'server-settings.json'), 'utf8')),
+    ).toMatchObject({ version: 1, settings: { mcpGateMigrated: true } });
+
+    await h.services.close();
+    const next = await harness({ packaged: true, e2e: false, previousShims }, h.userData);
+    const nextStartup = vi.spyOn(next.services.mcp, 'installStartup').mockReturnValue({
+      gateMigrated: true,
+      rows: [],
+    });
+    await next.services.core.start();
+    expect(nextStartup).toHaveBeenCalledExactlyOnceWith({
+      previous: previousShims,
+      gateMigrated: true,
+    });
+  });
+
+  it.each([
+    { packaged: false, e2e: false },
+    { packaged: true, e2e: true },
+  ])('skips startup install for $packaged packaged / $e2e e2e', async (options) => {
+    const h = await harness(options);
+    const startup = vi.spyOn(h.services.mcp, 'installStartup');
+    await h.services.core.start();
+    expect(startup).not.toHaveBeenCalled();
+  });
+
   it('subscribes, reconciles, adopts, then starts MCP, and only then reports health', async () => {
     const h = await harness();
     const order: string[] = [];
