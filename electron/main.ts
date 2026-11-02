@@ -280,6 +280,7 @@ import { createMcpRuntimePorts } from './conduit-mcp-runtime-ports';
 import { createDragOutHost } from './drag-out-host';
 import { execFileBounded } from './exec-bounded';
 import { createFolderPicker } from './folder-picker';
+import { createLaunchClaims } from './launch-claims';
 import { LauncherHost } from './launcher-host';
 import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
@@ -291,8 +292,8 @@ import { createOsFileClipboard, spawnPowerShell } from './os-file-clipboard';
 import { createPathLinkResolver } from './path-link-resolver';
 import {
   ScrollbackWriteGate,
-  sessionWriteGate,
-  timedMessagesWriteGate,
+  sessionsWritable,
+  timedMessagesWritable,
 } from './persistence-write-gates';
 import { PlanWatcher } from './plan-watcher';
 import {
@@ -1689,6 +1690,7 @@ app.whenReady().then(() => {
   // health check in between). A second term:start racing that await must not replay — and record
   // — the history again; it attaches once the first one has spawned.
   const coldStartsInFlight = new Set<string>();
+  const launchClaims = createLaunchClaims();
   // The pane's size reported while a cold start awaits its spawn (term:start → pty.start spans the
   // health-check await). pty.resize drops it — there's no child yet — so the spawn takes it instead
   // of term:start's older measurement, or the PTY is born a different size than the xterm.
@@ -1698,7 +1700,7 @@ app.whenReady().then(() => {
   // Host-owned schedules and ONE timer. Declared up here because flushStateSync reads the dirty
   // gate and disposeSession drops a session's schedules.
   const timedMessagesParse = parseTimedMessagesFile(readBlob(timedMessagesFile()));
-  const timedWriteGate = timedMessagesWriteGate(timedMessagesParse);
+  const timersWritable = timedMessagesWritable(timedMessagesParse);
   let timersDirty = false;
   let limitOffer: LimitOffer | null = null;
   let timersPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1712,17 +1714,15 @@ app.whenReady().then(() => {
    * is the fix, and flushStateSync still covers quit.
    */
   const persistTimers = () => {
-    if (!timedWriteGate.writable) return;
+    if (!timersWritable) return;
     timersDirty = true;
     if (timersPersistTimer) return;
     timersPersistTimer = setTimeout(() => {
       timersPersistTimer = null;
-      timedWriteGate.run(() =>
-        persistFile(
-          timedMessagesFile(),
-          serializeTimedMessagesFile({ version: 1, schedules: timers.list() }),
-          'timed-messages.json',
-        ),
+      persistFile(
+        timedMessagesFile(),
+        serializeTimedMessagesFile({ version: 1, schedules: timers.list() }),
+        'timed-messages.json',
       );
     }, 150);
   };
@@ -1890,7 +1890,7 @@ app.whenReady().then(() => {
   // lands before the first postState.
   const sessionsDiskParse = parseSessions(readBlob(sessionsFile()));
   const sessionsParse = settings.restoreSessions ? sessionsDiskParse : null;
-  const sessionsWriteGate = sessionWriteGate(settings, sessionsDiskParse);
+  const sessionsWritableThisRun = sessionsWritable(settings, sessionsDiskParse);
   if (sessionsDiskParse.kind === 'newer')
     log.warn('persist', 'sessions.json has a newer version; writes blocked this run');
   if (sessionsParse?.kind === 'ok' && sessionsParse.dropped > 0)
@@ -1920,14 +1920,13 @@ app.whenReady().then(() => {
     }
   }
   // Without the projects write the next launch re-migrates; see mf-model spec §2.3.
-  if (startup.writeSessions && !projectsWriteFailed)
-    sessionsWriteGate.run(() => {
-      try {
-        atomicWriteFileSync(sessionsFile(), serializeSessions(startup.sessions));
-      } catch (err) {
-        log.error('persist', `sessions.json migration write failed: ${String(err)}`);
-      }
-    });
+  if (startup.writeSessions && !projectsWriteFailed && sessionsWritableThisRun) {
+    try {
+      atomicWriteFileSync(sessionsFile(), serializeSessions(startup.sessions));
+    } catch (err) {
+      log.error('persist', `sessions.json migration write failed: ${String(err)}`);
+    }
+  }
   let projectsWritable = startup.projectsWritable;
   let projectsDirty = startup.writeProjects;
   const projectStore = new ProjectStore(
@@ -1997,28 +1996,22 @@ app.whenReady().then(() => {
   const emitMcpEvent: ServerEventSink = (type, data) => {
     if (type === 'ui.post' && 'route' in data) {
       const { route, message } = data;
+      // A file open arriving before the renderer is ready would be dropped; it queues like an OS open.
       if (message.type === 'openFileInEditor') {
         sendOpenFileInEditor(message);
         return;
       }
-      if (route.kind === 'broadcast') broadcast(message);
-      else if (route.kind === 'owner') sendToOwner(route.sessionId, message);
-      else {
-        const window = windows.get(route.windowId);
-        if (window && !window.isDestroyed() && !window.webContents.isDestroyed())
-          window.webContents.send('to-webview', message);
+      if (route.kind === 'broadcast') {
+        broadcast(message);
+        return;
       }
+      const window =
+        route.kind === 'owner' ? windowFor(route.sessionId) : windows.get(route.windowId);
+      if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
+      window.webContents.send('to-webview', message);
       if (data.raise) {
-        const window =
-          route.kind === 'owner'
-            ? windowFor(route.sessionId)
-            : route.kind === 'window'
-              ? windows.get(route.windowId)
-              : undefined;
-        if (window && !window.isDestroyed()) {
-          if (process.env.CONDUIT_E2E !== '1') window.show();
-          window.focus();
-        }
+        if (process.env.CONDUIT_E2E !== '1') window.show();
+        window.focus();
       }
     } else if (type === 'attention.flash' && 'sessionId' in data) {
       const window = windowFor(data.sessionId);
@@ -2142,7 +2135,7 @@ app.whenReady().then(() => {
   // would look orphaned and get deleted — wiping the scrollback of the very sessions the
   // persist gate deliberately preserves (a restore-off run keeps sessions.json intact, so its
   // scrollback must survive too, or toggling restore back on restores sessions with no history).
-  if (sessionsWriteGate.writable) {
+  if (sessionsWritableThisRun) {
     try {
       const dir = userData();
       const live = mgr.list().map((s) => s.id);
@@ -2161,7 +2154,6 @@ app.whenReady().then(() => {
   // never loaded the saved sessions, so its (empty) state must never overwrite them — even if the
   // user toggles restore back ON mid-run (that takes effect next launch). Gating on the live
   // setting would let a mid-run re-enable + quit wipe the preserved list. See persistence.ts.
-  const sessionsPersistGate = sessionsWriteGate;
   mgr.onChange(() => {
     if (deferredIndexes.size || pendingFsByWindow.size) {
       const sessions = mgr.list();
@@ -2179,10 +2171,8 @@ app.whenReady().then(() => {
     // on top of the good snapshot — leaving sessions.json empty, so the next launch restored
     // nothing and the multi-window layout collapsed to one window (planLayoutRestore drops a
     // window that owns no restored session).
-    if (!isQuitting)
-      sessionsPersistGate.run(() =>
-        persistFile(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json'),
-      );
+    if (!isQuitting && sessionsWritableThisRun)
+      persistFile(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
     postState();
   });
 
@@ -2325,11 +2315,10 @@ app.whenReady().then(() => {
       }
     };
     write(settingsFile(), serializeSettings(settings), 'settings.json');
-    // Startup-snapshot gate (see sessionsPersistGate note) so a restore-off run — even one that
+    // Startup-snapshot gate (see the sessionsWritableThisRun note) so a restore-off run — even one that
     // toggled restore back on — never overwrites the saved session set on quit.
-    sessionsPersistGate.run(() =>
-      write(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json'),
-    );
+    if (sessionsWritableThisRun)
+      write(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
     // Not gated on restoreSessions; blocked for a run whose projects.json was unreadable (B2).
     if (projectsWritable && projectsDirty)
       write(projectsFile(), serializeProjects(projectStore.list()), 'projects.json');
@@ -2347,13 +2336,11 @@ app.whenReady().then(() => {
     // an armed timer half-written and the next launch would silently lose it. Gated on an actual
     // change this run — readBlob swallows every read error, so an unconditional flush could
     // overwrite an intact file with nothing (the 0.11.1 durability class of bug).
-    if (timersDirty)
-      timedWriteGate.run(() =>
-        write(
-          timedMessagesFile(),
-          serializeTimedMessagesFile({ version: 1, schedules: timers.list() }),
-          'timed-messages.json',
-        ),
+    if (timersDirty && timersWritable)
+      write(
+        timedMessagesFile(),
+        serializeTimedMessagesFile({ version: 1, schedules: timers.list() }),
+        'timed-messages.json',
       );
     if (settings.restoreSessions) {
       const snapshot = buildLayoutSnapshot();
@@ -2940,6 +2927,7 @@ app.whenReady().then(() => {
     scopes.ended(id);
     restartSeq.delete(id);
     startRefusals.delete(id);
+    launchGenerations.delete(id);
     // The project is closed once its last session goes; the plans watch would otherwise hold an
     // fs.watch handle (and a poll interval) on a folder nothing is showing any more.
     if (planRoot) {
@@ -4432,6 +4420,7 @@ app.whenReady().then(() => {
           const ownsColdStart =
             settings.scrollbackPersistence && !coldStartsInFlight.has(m.sessionId);
           if (ownsColdStart) coldStartsInFlight.add(m.sessionId);
+          let releaseLaunch: (() => void) | undefined;
           // Released on every way out, a throw included (a rejected health check, a launch spec
           // that can't be built), or the session would never replay again this app run.
           try {
@@ -4475,6 +4464,13 @@ app.whenReady().then(() => {
               attach();
               break;
             }
+            const claim = launchClaims.claim(m.sessionId);
+            if (claim.kind === 'joined') {
+              await claim.settled;
+              if (mgr.get(m.sessionId) && pty.isAlive(m.sessionId)) attach();
+              break;
+            }
+            releaseLaunch = claim.release;
             if (s.agentId === COMMAND_AGENT_ID && !s.command) {
               // A saved open_terminal command that failed coercion: never guess what to run.
               scrollbacks.show(
@@ -4539,18 +4535,14 @@ app.whenReady().then(() => {
             }
             // Messaging wiring goes on last: per-launch args + the session token (spec §3.1).
             const launchIds = sessionPort.allocateLaunch(m.sessionId);
-            mcpRuntime.prepared(m.sessionId, launchIds);
             if (launchDef)
               spec = await mcpHost.prepareLaunch(m.sessionId, launchDef, spec, launchIds);
-            // prepareLaunch awaits the token store (C7 LaunchPort): re-check as after the health check.
+            // prepareLaunch awaits the token store (C7 LaunchPort); the claim rules out a second
+            // spawn meanwhile, but not a close.
             if (!mgr.get(m.sessionId)) break;
-            if (pty.isAlive(m.sessionId)) {
-              attach();
-              break;
-            }
             // brief --add-dir is not a session root (docs/specs/2026-10-26-conduit-role-brief.md §3.2)
             const scopeArgs = spec.args;
-            // Synchronous through pty.start: nothing may await after the isAlive re-check above.
+            // Synchronous through pty.start: nothing may await after the re-check above.
             const brief = roleBriefs.prepareSpawn(m.sessionId, launchDef, spec);
             spec = brief.spec;
             log.info('pty', 'spawn', {
@@ -4562,6 +4554,7 @@ app.whenReady().then(() => {
             const size = preSpawnSizes.get(m.sessionId) ?? { cols: m.cols, rows: m.rows };
             preSpawnSizes.delete(m.sessionId);
             for (const b of brief.banners) scrollbacks.show(m.sessionId, b, size);
+            mcpRuntime.prepared(m.sessionId, launchIds);
             pty.start(m.sessionId, size.cols, size.rows, spec);
             brief.commit(pty.isAlive(m.sessionId));
             mcpRuntime.spawned(m.sessionId);
@@ -4596,6 +4589,7 @@ app.whenReady().then(() => {
             }
           } finally {
             if (ownsColdStart) coldStartsInFlight.delete(m.sessionId);
+            releaseLaunch?.();
           }
           break;
         }

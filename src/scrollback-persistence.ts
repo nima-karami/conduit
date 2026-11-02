@@ -210,20 +210,21 @@ function restoreSegments(raw: unknown): ScrollbackRing | null {
   return ring;
 }
 
-export function restoreScrollback(
-  blob: string | undefined,
-):
-  | (PersistedScrollback & { kind?: never })
-  | { kind: 'newer'; sessionId?: string; segments?: never }
-  | null {
-  if (!blob) return null;
+export type ScrollbackRestore =
+  | { kind: 'empty' }
+  | { kind: 'newer' }
+  | { kind: 'ok'; scrollback: PersistedScrollback };
+
+export function restoreScrollback(blob: string | undefined): ScrollbackRestore {
+  const empty: ScrollbackRestore = { kind: 'empty' };
+  if (!blob) return empty;
   let parsed: unknown;
   try {
     parsed = JSON.parse(blob);
   } catch {
-    return null;
+    return empty;
   }
-  if (!parsed || typeof parsed !== 'object') return null;
+  if (!parsed || typeof parsed !== 'object') return empty;
   const p = parsed as {
     version?: unknown;
     sessionId?: unknown;
@@ -231,17 +232,19 @@ export function restoreScrollback(
     segments?: unknown;
   };
   if (judgePersistedVersion('scrollback-<id>.json', p.version) === 'newer')
-    return {
-      kind: 'newer',
-      ...(typeof p.sessionId === 'string' ? { sessionId: p.sessionId } : {}),
-    };
-  if (typeof p.sessionId !== 'string') return null;
+    return { kind: 'newer' };
+  if (typeof p.sessionId !== 'string') return empty;
   if (p.version === 1) {
     return typeof p.data === 'string'
-      ? { version: 2, sessionId: p.sessionId, segments: [{ data: p.data }] }
-      : null;
+      ? {
+          kind: 'ok',
+          scrollback: { version: 2, sessionId: p.sessionId, segments: [{ data: p.data }] },
+        }
+      : empty;
   }
-  if (p.version !== 2) return null;
+  if (p.version !== 2) return empty;
   const segments = restoreSegments(p.segments);
-  return segments ? { version: 2, sessionId: p.sessionId, segments } : null;
+  return segments
+    ? { kind: 'ok', scrollback: { version: 2, sessionId: p.sessionId, segments } }
+    : empty;
 }

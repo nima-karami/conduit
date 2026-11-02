@@ -2489,6 +2489,27 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     await launch(h, 's1');
     expect(h.screens.has('s1')).toBe(true);
   });
+
+  it('a profile session respawned with no exit (a retired PTY) gets a fresh screen model', async () => {
+    const h = harness();
+    await h.host.start();
+    await launch(h, 's1');
+    h.output('s1', 'old child');
+    expect((await h.screens.snapshot('s1'))?.lines[0]).toBe('old child');
+    await launch(h, 's1');
+    expect(h.screens.has('s1')).toBe(true);
+    expect((await h.screens.snapshot('s1'))?.lines[0]).toBe('');
+  });
+
+  it('an exit whose token revoke fails is logged, not left unhandled', async () => {
+    const rec = recordingLog();
+    const h = harness({ log: rec.log });
+    await h.host.start();
+    await launch(h, 's1');
+    vi.spyOn(h.tokens, 'revoke').mockRejectedValueOnce(new Error('store down'));
+    h.exit('s1');
+    await expect.poll(() => rec.of('token not revoked').length).toBe(1);
+  });
 });
 
 describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-install §2.5, AC11)', () => {

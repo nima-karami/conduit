@@ -66,11 +66,7 @@ export function createMcpRuntimePorts(deps: { pty: PtyPort; screens: SessionScre
       if (terminal)
         emit({ type: 'spawned', sessionId, generation: terminal.generation, size: terminal.size });
     },
-    output: (sessionId, data) => {
-      deps.screens.feed(sessionId, data);
-      const terminal = get(sessionId);
-      if (terminal) emit({ type: 'data', sessionId, generation: terminal.generation, data });
-    },
+    output: (sessionId, data) => deps.screens.feed(sessionId, data),
     resize: (sessionId, cols, rows) => {
       deps.screens.resize(sessionId, cols, rows);
       emit({ type: 'size', sessionId, size: { cols, rows } });

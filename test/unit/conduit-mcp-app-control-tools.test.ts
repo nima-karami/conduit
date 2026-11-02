@@ -434,6 +434,25 @@ describe('close_session', () => {
     expect(calls).toEqual([]);
   });
 
+  it('a windowless close the domain no longer knows → unknown_session, token refunded', async () => {
+    const h = harness();
+    h.windows.set('other-1', null);
+    h.deps.closeSession = async () => ({
+      ok: false,
+      code: 'unknown_session',
+      message: 'gone',
+    });
+    const app = build(h);
+    const { ctx } = context({ reach: 'any' });
+    const r = await runIt(app.prepareCloseSession(caller(), { session: 'codex-2' }, ctx));
+    expect(r).toStrictEqual({
+      ok: false,
+      error: { code: 'unknown_session', message: 'gone', retryable: false },
+    });
+    h.deps.closeSession = async () => ({ ok: true });
+    await budgetIntact(app, 'act');
+  });
+
   it('to a target in another window routes to that window with routedSessionId = target', async () => {
     const h = harness();
     const app = build(h);

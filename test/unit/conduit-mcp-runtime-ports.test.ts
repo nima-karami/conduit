@@ -31,7 +31,7 @@ function harness() {
       lines: ['hello'],
       cursorY: 0,
       cursorX: 5,
-      cursorRowStyles: 'plain'.repeat(0),
+      cursorRowStyles: '',
     }),
     has: (sessionId) => activeModels.has(sessionId),
   };
@@ -93,28 +93,27 @@ describe('createMcpRuntimePorts', () => {
     expect(ports.runtime.get('s1')).toBeUndefined();
   });
 
-  it('feeds output and size changes before notifying subscribed runtime listeners', async () => {
+  it('feeds output to the screen model and notifies subscribed listeners of size changes', async () => {
     const { ports, calls, events } = harness();
     ports.prepared('s1', ids);
     const observed: RuntimeEvent[] = [];
     const unsubscribe = ports.runtime.on((event) => observed.push(event));
     ports.output('s1', 'chunk');
+    ports.resize('s1', 90, 30);
     unsubscribe();
     ports.output('s1', 'after-unsubscribe');
     ports.resize('s1', 100, 40);
     expect(calls).toEqual([
       ['feed', 's1', 'chunk'],
+      ['resize', 's1', 90, 30],
       ['feed', 's1', 'after-unsubscribe'],
       ['resize', 's1', 100, 40],
     ]);
     expect(events).toEqual([
-      { type: 'data', sessionId: 's1', generation: ids.generation, data: 'chunk' },
-      { type: 'data', sessionId: 's1', generation: ids.generation, data: 'after-unsubscribe' },
+      { type: 'size', sessionId: 's1', size: { cols: 90, rows: 30 } },
       { type: 'size', sessionId: 's1', size: { cols: 100, rows: 40 } },
     ]);
-    expect(observed).toEqual([
-      { type: 'data', sessionId: 's1', generation: ids.generation, data: 'chunk' },
-    ]);
+    expect(observed).toEqual([{ type: 'size', sessionId: 's1', size: { cols: 90, rows: 30 } }]);
     await expect(ports.runtime.screen('s1')).resolves.toEqual({
       lines: ['hello'],
       cursorY: 0,

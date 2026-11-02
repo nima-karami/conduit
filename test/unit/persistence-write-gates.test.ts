@@ -4,8 +4,8 @@ import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   ScrollbackWriteGate,
-  sessionWriteGate,
-  timedMessagesWriteGate,
+  sessionsWritable,
+  timedMessagesWritable,
 } from '../../electron/persistence-write-gates';
 import { parseSessions } from '../../src/persistence';
 import { parseTimedMessagesFile } from '../../src/timed-messages';
@@ -30,39 +30,23 @@ const readIn = (dir: string) => (name: string) => {
 };
 
 describe('persisted write gates', () => {
-  it('a newer sessions.json blocks both the normal writer and the quit flush', () => {
-    const original = '{"version":2,"sessions":["newer bytes"]}';
-    const file = path.join(scratchDir(), 'sessions.json');
-    fs.writeFileSync(file, original);
-    const parsed = parseSessions(original);
-    const gate = sessionWriteGate({ restoreSessions: true }, parsed);
+  it('a newer sessions.json is not writable', () => {
+    const parsed = parseSessions('{"version":2,"sessions":["newer bytes"]}');
     expect(parsed.kind).toBe('newer');
-
-    gate.run(() => fs.writeFileSync(file, 'normal write'));
-    gate.run(() => fs.writeFileSync(file, 'quit flush'));
-
-    expect(fs.readFileSync(file, 'utf8')).toBe(original);
+    expect(sessionsWritable({ restoreSessions: true }, parsed)).toBe(false);
   });
 
   it('a current sessions.json stays writable, and restore-off still blocks it', () => {
     const parsed = parseSessions('{"version":1,"sessions":[]}');
-    expect(sessionWriteGate({ restoreSessions: true }, parsed).writable).toBe(true);
-    expect(sessionWriteGate({ restoreSessions: false }, parsed).writable).toBe(false);
+    expect(sessionsWritable({ restoreSessions: true }, parsed)).toBe(true);
+    expect(sessionsWritable({ restoreSessions: false }, parsed)).toBe(false);
   });
 
-  it('a newer timed-messages.json blocks debounce and quit writes', () => {
-    const original = '{"version":2,"schedules":["newer bytes"]}';
-    const file = path.join(scratchDir(), 'timed-messages.json');
-    fs.writeFileSync(file, original);
-    const parsed = parseTimedMessagesFile(original);
-    const gate = timedMessagesWriteGate(parsed);
+  it('a newer timed-messages.json is not writable', () => {
+    const parsed = parseTimedMessagesFile('{"version":2,"schedules":["newer bytes"]}');
     expect(parsed.kind).toBe('newer');
-
-    gate.run(() => fs.writeFileSync(file, 'debounced write'));
-    gate.run(() => fs.writeFileSync(file, 'quit flush'));
-
-    expect(fs.readFileSync(file, 'utf8')).toBe(original);
-    expect(timedMessagesWriteGate(parseTimedMessagesFile(undefined)).writable).toBe(true);
+    expect(timedMessagesWritable(parsed)).toBe(false);
+    expect(timedMessagesWritable(parseTimedMessagesFile(undefined))).toBe(true);
   });
 
   it('a newer scrollback file is neither replayed, persisted over nor deleted', () => {

@@ -144,7 +144,7 @@ describe('scrollback-persistence', () => {
         { data: 'line3\r\n', geometry: B },
       ],
     };
-    expect(restoreScrollback(serializeScrollback(p))).toEqual(p);
+    expect(restoreScrollback(serializeScrollback(p))).toEqual({ kind: 'ok', scrollback: p });
   });
 
   it('writes a segment on disk as {cols, rows, data}', () => {
@@ -163,9 +163,8 @@ describe('scrollback-persistence', () => {
   it('loads a v1 file (written before geometry was recorded) as one segment with no geometry', () => {
     const v1 = JSON.stringify({ version: 1, sessionId: 's1', data: 'old\r\n' });
     expect(restoreScrollback(v1)).toEqual({
-      version: 2,
-      sessionId: 's1',
-      segments: [{ data: 'old\r\n' }],
+      kind: 'ok',
+      scrollback: { version: 2, sessionId: 's1', segments: [{ data: 'old\r\n' }] },
     });
   });
 
@@ -183,27 +182,29 @@ describe('scrollback-persistence', () => {
       segments: [{ ...geometry, data: 'x' }],
     });
     expect(restoreScrollback(blob)).toEqual({
-      version: 2,
-      sessionId: 's',
-      segments: [{ data: 'x' }],
+      kind: 'ok',
+      scrollback: { version: 2, sessionId: 's', segments: [{ data: 'x' }] },
     });
   });
 
-  it('returns null on missing or garbage input', () => {
-    expect(restoreScrollback(undefined)).toBeNull();
-    expect(restoreScrollback('not json')).toBeNull();
-    expect(restoreScrollback('{"version":2,"sessionId":"s"}')).toBeNull();
-    expect(restoreScrollback('{"version":2,"sessionId":"s","segments":[{"cols":80}]}')).toBeNull();
-    expect(restoreScrollback('{"version":2,"sessionId":"s","segments":[null]}')).toBeNull();
-    expect(restoreScrollback('{"version":2,"segments":[]}')).toBeNull();
-    expect(restoreScrollback('{"version":1,"sessionId":"s"}')).toBeNull();
-    expect(restoreScrollback('[]')).toBeNull();
+  it('reads missing or garbage input as empty', () => {
+    expect(restoreScrollback(undefined)).toEqual({ kind: 'empty' });
+    expect(restoreScrollback('not json')).toEqual({ kind: 'empty' });
+    expect(restoreScrollback('{"version":2,"sessionId":"s"}')).toEqual({ kind: 'empty' });
+    expect(restoreScrollback('{"version":2,"sessionId":"s","segments":[{"cols":80}]}')).toEqual({
+      kind: 'empty',
+    });
+    expect(restoreScrollback('{"version":2,"sessionId":"s","segments":[null]}')).toEqual({
+      kind: 'empty',
+    });
+    expect(restoreScrollback('{"version":2,"segments":[]}')).toEqual({ kind: 'empty' });
+    expect(restoreScrollback('{"version":1,"sessionId":"s"}')).toEqual({ kind: 'empty' });
+    expect(restoreScrollback('[]')).toEqual({ kind: 'empty' });
   });
 
   it('explicitly refuses a newer scrollback format', () => {
-    expect(restoreScrollback('{"version":3,"sessionId":"s","segments":[]}')).toMatchObject({
+    expect(restoreScrollback('{"version":3,"sessionId":"s","segments":[]}')).toEqual({
       kind: 'newer',
-      sessionId: 's',
     });
   });
 

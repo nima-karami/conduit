@@ -1261,12 +1261,18 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       r.lastInputAt = undefined;
       // A CLI paints its UI before it initializes and never fully repaints (spec §2.4 D6).
       if (r.tracker) screens.keepTail(sessionId);
-      if (r.defAdapter && !r.unavailable) screens.ensure(sessionId, { seedTail: false });
+      if (r.defAdapter && !r.unavailable) {
+        // A retired PTY ends with no exit event, so the previous child's model would carry over.
+        screens.release(sessionId);
+        screens.ensure(sessionId, { seedTail: false });
+      }
     } else if (event.type === 'size') {
       if (r) r.size = event.size;
     } else if (event.type === 'exit') {
       if (!r) return;
-      void deps.tokens.revoke({ sessionId });
+      deps.tokens.revoke({ sessionId }).catch((err: unknown) => {
+        deps.log.warn('conduit-mcp', 'token not revoked', { sessionId, err: String(err) });
+      });
       closeConnectionsOf(sessionId);
       void removeConfig(sessionId);
       screens.release(sessionId);
