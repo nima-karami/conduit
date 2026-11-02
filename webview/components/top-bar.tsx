@@ -22,7 +22,8 @@ import {
   IconWinRestore,
 } from '../icons';
 import { getReviewNav, type ReviewNavModel, subscribeReviewNav } from '../review-nav-store';
-import { isMac } from '../shortcuts';
+import { useSettings } from '../settings';
+import { comboLabel, isMac } from '../shortcuts';
 import { useWorkbenchChromeState } from '../workbench-chrome-state';
 
 /** The Changes toggle's count: review mode counts its navigator's files, otherwise the model's. */
@@ -131,6 +132,8 @@ export function TopBar({
 }) {
   const [maxed, setMaxed] = useState(false);
   const navModel = useSyncExternalStore(subscribeReviewNav, getReviewNav, getReviewNav);
+  const { settings } = useSettings();
+  const searchCombo = comboLabel('openSearch', settings.shortcuts);
 
   useEffect(() => {
     if (!win) return;
@@ -157,8 +160,13 @@ export function TopBar({
   };
 
   const identity = (
-    <div className="topbar__identity" title={isDev ? CHROME_STR.devTitle : undefined}>
-      <img src={isDev ? './icon-dev.png' : './icon.png'} alt="" className="topbar__logo" />
+    <div className="topbar__identity">
+      <img
+        src={isDev ? './icon-dev.png' : './icon.png'}
+        alt=""
+        title={isDev ? CHROME_STR.devTitle : undefined}
+        className="topbar__logo"
+      />
       <span className="topbar__wordmark">{CHROME_STR.wordmark}</span>
     </div>
   );
@@ -234,7 +242,7 @@ export function TopBar({
           type="button"
           className="omnibar"
           onClick={onOpenSearch}
-          title={`${CHROME_STR.search} (Ctrl+P)`}
+          title={searchCombo ? `${CHROME_STR.search} (${searchCombo})` : CHROME_STR.search}
           aria-label={CHROME_STR.search}
           aria-keyshortcuts="Control+P"
         >

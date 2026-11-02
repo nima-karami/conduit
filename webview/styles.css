@@ -113,6 +113,9 @@
   /* The center footer's height, and the update toast's anchor above it: one geometry, so the
      toast never needs an offset of its own (sidebar-agent-tree spec §7). */
   --status-bar-h: 32px;
+  /* The floating stack sits this far from both the bottom and right window edges in every theme:
+     a flush Neon --win-pad of 0 would park cards on the window frame (sidebar-agent-tree §7). */
+  --toast-inset: 24px;
   /* Does a tab FLOAT inside its row or fill it? Same question --win-pad answers for panels,
      and the same axis: Aero insets the tab so it reads as a pill on open ground; Neon is a
      flush language, so a tab that stops short of its own band just looks unfinished. Density
@@ -1318,7 +1321,7 @@ body.resizing .panel__resize::after {
 
 /* ---------- status bar ----------
    The center column's footer (sidebar-agent-tree spec §7). Its height is the shared
-   --status-bar-h the update toast anchors on. Aero floats it as a panel card; Neon lays it flush
+   --status-bar-h token. Aero floats it as a panel card; Neon lays it flush
    with one hairline above, since the side panels' own rings already draw its other edges. */
 .statusbar {
   flex: 0 0 var(--status-bar-h);
@@ -6927,13 +6930,12 @@ body.gh-resizing {
   margin: 0;
 }
 
-/* ---- Toasts (K2) and the window's one floating stack (sidebar-agent-tree spec §7): docked
-   cards, transient toasts and the persistent update item share it, so nothing overlaps another
-   outlet. Fixed at the window's bottom-right with one equal inset on both sides, derived from
-   the window inset; it overlays content and never moves for a state, a panel or a view. Above
-   modals, below menus; pointer-events on the cards only. Silence = success; only failures toast. */
+/* ---- Toasts (K2) and the window's one floating stack (sidebar-agent-tree spec §7): the docked
+   approval card, transient toasts and the persistent update item share it, so nothing overlaps
+   another outlet. Fixed at the window's bottom-right, --toast-inset from both edges; it overlays
+   content (the status bar's right end included) and never moves for a state, a panel or a view.
+   Above modals, below menus; pointer-events on the cards only. Silence = success. */
 .toasts {
-  --toast-inset: calc(var(--win-pad) * 2);
   position: fixed;
   right: var(--toast-inset);
   bottom: var(--toast-inset);

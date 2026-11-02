@@ -7,8 +7,8 @@ import { UpdateCard } from './update-card';
 
 /**
  * The window's one floating stack (K2; sidebar-agent-tree spec §7 floating updates). Portals to
- * document.body so it floats above everything and never shifts layout. Docked cards (`children`,
- * e.g. the approval card) sit on top, transient toasts below them, and the persistent update item
+ * document.body so it floats above everything and never shifts layout. The approval card docks
+ * here (`children`) on top, transient toasts below it, and the persistent update item
  * last, nearest the anchor. The outlet stays mounted even when empty: a live region that exists
  * before its message arrives is the one assistive tech reliably announces.
  */
