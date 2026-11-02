@@ -75,7 +75,7 @@ export class PipeTransport {
   readonly peers = new Map<Socket, Peer>();
   private server?: Server;
   onConnect: () => void = () => {};
-  onDisconnect: () => void = () => {};
+  onDisconnect: (peer: Peer) => void = () => {};
   constructor(
     readonly endpoint: string,
     readonly platform: 'win32' | 'posix',
@@ -155,7 +155,7 @@ export class PipeTransport {
     socket.once('close', () => {
       clearTimeout(helloTimer);
       this.peers.delete(socket);
-      this.onDisconnect();
+      this.onDisconnect(peer);
     });
   }
 
@@ -259,6 +259,32 @@ export class PipeTransport {
       }
       peer.subscribed = false;
       void this.send(socket, missed);
+    }
+  };
+
+  /**
+   * One peer's event (a window-routed `ui.post`): window ids are per connection, so another app
+   * must not see it. It takes a seq like any event, so each stream stays ordered on one counter.
+   */
+  emitTo: (peer: object, ...event: Parameters<ServerEventSink>) => void = (peer, type, data) => {
+    for (const [socket, p] of this.peers) {
+      if (p !== peer || !p.subscribed) continue;
+      const seq = ++this.seq;
+      if (socket.writableLength <= this.eventBufferBound) {
+        void this.send(socket, {
+          jsonrpc: '2.0',
+          method: SERVER_EVENT_METHOD,
+          params: { seq, type, data },
+        });
+        return;
+      }
+      p.subscribed = false;
+      void this.send(socket, {
+        jsonrpc: '2.0',
+        method: SERVER_EVENT_METHOD,
+        params: { seq, type: 'missed', data: { seq } },
+      });
+      return;
     }
   };
 }

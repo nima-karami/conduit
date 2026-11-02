@@ -1,12 +1,16 @@
 import { appendFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { version } from '../package.json';
+import type { InstanceNames } from '../src/contracts/session-identity';
 import { instanceNames } from '../src/instance-names';
+import { formatRecord } from '../src/logging';
 import { compose, emptyCore } from './compose';
+import { directStopAll, hcBinaryOf, hcClient, serverChildEnv, startCore, stopCore } from './hc-cli';
 import { argValue, requireUserData } from './lifecycle/cli-args';
 import type { ShellCore } from './lifecycle/shell';
 import { stopAll } from './lifecycle/stop-all';
+import { createServices, type Services } from './services';
 import { PipeTransport, type RpcHandler } from './transport/pipe';
 
 export interface MainDependencies {
@@ -26,15 +30,20 @@ export async function runServer(
   const userData = requireUserData(args);
   const platform = process.platform === 'win32' ? 'win32' : 'posix';
   const names = instanceNames(userData, platform, tmpdir());
+  const hcEnv = serverChildEnv(process.env, names);
+  const hcBin = hcBinaryOf(argValue(args, '--hc'));
   if (args.includes('--stop-all')) {
     const result = await stopAll({
       endpoint: names.serverEndpoint,
       version,
       directFallback:
         dependencies.directFallback ??
-        (async () => {
-          throw new Error('Direct hc fallback not composed');
-        }),
+        (() =>
+          directStopAll(
+            hcClient(names, hcEnv, (m) => process.stderr.write(`${m}\n`)),
+            names,
+            () => stopCore(hcBin, hcEnv),
+          )),
     });
     if (!result.ok) process.stderr.write(`${result.reason}\n`);
     return { code: result.ok ? 0 : 1 };
@@ -47,9 +56,24 @@ export async function runServer(
   if (!(await transport.listen((request, peer) => handle(request, peer)))) return { code: 0 };
   const logPath = path.join(userData, 'server.log');
   const supervisorTerminal = argValue(args, '--supervisor-terminal');
+  let services: Services | undefined;
+  let composed: ReturnType<typeof compose> | undefined;
+  if (!dependencies.core) {
+    services = createServerServices({
+      userData,
+      names,
+      logPath,
+      e2e: args.includes('--e2e'),
+      hcEnv,
+      hcBin,
+      transport,
+      shell: () => composed,
+    });
+  }
   const shell = compose({
     transport,
-    core: dependencies.core ?? emptyCore(logPath),
+    core: dependencies.core ?? services?.core ?? emptyCore(logPath),
+    ...(services ? { dispatch: services.dispatch, disconnected: services.disconnected } : {}),
     version,
     instance: names.instance,
     logPath,
@@ -60,6 +84,7 @@ export async function runServer(
     exit: async (code) => {
       shell.lifecycle.dispose();
       try {
+        await services?.close();
         await transport.close();
       } catch (error) {
         logError(error);
@@ -70,6 +95,7 @@ export async function runServer(
       }
     },
   });
+  composed = shell;
   handle = shell.handle;
   logError = (error) => shell.log('error', String(error));
   shell.log('info', 'server listening');
@@ -78,9 +104,70 @@ export async function runServer(
     transport,
     close: async () => {
       shell.lifecycle.dispose();
+      await services?.close();
       await transport.close();
     },
   };
+}
+
+/** The real services over our hc core; tests pass a ShellCore instead. */
+function createServerServices(o: {
+  userData: string;
+  names: InstanceNames;
+  logPath: string;
+  e2e: boolean;
+  hcEnv: Record<string, string>;
+  hcBin: string;
+  transport: PipeTransport;
+  /** Undefined while the services are being built, before compose exists. */
+  shell: () => ReturnType<typeof compose> | undefined;
+}): Services {
+  const at =
+    (level: 'debug' | 'info' | 'warn' | 'error') =>
+    (scope: string, msg: string, data?: Record<string, unknown>) => {
+      const shell = o.shell();
+      // Load-time warnings come before compose and its logging settings: written at the default.
+      if (shell) shell.record(level, scope, msg, data);
+      else
+        appendFileSync(
+          o.logPath,
+          `${formatRecord({ ts: Date.now(), level, scope, msg, ...(data ? { data } : {}) })}\n`,
+        );
+    };
+  const log = { debug: at('debug'), info: at('info'), warn: at('warn'), error: at('error') };
+  return createServices({
+    userData: o.userData,
+    names: o.names,
+    platform: process.platform,
+    e2e: o.e2e,
+    appVersion: version,
+    logPath: o.logPath,
+    env: process.env,
+    homeDir: homedir(),
+    hc: hcClient(o.names, o.hcEnv, (m) => log.warn('hc', m)),
+    startCore: () => startCore(o.hcBin, o.names, o.hcEnv),
+    // Unpackaged layout (out/server → repo). The packaged runtime/shim path (D2b) is W7's.
+    shim: {
+      execPath: process.execPath,
+      shimPath: path.join(
+        __dirname,
+        '..',
+        '..',
+        'resources',
+        'conduit-mcp',
+        'conduit-mcp-shim.cjs',
+      ),
+    },
+    emit: o.transport.emit,
+    emitTo: o.transport.emitTo,
+    stopping: () => o.shell()?.lifecycle.stopping ?? false,
+    onHealth: (health) => {
+      const shell = o.shell();
+      if (shell) shell.lifecycle.runtime = health;
+      o.transport.emit('runtime.changed', health);
+    },
+    log,
+  });
 }
 
 if (require.main === module) {
