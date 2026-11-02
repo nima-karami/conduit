@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { serverPatchOf } from '../electron/settings-mirror';
 import type { AppSettings } from '../src/settings';
 import { DEFAULT_SETTINGS, FONT_SIZE_SCALE } from '../src/settings';
 import { decideHydrate, jsonEqual, makeGate, onLocalEdit, onPostFired } from '../src/settings-sync';
@@ -67,6 +68,15 @@ function applyToDom(next: Record<string, string>, prev: Record<string, string> |
     if (key.startsWith('--')) el.style.setProperty(key, value);
     else el.dataset[key] = value;
   }
+}
+
+/**
+ * The server's keys go at once and key-scoped (D7): the debounced whole-object updateSettings
+ * carries UI keys only, so a stale window can't revert another window's change.
+ */
+function postServerPatch(patch: Partial<AppSettings>) {
+  const server = serverPatchOf(patch);
+  if (Object.keys(server).length > 0) post({ type: 'updateServerSettings', patch: server });
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
@@ -134,6 +144,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, [settings]);
 
   const update = useCallback((patch: Partial<AppSettings>) => {
+    postServerPatch(patch);
     onLocalEdit(gate.current);
     setSettings((prev) => ({ ...prev, ...coupleThemeDefaults(prev, patch) }));
   }, []);
@@ -149,6 +160,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resetAll = useCallback(() => {
+    postServerPatch(DEFAULT_SETTINGS);
     onLocalEdit(gate.current);
     setSettings({ ...DEFAULT_SETTINGS });
   }, []);

@@ -13,7 +13,6 @@
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "start": "npm run build && electron .",
-    "rebuild": "electron-rebuild -f -w @lydell/node-pty",
     "test:unit": "vitest run",
     "e2e": "node test/e2e/run-smoke.mjs",
     "e2e:remote": "node tools/e2e-remote.mjs",
@@ -52,8 +51,7 @@
       "!out/**/*.map",
       "assets/icon.*",
       "package.json",
-      "!node_modules/**/*",
-      "node_modules/@lydell/**/*"
+      "!node_modules/**/*"
     ],
     "asarUnpack": [
       "**/*.node"
@@ -164,7 +162,6 @@
     "vitest": "^4.1.8"
   },
   "dependencies": {
-    "@lydell/node-pty": "1.2.0-beta.14",
     "@milkdown/kit": "^7.22.1",
     "@milkdown/react": "^7.22.1",
     "@prosemirror-adapter/react": "^0.5.5",
