@@ -47,7 +47,6 @@ import {
 } from '../../src/contracts/server-protocol';
 import {
   type ConduitLabels,
-  coreStartCwd,
   coreStartEnv,
   judgePersistedVersion,
   SERVER_FILE_VERSION,
@@ -71,6 +70,7 @@ import {
 } from '../../src/contracts/shim-protocol';
 import type { LaunchIds, TerminalRuntime } from '../../src/contracts/terminal-runtime';
 import * as terminalRuntime from '../../src/contracts/terminal-runtime';
+import { coreStartCwd } from '../../src/instance-names';
 import type { PtyWriter } from '../../src/pty-writer';
 import type { SessionActivity } from '../../src/session-activity';
 import type { AppSettings } from '../../src/settings';
@@ -276,7 +276,7 @@ describe('server ports', () => {
   // One focus producer: xterm's own reports inside term.input.
   it('carry focus only as input bytes', () => {
     expectTypeOf<keyof ServerNotifications>().toEqualTypeOf<
-      'term.input' | 'term.resize' | 'term.facts' | 'folders.suspect'
+      'term.input' | 'term.resize' | 'term.facts' | 'folders.suspect' | 'system.resumed'
     >();
     expectTypeOf<TerminalRuntime>().not.toHaveProperty('focus');
   });

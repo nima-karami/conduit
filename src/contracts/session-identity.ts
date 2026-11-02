@@ -1,6 +1,5 @@
 // C4 — how a Conduit session is recognised across the server, hc and MCP.
 // The token is the only identity an agent can present; labels only let the server find its terminals.
-import { join } from 'node:path';
 import type { AgentCli } from '../conduit-mcp/install-types';
 import type { TermGeometry } from '../protocol';
 import type { ReportedStatus } from './terminal-runtime';
@@ -222,14 +221,6 @@ export const USER_XDG_CAPTURED_ENV = 'CONDUIT_USER_XDG_CAPTURED';
 
 /** `hc run` flags for the supervisor start, from the app or from the server alike (D16, M17). */
 export const CORE_START_RUN_FLAGS = ['--bg', '--no-parent'] as const;
-
-/**
- * Cwd for every hc call that may start or restart a core: the core inherits the starting CLI's cwd
- * and its holders inherit the core's, and only a cwd blocks the GC rename (M21, D23).
- */
-export function coreStartCwd(runtimeRoot: string, hcVersion: string): string {
-  return join(runtimeRoot, 'hc', hcVersion);
-}
 
 /**
  * The one env builder for every process that may start our core: the app's supervisor start and the

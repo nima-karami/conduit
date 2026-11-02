@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { posix, win32 } from 'node:path';
+import { join, posix, win32 } from 'node:path';
 import { endpointPath } from './conduit-mcp/endpoint-path';
 import type { InstanceNames } from './contracts/session-identity';
 
@@ -30,4 +30,13 @@ export function instanceNames(
     hcConfigHome: path.join(userData, 'hc', 'config'),
     hcStateHome: path.join(userData, 'hc', 'state'),
   };
+}
+
+/**
+ * Cwd for every hc call that may start or restart a core: the core inherits the starting CLI's cwd
+ * and its holders inherit the core's, and only a cwd blocks the GC rename (M21, D23). Lives here, not in C4,
+ * because C4 is imported by the webview bundle, which has no node:path.
+ */
+export function coreStartCwd(runtimeRoot: string, hcVersion: string): string {
+  return join(runtimeRoot, 'hc', hcVersion);
 }
