@@ -1,0 +1,34 @@
+== start core from rtA (cwd = scratch root)
+   run: {"address":"t1","agent":"C:\\Program Files\\nodejs\\node.exe","cwd":"C:/Users/ka
+   52852 hc.exe ppid=14508 <scratch>\rtA\hc.exe serve
+   33024 hc.exe ppid=52852 <scratch>\rtA\hc.exe hold --socket \\.\pipe\herdr-core-karam-conduit-spike-fdc738cc-m21.holder.f02c7ddd.sock
+   52192 OpenConsole.exe ppid=33024 "<scratch>\rtA\conpty\x64\OpenConsole.exe" --headless --width 200 --height 120 --signal 0x1b0 --server 0x1a0
+rename rtA while core+holder from rtA live: RENAMED (not in use)
+rename rtB (unused): RENAMED (not in use)
+== server restart invoked through rtB\hc.exe
+{"core":{"id":"df9f059cb0abf355a3919d39b55da4df","name":"awby-desktop"},"finished":0,"holder":null,"holders":[{"current":false,"instance":"54751ad9b7c281efd9865e49a9a9e537","pid":33024,"terminals":1}],"installed_by":null,"live":1,"pid":39244,"uptime_ms":21,"version":"0.1.16"}
+{"core":{"id":"df9f059cb0abf355a3919d39b55da4df","name":"awby-desktop"},"finished":0,"holder":null,"holders":[{"current":false,"instance":"54751ad9b7c281efd9865e49a9a9e537","pid":33024,"terminals":1}],"installed_by":null,"live":1,"pid":39244,"uptime_ms":2065,"version":"0.1.16"}
+   33024 hc.exe ppid=52852 <scratch>\rtA\hc.exe hold --socket \\.\pipe\herdr-core-karam-conduit-spike-fdc738cc-m21.holder.f02c7ddd.sock
+   52192 OpenConsole.exe ppid=33024 "<scratch>\rtA\conpty\x64\OpenConsole.exe" --headless --width 200 --height 120 --signal 0x1b0 --server 0x1a0
+   39244 hc.exe ppid=34448 <scratch>\rtB\hc.exe serve
+t-old after restart: live
+   33024 hc.exe ppid=52852 <scratch>\rtA\hc.exe hold --socket \\.\pipe\herdr-core-karam-conduit-spike-fdc738cc-m21.holder.f02c7ddd.sock
+   52192 OpenConsole.exe ppid=33024 "<scratch>\rtA\conpty\x64\OpenConsole.exe" --headless --width 200 --height 120 --signal 0x1b0 --server 0x1a0
+   39244 hc.exe ppid=34448 <scratch>\rtB\hc.exe serve
+   52784 hc.exe ppid=39244 <scratch>\rtB\hc.exe hold --socket \\.\pipe\herdr-core-karam-conduit-spike-fdc738cc-m21.holder.2f4e1567.sock
+   52068 OpenConsole.exe ppid=52784 "<scratch>\rtB\conpty\x64\OpenConsole.exe" --headless --width 200 --height 120 --signal 0x1ac --server 0x1a4
+rename rtA: RENAMED (not in use)
+rename rtB: RENAMED (not in use)
+== kill t-old
+   39244 hc.exe ppid=34448 <scratch>\rtB\hc.exe serve
+   52784 hc.exe ppid=39244 <scratch>\rtB\hc.exe hold --socket \\.\pipe\herdr-core-karam-conduit-spike-fdc738cc-m21.holder.2f4e1567.sock
+   52068 OpenConsole.exe ppid=52784 "<scratch>\rtB\conpty\x64\OpenConsole.exe" --headless --width 200 --height 120 --signal 0x1ac --server 0x1a4
+rename rtA after t-old killed: RENAMED (not in use)
+rename rtB: RENAMED (not in use)
+== cwd-only and image-only holders (server stand-ins)
+rename rtS while a process has its cwd there: FAILED (in use): The process cannot access the file because it is being used by another process.
+rename rtS after it exits: RENAMED (not in use)
+== stop
+{"stopped":true}
+rename rtA after stop: RENAMED (not in use)
+rename rtB after stop: RENAMED (not in use)

@@ -1,0 +1,19 @@
+sh on PATH: False; bash: C:\Windows\System32\bash.exe
+server start: {"core":{"id":"83556982a28b3955860f65875b51269c","name":"awb
+run argv: ARGV-OK
+run line (&&): LINE-1 | LINE-2
+default shell argv: 
+shell screen: PS C:\Users\karam\AppData\Local\Temp\claude-scratch\hc-spike>
+{"error":{"hint":"check the program name and cwd","kind":"spawn_failed","message":"cannot start \"sh\": sh: not found on PATH"}}
+template run:  first_message=
+{"error":{"hint":"see `hc ls --all`","kind":"not_found","message":"no terminal \"tpl9\""}}
+template screen: 
+{"error":{"hint":"see `hc ls --all`","kind":"not_found","message":"no terminal \"tpl9\""}}
+exec argv: EXEC-OK
+exec line: EXEC-LINE-1  | EXEC-LINE-2
+wait/output: {"address":"t5","agent":"cmd.exe","cwd":
+wait --output: {"children":[],"ended":true,"exit_code":null,"reason":"output","signal":null,"status":null,"terminal":"t5","turn":0}
+pane sees sh: INFO: Could not find files for the given pattern(s).
+holder.log: holder: t4: cannot start "sh": sh: not found on PATH
+core.log: 
+{"stopped":true}

@@ -1,0 +1,14 @@
+run t8 initial foreground (run result) null
+cd C:\Windows TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe","-NoLogo","-NoProfile"],"cwd":"<scratch>","name":"powershell.exe","pid":33024} events since: []
+cd C:\Users TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe","-NoLogo","-NoProfile"],"cwd":"<scratch>","name":"powershell.exe","pid":33024} events since: []
+cd back to scratch TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe","-NoLogo","-NoProfile"],"cwd":"<scratch>","name":"powershell.exe","pid":33024} events since: []
+node long-running CLI TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe","-NoLogo","-NoProfile"],"cwd":"<scratch>","name":"powershell.exe","pid":33024} events since: []
+ctrl+c back to shell TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe","-NoLogo","-NoProfile"],"cwd":"<scratch>","name":"powershell.exe","pid":33024} events since: []
+node chdir while running TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe","-NoLogo","-NoProfile"],"cwd":"<scratch>","name":"powershell.exe","pid":33024} events since: []
+ctrl+c back to shell (2) TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe","-NoLogo","-NoProfile"],"cwd":"<scratch>","name":"powershell.exe","pid":33024} events since: []
+claude --version (short-lived) TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe","-NoLogo","-NoProfile"],"cwd":"<scratch>","name":"powershell.exe","pid":33024} events since: []
+claude interactive TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe","-NoLogo","-NoProfile"],"cwd":"<scratch>","name":"powershell.exe","pid":33024} events since: []
+claude exit -> shell TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe","-NoLogo","-NoProfile"],"cwd":"<scratch>","name":"powershell.exe","pid":33024} events since: []
+codex interactive TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe","-NoLogo","-NoProfile"],"cwd":"<scratch>","name":"powershell.exe","pid":33024} events since: []
+codex exit -> shell TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe","-NoLogo","-NoProfile"],"cwd":"<scratch>","name":"powershell.exe","pid":33024} events since: []
+foreground events total 1 min gap ms Infinity

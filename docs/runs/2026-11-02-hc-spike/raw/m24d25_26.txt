@@ -1,0 +1,17 @@
+M24d run reply 33 ms state live pid 24968
+M24d attach error kind finished t2 has finished
+M24d attach by address error kind finished t2 has finished
+M24d get by name {"address":"t2","state":"finished","exit_code":3,"reason":"exited","finished_ms":1793595382945,"name":"m24d-fast"}
+M24d read {"complete":true,"how":"history","text":"FINAL-OUTPUT-XYZ"}
+M24d events [{"dt":29,"type":"created","data":{"state":"live"}},{"dt":54,"type":"finished","data":{"exit_code":3,"finished_ms":1793595382945,"reason":"exited","signal":null}}]
+M24d name reuse after finish: new address t3
+M24d get by reused name -> t3 finished exit 0
+M25 env with overrides {"HC_SCOPE":"0-2b4ce67f3291462665dfda2ae044a787","HC_SESSION":"conduit-spike-fdc738cc","HC_TERMINAL_ID":"t4","HC_TERMINAL_SOCKET":"\\\\.\\pipe\\herdr-core-karam-conduit-spike-fdc738cc.sock","TERM":"xterm-256color","TERM_PROGRAM":"conduit","TERM_PROGRAM_VERSION":"0.52.0"} identity conduit 0.52.0
+M25 env TERM_PROGRAM="" {"HC_SCOPE":"0-079686fab87a71d55a029f54a38fd9ac","HC_SESSION":"conduit-spike-fdc738cc","HC_TERMINAL_ID":"t5","HC_TERMINAL_SOCKET":"\\\\.\\pipe\\herdr-core-karam-conduit-spike-fdc738cc.sock","TERM":"xterm-256color","TERM_PROGRAM":""} identity 
+M26 paint row 0 [{"k":"","s":"plain line                              "}]
+M26 paint row 1 [{"k":"D","s":"DIM-TEXT"},{"k":"","s":" normal "},{"k":"B","s":"BOLD"},{"k":"p245","s":"GREY245"},{"k":"I","s":"INV"}]
+M26 paint row 2 [{"k":"","s":"> "},{"k":"D","s":"placeholder hint"}]
+M26 paint row 3 []
+M26 paint contains SGR 2: true paint bytes 505
+M26 paint raw head "\u0018\u001b[!p\u001b[?2026l\u001b[?9l\u001b[?1000l\u001b[?1001l\u001b[?1002l\u001b[?1003l\u001b[?1004l\u001b[?1005l\u001b[?1006l\u001b[?1015l\u001b[?1016l\u001b[?2004l\u001b[?1l\u001b[?66l\u001b[?2031l\u001b[?2048l\u001b[=0;1u\u001b[?1049l\u001b[?1047l\u001b[?47l\u001b[H\u001b[2J\u001b[?1004h\u001b[3g\u001b[9G\u001bH\u001b[17G\u001bH\u001b[25G\u001bH\u001b[33G\u001bH\u001b[41G\u001bH\u001b[49G\u001bH\u001b[57G\u001bH\u001b[65G\u001bH\u001b[73G\u001bH\u001b[81G\u001bH\u001b[89G\u001bH\u001b[97G\u001bH\u001b[105G\u001bH\u001b[113G\u001bH\u001b[121G\u001bH\u001b[129G\u001bH\u001b[137G\u001bH\u001b[145G\u001bH\u001b[153G\u001bH\u001b[161G\u001bH\u001b[169G\u001bH\u001b[177G\u001bH\u001b[185G\u001bH\u001b[193G\u001bH\u001b[Hplain line\r\n\u001b[0m\u001b[2mDIM-TEXT\u001b[0m normal \u001b[0m\u001b[1mBOLD\u001b[0m \u001b[0m\u001b[38;5;245mGREY245\u001b[0m \u001b[0m\u001b[7mINV\u001b[0m\r\n> \u001b[0m\u001b[2mplaceholder hint\u001b[0m\u001b[3;19H\u001b[0m\u001b[?9001h"
+M26 terminal.read {"complete":true,"how":"screen","text":"plain line\nDIM-TEXT normal BOLD GREY245 INV\n> placeholder hint"}

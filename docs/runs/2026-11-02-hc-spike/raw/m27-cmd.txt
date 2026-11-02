@@ -1,0 +1,10 @@
+run t7 initial foreground (run result) null
+cd C:\Windows ms= 311 {"argv":["C:\\Windows\\system32\\cmd.exe"],"cwd":"C:\\Windows","name":"cmd.exe","pid":48492}
+cd C:\Users ms= 480 {"argv":["C:\\Windows\\system32\\cmd.exe"],"cwd":"C:\\Users","name":"cmd.exe","pid":48492}
+cd back to scratch ms= 486 {"argv":["C:\\Windows\\system32\\cmd.exe"],"cwd":"<scratch>","name":"cmd.exe","pid":48492}
+node long-running CLI TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\system32\\cmd.exe"],"cwd":"<scratch>","name":"cmd.exe","pid":48492} events since: []
+ctrl+c back to shell TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\system32\\cmd.exe"],"cwd":"<scratch>","name":"cmd.exe","pid":48492} events since: []
+node chdir while running TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\system32\\cmd.exe"],"cwd":"<scratch>","name":"cmd.exe","pid":48492} events since: []
+ctrl+c back to shell (2) TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\system32\\cmd.exe"],"cwd":"<scratch>","name":"cmd.exe","pid":48492} events since: []
+claude --version (short-lived) TIMEOUT; terminal.get foreground = {"argv":["C:\\Windows\\system32\\cmd.exe"],"cwd":"<scratch>","name":"cmd.exe","pid":48492} events since: []
+foreground events total 4 min gap ms 502

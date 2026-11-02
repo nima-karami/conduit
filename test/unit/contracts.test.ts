@@ -47,6 +47,7 @@ import {
 } from '../../src/contracts/server-protocol';
 import {
   type ConduitLabels,
+  coreStartCwd,
   coreStartEnv,
   judgePersistedVersion,
   SERVER_FILE_VERSION,
@@ -411,6 +412,7 @@ describe('session identity', () => {
       XDG_CONFIG_HOME: '/u/hc/config',
       XDG_STATE_HOME: '/u/hc/state',
       CONDUIT_USER_XDG_CONFIG_HOME: '/mine',
+      CONDUIT_USER_XDG_STATE_HOME: '',
       [USER_XDG_CAPTURED_ENV]: '1',
     });
   });
@@ -420,7 +422,18 @@ describe('session identity', () => {
     const first = coreStartEnv({ PATH: '/bin' }, names, true);
     const again = coreStartEnv(first, names, true);
     expect(again).toEqual(first);
-    expect(again).not.toHaveProperty('CONDUIT_USER_XDG_CONFIG_HOME');
+    expect(again.CONDUIT_USER_XDG_CONFIG_HOME).toBe('');
+  });
+
+  // terminal.run.env can't unset, and the XDG spec reads empty as unset (M22).
+  it('pass an absent user XDG variable through as empty under isolation', () => {
+    const env = coreStartEnv({ PATH: '/bin', XDG_STATE_HOME: '/s' }, names, true);
+    expect(env.CONDUIT_USER_XDG_CONFIG_HOME).toBe('');
+    expect(env.CONDUIT_USER_XDG_STATE_HOME).toBe('/s');
+  });
+
+  it('start the core in the version dir of the runtime root (M21)', () => {
+    expect(coreStartCwd('/u/runtime', '0.1.16')).toBe(path.join('/u/runtime', 'hc', '0.1.16'));
   });
 
   it("leave the user's XDG alone when isolation is off (M22 fail)", () => {
