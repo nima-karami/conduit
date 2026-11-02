@@ -115,8 +115,9 @@ describe('the chrome bands are one band', () => {
   });
 
   it('sizes every band label from one token', () => {
-    // .panel-title (Sessions), .tab (centre), .rtab (right rail) — three bands, one size.
-    expect(readsOf('--density-band-font')).toBeGreaterThanOrEqual(3);
+    // .panel-title (Sessions) and .tab (centre) — the right rail's tab row became header
+    // toggles (sidebar-agent-tree spec §7), so two bands remain, one size.
+    expect(readsOf('--density-band-font')).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -168,16 +169,15 @@ describe('the Neon chamfer is one continuous edge', () => {
   });
 });
 
-describe('the active view-switch segment stays legible on hover', () => {
-  // Neon fills the active segment with the accent and picks its label against that fill; a
-  // hover rule that recoloured the label to the accent put accent on accent and it vanished.
-  // The per-component :not() that used to carry this is now one entry in the shared hover
-  // ladder (docs/specs/archive/2026-08-01-interaction-state-vocabulary.md) — same guarantee.
-  it('keeps the active segment out of the hover ladder', () => {
+describe('the pressed header toggle stays legible on hover', () => {
+  // A pressed toggle carries the selection fill; the shared hover ladder would repaint it with
+  // the hover wash, so it sits in the ladder's :not() list
+  // (docs/specs/archive/2026-08-01-interaction-state-vocabulary.md).
+  it('keeps the pressed toggle out of the hover ladder', () => {
     const start = CSS.indexOf('--- quiet:');
     const ladder = CSS.slice(start, CSS.indexOf('):hover', start));
-    expect(ladder).toContain('.viewswitch__btn--on');
-    expect(CSS).not.toMatch(/\.viewswitch__btn--on:hover\s*\{[^}]*color:/);
+    expect(ladder).toContain('.topbar__toggle[aria-pressed="true"]');
+    expect(CSS).not.toMatch(/\.topbar__toggle\[aria-pressed="true"\]:hover\s*\{[^}]*color:/);
   });
 });
 

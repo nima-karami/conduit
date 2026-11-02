@@ -1,12 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react';
-import { changesBadgeClass } from '../../src/changes-badge';
+import { useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react';
 import type { ChangesModel } from '../../src/changes-view-model';
 import type { Handle } from '../../src/conduit-mcp/types';
 import type { DeleteOutcome } from '../../src/delete-confirm';
@@ -14,17 +6,15 @@ import type { ChangeKind, RepoChanges } from '../../src/protocol';
 import type { FolderSectionModel } from '../../src/session-sections';
 import type { RightPaneTab } from '../../src/settings';
 import type { Session } from '../../src/types';
-import { MCP_STR } from '../conduit-mcp-strings';
-import { tabBadge } from '../conduit-mcp-view-model';
+import { CHROME_STR } from '../chrome-strings';
 import type { OpenMode } from '../docs';
 import type { FsOp } from '../fs-undo';
-import { IconWarning } from '../icons';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { reviewModeStatusLabel } from '../review-commit';
 import { getReviewNav, subscribeReviewNav } from '../review-nav-store';
 import type { ReviewScope } from '../review-scope';
-import { useSettings } from '../settings';
 import type { ConduitMcpApi } from '../use-conduit-mcp';
+import { useWorkbenchChromeState } from '../workbench-chrome-state';
 import { ChangesView, type ChangesViewProps } from './changes-view';
 import type { MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
@@ -72,7 +62,7 @@ export function RightPane({
   onFileRenamed,
   onReviewScope,
   reviewMode,
-  onTabShown,
+  onTabShown: _legacyOnTabShown,
   moveGrip,
   paneRef,
   recordFsOp,
@@ -113,8 +103,9 @@ export function RightPane({
   /** Review mode's navigator section icons (§2 Lane D). */
   onReviewScope: (scope: ReviewScope, repoRoot?: string) => void;
   reviewMode: boolean;
+  /** Legacy: the panel no longer owns a tab to report; ignored until App stops passing it. */
   onTabShown?: (tab: RightPaneTab) => void;
-  // Barless panel: the tab row doubles as the panel-move drag surface (R5 alignment).
+  // Barless panel: the top-edge grip is the panel-move drag surface.
   moveGrip?: MoveGrip;
   paneRef?: React.MutableRefObject<RightPaneHandle | null>;
   /** Record a successful fs op into the app-level undo stack. */
@@ -127,8 +118,8 @@ export function RightPane({
   sessions: readonly Session[];
   onOpenSettings: () => void;
 }) {
-  const { settings, update } = useSettings();
-  const [tab, setTab] = useState<RightPaneTab>(settings.rightPaneTab);
+  // Fully controlled: App's chrome state is the one view authority (sidebar-agent-tree plan T1.3).
+  const { rightTab: tab } = useWorkbenchChromeState();
   const navModel = useSyncExternalStore(subscribeReviewNav, getReviewNav);
   const [statusText, setStatusText] = useState('');
   const nextStatusText =
@@ -136,26 +127,6 @@ export function RightPane({
   useEffect(() => {
     setStatusText(nextStatusText);
   }, [nextStatusText]);
-  // Explicit tab-button click persists the choice globally; imperative reveal/search switches
-  // (openSearch/revealInTree) intentionally do NOT — a transient navigation shouldn't overwrite
-  // the remembered preference.
-  const selectTab = useCallback(
-    (next: RightPaneTab) => {
-      setTab(next);
-      if (next !== settings.rightPaneTab) update({ rightPaneTab: next });
-    },
-    [settings.rightPaneTab, update],
-  );
-  // Adopt the persisted tab when it changes value — covers the async host hydration that
-  // lands after mount (so a remembered 'changes' reopens correctly). Fires only on an actual
-  // preference change, so a transient reveal/search switch (which doesn't touch the pref) is
-  // not snapped back. Never posts — no write loop with the settings broadcast.
-  useEffect(() => {
-    setTab(settings.rightPaneTab);
-  }, [settings.rightPaneTab]);
-  useEffect(() => {
-    onTabShown?.(tab);
-  }, [tab, onTabShown]);
   // Bridge to the SearchPane's input focus (lives inside FilesView when the Files tab is active).
   const searchPaneRef = useRef<SearchPaneHandle | null>(null);
   // Bridge to FilesView's reveal-in-tree (also only mounted on the Files tab).
@@ -174,9 +145,9 @@ export function RightPane({
   useImperativeHandle(
     paneRef,
     () => ({
+      // App switches the view and opens the panel before calling any of these (runInPane).
       openSearch(seed?: string) {
-        setTab('files');
-        // Focus after the tab mounts / is already mounted (next frame).
+        // SearchPane publishes its handle from a passive effect, after App's layout-effect call.
         requestAnimationFrame(() => {
           const pane = searchPaneRef.current;
           if (!pane) return;
@@ -185,76 +156,38 @@ export function RightPane({
         });
       },
       revealInTree(path: string) {
-        setTab('files');
         // FilesView may have just mounted (was on Changes) — reveal next frame.
         requestAnimationFrame(() => filesPaneRef.current?.revealInTree(path));
       },
       showChanges() {
-        setTab('changes');
+        // Nothing pane-local: the view switch itself is App's.
       },
       showMessages(filterHandle, threadId) {
-        setTab('messages');
         setMessagesNav((cur) => ({ filterHandle, threadId: threadId ?? null, seq: cur.seq + 1 }));
       },
     }),
     [],
   );
 
-  const messagesBadge = mcp.state ? tabBadge(mcp.state) : null;
-  const messagesBadgeText = messagesBadge
-    ? [
-        MCP_STR.unread(messagesBadge.count),
-        messagesBadge.urgent && mcp.state ? MCP_STR.urgentBadge(mcp.state.youUrgent) : '',
-      ]
-        .filter(Boolean)
-        .join(', ')
-    : '';
-
   return (
-    <aside className="rightpane">
-      <div className="rightpane__tabs" {...panelMoveDragProps(moveGrip)}>
-        <button
-          className={`rtab ${tab === 'changes' ? 'rtab--active' : ''}`}
-          onClick={() => selectTab('changes')}
-        >
-          Changes
-          {(() => {
-            const badgeCount =
-              reviewMode && navModel
-                ? navModel.files.length
-                : changesModel.kind === 'ready'
-                  ? changesModel.count
-                  : 0;
-            const cls = changesBadgeClass(badgeCount, tab === 'changes');
-            return cls !== null ? <span className={cls}>{badgeCount}</span> : null;
-          })()}
-        </button>
-        <button
-          className={`rtab ${tab === 'files' ? 'rtab--active' : ''}`}
-          onClick={() => selectTab('files')}
-        >
-          Files
-        </button>
-        <button
-          className={`rtab ${tab === 'messages' ? 'rtab--active' : ''}`}
-          onClick={() => selectTab('messages')}
-        >
-          {MCP_STR.tab}
-          {messagesBadge && (
-            <span
-              className={`rtab__badge${messagesBadge.urgent ? ' rtab__badge--urgent' : tab === 'messages' ? '' : ' rtab__badge--attention'}`}
-              title={messagesBadgeText}
-            >
-              {messagesBadge.urgent && <IconWarning size={10} />}
-              <span aria-hidden>{messagesBadge.count}</span>
-              <span className="sr-only">{`, ${messagesBadgeText}`}</span>
-            </span>
-          )}
-        </button>
-        <span className="sr-only" role="status">
-          {statusText}
-        </span>
+    <aside
+      id="right-pane"
+      className="rightpane"
+      data-right-view={tab}
+      aria-label={CHROME_STR.view[tab]}
+    >
+      {/* The panel's move surface now that the tab row is gone (spec §7); the panel context
+          menu's move actions are its keyboard alternative. */}
+      <div
+        className="rightpane__grip"
+        title={CHROME_STR.movePanel}
+        {...panelMoveDragProps(moveGrip)}
+      >
+        <span className="rightpane__grip-bar" aria-hidden />
       </div>
+      <span className="sr-only" role="status">
+        {statusText}
+      </span>
       {tab === 'messages' ? (
         <MessagesPane
           key={messagesNav.seq}

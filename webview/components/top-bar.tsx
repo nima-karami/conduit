@@ -1,38 +1,96 @@
-import type { JSX as ReactJSX } from 'react';
-import { useEffect, useState } from 'react';
-import {
-  type AttentionAsk,
-  attentionChipLabel,
-  attentionEntries,
-  type SnoozeMap,
-} from '../../src/attention';
+import { MessageSquare } from 'lucide-react';
+import { type ReactNode, useEffect, useId, useState, useSyncExternalStore } from 'react';
+import type { AttentionAsk, SnoozeMap } from '../../src/attention';
+import type { ChangesModel } from '../../src/changes-view-model';
 import type { McpAttentionItem } from '../../src/conduit-mcp/types';
+import type { McpUiState } from '../../src/conduit-mcp/ui-types';
+import type { RightPaneTab } from '../../src/settings';
 import type { Session } from '../../src/types';
 import { win } from '../bridge';
-import { CENTER_VIEWS, type CenterView } from '../center-view';
-import { MCP_STR } from '../conduit-mcp-strings';
+import type { CenterView } from '../center-view';
+import { CHROME_STR } from '../chrome-strings';
+import { tabBadge } from '../conduit-mcp-view-model';
 import {
-  IconBoard,
+  IconBranch,
   IconChevron,
   IconClose,
   IconDoc,
-  IconGraph,
   IconSearch,
+  IconWarning,
   IconWinMax,
   IconWinMin,
   IconWinRestore,
 } from '../icons';
-import { isMac } from '../shortcuts';
+import { getReviewNav, type ReviewNavModel, subscribeReviewNav } from '../review-nav-store';
+import { useSettings } from '../settings';
+import { comboLabel, isMac } from '../shortcuts';
+import { useWorkbenchChromeState } from '../workbench-chrome-state';
 
-const VIEW_ICON: Record<CenterView, ReactJSX.Element> = {
-  editor: <IconDoc size={14} />,
-  board: <IconBoard size={14} />,
-  canvas: <IconGraph size={14} />,
-};
+/** The Changes toggle's count: review mode counts its navigator's files, otherwise the model's. */
+export function changesBadgeCount(
+  reviewMode: boolean,
+  navModel: ReviewNavModel | null,
+  changesModel: ChangesModel | undefined,
+): number {
+  if (reviewMode && navModel) return navModel.files.length;
+  return changesModel?.kind === 'ready' ? changesModel.count : 0;
+}
 
-const NO_ITEMS: readonly McpAttentionItem[] = [];
-const NO_SNOOZE: SnoozeMap = new Map();
-const NO_ASKS: readonly AttentionAsk[] = [];
+const VIEWS: readonly { id: RightPaneTab; icon: ReactNode }[] = [
+  { id: 'files', icon: <IconDoc size={14} /> },
+  { id: 'changes', icon: <IconBranch size={14} /> },
+  { id: 'messages', icon: <MessageSquare size={14} aria-hidden /> },
+];
+
+interface Badge {
+  count: number;
+  urgent: boolean;
+  text: string;
+}
+
+function ViewToggle({
+  id,
+  icon,
+  badge,
+}: {
+  id: RightPaneTab;
+  icon: ReactNode;
+  badge: Badge | null;
+}) {
+  const chrome = useWorkbenchChromeState();
+  const descId = useId();
+  const pressed = chrome.rightOpen && chrome.rightTab === id;
+  const label = CHROME_STR.view[id];
+  return (
+    <button
+      type="button"
+      className="topbar__toggle"
+      data-right-view={id}
+      aria-label={label}
+      aria-pressed={pressed}
+      aria-controls="right-pane"
+      aria-describedby={badge ? descId : undefined}
+      title={badge ? `${label} — ${badge.text}` : label}
+      onClick={() => chrome.togglePanel(id)}
+    >
+      {icon}
+      {badge && (
+        <>
+          <span
+            className={`topbar__badge${badge.urgent ? ' topbar__badge--urgent' : ''}`}
+            aria-hidden
+          >
+            {badge.urgent && <IconWarning size={10} />}
+            {badge.count.toLocaleString()}
+          </span>
+          <span id={descId} className="sr-only">
+            {badge.text}
+          </span>
+        </>
+      )}
+    </button>
+  );
+}
 
 export function TopBar({
   isDev,
@@ -41,15 +99,9 @@ export function TopBar({
   onForward,
   canBack,
   canForward,
-  centerView,
-  onSelectView,
-  sessions,
-  onFocusAttention,
-  attentionItems = NO_ITEMS,
-  snoozed = NO_SNOOZE,
-  onOpenThread,
-  asks = NO_ASKS,
-  onFocusAsk,
+  changesModel,
+  reviewMode = false,
+  mcpState = null,
   onContextMenu,
 }: {
   isDev?: boolean;
@@ -59,26 +111,29 @@ export function TopBar({
   onForward: () => void;
   canBack: boolean;
   canForward: boolean;
-  centerView: CenterView;
-  onSelectView: (view: CenterView) => void;
-  /** Every session, for the aggregate attention chip's count. */
-  sessions: Session[];
-  /** Focus one session — the chip hands it the first one waiting on the user. */
-  onFocusAttention: (sessionId: string) => void;
-  /** Messaging's own reasons (urgent waiting, a message for you, …) join the count. */
-  attentionItems?: readonly McpAttentionItem[];
-  /** The same Snooze map the rail uses, so a snoozed session's items hide with it. */
-  snoozed?: SnoozeMap;
-  /** The chip's message entry opens its thread. */
-  onOpenThread?: (threadId: string) => void;
-  /** This window's waiting asks; they lead the count (tool-policy spec §2.4). */
-  asks?: readonly AttentionAsk[];
-  /** The chip's ask entry focuses the approval card. */
-  onFocusAsk?: () => void;
+  /** The Changes toggle's badge source, as the old Changes tab read it. */
+  changesModel?: ChangesModel;
+  reviewMode?: boolean;
+  /** The Messages toggle's unread/urgent badge source. */
+  mcpState?: McpUiState | null;
   // Right-click the top bar to open the panel show/hide menu.
   onContextMenu?: (e: React.MouseEvent) => void;
+  // Legacy props from the removed view switcher and attention chip; accepted and ignored until
+  // App stops passing them (sidebar-agent-tree plan T3.1 source compatibility).
+  centerView?: CenterView;
+  onSelectView?: (view: CenterView) => void;
+  sessions?: Session[];
+  onFocusAttention?: (sessionId: string) => void;
+  attentionItems?: readonly McpAttentionItem[];
+  snoozed?: SnoozeMap;
+  onOpenThread?: (threadId: string) => void;
+  asks?: readonly AttentionAsk[];
+  onFocusAsk?: () => void;
 }) {
   const [maxed, setMaxed] = useState(false);
+  const navModel = useSyncExternalStore(subscribeReviewNav, getReviewNav, getReviewNav);
+  const { settings } = useSettings();
+  const searchCombo = comboLabel('openSearch', settings.shortcuts);
 
   useEffect(() => {
     if (!win) return;
@@ -86,97 +141,88 @@ export function TopBar({
     return win.onMaximizeChange(setMaxed);
   }, []);
 
-  const entries = attentionEntries(sessions, attentionItems, snoozed, Date.now(), asks);
-  const chipLabel = attentionChipLabel(entries.length);
-  const first = entries[0];
-  const reason =
-    first?.kind === 'ask' && first.handle
-      ? MCP_STR.ask.chipReason(first.handle)
-      : first?.reason && first.handle
-        ? MCP_STR.attention[first.reason](first.handle)
-        : null;
-  const firstName = first?.sessionId
-    ? sessions.find((s) => s.id === first.sessionId)?.name
-    : undefined;
-  const chipTitle = reason ?? (firstName ? `Go to ${firstName}` : undefined);
-  const onChip = () => {
-    if (!first) return;
-    if (first.kind === 'ask' && onFocusAsk) onFocusAsk();
-    else if (first.kind === 'message' && first.threadId && onOpenThread)
-      onOpenThread(first.threadId);
-    else if (first.sessionId) onFocusAttention(first.sessionId);
+  const changesCount = changesBadgeCount(reviewMode, navModel, changesModel);
+  const mcpBadge = mcpState ? tabBadge(mcpState) : null;
+  const badges: Record<RightPaneTab, Badge | null> = {
+    files: null,
+    changes:
+      changesCount > 0
+        ? { count: changesCount, urgent: false, text: CHROME_STR.changesBadge(changesCount) }
+        : null,
+    messages:
+      mcpBadge && mcpState
+        ? {
+            count: mcpBadge.count,
+            urgent: mcpBadge.urgent,
+            text: CHROME_STR.messagesBadge(mcpBadge.count, mcpState.youUrgent),
+          }
+        : null,
   };
 
-  const logo = (
-    <img
-      src={isDev ? './icon-dev.png' : './icon.png'}
-      alt={isDev ? 'Conduit (dev)' : 'Conduit'}
-      title={isDev ? "Development build — isolated 'Conduit (dev)' profile" : undefined}
-      className="topbar__logo"
-    />
-  );
-
-  // Labelled segmented control: Board and Canvas were unlabelled icons in a corner
-  // and nobody found them (brief §7.8), so the words are not optional.
-  const viewswitch = (
-    <div className="viewswitch" role="tablist" aria-label="Center view">
-      {CENTER_VIEWS.map((v) => {
-        const active = v.id === centerView;
-        return (
-          <button
-            key={v.id}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            className={`viewswitch__btn${active ? ' viewswitch__btn--on' : ''}`}
-            title={v.label}
-            onClick={() => onSelectView(v.id)}
-          >
-            {VIEW_ICON[v.id]}
-            <span className="viewswitch__label">{v.short}</span>
-          </button>
-        );
-      })}
+  const identity = (
+    <div className="topbar__identity">
+      <img
+        src={isDev ? './icon-dev.png' : './icon.png'}
+        alt=""
+        title={isDev ? CHROME_STR.devTitle : undefined}
+        className="topbar__logo"
+      />
+      <span className="topbar__wordmark">{CHROME_STR.wordmark}</span>
     </div>
   );
 
   const nav = (
     <div className="topbar__nav">
-      <button className="iconbtn iconbtn--rot" title="Back" disabled={!canBack} onClick={onBack}>
+      <button
+        type="button"
+        className="iconbtn iconbtn--rot"
+        title={CHROME_STR.back}
+        aria-label={CHROME_STR.back}
+        disabled={!canBack}
+        onClick={onBack}
+      >
         <IconChevron />
       </button>
-      <button className="iconbtn" title="Forward" disabled={!canForward} onClick={onForward}>
+      <button
+        type="button"
+        className="iconbtn"
+        title={CHROME_STR.forward}
+        aria-label={CHROME_STR.forward}
+        disabled={!canForward}
+        onClick={onForward}
+      >
         <IconChevron />
       </button>
     </div>
   );
 
-  const attnchipEl = chipLabel ? (
-    <button type="button" className="attnchip" title={chipTitle} onClick={onChip}>
-      <span className="attnchip__dot" aria-hidden />
-      {chipLabel}
-      {reason && (
-        <span className="attnchip__reason">
-          <span className="sr-only">, </span>
-          {reason}
-        </span>
-      )}
-    </button>
-  ) : null;
-
   const winctl = (
     <div className="winctl">
-      <button className="winctl__btn" title="Minimize" onClick={() => win?.minimize()}>
+      <button
+        type="button"
+        className="winctl__btn"
+        title={CHROME_STR.minimize}
+        aria-label={CHROME_STR.minimize}
+        onClick={() => win?.minimize()}
+      >
         <IconWinMin size={12} />
       </button>
       <button
+        type="button"
         className="winctl__btn"
-        title={maxed ? 'Restore' : 'Maximize'}
+        title={maxed ? CHROME_STR.restore : CHROME_STR.maximize}
+        aria-label={maxed ? CHROME_STR.restore : CHROME_STR.maximize}
         onClick={() => win?.toggleMaximize()}
       >
         {maxed ? <IconWinRestore size={12} /> : <IconWinMax size={12} />}
       </button>
-      <button className="winctl__btn winctl__btn--close" title="Close" onClick={() => win?.close()}>
+      <button
+        type="button"
+        className="winctl__btn winctl__btn--close"
+        title={CHROME_STR.close}
+        aria-label={CHROME_STR.close}
+        onClick={() => win?.close()}
+      >
         <IconClose size={12} />
       </button>
     </div>
@@ -185,14 +231,8 @@ export function TopBar({
   return (
     <header className={`topbar${isMac ? ' topbar--mac' : ''}`} onContextMenu={onContextMenu}>
       <div className="topbar__left">
-        {isMac ? (
-          nav
-        ) : (
-          <>
-            {logo}
-            {viewswitch}
-          </>
-        )}
+        {identity}
+        {nav}
       </div>
 
       {/* Center omni-search pill (R4.13): click or Mod+P opens the overlay across
@@ -202,29 +242,22 @@ export function TopBar({
           type="button"
           className="omnibar"
           onClick={onOpenSearch}
-          title="Search sessions, agents, files (Ctrl+P)"
-          aria-label="Search sessions, agents, files"
+          title={searchCombo ? `${CHROME_STR.search} (${searchCombo})` : CHROME_STR.search}
+          aria-label={CHROME_STR.search}
           aria-keyshortcuts="Control+P"
         >
           <IconSearch size={14} className="omnibar__icon" />
-          <span className="omnibar__placeholder">Search sessions, agents, files…</span>
+          <span className="omnibar__placeholder">{CHROME_STR.searchPlaceholder}</span>
         </button>
       </div>
 
       <div className="topbar__right">
-        {isMac ? (
-          <>
-            {attnchipEl}
-            {viewswitch}
-            {logo}
-          </>
-        ) : (
-          <>
-            {nav}
-            {attnchipEl}
-            {winctl}
-          </>
-        )}
+        <div className="topbar__toggles" role="group" aria-label={CHROME_STR.panelGroup}>
+          {VIEWS.map((v) => (
+            <ViewToggle key={v.id} id={v.id} icon={v.icon} badge={badges[v.id]} />
+          ))}
+        </div>
+        {!isMac && winctl}
       </div>
     </header>
   );
