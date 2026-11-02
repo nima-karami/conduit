@@ -27,7 +27,8 @@ const INITIAL_STREAM_CREDIT = 256 * 1024;
 const BULK_LINES = 4000;
 // Paced so ConPTY renders every line: a burst that scrolls past the viewport between its frames
 // would be repainted, not replayed, and the count below would measure ConPTY rather than credit.
-const BULK_PROGRAM = String.raw`process.stdout.write('HC-READY\n');process.stdin.once('data',()=>{let n=0;const tick=()=>{let s='';for(let i=0;i<40&&n<${BULK_LINES};i++){n++;const id=String(n).padStart(6,'0');s+='L'+id+':'+id.repeat(13)+'\n'}process.stdout.write(s,()=>{if(n<${BULK_LINES})setTimeout(tick,10);else process.stdout.write('HC-BULK-END\n',()=>setTimeout(()=>process.exit(0),200))})};tick()})`;
+const BULK_PROGRAM = join(import.meta.dirname, 'fixtures', 'hc-bulk-program.cjs');
+const RESULT_PROGRAM = join(import.meta.dirname, 'fixtures', 'hc-result-program.cjs');
 const IDLE_PROGRAM = 'setTimeout(()=>{},120000)';
 
 function frame(channel, kind, payload) {
@@ -158,8 +159,7 @@ runScenario('hc-client', async ({ log }) => {
         launchId,
         '--',
         process.execPath,
-        '-e',
-        String.raw`process.stdout.write('HC-READY\n');let done=false;const timer=setTimeout(()=>{if(!done){process.stderr.write('HC-TIMEOUT\n');process.exit(2)}},30000);process.stdin.on('data',d=>{if(!done&&d.includes('go')){done=true;clearTimeout(timer);process.stdout.write('HC-RESULT\n',()=>process.exit(0))}})`,
+        RESULT_PROGRAM,
       ],
       { env, windowsHide: true, timeout: 15000 },
     );
@@ -226,7 +226,7 @@ runScenario('hc-client', async ({ log }) => {
     });
     const bulk = await client.call(
       'terminal.run',
-      runParams([process.execPath, '-e', BULK_PROGRAM], {}),
+      runParams([process.execPath, BULK_PROGRAM, String(BULK_LINES)], {}),
     );
     const bulkStream = (
       await client.attach({ terminal: bulk.address, cols: 200, rows: 120, history: 0 })

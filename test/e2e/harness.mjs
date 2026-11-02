@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { markCoverageIncomplete, startCoverage, stopCoverage } from './coverage-capture.mjs';
 import { attemptDir, screenshotWindows, startCapture, stopTrace } from './failure-artifacts.mjs';
+import { teardownScenarioServer } from './harness-server-teardown.mjs';
 import { acquireE2eLock, setBelowNormal } from './local-guard.mjs';
 import { EXIT_WATCHDOG, profilePrefix, RUN_MARKER, watchdogDelayMs } from './smoke-select.mjs';
 
@@ -120,6 +121,22 @@ export async function shutdownApp(app, page) {
   if ((await Promise.race([graceful.then(() => 'closed'), timer])) === 'timeout') {
     killAppTree(app);
   }
+  await teardownServerFor(app);
+}
+
+/** app -> its profile dir, until that app's server/hc teardown has run (once per app). */
+const pendingTeardown = new Map();
+
+/** Runs after Electron is gone; teardownScenarioServer logs its own failures and only the session guard throws. */
+async function teardownServerFor(app) {
+  const userDataDir = pendingTeardown.get(app);
+  if (!userDataDir) return;
+  pendingTeardown.delete(app);
+  await teardownScenarioServer({
+    userDataDir,
+    tmpdir: tmpdir(),
+    log: (...a) => console.log(`[${scenarioName()}]`, ...a),
+  });
 }
 
 /** Failure capture must land before the runner's 210 s kill: 200 s deadline + this. */
@@ -235,6 +252,7 @@ export async function launchElectron(launchOpts) {
     args: [...(launchOpts.args ?? []), `${RUN_MARKER}=${runId()}`],
   });
   liveApps.add(app);
+  pendingTeardown.set(app, launchOpts.args.find((a) => a.startsWith('--user-data-dir=')).slice(16));
   app.once('close', () => liveApps.delete(app));
   if (local) {
     lowerAppTree(app);
@@ -303,6 +321,13 @@ export function finishScenario(code) {
       if (code === 0) await stopCoverageWithin(...liveApps);
     } catch (e) {
       console.error('[harness] artifact capture failed:', e?.message || e);
+    }
+    for (const app of [...pendingTeardown.keys()]) {
+      try {
+        await teardownServerFor(app);
+      } catch (e) {
+        console.error('[harness] server teardown failed:', e?.message || e);
+      }
     }
     process.exit(code);
   })();
