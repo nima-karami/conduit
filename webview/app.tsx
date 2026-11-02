@@ -1609,7 +1609,9 @@ export function App() {
     if (sessions.length === 0) {
       setActiveId(undefined);
     } else if (!activeId || !sessions.some((s) => s.id === activeId)) {
-      setActiveId(sessions[0].id);
+      // Functional: a removal and an add can land in one state, and the auto-switch to the added
+      // session may already have set the id in this render; only replace an id that's gone.
+      setActiveId((cur) => (cur && sessions.some((s) => s.id === cur) ? cur : sessions[0]?.id));
     }
     setCenterView((v) => nextCenterView(v, sessions.length));
   }, [sessions, activeId]);
