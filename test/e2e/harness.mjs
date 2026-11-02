@@ -11,14 +11,27 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { markCoverageIncomplete, startCoverage, stopCoverage } from './coverage-capture.mjs';
 import { attemptDir, screenshotWindows, startCapture, stopTrace } from './failure-artifacts.mjs';
-import { teardownScenarioServer } from './harness-server-teardown.mjs';
+import {
+  assertOwnSession,
+  hcEnv,
+  teardownNames,
+  teardownScenarioServer,
+} from './harness-server-teardown.mjs';
 import { acquireE2eLock, setBelowNormal } from './local-guard.mjs';
 import { EXIT_WATCHDOG, profilePrefix, RUN_MARKER, watchdogDelayMs } from './smoke-select.mjs';
 
@@ -1121,6 +1134,97 @@ export function assertCall(calls, api, predicate) {
       );
     }
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Three-process scenarios (program W8): the probe agent and the profile's own hc session
+// ──────────────────────────────────────────────────────────────────────────────
+
+export const PROBE_AGENT_ID = 'e2e-probe';
+const PROBE_PROGRAM = join(here, 'fixtures', 'echo-probe.cjs');
+
+/**
+ * A fresh profile whose agents.json registers `fixtures/echo-probe.cjs` as PROBE_AGENT_ID, plus
+ * `agents`. `records(kind)` reads the probe's records (all launches, in order; see the fixture).
+ * @param {string} label
+ * @param {object[]} [agents]
+ */
+export function probeProfile(label, agents = []) {
+  const userDataDir = profileDir(label);
+  const recordsDir = join(userDataDir, 'e2e-probe');
+  mkdirSync(recordsDir, { recursive: true });
+  writeFileSync(
+    join(userDataDir, 'agents.json'),
+    JSON.stringify([
+      {
+        id: PROBE_AGENT_ID,
+        label: 'Probe',
+        command: process.execPath,
+        args: [PROBE_PROGRAM, '--records', recordsDir],
+        icon: 'terminal',
+        color: 'green',
+        cwdStrategy: 'workspaceFolder',
+      },
+      ...agents,
+    ]),
+  );
+  const records = (kind) => {
+    const file = join(recordsDir, 'probe.jsonl');
+    if (!existsSync(file)) return [];
+    const lines = readFileSync(file, 'utf8').split('\n');
+    // Only '\n'-terminated lines are whole records.
+    lines.pop();
+    return lines.map((l) => JSON.parse(l)).filter((r) => kind === undefined || r.kind === kind);
+  };
+  return { userDataDir, records };
+}
+
+const HC_PINNED = /HC_PINNED_VERSION = '([^']+)'/.exec(
+  readFileSync(join(REPO, 'src', 'contracts', 'hc.ts'), 'utf8'),
+)?.[1];
+
+/**
+ * hc against the session the app of `userDataDir` owns, never the runner's or the user's: every
+ * inherited HC_* is dropped, the session guard refuses anything not `conduit-*`, and the env and
+ * cwd are the ones the app starts its core with (C4 coreStartEnv / coreStartCwd, M21), so a
+ * command that (re)starts the core runs it exactly as the app would.
+ * @param {string} userDataDir
+ * @param {string[]} args
+ * @returns {{ status: number | null, out: string, json: () => any }}
+ */
+export function ownHc(userDataDir, args, { timeout = 30000 } = {}) {
+  const names = teardownNames(
+    userDataDir,
+    process.platform === 'win32' ? 'win32' : 'posix',
+    tmpdir(),
+  );
+  assertOwnSession(names.hcSession, process.env.HC_SESSION);
+  const env = {
+    ...hcEnv(process.env, names),
+    CONDUIT_USER_XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME ?? '',
+    CONDUIT_USER_XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? '',
+    CONDUIT_USER_XDG_CAPTURED: '1',
+  };
+  const cwd = join(userDataDir, 'runtime', 'hc', HC_PINNED);
+  mkdirSync(cwd, { recursive: true });
+  const r = spawnSync(process.env.CONDUIT_HC_BINARY || 'hc', args, {
+    env,
+    cwd,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout,
+  });
+  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+  return { status: r.status, out, json: () => JSON.parse(r.stdout) };
+}
+
+/** The live hc terminal running `sessionId` in its profile's own session, or null. */
+export function hcTerminalOf(userDataDir, sessionId) {
+  const r = ownHc(userDataDir, ['ls', '--json', '--label', `conduit.session=${sessionId}`]);
+  if (r.status !== 0) throw new Error(`hc ls: exit ${r.status}: ${r.out.slice(0, 300)}`);
+  const parsed = r.json();
+  const list = Array.isArray(parsed) ? parsed : (parsed.terminals ?? []);
+  return list.find((t) => (t.state ?? 'live') === 'live') ?? null;
 }
 
 class AssertionError extends Error {
