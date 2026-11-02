@@ -25,7 +25,7 @@ const HC_VERSION = '0.1.16';
 const APP_VERSION = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version;
 const ECHO_AGENT = 'e2e-echo';
 const FAKE_AGENT_ID = 'e2e-fake-mcp';
-const ECHO_PROGRAM = String.raw`process.stdout.write('E2E-READY\n');process.stdin.on('data',d=>process.stdout.write('ECHO:'+d.toString().trim()+'\n'))`;
+const ECHO_PROGRAM = String.raw`process.stdout.write('E2E-READY\n');process.stdin.on('data',d=>{const s=d.toString().trim();if(s==='exit-23'){process.exitCode=23;process.stdin.destroy();process.stdout.write('E2E-EXITING\n')}else process.stdout.write('ECHO:'+s+'\n')})`;
 const SIZE = { cols: 100, rows: 30 };
 
 /** One C2 connection: newline-delimited JSON-RPC, with every `event` notification kept in order. */
@@ -298,7 +298,21 @@ async function run() {
       'the server ring file never held the echo',
     );
 
-    phase('3. MCP: a fake agent launched through LaunchPort calls a tool');
+    phase('3. messaging-off launch and MCP fake agent');
+    await app.c2.call('serverSettings.patch', { patch: { conduitMcp: false } });
+    const { sessionId: noMcp } = await app.c2.call('sessions.create', {
+      agentId: ECHO_AGENT,
+      home: work,
+    });
+    app.c2.notify('term.resize', { sessionId: noMcp, ...SIZE });
+    const noMcpStart = await app.c2.call('sessions.start', { sessionId: noMcp });
+    assert(
+      noMcpStart.ok && noMcpStart.spawned,
+      `messaging-off start: ${JSON.stringify(noMcpStart)}`,
+    );
+    const noMcpAddress = noMcpStart.target.terminal;
+    await app.c2.call('serverSettings.patch', { patch: { conduitMcp: true } });
+
     const { sessionId: fake } = await app.c2.call('sessions.create', {
       agentId: FAKE_AGENT_ID,
       home: work,
@@ -329,7 +343,15 @@ async function run() {
       `list_sessions has no connected self: ${JSON.stringify(listed)}`,
     );
 
-    phase('4. server.restart: the agents outlive it');
+    phase('4. server.restart: launches survive and an exit while down is reconciled');
+    const { sessionId: exitsWhileDown } = await app.c2.call('sessions.create', {
+      agentId: ECHO_AGENT,
+      home: work,
+    });
+    app.c2.notify('term.resize', { sessionId: exitsWhileDown, ...SIZE });
+    const exitStart = await app.c2.call('sessions.start', { sessionId: exitsWhileDown });
+    assert(exitStart.ok && exitStart.spawned, `exit-test start: ${JSON.stringify(exitStart)}`);
+    const exitAddress = exitStart.target.terminal;
     await app.c2.call('server.restart', { reason: 'user' });
     assert(await until(() => app.c2.closed, 20_000), 'the old server kept its connection');
     // F6.4: the supervisor exits with the server; the app waits for its terminal, then starts one.
@@ -344,8 +366,25 @@ async function run() {
       }, 30_000),
       'the supervisor terminal never finished',
     );
+    const { stream: downStream } = await client.attach({
+      terminal: exitAddress,
+      ...SIZE,
+    });
+    downStream.onData((bytes) => downStream.credit(bytes.byteLength));
+    downStream.write(Buffer.from('exit-23\r'));
+    assert(
+      await until(async () => {
+        const terminal = await client.call('terminal.get', { terminal: exitAddress });
+        return terminal.state === 'finished';
+      }, 15_000),
+      'the exit-test terminal did not finish while the server was down',
+    );
+    const exitedTerminal = await client.call('terminal.get', { terminal: exitAddress });
+    assert(exitedTerminal.exit_code === 23, `exit while down: ${JSON.stringify(exitedTerminal)}`);
+    downStream.close();
+
     await startSupervisor();
-    app = await attachApp(names.serverEndpoint, [echo, fake]);
+    app = await attachApp(names.serverEndpoint, [echo, fake, noMcp, exitsWhileDown]);
     assert(
       await until(() => runtimeState(app.c2, app.snapshot) === 'ready', 30_000),
       'runtime never ready after the restart',
@@ -359,6 +398,29 @@ async function run() {
     assert(
       await until(() => echoView()?.runtime.spawn === 'live', 15_000),
       `echo after restart: ${JSON.stringify(echoView())}`,
+    );
+    const noMcpView = () =>
+      (
+        app.c2.events.filter((e) => e.type === 'sessions.changed').at(-1)?.data.sessions ??
+        app.snapshot.sessions
+      ).find((s) => s.id === noMcp);
+    assert(
+      await until(() => noMcpView()?.runtime.spawn === 'live', 15_000),
+      `messaging-off launch after restart: ${JSON.stringify(noMcpView())}`,
+    );
+    const noMcpAgain = await app.c2.call('sessions.start', { sessionId: noMcp });
+    assert(
+      noMcpAgain.ok && !noMcpAgain.spawned && noMcpAgain.target.terminal === noMcpAddress,
+      `messaging-off re-start after restart: ${JSON.stringify(noMcpAgain)}`,
+    );
+    const exitView = () =>
+      (
+        app.c2.events.filter((e) => e.type === 'sessions.changed').at(-1)?.data.sessions ??
+        app.snapshot.sessions
+      ).find((s) => s.id === exitsWhileDown);
+    assert(
+      await until(() => exitView()?.status === 'exited' && exitView()?.exitCode === 23, 15_000),
+      `exit while server down was not recorded: ${JSON.stringify(exitView())}`,
     );
     app.c2.notify('term.resize', { sessionId: echo, ...SIZE });
     const again = await app.c2.call('sessions.start', { sessionId: echo });
@@ -378,7 +440,7 @@ async function run() {
 
     phase('5. server.stopAll: terminals, server, supervisor and core all end');
     const stopped = await app.c2.call('server.stopAll');
-    assert(stopped.killed === 2, `stopAll: ${JSON.stringify(stopped)}`);
+    assert(stopped.killed === 3, `stopAll: ${JSON.stringify(stopped)}`);
     assert(
       await until(() => app.c2.closed, 20_000),
       'the server kept its connection after stopAll',

@@ -4,12 +4,7 @@ import { CLI_BINARIES } from '../src/conduit-mcp/install-types';
 import type { DisplayFacts } from '../src/contracts/frames';
 import type { HcClient } from '../src/contracts/hc';
 import type { ServerEventSink, TokenStorePort } from '../src/contracts/server-ports';
-import type {
-  RuntimeHealth,
-  ServerEvents,
-  SessionView,
-  WindowPresence,
-} from '../src/contracts/server-protocol';
+import type { RuntimeHealth, SessionView, WindowPresence } from '../src/contracts/server-protocol';
 import type { InstanceNames } from '../src/contracts/session-identity';
 import type { AdoptedTerminal } from '../src/contracts/terminal-runtime';
 import { folderKey } from '../src/folder-key';
@@ -112,11 +107,17 @@ export function createServices(o: ServicesOptions) {
   let statusOf: (sessionId: string) => Partial<SessionView> = () => ({});
   const withStatus = (sessions: SessionView[]): SessionView[] =>
     sessions.map((s) => ({ ...s, ...statusOf(s.id) }));
+  let resendTimer: ReturnType<typeof setTimeout> | undefined;
+  const invalidateSessions = () => {
+    if (resendTimer) return;
+    resendTimer = setTimeout(() => {
+      resendTimer = undefined;
+      o.emit('sessions.changed', { sessions: withStatus(domain.snapshot().sessions) });
+    }, STATUS_RESEND_MS);
+  };
   const emit: ServerEventSink = (type, data) => {
     if (type === 'sessions.changed') {
-      // The sink's generic doesn't narrow `data` with `type`; this is that narrowing.
-      const changed = data as ServerEvents['sessions.changed'];
-      o.emit('sessions.changed', { sessions: withStatus(changed.sessions) });
+      invalidateSessions();
       return;
     }
     o.emit(type, data);
@@ -157,6 +158,7 @@ export function createServices(o: ServicesOptions) {
       async onSessionDeleted(sessionId) {
         await m().launch.onSessionDeleted(sessionId);
         runtime.forgetSession(sessionId);
+        attention.forgetSession(sessionId);
       },
     },
     drafts: { noteHostInput: (sessionId, data) => m().draft.noteHostInput(sessionId, data) },
@@ -206,14 +208,7 @@ export function createServices(o: ServicesOptions) {
   });
   const server = mcp;
 
-  let resendTimer: ReturnType<typeof setTimeout> | undefined;
-  const offChange = attention.onChange(() => {
-    if (resendTimer) return;
-    resendTimer = setTimeout(() => {
-      resendTimer = undefined;
-      emit('sessions.changed', { sessions: domain.snapshot().sessions });
-    }, STATUS_RESEND_MS);
-  });
+  const offChange = attention.onChange(invalidateSessions);
   const offEdge = attention.onEdge((edge) => emit('attention.edge', edge));
   let started = false;
   // Startup's own health is the start() verdict; forwarding reconcile's publish would report
@@ -244,10 +239,11 @@ export function createServices(o: ServicesOptions) {
           log.error('runtime', `reconcile failed: ${String(error)}`);
         }
         domain.adopted(adopted);
+        server.resumeAdopted(adopted);
         adoptedOnce = true;
       }
       if (!mcpStarted) {
-        // After reconcile: an adopted session is restored on its `spawned`, before any shim resumes.
+        // See docs/specs/2026-11-01-three-process-architecture.md F1.4.5-6.
         await server.start();
         mcpStarted = true;
       }
@@ -257,8 +253,9 @@ export function createServices(o: ServicesOptions) {
     beginStopping: (mode) => runtime.beginStopping(mode),
     killSessions: () => runtime.killSessions(),
     async persist() {
+      runtime.detachStreams();
       await domain.persist();
-      scrollback.flushPending();
+      await scrollback.flushPending();
     },
     async idleState() {
       const rows = server.tokens.rows();

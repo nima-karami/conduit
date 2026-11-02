@@ -54,17 +54,6 @@ export function emptySnapshot(): Omit<ServerSnapshot, 'seq' | 'runtime'> {
   };
 }
 
-export function emptyCore(logPath: string): ShellCore {
-  return {
-    start: async () => ({ state: 'unavailable', reason: 'Runtime service not composed', logPath }),
-    beginStopping: async () => {},
-    killSessions: async () => 0,
-    persist: async () => {},
-    idleState: async () => ({ liveTerminals: 0, pendingTimers: false, busyTokens: true }),
-    snapshot: emptySnapshot,
-  };
-}
-
 export interface ComposeOptions {
   transport: PipeTransport;
   core: ShellCore;

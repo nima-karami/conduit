@@ -35,6 +35,30 @@ describe('server domain: sessions.start', () => {
     expect(b.runtime.spawns[0]?.labels['conduit.generation']).toBe('2');
   });
 
+  it('does not reserve or spawn a launch when sessions.json cannot be updated', async () => {
+    const newer = JSON.stringify({ version: 99, sessions: [] });
+    const h = harness({ files: { 'sessions.json': newer } });
+    const id = await h.create();
+
+    await expect(start(h, id)).rejects.toSatisfy((e: unknown) => isFault(e, 'unavailable'));
+    expect(h.runtime.spawns).toHaveLength(0);
+    expect(h.domain.sessions.get(id)).not.toHaveProperty('lastGeneration');
+    expect(readFileSync(join(h.userData, 'sessions.json'), 'utf8')).toBe(newer);
+  });
+
+  it('rolls back the generation and does not spawn when launch persistence fails', async () => {
+    const h = harness();
+    const id = await h.create();
+    await h.domain.persist();
+    rmSync(join(h.userData, 'sessions.json'));
+    mkdirSync(join(h.userData, 'sessions.json'));
+
+    await expect(start(h, id)).rejects.toSatisfy((e: unknown) => isFault(e, 'unavailable'));
+    expect(h.runtime.spawns).toHaveLength(0);
+    expect(h.domain.sessions.get(id)).not.toHaveProperty('lastGeneration');
+    expect(h.logs.some((line) => line.includes('sessions.json write failed'))).toBe(true);
+  });
+
   it('waits for the launch seam and prepares the launch before spawning with the same ids', async () => {
     const h = harness();
     const id = await h.create();

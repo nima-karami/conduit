@@ -5,7 +5,7 @@ import { version } from '../package.json';
 import type { InstanceNames } from '../src/contracts/session-identity';
 import { instanceNames } from '../src/instance-names';
 import { formatRecord } from '../src/logging';
-import { compose, emptyCore } from './compose';
+import { compose } from './compose';
 import { directStopAll, hcBinaryOf, hcClient, serverChildEnv, startCore, stopCore } from './hc-cli';
 import { argValue, requireUserData } from './lifecycle/cli-args';
 import type { ShellCore } from './lifecycle/shell';
@@ -70,9 +70,11 @@ export async function runServer(
       shell: () => composed,
     });
   }
+  const core = dependencies.core ?? services?.core;
+  if (!core) throw new Error('Server core composition failed');
   const shell = compose({
     transport,
-    core: dependencies.core ?? services?.core ?? emptyCore(logPath),
+    core,
     ...(services ? { dispatch: services.dispatch, disconnected: services.disconnected } : {}),
     version,
     instance: names.instance,

@@ -2,6 +2,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { directStopAll } from '../../server/hc-cli';
 import { serverChildEnv, spawnServerChild, supervise } from '../../server/supervise';
 import {
   SERVER_EXHAUSTED_FILE,
@@ -75,6 +76,61 @@ async function withScratch<T>(run: (userData: string) => Promise<T>): Promise<T>
 const crashRun = [1, 2, 4, 5, 6, 0];
 
 describe('server supervisor', () => {
+  it('direct stop re-lists after targeted kills and leaves a core with another live terminal', async () => {
+    const names = instanceNames('/profile', 'posix', '/tmp');
+    const calls: string[] = [];
+    let stopped = false;
+    const hc = {
+      call: async (method: string) => {
+        calls.push(method);
+        if (method === 'terminal.list') {
+          return calls.filter((call) => call === 'terminal.list').length === 1
+            ? { terminals: [{ address: 'session-1', state: 'live', name: 'session-1' }] }
+            : {
+                terminals: [{ address: 'other-1', state: 'live', name: 'unrelated' }],
+              };
+        }
+        if (method === 'terminal.get')
+          return { address: 'supervisor-1', state: 'exited', name: names.supervisorName };
+        return {};
+      },
+      close: () => calls.push('close'),
+    } as unknown as import('../../src/contracts/hc').HcClient;
+
+    await directStopAll(hc, names, async () => {
+      stopped = true;
+    });
+
+    expect(calls.filter((call) => call === 'terminal.list')).toHaveLength(2);
+    expect(calls).toContain('terminal.kill');
+    expect(stopped).toBe(false);
+  });
+
+  it('direct stop leaves the core running when the final terminal listing fails', async () => {
+    const names = instanceNames('/profile', 'posix', '/tmp');
+    let listCalls = 0;
+    let stopped = false;
+    const hc = {
+      call: async (method: string) => {
+        if (method === 'terminal.list' && ++listCalls === 2) throw new Error('listing failed');
+        if (method === 'terminal.list') return { terminals: [] };
+        if (method === 'terminal.get')
+          return { address: 'supervisor-1', state: 'exited', name: names.supervisorName };
+        return {};
+      },
+      close: () => {},
+    } as unknown as import('../../src/contracts/hc').HcClient;
+
+    await expect(
+      directStopAll(hc, names, async () => {
+        stopped = true;
+      }),
+    ).rejects.toThrow('listing failed');
+
+    expect(listCalls).toBe(2);
+    expect(stopped).toBe(false);
+  });
+
   it('restarts the backoff for crashes spaced outside the exhaustion window', async () => {
     const h = harness(crashRun);
     const spawn = h.options.spawnChild;
