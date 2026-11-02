@@ -6,7 +6,7 @@
  * exit 0 pass/SKIP · 1 assertion failed · 2 infra error
  */
 
-import { assert, openSession, phase } from './harness.mjs';
+import { assert, openSession, phase, runCommand } from './harness.mjs';
 import {
   browseAdd,
   CARD,
@@ -53,7 +53,8 @@ await runNewSession('new-session-folders-card', async ({ fx, log, launch }) => {
   phase('board card prefill');
   const boardHost = await openSession(page, { path: A, roots: [B] });
   log('board host session:', boardHost);
-  await page.locator('.viewswitch__btn[title="Feature Board"]').click();
+  await runCommand(page, 'Open feature board');
+  await page.waitForSelector('.board', { state: 'visible', timeout: 15000 });
   const card = page.locator('.bcard', { hasText: CARD.title }).first();
   await card.waitFor({ state: 'visible', timeout: 15000 });
   await card.click({ button: 'right' });

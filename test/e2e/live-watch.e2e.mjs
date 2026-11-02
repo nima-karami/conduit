@@ -9,7 +9,14 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, finishScenario, launchApp, openSession, tapBridge } from './harness.mjs';
+import {
+  assert,
+  finishScenario,
+  launchApp,
+  openSession,
+  showRightView,
+  tapBridge,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[live-watch] SKIP — suite is Windows-only');
@@ -26,7 +33,7 @@ try {
 
   await openSession(page, { path: project });
   await tapBridge(page);
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   // Let the host arm the project watcher (it does so when the renderer requests the project).
   await page.waitForTimeout(1200);
 

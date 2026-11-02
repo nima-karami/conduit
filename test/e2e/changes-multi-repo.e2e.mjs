@@ -275,7 +275,9 @@ async function runFirstLaunch(page) {
   const header = await page.evaluate(() => ({
     title: document.querySelector('.changes__header-summary')?.getAttribute('title'),
     count: document.querySelector('.changes__header-count')?.textContent,
-    badge: document.querySelector('.rtab .rtab__badge')?.textContent ?? null,
+    badge:
+      document.querySelector('button[data-right-view="changes"] .topbar__badge')?.textContent ??
+      null,
   }));
   assert(
     header.count === '2 changes · 2 repos' && header.title === '2 changes · 2 repos +2 -1',
@@ -627,7 +629,7 @@ async function runSecondLaunch(page, sid) {
   if (restored?.status !== 'running') {
     await page.evaluate((id) => window.agentDeck.post({ type: 'relaunch', id }), sid);
   }
-  await page.locator(`[data-sessionid="${sid}"] .session__text`).click();
+  await page.locator(`[data-sessionid="${sid}"] .session__select`).click();
   await openChangesTab(page);
   await waitFor(
     page,

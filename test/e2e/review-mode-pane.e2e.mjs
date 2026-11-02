@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario, waitForRepoGit } from './harness.mjs';
+import { assert, openSession, runCommand, runScenario, waitForRepoGit } from './harness.mjs';
 
 const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
 
@@ -34,8 +34,13 @@ function makeRepo(dir) {
   unlinkSync(join(dir, 'delete-me.txt'));
 }
 
-const rtabActiveText = (page) =>
-  page.evaluate(() => document.querySelector('.rtab--active')?.textContent?.trim() ?? '');
+const shownViewLabel = (page) =>
+  page.evaluate(
+    () =>
+      document
+        .querySelector('button[data-right-view][aria-pressed="true"]')
+        ?.getAttribute('aria-label') ?? '',
+  );
 
 const navRowCount = (page) =>
   page.evaluate(() => document.querySelectorAll('.rightpane .review__navrow').length);
@@ -77,7 +82,7 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
     { timeout: 15000 },
   );
   assert(
-    (await rtabActiveText(page)).startsWith('Changes'),
+    (await shownViewLabel(page)).startsWith('Changes'),
     'entering Review must select the Changes tab',
   );
   const rows = await navRowCount(page);
@@ -93,7 +98,7 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   await page.waitForFunction(
     () =>
       document
-        .querySelector('.rightpane__tabs [role="status"]')
+        .querySelector('#right-pane > [role="status"]')
         ?.textContent?.startsWith('Reviewing working tree'),
     null,
     { timeout: 8000 },
@@ -173,7 +178,11 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   await page.keyboard.press('Control+Shift+R');
   await page.waitForSelector('.rightpane', { state: 'visible', timeout: 15000 });
   await page.waitForFunction(
-    () => document.querySelector('.rtab--active')?.textContent?.trim().startsWith('Changes'),
+    () =>
+      document
+        .querySelector('button[data-right-view][aria-pressed="true"]')
+        ?.getAttribute('aria-label')
+        ?.startsWith('Changes'),
     null,
     { timeout: 8000 },
   );
@@ -213,12 +222,12 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
     },
   );
 
-  await page.click('.viewswitch__btn[title="Feature Board"]');
+  await runCommand(page, 'Open feature board');
   await page.waitForFunction(() => !document.querySelector('.rightpane .rnav'), null, {
     timeout: 8000,
   });
   await page.waitForFunction(
-    () => document.querySelector('.rightpane__tabs [role="status"]')?.textContent === 'Changes',
+    () => document.querySelector('#right-pane > [role="status"]')?.textContent === 'Changes',
     null,
     { timeout: 8000 },
   );
@@ -231,7 +240,7 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   );
   log('Board view hides the navigator; the ordinary Changes list shows ✓');
 
-  await page.click('.viewswitch__btn[title="Editor"]');
+  await runCommand(page, 'Open editor');
   await page.waitForSelector('.rightpane .rnav', { state: 'visible', timeout: 8000 });
   log('back to the editor view: the navigator reappears ✓');
 

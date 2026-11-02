@@ -28,7 +28,14 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openHistory, openReview, openSession, runScenario } from './harness.mjs';
+import {
+  assert,
+  openHistory,
+  openReview,
+  openSession,
+  runScenario,
+  showRightView,
+} from './harness.mjs';
 
 const FILES = 14;
 const BODY_LINES = 120;
@@ -187,7 +194,7 @@ runScenario('review-tab-state', async ({ page, log }) => {
   assert(before.query === QUERY, `query should be ${QUERY}, got ${before.query}`);
 
   // ── 3. Leave Review for another tab, then come back ─────────────────────────────────────
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow__name', { timeout: 20000 });
   await page
     .locator('.filerow', { hasText: name(1) })
@@ -318,7 +325,7 @@ runScenario('review-tab-state', async ({ page, log }) => {
       .catch(async () => assert(false, `${what}: focus is on ${await focusedIn()}, not ${want}`));
   };
   const openFromFiles = async (n, leaving) => {
-    await page.click('.rtab:has-text("Files")');
+    await showRightView(page, 'files');
     await page.locator('.filerow', { hasText: n }).first().dblclick();
     await page.waitForSelector('.viewer__monaco .view-lines', {
       state: 'attached',

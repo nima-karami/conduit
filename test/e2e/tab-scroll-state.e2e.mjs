@@ -18,7 +18,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, finishScenario, launchApp, makeLog, openSession } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+  showRightView,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[tab-scroll-state] SKIP — suite is Windows-only');
@@ -102,7 +110,7 @@ try {
   assert(sid, 'no session id from openSession');
   log('session', sid);
 
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow__name', { timeout: 20000 });
   const row = (name) => page.locator('.filerow', { hasText: name }).first();
 

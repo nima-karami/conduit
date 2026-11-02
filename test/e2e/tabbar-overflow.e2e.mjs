@@ -13,7 +13,7 @@
  * Chromium scrollbar layout is exercised — a mock renderer can't reproduce the gutter.
  */
 
-import { assert, openSession, REPO, runScenario } from './harness.mjs';
+import { assert, openSession, REPO, runScenario, showRightView } from './harness.mjs';
 
 const fileRowByName = (page, name) =>
   page.locator('.filerow', {
@@ -45,7 +45,7 @@ const stripOverflowing = (page) =>
 
 runScenario('tabbar-overflow', async ({ page, log }) => {
   await openSession(page, { path: REPO });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow', { state: 'attached', timeout: 20000 });
 
   // Expand webview/ then open many source files from it to overflow the strip.

@@ -19,7 +19,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, runScenario, showRightView } from './harness.mjs';
 
 const fileRow = (page, name) =>
   page.locator('.filerow', {
@@ -47,7 +47,7 @@ runScenario('explorer-keyboard-multiselect', async ({ page, log }) => {
   for (const n of names) writeFileSync(join(dir, n), `${n}\n`);
 
   await openSession(page, { path: dir });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await fileRow(page, 'a.txt').first().waitFor({ state: 'attached', timeout: 20000 });
   log('temp project opened with a–e.txt ✓');
 

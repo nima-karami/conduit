@@ -16,7 +16,7 @@
  *
  * Run: node test/e2e/run-smoke.mjs editor-first-paint   (needs `npm run build` first)
  */
-import { assert, openSession, REPO, runScenario } from './harness.mjs';
+import { assert, openSession, REPO, runScenario, showRightView } from './harness.mjs';
 
 const fileRowByName = (page, name) =>
   page.locator('.filerow', {
@@ -38,7 +38,7 @@ const tokenTypes = (page, lang) =>
 
 runScenario('editor-first-paint', async ({ page, log }) => {
   await openSession(page, { path: REPO });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow__name', { timeout: 20000 });
 
   // Baseline: with no code file open, nothing has registered the TypeScript grammar, so the

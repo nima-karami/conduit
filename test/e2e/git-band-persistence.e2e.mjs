@@ -11,7 +11,14 @@
  * Windows only, real app — see CLAUDE.md (run alone on a quiet machine).
  */
 
-import { assert, openChangesTab, openSession, REPO, runScenario } from './harness.mjs';
+import {
+  assert,
+  openChangesTab,
+  openSession,
+  REPO,
+  runScenario,
+  showRightView,
+} from './harness.mjs';
 
 /** What the git entry points look like right now. */
 const survey = (page) =>
@@ -69,11 +76,7 @@ runScenario('git-band-persistence', async ({ page, log }) => {
   log('terminal: review + chip present, tab row clean ✓');
 
   // Open an ordinary file from the explorer — the case that used to blank the band.
-  await page.evaluate(() => {
-    Array.from(document.querySelectorAll('.rtab'))
-      .find((el) => el.textContent?.trim().startsWith('Files'))
-      ?.click();
-  });
+  await showRightView(page, 'files');
   const row = page.locator('.filerow', { hasText: 'package.json' }).first();
   await row.waitFor({ state: 'visible', timeout: 20000 });
   await row.click();

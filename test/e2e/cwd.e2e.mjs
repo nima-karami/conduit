@@ -22,6 +22,7 @@ import {
   makeLog,
   openSession,
   REPO,
+  showRightView,
   tapBridge,
   typeLine,
 } from './harness.mjs';
@@ -156,7 +157,7 @@ try {
   log('PASS: home unchanged ✓');
 
   // mf-files D1: the Files tab shows the session's folders; it no longer follows the cd.
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   const homeName = basename(REPO);
   const sectionsAfterCd = await page
     .waitForFunction(

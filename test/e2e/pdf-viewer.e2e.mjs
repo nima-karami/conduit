@@ -26,6 +26,7 @@ import {
   makeLog,
   openSession,
   REPO,
+  showRightView,
   tapBridge,
 } from './harness.mjs';
 
@@ -50,13 +51,7 @@ try {
   await openSession(page, { path: repoDir.replace(/\\/g, '/'), agentId: 'shell:cmd' });
 
   // Switch the right pane to Files and open the fixture via the tree.
-  await page.waitForSelector('.rtab', { state: 'attached', timeout: 10000 });
-  await page.evaluate(() => {
-    const tab = Array.from(document.querySelectorAll('.rtab')).find(
-      (el) => el.textContent?.trim() === 'Files',
-    );
-    if (tab) tab.click();
-  });
+  await showRightView(page, 'files');
   await page.waitForFunction(
     () =>
       Array.from(document.querySelectorAll('.filerow__name')).some(

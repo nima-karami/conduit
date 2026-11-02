@@ -8,11 +8,11 @@
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, REPO, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, REPO, runScenario, showRightView } from './harness.mjs';
 
 runScenario('markdown-toc-collapse', async ({ app, page, log }) => {
   await openSession(page, { path: REPO });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
 
   const row = page.locator('.filerow', {
     has: page.locator('.filerow__name', { hasText: /^CHANGELOG\.md$/ }),

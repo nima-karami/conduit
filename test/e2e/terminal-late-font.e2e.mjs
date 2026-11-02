@@ -1,15 +1,17 @@
 /**
  * A terminal still fits its pane, and the PTY its terminal, while the page's web fonts are late.
  *
- * Holding the Google Fonts files back makes a reloaded page's layout settle late: the pane's first
- * measurement is taller than where it ends up. On main that left the grid taller than the pane —
+ * Holding the bundled terminal faces back past the boot font wait makes a reloaded page's layout
+ * settle late: the pane's first measurement is taller than where it ends up. On main that left the grid taller than the pane —
  * its bottom rows, the cursor and what the user types below the visible area until `clear` — and
  * the PTY a different height again. The fonts are held back so that timing is certain, not a race.
  * (The late font itself doesn't change the cell size here; the control terminal pins that.)
  *
  * Checked twice, each time after the font has arrived: a fresh session on a fresh document, and
  * the same session after a renderer reload (the attach path). Both times the xterm's screen must
- * fit inside its pane, and the PTY (asked of the shell, `mode con`) must be the xterm's size.
+ * fit inside its pane, the PTY (asked of the shell, `mode con`) must be the xterm's size, and the
+ * cell must be as wide as the real face's advance: a terminal still measured in its fallback face
+ * after the late face arrived would not be.
  */
 import { createRequire } from 'node:module';
 import {
@@ -17,15 +19,17 @@ import {
   assertFontsHeldBack,
   assertFontsPending,
   finishScenario,
-  holdBackWebFonts,
+  holdBackLocalFonts,
   launchElectron,
   makeLog,
+  measureCellWidth,
   openSession,
   probeTerminalSize,
   profileDir,
   REPO,
   shutdownApp,
   tapBridge,
+  terminalFace,
 } from './harness.mjs';
 
 if (process.platform !== 'win32') {
@@ -37,23 +41,26 @@ const log = makeLog('terminal-late-font');
 const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 const userDataDir = profileDir('tlf');
-const FONT_DELAY_MS = 3000;
+// Past the boot font wait (BOOT_FONT_TIMEOUT_MS, 3 s), so the first terminal mounts in a fallback.
+const FONT_DELAY_MS = 6000;
 
 async function waitForFont(page) {
+  const { family, px } = await terminalFace(page);
+  const font = `${px}px "${family}"`;
   await page.waitForTimeout(1000);
   log(
-    `faces before: ${await page.evaluate(() =>
-      [...document.fonts]
-        .filter((f) => /JetBrains/.test(f.family) && f.weight === '400')
-        .map((f) => f.status)
-        .join(','),
+    `${family} faces before: ${await page.evaluate(
+      (fam) =>
+        [...document.fonts]
+          .filter((f) => f.family.includes(fam))
+          .map((f) => `${f.weight}:${f.status}`)
+          .join(','),
+      family,
     )}`,
   );
   // Under WebGL nothing in the page requests the face; the editor or a code block would.
-  await page.evaluate(() => document.fonts.load('14px "JetBrains Mono"'));
-  await page.waitForFunction(() => document.fonts.check('14px "JetBrains Mono"'), null, {
-    timeout: 30000,
-  });
+  await page.evaluate((f) => document.fonts.load(f), font);
+  await page.waitForFunction((f) => document.fonts.check(f), font, { timeout: 30000 });
   await page.waitForTimeout(1500);
 }
 
@@ -65,6 +72,19 @@ const failures = [];
 const check = (ok, msg) => {
   if (!ok) failures.push(msg);
 };
+function judgeWidth(label, w) {
+  if (!w) return check(false, `${label}: no terminal to measure`);
+  log(
+    `${label}: cell ${w.cell}px wide, ${w.face} advance ${w.expected}px, fallback advance ${w.fallback}px${
+      w.expected === w.fallback ? ' (same width: this size cannot tell the faces apart)' : ''
+    }`,
+  );
+  check(w.loaded, `${label}: ${w.face} is still not loaded`);
+  check(
+    Math.abs(w.cell - w.expected) < 0.05,
+    `${label}: cells are ${w.cell}px wide, but ${w.face} makes them ${w.expected}px`,
+  );
+}
 function judge(label, m, truthCell) {
   log(
     `${label}: xterm ${m.xterm} (screen ${m.screenH}px, cell ${m.cellH}px, in a ${m.paneH}px pane), PTY ${m.pty}`,
@@ -92,7 +112,7 @@ try {
   await page.addInitScript(() => {
     window.__terms = {};
   });
-  const hold = await holdBackWebFonts(page, FONT_DELAY_MS);
+  const hold = await holdBackLocalFonts(app, page, FONT_DELAY_MS);
   // A fresh document under the hook: the font the window already had is gone.
   await page.reload();
   await page.waitForLoadState('domcontentloaded');
@@ -111,6 +131,7 @@ try {
   await page.click(`[data-sessionid="${sid}"]`);
   await page.waitForTimeout(1000);
   judge('fresh session', await measure(page, sid, 'fresh'), truth.cellH);
+  judgeWidth('fresh session', await measureCellWidth(page, sid));
 
   // ── 2. The same session after a reload (attach path), fonts late again ────
   await page.reload();
@@ -125,10 +146,11 @@ try {
   await page.waitForFunction((id) => !!window.__terms?.[id], sid, { timeout: 20000 });
   await waitForFont(page);
   judge('after reload', await measure(page, sid, 'reload'), truth.cellH);
+  judgeWidth('after reload', await measureCellWidth(page, sid));
 
-  assertFontsHeldBack(hold, 'terminal-late-font');
+  await assertFontsHeldBack(hold, 'terminal-late-font');
   assert(failures.length === 0, failures.join('\n  '));
-  log('PASS ✓ with late web fonts the grid stays inside its pane and the PTY at its size');
+  log('PASS ✓ with late terminal fonts the grid stays inside its pane and the PTY at its size');
   await shutdownApp(app, page);
   await finishScenario(0);
 } catch (e) {

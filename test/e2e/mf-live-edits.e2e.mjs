@@ -50,6 +50,7 @@ import {
   profileDir,
   REPO,
   removeDir,
+  showRightView,
   shutdownApp,
   stopServer,
   tapBridge,
@@ -571,19 +572,36 @@ async function phaseShell({ page }) {
   log('E2: shell gets no banner ✓');
 }
 
+/**
+ * What the sidebar row says about a session that cannot start: its status word (the old card's
+ * state text) and its tooltip's Can't start line, which carries the reason the card used to.
+ */
+const rowCantStart = (page, id) =>
+  page.evaluate((sid) => {
+    const row = document.querySelector(`[data-agent-tree] .session[data-sessionid="${sid}"]`);
+    if (!row) return null;
+    return {
+      stopped: (row.getAttribute('aria-label') ?? '').split(', ').includes('Stopped'),
+      line: (row.title ?? '').split('\n').find((l) => l.startsWith("Can't start")) ?? null,
+    };
+  }, id);
+
 async function phaseCantStart({ page, sid }) {
   const nope = await openSession(page, { path: S, agentId: 'nope-agent' });
   await page.locator(`.session[data-sessionid="${nope}"]`).click();
-  const cardState = page.locator(`.session[data-sessionid="${nope}"] .session__state`);
   const reason = page.locator('.session-stale .session-stale__detail');
   const shows = async () =>
-    (await cardState.textContent().catch(() => '')) === "Can't start" &&
+    (await rowCantStart(page, nope))?.stopped === true &&
+    (await rowCantStart(page, nope))?.line === "Can't start: conduit-nope-xyz wasn't found" &&
     (await page
       .locator('.session-stale .session-stale__title')
       .textContent()
       .catch(() => '')) === "Can't start" &&
     (await reason.textContent().catch(() => '')) === "conduit-nope-xyz wasn't found";
-  assert(await until(shows, 10000), "B1: card + centre say Can't start and name the command");
+  assert(
+    await until(shows, 10000),
+    `B1: row + centre say Can't start and name the command (row: ${JSON.stringify(await rowCantStart(page, nope))})`,
+  );
   await page.locator('.session-stale button', { hasText: '↻ Relaunch' }).click();
   await page.waitForTimeout(1500);
   assert(await shows(), 'B1: after Relaunch refuses again, the reason is still shown');
@@ -595,7 +613,7 @@ async function phaseCantStart({ page, sid }) {
 async function phaseLive({ page, sid }) {
   await page.locator(`.session[data-sessionid="${sid}"]`).click();
   const before = (await launches(page, sid)).length;
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   const bar = await page
     .waitForFunction(
       () =>
@@ -645,14 +663,14 @@ const logRecordsSince = (t0, sid) => {
 };
 
 async function phaseMissingHome({ app, page, sid, t0 }) {
-  const cardState = page.locator(`.session[data-sessionid="${sid}"] .session__state`);
   await page.locator(`.session[data-sessionid="${sid}"]`).click();
+  const missingHome = async () => {
+    const r = await rowCantStart(page, sid);
+    return r?.stopped === true && r.line === "Can't start: Home folder not found";
+  };
   assert(
-    await until(
-      async () => (await cardState.textContent().catch(() => '')) === "Can't start",
-      15000,
-    ),
-    `E5: the card says Can't start (got ${JSON.stringify(await cardState.textContent().catch(() => null))})`,
+    await until(missingHome, 15000),
+    `E5: the row says Can't start (got ${JSON.stringify(await rowCantStart(page, sid))})`,
   );
   const title = await page.locator('.session-stale .session-stale__title').textContent();
   const path = await page.locator('.session-stale .session-stale__path').textContent();

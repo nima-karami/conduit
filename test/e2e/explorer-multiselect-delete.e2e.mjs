@@ -14,7 +14,14 @@
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, getSpyCalls, openSession, runScenario, spyMain } from './harness.mjs';
+import {
+  assert,
+  getSpyCalls,
+  openSession,
+  runScenario,
+  showRightView,
+  spyMain,
+} from './harness.mjs';
 
 const fileRow = (page, name) =>
   page.locator('.filerow', {
@@ -45,7 +52,7 @@ runScenario('explorer-multiselect-delete', async ({ app, page, log }) => {
 
   await spyMain(app, [{ api: 'trashItem' }]);
   await openSession(page, { path: dir });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await fileRow(page, 'a.txt').first().waitFor({ state: 'attached', timeout: 20000 });
   log('temp project opened with a–e.txt ✓');
 

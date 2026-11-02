@@ -14,7 +14,7 @@
  *     expected to fail against the pre-fix build — the table is the deliverable.
  */
 
-import { assert } from './harness.mjs';
+import { assert, showRightView } from './harness.mjs';
 
 /** Bounded wait for one navigation. The wrapper's own deadline is 6 s. */
 const NAV_SETTLE_MS = 7000;
@@ -154,7 +154,7 @@ export async function openDoc(app, page, sessionId, absPath) {
  * exactly the overlay bugs this suite exists to catch).
  */
 export async function openViaTree(page, rootPath, relParts) {
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow__name', { timeout: 20000 });
   const root = rootPath.replace(/\\/g, '/');
   const levels = relParts.map((_, i) => `${root}/${relParts.slice(0, i + 1).join('/')}`);

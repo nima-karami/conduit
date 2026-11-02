@@ -18,7 +18,14 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openChangesTab, openHistory, openSession, runScenario } from './harness.mjs';
+import {
+  assert,
+  openChangesTab,
+  openHistory,
+  openSession,
+  runScenario,
+  showRightView,
+} from './harness.mjs';
 
 const PER_REPO_TITLE = 'Works on one repo. Right-click a repo header, or switch to Active repo.';
 
@@ -294,7 +301,7 @@ runScenario('multi-repo', async ({ page, log }) => {
   // Stage a.txt through the Changes UI. This is the path the fix repaired: the git action
   // must run in the ACTIVE repo (repo-a), not the opened parent, and the post-action refresh
   // must stay scoped to repo-a. If it ran in the parent, a.txt would never become staged.
-  await page.locator('.rtab', { hasText: 'Changes' }).click();
+  await showRightView(page, 'changes');
   // The row actions are pointer-events:none until the row is hovered (they overlay the diff-stat,
   // so an ungated overlay would make Discard hittable with nothing drawn). Playwright hit-tests
   // the click point BEFORE moving the mouse, so clicking cold resolves to the row text underneath

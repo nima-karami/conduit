@@ -607,18 +607,116 @@ export async function createProject(page, name) {
     .then((h) => h.jsonValue());
 }
 
-/** Show the right pane's Changes tab (expanding the pane if collapsed) and wait for its header. */
+/**
+ * Show one right-panel view through its header toggle, idempotently: a toggle that is already
+ * pressed closes the panel when clicked (sidebar-agent-tree spec §7), so it is clicked only when
+ * not pressed. A pressed toggle whose panel is still mounting is waited for, never clicked.
+ * Ordinary scenarios navigate only through this; raw toggle clicks belong to right-panel-toggles.
+ *
+ * @param {object} page
+ * @param {'files' | 'changes' | 'messages'} view
+ */
+export async function showRightView(page, view) {
+  const toggle = page.locator(`button[data-right-view="${view}"]`);
+  await toggle.waitFor({ state: 'visible', timeout: 15000 });
+  if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click();
+  await page.waitForFunction(
+    (v) =>
+      document.querySelector(`button[data-right-view="${v}"]`)?.getAttribute('aria-pressed') ===
+      'true',
+    view,
+    { timeout: 10000 },
+  );
+  await page
+    .locator(`#right-pane[data-right-view="${view}"]`)
+    .waitFor({ state: 'visible', timeout: 15000 });
+}
+
+/** The pressed header toggle's view, or null when the right panel is closed. */
+export function shownRightView(page) {
+  return page.evaluate(
+    () =>
+      document
+        .querySelector('button[data-right-view][aria-pressed="true"]')
+        ?.getAttribute('data-right-view') ?? null,
+  );
+}
+
+/** Show the right panel's Changes view (opening the panel if closed) and wait for its header. */
 export async function openChangesTab(page) {
-  if (!(await page.isVisible('.rightpane'))) {
-    await page.keyboard.press('Control+Shift+E');
-    await page.waitForSelector('.rightpane', { state: 'visible', timeout: 8000 });
-  }
-  await page.evaluate(() => {
-    Array.from(document.querySelectorAll('.rtab'))
-      .find((el) => el.textContent?.trim().startsWith('Changes'))
-      ?.click();
-  });
+  await showRightView(page, 'changes');
   await page.waitForSelector('.changes__header', { state: 'visible', timeout: 15000 });
+}
+
+/**
+ * Run a command palette command by its exact title (the header view switcher's replacement:
+ * 'Open editor', 'Open feature board', 'Open architecture canvas'). The palette is opened from
+ * outside any terminal so the app combo is not eaten by the xterm.
+ *
+ * @param {object} page
+ * @param {string} title
+ */
+export async function runCommand(page, title) {
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  });
+  await page.keyboard.press('Control+Shift+P');
+  await page.waitForSelector('.palette', { state: 'visible', timeout: 5000 });
+  await page.keyboard.type(title);
+  const row = page
+    .locator('.palette__row')
+    .filter({ has: page.locator('.palette__title').getByText(title, { exact: true }) })
+    .first();
+  await row.waitFor({ state: 'visible', timeout: 5000 });
+  await row.click();
+  await page.waitForSelector('.palette', { state: 'hidden', timeout: 5000 });
+}
+
+/** The center view on screen, read off the view itself now the header switcher is gone. */
+export function centerViewShown(page) {
+  return page.evaluate(() =>
+    document.querySelector('.board')
+      ? 'board'
+      : document.querySelector('.arch')
+        ? 'canvas'
+        : 'editor',
+  );
+}
+
+/** The center footer, and one of its items by `data-status-item` (machine, branch, attention…). */
+export const statusBar = (page) => page.locator('footer[data-status-bar]');
+export const statusItem = (page, item) =>
+  page.locator(`footer[data-status-bar] [data-status-item="${item}"]`);
+
+/** An agent row's accessible name ("<name>, <status>[, <space>][, a sub-agent needs you]"). */
+export function rowLabel(page, sessionId) {
+  return page
+    .locator(`[data-agent-tree] .session[data-sessionid="${sessionId}"]`)
+    .getAttribute('aria-label');
+}
+
+/** Select a Space filter row: 'all', 'no-space' or a project id. */
+export async function selectSpace(page, key) {
+  const row = page.locator(`button[data-space-id="${key}"]`);
+  await row.waitFor({ state: 'visible', timeout: 10000 });
+  if ((await row.getAttribute('aria-pressed')) !== 'true') await row.click();
+  await page.waitForFunction(
+    (k) =>
+      document.querySelector(`button[data-space-id="${k}"]`)?.getAttribute('aria-pressed') ===
+      'true',
+    key,
+    { timeout: 5000 },
+  );
+}
+
+/** Reveal the sidebar's Filter sessions input through Search agents and fill it. */
+export async function filterAgents(page, text) {
+  const input = page.locator('input.sessbar__filter');
+  if (!(await input.isVisible())) {
+    await page.getByRole('button', { name: 'Search agents', exact: true }).click();
+    await input.waitFor({ state: 'visible', timeout: 5000 });
+  }
+  await input.fill(text);
 }
 
 /**
@@ -1062,50 +1160,119 @@ export function assert(cond, msg) {
   if (!cond) throw new AssertionError(msg);
 }
 
+/** The terminal faces esbuild emits next to the page (out/<name>-<hash>.ttf, webview/fonts.css). */
+export const TERMINAL_FACE_FILE =
+  /\/(jetbrains-mono|fira-code|ibm-plex-mono|cascadia-mono)[^/]*\.ttf$/i;
+const MONO_FAMILY = {
+  jetbrains: 'JetBrains Mono',
+  firacode: 'Fira Code',
+  plexmono: 'IBM Plex Mono',
+};
+
+/** The selected terminal face and size this document booted with (bridge initialSettings). */
+export function terminalFace(page) {
+  return page
+    .evaluate(() => {
+      const s = window.agentDeck?.initialSettings;
+      return { id: s?.fontMono ?? 'plexmono', px: s?.terminalFontSize ?? 13 };
+    })
+    .then(({ id, px }) => ({ family: MONO_FAMILY[id] ?? 'IBM Plex Mono', px }));
+}
+
 /**
- * Delays the page's Google Fonts files, so a reload settles its layout late (the timing behind
- * the terminal-size scenarios). Returns the hold; `assertFontsHeldBack` proves it was exercised —
- * with fonts.googleapis.com unreachable no face is registered and those scenarios pass vacuously.
+ * Delays the bundled terminal faces, so a reload settles its layout late (the timing behind the
+ * terminal-size scenarios). The faces are local files, which Playwright's page.route cannot see,
+ * so the window's session delays them in webRequest; the page's cache is disabled so a reload
+ * re-requests them instead of reusing the faces the last document held. `delayMs` must exceed the
+ * boot font timeout (webview/terminal-fonts.ts, 3 s), or the app waits for the face before its
+ * first terminal and nothing is late. `assertFontsHeldBack` proves the hold was exercised.
  */
-export async function holdBackWebFonts(page, delayMs) {
-  const hold = { requests: 0 };
-  await page.route(/fonts.gstatic.com/, async (route) => {
-    hold.requests++;
-    await new Promise((r) => setTimeout(r, delayMs));
-    await route.continue();
-  });
-  return hold;
+export async function holdBackLocalFonts(app, page, delayMs) {
+  await app.evaluate(
+    ({ BrowserWindow }, { ms, src }) => {
+      const re = new RegExp(src, 'i');
+      const hold = { requests: 0 };
+      globalThis.__e2eFontHold = hold;
+      const ses = BrowserWindow.getAllWindows()[0].webContents.session;
+      ses.webRequest.onBeforeRequest({ urls: ['file:///*'] }, (details, callback) => {
+        if (!re.test(decodeURI(details.url))) return callback({});
+        hold.requests++;
+        setTimeout(() => callback({}), ms);
+      });
+    },
+    { ms: delayMs, src: TERMINAL_FACE_FILE.source },
+  );
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Network.enable');
+  await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
+  return { app, cdp };
 }
 
 /** At mount: the terminal font's faces are registered and none of them has loaded yet. */
 export async function assertFontsPending(page, label) {
+  const { family } = await terminalFace(page);
   const registered = await page
-    .waitForFunction(() => [...document.fonts].some((f) => /JetBrains Mono/.test(f.family)), null, {
+    .waitForFunction((fam) => [...document.fonts].some((f) => f.family.includes(fam)), family, {
       timeout: 15000,
     })
     .then(() => true)
     .catch(() => false);
   assert(
     registered,
-    `font hold-back not exercised (${label}): no JetBrains Mono face registered — is fonts.googleapis.com reachable?`,
+    `font hold-back not exercised (${label}): no ${family} face registered — is webview/fonts.css bundled?`,
   );
   const loaded = await page.evaluate(
-    () =>
-      [...document.fonts].filter((f) => /JetBrains Mono/.test(f.family) && f.status === 'loaded')
-        .length,
+    (fam) =>
+      [...document.fonts].filter((f) => f.family.includes(fam) && f.status === 'loaded').length,
+    family,
   );
   assert(
     loaded === 0,
-    `font hold-back not exercised (${label}): ${loaded} JetBrains Mono faces already loaded`,
+    `font hold-back not exercised (${label}): ${loaded} ${family} faces already loaded`,
   );
 }
 
-/** After the run: the hold actually delayed at least one font file. */
-export function assertFontsHeldBack(hold, label) {
+/** After the run: the hold actually delayed at least one terminal face file. */
+export async function assertFontsHeldBack(hold, label) {
+  const requests = await hold.app.evaluate(() => globalThis.__e2eFontHold?.requests ?? 0);
   assert(
-    hold.requests > 0,
-    `font hold-back not exercised (${label}): no fonts.gstatic.com request was held`,
+    requests > 0,
+    `font hold-back not exercised (${label}): no local terminal face request was held`,
   );
+}
+
+/**
+ * The live terminal's cell width against the loaded face's own advance at its size, rounded to
+ * device pixels as xterm rounds its cell. `fallback` is the same measure in the stack with the
+ * face removed: when the two differ, a cell measured in a fallback face cannot pass.
+ */
+export function measureCellWidth(page, sessionId) {
+  return page.evaluate((id) => {
+    const t = window.__terms?.[id];
+    const screen = t?.element?.querySelector('.xterm-screen');
+    if (!t || !screen) return null;
+    const stack = String(t.options.fontFamily);
+    const px = Number(t.options.fontSize);
+    const face = stack
+      .split(',')[0]
+      .trim()
+      .replace(/^["']|["']$/g, '');
+    const rest = stack.split(',').slice(1).join(',');
+    const ctx = document.createElement('canvas').getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const advance = (fam) => {
+      ctx.font = `${px}px ${fam}`;
+      return Math.floor(ctx.measureText('W').width * dpr) / dpr;
+    };
+    return {
+      face,
+      loaded: document.fonts.check(`${px}px "${face}"`),
+      cell: screen.getBoundingClientRect().width / t.cols,
+      expected: advance(stack),
+      fallback: advance(rest || 'monospace'),
+      dpr,
+    };
+  }, sessionId);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

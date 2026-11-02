@@ -10,6 +10,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { showRightView } from '../harness.mjs';
 import {
   assertInvariant,
   emitReport,
@@ -26,7 +27,7 @@ runStress('monaco-2mb', async ({ page, log }) => {
   makeBigMinifiedFile(join(root, 'huge.min.js'));
   await openSession(page, { path: root });
 
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow', { state: 'attached', timeout: 25000 });
 
   const openStart = Date.now();

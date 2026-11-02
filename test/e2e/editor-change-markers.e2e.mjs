@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, runScenario, showRightView } from './harness.mjs';
 
 const line = (n) => `const v${n} = ${n};`;
 const committed = Array.from({ length: 14 }, (_, i) => line(i + 1)).join('\n');
@@ -84,7 +84,7 @@ runScenario('editor-change-markers', async ({ app, page, log }) => {
   writeFileSync(join(root, 'brandnew.ts'), 'const fresh = true;\nconst alsoFresh = 1;\n');
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await openInEditor(page, 'tracked.ts');
   log('tracked file opened in the editor ✓');
 
@@ -144,7 +144,7 @@ runScenario('editor-change-markers', async ({ app, page, log }) => {
   }
 
   // An untracked file reads as one whole-file addition.
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await openInEditor(page, 'brandnew.ts');
   await page.waitForFunction(
     () => {

@@ -25,6 +25,7 @@ import {
   openSession,
   profileDir,
   REPO,
+  showRightView,
   tapBridge,
 } from './harness.mjs';
 
@@ -85,7 +86,7 @@ try {
   assert(sid, 'no session id from openSession');
   log('launch 1: session', sid);
 
-  await page1.click('.rtab:has-text("Files")');
+  await showRightView(page1, 'files');
   await page1.waitForSelector('.filerow__name', { timeout: 20000 });
   const row1 = (name) => page1.locator('.filerow', { hasText: name }).first();
 

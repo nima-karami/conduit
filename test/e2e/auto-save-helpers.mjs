@@ -15,6 +15,7 @@ import {
   launchApp,
   makeLog,
   openSession,
+  showRightView,
   shutdownApp,
 } from './harness.mjs';
 
@@ -194,7 +195,7 @@ export async function runAutoSave(name, { before = {}, files, phases }) {
         const { app, page } = launched;
         await openSession(page, { path: root });
         await spyWrites(app);
-        await page.click('.rtab:has-text("Files")');
+        await showRightView(page, 'files');
         await page.waitForSelector('.filerow__name', { timeout: 20000 });
         for (const [phase, run] of selected) {
           log(`— phase ${phase}`);

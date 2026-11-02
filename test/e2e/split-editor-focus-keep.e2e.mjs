@@ -15,7 +15,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { changeRow, commitBase, installTabHelpers } from './changes-fixture.mjs';
-import { assert, openChangesTab, openSession, runScenario } from './harness.mjs';
+import { assert, openChangesTab, openSession, runScenario, showRightView } from './harness.mjs';
 import {
   G,
   groupCount,
@@ -265,7 +265,7 @@ runScenario('split-editor-focus-keep', async ({ app, page, log }) => {
   });
 
   // CG: focus in the explorer; the right group closes from its strip menu by keyboard.
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   const marked = await page.evaluate(() => {
     const a = document.activeElement;
     if (!a || a === document.body) return false;

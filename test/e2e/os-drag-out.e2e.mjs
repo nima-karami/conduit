@@ -14,7 +14,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { assert, closeApp, openSession, runScenario, tapBridge } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  openSession,
+  runScenario,
+  showRightView,
+  tapBridge,
+} from './harness.mjs';
 
 // Mirrors OS_FILE_CLIPBOARD.win32 in src/drag-out-policy.ts (S0 F4: PASS); flip both together.
 const WIN32_OS_CLIPBOARD = true;
@@ -54,7 +61,7 @@ const dragStartOn = (locator) =>
 await runScenario('os-drag-out', async ({ app, page, log }) => {
   await openSession(page, { path: project });
   await tapBridge(page);
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
 
   const row = page.locator('.filerow', {
     has: page.locator('.filerow__name', { hasText: NAME }),

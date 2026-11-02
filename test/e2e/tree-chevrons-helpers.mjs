@@ -19,6 +19,7 @@ import {
   openSession,
   profileDir,
   removeDir,
+  showRightView,
 } from './harness.mjs';
 
 const NAME = 'tree-chevrons';
@@ -40,7 +41,7 @@ function makeRepo(dir) {
 
 async function showTab(page, name) {
   if (name === 'Changes') return openChangesTab(page);
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await page.waitForSelector('.files__bar', { state: 'visible', timeout: 15000 });
 }
 

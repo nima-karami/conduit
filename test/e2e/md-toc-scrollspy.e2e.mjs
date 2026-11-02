@@ -19,7 +19,7 @@
 
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assert, openSession, REPO, runScenario } from './harness.mjs';
+import { assert, openSession, REPO, runScenario, showRightView } from './harness.mjs';
 
 const DOC_NAME = '__md-toc-scrollspy-repro.md';
 const DOC_PATH = join(REPO, DOC_NAME);
@@ -51,7 +51,7 @@ runScenario('md-toc-scrollspy', async ({ page, log }) => {
   writeFileSync(DOC_PATH, buildDoc());
   try {
     await openSession(page, { path: REPO });
-    await page.locator('.rtab', { hasText: 'Files' }).click();
+    await showRightView(page, 'files');
 
     const row = page.locator('.filerow', {
       has: page.locator('.filerow__name', { hasText: new RegExp(`^${DOC_NAME}$`) }),

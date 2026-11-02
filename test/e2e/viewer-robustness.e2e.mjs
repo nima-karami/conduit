@@ -43,7 +43,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, runScenario, showRightView } from './harness.mjs';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Fixture generation (no dependencies: PNG is hand-encoded, PDF hand-written)
@@ -375,7 +375,7 @@ runScenario('viewer-robustness', async ({ app, page, log }) => {
   writeCorpus(root);
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
 
   // ── 1. Oversized image: no full-size flash before the fit (D7) ───────────────
   await startSampler(page);

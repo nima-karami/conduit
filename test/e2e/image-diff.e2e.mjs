@@ -22,6 +22,7 @@ import {
   makeLog,
   openSession,
   REPO,
+  showRightView,
   tapBridge,
 } from './harness.mjs';
 
@@ -153,13 +154,7 @@ try {
   // ── Test 4: open the standalone viewer and zoom ──────────────────────────────
   log('Test 4: standalone viewer zoom');
   // Switch the right pane to Files and open the top-level PNG via the tree.
-  await page.waitForSelector('.rtab', { state: 'attached', timeout: 10000 });
-  await page.evaluate(() => {
-    const tab = Array.from(document.querySelectorAll('.rtab')).find(
-      (el) => el.textContent?.trim() === 'Files',
-    );
-    if (tab) tab.click();
-  });
+  await showRightView(page, 'files');
   const treeReady = await page
     .waitForFunction(
       () =>

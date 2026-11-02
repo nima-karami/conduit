@@ -23,7 +23,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, runScenario, showRightView } from './harness.mjs';
 
 // Doc tabs are role="tab" inside the editor strip (.tabbar); the terminal/session tab is
 // a <button> without that role. Scope to .tabbar so unrelated app-wide role="tab" elements
@@ -50,7 +50,7 @@ runScenario('mouse-nav', async ({ app, page, log }) => {
   await openSession(page, { path: openedPath });
 
   // Switch to the Files tab and wait for the tree rows to load.
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow__name', { timeout: 20000 });
   const row = (name) => page.locator('.filerow', { hasText: name }).first();
 

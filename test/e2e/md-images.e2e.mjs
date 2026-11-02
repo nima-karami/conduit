@@ -8,7 +8,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, runScenario, showRightView } from './harness.mjs';
 
 // A real 1x1 red PNG.
 const PNG_B64 =
@@ -24,7 +24,7 @@ runScenario('md-images', async ({ app, page, log }) => {
   );
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   const row = page.locator('.filerow', {
     has: page.locator('.filerow__name', { hasText: /^report\.md$/ }),
   });

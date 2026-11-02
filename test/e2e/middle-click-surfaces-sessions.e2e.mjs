@@ -7,7 +7,7 @@
  * Run: `npm run build`, then `node test/e2e/run-smoke.mjs middle-click-surfaces-sessions`.
  */
 
-import { assert, closeApp, openSession, phase, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, phase, runScenario, showRightView } from './harness.mjs';
 import {
   middleClickJitter,
   sameSnapshot,
@@ -40,7 +40,7 @@ runScenario('middle-click-surfaces-sessions', async ({ app, page, log }) => {
   await replayPinnedAWithBackgroundB(page);
 
   phase('S9 oversize diff notice');
-  await page.locator('.rtab', { hasText: 'Changes' }).first().click();
+  await showRightView(page, 'changes');
   await changeRow(page, 'big.txt').first().waitFor({ state: 'visible', timeout: 15000 });
   await changeRow(page, 'big.txt').first().click();
   assert(
@@ -62,7 +62,9 @@ runScenario('middle-click-surfaces-sessions', async ({ app, page, log }) => {
   const sidB = await openSession(page, { path: `${root}/zproj` });
   await page.waitForFunction(
     (id) =>
-      document.querySelector('.session.session--active')?.getAttribute('data-sessionid') === id,
+      document
+        .querySelector('[data-agent-tree] .session.session--active')
+        ?.getAttribute('data-sessionid') === id,
     sidB,
     { timeout: 10000 },
   );

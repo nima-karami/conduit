@@ -15,6 +15,7 @@ import {
   launchApp,
   makeLog,
   openSession,
+  showRightView,
   shutdownApp,
 } from './harness.mjs';
 
@@ -32,7 +33,7 @@ export function makeRoot(files = { 'a.ts': ORIGINAL }) {
 
 /** Open the Files tab of the active session and dirty `name` by typing `text` at its start. */
 export async function dirtyFile(page, name = 'a.ts', text = 'EDIT') {
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow__name', { timeout: 20000 });
   await openFile(page, name);
   await typeAtStart(page, text);

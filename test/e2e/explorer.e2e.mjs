@@ -16,7 +16,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { assert, openSession, REPO, runScenario } from './harness.mjs';
+import { assert, openSession, REPO, runScenario, showRightView } from './harness.mjs';
 
 const NAME_A = basename(REPO); // repo-root session label (e.g. "conduit")
 
@@ -52,7 +52,7 @@ runScenario('explorer', async ({ page, log }) => {
   log('session B (src) =', sidB);
 
   // Switch the right pane to the Files tab.
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
 
   const activate = async (name) => {
     await page

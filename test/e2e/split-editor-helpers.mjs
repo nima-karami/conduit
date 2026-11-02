@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openChangesTab } from './harness.mjs';
+import { assert, openChangesTab, showRightView } from './harness.mjs';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -72,7 +72,7 @@ export const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 /** A real click or double-click on an explorer row (single = preview, double = pinned). */
 export async function explorer(page, name, how) {
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   const row = page.locator('.filerow', {
     has: page.locator('.filerow__name', { hasText: new RegExp(`^${esc(name)}$`) }),
   });
@@ -192,7 +192,7 @@ export const untilShown = (page, g, name) =>
 
 /** `explorer` for setup. */
 export async function setupExplorer(page, name, how) {
-  await press(page.locator('.rtab:has-text("Files")'));
+  await showRightView(page, 'files');
   const row = page.locator('.filerow', {
     has: page.locator('.filerow__name', { hasText: new RegExp(`^${esc(name)}$`) }),
   });

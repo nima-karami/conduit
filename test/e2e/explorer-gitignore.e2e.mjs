@@ -6,7 +6,7 @@
  * `git check-ignore` round-trip: node_modules (ignored) is dimmed; src (tracked) is not.
  */
 
-import { assert, openSession, REPO, runScenario } from './harness.mjs';
+import { assert, openSession, REPO, runScenario, showRightView } from './harness.mjs';
 
 const fileRow = (page, name) =>
   page.locator('.filerow', {
@@ -15,7 +15,7 @@ const fileRow = (page, name) =>
 
 runScenario('explorer-gitignore', async ({ page, log }) => {
   await openSession(page, { path: REPO });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow', { state: 'attached', timeout: 20000 });
 
   const nm = fileRow(page, 'node_modules').first();

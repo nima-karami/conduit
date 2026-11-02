@@ -17,7 +17,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, runScenario, showRightView } from './harness.mjs';
 
 // A 1x1 transparent PNG: a `data:` source renders eagerly (the sanitize schema allow-lists the
 // `data:` protocol on src), so it proves the raw-HTML <img> reaches the DOM as a real image.
@@ -50,7 +50,7 @@ runScenario('markdown-raw-html', async ({ page, log }) => {
   writeFileSync(join(dir, 'sample.md'), SAMPLE);
 
   await openSession(page, { path: dir.replace(/\\/g, '/') });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
 
   const row = page.locator('.filerow', {
     has: page.locator('.filerow__name', { hasText: /^sample\.md$/ }),

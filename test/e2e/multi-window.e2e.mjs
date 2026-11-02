@@ -282,6 +282,25 @@ try {
     `After move: S keeps roots and projectId (got ${JSON.stringify({ roots: movedS?.roots, projectId: movedS?.projectId })})`,
   );
   log('PASS move keeps roots + projectId ✓');
+  // The Space travels with it on screen too: window-2 lists the MW Space row, and under All the
+  // moved row names its Space ("<name>, <status>, MW").
+  const spaceShownW2 = await page2
+    .waitForFunction(
+      ({ id, pid }) =>
+        document.querySelector(`button[data-space-id="${pid}"]`)?.getAttribute('aria-label') ===
+          'MW' &&
+        /, MW$/.test(
+          document
+            .querySelector(`[data-agent-tree] .session[data-sessionid="${id}"]`)
+            ?.getAttribute('aria-label') ?? '',
+        ),
+      { id: sidS, pid: sProject },
+      { timeout: 10000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  assert(spaceShownW2, 'After move: window-2 shows the MW Space row and S under it');
+  log('PASS window-2 shows S in Space MW ✓');
 
   // ASSERT PTY SURVIVED: window-2's terminal buffer for S contains the PRE-MOVE sentinel
   // (replayed via the attach path) and shows NO "session relaunched" banner.

@@ -15,7 +15,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, removeDir, runScenario, stopServer } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  openSession,
+  removeDir,
+  runScenario,
+  showRightView,
+  stopServer,
+} from './harness.mjs';
 
 const NEEDLE = 'NEEDLE_42';
 const slash = (p) => p.replace(/\\/g, '/');
@@ -83,15 +91,7 @@ async function expectHits(page, want, what) {
 }
 
 async function openFilesTab(page) {
-  if (!(await page.isVisible('.rightpane'))) {
-    await page.keyboard.press('Control+Shift+E');
-    await page.waitForSelector('.rightpane', { state: 'visible', timeout: 8000 });
-  }
-  await page.evaluate(() => {
-    Array.from(document.querySelectorAll('.rtab'))
-      .find((el) => el.textContent?.trim().startsWith('Files'))
-      ?.click();
-  });
+  await showRightView(page, 'files');
   await page.waitForSelector('.search__inputbox textarea', { state: 'visible', timeout: 15000 });
 }
 

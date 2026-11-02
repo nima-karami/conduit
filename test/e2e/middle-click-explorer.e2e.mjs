@@ -5,7 +5,7 @@
  * container that can scroll, so the tree and the strip are made to overflow first.
  */
 
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, runScenario, showRightView } from './harness.mjs';
 import {
   middleClickJitter,
   sameSnapshot,
@@ -29,7 +29,7 @@ const exactText = (s) => new RegExp(`^${s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 runScenario('middle-click-explorer', async ({ app, page, log }) => {
   const root = writeFixtureRepo({ files });
   await openSession(page, { path: root });
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow__name', { timeout: 20000 });
   const row = (name) =>
     page.locator('.filerow', {

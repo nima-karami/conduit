@@ -20,7 +20,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, runScenario, showRightView } from './harness.mjs';
 
 /**
  * A repo with exactly one working-tree change, so the Changes tab has a row to probe. Opening
@@ -86,7 +86,7 @@ async function invisibleHitAlongRightEdge(page, box, from = 8, to = 90, step = 6
 runScenario('hover-obstruction', async ({ page, log }) => {
   await openSession(page, { path: repoWithOneChange() });
 
-  await page.locator('.rtab', { hasText: 'Changes' }).click();
+  await showRightView(page, 'changes');
   const change = page.locator('.change').first();
   await change.waitFor({ state: 'attached', timeout: 20000 });
   await restPointer(page);
@@ -98,7 +98,7 @@ runScenario('hover-obstruction', async ({ page, log }) => {
   );
   log('resting change row exposes no invisible actions ✓');
 
-  const card = page.locator('.session').first();
+  const card = page.locator('[data-agent-tree] .session').first();
   await card.waitFor({ state: 'attached', timeout: 10000 });
   await restPointer(page);
   const cardHit = await invisibleHitAlongRightEdge(page, await card.boundingBox());
@@ -116,7 +116,7 @@ runScenario('hover-obstruction', async ({ page, log }) => {
   await card.hover();
   await page.waitForTimeout(400);
   const revealed = await page.evaluate(() => {
-    const kill = document.querySelector('.session .session__kill');
+    const kill = document.querySelector('[data-agent-tree] .session .session__kill');
     if (!kill) return null;
     const cs = getComputedStyle(kill);
     return { pe: cs.pointerEvents, opacity: Number(cs.opacity) };
@@ -129,32 +129,39 @@ runScenario('hover-obstruction', async ({ page, log }) => {
   );
   log('hovered session card actions are reachable ✓');
 
-  // The group header's + takes the count's slot on hover. At rest it must not be hittable over
-  // the count; revealed, a REAL pointer at its centre must land on it, not on the header.
-  const header = page
-    .locator('.proj', { has: page.locator('.proj__name', { hasText: /^Standalone$/ }) })
-    .locator('.proj__label');
-  await header.waitFor({ state: 'attached', timeout: 10000 });
+  // The row's Pin (and ×) take the age's slot on hover (sidebar-agent-tree spec §6). At rest the
+  // age is what shows there and no invisible button may be hit over it; revealed, a REAL pointer
+  // at Pin's centre must land on Pin, and the age gives up its slot.
   await restPointer(page);
-  const headerBox = await header.boundingBox();
-  const headerHit = await invisibleHitAlongRightEdge(page, headerBox, 2, 44, 2);
-  log('resting Standalone header:', JSON.stringify(headerHit ?? 'clean'));
+  const rowBox = await card.boundingBox();
+  const resting = await page.evaluate(() => {
+    const row = document.querySelector('[data-agent-tree] .session');
+    const age = row?.querySelector('.session__age');
+    if (!age) return null;
+    const r = age.getBoundingClientRect();
+    return {
+      x: r.left + r.width / 2,
+      y: r.top + r.height / 2,
+      ageShown: getComputedStyle(age).visibility === 'visible',
+    };
+  });
+  assert(resting, 'precondition: the resting row should show its state age');
+  assert(resting.ageShown, 'at rest the row shows its age, not its actions');
+  const ageHit = await hitAt(page, resting.x, resting.y);
+  log('resting row over its age:', JSON.stringify(ageHit));
   assert(
-    !headerHit,
-    `a resting group header exposed an invisible control: ${headerHit?.button} at ${headerHit?.dx}px from its right edge`,
+    !(ageHit?.button && ageHit.opacity === 0),
+    `a resting row exposed an invisible control over its age: ${ageHit?.button}`,
   );
-  log('resting group header exposes no invisible + ✓');
+  log('resting row exposes no invisible Pin/× over its age ✓');
 
-  await page.mouse.move(headerBox.x + headerBox.width / 2, headerBox.y + headerBox.height / 2);
+  await page.mouse.move(rowBox.x + rowBox.width / 2, rowBox.y + rowBox.height / 2);
   await page.waitForTimeout(400);
-  const add = await page.evaluate(() => {
-    const label = [...document.querySelectorAll('.proj__label')].find(
-      (l) => l.querySelector('.proj__name')?.textContent === 'Standalone',
-    );
-    const btn = label?.querySelector('.proj__add');
+  const pin = await page.evaluate(() => {
+    const row = document.querySelector('[data-agent-tree] .session');
+    const btn = row?.querySelector('.session__pin');
     if (!btn) return null;
-    // The + fades in on a CSS transition, and in the hidden e2e window its timeline never ticks
-    // (measured: running, currentTime 0 after 400ms) — so read the transition's end state.
+    // In the hidden e2e window a CSS transition's timeline never ticks; read its end state.
     for (const a of btn.getAnimations()) a.finish();
     const cs = getComputedStyle(btn);
     const r = btn.getBoundingClientRect();
@@ -162,17 +169,19 @@ runScenario('hover-obstruction', async ({ page, log }) => {
     return {
       pe: cs.pointerEvents,
       opacity: Number(cs.opacity),
-      hitIsAdd: !!hit && btn.contains(hit),
-      countHidden: getComputedStyle(label.querySelector('.proj__count')).visibility === 'hidden',
+      hitIsPin: !!hit && btn.contains(hit),
+      label: btn.getAttribute('aria-label'),
+      ageHidden: getComputedStyle(row.querySelector('.session__age')).visibility === 'hidden',
     };
   });
-  log('hovered Standalone header +:', JSON.stringify(add));
-  assert(add, 'precondition: the Standalone header should render a + button');
+  log('hovered row Pin:', JSON.stringify(pin));
+  assert(pin, 'precondition: the row should render a Pin button');
+  assert(pin.label === 'Pin to top', `Pin's accessible name, got ${pin.label}`);
   assert(
-    add.pe === 'auto' && add.opacity > 0,
-    `hovering the header must make + usable — got pointer-events: ${add.pe}, opacity ${add.opacity}`,
+    pin.pe === 'auto' && pin.opacity > 0,
+    `hovering the row must make Pin usable — got pointer-events: ${pin.pe}, opacity ${pin.opacity}`,
   );
-  assert(add.hitIsAdd, 'the revealed + is not the hit target at its own centre');
-  assert(add.countHidden, 'the count should give its slot to the + while the header is hovered');
-  log('hovered group header + is reachable ✓');
+  assert(pin.hitIsPin, 'the revealed Pin is not the hit target at its own centre');
+  assert(pin.ageHidden, 'the age should give its slot to the actions while the row is hovered');
+  log('hovered row Pin is reachable ✓');
 });

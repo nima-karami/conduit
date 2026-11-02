@@ -18,6 +18,7 @@ import {
   makeLog,
   openSession,
   REPO,
+  showRightView,
   tapBridge,
 } from './harness.mjs';
 
@@ -62,20 +63,12 @@ async function readFileViaIpc(page, filePath, timeoutMs = 12000) {
 async function openMarkdownViaTree(page) {
   // The right pane defaults to the "Changes" tab. Switch to "Files" so FilesView mounts
   // and fires the readDir for the project root.
-  const switchedToFiles = await page
-    .waitForSelector('.rtab', { state: 'attached', timeout: 10000 })
-    .then(async () => {
-      await page.evaluate(() => {
-        const tabs = Array.from(document.querySelectorAll('.rtab'));
-        const filesTab = tabs.find((el) => el.textContent?.trim() === 'Files');
-        if (filesTab) filesTab.click();
-      });
-      return true;
-    })
+  const switchedToFiles = await showRightView(page, 'files')
+    .then(() => true)
     .catch(() => false);
 
   if (!switchedToFiles) {
-    log('WARNING: could not find .rtab buttons — falling back to IPC-only markdown test');
+    log('WARNING: could not show the Files view — falling back to IPC-only markdown test');
     return false;
   }
 

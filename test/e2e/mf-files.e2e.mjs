@@ -11,7 +11,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, runScenario, showRightView } from './harness.mjs';
 
 // ── fixture ─────────────────────────────────────────────────────────────────
 
@@ -115,7 +115,7 @@ const sessionOf = (page, sid) =>
 // ── phases ──────────────────────────────────────────────────────────────────
 
 async function phaseSections({ page, log, sid }) {
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await waitBars(
     page,
     [

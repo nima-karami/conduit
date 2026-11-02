@@ -7,6 +7,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { showRightView } from '../harness.mjs';
 import {
   assertInvariant,
   emitReport,
@@ -26,7 +27,7 @@ runStress('explorer-10k', async ({ page, log }) => {
   await openSession(page, { path: root });
 
   const loadStart = Date.now();
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow', { state: 'attached', timeout: 25000 });
   await page.waitForFunction(
     (n) => (window.__conduitFilesPerf?.totalRowCount ?? 0) >= n,

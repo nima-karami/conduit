@@ -25,7 +25,15 @@ import {
   tapMcp,
   until,
 } from './conduit-mcp-helpers.mjs';
-import { assert, closeApp, launchApp, runScenario, stopServer, typeLine } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  launchApp,
+  runScenario,
+  showRightView,
+  stopServer,
+  typeLine,
+} from './harness.mjs';
 
 /** Long enough that the send, the check and the quit all land inside B's busy run. */
 const BUSY_MS = 30_000;
@@ -134,7 +142,7 @@ await runScenario(
         `thread ${threadId} missing after restart`,
       );
 
-      await p2.locator('.rightpane .rtab', { hasText: 'Messages' }).click();
+      await showRightView(p2, 'messages');
       await p2.locator('.mcpmsg [role="option"]', { hasText: SUBJECT }).waitFor({ timeout: 5_000 });
 
       const noticed = await until(() => notices(b.sessionId).length > 0, NOTICE_WITHIN_MS);
