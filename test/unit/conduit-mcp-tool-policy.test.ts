@@ -219,6 +219,21 @@ describe('layers', () => {
 });
 
 describe('gateToolCall (spec §3.3 steps 1–5)', () => {
+  it.each(['open_session', 'open_terminal', 'close_session', 'attach_folder'] as const)(
+    '%s with on/viewing runs windowless without consulting visibility',
+    (tool) => {
+      expect(
+        gateToolCall({
+          sessionId: 's1',
+          messagingOn: true,
+          tool,
+          policy: { access: 'on', when: 'viewing' },
+          ownerReady: () => false,
+          onScreen: () => false,
+        }),
+      ).toBeNull();
+    },
+  );
   const on: ToolPolicy = { access: 'on', when: 'viewing' };
   const base = {
     sessionId: 's1' as string | null,
@@ -260,6 +275,40 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
         onScreen: throws,
       }),
     ).toBeNull();
+  });
+
+  it('on server actions run without a ready owner window, while viewing still checks visibility', () => {
+    expect(
+      gateToolCall({
+        ...base,
+        tool: 'open_session',
+        policy: { access: 'on', when: 'viewing' },
+        ownerReady: () => false,
+      }),
+    ).toBeNull();
+    expect(
+      gateToolCall({
+        ...base,
+        tool: 'close_session',
+        policy: { access: 'on', when: 'viewing' },
+        ownerReady: () => true,
+        onScreen: () => false,
+      })?.code,
+    ).toBe('caller_not_visible');
+  });
+
+  it('window actions and ask still require a ready owner window', () => {
+    expect(gateToolCall({ ...base, tool: 'open_file', ownerReady: () => false })?.code).toBe(
+      'window_not_ready',
+    );
+    expect(
+      gateToolCall({
+        ...base,
+        tool: 'open_session',
+        policy: { access: 'ask', when: 'viewing' },
+        ownerReady: () => false,
+      })?.code,
+    ).toBe('window_not_ready');
   });
 });
 

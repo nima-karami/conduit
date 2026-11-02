@@ -55,9 +55,11 @@ export class LauncherHost {
   constructor(private readonly deps: LauncherHostDeps) {
     const read = deps.readFile();
     const blob = read.kind === 'text' ? read.text : undefined;
-    this.file = parseLaunchers(blob);
-    this.writable = read.kind !== 'unreadable';
-    this.needsBackup = isLossy(blob, this.file);
+    const parsed = parseLaunchers(blob);
+    const future = 'kind' in parsed;
+    this.file = future ? { version: 1, usage: {}, custom: [] } : parsed;
+    this.writable = read.kind !== 'unreadable' && !future;
+    this.needsBackup = !future && isLossy(blob, this.file);
     this.shells = deps.detectShells();
     this.clis = deps.detectClis();
     this.compose();

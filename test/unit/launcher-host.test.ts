@@ -14,6 +14,12 @@ const def = (id: string, command = id, label = id): AgentDefinition => ({
   cwdStrategy: 'workspaceFolder',
 });
 
+const parsed = (blob: string | undefined) => {
+  const result = parseLaunchers(blob);
+  if ('kind' in result) throw new Error('newer launcher file');
+  return result;
+};
+
 function setup(over: Partial<LauncherHostDeps> & { file?: string } = {}) {
   const writes: string[] = [];
   const backups: number[] = [];
@@ -94,7 +100,7 @@ describe('LauncherHost', () => {
     const { host, writes } = setup();
     host.bump('cli:claude');
     host.bump('cli:claude');
-    expect(parseLaunchers(writes.at(-1)).usage['cli:claude']).toEqual({ count: 2, lastUsed: 101 });
+    expect(parsed(writes.at(-1)).usage['cli:claude']).toEqual({ count: 2, lastUsed: 101 });
     expect(host.dtos()).toEqual([
       { id: 'shell:pwsh', kind: 'shell', uses: 0 },
       { id: 'cli:claude', kind: 'cli', uses: 2, lastUsed: 101 },
@@ -106,7 +112,7 @@ describe('LauncherHost', () => {
     const r = host.addCustom('aider --x', undefined);
     expect(r).toEqual({ ok: true, id: 'custom:aider' });
     expect(registry.get('custom:aider')?.args).toEqual(['--x']);
-    expect(parseLaunchers(writes.at(-1)).custom.map((d) => d.id)).toEqual(['custom:aider']);
+    expect(parsed(writes.at(-1)).custom.map((d) => d.id)).toEqual(['custom:aider']);
     expect(host.dtos().at(-1)).toEqual({ id: 'custom:aider', kind: 'custom', uses: 0 });
     expect(host.addCustom('nope', undefined)).toEqual({
       ok: false,
@@ -128,14 +134,14 @@ describe('LauncherHost', () => {
     expect(host.removeCustom('cli:claude')).toBe(false);
     expect(host.removeCustom('custom:aider')).toBe(true);
     expect(registry.get('custom:aider')).toBeUndefined();
-    expect(parseLaunchers(writes.at(-1)).custom).toEqual([]);
+    expect(parsed(writes.at(-1)).custom).toEqual([]);
   });
 
   it('pendingFlush null until a change', () => {
     const { host } = setup();
     expect(host.pendingFlush()).toBeNull();
     host.bump('shell:pwsh');
-    expect(parseLaunchers(host.pendingFlush() ?? undefined).usage['shell:pwsh']?.count).toBe(1);
+    expect(parsed(host.pendingFlush() ?? undefined).usage['shell:pwsh']?.count).toBe(1);
   });
 
   it('a bad launchers.json reads as empty', () => {
@@ -166,6 +172,16 @@ describe('LauncherHost', () => {
     expect(writes).toEqual([]);
     expect(backups).toEqual([]);
     expect(host.pendingFlush()).toBeNull();
+  });
+
+  it('a newer launchers.json is neither backed up nor overwritten, including pending flush', () => {
+    const future = JSON.stringify({ version: 2, usage: {}, custom: [] });
+    const { host, writes, backups } = setup({ file: future });
+    host.bump('cli:claude');
+    expect(host.addCustom('aider', undefined).ok).toBe(false);
+    expect(host.pendingFlush()).toBeNull();
+    expect(writes).toEqual([]);
+    expect(backups).toEqual([]);
   });
 
   it('a lossy launchers.json (an entry dropped on parse) is backed up too; an intact one is not', () => {

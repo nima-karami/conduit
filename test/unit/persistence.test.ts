@@ -205,9 +205,9 @@ describe('persistence', () => {
     expect(r.sessions[1].projectId).toBe('p-1');
   });
 
-  it('version 2 → empty', () => {
+  it('version 2 is explicitly refused', () => {
     expect(parseSessions(JSON.stringify({ version: 2, sessions: [s] }))).toEqual({
-      kind: 'empty',
+      kind: 'newer',
     });
   });
 

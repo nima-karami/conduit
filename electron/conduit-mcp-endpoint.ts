@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as path from 'node:path';
+import type { EndpointConnection, McpEndpoint } from '../src/conduit-mcp/host';
 import { type Result, toolError } from '../src/conduit-mcp/types';
 import type { Logger } from './logger';
 
@@ -9,21 +10,7 @@ export const INBOUND_LINE_MAX_BYTES = 4 * 1024 * 1024;
 /** How long close() waits for queued replies to flush before destroying the socket anyway. */
 const CLOSE_FLUSH_MS = 2_000;
 
-export interface EndpointConnection {
-  readonly id: number;
-  /** From the hello line; null when absent or blank. */
-  readonly token: string | null;
-  /** Appends '\n'. */
-  send(line: string): void;
-  onLine(cb: (line: string) => void): void;
-  onClose(cb: () => void): void;
-  close(): void;
-}
-
-export interface McpEndpoint {
-  listen(): Promise<Result<void>>;
-  close(): Promise<void>;
-}
+export type { EndpointConnection, McpEndpoint } from '../src/conduit-mcp/host';
 
 const isPipe = (p: string) => p.startsWith('\\\\.\\pipe\\') || p.startsWith('//./pipe/');
 

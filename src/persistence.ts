@@ -5,6 +5,7 @@ import {
   TOOL_NAMES,
   withPolicyPatch,
 } from './conduit-mcp/tool-policy';
+import { judgePersistedVersion } from './contracts/session-identity';
 import { folderKey } from './folder-key';
 import type { PersistedDoc } from './protocol';
 import { coerceOpenedBy, coerceSessionCommand } from './session-command';
@@ -54,6 +55,7 @@ export function serializeSessions(sessions: Session[]): string {
 
 export type SessionsParse =
   | { kind: 'empty' }
+  | { kind: 'newer' }
   | { kind: 'ok'; sessions: Session[]; legacyIds: string[]; dropped: number };
 
 const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v !== '';
@@ -83,6 +85,7 @@ export function parseSessions(blob: string | undefined): SessionsParse {
     version?: unknown;
     sessions?: unknown;
   };
+  if (judgePersistedVersion('sessions.json', version) === 'newer') return { kind: 'newer' };
   if (version !== VERSION || !Array.isArray(entries)) return { kind: 'empty' };
 
   const sessions: Session[] = [];

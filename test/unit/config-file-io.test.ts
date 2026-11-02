@@ -8,7 +8,7 @@ import {
   errorCodeOf,
   readConfigFile,
   writeConfigAtomic,
-} from '../../electron/config-file-io';
+} from '../../src/conduit-mcp/config-file-io';
 import { ConfigFormatError } from '../../src/conduit-mcp/install-types';
 
 const roots: string[] = [];

@@ -185,18 +185,28 @@ export function createAppControlHandlers(
         if (isFail(t)) return t;
         const out = inReach('close_session', ctx.reach, who.sessionId, t);
         if (out) return out;
-        // The target's own window holds its docs and dirty buffers (plan B2).
-        const w = routeWindow(t.sessionId);
-        if (isFail(w)) return w;
+        const ownerWindow = deps.ownerWindowOf(t.sessionId);
+        const windowReady = ownerWindow !== null && deps.windowReady(ownerWindow);
         return {
           summary: { tool: 'close_session', target: t.handle },
-          routesUi: true,
+          ...(windowReady ? { routesUi: true as const } : {}),
           exec: async (token) => {
             const again = recheckTarget('close_session', t.sessionId, who.sessionId, ctx.reach);
             if (again) return again;
-            const w2 = routeWindow(t.sessionId);
-            if (isFail(w2)) return w2;
-            const r = await ctx.ui(w2, t.sessionId, { kind: 'closeSession', target: t.sessionId });
+            const currentWindow = deps.ownerWindowOf(t.sessionId);
+            if (currentWindow === null || !deps.windowReady(currentWindow)) {
+              const result = await deps.closeSession(t.sessionId, {
+                closedBy: { handle: caller.handle, sessionId: who.sessionId },
+              });
+              if (!result.ok) return fail(result.code, result.message);
+              token.keep();
+              logged('close_session', caller, { target: t.sessionId });
+              return { ok: true, value: { closed: t.sessionId } };
+            }
+            const r = await ctx.ui(currentWindow, t.sessionId, {
+              kind: 'closeSession',
+              target: t.sessionId,
+            });
             if (!r.ok) return r;
             const v = r.value;
             if (v.kind !== 'closeSession') return wrongAnswer(v);

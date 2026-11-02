@@ -3,6 +3,11 @@ import { PtyHost } from '../../src/pty-host';
 import { restoreScrollback } from '../../src/scrollback-persistence';
 import { ScrollbackStore } from '../../src/scrollback-store';
 
+const restored = (blob: string | undefined) => {
+  const r = restoreScrollback(blob);
+  return r.kind === 'ok' ? r.scrollback : undefined;
+};
+
 // node-pty is a native addon built against Electron's ABI; PtyHost's bookkeeping is the subject.
 let emit: ((data: string) => void) | null = null;
 let onExitCb: ((e: { exitCode: number }) => void) | null = null;
@@ -28,7 +33,7 @@ function harness() {
     send: () => {},
     recording: () => true,
   });
-  const lastWrite = () => restoreScrollback(writes[writes.length - 1]);
+  const lastWrite = () => restored(writes[writes.length - 1]);
   return { store, writes, lastWrite };
 }
 
@@ -101,7 +106,7 @@ describe('ScrollbackStore', () => {
     store.show('s1', 'unrecorded', { cols: 80, rows: 24 });
     expect(sent).toEqual(['marker', 'unrecorded']);
     store.flush('s1');
-    expect(restoreScrollback(writes[writes.length - 1])?.segments).toEqual([
+    expect(restored(writes[writes.length - 1])?.segments).toEqual([
       { data: 'marker', geometry: { cols: 80, rows: 24 } },
     ]);
   });
@@ -120,7 +125,7 @@ describe('ScrollbackStore', () => {
     store.flush('s2');
     writes.length = 0;
     store.flushPending();
-    expect(writes.map((b) => restoreScrollback(b)?.sessionId)).toEqual(['s1']);
+    expect(writes.map((b) => restored(b)?.sessionId)).toEqual(['s1']);
     vi.advanceTimersByTime(1000);
     expect(writes).toHaveLength(1);
   });

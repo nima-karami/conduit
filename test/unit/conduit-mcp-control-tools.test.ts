@@ -66,6 +66,7 @@ function harness(over: Partial<ControlDeps> = {}): Harness {
       const o = await h.outcome(req);
       return o.ok ? { ...o, sessionId: `${o.sessionId}-${n++}` } : o;
     },
+    closeSession: async () => ({ ok: true }),
     openFile: async (req) => {
       h.files.push(req);
       return { sessionId: req.callerSessionId };
@@ -299,6 +300,38 @@ describe('createControlHandlers', () => {
     }
     h.outcome = async (req) => ({ ok: true, sessionId: 's', label: req.label ?? 'x' });
     expect(code(await c.openSession(caller(), sessionArgs()))).toBe('ok');
+  });
+
+  it('spawn_unconfirmed includes its session id and is not retryable', async () => {
+    const h = harness();
+    h.outcome = async () => ({
+      ok: false,
+      code: 'spawn_unconfirmed',
+      message: 'launch is unconfirmed',
+      sessionId: 'created-1',
+    });
+    expect(await whenOn(h.deps).openSession(caller(), sessionArgs())).toEqual({
+      ok: false,
+      error: {
+        code: 'spawn_unconfirmed',
+        message: 'launch is unconfirmed',
+        retryable: false,
+        sessionId: 'created-1',
+      },
+    });
+  });
+
+  it('server_stopping is retryable', async () => {
+    const h = harness();
+    h.outcome = async () => ({
+      ok: false,
+      code: 'server_stopping',
+      message: 'server is stopping',
+    });
+    expect(await whenOn(h.deps).openSession(caller(), sessionArgs())).toEqual({
+      ok: false,
+      error: { code: 'server_stopping', message: 'server is stopping', retryable: true },
+    });
   });
 
   it('openSession throwing → open_failed (logged), the reservation released', async () => {
