@@ -1,0 +1,153 @@
+{
+  "$comment": "Recorded C6 hello lines, byte-for-byte as shims write them (src/contracts/shim-protocol.ts). Never edit a valid line: a live shim still sends it. unsupported = well-formed hellos from a newer generation, answered with the unsupported_generation welcome. transitions = the hellos one shim writes, in order, across a pre-initialize reconnect case (shim-protocol.ts ShimState table); the last one resumes exactly when phaseAfter is init-done, and initializeResponses is how many initialize responses reached the client (never more than one). initializedRead = whether the shim had read notifications/initialized when it sent its last hello; that hello resumes with exactly that flag. stateAfter permanent_fallback with errorSent = a case that ends without a hello.",
+  "valid": [
+    {
+      "name": "gen-2 hello",
+      "line": "{\"conduit\":2,\"token\":\"tok_3f9a1c\",\"shim\":\"0.52.0\",\"resume\":null}"
+    },
+    {
+      "name": "gen-2 resume",
+      "line": "{\"conduit\":2,\"token\":\"tok_3f9a1c\",\"shim\":\"0.52.0\",\"resume\":{\"initialize\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"claude-code\",\"version\":\"2.1.0\"}},\"initialized\":true}}"
+    },
+    {
+      "name": "gen-2 tokenless",
+      "line": "{\"conduit\":2,\"token\":null,\"shim\":\"0.52.0\",\"resume\":null}"
+    },
+    {
+      "name": "gen-1 v0.51 hello",
+      "line": "{\"conduit\":1,\"token\":\"tok_3f9a1c\"}"
+    },
+    {
+      "name": "gen-1 v0.51 tokenless",
+      "line": "{\"conduit\":1,\"token\":null}"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "not json",
+      "line": "hello"
+    },
+    {
+      "name": "array",
+      "line": "[2]"
+    },
+    {
+      "name": "token not a string",
+      "line": "{\"conduit\":2,\"token\":7,\"shim\":\"0.52.0\",\"resume\":null}"
+    },
+    {
+      "name": "gen-2 without shim",
+      "line": "{\"conduit\":2,\"token\":null,\"resume\":null}"
+    },
+    {
+      "name": "gen-2 without resume",
+      "line": "{\"conduit\":2,\"token\":null,\"shim\":\"0.52.0\"}"
+    },
+    {
+      "name": "resume without initialized",
+      "line": "{\"conduit\":2,\"token\":null,\"shim\":\"0.52.0\",\"resume\":{\"initialize\":{}}}"
+    },
+    {
+      "name": "resume initialize not an object",
+      "line": "{\"conduit\":2,\"token\":null,\"shim\":\"0.52.0\",\"resume\":{\"initialize\":[],\"initialized\":false}}"
+    },
+    {
+      "name": "generation not an integer",
+      "line": "{\"conduit\":2.5,\"token\":null,\"shim\":\"x\",\"resume\":null}"
+    }
+  ],
+  "unsupported": [
+    {
+      "name": "gen-3 hello",
+      "line": "{\"conduit\":3,\"token\":null,\"shim\":\"x\",\"resume\":null}"
+    },
+    {
+      "name": "gen-3 with fields we do not know",
+      "line": "{\"conduit\":3,\"token\":7,\"caps\":{}}"
+    }
+  ],
+  "transitions": [
+    {
+      "name": "drop in init-pending, reconnect within the deadline",
+      "phaseBefore": "init-pending",
+      "event": "reconnect within SHIM_INITIAL_CONNECT_DEADLINE_MS; initialize re-sent with the same id",
+      "phaseAfter": "init-pending",
+      "answeredLocally": false,
+      "hellos": [
+        "{\"conduit\":2,\"token\":\"tok_7c20e4\",\"shim\":\"0.52.0\",\"resume\":null}",
+        "{\"conduit\":2,\"token\":\"tok_7c20e4\",\"shim\":\"0.52.0\",\"resume\":null}"
+      ],
+      "initializeResponses": 0
+    },
+    {
+      "name": "drop in init-pending, no reconnect within the deadline",
+      "phaseBefore": "init-pending",
+      "event": "pending initialize answered locally once; the next successful connect resumes",
+      "phaseAfter": "init-done",
+      "answeredLocally": true,
+      "hellos": [
+        "{\"conduit\":2,\"token\":\"tok_7c20e4\",\"shim\":\"0.52.0\",\"resume\":null}",
+        "{\"conduit\":2,\"token\":\"tok_7c20e4\",\"shim\":\"0.52.0\",\"resume\":{\"initialize\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"codex-mcp-client\",\"version\":\"0.40.0\"}},\"initialized\":true}}"
+      ],
+      "initializeResponses": 1,
+      "initializedRead": true
+    },
+    {
+      "name": "FALLBACK entered in idle",
+      "phaseBefore": "idle",
+      "event": "initial-connect deadline with no initialize buffered; first successful connect",
+      "phaseAfter": "idle",
+      "answeredLocally": false,
+      "hellos": ["{\"conduit\":2,\"token\":\"tok_7c20e4\",\"shim\":\"0.52.0\",\"resume\":null}"],
+      "initializeResponses": 0
+    },
+    {
+      "name": "FALLBACK with a buffered initialize",
+      "phaseBefore": "idle",
+      "event": "initial-connect deadline answers the buffered initialize locally; first successful connect",
+      "phaseAfter": "init-done",
+      "answeredLocally": true,
+      "hellos": [
+        "{\"conduit\":2,\"token\":\"tok_7c20e4\",\"shim\":\"0.52.0\",\"resume\":{\"initialize\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"codex-mcp-client\",\"version\":\"0.40.0\"}},\"initialized\":true}}"
+      ],
+      "initializeResponses": 1,
+      "initializedRead": true
+    },
+    {
+      "name": "local initialize between hello and welcome",
+      "phaseBefore": "idle",
+      "event": "hello(resume:null) sent; the initial-connect deadline answers the buffered initialize locally before the welcome; that attempt is abandoned and a new hello carries the new snapshot",
+      "phaseAfter": "init-done",
+      "answeredLocally": true,
+      "initializeResponses": 1,
+      "hellos": [
+        "{\"conduit\":2,\"token\":\"tok_7c20e4\",\"shim\":\"0.52.0\",\"resume\":null}",
+        "{\"conduit\":2,\"token\":\"tok_7c20e4\",\"shim\":\"0.52.0\",\"resume\":{\"initialize\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"codex-mcp-client\",\"version\":\"0.40.0\"}},\"initialized\":true}}"
+      ],
+      "initializedRead": true
+    },
+    {
+      "name": "local initialize before the client sent notifications/initialized",
+      "phaseBefore": "idle",
+      "event": "the initial-connect deadline answers the buffered initialize locally; the first successful connect happens before the client's notifications/initialized is read, so the resume says initialized:false and the server waits for the notification",
+      "phaseAfter": "init-done",
+      "answeredLocally": true,
+      "initializeResponses": 1,
+      "initializedRead": false,
+      "hellos": [
+        "{\"conduit\":2,\"token\":\"tok_7c20e4\",\"shim\":\"0.52.0\",\"resume\":{\"initialize\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"codex-mcp-client\",\"version\":\"0.40.0\"}},\"initialized\":false}}"
+      ]
+    },
+    {
+      "name": "resume hello past the size limit",
+      "phaseBefore": "init-done",
+      "event": "a drop after init-done; the cached initialize would push the resume hello past SHIM_HELLO_MAX_BYTES, so no hello is sent: the next host-bound request gets reinitialize_required once and the shim enters permanent_fallback",
+      "phaseAfter": "init-done",
+      "answeredLocally": false,
+      "initializeResponses": 1,
+      "stateAfter": "permanent_fallback",
+      "errorSent": "reinitialize_required",
+      "hellos": []
+    }
+  ]
+}

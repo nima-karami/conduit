@@ -12,5 +12,5 @@
     "sourceMap": true,
     "types": ["node"]
   },
-  "include": ["src", "electron", "test", "types"]
+  "include": ["src", "electron", "server", "test", "types"]
 }

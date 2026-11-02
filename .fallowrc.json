@@ -28,6 +28,10 @@
     {
       "file": "src/types.ts",
       "exports": ["*"]
+    },
+    {
+      "file": "src/contracts/*.ts",
+      "exports": ["*"]
     }
   ]
 }
