@@ -399,6 +399,35 @@ describe('session identity', () => {
     hcStateHome: '/u/hc/state',
   };
 
+  it('leaves editor identity and our MCP wiring out of the core env, as sanitizeChildEnv did', () => {
+    const env = coreStartEnv(
+      {
+        PATH: '/bin',
+        VSCODE_PID: '1',
+        cursor_trace: 'x',
+        TERM_PROGRAM: 'vscode',
+        TERM_PROGRAM_VERSION: '1',
+        CONDUIT_SESSION_TOKEN: 't',
+        CONDUIT_MCP_ENDPOINT: 'e',
+        GIT_ASKPASS: '/askpass',
+      },
+      names,
+      false,
+    );
+    for (const k of [
+      'VSCODE_PID',
+      'cursor_trace',
+      'TERM_PROGRAM',
+      'TERM_PROGRAM_VERSION',
+      'CONDUIT_SESSION_TOKEN',
+      'CONDUIT_MCP_ENDPOINT',
+      'GIT_ASKPASS',
+    ])
+      expect(env).not.toHaveProperty(k);
+    expect(env.PATH).toBe('/bin');
+    expect(coreStartEnv({ GIT_ASKPASS: '/askpass' }, names, false).GIT_ASKPASS).toBe('/askpass');
+  });
+
   // Windows env names are case-insensitive, so a lower-case HC_ key would leak the parent session.
   it('start the core with one env: HC_* stripped, XDG isolated, originals passed through', () => {
     const env = coreStartEnv(

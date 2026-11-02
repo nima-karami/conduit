@@ -228,6 +228,20 @@ export const CORE_START_RUN_FLAGS = ['--bg', '--no-parent'] as const;
  * captured the user's originals). HC_* is stripped case-insensitively, since Windows env names are;
  * `isolateXdg` is false when M22 fails, and then our core shares the user's hc config (D24).
  */
+/**
+ * Panes inherit the core's env and terminal.run.env can only set, never unset (M22), so what
+ * today's sanitizeChildEnv strips per spawn has to be left out of the core's env instead: editor
+ * identity (a CLI would think it runs inside VS Code/Cursor), our own MCP wiring, and an editor's
+ * GIT_ASKPASS that would prompt in the wrong window.
+ */
+const isEditorKey = (upper: string) => upper.startsWith('VSCODE_') || upper.startsWith('CURSOR_');
+function isChildEnvNoise(upper: string, fromEditor: boolean): boolean {
+  if (isEditorKey(upper)) return true;
+  if (upper === 'TERM_PROGRAM' || upper === 'TERM_PROGRAM_VERSION') return true;
+  if (upper === 'CONDUIT_SESSION_TOKEN' || upper === 'CONDUIT_MCP_ENDPOINT') return true;
+  return upper === 'GIT_ASKPASS' && fromEditor;
+}
+
 export function coreStartEnv(
   parent: Readonly<Record<string, string | undefined>>,
   names: Pick<InstanceNames, 'hcSession' | 'hcConfigHome' | 'hcStateHome'>,
@@ -235,10 +249,12 @@ export function coreStartEnv(
 ): Record<string, string> {
   const env: Record<string, string> = {};
   const byUpper = new Map<string, string>();
+  const fromEditor = Object.keys(parent).some((k) => isEditorKey(k.toUpperCase()));
   for (const [k, v] of Object.entries(parent)) {
     if (v === undefined) continue;
     const upper = k.toUpperCase();
     if (upper.startsWith('HC_')) continue;
+    if (isChildEnvNoise(upper, fromEditor)) continue;
     byUpper.set(upper, v);
     if (upper !== USER_XDG_CAPTURED_ENV) env[k] = v;
   }
