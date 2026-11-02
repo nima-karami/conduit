@@ -218,6 +218,7 @@ export const MCP_STR = {
     spawn_unconfirmed: 'the launch could not be confirmed; close this session before trying again',
     server_stopping: 'Conduit is stopping; try again after it restarts',
     ui_timeout: 'Conduit’s window didn’t answer in time',
+    ui_unavailable: 'no Conduit window was open to answer',
   } satisfies Record<ToolErrorCode, string>,
   noResponse: 'Conduit didn’t answer. Try again.',
   you: 'you',
