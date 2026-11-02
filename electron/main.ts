@@ -35,6 +35,7 @@ import {
   openWindowIds,
 } from '../src/close-guard';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
+import { SHIM_LEAF } from '../src/conduit-mcp/install-entries';
 import { coerceInstallRequest } from '../src/conduit-mcp/install-types';
 import { readBlob } from '../src/config';
 import type { TruncatedBy } from '../src/content-search';
@@ -232,7 +233,7 @@ import {
 import { createDragOutHost } from './drag-out-host';
 import { execFileBounded } from './exec-bounded';
 import { createFolderPicker } from './folder-picker';
-import { type HcCliDeps, supervisorArgs, supervisorEnv } from './hc-cli';
+import { type HcCliDeps, supervisorEnv } from './hc-cli';
 import { createHcEvents } from './hc-events';
 import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
@@ -2326,14 +2327,15 @@ app.whenReady().then(() => {
   async function startServer(): Promise<void> {
     const appVersion = aboutInfo.version;
     // W9: a packaged app runs its server from copies outside the install dir (D2).
-    if (app.isPackaged)
-      await prepareRuntime({
-        resourcesDir: process.resourcesPath,
-        userData: userData(),
-        appVersion,
-        hcVersion: HC_PINNED_VERSION,
-        shimVersion: CURRENT_SHIM_GENERATION,
-      });
+    const prepared = app.isPackaged
+      ? await prepareRuntime({
+          resourcesDir: process.resourcesPath,
+          userData: userData(),
+          appVersion,
+          hcVersion: HC_PINNED_VERSION,
+          shimVersion: CURRENT_SHIM_GENERATION,
+        })
+      : undefined;
     const layout = runtimeLayout({
       packaged: app.isPackaged,
       userData: userData(),
@@ -2358,6 +2360,15 @@ app.whenReady().then(() => {
     }
     // E2e hooks reach the server as argv: hc may refresh the env on Windows (M10).
     const serverArgs = e2e ? ['--e2e'] : [];
+    if (prepared)
+      serverArgs.push(
+        '--shim-dir',
+        prepared.shimDir,
+        '--previous-exe',
+        process.execPath,
+        '--previous-shim',
+        path.join(process.resourcesPath, 'conduit-mcp', SHIM_LEAF),
+      );
     const marker = path.join(userData(), SERVER_EXHAUSTED_FILE);
     lifecycle = createServerLifecycle({
       names,
@@ -2382,22 +2393,15 @@ app.whenReady().then(() => {
           () => false,
         ),
       deleteMarker: () => fs.promises.rm(marker, { force: true }),
-      spawnDetachedSupervisor: () => {
-        const child = spawn(
-          layout.nodeExe,
-          supervisorArgs(layout.hcExe, {
-            superviseJs: layout.superviseJs,
-            userData: userData(),
-            serverArgs,
-          }),
-          {
-            detached: true,
-            stdio: 'ignore',
-            windowsHide: true,
-            env: supervisorEnv(hcEnv, names),
-            cwd: path.dirname(layout.superviseJs),
-          },
-        );
+      spawnDetachedSupervisor: (args) => {
+        if (!args) throw new Error('Missing supervisor argv');
+        const child = spawn(layout.nodeExe, args, {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+          env: supervisorEnv(hcEnv, names),
+          cwd: path.dirname(layout.superviseJs),
+        });
         child.on('error', (err) =>
           log.error('server', 'supervisor spawn failed', { err: String(err) }),
         );

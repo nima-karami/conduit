@@ -15,6 +15,7 @@ import type { AgentDefinition } from '../src/types';
 import { createDomain, type DomainLog } from './domain';
 import type { ShellCore } from './lifecycle/shell';
 import { type AppEventSink, createMcp, type ServerMcp } from './mcp';
+import type { PreviousShim } from './mcp/install';
 import { createRuntimeServices } from './runtime';
 import { RpcFault, type RpcHandler, RpcProtocolFault } from './transport/pipe';
 
@@ -35,6 +36,8 @@ export interface ServicesOptions {
   /** `hc server start` in our HC_SESSION, with coreStartEnv/coreStartCwd (F1.4.4). */
   startCore(): Promise<void>;
   shim: { execPath: string; shimPath: string };
+  packaged?: boolean;
+  previousShims?: readonly PreviousShim[];
   emit: ServerEventSink;
   emitTo: AppEventSink;
   stopping(): boolean;
@@ -223,8 +226,20 @@ export function createServices(o: ServicesOptions) {
 
   let adoptedOnce = false;
   let mcpStarted = false;
+  let installStarted = false;
   const core: ShellCore = {
     async start() {
+      if (!installStarted && o.packaged && !o.e2e) {
+        const gateMigrated = domain.settings().mcpGateMigrated;
+        const result = server.installStartup({ previous: o.previousShims ?? [], gateMigrated });
+        if (result.gateMigrated !== gateMigrated)
+          await domain.handle({
+            id: 0,
+            method: 'serverSettings.patch',
+            params: { patch: { mcpGateMigrated: result.gateMigrated } },
+          });
+        installStarted = true;
+      }
       if (!adoptedOnce) {
         try {
           await runtime.subscribe();

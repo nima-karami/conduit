@@ -61,7 +61,7 @@ describe('collectRuntimeGarbage', () => {
     expect(log.some((l) => l.startsWith(`rm ${held}`))).toBe(false);
   });
 
-  it('shim dirs never touched', async () => {
+  it('live shim dirs never touched', async () => {
     const { deps, log } = fakeFs({
       [ROOT]: ['shim', 'shim-2', 'shim.tmp', 'shim-2.gc', '0.52.0', '0.51.0.gc', '0.50.0.tmp'],
       [HC]: ['0.1.16'],
@@ -71,11 +71,34 @@ describe('collectRuntimeGarbage', () => {
       { appVersion: '0.52.0', hcVersion: '0.1.16' },
       deps,
     );
-    expect(log.filter((l) => l.includes('shim'))).toEqual([]);
+    expect(log.filter((l) => l.includes('shim'))).toEqual([
+      `rename ${join(ROOT, 'shim.tmp')} -> ${join(ROOT, 'shim.tmp')}.gc`,
+      `rm ${join(ROOT, 'shim.tmp')}.gc`,
+    ]);
     // Leftovers: a .gc goes straight to rm, a staging .tmp is renamed first.
-    expect(r.removed.sort()).toEqual([join(ROOT, '0.50.0.tmp'), join(ROOT, '0.51.0.gc')].sort());
+    expect(r.removed.sort()).toEqual(
+      [join(ROOT, '0.50.0.tmp'), join(ROOT, '0.51.0.gc'), join(ROOT, 'shim.tmp')].sort(),
+    );
     expect(log).toContain(`rm ${join(ROOT, '0.51.0.gc')}`);
     expect(log).not.toContain(`rename ${join(ROOT, '0.51.0.gc')} -> ${join(ROOT, '0.51.0.gc')}.gc`);
+  });
+
+  it('removes leftover shim staging directories but preserves live shim generations', async () => {
+    const { deps, log } = fakeFs({
+      [ROOT]: ['shim', 'shim-2', 'shim.tmp', 'shim-2.tmp', 'shim-stage.tmp'],
+      [HC]: [],
+    });
+    const r = await collectRuntimeGarbage(
+      ROOT,
+      { appVersion: '0.52.0', hcVersion: '0.1.16' },
+      deps,
+    );
+    expect(r.removed.sort()).toEqual(
+      [join(ROOT, 'shim.tmp'), join(ROOT, 'shim-2.tmp'), join(ROOT, 'shim-stage.tmp')].sort(),
+    );
+    expect(log.filter((line) => line.includes('shim'))).toHaveLength(6);
+    expect(log).not.toContain(`rename ${join(ROOT, 'shim')} -> ${join(ROOT, 'shim')}.gc`);
+    expect(log).not.toContain(`rename ${join(ROOT, 'shim-2')} -> ${join(ROOT, 'shim-2')}.gc`);
   });
 
   it('a missing runtime dir is nothing to collect', async () => {

@@ -25,7 +25,7 @@ function candidates(entries: string[], current: string): string[] {
   const versions = entries.filter((e) => SEMVER_DIR.test(e)).sort(newestFirst);
   for (const v of versions.slice(KEEP_NEWEST)) if (v !== current) out.push(v);
   for (const e of entries) if (e.endsWith(GC_SUFFIX) || e.endsWith('.tmp')) out.push(e);
-  return out.filter((e) => !e.startsWith(SHIM_RUNTIME_DIR));
+  return out.filter((e) => !e.startsWith(SHIM_RUNTIME_DIR) || e.endsWith('.tmp'));
 }
 
 /**

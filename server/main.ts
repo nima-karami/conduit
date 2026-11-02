@@ -2,6 +2,7 @@ import { appendFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { version } from '../package.json';
+import { SHIM_LEAF } from '../src/conduit-mcp/install-entries';
 import type { InstanceNames } from '../src/contracts/session-identity';
 import { instanceNames } from '../src/instance-names';
 import { formatRecord } from '../src/logging';
@@ -10,6 +11,7 @@ import { directStopAll, hcBinaryOf, hcClient, serverChildEnv, startCore, stopCor
 import { argValue, requireUserData } from './lifecycle/cli-args';
 import type { ShellCore } from './lifecycle/shell';
 import { stopAll } from './lifecycle/stop-all';
+import type { PreviousShim } from './mcp/install';
 import { createServices, type Services } from './services';
 import { PipeTransport, type RpcHandler } from './transport/pipe';
 
@@ -59,11 +61,16 @@ export async function runServer(
   let services: Services | undefined;
   let composed: ReturnType<typeof compose> | undefined;
   if (!dependencies.core) {
+    const previousExe = argValue(args, '--previous-exe');
+    const previousShim = argValue(args, '--previous-shim');
     services = createServerServices({
       userData,
       names,
       logPath,
       e2e: args.includes('--e2e'),
+      shimDir: argValue(args, '--shim-dir'),
+      previousShims:
+        previousExe && previousShim ? [{ execPath: previousExe, shimPath: previousShim }] : [],
       hcEnv,
       hcBin,
       transport,
@@ -124,6 +131,8 @@ function createServerServices(o: {
   names: InstanceNames;
   logPath: string;
   e2e: boolean;
+  shimDir?: string;
+  previousShims: readonly PreviousShim[];
   hcEnv: Record<string, string>;
   hcBin: string;
   transport: PipeTransport;
@@ -154,18 +163,17 @@ function createServerServices(o: {
     homeDir: homedir(),
     hc: hcClient(o.names, o.hcEnv, (m) => log.warn('hc', m)),
     startCore: () => startCore(o.hcBin, o.names, o.hcEnv),
-    // Unpackaged layout (out/server → repo). The packaged runtime/shim path (D2b) is W7's.
-    shim: {
-      execPath: process.execPath,
-      shimPath: path.join(
-        __dirname,
-        '..',
-        '..',
-        'resources',
-        'conduit-mcp',
-        'conduit-mcp-shim.cjs',
-      ),
-    },
+    packaged: o.shimDir !== undefined,
+    previousShims: o.previousShims,
+    shim: o.shimDir
+      ? {
+          execPath: path.join(o.shimDir, 'node.exe'),
+          shimPath: path.join(o.shimDir, SHIM_LEAF),
+        }
+      : {
+          execPath: process.execPath,
+          shimPath: path.join(__dirname, '..', '..', 'resources', 'conduit-mcp', SHIM_LEAF),
+        },
     emit: o.transport.emit,
     emitTo: o.transport.emitTo,
     stopping: () => o.shell()?.lifecycle.stopping ?? false,
