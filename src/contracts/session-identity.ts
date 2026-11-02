@@ -254,6 +254,9 @@ export function coreStartEnv(
     if (v === undefined) continue;
     const upper = k.toUpperCase();
     if (upper.startsWith('HC_')) continue;
+    // hc's only outbound host is its release server, reached by `hc update`/`machine add`, which Conduit
+    // never runs; a stray override must not redirect one run by hand (herdr-core audit, 2026-11-02).
+    if (upper === 'HERDR_RELEASES_URL') continue;
     if (isChildEnvNoise(upper, fromEditor)) continue;
     byUpper.set(upper, v);
     if (upper !== USER_XDG_CAPTURED_ENV) env[k] = v;
