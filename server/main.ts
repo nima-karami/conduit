@@ -75,7 +75,13 @@ export async function runServer(
   const shell = compose({
     transport,
     core,
-    ...(services ? { dispatch: services.dispatch, disconnected: services.disconnected } : {}),
+    ...(services
+      ? {
+          dispatch: services.dispatch,
+          disconnected: services.disconnected,
+          connected: services.connected,
+        }
+      : {}),
     version,
     instance: names.instance,
     logPath,

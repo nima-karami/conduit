@@ -160,6 +160,8 @@ export interface Domain {
   presence(windows: readonly WindowPresence[]): void;
   /** Every `term.resize`, besides C1 `resize`: a cold start's replay padding covers the pane's rows. */
   resized(sessionId: string, size: TermGeometry): void;
+  /** An app connected: agents.json is re-read (the server outlives app launches) and stores re-emitted if it changed. */
+  reloadAgents(): void;
   snapshot(): DomainSnapshot;
   settings(): ServerSettings;
   pendingTimers(): boolean;
@@ -272,11 +274,18 @@ export function createDomain(deps: DomainDeps): Domain {
   const settings = () => settingsStore.get();
 
   const registry = new AgentRegistry([]);
-  const agentsConfig = loadAgentsConfig(file('agents.json'), {
-    homeDir: deps.homeDir,
-    e2e: deps.e2e,
-    warn: (message, data) => log.warn('agents', message, data),
-  });
+  const readAgentsConfig = () =>
+    loadAgentsConfig(file('agents.json'), {
+      homeDir: deps.homeDir,
+      e2e: deps.e2e,
+      warn: (message, data) => log.warn('agents', message, data),
+    });
+  const agentsConfig = readAgentsConfig();
+  // The brief host holds this map, so a reload refills it in place.
+  const agentBriefs = new Map(agentsConfig.briefs);
+  const agentsFingerprint = (c: { defs: unknown; briefs: ReadonlyMap<string, unknown> }) =>
+    JSON.stringify([c.defs, [...c.briefs]]);
+  let agentsPrint = agentsFingerprint(agentsConfig);
   const launcherHost = new LauncherHost({
     registry,
     config: agentsConfig.defs,
@@ -332,7 +341,7 @@ export function createDomain(deps: DomainDeps): Domain {
 
   const roleBriefs = createRoleBriefHost({
     userData,
-    agentBriefs: agentsConfig.briefs,
+    agentBriefs,
     mgr,
     platform: hostPlatform,
     e2e: deps.e2e,
@@ -435,6 +444,17 @@ export function createDomain(deps: DomainDeps): Domain {
   const dataChanged = () => {
     deps.emit('data.changed', { store: 'agents', value: registry.list() });
     deps.emit('data.changed', { store: 'launchers', value: launcherHost.dtos() });
+  };
+  const reloadAgents = () => {
+    const next = readAgentsConfig();
+    const print = agentsFingerprint(next);
+    const changedConfig = print !== agentsPrint;
+    agentsPrint = print;
+    agentBriefs.clear();
+    for (const [id, source] of next.briefs) agentBriefs.set(id, source);
+    launcherHost.setConfig(next.defs);
+    const rescanned = launcherHost.rescan();
+    if (changedConfig || rescanned) launchersChanged();
   };
   const launchersChanged = () => {
     startRefusals.clear();
@@ -1467,6 +1487,7 @@ export function createDomain(deps: DomainDeps): Domain {
     domain,
     adopted,
     presence: (windows) => folders.presence(windows),
+    reloadAgents,
     resized: (id, size) => {
       if (mgr.get(id)) requestedSizes.set(id, size);
     },

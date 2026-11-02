@@ -96,6 +96,15 @@ describe('LauncherHost', () => {
     expect(registry.get('cli:codex')?.command).toBe('codex.exe');
   });
 
+  it('setConfig makes the next rescan compose the new agents.json definitions', () => {
+    const { host, registry } = setup({ config: [def('my-claude', 'claude')] });
+    expect(registry.get('my-claude')).toBeDefined();
+    host.setConfig([def('my-codex', 'codex')]);
+    expect(host.rescan()).toBe(true);
+    expect(registry.get('my-claude')).toBeUndefined();
+    expect(registry.get('my-codex')?.command).toBe('codex');
+  });
+
   it('bump persists usage; dtos carry uses/lastUsed', () => {
     const { host, writes } = setup();
     host.bump('cli:claude');

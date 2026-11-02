@@ -14,7 +14,7 @@ import type { AgentDefinition } from './types';
 
 export interface LauncherHostDeps {
   registry: AgentRegistry;
-  /** agents.json as loaded at startup; a rescan never re-reads it (plan Decisions Needed). */
+  /** agents.json as last loaded; a rescan never re-reads it, the owner calls setConfig. */
   config: readonly AgentDefinition[];
   detectShells: () => AgentDefinition[];
   detectClis: () => AgentDefinition[];
@@ -52,7 +52,7 @@ export class LauncherHost {
   private needsBackup: boolean;
   private readonly writable: boolean;
 
-  constructor(private readonly deps: LauncherHostDeps) {
+  constructor(private deps: LauncherHostDeps) {
     const read = deps.readFile();
     const blob = read.kind === 'text' ? read.text : undefined;
     const parsed = parseLaunchers(blob);
@@ -63,6 +63,10 @@ export class LauncherHost {
     this.shells = deps.detectShells();
     this.clis = deps.detectClis();
     this.compose();
+  }
+
+  setConfig(defs: readonly AgentDefinition[]): void {
+    this.deps = { ...this.deps, config: defs };
   }
 
   rescan(): boolean {

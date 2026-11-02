@@ -65,6 +65,8 @@ export interface ComposeOptions {
   dispatch?: RpcHandler;
   /** A peer's connection closed: MCP's presence mirror and ask grace key on it (F7). */
   disconnected?: (peer: Peer) => void;
+  /** A peer completed hello. */
+  connected?: (peer: Peer) => void;
   writeLog?: (line: string) => void;
 }
 
@@ -116,6 +118,7 @@ export function compose(options: ComposeOptions) {
         pid: process.pid,
         ...(options.supervisor ? { supervisor: options.supervisor } : {}),
       };
+      options.connected?.(peer);
       return { result };
     }
     if (!peer.order) throw new RpcFault('invalid', 'hello required');
