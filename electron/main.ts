@@ -140,6 +140,11 @@ import { hostRealPathLeaf } from '../src/path-link-confine';
 import { userRootsOf } from '../src/path-link-roots';
 import type { IndexedFile } from '../src/path-resolve';
 import { parseDocs, parseSessions, serializeDocs, serializeSessions } from '../src/persistence';
+import {
+  ScrollbackWriteGate,
+  sessionsWritable,
+  timedMessagesWritable,
+} from '../src/persistence-write-gates';
 import { buildQueueEntry } from '../src/pipeline';
 import { applyPlanCommentPatch, commentsFingerprint } from '../src/plan-comments';
 import { buildPreviewUrl, isPreviewUrl } from '../src/preview-url';
@@ -290,11 +295,6 @@ import { NotesWatcher } from './notes-watcher';
 import { OpenFileWatcher } from './open-file-watcher';
 import { createOsFileClipboard, spawnPowerShell } from './os-file-clipboard';
 import { createPathLinkResolver } from './path-link-resolver';
-import {
-  ScrollbackWriteGate,
-  sessionsWritable,
-  timedMessagesWritable,
-} from './persistence-write-gates';
 import { PlanWatcher } from './plan-watcher';
 import {
   PREVIEW_PARTITION,
