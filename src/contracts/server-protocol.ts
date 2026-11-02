@@ -519,7 +519,10 @@ export interface ServerEvents {
   'timers.fired': Reply<'timer:fired'>;
   'timers.changed': Reply<'timer:state'>;
   'server.stopping': { reason: 'update' | 'user' | 'idle' | 'stopAll' };
-  /** The app fell behind; call events.subscribe again. */
+  /**
+   * The app fell behind; call events.subscribe again. `seq` is the first event this peer did not get,
+   * and nothing more arrives on this connection until it re-subscribes.
+   */
   missed: { seq: number };
 }
 export type ServerEvent = keyof ServerEvents;

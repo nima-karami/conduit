@@ -255,7 +255,11 @@ export interface HcClient {
   attach(
     params: HcMethods['terminal.attach']['params'],
   ): Promise<{ result: HcMethods['terminal.attach']['result']; stream: HcStream }>;
-  /** Snapshot first, then events with seq > snapshot.seq; `missed` re-snapshots in place. */
+  /**
+   * Snapshot first, then events with seq > snapshot.seq. seq is core-wide, so a filtered subscription
+   * sees gaps (measured). On any `missed`, from hc or from the client when the channel ends, the
+   * caller subscribes again and reconciles; the client never restores a subscription itself.
+   */
   subscribe(
     params: HcMethods['events.subscribe']['params'],
     onNotification: (n: HcNotification) => void,
