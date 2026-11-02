@@ -834,7 +834,7 @@ export type HostToWebview =
   | {
       type: 'confirmQuit';
       requestId: number;
-      reason: 'quit' | 'windowClose' | 'update';
+      reason: 'quit' | 'windowClose' | 'update' | 'quitAndStop';
       running: number;
       busy: number;
     }

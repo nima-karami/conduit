@@ -1,4 +1,6 @@
-export type GuardReason = 'quit' | 'windowClose' | 'update';
+// 'quitAndStop' is the palette's Quit and stop all agents; a plain 'quit' never stops agents.
+export type AppQuitReason = 'quit' | 'update' | 'quitAndStop';
+export type GuardReason = AppQuitReason | 'windowClose';
 export interface GuardAsk {
   requestId: number;
   reason: GuardReason;
@@ -17,7 +19,7 @@ export interface CloseGuardDeps {
   ask(id: number, ask: GuardAsk): void;
   abort(id: number, requestId: number): void;
   confirmUnresponsive(id: number, signal: AbortSignal): Promise<boolean>;
-  proceedApp(reason: 'quit' | 'update'): void;
+  proceedApp(reason: AppQuitReason): void;
   proceedWindow(id: number): void;
   resumeWindowClose(id: number): void;
   setTimer(fn: () => void, ms: number): unknown;
@@ -25,7 +27,7 @@ export interface CloseGuardDeps {
   log(message: string): void;
 }
 export interface CloseGuard {
-  requestAppQuit(reason: 'quit' | 'update', firstId?: number): void;
+  requestAppQuit(reason: AppQuitReason, firstId?: number): void;
   requestWindowClose(id: number): void;
   onAck(id: number, requestId: number): void;
   onShown(id: number, requestId: number): void;
@@ -50,7 +52,7 @@ interface Answer {
 }
 interface AppGuard {
   kind: 'app';
-  reason: 'quit' | 'update';
+  reason: AppQuitReason;
   toAsk: number[];
   proceeded: Answer[];
   current: LiveAsk;
@@ -122,7 +124,7 @@ export function createCloseGuard(deps: CloseGuardDeps): CloseGuard {
     return a;
   }
 
-  function finishApp(reason: 'quit' | 'update', proceeded: Answer[]): void {
+  function finishApp(reason: AppQuitReason, proceeded: Answer[]): void {
     guard = null;
     queue = [];
     lastProceeded = proceeded;
@@ -170,7 +172,7 @@ export function createCloseGuard(deps: CloseGuardDeps): CloseGuard {
     return a && a.id === id && a.ask.requestId === requestId ? a : null;
   }
 
-  function requestAppQuit(reason: 'quit' | 'update', firstId?: number): void {
+  function requestAppQuit(reason: AppQuitReason, firstId?: number): void {
     if (guard?.kind === 'window' && reason === 'update') {
       const i = queue.findIndex((q) => q.kind === 'update');
       if (i >= 0) queue[i] = { kind: 'update', firstId };

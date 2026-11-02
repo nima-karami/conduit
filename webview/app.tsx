@@ -629,13 +629,13 @@ export function App() {
                 message: copy.body,
                 confirmLabel: copy.confirmLabel,
                 // F4: only a window close ends agents; a quit's destructive choice is the secondary.
-                danger: reason === 'windowClose',
+                danger: reason === 'windowClose' || reason === 'quitAndStop',
                 // Cancel is the keyboard default so an accidental Enter never quits.
                 focusCancel: true,
                 onShown,
                 onCancel: () => resolve(false),
                 onConfirm: () => resolve(true),
-                ...(reason !== 'windowClose'
+                ...(reason === 'quit' || reason === 'update'
                   ? {
                       secondaryLabel: 'Quit and stop all agents',
                       onSecondary: () => resolve({ proceed: true, stopAgents: true }),

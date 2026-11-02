@@ -1579,7 +1579,11 @@ export function TerminalPane({
       />
       {serverState.state !== 'connected' && (
         <div className="term-paused" role="status">
-          <span className="term-paused__label">Reconnecting — input paused</span>
+          <span className="term-paused__label">
+            {serverState.state === 'connecting' || serverState.state === 'reconnecting'
+              ? 'Reconnecting — input paused'
+              : "Input paused — background service isn't running"}
+          </span>
         </div>
       )}
       {!following && (

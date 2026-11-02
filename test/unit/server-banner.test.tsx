@@ -81,6 +81,17 @@ describe('ServerBanner', () => {
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
+  it('words the restart-budget stop without repeating the service', async () => {
+    const { host } = await render({
+      state: 'stopped',
+      reason: 'after ending 4 times within an hour',
+      logPath: '/tmp/log',
+    });
+    expect(host.textContent).toContain(
+      "Conduit's background service stopped after ending 4 times within an hour.",
+    );
+  });
+
   it('shows runtime starting and degraded notices', async () => {
     const starting = await render({ state: 'connected', runtime: { state: 'starting' } });
     expect(starting.host.textContent).toContain('starting');

@@ -27,7 +27,13 @@ import { isAppIndexUrl } from '../src/app-navigation';
 import { asyncSingleFlight } from '../src/async-singleflight';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
-import { createCloseGuard, createQuitGrant, GRANT_TTL_MS, openWindowIds } from '../src/close-guard';
+import {
+  createCloseGuard,
+  createQuitGrant,
+  GRANT_TTL_MS,
+  type GuardReason,
+  openWindowIds,
+} from '../src/close-guard';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
 import { coerceInstallRequest } from '../src/conduit-mcp/install-types';
 import { readBlob } from '../src/config';
@@ -226,7 +232,7 @@ import {
 import { createDragOutHost } from './drag-out-host';
 import { execFileBounded } from './exec-bounded';
 import { createFolderPicker } from './folder-picker';
-import { type HcCliDeps, supervisorEnv } from './hc-cli';
+import { type HcCliDeps, supervisorArgs, supervisorEnv } from './hc-cli';
 import { createHcEvents } from './hc-events';
 import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
@@ -1894,11 +1900,9 @@ app.whenReady().then(() => {
     );
   const openWindowCount = () => openWindows().length;
   // The open confirmQuit per window, so only a live app-quit answer can arm stopAgentsOnQuit.
-  const quitAsks = new Map<
-    number,
-    { requestId: number; reason: 'quit' | 'update' | 'windowClose' }
-  >();
-  // F4: a plain quit leaves agents running; only Quit and stop all agents sets this.
+  const quitAsks = new Map<number, { requestId: number; reason: GuardReason }>();
+  // F4: a plain quit leaves agents running; only the stop choice in the quit dialog arms this (the
+  // palette's quitAndStop reason stops them without it).
   let stopAgentsOnQuit = false;
 
   const closeGuard = createCloseGuard({
@@ -1942,6 +1946,7 @@ app.whenReady().then(() => {
         );
     },
     proceedApp: (reason) => {
+      const stopAgents = stopAgentsOnQuit || reason === 'quitAndStop';
       const finish = () => {
         quitAsks.clear();
         stopAgentsOnQuit = false;
@@ -1949,7 +1954,7 @@ app.whenReady().then(() => {
         if (reason === 'update') quitAndInstall();
         else setImmediate(() => app.quit());
       };
-      if (!stopAgentsOnQuit || !lifecycle) {
+      if (!stopAgents || !lifecycle) {
         finish();
         return;
       }
@@ -2350,7 +2355,7 @@ app.whenReady().then(() => {
       log.warn('runtime', 'gc failed', { err: String(err) });
     }
     // E2e hooks reach the server as argv: hc may refresh the env on Windows (M10).
-    const serverArgs = ['--hc', layout.hcExe, ...(e2e ? ['--e2e'] : [])];
+    const serverArgs = e2e ? ['--e2e'] : [];
     const marker = path.join(userData(), SERVER_EXHAUSTED_FILE);
     lifecycle = createServerLifecycle({
       names,
@@ -2378,7 +2383,11 @@ app.whenReady().then(() => {
       spawnDetachedSupervisor: () => {
         const child = spawn(
           layout.nodeExe,
-          [layout.superviseJs, '--user-data', userData(), ...serverArgs],
+          supervisorArgs(layout.hcExe, {
+            superviseJs: layout.superviseJs,
+            userData: userData(),
+            serverArgs,
+          }),
           {
             detached: true,
             stdio: 'ignore',
@@ -3955,8 +3964,7 @@ app.whenReady().then(() => {
           await lifecycle?.stopAllAndContinue();
           break;
         case 'app:quitAndStopAgents':
-          stopAgentsOnQuit = true;
-          closeGuard.requestAppQuit('quit', senderId);
+          closeGuard.requestAppQuit('quitAndStop', senderId);
           break;
         case 'session:retryLaunch':
           await terminals.retryLaunch(m.sessionId);

@@ -9,7 +9,7 @@
 import { countNoun } from './menu-selection';
 import type { Session } from './types';
 
-export type QuitReason = 'quit' | 'windowClose' | 'update';
+export type QuitReason = 'quit' | 'windowClose' | 'update' | 'quitAndStop';
 export type DirtyCloseReason = QuitReason | 'sessionClose' | 'sessionMove';
 export type DirtyTag = 'conflict' | 'failed' | 'notEdited' | 'noEntry' | 'partial' | 'saved' | null;
 
@@ -65,13 +65,14 @@ function middleEllipsize(name: string): string {
 
 // F4: a quit (or an update relaunch) leaves agents running in hc; closing a window or a session
 // still ends them.
-const STOP_VERB: Record<'windowClose' | 'sessionClose', string> = {
+const STOP_VERB: Record<'windowClose' | 'sessionClose' | 'quitAndStop', string> = {
   windowClose: 'Closing this window',
+  quitAndStop: 'Quitting',
   sessionClose: 'Closing',
 };
 
 function runningLine(
-  reason: 'quit' | 'update' | 'windowClose' | 'sessionClose',
+  reason: 'quit' | 'update' | 'windowClose' | 'sessionClose' | 'quitAndStop',
   running: number,
   busy: number,
   verb: 'will stop' | 'will also stop',
@@ -172,9 +173,13 @@ export function busySessions(sessions: Session[]): Session[] {
  * "Relaunch & update" for an update.
  */
 export function quitConfirmCopy({ running, busy, reason }: QuitConfirmCopyInput): QuitConfirmCopy {
-  const title = `${running} ${running === 1 ? 'session' : 'sessions'} still running`;
+  const title =
+    reason === 'quitAndStop'
+      ? `Stop ${countNoun(running, 'agent', 'agents')} and quit?`
+      : `${running} ${running === 1 ? 'session' : 'sessions'} still running`;
   const line = runningLine(reason, running, busy, 'will stop');
   const body = reason === 'update' ? `${line} Conduit will relaunch to install the update.` : line;
-  const confirmLabel = reason === 'update' ? 'Relaunch & update' : 'Quit';
+  const confirmLabel =
+    reason === 'update' ? 'Relaunch & update' : reason === 'quitAndStop' ? 'Stop and quit' : 'Quit';
   return { title, body, confirmLabel };
 }

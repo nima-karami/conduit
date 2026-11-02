@@ -331,7 +331,7 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
       d.log('error', "Conduit's background service stopped", { restarts: vanishedAt.length });
       set({
         state: 'stopped',
-        reason: `the background service ended ${vanishedAt.length} times within an hour`,
+        reason: `after ending ${vanishedAt.length} times within an hour`,
         logPath,
       });
       return;

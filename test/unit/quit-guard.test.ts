@@ -207,6 +207,16 @@ describe('quitConfirmCopy windowClose', () => {
   });
 });
 
+describe('quitConfirmCopy quitAndStop', () => {
+  it('says it stops the agents, with one destructive confirm', () => {
+    expect(quitConfirmCopy({ running: 2, busy: 1, reason: 'quitAndStop' })).toEqual({
+      title: 'Stop 2 agents and quit?',
+      body: 'Quitting will stop 2 running agents (1 actively working).',
+      confirmLabel: 'Stop and quit',
+    });
+  });
+});
+
 function file(path: string, tag: DirtyTag = null, extra: Partial<DirtyFile> = {}): DirtyFile {
   const name = path.slice(path.lastIndexOf('/') + 1);
   return { path, name, dir: 'src', tag, ...extra };

@@ -97,4 +97,24 @@ describe('TerminalPane GPU registration', () => {
     expect(host.querySelector('[role="status"]')).not.toBeNull();
     host.remove();
   });
+
+  it('says the service is down, not reconnecting, when it has stopped', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const r = createRoot(host);
+    root = r;
+    await act(async () =>
+      r.render(
+        <TerminalPane
+          sessionId="s1"
+          rootsSig=""
+          visible
+          serverState={{ state: 'stopped', reason: 'x', logPath: '/l' }}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain("Input paused — background service isn't running");
+    expect(host.textContent).not.toContain('Reconnecting');
+    host.remove();
+  });
 });

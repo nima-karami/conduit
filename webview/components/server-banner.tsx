@@ -33,7 +33,7 @@ function viewOf(
     case 'stopped':
       return {
         tone: 'error',
-        message: `${SERVICE} stopped: ${state.reason}.`,
+        message: `${SERVICE} stopped ${state.reason}.`,
         logPath: state.logPath,
         action: { label: 'Retry', run: onRetry },
       };
