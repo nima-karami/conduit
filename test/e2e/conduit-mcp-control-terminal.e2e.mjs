@@ -26,12 +26,15 @@ const SCRIPT =
   "process.stdout.write('CTRL-MARK '+process.pid+'\\n');" +
   "process.stdin.on('data',d=>{if(String(d).includes('q'))process.stdin.destroy()})";
 
-/** The pids of every complete marker line so far; a chunk split mid-pid must not yield a prefix. */
+/**
+ * The pids of every complete marker so far; a chunk split mid-pid must not yield a prefix. An
+ * attach paints the screen, so a marker can end in an escape sequence rather than a newline.
+ */
 const markerPids = (page, sid) =>
   page.evaluate(
     (id) => [
       ...new Set(
-        [...(window.__capBy?.[id] ?? '').matchAll(/CTRL-MARK (\d+)\r?\n/g)].map((m) => m[1]),
+        [...(window.__capBy?.[id] ?? '').matchAll(/CTRL-MARK (\d+)(?=\D)/g)].map((m) => m[1]),
       ),
     ],
     sid,
@@ -62,6 +65,9 @@ await runScenario(
     assert(r.handle === null, `node has no MCP adapter, got handle ${r.handle}`);
     assert(r.agent === 'node' && r.label === 'node', `label/agent: ${JSON.stringify(r)}`);
     const sid = r.session_id;
+    // The server spawns it at once, but its output reaches only a mounted pane (an observer link
+    // in hc), and a session opened off screen has none.
+    await page.locator(`.session[data-sessionid="${sid}"]`).click();
     assert(
       await until(async () => (await markerPids(page, sid)).length === 1, 30_000),
       `no marker from ${sid}`,

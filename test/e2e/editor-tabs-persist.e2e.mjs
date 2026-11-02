@@ -138,7 +138,7 @@ try {
   const { page: page2 } = second;
   await tapBridge(page2);
 
-  // Wait for the session to restore (stale) — its tabs hang off it.
+  // Wait for the session to re-attach (its agent outlived the quit) — its tabs hang off it.
   await page2.waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), sid, {
     timeout: 45000,
   });

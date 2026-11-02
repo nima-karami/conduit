@@ -2,7 +2,8 @@
  * conduit-mcp-restart — messages and handles survive a quit, and sessions restored at startup get
  * messaging (spec docs/specs/2026-10-25-conduit-mcp-server.md §3.4, §7; plan T11.1 and the
  * conductor's endpoint-wait decision):
- *   run 1: A sends to B while B is busy, so nothing is noticed; quit.
+ *   run 1: A sends to B while B is busy, so nothing is noticed; quit, then stop the server and
+ *   its agents: a plain quit leaves both running (F4), and the subject here is a cold restart.
  *   run 2 (same profile, autoRelaunchStale on, so both relaunch at startup): the session selected
  *   at startup mounts with no click and is wired; B reconnects under the same handle, the thread is
  *   intact in the Messages tab, and exactly one notice arrives once B's gate opens. Whether A's
@@ -24,7 +25,7 @@ import {
   tapMcp,
   until,
 } from './conduit-mcp-helpers.mjs';
-import { assert, closeApp, launchApp, runScenario, typeLine } from './harness.mjs';
+import { assert, closeApp, launchApp, runScenario, stopServer, typeLine } from './harness.mjs';
 
 /** Long enough that the send, the check and the quit all land inside B's busy run. */
 const BUSY_MS = 30_000;
@@ -65,12 +66,16 @@ await runScenario(
     const readyBeforeA = records(a.sessionId, 'READY').length;
 
     await closeApp(app, page);
-    const settingsPath = join(userDataDir, 'settings.json');
-    const blob = existsSync(settingsPath)
-      ? JSON.parse(readFileSync(settingsPath, 'utf8'))
-      : { version: 1, settings: {} };
-    blob.settings = { ...blob.settings, restoreSessions: true, autoRelaunchStale: true };
-    writeFileSync(settingsPath, JSON.stringify(blob));
+    await stopServer(app);
+    // The server owns these keys (server-settings.json, D7); settings.json keeps the app's mirror.
+    for (const name of ['settings.json', 'server-settings.json']) {
+      const settingsPath = join(userDataDir, name);
+      const blob = existsSync(settingsPath)
+        ? JSON.parse(readFileSync(settingsPath, 'utf8'))
+        : { version: 1, settings: {} };
+      blob.settings = { ...blob.settings, restoreSessions: true, autoRelaunchStale: true };
+      writeFileSync(settingsPath, JSON.stringify(blob));
+    }
     // Startup selects the first restored session and mounts its pane; keeping only A and B, A
     // first, makes that a fake, so its launch is one no click triggers.
     const sessionsPath = join(userDataDir, 'sessions.json');

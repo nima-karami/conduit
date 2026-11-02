@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, runScenario, shutdownApp } from './harness.mjs';
 
 runScenario('background-resources', async ({ app, page, log }) => {
   const root = mkdtempSync(join(tmpdir(), 'conduit-resources-'));
@@ -129,8 +129,9 @@ runScenario('background-resources', async ({ app, page, log }) => {
       `eight sessions, one watch, ${calls} Git commands for shared split demand; background output and wake verified`,
     );
   } finally {
-    await closeApp(app, page);
-    await app.close();
+    // shutdownApp, not closeApp: a quit leaves the agents running in the fixture (F4), and their
+    // cwd pins it against the delete below.
+    await shutdownApp(app, page);
     rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });

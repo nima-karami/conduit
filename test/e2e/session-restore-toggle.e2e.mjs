@@ -3,11 +3,16 @@
  * persisted session list (feat-session-dataloss).
  *
  * 1. Launch with a throwaway user-data dir, open a session, quit → sessions.json holds it.
- * 2. Re-launch on the SAME dir, turn restoreSessions OFF via updateSettings, then quit.
+ * 2. Re-launch on the SAME dir, turn restoreSessions OFF via updateServerSettings (a server key,
+ *    D7), then quit.
  *    Before the fix, the restore-off quit (and the onChange during PTY teardown) wrote
  *    serializeSessions([]) over sessions.json, destroying the saved set.
  * 3. Assert sessions.json STILL contains the original session after the restore-off quit.
- * 4. Re-launch with restoreSessions back ON → the session restores (nothing was lost).
+ * 4. Re-launch with restoreSessions back ON → the session is still there (nothing was lost).
+ *
+ * The session's agent keeps running in hc across every quit (F4), so it is live throughout and
+ * comes back `running`: D40 persists a live session even with restore OFF. A stale session under
+ * restore OFF is, by D40, neither written nor reopened, so this guard is about live ones.
  *
  * Windows only.
  */
@@ -49,7 +54,7 @@ async function launch() {
   return { app, page };
 }
 
-// Capture the latest state.settings so we can round-trip a modified copy back via updateSettings.
+// Capture the latest state.settings: the server keys' mirror arrives there.
 async function tapSettings(page) {
   await page.evaluate(() => {
     window.__settings = null;
@@ -111,10 +116,8 @@ try {
   assert(current, 'Never received settings from state');
   assert(current.restoreSessions === true, 'Expected restore ON on second launch');
 
-  await page2.evaluate(
-    (s) =>
-      window.agentDeck.post({ type: 'updateSettings', settings: { ...s, restoreSessions: false } }),
-    current,
+  await page2.evaluate(() =>
+    window.agentDeck.post({ type: 'updateServerSettings', patch: { restoreSessions: false } }),
   );
   await page2.waitForFunction(
     () => window.__settings && window.__settings.restoreSessions === false,
@@ -143,18 +146,17 @@ try {
   await tapBridge(page3);
   await tapSettings(page3);
 
-  const s3 = await page3
-    .waitForFunction(() => window.__settings || null, null, { timeout: 20000 })
-    .then((h) => h.jsonValue());
-  await page3.evaluate(
-    (s) =>
-      window.agentDeck.post({ type: 'updateSettings', settings: { ...s, restoreSessions: true } }),
-    s3,
+  await page3.waitForFunction(() => window.__settings || null, null, { timeout: 20000 });
+  await page3.evaluate(() =>
+    window.agentDeck.post({ type: 'updateServerSettings', patch: { restoreSessions: true } }),
   );
+  await page3.waitForFunction(() => window.__settings?.restoreSessions === true, null, {
+    timeout: 20000,
+  });
   await closeApp(appHandle, page3);
   appHandle = null;
 
-  // Final relaunch verifies restore now rehydrates the preserved session as stale.
+  // Final relaunch: the preserved session re-attaches to its still-running agent.
   const fourth = await launch();
   appHandle = fourth.app;
   const { page: page4 } = fourth;
@@ -166,7 +168,7 @@ try {
     })
     .then((h) => h.jsonValue());
   assert(restored, `Session ${sid} not restored after re-enabling restore`);
-  assert(restored.status === 'stale', `Expected 'stale', got '${restored.status}'`);
+  assert(restored.status === 'running', `Expected 'running', got '${restored.status}'`);
   log('PASS: re-enabling restore brings the session back ✓');
 
   await closeApp(appHandle, page4);
@@ -180,11 +182,8 @@ try {
     console.log('[session-restore-toggle] FAIL ✗', e.message);
     await finishScenario(1);
   }
+  // No bare close here: with a running session it waits on the quit guard forever;
+  // finishScenario ends any app still open.
   console.error('[session-restore-toggle] ERROR:', e?.message || e);
-  try {
-    if (appHandle) await appHandle.close();
-  } catch {
-    /* ignore */
-  }
   await finishScenario(2);
 }

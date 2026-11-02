@@ -3,8 +3,10 @@
  *
  * 1. Launch the app with a throwaway user-data dir, open a session.
  * 2. Close the app (simulating a restart) — sessions persist to sessions.json.
- * 3. Re-launch the same app on the SAME user-data dir.
- * 4. Assert the session is restored (status = 'stale').
+ * 3. Re-launch on the SAME user-data dir: the agent kept running in hc (F4), so the session
+ *    re-attaches live (status = 'running').
+ * 4. Close again and stop the server and its agents (a reboot), then re-launch: the session is
+ *    restored cold (status = 'stale').
  * 5. Send a 'relaunch' message and assert it returns to 'running'.
  *
  * Windows only.
@@ -21,6 +23,7 @@ import {
   makeLog,
   profileDir,
   REPO,
+  stopServer,
   tapBridge,
 } from './harness.mjs';
 
@@ -48,13 +51,10 @@ async function launch() {
   return { app, page };
 }
 
-let firstApp;
-let secondApp;
 try {
   // ── Launch 1: open a session ─────────────────────────────────────────────────
   const first = await launch();
-  firstApp = first.app;
-  const { page: page1 } = first;
+  const { app: firstApp, page: page1 } = first;
 
   await tapBridge(page1);
 
@@ -85,7 +85,6 @@ try {
   // quit-guard asks for confirmation — closeApp answers it (proceed) and waits for exit. This
   // also exercises before-quit's synchronous state flush (the update-durability fix).
   await closeApp(firstApp, page1);
-  firstApp = null;
   log('first app closed ✓');
 
   // Verify sessions.json contains the session.
@@ -95,10 +94,26 @@ try {
   assert(savedSession, `Session ${sid} not found in sessions.json`);
   log('session persisted to sessions.json ✓');
 
-  // ── Launch 2: sessions restore as stale ──────────────────────────────────────
+  // ── Launch 2: the agent outlived the app, so the session re-attaches live ────
+  const live = await launch();
+  await tapBridge(live.page);
+  const reattached = await live.page
+    .waitForFunction((id) => (window.__sessions || []).find((s) => s.id === id) || null, sid, {
+      timeout: 45000,
+    })
+    .then((h) => h.jsonValue());
+  assert(
+    reattached.status === 'running',
+    `Expected the live session to re-attach as 'running', got '${reattached.status}'`,
+  );
+  log('PASS: session re-attached live after a quit ✓');
+  await closeApp(live.app, live.page);
+  await stopServer(live.app);
+  log('server and agents stopped (cold restart) ✓');
+
+  // ── Launch 3: with the agent gone, the session restores as stale ────────────
   const second = await launch();
-  secondApp = second.app;
-  const { page: page2 } = second;
+  const { app: secondApp, page: page2 } = second;
 
   await tapBridge(page2);
 
@@ -142,7 +157,6 @@ try {
   log('PASS: session relaunched to running ✓');
 
   await closeApp(secondApp, page2);
-  secondApp = null;
 
   log('PASS ✓ T1B durability: all assertions passed');
   await finishScenario(0);
@@ -152,16 +166,8 @@ try {
     console.log('[durability] FAIL ✗', e.message);
     await finishScenario(1);
   }
+  // No bare close here: with a running session it waits on the quit guard forever;
+  // finishScenario ends any app still open.
   console.error('[durability] ERROR:', e?.message || e);
-  try {
-    if (firstApp) await firstApp.close();
-  } catch {
-    /* ignore */
-  }
-  try {
-    if (secondApp) await secondApp.close();
-  } catch {
-    /* ignore */
-  }
   await finishScenario(2);
 }

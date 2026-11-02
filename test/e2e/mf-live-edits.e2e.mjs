@@ -25,8 +25,8 @@
  *   live   Files and Search follow an attached folder with no respawn.
  *   B1     an agent whose command is not on PATH: card "Can't start", centre "Can't start —
  *          <cmd> wasn't found" with Relaunch, which refuses again with the reason still shown.
- *   E5/E6  relaunch with the home renamed away: "Can't start", the 12d state, no spawn (host log
- *          included from before the launch, with the refusal as the positive control,
+ *   E5/E6  relaunch with the home renamed away: "Can't start", the 12d state, no spawn (server
+ *          log included from before the launch, with the refusal as the positive control,
  *          autoRelaunchStale on); the home returns → "Session not running", still no spawn.
  *   Locate the home goes again; Locate… picks P → home P, Relaunch focused, spawns in P.
  */
@@ -34,7 +34,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   renameSync,
   writeFileSync,
@@ -52,6 +51,7 @@ import {
   REPO,
   removeDir,
   shutdownApp,
+  stopServer,
   tapBridge,
 } from './harness.mjs';
 
@@ -622,12 +622,12 @@ async function phaseLive({ page, sid }) {
   log('live: Files + Search follow E, no respawn ✓');
 }
 
+// Spawns and start refusals are the server's (server.log in the profile), not the app's.
 const logRecordsSince = (t0, sid) => {
-  const dir = join(tmpdir(), 'conduit-e2e-logs');
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => /^conduit-.*\.log$/.test(f))
-    .flatMap((f) => readFileSync(join(dir, f), 'utf8').split('\n'))
+  const file = join(userDataDir, 'server.log');
+  if (!existsSync(file)) return [];
+  return readFileSync(file, 'utf8')
+    .split('\n')
     .flatMap((l) => {
       try {
         return [JSON.parse(l)];
@@ -682,7 +682,10 @@ async function phaseMissingHome({ app, page, sid, t0 }) {
   const refused = records0.filter(isRefusal);
   assert(refused.length > 0, 'E5: the log window sees the start refusal (positive control)');
   const spawned = records0.filter((r) => r.scope === 'pty' && r.msg === 'spawn');
-  assert(spawned.length === 0, `E5: no pty spawn in the host log (got ${JSON.stringify(spawned)})`);
+  assert(
+    spawned.length === 0,
+    `E5: no pty spawn in the server log (got ${JSON.stringify(spawned)})`,
+  );
   log("E5: Can't start + 12d, no spawn (autoRelaunchStale on) ✓");
 
   await renameAway(`${H}.gone`, H);
@@ -773,12 +776,17 @@ try {
 
   await closeApp(app, page);
   launched = null;
-  const settingsPath = join(userDataDir, 'settings.json');
-  const blob = existsSync(settingsPath)
-    ? JSON.parse(readFileSync(settingsPath, 'utf8'))
-    : { version: 1, settings: {} };
-  blob.settings = { ...blob.settings, autoRelaunchStale: true };
-  writeFileSync(settingsPath, JSON.stringify(blob));
+  // A quit leaves the fake running in H (F4); E5/E6 are about a cold relaunch with H gone.
+  await stopServer(app);
+  // The server owns autoRelaunchStale (server-settings.json, D7); settings.json is the app's mirror.
+  for (const name of ['settings.json', 'server-settings.json']) {
+    const settingsPath = join(userDataDir, name);
+    const blob = existsSync(settingsPath)
+      ? JSON.parse(readFileSync(settingsPath, 'utf8'))
+      : { version: 1, settings: {} };
+    blob.settings = { ...blob.settings, autoRelaunchStale: true };
+    writeFileSync(settingsPath, JSON.stringify(blob));
+  }
   await renameAway(H, `${H}.gone`);
 
   const t0 = Date.now();

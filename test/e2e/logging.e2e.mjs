@@ -4,7 +4,8 @@
  * Drives the REAL app (CONDUIT_E2E=1 → the host logger writes to a temp logs dir under
  * os.tmpdir(), never real userData). Asserts:
  *   Slice A
- *   (a) a well-formed JSONL record is written to the active log file (ts/level/scope/msg);
+ *   (a) a well-formed JSONL record is written to the active log file (ts/level/scope/msg), and the
+ *       session spawn lands in the server's own `<userData>/server.log`;
  *   (b) a renderer-injected record carrying a sensitive key is persisted MASKED;
  *   (c) the `revealLogs` IPC opens the logs folder (shell.openPath spy).
  *   Slice B
@@ -16,7 +17,7 @@
  * Windows only (matches the rest of the suite).
  */
 
-import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -54,6 +55,16 @@ function readRecords() {
     .map((l) => JSON.parse(l));
 }
 
+/** The server's own log: spawns are the server's (C2), written once the app pushes its level. */
+const readServerRecords = (userDataDir) => {
+  const file = join(userDataDir, 'server.log');
+  if (!existsSync(file)) return [];
+  return readFileSync(file, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+};
+
 let launched;
 try {
   launched = await launchApp();
@@ -62,7 +73,7 @@ try {
   await spyMain(app, [{ api: 'openPath' }, { api: 'showItemInFolder' }]);
   await tapBridge(page);
 
-  // Spawn a session → the host logs an info `pty spawn` record (FS write through the sink).
+  // Spawn a session → the server logs an info `pty spawn` record at the level the app pushed.
   // Use a tiny throwaway dir (not the huge REPO) so teardown's project/git watchers stay cheap.
   const workDir = mkdtempSync(join(tmpdir(), 'conduit-logwork-'));
   await openSession(page, { path: workDir.replace(/\\/g, '/'), agentId: 'shell:cmd' });
@@ -90,9 +101,18 @@ try {
     assert(typeof r.scope === 'string', 'record missing scope');
     assert(typeof r.msg === 'string', 'record missing msg');
   }
-  const spawn = records.find((r) => r.scope === 'pty' && r.msg === 'spawn' && r.level === 'info');
-  assert(spawn, 'expected an info pty/spawn record from the session launch');
-  log('PASS: well-formed JSONL pty/spawn record present ✓');
+  const serverRecords = readServerRecords(launched.userDataDir);
+  for (const r of serverRecords) {
+    assert(typeof r.ts === 'number', 'server record missing numeric ts');
+    assert(typeof r.level === 'string', 'server record missing level');
+    assert(typeof r.scope === 'string', 'server record missing scope');
+    assert(typeof r.msg === 'string', 'server record missing msg');
+  }
+  const spawn = serverRecords.find(
+    (r) => r.scope === 'pty' && r.msg === 'spawn' && r.level === 'info',
+  );
+  assert(spawn, 'expected an info pty/spawn record in server.log from the session launch');
+  log('PASS: well-formed JSONL, pty/spawn record in server.log ✓');
 
   // (b) redaction: the probe record persisted with the token masked, path intact.
   const probe = records.find((r) => r.scope === 'e2e' && r.msg === 'redaction-probe');
