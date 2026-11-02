@@ -276,7 +276,7 @@ describe('server ports', () => {
   // One focus producer: xterm's own reports inside term.input.
   it('carry focus only as input bytes', () => {
     expectTypeOf<keyof ServerNotifications>().toEqualTypeOf<
-      'term.input' | 'term.resize' | 'term.facts' | 'folders.suspect'
+      'term.input' | 'term.resize' | 'term.facts' | 'folders.suspect' | 'system.resumed'
     >();
     expectTypeOf<TerminalRuntime>().not.toHaveProperty('focus');
   });
