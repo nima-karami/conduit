@@ -13,8 +13,8 @@ export interface PresenceMirror {
   onScreen(windowId: number, sessionId: string): boolean;
   /** The app's own id for a namespaced one; null once that window or its connection is gone. */
   localOf(windowId: number): { conn: AppConnection; windowId: number } | null;
-  /** The namespaced id for an app's window id, allocated on first sight. */
-  globalOf(conn: AppConnection, windowId: number): number;
+  /** The namespaced id of an app's window that a presence named; null otherwise. */
+  windowIdOf(conn: AppConnection, windowId: number): number | null;
   /** Whether any app connection is still known. */
   connected(): boolean;
 }
@@ -121,7 +121,7 @@ export function createPresenceMirror(deps: {
       const w = windows.get(g);
       return w ? { conn: w.conn, windowId: w.local } : null;
     },
-    globalOf,
+    windowIdOf: (conn, local) => ids.get(conn)?.get(local) ?? null,
     connected: () => ids.size > 0,
   };
 }

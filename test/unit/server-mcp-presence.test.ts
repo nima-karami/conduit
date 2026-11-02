@@ -50,7 +50,7 @@ describe('presence mirror (F7, C2 WindowPresence)', () => {
     expect(m.onScreen(wb ?? -1, 's2')).toBe(false);
     expect(m.localOf(wa ?? -1)).toEqual({ conn: a, windowId: 1 });
     expect(m.localOf(wb ?? -1)).toEqual({ conn: b, windowId: 1 });
-    expect(m.globalOf(a, 1)).toBe(wa);
+    expect(m.windowIdOf(a, 1)).toBe(wa);
   });
 
   it('fails closed for an unknown session or window', () => {
@@ -58,13 +58,18 @@ describe('presence mirror (F7, C2 WindowPresence)', () => {
     expect(m.ownerWindowOf('nope')).toBeNull();
     expect(m.windowReady(99)).toBe(false);
     expect(m.onScreen(99, 's1')).toBe(false);
+    // A lookup never allocates: an unnamed window stays unknown, and no connection is created.
+    const a = {};
+    expect(m.windowIdOf(a, 1)).toBeNull();
+    expect(m.windowIdOf(a, 1)).toBeNull();
+    expect(m.connected()).toBe(false);
   });
 
   it('forwards each presence to AttentionPort under the namespaced id', () => {
     const { m, calls } = mirror();
     const a = {};
     m.update(a, [win(3, { visibleSessionIds: ['s1', 's2'] })]);
-    const g = m.globalOf(a, 3);
+    const g = m.windowIdOf(a, 3);
     expect(calls).toEqual([`visible ${g} [s1,s2]`]);
   });
 
@@ -72,8 +77,8 @@ describe('presence mirror (F7, C2 WindowPresence)', () => {
     const { m, calls } = mirror();
     const a = {};
     m.update(a, [win(1), win(2)]);
-    const g1 = m.globalOf(a, 1);
-    const g2 = m.globalOf(a, 2);
+    const g1 = m.windowIdOf(a, 1);
+    const g2 = m.windowIdOf(a, 2);
     calls.length = 0;
     m.update(a, [win(1, { ready: false })]);
     expect(calls).toContain(`drop ${g2}`);
@@ -92,14 +97,14 @@ describe('presence mirror (F7, C2 WindowPresence)', () => {
     calls.length = 0;
     m.update(a, [win(1, { ownedSessionIds: ['s2'] }), win(2, { ownedSessionIds: ['s1'] })]);
     expect(calls.filter((c) => c.startsWith('moved'))).toEqual(['moved s1']);
-    expect(m.ownerWindowOf('s1')).toBe(m.globalOf(a, 2));
+    expect(m.ownerWindowOf('s1')).toBe(m.windowIdOf(a, 2));
   });
 
   it('an app disconnect drops its windows, clears attention, and is not a reset or a move', () => {
     const { m, calls } = mirror();
     const a = {};
     m.update(a, [win(1, { ownedSessionIds: ['s1'] })]);
-    const g = m.globalOf(a, 1);
+    const g = m.windowIdOf(a, 1);
     calls.length = 0;
     m.disconnect(a);
     expect(calls).toEqual([`drop ${g}`, 'clearAll']);
@@ -109,7 +114,7 @@ describe('presence mirror (F7, C2 WindowPresence)', () => {
     calls.length = 0;
     m.update(b, [win(1, { ownedSessionIds: ['s1'] })]);
     expect(calls.filter((c) => !c.startsWith('visible'))).toEqual([]);
-    expect(m.ownerWindowOf('s1')).toBe(m.globalOf(b, 1));
+    expect(m.ownerWindowOf('s1')).toBe(m.windowIdOf(b, 1));
     expect(m.ownerWindowOf('s1')).not.toBe(g);
   });
 

@@ -454,6 +454,81 @@ describe('conduit-mcp-shim: C6', () => {
     expect(f.conns).toHaveLength(1);
     await until(() => f.conns.length === 2, SHIM_WELCOME_TIMEOUT_MS + 2_000);
   });
+
+  it('welcome unsupported_generation → permanent fallback, no retry', async () => {
+    const f = fakeServer();
+    await f.listen();
+    const s = start(f.path, 'tok');
+    s.write(CODEX_INIT);
+    await until(() => f.conns[0]?.hello !== undefined);
+    f.conns[0]?.welcome('unsupported_generation');
+    await until(() => initResponses(s).length === 1);
+    expect(initResponses(s)[0].result.serverInfo.version).toBe('fallback');
+    await sleep(SHIM_RECONNECT.firstMs * 4);
+    expect(f.conns).toHaveLength(1);
+  });
+
+  it('past SHIM_CONNECT_BUFFER_MAX_BYTES a request gets host_unavailable; an overflowed initialize is forgotten', async () => {
+    const f = fakeServer();
+    await f.listen();
+    const s = start(f.path, 'tok_7c20e4');
+    await until(() => f.conns[0]?.hello !== undefined);
+    const big = {
+      ...CODEX_INIT,
+      params: { ...CODEX_INIT.params, pad: 'x'.repeat(SHIM_CONNECT_BUFFER_MAX_BYTES) },
+    };
+    s.write(big);
+    await until(() => initResponses(s).length === 1);
+    expect(initResponses(s)[0]).toMatchObject({ error: { data: { code: 'host_unavailable' } } });
+    f.conns[0]?.welcome();
+    // Id 0 again, now for an ordinary request: had the initialize stayed cached, its answer would
+    // read as a handshake and the next hello would resume one the client never had.
+    s.write('{"jsonrpc":"2.0","id":0,"method":"tools/list"}');
+    await until(() => f.conns[0]?.lines.length === 1);
+    expect(JSON.parse(f.conns[0]?.lines[0] ?? '{}').method).toBe('tools/list');
+    f.conns[0]?.send({ jsonrpc: '2.0', id: 0, result: { tools: [] } });
+    await until(() => s.out.length === 2);
+    f.conns[0]?.drop();
+    await until(() => f.conns[1]?.hello !== undefined);
+    expect(JSON.parse(f.hellos[1] ?? '{}').resume).toBeNull();
+  });
+
+  it('a connect error and its close schedule exactly one retry', async () => {
+    // Nothing listens, so every attempt fails with an error followed by a close. A preload
+    // counts the attempts on stderr.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmcp-shim-'));
+    preloadDirs.push(dir);
+    const preload = path.join(dir, 'count-connect.cjs');
+    fs.writeFileSync(
+      preload,
+      [
+        "const net = require('node:net');",
+        'const connect = net.connect;',
+        "net.connect = (...a) => { process.stderr.write('CONNECT\\n'); return connect(...a); };",
+        '',
+      ].join('\n'),
+    );
+    const s = start(testEndpoint(), 'tok', { preload });
+    let stderr = '';
+    s.child.stderr.setEncoding('utf8');
+    s.child.stderr.on('data', (d: string) => {
+      stderr += d;
+    });
+    // Backoff 250, 500, 1000: attempts at about 0, 250, 750 and 1750 ms. A second retry per
+    // failure would double that.
+    await sleep(1_900);
+    const attempts = stderr.split('\n').filter((l) => l === 'CONNECT').length;
+    expect(attempts).toBeGreaterThanOrEqual(3);
+    expect(attempts).toBeLessThanOrEqual(4);
+  });
+
+  it('stdout EPIPE → exit', async () => {
+    const s = start(undefined, undefined);
+    s.child.stdout.destroy();
+    s.write('{"jsonrpc":"2.0","id":1,"method":"tools/list"}');
+    s.write('{"jsonrpc":"2.0","id":2,"method":"tools/list"}');
+    expect(await s.exit).toBe(0);
+  });
 });
 
 describe('conduit-mcp-shim: recorded C6 transitions', () => {
@@ -559,10 +634,34 @@ describe('conduit-mcp-shim: recorded C6 transitions', () => {
     await until(() => f.conns[0]?.hello !== undefined, 10_000);
     expect(f.hellos).toEqual(t.hellos);
     f.conns[0]?.welcome();
+    // Order gate: the ping reaching the server proves the attempt promoted, so the notification
+    // below is relayed on it rather than read while its hello is still out.
+    s.write('{"jsonrpc":"2.0","id":9,"method":"ping"}');
+    await until(() => f.conns[0]?.lines.some((l) => JSON.parse(l).id === 9) === true);
     s.write(INITIALIZED);
     // The server waits for it on the relayed stream.
     await until(() => f.conns[0]?.lines.includes(INITIALIZED) === true);
+    expect(f.hellos).toEqual(t.hellos);
     expect(initResponses(s)).toHaveLength(t.initializeResponses);
+  });
+
+  it('notifications/initialized read while a resume hello is out re-hellos, never lost', async () => {
+    const f = fakeServer();
+    await f.listen();
+    const s = start(f.path, 'tok_7c20e4');
+    s.write(CODEX_INIT);
+    // The welcome is held: at the deadline the shim answers locally and re-hellos with resume.
+    await until(() => initResponses(s).length === 1, SHIM_INITIAL_CONNECT_DEADLINE_MS + 3_000);
+    await until(() => f.conns[1]?.hello !== undefined, 600);
+    expect(JSON.parse(f.hellos[1] ?? '{}').resume.initialized).toBe(false);
+    // Read in FALLBACK with that hello still unanswered.
+    s.write(INITIALIZED);
+    await until(() => f.conns[2]?.hello !== undefined, 600);
+    expect(JSON.parse(f.hellos[2] ?? '{}').resume.initialized).toBe(true);
+    f.conns[2]?.welcome();
+    // Queued, not dropped: relayed on the attempt that promoted.
+    await until(() => f.conns[2]?.lines.includes(INITIALIZED) === true);
+    expect(initResponses(s)).toHaveLength(1);
   });
 
   it('resume hello past the size limit', async () => {

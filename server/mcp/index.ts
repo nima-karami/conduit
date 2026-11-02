@@ -37,6 +37,15 @@ export type { AppConnection } from './presence';
 const INPUT_TOUCH_INTERVAL_MS = 30_000;
 /** D8: how long waiting asks outlive the last app connection before ui_unavailable. */
 export const APP_GRACE_MS = 5_000;
+/** The sender of a renderer message from a window no presence named: owns nothing, never ready. */
+const NO_WINDOW = 0;
+
+/** One app connection's event stream; the transport sends it to that peer only. */
+export type AppEventSink = <E extends ServerEvent>(
+  conn: AppConnection,
+  type: E,
+  data: ServerEvents[E],
+) => void;
 
 type HostTestSeams = Pick<
   ConduitMcpHostDeps,
@@ -64,6 +73,8 @@ export interface McpServerDeps extends Omit<McpHostDeps, 'tokens'> {
   install: Pick<McpInstallDeps, 'env' | 'userDataDir' | 'onPath' | 'knownHome' | 'io'>;
   host?: HostTestSeams;
   randomToken?: PersistentTokenStoreOptions['randomToken'];
+  /** Window-routed ui.post goes to the window's own app connection, under its own window id. */
+  emitTo: AppEventSink;
 }
 
 export interface ServerMcp {
@@ -73,6 +84,11 @@ export interface ServerMcp {
   launch: LaunchPort;
   /** For W4's runAddDir. */
   draft: DraftPort;
+  /**
+   * Listens on the MCP endpoint. Call it only after reconcile has delivered its `spawned` events:
+   * an adopted session is restored on its `spawned`, and a shim resuming before that would
+   * initialize against a session the host doesn't know yet (no rebind, no notices).
+   */
   start(): Promise<void>;
   stop(): Promise<void>;
   tick(): Promise<void>;
@@ -102,9 +118,6 @@ export interface ServerMcp {
     rows: GateRow[];
   };
 }
-
-const isUiPost = (type: ServerEvent, _data: unknown): _data is ServerEvents['ui.post'] =>
-  type === 'ui.post';
 
 /**
  * W5: the W0b host (src/conduit-mcp/host.ts) inside the server, over C7. Everything here is the
@@ -165,13 +178,18 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
   };
 
   const emit: ServerEventSink = (type, data) => {
-    if (!isUiPost(type, data)) return deps.emit(type, data);
-    track(data);
-    if (data.route.kind !== 'window') return deps.emit('ui.post', data);
-    const local = presence.localOf(data.route.windowId);
+    if (type !== 'ui.post') return deps.emit(type, data);
+    // The sink's generic doesn't narrow `data` with `type`; this is that narrowing.
+    const post = data as ServerEvents['ui.post'];
+    track(post);
+    if (post.route.kind !== 'window') return deps.emit('ui.post', post);
+    const local = presence.localOf(post.route.windowId);
     // Thrown, not dropped: the host's UI step then answers window_not_ready instead of timing out.
-    if (!local) throw new Error(`window ${data.route.windowId} is gone`);
-    deps.emit('ui.post', { ...data, route: { kind: 'window', windowId: local.windowId } });
+    if (!local) throw new Error(`window ${post.route.windowId} is gone`);
+    deps.emitTo(local.conn, 'ui.post', {
+      ...post,
+      route: { kind: 'window', windowId: local.windowId },
+    });
   };
 
   /**
@@ -192,15 +210,13 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     log: deps.log,
   });
 
-  /** Launches prepared in this run, by session and generation; any other `spawned` is an adopt. */
-  const prepared = new Set<string>();
-  const launchKey = (sessionId: string, generation: number) => `${sessionId}:${generation}`;
+  /** The generation each session last launched or was adopted at; any other `spawned` is an adopt. */
+  const prepared = new Map<string, number>();
   // Subscribed before the host, so the adopted session's state exists when its spawned handler runs.
   const stopAdopt = deps.runtime.on((e) => {
-    if (e.type !== 'spawned') return;
-    const key = launchKey(e.sessionId, e.generation);
-    if (prepared.has(key)) return;
-    prepared.add(key);
+    if (e.type === 'exit') prepared.delete(e.sessionId);
+    if (e.type !== 'spawned' || prepared.get(e.sessionId) === e.generation) return;
+    prepared.set(e.sessionId, e.generation);
     const def = deps.domain.defOf(e.sessionId);
     const launchId = deps.runtime.get(e.sessionId)?.launchId;
     if (!def || launchId === undefined) return;
@@ -246,7 +262,7 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     launch: {
       whenLaunchReady: () => h.whenLaunchReady(),
       prepareLaunch(sessionId, def, spec, ids) {
-        prepared.add(launchKey(sessionId, ids.generation));
+        prepared.set(sessionId, ids.generation);
         // D28: a binding belongs to one generation.
         bindings.delete(sessionId);
         return h.prepareLaunch(sessionId, def, spec, ids);
@@ -254,6 +270,7 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
       async onSessionDeleted(sessionId) {
         await h.onSessionDeleted(sessionId);
         bindings.delete(sessionId);
+        prepared.delete(sessionId);
       },
     },
     draft: { noteHostInput: (sessionId, data) => h.noteHostInput(sessionId, data) },
@@ -275,7 +292,8 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     },
 
     presence(conn, windows) {
-      cancelGrace();
+      // Only a window can answer an ask: an app with none is still away.
+      if (windows.length > 0) cancelGrace();
       presence.update(conn, windows);
     },
     appDisconnected(conn) {
@@ -288,7 +306,8 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     },
 
     async fromRenderer(conn, { windowId, message }) {
-      let sender = presence.globalOf(conn, windowId);
+      // Looked up, never allocated: a window no presence named answers nothing.
+      let sender = presence.windowIdOf(conn, windowId) ?? NO_WINDOW;
       const ask = message.type === 'mcp:askAnswer' ? asks.get(message.askId) : undefined;
       if (ask?.windowId != null)
         sender = answeringWindow(ask.windowId, ask.ask.callerSessionId, sender);

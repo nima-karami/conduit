@@ -112,18 +112,22 @@ function takeBuffer() {
 }
 
 /**
- * The snapshot rule: a hello carries the phase it was sent with, so a phase change before its
- * welcome abandons that attempt and dials again with the new snapshot. Exactly one initialize
- * response then ever reaches the client.
+ * The snapshot rule: a hello carries the phase and `initialized` it was sent with, so a change of
+ * either before its welcome abandons that attempt and dials again with the new snapshot. Exactly
+ * one initialize response then ever reaches the client.
  */
-function setPhase(next) {
-  if (phase === next) return;
-  phase = next;
-  if (next !== 'init-pending') clearTimeout(pendingTimer);
+function resnapshot() {
   if (attempt?.helloSent && !attempt.welcomed) {
     abandon(attempt);
     connect();
   }
+}
+
+function setPhase(next) {
+  if (phase === next) return;
+  phase = next;
+  if (next !== 'init-pending') clearTimeout(pendingTimer);
+  resnapshot();
 }
 
 function helloLine() {
@@ -158,7 +162,13 @@ function enqueue(line, msg) {
 
 function onClientLine(line) {
   const msg = parse(line);
-  if (isNotification(msg, 'notifications/initialized')) initializedRead = true;
+  const initialized = isNotification(msg, 'notifications/initialized');
+  if (initialized && !initializedRead) {
+    initializedRead = true;
+    // Part of the snapshot: a resume hello already out says initialized:false, and its server
+    // would wait for a notification this attempt never relays.
+    if (phase === 'init-done') resnapshot();
+  }
   if (isNotification(msg, 'notifications/cancelled')) {
     const target = msg.params?.requestId;
     if (typeof target === 'string' || typeof target === 'number') {
@@ -179,6 +189,8 @@ function onClientLine(line) {
   }
   if (mode === 'relaying') send(attempt, line, msg);
   else if (mode === 'connecting' || mode === 'reconnecting') enqueue(line, msg);
+  // Kept for the attempt that promotes: a server told initialized:false waits for this line.
+  else if (mode === 'fallback' && initialized) enqueue(line, msg);
   else if (mode === 'fallback' || mode === 'permanent_fallback') answerLocally(msg);
 }
 

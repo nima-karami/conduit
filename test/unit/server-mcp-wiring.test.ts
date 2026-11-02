@@ -58,7 +58,8 @@ function harness(opts: { manualTimers?: boolean } = {}) {
   const terminals = new Map<string, RuntimeTerminal>();
   const screens = new Map<string, string>();
   const listeners = new Set<(e: RuntimeEvent) => void>();
-  const events: Array<{ type: string; data: unknown }> = [];
+  /** `conn`: the one app connection an emitTo went to; absent for a broadcast emit. */
+  const events: Array<{ type: string; data: unknown; conn?: object }> = [];
   const log: string[] = [];
   const submits: Array<{ sessionId: string; text: string; hooks: SubmitHooks | undefined }> = [];
   const opens: McpOpenRequest[] = [];
@@ -184,6 +185,9 @@ function harness(opts: { manualTimers?: boolean } = {}) {
     emit: <E extends keyof ServerEvents>(type: E, data: ServerEvents[E]) => {
       events.push({ type, data });
     },
+    emitTo: <E extends keyof ServerEvents>(conn: object, type: E, data: ServerEvents[E]) => {
+      events.push({ type, data, conn });
+    },
   };
   const make = () =>
     createMcp({
@@ -205,11 +209,15 @@ function harness(opts: { manualTimers?: boolean } = {}) {
     });
   let mcp = make();
   mcps.push(mcp);
-  /** A server restart: the same userData, terminals and app, a fresh process. */
-  const restart = async () => {
+  /**
+   * A server restart: the same userData, terminals and app, a fresh process. Reconcile's adopts
+   * come before the MCP endpoint listens, as compose orders them.
+   */
+  const restart = async (adopted: string[] = []) => {
     await mcp.stop();
     mcp = make();
     mcps.push(mcp);
+    for (const id of adopted) adopt(id);
     await mcp.start();
   };
   /** C1 `spawned` for a terminal the new server adopted: no prepareLaunch in this run. */
@@ -515,6 +523,8 @@ describe('approvals', () => {
     await expect.poll(uiStep).toBeDefined();
     const step = uiStep();
     expect(step?.route).toEqual({ kind: 'window', windowId: 7 });
+    // To that window's own app connection, not broadcast to every app.
+    expect(h.events.find((e) => e.data === step)?.conn).toBe(app);
     if (step?.message.type !== 'mcp:ui') throw new Error('no ui step');
     await h.mcp.fromRenderer(app, {
       windowId: 7,
@@ -553,9 +563,8 @@ describe('D28 bindings across a server restart', () => {
         },
       ]);
     // The stopping server closes the connection itself; the binding must outlive that.
-    await h.restart();
+    await h.restart(['s1']);
     expect(bindingsOf(h)).toHaveLength(1);
-    h.adopt('s1');
     return { h, token };
   }
   const notice = async (h: ReturnType<typeof harness>) => {
@@ -608,6 +617,21 @@ describe('D28 bindings across a server restart', () => {
       .toEqual([{ sessionId: 's1', generation: 1, cli: 'opencode', clientInfoName: 'opencode' }]);
   });
 
+  it('pins the order: an adopt after the endpoint already took the resume comes too late', async () => {
+    const h = harness();
+    await h.mcp.start();
+    const { token, ids } = await h.launch('s1', SHELL);
+    h.mcp.termInput({ sessionId: 's1', generation: ids.generation, data: 'codex\r' });
+    await client(h.ep, token, { name: 'codex-mcp-client' });
+    await expect.poll(() => bindingsOf(h)?.length).toBe(1);
+    await h.restart();
+    await client(h.ep, token, { name: 'codex-mcp-client', resume: true });
+    h.adopt('s1');
+    await notice(h);
+    await h.mcp.tick();
+    expect(h.submits).toEqual([]);
+  });
+
   it('a new launch drops the binding', async () => {
     const { h } = await typedCodexThenRestart();
     await h.launch('s1', SHELL);
@@ -645,6 +669,25 @@ describe('D8 grace: no app for 5 s', () => {
     await expect.poll(() => errorOf(c.lines.find((l) => l.id === 5))).toBe('ui_unavailable');
     expect(h.mcp.pendingAsks()).toEqual([]);
     expect(h.opens).toEqual([]);
+  });
+
+  it('an app back with no window does not end the grace', async () => {
+    const { h, c, app } = await askingManual();
+    h.mcp.appDisconnected(app);
+    h.mcp.presence({}, []);
+    h.advance(5_100);
+    await expect.poll(() => errorOf(c.lines.find((l) => l.id === 5))).toBe('ui_unavailable');
+  });
+
+  it('a renderer message from a window no presence named answers nothing', async () => {
+    const { h, app } = await askingManual();
+    const askId = h.mcp.pendingAsks()[0]?.askId ?? '';
+    await h.mcp.fromRenderer(app, {
+      windowId: 99,
+      message: { type: 'mcp:askAnswer', askId, answer: 'approve' },
+    });
+    expect(h.opens).toEqual([]);
+    expect(h.mcp.pendingAsks()).toHaveLength(1);
   });
 
   it('an app back within the grace keeps the asks', async () => {

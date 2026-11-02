@@ -138,6 +138,8 @@ export function createShimEndpoint(opts: {
         send(line) {
           if (swallowing && isResumeReply(line)) {
             swallowing = false;
+            if (parseObject(line)?.error !== undefined)
+              opts.log.warn('conduit-mcp', 'replayed initialize refused', { id, reply: line });
             // After the host has initialized the connection: the refetch must see its tools.
             write(RESUME_LINE);
             return;

@@ -482,16 +482,19 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     awaitingApproval: () => [...new Set(waits.pending().map((w) => w.callerSessionId))],
 
     denyUnavailable() {
-      const ended = waits.pending().map((w) => {
+      // Marked only as each is ended, so the ask's own cancelled branch always clears its mark.
+      const ended: Array<{ askId: string; sessionId: string; tool: ToolName }> = [];
+      waits.cancel((w) => {
         unavailable.add(w.id);
-        return { askId: w.id, sessionId: w.callerSessionId, tool: w.meta.tool };
-      });
-      waits.cancel((w) => unavailable.has(w.id), true);
+        ended.push({ askId: w.id, sessionId: w.callerSessionId, tool: w.meta.tool });
+        return true;
+      }, true);
       return ended;
     },
 
     dispose() {
       waits.dispose();
+      unavailable.clear();
       waitsUi.dispose();
       inflight.clear();
     },
