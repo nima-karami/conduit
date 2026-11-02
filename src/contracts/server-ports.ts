@@ -131,8 +131,8 @@ export interface LaunchPort {
 export type AttentionEdge = ServerEvents['attention.edge'];
 
 /**
- * W6 provides, all of attention included: an input-driven attention clear is W6's rule, so W5 only
- * reports the input. Output comes from W6's own active stream (bells, the inert scan), so no caller
+ * W6 provides, all of attention included. Input never acknowledges an episode (v0.51: only
+ * visibility did), so W5 reports input and W6 records it without clearing. Output comes from W6's own active stream (bells, the inert scan), so no caller
  * records it. Visibility acknowledges watched sessions and suppresses episodes, so W5 forwards every
  * `ui.presence` here and calls `clearAll` when the app disconnects: no window is watching then. A
  * program's OSC 7501 report outranks the output heuristics wherever it reports (D34). Activity and

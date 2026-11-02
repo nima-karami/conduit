@@ -185,10 +185,12 @@ The decision stands. The build differs from the text above in these places:
 - **Every hc call that may start a core runs with cwd `runtime/hc/<hcVersion>`** (M21: a cwd, not
   mapped images, is what blocks the GC rename). The supervisor `chdir`s to its own runtime dir at
   startup for the same reason.
-- **The app starts the supervisor with `hc run`** (the CLI, `electron/hc-cli.ts`), env from
-  `coreStartEnv` over the app's own env (no `HC_*`, isolated XDG), by its unique name. If `hc run`
-  fails for any reason other than the name being taken, it spawns the supervisor directly as a
-  detached Node process with the same env.
+- **The app starts the supervisor through hc's API** (`terminal.run` in `electron/hc-cli.ts`, after
+  starting the core with `coreStartEnv`/`coreStartCwd`), by its unique name, with the app's own env: no
+  `HC_*`, and the user's own XDG values restored (empty when unset), because `hc run` can't pass an env and
+  panes would otherwise see the core's isolated XDG. If that fails for any reason other than the name
+  being taken, it spawns the supervisor directly as a detached Node process with the same env. Sessions
+  get v0.51's sanitized child env from the server.
 - **Spawn env sets `TERM_PROGRAM=conduit` and `TERM_PROGRAM_VERSION`** (M10); hc would otherwise
   default to `ghostty`.
 - **Accepted residuals added by the spike:** the C2 and MCP pipes accept same-user remote (SMB)
