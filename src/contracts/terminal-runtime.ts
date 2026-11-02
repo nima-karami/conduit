@@ -99,7 +99,7 @@ export interface SpawnFailed {
 
 /**
  * Where an attach paint ends (D20, until hc marks it): the bytes until the stream has been quiet for
- * PAINT_QUIET_MS, capped at PAINT_MAX_MS after the first byte. The server's C1 `paint` and the app's
+ * PAINT_QUIET_MS, capped at PAINT_MAX_MS from the moment the attach is held (so a paint with no bytes still ends). The server's C1 `paint` and the app's
  * C5 `FirstPaint` use the same rule, so neither reads a paint's tail as activity.
  */
 export const PAINT_QUIET_MS = 30;
