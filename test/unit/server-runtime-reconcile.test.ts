@@ -114,7 +114,8 @@ describe('TerminalRuntime reconcile', () => {
       code: 0,
       reason: 'exited',
     });
-    expect(h.ring.text('ended')).toBe('done\r\n');
+    // A live row: the earlier server run streamed its output into the ring already.
+    expect(h.ring.text('ended')).toBe('');
     await expect
       .poll(() => calls('terminal.rm').map((c) => c.params.terminal))
       .toEqual(['a-ended']);
@@ -259,6 +260,23 @@ describe('TerminalRuntime reconcile', () => {
       reason: 'exited',
     });
     await expect.poll(() => calls('terminal.rm').map((c) => c.params.terminal)).toEqual([address]);
+  });
+
+  it('a finished terminal whose output was streamed into the ring is not dumped into it again', async () => {
+    h = await harness();
+    await h.runtime.start();
+    h.fake.paint = Buffer.from('PAINT');
+    const ids = launch(1);
+    await h.tokens.reserve('s1', ids);
+    await h.runtime.spawn('s1', spec, labelsFor('s1', ids), ids);
+    await expect.poll(() => h.ring.text('s1')).toBe('PAINT');
+    const address = h.runtime.get('s1')?.target.terminal;
+    const record = h.fake.terminals.find((t) => t.address === address) as HcTerminal;
+    h.fake.onCall('terminal.read', () => ({ text: 'PAINT', complete: true, how: 'screen' }));
+    h.fake.disconnect();
+    Object.assign(record, { state: 'finished', exit_code: 2, reason: 'exited' });
+    await expect.poll(() => h.events.some((e) => e.type === 'exit')).toBe(true);
+    expect(h.ring.text('s1')).toBe('PAINT');
   });
 
   it('a replaced core version is degraded `core replaced`', async () => {

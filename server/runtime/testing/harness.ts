@@ -82,6 +82,9 @@ class Ring {
   gap(sessionId: string, paint: string, size: TermGeometry) {
     this.gaps.push({ sessionId, paint, size });
   }
+  resized(sessionId: string, size: TermGeometry) {
+    this.appended.push({ sessionId, data: '', size });
+  }
   text(sessionId: string) {
     return this.appended
       .filter((a) => a.sessionId === sessionId)

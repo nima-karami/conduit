@@ -254,6 +254,37 @@ describe('TerminalRuntime spawn', () => {
     expect(h.runtime.get('s1')?.size).toEqual({ cols: 100, rows: 50 });
   });
 
+  it('the ring is labelled with the size hc reports, and records a resize no output follows', async () => {
+    await started();
+    h.runtime.resize('s1', { cols: 100, rows: 44 });
+    h.fake.paint = Buffer.from('P');
+    await spawned();
+    await expect.poll(() => h.events.some((e) => e.type === 'paint')).toBe(true);
+    const channel = h.attachChannels.at(-1) ?? -1;
+    const t = h.fake.terminals.at(-1) as HcTerminal;
+    const sizes = () => h.ring.appended.map((a) => [a.data, a.size?.rows]);
+    // hc applies a resize asynchronously: bytes still arriving before its size event were
+    // written for the old grid.
+    h.runtime.resize('s1', { cols: 100, rows: 12 });
+    h.fake.send(channel, Buffer.from('old-grid'));
+    await expect.poll(() => h.ring.text('s1')).toBe('Pold-grid');
+    h.fake.emit(t, 'size', { cols: 100, rows: 12 });
+    // Nothing is printed at 12 rows: the pinned hc sends no repaint after a resize.
+    await expect.poll(() => sizes().at(-1)).toEqual(['', 12]);
+    h.runtime.resize('s1', { cols: 100, rows: 44 });
+    h.fake.emit(t, 'size', { cols: 100, rows: 44 });
+    await expect.poll(() => sizes().at(-1)).toEqual(['', 44]);
+    h.fake.send(channel, Buffer.from('new'));
+    await expect.poll(() => sizes().at(-1)).toEqual(['new', 44]);
+    expect(sizes()).toEqual([
+      ['P', 44],
+      ['old-grid', 44],
+      ['', 12],
+      ['', 44],
+      ['new', 44],
+    ]);
+  });
+
   it('TypingPort writes through input at the live generation', async () => {
     await started();
     await spawned();

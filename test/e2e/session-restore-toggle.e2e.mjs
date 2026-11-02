@@ -81,15 +81,21 @@ try {
   );
   await page1.waitForSelector('.termpane', { state: 'attached', timeout: 25000 });
 
+  // The cmd session this scenario opened, once its program has printed: `running` alone is not
+  // a live terminal (the app's own default session can be running and never spawned), and D40
+  // persists only a live one with restore OFF.
   const sid = await page1
     .waitForFunction(
-      () => (window.__sessions || []).find((s) => s.status === 'running')?.id || null,
+      () =>
+        (window.__sessions || []).find(
+          (s) => s.agentId === 'shell:cmd' && (window.__capBy?.[s.id] ?? '').length > 0,
+        )?.id || null,
       null,
       { timeout: 20000 },
     )
     .then((h) => h.jsonValue());
-  assert(sid, 'No running session found after openRepo');
-  log('first launch: session running, id =', sid);
+  assert(sid, 'The opened cmd session never printed after openRepo');
+  log('first launch: session live, id =', sid);
 
   await page1.waitForTimeout(500);
   assert(existsSync(sessionsPath), 'sessions.json was not written');
