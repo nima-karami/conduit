@@ -239,7 +239,14 @@ export type SessionStartResult =
        * before this reply, through ScrollbackPort.show, so it is in the ring too.
        */
       ok: false;
-      refusal: NonNullable<Session['startRefusal']> | SpawnUnconfirmed | ServerStopping;
+      refusal:
+        | NonNullable<Session['startRefusal']>
+        /** The session's home folder is gone; today's can't-start line, status `stale`. */
+        | { reason: 'home-missing' }
+        /** The saved command failed coercion; today's can't-start line, status `stale`. */
+        | { reason: 'command-invalid' }
+        | SpawnUnconfirmed
+        | ServerStopping;
     };
 
 /** The supervisor as the server knows it: its unique hc name and the address hc gave it (D17). */
@@ -405,7 +412,8 @@ export interface ServerMethods {
 
   // ── stores owned by the server ──
   'projects.create': { params: Msg<'project:create'>; result: Reply<'project:created'> };
-  'projects.rename': { params: Msg<'project:rename'>; result: Reply<'project:opResult'> };
+  /** Failures are RPC errors, as for projects.delete and projects.reorder. */
+  'projects.rename': { params: Msg<'project:rename'>; result: Empty };
   'projects.delete': { params: Msg<'project:delete'>; result: Empty };
   'projects.reorder': { params: Msg<'project:reorder'>; result: Empty };
   'launchers.rescan': { params: Empty; result: Empty };

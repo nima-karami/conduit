@@ -168,8 +168,9 @@ export interface TerminalRuntime {
    *    `terminal.rm`. `not_found` only: the record was pruned (after a day or past 500; nothing
    *    survives a reboot): `exit` `lost`, revoke.
    * 4. `reserved` rows (their process died mid-spawn) and `unconfirmed` rows: `terminal.get` with the
-   *    launch id as the name. Found: resolveAddress and adopt as in 3. Not found: the row stays; a
-   *    `reserved` one becomes `unconfirmed` and emits `unconfirmed`.
+   *    launch id as the name. Found: resolveAddress and adopt as in 3. Not found: the row stays
+   *    `unconfirmed` (a `reserved` one becomes it) and `unconfirmed` is emitted for every such row,
+   *    so a restarted server's domain can offer Retry launch / Discard for it.
    * 5. `superseded` rows: a terminal by that name is killed if live, logged, and its row revoked; not
    *    found, the row stays.
    * 6. Only after a clean load: kill `conduit.role=session` terminals that match no row. Never the
