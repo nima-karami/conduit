@@ -19,6 +19,7 @@ import {
   launchApp,
   makeLog,
   openSession,
+  showRightView,
   tapBridge,
 } from './harness.mjs';
 
@@ -45,7 +46,8 @@ async function openMenuOn(page, selector) {
     return Array.from(root.children).map((wrap) => {
       const item = wrap.querySelector('.ctxmenu__item');
       return {
-        label: item?.querySelector('span:last-child')?.textContent?.trim() ?? '',
+        // The label span, not the last span: a row may carry a detail ("2 waiting") after it.
+        label: item?.querySelector('.ctxmenu__label')?.textContent?.trim() ?? '',
         danger: !!item?.classList.contains('ctxmenu__item--danger'),
         sepBefore: !!wrap.querySelector('.ctxmenu__sep'),
         disabled: !!item?.disabled,
@@ -159,25 +161,72 @@ try {
   });
 
   // ── Session row ───────────────────────────────────────────────────────────
-  await page.waitForSelector('.session', { timeout: 15000 });
-  const session = await openMenuOn(page, '.session');
+  // The order is webview/session-menu.ts buildSessionMenu's: Go to + Pin, then the optional
+  // lifecycle / attention / messaging groups (environment-dependent here, so located rather than
+  // pinned), then edit+move, reference, and the close family last.
+  const rowSel = `[data-agent-tree] .session[data-sessionid="${repoSid}"]`;
+  await page.waitForSelector(rowSel, { timeout: 15000 });
+  const session = await openMenuOn(page, rowSel);
   log('session:', JSON.stringify(labels(session)));
   assertCanonical('session', session);
   const sl = labels(session);
-  const dupI = sl.indexOf('Duplicate session');
-  const moveProjI = sl.indexOf('Move to project…');
-  const newWinI = sl.indexOf('Move to new window');
-  assert(dupI >= 0, 'session: Duplicate session present');
-  assert(moveProjI === dupI + 1, 'session: Move to project… comes right after Duplicate session');
-  assert(newWinI > moveProjI, 'session: Move to project… comes before Move to new window');
-  const copyHomeI = sl.indexOf('Copy home path');
-  assert(copyHomeI >= 0, 'session: Copy home path present');
+  assert(
+    JSON.stringify(sl.slice(0, 2)) === JSON.stringify(['Go to', 'Pin to top']),
+    `session: opens with Go to, Pin to top, got ${JSON.stringify(sl.slice(0, 2))}`,
+  );
+  assert(session[2]?.sepBefore, 'session: a separator follows Go to / Pin to top');
+  const timedI = sl.indexOf('Timed message…');
+  const renameI = sl.indexOf('Rename');
+  assert(timedI > 1 && timedI < renameI, 'session: Timed message… sits between Pin and Rename');
+  const EDIT_MOVE = [
+    'Rename',
+    'Set icon…',
+    'Duplicate session',
+    'Move to space…',
+    'Move to new window',
+  ];
+  assert(
+    JSON.stringify(sl.slice(renameI, renameI + EDIT_MOVE.length)) === JSON.stringify(EDIT_MOVE),
+    `session: edit/move group must be ${JSON.stringify(EDIT_MOVE)}, got ${JSON.stringify(sl.slice(renameI))}`,
+  );
+  assert(session[renameI].sepBefore, 'session: Rename opens its own group');
+  assert(!sl.includes('Move to project…'), 'session: the old "Move to project…" label is gone');
+  const TAIL = [
+    'Copy home path',
+    'Copy name',
+    'Reveal in Explorer',
+    'Close',
+    'Close others',
+    'Close all',
+  ];
+  assert(
+    JSON.stringify(sl.slice(-TAIL.length)) === JSON.stringify(TAIL),
+    `session: must end ${JSON.stringify(TAIL)}, got ${JSON.stringify(sl)}`,
+  );
+  const tail = session.slice(-TAIL.length);
+  assert(tail[0].sepBefore && tail[3].sepBefore, 'session: reference and close groups separated');
+  assert(
+    tail.slice(3).every((r) => r.danger) && !tail.slice(0, 3).some((r) => r.danger),
+    'session: exactly the close family is danger',
+  );
   assert(!sl.includes('Copy path'), 'session: the old "Copy path" label is gone');
-  const revealI = sl.indexOf('Reveal in Explorer');
-  assert(revealI > copyHomeI, 'session: Reveal must come after Copy home path');
   await closeMenu(page);
 
-  // ── Group header menus ────────────────────────────────────────────────────
+  // ── Status group header: no menu of its own, the Agents pane menu ─────────
+  // The sort menu is gone (spec §6): right-clicking a group header bubbles to the pane menu.
+  const groupHead = '[data-agent-tree] button.proj__label[data-agent-group]';
+  await page.waitForSelector(groupHead, { timeout: 5000 });
+  const pane = await openMenuOn(page, groupHead);
+  log('agents pane:', JSON.stringify(labels(pane)));
+  assertCanonical('agents-pane', pane);
+  assert(
+    JSON.stringify(labels(pane)) ===
+      JSON.stringify(['New agent', 'Close all sessions', 'Close all stale sessions']),
+    `agents-pane: exactly New agent + bulk close, got ${JSON.stringify(labels(pane))}`,
+  );
+  await closeMenu(page);
+
+  // ── Space row menus ───────────────────────────────────────────────────────
   const projectId = await createProject(page, 'ctx-proj');
   await page.evaluate(
     ({ sid, pid }) =>
@@ -189,50 +238,40 @@ try {
     { sid: repoSid, pid: projectId },
     { timeout: 10000 },
   );
-  const tagHeader = (name) =>
-    page.evaluate((n) => {
-      for (const el of document.querySelectorAll('.proj__label[data-ctxhdr]')) {
-        el.removeAttribute('data-ctxhdr');
-      }
-      const l = Array.from(document.querySelectorAll('.proj__label')).find(
-        (el) => el.querySelector('.proj__name')?.textContent === n,
-      );
-      l?.setAttribute('data-ctxhdr', '1');
-      return !!l;
-    }, name);
-  await page.waitForFunction(() =>
-    Array.from(document.querySelectorAll('.proj__name')).some((n) => n.textContent === 'ctx-proj'),
-  );
-  assert(await tagHeader('ctx-proj'), 'the ctx-proj header should render');
-  const PROJECT_HEADER = ['New session in project', 'Open board', 'Rename…', 'Delete project…'];
-  const projHeader = await openMenuOn(page, '.proj__label[data-ctxhdr="1"]');
-  log('project header:', JSON.stringify(labels(projHeader)));
-  assertCanonical('project-header', projHeader);
+  const spaceSel = `button[data-space-id="${projectId}"]`;
+  await page.waitForSelector(spaceSel, { timeout: 10000 });
+  const SPACE_MENU = ['New agent in space', 'Open board', 'Rename…', 'Delete space…'];
+  const spaceMenu = await openMenuOn(page, spaceSel);
+  log('space row:', JSON.stringify(labels(spaceMenu)));
+  assertCanonical('space-row', spaceMenu);
   assert(
-    JSON.stringify(labels(projHeader)) === JSON.stringify(PROJECT_HEADER),
-    `project-header: order must be exactly ${JSON.stringify(PROJECT_HEADER)}, got ${JSON.stringify(labels(projHeader))}`,
+    JSON.stringify(labels(spaceMenu)) === JSON.stringify(SPACE_MENU),
+    `space-row: order must be exactly ${JSON.stringify(SPACE_MENU)}, got ${JSON.stringify(labels(spaceMenu))}`,
   );
   assert(
-    projHeader[3].danger && projHeader[3].sepBefore,
-    'project-header: Delete project… is danger and separated',
+    spaceMenu[3].danger && spaceMenu[3].sepBefore,
+    'space-row: Delete space… is danger and separated',
   );
   await closeMenu(page);
-  // The argv folder's session stays standalone, so the Standalone group is still there.
-  assert(await tagHeader('Standalone'), 'the Standalone header should render');
-  const loneHeader = await openMenuOn(page, '.proj__label[data-ctxhdr="1"]');
-  log('standalone header:', JSON.stringify(labels(loneHeader)));
+  // The argv folder's session has no Space, so the No space row is still there.
+  await page.waitForSelector('button[data-space-id="no-space"]', { timeout: 10000 });
+  const noSpace = await openMenuOn(page, 'button[data-space-id="no-space"]');
+  log('no-space row:', JSON.stringify(labels(noSpace)));
   assert(
-    JSON.stringify(labels(loneHeader)) === JSON.stringify(['New standalone session']),
-    `standalone-header: must be exactly ["New standalone session"], got ${JSON.stringify(labels(loneHeader))}`,
+    JSON.stringify(labels(noSpace)) === JSON.stringify(['New agent without a space']),
+    `no-space-row: must be exactly ["New agent without a space"], got ${JSON.stringify(labels(noSpace))}`,
+  );
+  await closeMenu(page);
+  const allRow = await openMenuOn(page, 'button[data-space-id="all"]');
+  log('all row:', JSON.stringify(labels(allRow)));
+  assert(
+    JSON.stringify(labels(allRow)) === JSON.stringify(['New agent']),
+    `all-row: must be exactly ["New agent"], got ${JSON.stringify(labels(allRow))}`,
   );
   await closeMenu(page);
 
   // ── Change row (Changes tab) ──────────────────────────────────────────────
-  await page.evaluate(() => {
-    Array.from(document.querySelectorAll('.rtab'))
-      .find((el) => el.textContent?.trim().startsWith('Changes'))
-      ?.click();
-  });
+  await showRightView(page, 'changes');
   await page.waitForSelector('.change', { timeout: 15000 });
   const change = await openMenuOn(page, '.change');
   log('change:', JSON.stringify(labels(change)));
@@ -247,11 +286,7 @@ try {
   await closeMenu(page);
 
   // ── File-tree node (Files tab) ────────────────────────────────────────────
-  await page.evaluate(() => {
-    Array.from(document.querySelectorAll('.rtab'))
-      .find((el) => el.textContent?.trim() === 'Files')
-      ?.click();
-  });
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow', { timeout: 15000 });
   const fileRow = await page.evaluate(() => {
     const r = Array.from(document.querySelectorAll('.filerow')).find((el) =>

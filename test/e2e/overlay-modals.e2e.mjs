@@ -37,7 +37,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, runScenario, showRightView } from './harness.mjs';
 
 const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
 
@@ -162,7 +162,7 @@ runScenario('overlay-modals', async ({ page, log }) => {
   await page.locator('.tmdlg').first().waitFor({ state: 'detached', timeout: 5000 });
 
   // ── (5) Mermaid fullscreen viewer backdrop fills the real viewport ──────────────────────────
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await page.waitForFunction(
     () =>
       Array.from(document.querySelectorAll('.filerow__name')).some(
@@ -211,7 +211,7 @@ runScenario('overlay-modals', async ({ page, log }) => {
     .waitFor({ state: 'detached', timeout: 5000 });
 
   // ── (1) Explorer name-collision confirm is centred on the WINDOW ────────────────────────────
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow', { state: 'attached', timeout: 20000 });
 
   const aDir = join(rootA, 'a');

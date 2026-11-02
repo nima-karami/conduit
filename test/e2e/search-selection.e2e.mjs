@@ -12,7 +12,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, finishScenario, openSession, runScenario } from './harness.mjs';
+import { assert, finishScenario, openSession, runScenario, showRightView } from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[search-selection] SKIP — suite is Windows-only');
@@ -35,7 +35,7 @@ runScenario('search-selection', async ({ page, log }) => {
   writeFileSync(join(root, 'source.ts'), FIXTURE);
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow__name', { timeout: 20000 });
   await page.locator('.filerow', { hasText: 'source.ts' }).first().click();
   await page.waitForSelector('.docpanel .monaco-editor', { timeout: 25000 });

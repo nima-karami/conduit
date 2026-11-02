@@ -12,7 +12,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, runScenario, showRightView } from './harness.mjs';
 
 const FIXTURE = `# Diagram
 
@@ -29,7 +29,7 @@ runScenario('mermaid-export', async ({ app, page, log }) => {
   writeFileSync(join(dir, 'diagram.md'), FIXTURE);
 
   await openSession(page, { path: dir });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
 
   const row = page.locator('.filerow', {
     has: page.locator('.filerow__name', { hasText: /^diagram\.md$/ }),

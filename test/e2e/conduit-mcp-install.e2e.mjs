@@ -33,7 +33,14 @@ import {
   tapMcp,
   until,
 } from './conduit-mcp-helpers.mjs';
-import { assert, openSession, profileDir, runScenario, typeLine } from './harness.mjs';
+import {
+  assert,
+  openSession,
+  profileDir,
+  runScenario,
+  showRightView,
+  typeLine,
+} from './harness.mjs';
 
 // The gate wants the fake's output to settle (busy window + 3 s quiet + a tick) before the text,
 // then the echo and the Enter; the slack covers a loaded runner (see conduit-mcp-gate).
@@ -113,15 +120,20 @@ await runScenario(
       return s?.handle === 'claude-1' && s.connected === true;
     }, 15_000);
     assert(connected, `shell state: ${JSON.stringify((await mcpState(page))?.sessions?.[sid])}`);
-    await page
-      .locator(`.session[data-sessionid="${sid}"] .session__mcp-link`)
-      .and(page.getByRole('img', { name: 'Connected to Conduit as claude-1' }))
-      .waitFor({ timeout: 10_000 });
-    log('claude typed in cmd → claude-1, connected, card shows the plug ✓');
+    // The card's plug icon is gone; its explanation is a line of the row's tooltip.
+    await page.waitForFunction(
+      ({ id, tip }) =>
+        (document.querySelector(`[data-agent-tree] .session[data-sessionid="${id}"]`)?.title ?? '')
+          .split('\n')
+          .includes(tip),
+      { id: sid, tip: 'Connected to Conduit as claude-1' },
+      { timeout: 10_000 },
+    );
+    log('claude typed in cmd → claude-1, connected, the row tooltip says so ✓');
 
     // 3. a human message is noticed and read
     const compose = async (handle, body) => {
-      await page.locator('.rightpane .rtab', { hasText: 'Messages' }).click();
+      await showRightView(page, 'messages');
       await page.locator('.mcpmsg__bar button', { hasText: 'New message' }).click();
       await page.locator('.mcpmsg-compose__recipient', { hasText: handle }).click();
       await page.locator('.mcpmsg-compose__body').click();

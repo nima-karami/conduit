@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, runScenario, showRightView } from './harness.mjs';
 
 runScenario('git-blame', async ({ app, page, log }) => {
   const root = mkdtempSync(join(tmpdir(), 'conduit-blame-'));
@@ -25,7 +25,7 @@ runScenario('git-blame', async ({ app, page, log }) => {
   execFileSync('git', ['commit', '-qm', 'seed the constants'], { cwd: root });
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   const row = page.locator('.filerow', {
     has: page.locator('.filerow__name', { hasText: /^app\.ts$/ }),
   });

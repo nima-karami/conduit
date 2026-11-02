@@ -7,7 +7,7 @@
  * Run: `npm run build`, then `node test/e2e/run-smoke.mjs middle-click-surfaces-search`.
  */
 
-import { assert, closeApp, openSession, phase, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, phase, runScenario, showRightView } from './harness.mjs';
 import {
   middleClickJitter,
   sameSnapshot,
@@ -38,7 +38,7 @@ runScenario('middle-click-surfaces-search', async ({ app, page, log }) => {
   const expectBackgroundOpen = backgroundOpener(page, log);
 
   phase('setup');
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   await treeRow(page, 'a.ts').first().waitFor({ state: 'visible', timeout: 20000 });
   await treeRow(page, 'a.ts').first().dblclick();
   assert(await waitActive(page, 'a.ts', 15000), 'setup: a.ts never became the active tab');
@@ -58,7 +58,7 @@ runScenario('middle-click-surfaces-search', async ({ app, page, log }) => {
   log('setup: a.ts active, pinned, editor focused ✓');
 
   phase('S2 Changes row');
-  await page.locator('.rtab', { hasText: 'Changes' }).first().click();
+  await showRightView(page, 'changes');
   await changeRow(page, 'dirty.ts').first().waitFor({ state: 'visible', timeout: 20000 });
   await focusEditor(page);
   await expectBackgroundOpen(
@@ -69,7 +69,7 @@ runScenario('middle-click-surfaces-search', async ({ app, page, log }) => {
   );
 
   phase('S3 search matches');
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   await searchBox(page).fill(TOKEN);
   await match(page, 'a.ts', A_TOKEN_LINE).waitFor({ state: 'visible', timeout: 20000 });
   await match(page, 'b.ts', B_TOKEN_LINE).waitFor({ state: 'visible', timeout: 20000 });

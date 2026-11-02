@@ -15,7 +15,7 @@ import {
   tabTitles,
   waitActiveTab,
 } from './changes-fixture.mjs';
-import { assert, openSession, runScenario, waitForRepoGit } from './harness.mjs';
+import { assert, openSession, runScenario, showRightView, waitForRepoGit } from './harness.mjs';
 import { clickTerminalTab } from './nav-history-fixture.mjs';
 
 const FILLER = Array.from({ length: 80 }, (_, i) => `f${String(i).padStart(2, '0')}.txt`);
@@ -96,11 +96,16 @@ async function activateTab(page, title) {
   await waitActiveTab(page, title);
 }
 
-const rtabActive = (page) =>
-  page.evaluate(() => document.querySelector('.rtab--active')?.textContent?.trim() ?? '');
+const shownViewLabel = (page) =>
+  page.evaluate(
+    () =>
+      document
+        .querySelector('button[data-right-view][aria-pressed="true"]')
+        ?.getAttribute('aria-label') ?? '',
+  );
 
 async function showFiles(page) {
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await page.waitForSelector('.files__bar', { state: 'visible', timeout: 15000 });
 }
 
@@ -261,7 +266,7 @@ runScenario('files-follow-tab', async ({ page, log }) => {
   // ── F3 + F6: activation keeps the pane on Changes; mounting Files reveals ─────
   await openChangesPanel(page);
   await activateTab(page, 'zz.txt');
-  assert((await rtabActive(page)).startsWith('Changes'), 'F3: the pane left Changes');
+  assert((await shownViewLabel(page)).startsWith('Changes'), 'F3: the pane left Changes');
   await showFiles(page);
   await expectRevealed(page, ['zz.txt'], 'F6 Files remount');
   await waitRevealedInView(page, 'F6');

@@ -10,14 +10,14 @@
  * Driven against the REAL app: opens CHANGELOG.md (lots of headings) in the rendered view.
  */
 
-import { assert, openSession, REPO, runScenario } from './harness.mjs';
+import { assert, openSession, REPO, runScenario, showRightView } from './harness.mjs';
 
 const menuItem = (page, label) =>
   page.locator('.ctxmenu__item', { hasText: new RegExp(`^${label}$`) });
 
 runScenario('markdown-viewer', async ({ page, log }) => {
   await openSession(page, { path: REPO });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
 
   // Open CHANGELOG.md in the rendered markdown view.
   const row = page.locator('.filerow', {

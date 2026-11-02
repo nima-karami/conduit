@@ -20,7 +20,7 @@ import {
   assertFontsHeldBack,
   assertFontsPending,
   finishScenario,
-  holdBackWebFonts,
+  holdBackLocalFonts,
   launchElectron,
   logicalLines,
   makeLog,
@@ -228,11 +228,12 @@ try {
   // A live resize first, so the reloads below land on a window that has changed size this run.
   await setContentSize(app, 1000, 700);
   await page.waitForTimeout(1500);
-  // Late web fonts make the reloaded pane's first measurement taller than where the layout
+  // Late terminal fonts make the reloaded pane's first measurement taller than where the layout
   // settles — the timing that left the PTY taller than the xterm. Hold the font files back so
-  // every reload hits it instead of some.
+  // every reload hits it instead of some: past the 3 s boot font wait, so the terminal mounts in
+  // a fallback face, and well inside the 3 s settle below, so the face lands before the probe.
   log(`live before the reloads: ${await noteSize(page, sid)}`);
-  const hold = await holdBackWebFonts(page, 2500);
+  const hold = await holdBackLocalFonts(app, page, 4000);
   for (let round = 1; round <= RELOADS; round++) {
     // The window doesn't change across these reloads, so neither may the live screen.
     const before = nonEmpty(await logicalLines(page, sid));
@@ -277,7 +278,7 @@ try {
     );
   }
 
-  assertFontsHeldBack(hold, 'scrollback-inrun');
+  await assertFontsHeldBack(hold, 'scrollback-inrun');
   assert(failures.length === 0, failures.join('\n  '));
   log('PASS ✓ Restart in one app run shows history; a reload over mixed sizes keeps every line');
   await shutdownApp(app, page);

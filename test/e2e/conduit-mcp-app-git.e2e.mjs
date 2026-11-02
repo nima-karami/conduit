@@ -40,7 +40,7 @@ import {
   tapMcp,
   until,
 } from './conduit-mcp-helpers.mjs';
-import { assert, phase, removeDir, runScenario } from './harness.mjs';
+import { assert, phase, removeDir, runCommand, runScenario } from './harness.mjs';
 
 const errCode = (r) => r?.error?.code;
 const REVIEW = 'review:@review';
@@ -297,7 +297,7 @@ await runScenario(
     );
 
     phase('board');
-    await page.locator('.viewswitch__btn[title="Feature Board"]').click();
+    await runCommand(page, 'Open feature board');
     await page.waitForSelector('.board', { timeout: 10_000 });
     await page.locator('.board__head button').first().focus();
     assert(

@@ -8,7 +8,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { launchApp, tapBridge } from './harness.mjs';
+import { launchApp, showRightView, tapBridge } from './harness.mjs';
 
 export { openViaTree, placeCursor, tapIndex, waitForIndexReady } from './goto-matrix.mjs';
 
@@ -214,7 +214,7 @@ export async function focusEditor(page) {
  * R3 jump). The query is cleared afterwards so the tree is usable again.
  */
 export async function openAtLineViaSearch(page, query, fileTitle, line) {
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   const box = page.locator('.search__inputbox textarea').first();
   await box.fill(query);
   const match = page

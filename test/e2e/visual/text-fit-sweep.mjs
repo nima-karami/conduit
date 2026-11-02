@@ -36,6 +36,8 @@ import {
   openReview,
   profileDir,
   removeDir,
+  runCommand,
+  showRightView,
   tapBridge,
 } from '../harness.mjs';
 import { auditTextFit, cropFinding } from './text-fit.mjs';
@@ -82,12 +84,23 @@ const TIMED_TEXT =
 const SCENES = {
   async rail(c) {
     await c.shot('rail');
-    await c.rightClickSel('.session');
+    await c.rightClickSel('[data-agent-tree] .session');
     await c.shot('ctx-session');
     await c.dismiss();
-    await c.rightClickSel('.proj__name');
-    await c.shot('ctx-project');
+    // Project headers became Space rows (sidebar-agent-tree spec §3); the long name is the stress.
+    if (!(await c.rightClickSel(`.sidebar button[data-space-id][aria-label="${LONG_PROJECT}"]`)))
+      throw new Error('rail: no Space row for the long project');
+    await c.shot('ctx-space');
     await c.dismiss();
+    // The filter is revealed by Search agents; a long query that matches nothing stresses the
+    // input and the "No sessions match" empty state together.
+    await c.page.getByRole('button', { name: 'Search agents', exact: true }).click();
+    await c.page.waitForSelector('input.sessbar__filter', { state: 'visible', timeout: 5000 });
+    await c.type(LONG_PROJECT.replace(/ /g, '_'));
+    await sleep(600);
+    await c.shot('rail-search');
+    await c.page.press('input.sessbar__filter', 'Escape');
+    await c.page.waitForSelector('input.sessbar__filter', { state: 'detached', timeout: 5000 });
   },
 
   async tabs(c) {
@@ -569,16 +582,15 @@ async function runPass({ theme, width, height, panels }, sceneNames, fixture) {
     if (pin) await page.dblclick('.tab--preview').catch(() => {});
   };
   const showRightTab = async (label) => {
-    if (!(await page.isVisible('.rightpane'))) await page.keyboard.press('Control+Shift+E');
-    await page.evaluate((l) => {
-      [...document.querySelectorAll('.rtab')]
-        .find((e) => e.textContent.trim().startsWith(l))
-        ?.click();
-    }, label);
+    await showRightView(page, label.toLowerCase());
     await sleep(800);
   };
-  const view = (title) =>
-    page.evaluate((t) => document.querySelector(`.viewswitch__btn[title="${t}"]`)?.click(), title);
+  const VIEW_COMMANDS = {
+    Editor: 'Open editor',
+    'Feature Board': 'Open feature board',
+    'Architecture Canvas': 'Open architecture canvas',
+  };
+  const view = (title) => runCommand(page, VIEW_COMMANDS[title]);
   const tokenBox = (text, nth = 0) =>
     page.evaluate(
       ({ t, n }) => {

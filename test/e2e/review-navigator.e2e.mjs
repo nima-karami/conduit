@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openReview, openSession, runScenario } from './harness.mjs';
+import { assert, openReview, openSession, runScenario, showRightView } from './harness.mjs';
 
 const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
 
@@ -62,7 +62,7 @@ runScenario('review-navigator', async ({ page, log }) => {
   await page.waitForSelector('.rightpane', { state: 'visible', timeout: 8000 });
   // openReview enters from the Changes tab; put the pane on Files so the panel button's
   // "Show changes" path is the one exercised, as the old tab-row entry left it.
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await page.waitForSelector('.rightpane .review__navrow', { state: 'detached', timeout: 8000 });
   await page.click('.review__panel');
   await page.waitForSelector('.rightpane .review__navrow', { state: 'visible', timeout: 8000 });

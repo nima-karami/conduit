@@ -25,7 +25,15 @@ import {
   waitFor,
   writesTo,
 } from './auto-save-helpers.mjs';
-import { assert, closeApp, launchApp, openSession, profileDir, shutdownApp } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  launchApp,
+  openSession,
+  profileDir,
+  showRightView,
+  shutdownApp,
+} from './harness.mjs';
 
 async function openAppearance(page) {
   await page.click('.footbtn[title^="Settings"]');
@@ -140,14 +148,14 @@ async function phaseSessionClose({ app, page, log }) {
   const other = mkdtempSync(join(tmpdir(), 'conduit-autosave-other-'));
   writeFileSync(join(other, 'gone.ts'), 'one\n');
   const sid = await openSession(page, { path: other });
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   await openFile(page, 'gone.ts');
   await typeAtStart(page, 'orphan');
   await waitFor(() => isDirty(page, 'gone.ts'), 'gone.ts dirty');
   await page.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), sid);
   await waitFor(async () => (await tab(page, 'gone.ts').count()) === 0, 'the session tab to go');
   // The killed session took focus with it; give the window a focused element for the palette.
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   await paletteSaveAll(page);
   await sleep(800);
   assert(disk(other, 'gone.ts') === 'one\n', "Save All must not write a closed session's buffer");

@@ -21,7 +21,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { clearTransients, observe, openDoc, placeCursor, trigger } from './goto-matrix.mjs';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, runScenario, showRightView } from './harness.mjs';
 
 const INSTALL_CODE = 'go install golang.org/x/tools/gopls@latest';
 const INSTALL_TOAST = `Go navigation needs gopls — install with ${INSTALL_CODE}`;
@@ -195,11 +195,7 @@ runScenario(
     // The diff goes first: once the code editor has registered the grammar, a diff would paint
     // whether or not the diff path registers it itself.
 
-    await page.evaluate(() => {
-      Array.from(document.querySelectorAll('.rtab'))
-        .find((el) => el.textContent?.trim().startsWith('Changes'))
-        ?.click();
-    });
+    await showRightView(page, 'changes');
     await page.locator('.change', { hasText: 'go.mod' }).first().click();
     await page.waitForFunction(
       () => (window.monaco.editor.getDiffEditors?.() ?? []).length > 0,
@@ -217,7 +213,7 @@ runScenario(
       path: join(process.env.GO_FILES_SHOTS ?? tmpdir(), 'go-files-diff.png'),
     });
 
-    await page.locator('.rtab', { hasText: 'Files' }).click();
+    await showRightView(page, 'files');
     for (const name of MODULE_FILES) {
       const icon = fileRow(page, name).first().locator('.filerow__icon').first();
       await icon.waitFor({ state: 'attached', timeout: 20000 });

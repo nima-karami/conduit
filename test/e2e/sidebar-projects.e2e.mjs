@@ -1,18 +1,19 @@
 /**
- * The sessions rail grouped by project (mf-sidebar spec §7.4), driven on the real app.
+ * Projects as Spaces in the sidebar (mf-sidebar spec §7.4, sidebar-agent-tree spec §3/§6), driven
+ * on the real app.
  *
- * Phase A — the group header: first-run and empty-after-action states, header order, inline
- * rename (surviving a relaunch), the hover +, Ctrl+N's project, Open board, Shift+F10, the filter
- * over root folders and agent labels, and the delete dialog.
+ * Phase A — the Space rows: first-run and empty-after-action states, Space order, inline rename
+ * from the Space menu and by double-click (surviving a relaunch), the Space menu's New agent in
+ * space, Mod+N's Space, Open board, Shift+F10, the search-revealed filter over root folders and
+ * agent labels, and the delete dialog.
  *
- * Phase B — moving a session: Move to project… (same PTY afterwards), + New project… (a double
- * Enter creates one project), Copy home path, a card dropped on another header (synthesized
- * DragEvents sharing one DataTransfer, as terminal-drop does) and on its own header (no-op), and
+ * Phase B — moving a session: Move to space… (same PTY afterwards), + New space… (a double Enter
+ * creates one Space), Copy home path, a row dropped on another Space row (synthesized DragEvents
+ * sharing one DataTransfer, as terminal-drop does), on its own Space and on All (both no-ops), and
  * the hover × closing the session.
  *
  * Hover-revealed controls are clicked with a REAL pointer after `elementFromPoint` proves the
- * control wins the hit-test; Playwright's locator click would bypass that. Synthesized input
- * still bypasses Electron's app-region mask, so one real-mouse click on the + stays human smoke.
+ * control wins the hit-test; Playwright's locator click would bypass that.
  *
  * exit 0 pass/SKIP · 1 assertion failed · 2 infra error
  */
@@ -22,12 +23,16 @@ import { join } from 'node:path';
 import {
   assert,
   createProject,
+  filterAgents,
   finishScenario,
   launchApp,
   makeLog,
   openSession,
   profileDir,
   removeDir,
+  rowLabel,
+  runCommand,
+  selectSpace,
   shutdownApp,
   tapBridge,
 } from './harness.mjs';
@@ -40,13 +45,39 @@ if (process.platform !== 'win32') {
 const log = makeLog('sidebar-projects');
 const exact = (s) => new RegExp(`^${s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
 
-const groupOf = (page, name) =>
-  page.locator('.proj', { has: page.locator('.proj__name', { hasText: exact(name) }) });
-const headerOf = (page, name) => groupOf(page, name).locator('.proj__label');
+/** A Space row by its exact accessible name (the Space's own name, spec \u00a73). */
+const spaceOf = (page, name) =>
+  page.locator(`.sidebar button[data-space-id][aria-label="${name.replace(/["\\]/g, '\\$&')}"]`);
+const spaceRow = (page, key) => page.locator(`.sidebar button[data-space-id="${key}"]`);
 
-const headerNames = (page) =>
-  page.$$eval('.sidebar .proj__label', (ls) =>
-    ls.map((l) => l.querySelector('.proj__name, .proj__rename')?.textContent ?? ''),
+const spaceNames = (page) =>
+  page.$$eval('.sidebar button[data-space-id]', (ls) =>
+    ls.map((l) => l.getAttribute('aria-label')),
+  );
+
+/** The Space row's description: "N agents" for All, the branch for a Space. */
+const spaceDetail = (page, key) =>
+  page.$eval(`.sidebar button[data-space-id="${key}"]`, (b) => {
+    const id = b.getAttribute('aria-describedby');
+    return id ? (document.getElementById(id)?.textContent ?? null) : null;
+  });
+
+const treeIds = (page) =>
+  page.$$eval('.sidebar [data-agent-tree] .session', (cs) =>
+    cs.map((c) => c.getAttribute('data-sessionid')),
+  );
+
+/** Wait until the tree shows exactly these rows, in any order. */
+const waitTreeIds = (page, ids, timeout = 5000) =>
+  page.waitForFunction(
+    (want) => {
+      const got = [...document.querySelectorAll('.sidebar [data-agent-tree] .session')].map((c) =>
+        c.getAttribute('data-sessionid'),
+      );
+      return got.length === want.length && want.every((id) => got.includes(id));
+    },
+    ids,
+    { timeout },
   );
 
 const sessionById = (page, id) =>
@@ -55,8 +86,8 @@ const sessionById = (page, id) =>
 const liveRegion = (page) =>
   page.$eval('.sidebar [aria-live="polite"]', (el) => el.textContent.replace(/\u200b/g, ''));
 
-async function headerMenu(page, name, item) {
-  await headerOf(page, name).click({ button: 'right' });
+async function spaceMenu(page, name, item) {
+  await spaceOf(page, name).click({ button: 'right' });
   await page.waitForSelector('.ctxmenu', { timeout: 5000 });
   await page.locator('.ctxmenu__item', { hasText: exact(item) }).click();
 }
@@ -74,28 +105,6 @@ async function killAll(page) {
   await page.waitForFunction(() => (window.__sessions || []).length === 0, null, {
     timeout: 15000,
   });
-}
-
-/** A real pointer on the header, then prove the revealed + wins the hit-test at its centre. */
-async function hoverPlus(page, name) {
-  const box = await headerOf(page, name).boundingBox();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.waitForTimeout(350);
-  const probe = await page.evaluate((n) => {
-    const label = [...document.querySelectorAll('.proj__label')].find(
-      (l) => l.querySelector('.proj__name')?.textContent === n,
-    );
-    const btn = label?.querySelector('.proj__add');
-    if (!btn) return null;
-    const r = btn.getBoundingClientRect();
-    const x = r.left + r.width / 2;
-    const y = r.top + r.height / 2;
-    const hit = document.elementFromPoint(x, y);
-    return { x, y, wins: !!hit && btn.contains(hit), label: btn.getAttribute('aria-label') };
-  }, name);
-  assert(probe, `${name}: header has no + button`);
-  assert(probe.wins, `${name}: the revealed + is not the hit target at its centre`);
-  return probe;
 }
 
 const userDataDir = profileDir('projects');
@@ -117,51 +126,77 @@ try {
   await killAll(page);
   await page.waitForSelector('.sidebar .emptystate__title', { timeout: 5000 });
   assert(
-    (await page.textContent('.sidebar .emptystate__title')) === 'No sessions yet',
+    (await page.textContent('.sidebar .emptystate__title')) === 'No agents yet',
     'first-run title',
   );
   assert(
     (await page.textContent('.sidebar .emptystate__hint')) ===
-      'A session is one terminal working across one or more folders. Run four at once.',
+      'An agent is one terminal working across one or more folders. Run four at once.',
     'first-run hint',
   );
-  assert((await page.locator('.sessbar').count()) === 0, 'first run shows no filter row');
-  log('first-run copy ✓');
+  // The filter is no longer a standing row: it hides behind Search agents (spec §9).
+  const search = page.getByRole('button', { name: 'Search agents', exact: true });
+  assert(
+    (await search.getAttribute('aria-expanded')) === 'false',
+    'first run: Search agents is collapsed',
+  );
+  assert(
+    (await page.locator('.sessbar, input.sessbar__filter').count()) === 0,
+    'first run shows no filter input',
+  );
+  assert((await spaceDetail(page, 'all')) === '0 agents', 'first run: All describes 0 agents');
+  log('first-run copy, collapsed search, All 0 agents ✓');
 
   const alphaId = await createProject(page, 'Alpha');
   const betaId = await createProject(page, 'Beta');
-  await page.waitForFunction(() => document.querySelectorAll('.sidebar .proj__label').length === 2);
-  const counts = await page.$$eval('.sidebar .proj__count', (cs) => cs.map((c) => c.textContent));
-  assert(JSON.stringify(counts) === '["0","0"]', `empty projects show count 0, got ${counts}`);
-  assert(
-    (await page.locator('.sidebar .emptystate__title').count()) === 0,
-    'projects exist: no first-run copy',
+  await page.waitForFunction(
+    (ids) => ids.every((id) => document.querySelector(`.sidebar button[data-space-id="${id}"]`)),
+    [alphaId, betaId],
   );
-  log('empty-after-action: two headers, count 0, no copy ✓');
+  const emptyOrder = await spaceNames(page);
+  assert(
+    JSON.stringify(emptyOrder) === '["All","Alpha","Beta"]',
+    `empty Spaces render as rows under All (no No space without loose agents), got ${JSON.stringify(emptyOrder)}`,
+  );
+  assert((await spaceDetail(page, 'all')) === '0 agents', 'empty Spaces add no agents to All');
+  // Zero agents is still the first run (spec §9 table): the Spaces exist above it.
+  assert(
+    (await page.textContent('.sidebar .emptystate__title')) === 'No agents yet',
+    'Spaces without agents keep the first-run copy',
+  );
+  log('empty-after-action: two Space rows, All 0 agents ✓');
 
   // ── Setup: one session per project, one standalone ───────────────────────
   const sAlpha = await openSession(page, { path: dirA, projectId: alphaId });
   const sBeta = await openSession(page, { path: dirB, roots: [dirR], projectId: betaId });
   const sLone = await openSession(page, { path: dirA });
-  await page.waitForFunction(() => document.querySelectorAll('.sidebar .proj__label').length === 3);
-  const order = await headerNames(page);
+  await page.waitForSelector('.sidebar button[data-space-id="no-space"]', { timeout: 10000 });
+  const order = await spaceNames(page);
   assert(
-    JSON.stringify(order) === '["Alpha","Beta","Standalone"]',
-    `header order, got ${JSON.stringify(order)}`,
+    JSON.stringify(order) === '["All","Alpha","Beta","No space"]',
+    `Space order, got ${JSON.stringify(order)}`,
   );
-  for (const n of ['Alpha', 'Beta', 'Standalone']) {
-    const c = (await headerOf(page, n).locator('.proj__count').textContent())?.trim();
-    assert(c === '1', `${n} count should be 1, got ${c}`);
+  assert((await spaceDetail(page, 'all')) === '3 agents', 'All counts the three agents');
+  // A Space row shows no count of its own; selecting it is how its membership shows.
+  for (const [key, sid] of [
+    [alphaId, sAlpha],
+    [betaId, sBeta],
+    ['no-space', sLone],
+  ]) {
+    await selectSpace(page, key);
+    await waitTreeIds(page, [sid]).catch(async () => {
+      assert(false, `Space ${key} should show only ${sid}, got ${await treeIds(page)}`);
+    });
   }
-  assert(
-    (await groupOf(page, 'Beta').locator(`.session[data-sessionid="${sBeta}"]`).count()) === 1,
-    'the Beta session renders under Beta',
-  );
-  log('header order Alpha, Beta, Standalone; one session each ✓');
+  await selectSpace(page, 'all');
+  await waitTreeIds(page, [sAlpha, sBeta, sLone]);
+  const betaLabel = await rowLabel(page, sBeta);
+  assert(/, Beta$/.test(betaLabel ?? ''), `under All a row names its Space, got ${betaLabel}`);
+  log('Space order All, Alpha, Beta, No space; one agent each ✓');
 
   // ── Rename, surviving a relaunch ─────────────────────────────────────────
-  await headerMenu(page, 'Alpha', 'Rename…');
-  const input = page.locator('.proj__rename');
+  await spaceMenu(page, 'Alpha', 'Rename…');
+  const input = page.locator('.sidebar .spaces input.proj__rename');
   await input.waitFor({ state: 'visible', timeout: 5000 });
   assert(
     await input.evaluate((el) => document.activeElement === el && el.selectionEnd === 5),
@@ -169,8 +204,29 @@ try {
   );
   await page.keyboard.type('Alpha2');
   await page.keyboard.press('Enter');
-  await headerOf(page, 'Alpha2').waitFor({ state: 'attached', timeout: 5000 });
+  await spaceOf(page, 'Alpha2').waitFor({ state: 'attached', timeout: 5000 });
+  assert(
+    (await spaceRow(page, alphaId).getAttribute('aria-label')) === 'Alpha2',
+    'the renamed Space keeps its id',
+  );
   log('rename → Alpha2 ✓');
+
+  // Double-click is the other way into rename; Escape leaves the name alone.
+  await spaceOf(page, 'Beta').dblclick();
+  await input.waitFor({ state: 'visible', timeout: 5000 });
+  assert((await input.inputValue()) === 'Beta', 'double-click opens rename on that Space');
+  await page.keyboard.press('Escape');
+  await spaceOf(page, 'Beta').waitFor({ state: 'visible', timeout: 5000 });
+  assert(
+    (await page.evaluate(
+      (id) => (window.__projects || []).find((p) => p.id === id)?.name,
+      betaId,
+    )) === 'Beta',
+    'Escape cancels the rename',
+  );
+  // The double-click's first click selected Beta; the selection persists per window.
+  await selectSpace(page, 'all');
+  log('double-click rename, Escape cancels ✓');
 
   await shutdownApp(launched.app, launched.page);
   launched = await launchApp({ userDataDir });
@@ -188,7 +244,7 @@ try {
     [sAlpha, sBeta, sLone],
     { timeout: 45000 },
   );
-  await headerOf(page, 'Alpha2').waitFor({ state: 'attached', timeout: 10000 });
+  await spaceOf(page, 'Alpha2').waitFor({ state: 'attached', timeout: 10000 });
   log('Alpha2 survives a relaunch ✓');
   // Restored sessions come back stale and the argv folder opens another; relaunch ours so the
   // delete below proves "keeps running" against a live process, and drop the extra.
@@ -215,77 +271,92 @@ try {
     { timeout: 30000 },
   );
 
-  // ── Header + opens New session on that project ───────────────────────────
-  const plus = await hoverPlus(page, 'Beta');
-  assert(plus.label === 'New session in Beta', `Beta + label, got ${plus.label}`);
-  await page.mouse.click(plus.x, plus.y);
-  await page.waitForSelector('button.ns-chip__body[aria-label="Project: Beta"]', { timeout: 8000 });
+  // ── The Space menu's New agent in space opens New agent on that Space ────
+  // (the old header's hover + is gone; the Space menu carries it, spec §3)
+  await spaceOf(page, 'Beta').click({ button: 'right' });
+  await page.waitForSelector('.ctxmenu', { timeout: 5000 });
+  const spaceItems = await page.$$eval('.ctxmenu .ctxmenu__item .ctxmenu__label', (els) =>
+    els.map((e) => e.textContent.trim()),
+  );
+  assert(
+    JSON.stringify(spaceItems) ===
+      JSON.stringify(['New agent in space', 'Open board', 'Rename…', 'Delete space…']),
+    `Space menu items, got ${JSON.stringify(spaceItems)}`,
+  );
+  await page.locator('.ctxmenu__item', { hasText: exact('New agent in space') }).click();
+  await page.waitForSelector('button.ns-chip__body[aria-label="Space: Beta"]', { timeout: 8000 });
   await escapeDialog(page);
-  log('header + → New session on Beta ✓');
+  log('Space menu New agent in space → New agent on Beta ✓');
 
-  // ── Ctrl+N takes the active session's project ────────────────────────────
+  // ── Mod+N under All takes the last focused agent's Space ─────────────────
   await page.locator(`.session[data-sessionid="${sAlpha}"] .session__name`).click();
   await page.waitForSelector(`.session--active[data-sessionid="${sAlpha}"]`, { timeout: 5000 });
   await page.keyboard.press('Control+N');
-  await page.waitForSelector('button.ns-chip__body[aria-label="Project: Alpha2"]', {
+  await page.waitForSelector('button.ns-chip__body[aria-label="Space: Alpha2"]', {
     timeout: 8000,
   });
   await escapeDialog(page);
   log('Ctrl+N with an Alpha2 session active → Alpha2 ✓');
 
   // ── Open board selects the project's session and shows the board ─────────
-  await headerMenu(page, 'Beta', 'Open board');
+  await spaceMenu(page, 'Beta', 'Open board');
   await page.waitForSelector('.board', { state: 'visible', timeout: 8000 });
   const activeCard = await page.getAttribute('.session--active', 'data-sessionid');
   assert(activeCard === sBeta, `Open board should select Beta's session, got ${activeCard}`);
-  await page.locator('.viewswitch__btn', { hasText: 'Workspace' }).click();
+  await runCommand(page, 'Open editor');
   await page.waitForSelector('.board', { state: 'detached', timeout: 5000 });
   log('Open board → Beta session active, Board shown ✓');
 
-  // ── Shift+F10 on a chevron opens the header menu, first item highlighted ─
-  const chevron = headerOf(page, 'Beta').locator('.proj__chevron');
-  await chevron.focus();
+  // ── Shift+F10 on a Space row opens its menu, first item highlighted ──────
+  const betaSpace = spaceOf(page, 'Beta');
+  await betaSpace.focus();
   await page.keyboard.press('Shift+F10');
   await page.waitForSelector('.ctxmenu', { timeout: 5000 });
   const activeItem = await page.textContent('.ctxmenu__item--active');
   assert(
-    activeItem?.trim() === 'New session in project',
+    activeItem?.trim() === 'New agent in space',
     `keyboard menu should highlight its first item, got ${activeItem}`,
   );
   await page.keyboard.press('Escape');
   await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
   assert(
-    await chevron.evaluate((el) => document.activeElement === el),
-    'Escape returns focus to the chevron',
+    await betaSpace.evaluate((el) => document.activeElement === el),
+    'Escape returns focus to the Space row',
   );
-  log('Shift+F10 → header menu, focus returns on Escape ✓');
+  log('Shift+F10 → Space menu, focus returns on Escape ✓');
 
   // ── Filter over a root folder name and an agent label ────────────────────
-  const visibleIds = () =>
-    page.$$eval('.sidebar .session', (cs) => cs.map((c) => c.getAttribute('data-sessionid')));
-  // Read before filtering: the root filter below hides this card.
-  const agentText = (
-    await page.locator(`.session[data-sessionid="${sLone}"] .session__meta`).textContent()
-  )
-    ?.trim()
-    .toLowerCase();
-  assert(agentText, 'the standalone card shows its agent label');
-  await page.fill('.sessbar__filter', 'rootfolder-zz');
-  await page.waitForTimeout(150);
-  const byRoot = await visibleIds();
-  assert(JSON.stringify(byRoot) === JSON.stringify([sBeta]), `root filter, got ${byRoot}`);
-  assert(
-    (await page.locator('.sidebar .proj__label').count()) === 1,
-    'a filter hides groups with no match (empty projects included)',
+  // Read before filtering: the root filter below hides this row. The old card's agent subtitle
+  // now lives in the row tooltip, third line (name, status, agent… — agentRowTooltip).
+  const loneTip = (await page.getAttribute(`.session[data-sessionid="${sLone}"]`, 'title')) ?? '';
+  const agentText = loneTip.split('\n')[2]?.trim().toLowerCase();
+  assert(agentText, `the standalone row's tooltip names its agent, got ${JSON.stringify(loneTip)}`);
+  await filterAgents(page, 'rootfolder-zz');
+  await waitTreeIds(page, [sBeta]).catch(async () => {
+    assert(false, `root filter should leave only ${sBeta}, got ${await treeIds(page)}`);
+  });
+  const groupHeads = await page.$$eval('.sidebar [data-agent-tree] .proj__label', (ls) =>
+    ls.map((l) => l.querySelector('.proj__count')?.textContent),
   );
-  await page.fill('.sessbar__filter', agentText);
-  await page.waitForTimeout(150);
-  assert((await visibleIds()).includes(sLone), `agent-label filter "${agentText}" misses the card`);
-  await page.fill('.sessbar__filter', '');
+  assert(
+    JSON.stringify(groupHeads) === '["1"]',
+    `a filter hides status groups with no match, got counts ${JSON.stringify(groupHeads)}`,
+  );
+  await filterAgents(page, agentText);
+  await page
+    .waitForFunction(
+      (sid) =>
+        !!document.querySelector(`.sidebar [data-agent-tree] .session[data-sessionid="${sid}"]`),
+      sLone,
+      { timeout: 5000 },
+    )
+    .catch(() => assert(false, `agent-label filter "${agentText}" misses the row`));
+  await filterAgents(page, '');
+  await waitTreeIds(page, [sAlpha, sBeta, sLone]);
   log('filter by root folder and by agent label ✓');
 
   // ── Delete: Enter cancels; the danger button deletes; sessions go standalone ─
-  await headerMenu(page, 'Alpha2', 'Delete project…');
+  await spaceMenu(page, 'Alpha2', 'Delete space…');
   await page.waitForSelector('.confirm', { timeout: 5000 });
   assert((await page.textContent('.confirm__title')) === 'Delete “Alpha2”?', 'delete dialog title');
   const msg = await page.textContent('.confirm__msg');
@@ -303,7 +374,11 @@ try {
   );
   log('Enter cancels the delete ✓');
 
-  await headerMenu(page, 'Alpha2', 'Delete project…');
+  await spaceMenu(page, 'Alpha2', 'Delete space…');
+  assert(
+    (await page.textContent('.confirm .btn--danger'))?.trim() === 'Delete space',
+    'the danger button says Delete space',
+  );
   await page.click('.confirm .btn--danger');
   await page.waitForFunction((id) => !(window.__projects || []).some((p) => p.id === id), alphaId, {
     timeout: 10000,
@@ -321,9 +396,21 @@ try {
     after.status === 'running',
     `the deleted project's session must keep running, got ${after.status}`,
   );
-  await groupOf(page, 'Standalone')
-    .locator(`.session[data-sessionid="${sAlpha}"]`)
-    .waitFor({ state: 'attached', timeout: 5000 });
+  await spaceRow(page, alphaId).waitFor({ state: 'detached', timeout: 5000 });
+  await page.waitForFunction(
+    (sid) =>
+      document
+        .querySelector(`.sidebar [data-agent-tree] .session[data-sessionid="${sid}"]`)
+        ?.getAttribute('aria-label')
+        ?.split(', ').length === 2,
+    sAlpha,
+    { timeout: 5000 },
+  );
+  await selectSpace(page, 'no-space');
+  await waitTreeIds(page, [sAlpha, sLone]).catch(async () => {
+    assert(false, `No space should hold the deleted Space's agent, got ${await treeIds(page)}`);
+  });
+  await selectSpace(page, 'all');
   await page.waitForFunction(
     () =>
       document
@@ -334,7 +421,7 @@ try {
   );
   log('delete → session standalone and running, announced ✓', await liveRegion(page));
 
-  // ── Phase B: Move to project… keeps the PTY ──────────────────────────────
+  // ── Phase B: Move to space… keeps the PTY ────────────────────────────────
   const loneName = (await sessionById(page, sLone)).name;
   const card = (id) => page.locator(`.sidebar .session[data-sessionid="${id}"]`);
   const beforeActivate = await page.evaluate((sid) => (window.__capBy?.[sid] ?? '').length, sLone);
@@ -374,15 +461,24 @@ try {
       return false;
     }, sLone);
   assert(await termHasMarker(), 'precondition: the marker is on the visible terminal');
-  // Only the age rendered on every card; the meter (Busy) and diffstat (Review) were per-state,
-  // and no card here is in either — session-card.test.ts covers those two.
-  const retired = await page.locator('.sidebar .session__age').count();
-  assert(retired === 0, `the 9b card has no age, found ${retired}`);
+  // The agent row brings back one state age (spec §6: <1m / Nm / Nh / Nd), hidden from the
+  // accessible name, which carries the status word instead.
+  const ages = await page.$$eval('.sidebar [data-agent-tree] .session', (rows) =>
+    rows.map((r) => {
+      const a = r.querySelector('.session__age');
+      return a ? { text: a.textContent, hidden: a.getAttribute('aria-hidden') } : null;
+    }),
+  );
+  assert(
+    ages.length === 3 &&
+      ages.every((a) => a && /^(<1m|\d+[mhd])$/.test(a.text) && a.hidden === 'true'),
+    `every row shows an aria-hidden state age, got ${JSON.stringify(ages)}`,
+  );
 
   async function openPicker(id) {
     await card(id).click({ button: 'right', position: { x: 30, y: 10 } });
     await page.waitForSelector('.ctxmenu', { timeout: 5000 });
-    await page.locator('.ctxmenu__item', { hasText: exact('Move to project…') }).click();
+    await page.locator('.ctxmenu__item', { hasText: exact('Move to space…') }).click();
     await page.waitForSelector('.projpicker', { timeout: 5000 });
   }
 
@@ -397,9 +493,16 @@ try {
     { sid: sLone, pid: betaId },
     { timeout: 10000 },
   );
-  await groupOf(page, 'Beta')
-    .locator(`.session[data-sessionid="${sLone}"]`)
-    .waitFor({ state: 'attached', timeout: 5000 });
+  await page.waitForFunction(
+    (sid) =>
+      /, Beta$/.test(
+        document
+          .querySelector(`.sidebar [data-agent-tree] .session[data-sessionid="${sid}"]`)
+          ?.getAttribute('aria-label') ?? '',
+      ),
+    sLone,
+    { timeout: 5000 },
+  );
   assert((await sessionById(page, sLone)).status === 'running', 'the moved session keeps running');
   assert(await termHasMarker(), 'the moved session still shows its earlier output (same PTY)');
   await page.waitForFunction(
@@ -410,31 +513,42 @@ try {
     `Moved ${loneName} to Beta`,
     { timeout: 10000 },
   );
-  log('Move to project… → Beta, same PTY, announced ✓');
+  log('Move to space… → Beta, same PTY, announced ✓');
 
-  // ── + New project… creates once, even on a double Enter ──────────────────
+  // ── + New space… creates once, even on a double Enter ────────────────────
   await openPicker(sLone);
+  assert(
+    (await page.textContent('.projpicker__new'))?.trim() === '+ New space…',
+    'the picker offers + New space…',
+  );
   await page.locator('.projpicker__new').click();
   const nameInput = page.locator('.projpicker__name');
   await nameInput.waitFor({ state: 'visible', timeout: 5000 });
   await nameInput.fill('RMB pipeline');
   await nameInput.press('Enter');
   await page.keyboard.press('Enter');
-  await groupOf(page, 'RMB pipeline')
-    .locator(`.session[data-sessionid="${sLone}"]`)
-    .waitFor({ state: 'attached', timeout: 10000 });
+  await page.waitForFunction(
+    (sid) =>
+      /, RMB pipeline$/.test(
+        document
+          .querySelector(`.sidebar [data-agent-tree] .session[data-sessionid="${sid}"]`)
+          ?.getAttribute('aria-label') ?? '',
+      ),
+    sLone,
+    { timeout: 10000 },
+  );
   await page.waitForTimeout(800);
   const rmbCount = await page.evaluate(
     () => (window.__projects || []).filter((p) => p.name === 'RMB pipeline').length,
   );
   assert(rmbCount === 1, `a double Enter must create one project, got ${rmbCount}`);
-  const namesNow = await headerNames(page);
+  const namesNow = await spaceNames(page);
   assert(
-    namesNow.indexOf('RMB pipeline') >= 0 &&
-      namesNow.indexOf('RMB pipeline') < namesNow.indexOf('Standalone'),
-    `RMB pipeline should render above Standalone, got ${JSON.stringify(namesNow)}`,
+    namesNow.indexOf('RMB pipeline') > namesNow.indexOf('Beta') &&
+      namesNow.indexOf('RMB pipeline') < namesNow.indexOf('No space'),
+    `RMB pipeline should render after Beta and above No space, got ${JSON.stringify(namesNow)}`,
   );
-  log('+ New project… → one "RMB pipeline" holding the session ✓');
+  log('+ New space… → one "RMB pipeline" holding the session ✓');
 
   // ── Copy home path ───────────────────────────────────────────────────────
   await card(sLone).click({ button: 'right', position: { x: 30, y: 10 } });
@@ -461,21 +575,19 @@ try {
     log(clipboardPrecondition);
   } else log('Copy home path ✓');
 
-  // ── Drop a card on another group's header, then on its own ───────────────
+  // ── Drop a row on another Space row, then on its own, then on All ────────
   // dragend reports a point inside this window, so the host's cross-window hit-test no-ops.
   const bounds = await launched.app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].getBounds(),
   );
   const home_x = Math.round(bounds.x + bounds.width / 2);
   const home_y = Math.round(bounds.y + bounds.height / 2);
-  const dropOnHeader = (sid, headerName) =>
+  const dropOnSpace = (sid, spaceKey) =>
     page.evaluate(
-      async ({ sid, headerName, sx, sy }) => {
+      async ({ sid, spaceKey, sx, sy }) => {
         const src = document.querySelector(`.sidebar .session[data-sessionid="${sid}"]`);
-        const label = [...document.querySelectorAll('.proj__label')].find(
-          (l) => l.querySelector('.proj__name')?.textContent === headerName,
-        );
-        if (!src || !label) return { error: 'missing card or header' };
+        const label = document.querySelector(`.sidebar button[data-space-id="${spaceKey}"]`);
+        if (!src || !label) return { error: 'missing row or Space' };
         const dt = new DataTransfer();
         const fire = (el, type, extra = {}) =>
           el.dispatchEvent(
@@ -486,20 +598,25 @@ try {
         await tick();
         const accepted = !fire(label, 'dragover');
         await tick();
-        const cue = label.classList.contains('proj__label--dropinto');
+        const cue = label.classList.contains('space--drop');
         fire(label, 'drop');
         await tick();
+        const cueAfter = label.isConnected && label.classList.contains('space--drop');
         fire(src, 'dragend', { screenX: sx, screenY: sy });
-        return { accepted, cue };
+        return { accepted, cue, cueAfter };
       },
-      { sid, headerName, sx: home_x, sy: home_y },
+      { sid, spaceKey, sx: home_x, sy: home_y },
     );
 
-  const intoBeta = await dropOnHeader(sLone, 'Beta');
+  const othersBefore = await page.evaluate(
+    (ids) => ids.map((id) => (window.__sessions || []).find((s) => s.id === id)?.projectId ?? null),
+    [sAlpha, sBeta],
+  );
+  const intoBeta = await dropOnSpace(sLone, betaId);
   assert(!intoBeta.error, `drag setup: ${intoBeta.error}`);
   assert(
-    intoBeta.accepted && intoBeta.cue,
-    `Beta should accept the card with a drop-into cue: ${JSON.stringify(intoBeta)}`,
+    intoBeta.accepted && intoBeta.cue && !intoBeta.cueAfter,
+    `Beta should accept the row with a drop cue that clears on drop: ${JSON.stringify(intoBeta)}`,
   );
   await page.waitForFunction(
     ({ sid, pid }) => (window.__sessions || []).find((s) => s.id === sid)?.projectId === pid,
@@ -510,19 +627,32 @@ try {
     await page.evaluate((sid) => (window.__sessions || []).some((s) => s.id === sid), sLone),
     'the dropped session stays in this window',
   );
-  log('card dropped on Beta → filed into Beta, same window ✓');
-
-  const ontoOwn = await dropOnHeader(sLone, 'Beta');
+  const othersAfter = await page.evaluate(
+    (ids) => ids.map((id) => (window.__sessions || []).find((s) => s.id === id)?.projectId ?? null),
+    [sAlpha, sBeta],
+  );
   assert(
-    !ontoOwn.accepted && !ontoOwn.cue,
-    `its own header must refuse the card with no cue: ${JSON.stringify(ontoOwn)}`,
+    JSON.stringify(othersAfter) === JSON.stringify(othersBefore),
+    `only the dropped session moves: ${JSON.stringify({ othersBefore, othersAfter })}`,
+  );
+  log('row dropped on Beta → filed into Beta, only it moved, same window ✓');
+
+  const ontoOwn = await dropOnSpace(sLone, betaId);
+  assert(
+    !ontoOwn.error && !ontoOwn.accepted && !ontoOwn.cue,
+    `its own Space must refuse the row with no cue: ${JSON.stringify(ontoOwn)}`,
+  );
+  const ontoAll = await dropOnSpace(sLone, 'all');
+  assert(
+    !ontoAll.error && !ontoAll.accepted && !ontoAll.cue,
+    `All is never a drop target: ${JSON.stringify(ontoAll)}`,
   );
   await page.waitForTimeout(1000);
   assert(
     (await sessionById(page, sLone))?.projectId === betaId,
-    'a drop on its own header changes nothing',
+    'a drop on its own Space or on All changes nothing',
   );
-  log('card dropped on its own header → no cue, no change ✓');
+  log('row dropped on its own Space and on All → no cue, no change ✓');
 
   // ── Hover × closes the session ───────────────────────────────────────────
   const cardBox = await card(sLone).boundingBox();
@@ -537,8 +667,8 @@ try {
     const hit = document.elementFromPoint(x, y);
     return { x, y, wins: !!hit && btn.contains(hit), label: btn.getAttribute('aria-label') };
   }, sLone);
-  assert(kill, 'the hovered card has a close button');
-  assert(kill.label === 'Close session', `× label, got ${kill.label}`);
+  assert(kill, 'the hovered row has a close button');
+  assert(kill.label === `Close ${loneName}`, `× label, got ${kill.label}`);
   assert(kill.wins, 'the revealed × is not the hit target at its centre');
   await page.mouse.click(kill.x, kill.y);
   const confirmShown = await page

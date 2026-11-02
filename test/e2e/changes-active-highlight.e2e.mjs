@@ -16,7 +16,14 @@ import {
   tabTitles,
   waitActiveTab,
 } from './changes-fixture.mjs';
-import { assert, openSession, runScenario, waitForRepoGit } from './harness.mjs';
+import {
+  assert,
+  openSession,
+  runCommand,
+  runScenario,
+  showRightView,
+  waitForRepoGit,
+} from './harness.mjs';
 import { clickTerminalTab } from './nav-history-fixture.mjs';
 
 const FILLER = Array.from({ length: 80 }, (_, i) => `f${String(i).padStart(2, '0')}.txt`);
@@ -103,11 +110,16 @@ async function closeTab(page, title) {
   await page.waitForFunction((t) => !window.__sd.titles().includes(t), title, { timeout: 8000 });
 }
 
-const rtabActive = (page) =>
-  page.evaluate(() => document.querySelector('.rtab--active')?.textContent?.trim() ?? '');
+const shownViewLabel = (page) =>
+  page.evaluate(
+    () =>
+      document
+        .querySelector('button[data-right-view][aria-pressed="true"]')
+        ?.getAttribute('aria-label') ?? '',
+  );
 
 async function openFromFiles(page, name) {
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   const row = page.locator('.filerow', {
     has: page.locator('.filerow__name', { hasText: new RegExp(`^${name.replace('.', '\\.')}$`) }),
   });
@@ -201,14 +213,14 @@ runScenario('changes-active-highlight', async ({ page, log }) => {
 
   // ── file tab maps to the unstaged row; D2: opening a file switches the pane to Files ──
   await openFromFiles(page, 'a.txt');
-  const paneAfterOpen = await rtabActive(page);
+  const paneAfterOpen = await shownViewLabel(page);
   assert(paneAfterOpen.startsWith('Files'), `D2: pane after a file open is "${paneAfterOpen}"`);
   await openChangesPanel(page);
   await expectActive(page, [{ file: 'a.txt', section: 'Changes' }], 'a.txt file tab');
   await activateTab(page, 'b.txt (Working Tree)');
   await activateTab(page, 'a.txt');
   await expectActive(page, [{ file: 'a.txt', section: 'Changes' }], 'a.txt file tab re-activated');
-  assert((await rtabActive(page)).startsWith('Changes'), 'activating a tab keeps the pane');
+  assert((await shownViewLabel(page)).startsWith('Changes'), 'activating a tab keeps the pane');
   log('file tab → unstaged row; D2 file open switches to Files, tab activation does not ✓');
 
   // ── non-mapping tabs clear the highlight ─────────────────────────────────────
@@ -238,9 +250,9 @@ runScenario('changes-active-highlight', async ({ page, log }) => {
   // ── center view is not the editor ─────────────────────────────────────────────
   await activateTab(page, 'a.txt (Index)');
   await expectActive(page, [{ file: 'a.txt', section: 'Staged' }], 'before Board');
-  await page.locator('.viewswitch__btn[title="Feature Board"]').click();
+  await runCommand(page, 'Open feature board');
   await expectActive(page, [], 'Board center view');
-  await page.locator('.viewswitch__btn[title="Editor"]').click();
+  await runCommand(page, 'Open editor');
   await expectActive(page, [{ file: 'a.txt', section: 'Staged' }], 'back to Editor');
   log('Board center view clears the highlight; Editor restores it ✓');
 
@@ -274,7 +286,7 @@ runScenario('changes-active-highlight', async ({ page, log }) => {
   assert(!(await activeRowInView(page)), 'precondition: the row is scrolled away');
   log('Refresh with the same target leaves scrollTop alone ✓');
 
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await openChangesPanel(page);
   await expectActive(page, [{ file: 'zz-last.txt', section: 'Changes' }], 'remount');
   await waitInView(page, 'Files → Changes remount');

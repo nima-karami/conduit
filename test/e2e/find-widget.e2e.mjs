@@ -16,7 +16,7 @@
  *
  * Run: node test/e2e/run-smoke.mjs find-widget   (needs `npm run build` first)
  */
-import { assert, closeApp, openSession, REPO, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, REPO, runScenario, showRightView } from './harness.mjs';
 
 const THEMES = [
   { id: 'aero-dark', label: 'Aero Dark' },
@@ -131,7 +131,7 @@ const PROBE = `() => {
 
 runScenario('find-widget', async ({ app, page, log }) => {
   await openSession(page, { path: REPO });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow__name', { timeout: 20000 });
   await fileRowByName(page, 'webview').first().click();
   await fileRowByName(page, 'app.tsx').first().waitFor({ state: 'attached', timeout: 20000 });

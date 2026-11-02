@@ -3,12 +3,13 @@
  * §2, §7; plan T3.3). Two fake agents, A and B, so the real shim, gate, call flow and approval
  * card are in the path:
  *   - off: the global layer drops open_session from A's live tool list, and a call is refused;
- *   - ask: the card shows in A's window without taking focus, the chip counts it, and Deny,
+ *   - ask: the card shows in A's window without taking focus, the footer counts it, A's row reads
+ *     Needs you, and Deny,
  *     Approve and Always for this session each end the call as they say;
  *   - a double-click on Deny over two asks answers one: the buttons stay put as the card swaps
  *     to the next ask (no pager, shorter summary), read disabled for the guard, and no click
  *     reaches the app behind the card (QA L2, L3);
- *   - the chip focuses the card and Esc hands focus back, answering nothing;
+ *   - the footer's need-you button focuses the card and Esc hands focus back, answering nothing;
  *   - viewing: open_file from A while B is on screen is refused and opens nothing;
  *   - move:no: a focus:true open leaves A on screen;
  *   - a CLI's notifications/cancelled removes the card and gets no reply;
@@ -35,7 +36,15 @@ import {
   toolsSeen,
   until,
 } from './conduit-mcp-helpers.mjs';
-import { assert, phase, removeDir, runScenario, typeLine } from './harness.mjs';
+import {
+  assert,
+  phase,
+  removeDir,
+  rowLabel,
+  runScenario,
+  statusItem,
+  typeLine,
+} from './harness.mjs';
 
 const errCode = (r) => r?.error?.code;
 
@@ -52,7 +61,11 @@ await runScenario(
     writeFileSync(join(dirA, 'fixture.txt'), 'policy fixture\n');
 
     const makeActive = async (sessionId) => {
-      await page.locator(`.session[data-sessionid="${sessionId}"]`).click();
+      await page
+        .locator(
+          `[data-agent-tree] .session[data-sessionid="${sessionId}"] [data-agent-action="select"]`,
+        )
+        .click();
       assert(
         await until(async () => (await activeSessionId(page)) === sessionId, 5_000),
         `${sessionId} never became active`,
@@ -98,26 +111,42 @@ await runScenario(
       !(await page.evaluate(() => !!document.activeElement?.closest('.askcard'))),
       'the card took focus on arrival',
     );
-    const chip = () =>
-      page.evaluate(() => document.querySelector('.attnchip')?.textContent ?? null);
+    const attention = statusItem(page, 'attention');
+    const footer = () =>
+      page.evaluate(() => {
+        const btn = document.querySelector(
+          'footer[data-status-bar] [data-status-item="attention"]',
+        );
+        return btn
+          ? { text: btn.textContent?.trim() ?? '', title: btn.getAttribute('title') }
+          : null;
+      });
     assert(
-      await until(async () => (await chip())?.startsWith('1 needs you'), 5_000),
-      `chip: ${await chip()}`,
+      await until(async () => (await footer())?.text === '1 needs you', 5_000),
+      `footer attention: ${JSON.stringify(await footer())}`,
     );
-    // The chip is the keyboard way in: it focuses the card, and Esc hands focus back.
+    const askTip = `${a.handle} is waiting for your approval`;
+    assert((await footer())?.title === askTip, `footer tooltip: ${(await footer())?.title}`);
+    // The footer button is the keyboard way in: it focuses the card, and Esc hands focus back.
     const focusIn = (sel) => page.evaluate((s) => !!document.activeElement?.closest(s), sel);
-    await page.locator('.attnchip').click();
-    assert(await until(() => focusIn('.askcard'), 5_000), 'the chip did not focus the card');
+    const footerSel = 'footer[data-status-bar] [data-status-item="attention"]';
+    await attention.click();
+    assert(await until(() => focusIn('.askcard'), 5_000), 'the footer did not focus the card');
     await page.keyboard.press('Escape');
     assert(
-      await until(async () => !(await focusIn('.askcard')) && (await focusIn('.attnchip')), 5_000),
-      'Esc did not return focus to the chip',
+      await until(async () => !(await focusIn('.askcard')) && (await focusIn(footerSel)), 5_000),
+      'Esc did not return focus to the footer button',
     );
     assert((await card.count()) === 1, 'Esc answered or closed the card');
-    log('chip → card → Esc ✓');
-    await page
-      .locator(`.session[data-sessionid="${a.sessionId}"] .session__ask`)
-      .waitFor({ timeout: 5_000 });
+    log('footer → card → Esc ✓');
+    // The pending ask marks its caller's row Needs you (its old inline ask button is gone).
+    assert(
+      await until(
+        async () => ((await rowLabel(page, a.sessionId)) ?? '').includes(', Needs you'),
+        5_000,
+      ),
+      `A's row: ${await rowLabel(page, a.sessionId)}`,
+    );
     await clickAskAnswer(page, 'deny');
     const denied = await resultAfter(a.sessionId, before, 10_000);
     assert(errCode(denied) === 'denied', `deny: ${JSON.stringify(denied)}`);

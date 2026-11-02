@@ -10,7 +10,7 @@
 
 import { unlinkSync } from 'node:fs';
 import { closeAllDocs } from './goto-matrix.mjs';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, runCommand, runScenario } from './harness.mjs';
 import {
   activeSessionId,
   activeTab,
@@ -125,13 +125,11 @@ runScenario('editor-nav-history-lifecycle', async ({ page, log }) => {
   // AC14
   await openFile(page, root, 'l14a.ts');
   await openFile(page, root, 'l14b.ts');
-  await page.click('.viewswitch__btn[title="Feature Board"]');
-  await page.waitForSelector('.viewswitch__btn[title="Feature Board"][aria-selected="true"]', {
-    timeout: 5000,
-  });
+  await runCommand(page, 'Open feature board');
+  await page.waitForSelector('.board', { state: 'visible', timeout: 5000 });
   await page.keyboard.press('Alt+ArrowLeft');
   const editorShown = await page
-    .waitForSelector('.viewswitch__btn[title="Editor"][aria-selected="true"]', { timeout: 5000 })
+    .waitForFunction(() => !document.querySelector('.board, .arch'), null, { timeout: 5000 })
     .then(() => true)
     .catch(() => false);
   assert(editorShown, 'AC14: Back from the Board switches the center view to the editor');

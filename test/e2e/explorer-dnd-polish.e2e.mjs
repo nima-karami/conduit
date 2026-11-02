@@ -13,7 +13,15 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, finishScenario, launchApp, openSession, tapBridge } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  finishScenario,
+  launchApp,
+  openSession,
+  showRightView,
+  tapBridge,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[explorer-dnd-polish] SKIP — suite is Windows-only');
@@ -94,7 +102,7 @@ try {
   log('case-only rename (Foo.ts → foo.ts) survives ✓');
 
   // ── Test 3: F2 selects only the filename stem ──────────────────────────────
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await page.evaluate(
     (p) => window.agentDeck.post({ type: 'readDir', path: p }),
     project.replace(/\\/g, '/'),

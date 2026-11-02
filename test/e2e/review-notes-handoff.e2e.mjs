@@ -43,6 +43,7 @@ import {
   openReview,
   openSession,
   profileDir,
+  showRightView,
   tapBridge,
   writeToTerminal,
 } from './harness.mjs';
@@ -241,11 +242,7 @@ try {
   // leave Review first — the status list comes back with another doc active.
   await page.locator('.tab').first().click();
   await page.waitForSelector('.rnav', { state: 'detached', timeout: 8000 });
-  await page.evaluate(() => {
-    Array.from(document.querySelectorAll('.rtab'))
-      .find((el) => el.textContent?.trim().startsWith('Changes'))
-      ?.click();
-  });
+  await showRightView(page, 'changes');
   await page.waitForSelector('.change .change__file', { state: 'visible', timeout: 15000 });
   // A `.conduit/` write is kept out of fsChanged on purpose, so the list catches up on the next
   // refresh, not on the save (spec 2026-08-27-review-supercharge §12.10). This used to pass on

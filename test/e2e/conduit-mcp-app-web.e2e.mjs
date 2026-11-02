@@ -36,7 +36,7 @@ import {
   tapMcp,
   until,
 } from './conduit-mcp-helpers.mjs';
-import { assert, phase, removeDir, runScenario } from './harness.mjs';
+import { assert, centerViewShown, phase, removeDir, runCommand, runScenario } from './harness.mjs';
 import { openPalette, paletteRow } from './middle-click-surfaces-helpers.mjs';
 
 const errCode = (r) => r?.error?.code;
@@ -65,8 +65,7 @@ await runScenario(
         `${what}: active tab is ${await activeTab(page)}, not ${id}`,
       );
     const webTabs = async () => (await shownTabs(page)).filter((id) => id.startsWith('web:'));
-    const viewOn = () =>
-      page.evaluate(() => document.querySelector('.viewswitch__btn--on')?.getAttribute('title'));
+    const viewOn = () => centerViewShown(page);
 
     phase('setup');
     await hearLive(page);
@@ -123,15 +122,12 @@ await runScenario(
     log('focus:false adds the tab and keeps the active one and focus ✓');
 
     phase('editor forward');
-    await page.locator('.viewswitch__btn[title="Feature Board"]').click();
-    assert(
-      await until(async () => (await viewOn()) === 'Feature Board', 5_000),
-      'board never shown',
-    );
+    await runCommand(page, 'Open feature board');
+    assert(await until(async () => (await viewOn()) === 'board', 5_000), 'board never shown');
     const g3 = await callTool(page, a.sessionId, 'open_url', { url: `${url}g3` });
     assert(same(g3, { opened: `${url}g3` }), `editor forward: ${JSON.stringify(g3)}`);
     assert(
-      await until(async () => (await viewOn()) === 'Editor', 5_000),
+      await until(async () => (await viewOn()) === 'editor', 5_000),
       `center view stayed ${await viewOn()}`,
     );
     await waitActiveTab(web(`${url}g3`), 'editor forward');

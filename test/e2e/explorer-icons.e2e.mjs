@@ -7,7 +7,7 @@
  * round-trip.
  */
 
-import { assert, openSession, REPO, runScenario } from './harness.mjs';
+import { assert, openSession, REPO, runScenario, showRightView } from './harness.mjs';
 
 const fileRowByName = (page, name) =>
   page.locator('.filerow', {
@@ -26,7 +26,7 @@ runScenario('explorer-icons', async ({ page, log }) => {
     window.agentDeck.post({ type: 'ready' });
   });
 
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow', { state: 'attached', timeout: 20000 });
 
   const row = fileRowByName(page, 'package.json').first();

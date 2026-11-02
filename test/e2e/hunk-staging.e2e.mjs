@@ -18,7 +18,14 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openReview, openSession, runScenario } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  openReview,
+  openSession,
+  runScenario,
+  showRightView,
+} from './harness.mjs';
 
 const SCOPE_SEL = '[role="radiogroup"][aria-label="Scope"] [role="radio"]';
 
@@ -197,7 +204,7 @@ runScenario('hunk-staging', async ({ app, page, log }) => {
   log('conflict toasted and staged nothing ✓');
 
   // ---- (5) The editor peek --------------------------------------------------------------
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   const row = page.locator('.filerow', {
     has: page.locator('.filerow__name', { hasText: /^peek\.txt$/ }),
   });

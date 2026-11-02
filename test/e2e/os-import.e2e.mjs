@@ -11,7 +11,14 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, finishScenario, launchApp, openSession, tapBridge } from './harness.mjs';
+import {
+  assert,
+  finishScenario,
+  launchApp,
+  openSession,
+  showRightView,
+  tapBridge,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[os-import] SKIP — suite is Windows-only');
@@ -31,7 +38,7 @@ try {
   const { page, log } = { ...launched, log: (...a) => console.log('[os-import]', ...a) };
   await openSession(page, { path: project });
   await tapBridge(page);
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
 
   // The host import the drop wires up.
   const res = await page.evaluate(

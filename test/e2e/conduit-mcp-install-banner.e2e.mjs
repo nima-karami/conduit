@@ -53,17 +53,18 @@ await runScenario(
       DETECT_WITHIN_MS,
     );
     assert(detected, `notConnected: ${JSON.stringify((await mcpState(page))?.notConnected)}`);
-    await page
-      .locator(`.session[data-sessionid="${sid}"] .session__mcp-link`)
-      .and(
-        page.getByRole('img', {
-          name: 'Not connected: install Conduit for Claude Code in Settings → MCP',
-        }),
-      )
-      .waitFor({ timeout: 10_000 });
+    // The card's plug icon is gone; its explanation is a line of the row's tooltip.
+    await page.waitForFunction(
+      ({ id, tip }) =>
+        (document.querySelector(`[data-agent-tree] .session[data-sessionid="${id}"]`)?.title ?? '')
+          .split('\n')
+          .includes(tip),
+      { id: sid, tip: 'Not connected: install Conduit for Claude Code in Settings → MCP' },
+      { timeout: 10_000 },
+    );
     await banner.waitFor({ timeout: 10_000 });
     await banner.getByRole('button', { name: 'Install for Claude Code' }).waitFor();
-    log('claude typed → notConnected, unplug hint on the card, banner offers Install ✓');
+    log('claude typed → notConnected, unplug hint in the row tooltip, banner offers Install ✓');
 
     // 2. skip list
     const sidV = await openSession(page, { path: work });

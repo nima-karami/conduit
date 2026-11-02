@@ -25,7 +25,14 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { groupMatches, tokenRgb } from './canvas.mjs';
-import { assert, closeApp, openReview, openSession, runScenario } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  openReview,
+  openSession,
+  runScenario,
+  showRightView,
+} from './harness.mjs';
 import { contrast } from './row-color.mjs';
 
 const LINES = 2000;
@@ -87,11 +94,7 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
         '.diff-controls button[aria-label="Inline view"], .diff-controls button[aria-label="Side-by-side view"]',
       )
       .getAttribute('aria-label');
-  await page.evaluate(() => {
-    Array.from(document.querySelectorAll('.rtab'))
-      .find((el) => el.textContent?.trim().startsWith('Changes'))
-      ?.click();
-  });
+  await showRightView(page, 'changes');
   await page.locator('.change', { hasText: 'plain.ts' }).click();
   await page.waitForFunction(
     () => (window.monaco.editor.getDiffEditors?.() ?? []).length > 0,

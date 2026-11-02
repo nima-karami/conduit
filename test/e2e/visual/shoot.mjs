@@ -31,6 +31,8 @@ import {
   openHistory,
   openReview,
   profileDir,
+  runCommand,
+  showRightView,
 } from '../harness.mjs';
 import { ensureFixtureRepo, setArchProposal } from './fixture-repo.mjs';
 
@@ -141,7 +143,7 @@ const SCENES = {
     // states would otherwise look identical to one that produced them all.
     const observed = await page.evaluate(() =>
       [...document.querySelectorAll('.session')].map(
-        (el) => el.querySelector('.session__state')?.textContent ?? '?',
+        (el) => (el.getAttribute('aria-label') ?? '').split(', ')[1] ?? '?',
       ),
     );
     console.log(`  states on screen: ${observed.join(', ')}`);
@@ -151,8 +153,8 @@ const SCENES = {
     console.log(`  host statuses: ${statuses}`);
   },
 
-  async changes({ clickText, shot, nap }) {
-    await clickText('.rtab', 'Changes');
+  async changes({ page, shot, nap }) {
+    await showRightView(page, 'changes');
     await nap(1500);
     await shot('changes');
   },
@@ -293,7 +295,7 @@ const SCENES = {
       await rename(stopped, 'gateway logs');
       await click(`.session[data-sessionid="${first}"]`);
       await nap(800);
-      await click('.viewswitch__btn[title="Feature Board"]');
+      await runCommand(page, 'Open feature board');
       await nap(2500);
       await shot('board');
 
@@ -580,14 +582,14 @@ async function runTheme(theme, sceneNames, repo) {
     });
     await sleep(500);
   };
-  // Open the canvas with (or without) a pending proposal on disk. The view switcher toggles, so
-  // a scene that runs after another canvas scene has to leave first; requestArchitecture then
-  // re-reads both the doc and the proposal through the real host path.
+  // Open the canvas with (or without) a pending proposal on disk. A scene that runs after another
+  // canvas scene leaves it first, so the canvas mounts afresh; requestArchitecture then re-reads
+  // both the doc and the proposal through the real host path.
   const toCanvas = async (withProposal) => {
     setArchProposal(withProposal);
-    await click('.viewswitch__btn[title="Editor"]');
+    await runCommand(page, 'Open editor');
     await sleep(600);
-    await click('.viewswitch__btn[title="Architecture Canvas"]');
+    await runCommand(page, 'Open architecture canvas');
     await sleep(3000);
     await page.evaluate(
       (p) => window.agentDeck.post({ type: 'requestArchitecture', path: p }),

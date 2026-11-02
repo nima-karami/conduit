@@ -9,7 +9,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, runScenario, showRightView } from './harness.mjs';
 
 const ITEM = 'Open as new session';
 
@@ -64,7 +64,7 @@ runScenario('explorer-open-as-session', async ({ page, log }) => {
   writeFileSync(join(dir, 'top.txt'), 'top\n');
 
   await openSession(page, { path: dir });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await fileRow(page, 'pkg').first().waitFor({ state: 'attached', timeout: 20000 });
   log('temp project opened ✓');
 

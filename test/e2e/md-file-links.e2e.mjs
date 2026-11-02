@@ -16,7 +16,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, finishScenario, openSession, runScenario } from './harness.mjs';
+import { assert, finishScenario, openSession, runScenario, showRightView } from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[md-file-links] SKIP — suite is Windows-only');
@@ -36,7 +36,7 @@ writeFileSync(join(dir, 'index.md'), `# Index\n\n[open target](${fileUrl})\n`);
 
 runScenario('md-file-links', async ({ page, log }) => {
   await openSession(page, { path: dir });
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
 
   const openRow = async (name) => {
     const row = page.locator('.filerow', {

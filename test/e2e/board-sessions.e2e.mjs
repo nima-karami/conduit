@@ -22,6 +22,7 @@ import {
   createProject,
   openSession,
   removeDir,
+  runCommand,
   runScenario,
   stopServer,
   tapBridge,
@@ -96,7 +97,7 @@ runScenario('board-sessions', async ({ app, page, log }) => {
     const card = page.locator('.bcard', { hasText: TITLE }).first();
     const openBoard = async () => {
       if ((await page.locator('.board').count()) === 0) {
-        await page.locator('.viewswitch__btn[title="Feature Board"]').click();
+        await runCommand(page, 'Open feature board');
       }
       await card.waitFor({ state: 'visible', timeout: 15000 });
     };
@@ -145,7 +146,7 @@ runScenario('board-sessions', async ({ app, page, log }) => {
 
     const closeBoard = async () => {
       if ((await page.locator('.board').count()) > 0) {
-        await page.locator('.viewswitch__btn[title="Editor"]').click();
+        await runCommand(page, 'Open editor');
         await page.waitForSelector('.board', { state: 'detached', timeout: 10000 });
       }
     };

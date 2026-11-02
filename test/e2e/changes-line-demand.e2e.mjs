@@ -22,6 +22,7 @@ import {
   openSession,
   removeDir,
   runScenario,
+  showRightView,
   stopServer,
   waitForRepoGit,
 } from './harness.mjs';
@@ -40,23 +41,8 @@ const git = (cwd, ...args) =>
     env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
   });
 
-/** Show the right pane's Files tab (expanding the pane if collapsed). */
-async function openFilesTab(page) {
-  if (!(await page.isVisible('.rightpane'))) {
-    await page.keyboard.press('Control+Shift+E');
-    await page.waitForSelector('.rightpane', { state: 'visible', timeout: 8000 });
-  }
-  await page.evaluate(() => {
-    Array.from(document.querySelectorAll('.rtab'))
-      .find((el) => el.textContent?.trim().startsWith('Files'))
-      ?.click();
-  });
-  await page.waitForFunction(
-    () => document.querySelector('.rtab--active')?.textContent?.trim().startsWith('Files'),
-    null,
-    { timeout: 15000 },
-  );
-}
+/** Show the right panel's Files view (opening the panel if closed). */
+const openFilesTab = (page) => showRightView(page, 'files');
 
 /** Block until the host has spawned no git for `quietMs`, so a probe reset starts from silence. */
 async function gitQuiet(app, quietMs, budgetMs) {

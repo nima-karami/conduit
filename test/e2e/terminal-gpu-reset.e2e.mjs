@@ -117,7 +117,7 @@ const glyphPixels = async (app, page, sid) => {
 };
 
 const activate = async (page, sid) => {
-  await page.locator(`[data-sessionid="${sid}"] .session__text`).first().click();
+  await page.locator(`[data-sessionid="${sid}"] .session__select`).first().click();
   await page.waitForFunction((id) => (window.__terms?.[id]?.element?.offsetWidth ?? 0) > 0, sid, {
     timeout: 10000,
   });

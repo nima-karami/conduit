@@ -84,7 +84,9 @@ runScenario('chamfer-edge', async ({ app, page, log }) => {
 
   // The new-session modal carries the two that drifted longest: a filled primary button
   // beside a default one, and an accent-bordered selected launch pill.
-  await page.evaluate(() => document.querySelector('.sidebar__head .iconbtn:last-child')?.click());
+  await page.evaluate(() =>
+    document.querySelector('.sidebar button[aria-label="New agent"]')?.click(),
+  );
   await page.waitForSelector('.modal', { timeout: 10000 });
   await page.waitForTimeout(400);
 

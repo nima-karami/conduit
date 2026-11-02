@@ -21,7 +21,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { groupMatches, sampleCanvas, tokenRgb } from './canvas.mjs';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, runScenario, showRightView } from './harness.mjs';
 import { contrast } from './row-color.mjs';
 
 const seq = (n, f = (i) => `const v${i} = ${i};`) =>
@@ -66,7 +66,7 @@ const P_LAYOUT = (suffix) => {
 };
 
 const openInEditor = async (page, name) => {
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   const row = page.locator('.filerow', {
     has: page.locator('.filerow__name', { hasText: new RegExp(`^${name.replace('.', '\\.')}$`) }),
   });

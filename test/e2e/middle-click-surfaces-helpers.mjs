@@ -4,7 +4,7 @@
  * `*.e2e.mjs`.
  */
 
-import { assert } from './harness.mjs';
+import { assert, showRightView } from './harness.mjs';
 import {
   middleClickJitter,
   sameSnapshot,
@@ -149,20 +149,20 @@ export const backgroundOpener = (page, log) => async (label, target, title, stat
  * empty.
  */
 export async function replayPinnedAWithBackgroundB(page) {
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   await treeRow(page, 'a.ts').first().waitFor({ state: 'visible', timeout: 20000 });
   await treeRow(page, 'a.ts').first().dblclick();
   await waitActive(page, 'a.ts', 15000);
   await page.waitForSelector('.monaco-editor', { state: 'visible', timeout: 15000 });
   await focusEditor(page);
 
-  await page.locator('.rtab', { hasText: 'Changes' }).first().click();
+  await showRightView(page, 'changes');
   await changeRow(page, 'dirty.ts').first().waitFor({ state: 'visible', timeout: 20000 });
   await focusEditor(page);
   await middleClickJitter(page, changeRow(page, 'dirty.ts').first());
   await waitTab(page, 'dirty.ts (Working Tree)');
 
-  await page.click('.rtab:has-text("Files")');
+  await showRightView(page, 'files');
   await searchBox(page).fill(TOKEN);
   await match(page, 'a.ts', A_TOKEN_LINE).waitFor({ state: 'visible', timeout: 20000 });
   await match(page, 'b.ts', B_TOKEN_LINE).waitFor({ state: 'visible', timeout: 20000 });

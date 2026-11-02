@@ -26,7 +26,7 @@ import {
   URGENT_NOTICE,
   until,
 } from './conduit-mcp-helpers.mjs';
-import { assert, runScenario, typeLine } from './harness.mjs';
+import { assert, runScenario, statusItem, typeLine } from './harness.mjs';
 
 // Test budgets, derived from the product's clocks rather than guessed: once B's output stops, the
 // activity tracker reads idle after its busy window (1.5 s), the gate wants 3 s of output quiet
@@ -81,17 +81,16 @@ await runScenario(
         );
       }, 5_000);
       assert(raised, `no "urgent message waiting for ${b.handle}" attention while busy`);
-      // The same reason rides the topbar chip (spec §8 Attention chip).
-      const chipText = () =>
-        page
-          .locator('.attnchip')
-          .textContent()
-          .catch(() => '');
-      const onChip = await until(
-        async () => ((await chipText()) ?? '').includes(`urgent message waiting for ${b.handle}`),
+      // The same reason rides the footer's need-you button, as its first entry's tooltip (spec
+      // 2026-11-02-sidebar-agent-tree §7; it replaced the header chip).
+      const attention = statusItem(page, 'attention');
+      const footerTitle = async () =>
+        (await attention.count()) === 0 ? null : await attention.getAttribute('title');
+      const onFooter = await until(
+        async () => (await footerTitle()) === `urgent message waiting for ${b.handle}`,
         5_000,
       );
-      assert(onChip, `.attnchip text: ${await chipText()}`);
+      assert(onFooter, `footer attention title: ${await footerTitle()}`);
       // B's output runs BUSY_MS from before busyFrom; no notice may land inside it.
       while (Date.now() - busyFrom < BUSY_MS - 500) {
         assert(notices(b.sessionId).length === 0, 'a notice was typed while B was busy');

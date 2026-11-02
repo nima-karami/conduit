@@ -9,14 +9,14 @@
  *    shell then echoes on its prompt.
  */
 
-import { assert, openSession, REPO, runScenario, tapBridge } from './harness.mjs';
+import { assert, openSession, REPO, runScenario, showRightView, tapBridge } from './harness.mjs';
 
 const MIME = 'application/x-conduit-path';
 
 runScenario('terminal-drop', async ({ page, log }) => {
   await openSession(page, { path: REPO });
   await tapBridge(page);
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
 
   const pkg = page.locator('.filerow', {
     has: page.locator('.filerow__name', { hasText: /^package\.json$/ }),

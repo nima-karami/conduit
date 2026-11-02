@@ -274,9 +274,9 @@ async function phasePanelDock(page) {
     'PD: dropping the strip background on the explorer did not re-dock the center panel',
   );
 
-  // The explorer is barless: its tab row's background is its move-drag surface.
+  // The explorer is barless: its top-edge grip is its move-drag surface.
   const grip = await page.evaluate(() => {
-    const row = document.querySelector('.panel--explorer .rightpane__tabs');
+    const row = document.querySelector('.panel--explorer .rightpane__grip');
     const box = row?.getBoundingClientRect();
     if (!box) return null;
     const y = box.top + box.height / 2;
@@ -285,7 +285,7 @@ async function phasePanelDock(page) {
     }
     return null;
   });
-  assert(grip, 'PD: no background point on the explorer tab row');
+  assert(grip, 'PD: no background point on the explorer grip');
   const seenBar = await drag(page, grip, await center(body(page, 1), 'PD center'), {
     during: async () => ({
       centerArmed: await page.evaluate(

@@ -14,7 +14,7 @@
  *
  * Run: node test/e2e/run-smoke.mjs goto-index   (needs `npm run build` first)
  */
-import { assert, openSession, REPO, runScenario } from './harness.mjs';
+import { assert, openSession, REPO, runScenario, showRightView } from './harness.mjs';
 
 const fileRowByName = (page, name) =>
   page.locator('.filerow', {
@@ -58,7 +58,7 @@ runScenario('goto-index', async ({ page, log }) => {
   );
 
   // Open a real file through the app's own open path (explorer click).
-  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await showRightView(page, 'files');
   await page.waitForSelector('.filerow__name', { timeout: 20000 });
   await fileRowByName(page, 'webview').first().click();
   await fileRowByName(page, 'app.tsx').first().click();
