@@ -56,6 +56,24 @@ describe('mcp-ask-store', () => {
     });
   });
 
+  it('upserts a repeated mcp:ask by askId without duplicating its card', () => {
+    emit(ask('a1'));
+    emit(ask('a1'));
+    expect(store.getAsksSnapshot().map((a) => a.askId)).toEqual(['a1']);
+  });
+
+  it('an authoritative snapshot clears an ask whose askClosed event was lost', () => {
+    emit(ask('a1'));
+    emit(ask('a2'));
+    const snapshot: HostToWebview = {
+      type: 'mcp:asksSnapshot',
+      asks: [ask('a2') as Extract<HostToWebview, { type: 'mcp:ask' }>],
+    };
+    emit(snapshot);
+    emit(snapshot);
+    expect(store.getAsksSnapshot().map((a) => a.askId)).toEqual(['a2']);
+  });
+
   it('notifies subscribers on change and stops after unsubscribe', () => {
     const cb = vi.fn();
     const off = store.subscribeAsks(cb);

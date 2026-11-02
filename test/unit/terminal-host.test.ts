@@ -210,6 +210,22 @@ describe('terminal-host', () => {
     expect(r.attaches).toHaveLength(0);
   });
 
+  it('finished cold start stays ended across server reconnect', async () => {
+    const r = rig([
+      {
+        ok: true,
+        finished: { exitCode: 7, reason: 'exited', output: 'bye' },
+        prelude: paint('bye'),
+      },
+    ]);
+    await r.host.start(START);
+    r.setConnected(false);
+    r.setConnected(true);
+    r.host.serverConnected();
+    await flush();
+    expect(r.trace.filter((entry) => entry === 'call:sessions.start')).toHaveLength(1);
+  });
+
   it('refusal writes prelude only', async () => {
     const r = rig([{ ok: false, refusal: { reason: 'home-missing' }, prelude: paint('OLD') }]);
     await r.host.start(START);

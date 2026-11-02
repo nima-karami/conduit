@@ -60,7 +60,12 @@ afterEach(async () => {
 });
 
 async function mount(
-  o: { tab?: 'general' | 'mcp'; projectPath?: string | null; initialCli?: AgentCli } = {},
+  o: {
+    tab?: 'general' | 'mcp';
+    projectPath?: string | null;
+    initialCli?: AgentCli;
+    serverConnected?: boolean;
+  } = {},
 ) {
   host = document.createElement('div');
   document.body.append(host);
@@ -73,6 +78,7 @@ async function mount(
           initialTab={o.tab ?? 'mcp'}
           projectPath={o.projectPath ?? null}
           initialCli={o.initialCli}
+          serverConnected={o.serverConnected ?? true}
           onClose={() => {}}
           onSetChangesView={() => {}}
         />
@@ -100,6 +106,11 @@ const posted = () =>
     );
 
 describe('Settings → MCP tab', () => {
+  it('disables server-owned controls and explains the disconnect', async () => {
+    await mount({ serverConnected: false });
+    expect(settingSwitch(MCP_STR.settingsToggle)?.disabled).toBe(true);
+    expect(document.body.textContent).toContain('Connect to Conduit to change these settings.');
+  });
   it('MCP nav item sits after General', async () => {
     await mount();
     expect(navLabels().slice(0, 2)).toEqual(['General', S.tab]);

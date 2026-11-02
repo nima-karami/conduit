@@ -267,6 +267,42 @@ describe('createServerLifecycle start rule', () => {
     expect(h.spawned).toHaveLength(1);
     expect(h.state()).toBe('connected');
   });
+
+  it('an unanswered supervisor lookup becomes hc-unresponsive after the named deadline', async () => {
+    const h = await harness();
+    h.fake.onCall('terminal.get', () => new Promise(() => {}));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const operation = h.lifecycle.start();
+    await until(() => h.fake.calls.some((c) => c.method === 'terminal.get'), 'lookup');
+    vi.advanceTimersByTime(5_000);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(h.lifecycle.current()).toMatchObject({
+      state: 'unavailable',
+      reason: 'hc-unresponsive',
+    });
+    await operation;
+    expect(h.runs()).toBe(0);
+  });
+
+  it('a supervisor lookup that hangs after start becomes hc-unresponsive', async () => {
+    const h = await harness();
+    let lookups = 0;
+    h.fake.onCall('terminal.get', () => {
+      if (++lookups === 1) throw new HcRpcError(-32000, 'missing', { kind: 'not_found' });
+      return new Promise(() => {});
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const operation = h.lifecycle.start();
+    await until(() => lookups === 2, 'post-start lookup');
+    vi.advanceTimersByTime(5_000);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(h.lifecycle.current()).toMatchObject({
+      state: 'unavailable',
+      reason: 'hc-unresponsive',
+    });
+    await operation;
+    expect(h.runs()).toBe(1);
+  });
 });
 
 describe('createServerLifecycle versions (F6, D26)', () => {
@@ -384,6 +420,46 @@ describe('createServerLifecycle versions (F6, D26)', () => {
 });
 
 describe('createServerLifecycle F9 and explicit actions', () => {
+  it('a real hello timeout during lostConnection becomes unavailable', async () => {
+    const h = await harness({ supervisorLive: true });
+    await h.lifecycle.start();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    h.c2.silent = true;
+    h.c2.dropClients();
+    await until(() => h.state() === 'reconnecting', 'reconnecting');
+    await until(
+      () => h.fake.calls.filter((c) => c.method === 'terminal.get').length >= 2,
+      'supervisor check',
+    );
+    await until(() => timers.mock.calls.some(([, ms]) => ms === 500), 'backoff timer');
+    timers.mockRestore();
+    await vi.advanceTimersByTimeAsync(500);
+    await until(() => h.c2.calls('hello').length >= 2, 'reconnect hello');
+    vi.advanceTimersByTime(20_000);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(h.lifecycle.current()).toMatchObject({ state: 'unavailable', reason: 'hello-timeout' });
+  });
+  it('stopAll reports unavailable after the server connection drops', async () => {
+    const h = await harness({ supervisorLive: true });
+    await h.lifecycle.start();
+    await h.c2.close();
+    await until(() => h.state() === 'reconnecting', 'reconnecting');
+    expect(await h.lifecycle.stopAll()).toEqual({
+      ok: false,
+      reason: 'The background service is unavailable.',
+    });
+  });
+  it('failed stopAll restores connection monitoring for a later drop', async () => {
+    const h = await harness({ supervisorLive: true });
+    await h.lifecycle.start();
+    h.c2.on('server.stopAll', () => {
+      throw new Error('stop failed');
+    });
+    expect(await h.lifecycle.stopAll()).toEqual({ ok: false, reason: 'server error' });
+    h.c2.dropClients();
+    await until(() => h.state() === 'reconnecting', 'reconnect after failed stop');
+  });
   it('tracks the unique-name supervisor address before the first hello', async () => {
     const h = await harness({ supervisorLive: true });
     let hellos = 0;
@@ -410,8 +486,13 @@ describe('createServerLifecycle F9 and explicit actions', () => {
     const h = await harness({ supervisorLive: true });
     await h.lifecycle.start();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const timers = vi.spyOn(globalThis, 'setTimeout');
     await h.c2.close();
-    await until(() => h.state() === 'reconnecting' && vi.getTimerCount() > 0, 'recovery');
+    await until(
+      () => h.state() === 'reconnecting' && timers.mock.calls.some(([, ms]) => ms === 500),
+      'recovery backoff',
+    );
+    timers.mockRestore();
     vi.advanceTimersByTime(500);
     await until(() => h.settled() === 2 && vi.getTimerCount() > 0, 'failed reconnect');
     h.flags.marker = true;
@@ -537,8 +618,13 @@ describe('createServerLifecycle F9 and explicit actions', () => {
     await h.lifecycle.start();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const opened = h.clients();
+    const timers = vi.spyOn(globalThis, 'setTimeout');
     await h.c2.close();
-    await until(() => h.state() === 'reconnecting', 'reconnecting');
+    await until(
+      () => h.state() === 'reconnecting' && timers.mock.calls.some(([, ms]) => ms === 500),
+      'reconnecting backoff',
+    );
+    timers.mockRestore();
     const attempts = () => h.clients() - opened;
     for (const [i, delay] of [500, 1000, 2000, 4000, 5000, 5000].entries()) {
       await until(() => h.settled() === opened + i && vi.getTimerCount() > 0, `sleep ${i}`);

@@ -37,7 +37,12 @@ function setAsks(next: readonly PendingAskView[]): void {
 subscribe((m) => {
   if (m.type === 'mcp:ask') {
     const { type: _type, ...view } = m;
-    setAsks([...asks, view]);
+    const existing = asks.findIndex((a) => a.askId === view.askId);
+    setAsks(existing < 0 ? [...asks, view] : asks.map((a, i) => (i === existing ? view : a)));
+    return;
+  }
+  if (m.type === 'mcp:asksSnapshot') {
+    setAsks(m.asks);
     return;
   }
   if (m.type !== 'mcp:askClosed') return;

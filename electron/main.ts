@@ -254,6 +254,7 @@ import {
 import { defaultTreeKillDeps } from './process-tree';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
+import { stopAgentsBeforeQuit } from './quit-stop';
 import { createRepoTrackerHost } from './repo-tracker-host';
 import { collectRuntimeGarbage } from './runtime-gc';
 import { runtimeLayout } from './runtime-layout';
@@ -272,6 +273,7 @@ import { installSkill, listSkills } from './skills-service';
 import { createTerminalHost } from './terminal-host';
 import { createTerminalLinkFactory } from './terminal-link';
 import { checkForUpdate, initUpdater, quitAndInstall } from './updater';
+import { closeWindowSessions, reconcileSessionOwners } from './window-session-close';
 
 function readAboutInfo(): AboutInfo {
   try {
@@ -1888,6 +1890,7 @@ app.whenReady().then(() => {
   // ── Quit / close / update-relaunch guard (dirty-quit-guard spec §2) ──────────────
   // A window whose close the guard already proceeded: its re-fired close event passes through.
   const windowConfirmed = new Set<number>();
+  const windowClosing = new Set<number>();
 
   const liveWindow = (id: number): BrowserWindow | undefined => {
     const w = windows.get(id);
@@ -1906,6 +1909,14 @@ app.whenReady().then(() => {
   // F4: a plain quit leaves agents running; only the stop choice in the quit dialog arms this (the
   // palette's quitAndStop reason stops them without it).
   let stopAgentsOnQuit = false;
+  let stopFailureRequestId = 0;
+  const stopFailureAsks = new Map<
+    number,
+    {
+      windowId: number;
+      settle(choice: 'retry' | 'leave' | 'cancel'): void;
+    }
+  >();
 
   const closeGuard = createCloseGuard({
     windowIds: openWindows,
@@ -1956,15 +1967,39 @@ app.whenReady().then(() => {
         if (reason === 'update') quitAndInstall();
         else setImmediate(() => app.quit());
       };
-      if (!stopAgents || !lifecycle) {
+      if (!stopAgents) {
         finish();
         return;
       }
-      // stopAll is bounded by STOP_ALL_ANSWER_TIMEOUT_MS, so a dead server can't hold the quit.
-      void lifecycle.stopAll().then((r) => {
-        log.info('server', 'stopAll on quit', { ...r });
-        finish();
-      }, finish);
+      void stopAgentsBeforeQuit({
+        stop: () => lifecycle?.stopAll() ?? Promise.resolve({ ok: false }),
+        failure: async (failureReason) => {
+          const w = focusedWindow() ?? liveWindow(primaryWindowId);
+          if (!w) return 'cancel';
+          const requestId = ++stopFailureRequestId;
+          return new Promise<'retry' | 'leave' | 'cancel'>((resolve) => {
+            const closed = () => settle('cancel');
+            const settle = (choice: 'retry' | 'leave' | 'cancel') => {
+              stopFailureAsks.delete(requestId);
+              w.removeListener('closed', closed);
+              resolve(choice);
+            };
+            stopFailureAsks.set(requestId, { windowId: w.id, settle });
+            w.once('closed', closed);
+            w.webContents.send('to-webview', {
+              type: 'confirmStopAgentsFailed',
+              requestId,
+              reason: failureReason,
+            } satisfies HostToWebview);
+          });
+        },
+        finish,
+        cancel: () => {
+          stopAgentsOnQuit = false;
+          quitAsks.clear();
+          closeGuard.unlockAnswered();
+        },
+      });
     },
     proceedWindow: (id) => {
       const w = liveWindow(id);
@@ -1977,9 +2012,32 @@ app.whenReady().then(() => {
         return;
       }
       stopAgentsOnQuit = false;
-      windowConfirmed.add(id);
-      for (const s of sessionsOwnedBy(sessionOwner, id, store.list())) void removeSession(s.id);
-      w.close();
+      const ask = quitAsks.get(id);
+      quitAsks.delete(id);
+      windowClosing.add(id);
+      void closeWindowSessions({
+        sessionIds: sessionsOwnedBy(sessionOwner, id, store.list()).map((s) => s.id),
+        remove: (sessionId) => callServer('sessions.remove', { sessionId }).then(() => {}),
+        close: () => {
+          windowClosing.delete(id);
+          windowConfirmed.add(id);
+          if (!w.isDestroyed()) w.close();
+        },
+        failed: (message) => {
+          windowClosing.delete(id);
+          log.warn('window', 'session removal on close failed', { windowId: id, message });
+          if (!liveWindow(id)) return;
+          if (ask)
+            w.webContents.send('to-webview', {
+              type: 'quitAborted',
+              requestId: ask.requestId,
+            } satisfies HostToWebview);
+          w.webContents.send('to-webview', {
+            type: 'error',
+            message: `Couldn't close the window: ${message}`,
+          } satisfies HostToWebview);
+        },
+      });
     },
     resumeWindowClose: (id) => {
       const w = liveWindow(id);
@@ -2000,6 +2058,7 @@ app.whenReady().then(() => {
   // Closing the last window is a quit (its sessions are kept for restore); closing any other window
   // ends only that window's sessions. darwin keeps the app alive with no windows.
   const closeDecision = (w: BrowserWindow) => {
+    if (windowClosing.has(w.id)) return;
     if (openWindowCount() === 1 && process.platform !== 'darwin') app.quit();
     else closeGuard.requestWindowClose(w.id);
   };
@@ -2194,7 +2253,13 @@ app.whenReady().then(() => {
 
   /** The app's side of every server list: owners, cwd auto-follow, folder runtime, indexes. */
   const sessionsApplied = (diffs: SessionFolderDiff[]) => {
-    let membership = false;
+    let membership = reconcileSessionOwners(
+      sessionOwner,
+      store.list().map((s) => s.id),
+      (id) => !!liveWindow(id),
+      fallbackWindow(),
+      (id) => pendingCreates.isHeld(id),
+    );
     for (const d of diffs) {
       if (d.kind === 'removed') {
         forgetSession(d.sessionId);
@@ -2476,7 +2541,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'revealLogs':
-          void shell.openPath(log.logsDir());
+          void shell.openPath(userData());
           break;
         case 'openRepo':
           await openRepoRequest(m, senderId, replyHere);
@@ -3387,8 +3452,20 @@ app.whenReady().then(() => {
             const r = await callServer('serverSettings.patch', { patch: serverPatchOf(m.patch) });
             settings = mirrorServerKeys(settings, r.settings);
             persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
+            replyHere({
+              type: 'serverSettings:result',
+              requestId: m.requestId,
+              ok: true,
+              settings: r.settings,
+            });
           } catch (err) {
             log.warn('settings', 'server settings patch failed', { err: String(err) });
+            replyHere({
+              type: 'serverSettings:result',
+              requestId: m.requestId,
+              ok: false,
+              settings,
+            });
           }
           // On a failure this re-broadcasts the mirror, reverting the window's optimistic edit.
           postState();
@@ -3971,6 +4048,14 @@ app.whenReady().then(() => {
         case 'server:stopAllAndContinue':
           await lifecycle?.stopAllAndContinue();
           break;
+        case 'server:restartAgentsToUpdate':
+          await lifecycle?.stopAllAndContinue();
+          break;
+        case 'stopAgentsFailureDecision': {
+          const ask = stopFailureAsks.get(m.requestId);
+          if (ask?.windowId === senderId) ask.settle(m.choice);
+          break;
+        }
         case 'app:quitAndStopAgents':
           closeGuard.requestAppQuit('quitAndStop', senderId);
           break;
@@ -3989,7 +4074,7 @@ app.whenReady().then(() => {
         case 'quitDecision': {
           const ask = quitAsks.get(senderId);
           if (ask?.requestId === m.requestId) {
-            quitAsks.delete(senderId);
+            if (ask.reason !== 'windowClose' || !m.proceed) quitAsks.delete(senderId);
             if (!m.proceed) stopAgentsOnQuit = false;
             else if (m.stopAgents && ask.reason !== 'windowClose') stopAgentsOnQuit = true;
           }

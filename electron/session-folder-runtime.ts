@@ -124,26 +124,32 @@ export class SessionFolderRuntime {
     );
   }
 
-  private arm() {
+  private watchEntries(): { path: string; sessionId: string | undefined }[] {
+    const projects = [...this.projectsByWindow.values()].flatMap(({ p, sessionId }) =>
+      watchFoldersFor(p, sessionId ? this.deps.store.get(sessionId) : undefined).map((path) => ({
+        path,
+        sessionId,
+      })),
+    );
     const visible = this.deps.visibleSessionIds().flatMap((id) => {
       const s = this.deps.store.get(id);
-      return s ? watchFoldersFor(s.home, s) : [];
+      return s ? watchFoldersFor(s.home, s).map((path) => ({ path, sessionId: id })) : [];
     });
     // Hidden too: a write then marks only its repo, and switching back runs git for that repo
     // alone (multi-repo-tracking spec §2 "no catch-up git"). Bounded by open sessions; the
     // watcher folds nested roots into their ancestor's watch.
     const tracking = this.deps.store
       .list()
-      .flatMap((s) => (s.repos?.length ? watchFoldersFor(s.home, s) : []));
-    this.watcher.setFolders([
-      ...new Set([
-        ...[...this.projectsByWindow.values()].flatMap(({ p, sessionId }) =>
-          watchFoldersFor(p, sessionId ? this.deps.store.get(sessionId) : undefined),
-        ),
-        ...visible,
-        ...tracking,
-      ]),
-    ]);
+      .flatMap((s) =>
+        s.repos?.length
+          ? watchFoldersFor(s.home, s).map((path) => ({ path, sessionId: s.id }))
+          : [],
+      );
+    return [...projects, ...visible, ...tracking];
+  }
+
+  private arm() {
+    this.watcher.setFolders([...new Set(this.watchEntries().map(({ path }) => path))]);
   }
 
   private reconcilePlans() {
@@ -161,17 +167,25 @@ export class SessionFolderRuntime {
 
   private suspect(folders: string[]) {
     this.deps.log('warn', 'watch suspect', { folders });
-    const keys = new Set(folders.map(folderKey));
-    const affected = new Set(
-      [...this.projectsByWindow.values()].flatMap(({ p, sessionId }) =>
-        sessionId &&
-        watchFoldersFor(p, this.deps.store.get(sessionId)).some((root) => keys.has(folderKey(root)))
-          ? [sessionId]
-          : [],
-      ),
-    );
-    // The server rechecks only a path that is one of that session's own folders.
-    for (const id of affected) for (const folder of folders) this.deps.suspect(id, folder);
+    const suspectKeys = new Set(folders.map(folderKey));
+    const owned = new Map<string, Map<string, string>>();
+    const addOwned = (sessionId: string, path: string) => {
+      let pathsByKey = owned.get(sessionId);
+      if (!pathsByKey) {
+        pathsByKey = new Map();
+        owned.set(sessionId, pathsByKey);
+      }
+      pathsByKey.set(folderKey(path), path);
+    };
+
+    for (const { path, sessionId } of this.watchEntries()) if (sessionId) addOwned(sessionId, path);
+
+    // The server rechecks only a path this session contributed to the armed set.
+    for (const [id, pathsByKey] of owned)
+      for (const key of suspectKeys) {
+        const path = pathsByKey.get(key);
+        if (path !== undefined) this.deps.suspect(id, path);
+      }
   }
 
   private emit(sessionId: string) {

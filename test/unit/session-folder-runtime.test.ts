@@ -165,6 +165,15 @@ describe('SessionFolderRuntime (server list)', () => {
     h.suspect(['/x/R', '/w/a']);
     expect(h.suspects).toEqual(['a:/x/R', 'a:/w/a']);
   });
+
+  it('onSuspect includes a hidden session whose registered repos keep its folders armed', () => {
+    const h = harness();
+    h.sessions[1].repos = [{ root: '/w/b', name: 'b', folder: '/w/b', tag: 'home' }];
+    h.rt.reposChanged();
+    h.suspect(['/w/b']);
+    expect(h.armed.at(-1)).toContain('/w/b');
+    expect(h.suspects).toEqual(['b:/w/b']);
+  });
 });
 
 describe('SessionFolderRuntime (watcher)', () => {

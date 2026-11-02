@@ -15,12 +15,16 @@ function viewOf(
   state: ServerUiState,
   onRetry: () => void,
   onStopAllAndContinue: () => void,
+  onRestartAgentsToUpdate: () => void,
 ): BannerView | null {
   switch (state.state) {
     case 'unavailable':
       return {
         tone: 'error',
-        message: `${SERVICE} isn't running.`,
+        message:
+          state.reason === 'hc-unresponsive'
+            ? 'The terminal supervisor did not respond.'
+            : `${SERVICE} isn't running.`,
         logPath: state.logPath,
         action: { label: 'Retry', run: onRetry },
       };
@@ -47,6 +51,13 @@ function viewOf(
   if (runtime?.state === 'starting') return { tone: 'info', message: `${SERVICE} is starting…` };
   if (runtime?.state === 'degraded')
     return { tone: 'warn', message: `${SERVICE} is degraded: ${runtime.reason}.` };
+  if (runtime?.state === 'unavailable' && runtime.reason === 'terminal engine update pending')
+    return {
+      tone: 'warn',
+      message: 'The terminal engine was updated. Restart agents to use the new version.',
+      logPath: runtime.logPath,
+      action: { label: 'Restart agents to update', run: onRestartAgentsToUpdate },
+    };
   if (runtime?.state === 'unavailable')
     return {
       tone: 'error',
@@ -61,12 +72,14 @@ export function ServerBanner({
   state,
   onRetry,
   onStopAllAndContinue,
+  onRestartAgentsToUpdate,
 }: {
   state: ServerUiState;
   onRetry: () => void;
   onStopAllAndContinue: () => void;
+  onRestartAgentsToUpdate: () => void;
 }) {
-  const view = viewOf(state, onRetry, onStopAllAndContinue);
+  const view = viewOf(state, onRetry, onStopAllAndContinue, onRestartAgentsToUpdate);
   if (!view) return null;
   return (
     <div className={`server-banner server-banner--${view.tone}`} role="region" aria-label={SERVICE}>

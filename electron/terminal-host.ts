@@ -157,6 +157,9 @@ export function createTerminalHost(d: TerminalHostDeps) {
         return;
       }
       if ('finished' in r) {
+        const generation = d.store.generationOf(sessionId);
+        pane.generation = generation;
+        pane.endedGeneration = generation;
         writePaint(sessionId, r.prelude);
         releaseShow(sessionId, pane);
         showExit(sessionId, pane, r.finished.exitCode);

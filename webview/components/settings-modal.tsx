@@ -90,6 +90,7 @@ export function SettingsModal({
   onRelaunch,
   updateStatus,
   onSetChangesView,
+  serverConnected = true,
 }: {
   agents: AgentDefinition[];
   initialTab?: Tab;
@@ -100,6 +101,7 @@ export function SettingsModal({
   onClose: () => void;
   /** The same path as the Changes header toggle, so switching to All unpins (spec D15). */
   onSetChangesView: (view: ChangesViewMode) => void;
+  serverConnected?: boolean;
   onCheckUpdate?: () => void;
   onRelaunch?: () => void;
   updateStatus?: UpdateStatus | null;
@@ -153,6 +155,7 @@ export function SettingsModal({
                 update={update}
                 agents={agents}
                 onSetChangesView={onSetChangesView}
+                serverConnected={serverConnected}
               />
             )}
             {tab === 'mcp' && (
@@ -162,6 +165,7 @@ export function SettingsModal({
                 projectPath={projectPath}
                 focusCli={focusCli}
                 onFocusCliSpent={spendFocusCli}
+                serverConnected={serverConnected}
               />
             )}
             {tab === 'shortcuts' && <ShortcutsTab settings={settings} update={update} />}
@@ -878,13 +882,15 @@ const POLICY_TABS: readonly PolicyTab[] = ['all', ...CLI_KINDS];
 function McpToolPolicyRows({
   settings,
   update,
+  serverConnected,
 }: {
   settings: AppSettings;
   update: (p: Partial<AppSettings>) => void;
+  serverConnected: boolean;
 }) {
   const idBase = useId();
   const [tab, setTab] = useState<PolicyTab>('all');
-  const off = !settings.conduitMcp;
+  const off = !settings.conduitMcp || !serverConnected;
   const global = settings.mcpToolPolicy;
   const byCli = settings.mcpToolPolicyByCli;
   const tabId = (t: PolicyTab) => `${idBase}-tab-${t}`;
@@ -983,12 +989,14 @@ function McpTab({
   projectPath,
   focusCli,
   onFocusCliSpent,
+  serverConnected,
 }: {
   settings: AppSettings;
   update: (p: Partial<AppSettings>) => void;
   projectPath: string | null;
   focusCli?: AgentCli;
   onFocusCliSpent: () => void;
+  serverConnected: boolean;
 }) {
   const S = MCP_STR.install;
   const install = useMcpInstall(projectPath);
@@ -1001,8 +1009,15 @@ function McpTab({
     <>
       <SetGroup title={MCP_STR.settingsTitle}>
         <Section title={MCP_STR.settingsToggle} desc={MCP_STR.settingsDesc}>
-          <Toggle value={settings.conduitMcp} onChange={(v) => update({ conduitMcp: v })} />
+          <Toggle
+            value={settings.conduitMcp}
+            disabled={!serverConnected}
+            onChange={(v) => update({ conduitMcp: v })}
+          />
         </Section>
+        {!serverConnected && (
+          <p className="settools__hint">Connect to Conduit to change these settings.</p>
+        )}
         <p className="settools__hint">{S.messagingNotices}</p>
       </SetGroup>
 
@@ -1031,7 +1046,7 @@ function McpTab({
       </SetGroup>
 
       <SetGroup title={S.toolsTitle}>
-        <McpToolPolicyRows settings={settings} update={update} />
+        <McpToolPolicyRows settings={settings} update={update} serverConnected={serverConnected} />
       </SetGroup>
 
       <SetGroup title={S.suggestTitle}>
@@ -1058,11 +1073,13 @@ function General({
   update,
   agents,
   onSetChangesView,
+  serverConnected,
 }: {
   settings: AppSettings;
   update: (p: Partial<AppSettings>) => void;
   agents: AgentDefinition[];
   onSetChangesView: (view: ChangesViewMode) => void;
+  serverConnected: boolean;
 }) {
   return (
     <>
@@ -1087,6 +1104,7 @@ function General({
         >
           <Toggle
             value={settings.restoreSessions}
+            disabled={!serverConnected}
             onChange={(v) => update({ restoreSessions: v })}
           />
         </Section>
@@ -1096,6 +1114,7 @@ function General({
         >
           <Toggle
             value={settings.autoRelaunchStale}
+            disabled={!serverConnected}
             onChange={(v) => update({ autoRelaunchStale: v })}
           />
         </Section>
@@ -1121,7 +1140,11 @@ function General({
           title="Track live working directory"
           desc="Re-root the Files and Changes views when the terminal reports a new working directory via OSC escape sequences"
         >
-          <Toggle value={settings.trackCwd} onChange={(v) => update({ trackCwd: v })} />
+          <Toggle
+            value={settings.trackCwd}
+            disabled={!serverConnected}
+            onChange={(v) => update({ trackCwd: v })}
+          />
         </Section>
         <Section
           title="Changes view"
@@ -1153,6 +1176,7 @@ function General({
           <SelectField
             ariaLabel="Resume automatically after a usage limit"
             value={settings.autoResumeOnLimit}
+            disabled={!serverConnected}
             options={[
               { value: 'arm', label: 'Arm it' },
               { value: 'offer', label: 'Ask me' },
@@ -1163,6 +1187,10 @@ function General({
         </Section>
       </SetGroup>
 
+      {!serverConnected && (
+        <p className="settools__hint">Connect to Conduit to change server settings.</p>
+      )}
+
       <SetGroup title="Accessibility">
         <Section title="Reduce motion" desc="Disable the animated background and other motion">
           <Toggle value={settings.reduceMotion} onChange={(v) => update({ reduceMotion: v })} />
@@ -1170,7 +1198,7 @@ function General({
       </SetGroup>
 
       <LoggingSection settings={settings} update={update} />
-      <ResetSection />
+      <ResetSection serverConnected={serverConnected} />
     </>
   );
 }
@@ -1225,7 +1253,7 @@ function LoggingSection({
   );
 }
 
-function ResetSection() {
+function ResetSection({ serverConnected }: { serverConnected: boolean }) {
   const { resetAll, resetLayout } = useSettings();
   return (
     <SetGroup title="Reset">
@@ -1236,8 +1264,11 @@ function ResetSection() {
         title="Reset all settings"
         desc="Everything (theme, fonts, shortcuts, layout…) back to defaults"
       >
-        <ConfirmButton label="Reset all" danger onConfirm={resetAll} />
+        <ConfirmButton label="Reset all" danger disabled={!serverConnected} onConfirm={resetAll} />
       </Section>
+      {!serverConnected && (
+        <p className="settools__hint">Connect to Conduit to reset server settings.</p>
+      )}
     </SetGroup>
   );
 }
@@ -1247,10 +1278,12 @@ function ConfirmButton({
   label,
   onConfirm,
   danger,
+  disabled,
 }: {
   label: string;
   onConfirm: () => void;
   danger?: boolean;
+  disabled?: boolean;
 }) {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
@@ -1261,6 +1294,7 @@ function ConfirmButton({
   return (
     <button
       className={`btn ${armed ? (danger ? 'btn--danger' : 'btn--primary') : ''}`}
+      disabled={disabled}
       onClick={() => {
         if (armed) {
           onConfirm();
