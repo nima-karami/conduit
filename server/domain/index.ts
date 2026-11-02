@@ -26,21 +26,26 @@ import type {
   SessionStorePort,
   TypingPort,
 } from '../../src/contracts/server-ports';
-import type {
-  ServerMethod,
-  ServerMethods,
-  ServerSettings,
-  ServerSnapshot,
-  SessionMutation,
-  SessionStartResult,
-  SessionView,
-  WindowPresence,
+import {
+  APP_SESSION_FIELDS,
+  type AppSessionField,
+  type ServerMethod,
+  type ServerMethods,
+  type ServerSettings,
+  type ServerSnapshot,
+  type SessionMutation,
+  type SessionStartResult,
+  type SessionView,
+  type WindowPresence,
 } from '../../src/contracts/server-protocol';
-import type {
-  ConduitLabels,
-  PersistedLaunchCounter,
-  SessionRuntime,
+import {
+  type ConduitLabels,
+  type PersistedLaunchCounter,
+  type SessionRuntime,
+  USER_XDG_CAPTURED_ENV,
+  USER_XDG_PASSTHROUGH,
 } from '../../src/contracts/session-identity';
+import type { FirstPaint } from '../../src/contracts/terminal-link';
 import type {
   AdoptedTerminal,
   LaunchIds,
@@ -69,7 +74,7 @@ import { CwdScanner } from '../../src/osc-cwd';
 import { userRootsOf } from '../../src/path-link-roots';
 import { parseSessions, serializeSessions } from '../../src/persistence';
 import { ProjectStore, parseProjects, serializeProjects } from '../../src/project-store';
-import type { LimitOffer } from '../../src/protocol';
+import type { LimitOffer, TermGeometry } from '../../src/protocol';
 import { spawnPrelude } from '../../src/scrollback-persistence';
 import {
   COMMAND_AGENT_ID,
@@ -100,6 +105,7 @@ import type {
   Session,
   SessionCommand,
   SessionOpener,
+  SpawnSpec,
   StartRefusal,
 } from '../../src/types';
 import { type RpcAnswer, RpcFault, type RpcRequest } from '../transport/pipe';
@@ -119,6 +125,8 @@ export interface DomainDeps {
   /** The `conduit.instance` label (InstanceNames.instance). */
   instance: string;
   e2e: boolean;
+  /** The server's own env (process.env): only the user's captured XDG values are read (D24). */
+  env: Readonly<Record<string, string | undefined>>;
   runtime: TerminalRuntime;
   launch: LaunchPort;
   drafts: DraftPort;
@@ -147,6 +155,8 @@ export interface Domain {
   adopted(terminals: readonly AdoptedTerminal[]): void;
   /** Every `ui.presence`; W4 reads only the focus part (folder health recheck). */
   presence(windows: readonly WindowPresence[]): void;
+  /** Every `term.resize`, besides C1 `resize`: a cold start's replay padding covers the pane's rows. */
+  resized(sessionId: string, size: TermGeometry): void;
   snapshot(): DomainSnapshot;
   settings(): ServerSettings;
   pendingTimers(): boolean;
@@ -169,6 +179,7 @@ type Handlers = {
   [M in DomainMethod]: Handler<ServerMethods[M]['result']>;
 } & {
   'folders.suspect': Handler<Record<string, never>>;
+  'system.resumed': Handler<Record<string, never>>;
 };
 
 /** C2 `sessions.changed` is coalesced to at most one per this (server-protocol.ts). */
@@ -183,10 +194,52 @@ interface Facts {
   lastSize: SessionRuntime['lastSize'];
 }
 
+/**
+ * A start with no `term.resize` yet (a windowless MCP open) runs at hc's default spawn size
+ * (docs/runs/2026-11-02-hc-spike/report.md), so that is what ConPTY's spawn clear covers.
+ */
+const HC_DEFAULT_ROWS = 120;
+
 const dim = (text: string) => `\r\n\x1b[2m— ${text} —\x1b[0m\r\n`;
 
-const lastGenerationOf = (s: Session): number =>
-  'lastGeneration' in s && typeof s.lastGeneration === 'number' ? s.lastGeneration : 0;
+type StoredSession = Session & Partial<PersistedLaunchCounter>;
+
+const lastGenerationOf = (s: StoredSession): number =>
+  typeof s.lastGeneration === 'number' ? s.lastGeneration : 0;
+
+/** The record minus what the app owns and the server-private launch counter. */
+function viewFields(s: Session): Omit<Session, AppSessionField> {
+  const record: StoredSession = { ...s };
+  for (const k of APP_SESSION_FIELDS) delete record[k];
+  delete record.lastGeneration;
+  return record;
+}
+
+/**
+ * The server runs under our core's isolated XDG; its sessions get the user's own values back, an
+ * empty one included, since terminal.run.env can only set (D24, M22).
+ */
+function withUserXdg(spec: SpawnSpec, env: DomainDeps['env']): SpawnSpec {
+  if (env[USER_XDG_CAPTURED_ENV] === undefined) return spec;
+  const restored: Record<string, string> = {};
+  for (const [xdg, passthrough] of Object.entries(USER_XDG_PASSTHROUGH)) {
+    const value = env[passthrough];
+    if (value !== undefined) restored[xdg] = value;
+  }
+  return { ...spec, env: { ...spec.env, ...restored } };
+}
+
+/** `prelude` with `more` appended as its own run, at the pane's size. */
+function composePrelude(prelude: FirstPaint | undefined, more: string): FirstPaint | undefined {
+  if (!more) return prelude;
+  return {
+    data: (prelude?.data ?? '') + more,
+    replay: [...(prelude?.replay ?? []), { length: more.length }],
+  };
+}
+
+const isStringArray = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.every((x) => typeof x === 'string');
 
 const str = (p: Record<string, unknown>, key: string): string => {
   const v = p[key];
@@ -283,12 +336,16 @@ export function createDomain(deps: DomainDeps): Domain {
   const factsOf = (id: string): Facts =>
     facts.get(id) ?? { generation: null, spawn: 'none', reportedStatus: null, lastSize: null };
   const setFacts = (id: string, patch: Partial<Facts>) => {
+    // A late runtime event for a closed session must not leave facts behind it. A record held for
+    // reconcile (restore off) is not closed: its unconfirmed launch decides whether it reopens.
+    if (!mgr.get(id) && !held.some((s) => s.id === id)) return;
     facts.set(id, { ...factsOf(id), ...patch });
     // Only the launch state decides what D40 writes; the rest is runtime-only.
     changed('spawn' in patch || 'generation' in patch);
   };
   const isLive = (id: string) => runtime.get(id)?.state === 'live';
   const restartSeq = new Map<string, number>();
+  const requestedSizes = new Map<string, TermGeometry>();
   const startRefusals = new Map<string, StartRefusal>();
   const pendingRelaunchMarker = new Set<string>();
   const starts = new Map<string, Promise<SessionStartResult>>();
@@ -299,6 +356,10 @@ export function createDomain(deps: DomainDeps): Domain {
   let limitOffer: LimitOffer | null = null;
 
   let reconciled = false;
+  let markReconciled: () => void = () => {};
+  const reconciledReady = new Promise<void>((r) => {
+    markReconciled = r;
+  });
   const persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
   function writeSync(name: string, text: string) {
     try {
@@ -377,15 +438,7 @@ export function createDomain(deps: DomainDeps): Domain {
 
   function views(): SessionView[] {
     return mgr.list().map((s) => {
-      const {
-        repos: _repos,
-        repoGit: _repoGit,
-        activeRepoRoot: _activeRepoRoot,
-        repoPinned: _repoPinned,
-        pinnedRepoRoot: _pinnedRepoRoot,
-        autoRepoRoot: _autoRepoRoot,
-        ...rest
-      } = s;
+      const rest = viewFields(s);
       const f = factsOf(s.id);
       const agentScope = scopes.view(s.id);
       const seq = restartSeq.get(s.id);
@@ -515,6 +568,7 @@ export function createDomain(deps: DomainDeps): Domain {
       } else mgr.setStatus(t.sessionId, 'exited');
     }
     reconciled = true;
+    markReconciled();
     changed();
   }
 
@@ -657,10 +711,11 @@ export function createDomain(deps: DomainDeps): Domain {
     const inFlight = starts.get(id);
     if (inFlight) return inFlight.then((r) => attachResult(id) ?? r);
     if (!mgr.get(id)) return Promise.reject(new RpcFault('not_found', 'Session no longer exists'));
-    if (deps.stopping())
-      return Promise.resolve({ ok: false, refusal: { reason: 'server_stopping' } });
+    // A live session still attaches while stopping: a restart's settle leaves it running.
     const live = attachResult(id);
     if (live) return Promise.resolve(live);
+    if (deps.stopping())
+      return Promise.resolve({ ok: false, refusal: { reason: 'server_stopping' } });
     const f = factsOf(id);
     if (f.spawn === 'unconfirmed' && f.launchId && !retry)
       return Promise.resolve({
@@ -680,16 +735,29 @@ export function createDomain(deps: DomainDeps): Domain {
   };
 
   async function coldStart(id: string): Promise<SessionStartResult> {
+    // Until the first reconcile a running terminal of this session is not adopted yet, and
+    // spawning would start a second run of it.
+    await reconciledReady;
+    const adoptedLive = attachResult(id);
+    if (adoptedLive) return adoptedLive;
     // A restored session's first health check may still be marking missing folders.
     await folders.pending(id);
     // A session restored at start launches before the MCP endpoint listens; it waits, bounded.
     await deps.launch.whenLaunchReady();
     const s = mgr.get(id);
     if (!s) throw new RpcFault('not_found', 'Session no longer exists');
+    // Neutralized history of the previous process, before the plan check as today, so a refused
+    // start still shows it. Once per start: each call records the replay's tail in the ring.
+    const replay = settings().scrollbackPersistence ? scrollback.replayForColdStart(id) : null;
+    const history = replay?.data ? replay : undefined;
+    const refused = (
+      refusal: Extract<SessionStartResult, { ok: false }>['refusal'],
+      prelude: FirstPaint | undefined = history,
+    ): SessionStartResult => ({ ok: false, refusal, ...(prelude ? { prelude } : {}) });
     if (s.agentId === COMMAND_AGENT_ID && !s.command) {
       refuseStart(id, "can't start: the saved command is invalid");
       log.warn('pty', 'refused', { sessionId: id, reason: 'command-invalid' });
-      return { ok: false, refusal: { reason: 'command-invalid' } };
+      return refused({ reason: 'command-invalid' });
     }
     const def = effectiveDef(s, registry);
     const plan = buildLaunchSpec({
@@ -712,18 +780,16 @@ export function createDomain(deps: DomainDeps): Domain {
       if (plan.reason === 'home-missing') {
         // Re-checks the folders, so a home that has come back clears and the next start works.
         void folders.check(id);
-        return { ok: false, refusal: { reason: 'home-missing' } };
+        return refused({ reason: 'home-missing' });
       }
       const refusal: StartRefusal = { reason: 'unresolvable', command: plan.command };
       startRefusals.set(id, refusal);
       changed(false);
-      return { ok: false, refusal };
+      return refused(refusal);
     }
     for (const root of plan.skippedAddDirRoots)
       log.warn('pty', 'add-dir skipped', { sessionId: id, root });
-    // Neutralized history of the previous process; W6 records its tail in the ring.
-    const replay = settings().scrollbackPersistence ? scrollback.replayForColdStart(id) : null;
-    let spec = plan.spec;
+    let spec = withUserXdg(plan.spec, deps.env);
     if (settings().trackCwd) {
       const aug = cwdReportingAugmentation(def?.id ?? s.agentId, spec.args);
       if (aug?.args) spec = { ...spec, args: [...spec.args, ...aug.args] };
@@ -757,6 +823,17 @@ export function createDomain(deps: DomainDeps): Domain {
     lastLines.delete(id);
     // Claude's visible scope is read off the final args, so a user's own --add-dir counts.
     if (plan.addDir) scopes.captured(id, scopeFromSpawnArgs(spec.cwd, scopeArgs, resolve, s));
+    // Composed before the spawn: the child's first output may reach the ring before the reply.
+    const recordedRows = history?.replay.findLast((r) => r.geometry)?.geometry?.rows;
+    const rows = requestedSizes.get(id)?.rows ?? factsOf(id).lastSize?.rows ?? HC_DEFAULT_ROWS;
+    const marker = spawnPrelude(deps.platform, rows, {
+      relaunched: pendingRelaunchMarker.delete(id),
+      replayed: !!history,
+      ...(recordedRows === undefined ? {} : { recordedRows }),
+    });
+    const prelude = composePrelude(history, marker);
+    // In the ring before the child's first output; the app writes it from the prelude, so no show.
+    if (marker) scrollback.record(id, marker);
     const result = await runtime.spawn(id, spec, labels, ids);
     brief.commit(result.ok && 'terminal' in result);
     if (!(result.ok && 'terminal' in result)) scopes.ended(id);
@@ -769,6 +846,21 @@ export function createDomain(deps: DomainDeps): Domain {
         facts.delete(id);
         throw new RpcFault('not_found', 'Session no longer exists');
       }
+      if (refusal.reason === 'spawn_failed') {
+        // hc refused the run: a can't-start like a missing command. C2 has no spawn_failed refusal,
+        // so the result maps to `unresolvable`; the view's startRefusal stays unset, since its
+        // panel reads "not found" and hc's message says what really failed.
+        setFacts(id, { spawn: 'none' });
+        endEpisode(id);
+        refuseStart(id, `can't start: ${refusal.message}`);
+        log.warn('pty', 'refused', {
+          sessionId: id,
+          reason: 'spawn_failed',
+          message: refusal.message,
+        });
+        // The marker is already in the ring, so the pane is shown it too.
+        return refused({ reason: 'unresolvable', command: spec.command }, prelude);
+      }
       if (refusal.reason === 'spawn_unconfirmed')
         setFacts(id, { spawn: 'unconfirmed', launchId: refusal.launchId });
       scrollback.show(
@@ -779,17 +871,15 @@ export function createDomain(deps: DomainDeps): Domain {
             : 'Conduit is stopping',
         ),
       );
-      return { ok: false, refusal };
+      return refused(refusal, prelude);
     }
     if ('finished' in result) {
       setFacts(id, { spawn: 'none' });
       mgr.setStatus(id, 'exited');
       endEpisode(id);
-      return {
-        ok: true,
-        finished: result.finished,
-        prelude: scrollback.replayForColdStart(id) ?? { data: '', replay: [] },
-      };
+      // W6 already put the output in the ring; a second replay would record the tail twice.
+      const final = composePrelude(prelude, result.finished.output) ?? { data: '', replay: [] };
+      return { ok: true, finished: result.finished, prelude: final };
     }
     const { terminal } = result;
     if (!mgr.get(id)) {
@@ -802,19 +892,12 @@ export function createDomain(deps: DomainDeps): Domain {
     mgr.touch(id);
     // A message written into a shell that has not printed its prompt is lost: settle first.
     timers.onPtyStart(id);
-    const recordedRows = replay?.replay.findLast((r) => r.geometry)?.geometry?.rows;
-    const marker = spawnPrelude(deps.platform, terminal.size.rows, {
-      relaunched: pendingRelaunchMarker.delete(id),
-      replayed: !!replay?.data,
-      ...(recordedRows === undefined ? {} : { recordedRows }),
-    });
-    if (marker) scrollback.show(id, marker);
     return {
       ok: true,
       target: terminal.target,
       generation: terminal.generation,
       spawned: true,
-      ...(replay?.data ? { prelude: replay } : {}),
+      ...(prelude ? { prelude } : {}),
     };
   }
 
@@ -883,6 +966,7 @@ export function createDomain(deps: DomainDeps): Domain {
   }
 
   async function createFromApp(p: Record<string, unknown>): Promise<{ sessionId: string }> {
+    if (deps.stopping()) throw new RpcFault('server_stopping', 'Conduit is stopping');
     const agentId = str(p, 'agentId');
     const home = str(p, 'home');
     if (!registry.get(agentId) && agentId !== COMMAND_AGENT_ID)
@@ -956,6 +1040,8 @@ export function createDomain(deps: DomainDeps): Domain {
       if (started.refusal.reason === 'server_stopping')
         return { ok: false, code: 'server_stopping', message: 'Conduit is stopping' };
     }
+    // The session exists either way: a start that threw or refused for its own reasons (a command
+    // not found, a home gone) shows in the pane like an app open, and the caller can close it.
     return { ok: true, sessionId: r.sessionId, label: mgr.get(r.sessionId)?.name ?? '' };
   }
 
@@ -974,7 +1060,7 @@ export function createDomain(deps: DomainDeps): Domain {
     mgr.remove(id);
     scopes.ended(id);
     endEpisode(id);
-    for (const m of [facts, restartSeq, startRefusals, lastLines]) m.delete(id);
+    for (const m of [facts, restartSeq, startRefusals, lastLines, requestedSizes]) m.delete(id);
     pendingRelaunchMarker.delete(id);
     timers.onSessionDisposed(id);
     if (limitOffer?.sessionId === id) {
@@ -1011,8 +1097,8 @@ export function createDomain(deps: DomainDeps): Domain {
 
   async function relaunch(ids: unknown): Promise<{ relaunched: string[] }> {
     const relaunched: string[] = [];
-    for (const id of Array.isArray(ids) ? ids : []) {
-      if (typeof id !== 'string') continue;
+    if (!isStringArray(ids)) throw new RpcFault('invalid', 'Expected sessionIds');
+    for (const id of ids) {
       await folders.pending(id);
       const s = mgr.get(id);
       // A homeMissing session never spawns; the renderer is not trusted.
@@ -1058,6 +1144,7 @@ export function createDomain(deps: DomainDeps): Domain {
         | { ok: true }
         | { ok: false; reason: NonNullable<ServerMethods['sessions.mutate']['result']['reason']> },
     ) => (r.ok ? { ok: true } : { ok: false, reason: r.reason });
+    if (!mgr.get(id)) return { ok: false, reason: 'unknown-session' };
     switch (m?.op) {
       case 'rename':
         mgr.rename(id, String(m.name ?? ''));
@@ -1148,12 +1235,13 @@ export function createDomain(deps: DomainDeps): Domain {
     },
     'projects.rename': (p) => {
       if (!projectsAvailable()) throw new RpcFault('unavailable', 'store-unavailable');
-      if (!projectStore.rename(p.id, p.name)) throw new RpcFault('invalid', 'invalid-name');
+      if (!projectStore.rename(str(p, 'id'), p.name)) throw new RpcFault('invalid', 'invalid-name');
       return {};
     },
     'projects.delete': (p) => {
       if (!projectsAvailable()) throw new RpcFault('unavailable', 'store-unavailable');
-      if (projectStore.delete(p.id) && typeof p.id === 'string') mgr.clearProject(p.id);
+      const id = str(p, 'id');
+      if (projectStore.delete(id)) mgr.clearProject(id);
       return {};
     },
     'projects.reorder': (p) => {
@@ -1211,12 +1299,11 @@ export function createDomain(deps: DomainDeps): Domain {
       return {};
     },
     'timers.cancel': (p) => {
-      if (typeof p.id === 'string') timers.cancel(p.id);
+      timers.cancel(str(p, 'id'));
       return {};
     },
     'timers.renew': (p) => {
-      if (typeof p.id !== 'string') throw new RpcFault('invalid', 'Expected id');
-      const res = timers.renewSchedule(p.id);
+      const res = timers.renewSchedule(str(p, 'id'));
       if (!res.ok) throw new RpcFault('refused', res.error);
       return {};
     },
@@ -1248,6 +1335,11 @@ export function createDomain(deps: DomainDeps): Domain {
     },
     'folders.suspect': async (p) => {
       await folders.suspect(str(p, 'sessionId'), str(p, 'path'));
+      return {};
+    },
+    'system.resumed': () => {
+      // Timers armed before a suspend fire late or not at all; due schedules go out now.
+      timers.evaluate();
       return {};
     },
   };
@@ -1331,6 +1423,9 @@ export function createDomain(deps: DomainDeps): Domain {
     domain,
     adopted,
     presence: (windows) => folders.presence(windows),
+    resized: (id, size) => {
+      if (mgr.get(id)) requestedSizes.set(id, size);
+    },
     snapshot: () => ({
       sessions: views(),
       settings: settings(),

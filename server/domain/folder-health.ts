@@ -33,6 +33,7 @@ export class ServerFolderHealth {
   private readonly health: FolderHealth;
   private readonly loggedRejections = new Map<string, SessionOpReason>();
   private focusedWindow: number | null = null;
+  private visible = new Set<string>();
 
   constructor(private readonly deps: ServerFolderHealthDeps) {
     this.health = new FolderHealth({
@@ -51,22 +52,25 @@ export class ServerFolderHealth {
     return this.health.pending(sessionId);
   }
 
-  /** Only a path that is one of the session's own folders; the app's watcher may cover others. */
+  /** `only` limits the check to the session's own folders; the app's watcher may cover others. */
   suspect(sessionId: string, path: string): Promise<void> {
-    const s = this.deps.mgr.get(sessionId);
-    const key = folderKey(path);
-    if (!s || ![s.home, ...s.roots].some((f) => folderKey(f) === key)) return Promise.resolve();
     this.deps.log.warn('folders', 'watch suspect', { sessionId, path });
     return this.check(sessionId, [path]);
   }
 
-  /** Today's folders.focused(): a window gaining focus rechecks what it shows. */
+  /**
+   * Today's folders.focused(): a window gaining focus rechecks what it shows, and the focused
+   * window rechecks a session it newly shows.
+   */
   presence(windows: readonly WindowPresence[]): void {
     const focused = windows.find((w) => w.focused);
     const id = focused?.windowId ?? null;
-    if (id === this.focusedWindow) return;
+    const visible = new Set(focused?.visibleSessionIds ?? []);
+    const recheck =
+      id === this.focusedWindow ? [...visible].filter((s) => !this.visible.has(s)) : [...visible];
     this.focusedWindow = id;
-    for (const sessionId of focused?.visibleSessionIds ?? []) void this.check(sessionId);
+    this.visible = visible;
+    for (const sessionId of recheck) void this.check(sessionId);
   }
 
   dispose(): void {

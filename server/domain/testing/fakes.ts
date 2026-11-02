@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ServerEvent, ServerEvents } from '../../../src/contracts/server-protocol';
@@ -141,11 +141,31 @@ export interface HarnessOptions {
   replay?: FirstPaint | null;
   stopping?: boolean;
   e2e?: boolean;
+  env?: Record<string, string>;
+  platform?: NodeJS.Platform;
+  resolveCommand?: (command: string) => string | undefined;
+  /** Default true: the first reconcile (`adopted([])`) has run, so starts can spawn. */
+  reconciled?: boolean;
+}
+
+const tempDirs: string[] = [];
+const domains: Domain[] = [];
+
+/** For afterEach: disposes every harness's domain and removes the temp dirs harnesses made. */
+export function disposeHarnesses(): void {
+  for (const d of domains.splice(0)) d.dispose();
+  // dispose() doesn't wait for an async atomic write still in flight; rm retries past it.
+  for (const dir of tempDirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 }
 
 /** A domain over fakes for every port, in a fresh temp userData (posix paths on CI). */
 export function harness(opts: HarnessOptions = {}) {
-  const userData = opts.userData ?? mkdtempSync(join(tmpdir(), 'conduit-w4-'));
+  let userData = opts.userData;
+  if (!userData) {
+    userData = mkdtempSync(join(tmpdir(), 'conduit-w4-'));
+    tempDirs.push(userData);
+  }
   const home = join(userData, 'home');
   mkdirSync(home, { recursive: true });
   for (const [name, text] of Object.entries(opts.files ?? {}))
@@ -154,6 +174,7 @@ export function harness(opts: HarnessOptions = {}) {
   const calls = runtime.calls;
   const events: RecordedEvent[] = [];
   const shown: { sessionId: string; data: string }[] = [];
+  const recorded: { sessionId: string; data: string }[] = [];
   const written: { sessionId: string; data: string; generation?: number }[] = [];
   const drafts: { sessionId: string; data: string }[] = [];
   const submitted: { sessionId: string; text: string }[] = [];
@@ -164,9 +185,10 @@ export function harness(opts: HarnessOptions = {}) {
   const deps: DomainDeps = {
     userData,
     homeDir: home,
-    platform: process.platform,
+    platform: opts.platform ?? process.platform,
     instance: 'inst',
     e2e: opts.e2e ?? false,
+    env: opts.env ?? {},
     runtime,
     launch: {
       whenLaunchReady: async () => {
@@ -189,6 +211,10 @@ export function harness(opts: HarnessOptions = {}) {
       show: (sessionId, data) => {
         calls.push('show');
         shown.push({ sessionId, data });
+      },
+      record: (sessionId, data) => {
+        calls.push('record');
+        recorded.push({ sessionId, data });
       },
       forget: (id) => calls.push(`forget:${id}`),
     },
@@ -217,10 +243,12 @@ export function harness(opts: HarnessOptions = {}) {
     installState: () => 'not-installed',
     detectShells: () => [SHELL],
     detectClis: () => [CLAUDE],
-    resolveCommand: (c) => c,
+    resolveCommand: opts.resolveCommand ?? ((c) => c),
     log: { debug: log('debug'), info: log('info'), warn: log('warn'), error: log('error') },
   };
   const domain: Domain = createDomain(deps);
+  domains.push(domain);
+  if (opts.reconciled ?? true) domain.adopted([]);
   /** One C2 request; a refusal rejects with the RpcFault. */
   const call = async (method: string, params: Record<string, unknown> = {}): Promise<unknown> => {
     const answer = domain.handle({ id: 1, method, params });
@@ -245,6 +273,7 @@ export function harness(opts: HarnessOptions = {}) {
     events,
     types,
     shown,
+    recorded,
     written,
     drafts,
     submitted,

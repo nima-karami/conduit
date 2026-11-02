@@ -2,8 +2,16 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { harness } from '../../server/domain/testing/fakes';
+import {
+  disposeHarnesses,
+  harness,
+  isFault,
+  type RecordedEvent,
+} from '../../server/domain/testing/fakes';
 import type { SessionView } from '../../src/contracts/server-protocol';
+import type { TimedMessage } from '../../src/timed-messages';
+
+afterEach(disposeHarnesses);
 
 const ESC = '\x1b';
 const viewOf = (h: ReturnType<typeof harness>, id: string): SessionView | undefined =>
@@ -36,7 +44,6 @@ describe('server domain: event order', () => {
     expect(opened).toBeGreaterThanOrEqual(0);
     expect(opened).toBeLessThan(changed);
     expect(h.events[opened]?.data).toEqual({ sessionId: id, openerSessionId: 'x', focus: false });
-    h.domain.dispose();
   });
 
   it('emits timers.fired before the timers.changed of that fire', async () => {
@@ -47,17 +54,37 @@ describe('server domain: event order', () => {
     });
     // The PTY settle window holds a fresh launch's delivery; the e2e clock seam moves past it.
     await h.call('timers.test', { op: 'advance', ms: 10_000 });
-    await vi.waitFor(() => expect(h.types()).toContain('timers.fired'));
+    // The first timers.changed that carries the fire (its lastFire) must come after timers.fired.
+    const showsFire = (e: RecordedEvent) =>
+      e.type === 'timers.changed' &&
+      (e.data as { schedules: TimedMessage[] }).schedules.some((s) => s.lastFire !== undefined);
+    await vi.waitFor(() => expect(h.events.some(showsFire)).toBe(true));
     const fired = h.types().indexOf('timers.fired');
-    await vi.waitFor(() => expect(h.types().lastIndexOf('timers.changed')).toBeGreaterThan(fired));
+    expect(fired).toBeGreaterThanOrEqual(0);
+    expect(fired).toBeLessThan(h.events.findIndex(showsFire));
     expect(h.submitted).toEqual([{ sessionId: id, text: 'go' }]);
-    h.domain.dispose();
   });
 
   it('refuses timers.test unless started for e2e', async () => {
     const h = harness();
-    await expect(h.call('timers.test', { op: 'advance', ms: 1 })).rejects.toBeTruthy();
-    h.domain.dispose();
+    await expect(h.call('timers.test', { op: 'advance', ms: 1 })).rejects.toSatisfy((e: unknown) =>
+      isFault(e, 'refused'),
+    );
+  });
+
+  it('re-evaluates due timers on system.resumed', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const h = harness();
+    const id = await live(h);
+    await h.call('timers.set', {
+      schedule: { sessionId: id, message: 'wake', trigger: { kind: 'in', delayMs: 60_000 } },
+    });
+    // The machine slept past the due time: the clock moved, the armed timeout never ran.
+    vi.setSystemTime(Date.now() + 3_600_000);
+    await h.call('system.resumed');
+    // Microtasks only: advancing the fake clock would run the armed timeout and prove nothing.
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(h.submitted).toEqual([{ sessionId: id, text: 'wake' }]);
   });
 });
 
@@ -69,7 +96,6 @@ describe('server domain: internal subscribers on C1 data', () => {
     const line = viewOf(h, id)?.lastLine ?? '';
     expect(line.startsWith('hellohello')).toBe(true);
     expect(line.length).toBe(120);
-    h.domain.dispose();
   });
 
   it('arms a limit timer from the trailing lines per autoResumeOnLimit', async () => {
@@ -83,7 +109,6 @@ describe('server domain: internal subscribers on C1 data', () => {
     const other = await live(h);
     data(h, other, 'x', ["You've hit your session limit · resets 11:10pm (America/Toronto)"]);
     expect(h.domain.snapshot().timers.schedules.some((s) => s.sessionId === other)).toBe(false);
-    h.domain.dispose();
   });
 
   it('tracks bracketed paste for runAddDir and notes the paste as a draft before writing', async () => {
@@ -111,7 +136,6 @@ describe('server domain: internal subscribers on C1 data', () => {
     // scopes.output: claude confirming the folder ends the drift.
     data(h, id, `\u23BF  Added ${extra} as a working directory for this session\r\n`);
     await vi.waitFor(() => expect(viewOf(h, id)?.agentScope).toBeUndefined());
-    h.domain.dispose();
   });
 
   it('refuses add-dir while attention says busy', async () => {
@@ -128,7 +152,6 @@ describe('server domain: internal subscribers on C1 data', () => {
       reason: 'busy',
     });
     expect(h.written).toEqual([]);
-    h.domain.dispose();
   });
 
   it('follows the cwd from OSC reports into SessionView.cwd, never the app repo fields', async () => {
@@ -142,7 +165,6 @@ describe('server domain: internal subscribers on C1 data', () => {
     const view = viewOf(h, id) ?? {};
     for (const k of ['repos', 'repoGit', 'activeRepoRoot', 'autoRepoRoot', 'pinnedRepoRoot'])
       expect(k in view).toBe(false);
-    h.domain.dispose();
   });
 
   it('applies hc titles and runtime facts to the view', async () => {
@@ -161,7 +183,6 @@ describe('server domain: internal subscribers on C1 data', () => {
     });
     h.runtime.fire({ type: 'exit', sessionId: id, generation: 1, code: 0, reason: 'exited' });
     expect(viewOf(h, id)).toMatchObject({ status: 'exited', runtime: { spawn: 'none' } });
-    h.domain.dispose();
   });
 
   it('marks spawn unconfirmed on a C1 unconfirmed event and live on a late registration', async () => {
@@ -171,6 +192,5 @@ describe('server domain: internal subscribers on C1 data', () => {
     expect(viewOf(h, id)?.runtime).toMatchObject({ spawn: 'unconfirmed', generation: 4 });
     h.runtime.fire({ type: 'spawned', sessionId: id, generation: 4, size: { cols: 80, rows: 24 } });
     expect(viewOf(h, id)?.runtime).toMatchObject({ spawn: 'live', generation: 4 });
-    h.domain.dispose();
   });
 });
