@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AgentTreeRow } from '../../src/agent-tree';
 import type { ResolvedSessionIcon } from '../../src/session-icon';
 import { type AgentState, formatStateAge } from '../../src/sidebar-state';
@@ -116,12 +116,8 @@ export function AgentRow({
   onFocus?: () => void;
   drag?: AgentRowDragProps;
 }) {
-  const [draft, setDraft] = useState(session.name);
-  useEffect(() => {
-    if (editing) setDraft(session.name);
-  }, [editing, session.name]);
-  const commit = () => {
-    const next = draft.trim();
+  const endRename = (draft: string | null) => {
+    const next = draft?.trim();
     if (next && next !== session.name) onRename(next);
     onEditEnd();
   };
@@ -145,7 +141,8 @@ export function AgentRow({
       className={cls}
       role="treeitem"
       data-sessionid={session.id}
-      aria-level={row.depth + 1}
+      // Level 1 is the status group header: the tree is one flat list (see Sidebar).
+      aria-level={row.depth + 2}
       aria-selected={selected}
       aria-expanded={hasKids ? !row.folded : undefined}
       aria-label={label}
@@ -180,19 +177,11 @@ export function AgentRow({
       {editing ? (
         <span className="session__select">
           <SessionGlyph icon={icon} size={child ? 13 : 15} />
-          <input
+          <RenameInput
+            name={session.name}
+            label={SIDEBAR_STR.menu.rename}
             className="session__edit"
-            aria-label={SIDEBAR_STR.menu.rename}
-            autoFocus
-            value={draft}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === 'Enter') commit();
-              else if (e.key === 'Escape') onEditEnd();
-            }}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commit}
+            onEnd={endRename}
           />
         </span>
       ) : (
@@ -348,5 +337,53 @@ export function AgentRowPreview() {
         onFold={noop}
       />
     </div>
+  );
+}
+
+/** Rename in place: a Space, a new Space's name, or an agent row (spec §3, §6). */
+export function RenameInput({
+  name,
+  label,
+  className = 'proj__rename',
+  onEnd,
+}: {
+  name: string;
+  label?: string;
+  className?: string;
+  onEnd: (draft: string | null) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  // Enter unmounts the input, and a blur may follow; the first end wins.
+  const ended = useRef(false);
+  const end = (draft: string | null) => {
+    if (ended.current) return;
+    ended.current = true;
+    onEnd(draft);
+  };
+  useEffect(() => {
+    ref.current?.select();
+  }, []);
+  return (
+    <input
+      ref={ref}
+      className={className}
+      aria-label={label ?? SIDEBAR_STR.renameSpaceLabel(name)}
+      defaultValue={name}
+      autoFocus
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onBlur={(e) => end(e.currentTarget.value)}
+      onKeyDown={(e) => {
+        // The tree's own keys must not see typing.
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          end(e.currentTarget.value);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          end(null);
+        }
+      }}
+    />
   );
 }

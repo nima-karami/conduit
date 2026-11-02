@@ -46,7 +46,7 @@ describe('SIDEBAR_STR', () => {
     expect(SIDEBAR_STR.agentCount(12_345)).toBe(`${(12_345).toLocaleString()} agents`);
   });
 
-  it('row label: name and status, the Space only when given, a descendant ask spelled out', () => {
+  it('row label: name, status, the Space when given, then a descendant ask last', () => {
     expect(
       SIDEBAR_STR.rowLabel({ name: 'lead', state: 'working', descendantNeedsYou: false }),
     ).toBe('lead, Working');
@@ -57,7 +57,7 @@ describe('SIDEBAR_STR', () => {
         space: 'Conduit',
         descendantNeedsYou: true,
       }),
-    ).toBe('lead, Idle, a sub-agent needs you, Conduit');
+    ).toBe('lead, Idle, Conduit, a sub-agent needs you');
   });
 
   it('keeps user names verbatim in action labels', () => {
@@ -73,6 +73,6 @@ describe('SIDEBAR_STR', () => {
     expect(flat).not.toMatch(/project/i);
     expect(SIDEBAR_STR.all).toBe('All');
     expect(SIDEBAR_STR.noSpace).toBe('No space');
-    expect(SIDEBAR_STR.menu.moveSpace).toBe('Move to Space…');
+    expect(SIDEBAR_STR.menu.moveSpace).toBe('Move to space…');
   });
 });

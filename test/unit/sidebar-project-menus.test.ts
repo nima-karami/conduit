@@ -139,8 +139,8 @@ describe('Sidebar: Space menus', () => {
     const onOpenBoard = vi.fn();
     await render({ onNewInProject, onOpenBoard });
     await contextMenu(space('p-a'));
-    expect(menuLabels()).toEqual(['New agent in Space', 'Open board', 'Rename…', 'Delete space…']);
-    await act(async () => menuItem('New agent in Space')?.click());
+    expect(menuLabels()).toEqual(['New agent in space', 'Open board', 'Rename…', 'Delete space…']);
+    await act(async () => menuItem('New agent in space')?.click());
     expect(onNewInProject).toHaveBeenCalledWith('p-a');
     await contextMenu(space('p-a'));
     await act(async () => menuItem('Open board')?.click());
@@ -180,8 +180,8 @@ describe('Sidebar: Space menus', () => {
     const onNewInProject = vi.fn();
     await render({ onNewInProject });
     await contextMenu(space('no-space'));
-    expect(menuLabels()).toEqual(['New agent without a Space']);
-    await act(async () => menuItem('New agent without a Space')?.click());
+    expect(menuLabels()).toEqual(['New agent without a space']);
+    await act(async () => menuItem('New agent without a space')?.click());
     expect(onNewInProject).toHaveBeenCalledWith(null);
   });
 });

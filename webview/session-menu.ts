@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
 import { SNOOZE_MS } from '../src/attention';
-import type { Handle } from '../src/conduit-mcp/types';
+import type { Handle, McpUnavailableReason } from '../src/conduit-mcp/types';
 import type { MenuActivation, MenuItem } from './components/context-menu';
 import { MCP_STR } from './conduit-mcp-strings';
+import type { CardMcpStatus } from './mcp-card-status';
 import { SIDEBAR_STR } from './sidebar-strings';
 
 /**
@@ -34,12 +35,29 @@ export type SessionMenuAction =
   | 'closeOthers'
   | 'closeAll';
 
+/** Why messaging works or does not for this session, as the old card's badge said it. */
+export type SessionMcpLink = CardMcpStatus | { kind: 'unavailable'; reason: McpUnavailableReason };
+
+function mcpLinkTip(link: SessionMcpLink): string {
+  if (link.kind === 'connected') return MCP_STR.install.connectedTip(link.handle);
+  if (link.kind === 'unavailable') return MCP_STR.unavailable[link.reason];
+  return link.install === 'installed'
+    ? MCP_STR.install.notConnectedInstalledTip(link.cli)
+    : MCP_STR.install.notConnectedTip(link.cli);
+}
+
 export interface SessionMenuInput {
   name: string;
   maySplit: boolean;
   canRelaunch: boolean;
   pinned: boolean;
   hasApproval: boolean;
+  /** A reason or a pending ask: there is something to silence. Absent reads as false. */
+  snoozable?: boolean;
+  /** Epoch ms a live snooze ends, for its remaining time. */
+  snoozedUntil?: number;
+  /** The clock snoozedUntil is read against; defaults to now. */
+  now?: number;
   waitingTimers: number;
   hasMcp: boolean;
   /** The pause entry names the handle; null while the session has none. */
@@ -47,6 +65,7 @@ export interface SessionMenuInput {
   mcpPaused: boolean;
   mcpSwitchable: boolean;
   mcpSetupNeeded: boolean;
+  mcpLink?: SessionMcpLink | null;
   otherCount: number;
   allCount: number;
   windowMoves: readonly MenuItem[];
@@ -79,8 +98,16 @@ export function buildSessionMenu(input: SessionMenuInput): MenuItem[] {
   // What the old card carried as badges and buttons: the waiting ask, Snooze and the timers.
   const attention: MenuItem[] = [];
   if (input.hasApproval) attention.push(item('approval', M.approval));
+  if (input.snoozable) {
+    const left =
+      input.snoozedUntil === undefined
+        ? 0
+        : Math.ceil((input.snoozedUntil - (input.now ?? Date.now())) / 60_000);
+    attention.push(
+      item('snooze', M.snooze(SNOOZE_MS / 60_000), left > 0 ? { detail: M.snoozedLeft(left) } : {}),
+    );
+  }
   attention.push(
-    item('snooze', M.snooze(SNOOZE_MS / 60_000)),
     item(
       'timed',
       M.timed,
@@ -89,16 +116,17 @@ export function buildSessionMenu(input: SessionMenuInput): MenuItem[] {
   );
 
   const messaging: MenuItem[] = [];
+  // The old card's connection badge, in words: it explains and never acts.
+  if (input.mcpLink)
+    messaging.push({
+      label: mcpLinkTip(input.mcpLink),
+      icon: icons.messages,
+      disabled: true,
+      onClick: () => {},
+    });
   if (input.hasMcp && input.mcpHandle !== null) {
     const handle = input.mcpHandle;
     messaging.push(
-      // The old card's connection badge, in words: it explains and never acts.
-      {
-        label: MCP_STR.install.connectedTip(handle),
-        icon: icons.messages,
-        disabled: true,
-        onClick: () => {},
-      },
       item('messages', MCP_STR.openMessages),
       item(
         'pauseMcp',

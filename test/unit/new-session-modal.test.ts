@@ -425,7 +425,7 @@ describe('NewSessionModal', () => {
     };
     await render({ home: '/w/a' }, ctx({ active, sessions: [active] }));
     expect(q('.ns-chip__body')?.textContent).toBe('in RMB pipeline');
-    await click(q('button[aria-label="Remove from Space"]'));
+    await click(q('button[aria-label="Remove from space"]'));
     expect(q('.ns-chip--none')?.textContent).toBe('No space');
     await answerProbes();
     await answerBriefPreview();
@@ -469,7 +469,7 @@ describe('NewSessionModal', () => {
     expect(last('openRepo')?.projectId).toBe('p9');
   });
 
-  it('Esc in the New project input reverts to the row; the menu and dialog stay (review N6)', async () => {
+  it('Esc in the New space input reverts to the row; the menu and dialog stay (review N6)', async () => {
     await render({ home: '/w/a' });
     await click(q('.ns-chip--none'));
     await click(q('.ns-projects__new'));

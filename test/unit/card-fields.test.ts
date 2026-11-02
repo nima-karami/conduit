@@ -15,17 +15,7 @@ function makeSession(overrides: Partial<Session> & { id: string }): Session {
   };
 }
 
-describe('fieldValue folder/path', () => {
-  it('folder: basename of live cwd when cwd is set', () => {
-    const s = makeSession({ id: 's1', home: '/launch/dir', cwd: '/work/sub' });
-    expect(fieldValue(s, 'Agent', 'folder')).toBe('sub');
-  });
-
-  it('folder: falls back to home basename when cwd is undefined', () => {
-    const s = makeSession({ id: 's1', home: '/launch/dir' });
-    expect(fieldValue(s, 'Agent', 'folder')).toBe('dir');
-  });
-
+describe('fieldValue path', () => {
   it('path: full live cwd when cwd is set', () => {
     const s = makeSession({ id: 's1', home: '/launch/dir', cwd: '/work/sub' });
     expect(fieldValue(s, 'Agent', 'path')).toBe('/work/sub');
@@ -34,6 +24,13 @@ describe('fieldValue folder/path', () => {
   it('path: falls back to home when cwd is undefined', () => {
     const s = makeSession({ id: 's1', home: '/launch/dir' });
     expect(fieldValue(s, 'Agent', 'path')).toBe('/launch/dir');
+  });
+
+  it('agent and worktree read straight through', () => {
+    const s = makeSession({ id: 's1', worktree: 'wt' });
+    expect(fieldValue(s, 'Codex', 'agent')).toBe('Codex');
+    expect(fieldValue(s, 'Codex', 'worktree')).toBe('wt');
+    expect(fieldValue(makeSession({ id: 's2' }), '', 'worktree')).toBe('');
   });
 });
 

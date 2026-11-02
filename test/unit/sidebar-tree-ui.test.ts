@@ -67,6 +67,8 @@ interface Setup {
   onKill?: (id: string) => void;
   onNew?: () => void;
   sessionsLoaded?: boolean;
+  renamingId?: string;
+  onRowMenu?: (s: Session, at: { anchor: unknown; keyboard: true }) => void;
 }
 
 const spies = {
@@ -74,6 +76,7 @@ const spies = {
   reportVisibleIds: vi.fn<(ids: readonly string[]) => void>(),
 };
 let bumpFilter: () => void = () => {};
+let setSessions: (next: Session[]) => void = () => {};
 
 async function render(s: Setup) {
   spies.updateUi.mockClear();
@@ -82,6 +85,8 @@ async function render(s: Setup) {
     const [ui, setUi] = useState<SidebarUiState>({ ...defaultSidebarUi(), ...s.ui });
     const [filterRequest, setFilterRequest] = useState(0);
     bumpFilter = () => setFilterRequest((n) => n + 1);
+    const [sessions, setList] = useState(s.sessions);
+    setSessions = setList;
     const value: SidebarTreeContextValue = {
       ui,
       runtime: { seen: {}, stateSince: {} },
@@ -101,7 +106,7 @@ async function render(s: Setup) {
       SidebarTreeProvider,
       { value },
       createElement(Sidebar, {
-        sessions: s.sessions,
+        sessions,
         projects,
         windowCount: 1,
         onNewInProject: () => {},
@@ -122,6 +127,8 @@ async function render(s: Setup) {
         mcpNotConnected: {},
         mcpEnabled: false,
         onSetRenaming: s.onSetRenaming ?? (() => {}),
+        renamingId: s.renamingId,
+        onRowMenu: s.onRowMenu,
         sessionsLoaded: s.sessionsLoaded,
       }),
     );
@@ -135,7 +142,7 @@ async function render(s: Setup) {
 const q = <T extends Element = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const qa = <T extends Element = HTMLElement>(sel: string) => [...document.querySelectorAll<T>(sel)];
 const rowEl = (id: string) => q(`.session[data-sessionid="${id}"]`);
-const rowIds = () => qa('[role="treeitem"]').map((el) => el.dataset.sessionid);
+const rowIds = () => qa('.session[role="treeitem"]').map((el) => el.dataset.sessionid);
 const click = async (el: Element | null) => act(async () => (el as HTMLElement).click());
 async function key(el: Element, k: string, init: KeyboardEventInit = {}) {
   await act(async () => {
@@ -163,12 +170,16 @@ describe('selector contract', () => {
     expect(group.getAttribute('aria-expanded')).toBe('true');
     // Two roots (p and l); the descendants are not counted.
     expect(group.getAttribute('aria-label')).toBe('Idle (2)');
-    const content = document.getElementById(group.getAttribute('aria-controls') ?? '');
-    expect(content?.getAttribute('role')).toBe('group');
+    // One flat list: headers and rows are all direct children of the tree.
+    expect(group.getAttribute('role')).toBe('treeitem');
+    expect(group.getAttribute('aria-level')).toBe('1');
+    expect(group.parentElement).toBe(tree);
+    expect(rowEl('g').parentElement).toBe(tree);
+    expect(tree.querySelector('[role="group"], [role="none"]')).toBeNull();
     expect(rowIds()).toEqual(['p', 'c', 'g', 'l']);
-    expect(rowEl('p').getAttribute('aria-level')).toBe('1');
-    expect(rowEl('c').getAttribute('aria-level')).toBe('2');
-    expect(rowEl('g').getAttribute('aria-level')).toBe('3');
+    expect(rowEl('p').getAttribute('aria-level')).toBe('2');
+    expect(rowEl('c').getAttribute('aria-level')).toBe('3');
+    expect(rowEl('g').getAttribute('aria-level')).toBe('4');
     expect(rowEl('c').getAttribute('aria-selected')).toBe('true');
     expect(rowEl('p').getAttribute('aria-selected')).toBe('false');
     expect(rowEl('p').getAttribute('aria-expanded')).toBe('true');
@@ -213,7 +224,7 @@ describe('selector contract', () => {
     const header = q('button.proj__label[data-agent-group="blocked"]');
     expect(header.getAttribute('aria-label')).toBe('Needs you (1)');
     expect(rowEl('p').className).toContain('session--attention');
-    expect(rowEl('p').getAttribute('aria-label')).toBe('p, Idle, a sub-agent needs you, Alpha');
+    expect(rowEl('p').getAttribute('aria-label')).toBe('p, Idle, Alpha, a sub-agent needs you');
     expect(rowEl('g').getAttribute('aria-label')).toBe('g, Needs you, Alpha');
   });
 });
@@ -226,7 +237,7 @@ describe('Space filter', () => {
       expect.objectContaining({ selection: { kind: 'space', projectId: 'p-b' } }),
     );
     expect(rowIds()).toEqual(['c']);
-    expect(rowEl('c').getAttribute('aria-level')).toBe('1');
+    expect(rowEl('c').getAttribute('aria-level')).toBe('2');
     expect(rowEl('c').getAttribute('aria-label')).toBe('c, Idle');
     await click(q('button[data-space-id="no-space"]'));
     expect(rowIds()).toEqual(['l']);
@@ -235,7 +246,7 @@ describe('Space filter', () => {
   it('an empty selected Space says so', async () => {
     await render({ sessions: family(), ui: { selection: { kind: 'space', projectId: 'p-x' } } });
     expect(q('[data-agent-tree]')).toBeNull();
-    expect(document.body.textContent).toContain('No agents in this Space');
+    expect(document.body.textContent).toContain('No agents in this space');
   });
 });
 
@@ -243,17 +254,22 @@ describe('keyboard', () => {
   it('one tab stop; arrows, Home and End walk the visible order', async () => {
     await render({ sessions: family(), activeId: 'c' });
     expect(qa('[role="treeitem"][tabindex="0"]').map((e) => e.dataset.sessionid)).toEqual(['c']);
+    expect(q('button.proj__label').getAttribute('tabindex')).toBe('-1');
     for (const b of qa('.session button')) expect(b.getAttribute('tabindex')).toBe('-1');
     await act(async () => rowEl('c').focus());
     await key(rowEl('c'), 'ArrowDown');
     expect(document.activeElement).toBe(rowEl('g'));
     await key(rowEl('g'), 'End');
     expect(document.activeElement).toBe(rowEl('l'));
+    // Home and Up reach the group header, a treeitem of its own.
+    const header = q('button.proj__label[data-agent-group="idle"]');
     await key(rowEl('l'), 'Home');
+    expect(document.activeElement).toBe(header);
+    await key(header, 'ArrowDown');
     expect(document.activeElement).toBe(rowEl('p'));
     await key(rowEl('p'), 'ArrowUp');
-    expect(document.activeElement).toBe(rowEl('p'));
-    expect(qa('[role="treeitem"][tabindex="0"]').map((e) => e.dataset.sessionid)).toEqual(['p']);
+    expect(document.activeElement).toBe(header);
+    expect(qa('[role="treeitem"][tabindex="0"]')).toEqual([header]);
   });
 
   it('Left folds then goes to the parent; Right unfolds then enters the first child', async () => {
@@ -320,6 +336,126 @@ describe('keyboard', () => {
   });
 });
 
+describe('a row that changes group keeps its node', () => {
+  it('focus survives Working → Done and a pin', async () => {
+    await render({
+      sessions: [session('w', { busy: true, completions: 0 }), session('i')],
+      tree: { runtime: { seen: { w: 0, i: 0 }, stateSince: {} } },
+    });
+    const node = rowEl('w');
+    expect(q('button.proj__label[data-agent-group="working"]')).not.toBeNull();
+    await act(async () => node.focus());
+    await act(async () =>
+      setSessions([session('w', { busy: false, completions: 1 }), session('i')]),
+    );
+    expect(q('button.proj__label[data-agent-group="done"]')).not.toBeNull();
+    expect(q('button.proj__label[data-agent-group="working"]')).toBeNull();
+    expect(rowEl('w')).toBe(node);
+    expect(document.activeElement).toBe(node);
+    await click(node.querySelector('[data-agent-action="pin"]'));
+    expect(q('button.proj__label[data-agent-group="pinned"]')).not.toBeNull();
+    expect(rowEl('w')).toBe(node);
+  });
+
+  it('an open rename keeps its draft across the move', async () => {
+    await render({
+      sessions: [session('w', { busy: true })],
+      tree: { runtime: { seen: { w: 0 }, stateSince: {} } },
+      renamingId: 'w',
+    });
+    const input = q<HTMLInputElement>('input.session__edit');
+    input.value = 'half typed';
+    await act(async () => setSessions([session('w', { busy: false, completions: 1 })]));
+    expect(q('input.session__edit')).toBe(input);
+    expect(input.value).toBe('half typed');
+    expect(document.activeElement).toBe(input);
+  });
+
+  it('Escape in a row rename ends it without renaming, and only once', async () => {
+    const onSetRenaming = vi.fn();
+    await render({ sessions: [session('w')], renamingId: 'w', onSetRenaming });
+    const input = q<HTMLInputElement>('input.session__edit');
+    input.value = 'nope';
+    await key(input, 'Escape');
+    await act(async () => input.blur());
+    expect(onSetRenaming.mock.calls).toEqual([[null]]);
+  });
+});
+
+describe('focus repair', () => {
+  it('a row closed from its own menu hands focus to the nearest row', async () => {
+    const onContextMenu = vi.fn((e: React.MouseEvent, _s: Session) => e.preventDefault());
+    await render({ sessions: family(), onContextMenu });
+    await act(async () => rowEl('l').focus());
+    await act(async () => {
+      rowEl('l').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    });
+    // The App's menu takes focus while open, then Close removes the row.
+    await act(async () => (document.activeElement as HTMLElement).blur());
+    await act(async () => setSessions(family().filter((s) => s.id !== 'l')));
+    expect(document.activeElement).toBe(rowEl('g'));
+  });
+
+  it('the last row gone hands focus to New agent', async () => {
+    await render({ sessions: [session('a')] });
+    await act(async () => rowEl('a').focus());
+    await act(async () => setSessions([]));
+    expect(document.activeElement).toBe(q('button[aria-label="New agent"]'));
+  });
+
+  it('focus moved to a control outside the tree is never pulled back', async () => {
+    await render({ sessions: family() });
+    await act(async () => rowEl('l').focus());
+    const search = q<HTMLButtonElement>('button[aria-label="Search agents"]');
+    await act(async () => search.focus());
+    await act(async () => setSessions(family().filter((s) => s.id !== 'l')));
+    expect(document.activeElement).toBe(search);
+  });
+});
+
+describe('keyboard menu and group headers', () => {
+  it('Shift+F10 and the Menu key open the row menu anchored to the row', async () => {
+    const onRowMenu = vi.fn();
+    await render({ sessions: family(), onRowMenu });
+    const el = rowEl('c');
+    el.getBoundingClientRect = () =>
+      ({ left: 1, right: 201, top: 10, bottom: 36, width: 200, height: 26 }) as DOMRect;
+    const ev = new KeyboardEvent('keydown', {
+      key: 'F10',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      el.dispatchEvent(ev);
+    });
+    expect(ev.defaultPrevented).toBe(true);
+    expect(onRowMenu).toHaveBeenCalledWith(expect.objectContaining({ id: 'c' }), {
+      anchor: { left: 1, right: 201, top: 10, bottom: 36 },
+      keyboard: true,
+    });
+    await key(el, 'ContextMenu');
+    await key(el, 'F10');
+    expect(onRowMenu).toHaveBeenCalledTimes(2);
+  });
+
+  it('Left folds a group header, Right unfolds then enters its first root', async () => {
+    await render({ sessions: family() });
+    const header = () => q('button.proj__label[data-agent-group="idle"]');
+    await act(async () => header().focus());
+    await key(header(), 'ArrowLeft');
+    expect(header().getAttribute('aria-expanded')).toBe('false');
+    expect(rowIds()).toEqual([]);
+    await key(header(), 'ArrowRight');
+    expect(header().getAttribute('aria-expanded')).toBe('true');
+    await key(header(), 'ArrowRight');
+    expect(document.activeElement).toBe(rowEl('p'));
+    await key(rowEl('p'), 'ArrowLeft');
+    await key(rowEl('p'), 'ArrowLeft');
+    expect(document.activeElement).toBe(header());
+  });
+});
+
 describe('pins and groups', () => {
   it('Pin to top makes a Pinned group, and a pinned child roots there once', async () => {
     await render({ sessions: family() });
@@ -329,7 +465,7 @@ describe('pins and groups', () => {
       'Pinned (1)',
     );
     expect(rowIds()).toEqual(['g', 'p', 'c', 'l']);
-    expect(rowEl('g').getAttribute('aria-level')).toBe('1');
+    expect(rowEl('g').getAttribute('aria-level')).toBe('2');
     expect(rowEl('g').querySelector('[data-agent-action="pin"]')?.getAttribute('aria-label')).toBe(
       'Unpin',
     );
@@ -380,7 +516,7 @@ describe('search', () => {
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
     expect(rowIds()).toEqual(['g']);
-    expect(rowEl('g').getAttribute('aria-level')).toBe('1');
+    expect(rowEl('g').getAttribute('aria-level')).toBe('2');
     await act(async () => {
       const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
       set?.call(input, 'zzz');

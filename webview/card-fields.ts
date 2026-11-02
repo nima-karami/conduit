@@ -1,39 +1,17 @@
-import type { CardField } from '../src/settings';
 import type { Session } from '../src/types';
 import { CANT_START_TITLE, MISSING_HOME_TITLE, notFoundSegments } from './agent-scope-copy';
-import { relativeTime } from './relative-time';
 
-const STATUS_TEXT: Record<Session['status'], string> = {
-  running: 'running',
-  stale: 'idle',
-  exited: 'exited',
-};
+type RowField = 'agent' | 'path' | 'worktree';
 
-const basename = (p: string) => p.split(/[/]/).filter(Boolean).pop() || p;
-
-/** Resolve a session field to its display string ('' = nothing to show). */
-export function fieldValue(session: Session, agentLabel: string, field: CardField): string {
+/** The facts the row tooltip still shows from the old card fields ('' = nothing to show). */
+export function fieldValue(session: Session, agentLabel: string, field: RowField): string {
   switch (field) {
-    case 'name':
-      return session.name;
-    case 'live':
-      return session.lastLine ?? '';
     case 'agent':
       return agentLabel;
-    case 'folder':
-      return basename(session.cwd ?? session.home);
     case 'path':
       return session.cwd ?? session.home;
     case 'worktree':
       return session.worktree ?? '';
-    case 'time':
-      return relativeTime(session.createdAt);
-    case 'active':
-      return typeof session.lastActiveAt === 'number' ? relativeTime(session.lastActiveAt) : '';
-    case 'status':
-      return STATUS_TEXT[session.status];
-    case 'none':
-      return '';
   }
 }
 

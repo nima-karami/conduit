@@ -58,7 +58,7 @@ export const SIDEBAR_STR = {
    * All, and a descendant's Needs you, which the own mark does not show.
    */
   rowLabel: (o: { name: string; state: AgentState; space?: string; descendantNeedsYou: boolean }) =>
-    [o.name, STATE[o.state], o.descendantNeedsYou ? 'a sub-agent needs you' : '', o.space ?? '']
+    [o.name, STATE[o.state], o.space ?? '', o.descendantNeedsYou ? 'a sub-agent needs you' : '']
       .filter(Boolean)
       .join(', '),
   goTo: (name: string) => `Go to ${name}`,
@@ -73,12 +73,12 @@ export const SIDEBAR_STR = {
   firstRunTitle: 'No agents yet',
   firstRunHint: 'An agent is one terminal working across one or more folders. Run four at once.',
   startAgent: 'Start an agent',
-  emptySpace: 'No agents in this Space',
+  emptySpace: 'No agents in this space',
   noMatch: (q: string) => `No sessions match “${q}”`,
   loading: 'Loading agents…',
   // Space menus (spec §3).
-  newAgentInSpace: 'New agent in Space',
-  newAgentNoSpace: 'New agent without a Space',
+  newAgentInSpace: 'New agent in space',
+  newAgentNoSpace: 'New agent without a space',
   openBoard: 'Open board',
   renameSpace: 'Rename…',
   renameSpaceLabel: (name: string) => `Rename ${name}`,
@@ -96,12 +96,13 @@ export const SIDEBAR_STR = {
     relaunch: 'Relaunch',
     approval: 'View approval',
     snooze: (minutes: number) => `Snooze for ${count(minutes, 'minute', 'minutes')}`,
+    snoozedLeft: (minutes: number) => `${number.format(minutes)} min left`,
     timed: 'Timed message…',
     timedWaiting: (n: number) => `${number.format(n)} waiting`,
     rename: 'Rename',
     setIcon: 'Set icon…',
     duplicate: 'Duplicate session',
-    moveSpace: 'Move to Space…',
+    moveSpace: 'Move to space…',
     copyHome: 'Copy home path',
     copyName: 'Copy name',
     reveal: 'Reveal in Explorer',

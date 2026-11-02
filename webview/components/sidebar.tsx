@@ -10,13 +10,14 @@ import {
 import { resolveAgentIcon } from '../../src/agent-icon';
 import { sessionAgentLabel } from '../../src/agent-label';
 import {
+  type AgentTreeGroup,
   type AgentTreeModel,
   buildAgentTree,
   buildSpaceRows,
   type SpaceRowModel,
 } from '../../src/agent-tree';
 import type { McpNotConnected, McpSessionBadge } from '../../src/conduit-mcp/ui-types';
-import { triggerMenu } from '../../src/menu-position';
+import { type Rect, triggerMenu } from '../../src/menu-position';
 import { normalizeProjectName, renamedProjectName } from '../../src/project-name';
 import {
   deleteProjectDialog,
@@ -48,11 +49,14 @@ import { EmptyState } from './empty-state';
 import {
   AgentGroupHeader,
   type MenuAt,
-  RenameInput,
   type SpaceDropHandlers,
   SpaceRow,
 } from './project-group-header';
-import { AgentRow, type RowGuides } from './session-card';
+import { AgentRow, RenameInput, type RowGuides } from './session-card';
+
+const GROUP_NAV = 'group:';
+const groupNavId = (g: AgentGroup) => `${GROUP_NAV}${g}`;
+const isGroupNavId = (id: string) => id.startsWith(GROUP_NAV);
 
 /** One rendered row of the flattened, unfolded forest: the pointer and keyboard order. */
 interface FlatRow {
@@ -60,6 +64,11 @@ interface FlatRow {
   guides: RowGuides;
   lastChild: boolean;
 }
+
+/** The tree's direct children, in pointer and keyboard order. */
+type TreeItem =
+  | { kind: 'group'; key: AgentGroup; navId: string; group: AgentTreeGroup }
+  | { kind: 'row'; key: string; navId: string; row: FlatRow; group: AgentGroup };
 
 /**
  * Depth-first over each unfolded group, iteratively (ancestry comes from persisted, possibly
@@ -115,6 +124,8 @@ function useAgeClock(sinces: readonly number[]): number {
   return now;
 }
 
+/** Keeps a repeated announcement distinct, so a live region speaks it again. */
+const ZWSP = String.fromCharCode(0x200b);
 const SPACE_KEY_ALL = 'all';
 const SPACE_KEY_NONE = 'no-space';
 
@@ -145,6 +156,7 @@ export function Sidebar({
   onRelaunch,
   onOpenSettings,
   onContextMenu,
+  onRowMenu,
   mcpBadges,
   mcpNotConnected,
   mcpEnabled,
@@ -180,6 +192,8 @@ export function Sidebar({
   onRelaunch: (id: string) => void;
   onOpenSettings: () => void;
   onContextMenu?: (e: React.MouseEvent, session: Session) => void;
+  /** Shift+F10 / the Menu key on a row: the same menu, anchored to the row. */
+  onRowMenu?: (session: Session, at: { anchor: Rect; keyboard: true }) => void;
   /** Legacy, unused: Snooze moved to the session menu (spec §6); the lead drops the argument. */
   onSnooze?: (id: string) => void;
   /** Messaging state by session id, for the row tooltip (conduit-mcp spec §8). */
@@ -425,13 +439,22 @@ export function Sidebar({
     () => buildAgentTree({ sessions, runtime, ui, matchingIds, askSessionIds }),
     [sessions, runtime, ui, matchingIds, askSessionIds],
   );
-  const flat = useMemo(
-    () =>
-      model.groups.map((g) => ({
-        group: g,
-        rows: g.folded ? [] : flattenGroup(model, g.rootIds),
-      })),
-    [model],
+  // One flat list of direct children of the tree — group headers and rows alike — so a row whose
+  // state moves it to another group keeps its DOM node, its focus and an open rename.
+  const items = useMemo(() => {
+    const out: TreeItem[] = [];
+    for (const g of model.groups) {
+      out.push({ kind: 'group', key: g.key, navId: groupNavId(g.key), group: g });
+      if (g.folded) continue;
+      for (const f of flattenGroup(model, g.rootIds))
+        out.push({ kind: 'row', key: f.id, navId: f.id, row: f, group: g.key });
+    }
+    return out;
+  }, [model]);
+  const navIds = useMemo(() => items.map((it) => it.navId), [items]);
+  const groupOfRow = useMemo(
+    () => new Map(items.flatMap((it) => (it.kind === 'row' ? [[it.key, it.group] as const] : []))),
+    [items],
   );
   const visibleIds = model.visibleIds;
   // Reported only when the order changes, not on every rebuild of the model.
@@ -450,49 +473,62 @@ export function Sidebar({
   );
   const now = useAgeClock(sinces);
 
-  // Roving focus: one tab stop in the tree, on the focused row, else the selected, else the first.
+  // Roving focus: one tab stop in the tree — the focused item, else the selected row, else the
+  // first item.
   const [focusId, setFocusId] = useState<string | null>(null);
   const tabId =
-    focusId !== null && visibleIds.includes(focusId)
+    focusId !== null && navIds.includes(focusId)
       ? focusId
-      : activeId !== undefined && visibleIds.includes(activeId)
+      : activeId !== undefined && navIds.includes(activeId)
         ? activeId
-        : (visibleIds[0] ?? null);
-  const focusRow = useCallback((id: string) => {
-    setFocusId(id);
-    treeRef.current
-      ?.querySelector<HTMLElement>(`[role="treeitem"][data-sessionid="${cssId(id)}"]`)
-      ?.focus();
+        : (navIds[0] ?? null);
+  const focusItem = useCallback((navId: string) => {
+    setFocusId(navId);
+    const sel = isGroupNavId(navId)
+      ? `[role="treeitem"][data-agent-group="${cssId(navId.slice(GROUP_NAV.length))}"]`
+      : `[role="treeitem"][data-sessionid="${cssId(navId)}"]`;
+    treeRef.current?.querySelector<HTMLElement>(sel)?.focus();
   }, []);
 
-  // A focused row that vanished (closed, folded away, filtered) hands focus to its parent, else
-  // the nearest row, else New agent — only if focus was in the tree when it went (spec §9).
-  const prevVisibleRef = useRef<readonly string[]>(visibleIds);
+  // A focused item that vanished (closed, folded away, filtered) hands focus to its nearest
+  // visible ancestor, else the nearest item, else New agent — only if focus was in the tree when
+  // it went, or the item's own menu removed it (spec §9).
+  const prevNavRef = useRef<readonly string[]>(navIds);
+  const prevGroupOfRowRef = useRef(groupOfRow);
   const treeHadFocusRef = useRef(false);
   useEffect(() => {
-    const prev = prevVisibleRef.current;
-    prevVisibleRef.current = visibleIds;
-    if (focusId === null || visibleIds.includes(focusId) || !treeHadFocusRef.current) return;
+    const prev = prevNavRef.current;
+    const prevGroups = prevGroupOfRowRef.current;
+    prevNavRef.current = navIds;
+    prevGroupOfRowRef.current = groupOfRow;
+    if (focusId === null || navIds.includes(focusId) || !treeHadFocusRef.current) return;
     const active = document.activeElement;
     if (active && active !== document.body && !treeRef.current?.contains(active)) return;
     let next: string | undefined;
     let p = model.rows[focusId]?.parentId ?? null;
     while (p !== null && next === undefined) {
-      if (visibleIds.includes(p)) next = p;
+      if (navIds.includes(p)) next = p;
       else p = model.rows[p]?.parentId ?? null;
+    }
+    const formerGroup = prevGroups.get(focusId);
+    if (next === undefined && formerGroup !== undefined) {
+      const g = groupNavId(formerGroup);
+      // Folding a group away: its header is the parent.
+      if (navIds.includes(g) && model.groups.find((x) => x.key === formerGroup)?.folded) next = g;
     }
     if (next === undefined) {
       const at = prev.indexOf(focusId);
       for (let i = at; i >= 0 && next === undefined; i--)
-        if (visibleIds.includes(prev[i])) next = prev[i];
-      next ??= prev.slice(at + 1).find((id) => visibleIds.includes(id)) ?? visibleIds[0];
+        if (navIds.includes(prev[i]) && !isGroupNavId(prev[i])) next = prev[i];
+      next ??= prev.slice(at + 1).find((id) => navIds.includes(id) && !isGroupNavId(id));
     }
-    if (next !== undefined) focusRow(next);
+    if (next !== undefined) focusItem(next);
     else {
       setFocusId(null);
+      treeHadFocusRef.current = false;
       newAgentRef.current?.focus();
     }
-  }, [visibleIds, focusId, model, focusRow]);
+  }, [navIds, groupOfRow, focusId, model, focusItem]);
 
   const toggleFold = (id: string) => {
     const folded = ui.foldedSessions.includes(id);
@@ -512,39 +548,65 @@ export function Sidebar({
       foldedGroups: folded ? ui.foldedGroups.filter((x) => x !== g) : [...ui.foldedGroups, g],
     });
   };
+  // A menu picked from a row may remove it (Close): remember the row so focus can be repaired.
+  const noteMenuRow = (id: string) => {
+    setFocusId(id);
+    treeHadFocusRef.current = true;
+  };
 
   const onTreeKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const el = e.target as HTMLElement;
     if (el.getAttribute('role') !== 'treeitem') return;
-    const id = el.dataset.sessionid;
-    if (id === undefined) return;
-    const row = model.rows[id];
-    const at = visibleIds.indexOf(id);
+    const groupKey = el.dataset.agentGroup as AgentGroup | undefined;
+    const navId = groupKey !== undefined ? groupNavId(groupKey) : el.dataset.sessionid;
+    if (navId === undefined) return;
+    const at = navIds.indexOf(navId);
     const go = (target: string | undefined) => {
       e.preventDefault();
-      if (target !== undefined) focusRow(target);
+      if (target !== undefined) focusItem(target);
     };
     switch (e.key) {
       case 'ArrowDown':
-        return go(visibleIds[at + 1]);
+        return go(navIds[at + 1]);
       case 'ArrowUp':
-        return go(at > 0 ? visibleIds[at - 1] : undefined);
+        return go(at > 0 ? navIds[at - 1] : undefined);
       case 'Home':
-        return go(visibleIds[0]);
+        return go(navIds[0]);
       case 'End':
-        return go(visibleIds[visibleIds.length - 1]);
+        return go(navIds[navIds.length - 1]);
+    }
+    if (groupKey !== undefined) {
+      const group = model.groups.find((g) => g.key === groupKey);
+      if (!group) return;
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (group.folded) toggleGroup(groupKey);
+        else if (group.rootIds[0] !== undefined) focusItem(group.rootIds[0]);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (!group.folded) toggleGroup(groupKey);
+      }
+      // Enter and Space are the header button's own click.
+      return;
+    }
+    const id = navId;
+    const row = model.rows[id];
+    if (!row) return;
+    switch (e.key) {
       case 'ArrowRight':
-        if (!row || row.childIds.length === 0) return;
+        if (row.childIds.length === 0) return;
         e.preventDefault();
         if (row.folded) toggleFold(id);
-        else focusRow(row.childIds[0]);
+        else focusItem(row.childIds[0]);
         return;
-      case 'ArrowLeft':
-        if (!row) return;
+      case 'ArrowLeft': {
         e.preventDefault();
-        if (row.childIds.length > 0 && !row.folded) toggleFold(id);
-        else if (row.parentId !== null && visibleIds.includes(row.parentId)) focusRow(row.parentId);
+        if (row.childIds.length > 0 && !row.folded) return toggleFold(id);
+        if (row.parentId !== null && navIds.includes(row.parentId)) return focusItem(row.parentId);
+        const g = groupOfRow.get(id);
+        if (row.depth === 0 && g !== undefined) focusItem(groupNavId(g));
         return;
+      }
       case 'Enter':
         e.preventDefault();
         onSelect(id);
@@ -553,6 +615,21 @@ export function Sidebar({
         e.preventDefault();
         onSetRenaming(id);
         return;
+      case 'ContextMenu':
+      case 'F10': {
+        if (e.key === 'F10' && !e.shiftKey) return;
+        const s = sessionsById.get(id);
+        if (!onRowMenu || !s) return;
+        // Claimed here, so the browser's own contextmenu event never opens a second menu.
+        e.preventDefault();
+        const r = el.getBoundingClientRect();
+        noteMenuRow(id);
+        onRowMenu(s, {
+          anchor: { left: r.left, right: r.right, top: r.top, bottom: r.bottom },
+          keyboard: true,
+        });
+        return;
+      }
     }
   };
 
@@ -571,7 +648,9 @@ export function Sidebar({
       const s = sessionsById.get(id);
       if (s) said.push(`${s.name}: ${SIDEBAR_STR.state(st)}`);
     }
-    if (said.length > 0) setTreeAnnouncement(said.join('. '));
+    // A live region speaks only on a change, so a repeat differs by a zero-width space.
+    const text = said.join('. ');
+    if (said.length > 0) setTreeAnnouncement((cur) => (cur === text ? `${text}${ZWSP}` : text));
   }, [model, sessionsById]);
 
   // ---- Search ---------------------------------------------------------------------------------
@@ -679,7 +758,14 @@ export function Sidebar({
         onClose={() => onKill(s.id)}
         onRelaunch={() => onRelaunch(s.id)}
         onFold={() => toggleFold(s.id)}
-        onContextMenu={onContextMenu ? (e) => onContextMenu(e, s) : undefined}
+        onContextMenu={
+          onContextMenu
+            ? (e) => {
+                noteMenuRow(s.id);
+                onContextMenu(e, s);
+              }
+            : undefined
+        }
         onFocus={() => {
           setFocusId(s.id);
           treeHadFocusRef.current = true;
@@ -802,7 +888,7 @@ export function Sidebar({
             title={SIDEBAR_STR.searchAgents}
             aria-label={SIDEBAR_STR.searchAgents}
             aria-expanded={showFilter}
-            aria-controls={filterId}
+            aria-controls={showFilter ? filterId : undefined}
             // Keeps the filter's blur from hiding it before this click decides.
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => (showFilter && filter === '' ? setFilterOpen(false) : revealFilter())}
@@ -876,32 +962,30 @@ export function Sidebar({
             aria-label={SIDEBAR_STR.agents}
             onKeyDown={onTreeKey}
             onBlur={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+              // Only a move to a real element outside counts: a removed row blurs to nothing.
+              const to = e.relatedTarget;
+              if (to instanceof Element && !e.currentTarget.contains(to))
                 treeHadFocusRef.current = false;
             }}
           >
-            {flat.map(({ group, rows }) => {
-              const contentId = `${baseId}-group-${group.key}`;
-              return (
-                <div className="agents__section" role="none" key={group.key}>
-                  <AgentGroupHeader
-                    group={group.key}
-                    roots={group.rootIds.length}
-                    folded={group.folded}
-                    controls={contentId}
-                    onToggle={() => toggleGroup(group.key)}
-                  />
-                  <div
-                    className="agents__group"
-                    role="group"
-                    id={contentId}
-                    aria-label={SIDEBAR_STR.group(group.key)}
-                  >
-                    {rows.map(renderRow)}
-                  </div>
-                </div>
-              );
-            })}
+            {items.map((it) =>
+              it.kind === 'group' ? (
+                <AgentGroupHeader
+                  key={`group:${it.key}`}
+                  group={it.group.key}
+                  roots={it.group.rootIds.length}
+                  folded={it.group.folded}
+                  tabbable={it.navId === tabId}
+                  onToggle={() => toggleGroup(it.group.key)}
+                  onFocus={() => {
+                    setFocusId(it.navId);
+                    treeHadFocusRef.current = true;
+                  }}
+                />
+              ) : (
+                renderRow(it.row)
+              ),
+            )}
           </div>
         )}
       </div>

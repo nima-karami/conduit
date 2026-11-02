@@ -3,11 +3,8 @@ import { act, createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { SpaceRowModel } from '../../src/agent-tree';
-import {
-  AgentGroupHeader,
-  RenameInput,
-  SpaceRow,
-} from '../../webview/components/project-group-header';
+import { AgentGroupHeader, SpaceRow } from '../../webview/components/project-group-header';
+import { RenameInput } from '../../webview/components/session-card';
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -192,21 +189,26 @@ describe('SpaceRow', () => {
 });
 
 describe('AgentGroupHeader', () => {
-  it('is button.proj__label with the group, expansion, controls and a root count', async () => {
+  it('is a level-1 treeitem button.proj__label with the group, expansion and a root count', async () => {
     const onToggle = vi.fn();
+    const onFocus = vi.fn();
     await render(
       createElement(AgentGroupHeader, {
         group: 'blocked',
         roots: 2,
         folded: false,
-        controls: 'g-1',
+        tabbable: true,
         onToggle,
+        onFocus,
       }),
     );
     const btn = q<HTMLButtonElement>('button.proj__label');
     expect(btn.dataset.agentGroup).toBe('blocked');
     expect(btn.getAttribute('aria-expanded')).toBe('true');
-    expect(btn.getAttribute('aria-controls')).toBe('g-1');
+    expect(btn.getAttribute('role')).toBe('treeitem');
+    expect(btn.getAttribute('aria-level')).toBe('1');
+    expect(btn.getAttribute('tabindex')).toBe('0');
+    expect(btn.hasAttribute('aria-controls')).toBe(false);
     expect(btn.getAttribute('aria-label')).toBe('Needs you (2)');
     expect(btn.className).toBe('proj__label proj__label--attn');
     expect(btn.querySelector('.proj__count')?.textContent).toBe('2');
@@ -220,14 +222,16 @@ describe('AgentGroupHeader', () => {
         group: 'stopped',
         roots: 1,
         folded: true,
-        controls: 'g-2',
+        tabbable: false,
         onToggle: () => {},
+        onFocus: () => {},
       }),
     );
     const btn = q('button.proj__label');
     expect(btn.getAttribute('aria-expanded')).toBe('false');
     expect(btn.getAttribute('aria-label')).toBe('Stopped (1)');
     expect(btn.className).toBe('proj__label');
+    expect(btn.getAttribute('tabindex')).toBe('-1');
   });
 });
 

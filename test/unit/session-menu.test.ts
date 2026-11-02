@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MenuItem } from '../../webview/components/context-menu';
+import { MCP_STR } from '../../webview/conduit-mcp-strings';
 import {
   buildSessionMenu,
   type SessionMenuAction,
@@ -50,6 +51,8 @@ function input(over: Partial<SessionMenuInput> = {}) {
     mcpPaused: false,
     mcpSwitchable: false,
     mcpSetupNeeded: false,
+    mcpLink: null,
+    snoozable: false,
     otherCount: 2,
     allCount: 3,
     windowMoves: [],
@@ -65,12 +68,12 @@ const seps = (items: MenuItem[]) => items.filter((i) => i.separatorBefore).map((
 const find = (items: MenuItem[], label: string) => items.find((i) => i.label === label);
 
 const HEAD = ['Go to', 'Pin to top'];
-const ATTENTION = ['Snooze for 10 minutes', 'Timed message…'];
+const ATTENTION = ['Timed message…'];
 const TAIL = [
   'Rename',
   'Set icon…',
   'Duplicate session',
-  'Move to Space…',
+  'Move to space…',
   'Copy home path',
   'Copy name',
   'Reveal in Explorer',
@@ -80,10 +83,10 @@ const TAIL = [
 ];
 
 describe('buildSessionMenu — entries, order and separators', () => {
-  it('a plain session: Go to and Pin lead, then Snooze and timers, edit, copy and close', () => {
+  it('a plain session: Go to and Pin lead, then timers, edit, copy and close', () => {
     const items = buildSessionMenu(input().value);
     expect(labels(items)).toEqual([...HEAD, ...ATTENTION, ...TAIL]);
-    expect(seps(items)).toEqual(['Snooze for 10 minutes', 'Rename', 'Copy home path', 'Close']);
+    expect(seps(items)).toEqual(['Timed message…', 'Rename', 'Copy home path', 'Close']);
     expect(items[0].separatorBefore).toBeFalsy();
   });
 
@@ -98,19 +101,31 @@ describe('buildSessionMenu — entries, order and separators', () => {
       ...HEAD,
       'Open in split pane',
       'Relaunch',
-      'Snooze for 10 minutes',
+      'Timed message…',
     ]);
     expect(seps(items)).toEqual([
       'Open in split pane',
-      'Snooze for 10 minutes',
+      'Timed message…',
       'Rename',
       'Copy home path',
       'Close',
     ]);
   });
 
+  it('Snooze appears only when there is something to silence, with any time left', () => {
+    expect(labels(buildSessionMenu(input().value))).not.toContain('Snooze for 10 minutes');
+    const on = buildSessionMenu(input({ snoozable: true }).value);
+    expect(find(on, 'Snooze for 10 minutes')?.detail).toBeUndefined();
+    const live = buildSessionMenu(
+      input({ snoozable: true, snoozedUntil: 1_000 + 6.5 * 60_000, now: 1_000 }).value,
+    );
+    expect(find(live, 'Snooze for 10 minutes')?.detail).toBe('7 min left');
+    const over = buildSessionMenu(input({ snoozable: true, snoozedUntil: 500, now: 1_000 }).value);
+    expect(find(over, 'Snooze for 10 minutes')?.detail).toBeUndefined();
+  });
+
   it('View approval appears only with a waiting ask, ahead of Snooze', () => {
-    const items = labels(buildSessionMenu(input({ hasApproval: true }).value));
+    const items = labels(buildSessionMenu(input({ hasApproval: true, snoozable: true }).value));
     expect(items.slice(2, 5)).toEqual(['View approval', 'Snooze for 10 minutes', 'Timed message…']);
     expect(labels(buildSessionMenu(input().value))).not.toContain('View approval');
   });
@@ -129,6 +144,7 @@ describe('buildSessionMenu — entries, order and separators', () => {
         mcpHandle: 'claude-1',
         mcpSwitchable: true,
         mcpSetupNeeded: true,
+        mcpLink: { kind: 'connected', handle: 'claude-1' },
       }).value,
     );
     const at = labels(on).indexOf('Connected to Conduit as claude-1');
@@ -150,19 +166,33 @@ describe('buildSessionMenu — entries, order and separators', () => {
     // Tools without a handle yet open their own group.
     const tools = buildSessionMenu(input({ mcpSwitchable: true }).value);
     expect(find(tools, 'MCP tools…')?.separatorBefore).toBe(true);
+    // Not connected or unavailable: the reason in words, with no messaging entries.
+    const missing = buildSessionMenu(
+      input({ mcpLink: { kind: 'not-connected', cli: 'codex', install: 'not-installed' } }).value,
+    );
+    expect(labels(missing)).toContain(MCP_STR.install.notConnectedTip('codex'));
+    const installed = buildSessionMenu(
+      input({ mcpLink: { kind: 'not-connected', cli: 'codex', install: 'installed' } }).value,
+    );
+    expect(labels(installed)).toContain(MCP_STR.install.notConnectedInstalledTip('codex'));
+    const off = buildSessionMenu(
+      input({ mcpLink: { kind: 'unavailable', reason: 'messaging-off' } }).value,
+    );
+    expect(find(off, MCP_STR.unavailable['messaging-off'])?.disabled).toBe(true);
+    expect(labels(buildSessionMenu(input().value)).join(' ')).not.toMatch(/Conduit as|unavailable/);
     // A handle-less badge never offers messages.
     expect(labels(buildSessionMenu(input({ hasMcp: true }).value))).not.toContain('Open messages');
   });
 
-  it('inlines the window moves after Move to Space…', () => {
+  it('inlines the window moves after Move to space…', () => {
     const moves: MenuItem[] = [
       { label: 'Move to new window', onClick: () => {} },
       { label: 'Move to Window 2', onClick: () => {} },
     ];
     const items = labels(buildSessionMenu(input({ windowMoves: moves }).value));
-    const at = items.indexOf('Move to Space…');
+    const at = items.indexOf('Move to space…');
     expect(items.slice(at, at + 4)).toEqual([
-      'Move to Space…',
+      'Move to space…',
       'Move to new window',
       'Move to Window 2',
       'Copy home path',
@@ -182,6 +212,7 @@ describe('buildSessionMenu — entries, order and separators', () => {
       maySplit: true,
       canRelaunch: true,
       hasApproval: true,
+      snoozable: true,
       hasMcp: true,
       mcpHandle: 'h-1',
       mcpSwitchable: true,
@@ -221,7 +252,7 @@ describe('buildSessionMenu — entries, order and separators', () => {
 
   it('a bare programmatic call reaches the callback without an activation', () => {
     const { value, calls } = input();
-    find(buildSessionMenu(value), 'Move to Space…')?.onClick();
+    find(buildSessionMenu(value), 'Move to space…')?.onClick();
     expect(calls).toEqual([{ action: 'moveSpace', arg: undefined }]);
   });
 });

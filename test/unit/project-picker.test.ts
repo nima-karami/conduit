@@ -111,7 +111,7 @@ describe('ProjectPicker', () => {
   it('filter input focused on open; rows = projects then Standalone; current row aria-selected with a check', async () => {
     await render();
     expect(document.activeElement).toBe(q('.projpicker__filter'));
-    expect(rowLabels()).toEqual(['RMB pipeline', 'conduit', 'Standalone', '+ New project…']);
+    expect(rowLabels()).toEqual(['RMB pipeline', 'conduit', 'Standalone', '+ New space…']);
     const current = document.querySelectorAll('.projpicker [aria-selected="true"]');
     expect(current).toHaveLength(1);
     expect(current[0].textContent).toBe('RMB pipeline');
@@ -125,7 +125,7 @@ describe('ProjectPicker', () => {
     expect(filter.getAttribute('aria-expanded')).toBe('true');
     const list = document.getElementById(filter.getAttribute('aria-controls') ?? '');
     expect(list?.getAttribute('role')).toBe('listbox');
-    expect(list?.getAttribute('aria-label')).toBe('Move api fix to project');
+    expect(list?.getAttribute('aria-label')).toBe('Move api fix to space');
     expect(q('.projpicker').getAttribute('role')).not.toBe('listbox');
     expect(list?.contains(filter)).toBe(false);
     const owned = [...(list?.children ?? [])].filter((c) => c.getAttribute('role') !== 'none');
@@ -135,12 +135,12 @@ describe('ProjectPicker', () => {
     expect(list?.contains(q('.projpicker__none'))).toBe(false);
   });
 
-  it('no match → a disabled "No projects match" row, Standalone and + New project… still shown', async () => {
+  it('no match → a disabled "No spaces match" row, Standalone and + New space… still shown', async () => {
     await render();
     await type(q('.projpicker__filter'), 'zzz');
-    expect(q('.projpicker__none').textContent).toBe('No projects match');
+    expect(q('.projpicker__none').textContent).toBe('No spaces match');
     expect(q('.projpicker__none').getAttribute('aria-disabled')).toBe('true');
-    expect(rowLabels()).toEqual(['Standalone', '+ New project…']);
+    expect(rowLabels()).toEqual(['Standalone', '+ New space…']);
   });
 
   it('ArrowDown moves aria-activedescendant; Enter on another row → moveSession(id, …) and onClose', async () => {
@@ -175,7 +175,7 @@ describe('ProjectPicker', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('New project: prefilled with the filter; empty name → hint "1–80 characters", nothing posted', async () => {
+  it('New space: prefilled with the filter; empty name → hint "1–80 characters", nothing posted', async () => {
     const input = await openCreate('RMB  x');
     expect(input.value).toBe('RMB  x');
     expect(document.activeElement).toBe(input);
@@ -219,7 +219,7 @@ describe('ProjectPicker', () => {
     expect(moveSession).not.toHaveBeenCalled();
   });
 
-  it('project:opResult store-unavailable → "Couldn\'t create project"', async () => {
+  it('project:opResult store-unavailable → "Couldn\'t create space"', async () => {
     const input = await openCreate('ok');
     await key(input, 'Enter');
     await act(async () =>
@@ -231,7 +231,7 @@ describe('ProjectPicker', () => {
       }),
     );
     await flush();
-    expect(q('.projpicker__hint').textContent).toBe("Couldn't create project");
+    expect(q('.projpicker__hint').textContent).toBe("Couldn't create space");
   });
 
   it('null reply (timeout) → re-enabled, nothing chained', async () => {

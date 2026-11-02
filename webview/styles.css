@@ -103,6 +103,10 @@
      three rules already asked for by name — it was never defined, so their `var(--r-md, 8px)`
      fallback always won and those corners stayed round in Neon. */
   --r-md: 8px;
+  /* A Space's letter tile and the agent tree's connector elbow: small corners that still square
+     off in Neon (sidebar-agent-tree spec §10). */
+  --r-space-tile: 5px;
+  --r-tree-elbow: 6px;
   /* Fully-round controls — anything drawn as a pill. A step of its own because a pill is not
      --r-ctl's 13px at any height, but it still has to square off in Neon, so it belongs on
      the shape axis rather than being written as a literal 999px. A pill nested in a pill (the
@@ -401,6 +405,8 @@
      straight to border-radius, where a bare 0 is legal. */
   --r-badge: 0px;
   --r-md: 0px;
+  --r-space-tile: 0px;
+  --r-tree-elbow: 0px;
   --r-round: 0px;
   /* Units matter: these are read inside calc() by the fixed board/canvas overlays, and a
      unitless 0 there invalidates the whole declaration. */
@@ -517,7 +523,16 @@
   --notch: var(--notch-sm);
 }
 [data-theme="neon"]
-  :is(.chamfer, .chamfer--sm, .session--active, .session--attention, .modal, .btn, .rcard) {
+  :is(
+    .chamfer,
+    .chamfer--sm,
+    .session--active,
+    .session--attention,
+    .space--on,
+    .modal,
+    .btn,
+    .rcard
+  ) {
   position: relative;
 }
 /* .term-follow rides with .ctxmenu here and NOT in the position:relative rule above: both
@@ -529,6 +544,7 @@
   .chamfer--sm,
   .session--active,
   .session--attention,
+  .space--on,
   .modal,
   .btn,
   .ctxmenu,
@@ -549,6 +565,7 @@
     .chamfer--sm,
     .session--active,
     .session--attention,
+    .space--on,
     .modal,
     .btn,
     .ctxmenu,
@@ -995,13 +1012,10 @@ body.resizing .panel__resize::after {
   --density-topctl-h: 30px; /* topbar controls: view switcher, omnibar, attention chip */
   --density-tab-inset: 3px; /* breathing room above/below a doc tab inside the tab row */
   --density-crumb-h: 32px; /* breadcrumb / diff-controls band INSIDE the doc panel */
-  --density-row-pad-v: 8px; /* session row vertical padding */
-  --density-row-pad-h: 12px; /* session row horizontal padding */
-  --density-row-gap: 9px; /* session row icon gap */
-  --density-card-gap: 6px; /* session card: name row -> live line -> state footer */
+  --density-agent-row-h: 30px; /* agent tree root row and Space row */
+  --density-agent-child-h: 26px; /* agent tree sub-agent row, at every density */
   --density-item-pad-v: 7px; /* cust/list item vertical padding */
   --density-item-pad-h: 8px; /* cust/list item horizontal padding */
-  --density-sidebar-head-pad: 14px 14px 10px;
   --density-rtabs-pad: 12px 16px 0;
   --density-rtab-pad: 4px 0 10px;
   --density-btn-pad: 6px 14px; /* the parts sheet's button box (5c/5f) */
@@ -1048,13 +1062,9 @@ body.resizing .panel__resize::after {
   --density-topctl-h: 25px;
   --density-tab-inset: 2px;
   --density-crumb-h: 26px;
-  --density-row-pad-v: 4px;
-  --density-row-pad-h: 7px;
-  --density-row-gap: 7px;
-  --density-card-gap: 4px;
+  --density-agent-row-h: 26px;
   --density-item-pad-v: 3px;
   --density-item-pad-h: 7px;
-  --density-sidebar-head-pad: 8px 10px 6px;
   --density-rtabs-pad: 6px 12px 0;
   --density-rtab-pad: 2px 0 6px;
   --density-btn-pad: 4px 11px;
@@ -2329,8 +2339,9 @@ body.resizing .panel__resize::after {
   color: var(--text-faint);
 }
 /* ---------- the agent tree (sidebar-agent-tree spec §4–§6) ----------
-   Status groups of a flat, keyed forest: each row is its own treeitem with aria-level, so a
-   parent's box never contains its children and a click on a row is always that row. Depth
+   One flat, keyed list: group headers and rows are sibling treeitems with aria-level, so a
+   parent's box never contains its children, a click on a row is always that row, and a row
+   changing group keeps its node. Depth
    indents the select button; connectors are drawn per row from the same three lengths. */
 .agents {
   --agent-pad: 8px;
@@ -2338,17 +2349,6 @@ body.resizing .panel__resize::after {
   --agent-stem: 7px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-}
-.agents__section,
-.agents__group {
-  display: flex;
-  flex-direction: column;
-}
-.agents__section {
-  gap: 2px;
-}
-.agents__group {
   gap: 1px;
 }
 .proj__label {
@@ -8863,19 +8863,6 @@ button.toggle--on .toggle__knob {
   display: flex;
   gap: 20px;
   align-items: flex-start;
-}
-.cardcfg__toggles {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 220px;
-}
-.cardcfg__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: calc(12.5px * var(--font-scale));
-  color: var(--text);
 }
 .cardcfg__preview {
   flex: 1;

@@ -86,7 +86,8 @@ describe('AgentRow — the selector contract', () => {
     expect(html).toMatch(/^<div class="session session--root"/);
     expect(attr(html, 'role')).toBe('treeitem');
     expect(attr(html, 'data-sessionid')).toBe('s1');
-    expect(attr(html, 'aria-level')).toBe('1');
+    // Level 1 is the group header of the flat tree.
+    expect(attr(html, 'aria-level')).toBe('2');
     expect(attr(html, 'aria-selected')).toBe('false');
     expect(attr(html, 'aria-label')).toBe('api fix, Idle');
     expect(html).not.toContain('aria-expanded');
@@ -95,7 +96,7 @@ describe('AgentRow — the selector contract', () => {
   it('a child is one level deeper and carries the child class', () => {
     const html = row({ row: { depth: 2 } });
     expect(html).toContain('session session--child');
-    expect(attr(html, 'aria-level')).toBe('3');
+    expect(attr(html, 'aria-level')).toBe('4');
   });
 
   it('the select button is labelled Go to and holds the name; no button nests in a button', () => {
@@ -198,6 +199,24 @@ const rule = (selector: string) => {
 };
 
 describe('agent row CSS', () => {
+  it('defines the row, elbow and tile tokens it reads, per density and per theme', () => {
+    const block = (head: string) => {
+      const at = CSS.indexOf(head);
+      expect(at, head).toBeGreaterThan(-1);
+      return CSS.slice(at, CSS.indexOf('\n}', at));
+    };
+    const compact = block(':root[data-density="compact"] {');
+    const neon = block(':root[data-theme="neon"] {');
+    expect(CSS).toContain('\n  --density-agent-row-h: 30px;');
+    expect(CSS).toContain('\n  --density-agent-child-h: 26px;');
+    expect(compact).toContain('--density-agent-row-h: 26px;');
+    expect(compact).not.toContain('--density-agent-child-h');
+    expect(CSS).toContain('\n  --r-space-tile: 5px;');
+    expect(CSS).toContain('\n  --r-tree-elbow: 6px;');
+    expect(neon).toContain('--r-space-tile: 0px;');
+    expect(neon).toContain('--r-tree-elbow: 0px;');
+  });
+
   it('rows and Spaces take their heights from density, never a theme block', () => {
     expect(rule('.session')).toContain('height: var(--density-agent-row-h)');
     expect(rule('.session--child')).toContain('height: var(--density-agent-child-h)');

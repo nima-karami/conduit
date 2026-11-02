@@ -1,11 +1,10 @@
 import { LayoutGrid } from 'lucide-react';
-import { useEffect, useRef } from 'react';
 import type { SpaceRowModel } from '../../src/agent-tree';
 import type { Rect } from '../../src/menu-position';
 import type { AgentGroup } from '../../src/sidebar-state';
 import { IconChevron, IconChevronDown } from '../icons';
 import { SIDEBAR_STR } from '../sidebar-strings';
-import { AgentMark } from './session-card';
+import { AgentMark, RenameInput } from './session-card';
 
 export interface SpaceDropHandlers {
   onDragOver: (e: React.DragEvent) => void;
@@ -113,31 +112,37 @@ export function SpaceRow({
 }
 
 /**
- * A status group's header (spec §4): the .proj__label band, now a fold button. The count is of
- * roots, never descendants.
+ * A status group's header (spec §4): the .proj__label band, a level-1 treeitem of the one flat
+ * tree, so moving a row between groups never remounts it. The count is of roots, never
+ * descendants.
  */
 export function AgentGroupHeader({
   group,
   roots,
   folded,
-  controls,
+  tabbable,
   onToggle,
+  onFocus,
 }: {
   group: AgentGroup;
   roots: number;
   folded: boolean;
-  controls: string;
+  tabbable: boolean;
   onToggle: () => void;
+  onFocus: () => void;
 }) {
   return (
     <button
       type="button"
       className={`proj__label${group === 'blocked' ? ' proj__label--attn' : ''}`}
+      role="treeitem"
+      aria-level={1}
       data-agent-group={group}
       aria-expanded={!folded}
-      aria-controls={controls}
       aria-label={SIDEBAR_STR.groupLabel(group, roots)}
+      tabIndex={tabbable ? 0 : -1}
       onClick={onToggle}
+      onFocus={onFocus}
     >
       <span className="proj__chevron" aria-hidden>
         {folded ? <IconChevron size={9} /> : <IconChevronDown size={9} />}
@@ -145,50 +150,5 @@ export function AgentGroupHeader({
       <span className="proj__name">{SIDEBAR_STR.group(group)}</span>
       <span className="proj__count">{roots}</span>
     </button>
-  );
-}
-
-/** Rename a Space in place, or name a new one (spec §3 Space menu). */
-export function RenameInput({
-  name,
-  label,
-  onEnd,
-}: {
-  name: string;
-  label?: string;
-  onEnd: (draft: string | null) => void;
-}) {
-  const ref = useRef<HTMLInputElement>(null);
-  // Enter unmounts the input, and a blur may follow; the first end wins.
-  const ended = useRef(false);
-  const end = (draft: string | null) => {
-    if (ended.current) return;
-    ended.current = true;
-    onEnd(draft);
-  };
-  useEffect(() => {
-    ref.current?.select();
-  }, []);
-  return (
-    <input
-      ref={ref}
-      className="proj__rename"
-      aria-label={label ?? SIDEBAR_STR.renameSpaceLabel(name)}
-      defaultValue={name}
-      autoFocus
-      onClick={(e) => e.stopPropagation()}
-      onDoubleClick={(e) => e.stopPropagation()}
-      onBlur={(e) => end(e.currentTarget.value)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          end(e.currentTarget.value);
-        } else if (e.key === 'Escape') {
-          e.preventDefault();
-          e.stopPropagation();
-          end(null);
-        }
-      }}
-    />
   );
 }

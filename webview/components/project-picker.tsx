@@ -14,7 +14,7 @@ import { Popover } from './popover';
 
 const NAME_HINT = '1–80 characters';
 
-/** Move to project… (mf-sidebar spec §2.7): pick a project, Standalone, or create one. */
+/** Move to space… (mf-sidebar spec §2.7): pick a space, Standalone, or create one. */
 export function ProjectPicker({
   session,
   projects,
@@ -101,7 +101,7 @@ export function ProjectPicker({
       projectAnnouncer.moveSession(session.id, reply.id, { session: session.name, target: name });
       onClose();
     } else if (reply?.type === 'project:opResult') {
-      setHint(reply.reason === 'invalid-name' ? NAME_HINT : "Couldn't create project");
+      setHint(reply.reason === 'invalid-name' ? NAME_HINT : "Couldn't create space");
     }
   };
 
@@ -134,8 +134,8 @@ export function ProjectPicker({
       <input
         ref={filterRef}
         className="projpicker__filter"
-        placeholder="Filter projects…"
-        aria-label="Filter projects"
+        placeholder="Filter spaces…"
+        aria-label="Filter spaces"
         role="combobox"
         aria-expanded
         aria-autocomplete="list"
@@ -152,10 +152,10 @@ export function ProjectPicker({
       />
       {noMatch && (
         <div className="projpicker__none" aria-disabled="true">
-          No projects match
+          No spaces match
         </div>
       )}
-      <div id={listId} role="listbox" aria-label={`Move ${session.name} to project`}>
+      <div id={listId} role="listbox" aria-label={`Move ${session.name} to space`}>
         {rows.map((row, i) => (
           <div
             key={row.key}
@@ -184,7 +184,7 @@ export function ProjectPicker({
               onMouseEnter={() => setHighlight(newIndex)}
               onClick={startCreating}
             >
-              + New project…
+              + New space…
             </div>
           </>
         )}
@@ -195,8 +195,8 @@ export function ProjectPicker({
           <div className="projpicker__create">
             <input
               className="projpicker__name"
-              aria-label="New project name"
-              placeholder="Project name"
+              aria-label="New space name"
+              placeholder="Space name"
               autoFocus
               value={draft}
               disabled={busy}

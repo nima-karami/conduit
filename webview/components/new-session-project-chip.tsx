@@ -78,8 +78,8 @@ export function NewSessionProjectChip({
           <button
             type="button"
             className="ns-chip__remove"
-            aria-label="Remove from Space"
-            title="Remove from Space"
+            aria-label="Remove from space"
+            title="Remove from space"
             onClick={() => onSet(null)}
           >
             ×
@@ -195,7 +195,7 @@ function ProjectMenu({
   );
 }
 
-/** Its own overlay entry, so Esc reverts to the `+ New project…` row (spec §2.2) instead of
+/** Its own overlay entry, so Esc reverts to the `+ New space…` row (spec §2.2) instead of
  *  closing the whole menu. */
 function NewProjectInput({
   onNew,
