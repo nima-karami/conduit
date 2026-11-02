@@ -1,5 +1,5 @@
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import { HC_PINNED_VERSION } from '../src/contracts/hc';
 import { coreStartCwd } from '../src/instance-names';
 
@@ -9,6 +9,20 @@ export interface RuntimeLayout {
   hcExe: string;
   hcVersion: string;
   coreCwd: string;
+}
+
+/**
+ * The first `node` on the app's PATH, as an absolute path: a bare name would be resolved by hc,
+ * whose spelling (`node.EXE`) the server then writes into every CLI's MCP entry.
+ */
+function nodeOnPath(env: NodeJS.ProcessEnv): string | undefined {
+  const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH');
+  const exe = process.platform === 'win32' ? 'node.exe' : 'node';
+  return (key ? (env[key] ?? '') : '')
+    .split(delimiter)
+    .filter(Boolean)
+    .map((dir) => join(dir, exe))
+    .find((candidate) => existsSync(candidate));
 }
 
 /**
@@ -37,7 +51,7 @@ export function runtimeLayout(i: {
     };
   }
   return {
-    nodeExe: i.env.CONDUIT_NODE_BINARY ?? 'node',
+    nodeExe: i.env.CONDUIT_NODE_BINARY ?? nodeOnPath(i.env) ?? 'node',
     superviseJs: join(i.appPath, 'out', 'server', 'supervise.js'),
     hcExe: i.env.CONDUIT_HC_BINARY ?? 'hc',
     hcVersion,

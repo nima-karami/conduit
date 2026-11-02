@@ -1,9 +1,19 @@
 import { execFile } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { HC_PINNED_VERSION, type HcClient } from '../src/contracts/hc';
-import { coreStartEnv, type InstanceNames } from '../src/contracts/session-identity';
+import {
+  coreStartEnv,
+  type InstanceNames,
+  USER_XDG_PASSTHROUGH,
+} from '../src/contracts/session-identity';
 import { HcDisconnectedError, HcRpcError, NodeHcClient } from '../src/hc-client';
 import { coreStartCwd } from '../src/instance-names';
+
+/**
+ * Set by the app's supervisor start when our core runs isolated: the supervisor and server get the
+ * user's own XDG values, so their env can't show the decision itself (D24, M22).
+ */
+export const HC_XDG_ISOLATED_ENV = 'CONDUIT_HC_XDG_ISOLATED';
 
 /**
  * Our hc env: HC_* stripped, our HC_SESSION, and the XDG isolation our core start already decided
@@ -14,8 +24,36 @@ export function serverChildEnv(
   names: InstanceNames,
 ): Record<string, string> {
   const isolated =
-    parent.XDG_CONFIG_HOME === names.hcConfigHome || parent.XDG_STATE_HOME === names.hcStateHome;
-  return coreStartEnv(parent, names, isolated);
+    parent[HC_XDG_ISOLATED_ENV] === '1' ||
+    parent.XDG_CONFIG_HOME === names.hcConfigHome ||
+    parent.XDG_STATE_HOME === names.hcStateHome;
+  const env = coreStartEnv(parent, names, isolated);
+  delete env[HC_XDG_ISOLATED_ENV];
+  return env;
+}
+
+/**
+ * The server process's own env: its supervisor's without HC_*, and never our core's XDG values,
+ * which would reach every CLI config path the server resolves. A supervisor still under them (one
+ * started by `hc run`) has them swapped for the user's here.
+ */
+export function serverProcessEnv(
+  parent: Readonly<Record<string, string | undefined>>,
+  names: Pick<InstanceNames, 'hcConfigHome' | 'hcStateHome'>,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(parent))
+    if (v !== undefined && !k.toUpperCase().startsWith('HC_')) env[k] = v;
+  const ours: Record<string, string> = {
+    XDG_CONFIG_HOME: names.hcConfigHome,
+    XDG_STATE_HOME: names.hcStateHome,
+  };
+  for (const [xdg, passthrough] of Object.entries(USER_XDG_PASSTHROUGH)) {
+    if (env[xdg] !== ours[xdg]) continue;
+    env[xdg] = env[passthrough] ?? '';
+    env[HC_XDG_ISOLATED_ENV] = '1';
+  }
+  return env;
 }
 
 /** `--hc <path>`: the bundled hc of this runtime version; dev and e2e use the one on PATH. */

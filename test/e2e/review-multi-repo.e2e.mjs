@@ -330,7 +330,7 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
   await tapBridge(page);
   await page.evaluate(() =>
-    window.agentDeck.post({ type: 'updateSettings', settings: { trackCwd: true } }),
+    window.agentDeck.post({ type: 'updateServerSettings', patch: { trackCwd: true } }),
   );
   await page.setViewportSize({ width: 1440, height: 860 });
   const userDataDir = await app.evaluate((e) => e.app.getPath('userData'));

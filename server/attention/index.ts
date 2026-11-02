@@ -77,11 +77,11 @@ export class ServerAttention implements AttentionPort {
     this.activity.dropWindow(windowId);
   }
 
-  recordInput(sessionId: string, _now: number): void {
-    let changed = this.activity.acknowledge(sessionId);
-    if (this.acknowledgeReported(sessionId)) changed = true;
-    if (changed) this.changed();
-  }
+  /**
+   * Typing is not an acknowledgment, only seeing a session is (v0.51): input sent into a hidden
+   * session keeps its badge. See docs/specs/archive/2026-08-21-attention-signal-quality.md.
+   */
+  recordInput(_sessionId: string, _now: number): void {}
 
   clearAll(): void {
     for (const windowId of [...this.windows]) this.dropWindow(windowId);

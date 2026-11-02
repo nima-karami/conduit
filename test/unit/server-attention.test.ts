@@ -107,7 +107,7 @@ describe('ServerAttention', () => {
     expect(attention.statusOf('a').needsAttention).toBe(false);
   });
 
-  it('input clears an armed episode', () => {
+  it('input into a hidden session is not an acknowledgment: the episode stays armed, once', () => {
     setup();
     at(10_000);
     data('\x07');
@@ -115,10 +115,20 @@ describe('ServerAttention', () => {
     attention.sweep();
     expect(attention.statusOf('a').needsAttention).toBe(true);
     attention.recordInput('a', 20_001);
-    expect(attention.statusOf('a').needsAttention).toBe(false);
+    data('echo x\r\n');
     at(30_000);
     attention.sweep();
-    expect(attention.statusOf('a').needsAttention).toBe(false);
+    expect(attention.statusOf('a').needsAttention).toBe(true);
+    expect(edges).toHaveLength(1);
+  });
+
+  it('input does not clear a reported waiting episode', () => {
+    setup();
+    status({ state: 'working' });
+    status({ state: 'done' });
+    expect(attention.statusOf('a').needsAttention).toBe(true);
+    attention.recordInput('a', 1);
+    expect(attention.statusOf('a').needsAttention).toBe(true);
   });
 
   it('clearAll drops every window: an unwatched run arms again', () => {

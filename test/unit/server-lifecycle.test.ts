@@ -10,7 +10,7 @@ import {
 import type { HcTerminal } from '../../src/contracts/hc';
 import { SERVER_RESTART_EXIT_WAIT_MS } from '../../src/contracts/server-protocol';
 import type { InstanceNames } from '../../src/contracts/session-identity';
-import { NodeHcClient } from '../../src/hc-client';
+import { HcRpcError, NodeHcClient } from '../../src/hc-client';
 import { FakeHc } from '../../src/hc-client/testing/fake-hc';
 import { FakeC2Server } from './fake-c2-server';
 
@@ -96,10 +96,25 @@ async function harness(
     execFile: async (_file, args) => {
       cliCalls.push(args);
       if (cliResult.code !== 0) return cliResult;
-      if (args[0] === 'run') addSupervisor();
       if (args[0] === 'kill') await killSupervisorTerminal();
       return cliResult;
     },
+    startCore: async () => {},
+    // The supervisor's terminal.run, recorded as `run -- <argv>`; cliResult scripts its failure.
+    connect: () => ({
+      call: (async (_method: string, params: { argv: string[] }) => {
+        cliCalls.push(['run', '--', ...params.argv]);
+        if (cliResult.code !== 0) {
+          const message = cliResult.stderr.trim();
+          throw new HcRpcError(-32000, message, {
+            kind: /name_taken/.test(message) ? 'name_taken' : 'spawn_failed',
+          });
+        }
+        addSupervisor();
+        return {};
+      }) as never,
+      close: () => {},
+    }),
   };
   const names: InstanceNames = {
     instance: 'abc',
@@ -494,7 +509,7 @@ describe('createServerLifecycle F9 and explicit actions', () => {
     await h.lifecycle.restartService();
     expect(h.cliCalls.map((a) => a.slice(0, 2))).toEqual([
       ['kill', SUPERVISOR],
-      ['run', '--bg'],
+      ['run', '--'],
     ]);
     expect(h.state()).toBe('connected');
   });

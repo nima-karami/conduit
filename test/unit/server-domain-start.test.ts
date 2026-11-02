@@ -209,12 +209,44 @@ describe('server domain: sessions.start', () => {
       XDG_STATE_HOME: '',
     });
 
-    // Not captured: the server's XDG are the user's own, inherited, and nothing is set.
+    // Not captured: the server's XDG are the user's own and pass through as they are.
     const plain = harness({ env: { XDG_CONFIG_HOME: '/mine' } });
     const p = await plain.create();
     await start(plain, p);
     const env = plain.runtime.spawns[0]?.spec.env ?? {};
-    expect('XDG_CONFIG_HOME' in env || 'XDG_STATE_HOME' in env).toBe(false);
+    expect(env.XDG_CONFIG_HOME).toBe('/mine');
+    expect('XDG_STATE_HOME' in env).toBe(false);
+  });
+
+  it("starts a session's env from the server's, as node-pty did from the app's (M10)", async () => {
+    const h = harness({
+      env: {
+        Path: '/fake-bin;/usr/bin',
+        HOME: '/iso/home',
+        CONDUIT_E2E_X: '1',
+        HC_SESSION: 'conduit-abc',
+        HC_TERMINAL_ID: 't3',
+        VSCODE_PID: '9',
+        TERM_PROGRAM: 'vscode',
+        CONDUIT_HC_XDG_ISOLATED: '1',
+        CONDUIT_USER_XDG_CAPTURED: '1',
+        CONDUIT_USER_XDG_CONFIG_HOME: '',
+        XDG_CONFIG_HOME: '',
+      },
+    });
+    const id = await h.create();
+    await start(h, id);
+    const env = h.runtime.spawns[0]?.spec.env ?? {};
+    expect(env).toMatchObject({
+      Path: '/fake-bin;/usr/bin',
+      HOME: '/iso/home',
+      CONDUIT_E2E_X: '1',
+      XDG_CONFIG_HOME: '',
+    });
+    const leaked = Object.keys(env).filter((k) =>
+      /^(HC_|VSCODE_|CONDUIT_USER_XDG_|CONDUIT_HC_XDG_ISOLATED$|TERM_PROGRAM$)/i.test(k),
+    );
+    expect(leaked).toEqual([]);
   });
 
   it('returns spawned:false for a live session: no prelude, no second run', async () => {

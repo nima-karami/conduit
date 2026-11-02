@@ -93,8 +93,8 @@ try {
   // Ensure trackCwd is enabled (it's the default).
   await page.evaluate(() => {
     window.agentDeck.post({
-      type: 'updateSettings',
-      settings: { trackCwd: true },
+      type: 'updateServerSettings',
+      patch: { trackCwd: true },
     });
   });
   await page.waitForTimeout(300);
@@ -215,8 +215,8 @@ try {
   // Disable trackCwd.
   await page.evaluate(() => {
     window.agentDeck.post({
-      type: 'updateSettings',
-      settings: { trackCwd: false },
+      type: 'updateServerSettings',
+      patch: { trackCwd: false },
     });
   });
   await page.waitForTimeout(300);

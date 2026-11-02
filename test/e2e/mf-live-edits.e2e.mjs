@@ -212,10 +212,16 @@ async function renameAway(from, to) {
   }
 }
 
-/** The window is hidden, so OS focus never arrives: drive the host's own focus handler. */
+/**
+ * The window is hidden, so OS focus never arrives: drive the host's own handlers. A real focus gain
+ * follows a blur, a presence report apart (the host coalesces reports per tick).
+ */
 const focusWindow = (app) =>
-  app.evaluate(({ BrowserWindow }) => {
-    for (const w of BrowserWindow.getAllWindows()) w.emit('focus');
+  app.evaluate(async ({ BrowserWindow }) => {
+    const all = BrowserWindow.getAllWindows();
+    for (const w of all) w.emit('blur');
+    await new Promise((r) => setTimeout(r, 50));
+    for (const w of all) w.emit('focus');
   });
 
 const banner = (page) => page.locator('.termhost:visible .scope-banner');

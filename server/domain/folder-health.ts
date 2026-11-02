@@ -16,6 +16,8 @@ export interface ServerFolderHealthDeps {
   revalidate: (sessionId: string, folder: string) => Promise<SessionOpReason | null>;
   realKeys: Map<string, string>;
   log: DomainLog;
+  /** A session's missing marks changed: what its agent can still see may have too. */
+  healthChanged: (sessionId: string) => void;
 }
 
 const isDir = (p: string) =>
@@ -115,7 +117,8 @@ export class ServerFolderHealth {
       }
     }
     const cur = this.deps.mgr.get(r.sessionId);
-    if (cur) this.deps.mgr.setFolderHealth(cur.id, applyHealthReport(cur, r, rejected));
+    if (cur && this.deps.mgr.setFolderHealth(cur.id, applyHealthReport(cur, r, rejected)))
+      this.deps.healthChanged(cur.id);
   }
 
   // Re-probed every poll tick, so only a new reason is worth a line (mf-model plan, Decisions).

@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -135,6 +135,22 @@ describe('server domain: internal subscribers on C1 data', () => {
     expect(h.written).toEqual([{ sessionId: id, data: paste, generation: 1 }]);
     // scopes.output: claude confirming the folder ends the drift.
     data(h, id, `\u23BF  Added ${extra} as a working directory for this session\r\n`);
+    await vi.waitFor(() => expect(viewOf(h, id)?.agentScope).toBeUndefined());
+  });
+
+  it('an unseen folder that goes missing drops out of the agent scope', async () => {
+    const h = harness();
+    const extra = join(h.userData, 'extra');
+    mkdirSync(extra);
+    const id = await live(h, { agentId: 'claude' });
+    await h.call('sessions.mutate', { sessionId: id, mutation: { op: 'addRoot', path: extra } });
+    await vi.waitFor(() => expect(viewOf(h, id)?.agentScope?.typeable).toEqual([extra]));
+    rmSync(extra, { recursive: true });
+    // The addRoot's own health check may still be in flight and answer the first suspect.
+    await vi.waitFor(async () => {
+      await h.call('folders.suspect', { sessionId: id, path: extra });
+      expect(viewOf(h, id)?.missingRoots).toEqual([extra]);
+    });
     await vi.waitFor(() => expect(viewOf(h, id)?.agentScope).toBeUndefined());
   });
 
