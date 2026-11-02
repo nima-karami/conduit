@@ -362,7 +362,7 @@ try {
   const msg = await page.textContent('.confirm__msg');
   assert(
     msg ===
-      "Its 1 session becomes standalone and keeps running. Folders and their .conduit/ data aren't touched.",
+      "Its 1 agent keeps running without a space. Folders and their .conduit/ data aren't touched.",
     `delete dialog copy, got ${msg}`,
   );
   await page.keyboard.press('Enter');

@@ -148,7 +148,7 @@ export const folderNames = (page) =>
   page.$$eval('.ns-folder .ns-folder__name', (els) => els.map((e) => e.textContent));
 
 export async function openDialog(page) {
-  await page.locator('[aria-label="New session"]').first().click();
+  await page.locator('button[aria-label="New agent"]').first().click();
   await page.waitForSelector('.modal.ns', { state: 'visible', timeout: 10000 });
   // A menu opened while modal-pop still animates can close itself (learnings, mf-changes fix1).
   await page.waitForFunction(

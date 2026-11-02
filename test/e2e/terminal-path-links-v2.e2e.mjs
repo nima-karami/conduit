@@ -418,7 +418,7 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   await page.waitForSelector('.ctxmenu[role="menu"]', { state: 'visible', timeout: 10000 });
   /** Where the pointer rests relative to `rowSel` rows under `frameSel`, and whether the row
    *  under it paints a hover fill a row it is not over does not (one highlight only). */
-  const restingOn = (frameSel, rowSel) =>
+  const restingOn = (frameSel, rowSel, at = c8) =>
     page.evaluate(
       ({ x, y, frameSel, rowSel }) => {
         const frame = document.querySelector(frameSel);
@@ -442,7 +442,7 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
           rect: frame?.getBoundingClientRect().toJSON(),
         };
       },
-      { ...c8, frameSel, rowSel },
+      { ...at, frameSel, rowSel },
     );
   /** Chromium sends a row that lands under a stationary pointer a pointermove at the same point,
    *  but on its own schedule; sending it here makes the hover state deterministic without moving
@@ -486,12 +486,37 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
     null,
     { timeout: 5000 },
   );
-  await settleRestingPointer();
   assert(
     await page.isVisible('.pathpick'),
     'the picker should outlive the Enter that opened it: a key the menu takes must not reach the shell',
   );
-  const pick8 = await restingOn('.pathpick', '[role="option"]');
+  // The picker is clamped around the click point, so that point no longer rests on one of its
+  // rows. Measure row 1's centre off the picker's own rect, then reopen the picker with the
+  // pointer already parked there: a pointer that has not moved since the frame opened never takes
+  // a row (hover-gate.ts), while moving onto a row after it opened would.
+  const pickAt = await page.evaluate(() => {
+    const r = document.querySelectorAll('.pathpick [role="option"]')[1].getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  });
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.pathpick', { state: 'detached', timeout: 5000 });
+  await page.mouse.move(pickAt.x, pickAt.y);
+  await clickAt(LINE_BOTTOM, LINE_BOTTOM.length - 6, { button: 'right' });
+  await page.waitForSelector('.ctxmenu[role="menu"]', { state: 'visible', timeout: 10000 });
+  // Home first: parking the pointer may have highlighted a menu row, and the assertions above
+  // already proved where ArrowDown starts under a resting pointer.
+  await page.keyboard.press('Home');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.pathpick', { state: 'visible', timeout: 10000 });
+  await page.waitForFunction(
+    () => document.querySelectorAll('.pathpick [role="option"]').length === 3,
+    null,
+    { timeout: 5000 },
+  );
+  await page.mouse.move(pickAt.x, pickAt.y);
+  await page.waitForTimeout(600);
+  const pick8 = await restingOn('.pathpick', '[role="option"]', pickAt);
   log('step 8 picker: pointer rests on row', pick8.underIdx, 'active', pick8.activeIdx);
   assert(
     pick8.underIdx >= 1 && pick8.underHovered,

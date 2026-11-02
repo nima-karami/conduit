@@ -413,7 +413,7 @@ const SCENES = {
 
   async 'new-session'({ click, dismiss, shot, nap }) {
     await dismiss();
-    await click('[aria-label="New session"]');
+    await click('button[aria-label="New agent"]');
     await nap(1500);
     await shot('new-session');
   },

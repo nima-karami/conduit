@@ -28,6 +28,7 @@ import {
   openSession,
   profileDir,
   REPO,
+  revealSessionRow,
   shutdownApp,
   tapBridge,
 } from './harness.mjs';
@@ -196,6 +197,7 @@ try {
     window.__terms = {};
   });
   // The REPO launch arg restores its own session too; a pane only starts once it is on screen.
+  await revealSessionRow(page2, sid);
   await page2.click(`[data-sessionid="${sid}"]`);
   await page2.evaluate((id) => window.agentDeck.post({ type: 'relaunch', id }), sid);
 

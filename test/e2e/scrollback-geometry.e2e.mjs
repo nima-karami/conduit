@@ -22,6 +22,7 @@ import {
   makeLog,
   profileDir,
   REPO,
+  revealSessionRow,
   shutdownApp,
   tapBridge,
 } from './harness.mjs';
@@ -100,6 +101,7 @@ try {
   await page.evaluate(() => {
     window.__terms = {};
   });
+  await revealSessionRow(page, SID);
   await page.click(`[data-sessionid="${SID}"]`);
   await page.evaluate((id) => window.agentDeck.post({ type: 'relaunch', id }), SID);
 

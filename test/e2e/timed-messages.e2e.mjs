@@ -26,6 +26,7 @@ import {
   openSession,
   profileDir,
   REPO,
+  revealSessionRow,
   runShellReader,
   stopServer,
   tapBridge,
@@ -300,6 +301,7 @@ try {
     (id) => (window.__sessions || []).find((x) => x.id === id)?.name ?? '',
     waiting.sessionId,
   );
+  await revealSessionRow(page2, waiting.sessionId);
   await page2.locator('.session', { hasText: waitingName }).first().click();
   await page2
     .locator('.session-stale__waiting')

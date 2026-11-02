@@ -90,7 +90,7 @@ await runNewSession('new-session-folders-start', async ({ fx, log, launch, close
   await page.locator('.ns-chip--none').click();
   await page.locator('.ns-projects [role="menuitemradio"]', { hasText: 'RMB pipeline' }).click();
   assert(
-    (await page.locator('.ns-chip__body').getAttribute('aria-label')) === 'Project: RMB pipeline',
+    (await page.locator('.ns-chip__body').getAttribute('aria-label')) === 'Space: RMB pipeline',
     'the chip names the picked project',
   );
 

@@ -22,6 +22,7 @@ import {
   makeLog,
   profileDir,
   REPO,
+  revealSessionRow,
   shutdownApp,
   tapBridge,
 } from './harness.mjs';
@@ -90,6 +91,7 @@ try {
     window.__terms = {};
   });
   // A terminal starts when its pane mounts, and the launch's folder-arg session is the one shown.
+  await revealSessionRow(page, SID);
   await page.click(`[data-sessionid="${SID}"]`);
   await page.evaluate((id) => window.agentDeck.post({ type: 'relaunch', id }), SID);
 

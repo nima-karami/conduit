@@ -162,7 +162,7 @@ runScenario('terminal-link-menu', async ({ page, log }) => {
   await choose('Open as new session');
   const dirHome = await dialogHome();
   assert(norm(dirHome) === norm(repoB), `New session home should be ${repoB}, got ${dirHome}`);
-  const projChip = await page.locator('.ns-chip__body[aria-label="Project: LinkProj"]').count();
+  const projChip = await page.locator('.ns-chip__body[aria-label="Space: LinkProj"]').count();
   assert(projChip === 1, 'the New session dialog should be prefilled with project LinkProj');
   await escapeToTerminal();
   log('dir → Open as new session prefills folder + project; Esc returns focus ✓');

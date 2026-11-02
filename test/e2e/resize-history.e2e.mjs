@@ -17,6 +17,7 @@ import {
   openSession,
   profileDir,
   REPO,
+  revealSessionRow,
   shutdownApp,
   tapBridge,
   typeLine,
@@ -172,6 +173,7 @@ try {
   await page.evaluate(() => {
     window.__terms = {};
   });
+  await revealSessionRow(page, sid);
   await page.click(`[data-sessionid="${sid}"]`);
   await page.evaluate((id) => window.agentDeck.post({ type: 'relaunch', id }), sid);
   await page.waitForFunction((s) => (window.__capBy?.[s] ?? '').includes('RUN2-END'), sid, {

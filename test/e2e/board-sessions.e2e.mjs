@@ -234,7 +234,7 @@ runScenario('board-sessions', async ({ app, page, log }) => {
       `exactly R is attached (got ${JSON.stringify(others)})`,
     );
     assert(
-      await page.locator('.modal.ns [aria-label="Project: RMB"]').isVisible(),
+      await page.locator('.modal.ns [aria-label="Space: RMB"]').isVisible(),
       'the project chip is RMB',
     );
     const before2 = await page.evaluate(() => window.__sessions.map((s) => s.id));

@@ -101,10 +101,16 @@ runScenario('markdown-search', async ({ app, page, log }) => {
 
   // ── Scoped: Ctrl+F does NOT open the markdown find when focus is elsewhere ─────
   // The markdown viewer owns Ctrl+F only while it holds focus (same owns-check as
-  // Ctrl+A). Focusing an always-visible control outside the viewer (the session
-  // filter input) and pressing Ctrl+F must not reopen the markdown bar. (Driving the
-  // terminal pane directly is unreliable here — it's hidden while a doc fills the center.)
-  await page.locator('input[placeholder*="Filter sessions" i]').first().click();
+  // Ctrl+A). Focusing a control outside the viewer (the session filter input, which the
+  // Agents header's Search agents toggle reveals) and pressing Ctrl+F must not reopen the
+  // markdown bar. (Driving the terminal pane directly is unreliable here — it's hidden
+  // while a doc fills the center.)
+  const filterInput = page.locator('input.sessbar__filter');
+  if (!(await filterInput.isVisible())) {
+    await page.getByRole('button', { name: 'Search agents', exact: true }).click();
+    await filterInput.waitFor({ state: 'visible', timeout: 5000 });
+  }
+  await filterInput.click();
   await page.keyboard.press('Control+f');
   await page.waitForTimeout(300);
   assert(

@@ -421,8 +421,8 @@ const COLD_OPEN_WAIT_MS = 30000;
 /**
  * Wait for the launch's folder-arg open (`REPO`) to land. It waits for the server, so its session
  * arrives after the first state; one that lands mid-scenario takes the selection and unmounts the
- * pane a scenario just opened. Returns once the window shows that session; a no-op for an app
- * launched without CONDUIT_E2E or without a folder arg.
+ * pane a scenario just opened. Returns once the window's state holds that session; a no-op for an
+ * app launched without CONDUIT_E2E or without a folder arg.
  */
 async function settleColdOpen(app, page) {
   const deadline = Date.now() + COLD_OPEN_WAIT_MS;
@@ -442,10 +442,16 @@ async function settleColdOpen(app, page) {
     );
     if (r.state === 'done') {
       if (r.sessionId) {
-        await page.waitForSelector(`.session[data-sessionid="${r.sessionId}"]`, {
-          state: 'attached',
-          timeout: Math.max(deadline - Date.now(), 1000),
-        });
+        // Its row may be legitimately hidden (a Space filter is on, or its group is folded), so the
+        // landing is confirmed by the renderer's own state, never by the row's DOM presence.
+        await page.waitForLoadState('domcontentloaded');
+        await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
+        await tapBridge(page);
+        await page.waitForFunction(
+          (id) => (window.__sessions || []).some((s) => s.id === id),
+          r.sessionId,
+          { timeout: Math.max(deadline - Date.now(), 1000) },
+        );
       }
       return;
     }
@@ -717,6 +723,63 @@ export async function filterAgents(page, text) {
     await input.waitFor({ state: 'visible', timeout: 5000 });
   }
   await input.fill(text);
+}
+
+/** The parent chain of a session, outermost first, from the renderer's own state. */
+async function ancestorChain(page, id) {
+  return page.evaluate((sid) => {
+    const byId = new Map((window.__sessions || []).map((s) => [s.id, s]));
+    const chain = [];
+    for (let s = byId.get(sid); s?.openedBy?.sessionId; s = byId.get(s.openedBy.sessionId)) {
+      chain.unshift(s.openedBy.sessionId);
+    }
+    return chain;
+  }, id);
+}
+
+/**
+ * Unfold whatever hides a session's row, then wait for it. A restored session is not running, so
+ * it lands in the "Stopped" group, which is folded by default; a child's row is also unrendered
+ * while its parent row is folded. Both are legitimate states, so a scenario must not assume the
+ * row is in the DOM before clicking or reading it.
+ *
+ * @param {object} page
+ * @param {string} id session id
+ */
+export async function revealSessionRow(page, id) {
+  const sel = `[data-agent-tree] .session[data-sessionid="${id}"]`;
+  const shown = async () => (await page.locator(sel).count()) > 0;
+  if (await shown()) return;
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    // A folded group hides every row inside it. Clicking each folded one in turn is idempotent:
+    // an unfolded group drops out of the next round.
+    const foldedGroups = await page.$$eval(
+      '[data-agent-tree] button.proj__label[data-agent-group]',
+      (heads) =>
+        heads
+          .filter((h) => h.getAttribute('aria-expanded') === 'false')
+          .map((h) => h.getAttribute('data-agent-group'))
+          // Restored sessions are stopped, so that group is the one that usually hides them.
+          .sort((a, b) => (a === 'stopped' ? -1 : b === 'stopped' ? 1 : 0)),
+    );
+    for (const group of foldedGroups) {
+      await page.click(`[data-agent-tree] button.proj__label[data-agent-group="${group}"]`);
+      if (await shown()) return;
+    }
+    // A child row only renders under an unfolded parent, so walk the chain outermost first.
+    for (const ancestor of await ancestorChain(page, id)) {
+      const fold = page.locator(
+        `[data-agent-tree] .session[data-sessionid="${ancestor}"] .session__fold`,
+      );
+      if ((await fold.count()) > 0 && (await fold.getAttribute('aria-expanded')) === 'false') {
+        await fold.click();
+      }
+    }
+    if (await shown()) return;
+    await page.waitForTimeout(200);
+  }
+  await page.waitForSelector(sel, { state: 'attached', timeout: 5000 });
 }
 
 /**

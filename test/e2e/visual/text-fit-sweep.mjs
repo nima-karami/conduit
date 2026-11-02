@@ -250,7 +250,7 @@ const SCENES = {
   },
 
   async 'new-session'(c) {
-    await c.page.click('[aria-label="New session"]');
+    await c.page.click('button[aria-label="New agent"]');
     await sleep(2500);
     await c.shot('new-session');
     await c.dismiss();

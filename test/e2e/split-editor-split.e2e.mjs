@@ -21,6 +21,7 @@ import {
   makeLog,
   openSession,
   profileDir,
+  revealSessionRow,
   shutdownApp,
   tapBridge,
 } from './harness.mjs';
@@ -260,6 +261,7 @@ try {
   await page.waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), sid, {
     timeout: 45000,
   });
+  await revealSessionRow(page, sid);
   await page.waitForSelector(`.session:has-text("${repoName}")`, { timeout: 20000 });
   await page.locator('.session', { hasText: repoName }).first().click();
   await page
