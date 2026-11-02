@@ -1,5 +1,13 @@
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { GAP_MARKER, type ScrollbackFiles, ServerScrollback } from '../../server/scrollback';
+import {
+  diskScrollbackFiles,
+  GAP_MARKER,
+  type ScrollbackFiles,
+  ServerScrollback,
+} from '../../server/scrollback';
 import type { ServerEvent, ServerEvents } from '../../src/contracts/server-protocol';
 import type { TermGeometry } from '../../src/protocol';
 import { scrollbackFileName } from '../../src/scrollback-files';
@@ -15,7 +23,9 @@ let size: TermGeometry | undefined;
 function make() {
   const files: ScrollbackFiles = {
     read: (name) => disk.get(name),
-    write: (name, blob) => disk.set(name, blob),
+    write: (name, blob) => {
+      disk.set(name, blob);
+    },
     remove: (name) => disk.delete(name),
   };
   return new ServerScrollback({
@@ -85,6 +95,107 @@ describe('ServerScrollback', () => {
     s.flushPending();
     expect(onDisk('a')?.[0].data).toBe(replay?.data);
     expect(make().replayForColdStart('none')).toBeNull();
+  });
+
+  it('hydrates the persisted ring before appending adoption output in a fresh instance', async () => {
+    const scratch = path.join(os.tmpdir(), 'Codex-scratch');
+    fs.mkdirSync(scratch, { recursive: true });
+    const dir = fs.mkdtempSync(path.join(scratch, 'server-ring-'));
+    const create = () =>
+      new ServerScrollback({
+        files: diskScrollbackFiles(dir, () => {}),
+        emit: (type) => shown.push({ type, data: undefined }),
+        sizeOf: () => SIZE,
+        recording: () => true,
+      });
+    try {
+      const first = create();
+      first.append('a', 'persisted-before-restart', SIZE);
+      await first.flushPending();
+      const second = create();
+      second.gap('a', 'adopted-after-restart', SIZE);
+      await second.flushPending();
+      const restored = restoreScrollback(
+        fs.readFileSync(path.join(dir, scrollbackFileName('a')), 'utf8'),
+      );
+      expect(restored.kind === 'ok' ? restored.scrollback.segments[0]?.data : null).toBe(
+        `persisted-before-restart${GAP_MARKER}adopted-after-restart`,
+      );
+      expect(shown).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('flushPending waits for a delayed disk write', async () => {
+    let release!: () => void;
+    let written = false;
+    const files: ScrollbackFiles = {
+      read: (name) => disk.get(name),
+      write: async (name, blob) => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        disk.set(name, blob);
+        written = true;
+      },
+      remove: (name) => disk.delete(name),
+    };
+    const s = new ServerScrollback({
+      files,
+      emit: <E extends ServerEvent>(type: E, data: ServerEvents[E]) => shown.push({ type, data }),
+      sizeOf: () => size,
+      recording: () => recording,
+    });
+    s.append('a', 'delayed', SIZE);
+    const flushing = s.flushPending();
+    let completed = false;
+    void flushing.then(() => {
+      completed = true;
+    });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    release();
+    await flushing;
+    expect(written).toBe(true);
+  });
+
+  it('flushPending propagates disk write failures', async () => {
+    const files: ScrollbackFiles = {
+      read: (name) => disk.get(name),
+      write: async () => {
+        throw new Error('disk failed');
+      },
+      remove: (name) => disk.delete(name),
+    };
+    const s = new ServerScrollback({
+      files,
+      emit: <E extends ServerEvent>(type: E, data: ServerEvents[E]) => shown.push({ type, data }),
+      sizeOf: () => size,
+      recording: () => recording,
+    });
+    s.append('a', 'fail', SIZE);
+    await expect(s.flushPending()).rejects.toThrow('disk failed');
+  });
+
+  it('flushPending propagates a debounced write failure that already settled', async () => {
+    vi.useFakeTimers();
+    const s = new ServerScrollback({
+      files: {
+        read: () => undefined,
+        write: async () => {
+          throw new Error('earlier disk failure');
+        },
+        remove: () => {},
+      },
+      emit: () => {},
+      sizeOf: () => SIZE,
+      recording: () => true,
+    });
+    s.append('a', 'bytes already credited', SIZE);
+    await vi.advanceTimersByTimeAsync(250);
+    await expect(s.flushPending()).rejects.toThrow('earlier disk failure');
+    vi.useRealTimers();
   });
 
   it('a file a newer version wrote is never replayed or overwritten', () => {

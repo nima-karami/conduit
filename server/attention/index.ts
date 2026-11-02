@@ -103,6 +103,11 @@ export class ServerAttention implements AttentionPort {
     this.off();
   }
 
+  forgetSession(sessionId: string): void {
+    this.reset(sessionId);
+    this.activity.forget(sessionId);
+  }
+
   sweep(): void {
     const { changed, edges } = this.activity.sweep(this.now());
     for (const edge of edges)

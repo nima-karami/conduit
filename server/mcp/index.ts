@@ -23,6 +23,7 @@ import type {
   ServerNotifications,
   WindowPresence,
 } from '../../src/contracts/server-protocol';
+import type { AdoptedTerminal } from '../../src/contracts/terminal-runtime';
 import type { HostPlatform } from '../../src/lsp-binary';
 import type { HostToWebview } from '../../src/protocol';
 import { createBindingStore } from './bindings-file';
@@ -87,12 +88,9 @@ export interface ServerMcp {
   launch: LaunchPort;
   /** For W4's runAddDir. */
   draft: DraftPort;
-  /**
-   * Listens on the MCP endpoint. Call it only after reconcile has delivered its `spawned` events:
-   * an adopted session is restored on its `spawned`, and a shim resuming before that would
-   * initialize against a session the host doesn't know yet (no rebind, no notices).
-   */
+  /** Startup ordering: see docs/specs/2026-11-01-three-process-architecture.md F1.4.5-6. */
   start(): Promise<void>;
+  resumeAdopted(terminals: readonly AdoptedTerminal[]): void;
   stop(): Promise<void>;
   tick(): Promise<void>;
   /** C2 `term.input`: the host's bookkeeping runs before the TypingPort write (F8). */
@@ -215,22 +213,27 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
 
   /** The generation each session last launched or was adopted at; any other `spawned` is an adopt. */
   const prepared = new Map<string, number>();
+  const resumeAdopted = (
+    terminals: readonly Pick<AdoptedTerminal, 'sessionId' | 'generation' | 'launchId'>[],
+  ) => {
+    for (const t of terminals) {
+      if (prepared.get(t.sessionId) === t.generation) continue;
+      const def = deps.domain.defOf(t.sessionId);
+      if (!def || !host) continue;
+      host.resumeLaunch(t.sessionId, def, t, bindings.get(t.sessionId) ?? null);
+      prepared.set(t.sessionId, t.generation);
+    }
+  };
   // Subscribed before the host, so the adopted session's state exists when its spawned handler runs.
   const stopAdopt = deps.runtime.on((e) => {
     // An older generation's late exit must not make the live one's next `spawned` read as an adopt.
     if (e.type === 'exit' && prepared.get(e.sessionId) === e.generation)
       prepared.delete(e.sessionId);
+    if (e.type === 'exit' && bindings.get(e.sessionId)?.generation === e.generation)
+      bindings.delete(e.sessionId);
     if (e.type !== 'spawned' || prepared.get(e.sessionId) === e.generation) return;
-    prepared.set(e.sessionId, e.generation);
-    const def = deps.domain.defOf(e.sessionId);
-    const launchId = deps.runtime.get(e.sessionId)?.launchId;
-    if (!def || launchId === undefined) return;
-    host?.resumeLaunch(
-      e.sessionId,
-      def,
-      { generation: e.generation, launchId },
-      bindings.get(e.sessionId) ?? null,
-    );
+    const terminal = deps.runtime.get(e.sessionId);
+    if (terminal) resumeAdopted([terminal]);
   });
 
   const h = createConduitMcpHost({
@@ -280,6 +283,7 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     },
     draft: { noteHostInput: (sessionId, data) => h.noteHostInput(sessionId, data) },
     start: () => h.start(),
+    resumeAdopted,
     async stop() {
       cancelGrace();
       stopAdopt();

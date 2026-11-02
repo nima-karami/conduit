@@ -1283,16 +1283,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
    * only when a CLI initializes (spec 2026-10-27-conduit-mcp-install §3.1).
    */
   const wireWithoutAdapter = async (
-    sessionId: string,
     r: Runtime,
     spec: SpawnSpec,
-    ids: LaunchIds,
+    token: string,
   ): Promise<SpawnSpec> => {
     if (!deps.domain.messagingOn() || !endpointReady) {
-      await deps.tokens.revoke({ sessionId });
       return spec;
     }
-    const { token } = await deps.tokens.reserve(sessionId, ids);
     r.tracker = createTypedLineTracker();
     return {
       ...spec,
@@ -1401,6 +1398,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       const adapter = adapterFor(def, { e2e: deps.e2e });
       const session = deps.sessions.get(sessionId);
       if (!session) return spec;
+      const { token } = await deps.tokens.reserve(sessionId, ids);
       const r = rt(sessionId);
       r.defAdapter = adapter;
       r.unavailable = null;
@@ -1414,16 +1412,14 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         r.notConnected = undefined;
         scheduleBroadcast();
       }
-      if (!adapter) return wireWithoutAdapter(sessionId, r, spec, ids);
+      if (!adapter) return wireWithoutAdapter(r, spec, token);
       if (claimHandle(sessionId, adapter.id) === null) {
-        await deps.tokens.revoke({ sessionId });
         return spec;
       }
 
       const unavailable = async (reason: McpUnavailableReason) => {
         r.unavailable = reason;
         scheduleBroadcast();
-        await deps.tokens.revoke({ sessionId });
         return spec;
       };
       if (!deps.domain.messagingOn()) return unavailable('messaging-off');
@@ -1455,7 +1451,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           return unavailable('launch-io');
         }
       }
-      const { token } = await deps.tokens.reserve(sessionId, ids);
       scheduleBroadcast();
       return {
         ...spec,

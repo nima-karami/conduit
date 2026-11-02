@@ -188,8 +188,6 @@ type Handlers = {
   'system.resumed': Handler<Record<string, never>>;
 };
 
-/** C2 `sessions.changed` is coalesced to at most one per this (server-protocol.ts). */
-const CHANGED_COALESCE_MS = 150;
 const PERSIST_COALESCE_MS = 150;
 
 interface Facts {
@@ -416,14 +414,9 @@ export function createDomain(deps: DomainDeps): Domain {
     );
   };
 
-  let changedTimer: ReturnType<typeof setTimeout> | undefined;
   function changed(persist = true) {
     if (persist) schedulePersist('sessions');
-    if (changedTimer) return;
-    changedTimer = setTimeout(() => {
-      changedTimer = undefined;
-      deps.emit('sessions.changed', { sessions: views() });
-    }, CHANGED_COALESCE_MS);
+    queueMicrotask(() => deps.emit('sessions.changed', { sessions: views() }));
   }
   let timersChangedTimer: ReturnType<typeof setTimeout> | undefined;
   const timersState = () => ({ schedules: timers.list(), offer: limitOffer });
@@ -558,9 +551,12 @@ export function createDomain(deps: DomainDeps): Domain {
   function adopted(terminals: readonly AdoptedTerminal[]) {
     if (!reconciled && !settingsAtLoad.restoreSessions) {
       const adoptedIds = new Set(terminals.map((t) => t.sessionId));
-      const reopen = held.filter((s) => adoptedIds.has(s.id) || factsOf(s.id).spawn !== 'none');
+      const reopen = held.filter(
+        (s) => adoptedIds.has(s.id) || factsOf(s.id).spawn !== 'none' || exitCodes.has(s.id),
+      );
       held = [];
       mgr.restore(reopen);
+      for (const s of reopen) if (exitCodes.has(s.id)) mgr.setStatus(s.id, 'exited');
       loadTimers();
       for (const s of reopen) void folders.check(s.id);
     }
@@ -677,7 +673,16 @@ export function createDomain(deps: DomainDeps): Domain {
         });
         return;
       case 'exit':
-        if (!current(e.sessionId, e.generation)) return;
+        if (!current(e.sessionId, e.generation)) {
+          const persisted = mgr.get(e.sessionId) ?? held.find((s) => s.id === e.sessionId);
+          if (
+            factsOf(e.sessionId).generation !== null ||
+            !persisted ||
+            lastGenerationOf(persisted) !== e.generation
+          )
+            return;
+          setFacts(e.sessionId, { generation: e.generation });
+        }
         log.info('pty', 'exit', { sessionId: e.sessionId, code: e.code, reason: e.reason });
         exitCodes.set(e.sessionId, e.code);
         setFacts(e.sessionId, { spawn: 'none' });
@@ -704,9 +709,19 @@ export function createDomain(deps: DomainDeps): Domain {
   function allocateLaunch(id: string): LaunchIds {
     const s = mgr.get(id);
     if (!s) throw new RpcFault('not_found', 'Session no longer exists');
+    if (!sessionsWriteAllowed()) throw new RpcFault('unavailable', 'sessions-unavailable');
+    const persisted = s as StoredSession;
+    const previous = persisted.lastGeneration;
     const counter: PersistedLaunchCounter = { lastGeneration: lastGenerationOf(s) + 1 };
     Object.assign(s, counter);
-    if (sessionsWriteAllowed()) writeSync('sessions.json', serializeSessions(persistedSessions()));
+    try {
+      atomicWriteFileSync(file('sessions.json'), serializeSessions(persistedSessions()));
+    } catch (e) {
+      if (previous === undefined) delete persisted.lastGeneration;
+      else persisted.lastGeneration = previous;
+      log.error('persist', `sessions.json write failed: ${String(e)}`);
+      throw new RpcFault('unavailable', 'sessions-unavailable');
+    }
     return { generation: counter.lastGeneration, launchId: randomBytes(16).toString('hex') };
   }
 
@@ -1472,7 +1487,6 @@ export function createDomain(deps: DomainDeps): Domain {
       unsubscribe();
       timers.stop();
       folders.dispose();
-      clearTimeout(changedTimer);
       clearTimeout(timersChangedTimer);
       for (const t of persistTimers.values()) clearTimeout(t);
       persistTimers.clear();

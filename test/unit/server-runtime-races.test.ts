@@ -540,7 +540,9 @@ describe('TerminalRuntime races', () => {
       log: () => {},
       files: {
         read: (n) => files.get(n),
-        write: (n, b) => files.set(n, b),
+        write: (n, b) => {
+          files.set(n, b);
+        },
         remove: (n) => files.delete(n),
       },
     });
