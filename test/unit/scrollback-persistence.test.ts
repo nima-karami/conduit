@@ -194,6 +194,21 @@ describe('scrollback-persistence', () => {
     expect(restoreScrollback(serializeScrollback(p))).toEqual({ kind: 'ok', scrollback: p });
   });
 
+  it('round-trips the launch mark, and drops one that does not fit the ring', () => {
+    const p: PersistedScrollback = {
+      version: 2,
+      sessionId: 's1',
+      segments: [{ data: 'run1run2', geometry: B }],
+      beforeLaunch: 4,
+    };
+    expect(restoreScrollback(serializeScrollback(p))).toEqual({ kind: 'ok', scrollback: p });
+    for (const beforeLaunch of [9, -1, 1.5, '4']) {
+      const blob = JSON.stringify({ ...JSON.parse(serializeScrollback(p)), beforeLaunch });
+      const r = restoreScrollback(blob);
+      expect(r.kind === 'ok' && r.scrollback.beforeLaunch).toBeUndefined();
+    }
+  });
+
   it('writes a segment on disk as {cols, rows, data}', () => {
     const blob = serializeScrollback({
       version: 2,

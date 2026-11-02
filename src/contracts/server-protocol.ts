@@ -223,11 +223,16 @@ export type SessionStartResult =
       target: AttachTarget;
       generation: number;
       /**
-       * false: the session was already live (today's attach path). No prelude, no second
-       * `terminal.run`; the app attaches as an observer with `history: 2000`.
+       * false: the session was already live (today's attach path). No second `terminal.run`; the
+       * app writes `prelude`, if any, then attaches as an observer with `history: 2000`.
        */
       spawned: boolean;
-      /** Stored scrollback to write before attaching, when a stale session cold-spawns (D18). */
+      /**
+       * Written before attaching. Spawned: the stored scrollback when a stale session cold-spawns
+       * (D18). Not spawned: the ring recorded before the live launch (ScrollbackPort
+       * replayBeforeLaunch) and a screen of padding, since hc's history paint covers only the
+       * live terminal and opens by clearing the screen.
+       */
       prelude?: FirstPaint;
     }
   | {

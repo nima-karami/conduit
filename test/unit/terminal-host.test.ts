@@ -123,6 +123,18 @@ describe('terminal-host', () => {
     ]);
   });
 
+  it('spawned:false writes the earlier runs before the observer attach', async () => {
+    const r = rig([live({ prelude: paint('EARLIER') })]);
+    await r.host.start(START);
+    expect(r.trace).toEqual([
+      'notify:term.resize',
+      'call:sessions.start',
+      'data:EARLIER:replay',
+      `attach:${APP_ATTACH_HISTORY_LINES}`,
+      'data:SCREEN:replay',
+    ]);
+  });
+
   it('retryLaunch on a mounted pane takes the start path with sessions.retryLaunch', async () => {
     const r = rig([{ ok: false, refusal: { reason: 'home-missing' } }, live()]);
     await r.host.start(START);

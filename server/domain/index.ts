@@ -71,7 +71,7 @@ import { parseSessions, serializeSessions } from '../../src/persistence';
 import { ProjectStore, parseProjects, serializeProjects } from '../../src/project-store';
 import type { LimitOffer, TermGeometry } from '../../src/protocol';
 import { briefKeepIds, createRoleBriefHost, parseBriefRequest } from '../../src/role-brief-host';
-import { spawnPrelude } from '../../src/scrollback-persistence';
+import { scrollbackReplayPadding, spawnPrelude } from '../../src/scrollback-persistence';
 import {
   COMMAND_AGENT_ID,
   coerceOpenedBy,
@@ -751,11 +751,28 @@ export function createDomain(deps: DomainDeps): Domain {
     return { generation: counter.lastGeneration, launchId: randomBytes(16).toString('hex') };
   }
 
+  /**
+   * The ring before the live launch, then a screen of newlines: hc's history paint opens by
+   * erasing the screen in place, which would wipe the replay's last screen otherwise.
+   */
+  const earlierRuns = (id: string): FirstPaint | undefined => {
+    const before = settings().scrollbackPersistence ? scrollback.replayBeforeLaunch(id) : null;
+    if (!before) return undefined;
+    const rows = (requestedSizes.get(id) ?? deps.lastSizeOf(id))?.rows ?? HC_DEFAULT_ROWS;
+    return composePrelude(before, scrollbackReplayPadding(deps.platform, rows));
+  };
+
   const attachResult = (id: string): SessionStartResult | undefined => {
     const t = runtime.get(id);
-    return t?.state === 'live'
-      ? { ok: true, target: t.target, generation: t.generation, spawned: false }
-      : undefined;
+    if (t?.state !== 'live') return undefined;
+    const prelude = earlierRuns(id);
+    return {
+      ok: true,
+      target: t.target,
+      generation: t.generation,
+      spawned: false,
+      ...(prelude ? { prelude } : {}),
+    };
   };
 
   /** What answers a start without spawning; run again after the first reconcile, which may change it. */

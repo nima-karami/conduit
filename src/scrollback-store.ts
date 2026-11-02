@@ -4,12 +4,16 @@ import {
   attachReplay,
   type ColdReplay,
   coldReplay,
+  lastRelaunchAt,
+  ringPrefix,
   SCROLLBACK_CAP_BYTES,
   type ScrollbackRing,
   serializeScrollback,
 } from './scrollback-persistence';
 
 const PERSIST_DEBOUNCE_MS = 250;
+
+const length = (ring: ScrollbackRing) => ring.reduce((n, s) => n + s.data.length, 0);
 
 export interface ScrollbackStoreOptions {
   /** Delivers a host-composed line to the session's terminal. */
@@ -25,6 +29,8 @@ export interface ScrollbackStoreOptions {
  */
 export class ScrollbackStore {
   private readonly rings = new Map<string, ScrollbackRing>();
+  /** Characters of each ring recorded before the session's current launch; trimmed with it. */
+  private readonly beforeLaunch = new Map<string, number>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly send: (sessionId: string, data: string) => void;
   private readonly recording: () => boolean;
@@ -40,10 +46,14 @@ export class ScrollbackStore {
   }
 
   append(sessionId: string, chunk: string, geometry: TermGeometry | undefined): void {
-    this.rings.set(
-      sessionId,
-      appendToRing(this.rings.get(sessionId) ?? [], chunk, geometry, this.cap),
-    );
+    const ring = this.rings.get(sessionId) ?? [];
+    const next = appendToRing(ring, chunk, geometry, this.cap);
+    this.rings.set(sessionId, next);
+    const before = this.beforeLaunch.get(sessionId);
+    if (before !== undefined) {
+      const trimmed = length(ring) + chunk.length - length(next);
+      this.beforeLaunch.set(sessionId, Math.max(0, before - trimmed));
+    }
     if (this.timers.has(sessionId)) return;
     this.timers.set(
       sessionId,
@@ -81,6 +91,23 @@ export class ScrollbackStore {
     if (this.recording()) this.append(sessionId, data, geometry);
   }
 
+  /** A new launch starts here: what the ring holds now is the launches before it. */
+  markLaunch(sessionId: string, at = length(this.rings.get(sessionId) ?? [])): void {
+    this.beforeLaunch.set(sessionId, at);
+  }
+
+  /**
+   * The ring before the current launch, for a pane attaching to it live: its own output comes from
+   * the core's history instead. With no recorded mark (a file written without one), everything
+   * before the last relaunch marker, so nothing of the live launch is shown twice.
+   */
+  replayBeforeLaunch(sessionId: string): { data: string; runs: ReplayRun[] } | undefined {
+    const ring = this.rings.get(sessionId) ?? [];
+    const before = this.beforeLaunch.get(sessionId) ?? lastRelaunchAt(ring) ?? 0;
+    const replay = attachReplay(ringPrefix(ring, before));
+    return replay.data ? replay : undefined;
+  }
+
   /** The replay for a pane attaching to the session's live child (see `attachReplay`). */
   attachReplay(sessionId: string): { data: string; runs: ReplayRun[] } {
     return attachReplay(this.rings.get(sessionId) ?? []);
@@ -91,7 +118,16 @@ export class ScrollbackStore {
     this.cancelTimer(sessionId);
     const segments = this.rings.get(sessionId);
     if (!segments) return;
-    this.persist(sessionId, serializeScrollback({ version: 2, sessionId, segments }));
+    const beforeLaunch = this.beforeLaunch.get(sessionId);
+    this.persist(
+      sessionId,
+      serializeScrollback({
+        version: 2,
+        sessionId,
+        segments,
+        ...(beforeLaunch === undefined ? {} : { beforeLaunch }),
+      }),
+    );
   }
 
   flushPending(): void {
@@ -101,6 +137,7 @@ export class ScrollbackStore {
   drop(sessionId: string): void {
     this.cancelTimer(sessionId);
     this.rings.delete(sessionId);
+    this.beforeLaunch.delete(sessionId);
   }
 
   private cancelTimer(sessionId: string): void {

@@ -45,6 +45,8 @@ export interface RuntimeRing {
    * after a resize, and a cold replay must still resize where the pane did.
    */
   resized(sessionId: string, size: TermGeometry): void;
+  /** A launch is about to run: the ring before it is what a live attach replays (F2). */
+  launchStarted(sessionId: string): void;
 }
 
 export interface HcRuntimeDeps {
@@ -481,6 +483,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
     // hc defaults to ghostty and answers XTVERSION with it (M10).
     env.TERM_PROGRAM = 'conduit';
     env.TERM_PROGRAM_VERSION = this.deps.appVersion;
+    this.deps.ring.launchStarted(sessionId);
     let record: HcMethods['terminal.run']['result'];
     try {
       record = await this.deps.hc.call('terminal.run', {

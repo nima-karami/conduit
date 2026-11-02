@@ -204,6 +204,12 @@ export interface ScrollbackPort {
    */
   replayForColdStart(sessionId: string): FirstPaint | null;
   /**
+   * For a start that finds the session already live: the ring recorded before its current launch
+   * (earlier runs, relaunch markers, host-composed lines), run by run and recording nothing. The
+   * observer's hc history covers the live launch itself. Null = nothing before it.
+   */
+  replayBeforeLaunch(sessionId: string): FirstPaint | null;
+  /**
    * Today's ScrollbackStore.show, for host-composed bytes that are not PTY output: the relaunch
    * marker, ConPTY replay padding, role-brief banners, can't-start lines and the refusal text of a
    * start that never spawns. Emitted as C2 `term.show` and appended to the ring at the session's
