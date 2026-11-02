@@ -29,6 +29,15 @@ describe('hc endpoint resolution', () => {
     ).toBe('\\\\.\\pipe\\herdr-core-karam-default.sock');
   });
 
+  it('strips non-alphanumerics from the account name in the Windows pipe', () => {
+    expect(
+      resolveHcEndpoint({
+        platform: 'win32',
+        env: { USERNAME: 'Jo Sm.it-h', APPDATA: '/no-hc-config' },
+      }),
+    ).toBe('\\\\.\\pipe\\herdr-core-JoSmith-default.sock');
+  });
+
   it('uses HC_SESSION and the state fallback when no runtime directory exists', () => {
     expect(
       resolveHcEndpoint({

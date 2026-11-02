@@ -360,6 +360,13 @@ export class FakeHc {
       };
       this.terminals.push(record);
       this.emit(record, 'created', record);
+      const [program = ''] = record.argv;
+      this.emit(record, 'foreground', {
+        pid: record.pid,
+        name: program,
+        argv: record.argv,
+        cwd: record.cwd,
+      });
       return record;
     }
     if (method === 'terminal.list') {

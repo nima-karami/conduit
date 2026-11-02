@@ -41,6 +41,8 @@ export const HC_ERROR_KINDS = [
   'finished',
   'spawn_failed',
   'name_taken',
+  'live',
+  'needs_framed',
 ] as const satisfies readonly HcErrorKind[];
 const isKnownKind = (kind: string | undefined): kind is HcErrorKind =>
   HC_ERROR_KINDS.some((known) => known === kind);

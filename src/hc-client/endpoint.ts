@@ -12,7 +12,8 @@ export interface EndpointOptions {
 
 /**
  * herdr-core v0.1.16 docs/security.md "State and endpoints" (HC_SOCKET, config `socket`, the Unix
- * runtime/state fallbacks); the Windows pipe name is measured (`herdr-core-<account>-<session>.sock`).
+ * runtime/state fallbacks); the Windows pipe name is measured (`herdr-core-<account>-<session>.sock`,
+ * the account stripped to alphanumerics: "Jo Sm.it-h" gives `JoSmith`).
  */
 export function resolveHcEndpoint(options: EndpointOptions = {}): string {
   const env = options.env ?? process.env;
@@ -36,8 +37,10 @@ export function resolveHcEndpoint(options: EndpointOptions = {}): string {
     const config = parse(readFileSync(configPath, 'utf8'));
     if (typeof config.socket === 'string') return config.socket;
   }
-  if (platform === 'win32')
-    return `\\\\.\\pipe\\herdr-core-${env.USERNAME || userInfo().username}-${session}.sock`;
+  if (platform === 'win32') {
+    const account = (env.USERNAME || userInfo().username).replace(/[^\p{L}\p{N}]/gu, '');
+    return `\\\\.\\pipe\\herdr-core-${account}-${session}.sock`;
+  }
   const uid = options.uid ?? process.getuid?.();
   const userRuntime = uid === undefined ? undefined : `/run/user/${uid}`;
   const runtime =

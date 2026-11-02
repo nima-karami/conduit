@@ -20,6 +20,30 @@ const run = (labels: Record<string, string> = {}) =>
   client.call('terminal.run', { argv: ['x'], labels, keep: false, no_parent: true });
 
 describe('fake hc fidelity', () => {
+  it('emits foreground right after created on run, as hc does', async () => {
+    const seen: HcNotification[] = [];
+    await client.subscribe({}, (n) => seen.push(n));
+    const created = await client.call('terminal.run', {
+      argv: ['x', 'y'],
+      cwd: '/work',
+      labels: {},
+      keep: false,
+      no_parent: true,
+    });
+    await expect
+      .poll(() => seen.map((n) => (n.method === 'event' ? n.params.type : n.method)))
+      .toEqual(['created', 'foreground']);
+    expect(seen[1]).toEqual({
+      method: 'event',
+      params: {
+        seq: 2,
+        type: 'foreground',
+        terminal: created.address,
+        data: { pid: created.pid, name: 'x', argv: ['x', 'y'], cwd: '/work' },
+      },
+    });
+  });
+
   it('refuses to remove a live terminal', async () => {
     await expect(client.call('terminal.rm', { terminal: 't1' })).rejects.toMatchObject({
       name: 'HcRpcError',
@@ -61,8 +85,8 @@ describe('fake hc fidelity', () => {
         {
           method: 'event',
           params: {
-            // seq 1 was the other terminal's `created`, outside this filter: seq is core-wide.
-            seq: 2,
+            // seq 1-2 were the other terminal's created and foreground, outside this filter: seq is core-wide.
+            seq: 3,
             type: 'finished',
             terminal: 't1',
             data: { reason: 'killed', exit_code: 1, signal: null, finished_ms: expect.any(Number) },

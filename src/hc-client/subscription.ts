@@ -70,7 +70,7 @@ export class EventSubscription {
     } catch (error) {
       this.log(`hc event channel ${this.stream.channel}: unreadable notification`, error);
       this.stream.close();
-      this.endWithMissed();
+      this.end('malformed');
       return;
     }
     if (!this.ended) this.stream.credit(bytes.byteLength);
@@ -80,12 +80,12 @@ export class EventSubscription {
   private channelEnded(end: HcStreamEnd): void {
     if (this.ended) return;
     if (end.reason === 'disconnected') this.ended = true;
-    else this.endWithMissed();
+    else this.end('closed');
   }
 
-  private endWithMissed(): void {
+  private end(reason: 'closed' | 'malformed'): void {
     this.ended = true;
-    this.deliver({ method: 'missed', params: { seq: this.seq, terminals: [] } });
+    this.deliver({ method: 'ended', params: { reason } });
   }
 
   private scan(bytes: Uint8Array): void {

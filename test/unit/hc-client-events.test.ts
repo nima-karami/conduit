@@ -33,16 +33,52 @@ describe('hc event subscriptions', () => {
     expect(seen).toEqual([title(1)]);
   });
 
-  it('ends only the subscription with missed on malformed event JSON, keeping the connection', async () => {
+  it('decodes a multi-byte UTF-8 character split across two DATA frames inside an event string', async () => {
+    const seen: HcNotification[] = [];
+    await client.subscribe({}, (n) => seen.push(n));
+    const bytes = Buffer.from(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'event',
+        params: { seq: 1, type: 'title', terminal: 't1', data: { title: 'café!' } },
+      }),
+    );
+    const split = bytes.indexOf(0xc3) + 1;
+    fake.send(fake.channels[0], bytes.subarray(0, split));
+    await barrier();
+    expect(seen).toEqual([]);
+    fake.send(fake.channels[0], bytes.subarray(split));
+    await expect
+      .poll(() => seen)
+      .toEqual([
+        {
+          method: 'event',
+          params: { seq: 1, type: 'title', terminal: 't1', data: { title: 'café!' } },
+        },
+      ]);
+  });
+
+  it('ignores a wire-sent ended notification; it is client-made only', async () => {
+    const seen: HcNotification[] = [];
+    await client.subscribe({}, (n) => seen.push(n));
+    fake.notify(fake.channels[0], {
+      jsonrpc: '2.0',
+      method: 'ended',
+      params: { seq: 1, reason: 'closed' },
+    });
+    fake.notify(fake.channels[0], { jsonrpc: '2.0', ...title(2) });
+    await barrier();
+    expect(seen).toEqual([title(2)]);
+  });
+
+  it('ends only the subscription with ended on malformed event JSON, keeping the connection', async () => {
     const states: string[] = [];
     client.onConnection((state) => states.push(state));
     const seen: HcNotification[] = [];
     await client.subscribe({}, (n) => seen.push(n));
     const channel = fake.channels[0];
     fake.send(channel, Buffer.from('{"jsonrpc":"2.0","method":"event","params":}\n'));
-    await expect
-      .poll(() => seen)
-      .toEqual([{ method: 'missed', params: { seq: 0, terminals: [] } }]);
+    await expect.poll(() => seen).toEqual([{ method: 'ended', params: { reason: 'malformed' } }]);
     await expect
       .poll(() => fake.frames.some((f) => f.channel === channel && f.kind === FrameKind.Close))
       .toBe(true);
@@ -56,7 +92,7 @@ describe('hc event subscriptions', () => {
     expect(states).toEqual(['connected']);
   });
 
-  it('ends the subscription with missed when hc closes its event channel', async () => {
+  it('ends the subscription with ended when hc closes its event channel', async () => {
     const states: string[] = [];
     client.onConnection((state) => states.push(state));
     const seen: HcNotification[] = [];
@@ -65,7 +101,7 @@ describe('hc event subscriptions', () => {
     fake.end(fake.channels[0], { reason: 'server_stop' });
     await expect
       .poll(() => seen)
-      .toEqual([title(3), { method: 'missed', params: { seq: 3, terminals: [] } }]);
+      .toEqual([title(3), { method: 'ended', params: { reason: 'closed' } }]);
     await barrier();
     expect(states).toEqual(['connected']);
   });

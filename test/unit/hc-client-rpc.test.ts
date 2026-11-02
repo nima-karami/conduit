@@ -53,6 +53,8 @@ describe('hc RPC', () => {
     'conflict',
     'status_mismatch',
     'spawn_failed',
+    'live',
+    'needs_framed',
   ])('maps %s from error.data.kind', async (kind) => {
     fake.onCall('terminal.get', () => {
       throw new FakeRpcError(kind, 'core explanation');
