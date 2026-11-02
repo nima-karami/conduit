@@ -36,6 +36,7 @@ import type { FsOp } from '../fs-undo';
 import { requestHost } from '../host-request';
 import { createOsClipboardCopier } from '../os-clipboard-copy';
 import { installOsDropSeam } from '../os-drop-seam';
+import { SERVICE_UNAVAILABLE_COPY } from '../server-unavailable';
 import { pushToast } from '../toast-store';
 import { ConflictDialog, type ConflictPrompt, type ConflictResolution } from './conflict-dialog';
 import type { MenuState } from './context-menu';
@@ -581,6 +582,10 @@ export function FilesView({
         ['folder:probeResult'],
         PROBE_TIMEOUT_MS,
       );
+      if (r?.error === 'server-unavailable') {
+        pushToast({ message: SERVICE_UNAVAILABLE_COPY, variant: 'error' });
+        break;
+      }
       // probeFolder reports `exists` only for a directory; no reply reads as a file.
       for (const res of r?.results ?? []) probed.set(res.path, res.exists);
     }

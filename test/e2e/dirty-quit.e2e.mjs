@@ -38,7 +38,10 @@ await runPhases('dirty-quit', {
       'a.ts is listed',
     );
     const text = await dialog.textContent();
-    assert(/will also stop \d+ running agent/.test(text), `running line present: ${text}`);
+    assert(
+      /\d+ agents? will keep running after Conduit closes/.test(text),
+      `running line present: ${text}`,
+    );
     assert((await sessionStatus(d.page, d.sid)) === 'running', 'session still running (A1)');
     // §10: the initially focused primary shows the ring on top of its own resting shadow.
     for (const theme of ['aero', 'aero-dark', 'neon']) {

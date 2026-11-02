@@ -56,7 +56,6 @@ import {
 } from '../src/file-service';
 import { folderKey } from '../src/folder-key';
 import { locateFolder } from '../src/folder-locate';
-import type { SessionOpReason } from '../src/folder-validation';
 import { type DndOpts, fsCopy, fsMove } from '../src/fs-dnd';
 import { fsImport, type ImportConflictPolicy } from '../src/fs-import';
 import {
@@ -130,6 +129,8 @@ import type {
   HostToWebview,
   PersistedDoc,
   RepoDTO,
+  ServerUiState,
+  SessionOpReason,
   WebviewToHost,
 } from '../src/protocol';
 import { summarizeQueue } from '../src/queue-summary';
@@ -1438,6 +1439,7 @@ app.whenReady().then(() => {
   // The latest renderer-wide server state, so a window that loads after the snapshot still gets it.
   let lastTimers: Extract<HostToWebview, { type: 'timer:state' }> | null = null;
   let lastMcp: Extract<HostToWebview, { type: 'mcp:state' }> | null = null;
+  let serverUiState: ServerUiState = { state: 'connecting' };
 
   // Fail-closed per-window readiness and visible set for the MCP policy gate; separate from
   // activity/gitDemand, which fail open (spec 2026-10-30-conduit-mcp-tool-policy §2.3).
@@ -1883,6 +1885,13 @@ app.whenReady().then(() => {
       BrowserWindow.getFocusedWindow()?.id,
     );
   const openWindowCount = () => openWindows().length;
+  // The open confirmQuit per window, so only a live app-quit answer can arm stopAgentsOnQuit.
+  const quitAsks = new Map<
+    number,
+    { requestId: number; reason: 'quit' | 'update' | 'windowClose' }
+  >();
+  // F4: a plain quit leaves agents running; only Quit and stop all agents sets this.
+  let stopAgentsOnQuit = false;
 
   const closeGuard = createCloseGuard({
     windowIds: openWindows,
@@ -1898,10 +1907,14 @@ app.whenReady().then(() => {
       const sessions = sessionsOwnedBy(sessionOwner, id, store.list());
       return { running: runningSessions(sessions).length, busy: busySessions(sessions).length };
     },
-    ask: (id, ask) =>
-      liveWindow(id)?.webContents.send('to-webview', { type: 'confirmQuit', ...ask }),
-    abort: (id, requestId) =>
-      liveWindow(id)?.webContents.send('to-webview', { type: 'quitAborted', requestId }),
+    ask: (id, ask) => {
+      quitAsks.set(id, { requestId: ask.requestId, reason: ask.reason });
+      liveWindow(id)?.webContents.send('to-webview', { type: 'confirmQuit', ...ask });
+    },
+    abort: (id, requestId) => {
+      quitAsks.delete(id);
+      liveWindow(id)?.webContents.send('to-webview', { type: 'quitAborted', requestId });
+    },
     confirmUnresponsive: (id, signal) => {
       const w = liveWindow(id);
       if (!w) return Promise.resolve(true);
@@ -1921,9 +1934,22 @@ app.whenReady().then(() => {
         );
     },
     proceedApp: (reason) => {
-      quitGrant.issue();
-      if (reason === 'update') quitAndInstall();
-      else setImmediate(() => app.quit());
+      const finish = () => {
+        quitAsks.clear();
+        stopAgentsOnQuit = false;
+        quitGrant.issue();
+        if (reason === 'update') quitAndInstall();
+        else setImmediate(() => app.quit());
+      };
+      if (!stopAgentsOnQuit || !lifecycle) {
+        finish();
+        return;
+      }
+      // stopAll is bounded by STOP_ALL_ANSWER_TIMEOUT_MS, so a dead server can't hold the quit.
+      void lifecycle.stopAll().then((r) => {
+        log.info('server', 'stopAll on quit', { ...r });
+        finish();
+      }, finish);
     },
     proceedWindow: (id) => {
       const w = liveWindow(id);
@@ -1935,6 +1961,7 @@ app.whenReady().then(() => {
         setImmediate(() => app.quit());
         return;
       }
+      stopAgentsOnQuit = false;
       windowConfirmed.add(id);
       for (const s of sessionsOwnedBy(sessionOwner, id, store.list())) void removeSession(s.id);
       w.close();
@@ -2245,7 +2272,13 @@ app.whenReady().then(() => {
       stores = { ...stores, ...s };
       postState();
     },
-    onRuntime: (h) => log.info('server', 'runtime', { ...h }),
+    onRuntime: (h) => {
+      log.info('server', 'runtime', { ...h });
+      // Runtime health is per connection; a late event after a drop has no server behind it.
+      if (serverUiState.state !== 'connected') return;
+      serverUiState = { ...serverUiState, runtime: h };
+      broadcast({ type: 'server:state', state: serverUiState });
+    },
     osAttention: () => settings.osAttention,
     anyWindowFocused: () => BrowserWindow.getFocusedWindow() !== null,
     notifyAttention,
@@ -2347,10 +2380,11 @@ app.whenReady().then(() => {
       now: Date.now,
       log: appLog,
     });
-    // S4 renders these; until then they are logged and terminals show "starting".
     lifecycle.onState((s) => {
       log.info('server', `state ${s.state}`, { ...s });
       serverCalls.stateChanged(s);
+      serverUiState = s.state === 'connected' ? { state: 'connected' } : s;
+      broadcast({ type: 'server:state', state: serverUiState });
     });
     lifecycle.onConnected((c) => {
       serverCalls.connected(c);
@@ -2384,6 +2418,7 @@ app.whenReady().then(() => {
           presence.markReady(senderId);
           schedulePresence();
           postState();
+          replyHere({ type: 'server:state', state: serverUiState });
           // A just-loaded window may have missed the create/focus win:list broadcasts (it
           // wasn't subscribed yet); send the current picker list now (Slice B).
           broadcastWinList?.();
@@ -3895,15 +3930,41 @@ app.whenReady().then(() => {
         case 'updateRelaunch':
           closeGuard.requestAppQuit('update', senderId);
           break;
+        case 'server:retry':
+          await lifecycle?.retry();
+          break;
+        case 'server:restartService':
+          await lifecycle?.restartService();
+          break;
+        case 'server:stopAllAndContinue':
+          await lifecycle?.stopAllAndContinue();
+          break;
+        case 'app:quitAndStopAgents':
+          stopAgentsOnQuit = true;
+          closeGuard.requestAppQuit('quit', senderId);
+          break;
+        case 'session:retryLaunch':
+          await terminals.retryLaunch(m.sessionId);
+          break;
+        case 'session:discardLaunch':
+          await callServer('sessions.discardLaunch', { sessionId: m.sessionId });
+          break;
         case 'quitAck':
           closeGuard.onAck(senderId, m.requestId);
           break;
         case 'quitDialogShown':
           closeGuard.onShown(senderId, m.requestId);
           break;
-        case 'quitDecision':
+        case 'quitDecision': {
+          const ask = quitAsks.get(senderId);
+          if (ask?.requestId === m.requestId) {
+            quitAsks.delete(senderId);
+            if (!m.proceed) stopAgentsOnQuit = false;
+            else if (m.stopAgents && ask.reason !== 'windowClose') stopAgentsOnQuit = true;
+          }
           closeGuard.onDecision(senderId, m.requestId, m.proceed);
           break;
+        }
       }
     } catch (err: unknown) {
       const refusal = serverDownReply(m, err);

@@ -18,6 +18,7 @@ import { post } from '../bridge';
 import { getDirtySnapshot } from '../dirty-store';
 import { createFolderActions } from '../folder-actions';
 import { requestHost } from '../host-request';
+import { SERVICE_UNAVAILABLE_COPY } from '../server-unavailable';
 import { pushToast } from '../toast-store';
 
 const SET_HOME_TIMEOUT_MS = 10_000;
@@ -61,7 +62,11 @@ export function MissingHomeState({ session, onFixed }: { session: Session; onFix
         SET_HOME_TIMEOUT_MS,
       );
       if (r?.ok) return true;
-      pushToast({ message: asHomeFailedToast(folder), variant: 'error' });
+      pushToast({
+        message:
+          r?.reason === 'server-unavailable' ? SERVICE_UNAVAILABLE_COPY : asHomeFailedToast(folder),
+        variant: 'error',
+      });
       return false;
     });
 

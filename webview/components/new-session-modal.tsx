@@ -27,6 +27,7 @@ import {
   reduceBrief,
 } from '../role-brief-state';
 import { BRIEF_STR } from '../role-brief-strings';
+import { SERVICE_UNAVAILABLE_COPY } from '../server-unavailable';
 import { ModalLayer } from './modal-layer';
 import { NewSessionFolders } from './new-session-folders';
 import { NewSessionLaunchRow } from './new-session-launch-row';
@@ -42,6 +43,7 @@ const PROBE_DEBOUNCE_MS = 250;
 type OpenRepoError = NonNullable<Extract<HostToWebview, { type: 'openRepo:result' }>['error']>;
 /** mf-new-session plan, Spec staleness §3.2: one copy per mf-model error. */
 const START_ERROR: Record<OpenRepoError, string> = {
+  'server-unavailable': SERVICE_UNAVAILABLE_COPY,
   'home-missing': 'home folder not found',
   'invalid-path': 'home is not a folder',
   'unknown-agent': 'launcher is no longer available',
@@ -67,6 +69,8 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
   const briefSeq = useRef(0);
   const probeSeq = useRef(0);
   const [preview, setPreview] = useState<LaunchPreviewView>({ loading: false });
+  // The folder probe's refusal; a start refusal arrives as startError instead.
+  const [probeUnavailable, setProbeUnavailable] = useState(false);
   const frameRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const reasonId = useId();
@@ -100,7 +104,11 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
         ['folder:probeResult'],
         REPLY_TIMEOUT_MS,
       ).then((reply) => {
-        if (reply) dispatch({ type: 'probed', results: reply.results });
+        if (!reply) return;
+        setProbeUnavailable(reply.error === 'server-unavailable');
+        // Unprobed, so the next folder edit after a reconnect asks again.
+        if (reply.error) for (const p of paths) probed.current.delete(folderKey(p));
+        else dispatch({ type: 'probed', results: reply.results });
       });
     }
   }, [state.folders]);
@@ -337,9 +345,9 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
           </section>
         </div>
 
-        {state.startError && (
+        {(state.startError || probeUnavailable) && (
           <div className="ns__error" role="alert">
-            {state.startError}
+            {state.startError ?? SERVICE_UNAVAILABLE_COPY}
           </div>
         )}
         <div className="modal__foot ns__foot">

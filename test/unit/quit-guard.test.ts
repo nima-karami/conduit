@@ -115,10 +115,11 @@ describe('quitConfirmCopy', () => {
       expect(title).toBe('2 sessions still running');
     });
 
-    it('body mentions quitting and busy clause', () => {
+    it('body says the agents keep running, with the busy clause (F4)', () => {
       const { body } = quitConfirmCopy({ running: twoRunning, busy: 1, reason: 'quit' });
-      expect(body).toContain('2 running agents');
-      expect(body).toContain('(1 actively working)');
+      expect(body).toBe(
+        'Your 2 agents (1 actively working) will keep running after Conduit closes.',
+      );
     });
 
     it('confirmLabel is "Quit"', () => {
@@ -135,7 +136,7 @@ describe('quitConfirmCopy', () => {
 
     it('still mentions the agent count', () => {
       const { body } = quitConfirmCopy({ running: twoRunning, busy: 0, reason: 'quit' });
-      expect(body).toContain('2 running agents');
+      expect(body).toContain('2 agents');
     });
   });
 
@@ -149,7 +150,7 @@ describe('quitConfirmCopy', () => {
 
     it('body uses singular "agent"', () => {
       const { body } = quitConfirmCopy({ running: oneRunning, busy: 0, reason: 'quit' });
-      expect(body).toContain('1 running agent');
+      expect(body).toContain('1 agent');
       expect(body).not.toContain('agents');
     });
   });
@@ -160,11 +161,11 @@ describe('quitConfirmCopy', () => {
       expect(title).toBe('2 sessions still running');
     });
 
-    it('body mentions closing and relaunch', () => {
+    it('body says the agents keep running and Conduit relaunches', () => {
       const { body } = quitConfirmCopy({ running: twoRunning, busy: 2, reason: 'update' });
-      expect(body).toContain('closes');
-      expect(body).toContain('relaunch');
-      expect(body).toContain('(2 actively working)');
+      expect(body).toBe(
+        'Your 2 agents (2 actively working) will keep running after Conduit closes. Conduit will relaunch to install the update.',
+      );
     });
 
     it('confirmLabel is "Relaunch & update"', () => {
@@ -190,18 +191,19 @@ describe('quitConfirmCopy', () => {
 
     it('body uses singular "agent"', () => {
       const { body } = quitConfirmCopy({ running: oneRunning, busy: 0, reason: 'update' });
-      expect(body).toContain('1 running agent');
+      expect(body).toContain('1 agent');
       expect(body).not.toContain('agents');
     });
   });
 });
 
 describe('quitConfirmCopy windowClose', () => {
-  it('quitConfirmCopy windowClose == quit copy', () => {
-    const running = 2;
-    expect(quitConfirmCopy({ running, busy: 1, reason: 'windowClose' })).toEqual(
-      quitConfirmCopy({ running, busy: 1, reason: 'quit' }),
-    );
+  it('closing a window still stops its agents', () => {
+    expect(quitConfirmCopy({ running: 2, busy: 1, reason: 'windowClose' })).toEqual({
+      title: '2 sessions still running',
+      body: 'Closing this window will stop 2 running agents (1 actively working).',
+      confirmLabel: 'Quit',
+    });
   });
 });
 
@@ -276,10 +278,10 @@ describe('dirtyCloseCopy', () => {
   it('running line per reason, with busy suffix and plurals', () => {
     const files = [file('/r/a.ts')];
     expect(copyOf({ files, running: 1, reason: 'quit' }).lines).toEqual([
-      'Quitting will also stop 1 running agent.',
+      'Your 1 agent will keep running after Conduit closes.',
     ]);
     expect(copyOf({ files, running: 3, busy: 2, reason: 'quit' }).lines).toEqual([
-      'Quitting will also stop 3 running agents (2 actively working).',
+      'Your 3 agents (2 actively working) will keep running after Conduit closes.',
     ]);
     expect(copyOf({ files, running: 2, reason: 'windowClose' }).lines).toEqual([
       'Closing this window will also stop 2 running agents.',
@@ -298,7 +300,7 @@ describe('dirtyCloseCopy', () => {
 
   it('update line', () => {
     expect(copyOf({ files: [file('/r/a.ts')], running: 2, reason: 'update' }).lines).toEqual([
-      'Quitting will also stop 2 running agents.',
+      'Your 2 agents will keep running after Conduit closes.',
       'Conduit will relaunch to install the update.',
     ]);
   });

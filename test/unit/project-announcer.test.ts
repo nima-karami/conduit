@@ -160,6 +160,19 @@ describe('projectAnnouncer — moves', () => {
     expect(announcer.getSnapshot()).toBe("Couldn't move api fix");
   });
 
+  it('server-unavailable uses the shared banner retry message', async () => {
+    announcer.moveSession('s1', 'p-1', TEXT);
+    await settle({
+      type: 'session:opResult',
+      requestId: 1,
+      ok: false,
+      reason: 'server-unavailable',
+    });
+    expect(announcer.getSnapshot()).toBe(
+      "Conduit's background service isn't running — Retry from the banner.",
+    );
+  });
+
   it('null (timeout) → no announcement', async () => {
     const cb = vi.fn();
     announcer.subscribe(cb);

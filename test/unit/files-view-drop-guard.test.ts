@@ -7,6 +7,7 @@ import type { HostToWebview, WebviewToHost } from '../../src/protocol';
 import type { MenuState } from '../../webview/components/context-menu';
 import { FilesView } from '../../webview/components/files-view';
 import { SettingsProvider } from '../../webview/settings';
+import { __resetToastsForTest, getToastsSnapshot } from '../../webview/toast-store';
 
 const listeners = vi.hoisted(() => new Set<(m: HostToWebview) => void>());
 const posted = vi.hoisted((): WebviewToHost[] => []);
@@ -85,6 +86,7 @@ afterEach(async () => {
   host.remove();
   listeners.clear();
   posted.length = 0;
+  __resetToastsForTest();
 });
 
 describe('FilesView OS-drop guard', () => {
@@ -126,5 +128,38 @@ describe('FilesView OS-drop guard', () => {
     });
     expect(menus).toHaveLength(1);
     expect(probes).toHaveLength(1);
+  });
+
+  it('folder probe service-unavailable shows the shared banner retry message', async () => {
+    await render(() => {});
+    const seam = window.__conduitOsDrop;
+    if (!seam) throw new Error('seam not installed');
+    let drop: Promise<void> = Promise.resolve();
+    await act(async () => {
+      drop = seam({
+        items: [{ path: '/x/one', isDir: null as unknown as boolean }],
+        targetDir: '/w/home',
+        x: 10,
+        y: 10,
+      });
+    });
+    const request = posted.find(
+      (m): m is Extract<WebviewToHost, { type: 'folder:probe' }> => m.type === 'folder:probe',
+    );
+    if (!request) throw new Error('no probe request');
+    await act(async () => {
+      for (const listener of listeners) {
+        listener({
+          type: 'folder:probeResult',
+          requestId: request.requestId,
+          results: [],
+          error: 'server-unavailable',
+        } as HostToWebview);
+      }
+      await drop;
+    });
+    expect(getToastsSnapshot().map((toast) => toast.message)).toContain(
+      "Conduit's background service isn't running — Retry from the banner.",
+    );
   });
 });

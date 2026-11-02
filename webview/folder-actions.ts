@@ -5,6 +5,7 @@ import type { LocateReason, WebviewToHost } from '../src/protocol';
 import { repoBaseName } from '../src/repo-display';
 import type { FolderSectionModel } from '../src/session-sections';
 import type { requestHost } from './host-request';
+import { SERVICE_UNAVAILABLE_COPY } from './server-unavailable';
 import type { PushToastInput } from './toast-store';
 
 // A native picker stays open as long as the user leaves it; the op replies are host-local.
@@ -63,11 +64,13 @@ export function createFolderActions(deps: FolderActionsDeps): FolderActions {
     );
 
   const addFailureCopy = (reason: LocateReason | undefined, name: string) =>
-    reason === 'duplicate'
-      ? STR.duplicate(name)
-      : reason === 'overlaps'
-        ? STR.overlaps(name)
-        : STR.addFailed(name);
+    reason === 'server-unavailable'
+      ? SERVICE_UNAVAILABLE_COPY
+      : reason === 'duplicate'
+        ? STR.duplicate(name)
+        : reason === 'overlaps'
+          ? STR.overlaps(name)
+          : STR.addFailed(name);
 
   return {
     async add() {
@@ -98,7 +101,11 @@ export function createFolderActions(deps: FolderActionsDeps): FolderActions {
         OP_TIMEOUT_MS,
       );
       if (!r?.ok) {
-        error(STR.removeFailed(section.label));
+        error(
+          r?.reason === 'server-unavailable'
+            ? SERVICE_UNAVAILABLE_COPY
+            : STR.removeFailed(section.label),
+        );
         return { kind: 'none' };
       }
       // Captured now: Undo targets this session and spelling even after a session switch.
@@ -131,7 +138,12 @@ export function createFolderActions(deps: FolderActionsDeps): FolderActions {
         ['session:opResult'],
         OP_TIMEOUT_MS,
       );
-      if (!r?.ok) error(STR.makeHomeFailed(section.label));
+      if (!r?.ok)
+        error(
+          r?.reason === 'server-unavailable'
+            ? SERVICE_UNAVAILABLE_COPY
+            : STR.makeHomeFailed(section.label),
+        );
     },
 
     async locate(section) {
@@ -151,9 +163,11 @@ export function createFolderActions(deps: FolderActionsDeps): FolderActions {
       }
       const picked = r.path !== undefined ? repoBaseName(r.path) : section.label;
       error(
-        r.reason === 'duplicate' || r.reason === 'overlaps'
-          ? addFailureCopy(r.reason, picked)
-          : STR.locateFailed(section.label),
+        r.reason === 'server-unavailable'
+          ? SERVICE_UNAVAILABLE_COPY
+          : r.reason === 'duplicate' || r.reason === 'overlaps'
+            ? addFailureCopy(r.reason, picked)
+            : STR.locateFailed(section.label),
       );
       return { kind: 'none' };
     },

@@ -526,6 +526,39 @@ describe('NewSessionModal', () => {
     expect(startBtn().disabled).toBe(false);
   });
 
+  it('openRepo service-unavailable shows the shared banner retry message', async () => {
+    await render({ home: '/w/a', agentId: 'cli:claude' });
+    await answerProbes();
+    await answerBriefPreview();
+    await answerPreview();
+    await click(startBtn());
+    const req = last('openRepo');
+    await emit({
+      type: 'openRepo:result',
+      requestId: req?.requestId ?? -1,
+      droppedRoots: [],
+      error: 'server-unavailable',
+    });
+    expect(q('.ns__error')?.textContent).toBe(
+      "Couldn't start session: Conduit's background service isn't running — Retry from the banner.",
+    );
+  });
+
+  it('folder probe service-unavailable shows the shared banner retry message', async () => {
+    await render({ home: '/w/a', agentId: 'cli:claude' });
+    const req = last('folder:probe');
+    if (!req) throw new Error('no probe request');
+    await emit({
+      type: 'folder:probeResult',
+      requestId: req.requestId,
+      results: [],
+      error: 'server-unavailable',
+    });
+    expect(q('.ns__error')?.textContent).toBe(
+      "Conduit's background service isn't running — Retry from the banner.",
+    );
+  });
+
   it('stale preview reply ignored', async () => {
     await render({ home: '/w/a', roots: ['/w/b'], agentId: 'cli:claude' });
     const first = last('launch:preview');

@@ -23,7 +23,7 @@ export interface QuitResponderDeps {
     busy: number;
     onShown(): void;
     signal: AbortSignal;
-  }): Promise<boolean>;
+  }): Promise<boolean | { proceed: boolean; stopAgents?: boolean }>;
   focusDialog(): void;
   setLocked(on: boolean): void;
   wait(ms: number): Promise<void>;
@@ -46,19 +46,23 @@ export function createQuitResponder(deps: QuitResponderDeps): {
   let lockedFor: number | null = null;
   let discarded = false;
 
-  async function decide(msg: ConfirmQuitMsg, signal: AbortSignal): Promise<boolean | null> {
+  async function decide(
+    msg: ConfirmQuitMsg,
+    signal: AbortSignal,
+  ): Promise<{ proceed: boolean; stopAgents?: boolean } | null> {
     const { requestId, reason, running, busy } = msg;
     const onShown = () => deps.post({ type: 'quitDialogShown', requestId });
     const paths = deps.dirtyPaths();
-    if (paths.length === 0 && running === 0) return true;
+    if (paths.length === 0 && running === 0) return { proceed: true };
     if (paths.length === 0) {
-      const ok = await deps.askSessions({ reason, running, busy, onShown, signal });
-      return signal.aborted ? null : ok;
+      const answer = await deps.askSessions({ reason, running, busy, onShown, signal });
+      if (signal.aborted) return null;
+      return typeof answer === 'boolean' ? { proceed: answer } : answer;
     }
     const answer = await deps.askDirty({ reason, paths, running, busy, onShown, signal });
     if (signal.aborted) return null;
     if (answer === 'discarded') discarded = true;
-    return answer !== 'cancel';
+    return { proceed: answer !== 'cancel' };
   }
 
   async function onConfirmQuit(msg: ConfirmQuitMsg): Promise<void> {
@@ -87,10 +91,10 @@ export function createQuitResponder(deps: QuitResponderDeps): {
       }
 
       own.phase = 'asking';
-      const proceed = await decide(msg, signal);
-      if (proceed === null) return;
+      const decision = await decide(msg, signal);
+      if (decision === null) return;
 
-      if (!proceed) {
+      if (!decision.proceed) {
         deps.post({ type: 'quitDecision', requestId, proceed: false });
         discarded = false;
         return;
@@ -112,7 +116,12 @@ export function createQuitResponder(deps: QuitResponderDeps): {
       }
       // An edit made while the dialog or the settle bound was up is still debounced.
       deps.flushSettings();
-      deps.post({ type: 'quitDecision', requestId, proceed: true });
+      deps.post({
+        type: 'quitDecision',
+        requestId,
+        proceed: true,
+        ...(decision.stopAgents ? { stopAgents: true } : {}),
+      });
     } finally {
       // A superseded flow leaves suppression to the flow that replaced it, whose own finally clears it.
       if (flow === own) {

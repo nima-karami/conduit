@@ -36,7 +36,7 @@ function setup(
     mode?: AutoSaveMode;
     dirty?: string[];
     dirtyAnswer?: () => Promise<DirtyAnswer>;
-    sessionsAnswer?: () => Promise<boolean>;
+    sessionsAnswer?: () => Promise<boolean | { proceed: boolean; stopAgents?: boolean }>;
     flushAll?: () => Promise<void>;
     whenIdle?: () => Promise<void>;
   } = {},
@@ -335,6 +335,33 @@ describe('quit responder', () => {
     expect(t.sessionAsks).toHaveLength(1);
     expect(t.sessionAsks[0]).toMatchObject({ reason: 'update', running: 2, busy: 1 });
     expect(t.decisions()).toEqual([{ type: 'quitDecision', requestId: 1, proceed: ok }]);
+  });
+
+  it('forwards stopAgents only when the session answer proceeds with it', async () => {
+    const t = setup({
+      sessionsAnswer: () => Promise.resolve({ proceed: true, stopAgents: true }),
+    });
+    await t.responder.onConfirmQuit(confirm({ running: 1 }));
+    expect(t.decisions()).toEqual([
+      { type: 'quitDecision', requestId: 1, proceed: true, stopAgents: true },
+    ]);
+
+    const cancelled = setup({
+      sessionsAnswer: () => Promise.resolve({ proceed: false, stopAgents: true }),
+    });
+    await cancelled.responder.onConfirmQuit(confirm({ running: 1 }));
+    expect(cancelled.decisions()).toEqual([{ type: 'quitDecision', requestId: 1, proceed: false }]);
+  });
+
+  it('an aborted stopAgents answer never posts a decision', async () => {
+    const answer = deferred<{ proceed: boolean; stopAgents?: boolean }>();
+    const t = setup({ sessionsAnswer: () => answer.promise });
+    const run = t.responder.onConfirmQuit(confirm({ running: 1 }));
+    await vi.advanceTimersByTimeAsync(0);
+    t.responder.onQuitAborted(1);
+    answer.resolve({ proceed: true, stopAgents: true });
+    await run;
+    expect(t.decisions()).toEqual([]);
   });
 
   it('dirty → askDirty with running/busy/reason', async () => {

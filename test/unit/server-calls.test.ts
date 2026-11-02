@@ -63,6 +63,36 @@ describe('server-down typed replies', () => {
       request: { type: 'project:create', name: 'new', requestId: 37 },
       reply: { type: 'project:opResult', requestId: 37, ok: false, reason: 'store-unavailable' },
     },
+    {
+      request: { type: 'openRepo', path: '/repo', agentId: 'shell', roots: [], requestId: 37 },
+      reply: {
+        type: 'openRepo:result',
+        requestId: 37,
+        droppedRoots: [],
+        error: 'server-unavailable',
+      },
+    },
+    {
+      request: { type: 'folder:probe', paths: ['/repo'], requestId: 37 },
+      reply: {
+        type: 'folder:probeResult',
+        requestId: 37,
+        results: [],
+        error: 'server-unavailable',
+      },
+    },
+    ...(['session:addRoot', 'session:locateFolder'] as const).map((type) => ({
+      request: { type, sessionId: 's', path: '/repo', requestId: 37 },
+      reply:
+        type === 'session:addRoot'
+          ? { type: 'session:opResult', requestId: 37, ok: false, reason: 'server-unavailable' }
+          : {
+              type: 'session:locateResult',
+              requestId: 37,
+              ok: false,
+              reason: 'server-unavailable',
+            },
+    })),
   ];
   for (const kind of ['disconnected', 'timeout'] as const) {
     it.each(cases)(`${kind}: $request.type keeps the correlation id`, ({ request, reply }) => {

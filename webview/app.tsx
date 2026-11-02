@@ -48,6 +48,7 @@ import type {
   FileDiffDTO,
   HostToWebview,
   PersistedDoc,
+  ServerUiState,
 } from '../src/protocol';
 import {
   acceptSearchResults,
@@ -127,6 +128,7 @@ import { ProjectPicker } from './components/project-picker';
 import { QuitScrim } from './components/quit-scrim';
 import { RightPane, type RightPaneHandle } from './components/right-pane';
 import type { SearchScopeModel } from './components/search-pane';
+import { ServerBanner } from './components/server-banner';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
 import { TimedMessageDialog } from './components/timed-message-dialog';
@@ -448,6 +450,7 @@ function moveFileTab(from: string, to: string): boolean {
 
 export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
+  const [serverState, setServerState] = useState<ServerUiState>({ state: 'connecting' });
   const [activeId, setActiveId] = useState<string | undefined>();
   const [snapshots, setSnapshots] = useState<SessionSnapshots>({});
   // Read by the once-registered subscribe below; assigned where `visible` is posted.
@@ -607,7 +610,7 @@ export function App() {
         dirtyPaths: () => [...getDirtySnapshot()],
         askDirty: (req) => dirtyCloseRef.current.ask(req),
         askSessions: ({ reason, running, busy, onShown, signal }) =>
-          new Promise<boolean>((resolve) => {
+          new Promise<boolean | { proceed: boolean; stopAgents?: boolean }>((resolve) => {
             const copy = quitConfirmCopy({ running, busy, reason });
             const key = nextModalKey();
             signal.addEventListener(
@@ -625,12 +628,19 @@ export function App() {
                 title: copy.title,
                 message: copy.body,
                 confirmLabel: copy.confirmLabel,
-                danger: true,
+                // F4: only a window close ends agents; a quit's destructive choice is the secondary.
+                danger: reason === 'windowClose',
                 // Cancel is the keyboard default so an accidental Enter never quits.
                 focusCancel: true,
                 onShown,
                 onCancel: () => resolve(false),
                 onConfirm: () => resolve(true),
+                ...(reason !== 'windowClose'
+                  ? {
+                      secondaryLabel: 'Quit and stop all agents',
+                      onSecondary: () => resolve({ proceed: true, stopAgents: true }),
+                    }
+                  : {}),
               },
             });
           }),
@@ -758,6 +768,8 @@ export function App() {
         if (msg.status === 'ready') setUpdateDismissed(false);
       } else if (msg.type === 'confirmQuit') {
         void responder.onConfirmQuit(msg);
+      } else if (msg.type === 'server:state') {
+        setServerState(msg.state);
       } else if (msg.type === 'quitAborted') {
         responder.onQuitAborted(msg.requestId);
       }
@@ -4067,6 +4079,22 @@ export function App() {
         run: () => openTimedMessages(),
       },
       {
+        id: 'cmd:restartService',
+        title: "Restart Conduit's background service",
+        keywords: ['server', 'reconnect', 'retry'],
+        group: 'Commands',
+        icon: <IconCommand size={14} />,
+        run: () => post({ type: 'server:restartService' }),
+      },
+      {
+        id: 'cmd:quitAndStopAgents',
+        title: 'Quit and stop all agents',
+        keywords: ['exit', 'close', 'kill', 'server'],
+        group: 'Commands',
+        icon: <IconCommand size={14} />,
+        run: () => post({ type: 'app:quitAndStopAgents' }),
+      },
+      {
         id: 'cmd:findInFiles',
         title: 'Find in files',
         keywords: ['search', 'grep'],
@@ -4586,6 +4614,9 @@ export function App() {
         // and falls back to the editor start state instead of a void.
         <ErrorBoundary key="center" onReset={() => setCenterView('editor')}>
           <CenterPane
+            serverState={serverState}
+            onRetryLaunch={(sessionId) => post({ type: 'session:retryLaunch', sessionId })}
+            onDiscardLaunch={(sessionId) => post({ type: 'session:discardLaunch', sessionId })}
             mcpNotConnected={mcp.state?.notConnected ?? NO_NOT_CONNECTED}
             mcpEnabled={mcp.state?.enabled ?? false}
             onOpenMcpSettings={(cli) => openSettingsAt('mcp', cli)}
@@ -4842,6 +4873,11 @@ export function App() {
         asks={asks}
         onFocusAsk={requestAskFocus}
         onContextMenu={onPanelTogglesMenu}
+      />
+      <ServerBanner
+        state={serverState}
+        onRetry={() => post({ type: 'server:retry' })}
+        onStopAllAndContinue={() => post({ type: 'server:stopAllAndContinue' })}
       />
       <div className="workbench">{visibleOrder.map(renderRegion)}</div>
       {newSession && (
