@@ -387,6 +387,7 @@ function harness(
     dropWindow: () => undefined,
     recordInput: (id, at) => lastOut.set(id, at),
     clearAll: () => undefined,
+    onChange: () => () => undefined,
     onEdge: (listener) => {
       attentionListeners.add(listener);
       return () => attentionListeners.delete(listener);

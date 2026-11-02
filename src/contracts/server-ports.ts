@@ -143,6 +143,8 @@ export interface AttentionPort
   recordInput(sessionId: string, now: number): void;
   clearAll(): void;
   onEdge(listener: (edge: AttentionEdge) => void): () => void;
+  /** busy or needsAttention flipped for some session: compose re-sends `sessions.changed`. */
+  onChange(listener: () => void): () => void;
 }
 
 /**
