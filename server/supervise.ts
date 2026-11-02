@@ -5,8 +5,6 @@ import { access, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/prom
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  coreStartEnv,
-  type InstanceNames,
   judgePersistedVersion,
   SERVER_EXHAUSTED_FILE,
   SERVER_EXIT,
@@ -18,7 +16,10 @@ import {
   SUPERVISOR_MARKER_POLL_MS,
 } from '../src/contracts/session-identity';
 import { instanceNames } from '../src/instance-names';
-import { requireUserData } from './lifecycle/cli-args';
+import { hcBinaryOf, hcClient, serverChildEnv, stopCore, supervisorCore } from './hc-cli';
+import { argValue, requireUserData } from './lifecycle/cli-args';
+
+export { serverChildEnv } from './hc-cli';
 
 export interface SupervisorMarker {
   /** `newer`: a newer supervisor's marker is already there; it stands for ours and is never touched. */
@@ -178,19 +179,6 @@ export async function supervise(options: SuperviseOptions): Promise<number> {
   }
 }
 
-/**
- * Our core start already decided XDG isolation (M22) and put it in our env; the server inherits that
- * decision rather than a constant. Either variable pointing at our homes means it was isolated.
- */
-export function serverChildEnv(
-  parent: Readonly<Record<string, string | undefined>>,
-  names: InstanceNames,
-): Record<string, string> {
-  const isolated =
-    parent.XDG_CONFIG_HOME === names.hcConfigHome || parent.XDG_STATE_HOME === names.hcStateHome;
-  return coreStartEnv(parent, names, isolated);
-}
-
 /** A spawn `error` resolves as a crash (null), so the supervisor backs off instead of exiting. */
 export function spawnServerChild(
   command: string,
@@ -209,30 +197,32 @@ export function spawnServerChild(
   });
 }
 
-function spawnServer(
-  args: string[],
-  userData: string,
-  supervisorTerminal: string | undefined,
-): Promise<number | null> {
-  const childArgs = [path.join(__dirname, 'main.js'), ...args];
-  if (supervisorTerminal) childArgs.push('--supervisor-terminal', supervisorTerminal);
-  const names = instanceNames(userData, process.platform === 'win32' ? 'win32' : 'posix', tmpdir());
-  return spawnServerChild(
-    process.execPath,
-    childArgs,
-    serverChildEnv(process.env, names),
-    __dirname,
-  );
-}
-
 async function runCli(): Promise<void> {
+  // hc run starts us with cwd = coreStartCwd; a cwd there would block that dir's GC rename (D23, M21).
+  process.chdir(__dirname);
   const args = process.argv.slice(2);
   const userData = requireUserData(args);
   const supervisorTerminal = process.env.HC_TERMINAL_ID;
+  const names = instanceNames(userData, process.platform === 'win32' ? 'win32' : 'posix', tmpdir());
+  const env = serverChildEnv(process.env, names);
+  const hc = hcBinaryOf(argValue(args, '--hc'));
+  const childArgs = [path.join(__dirname, 'main.js'), ...args];
+  if (supervisorTerminal) childArgs.push('--supervisor-terminal', supervisorTerminal);
   await supervise({
     userData,
     logPath: path.join(userData, 'server.log'),
-    spawnChild: () => spawnServer(args, userData, supervisorTerminal),
+    spawnChild: () => spawnServerChild(process.execPath, childArgs, env, __dirname),
+    // Without an hc terminal of our own we run as a plain spawn and there is no core of ours.
+    ...(supervisorTerminal
+      ? {
+          core: supervisorCore(
+            () => hcClient(names, env, logToStderr),
+            names,
+            () => stopCore(hc, env),
+            logToStderr,
+          ),
+        }
+      : {}),
   });
 }
 

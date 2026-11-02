@@ -809,7 +809,8 @@ export class HcTerminalRuntime implements TerminalRuntime {
     });
   }
 
-  private async subscribe(): Promise<void> {
+  /** Public for compose: its startup needs reconcile's adopted list for domain.adopted (F1.4.5). */
+  async subscribe(): Promise<void> {
     this.sub?.close();
     this.sub = await this.deps.hc.subscribe(
       { labels: { 'conduit.instance': this.deps.instance } },

@@ -11,6 +11,7 @@ import { formatRecord, type LogLevel, levelEnabled } from '../src/logging';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import { ServerLifecycle, type ShellCore } from './lifecycle/shell';
 import {
+  type Peer,
   type PipeTransport,
   type RpcAnswer,
   RpcFault,
@@ -73,6 +74,8 @@ export interface ComposeOptions {
   supervisor?: { name: string; terminal: string };
   exit(code: number): Promise<void> | void;
   dispatch?: RpcHandler;
+  /** A peer's connection closed: MCP's presence mirror and ask grace key on it (F7). */
+  disconnected?: (peer: Peer) => void;
   writeLog?: (line: string) => void;
 }
 
@@ -81,18 +84,30 @@ export function compose(options: ComposeOptions) {
     logging: DEFAULT_SETTINGS.logging,
     logLevel: DEFAULT_SETTINGS.logLevel,
   };
-  const log = (level: Exclude<LogLevel, 'off'>, message: string) => {
+  const record = (
+    level: Exclude<LogLevel, 'off'>,
+    scope: string,
+    msg: string,
+    data?: Record<string, unknown>,
+  ) => {
     if (logging.logging && levelEnabled(logging.logLevel, level)) {
-      options.writeLog?.(formatRecord({ ts: Date.now(), level, scope: 'server', msg: message }));
+      options.writeLog?.(
+        formatRecord({ ts: Date.now(), level, scope, msg, ...(data ? { data } : {}) }),
+      );
     }
   };
+  const log = (level: Exclude<LogLevel, 'off'>, message: string) =>
+    record(level, 'server', message);
   const lifecycle = new ServerLifecycle({
     ...options,
     emit: options.transport.emit,
     onError: (error) => log('error', String(error)),
   });
   options.transport.onConnect = () => lifecycle.connected();
-  options.transport.onDisconnect = () => lifecycle.disconnected();
+  options.transport.onDisconnect = (peer) => {
+    lifecycle.disconnected();
+    options.disconnected?.(peer);
+  };
   const handle: RpcHandler = (request, peer) => {
     const params = request.params;
     if (typeof params !== 'object' || params === null || Array.isArray(params))
@@ -168,5 +183,5 @@ export function compose(options: ComposeOptions) {
     if (options.dispatch) return options.dispatch(request, peer);
     throw new RpcProtocolFault(-32601, 'Method not found');
   };
-  return { lifecycle, handle, logging, log };
+  return { lifecycle, handle, logging, log, record };
 }
