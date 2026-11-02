@@ -65,14 +65,14 @@ export interface ScreenPoint {
 }
 
 /** A window's outer bounds in screen coordinates (electron `BrowserWindow.getBounds()`). */
-export interface Rect {
+export interface ScreenRect {
   x: number;
   y: number;
   width: number;
   height: number;
 }
 
-function rectContains(r: Rect, p: ScreenPoint): boolean {
+function rectContains(r: ScreenRect, p: ScreenPoint): boolean {
   return p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height;
 }
 
@@ -80,7 +80,7 @@ function rectContains(r: Rect, p: ScreenPoint): boolean {
  *  the move is guarded; see dirty-quit-guard plan, critic S1. */
 export const DRAG_STAY_INSET_PX = 8;
 
-export function pointWellInside(r: Rect, p: ScreenPoint, inset: number): boolean {
+export function pointWellInside(r: ScreenRect, p: ScreenPoint, inset: number): boolean {
   const width = r.width - 2 * inset;
   const height = r.height - 2 * inset;
   if (width <= 0 || height <= 0) return false;
@@ -99,7 +99,7 @@ export function pointWellInside(r: Rect, p: ScreenPoint, inset: number): boolean
  */
 export function windowAtPoint(
   point: ScreenPoint,
-  wins: { id: number; bounds: Rect }[],
+  wins: { id: number; bounds: ScreenRect }[],
   excludeId: number,
 ): number | null {
   for (const w of wins) {
@@ -119,8 +119,8 @@ export function windowAtPoint(
 export function tearOutBounds(
   point: ScreenPoint,
   size: { width: number; height: number },
-  display?: Rect,
-): Rect {
+  display?: ScreenRect,
+): ScreenRect {
   // Place the titlebar a little above-left of the pointer so the cursor sits inside the
   // window's chrome, matching the "the window appears under your drop" expectation.
   const TITLEBAR_OFFSET = 16;
@@ -142,7 +142,7 @@ export function tearOutBounds(
 
 /** One persisted window: its outer bounds + the ids of the sessions it owns. */
 export interface WindowLayout {
-  bounds: Rect;
+  bounds: ScreenRect;
   sessionIds: string[];
   /** Absent in layouts written before the agent tree; the renderer then starts at defaults. */
   sidebarUi?: SidebarUiState;
@@ -153,14 +153,14 @@ const cloneUi = (ui: SidebarUiState): SidebarUiState => parseSidebarUi(ui);
 const LAYOUT_VERSION = 1;
 
 /** Default bounds for a fallback single window when no usable layout bounds exist. */
-const DEFAULT_BOUNDS: Rect = { x: 0, y: 0, width: 1440, height: 900 };
+const DEFAULT_BOUNDS: ScreenRect = { x: 0, y: 0, width: 1440, height: 900 };
 
 /** Serialize the window layout to a versioned JSON envelope (mirrors src/persistence.ts). */
 export function serializeWindowLayout(windows: WindowLayout[]): string {
   return JSON.stringify({ version: LAYOUT_VERSION, windows });
 }
 
-function isRect(v: unknown): v is Rect {
+function isRect(v: unknown): v is ScreenRect {
   if (!v || typeof v !== 'object') return false;
   const r = v as Record<string, unknown>;
   return (
@@ -173,7 +173,7 @@ function isRect(v: unknown): v is Rect {
 
 /**
  * Parse a persisted layout blob, tolerant of malformed/absent input (→ `[]`). Drops any
- * window whose bounds aren't a valid Rect and coerces sessionIds to a string array.
+ * window whose bounds aren't a valid ScreenRect and coerces sessionIds to a string array.
  */
 export function parseWindowLayout(raw: string | undefined): WindowLayout[] {
   if (!raw) return [];
@@ -256,7 +256,7 @@ export function planLayoutRestore(
  * window already intersects a display it's returned unchanged; otherwise it's moved to the
  * top-left of the first display, preserving size. Pure.
  */
-export function clampBoundsToDisplays(bounds: Rect, displays: Rect[]): Rect {
+export function clampBoundsToDisplays(bounds: ScreenRect, displays: ScreenRect[]): ScreenRect {
   if (displays.length === 0) return bounds;
   const intersects = displays.some(
     (d) =>

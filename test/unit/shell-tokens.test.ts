@@ -81,7 +81,7 @@ describe('the chrome bands are one band', () => {
   // different label sizes, which read as three unrelated strips. One value now feeds all
   // three, and the top bar derives from it rather than being a fourth loose number.
   it('derives every band height from --density-band-h', () => {
-    for (const token of ['--density-tabbar-h', '--density-rtab-h']) {
+    for (const token of ['--density-tabbar-h']) {
       expect(CSS).toContain(`${token}: var(--density-band-h)`);
     }
   });

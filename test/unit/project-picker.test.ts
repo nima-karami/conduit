@@ -108,10 +108,10 @@ async function openCreate(prefill = '') {
 }
 
 describe('ProjectPicker', () => {
-  it('filter input focused on open; rows = projects then Standalone; current row aria-selected with a check', async () => {
+  it('filter input focused on open; rows = spaces then No space; current row aria-selected with a check', async () => {
     await render();
     expect(document.activeElement).toBe(q('.projpicker__filter'));
-    expect(rowLabels()).toEqual(['RMB pipeline', 'conduit', 'Standalone', '+ New space…']);
+    expect(rowLabels()).toEqual(['RMB pipeline', 'conduit', 'No space', '+ New space…']);
     const current = document.querySelectorAll('.projpicker [aria-selected="true"]');
     expect(current).toHaveLength(1);
     expect(current[0].textContent).toBe('RMB pipeline');
@@ -135,12 +135,12 @@ describe('ProjectPicker', () => {
     expect(list?.contains(q('.projpicker__none'))).toBe(false);
   });
 
-  it('no match → a disabled "No spaces match" row, Standalone and + New space… still shown', async () => {
+  it('no match → a disabled "No spaces match" row, No space and + New space… still shown', async () => {
     await render();
     await type(q('.projpicker__filter'), 'zzz');
     expect(q('.projpicker__none').textContent).toBe('No spaces match');
     expect(q('.projpicker__none').getAttribute('aria-disabled')).toBe('true');
-    expect(rowLabels()).toEqual(['Standalone', '+ New space…']);
+    expect(rowLabels()).toEqual(['No space', '+ New space…']);
   });
 
   it('ArrowDown moves aria-activedescendant; Enter on another row → moveSession(id, …) and onClose', async () => {
@@ -157,14 +157,14 @@ describe('ProjectPicker', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('picking Standalone moves to null', async () => {
+  it('picking No space moves to null', async () => {
     await render();
     await act(async () =>
       (document.querySelectorAll('.projpicker__row')[2] as HTMLElement).click(),
     );
     expect(moveSession).toHaveBeenCalledWith('s1', null, {
       session: 'api fix',
-      target: 'Standalone',
+      target: 'No space',
     });
   });
 
@@ -279,9 +279,9 @@ describe('ProjectPicker', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('a dangling projectId marks Standalone current', async () => {
+  it('a dangling projectId marks No space current', async () => {
     await render({ ...S, projectId: 'p-gone' });
     const current = document.querySelectorAll('.projpicker [aria-selected="true"]');
-    expect([...current].map((c) => c.textContent)).toEqual(['Standalone']);
+    expect([...current].map((c) => c.textContent)).toEqual(['No space']);
   });
 });

@@ -21,7 +21,6 @@ const AUDITED: Record<string, string> = {
   'webview/components/folder-section.tsx': 'rows and sections set dropEffect',
   'webview/components/panel-frame.tsx': 'dock handlers from app.tsx',
   'webview/components/project-group-header.tsx': 'sidebar handlers, own drags only',
-  'webview/components/session-card.tsx': 'sidebar handlers, own drags only',
   'webview/components/settings-modal.tsx': 'shader textarea sets dropEffect (tested below)',
   'webview/components/sidebar.tsx': 'acts only on its own card/group drags',
   'webview/components/terminal-pane.tsx': 'onPathDragOver sets dropEffect',

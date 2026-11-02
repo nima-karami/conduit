@@ -302,7 +302,9 @@ export function SearchPane({
   const onTextChangeRef = useRef(onTextChange);
   onTextChangeRef.current = onTextChange;
 
-  useEffect(() => {
+  // Layout, not passive: RightPane.openSearch reads the handle on the next frame, which can run
+  // before a passive effect in a commit that mounts this pane.
+  useLayoutEffect(() => {
     if (!paneRef) return;
     paneRef.current = {
       focusInput() {

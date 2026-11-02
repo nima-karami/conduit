@@ -13,6 +13,7 @@ import { activeCwd, gitRootForSession } from '../src/active-cwd';
 import { repoForPath } from '../src/active-repo';
 import type { AttentionEntry } from '../src/attention';
 import { needYouEntries, pruneSnoozed, visibleSessionIds } from '../src/attention';
+import { routeAttention } from '../src/attention-route';
 import type { BoardCard } from '../src/board';
 import { cardSessionPrefill } from '../src/board-linkage';
 import { canonicalPath, pathBelow, renamedPath } from '../src/canonical-path';
@@ -36,6 +37,7 @@ import { langFromPath } from '../src/lang';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import type { LspNotSyncedCause } from '../src/lsp-protocol';
 import { isHtmlDocPath } from '../src/media-kind';
+import { type Rect, triggerMenu } from '../src/menu-position';
 import type { ApplyResult } from '../src/nav-history';
 import { type NewSessionPrefill, projectForNewSession } from '../src/new-session-seed';
 import { resolveOwningSession } from '../src/owning-session';
@@ -69,6 +71,7 @@ import {
 import { gitOf } from '../src/repo-git';
 import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
+import { type RightPanelEvent, rightPanelTransition } from '../src/right-panel-toggle';
 import { retainSessionScopes, type SearchScope, scopeChipFolders } from '../src/search-scope';
 import { resolveSessionIcon } from '../src/session-icon';
 import { sessionNameFromPath } from '../src/session-name';
@@ -145,6 +148,7 @@ import type { SearchScopeModel } from './components/search-pane';
 import { ServerBanner } from './components/server-banner';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
+import { StatusBar } from './components/status-bar';
 import { TimedMessageDialog } from './components/timed-message-dialog';
 import { Toasts } from './components/toasts';
 import { TopBar } from './components/top-bar';
@@ -307,6 +311,7 @@ import {
 import { selectionInActiveDoc } from './selection-registry';
 import { selectionSourceFor } from './selection-source';
 import { buildSessionMenu, type SessionMenuAction } from './session-menu';
+import { sessionMcpLink, sessionSnoozeInput } from './session-menu-input';
 import { useSettings } from './settings';
 import { comboLabel, effectiveCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import {
@@ -931,7 +936,6 @@ export function App() {
   const { sessions, snooze, snoozed } = useSnooze(hostSessions);
   const mcp = useConduitMcp();
   const asks = useAsks();
-  const awaiting = useMemo(() => new Set(mcp.state?.awaitingApproval ?? []), [mcp.state]);
   const agents: AgentDefinition[] = state?.agents ?? [];
 
   useEffect(() => {
@@ -1017,12 +1021,19 @@ export function App() {
   // remembered rightPaneTab; a changed preference (hydration, explicit pick) is adopted.
   const [rightTab, setRightTab] = useState<RightPaneTab>(settings.rightPaneTab);
   useEffect(() => setRightTab(settings.rightPaneTab), [settings.rightPaneTab]);
+  const rightTabRef = useRef(rightTab);
+  rightTabRef.current = rightTab;
   const [paneQueue] = useState(() => createPaneQueue<RightPaneHandle>());
   const [paneQueueSeq, setPaneQueueSeq] = useState(0);
   const runInPane = useCallback(
     (tab: RightPaneTab, action: (pane: RightPaneHandle) => void, open: boolean) => {
-      setRightTab(tab);
-      if (open && settingsRef.current.explorerCollapsed) update({ explorerCollapsed: false });
+      const cur = settingsRef.current;
+      const next = rightPanelTransition(
+        { open: !cur.explorerCollapsed, view: tab, remembered: cur.rightPaneTab },
+        { kind: 'imperative', view: tab, open },
+      );
+      setRightTab(next.view);
+      if (next.open === cur.explorerCollapsed) update({ explorerCollapsed: !next.open });
       paneQueue.push(action);
       setPaneQueueSeq((n) => n + 1);
     },
@@ -1842,11 +1853,9 @@ export function App() {
   useEffect(() => {
     post({ type: 'changes:subscribe', sessionIds: activeId && wantsLines ? [activeId] : [] });
   }, [activeId, wantsLines]);
-  // Review mode opens the panel itself (useReviewModeLayout), so this only queues the switch.
-  const showChangesInPane = useCallback(
-    () => runInPane('changes', (pane) => pane.showChanges(), false),
-    [runInPane],
-  );
+  // Review mode opens the panel itself (useReviewModeLayout), so this only switches the view,
+  // without persisting it.
+  const showChangesInPane = useCallback(() => setRightTab('changes'), []);
   const setExplorerCollapsedSetting = useCallback(
     (v: boolean) => update({ explorerCollapsed: v }),
     [update],
@@ -1862,25 +1871,28 @@ export function App() {
 
   // Header toggles (sidebar-agent-tree spec §7): an explicit pick is remembered, the active
   // view closes the panel. Review mode tracks either as a user toggle.
-  const openPanel = useCallback(
-    (tab: RightPaneTab, remember: boolean) => {
-      setRightTab(tab);
-      if (settingsRef.current.explorerCollapsed) {
-        userToggledExplorerRef.current();
-        update({ explorerCollapsed: false });
-      }
-      if (remember && tab !== settingsRef.current.rightPaneTab) update({ rightPaneTab: tab });
+  const applyPanelEvent = useCallback(
+    (ev: RightPanelEvent) => {
+      const cur = settingsRef.current;
+      const next = rightPanelTransition(
+        { open: !cur.explorerCollapsed, view: rightTabRef.current, remembered: cur.rightPaneTab },
+        ev,
+      );
+      setRightTab(next.view);
+      if (next.userToggled) userToggledExplorerRef.current();
+      if (next.open === cur.explorerCollapsed) update({ explorerCollapsed: !next.open });
+      if (next.persist) update({ rightPaneTab: next.persist });
     },
     [update],
   );
+  const openPanel = useCallback(
+    (tab: RightPaneTab, remember: boolean) =>
+      applyPanelEvent({ kind: 'open', view: tab, remember }),
+    [applyPanelEvent],
+  );
   const toggleRightView = useCallback(
-    (tab: RightPaneTab) => {
-      if (!settingsRef.current.explorerCollapsed && rightTab === tab) {
-        userToggledExplorerRef.current();
-        update({ explorerCollapsed: true });
-      } else openPanel(tab, true);
-    },
-    [rightTab, openPanel, update],
+    (tab: RightPaneTab) => applyPanelEvent({ kind: 'toggle', view: tab }),
+    [applyPanelEvent],
   );
 
   // The agent tree's inputs (sidebar-agent-tree plan T1.2). Snooze hides a session's reason on
@@ -1910,15 +1922,12 @@ export function App() {
       document.removeEventListener('visibilitychange', sync);
     };
   }, []);
-  // Which of the two terminals (active, split) holds keyboard focus: a background split does not
-  // count as viewed. Read off center-pane's termstack, where the split host alone carries a bar.
-  const [focusedTerminal, setFocusedTerminal] = useState<'active' | 'split' | null>(null);
+  // Which terminal holds keyboard focus: a background split does not count as viewed.
+  const [focusedHostId, setFocusedHostId] = useState<string | null>(null);
   useEffect(() => {
     const read = () => {
-      const host = document.activeElement?.closest('.termstack > .termhost');
-      setFocusedTerminal(
-        host ? (host.querySelector(':scope > .termhost__bar') ? 'split' : 'active') : null,
-      );
+      const host = document.activeElement?.closest<HTMLElement>('.termhost[data-sessionid]');
+      setFocusedHostId(host?.dataset.sessionid ?? null);
     };
     document.addEventListener('focusin', read);
     document.addEventListener('focusout', read);
@@ -1927,8 +1936,11 @@ export function App() {
       document.removeEventListener('focusout', read);
     };
   }, []);
+  // Only a shown host counts; focus can outlive a switch that hid it until the next focus event.
   const focusedTerminalId =
-    focusedTerminal === 'active' ? activeId : focusedTerminal === 'split' ? splitId : null;
+    focusedHostId !== null && (focusedHostId === activeId || focusedHostId === splitId)
+      ? focusedHostId
+      : null;
   const viewedTerminalId =
     windowLooking && centerView === 'editor' && layout.groups[0]?.activeDocId === null
       ? (focusedTerminalId ?? undefined)
@@ -2033,11 +2045,12 @@ export function App() {
     [sessions, activeId, needYou],
   );
   const focusAttention = useCallback(
-    (entry: AttentionEntry) => {
-      if (entry.kind === 'ask') requestAskFocus();
-      else if (entry.kind === 'message' && entry.threadId) openMessages(null, entry.threadId);
-      else if (entry.sessionId) setActiveId(entry.sessionId);
-    },
+    (entry: AttentionEntry) =>
+      routeAttention(entry, {
+        focusAsk: requestAskFocus,
+        openThread: (threadId) => openMessages(null, threadId),
+        focusSession: setActiveId,
+      }),
     [openMessages],
   );
   const chrome = useMemo<WorkbenchChromeContextValue>(
@@ -3356,8 +3369,12 @@ export function App() {
     ];
   };
 
-  const onSessionContextMenu = (e: React.MouseEvent, s: Session) => {
-    e.preventDefault();
+  // A right-click opens at the pointer; Shift+F10 on a row anchors to it with keyboard highlight.
+  const openSessionMenu = (
+    s: Session,
+    at: { x: number; y: number } | { anchor: Rect; keyboard: true },
+  ) => {
+    const point = 'anchor' in at ? { x: at.anchor.left, y: at.anchor.bottom } : at;
     const others = closeOthersIds(
       sessions.map((x) => x.id),
       s.id,
@@ -3366,80 +3383,90 @@ export function App() {
     const badge = mcp.state?.sessions[s.id];
     const notConnected = mcp.state?.notConnected[s.id];
     const pinned = sidebarUi.pinnedIds.includes(s.id);
-    setMenu({
-      x: e.clientX,
-      y: e.clientY,
-      items: buildSessionMenu({
-        name: s.name,
-        maySplit: s.status === 'running' && s.id !== activeId,
-        canRelaunch: canRelaunch(s),
-        pinned,
-        hasApproval: askSessionIds.has(s.id),
-        waitingTimers: waitingCountFor(getTimerSnapshot(), s.id),
-        // Messaging (spec §9 card menu): only a session with a handle can be messaged or paused.
-        hasMcp: badge !== undefined,
-        mcpHandle: badge?.handle ?? null,
-        mcpPaused: badge?.paused === true,
-        // Offered before any launch: a switchable session may not have a handle yet (spec §4).
-        mcpSwitchable: mcp.state?.switchable.includes(s.id) === true,
-        // The banner's actions, reachable by keyboard while focus sits in xterm (spec 2026-10-27-conduit-mcp-install §2.5).
-        mcpSetupNeeded: notConnected !== undefined,
-        otherCount: others.length,
-        allCount: all.length,
-        windowMoves: moveMenuItems(s.id),
-        icons: SESSION_MENU_ICONS,
-        actions: {
-          select: () => setActiveId(s.id),
-          split: () => setSplitId(s.id),
-          relaunch: () => post({ type: 'relaunch' as const, id: s.id }),
-          snooze: () => snooze(s.id),
-          approval: () => requestAskFocus(),
-          timed: () => openTimedMessages(s.id),
-          messages: () => openMessages(badge?.handle ?? null),
-          pauseMcp: () => mcp.pause(s.id, badge?.paused !== true),
-          mcpTools: () => setMcpToolsFor(s.id),
-          setupMcp: () => openSettingsAt('mcp', notConnected?.cli),
-          // From the live value: the menu may outlive a sidebar edit made while it was open.
-          pin: () => {
-            const ui = sidebarSyncRef.current.ui;
-            updateSidebarUi({
-              ...ui,
-              pinnedIds: ui.pinnedIds.includes(s.id)
-                ? ui.pinnedIds.filter((id) => id !== s.id)
-                : [...ui.pinnedIds, s.id],
-            });
-          },
-          rename: () => {
-            setActiveId(s.id);
-            setRenamingId(s.id);
-          },
-          setIcon: () => setIconPickerSessionId(s.id),
-          duplicate: () => post({ type: 'duplicate', id: s.id }),
-          // Beside the row it was picked from (12e); a bare call has only the right-click point.
-          moveSpace: (a) =>
-            setMovePicker({
-              sessionId: s.id,
-              at: a ? { x: a.rect.right, y: a.rect.top } : { x: e.clientX, y: e.clientY },
-            }),
-          copyHome: () => copyToClipboard(s.home),
-          copyName: () => copyToClipboard(s.name),
-          reveal: () => post({ type: 'revealInExplorer', path: s.home }),
-          close: () => requestKill(s.id),
-          closeOthers: () =>
-            closeSessions(
-              others,
-              'Close other sessions',
-              `Close ${others.length} other session${others.length === 1 ? '' : 's'}? Running terminals will be terminated.`,
-            ),
-          closeAll: () =>
-            closeSessions(
-              all,
-              'Close all sessions',
-              `Close all ${all.length} session${all.length === 1 ? '' : 's'}? Running terminals will be terminated.`,
-            ),
+    const items = buildSessionMenu({
+      name: s.name,
+      maySplit: s.status === 'running' && s.id !== activeId,
+      canRelaunch: canRelaunch(s),
+      pinned,
+      hasApproval: askSessionIds.has(s.id),
+      ...sessionSnoozeInput(
+        sessions.find((x) => x.id === s.id) ?? s,
+        askSessionIds.has(s.id),
+        snoozed,
+        Date.now(),
+      ),
+      waitingTimers: waitingCountFor(getTimerSnapshot(), s.id),
+      // Messaging (spec §9 card menu): only a session with a handle can be messaged or paused.
+      hasMcp: badge !== undefined,
+      mcpHandle: badge?.handle ?? null,
+      mcpPaused: badge?.paused === true,
+      // Offered before any launch: a switchable session may not have a handle yet (spec §4).
+      mcpSwitchable: mcp.state?.switchable.includes(s.id) === true,
+      // The banner's actions, reachable by keyboard while focus sits in xterm (spec 2026-10-27-conduit-mcp-install §2.5).
+      mcpSetupNeeded: notConnected !== undefined,
+      mcpLink: sessionMcpLink(badge, notConnected, mcp.state?.enabled ?? false),
+      otherCount: others.length,
+      allCount: all.length,
+      windowMoves: moveMenuItems(s.id),
+      icons: SESSION_MENU_ICONS,
+      actions: {
+        select: () => setActiveId(s.id),
+        split: () => setSplitId(s.id),
+        relaunch: () => post({ type: 'relaunch' as const, id: s.id }),
+        snooze: () => snooze(s.id),
+        approval: () => requestAskFocus(),
+        timed: () => openTimedMessages(s.id),
+        messages: () => openMessages(badge?.handle ?? null),
+        pauseMcp: () => mcp.pause(s.id, badge?.paused !== true),
+        mcpTools: () => setMcpToolsFor(s.id),
+        setupMcp: () => openSettingsAt('mcp', notConnected?.cli),
+        // From the live value: the menu may outlive a sidebar edit made while it was open.
+        pin: () => {
+          const ui = sidebarSyncRef.current.ui;
+          updateSidebarUi({
+            ...ui,
+            pinnedIds: ui.pinnedIds.includes(s.id)
+              ? ui.pinnedIds.filter((id) => id !== s.id)
+              : [...ui.pinnedIds, s.id],
+          });
         },
-      }),
+        rename: () => {
+          setActiveId(s.id);
+          setRenamingId(s.id);
+        },
+        setIcon: () => setIconPickerSessionId(s.id),
+        duplicate: () => post({ type: 'duplicate', id: s.id }),
+        // Beside the row it was picked from (12e); a bare call has only the right-click point.
+        moveSpace: (a) =>
+          setMovePicker({
+            sessionId: s.id,
+            at: a ? { x: a.rect.right, y: a.rect.top } : point,
+          }),
+        copyHome: () => copyToClipboard(s.home),
+        copyName: () => copyToClipboard(s.name),
+        reveal: () => post({ type: 'revealInExplorer', path: s.home }),
+        close: () => requestKill(s.id),
+        closeOthers: () =>
+          closeSessions(
+            others,
+            'Close other sessions',
+            `Close ${others.length} other session${others.length === 1 ? '' : 's'}? Running terminals will be terminated.`,
+          ),
+        closeAll: () =>
+          closeSessions(
+            all,
+            'Close all sessions',
+            `Close all ${all.length} session${all.length === 1 ? '' : 's'}? Running terminals will be terminated.`,
+          ),
+      },
     });
+    setMenu(
+      'anchor' in at ? { ...triggerMenu(at.anchor), keyboard: true, items } : { ...at, items },
+    );
+  };
+  const onSessionContextMenu = (e: React.MouseEvent, s: Session) => {
+    e.preventDefault();
+    openSessionMenu(s, { x: e.clientX, y: e.clientY });
   };
 
   const onGroupStripContextMenu = (e: React.MouseEvent, group: GroupIndex) => {
@@ -4865,88 +4892,93 @@ export function App() {
   const renderRegion = (region: Region) => {
     if (region === 'center') {
       return (
-        // Guard the center pane: a render/teardown throw here (e.g. the xterm
-        // WebGL addon failing to dispose when a running session is closed) would
-        // otherwise blank the whole React root to black. The boundary catches it
-        // and falls back to the editor start state instead of a void.
-        <ErrorBoundary key="center" onReset={() => setCenterView('editor')}>
-          <CenterPane
-            serverState={serverState}
-            onRetryLaunch={(sessionId) => post({ type: 'session:retryLaunch', sessionId })}
-            onDiscardLaunch={(sessionId) => post({ type: 'session:discardLaunch', sessionId })}
-            mcpNotConnected={mcp.state?.notConnected ?? NO_NOT_CONNECTED}
-            mcpEnabled={mcp.state?.enabled ?? false}
-            onOpenMcpSettings={(cli) => openSettingsAt('mcp', cli)}
-            sessions={sessions}
-            agents={agents}
-            repos={state?.repos ?? []}
-            activeId={activeId}
-            layout={layout}
-            files={files}
-            diffs={diffs}
-            onFocusGroup={focusGroup}
-            onSplitRight={splitRight}
-            editorSplitRatio={settings.editorSplitRatio}
-            onSplitRatioCommit={(editorSplitRatio) => update({ editorSplitRatio })}
-            // A pointer click on the Terminal button leaves focus on the button (main's behaviour,
-            // pinned by editor-nav-history-lifecycle); a keyboard landing on it focuses xterm.
-            onSelectDoc={(id, group) =>
-              activateDocByUser(id, activeIdRef.current ?? '', group, id !== null)
-            }
-            onCloseDoc={(id, group) => void closeTabsByUser([id], group, 'button')}
-            onRelaunch={(id) => post({ type: 'relaunch', id })}
-            onOpenTimedMessages={openTimedMessages}
-            onTabContextMenu={onTabContextMenu}
-            onGroupStripContextMenu={onGroupStripContextMenu}
-            onTerminalTabContextMenu={onTerminalTabContextMenu}
-            onReorderDoc={(dragId, targetId, group) =>
-              dispatchDocs({ type: 'reorder', dragId, targetId, group })
-            }
-            onPinDoc={(id, group) => dispatchDocs({ type: 'pinDoc', id, group })}
-            onMoveTab={moveTabToGroup}
-            dock={dockHandlers('center')}
-            splitId={splitId}
-            onCloseSplit={() => setSplitId(null)}
-            onOpenFile={(p, mode) => openFile(p, undefined, mode)}
-            onOpenFileAt={openTerminalFileLink}
-            onSearchAllFiles={(q) => setPalette({ initialQuery: q })}
-            onOpenAsSessionFromTerminal={openAsSessionFromTerminal}
-            openAsSessionHintFor={openAsSessionHintFor}
-            onOpenWeb={openWeb}
-            flashTab={backgroundFeedback.flashTab}
-            onRevealFolder={(path) => post({ type: 'revealInExplorer', path })}
-            onOpenCommitReview={(sha, sid, repoRoot) =>
-              openReviewForCommit(sha, sid, undefined, repoRoot, undefined, true)
-            }
-            reviewRepos={reviewRepos}
-            reviewRepoChanges={reviewRepoChanges}
-            reviewRepoGit={active?.repoGit}
-            reviewFallbackRoot={reviewFallbackRoot}
-            home={active?.home}
-            onReviewRequestDiff={requestReviewDiff}
-            onJumpToHunk={jumpToHunk}
-            onOpenReviewDiff={onOpenReviewDiff}
-            onReviewGitAction={onGitAction}
-            onCloseReview={closeReviewTab}
-            onSetReviewSource={setReviewSource}
-            onNewSession={() => openNewSession()}
-            onOpenCommitFile={openCommitFile}
-            onRetargetHistory={retargetGitHistory}
-            onReviewCommit={(sha, subject, repoRoot, sessionId) =>
-              openReviewForCommit(sha, sessionId, subject, repoRoot, undefined, true)
-            }
-            onDocTitle={(id, title) => dispatchDocs({ type: 'setTitle', id, title })}
-            paneTab={rightTab}
-            explorerCollapsed={settings.explorerCollapsed}
-            onTogglePanel={toggleExplorer}
-            onShowChanges={showChangesInPane}
-            onClearSideBySide={(id) => dispatchDocs({ type: 'clearSideBySide', id })}
-            onRetryDiff={(doc) =>
-              diffReadQueueRef.current.request({ path: doc.path, diffScope: doc.diffScope })
-            }
-            onOpenFullDiff={(doc) => openDiff(doc.path, doc.sessionId)}
-          />
-        </ErrorBoundary>
+        // The footer sits outside the boundary, so a center-pane crash keeps the window's
+        // status (sidebar-agent-tree spec §7: the status bar belongs to the center column).
+        <div key="center" className="centercol">
+          {/* Guard the center pane: a render/teardown throw here (e.g. the xterm
+            WebGL addon failing to dispose when a running session is closed) would
+            otherwise blank the whole React root to black. The boundary catches it
+            and falls back to the editor start state instead of a void. */}
+          <ErrorBoundary onReset={() => setCenterView('editor')}>
+            <CenterPane
+              serverState={serverState}
+              onRetryLaunch={(sessionId) => post({ type: 'session:retryLaunch', sessionId })}
+              onDiscardLaunch={(sessionId) => post({ type: 'session:discardLaunch', sessionId })}
+              mcpNotConnected={mcp.state?.notConnected ?? NO_NOT_CONNECTED}
+              mcpEnabled={mcp.state?.enabled ?? false}
+              onOpenMcpSettings={(cli) => openSettingsAt('mcp', cli)}
+              sessions={sessions}
+              agents={agents}
+              repos={state?.repos ?? []}
+              activeId={activeId}
+              layout={layout}
+              files={files}
+              diffs={diffs}
+              onFocusGroup={focusGroup}
+              onSplitRight={splitRight}
+              editorSplitRatio={settings.editorSplitRatio}
+              onSplitRatioCommit={(editorSplitRatio) => update({ editorSplitRatio })}
+              // A pointer click on the Terminal button leaves focus on the button (main's behaviour,
+              // pinned by editor-nav-history-lifecycle); a keyboard landing on it focuses xterm.
+              onSelectDoc={(id, group) =>
+                activateDocByUser(id, activeIdRef.current ?? '', group, id !== null)
+              }
+              onCloseDoc={(id, group) => void closeTabsByUser([id], group, 'button')}
+              onRelaunch={(id) => post({ type: 'relaunch', id })}
+              onOpenTimedMessages={openTimedMessages}
+              onTabContextMenu={onTabContextMenu}
+              onGroupStripContextMenu={onGroupStripContextMenu}
+              onTerminalTabContextMenu={onTerminalTabContextMenu}
+              onReorderDoc={(dragId, targetId, group) =>
+                dispatchDocs({ type: 'reorder', dragId, targetId, group })
+              }
+              onPinDoc={(id, group) => dispatchDocs({ type: 'pinDoc', id, group })}
+              onMoveTab={moveTabToGroup}
+              dock={dockHandlers('center')}
+              splitId={splitId}
+              onCloseSplit={() => setSplitId(null)}
+              onOpenFile={(p, mode) => openFile(p, undefined, mode)}
+              onOpenFileAt={openTerminalFileLink}
+              onSearchAllFiles={(q) => setPalette({ initialQuery: q })}
+              onOpenAsSessionFromTerminal={openAsSessionFromTerminal}
+              openAsSessionHintFor={openAsSessionHintFor}
+              onOpenWeb={openWeb}
+              flashTab={backgroundFeedback.flashTab}
+              onRevealFolder={(path) => post({ type: 'revealInExplorer', path })}
+              onOpenCommitReview={(sha, sid, repoRoot) =>
+                openReviewForCommit(sha, sid, undefined, repoRoot, undefined, true)
+              }
+              reviewRepos={reviewRepos}
+              reviewRepoChanges={reviewRepoChanges}
+              reviewRepoGit={active?.repoGit}
+              reviewFallbackRoot={reviewFallbackRoot}
+              home={active?.home}
+              onReviewRequestDiff={requestReviewDiff}
+              onJumpToHunk={jumpToHunk}
+              onOpenReviewDiff={onOpenReviewDiff}
+              onReviewGitAction={onGitAction}
+              onCloseReview={closeReviewTab}
+              onSetReviewSource={setReviewSource}
+              onNewSession={() => openNewSession()}
+              onOpenCommitFile={openCommitFile}
+              onRetargetHistory={retargetGitHistory}
+              onReviewCommit={(sha, subject, repoRoot, sessionId) =>
+                openReviewForCommit(sha, sessionId, subject, repoRoot, undefined, true)
+              }
+              onDocTitle={(id, title) => dispatchDocs({ type: 'setTitle', id, title })}
+              paneTab={rightTab}
+              explorerCollapsed={settings.explorerCollapsed}
+              onTogglePanel={toggleExplorer}
+              onShowChanges={showChangesInPane}
+              onClearSideBySide={(id) => dispatchDocs({ type: 'clearSideBySide', id })}
+              onRetryDiff={(doc) =>
+                diffReadQueueRef.current.request({ path: doc.path, diffScope: doc.diffScope })
+              }
+              onOpenFullDiff={(doc) => openDiff(doc.path, doc.sessionId)}
+            />
+          </ErrorBoundary>
+          <StatusBar />
+        </div>
       );
     }
     if (region === 'sessions') {
@@ -4994,15 +5026,13 @@ export function App() {
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenSettings={() => openSettingsAt('general')}
             onContextMenu={onSessionContextMenu}
-            onSnooze={snooze}
+            onRowMenu={openSessionMenu}
+            sessionsLoaded={sessionsLoaded}
             mcpBadges={mcp.state?.sessions ?? NO_MCP_BADGES}
             mcpNotConnected={mcp.state?.notConnected ?? NO_NOT_CONNECTED}
             mcpEnabled={mcp.state?.enabled ?? false}
-            awaitingApproval={awaiting}
-            onFocusAsk={requestAskFocus}
             renamingId={renamingId}
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
-            onReorderSessions={(o) => post({ type: 'reorderSessions', order: o })}
             onSessionDragEnd={(sessionId, screenX, screenY) => {
               const drop = () => post({ type: 'session:dragEnd', sessionId, screenX, screenY });
               const own = {
@@ -5016,9 +5046,6 @@ export function App() {
               if (pointWellInside(own, { x: screenX, y: screenY }, DRAG_STAY_INSET_PX)) drop();
               else guardSessionRemoval([sessionId], 'sessionMove', drop);
             }}
-            updateStatus={updateStatus}
-            updateDismissed={updateDismissed}
-            onUpdateDismiss={() => setUpdateDismissed(true)}
           />
         </PanelFrame>
       );
@@ -5092,7 +5119,6 @@ export function App() {
           onChangeContextMenu={onChangeContextMenu}
           onReviewScope={openReviewScoped}
           reviewMode={reviewMode}
-          onTabShown={setRightTab}
           recordFsOp={recordFsOp}
           onContextPath={(p) =>
             active && post({ type: 'repo:context', sessionId: active.id, path: p })
@@ -5122,15 +5148,9 @@ export function App() {
             onForward={goForward}
             canBack={canNavigate(navState, navDepsRef.current, -1)}
             canForward={canNavigate(navState, navDepsRef.current, 1)}
-            centerView={centerView}
-            onSelectView={setCenterView}
-            sessions={sessions}
-            onFocusAttention={setActiveId}
-            attentionItems={mcp.state?.attention}
-            snoozed={snoozed}
-            onOpenThread={(threadId) => openMessages(null, threadId)}
-            asks={asks}
-            onFocusAsk={requestAskFocus}
+            changesModel={changesViewModel}
+            reviewMode={reviewMode}
+            mcpState={mcp.state}
             onContextMenu={onPanelTogglesMenu}
           />
           <ServerBanner
@@ -5300,12 +5320,13 @@ export function App() {
                 />
               ) : null;
             })()}
-          <ApprovalCard
-            announce={(t) => {
-              if (navLiveRef.current) navLiveRef.current.textContent = t;
-            }}
-          />
-          <Toasts />
+          <Toasts>
+            <ApprovalCard
+              announce={(t) => {
+                if (navLiveRef.current) navLiveRef.current.textContent = t;
+              }}
+            />
+          </Toasts>
         </div>
       </WorkbenchChromeProvider>
     </SidebarTreeProvider>

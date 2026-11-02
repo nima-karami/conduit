@@ -194,29 +194,17 @@ export function Sidebar({
   onContextMenu?: (e: React.MouseEvent, session: Session) => void;
   /** Shift+F10 / the Menu key on a row: the same menu, anchored to the row. */
   onRowMenu?: (session: Session, at: { anchor: Rect; keyboard: true }) => void;
-  /** Legacy, unused: Snooze moved to the session menu (spec §6); the lead drops the argument. */
-  onSnooze?: (id: string) => void;
   /** Messaging state by session id, for the row tooltip (conduit-mcp spec §8). */
   mcpBadges: Readonly<Record<string, McpSessionBadge>>;
   /** Sessions whose agent CLI never reached the host, by session id (mcp-install spec §2.5). */
   mcpNotConnected: Readonly<Record<string, McpNotConnected>>;
   mcpEnabled: boolean;
-  /** Legacy, unused: the tree reads waiting asks from its context. */
-  awaitingApproval?: ReadonlySet<string>;
-  /** Legacy, unused: View approval moved to the session menu. */
-  onFocusAsk?: () => void;
   renamingId?: string;
   onSetRenaming: (id: string | null) => void;
-  /** Legacy, unused: the tree has no manual order (spec §6). */
-  onReorderSessions?: (order: string[]) => void;
   // Cross-window drag (multi-window Slice C): a row's dragend with the drop's global SCREEN
   // coords. The host hit-tests them — another window → move, empty desktop → tear out, this
   // window → no-op. A drop on a Space row is handled here as well.
   onSessionDragEnd?: (sessionId: string, screenX: number, screenY: number) => void;
-  /** Legacy, unused: updates render as a floating toast (spec §7 Revision 2). */
-  updateStatus?: unknown;
-  updateDismissed?: boolean;
-  onUpdateDismiss?: () => void;
   // The panel is rendered barless, so the Spaces header doubles as the panel-move drag surface.
   moveGrip?: MoveGrip;
 }) {

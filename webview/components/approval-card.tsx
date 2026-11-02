@@ -1,5 +1,4 @@
 import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { cliKindOfHandle } from '../../src/conduit-mcp/handles';
 import type { AskAnswer, AskSummary } from '../../src/conduit-mcp/ui-types';
 import { MCP_STR } from '../conduit-mcp-strings';
@@ -166,7 +165,8 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
     else region.focus();
   };
 
-  return createPortal(
+  // Rendered inside the floating stack (<Toasts>), which owns the portal and the anchor.
+  return (
     <section
       ref={regionRef}
       className="askcard"
@@ -233,7 +233,6 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
           {rawOpen && <pre className="askcard__args">{JSON.stringify(ask.args, null, 2)}</pre>}
         </div>
       </div>
-    </section>,
-    document.body,
+    </section>
   );
 }

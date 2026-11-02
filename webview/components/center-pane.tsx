@@ -386,6 +386,7 @@ export function CenterPane({
           <div
             key={s.id}
             className="termhost"
+            data-sessionid={s.id}
             style={{ display: visible ? 'flex' : 'none', flex: visible ? 1 : undefined }}
           >
             {isSplit && (

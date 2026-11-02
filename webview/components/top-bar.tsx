@@ -1,13 +1,9 @@
 import { MessageSquare } from 'lucide-react';
 import { type ReactNode, useEffect, useId, useState, useSyncExternalStore } from 'react';
-import type { AttentionAsk, SnoozeMap } from '../../src/attention';
 import type { ChangesModel } from '../../src/changes-view-model';
-import type { McpAttentionItem } from '../../src/conduit-mcp/types';
 import type { McpUiState } from '../../src/conduit-mcp/ui-types';
 import type { RightPaneTab } from '../../src/settings';
-import type { Session } from '../../src/types';
 import { win } from '../bridge';
-import type { CenterView } from '../center-view';
 import { CHROME_STR } from '../chrome-strings';
 import { tabBadge } from '../conduit-mcp-view-model';
 import {
@@ -23,7 +19,7 @@ import {
 } from '../icons';
 import { getReviewNav, type ReviewNavModel, subscribeReviewNav } from '../review-nav-store';
 import { useSettings } from '../settings';
-import { comboLabel, isMac } from '../shortcuts';
+import { ariaKeyShortcut, comboLabel, isMac } from '../shortcuts';
 import { useWorkbenchChromeState } from '../workbench-chrome-state';
 
 /** The Changes toggle's count: review mode counts its navigator's files, otherwise the model's. */
@@ -118,17 +114,6 @@ export function TopBar({
   mcpState?: McpUiState | null;
   // Right-click the top bar to open the panel show/hide menu.
   onContextMenu?: (e: React.MouseEvent) => void;
-  // Legacy props from the removed view switcher and attention chip; accepted and ignored until
-  // App stops passing them (sidebar-agent-tree plan T3.1 source compatibility).
-  centerView?: CenterView;
-  onSelectView?: (view: CenterView) => void;
-  sessions?: Session[];
-  onFocusAttention?: (sessionId: string) => void;
-  attentionItems?: readonly McpAttentionItem[];
-  snoozed?: SnoozeMap;
-  onOpenThread?: (threadId: string) => void;
-  asks?: readonly AttentionAsk[];
-  onFocusAsk?: () => void;
 }) {
   const [maxed, setMaxed] = useState(false);
   const navModel = useSyncExternalStore(subscribeReviewNav, getReviewNav, getReviewNav);
@@ -244,7 +229,7 @@ export function TopBar({
           onClick={onOpenSearch}
           title={searchCombo ? `${CHROME_STR.search} (${searchCombo})` : CHROME_STR.search}
           aria-label={CHROME_STR.search}
-          aria-keyshortcuts="Control+P"
+          aria-keyshortcuts={ariaKeyShortcut('openSearch', settings.shortcuts)}
         >
           <IconSearch size={14} className="omnibar__icon" />
           <span className="omnibar__placeholder">{CHROME_STR.searchPlaceholder}</span>

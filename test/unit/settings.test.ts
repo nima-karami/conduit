@@ -348,13 +348,14 @@ describe('settings persistence', () => {
     ).toBe('files');
   });
 
-  it('has the right pane import RightPaneTab from settings, with no local alias', () => {
+  it('has the right pane read its view from App, with no local tab alias or state', () => {
     const src = readFileSync(
       join(__dirname, '..', '..', 'webview', 'components', 'right-pane.tsx'),
       'utf8',
     );
-    expect(src).toMatch(/import type \{[^}]*RightPaneTab[^}]*\} from '\.\.\/\.\.\/src\/settings'/s);
+    expect(src).toContain('useWorkbenchChromeState()');
     expect(src).not.toContain('type RightTab');
+    expect(src).not.toMatch(/useState<RightPaneTab>/);
   });
 
   it('rejects invalid enum values and clamps widths', () => {

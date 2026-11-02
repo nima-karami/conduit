@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  dropResolvesToManual,
-  moveBefore,
-  reorderPersists,
-  sortedCanonical,
-  toggleCollapsed,
-} from '../../src/reorder';
-import type { Session } from '../../src/types';
+import { moveBefore, toggleCollapsed } from '../../src/reorder';
 
 // ── collapse set helpers ──────────────────────────────────────────────────────
 
@@ -33,216 +26,21 @@ describe('toggleCollapsed', () => {
   });
 });
 
-// ── test fixtures ─────────────────────────────────────────────────────────────
+describe('moveBefore', () => {
+  const ids = ['s1', 's2', 's3'];
 
-function makeSession(overrides: Partial<Session> & { id: string }): Session {
-  return {
-    name: overrides.id,
-    agentId: 'shell:cmd',
-    home: '/proj',
-    roots: [],
-    status: 'running',
-    createdAt: 0,
-    lastActiveAt: 0,
-    ...overrides,
-  };
-}
-
-function makeMap(...sessions: Session[]): Map<string, Session> {
-  return new Map(sessions.map((s) => [s.id, s]));
-}
-
-// ── sortedCanonical ──────────────────────────────────────────────────────────
-
-describe('sortedCanonical', () => {
-  it('manual: returns ids in the given order unchanged', () => {
-    const s1 = makeSession({ id: 's1', name: 'zoo' });
-    const s2 = makeSession({ id: 's2', name: 'ant' });
-    const map = makeMap(s1, s2);
-    expect(sortedCanonical(['s1', 's2'], 'manual', map, [])).toEqual(['s1', 's2']);
+  it('moves an id to just before the target', () => {
+    expect(moveBefore(ids, 's3', 's1')).toEqual(['s3', 's1', 's2']);
+    expect(moveBefore(ids, 's1', 's2')).toEqual(['s1', 's2', 's3']);
   });
 
-  it('name: sorts by session name A-Z', () => {
-    const s1 = makeSession({ id: 's1', name: 'zoo' });
-    const s2 = makeSession({ id: 's2', name: 'ant' });
-    const map = makeMap(s1, s2);
-    expect(sortedCanonical(['s1', 's2'], 'name', map, [])).toEqual(['s2', 's1']);
+  it('a null or absent target moves it to the end', () => {
+    expect(moveBefore(ids, 's1', null)).toEqual(['s2', 's3', 's1']);
+    expect(moveBefore(ids, 's1', 'nope')).toEqual(['s2', 's3', 's1']);
   });
 
-  it('recent: sorts by createdAt descending', () => {
-    const s1 = makeSession({ id: 's1', createdAt: 100 });
-    const s2 = makeSession({ id: 's2', createdAt: 200 });
-    const map = makeMap(s1, s2);
-    expect(sortedCanonical(['s1', 's2'], 'recent', map, [])).toEqual(['s2', 's1']);
-  });
-
-  it('active: sorts by lastActiveAt descending, name as tiebreaker', () => {
-    const s1 = makeSession({ id: 's1', name: 'b', lastActiveAt: 100 });
-    const s2 = makeSession({ id: 's2', name: 'a', lastActiveAt: 100 });
-    const map = makeMap(s1, s2);
-    expect(sortedCanonical(['s1', 's2'], 'active', map, [])).toEqual(['s2', 's1']);
-  });
-
-  it('status: sorts by running < stale < exited, name as tiebreaker', () => {
-    const s1 = makeSession({ id: 's1', name: 'a', status: 'exited' });
-    const s2 = makeSession({ id: 's2', name: 'b', status: 'running' });
-    const s3 = makeSession({ id: 's3', name: 'c', status: 'stale' });
-    const map = makeMap(s1, s2, s3);
-    expect(sortedCanonical(['s1', 's3', 's2'], 'status', map, [])).toEqual(['s2', 's3', 's1']);
-  });
-
-  it('project: sorts by project name A-Z then name, not by folder', () => {
-    const s1 = makeSession({ id: 's1', name: 'a', home: '/ant', projectId: 'pz' });
-    const s2 = makeSession({ id: 's2', name: 'b', home: '/zoo', projectId: 'pa' });
-    const map = makeMap(s1, s2);
-    const projects = [
-      { id: 'pz', name: 'zoo', order: 0 },
-      { id: 'pa', name: 'ant', order: 1 },
-    ];
-    expect(sortedCanonical(['s1', 's2'], 'project', map, projects)).toEqual(['s2', 's1']);
-  });
-
-  it('sortedCanonical project sort uses project names, standalone last', () => {
-    const s1 = makeSession({ id: 's1', name: 'x' });
-    const s2 = makeSession({ id: 's2', name: 'y', projectId: 'pb' });
-    const s3 = makeSession({ id: 's3', name: 'z', projectId: 'pa' });
-    const map = makeMap(s1, s2, s3);
-    const projects = [
-      { id: 'pb', name: 'b', order: 0 },
-      { id: 'pa', name: 'a', order: 1 },
-    ];
-    expect(sortedCanonical(['s1', 's2', 's3'], 'project', map, projects)).toEqual([
-      's3',
-      's2',
-      's1',
-    ]);
-  });
-
-  it('skips ids not present in the map', () => {
-    const s1 = makeSession({ id: 's1', name: 'a' });
-    const map = makeMap(s1);
-    // 'missing' is silently dropped
-    expect(sortedCanonical(['s1', 'missing'], 'name', map, [])).toEqual(['s1']);
-  });
-
-  it('does not mutate the input ids array', () => {
-    const ids = ['s2', 's1'];
-    const s1 = makeSession({ id: 's1', name: 'ant' });
-    const s2 = makeSession({ id: 's2', name: 'zoo' });
-    sortedCanonical(ids, 'name', makeMap(s1, s2), []);
-    expect(ids).toEqual(['s2', 's1']);
-  });
-});
-
-// ── dropResolvesToManual ──────────────────────────────────────────────────────
-
-describe('dropResolvesToManual', () => {
-  it('returns false when candidate equals canonical', () => {
-    expect(dropResolvesToManual(['a', 'b', 'c'], ['a', 'b', 'c'])).toBe(false);
-  });
-
-  it('returns true when candidate differs in order', () => {
-    expect(dropResolvesToManual(['b', 'a', 'c'], ['a', 'b', 'c'])).toBe(true);
-  });
-
-  it('returns true when lengths differ', () => {
-    expect(dropResolvesToManual(['a', 'b'], ['a', 'b', 'c'])).toBe(true);
-  });
-
-  it('returns true for a single transposition', () => {
-    expect(dropResolvesToManual(['a', 'c', 'b'], ['a', 'b', 'c'])).toBe(true);
-  });
-
-  it('returns false for identical single-element arrays', () => {
-    expect(dropResolvesToManual(['a'], ['a'])).toBe(false);
-  });
-
-  it('returns false for empty arrays', () => {
-    expect(dropResolvesToManual([], [])).toBe(false);
-  });
-});
-
-// ── reorderPersists ───────────────────────────────────────────────────────────
-
-describe('reorderPersists', () => {
-  it('manual: a card move that changes the rendered order persists', () => {
-    const s1 = makeSession({ id: 's1' });
-    const s2 = makeSession({ id: 's2' });
-    const s3 = makeSession({ id: 's3' });
-    const map = makeMap(s1, s2, s3);
-    const current = ['s1', 's2', 's3'];
-    const candidate = moveBefore(current, 's3', 's1'); // [s3, s1, s2]
-    expect(reorderPersists(candidate, current, 'manual', map, [])).toBe(true);
-  });
-
-  it('project sort: a drop against the project-name order persists; one in order does not', () => {
-    const s1 = makeSession({ id: 's1', name: 'x', projectId: 'pa' });
-    const s2 = makeSession({ id: 's2', name: 'y', projectId: 'pb' });
-    const map = makeMap(s1, s2);
-    const projects = [
-      { id: 'pb', name: 'bee', order: 0 },
-      { id: 'pa', name: 'ant', order: 1 },
-    ];
-    expect(reorderPersists(['s2', 's1'], ['s1', 's2'], 'project', map, projects)).toBe(true);
-    expect(reorderPersists(['s1', 's2'], ['s1', 's2'], 'project', map, projects)).toBe(false);
-  });
-
-  it('manual: a no-op move (candidate === current) does not persist', () => {
-    const s1 = makeSession({ id: 's1' });
-    const s2 = makeSession({ id: 's2' });
-    const map = makeMap(s1, s2);
-    const current = ['s1', 's2'];
-    expect(reorderPersists(['s1', 's2'], current, 'manual', map, [])).toBe(false);
-  });
-
-  it('name sort: candidate already in sort order does not persist', () => {
-    const s1 = makeSession({ id: 's1', name: 'ant' });
-    const s2 = makeSession({ id: 's2', name: 'bee' });
-    const map = makeMap(s1, s2);
-    // candidate is already in name-sorted order → no-op, does not persist
-    expect(reorderPersists(['s1', 's2'], ['s1', 's2'], 'name', map, [])).toBe(false);
-  });
-
-  it('name sort: candidate deviating from sort order persists (switch to manual)', () => {
-    const s1 = makeSession({ id: 's1', name: 'ant' });
-    const s2 = makeSession({ id: 's2', name: 'bee' });
-    const map = makeMap(s1, s2);
-    // dragging bee before ant deviates from the name-sorted canonical [s1, s2]
-    expect(reorderPersists(['s2', 's1'], ['s1', 's2'], 'name', map, [])).toBe(true);
-  });
-});
-
-// ── commit-builder integration ────────────────────────────────────────────────
-// Verifies that the card-drop builder produces the right outcome
-// across sort modes (the "commit logic" from the spec).
-
-describe('card-commit builder (moveBefore + dropResolvesToManual)', () => {
-  const s1 = makeSession({ id: 's1', name: 'ant' });
-  const s2 = makeSession({ id: 's2', name: 'bee' });
-  const s3 = makeSession({ id: 's3', name: 'zoo' });
-  const map = makeMap(s1, s2, s3);
-  const renderedIds = ['s1', 's2', 's3']; // in name-sorted rendered order
-
-  it('manual: a same-pos drop is a no-op (no switch)', () => {
-    const candidate = moveBefore(['s1', 's2', 's3'], 's1', 's2');
-    // s1→before s2 in [s1,s2,s3] puts s1 before s2 — no real change
-    const canonical = sortedCanonical(['s1', 's2', 's3'], 'manual', map, []);
-    expect(dropResolvesToManual(candidate, canonical)).toBe(false);
-  });
-
-  it('name sort: a violating drop switches to manual', () => {
-    // Drag s1 (ant) after s3 (zoo): rendered order becomes [s2, s3, s1]
-    const candidate = moveBefore(renderedIds, 's1', null); // null = end
-    const canonical = sortedCanonical(renderedIds, 'name', map, []);
-    expect(candidate).toEqual(['s2', 's3', 's1']);
-    expect(dropResolvesToManual(candidate, canonical)).toBe(true);
-  });
-
-  it('name sort: dropping onto canonical position is a no-op', () => {
-    // [s1, s2, s3] is already the name-sorted order; moving s2 before s3 is a no-op
-    const candidate = moveBefore(renderedIds, 's2', 's3');
-    const canonical = sortedCanonical(renderedIds, 'name', map, []);
-    expect(candidate).toEqual(['s1', 's2', 's3']);
-    expect(dropResolvesToManual(candidate, canonical)).toBe(false);
+  it('is a no-op for a self-drop or an absent id', () => {
+    expect(moveBefore(ids, 's2', 's2')).toBe(ids);
+    expect(moveBefore(ids, 'nope', 's1')).toBe(ids);
   });
 });

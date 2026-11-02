@@ -3,7 +3,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { buildAgentTree } from '../../src/agent-tree';
 import { attentionEntries, attentionSessions } from '../../src/attention';
-import { orderSessions } from '../../src/session-groups';
 import { sessionIconState } from '../../src/session-icon';
 import { advanceAgentRuntime, defaultSidebarUi } from '../../src/sidebar-state';
 import type { Session, SessionIconKind } from '../../src/types';
@@ -80,9 +79,5 @@ describe('legacy consumers ignore the new facts', () => {
     expect(attentionEntries([blockedOnly, finished], [], new Map(), 0).map((e) => e.key)).toEqual([
       'session:y',
     ]);
-  });
-
-  it('legacy grouping still floats needsAttention', () => {
-    expect(orderSessions([blockedOnly, finished], 'name', []).map((s) => s.id)).toEqual(['y', 'x']);
   });
 });

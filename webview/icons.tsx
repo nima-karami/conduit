@@ -548,7 +548,7 @@ const SESSION_ICON: Record<SessionIconKind, (p: P) => ReactJSX.Element> = {
  * Glyph for a session tab (D4). Decorative/aria-hidden — the label carries meaning for
  * assistive tech. Call sites pass a ResolvedSessionIcon from {@link resolveSessionIcon} so
  * iconOverride is respected everywhere (D3). The glyph carries IDENTITY only — status is the
- * card's own dot + word (src/session-dot.ts), so it is never double-coded here.
+ * row's own state indicator, so it is never double-coded here.
  */
 export function SessionGlyph({ icon, size, className }: P & { icon: ResolvedSessionIcon }) {
   if (icon.type === 'lucide') {

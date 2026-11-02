@@ -331,3 +331,19 @@ export function comboLabel(
   const combo = action ? effectiveCombo(action, shortcuts) : '';
   return combo === '' ? undefined : formatCombo(combo);
 }
+
+/** `aria-keyshortcuts` form of an action's bound combo (WAI-ARIA modifier names); undefined
+ *  when unbound or when the binding is a key family no single ARIA value can name. */
+export function ariaKeyShortcut(
+  actionId: string,
+  shortcuts: AppSettings['shortcuts'],
+): string | undefined {
+  const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
+  const combo = action ? effectiveCombo(action, shortcuts) : '';
+  if (combo === '' || combo.endsWith(DIGIT_FAMILY)) return undefined;
+  const names: Record<string, string> = { Mod: isMac ? 'Meta' : 'Control', Ctrl: 'Control' };
+  return combo
+    .split('+')
+    .map((p) => names[p] ?? p)
+    .join('+');
+}

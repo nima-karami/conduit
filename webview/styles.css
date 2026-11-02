@@ -88,7 +88,7 @@
      scheduled this and it is on track"; `auto` is the "you didn't ask for this" tier the
      attention amber already owns; `late` is that amber, quieter. Aliases only — a theme retunes
      these by retuning --accent / --amber / --text. Raw --amber misses 4.5:1 on Aero's white
-     --raise, so the two amber tiers are mixed toward the theme's ink, exactly as .attnchip does. */
+     --raise, so the two amber tiers are mixed toward the theme's ink, as .statusbar__attn does. */
   --timer-armed: var(--accent);
   --timer-auto: color-mix(in srgb, var(--amber) 60%, var(--text));
   --timer-late: color-mix(in srgb, var(--amber) 40%, var(--text));
@@ -114,8 +114,8 @@
   --r-round: 999px;
   --win-pad: 12px; /* 0 = panels flush to the window */
   --gutter: 11px; /* gap between panels */
-  /* The center footer's height, and the update toast's anchor above it: one geometry, so the
-     toast never needs an offset of its own (sidebar-agent-tree spec §7). */
+  /* The center footer's height (sidebar-agent-tree spec §7). The floating stack anchors to
+     --toast-inset, not to this. */
   --status-bar-h: 32px;
   /* The floating stack sits this far from both the bottom and right window edges in every theme:
      a flush Neon --win-pad of 0 would park cards on the window frame (sidebar-agent-tree §7). */
@@ -184,7 +184,7 @@
   /* ---- type ---- */
   --font-ui: "Figtree", system-ui, sans-serif;
   --font-display: "Figtree", system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-mono: "IBM Plex Mono", "Cascadia Mono", "Segoe UI Symbol", ui-monospace, monospace;
   --label-case: none; /* section labels, tabs, badges */
   --label-track: 0.02em;
   --label-weight: 700;
@@ -279,13 +279,11 @@
 
   /* Overlay stack z-index bands (spec 2026-09-07-overlay-layers §2.1, toast/popover order
      superseded by 2026-09-23-mf-files): modal band 60-79 (the
-     live band is `--layer-modal` + clamped modal depth), toasts above every modal,
-     popovers above toasts (a menu opened into the toast corner must take its clicks), the
-     mermaid theatre above both. */
+     live band is `--layer-modal` + clamped modal depth), the floating stack (toasts, the
+     approval card, the update item) above every modal, popovers above it (a menu opened into
+     the stack corner must take its clicks), the mermaid theatre above both. */
   --layer-modal: 60;
   --layer-toast: 80;
-  /* Asks above toasts, below popovers (tool-policy plan N3). */
-  --layer-ask: 90;
   --layer-popover: 200;
   --layer-theatre: 300;
 }
@@ -457,7 +455,7 @@
 
   --font-ui: "Chakra Petch", system-ui, sans-serif;
   --font-display: "Chakra Petch", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", "Segoe UI Symbol", ui-monospace, monospace;
   --label-case: uppercase;
   --label-track: 0.14em;
 
@@ -696,13 +694,13 @@
   --font-ui: system-ui, -apple-system, sans-serif;
 }
 :root[data-font-mono="jetbrains"] {
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", "Segoe UI Symbol", ui-monospace, monospace;
 }
 :root[data-font-mono="firacode"] {
-  --font-mono: "Fira Code", ui-monospace, monospace;
+  --font-mono: "Fira Code", "Cascadia Mono", "Segoe UI Symbol", ui-monospace, monospace;
 }
 :root[data-font-mono="plexmono"] {
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-mono: "IBM Plex Mono", "Cascadia Mono", "Segoe UI Symbol", ui-monospace, monospace;
 }
 
 /* Monaco's CSS assumes the UA's content-box and declares border-box itself where it wants it;
@@ -1003,18 +1001,15 @@ body.resizing .panel__resize::after {
      is the design; the rounding only stops it falling between pixels. */
   --density-topbar-h: round(var(--density-band-h) * 1.5, 1px);
   --density-tabbar-h: var(--density-band-h);
-  --density-rtab-h: var(--density-band-h);
   /* Band labels read as one row too — one size, not three. */
   --density-band-font: 12px;
-  --density-topctl-h: 30px; /* topbar controls: view switcher, omnibar, attention chip */
+  --density-topctl-h: 30px; /* topbar controls: omnibar, right-panel toggles */
   --density-tab-inset: 3px; /* breathing room above/below a doc tab inside the tab row */
   --density-crumb-h: 32px; /* breadcrumb / diff-controls band INSIDE the doc panel */
   --density-agent-row-h: 30px; /* agent tree root row and Space row */
   --density-agent-child-h: 26px; /* agent tree sub-agent row, at every density */
   --density-item-pad-v: 7px; /* cust/list item vertical padding */
   --density-item-pad-h: 8px; /* cust/list item horizontal padding */
-  --density-rtabs-pad: 12px 16px 0;
-  --density-rtab-pad: 4px 0 10px;
   --density-btn-pad: 6px 14px; /* the parts sheet's button box (5c/5f) */
   --density-set-pad-v: 14px; /* settings row vertical padding */
   --density-setgroup-mb: 26px;
@@ -1062,8 +1057,6 @@ body.resizing .panel__resize::after {
   --density-agent-row-h: 26px;
   --density-item-pad-v: 3px;
   --density-item-pad-h: 7px;
-  --density-rtabs-pad: 6px 12px 0;
-  --density-rtab-pad: 2px 0 6px;
   --density-btn-pad: 4px 11px;
   --density-set-pad-v: 7px;
   --density-setgroup-mb: 14px;
@@ -1136,9 +1129,8 @@ body.resizing .panel__resize::after {
    everything else. Height is density's; the theme may never change it.
 
    Three columns with equal outer tracks, so the search pill sits at the true centre of the
-   window whatever the side groups hold — and when one side outgrows its half (Neon's wide
-   uppercase switcher at 1000px), its track grows to its content and pushes the pill aside
-   rather than running underneath it. */
+   window whatever the side groups hold — and when one side outgrows its half (a narrow window),
+   its track grows to its content and pushes the pill aside rather than running underneath it. */
 .topbar {
   flex: 0 0 var(--density-topbar-h);
   height: var(--density-topbar-h);
@@ -2410,7 +2402,7 @@ body.resizing .panel__resize::after {
   padding: 6px 8px 4px;
   cursor: pointer;
 }
-/* Needs you's header takes the attention chip's ink: pure --amber misses 4.5:1 on a panel. */
+/* Needs you's header takes the status bar's attention ink: pure --amber misses 4.5:1 on a panel. */
 .proj__label--attn {
   color: color-mix(in srgb, var(--amber) 70%, var(--text));
 }
@@ -2774,6 +2766,16 @@ body.resizing .panel__resize::after {
 }
 
 /* ---------- center ---------- */
+/* The center region: the pane above its footer, one --gutter apart like any two surfaces, so at
+   Neon (gutter 0) the footer's own top hairline is the only rule between them. */
+.centercol {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gutter);
+  min-width: 0;
+  min-height: 0;
+}
 /* The centre column is NOT a panel: the tab row floats on the window ground and the doc
    surface below it is the panel (frame 5a). At Neon --gutter is 0 and the two are flush. */
 .centerpane {
@@ -7026,16 +7028,12 @@ body.gh-resizing {
   color: var(--text-dim);
   cursor: pointer;
 }
-/* ---- Approval card (spec 2026-10-30-conduit-mcp-tool-policy §2.4, §10): top-right under the
-   top bar, so it covers neither the bar (no drag-mask hole needed) nor a terminal input row or
-   the toasts, which sit bottom-right. Measured from the bar the way .board is: --win-pad above
-   it on Aero, 0 on Neon. Never auto-focused; the region is focused only on request. */
+/* ---- Approval card (spec 2026-10-30-conduit-mcp-tool-policy §2.4, §10): the top item of the
+   floating stack (sidebar-agent-tree spec §7), which owns its position and layer. The stack
+   ignores the pointer between its items, so each item takes it back. Never auto-focused; the
+   region is focused only on request. */
 .askcard {
-  position: fixed;
-  top: calc(var(--win-pad) + var(--density-topbar-h) + 8px);
-  right: calc(var(--win-pad) + 16px);
-  z-index: var(--layer-ask);
-  width: min(360px, calc(100vw - 32px));
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -7324,7 +7322,7 @@ body.gh-resizing {
   text-align: left;
   cursor: pointer;
 }
-/* The warn box for a missing folder (mf-files spec §11): the .attnchip amber recipe. */
+/* The warn box for a missing folder (mf-files spec §11): the .statusbar__attn amber recipe. */
 .files-missing {
   display: flex;
   flex-direction: column;
@@ -8504,6 +8502,7 @@ body.gh-resizing {
 :root:not([data-background="none"]) .rightpane,
 :root:not([data-background="none"]) .center-empty,
 :root:not([data-background="none"]) .topbar,
+:root:not([data-background="none"]) .statusbar,
 :root:not([data-background="none"]) .panel__bar {
   background: var(--surface-panel);
   backdrop-filter: blur(var(--bg-blur));
@@ -9103,7 +9102,7 @@ button.toggle--on .toggle__knob {
 }
 /* Agent proposed (8e): the card differs between `.conduit/board.json` and the pending
    `board.proposed.json`. Same warm vocabulary as the canvas proposal review's edited ring
-   and the attention chip; the label tier is mixed toward the theme's ink because pure
+   and the status bar's attention item; the label tier is mixed toward the theme's ink because pure
    --amber misses 4.5:1 on its own wash. */
 .bcard--proposed,
 .bcard--proposed:hover {
@@ -14379,7 +14378,7 @@ button.toggle--on .toggle__knob {
 .mcpmsg-chip--fyi {
   color: var(--text-faint);
 }
-/* The attention chip's own text tier: pure amber misses 4.5:1 on its wash (see .attnchip). */
+/* The urgent chip's own text tier: pure amber misses 4.5:1 on its wash (see .statusbar__attn). */
 .mcpmsg-chip--urgent {
   background: color-mix(in srgb, var(--amber) 14%, transparent);
   color: color-mix(in srgb, var(--amber) 70%, var(--text));

@@ -7,6 +7,27 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Changed
+- **The sidebar is now Spaces and Agents.** Projects are called **Spaces**: pick one at the top to
+  filter, or **All**. Below it, agents are grouped by status — Pinned, Needs you, Done, Working,
+  Idle, Stopped — with Stopped folded at first. **Done** means an agent finished a run you haven't
+  looked at yet; it clears once you focus its terminal. Folds and pins are remembered per window.
+- **Sub-agents sit under the agent that opened them.** An agent started by another (through
+  Conduit's tools) appears nested beneath it, any number of levels deep, and a sub-agent that
+  needs you lifts its parent into Needs you. Close the parent and its sub-agents stay, as roots.
+- **Compact agent rows with automatic icons.** Each row is one line: the agent's icon (picked
+  from its CLI unless you set one), its name, its age and a status mark you can tell apart without
+  colour. Hover or focus shows Pin and Close. Everything else — snooze, approvals, messaging,
+  Move to space, rename, icon — is in the row's menu (right-click, or Shift+F10).
+- **Files, Changes and Messages are toggles in the top bar.** Click one to open the side panel on
+  that view; click the pressed one to close it. The Workspace/Board/Canvas switcher and the
+  attention chip are gone from the header; Board, Canvas and Workspace are still in the command
+  palette and on their shortcuts. Drag the grip at the panel's top edge to move it.
+- **A status bar under the terminal and editor.** It shows this computer, the active session's
+  branch and worktree, how many agents are live, a **need you** button that jumps to the first
+  thing waiting on you, and your Command palette shortcut.
+- **Updates and approvals float bottom-right.** The update notice left the sidebar: it now sits
+  in the bottom-right notification stack, with the download percent while it downloads. Agent
+  approval requests dock at the top of the same stack instead of under the top bar.
 - **Agents keep running when Conduit quits or updates.** Terminals now run in a background service
   (Conduit's own copy of herdr-core), not in the app. Quit Conduit, let it update, or end it from
   Task Manager, and your agents carry on; the next launch reattaches to them with their screens
@@ -40,6 +61,13 @@ All notable user-facing changes to Conduit. Format follows
   before it confirms, the pane says "Conduit couldn't confirm this agent started. It may still come
   up on its own." If it does come up, Conduit picks it up. Otherwise **Retry launch** starts it
   again and **Discard** drops it.
+
+### Fixed
+- **Terminal symbols render in the right font.** Characters like ✔ ❯ ⚠ ⏺ ⎿ ● no longer come out
+  in a mismatched fallback font, and a font that finishes loading late no longer leaves a mix of
+  fonts on screen. Cascadia Mono and Segoe UI Symbol now back every mono font.
+- **Fonts are bundled with Conduit.** Every UI and terminal font ships with the app, so Google
+  Fonts is no longer contacted and fonts work offline.
 
 ### Known limitations
 - **Agents with a shell can reach Conduit's terminal service directly.** Conduit's Off / Ask / On

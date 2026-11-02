@@ -141,6 +141,7 @@ Existing esbuild font loaders emit packaged out assets/notices; remove Google @i
 | Hydrating | Chrome immediately; loading placeholder only in unresolved list region; no empty-state flash. |
 | Partial repo/MCP data | Rows usable; omit unknown branch/badge, update when known. |
 | Disconnected/runtime unavailable | Retain last state, existing connection/retry UI; do not fabricate Working or queue commands. |
+| Server restart | Counters reset (§4) and `seen` clamps down on the first lower counter it observes. Known edge (accepted): snapshots carry no server-instance id, so a restart the renderer never sees as a decrease — the new counter has already reached or passed the old `seen` — can briefly show a spurious Done until the terminal is viewed. |
 | Missing folder/start refusal | Stopped mark + reason; existing reconnect/relaunch remediation. |
 | Deleted Space/session | Fall back to All for removed selected Space; re-root children; no stale selection crash. |
 | Save/move/rename pending or failed | Existing host feedback; rollback rejected membership/name; keep focus on actionable item. |

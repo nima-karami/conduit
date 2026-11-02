@@ -156,7 +156,6 @@ const HOVER_FILL_ALLOW = new Map<string, string>([
   ],
   ['.btn--danger:hover', 'destructive button — red is the meaning'],
   ['.btn--warn:hover:not(:disabled)', 'warn action — amber is the meaning'],
-  ['.attnchip:hover', 'amber is session STATUS (needs you), not interaction state'],
   ['.session--attention:hover', 'amber is session status'],
   ['.session--review:hover', 'amber is session status'],
   ['.session__btn--primary:hover', 'the amber act-on-it button of an attention card'],

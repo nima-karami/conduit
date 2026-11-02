@@ -140,7 +140,8 @@ describe('ApprovalCard', () => {
     const r = region();
     expect(r?.getAttribute('role')).toBe('region');
     expect(r?.getAttribute('aria-label')).toBe('Agent request');
-    expect(r?.parentElement).toBe(document.body);
+    // In place, not portaled: the floating stack (<Toasts>) owns the portal and the anchor.
+    expect(r?.parentElement).toBe(host);
     expect(r?.textContent).toContain('fake-1 requests open_session');
     expect(r?.textContent).toContain('Open a claude session in /w/a1');
     expect(r?.textContent).toContain('Ask: set for Other');

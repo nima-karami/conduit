@@ -1,23 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CENTER_VIEWS,
   type CenterView,
   centerViewForAction,
   INITIAL_CENTER_VIEW,
   nextCenterView,
 } from '../../webview/center-view';
 
+const VIEWS: readonly CenterView[] = ['editor', 'board', 'canvas'];
+
 describe('center-view', () => {
-  it('lists exactly editor, board, canvas in order (review is an editor tab, not a view)', () => {
-    expect(CENTER_VIEWS.map((v) => v.id)).toEqual(['editor', 'board', 'canvas']);
-  });
-
-  it('every view has a human label', () => {
-    for (const v of CENTER_VIEWS) {
-      expect(v.label.length).toBeGreaterThan(0);
-    }
-  });
-
   it('maps view-switch actions to their center view', () => {
     expect(centerViewForAction('openEditor')).toBe('editor');
     expect(centerViewForAction('openBoard')).toBe('board');
@@ -34,14 +25,14 @@ describe('center-view', () => {
     expect(centerViewForAction('openReview')).toBeNull();
   });
 
-  it('round-trips every CENTER_VIEW id through an action mapping', () => {
+  it('round-trips every center view through an action mapping', () => {
     const actionFor: Record<CenterView, string> = {
       editor: 'openEditor',
       board: 'openBoard',
       canvas: 'openArchitecture',
     };
-    for (const v of CENTER_VIEWS) {
-      expect(centerViewForAction(actionFor[v.id])).toBe(v.id);
+    for (const v of VIEWS) {
+      expect(centerViewForAction(actionFor[v])).toBe(v);
     }
   });
 
@@ -51,8 +42,8 @@ describe('center-view', () => {
     });
 
     it('falls every view back to the initial editor when no sessions remain', () => {
-      for (const v of CENTER_VIEWS) {
-        expect(nextCenterView(v.id, 0)).toBe('editor');
+      for (const v of VIEWS) {
+        expect(nextCenterView(v, 0)).toBe('editor');
       }
     });
 
@@ -64,9 +55,9 @@ describe('center-view', () => {
     });
 
     it('preserves the chosen view while at least one session exists', () => {
-      for (const v of CENTER_VIEWS) {
-        expect(nextCenterView(v.id, 1)).toBe(v.id);
-        expect(nextCenterView(v.id, 5)).toBe(v.id);
+      for (const v of VIEWS) {
+        expect(nextCenterView(v, 1)).toBe(v);
+        expect(nextCenterView(v, 5)).toBe(v);
       }
     });
 

@@ -171,7 +171,7 @@ export function reduceNewSession(
       return { ...s, phase: 'starting', startError: undefined, projectError: false };
     case 'startFailed':
       return a.project
-        ? { ...s, phase: 'editing', projectError: true, announce: "Couldn't create project" }
+        ? { ...s, phase: 'editing', projectError: true, announce: "Couldn't create space" }
         : {
             ...s,
             phase: 'editing',

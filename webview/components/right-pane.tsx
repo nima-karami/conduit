@@ -4,7 +4,6 @@ import type { Handle } from '../../src/conduit-mcp/types';
 import type { DeleteOutcome } from '../../src/delete-confirm';
 import type { ChangeKind, RepoChanges } from '../../src/protocol';
 import type { FolderSectionModel } from '../../src/session-sections';
-import type { RightPaneTab } from '../../src/settings';
 import type { Session } from '../../src/types';
 import { CHROME_STR } from '../chrome-strings';
 import type { OpenMode } from '../docs';
@@ -29,8 +28,6 @@ export interface RightPaneHandle {
   openSearch(seed?: string): void;
   /** Switch to the Files tab and reveal+highlight `path` in the tree. */
   revealInTree(path: string): void;
-  /** Switch to the Changes tab without persisting the choice (review mode). */
-  showChanges(): void;
   /** Switch to Messages, filtered to one handle and/or opened on a thread (card menu, chip). */
   showMessages(filterHandle: Handle | null, threadId?: string): void;
 }
@@ -62,7 +59,6 @@ export function RightPane({
   onFileRenamed,
   onReviewScope,
   reviewMode,
-  onTabShown: _legacyOnTabShown,
   moveGrip,
   paneRef,
   recordFsOp,
@@ -103,8 +99,6 @@ export function RightPane({
   /** Review mode's navigator section icons (§2 Lane D). */
   onReviewScope: (scope: ReviewScope, repoRoot?: string) => void;
   reviewMode: boolean;
-  /** Legacy: the panel no longer owns a tab to report; ignored until App stops passing it. */
-  onTabShown?: (tab: RightPaneTab) => void;
   // Barless panel: the top-edge grip is the panel-move drag surface.
   moveGrip?: MoveGrip;
   paneRef?: React.MutableRefObject<RightPaneHandle | null>;
@@ -147,7 +141,7 @@ export function RightPane({
     () => ({
       // App switches the view and opens the panel before calling any of these (runInPane).
       openSearch(seed?: string) {
-        // SearchPane publishes its handle from a passive effect, after App's layout-effect call.
+        // SearchPane may mount in this commit; its layout effect has published the handle by then.
         requestAnimationFrame(() => {
           const pane = searchPaneRef.current;
           if (!pane) return;
@@ -158,9 +152,6 @@ export function RightPane({
       revealInTree(path: string) {
         // FilesView may have just mounted (was on Changes) — reveal next frame.
         requestAnimationFrame(() => filesPaneRef.current?.revealInTree(path));
-      },
-      showChanges() {
-        // Nothing pane-local: the view switch itself is App's.
       },
       showMessages(filterHandle, threadId) {
         setMessagesNav((cur) => ({ filterHandle, threadId: threadId ?? null, seq: cur.seq + 1 }));

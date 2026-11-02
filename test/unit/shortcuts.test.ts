@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  ariaKeyShortcut,
   comboFromEvent,
   comboLabel,
   effectiveCombo,
@@ -173,5 +174,12 @@ describe('comboLabel', () => {
     expect(comboLabel('focusLeftGroup', {})).toBeUndefined();
     expect(comboLabel('focusLeftGroup', { focusLeftGroup: 'Mod+K' })).toBe('Ctrl + K');
     expect(comboLabel('save', {})).toBe('Ctrl + S');
+  });
+
+  it('names the bound combo for aria-keyshortcuts, omitting it when unbound', () => {
+    expect(ariaKeyShortcut('openSearch', {})).toBe('Control+P');
+    expect(ariaKeyShortcut('openSearch', { openSearch: 'Alt+Shift+O' })).toBe('Alt+Shift+O');
+    expect(ariaKeyShortcut('focusLeftGroup', {})).toBeUndefined();
+    expect(ariaKeyShortcut('no-such-action', {})).toBeUndefined();
   });
 });

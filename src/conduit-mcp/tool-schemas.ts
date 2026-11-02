@@ -17,7 +17,8 @@ const MESSAGING_SCHEMAS: readonly ToolSchema[] = [
   {
     name: 'list_sessions',
     description:
-      'List the Conduit sessions you can message (handle, label, agent, project, roots, presence) ' +
+      'List the Conduit sessions you can message (handle, label, agent, project = its space, roots, ' +
+      'presence) ' +
       'plus the human, handle "you". Your own session is marked self.',
     inputSchema: { ...OBJECT, properties: {} },
   },
