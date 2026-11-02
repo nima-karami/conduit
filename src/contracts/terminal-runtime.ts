@@ -87,7 +87,21 @@ export interface SpawnFinished {
 export type SpawnResult =
   | { ok: true; terminal: RuntimeTerminal }
   | { ok: true; launchId: string; finished: SpawnFinished }
-  | { ok: false; refusal: SpawnUnconfirmed | ServerStopping };
+  | { ok: false; refusal: SpawnUnconfirmed | ServerStopping | SpawnFailed };
+
+/** hc refused the run itself (e.g. `spawn_failed`: the program can't start); its row is revoked. */
+export interface SpawnFailed {
+  reason: 'spawn_failed';
+  message: string;
+}
+
+/**
+ * Where an attach paint ends (D20, until hc marks it): the bytes until the stream has been quiet for
+ * PAINT_QUIET_MS, capped at PAINT_MAX_MS after the first byte. The server's C1 `paint` and the app's
+ * C5 `FirstPaint` use the same rule, so neither reads a paint's tail as activity.
+ */
+export const PAINT_QUIET_MS = 30;
+export const PAINT_MAX_MS = 1_000;
 
 /**
  * The stopping transition's bound on in-flight launches (D32). Past it, `server.restart` leaves them
