@@ -181,6 +181,49 @@ describe('TerminalRuntime races', () => {
     expect(h.runtime.get('s1')?.size).toEqual({ cols: 50, rows: 7 });
   });
 
+  it('a resize while a reconcile re-attach paints (gap) waits for the paint, then applies', async () => {
+    h = await harness();
+    await h.runtime.start();
+    h.runtime.on((e) => {
+      if (e.type === 'spawned') h.runtime.screens.ensure(e.sessionId, { seedTail: false });
+    });
+    h.runtime.resize('s1', { cols: 40, rows: 5 });
+    const { result } = await startedSpawn();
+    await result;
+    h.fake.paint = Buffer.from('SCREEN');
+    h.beforeAttach = async () => {
+      h.beforeAttach = undefined;
+      h.runtime.resize('s1', { cols: 50, rows: 7 });
+    };
+    h.fake.disconnect();
+    await expect
+      .poll(() => h.events.find((e) => e.type === 'paint' && e.cause === 'gap'))
+      .toBeDefined();
+    const snap = await h.runtime.screen('s1');
+    expect(snap?.lines).toHaveLength(7);
+    expect(h.runtime.get('s1')?.size).toEqual({ cols: 50, rows: 7 });
+  });
+
+  it('an hc size event during the paint does not hide the kept size: the model ends at it', async () => {
+    h = await harness();
+    await h.runtime.start();
+    h.runtime.on((e) => {
+      if (e.type === 'spawned') h.runtime.screens.ensure(e.sessionId, { seedTail: false });
+    });
+    h.runtime.resize('s1', { cols: 40, rows: 5 });
+    h.fake.paint = Buffer.from('PAINT');
+    const { result } = await startedSpawn();
+    await result;
+    // The attach is held and its paint still collecting.
+    h.fake.emit(h.fake.terminals.at(-1) as HcTerminal, 'size', { cols: 60, rows: 9 });
+    await barrier();
+    h.runtime.resize('s1', { cols: 60, rows: 9 });
+    await expect.poll(() => h.events.some((e) => e.type === 'paint')).toBe(true);
+    const snap = await h.runtime.screen('s1');
+    expect(snap?.lines).toHaveLength(9);
+    expect(h.runtime.get('s1')?.size).toEqual({ cols: 60, rows: 9 });
+  });
+
   it('an odd attach error after hc reported the end still records the exit', async () => {
     h = await harness();
     await h.runtime.start();
@@ -244,11 +287,35 @@ describe('TerminalRuntime races', () => {
     h = await harness({ launchSettleMs: 5000 });
     await h.runtime.start();
     h.beforeAttach = () => new Promise(() => {});
-    const { ids } = await startedSpawn();
-    await expect.poll(() => h.tokens.row(ids.launchId)?.state).toBe('live');
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.fake.onCall('terminal.run', async (params) => {
+      await gate;
+      const record: HcTerminal = {
+        address: 'held',
+        name: String(params.name),
+        labels: params.labels as Record<string, string>,
+        argv: [],
+        cwd: '/',
+        state: 'live',
+        created_ms: 1,
+        screen: 'exact',
+        cols: 80,
+        rows: 24,
+      };
+      h.fake.terminals.push(record);
+      return record;
+    });
+    await startedSpawn();
+    await expect.poll(() => calls('terminal.run').length).toBe(1);
     const at = Date.now();
-    await h.runtime.beginStopping('stopAll');
-    expect(Date.now() - at).toBeLessThan(1000);
+    const stopped = h.runtime.beginStopping('stopAll');
+    setTimeout(release, 50);
+    await stopped;
+    // The reply was released at 50 ms; the attach never completes, so only the reply may gate it.
+    expect(Date.now() - at).toBeLessThan(1500);
   });
 
   it('a paint that keeps arriving ends at PAINT_MAX_MS; later bytes are data', async () => {
@@ -288,6 +355,7 @@ describe('TerminalRuntime races', () => {
   it('a resize during the attach reaches the stream once it is held', async () => {
     h = await harness();
     await h.runtime.start();
+    h.fake.paint = Buffer.from('P');
     h.beforeAttach = async () => {
       h.runtime.resize('s1', { cols: 100, rows: 50 });
     };
