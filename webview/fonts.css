@@ -28,6 +28,22 @@
 
 @font-face {
   font-family: "IBM Plex Mono";
+  src: url("../assets/fonts/ibm-plex-mono-medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("../assets/fonts/ibm-plex-mono-semibold.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
   src: url("../assets/fonts/ibm-plex-mono-bold.ttf") format("truetype");
   font-weight: 700;
   font-style: normal;

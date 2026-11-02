@@ -5,6 +5,7 @@ import {
   GPU_REATTACH_DELAY_MS,
   GPU_UNAVAILABLE_RETRY_MS,
   MAX_WEBGL_TERMINALS,
+  remeasureFont,
 } from '../../webview/terminal-gpu';
 
 interface Handle {
@@ -19,7 +20,7 @@ function harness({ failAttach = new Set<string>() } = {}) {
   const handles: Handle[] = [];
   const events: string[] = [];
   const attempts: string[] = [];
-  // Every font-side call in order, e.g. 'clear:a', 'refresh:a', 'family:a=X'.
+  // Every font-side call in order, e.g. 'measure:a', 'clear:a', 'refresh:a', 'family:a=X'.
   const fontCalls: string[] = [];
   const gpu = createGpuCoordinator<string>({
     now: () => now,
@@ -40,6 +41,7 @@ function harness({ failAttach = new Set<string>() } = {}) {
       return h;
     },
     log: (event) => events.push(event),
+    remeasureFont: (term) => fontCalls.push(`measure:${term}`),
     clearFontAtlas: (term) => fontCalls.push(`clear:${term}`),
     refreshTerminal: (term) => fontCalls.push(`refresh:${term}`),
     applyFontFamily: (term, family) => fontCalls.push(`family:${term}=${family}`),
@@ -391,12 +393,21 @@ describe('terminal GPU coordinator', () => {
   });
 
   describe('font refresh', () => {
-    it('clears every live terminal before any repaints, then refits each pane', () => {
+    it('re-measures and clears every live terminal before any repaints, then refits each pane', () => {
       const { gpu, fontCalls } = harness();
       gpu.register('a', () => fontCalls.push('fit:a'));
       gpu.register('b', () => fontCalls.push('fit:b'));
       gpu.refreshFonts();
-      expect(fontCalls).toEqual(['clear:a', 'clear:b', 'refresh:a', 'refresh:b', 'fit:a', 'fit:b']);
+      expect(fontCalls).toEqual([
+        'measure:a',
+        'clear:a',
+        'measure:b',
+        'clear:b',
+        'refresh:a',
+        'refresh:b',
+        'fit:a',
+        'fit:b',
+      ]);
     });
 
     it('a second late event for the same family clears the atlas again', () => {
@@ -414,7 +425,7 @@ describe('terminal GPU coordinator', () => {
       gpu.register('b', () => fontCalls.push('fit:b'));
       offA();
       gpu.refreshFonts();
-      expect(fontCalls).toEqual(['clear:b', 'refresh:b', 'fit:b']);
+      expect(fontCalls).toEqual(['measure:b', 'clear:b', 'refresh:b', 'fit:b']);
     });
 
     it('refreshes terminals on the DOM renderer too, without touching the loss budget', () => {
@@ -423,7 +434,14 @@ describe('terminal GPU coordinator', () => {
       gpu.register('b');
       const logged = events.length;
       gpu.refreshFonts();
-      expect(fontCalls).toEqual(['clear:a', 'clear:b', 'refresh:a', 'refresh:b']);
+      expect(fontCalls).toEqual([
+        'measure:a',
+        'clear:a',
+        'measure:b',
+        'clear:b',
+        'refresh:a',
+        'refresh:b',
+      ]);
       expect(events).toHaveLength(logged);
       expect(live().map((h) => h.term)).toEqual(['a']);
     });
@@ -447,6 +465,38 @@ describe('terminal GPU coordinator', () => {
       gpu.register('b');
       gpu.applyFontFamily('X');
       expect(fontCalls).toEqual(['family:a=X', 'family:b=X', 'refresh:a', 'refresh:b', 'fit:a']);
+    });
+  });
+
+  describe('remeasureFont', () => {
+    // xterm skips an identical assignment, so the cell is re-measured only through a real change.
+    const recording = (fontFamily: string | undefined) => {
+      const sets: (string | undefined)[] = [];
+      let value = fontFamily;
+      const options = {
+        get fontFamily() {
+          return value;
+        },
+        set fontFamily(v: string | undefined) {
+          sets.push(v);
+          value = v;
+        },
+      };
+      return { term: { options }, sets };
+    };
+
+    it('changes the family to another value, then back', () => {
+      const { term, sets } = recording("'Fira Code', monospace");
+      remeasureFont(term);
+      expect(sets).toHaveLength(2);
+      expect(sets[0]).not.toBe("'Fira Code', monospace");
+      expect(sets[1]).toBe("'Fira Code', monospace");
+    });
+
+    it('still makes a real change when the family is the bare generic', () => {
+      const { term, sets } = recording('monospace');
+      remeasureFont(term);
+      expect(sets).toEqual(['serif', 'monospace']);
     });
   });
 });

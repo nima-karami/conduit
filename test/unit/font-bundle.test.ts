@@ -1,6 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import * as esbuild from 'esbuild';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MONO_FONTS, UI_FONTS } from '../../webview/themes';
 
 // The bundled faces against what they claim: every face the stacks name is local, its weights are
@@ -98,6 +100,15 @@ describe('bundled font faces', () => {
       expect(existsSync(join(ROOT, 'assets', 'fonts', f.file)), f.file).toBe(true);
   });
 
+  it('IBM Plex Mono, the one static mono family, ships every weight the UI asks for', () => {
+    expect(fileOf('IBM Plex Mono').map((f) => f.weights)).toEqual([
+      [400, 400],
+      [500, 500],
+      [600, 600],
+      [700, 700],
+    ]);
+  });
+
   it('only the platform UI font is unbundled', () => {
     expect(UI_FONTS.filter((d) => !d.bundled).map((d) => d.id)).toEqual(['system']);
     expect(MONO_FONTS.every((d) => d.bundled)).toBe(true);
@@ -163,15 +174,7 @@ describe('font licenses and packaging', () => {
     }
   });
 
-  it('the build ships the notices and licenses, and the page allows no remote font origin', () => {
-    const build = read('esbuild.mjs');
-    expect(build).toContain(
-      "copyFileSync('THIRD_PARTY_NOTICES.txt', 'out/THIRD_PARTY_NOTICES.txt')",
-    );
-    expect(build).toContain("cpSync('assets/fonts/licenses', 'out/licenses/fonts'");
-    expect(build).toMatch(/'\.ttf': 'file'/);
-    expect(build).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com/);
-    expect(build).toContain("font-src 'self';");
+  it('package installs the font licenses under resources', () => {
     const pkg = JSON.parse(read('package.json'));
     expect(pkg.build.extraResources).toContainEqual({
       from: 'assets/fonts/licenses',
@@ -183,5 +186,54 @@ describe('font licenses and packaging', () => {
     expect(read('webview', 'index.tsx')).toMatch(/import '\.\/fonts';/);
     expect(read('webview', 'fonts.ts')).toMatch(/import '\.\/fonts\.css';/);
     expect(read('webview', 'terminal-fonts.ts')).not.toMatch(/from '\.\/fonts'|\.\/fonts\.css/);
+  });
+});
+
+describe('the built renderer bundle', () => {
+  // The real esbuild renderer build into a temp dir: what ships, not what the sources say.
+  let out = '';
+  beforeAll(async () => {
+    out = mkdtempSync(join(tmpdir(), 'conduit-font-bundle-'));
+    const { webBuild, writeHtml } = await import('../../esbuild.mjs');
+    await esbuild.build({ ...webBuild(out), logLevel: 'silent', sourcemap: false });
+    writeHtml(out);
+  }, 120_000);
+  afterAll(() => {
+    if (out) rmSync(out, { recursive: true, force: true });
+  });
+
+  it('emits every bundled face byte-identical, referenced from webview.css', () => {
+    const css = readFileSync(join(out, 'webview.css'), 'utf8');
+    for (const f of faces()) {
+      const stem = f.file.replace(/\.ttf$/, '');
+      const ref = new RegExp(`url\\("\\./(${stem}-[A-Z0-9]+\\.ttf)"\\)`).exec(css);
+      expect(ref, f.file).not.toBeNull();
+      const emitted = readFileSync(join(out, ref?.[1] ?? ''));
+      expect(emitted.equals(readFileSync(join(ROOT, 'assets', 'fonts', f.file))), f.file).toBe(
+        true,
+      );
+    }
+  });
+
+  it('the page allows fonts and styles from itself only', () => {
+    const csp = /Content-Security-Policy" content="([^"]+)"/.exec(
+      readFileSync(join(out, 'index.html'), 'utf8'),
+    )?.[1];
+    expect(csp).toContain("font-src 'self';");
+    expect(csp).toContain("style-src 'self' 'unsafe-inline';");
+    expect(csp).not.toMatch(/https:/);
+  });
+
+  it('ships the notices and every font license beside the fonts', () => {
+    expect(readFileSync(join(out, 'THIRD_PARTY_NOTICES.txt'), 'utf8')).toBe(
+      read('THIRD_PARTY_NOTICES.txt'),
+    );
+    const names = readdirSync(join(ROOT, 'assets', 'fonts', 'licenses'));
+    expect(names).toHaveLength(9);
+    for (const name of names) {
+      expect(readFileSync(join(out, 'licenses', 'fonts', name), 'utf8')).toBe(
+        read('assets', 'fonts', 'licenses', name),
+      );
+    }
   });
 });

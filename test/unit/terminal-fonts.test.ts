@@ -7,21 +7,27 @@ import {
 } from '../../webview/terminal-fonts';
 import { monoStack } from '../../webview/xterm-theme';
 
-type LoadImpl = (font: string) => Promise<unknown[]>;
+interface Face {
+  family: string;
+}
+type LoadImpl = (font: string) => Promise<Face[]>;
+type LoadingDone = (event: { fontfaces: readonly Face[] }) => void;
 
-function harness(loadImpl: LoadImpl = () => Promise.resolve([{}])) {
+const FACE: Face = { family: 'Some Face' };
+
+function harness(loadImpl: LoadImpl = () => Promise.resolve([{ ...FACE }])) {
   const calls: string[] = [];
   const loads: { font: string; text?: string }[] = [];
   const warnings: string[] = [];
-  const listeners: (() => void)[] = [];
-  const timers: (() => void)[] = [];
+  const listeners: LoadingDone[] = [];
+  const timers: { fn: () => void; cancelled: boolean }[] = [];
   const fonts = {
     load(font: string, text?: string) {
       loads.push({ font, text });
       calls.push(`load:${font}`);
       return loadImpl(font);
     },
-    addEventListener(_type: 'loadingdone', fn: () => void) {
+    addEventListener(_type: 'loadingdone', fn: LoadingDone) {
       listeners.push(fn);
     },
   };
@@ -33,7 +39,11 @@ function harness(loadImpl: LoadImpl = () => Promise.resolve([{}])) {
     },
     setTimer: (fn, ms) => {
       expect(ms).toBe(BOOT_FONT_TIMEOUT_MS);
-      timers.push(fn);
+      const t = { fn, cancelled: false };
+      timers.push(t);
+      return () => {
+        t.cancelled = true;
+      };
     },
     warn: (message) => warnings.push(message),
   };
@@ -78,7 +88,7 @@ describe('loadBootFonts', () => {
 
   it('a rejected load is logged, and the boot still settles', async () => {
     const { svc, warnings } = harness((font) =>
-      font.startsWith('700') ? Promise.reject(new Error('net')) : Promise.resolve([{}]),
+      font.startsWith('700') ? Promise.reject(new Error('net')) : Promise.resolve([{ ...FACE }]),
     );
     await expect(svc.loadBootFonts(BOOT)).resolves.toBeUndefined();
     expect(warnings).toEqual(['font load failed', 'font load failed']);
@@ -88,7 +98,7 @@ describe('loadBootFonts', () => {
     const { svc, timers, warnings } = harness(() => new Promise(() => {}));
     const boot = svc.loadBootFonts(BOOT);
     expect(timers).toHaveLength(1);
-    timers[0]();
+    timers[0].fn();
     await expect(boot).resolves.toBeUndefined();
     expect(warnings).toEqual(['font load timed out']);
   });
@@ -103,20 +113,63 @@ describe('loadBootFonts', () => {
     expect(listeners).toHaveLength(1);
   });
 
-  it('every later loadingdone refreshes all terminals through the coordinator', async () => {
+  it('a successful load cancels its timer, and a stray fire after it logs nothing', async () => {
+    const { svc, timers, warnings } = harness();
+    await svc.loadBootFonts(BOOT);
+    expect(timers[0].cancelled).toBe(true);
+    timers[0].fn();
+    expect(warnings).toEqual([]);
+  });
+
+  it('a late face of the terminal stack refreshes every terminal, each time it lands', async () => {
     const { svc, calls, listeners } = harness();
     await svc.loadBootFonts(BOOT);
     calls.length = 0;
-    listeners[0]();
-    listeners[0]();
-    expect(calls).toEqual(['refreshFonts', 'refreshFonts']);
+    listeners[0]({ fontfaces: [{ family: '"JetBrains Mono"' }] });
+    listeners[0]({ fontfaces: [{ family: 'Cascadia Mono' }] });
+    listeners[0]({ fontfaces: [{ family: 'Segoe UI Symbol' }] });
+    expect(calls).toEqual(['refreshFonts', 'refreshFonts', 'refreshFonts']);
+  });
+
+  it('ignores faces outside the terminal stack: UI, codicon, KaTeX, another mono', async () => {
+    const { svc, calls, listeners } = harness();
+    await svc.loadBootFonts(BOOT);
+    calls.length = 0;
+    for (const family of ['Figtree', 'codicon', 'KaTeX_Main', 'Fira Code']) {
+      listeners[0]({ fontfaces: [{ family }] });
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it('a face the boot load already waited for needs no refresh', async () => {
+    const face = { family: 'JetBrains Mono' };
+    const { svc, calls, listeners } = harness(() => Promise.resolve([face]));
+    await svc.loadBootFonts(BOOT);
+    calls.length = 0;
+    listeners[0]({ fontfaces: [face] });
+    expect(calls).toEqual([]);
+  });
+
+  it('a face that missed the boot timeout refreshes when it lands', async () => {
+    const face = { family: 'JetBrains Mono' };
+    let land!: () => void;
+    const { svc, calls, listeners, timers } = harness(
+      () => new Promise((r) => (land = () => r([face]))),
+    );
+    const boot = svc.loadBootFonts(BOOT);
+    timers[0].fn();
+    await boot;
+    land();
+    await Promise.resolve();
+    listeners[0]({ fontfaces: [face] });
+    expect(calls.filter((c) => c === 'refreshFonts')).toHaveLength(1);
   });
 
   it('settles at once without a FontFaceSet', async () => {
     const svc = createFontService({
       fonts: undefined,
       gpu: { refreshFonts: () => {}, applyFontFamily: () => {} },
-      setTimer: () => {},
+      setTimer: () => () => {},
       warn: () => {},
     });
     await expect(svc.loadBootFonts(BOOT)).resolves.toBeUndefined();
@@ -125,8 +178,8 @@ describe('loadBootFonts', () => {
 
 describe('applyTerminalFontChange', () => {
   const deferred = () => {
-    let resolve!: (v: unknown[]) => void;
-    const promise = new Promise<unknown[]>((r) => {
+    let resolve!: (v: Face[]) => void;
+    const promise = new Promise<Face[]>((r) => {
       resolve = r;
     });
     return { promise, resolve };
@@ -138,7 +191,7 @@ describe('applyTerminalFontChange', () => {
     const done = svc.applyTerminalFontChange('firacode', 14);
     await Promise.resolve();
     expect(calls.some((c) => c.startsWith('apply:'))).toBe(false);
-    d.resolve([{}]);
+    d.resolve([{ ...FACE }]);
     await done;
     expect(calls).toEqual([
       `load:400 14px ${monoStack('firacode')}`,
@@ -153,7 +206,7 @@ describe('applyTerminalFontChange', () => {
     const a = svc.applyTerminalFontChange('firacode', 14);
     const b = svc.applyTerminalFontChange('firacode', 14);
     expect(b).toBe(a);
-    d.resolve([{}]);
+    d.resolve([{ ...FACE }]);
     await a;
     expect(calls.filter((c) => c.startsWith('load:'))).toHaveLength(2);
     expect(calls.filter((c) => c.startsWith('apply:'))).toHaveLength(1);
@@ -162,12 +215,12 @@ describe('applyTerminalFontChange', () => {
   it('the latest request wins when an earlier one settles last', async () => {
     const slow = deferred();
     const { svc, calls } = harness((font) =>
-      font.includes('Fira') ? slow.promise : Promise.resolve([{}]),
+      font.includes('Fira') ? slow.promise : Promise.resolve([{ ...FACE }]),
     );
     const first = svc.applyTerminalFontChange('firacode', 14);
     const second = svc.applyTerminalFontChange('plexmono', 14);
     await second;
-    slow.resolve([{}]);
+    slow.resolve([{ ...FACE }]);
     await first;
     expect(calls.filter((c) => c.startsWith('apply:'))).toEqual([`apply:${monoStack('plexmono')}`]);
   });
@@ -177,5 +230,39 @@ describe('applyTerminalFontChange', () => {
     await svc.applyTerminalFontChange('plexmono', 13);
     expect(warnings).toEqual(['font load failed', 'font load failed']);
     expect(calls.at(-1)).toBe(`apply:${monoStack('plexmono')}`);
+  });
+
+  it('a load past the timeout logs and applies anyway', async () => {
+    const { svc, calls, timers, warnings } = harness(() => new Promise(() => {}));
+    const done = svc.applyTerminalFontChange('firacode', 14);
+    timers[0].fn();
+    await done;
+    expect(warnings).toEqual(['font load timed out']);
+    expect(calls.at(-1)).toBe(`apply:${monoStack('firacode')}`);
+  });
+
+  it('a change refits once: its own faces landing never trigger a second refresh', async () => {
+    const fira = { family: 'Fira Code' };
+    const { svc, calls, listeners } = harness((font) =>
+      Promise.resolve(font.includes('Fira') ? [fira] : [{ ...FACE }]),
+    );
+    await svc.loadBootFonts(BOOT);
+    const done = svc.applyTerminalFontChange('firacode', 14);
+    listeners[0]({ fontfaces: [fira] });
+    await done;
+    listeners[0]({ fontfaces: [fira] });
+    expect(calls.filter((c) => c === 'refreshFonts')).toEqual([]);
+    expect(calls.filter((c) => c.startsWith('apply:'))).toHaveLength(1);
+  });
+
+  it('after a change, the new stack is the one whose late faces refresh', async () => {
+    const { svc, calls, listeners } = harness();
+    await svc.loadBootFonts(BOOT);
+    await svc.applyTerminalFontChange('firacode', 14);
+    calls.length = 0;
+    listeners[0]({ fontfaces: [{ family: 'JetBrains Mono' }] });
+    expect(calls).toEqual([]);
+    listeners[0]({ fontfaces: [{ family: 'Fira Code' }] });
+    expect(calls).toEqual(['refreshFonts']);
   });
 });

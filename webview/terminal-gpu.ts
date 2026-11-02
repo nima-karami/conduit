@@ -36,6 +36,8 @@ export interface GpuCoordinatorDeps<T> {
     event: 'context-lost' | 'reattach' | 'unavailable' | 'give-up',
     data: Record<string, unknown>,
   ): void;
+  /** Re-measure the cell in the faces now loaded (see remeasureFont). */
+  remeasureFont(term: T): void;
   /** Drop every rasterised glyph, so the next paint re-draws in the faces now loaded. */
   clearFontAtlas(term: T): void;
   refreshTerminal(term: T): void;
@@ -154,7 +156,10 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
     refreshFonts() {
       // Glyphs cached in a fallback face stay in every atlas holding them, and the WebGL atlas is
       // shared between terminals, so all are cleared before any repaints.
-      for (const term of entries.keys()) deps.clearFontAtlas(term);
+      for (const term of entries.keys()) {
+        deps.remeasureFont(term);
+        deps.clearFontAtlas(term);
+      }
       refreshAll();
     },
     applyFontFamily(family) {
@@ -162,6 +167,16 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
       refreshAll();
     },
   };
+}
+
+/**
+ * xterm measures its cell only when a font option's value changes, so a face that lands after the
+ * terminal was built leaves the fallback face's cell size; an identical assignment is a no-op.
+ */
+export function remeasureFont(term: { options: { fontFamily?: string } }): void {
+  const family = term.options.fontFamily ?? 'monospace';
+  term.options.fontFamily = family === 'monospace' ? 'serif' : 'monospace';
+  term.options.fontFamily = family;
 }
 
 export const terminalGpu: GpuCoordinator<Terminal> = createGpuCoordinator<Terminal>({
@@ -182,6 +197,7 @@ export const terminalGpu: GpuCoordinator<Terminal> = createGpuCoordinator<Termin
     }
   },
   log: (event, data) => log.warn('terminal', `webgl ${event}`, data),
+  remeasureFont,
   clearFontAtlas: (term) => term.clearTextureAtlas(),
   refreshTerminal: (term) => term.refresh(0, term.rows - 1),
   applyFontFamily: (term, family) => {
