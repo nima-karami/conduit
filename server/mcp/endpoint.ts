@@ -15,7 +15,7 @@ import {
 } from '../../src/contracts/shim-protocol';
 
 /** As v0.51's endpoint: bounds one relayed line so a stray client can't grow the server. */
-export const INBOUND_LINE_MAX_BYTES = 4 * 1024 * 1024;
+const INBOUND_LINE_MAX_BYTES = 4 * 1024 * 1024;
 /** How long close() waits for queued replies to flush before destroying the socket anyway. */
 const CLOSE_FLUSH_MS = 2_000;
 /**
@@ -38,7 +38,7 @@ const sha256 = (t: string) => createHash('sha256').update(t).digest('hex');
  * file with a token presented can only mean the file was lost: every Conduit launch reserved its row
  * on disk before it ran.
  */
-export function welcomeFor(hello: { token: string | null }, rows: TokenRows): ShimWelcome {
+function welcomeFor(hello: { token: string | null }, rows: TokenRows): ShimWelcome {
   if (rows.state === 'unreadable') return { conduit: 2, ok: false, reason: 'draining' };
   if (hello.token === null) return { conduit: 2, ok: true };
   if (rows.state === 'missing') return { conduit: 2, ok: false, reason: 'draining' };

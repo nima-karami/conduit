@@ -125,7 +125,7 @@ export function exitReasonOf(
 }
 
 /** Wire words → C1 (three-process-architecture §hc invariants); any other word is no status. */
-export function mapStatus(status: HcStatus | null | undefined): ReportedStatus {
+function mapStatus(status: HcStatus | null | undefined): ReportedStatus {
   if (!status) return null;
   const app = status.app === undefined ? {} : { app: status.app };
   switch (status.state) {

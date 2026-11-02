@@ -10,7 +10,7 @@ import { type HcRuntimeDeps, HcTerminalRuntime } from '../runtime';
 export const INSTANCE = 'inst';
 
 /** TokenStorePort over an in-memory row list, recording every call in order. */
-export class MemTokens implements TokenStorePort {
+class MemTokens implements TokenStorePort {
   list: TokenRecord[] = [];
   state: TokenRows['state'] = 'loaded';
   readonly calls: string[] = [];
@@ -73,7 +73,7 @@ export const labelsFor = (sessionId: string, ids: LaunchIds): ConduitLabels => (
   'conduit.role': 'session',
 });
 
-export class Ring {
+class Ring {
   readonly appended: Array<{ sessionId: string; data: string; size?: TermGeometry }> = [];
   readonly gaps: Array<{ sessionId: string; paint: string; size: TermGeometry }> = [];
   append(sessionId: string, data: string, size: TermGeometry | undefined) {

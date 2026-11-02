@@ -109,7 +109,7 @@ export class FakeRuntime implements TerminalRuntime {
   }
 }
 
-export const SHELL: AgentDefinition = {
+const SHELL: AgentDefinition = {
   id: 'sh',
   label: 'sh',
   command: 'sh',
@@ -118,7 +118,7 @@ export const SHELL: AgentDefinition = {
   color: 'terminal.ansiWhite',
   cwdStrategy: 'workspaceFolder',
 };
-export const CLAUDE: AgentDefinition = {
+const CLAUDE: AgentDefinition = {
   id: 'claude',
   label: 'Claude',
   command: 'claude',

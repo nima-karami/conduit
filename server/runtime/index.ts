@@ -5,8 +5,6 @@ import { diskScrollbackFiles, type ScrollbackFiles, ServerScrollback } from '../
 import { HcTerminalRuntime } from './runtime';
 import { createTyping } from './typing';
 
-export { HcTerminalRuntime } from './runtime';
-
 export interface RuntimeServicesDeps {
   hc: HcClient;
   tokens: TokenStorePort;

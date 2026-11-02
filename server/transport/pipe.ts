@@ -59,7 +59,7 @@ const expectedRefusal = (error: unknown) =>
  * Per-peer bound on unflushed event bytes. Past it a stalled app would grow the server's memory
  * without limit, so its stream is dropped with C2 `missed` until it calls events.subscribe again.
  */
-export const EVENT_BUFFER_BOUND_BYTES = 8 * 1024 * 1024;
+const EVENT_BUFFER_BOUND_BYTES = 8 * 1024 * 1024;
 
 function rpcError(error: unknown): ServerRpcError | { code: number; message: string } {
   if (error instanceof RpcFault)
