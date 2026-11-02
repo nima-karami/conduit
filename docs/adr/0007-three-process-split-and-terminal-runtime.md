@@ -1,6 +1,7 @@
 # ADR 0007 — Three-process split: Conduit app, Conduit server, terminal runtime
 
-**Status:** proposed (revision 9.1, after codex-review-9) · **Date:** 2026-11-01
+**Status:** accepted 2026-11-02 (proposed 2026-11-01, revision 9.1; built on `feat/three-process`,
+see §As built) · **Date:** 2026-11-01
 **Design:** `docs/specs/2026-11-01-three-process-architecture.md` · **Program:**
 `docs/specs/2026-11-01-three-process-program.md` · **Spike:** `docs/specs/2026-11-01-hc-runtime-spike.md`
 · **Reviews:** `docs/runs/2026-11-01-three-process-design/`
@@ -161,6 +162,39 @@ hc core + holder (userData/runtime/hc)   herdr-core, pinned and unmodified. PTYs
   still works, and terminals show as unavailable with the log path.
 - **New external dependency:** hc's 0.x protocol (one maintainer, weeks old) and its Windows issues.
   Pin exactly; bump only with a remote `--full` e2e.
+
+## As built (2026-11-02)
+
+The decision stands. The build differs from the text above in these places:
+
+- **Cwd and typed-CLI detection don't use hc `foreground`** (decision 13). On Windows it reports
+  only a terminal's root process, so typed CLIs never show up, and it misses PowerShell
+  `Set-Location` (spike M27 failed). The server runs the ported `CwdScanner` + `cwdGate` and the
+  cwd OSC injection on terminal output; typed-CLI detection stays `detectTyped` on `term.input`.
+  An upstream request is filed.
+- **No separate walking skeleton (W3b).** It never ran as its own lane; the W7 slice 2 e2e set plus
+  `test/e2e/server-standalone.e2e.mjs` stand in for it.
+- **A discarded screen model is reseeded from an observer attach.** Past the backlog bound the
+  server keeps its active attach and reseeds from an observer's paint, because re-taking the
+  active attach would feed the ring the same bytes twice or drop the ones in between.
+- **The paint cap is armed when the attach is held**, not at the first byte, so a paint with no
+  bytes still ends.
+- **XDG isolation is kept for our core.** Panes inherit the core's env and hc can't unset a
+  variable (M22), so each `XDG_*` the user doesn't have reaches panes as `""`; the user's own
+  values pass through unchanged.
+- **Every hc call that may start a core runs with cwd `runtime/hc/<hcVersion>`** (M21: a cwd, not
+  mapped images, is what blocks the GC rename). The supervisor `chdir`s to its own runtime dir at
+  startup for the same reason.
+- **The app starts the supervisor with `hc run`** (the CLI, `electron/hc-cli.ts`), env from
+  `coreStartEnv` over the app's own env (no `HC_*`, isolated XDG), by its unique name. If `hc run`
+  fails for any reason other than the name being taken, it spawns the supervisor directly as a
+  detached Node process with the same env.
+- **Spawn env sets `TERM_PROGRAM=conduit` and `TERM_PROGRAM_VERSION`** (M10); hc would otherwise
+  default to `ghostty`.
+- **Accepted residuals added by the spike:** the C2 and MCP pipes accept same-user remote (SMB)
+  clients and are readable by any local user (M28); detached processes end with their session
+  (M23); a kill-on-close job without breakaway that starts the core takes it down (M17, to be
+  re-measured with the real installer).
 
 ## Alternatives rejected
 
