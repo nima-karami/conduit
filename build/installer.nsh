@@ -107,7 +107,53 @@
   WriteRegStr HKCU "Software\RegisteredApplications" "Conduit" "Software\Conduit\Capabilities"
 !macroend
 
+; ── Uninstall stop: three-process architecture §Processes and installs "Uninstall" (F12) ──────
+; The template runs customUnInstall during every update too, and an update leaves agents running
+; (D11), hence ${ifNot} ${isUpdated}. Stopping ends agents, so it asks and Cancel aborts the
+; uninstall; /SD IDOK = a silent uninstall stops without asking. The stop is the newest complete
+; runtime\<version>\ (shim, hc, .tmp and .gc dirs are not one). No such dir: nothing to stop.
+!include "WordFunc.nsh"
+
+!macro ConduitStopAgents
+  Var /GLOBAL conduitStopVersion
+  Var /GLOBAL conduitStopDir
+  StrCpy $conduitStopVersion "0"
+  StrCpy $conduitStopDir ""
+  FindFirst $R1 $R2 "$APPDATA\${PRODUCT_NAME}\runtime\*"
+  ${DoWhile} $R2 != ""
+    StrCpy $R3 $R2 4 -4
+    StrCpy $R4 $R2 3 -3
+    ${If} $R3 != ".tmp"
+    ${AndIf} $R4 != ".gc"
+    ${AndIf} ${FileExists} "$APPDATA\${PRODUCT_NAME}\runtime\$R2\node.exe"
+    ${AndIf} ${FileExists} "$APPDATA\${PRODUCT_NAME}\runtime\$R2\server\main.js"
+      ${VersionCompare} $R2 $conduitStopVersion $R5
+      ${If} $R5 == 1
+        StrCpy $conduitStopVersion $R2
+        StrCpy $conduitStopDir "$APPDATA\${PRODUCT_NAME}\runtime\$R2"
+      ${EndIf}
+    ${EndIf}
+    FindNext $R1 $R2
+  ${Loop}
+  FindClose $R1
+
+  ${If} $conduitStopDir != ""
+    MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "Uninstalling Conduit stops the agents it is running. Continue?" /SD IDOK IDOK conduit_stop_agents
+    Abort
+    conduit_stop_agents:
+    ; Not the install dir as cwd: anything the stop leaves running would pin it against removal.
+    SetOutPath $TEMP
+    ExecWait '"$conduitStopDir\node.exe" "$conduitStopDir\server\main.js" --stop-all --user-data "$APPDATA\${PRODUCT_NAME}"' $R6
+    ${If} $R6 != 0
+      MessageBox MB_OK|MB_ICONEXCLAMATION "Conduit could not stop all of its agents; they keep running until they exit." /SD IDOK
+    ${EndIf}
+  ${EndIf}
+!macroend
+
 !macro customUnInstall
+  ${ifNot} ${isUpdated}
+    !insertmacro ConduitStopAgents
+  ${endIf}
   DeleteRegKey HKCU "Software\Classes\Directory\shell\Conduit"
   DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\Conduit"
   DeleteRegKey HKCU "Software\Classes\*\shell\Conduit"
