@@ -178,6 +178,60 @@ describe('TerminalRuntime spawn', () => {
     expect(h.runtime.get('s1')).toBeUndefined();
   });
 
+  it('an attach refused with not_found for a program that just ended is recorded, not thrown', async () => {
+    await started();
+    h.fake.afterReply = (method, result) => {
+      if (method !== 'terminal.run') return;
+      const t = h.fake.terminals.find((x) => x.address === (result as HcTerminal).address);
+      if (t) Object.assign(t, { state: 'finished', exit_code: 4, reason: 'exited' });
+    };
+    h.fake.onCall('terminal.attach', () => {
+      throw new FakeRpcError('not_found');
+    });
+    h.fake.onCall('terminal.read', () => ({ text: 'FAST-OUT', complete: true, how: 'screen' }));
+    const { ids, result } = await spawned();
+    expect(result).toEqual({
+      ok: true,
+      launchId: ids.launchId,
+      finished: { exitCode: 4, reason: 'exited' },
+    });
+    expect(h.ring.text('s1')).toBe('FAST-OUT');
+  });
+
+  it('a `finished` event racing the first attach records the exit and output once', async () => {
+    await started();
+    let release = () => {};
+    h.fake.onCall('terminal.attach', async (params) => {
+      // hc reports the end while our attach is still on its way.
+      const t = h.fake.terminals.find((x) => x.address === params.terminal) as HcTerminal;
+      Object.assign(t, { state: 'finished', exit_code: 4, reason: 'exited' });
+      h.fake.emit(t, 'finished', { reason: 'exited', exit_code: 4, signal: null, finished_ms: 1 });
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      throw new FakeRpcError('not_found');
+    });
+    h.fake.onCall('terminal.read', () => ({ text: 'FAST-OUT', complete: true, how: 'screen' }));
+    const ids = launch(1);
+    await h.tokens.reserve('s1', ids);
+    const pending = h.runtime.spawn('s1', spec, labelsFor('s1', ids), ids);
+    await expect.poll(() => calls('terminal.attach').length).toBe(1);
+    await h.hc.call('server.status', {});
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    release();
+    await expect(pending).resolves.toEqual({
+      ok: true,
+      launchId: ids.launchId,
+      finished: { exitCode: 4, reason: 'exited' },
+    });
+    expect(h.ring.text('s1')).toBe('FAST-OUT');
+    expect(h.events.filter((e) => e.type === 'exit')).toEqual([
+      { type: 'exit', sessionId: 's1', generation: 1, code: 4, reason: 'exited' },
+    ]);
+    await expect.poll(() => calls('terminal.rm').length).toBe(1);
+    expect(calls('terminal.read')).toHaveLength(1);
+  });
+
   it('input, resize and facts pass through the active attach; a stale generation is dropped', async () => {
     await started();
     await spawned();

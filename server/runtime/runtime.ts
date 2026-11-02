@@ -24,6 +24,7 @@ import {
   type RuntimeExitReason,
   type RuntimeTerminal,
   SERVER_REATTACH_HISTORY_LINES,
+  type SpawnFinished,
   type SpawnResult,
   type TerminalRuntime,
 } from '../../src/contracts/terminal-runtime';
@@ -69,6 +70,7 @@ interface Tracked {
   retiring: boolean;
   /** `spawned` went out: the first active attach; re-attaches don't repeat it. */
   announced: boolean;
+  finishing?: Promise<SpawnFinished>;
 }
 
 interface AttachPlan {
@@ -461,7 +463,9 @@ export class HcTerminalRuntime implements TerminalRuntime {
         ...this.display(t.sessionId),
       });
     } catch (error) {
-      if (isFinishedRefusal(error)) return false;
+      // An ended program: `finished` while hc keeps the record, `not_found` once it is gone
+      // (our own rm after its `finished` event); finishUnattached records whichever happened.
+      if (isFinishedRefusal(error) || isNotFound(error)) return false;
       if (error instanceof HcDisconnectedError) return true;
       throw error;
     }
@@ -546,11 +550,17 @@ export class HcTerminalRuntime implements TerminalRuntime {
     this.recordExit(t, end.exit_code ?? null, exitReasonOf(end.reason));
   }
 
-  /** C1: an ended program's output is only in `terminal.read`; record it and its exit at once. */
-  private async finishUnattached(t: Tracked): Promise<{
-    exitCode: number | null;
-    reason: RuntimeExitReason;
-  }> {
+  /**
+   * C1: an ended program's output is only in `terminal.read`; record it and its exit at once.
+   * Once per terminal: hc's `finished` event and a refused attach can both get here, and the
+   * second must not read again after the first one's `terminal.rm`.
+   */
+  private finishUnattached(t: Tracked): Promise<SpawnFinished> {
+    t.finishing ??= this.readFinal(t);
+    return t.finishing;
+  }
+
+  private async readFinal(t: Tracked): Promise<SpawnFinished> {
     let exitCode: number | null = null;
     let reason: RuntimeExitReason = 'lost';
     try {
@@ -708,8 +718,9 @@ export class HcTerminalRuntime implements TerminalRuntime {
     const t = this.byAddress.get(e.terminal);
     if (!t) return;
     if (e.type === 'finished' || e.type === 'lost') {
-      // With a stream, its CLOSE carries the end; without one (a reconnect pending) this does.
-      if (!t.stream) this.recordExit(t, e.data.exit_code, exitReasonOf(e.data.reason));
+      // With a stream, its CLOSE carries the end; without one (first attach in flight, or a
+      // reconnect pending) this does, output included.
+      if (!t.stream) await this.finishUnattached(t);
     } else if (e.type === 'status')
       this.emit({
         type: 'status',
