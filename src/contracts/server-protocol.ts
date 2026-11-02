@@ -100,7 +100,11 @@ export type AppSessionField = (typeof APP_SESSION_FIELDS)[number];
 export type AppSessionOverlay = Partial<Pick<Session, AppSessionField>>;
 
 /** What the server sends for a session: its record plus runtime facts, never the app's fields. */
-export type SessionView = Omit<Session, AppSessionField> & { runtime: SessionRuntime };
+export type SessionView = Omit<Session, AppSessionField> & {
+  runtime: SessionRuntime;
+  /** The last run's exit code, set with the transition to `exited` (the pane's exit line reads it). */
+  exitCode?: number | null;
+};
 /** What the app renders: a server view with the app's overlay merged on. */
 export type AppSessionView = SessionView & AppSessionOverlay;
 
@@ -375,7 +379,8 @@ export interface ServerMethods {
       placement?: { nearSessionId?: string; focus: boolean };
       cardId?: string;
     };
-    result: { sessionId: string };
+    /** `droppedRoots`: requested roots that were missing or duplicates (today's openRepo:result toast). */
+    result: { sessionId: string; droppedRoots?: string[] };
   };
   /**
    * Spawns if not live; concurrent calls for one session share one spawn (F2). Resolves on hc's
