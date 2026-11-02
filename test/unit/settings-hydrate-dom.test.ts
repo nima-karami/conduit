@@ -23,12 +23,22 @@ afterEach(async () => {
 });
 
 async function mount() {
-  const seen: { hydrate?: (s: AppSettings) => void; renders: number; settings?: AppSettings } = {
+  const seen: {
+    hydrate?: (s: AppSettings) => void;
+    update?: (p: Partial<AppSettings>) => void;
+    flush?: () => void;
+    settleServerPatch?: (id: number, ok: boolean, server: AppSettings) => void;
+    renders: number;
+    settings?: AppSettings;
+  } = {
     renders: 0,
   };
   function Probe() {
     const ctx = useSettings();
     seen.hydrate = ctx.hydrate;
+    seen.update = ctx.update;
+    seen.flush = ctx.flushPending;
+    seen.settleServerPatch = ctx.settleServerPatch;
     seen.settings = ctx.settings;
     seen.renders += 1;
     return null;
@@ -61,6 +71,27 @@ describe('SettingsProvider hydrate vs live DOM', () => {
     expect(seen.settings).toBe(before);
     expect(seen.renders).toBe(renders);
     expect(rootVar('--right-w')).toBe(`${DEFAULT_SETTINGS.rightWidth - 120}px`);
+  });
+
+  it('a rejected server patch cannot keep the UI settings echo gate closed', async () => {
+    const seen = await mount();
+    await act(async () => seen.update?.({ conduitMcp: false }));
+    await act(async () => seen.hydrate?.({ ...clone(DEFAULT_SETTINGS), conduitMcp: true }));
+    expect(seen.settings?.conduitMcp).toBe(true);
+  });
+
+  it('mixed patch rejection settles independently and later host changes still hydrate', async () => {
+    const seen = await mount();
+    await act(async () => seen.update?.({ conduitMcp: false, sidebarCollapsed: true }));
+    await act(async () => seen.flush?.());
+    await act(async () => seen.settleServerPatch?.(1, false, DEFAULT_SETTINGS));
+    expect(seen.settings?.conduitMcp).toBe(true);
+    await act(async () =>
+      seen.hydrate?.({ ...clone(DEFAULT_SETTINGS), conduitMcp: true, sidebarCollapsed: true }),
+    );
+    expect(seen.settings?.conduitMcp).toBe(true);
+    await act(async () => seen.hydrate?.({ ...clone(DEFAULT_SETTINGS), theme: 'nord' }));
+    expect(seen.settings?.theme).toBe('nord');
   });
 
   it('identical settings in a different key order are still equal', async () => {

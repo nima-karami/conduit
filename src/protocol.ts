@@ -427,7 +427,12 @@ export type ServerUiState = (
   | { state: 'reconnecting' }
   | {
       state: 'unavailable';
-      reason: 'exhausted' | 'hello-timeout' | 'restart-wait-timeout' | 'start-failed';
+      reason:
+        | 'exhausted'
+        | 'hello-timeout'
+        | 'restart-wait-timeout'
+        | 'start-failed'
+        | 'hc-unresponsive';
       logPath: string;
       detail?: string;
     }
@@ -437,6 +442,8 @@ export type ServerUiState = (
 
 export type HostToWebview =
   | { type: 'server:state'; state: ServerUiState }
+  | { type: 'confirmStopAgentsFailed'; requestId: number; reason: string }
+  | { type: 'serverSettings:result'; requestId: number; ok: boolean; settings: ServerSettings }
   | {
       type: 'state';
       agents: AgentDefinition[];
@@ -600,6 +607,18 @@ export type HostToWebview =
       summary: AskSummary;
       args: unknown;
       source: PolicySource;
+    }
+  | {
+      type: 'mcp:asksSnapshot';
+      asks: Array<{
+        askId: string;
+        callerSessionId: string;
+        callerHandle: Handle;
+        tool: ToolName;
+        summary: AskSummary;
+        args: unknown;
+        source: PolicySource;
+      }>;
     }
   | { type: 'mcp:askClosed'; askId: string; outcome: AskClosedOutcome }
   // An app-control tool's UI step (spec 2026-10-30-conduit-mcp-app-control §2.3). sessionId is
@@ -1160,7 +1179,7 @@ export type WebviewToHost =
   | { type: 'updateSettings'; settings: AppSettings }
   // Key-scoped and sent at once, so a stale window can't revert another window's change (D7). The
   // host forwards only the server's keys (SERVER_SETTINGS_KEYS); C2 imports this file, not the reverse.
-  | { type: 'updateServerSettings'; patch: Partial<ServerSettings> }
+  | { type: 'updateServerSettings'; patch: Partial<ServerSettings>; requestId: number }
   // Quick-open corpus: every file under root. `root` must be one of the session's folders or
   // registered repos (host-checked). `fresh` skips the host's short-lived index cache: the
   // renderer sends it after a `fileIndexChanged`, when that cache may predate the change.
@@ -1252,6 +1271,8 @@ export type WebviewToHost =
   | { type: 'server:retry' }
   | { type: 'server:restartService' }
   | { type: 'server:stopAllAndContinue' }
+  | { type: 'server:restartAgentsToUpdate' }
+  | { type: 'stopAgentsFailureDecision'; requestId: number; choice: 'retry' | 'leave' | 'cancel' }
   // The palette's "Quit and stop all agents": a quit through the close guard that ends in stopAll.
   | { type: 'app:quitAndStopAgents' }
   | { type: 'session:retryLaunch'; sessionId: string }

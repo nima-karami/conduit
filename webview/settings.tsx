@@ -8,11 +8,13 @@ import {
   useRef,
   useState,
 } from 'react';
+import type { ServerSettings } from '../src/contracts/server-protocol';
 import type { AppSettings } from '../src/settings';
 import { DEFAULT_SETTINGS, FONT_SIZE_SCALE } from '../src/settings';
-import { serverPatchOf } from '../src/settings-mirror';
+import { mirrorServerKeys, serverPatchOf } from '../src/settings-mirror';
 import { decideHydrate, jsonEqual, makeGate, onLocalEdit, onPostFired } from '../src/settings-sync';
 import { initialSettings, post } from './bridge';
+import { splitSettingsPatch, uiSettingsEqual } from './settings-hydration';
 import { coupleThemeDefaults } from './themes';
 
 interface SettingsCtx {
@@ -27,6 +29,7 @@ interface SettingsCtx {
   resetLayout: () => void;
   /** Post an edit still inside the persist debounce now. */
   flushPending: () => void;
+  settleServerPatch: (requestId: number, ok: boolean, server: ServerSettings) => void;
 }
 
 const Ctx = createContext<SettingsCtx | null>(null);
@@ -74,9 +77,10 @@ function applyToDom(next: Record<string, string>, prev: Record<string, string> |
  * The server's keys go at once and key-scoped (D7): the debounced whole-object updateSettings
  * carries UI keys only, so a stale window can't revert another window's change.
  */
-function postServerPatch(patch: Partial<AppSettings>) {
+function postServerPatch(patch: Partial<AppSettings>, requestId: number) {
   const server = serverPatchOf(patch);
-  if (Object.keys(server).length > 0) post({ type: 'updateServerSettings', patch: server });
+  if (Object.keys(server).length > 0)
+    post({ type: 'updateServerSettings', patch: server, requestId });
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
@@ -88,6 +92,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   // Gate guarding hydration against stale host echoes that race a pending local edit.
   // See src/settings-sync.ts for the decision logic + the bug it prevents (K1).
   const gate = useRef(makeGate());
+  const nextPatchId = useRef(0);
+  const latestServerPatch = useRef<number | null>(null);
   // The value we last posted, and the epoch at which we posted it, so an incoming
   // hydrate can be recognised as OUR change confirming (vs a stale broadcast).
   const posted = useRef<{ value: AppSettings | null; epoch: number }>({ value: null, epoch: -1 });
@@ -144,15 +150,31 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, [settings]);
 
   const update = useCallback((patch: Partial<AppSettings>) => {
-    postServerPatch(patch);
-    onLocalEdit(gate.current);
+    const { ui, server } = splitSettingsPatch(patch);
+    if (Object.keys(server).length > 0) {
+      const requestId = ++nextPatchId.current;
+      latestServerPatch.current = requestId;
+      postServerPatch(server, requestId);
+    }
+    if (Object.keys(ui).length > 0) onLocalEdit(gate.current);
     setSettings((prev) => ({ ...prev, ...coupleThemeDefaults(prev, patch) }));
   }, []);
+
+  const settleServerPatch = useCallback(
+    (requestId: number, _ok: boolean, server: ServerSettings) => {
+      if (latestServerPatch.current !== requestId) return;
+      latestServerPatch.current = null;
+      setSettings((prev) => mirrorServerKeys(prev, server));
+    },
+    [],
+  );
 
   const hydrate = useCallback((s: AppSettings) => {
     const { apply } = decideHydrate(gate.current, {
       postedEpoch: posted.current.epoch,
-      incomingMatchesPosted: jsonEqual(s, posted.current.value),
+      incomingMatchesPosted: posted.current.value
+        ? uiSettingsEqual(s, posted.current.value)
+        : jsonEqual(s, posted.current.value),
     });
     // The host echoes settings on every `state` broadcast; keeping the old object when nothing
     // changed spares every settings consumer a re-render per broadcast.
@@ -160,7 +182,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resetAll = useCallback(() => {
-    postServerPatch(DEFAULT_SETTINGS);
+    const requestId = ++nextPatchId.current;
+    latestServerPatch.current = requestId;
+    postServerPatch(DEFAULT_SETTINGS, requestId);
     onLocalEdit(gate.current);
     setSettings({ ...DEFAULT_SETTINGS });
   }, []);
@@ -180,7 +204,17 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ settings, update, hydrate, resetAll, resetLayout, flushPending: flush }}>
+    <Ctx.Provider
+      value={{
+        settings,
+        update,
+        hydrate,
+        resetAll,
+        resetLayout,
+        flushPending: flush,
+        settleServerPatch,
+      }}
+    >
       {children}
     </Ctx.Provider>
   );

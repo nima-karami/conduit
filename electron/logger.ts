@@ -76,12 +76,16 @@ export class Logger {
    * before writing). Best-effort: a missing/unreadable file yields '' (never throws).
    */
   readTail(n: number): string {
+    return this.readFileTail(this.file, n);
+  }
+
+  private readFileTail(file: string, n: number): string {
     const cap = Math.min(Math.max(0, n), TAIL_MAX_LINES);
     if (cap === 0) return '';
     try {
-      const stat = fs.statSync(this.file);
+      const stat = fs.statSync(file);
       const start = Math.max(0, stat.size - TAIL_MAX_BYTES);
-      const fd = fs.openSync(this.file, 'r');
+      const fd = fs.openSync(file, 'r');
       try {
         const len = stat.size - start;
         const buf = Buffer.alloc(len);
@@ -109,7 +113,14 @@ export class Logger {
         ? '(logging is off — no recent log content)'
         : this.readTail(TAIL_MAX_LINES);
       const out = path.join(this.dir, `conduit-diagnostics-${Date.now()}.txt`);
-      fs.writeFileSync(out, `${header}${body}\n`);
+      const server = this.readFileTail(
+        path.join(app.getPath('userData'), 'server.log'),
+        TAIL_MAX_LINES,
+      );
+      fs.writeFileSync(
+        out,
+        `${header}${body}\n\n=== server.log ===\n${server || '(server log unavailable)'}\n`,
+      );
       return out;
     } catch {
       return null;

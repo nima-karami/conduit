@@ -32,6 +32,7 @@ function rig(over: Partial<ServerEventRouterDeps> = {}) {
   const store = new AppSessionStore();
   const owners = new Map<string, number>();
   const states: string[][] = [];
+  const sent: Array<{ id: number; message: HostToWebview }> = [];
   let osAttention = true;
   const deps: ServerEventRouterDeps = {
     store,
@@ -42,7 +43,10 @@ function rig(over: Partial<ServerEventRouterDeps> = {}) {
       trace.push(`state:${ids.join(',')}`);
     },
     broadcast: (m: HostToWebview) => trace.push(`broadcast:${m.type}`),
-    sendToWindow: (id, m) => trace.push(`window${id}:${m.type}`),
+    sendToWindow: (id, m) => {
+      sent.push({ id, message: m });
+      trace.push(`window${id}:${m.type}`);
+    },
     ownerWindowOf: (id) => owners.get(id),
     raiseWindow: (id) => trace.push(`raise:${id}`),
     openFileInEditor: () => trace.push('openFile'),
@@ -67,6 +71,7 @@ function rig(over: Partial<ServerEventRouterDeps> = {}) {
     trace,
     owners,
     states,
+    sent,
     setOsAttention: (v: boolean) => {
       osAttention = v;
     },
@@ -201,7 +206,42 @@ describe('server-events router', () => {
       callerSessionId: 'caller',
     } as unknown as ServerSnapshot['pendingAsks'][number];
     r.router.snapshot({ ...snapshot([view('caller')]), pendingAsks: [ask] });
-    expect(r.trace).toContain('window4:mcp:ask');
+    expect(r.trace).toContain('window4:mcp:asksSnapshot');
+    expect(r.sent.find((s) => s.message.type === 'mcp:asksSnapshot')?.message).toEqual({
+      type: 'mcp:asksSnapshot',
+      asks: [ask],
+    });
     expect(r.trace.at(-1)).toBe('state:caller');
+  });
+
+  it('approvals.changed reconciles each owner window authoritative pending ask set', () => {
+    const r = rig();
+    r.owners.set('caller', 4);
+    r.router.snapshot(snapshot([view('caller')]));
+    r.sent.length = 0;
+    const ask = { askId: 'a1', callerSessionId: 'caller' } as ServerSnapshot['pendingAsks'][number];
+    r.router.event(ev('approvals.changed', { pending: [ask] }));
+    expect(r.trace).toContain('window4:mcp:asksSnapshot');
+    expect(r.sent.at(-1)?.message).toEqual({ type: 'mcp:asksSnapshot', asks: [ask] });
+    r.router.event(ev('approvals.changed', { pending: [] }));
+    expect(r.sent.at(-1)?.message).toEqual({ type: 'mcp:asksSnapshot', asks: [] });
+  });
+
+  it('clears prior approval recipients after ownership moves or the last session disappears', () => {
+    const r = rig();
+    r.owners.set('caller', 4);
+    const ask = { askId: 'a1', callerSessionId: 'caller' } as ServerSnapshot['pendingAsks'][number];
+    r.router.snapshot({ ...snapshot([view('caller')]), pendingAsks: [ask] });
+
+    r.owners.set('caller', 5);
+    r.router.snapshot({ ...snapshot([view('caller')]), pendingAsks: [ask] });
+    expect(r.sent.filter((s) => s.message.type === 'mcp:asksSnapshot').slice(-2)).toEqual([
+      { id: 4, message: { type: 'mcp:asksSnapshot', asks: [] } },
+      { id: 5, message: { type: 'mcp:asksSnapshot', asks: [ask] } },
+    ]);
+
+    r.owners.delete('caller');
+    r.router.snapshot(snapshot([]));
+    expect(r.sent.at(-1)).toEqual({ id: 5, message: { type: 'mcp:asksSnapshot', asks: [] } });
   });
 });

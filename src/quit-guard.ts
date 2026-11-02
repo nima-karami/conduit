@@ -154,6 +154,16 @@ export interface QuitConfirmCopy {
   confirmLabel: string;
 }
 
+export function stopAgentsFailureCopy(reason: string): {
+  message: string;
+  buttons: string[];
+} {
+  return {
+    message: `Couldn't stop the agents: ${reason}`,
+    buttons: ['Retry', 'Quit and leave them running', 'Cancel'],
+  };
+}
+
 /** Sessions with a live PTY (`status === 'running'`). */
 export function runningSessions(sessions: Session[]): Session[] {
   return sessions.filter((s) => s.status === 'running');

@@ -141,8 +141,12 @@ export function createServerEventRouter(d: ServerEventRouterDeps): {
     const windowId = route.kind === 'owner' ? d.ownerWindowOf(route.sessionId) : route.windowId;
     if (windowId === undefined) return;
     d.sendToWindow(windowId, message);
+    if (message.type === 'mcp:ask' || message.type === 'mcp:askClosed')
+      approvalRecipients.add(windowId);
     if (raise) d.raiseWindow(windowId);
   };
+
+  const approvalRecipients = new Set<number>();
 
   const handlers: { [E in keyof ServerEvents]: (data: ServerEvents[E]) => void } = {
     'sessions.changed': (data) => {
@@ -152,8 +156,7 @@ export function createServerEventRouter(d: ServerEventRouterDeps): {
     'sessions.opened': (data) => d.place(data),
     'term.show': (data) => d.terminals.show(data.sessionId, data.data),
     'ui.post': (data) => post(data.route, data.message, data.raise),
-    // Asks reach their windows as ui.post; the list matters only to a (re)connecting app.
-    'approvals.changed': () => {},
+    'approvals.changed': (data) => syncApprovals(data.pending),
     'attention.edge': (data) => {
       if (
         shouldRaiseOsAttention({
@@ -178,6 +181,26 @@ export function createServerEventRouter(d: ServerEventRouterDeps): {
     missed: () => {},
   };
 
+  const syncApprovals = (pending: ServerSnapshot['pendingAsks']) => {
+    const owners = new Map<number, typeof pending>();
+    for (const session of d.store.list()) {
+      const windowId = d.ownerWindowOf(session.id);
+      if (windowId !== undefined && !owners.has(windowId)) owners.set(windowId, []);
+    }
+    for (const ask of pending) {
+      const windowId = d.ownerWindowOf(ask.callerSessionId);
+      if (windowId === undefined) continue;
+      const list = owners.get(windowId) ?? [];
+      list.push(ask);
+      owners.set(windowId, list);
+    }
+    const recipients = new Set([...approvalRecipients, ...owners.keys()]);
+    for (const windowId of recipients)
+      d.sendToWindow(windowId, { type: 'mcp:asksSnapshot', asks: owners.get(windowId) ?? [] });
+    approvalRecipients.clear();
+    for (const windowId of owners.keys()) approvalRecipients.add(windowId);
+  };
+
   return {
     snapshot(s) {
       d.onServerSettings(s.settings);
@@ -186,9 +209,8 @@ export function createServerEventRouter(d: ServerEventRouterDeps): {
       sessions(s.sessions);
       d.broadcast({ type: 'timer:state', ...s.timers });
       d.broadcast({ type: 'mcp:state', state: s.mcp });
-      // F7: an ask opened while this app was away is answerable from its owner window.
-      for (const ask of s.pendingAsks)
-        post({ kind: 'owner', sessionId: ask.callerSessionId }, { type: 'mcp:ask', ...ask });
+      // F7: every owner receives the full set so a missed close cannot leave a stale card.
+      syncApprovals(s.pendingAsks);
       d.broadcastState();
     },
     event(e) {

@@ -270,6 +270,7 @@ import { probePathExists } from './path-probe';
 import { planExternalChanges } from './plan-store';
 import { clearReveal, fileUri, peekReveal, setDefinitionOpener, setReveal } from './project-index';
 import { createQuitResponder } from './quit-responder';
+import { quitStopFailureDialog } from './quit-stop-dialog';
 import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from './recent-docs';
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
@@ -540,7 +541,13 @@ export function App() {
   const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
-  const { hydrate, settings, update, flushPending: flushSettings } = useSettings();
+  const {
+    hydrate,
+    settings,
+    update,
+    flushPending: flushSettings,
+    settleServerPatch,
+  } = useSettings();
   useMonacoNavKeybindings(settings.shortcuts);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -773,13 +780,23 @@ export function App() {
         if (msg.status === 'ready') setUpdateDismissed(false);
       } else if (msg.type === 'confirmQuit') {
         void responder.onConfirmQuit(msg);
+      } else if (msg.type === 'confirmStopAgentsFailed') {
+        setQuitLocked(false);
+        showConfirm(
+          quitStopFailureDialog(msg.reason, (choice) => {
+            if (choice !== 'cancel') setQuitLocked(true);
+            post({ type: 'stopAgentsFailureDecision', requestId: msg.requestId, choice });
+          }),
+        );
       } else if (msg.type === 'server:state') {
         setServerState(msg.state);
+      } else if (msg.type === 'serverSettings:result') {
+        settleServerPatch(msg.requestId, msg.ok, msg.settings);
       } else if (msg.type === 'quitAborted') {
         responder.onQuitAborted(msg.requestId);
       }
     });
-  }, [hydrate, showConfirm, responder]);
+  }, [hydrate, showConfirm, responder, settleServerPatch]);
 
   // `ready` is the handshake the host answers with the whole startup burst (state, win:list,
   // restoreDocs, review:marks), so it must not be posted before this subscription exists. It used
@@ -4888,6 +4905,17 @@ export function App() {
         state={serverState}
         onRetry={() => post({ type: 'server:retry' })}
         onStopAllAndContinue={() => post({ type: 'server:stopAllAndContinue' })}
+        onRestartAgentsToUpdate={() =>
+          showConfirm({
+            title: 'Restart agents to update the terminal engine?',
+            message:
+              'This stops all running agents and restarts the terminal engine. You can relaunch agents afterward.',
+            confirmLabel: 'Restart agents',
+            danger: true,
+            focusCancel: true,
+            onConfirm: () => post({ type: 'server:restartAgentsToUpdate' }),
+          })
+        }
       />
       <div className="workbench">{visibleOrder.map(renderRegion)}</div>
       {newSession && (
@@ -4931,6 +4959,7 @@ export function App() {
           onCheckUpdate={() => post({ type: 'updateCheck' })}
           onRelaunch={() => post({ type: 'updateRelaunch' })}
           updateStatus={updateStatus}
+          serverConnected={serverState.state === 'connected'}
           onSetChangesView={onSetChangesView}
         />
       )}

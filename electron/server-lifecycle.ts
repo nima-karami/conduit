@@ -24,7 +24,12 @@ export type ServerLifecycleState =
   | { state: 'reconnecting' }
   | {
       state: 'unavailable';
-      reason: 'exhausted' | 'hello-timeout' | 'restart-wait-timeout' | 'start-failed';
+      reason:
+        | 'exhausted'
+        | 'hello-timeout'
+        | 'restart-wait-timeout'
+        | 'start-failed'
+        | 'hc-unresponsive';
       logPath: string;
       detail?: string;
     }
@@ -54,7 +59,10 @@ export interface ServerLifecycleDeps {
 export const VANISHED_RESTART_BUDGET = { attempts: 3, windowMs: 60 * 60_000 } as const;
 
 const RECONNECT_BACKOFF_MS = { first: 500, max: 5_000 } as const;
+export const SUPERVISOR_LOOKUP_TIMEOUT_MS = 5_000;
 const ENDED: ReadonlySet<HcEvent['type']> = new Set(['finished', 'lost', 'removed']);
+
+class SupervisorLookupTimeout extends Error {}
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -72,7 +80,7 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
   retry(): Promise<void>;
   restartService(): Promise<void>;
   stopAllAndContinue(): Promise<void>;
-  stopAll(): Promise<{ ok: boolean; killed?: number }>;
+  stopAll(): Promise<{ ok: boolean; killed?: number; reason?: string }>;
   dispose(): void;
 } {
   const logPath = join(d.userData, 'server.log');
@@ -118,14 +126,28 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
   };
 
   /** By the unique name; the role label decides nothing. */
-  const supervisorLive = async (e: number): Promise<'live' | 'absent' | 'unreachable'> => {
+  const supervisorLive = async (
+    e: number,
+  ): Promise<'live' | 'absent' | 'unreachable' | 'timeout'> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const t = await d.hc.call('terminal.get', { terminal: d.names.supervisorName });
+      const t = await Promise.race([
+        d.hc.call('terminal.get', { terminal: d.names.supervisorName }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new SupervisorLookupTimeout('supervisor lookup timed out')),
+            SUPERVISOR_LOOKUP_TIMEOUT_MS,
+          );
+        }),
+      ]);
       if (live(e) && t.state === 'live') watch(t.address);
       return t.state === 'live' ? 'live' : 'absent';
     } catch (error) {
+      if (error instanceof SupervisorLookupTimeout) return 'timeout';
       if (error instanceof HcRpcError && error.kind === 'not_found') return 'absent';
       return 'unreachable';
+    } finally {
+      clearTimeout(timer);
     }
   };
 
@@ -208,6 +230,10 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
     }
     const supervisor = await supervisorLive(e);
     if (!live(e)) return;
+    if (supervisor === 'timeout') {
+      unavailable('hc-unresponsive');
+      return;
+    }
     if (supervisor !== 'live') {
       const run = await startSupervisor(d.cli, {
         names: d.names,
@@ -230,8 +256,12 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
           }),
         );
       }
-      await supervisorLive(e);
+      const afterStart = await supervisorLive(e);
       if (!live(e)) return;
+      if (afterStart === 'timeout') {
+        unavailable('hc-unresponsive');
+        return;
+      }
     }
     await connect(e);
   };
@@ -248,11 +278,12 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
       } catch (error) {
         c.close();
         if (!live(e)) return;
-        const supervisor = await supervisorLive(e);
-        if (!live(e)) return;
-        if (supervisor === 'absent' && offWatch) return vanished();
         if (error instanceof ServerCallError && error.kind === 'timeout')
           return unavailable('hello-timeout', error.message);
+        const supervisor = await supervisorLive(e);
+        if (!live(e)) return;
+        if (supervisor === 'timeout') return unavailable('hc-unresponsive');
+        if (supervisor === 'absent' && offWatch) return vanished();
         if (d.now() >= deadline) return unavailable('hello-timeout', String(error));
         await sleep(delay);
         delay = Math.min(delay * 2, RECONNECT_BACKOFF_MS.max);
@@ -339,6 +370,24 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
     await startRule(e);
   };
 
+  const restoreAfterFailedStop = (
+    e: number,
+    c: ServerClient,
+    hello: Hello | null,
+    closed: boolean,
+  ) => {
+    if (!live(e)) return;
+    if (closed) {
+      void lostConnection();
+      return;
+    }
+    const resumed = begin();
+    c.onClose(() => {
+      if (conn === c && live(resumed)) void lostConnection();
+    });
+    if (hello?.supervisor) watch(hello.supervisor.terminal);
+  };
+
   /** C2 dropped: the supervisor restarts the server itself, so the app only reopens. */
   const lostConnection = async (): Promise<void> => {
     const e = begin();
@@ -347,6 +396,10 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
     set({ state: 'reconnecting' });
     const supervisor = await supervisorLive(e);
     if (!live(e)) return;
+    if (supervisor === 'timeout') {
+      unavailable('hc-unresponsive');
+      return;
+    }
     if (supervisor === 'absent') {
       await vanished();
       return;
@@ -372,9 +425,19 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
           return;
         }
         return greeted(e, c, hello);
-      } catch {
+      } catch (error) {
         c.close();
         if (!live(e)) return;
+        if (error instanceof ServerCallError && error.kind === 'timeout') {
+          drop();
+          unavailable('hello-timeout', error.message);
+          return;
+        }
+        if (!(error instanceof ServerCallError) || error.kind !== 'disconnected') {
+          drop();
+          unavailable('hello-timeout', String(error));
+          return;
+        }
         delay = Math.min(delay * 2, RECONNECT_BACKOFF_MS.max);
       }
     }
@@ -420,15 +483,23 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
       offWatch?.();
       offWatch = null;
       set({ state: 'connecting' });
-      if (c) {
-        if (!(await stopAndWait(e, c, hello, 'server.stopAll'))) return;
+      if (!c) {
+        if (live(e))
+          unavailable('start-failed', 'server is not connected; agents were not stopped');
+        return;
       }
+      if (!(await stopAndWait(e, c, hello, 'server.stopAll'))) return;
       if (live(e)) await startRule(e);
     },
     async stopAll() {
       const c = conn;
-      if (!c) return { ok: false };
-      begin();
+      if (!c) return { ok: false, reason: 'The background service is unavailable.' };
+      const e = begin();
+      const hello = connHello;
+      let closed = false;
+      const offClose = c.onClose(() => {
+        closed = true;
+      });
       offWatch?.();
       offWatch = null;
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -437,12 +508,16 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
       });
       try {
         const r = await Promise.race([c.call('server.stopAll', {}), timeout]);
-        return r ? { ok: true, killed: r.killed } : { ok: false };
+        if (r) return { ok: true, killed: r.killed };
+        restoreAfterFailedStop(e, c, hello, closed);
+        return { ok: false, reason: 'Timed out waiting for the agents to stop.' };
       } catch (error) {
         d.log('warn', 'server.stopAll failed', { err: String(error) });
-        return { ok: false };
+        restoreAfterFailedStop(e, c, hello, closed);
+        return { ok: false, reason: error instanceof Error ? error.message : String(error) };
       } finally {
         clearTimeout(timer);
+        offClose();
       }
     },
     dispose() {

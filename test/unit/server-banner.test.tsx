@@ -18,6 +18,7 @@ afterEach(async () => {
 
 function button(host: HTMLElement, label: string): HTMLButtonElement {
   const b = [...host.querySelectorAll('button')].find((el) => el.textContent?.includes(label));
+  expect(b, `${label} button`).toBeDefined();
   if (!b) throw new Error(`no ${label} button`);
   return b;
 }
@@ -28,12 +29,18 @@ async function render(state: ServerUiState) {
   root = r;
   const onRetry = vi.fn();
   const onStopAllAndContinue = vi.fn();
+  const onRestartAgentsToUpdate = vi.fn();
   await act(async () =>
     r.render(
-      <ServerBanner state={state} onRetry={onRetry} onStopAllAndContinue={onStopAllAndContinue} />,
+      <ServerBanner
+        state={state}
+        onRetry={onRetry}
+        onStopAllAndContinue={onStopAllAndContinue}
+        onRestartAgentsToUpdate={onRestartAgentsToUpdate}
+      />,
     ),
   );
-  return { host, onRetry, onStopAllAndContinue };
+  return { host, onRetry, onStopAllAndContinue, onRestartAgentsToUpdate };
 }
 
 describe('ServerBanner', () => {
@@ -124,5 +131,29 @@ describe('ServerBanner', () => {
       runtime: { state: 'ready', hcVersion: '0.1.16' },
     });
     expect(host.firstChild).toBeNull();
+  });
+
+  it('explains when the terminal supervisor does not answer', async () => {
+    const { host } = await render({
+      state: 'unavailable',
+      reason: 'hc-unresponsive',
+      logPath: '/tmp/server.log',
+    });
+    expect(host.textContent).toContain('terminal supervisor did not respond');
+  });
+
+  it('offers the confirmed update restart only for the pending terminal engine update', async () => {
+    const state: ServerUiState = {
+      state: 'connected',
+      runtime: {
+        state: 'unavailable',
+        reason: 'terminal engine update pending',
+        logPath: '/tmp/runtime.log',
+      },
+    };
+    const { host, onRestartAgentsToUpdate } = await render(state);
+    const restart = button(host, 'Restart agents to update');
+    await act(async () => restart.click());
+    expect(onRestartAgentsToUpdate).toHaveBeenCalledOnce();
   });
 });

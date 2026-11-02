@@ -46,6 +46,7 @@ async function mount() {
         <SettingsModal
           agents={[]}
           initialTab="mcp"
+          serverConnected
           onClose={() => {}}
           onSetChangesView={() => {}}
         />
@@ -92,11 +93,12 @@ const flush = () =>
     vi.advanceTimersByTime(300);
   });
 
-const posted = (): Extract<WebviewToHost, { type: 'updateSettings' }>[] =>
+const serverPatches = (): Extract<WebviewToHost, { type: 'updateServerSettings' }>[] =>
   bridge.post.mock.calls
     .map(([m]) => m as WebviewToHost)
     .filter(
-      (m): m is Extract<WebviewToHost, { type: 'updateSettings' }> => m.type === 'updateSettings',
+      (m): m is Extract<WebviewToHost, { type: 'updateServerSettings' }> =>
+        m.type === 'updateServerSettings',
     );
 
 const ALL = MCP_STR.tools.layerName.global;
@@ -130,14 +132,14 @@ describe('Settings → MCP tools', () => {
     await click(radio('open_terminal', 'On'));
     expect(checked('open_terminal')).toBe('On');
     await flush();
-    const last = posted().at(-1);
-    expect(last?.settings.mcpToolPolicy.open_terminal).toEqual({
+    const last = serverPatches().at(-1);
+    expect(last?.patch.mcpToolPolicy?.open_terminal).toEqual({
       access: 'on',
       when: 'viewing',
       move: 'yes',
     });
-    expect(last?.settings.mcpToolPolicy.open_session.access).toBe('ask');
-    expect(last?.settings.mcpToolPolicyByCli).toEqual({});
+    expect(last?.patch.mcpToolPolicy?.open_session.access).toBe('ask');
+    expect(Object.keys(last?.patch ?? {})).toEqual(['mcpToolPolicy']);
   });
 
   it('Codex tab: Off for open_file posts mcpToolPolicyByCli.codex.open_file.access off', async () => {
@@ -149,10 +151,9 @@ describe('Settings → MCP tools', () => {
     await click(radio('open_file', 'Off'));
     expect(checked('open_file')).toBe('Off');
     await flush();
-    const last = posted().at(-1);
-    expect(last?.settings.mcpToolPolicyByCli).toEqual({ codex: { open_file: { access: 'off' } } });
-    // The global layer is untouched by a CLI-layer edit.
-    expect(last?.settings.mcpToolPolicy.open_file.access).toBe('on');
+    const last = serverPatches().at(-1);
+    expect(last?.patch.mcpToolPolicyByCli).toEqual({ codex: { open_file: { access: 'off' } } });
+    expect(Object.keys(last?.patch ?? {})).toEqual(['mcpToolPolicyByCli']);
   });
 
   it('Codex tab: Inherit drops an empty kind', async () => {
@@ -161,7 +162,7 @@ describe('Settings → MCP tools', () => {
     await click(radio('open_file', 'Off'));
     await click(radio('open_file', `Inherit (On · from ${ALL})`));
     await flush();
-    expect(posted().at(-1)?.settings.mcpToolPolicyByCli).toStrictEqual({});
+    expect(serverPatches().at(-1)?.patch.mcpToolPolicyByCli).toStrictEqual({});
   });
 
   it('arrows move between CLI tabs and select', async () => {

@@ -669,7 +669,8 @@ function mockHost(msg: WebviewToHost) {
   if (
     msg.type === 'server:retry' ||
     msg.type === 'server:restartService' ||
-    msg.type === 'server:stopAllAndContinue'
+    msg.type === 'server:stopAllAndContinue' ||
+    msg.type === 'server:restartAgentsToUpdate'
   ) {
     emit({ type: 'server:state', state: { state: 'connected' } });
     return;
