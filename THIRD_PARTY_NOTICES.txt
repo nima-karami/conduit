@@ -1,0 +1,17 @@
+Conduit for Windows bundles the following third-party programs, unmodified. Their full license
+texts are installed alongside them in the Conduit install dir's resources folder.
+
+==== Node.js 24.18.0 (node.exe, win-x64)
+
+Copyright Node.js contributors. MIT License, with the licenses of the components Node.js
+bundles.
+Source: https://github.com/nodejs/node/tree/v24.18.0
+License: resources/licenses/node/LICENSE
+
+==== herdr-core (hc) 0.1.16, with Microsoft ConPTY (conpty.dll, OpenConsole.exe)
+
+Apache License 2.0. hc includes the components listed in its own notices, among them Microsoft's
+ConPTY under the MIT License.
+Source: https://github.com/herdrdev/herdr-core/tree/v0.1.16
+License: resources/runtime/hc/LICENSE
+Notices: resources/runtime/hc/THIRD-PARTY-NOTICES/

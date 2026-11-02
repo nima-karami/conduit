@@ -31,3 +31,4 @@ designs/
 # Windows bash crash dumps (never track)
 *.stackdump
 .shots/
+build/vendor/
