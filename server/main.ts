@@ -59,10 +59,15 @@ export async function runServer(
     writeLog: (line) => appendFileSync(logPath, `${line}\n`),
     exit: async (code) => {
       shell.lifecycle.dispose();
-      await transport.close();
-      // A handle a service left open must not keep a stopped server alive; the supervisor waits on it.
-      if (dependencies.exit) await dependencies.exit(code);
-      else process.exit(code);
+      try {
+        await transport.close();
+      } catch (error) {
+        logError(error);
+      } finally {
+        // A handle a service left open must not keep a stopped server alive; the supervisor waits on it.
+        if (dependencies.exit) await dependencies.exit(code);
+        else process.exit(code);
+      }
     },
   });
   handle = shell.handle;

@@ -307,4 +307,19 @@ describe('server shell on the real C2 pipe', () => {
       params: { type: 'runtime.changed', data: { hcVersion: 'after' } },
     });
   });
+  it('closes even when a peer stopped reading with a backlog past the socket buffer', async () => {
+    const x = await setup({ eventBufferBound: 64 * 1024 * 1024 });
+    const c = await client(x.names.serverEndpoint);
+    await c.call('hello', hello);
+    await c.call('events.subscribe');
+    c.socket.pause();
+    const chunk = 'x'.repeat(64 * 1024);
+    for (let i = 0; i < 200; i += 1)
+      x.transport.emit('runtime.changed', { state: 'unavailable', reason: chunk, logPath: '' });
+    const closed = await Promise.race([
+      x.transport.close().then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), 5_000)),
+    ]);
+    expect(closed).toBe(true);
+  });
 });

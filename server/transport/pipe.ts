@@ -28,6 +28,9 @@ export type RpcAnswer =
   | { reply: false };
 export type RpcHandler = (request: RpcRequest, peer: Peer) => RpcAnswer | Promise<RpcAnswer>;
 
+/** How long a closing peer gets to drain before its socket is destroyed. */
+const CLOSE_GRACE_MS = 1_000;
+
 export class RpcFault extends Error {
   constructor(
     readonly kind: ServerErrorKind,
@@ -224,7 +227,11 @@ export class PipeTransport {
   }
 
   async close(): Promise<void> {
-    for (const socket of this.peers.keys()) socket.end(() => socket.destroy());
+    for (const socket of this.peers.keys()) {
+      socket.end(() => socket.destroy());
+      // A peer that stopped reading never finishes its end; server.close would wait on it forever.
+      setTimeout(() => socket.destroy(), CLOSE_GRACE_MS).unref();
+    }
     const server = this.server;
     if (!server?.listening) return;
     await new Promise<void>((resolve, reject) =>
