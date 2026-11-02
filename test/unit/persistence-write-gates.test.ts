@@ -2,12 +2,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { parseSessions } from '../../src/persistence';
 import {
   ScrollbackWriteGate,
   sessionsWritable,
   timedMessagesWritable,
-} from '../../electron/persistence-write-gates';
-import { parseSessions } from '../../src/persistence';
+} from '../../src/persistence-write-gates';
 import { parseTimedMessagesFile } from '../../src/timed-messages';
 
 const dirs: string[] = [];

@@ -1,7 +1,7 @@
-import type { SessionsParse } from '../src/persistence';
-import { shouldPersistSessions } from '../src/persistence';
-import { type PersistedScrollback, restoreScrollback } from '../src/scrollback-persistence';
-import type { TimedMessagesFile } from '../src/timed-messages';
+import type { SessionsParse } from './persistence';
+import { shouldPersistSessions } from './persistence';
+import { type PersistedScrollback, restoreScrollback } from './scrollback-persistence';
+import type { TimedMessagesFile } from './timed-messages';
 
 // A file a newer version wrote is never overwritten this run (architecture §Persisted formats).
 export function sessionsWritable(

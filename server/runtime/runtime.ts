@@ -72,6 +72,13 @@ interface Tracked {
    * success's CLOSE carries the exit, a refusal reads it), so neither path reads or rm's twice.
    */
   attaching: boolean;
+  /** hc reported the end while the attach was in flight; an attach that fails oddly finishes it. */
+  endSeen: boolean;
+  /**
+   * The active attach's first paint is still arriving: it is at the attach size, so a resize waits
+   * for its end rather than restarting the screen model on a stale grid.
+   */
+  painting: boolean;
   /** Set once the exit is recorded. */
   exit?: SpawnFinished;
   /** An in-place restart's kill: its exit is not reported (C1 `retire`). */
@@ -83,9 +90,11 @@ interface Tracked {
 
 interface Launch {
   sessionId: string;
-  work?: Promise<unknown>;
   /** The `terminal.run` reply is still outstanding: the only launches the stop settles (D32). */
   awaitingReply: boolean;
+  /** Resolves on the reply or the connection loss; the stop waits on this, never the attach. */
+  replied: Promise<void>;
+  reply(): void;
   settledBy?: 'restart' | 'stopAll';
 }
 
@@ -167,13 +176,15 @@ class PaintCollector {
   private cap?: ReturnType<typeof setTimeout>;
   done = false;
 
-  constructor(private readonly onEnd: (data: string) => void) {}
+  /** Armed when the attach succeeds: a viewer that is never painted still ends its paint. */
+  constructor(private readonly onEnd: (data: string) => void) {
+    this.cap = setTimeout(() => this.end(), PAINT_MAX_MS);
+  }
 
   push(text: string): void {
     this.chunks.push(text);
     clearTimeout(this.quiet);
     this.quiet = setTimeout(() => this.end(), PAINT_QUIET_MS);
-    this.cap ??= setTimeout(() => this.end(), PAINT_MAX_MS);
   }
 
   end(): void {
@@ -350,11 +361,14 @@ export class HcTerminalRuntime implements TerminalRuntime {
     ids: LaunchIds,
   ): Promise<SpawnResult> {
     if (this.stopping) return { ok: false, refusal: { reason: 'server_stopping' } };
-    const launch: Launch = { sessionId, awaitingReply: true };
+    let reply = () => {};
+    const replied = new Promise<void>((resolve) => {
+      reply = resolve;
+    });
+    const launch: Launch = { sessionId, awaitingReply: true, replied, reply };
     this.inFlight.set(ids.launchId, launch);
-    launch.work = this.runSpawn(sessionId, spec, labels, ids, launch);
     try {
-      return (await launch.work) as SpawnResult;
+      return await this.runSpawn(sessionId, spec, labels, ids, launch);
     } finally {
       if (this.inFlight.get(ids.launchId) === launch) this.inFlight.delete(ids.launchId);
     }
@@ -371,7 +385,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
     if (unsettled.length) {
       let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
-        Promise.allSettled(unsettled.map(([, l]) => l.work)),
+        Promise.all(unsettled.map(([, l]) => l.replied)),
         new Promise((resolve) => {
           timer = setTimeout(resolve, this.deps.launchSettleMs ?? LAUNCH_SETTLE_ON_STOP_MS);
         }),
@@ -406,7 +420,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
   resize(sessionId: string, size: TermGeometry): void {
     this.lastSize.set(sessionId, size);
     const t = this.sessions.get(sessionId);
-    if (!t?.stream) return;
+    if (!t?.stream || t.painting) return;
     t.size = size;
     this.screens.resize(sessionId, size);
     try {
@@ -488,22 +502,27 @@ export class HcTerminalRuntime implements TerminalRuntime {
       });
     } catch (error) {
       launch.awaitingReply = false;
-      // Released before the awaited write: a reconnect's reconcile must see this row as no
-      // longer owned, or a late registration found by name would be skipped.
-      this.inFlight.delete(ids.launchId);
+      launch.reply();
       if (!(error instanceof HcDisconnectedError)) {
         // hc refused the run itself: nothing can register under this launch id.
         await this.deps.tokens.revoke({ launchId: ids.launchId });
         const message = error instanceof Error ? error.message : String(error);
         return { ok: false, refusal: { reason: 'spawn_failed', message } };
       }
-      if (!launch.settledBy) {
+      // Released before the awaited write: a reconnect's reconcile must see this row as no
+      // longer owned, or a late registration found by name would be skipped.
+      this.inFlight.delete(ids.launchId);
+      // created() may already have adopted it under that release: then it is not unconfirmed.
+      const adopted = this.sessions.get(sessionId)?.launchId === ids.launchId;
+      if (!launch.settledBy && !adopted) {
         await this.deps.tokens.markUnconfirmed(ids.launchId);
-        this.emitUnconfirmed({ sessionId, ...ids });
+        if (this.sessions.get(sessionId)?.launchId !== ids.launchId)
+          this.emitUnconfirmed({ sessionId, ...ids });
       }
       return { ok: false, refusal: { reason: 'spawn_unconfirmed', launchId: ids.launchId } };
     }
     launch.awaitingReply = false;
+    launch.reply();
     if (launch.settledBy === 'stopAll') {
       await this.killAddress(record.address, 'launch replied after stop all');
       await this.deps.tokens.revoke({ launchId: ids.launchId });
@@ -534,7 +553,6 @@ export class HcTerminalRuntime implements TerminalRuntime {
    * false: the program ended, and finishUnattached records it.
    */
   private async attach(t: Tracked, plan: AttachPlan): Promise<boolean> {
-    const requested = this.lastSize.get(t.sessionId);
     let attached: Awaited<ReturnType<HcClient['attach']>>;
     t.attaching = true;
     try {
@@ -549,9 +567,11 @@ export class HcTerminalRuntime implements TerminalRuntime {
       // `finished` while hc keeps the record, `not_found` once it is gone.
       if (isFinishedRefusal(error) || isNotFound(error)) return false;
       if (error instanceof HcDisconnectedError) return true;
+      if (t.endSeen) return false;
       throw error;
     } finally {
       t.attaching = false;
+      t.endSeen = false;
     }
     const { stream } = attached;
     if (t.exit) {
@@ -570,17 +590,16 @@ export class HcTerminalRuntime implements TerminalRuntime {
       });
     }
     this.wire(t, stream, plan);
-    // A `term.resize` that arrived while the attach was in flight had no stream to reach.
-    const latest = this.lastSize.get(t.sessionId);
-    if (latest && latest !== requested) this.resize(t.sessionId, latest);
     return true;
   }
 
   private wire(t: Tracked, stream: HcStream, plan: AttachPlan): void {
     const decoder = new TextDecoder();
     let gapMarked = false;
+    t.painting = true;
     const paint = new PaintCollector((data) => {
       if (t.stream !== stream) return;
+      t.painting = false;
       this.screens.paint(t.sessionId, data, plan.size);
       this.emit({
         type: 'paint',
@@ -590,6 +609,10 @@ export class HcTerminalRuntime implements TerminalRuntime {
         size: plan.size,
         cause: plan.cause,
       });
+      // A `term.resize` during the attach or its paint had to wait for the paint's own grid.
+      const latest = this.lastSize.get(t.sessionId);
+      if (latest && (latest.cols !== t.size.cols || latest.rows !== t.size.rows))
+        this.resize(t.sessionId, latest);
     });
     stream.onData((bytes) => {
       const text = decoder.decode(bytes, { stream: true });
@@ -716,26 +739,22 @@ export class HcTerminalRuntime implements TerminalRuntime {
   private async reseed(sessionId: string): Promise<void> {
     const t = this.sessions.get(sessionId);
     if (!t?.stream) return;
+    const size = t.size;
     try {
       const { stream } = await this.deps.hc.attach({
         terminal: t.address,
-        cols: t.size.cols,
-        rows: t.size.rows,
+        cols: size.cols,
+        rows: size.rows,
         observe: true,
       });
       const decoder = new TextDecoder();
       const paint = new PaintCollector((data) => {
         stream.close();
         if (this.sessions.get(sessionId) !== t) return;
-        this.screens.paint(sessionId, data, t.size);
-        this.emit({
-          type: 'paint',
-          sessionId,
-          generation: t.generation,
-          data,
-          size: t.size,
-          cause: 'attach',
-        });
+        // Internal only: C1's `paint` is the active stream's, and this one never reached the ring.
+        this.screens.paint(sessionId, data, size);
+        if (t.size.cols !== size.cols || t.size.rows !== size.rows)
+          this.screens.resize(sessionId, t.size);
       });
       stream.onData((bytes) => {
         stream.credit(bytes.byteLength);
@@ -755,6 +774,8 @@ export class HcTerminalRuntime implements TerminalRuntime {
       address,
       size,
       attaching: false,
+      endSeen: false,
+      painting: false,
       retiring: false,
       announced: false,
     };
@@ -833,7 +854,8 @@ export class HcTerminalRuntime implements TerminalRuntime {
     if (e.type === 'finished' || e.type === 'lost') {
       // With a stream its CLOSE carries the end, and an attach in flight decides by its outcome;
       // otherwise (a reconnect pending) this records it, output included.
-      if (!t.stream && !t.attaching) await this.finishUnattached(t);
+      if (t.attaching) t.endSeen = true;
+      else if (!t.stream) await this.finishUnattached(t);
     } else if (e.type === 'status')
       this.emit({
         type: 'status',

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ServerAttention } from '../../server/attention';
 import { createRuntimeServices } from '../../server/runtime';
 import { exitReasonOf } from '../../server/runtime/runtime';
@@ -12,11 +12,12 @@ import {
 import { FrameKind } from '../../src/contracts/frames';
 import type { HcTerminal } from '../../src/contracts/hc';
 import type { ServerEvent, ServerEvents } from '../../src/contracts/server-protocol';
-import type { RuntimeEvent } from '../../src/contracts/terminal-runtime';
+import { PAINT_QUIET_MS, type RuntimeEvent } from '../../src/contracts/terminal-runtime';
 import { FakeRpcError } from '../../src/hc-client/testing/fake-hc';
 
 let h: Harness;
 afterEach(async () => {
+  vi.useRealTimers();
   await h?.close();
 });
 
@@ -80,11 +81,21 @@ describe('TerminalRuntime races', () => {
 
   it('an attach that succeeds after the exit was recorded meanwhile is dropped', async () => {
     h = await harness();
-    await h.runtime.start();
     const ids = launch(1);
-    await h.tokens.reserve('s1', ids);
-    await h.runtime.spawn('s1', spec, labelsFor('s1', ids), ids);
-    const address = h.runtime.get('s1')?.target.terminal ?? '';
+    const address = 'a1';
+    h.tokens.add('s1', ids, 'live', address);
+    h.fake.terminals.push({
+      address,
+      name: ids.launchId,
+      labels: hcLabelsFor('s1', ids),
+      argv: [],
+      cwd: '/',
+      state: 'live',
+      created_ms: 1,
+      screen: 'exact',
+      cols: 80,
+      rows: 24,
+    });
     let gone = false;
     h.fake.onCall('terminal.get', (params) => {
       const t = h.fake.terminals.find(
@@ -99,11 +110,10 @@ describe('TerminalRuntime races', () => {
       h.beforeAttach = undefined;
       // A concurrent reconcile finds the record pruned and records the exit first.
       gone = true;
-      await h.runtime.reconcile();
+      await expect(h.runtime.reconcile()).resolves.toEqual([]);
       gone = false;
     };
-    h.fake.disconnect();
-    await expect.poll(() => h.events.some((e) => e.type === 'resynced')).toBe(true);
+    await expect(h.runtime.reconcile()).resolves.toEqual([]);
     expect(h.events.filter((e) => e.type === 'exit')).toEqual([
       { type: 'exit', sessionId: 's1', generation: 1, code: null, reason: 'lost' },
     ]);
@@ -112,7 +122,7 @@ describe('TerminalRuntime races', () => {
       .poll(() => h.fake.frames.some((f) => f.channel === channel && f.kind === FrameKind.Close))
       .toBe(true);
     expect(h.runtime.get('s1')).toBeUndefined();
-    expect(h.events.filter((e) => e.type === 'paint' && e.cause === 'gap')).toHaveLength(0);
+    expect(h.events.some((e) => e.type === 'paint' || e.type === 'spawned')).toBe(false);
   });
 
   it('a reconcile while a re-attach is in flight does not attach twice', async () => {
@@ -130,6 +140,149 @@ describe('TerminalRuntime races', () => {
     await expect.poll(() => h.events.some((e) => e.type === 'resynced')).toBe(true);
     expect(calls('terminal.attach')).toHaveLength(before + 1);
     expect(h.runtime.input('s1', 1, 'k')).toBe(true);
+  });
+
+  it('a resize during the first attach: the screen model ends at the new size', async () => {
+    h = await harness();
+    await h.runtime.start();
+    h.runtime.on((e) => {
+      if (e.type === 'spawned') h.runtime.screens.ensure(e.sessionId, { seedTail: false });
+    });
+    h.runtime.resize('s1', { cols: 40, rows: 5 });
+    h.fake.paint = Buffer.from('PAINT');
+    h.beforeAttach = async () => {
+      h.beforeAttach = undefined;
+      h.runtime.resize('s1', { cols: 40, rows: 8 });
+    };
+    const { result } = await startedSpawn();
+    await result;
+    await expect
+      .poll(() => h.events.find((e) => e.type === 'paint'))
+      .toMatchObject({ size: { cols: 40, rows: 5 } });
+    const snap = await h.runtime.screen('s1');
+    expect(snap?.lines).toHaveLength(8);
+    expect(h.runtime.get('s1')?.size).toEqual({ cols: 40, rows: 8 });
+  });
+
+  it('a resize while the first paint arrives waits for the paint, then applies', async () => {
+    h = await harness();
+    await h.runtime.start();
+    h.runtime.on((e) => {
+      if (e.type === 'spawned') h.runtime.screens.ensure(e.sessionId, { seedTail: false });
+    });
+    h.runtime.resize('s1', { cols: 40, rows: 5 });
+    h.fake.paint = Buffer.from('PAINT');
+    const { result } = await startedSpawn();
+    await result;
+    h.runtime.resize('s1', { cols: 50, rows: 7 });
+    await expect.poll(() => h.events.some((e) => e.type === 'paint')).toBe(true);
+    const snap = await h.runtime.screen('s1');
+    expect(snap?.lines).toHaveLength(7);
+    expect(h.runtime.get('s1')?.size).toEqual({ cols: 50, rows: 7 });
+  });
+
+  it('an odd attach error after hc reported the end still records the exit', async () => {
+    h = await harness();
+    await h.runtime.start();
+    h.fake.onCall('terminal.read', () => ({ text: 'bye', complete: true, how: 'screen' }));
+    h.beforeAttach = async () => {
+      const t = h.fake.terminals.at(-1) as HcTerminal;
+      Object.assign(t, { state: 'finished', exit_code: 6, reason: 'exited' });
+      finishedEvent(t, 6);
+      await barrier();
+    };
+    h.fake.onCall('terminal.attach', () => {
+      throw new FakeRpcError('blocked');
+    });
+    const { ids, result } = await startedSpawn();
+    await expect(result).resolves.toEqual({
+      ok: true,
+      launchId: ids.launchId,
+      finished: { exitCode: 6, reason: 'exited', output: 'bye' },
+    });
+  });
+
+  it('a launch adopted while its unconfirmed mark is written is not reported unconfirmed', async () => {
+    h = await harness();
+    await h.runtime.start();
+    h.fake.onCall('terminal.run', () => {
+      setImmediate(() => h.fake.disconnect());
+      return new Promise(() => {});
+    });
+    const ids = launch(1);
+    const mark = h.tokens.markUnconfirmed.bind(h.tokens);
+    h.tokens.markUnconfirmed = async (launchId) => {
+      await mark(launchId);
+      await expect.poll(() => h.events.some((e) => e.type === 'resynced')).toBe(true);
+      const t: HcTerminal = {
+        address: 'late',
+        name: ids.launchId,
+        labels: hcLabelsFor('s1', ids),
+        argv: [],
+        cwd: '/',
+        state: 'live',
+        created_ms: 1,
+        screen: 'exact',
+        cols: 80,
+        rows: 24,
+      };
+      h.fake.terminals.push(t);
+      h.fake.emit(t, 'created', t);
+      await expect.poll(() => h.runtime.get('s1')?.target.terminal).toBe('late');
+    };
+    await h.tokens.reserve('s1', ids);
+    await expect(h.runtime.spawn('s1', spec, labelsFor('s1', ids), ids)).resolves.toMatchObject({
+      ok: false,
+      refusal: { reason: 'spawn_unconfirmed' },
+    });
+    // Only the reconnect's reconcile announced it (C1 step 4); the adopted spawn adds none.
+    expect(h.events.filter((e) => e.type === 'unconfirmed')).toHaveLength(1);
+    expect(h.tokens.row(ids.launchId)?.state).toBe('live');
+  });
+
+  it('the stop waits on the run reply, never on the attach', async () => {
+    h = await harness({ launchSettleMs: 5000 });
+    await h.runtime.start();
+    h.beforeAttach = () => new Promise(() => {});
+    const { ids } = await startedSpawn();
+    await expect.poll(() => h.tokens.row(ids.launchId)?.state).toBe('live');
+    const at = Date.now();
+    await h.runtime.beginStopping('stopAll');
+    expect(Date.now() - at).toBeLessThan(1000);
+  });
+
+  it('a paint that keeps arriving ends at PAINT_MAX_MS; later bytes are data', async () => {
+    h = await harness();
+    await h.runtime.start();
+    h.fake.paint = Buffer.from('P');
+    const { result } = await startedSpawn();
+    await result;
+    const channel = h.attachChannels.at(-1) ?? -1;
+    const timer = setInterval(() => h.fake.send(channel, Buffer.from('x')), 10);
+    try {
+      await expect
+        .poll(() => h.events.some((e) => e.type === 'data'), { timeout: 3000 })
+        .toBe(true);
+    } finally {
+      clearInterval(timer);
+    }
+    expect(h.events.filter((e) => e.type === 'paint')).toHaveLength(1);
+  });
+
+  it('forgetSession drops the kept size and facts', async () => {
+    h = await harness();
+    await h.runtime.start();
+    h.runtime.resize('s1', { cols: 33, rows: 11 });
+    h.runtime.facts('s1', { fg: '#fff' });
+    h.runtime.forgetSession('s1');
+    expect(h.runtime.lastSizeOf('s1')).toBeUndefined();
+    const { result } = await startedSpawn();
+    await result;
+    expect(calls('terminal.attach').at(-1)?.params).toEqual({
+      terminal: h.runtime.get('s1')?.target.terminal,
+      cols: 200,
+      rows: 120,
+    });
   });
 
   it('a resize during the attach reaches the stream once it is held', async () => {
@@ -271,14 +424,20 @@ describe('TerminalRuntime races', () => {
     h = await harness();
     await h.runtime.start();
     h.fake.paint = Buffer.from('PAINT');
+    // Paint timers only: the sockets and the client's queueing stay real.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { result } = await startedSpawn();
     await result;
-    // Well inside PAINT_QUIET_MS of the paint's first byte.
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await barrier();
+    const paints = () => h.events.filter((e) => e.type === 'paint');
+    vi.advanceTimersByTime(PAINT_QUIET_MS - 10);
     h.fake.send(h.attachChannels.at(-1) ?? -1, Buffer.from('MORE'));
-    await expect
-      .poll(() => h.events.find((e) => e.type === 'paint'))
-      .toMatchObject({ data: 'PAINTMORE', cause: 'attach' });
+    await barrier();
+    vi.advanceTimersByTime(PAINT_QUIET_MS - 10);
+    expect(paints()).toHaveLength(0);
+    vi.advanceTimersByTime(15);
+    vi.useRealTimers();
+    expect(paints()).toMatchObject([{ data: 'PAINTMORE', cause: 'attach' }]);
     expect(h.events.some((e) => e.type === 'data')).toBe(false);
   });
 

@@ -1,10 +1,10 @@
 import { unlink } from 'node:fs';
 import { join } from 'node:path';
-import { ScrollbackWriteGate } from '../../electron/persistence-write-gates';
 import { atomicWriteFile } from '../../src/atomic-write';
 import { readBlob } from '../../src/config';
 import type { ScrollbackPort, ServerEventSink } from '../../src/contracts/server-ports';
 import type { FirstPaint } from '../../src/contracts/terminal-link';
+import { ScrollbackWriteGate } from '../../src/persistence-write-gates';
 import type { TermGeometry } from '../../src/protocol';
 import { scrollbackFileName } from '../../src/scrollback-files';
 import { ScrollbackStore } from '../../src/scrollback-store';

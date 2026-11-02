@@ -67,9 +67,10 @@ describe('TerminalRuntime screen()', () => {
       .poll(() =>
         h.events.filter((e) => e.type === 'paint').map((e) => e.type === 'paint' && e.cause),
       )
-      .toEqual(['attach', 'attach']);
+      .toEqual(['attach']);
     const snap = await h.runtime.screen('s1');
     expect(snap?.lines[0]).toBe('reseeded');
+    expect(h.events.filter((e) => e.type === 'paint')).toHaveLength(1);
     expect(h.ring.text('s1')).not.toContain('reseeded');
     // The observer is gone and the active stream still carries everything, exactly once.
     await expect

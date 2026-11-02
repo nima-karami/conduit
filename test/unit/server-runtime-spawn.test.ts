@@ -234,7 +234,9 @@ describe('TerminalRuntime spawn', () => {
 
   it('input, resize and facts pass through the active attach; a stale generation is dropped', async () => {
     await started();
+    h.fake.paint = Buffer.from('P');
     await spawned();
+    await expect.poll(() => h.events.some((e) => e.type === 'paint')).toBe(true);
     const channel = h.attachChannels.at(-1);
     expect(h.runtime.input('s1', 1, 'ls\r')).toBe(true);
     expect(h.runtime.input('s1', 0, 'stale')).toBe(false);
