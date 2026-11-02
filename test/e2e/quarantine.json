@@ -1,3 +1,8 @@
 {
-  "scenarios": {}
+  "scenarios": {
+    "scrollback-inrun": {
+      "reason": "herdr-core 0.1.16's attach history paint hard-breaks soft-wrapped lines with CRLF at the paint width, so a reload splits wrapped lines ('ech' / 'o R2-END'); everything else in the scenario passes (earlier runs, order, no duplicates, PTY = xterm). Upstream request filed in the run report; lift when hc keeps soft wraps.",
+      "since": "2026-11-02"
+    }
+  }
 }
