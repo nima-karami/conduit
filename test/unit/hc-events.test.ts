@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHcEvents } from '../../electron/hc-events';
-import type { HcEvent } from '../../src/contracts/hc';
+import type { HcEvent, HcTerminal } from '../../src/contracts/hc';
 import { NodeHcClient } from '../../src/hc-client';
 import { FakeHc } from '../../src/hc-client/testing/fake-hc';
 
@@ -27,6 +27,26 @@ const subscribes = () => fake.calls.filter((c) => c.method === 'events.subscribe
 const sizeOf = (e: HcEvent) => (e.type === 'size' ? e.data : null);
 
 describe('createHcEvents', () => {
+  it.each(['missed', 'ended', 'reconnect'])(
+    'exposes replacement snapshots after %s, even without a finished event',
+    async (recovery) => {
+      await events.ready();
+      const snapshots: HcTerminal[][] = [];
+      const off = events.onSnapshot?.((terminals) => snapshots.push(terminals));
+      fake.terminals[0].state = 'finished';
+      if (recovery === 'reconnect') fake.disconnect();
+      else if (recovery === 'ended') fake.end(fake.channels[0]);
+      else
+        fake.notify(fake.channels[0], {
+          jsonrpc: '2.0',
+          method: 'missed',
+          params: { seq: 1, terminals: [] },
+        });
+      await vi.waitFor(() => expect(snapshots.at(-1)?.[0].state).toBe('finished'));
+      off?.();
+    },
+  );
+
   it('subscribes once with the instance labels and routes events by terminal', async () => {
     await events.ready();
     expect(subscribes().map((c) => c.params)).toEqual([{ labels: LABELS }]);
