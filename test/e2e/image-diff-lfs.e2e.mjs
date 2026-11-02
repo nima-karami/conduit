@@ -13,7 +13,15 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openReview, openSession, REPO, runScenario } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  openReview,
+  openSession,
+  REPO,
+  runScenario,
+  stopServer,
+} from './harness.mjs';
 
 const FIXTURE_PNG = join(REPO, 'test', 'e2e', 'fixtures', 'sample.png');
 // A second valid 1×1 PNG, byte-different from the fixture, for the "modified" side.
@@ -125,6 +133,7 @@ runScenario('image-diff-lfs', async ({ app, page, log }) => {
 
   log('PASS ✓ image-diff-lfs');
   await closeApp(app, page);
-  // After closeApp: the session's shell holds the repo as its cwd until then.
+  // A quit leaves the sessions' shells running in hc (F4), their cwd pinning the fixture.
+  await stopServer(app);
   rmSync(root, { recursive: true, force: true, maxRetries: 5 });
 });

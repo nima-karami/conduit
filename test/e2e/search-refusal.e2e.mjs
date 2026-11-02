@@ -13,7 +13,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, removeDir, runScenario, tapBridge } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  openSession,
+  removeDir,
+  runScenario,
+  stopServer,
+  tapBridge,
+} from './harness.mjs';
 
 const NEEDLE = 'REFUSAL_NEEDLE_7';
 const REFUSED = 'Search refused';
@@ -134,6 +142,8 @@ runScenario('search-refusal', async ({ app, page, log }) => {
     log('searchFiles: the same four refused with no searchResults ✓');
   } finally {
     await closeApp(app, page);
+    // A quit leaves the sessions' shells running in hc (F4), their cwd pinning the fixture.
+    await stopServer(app);
     await removeDir(root);
   }
 });

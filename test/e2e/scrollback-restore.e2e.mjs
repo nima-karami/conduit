@@ -89,6 +89,8 @@ try {
   await page.evaluate(() => {
     window.__terms = {};
   });
+  // A terminal starts when its pane mounts, and the launch's folder-arg session is the one shown.
+  await page.click(`[data-sessionid="${SID}"]`);
   await page.evaluate((id) => window.agentDeck.post({ type: 'relaunch', id }), SID);
 
   // Wait until the live shell has spawned and painted (its prompt arrives AFTER the

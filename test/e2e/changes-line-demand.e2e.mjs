@@ -22,6 +22,7 @@ import {
   openSession,
   removeDir,
   runScenario,
+  stopServer,
   waitForRepoGit,
 } from './harness.mjs';
 
@@ -131,6 +132,8 @@ runScenario('changes-line-demand', async ({ app, page, log }) => {
     log('Changes tab: +3 shown, numstat ran on demand');
   } finally {
     await closeApp(app, page);
+    // A quit leaves the sessions' shells running in hc (F4), their cwd pinning the fixture.
+    await stopServer(app);
     await removeDir(repo);
   }
 });

@@ -17,3 +17,15 @@ export function canRelaunch(s: Pick<Session, 'status' | 'homeMissing'>): boolean
 export function relaunchableSessionIds(sessions: Session[]): string[] {
   return sessions.filter((s) => s.status === 'stale' && !s.homeMissing).map((s) => s.id);
 }
+
+/**
+ * The startup autoRelaunchStale pass, decided once. Undefined until the host's sessions come from
+ * the server: before its first snapshot `sessions` is empty because nothing is known yet.
+ */
+export function autoRelaunchTargets(
+  state: { sessionsLoaded: boolean; sessions: Session[] },
+  autoRelaunchStale: boolean,
+): string[] | undefined {
+  if (!state.sessionsLoaded) return undefined;
+  return autoRelaunchStale ? relaunchableSessionIds(state.sessions) : [];
+}

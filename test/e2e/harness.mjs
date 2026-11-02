@@ -316,6 +316,7 @@ export async function launchElectron(launchOpts) {
   }
   startCapture(app);
   startCoverage(app);
+  await settleColdOpen(app, await app.firstWindow());
   return app;
 }
 
@@ -392,7 +393,7 @@ export function finishScenario(code) {
 }
 
 /** `name` as the first PATH entry holding it, the way the app's spawn of a bare name finds it. */
-function onPath(name) {
+export function onPath(name) {
   const exe = process.platform === 'win32' ? `${name}.exe` : name;
   return (process.env.PATH ?? '')
     .split(delimiter)
@@ -415,20 +416,64 @@ function serverRuntimeEnv(env) {
   return pinned;
 }
 
+const COLD_OPEN_WAIT_MS = 30000;
+
+/**
+ * Wait for the launch's folder-arg open (`REPO`) to land. It waits for the server, so its session
+ * arrives after the first state; one that lands mid-scenario takes the selection and unmounts the
+ * pane a scenario just opened. Returns once the window shows that session; a no-op for an app
+ * launched without CONDUIT_E2E or without a folder arg.
+ */
+async function settleColdOpen(app, page) {
+  const deadline = Date.now() + COLD_OPEN_WAIT_MS;
+  for (;;) {
+    const left = deadline - Date.now();
+    const r = await app.evaluate(
+      async (_, ms) => {
+        if (process.env.CONDUIT_E2E !== '1') return { state: 'done' };
+        if (!('__coldOpen' in global)) return { state: 'pending' };
+        const timeout = new Promise((res) => setTimeout(() => res({ state: 'pending' }), ms));
+        return Promise.race([
+          global.__coldOpen.then((sessionId) => ({ state: 'done', sessionId })),
+          timeout,
+        ]);
+      },
+      Math.max(left, 0),
+    );
+    if (r.state === 'done') {
+      if (r.sessionId) {
+        await page.waitForSelector(`.session[data-sessionid="${r.sessionId}"]`, {
+          state: 'attached',
+          timeout: Math.max(deadline - Date.now(), 1000),
+        });
+      }
+      return;
+    }
+    if (Date.now() >= deadline) break;
+    await new Promise((res) => setTimeout(res, 100));
+  }
+  console.log(
+    `[${scenarioName()}] the launch's folder-arg open was still pending after ${COLD_OPEN_WAIT_MS}ms`,
+  );
+}
+
 /**
  * Launch the real Conduit app in a throwaway user-data dir.
  *
- * @param {{ extraArgs?: string[] }} [opts]
+ * `openFolder: false` launches the app path as `.`, which is no open target (extractOpenTarget),
+ * so the launch adds no session of its own: for a scenario whose subject is the startup selection.
+ *
+ * @param {{ extraArgs?: string[], openFolder?: boolean }} [opts]
  * @returns {{ app, page, userDataDir: string, cleanup: () => Promise<void> }}
  */
-export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
+export async function launchApp({ extraArgs = [], userDataDir, env, openFolder = true } = {}) {
   const electronPath = require('electron');
   // A caller may pass a fixed user-data dir to relaunch against the same profile (e.g. a
   // durability/restore assertion); otherwise a throwaway dir the OS reaps.
   const udd = userDataDir || profileDir();
   const app = await launchElectron({
     executablePath: electronPath,
-    args: [`--user-data-dir=${udd}`, REPO, ...extraArgs],
+    args: [`--user-data-dir=${udd}`, openFolder ? REPO : '.', ...extraArgs],
     cwd: REPO,
     // A caller may override the child env (e.g. prepend a stub `git` to PATH to prove timeouts).
     ...(env ? { env: { ...process.env, ...serverRuntimeEnv(env), ...env } } : {}),

@@ -441,6 +441,8 @@ export type HostToWebview =
       type: 'state';
       agents: AgentDefinition[];
       sessions: Session[];
+      /** False until the server's first snapshot: an empty `sessions` then means none known yet. */
+      sessionsLoaded: boolean;
       projects: Project[];
       repos: RepoDTO[];
       /** Registry members joined with launchers.json usage, in `agents` order (mf-new-session §3.2). */

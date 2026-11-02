@@ -27,6 +27,7 @@ import {
   profileDir,
   REPO,
   runShellReader,
+  stopServer,
   tapBridge,
 } from './harness.mjs';
 
@@ -256,6 +257,9 @@ try {
     { timeout: 10000 },
   );
   await closeApp(first.app, page);
+  // A quit leaves the session running in hc (F4), where the schedule would fire; the subject is a
+  // restore with nothing running.
+  await stopServer(first.app);
   first = null;
   log('app closed with a schedule armed ✓');
 
@@ -313,15 +317,20 @@ try {
   assert(fires[0].delivered === true, 'the catch-up fire must report delivered');
   assert(fires[0].late === true, 'a catch-up fire must be marked late');
 
-  // The real shell echoes what was typed: the command line AND its output.
+  // The real shell echoes what was typed: the command line AND its output. Counted outside OSC
+  // strings: cmd also names the running command in its window title, which hc's ConPTY forwards.
+  const OSC = String.raw`\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`;
+  const shown = (osc) =>
+    ((window.__cap || '').replace(new RegExp(osc, 'g'), '').match(/conduit-timed-late/g) || [])
+      .length;
   await page2.waitForFunction(
-    () => ((window.__cap || '').match(/conduit-timed-late/g) || []).length >= 2,
-    null,
+    (osc) =>
+      ((window.__cap || '').replace(new RegExp(osc, 'g'), '').match(/conduit-timed-late/g) || [])
+        .length >= 2,
+    OSC,
     { timeout: 30000 },
   );
-  const hits = await page2.evaluate(
-    () => ((window.__cap || '').match(/conduit-timed-late/g) || []).length,
-  );
+  const hits = await page2.evaluate(shown, OSC);
   assert(hits === 2, `expected the typed line and its echo exactly once each, got ${hits}`);
   log('shell echoed the late message exactly once ✓');
 

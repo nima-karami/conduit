@@ -550,6 +550,7 @@ function mockState() {
     type: 'state' as const,
     agents: mockAgents,
     sessions,
+    sessionsLoaded: true,
     projects: mockProjects,
     repos: mockRepos,
     launchers: mockAgents.map((a) => ({

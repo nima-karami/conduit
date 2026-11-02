@@ -16,7 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, removeDir, runScenario } from './harness.mjs';
+import { assert, closeApp, openSession, removeDir, runScenario, stopServer } from './harness.mjs';
 
 /** The watcher's debounce, the host's coalesced signal and one `ls-files`, with headroom. */
 const REFRESH_BUDGET_MS = 15000;
@@ -112,6 +112,8 @@ runScenario('quickopen-fresh', async ({ app, page, log }) => {
     log('palette open: fresh-two.ts appeared live ✓');
   } finally {
     await closeApp(app, page);
+    // A quit leaves the sessions' shells running in hc (F4), their cwd pinning the fixture.
+    await stopServer(app);
     await removeDir(root);
   }
 });

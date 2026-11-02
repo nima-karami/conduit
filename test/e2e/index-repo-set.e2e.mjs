@@ -17,7 +17,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, removeDir, runScenario, tapBridge } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  openSession,
+  removeDir,
+  runScenario,
+  stopServer,
+  tapBridge,
+} from './harness.mjs';
 
 /** The session-open index waits 1.5 s, then streams; the re-scan, the re-sync and the flush. */
 const INDEX_BUDGET_MS = 30000;
@@ -111,6 +119,8 @@ runScenario('index-repo-set', async ({ app, page, log }) => {
   } finally {
     await release(app, 'topup');
     await closeApp(app, page);
+    // A quit leaves the sessions' shells running in hc (F4), their cwd pinning the fixture.
+    await stopServer(app);
     await removeDir(root);
   }
 });

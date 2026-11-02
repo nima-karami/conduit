@@ -78,7 +78,12 @@ import {
   sessionSections,
 } from '../src/session-sections';
 import type { ChangesViewMode, RightPaneTab } from '../src/settings';
-import { canRelaunch, relaunchableSessionIds, staleSessionIds } from '../src/stale-sessions';
+import {
+  autoRelaunchTargets,
+  canRelaunch,
+  relaunchableSessionIds,
+  staleSessionIds,
+} from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
 import { formatDuration } from '../src/timed-messages';
 import type { AgentDefinition, Session } from '../src/types';
@@ -851,16 +856,19 @@ export function App() {
     if (pick) setActiveId(pick);
   }, [sessions, settings.autoSwitchSession]);
 
-  // Auto-relaunch stale sessions on the FIRST state message after startup (T1B).
+  // Auto-relaunch stale sessions on the first state that carries the server's sessions (T1B).
   // A ref guards against re-firing on every subsequent state broadcast. Only fires
   // when the setting is ON; default is OFF so no behavior change for existing users.
   const autoRelaunchDoneRef = useRef(false);
   useEffect(() => {
     if (autoRelaunchDoneRef.current) return;
     if (!state) return;
+    const targets = autoRelaunchTargets(
+      { sessionsLoaded: state.sessionsLoaded, sessions },
+      settings.autoRelaunchStale,
+    );
+    if (!targets) return;
     autoRelaunchDoneRef.current = true;
-    if (!settings.autoRelaunchStale) return;
-    const targets = relaunchableSessionIds(sessions);
     for (const id of targets) {
       post({ type: 'relaunch', id });
     }

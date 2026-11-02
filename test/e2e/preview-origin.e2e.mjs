@@ -19,6 +19,7 @@ import {
   openSession,
   removeDir,
   runScenario,
+  stopServer,
 } from './harness.mjs';
 
 if (process.platform !== 'win32') {
@@ -136,8 +137,9 @@ runScenario('preview-origin', async ({ app, page, log }) => {
     log('PASS — one origin per root holds against junction and encoded-segment reads');
     passed = true;
   } finally {
-    // The sessions pin both roots on Windows until the app is gone.
     await closeApp(app, page);
+    // A quit leaves the sessions' shells running in hc (F4), their cwd pinning the fixture.
+    await stopServer(app);
     const removeTemp = async () => {
       // Unlink the junction itself first: a recursive delete must never walk through it into B.
       rmSync(junction, { force: true });

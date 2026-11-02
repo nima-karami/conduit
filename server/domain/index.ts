@@ -1014,8 +1014,12 @@ export function createDomain(deps: DomainDeps): Domain {
       c.rollback();
       throw err;
     }
-    // A person's open counts as launcher usage; an MCP open never does.
-    if (!i.openedBy) launcherHost.bump(def.id);
+    // A person's open counts as launcher usage; an MCP open never does. The app ranks the pills
+    // from the last launchers push, so a bump is one.
+    if (!i.openedBy) {
+      launcherHost.bump(def.id);
+      deps.emit('data.changed', { store: 'launchers', value: launcherHost.dtos() });
+    }
     // Synchronous with the create: the coalesced sessions.changed that lists it comes later.
     deps.emit('sessions.opened', {
       sessionId: id,

@@ -18,6 +18,7 @@ import {
   makeLog,
   profileDir,
   shutdownApp,
+  stopServer,
   tapBridge,
 } from './harness.mjs';
 
@@ -89,7 +90,8 @@ function makeFixture() {
 /**
  * Standalone launch (not `runScenario`) because the scenarios seed userData and PATH, and some
  * relaunch against the same profile. `launch(run)` starts the app with `STUB_RUN=run`; `close()`
- * closes it cleanly mid-scenario.
+ * closes it cleanly mid-scenario and stops its server: a quit leaves agents running (F4), and only a
+ * fresh server spawns the next run's agents with that run's env.
  */
 export async function runNewSession(name, fn) {
   const log = makeLog(name);
@@ -105,8 +107,10 @@ export async function runNewSession(name, fn) {
     return launched;
   };
   const close = async () => {
-    await closeApp(launched.app, launched.page);
+    const { app } = launched;
+    await closeApp(app, launched.page);
     launched = null;
+    await stopServer(app);
   };
   try {
     await fn({ fx, log, launch, close });

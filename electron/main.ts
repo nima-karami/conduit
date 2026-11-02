@@ -1508,6 +1508,7 @@ app.whenReady().then(() => {
   // Per-window state (multi-window Slice A): each window receives only the sessions it owns;
   // shared fields (agents/repos/settings/about) are identical per window. Status, busy and
   // needs-attention come in-band from the server (sessions.changed).
+  let sessionsLoaded = false;
   const postState = () => {
     const all = store.list();
     const repos = reposForState();
@@ -1516,6 +1517,7 @@ app.whenReady().then(() => {
         type: 'state',
         agents: stores.agents,
         sessions: sessionsOwnedBy(sessionOwner, windowId, all),
+        sessionsLoaded,
         projects: stores.projects,
         repos,
         launchers: stores.launchers,
@@ -2406,8 +2408,14 @@ app.whenReady().then(() => {
       c.call('server.setLogging', { logging: settings.logging, logLevel: settings.logLevel }).catch(
         (err: unknown) => log.warn('server', 'setLogging failed', { err: String(err) }),
       );
-      c.subscribe(router).then(resolveFirstSnapshot, (err: unknown) =>
-        log.warn('server', 'subscribe failed', { err: String(err) }),
+      c.subscribe(router).then(
+        () => {
+          resolveFirstSnapshot();
+          if (sessionsLoaded) return;
+          sessionsLoaded = true;
+          postState();
+        },
+        (err: unknown) => log.warn('server', 'subscribe failed', { err: String(err) }),
       );
       pushPresence();
       terminals.serverConnected();
@@ -4570,7 +4578,10 @@ app.whenReady().then(() => {
   // no view of which docs are open in the renderer, so the nearest-ancestor (Rule 2) reuse is
   // all that applies here; the renderer's own resolveOwningSession Rule 1 still de-dupes an
   // already-open file when the doc actually opens.
-  const openFileFromOS = (filePath: string, ownerWindowId: number) => {
+  const openFileFromOS = async (
+    filePath: string,
+    ownerWindowId: number,
+  ): Promise<string | undefined> => {
     const root = gitRootOf(filePath, (p) => fs.existsSync(p)) ?? path.dirname(filePath);
     const existing = resolveOwningSession({
       path: filePath,
@@ -4580,8 +4591,9 @@ app.whenReady().then(() => {
     });
     const send = (sessionId: string) =>
       sendOpenFileInEditor({ type: 'openFileInEditor', path: filePath, sessionId, source: 'os' });
-    if (existing) send(existing);
-    else void openFromOS(root, ownerWindowId).then((id) => id && send(id));
+    const sessionId = existing ?? (await openFromOS(root, ownerWindowId));
+    if (sessionId) send(sessionId);
+    return sessionId;
   };
 
   /** A new session for an OS open, once the server's agents are known. */
@@ -4610,29 +4622,26 @@ app.whenReady().then(() => {
 
   // OS opens are owned by the given window (multi-window Slice A): the focused window for a
   // warm second-instance, the primary window at cold launch.
-  const openArg = (argv: readonly string[], ownerWindowId: number) => {
+  /** Resolves with the session the open landed in, once it has. */
+  const openArg = async (
+    argv: readonly string[],
+    ownerWindowId: number,
+  ): Promise<string | undefined> => {
     // argv[0] is the executable (the absolute path to Conduit.exe on a packaged build); skip
     // it explicitly, else classifyPath would return the exe itself as the file to open.
     const target = extractOpenTarget(argv, classifyPath, [process.execPath, argv[0] ?? '']);
-    if (!target) return;
+    if (!target) return undefined;
     log.info('app', 'os-open', { kind: target.kind, path: target.path });
-    const open = (p: string) => {
-      if (target.kind === 'dir') void openFromOS(p, ownerWindowId);
-      else openFileFromOS(p, ownerWindowId);
-    };
-    // Synchronous unless there is an alias to expand: a smoke seam asserts the cold-launch
-    // buffering right after firing `second-instance`.
-    if (hasShortComponent(target.path)) {
-      void expandShortNames(target.path, hostShortNameDeps).then(open);
-    } else {
-      open(target.path);
-    }
+    const p = hasShortComponent(target.path)
+      ? await expandShortNames(target.path, hostShortNameDeps)
+      : target.path;
+    return target.kind === 'dir' ? openFromOS(p, ownerWindowId) : openFileFromOS(p, ownerWindowId);
   };
 
   app.on('second-instance', (_event, argv) => {
     log.info('app', 'second-instance');
     const target = focusedWindow();
-    openArg(argv, target?.id ?? primaryWindowId);
+    void openArg(argv, target?.id ?? primaryWindowId);
     if (target) {
       if (target.isMinimized()) target.restore();
       target.focus();
@@ -4640,7 +4649,10 @@ app.whenReady().then(() => {
   });
 
   // First launch opened via the context menu while the app was closed → primary window.
-  openArg(process.argv, primaryWindowId);
+  const coldOpen = openArg(process.argv, primaryWindowId);
+  // Smoke-only: the open waits for the server, so it lands after the first state; a scenario
+  // waits for it before acting, else its session appears mid-scenario and takes the selection.
+  if (process.env.CONDUIT_E2E === '1') (global as Record<string, unknown>).__coldOpen = coldOpen;
 
   startServer().catch((err: unknown) =>
     log.error('server', 'start failed', { err: err instanceof Error ? err.message : String(err) }),
