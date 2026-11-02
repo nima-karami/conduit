@@ -47,7 +47,7 @@ function sameGit(a: GitInfo | undefined, b: GitInfo | undefined): boolean {
   );
 }
 
-function sameRepoGit(
+export function sameRepoGit(
   a: Record<string, GitInfo> | undefined,
   b: Record<string, GitInfo> | undefined,
 ): boolean {

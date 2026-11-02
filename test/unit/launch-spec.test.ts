@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AgentRegistry } from '../../src/agent-registry';
-import { buildLaunchSpec, type LaunchRequest } from '../../src/launch-spec';
-import { resolveLaunchSpec } from '../../src/pty-host';
+import { buildLaunchSpec, type LaunchRequest, resolveLaunchSpec } from '../../src/launch-spec';
 import { COMMAND_AGENT_ID, commandDef } from '../../src/session-command';
 import type { AgentDefinition } from '../../src/types';
 

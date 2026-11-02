@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveLaunchSpec } from '../../src/pty-host';
+import { resolveLaunchSpec } from '../../src/launch-spec';
 import type { AgentDefinition } from '../../src/types';
 
 const claude: AgentDefinition = {

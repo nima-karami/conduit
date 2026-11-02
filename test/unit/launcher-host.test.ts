@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { LauncherHost, type LauncherHostDeps } from '../../electron/launcher-host';
 import { AgentRegistry } from '../../src/agent-registry';
+import { LauncherHost, type LauncherHostDeps } from '../../src/launcher-host';
 import { parseLaunchers, serializeLaunchers } from '../../src/launcher-store';
 import type { AgentDefinition } from '../../src/types';
 

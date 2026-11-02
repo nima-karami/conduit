@@ -95,9 +95,9 @@ describe('launchArgsFor', () => {
 describe('batchGuarded', () => {
   it('win32 guards batch files and unresolvable commands only', () => {
     expect(batchGuarded('win32', undefined)).toBe(true);
-    expect(batchGuarded('win32', 'C:\npm\claude.cmd')).toBe(true);
-    expect(batchGuarded('win32', 'C:\npm\claude.BAT')).toBe(true);
-    expect(batchGuarded('win32', 'C:\bin\claude.exe')).toBe(false);
+    expect(batchGuarded('win32', 'C:\npmclaude.cmd')).toBe(true);
+    expect(batchGuarded('win32', 'C:\npmclaude.BAT')).toBe(true);
+    expect(batchGuarded('win32', 'C:\binclaude.exe')).toBe(false);
   });
 
   it('posix is never guarded', () => {

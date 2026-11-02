@@ -25,6 +25,7 @@ import { repoForPath, requestGitRoot, resolveRequestRepoRoot } from '../src/acti
 import { type AgentScopeReason, runAddDir } from '../src/add-dir-delivery';
 import { AgentRegistry } from '../src/agent-registry';
 import { scopeFromSpawnArgs } from '../src/agent-scope';
+import { AgentScopeTracker } from '../src/agent-scope-tracker';
 import { isAppIndexUrl } from '../src/app-navigation';
 import { asyncSingleFlight } from '../src/async-singleflight';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
@@ -107,6 +108,7 @@ import {
 import { type BellScanState, countBareBells } from '../src/last-line';
 import { previewLaunch } from '../src/launch-preview';
 import { buildLaunchSpec } from '../src/launch-spec';
+import { LauncherHost } from '../src/launcher-host';
 import {
   decideLimitAction,
   type LimitEpisode,
@@ -160,7 +162,7 @@ import type {
   TermGeometry,
   WebviewToHost,
 } from '../src/protocol';
-import { currentWindowsPty, PtyHost } from '../src/pty-host';
+import { PtyHost } from '../src/pty-host';
 import { createPtyWriter } from '../src/pty-writer';
 import { summarizeQueue } from '../src/queue-summary';
 import { busySessions, runningSessions } from '../src/quit-guard';
@@ -188,6 +190,7 @@ import {
   setMark as setReviewMark,
 } from '../src/review-marks';
 import { applyNotePatch, notesFingerprint, type ReviewNotesData } from '../src/review-notes';
+import { briefKeepIds, createRoleBriefHost, parseBriefRequest } from '../src/role-brief-host';
 import { orphanScrollbackFiles, scrollbackFileName } from '../src/scrollback-files';
 import { spawnPrelude } from '../src/scrollback-persistence';
 import { ScrollbackStore } from '../src/scrollback-store';
@@ -250,8 +253,8 @@ import {
   type WindowLayout,
   windowAtPoint,
 } from '../src/window-registry';
+import { currentWindowsPty } from '../src/windows-pty-info';
 import { parseTrustStore, serializeTrustStore } from '../src/workspace-trust';
-import { AgentScopeTracker } from './agent-scope-tracker';
 import { extractOpenTarget, gitRootOf } from './arg-utils';
 import { BoardWatcher } from './board-watcher';
 import {
@@ -286,7 +289,6 @@ import { createDragOutHost } from './drag-out-host';
 import { execFileBounded } from './exec-bounded';
 import { createFolderPicker } from './folder-picker';
 import { createLaunchClaims } from './launch-claims';
-import { LauncherHost } from './launcher-host';
 import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
 import { startLanguageServer } from './lsp-server';
@@ -308,7 +310,6 @@ import { defaultTreeKillDeps } from './process-tree';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
 import { createRepoTrackerHost } from './repo-tracker-host';
-import { briefKeepIds, createRoleBriefHost, parseBriefRequest } from './role-brief-host';
 import { SessionFolderRuntime } from './session-folder-runtime';
 import { createSessionScreens } from './session-screens';
 import { installSkill, listSkills } from './skills-service';

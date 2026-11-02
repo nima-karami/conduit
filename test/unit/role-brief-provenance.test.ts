@@ -33,7 +33,7 @@ describe('role brief provenance', () => {
   it('only the host and the session manager write a brief state, and no MCP file reads one', () => {
     const all = [...walk('src'), ...walk('electron'), ...walk('webview')];
     const writers = all.filter((f) => read(f).includes('setBrief(')).sort();
-    expect(writers).toEqual(['electron/role-brief-host.ts', 'src/session-manager.ts']);
+    expect(writers).toEqual(['src/role-brief-host.ts', 'src/session-manager.ts']);
     const mcp = all.filter(
       (f) => f.startsWith('src/conduit-mcp/') || f.startsWith('electron/conduit-mcp-'),
     );
@@ -43,7 +43,7 @@ describe('role brief provenance', () => {
 
   it('electron/main.ts is the only importer of role-brief-host', () => {
     const importers = [...walk('src'), ...walk('electron'), ...walk('webview')].filter(
-      (f) => /role-brief-host/.test(read(f)) && f !== 'electron/role-brief-host.ts',
+      (f) => /role-brief-host/.test(read(f)) && f !== 'src/role-brief-host.ts',
     );
     expect(importers.filter((f) => f !== 'electron/main.ts')).toEqual([]);
   });

@@ -1,7 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-import { windowsPtyInfo } from '../../src/pty-host';
-
-vi.mock('@lydell/node-pty', () => ({ spawn: () => ({}) }));
+import { describe, expect, it } from 'vitest';
+import { windowsPtyInfo } from '../../src/windows-pty-info';
 
 describe('windowsPtyInfo', () => {
   it('reports ConPTY and the build number on Windows', () => {

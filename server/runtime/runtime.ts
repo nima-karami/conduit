@@ -19,8 +19,6 @@ import {
   type AdoptedTerminal,
   LAUNCH_SETTLE_ON_STOP_MS,
   type LaunchIds,
-  PAINT_MAX_MS,
-  PAINT_QUIET_MS,
   type ReportedStatus,
   type RuntimeEvent,
   type RuntimeExitReason,
@@ -32,6 +30,7 @@ import {
 } from '../../src/contracts/terminal-runtime';
 import { HcDisconnectedError, HcRpcError } from '../../src/hc-client';
 import { lastNonEmptyLines } from '../../src/last-line';
+import { PaintCollector } from '../../src/paint-collector';
 import type { TermGeometry } from '../../src/protocol';
 import { appendScrollback } from '../../src/scrollback-persistence';
 import type { SpawnSpec } from '../../src/types';
@@ -165,36 +164,6 @@ function asLabels(labels: Record<string, string>): ConduitLabels {
 
 /** `terminal.read` is plain text; the ring holds terminal bytes. */
 const asTerminalText = (text: string) => text.replace(/\r?\n/g, '\r\n');
-
-/**
- * Collects an attach's first paint by C1's boundary rule (D20): quiet for PAINT_QUIET_MS, capped
- * at PAINT_MAX_MS after the attach is held.
- */
-class PaintCollector {
-  private chunks: string[] = [];
-  private quiet?: ReturnType<typeof setTimeout>;
-  private cap?: ReturnType<typeof setTimeout>;
-  done = false;
-
-  /** Armed when the attach is held: a viewer that is never painted still ends its paint. */
-  constructor(private readonly onEnd: (data: string) => void) {
-    this.cap = setTimeout(() => this.end(), PAINT_MAX_MS);
-  }
-
-  push(text: string): void {
-    this.chunks.push(text);
-    clearTimeout(this.quiet);
-    this.quiet = setTimeout(() => this.end(), PAINT_QUIET_MS);
-  }
-
-  end(): void {
-    if (this.done) return;
-    this.done = true;
-    clearTimeout(this.quiet);
-    clearTimeout(this.cap);
-    this.onEnd(this.chunks.join(''));
-  }
-}
 
 export class HcTerminalRuntime implements TerminalRuntime {
   readonly screens: ServerScreens;

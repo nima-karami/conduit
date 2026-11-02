@@ -1,14 +1,9 @@
 // Per-session agent scope, dismissals and the published drift view, in host memory only
 // (mf-live-edits spec §2.1, §2.3, §2.5). Reaches the renderer as a postState decoration.
-import { ADD_DIR_SCAN_START, type AddDirScanState, scanAddDirOutput } from '../src/add-dir-confirm';
-import {
-  type AgentScope,
-  agentScopeDrift,
-  type DismissKind,
-  pruneDismissed,
-} from '../src/agent-scope';
-import { folderKey } from '../src/folder-key';
-import type { AgentScopeView, Session } from '../src/types';
+import { ADD_DIR_SCAN_START, type AddDirScanState, scanAddDirOutput } from './add-dir-confirm';
+import { type AgentScope, agentScopeDrift, type DismissKind, pruneDismissed } from './agent-scope';
+import { folderKey } from './folder-key';
+import type { AgentScopeView, Session } from './types';
 
 export interface AgentScopeTrackerDeps {
   get: (id: string) => Session | undefined;

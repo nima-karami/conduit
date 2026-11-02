@@ -1,70 +1,10 @@
 import * as os from 'node:os';
-import * as path from 'node:path';
 import * as pty from '@lydell/node-pty';
 import { lastNonEmptyLine, lastNonEmptyLines } from './last-line';
-import type { HostToWebview, TermGeometry, WindowsPtyInfo } from './protocol';
+import { sanitizeChildEnv } from './launch-spec';
+import type { HostToWebview, TermGeometry } from './protocol';
 import { appendScrollback } from './scrollback-persistence';
-import type { AgentDefinition, SpawnSpec } from './types';
-
-/**
- * @lydell/node-pty ships ConPTY only (no winpty agent) and ignores `useConpty`, so every Windows
- * PTY is ConPTY, a debugger attached or not. The renderer's xterm must be told the same; preload
- * reads it once per renderer load.
- */
-export function windowsPtyInfo(
-  platform: NodeJS.Platform,
-  release: string,
-): WindowsPtyInfo | undefined {
-  if (platform !== 'win32') return undefined;
-  return { backend: 'conpty', buildNumber: Number(release.split('.')[2]) };
-}
-
-export function currentWindowsPty(): WindowsPtyInfo | undefined {
-  return windowsPtyInfo(process.platform, os.release());
-}
-
-// Prefixes that identify editor-injected environment variables.
-const EDITOR_PREFIXES = ['VSCODE_', 'CURSOR_'];
-
-/**
- * Return a copy of `parentEnv` with editor-identity vars removed so that child
- * PTY processes do not inherit them and mistakenly believe they are running
- * inside VS Code or Cursor.
- *
- * When Conduit is launched from Cursor or VS Code, the parent process injects
- * vars like TERM_PROGRAM=vscode and keys prefixed with VSCODE_ or CURSOR_ into
- * the environment. Tools running in the terminal (e.g. the Claude Code CLI)
- * inspect these vars to detect their host editor, so leaking them causes
- * incorrect editor detection. Conduit itself never reads any of these vars.
- *
- * Stripped unconditionally:
- *   - TERM_PROGRAM, TERM_PROGRAM_VERSION
- *   - All keys starting with VSCODE_ or CURSOR_
- *   - CONDUIT_SESSION_TOKEN and CONDUIT_MCP_ENDPOINT: see docs/specs/2026-10-26-conduit-mcp-cursor.md §3.2.
- *
- * Stripped conditionally (only when editor-prefix vars are present):
- *   - GIT_ASKPASS: editors inject their own askpass shim, which arrives via the
- *     VSCODE_GIT_ASKPASS_* keys. The generic GIT_ASKPASS is stripped alongside
- *     those editor keys to remove the shim path without clobbering a
- *     user-configured askpass in an otherwise clean environment.
- *
- * Everything else (PATH, HOME, user-set vars, etc.) is kept intact.
- */
-export function sanitizeChildEnv(parentEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const hasEditorVars = Object.keys(parentEnv).some((k) =>
-    EDITOR_PREFIXES.some((p) => k.startsWith(p)),
-  );
-  const result: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(parentEnv)) {
-    if (EDITOR_PREFIXES.some((p) => key.startsWith(p))) continue;
-    if (key === 'TERM_PROGRAM' || key === 'TERM_PROGRAM_VERSION') continue;
-    if (key === 'CONDUIT_SESSION_TOKEN') continue;
-    if (key === 'CONDUIT_MCP_ENDPOINT') continue;
-    if (key === 'GIT_ASKPASS' && hasEditorVars) continue;
-    result[key] = value;
-  }
-  return result;
-}
+import type { SpawnSpec } from './types';
 
 /**
  * Trailing PTY bytes kept per session to derive `lastLine`. Small on purpose: this is a
@@ -255,33 +195,4 @@ export class PtyHost {
     this.tails.clear();
     this.lastLines.clear();
   }
-}
-
-/** Default shell spec for a given working directory. */
-function defaultShellSpec(cwd: string): SpawnSpec {
-  const isWin = process.platform === 'win32';
-  const command = isWin
-    ? process.env.ComSpec || 'powershell.exe'
-    : process.env.SHELL || '/bin/bash';
-  // $SHELL is the user's login shell, so -l/-i is safe here and makes the
-  // fallback source profile files just like the detected shells (see shells.ts) —
-  // except sh/dash/ash (busybox, Alpine minimal images), which reject -l and have
-  // no profile to source, same reason shells.ts's own sh candidate carries no args.
-  const noLogin = isWin || /^(sh|dash|ash)$/.test(path.basename(command));
-  return { command, args: noLogin ? [] : ['-i', '-l'], cwd };
-}
-
-/**
- * Decide what to launch in a session's terminal: its resolved definition in its folder, or a
- * plain shell when there is none; `fallbackCwd` when the requested cwd is missing or gone.
- * The caller resolves the definition (effectiveDef, spec 2026-10-27-conduit-mcp-control-tools §3.3).
- */
-export function resolveLaunchSpec(
-  def: AgentDefinition | undefined,
-  cwd: string | undefined,
-  cwdExists: (p: string) => boolean,
-  fallbackCwd: string,
-): SpawnSpec {
-  const dir = cwd && cwdExists(cwd) ? cwd : fallbackCwd;
-  return def ? { command: def.command, args: [...def.args], cwd: dir } : defaultShellSpec(dir);
 }
