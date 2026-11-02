@@ -1,0 +1,269 @@
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { disposeHarnesses, harness, isFault } from '../../server/domain/testing/fakes';
+import { APP_SESSION_FIELDS, type ServerSettings } from '../../src/contracts/server-protocol';
+
+const read = (dir: string, name: string) => readFileSync(join(dir, name), 'utf8');
+const json = (dir: string, name: string) => JSON.parse(read(dir, name));
+afterEach(disposeHarnesses);
+
+const v051Settings = (settings: Record<string, unknown>) =>
+  JSON.stringify({ version: 1, settings });
+
+describe('server domain: server settings', () => {
+  it('seeds server-settings.json once from v0.51 settings.json, server keys only', async () => {
+    const h = harness({
+      files: {
+        'settings.json': v051Settings({
+          trackCwd: false,
+          theme: 'light',
+          autoResumeOnLimit: 'offer',
+        }),
+      },
+    });
+    const file = json(h.userData, 'server-settings.json');
+    expect(file.version).toBe(1);
+    expect(file.settings.trackCwd).toBe(false);
+    expect(file.settings.autoResumeOnLimit).toBe('offer');
+    expect('theme' in file.settings).toBe(false);
+
+    // Seeded once: a later settings.json never overrides the server's own file.
+    writeFileSync(join(h.userData, 'settings.json'), v051Settings({ trackCwd: true }));
+    h.domain.dispose();
+    const again = harness({ userData: h.userData });
+    expect(again.domain.settings().trackCwd).toBe(false);
+  });
+
+  it('patches key-scoped and coerced, writes the file and emits serverSettings.changed', async () => {
+    const h = harness();
+    const r = (await h.call('serverSettings.patch', {
+      patch: { trackCwd: false, theme: 'dark', autoResumeOnLimit: 'bogus' },
+    })) as { settings: ServerSettings };
+    expect(r.settings.trackCwd).toBe(false);
+    expect(r.settings.autoResumeOnLimit).toBe('arm');
+    expect('theme' in r.settings).toBe(false);
+    expect(json(h.userData, 'server-settings.json').settings.trackCwd).toBe(false);
+    const changed = h.events.filter((e) => e.type === 'serverSettings.changed');
+    expect(changed).toEqual([{ type: 'serverSettings.changed', data: { settings: r.settings } }]);
+    // Never the app's settings.json.
+    expect(existsSync(join(h.userData, 'settings.json'))).toBe(false);
+  });
+
+  it('backs up a corrupt server-settings.json, logs it, then seeds', async () => {
+    const corrupt = '{ not json';
+    const h = harness({
+      files: {
+        'server-settings.json': corrupt,
+        'settings.json': v051Settings({ trackCwd: false }),
+      },
+    });
+    expect(read(h.userData, 'server-settings.corrupt.json')).toBe(corrupt);
+    expect(json(h.userData, 'server-settings.json')).toMatchObject({
+      version: 1,
+      settings: { trackCwd: false },
+    });
+    expect(h.logs.some((l) => l.includes('server-settings.json is corrupt'))).toBe(true);
+  });
+
+  it('keeps the first corrupt backup when a later corruption is re-seeded', async () => {
+    const h = harness({
+      files: { 'server-settings.json': '{ second', 'server-settings.corrupt.json': '{ first' },
+    });
+    expect(read(h.userData, 'server-settings.corrupt.json')).toBe('{ first');
+    expect(json(h.userData, 'server-settings.json').version).toBe(1);
+  });
+
+  it('never overwrites a corrupt server-settings.json whose backup failed', async () => {
+    const corrupt = '{ not json';
+    const userData = mkdtempSync(join(tmpdir(), 'conduit-w4-backup-'));
+    try {
+      writeFileSync(join(userData, 'server-settings.json'), corrupt);
+      // A directory in the backup's place makes the backup write fail.
+      mkdirSync(join(userData, 'server-settings.corrupt.json', 'x'), { recursive: true });
+      const h = harness({ userData });
+      await h.call('serverSettings.patch', { patch: { trackCwd: false } });
+      expect(read(userData, 'server-settings.json')).toBe(corrupt);
+      expect(h.logs.some((l) => l.includes('backup failed'))).toBe(true);
+      h.domain.dispose();
+    } finally {
+      rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    }
+  });
+
+  it('refuses to overwrite a newer server-settings.json', async () => {
+    const newer = JSON.stringify({ version: 99, settings: { trackCwd: false } });
+    const h = harness({ files: { 'server-settings.json': newer } });
+    await h.call('serverSettings.patch', { patch: { trackCwd: true } });
+    expect(read(h.userData, 'server-settings.json')).toBe(newer);
+  });
+});
+
+describe('server domain: persisted formats', () => {
+  it('never overwrites a newer sessions.json, timed-messages.json or projects.json', async () => {
+    const files = {
+      'sessions.json': JSON.stringify({ version: 99, sessions: [] }),
+      'timed-messages.json': JSON.stringify({ version: 99, schedules: [] }),
+      'projects.json': JSON.stringify({ version: 99, projects: [] }),
+    };
+    const h = harness({ files });
+    h.domain.adopted([]);
+    const id = await h.create();
+    await h.call('sessions.start', { sessionId: id });
+    await h.call('timers.set', {
+      schedule: { sessionId: id, message: 'x', trigger: { kind: 'in', delayMs: 3_600_000 } },
+    });
+    await expect(h.call('projects.create', { name: 'P', requestId: 1 })).rejects.toSatisfy(
+      (e: unknown) => isFault(e, 'unavailable'),
+    );
+    await h.domain.persist();
+    for (const [name, text] of Object.entries(files)) expect(read(h.userData, name)).toBe(text);
+  });
+
+  it('blocks launcher writes on a newer launchers.json', async () => {
+    const newer = JSON.stringify({ version: 99, usage: {}, custom: [] });
+    const h = harness({ files: { 'launchers.json': newer } });
+    await h.create();
+    await h.call('launchers.addCustom', { commandLine: 'node --version', requestId: 1 });
+    await h.domain.persist();
+    expect(read(h.userData, 'launchers.json')).toBe(newer);
+  });
+
+  it('restoreSessions:false keeps live and unconfirmed sessions with their lastGeneration, drops the rest', async () => {
+    const a = harness({
+      files: {
+        'server-settings.json': JSON.stringify({
+          version: 1,
+          settings: { restoreSessions: false },
+        }),
+      },
+    });
+    a.domain.adopted([]);
+    const liveId = await a.create();
+    const idle = await a.create();
+    const unconfirmed = await a.create();
+    await a.call('sessions.start', { sessionId: liveId });
+    a.runtime.fire({
+      type: 'unconfirmed',
+      sessionId: unconfirmed,
+      generation: 1,
+      launchId: 'b'.repeat(32),
+    });
+    await a.domain.persist();
+    const ids = json(a.userData, 'sessions.json').sessions.map((s: { id: string }) => s.id);
+    expect(ids.sort()).toEqual([liveId, unconfirmed].sort());
+    expect(ids).not.toContain(idle);
+
+    // A restart reopens only what reconcile adopted or left unconfirmed.
+    a.domain.dispose();
+    const b = harness({ userData: a.userData, reconciled: false });
+    b.runtime.fire({
+      type: 'unconfirmed',
+      sessionId: unconfirmed,
+      generation: 1,
+      launchId: 'b'.repeat(32),
+    });
+    const terminal = b.runtime.live(liveId, 1, 'c'.repeat(32), { cols: 80, rows: 24 });
+    b.domain.adopted([
+      {
+        ...terminal,
+        labels: {
+          'conduit.session': liveId,
+          'conduit.instance': 'inst',
+          'conduit.generation': '1',
+          'conduit.launch': 'c'.repeat(32),
+          'conduit.role': 'session',
+        },
+      },
+    ]);
+    const views = b.domain.snapshot().sessions;
+    expect(views.map((s) => s.id).sort()).toEqual([liveId, unconfirmed].sort());
+    expect(views.find((s) => s.id === liveId)).toMatchObject({
+      status: 'running',
+      runtime: { spawn: 'live', generation: 1 },
+    });
+    expect(views.find((s) => s.id === unconfirmed)?.runtime.spawn).toBe('unconfirmed');
+    expect(b.domain.sessions.allocateLaunch(liveId).generation).toBe(2);
+  });
+
+  it('sends views without the app fields or the launch counter', async () => {
+    const h = harness();
+    const id = await h.create();
+    await h.call('sessions.start', { sessionId: id });
+    const record = h.domain.sessions.get(id);
+    expect(record).toHaveProperty('lastGeneration', 1);
+    // SessionManager's imported repo logic writes these on the shared record.
+    if (record) Object.assign(record, { repoPinned: false, repos: [], autoRepoRoot: h.home });
+    const view = h.domain.snapshot().sessions.find((s) => s.id === id) ?? {};
+    for (const k of [...APP_SESSION_FIELDS, 'lastGeneration']) expect(k in view).toBe(false);
+  });
+
+  it('restoreSessions:true reopens every session as stale', async () => {
+    const a = harness();
+    const id = await a.create();
+    await a.domain.persist();
+    a.domain.dispose();
+    const b = harness({ userData: a.userData });
+    expect(b.domain.snapshot().sessions.map((s) => [s.id, s.status])).toEqual([[id, 'stale']]);
+  });
+});
+
+describe('server domain: folder health', () => {
+  it('rechecks on a ui.presence focus change and on folders.suspect for own folders only', async () => {
+    const h = harness();
+    const root = join(h.userData, 'root');
+    mkdirSync(root);
+    const id = await h.create({ roots: [root] });
+    expect(h.domain.sessions.get(id)?.roots).toEqual([root]);
+    // relaunch awaits the create's own health check, which would otherwise answer the next one.
+    await h.call('sessions.relaunch', { sessionIds: [id] });
+    rmSync(root, { recursive: true });
+
+    await h.domain.handle({ method: 'folders.suspect', params: { sessionId: id, path: root } });
+    await vi.waitFor(() => expect(h.domain.sessions.get(id)?.missingRoots).toEqual([root]));
+
+    mkdirSync(root);
+    const presence = (focused: boolean) => [
+      { windowId: 1, focused, ready: true, visibleSessionIds: [id], ownedSessionIds: [id] },
+    ];
+    h.domain.presence(presence(false));
+    h.domain.presence(presence(true));
+    await vi.waitFor(() => expect(h.domain.sessions.get(id)?.missingRoots).toBeUndefined());
+  });
+
+  it('rechecks a session the focused window newly shows', async () => {
+    const h = harness();
+    const home = join(h.userData, 'proj');
+    mkdirSync(home);
+    const id = await h.create({ home });
+    await h.call('sessions.relaunch', { sessionIds: [id] });
+    rmSync(home, { recursive: true });
+    await h.domain.handle({ method: 'folders.suspect', params: { sessionId: id, path: home } });
+    await vi.waitFor(() => expect(h.domain.sessions.get(id)?.homeMissing).toBe(true));
+    const win = (visibleSessionIds: string[]) => [
+      { windowId: 3, focused: true, ready: true, visibleSessionIds, ownedSessionIds: [id] },
+    ];
+    h.domain.presence(win([]));
+    mkdirSync(home);
+    h.domain.presence(win([id]));
+    await vi.waitFor(() => expect(h.domain.sessions.get(id)?.homeMissing).toBeUndefined());
+  });
+
+  it('a home that came back clears on the focus recheck', async () => {
+    const h = harness();
+    const home = join(h.userData, 'proj');
+    mkdirSync(home);
+    const id = await h.create({ home });
+    // relaunch awaits the create's own health check, which would otherwise answer the next one.
+    await h.call('sessions.relaunch', { sessionIds: [id] });
+    rmSync(home, { recursive: true });
+    await h.domain.handle({ method: 'folders.suspect', params: { sessionId: id, path: home } });
+    await vi.waitFor(() => expect(h.domain.sessions.get(id)?.homeMissing).toBe(true));
+    mkdirSync(home);
+    h.domain.presence([
+      { windowId: 2, focused: true, ready: true, visibleSessionIds: [id], ownedSessionIds: [id] },
+    ]);
+    await vi.waitFor(() => expect(h.domain.sessions.get(id)?.homeMissing).toBeUndefined());
+  });
+});
