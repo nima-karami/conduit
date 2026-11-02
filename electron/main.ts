@@ -1645,7 +1645,12 @@ app.whenReady().then(() => {
         ...(opts.brief ? { brief: opts.brief } : {}),
       });
       assignOwner(sessionOwner, r.sessionId, ownerWindowId);
-      rememberOpen(agentId, home, opts.roots ?? [], r.droppedRoots ?? []);
+      rememberOpen(
+        agentId,
+        home,
+        opts.roots ?? [],
+        (r.droppedRoots ?? []).map((d) => d.path),
+      );
       postState();
       schedulePresence();
       return r;
@@ -1816,11 +1821,7 @@ app.whenReady().then(() => {
         ...(m.cardId ? { cardId: m.cardId } : {}),
         ...(m.brief !== undefined ? { brief: m.brief } : {}),
       });
-      // C2 carries the dropped paths without their reasons; the toast names only the path.
-      answer({
-        sessionId: r.sessionId,
-        droppedRoots: (r.droppedRoots ?? []).map((p) => ({ path: p, reason: 'invalid-path' })),
-      });
+      answer({ sessionId: r.sessionId, droppedRoots: r.droppedRoots ?? [] });
     } catch (err) {
       const error = openRepoErrorOf(err);
       if (!error) throw err;
@@ -2460,8 +2461,11 @@ app.whenReady().then(() => {
               ),
             dirname: path.dirname,
             ops: {
+              // Locate replaces a missing home; it doesn't keep it as a root (session-ops keepOldHome).
               setHome: (sessionId, p) =>
-                mutateSession(sessionId, { op: 'setHome', path: p }).then(opResultOf),
+                mutateSession(sessionId, { op: 'setHome', path: p, keepOldHome: false }).then(
+                  opResultOf,
+                ),
               replaceRoot: (sessionId, from, to) =>
                 mutateSession(sessionId, { op: 'replaceRoot', from, to }).then(opResultOf),
             },
