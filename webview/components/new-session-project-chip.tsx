@@ -52,7 +52,7 @@ export function NewSessionProjectChip({
           aria-expanded={menu !== null}
           onClick={toggle}
         >
-          No project
+          No space
           <IconChevronDown size={10} className="ns-chip__caret" aria-hidden />
         </button>
       ) : (
@@ -61,7 +61,7 @@ export function NewSessionProjectChip({
             ref={bodyRef}
             type="button"
             className="ns-chip__body"
-            aria-label={`Project: ${name}`}
+            aria-label={`Space: ${name}`}
             aria-haspopup="menu"
             aria-expanded={menu !== null}
             onClick={toggle}
@@ -78,15 +78,15 @@ export function NewSessionProjectChip({
           <button
             type="button"
             className="ns-chip__remove"
-            aria-label="Remove from project"
-            title="Remove from project"
+            aria-label="Remove from Space"
+            title="Remove from Space"
             onClick={() => onSet(null)}
           >
             ×
           </button>
         </div>
       )}
-      {error && <span className="ns-chip__error">Couldn't create project</span>}
+      {error && <span className="ns-chip__error">Couldn't create space</span>}
       {menu && (
         <ProjectMenu
           anchor={menu}
@@ -144,7 +144,7 @@ function ProjectMenu({
       anchor={anchor}
       align="start"
       role="menu"
-      aria-label="Project"
+      aria-label="Space"
       className="ctxmenu ns-projects"
       triggerRef={triggerRef}
       onClose={onClose}
@@ -157,7 +157,7 @@ function ProjectMenu({
         className="ctxmenu__item"
         onClick={() => onSet(null)}
       >
-        No project
+        No space
       </button>
       {ordered.map((p) => (
         <button
@@ -188,7 +188,7 @@ function ProjectMenu({
           className="ctxmenu__item ns-projects__new"
           onClick={() => setNaming(true)}
         >
-          + New project…
+          + New space…
         </button>
       )}
     </Popover>
@@ -212,8 +212,8 @@ function NewProjectInput({
     <input
       ref={inputRef}
       className="ns-input ns-projects__input"
-      aria-label="Project name"
-      placeholder="Project name"
+      aria-label="Space name"
+      placeholder="Space name"
       maxLength={200}
       value={draft}
       onChange={(e) => setDraft(e.target.value)}

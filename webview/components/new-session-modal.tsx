@@ -224,7 +224,7 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
           REPLY_TIMEOUT_MS,
         );
         if (created?.type !== 'project:created') {
-          dispatch({ type: 'startFailed', reason: "couldn't create project", project: true });
+          dispatch({ type: 'startFailed', reason: "couldn't create space", project: true });
           return;
         }
         projectId = created.id;

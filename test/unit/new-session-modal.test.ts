@@ -425,8 +425,8 @@ describe('NewSessionModal', () => {
     };
     await render({ home: '/w/a' }, ctx({ active, sessions: [active] }));
     expect(q('.ns-chip__body')?.textContent).toBe('in RMB pipeline');
-    await click(q('button[aria-label="Remove from project"]'));
-    expect(q('.ns-chip--none')?.textContent).toBe('No project');
+    await click(q('button[aria-label="Remove from Space"]'));
+    expect(q('.ns-chip--none')?.textContent).toBe('No space');
     await answerProbes();
     await answerBriefPreview();
     await answerPreview();
@@ -442,7 +442,7 @@ describe('NewSessionModal', () => {
       (b) => b.textContent === 'RMB pipeline',
     );
     await click(item);
-    expect(q('.ns-chip__body')?.getAttribute('aria-label')).toBe('Project: RMB pipeline');
+    expect(q('.ns-chip__body')?.getAttribute('aria-label')).toBe('Space: RMB pipeline');
     await answerProbes();
     await answerBriefPreview();
     await answerPreview();
@@ -454,7 +454,7 @@ describe('NewSessionModal', () => {
     await render({ home: '/w/a' });
     await click(q('.ns-chip--none'));
     await click(q('.ns-projects__new'));
-    const input = q<HTMLInputElement>('input[aria-label="Project name"]');
+    const input = q<HTMLInputElement>('input[aria-label="Space name"]');
     await type(input, '  Fresh one ');
     await key(input, 'Enter');
     expect(q('.ns-chip--pending .ns-chip__body')?.textContent).toBe('in Fresh one');
@@ -473,24 +473,24 @@ describe('NewSessionModal', () => {
     await render({ home: '/w/a' });
     await click(q('.ns-chip--none'));
     await click(q('.ns-projects__new'));
-    const input = q<HTMLInputElement>('input[aria-label="Project name"]');
+    const input = q<HTMLInputElement>('input[aria-label="Space name"]');
     await type(input, 'Half typed');
     await key(input, 'Escape');
-    expect(q('input[aria-label="Project name"]')).toBeNull();
+    expect(q('input[aria-label="Space name"]')).toBeNull();
     expect(q('.ns-projects')).not.toBeNull();
     expect(document.activeElement).toBe(q('.ns-projects__new'));
     expect(q('.ns-chip--pending')).toBeNull();
     expect(q('.modal.ns')).not.toBeNull();
     expect(onClose).not.toHaveBeenCalled();
     await click(q('.ns-projects__new'));
-    expect(q<HTMLInputElement>('input[aria-label="Project name"]')?.value).toBe('');
+    expect(q<HTMLInputElement>('input[aria-label="Space name"]')?.value).toBe('');
   });
 
   it('a failed project:create marks the chip and posts no openRepo', async () => {
     await render({ home: '/w/a' });
     await click(q('.ns-chip--none'));
     await click(q('.ns-projects__new'));
-    const input = q<HTMLInputElement>('input[aria-label="Project name"]');
+    const input = q<HTMLInputElement>('input[aria-label="Space name"]');
     await type(input, 'Fresh');
     await key(input, 'Enter');
     await answerProbes();
@@ -504,7 +504,7 @@ describe('NewSessionModal', () => {
       ok: false,
       reason: 'store-unavailable',
     });
-    expect(q('.ns-chip__error')?.textContent).toBe("Couldn't create project");
+    expect(q('.ns-chip__error')?.textContent).toBe("Couldn't create space");
     expect(postedOf('openRepo')).toHaveLength(0);
   });
 
