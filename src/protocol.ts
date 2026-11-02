@@ -15,8 +15,8 @@ import type {
 } from './conduit-mcp/ui-types';
 import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-search';
 import type { DisplayFacts } from './contracts/frames';
-import type { ServerSettings } from './contracts/server-protocol';
-import type { DroppedRoot, SessionOpReason } from './folder-validation';
+import type { RuntimeHealth, ServerSettings } from './contracts/server-protocol';
+import type { DroppedRoot, SessionOpReason as FolderSessionOpReason } from './folder-validation';
 import type { GitFailure } from './git-exec';
 import type { RefEndpoint } from './git-range';
 import type { LauncherDTO } from './launchers';
@@ -416,9 +416,27 @@ export interface AboutInfo {
   e2e: boolean;
 }
 
+export type SessionOpReason = FolderSessionOpReason | 'server-unavailable';
 export type LocateReason = SessionOpReason | 'cancelled';
 
+// ServerLifecycleState minus `hello`, kept here because the renderer can't import electron/
+// (W7 plan, Slice 4); main.ts assigns one to the other, so a drift fails typecheck.
+export type ServerUiState = (
+  | { state: 'connecting' }
+  | { state: 'connected' }
+  | { state: 'reconnecting' }
+  | {
+      state: 'unavailable';
+      reason: 'exhausted' | 'hello-timeout' | 'restart-wait-timeout' | 'start-failed';
+      logPath: string;
+      detail?: string;
+    }
+  | { state: 'downgrade'; serverVersion: string }
+  | { state: 'stopped'; reason: string; logPath: string }
+) & { runtime?: RuntimeHealth };
+
 export type HostToWebview =
+  | { type: 'server:state'; state: ServerUiState }
   | {
       type: 'state';
       agents: AgentDefinition[];
@@ -763,7 +781,12 @@ export type HostToWebview =
   // Posted after the `state` that carries the new launcher, so its id is already in `agents`.
   | { type: 'launcher:added'; requestId: number; id?: string; error?: string }
   | { type: 'folder:picked'; requestId: number; path: string | null }
-  | { type: 'folder:probeResult'; requestId: number; results: FolderProbeResult[] }
+  | {
+      type: 'folder:probeResult';
+      requestId: number;
+      results: FolderProbeResult[];
+      error?: 'server-unavailable';
+    }
   | { type: 'fs:osClipboardResult'; requestId: number; ok: true }
   | {
       type: 'fs:osClipboardResult';
@@ -785,7 +808,7 @@ export type HostToWebview =
       requestId: number;
       sessionId?: string;
       droppedRoots: DroppedRoot[];
-      error?: 'home-missing' | 'invalid-path' | 'unknown-agent' | BriefError;
+      error?: 'home-missing' | 'invalid-path' | 'unknown-agent' | 'server-unavailable' | BriefError;
     }
   | { type: 'brief:probed'; requestId: number; ok: boolean; bytes?: number; error?: BriefError }
   | {
@@ -1223,7 +1246,14 @@ export type WebviewToHost =
   // Replies to `confirmQuit`, each disarming one guard timeout (dirty-quit-guard spec §2).
   | { type: 'quitAck'; requestId: number }
   | { type: 'quitDialogShown'; requestId: number }
-  | { type: 'quitDecision'; requestId: number; proceed: boolean }
+  | { type: 'quitDecision'; requestId: number; proceed: boolean; stopAgents?: boolean }
+  | { type: 'server:retry' }
+  | { type: 'server:restartService' }
+  | { type: 'server:stopAllAndContinue' }
+  // The palette's "Quit and stop all agents": a quit through the close guard that ends in stopAll.
+  | { type: 'app:quitAndStopAgents' }
+  | { type: 'session:retryLaunch'; sessionId: string }
+  | { type: 'session:discardLaunch'; sessionId: string }
   // D11: cheap existence check for terminal path-link validation. The host replies with
   // `pathExistsResult`. This is a read-only check (no write surface); the host uses
   // fs.existsSync without workspace-containment validation because the renderer can

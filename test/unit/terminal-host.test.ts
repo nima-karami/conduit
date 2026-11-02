@@ -123,6 +123,25 @@ describe('terminal-host', () => {
     ]);
   });
 
+  it('retryLaunch on a mounted pane takes the start path with sessions.retryLaunch', async () => {
+    const r = rig([{ ok: false, refusal: { reason: 'home-missing' } }, live()]);
+    await r.host.start(START);
+    r.trace.length = 0;
+    await r.host.retryLaunch('s1');
+    expect(r.trace).toEqual([
+      'notify:term.resize',
+      'call:sessions.retryLaunch',
+      `attach:${APP_ATTACH_HISTORY_LINES}`,
+      'data:SCREEN:replay',
+    ]);
+  });
+
+  it('retryLaunch with no pane only asks the server', async () => {
+    const r = rig([live()]);
+    await r.host.retryLaunch('s1');
+    expect(r.trace).toEqual(['call:sessions.retryLaunch']);
+  });
+
   it('cold start writes term.show then prelude as term:data{replay} then attaches', async () => {
     const r = rig([live({ spawned: true, prelude: paint('HISTORY') })], { firstPaint: '' });
     const started = r.host.start(START);

@@ -1,7 +1,9 @@
 import { folderKey } from './folder-key';
-import type { LocateReason } from './protocol';
-import type { SessionOpResult } from './session-ops';
+import type { LocateReason, SessionOpReason } from './protocol';
 import type { Session } from './types';
+
+// The app's ops answer with C2's session:opResult reasons, which include 'server-unavailable'.
+type OpResult = { ok: true } | { ok: false; reason: SessionOpReason };
 
 export interface LocateDeps {
   get: (sessionId: string) => Session | undefined;
@@ -9,8 +11,8 @@ export interface LocateDeps {
   isDir: (p: string) => Promise<boolean>;
   dirname: (p: string) => string;
   ops: {
-    setHome: (sessionId: string, path: string, keepOldHome: boolean) => Promise<SessionOpResult>;
-    replaceRoot: (sessionId: string, oldPath: string, newPath: string) => Promise<SessionOpResult>;
+    setHome: (sessionId: string, path: string, keepOldHome: boolean) => Promise<OpResult>;
+    replaceRoot: (sessionId: string, oldPath: string, newPath: string) => Promise<OpResult>;
   };
 }
 

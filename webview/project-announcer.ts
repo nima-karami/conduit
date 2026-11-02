@@ -1,5 +1,6 @@
 import type { Project } from '../src/types';
 import { requestHost } from './host-request';
+import { SERVICE_UNAVAILABLE_COPY } from './server-unavailable';
 
 // The live region's text for mf-sidebar spec AC 14. One module so every surface that moves or
 // deletes a project announces through the same polite region in the sidebar.
@@ -51,7 +52,11 @@ export const projectAnnouncer = {
     ).then((reply) => {
       if (!reply) return;
       announce(
-        reply.ok ? `Moved ${text.session} to ${text.target}` : `Couldn't move ${text.session}`,
+        reply.reason === 'server-unavailable'
+          ? SERVICE_UNAVAILABLE_COPY
+          : reply.ok
+            ? `Moved ${text.session} to ${text.target}`
+            : `Couldn't move ${text.session}`,
       );
     });
   },

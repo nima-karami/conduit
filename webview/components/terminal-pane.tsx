@@ -16,7 +16,7 @@ import { classifyLinkUri, dispatchLinkUri, type LinkUriSinks } from '../../src/l
 import { isAncestorOf } from '../../src/owning-session';
 import type { ResolveRoot } from '../../src/path-link-roots';
 import type { PathCandidate, TokenResolution } from '../../src/path-resolve';
-import type { HostToWebview, TermGeometry } from '../../src/protocol';
+import type { HostToWebview, ServerUiState, TermGeometry } from '../../src/protocol';
 import { withTimeout } from '../../src/with-timeout';
 import {
   logToHost,
@@ -224,6 +224,7 @@ export function TerminalPane({
   cwd,
   rootsSig,
   visible,
+  serverState,
   onOpenFile,
   onRevealFolder,
   onOpenCommitReview,
@@ -240,6 +241,7 @@ export function TerminalPane({
    *  discovery misses at once. Mirrored into a ref, never an effect dep. */
   rootsSig: string;
   visible: boolean;
+  serverState: ServerUiState;
   /** Called when a file path link is clicked: absolute path + optional position +
    * this pane's session id, so the doc opens in the session whose terminal was clicked
    * (not the globally-active one — they differ in split view / same-folder sessions). */
@@ -1575,6 +1577,11 @@ export function TerminalPane({
           }
         }}
       />
+      {serverState.state !== 'connected' && (
+        <div className="term-paused" role="status">
+          <span className="term-paused__label">Reconnecting — input paused</span>
+        </div>
+      )}
       {!following && (
         <button
           type="button"

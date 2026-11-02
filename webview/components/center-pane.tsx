@@ -4,7 +4,13 @@ import type { AgentCli } from '../../src/conduit-mcp/install-types';
 import type { McpNotConnected } from '../../src/conduit-mcp/ui-types';
 import { inputBoxPrompt } from '../../src/input-box-rows';
 import { rootsSigOf } from '../../src/path-link-roots';
-import type { FileContentDTO, FileDiffDTO, RepoChanges, RepoDTO } from '../../src/protocol';
+import type {
+  FileContentDTO,
+  FileDiffDTO,
+  RepoChanges,
+  RepoDTO,
+  ServerUiState,
+} from '../../src/protocol';
 import { historyRepoFor, orderRepos } from '../../src/repo-display';
 import type { RepoInfo } from '../../src/repo-scan';
 import { effectiveDef } from '../../src/session-command';
@@ -123,6 +129,9 @@ export function CenterPane({
   mcpNotConnected,
   mcpEnabled,
   onOpenMcpSettings,
+  serverState,
+  onRetryLaunch,
+  onDiscardLaunch,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -223,6 +232,9 @@ export function CenterPane({
   mcpNotConnected: Readonly<Record<string, McpNotConnected>>;
   mcpEnabled: boolean;
   onOpenMcpSettings: (cli: AgentCli) => void;
+  serverState: ServerUiState;
+  onRetryLaunch: (sessionId: string) => void;
+  onDiscardLaunch: (sessionId: string) => void;
 }) {
   const [compareOpen, setCompareOpen] = useState(false);
   const saveStatuses = useFileSaveStatuses();
@@ -236,7 +248,28 @@ export function CenterPane({
       setFocusRelaunchFor(null);
     }
   };
-  const running = sessions.filter((s) => s.status === 'running');
+  // An exited session keeps the pane it ran in, so its last output and exit line stay readable. A
+  // pane is never mounted fresh for one: its term:start would make sessions.start spawn it again.
+  const keptPanes = useRef(new Set<string>());
+  // Restarting an exited session doesn't bump restartSeq: the server relies on a fresh pane's
+  // term:start to spawn it, so each exited → running seen here is a new pane key.
+  const runs = useRef(new Map<string, { n: number; exited: boolean }>());
+  const runOf = (s: Session) => {
+    const r = runs.current.get(s.id);
+    return (r?.n ?? 0) + (r?.exited && s.status === 'running' ? 1 : 0);
+  };
+  const paneKeyOf = (s: Session) => `${s.id}:${s.restartSeq ?? 0}:${runOf(s)}`;
+  const mountedPanes = sessions.filter(
+    (s) => s.status === 'running' || (s.status === 'exited' && keptPanes.current.has(paneKeyOf(s))),
+  );
+  // After commit, so only a pane that really mounted is kept, and renders stay pure.
+  useLayoutEffect(() => {
+    keptPanes.current = new Set(mountedPanes.map(paneKeyOf));
+    runs.current = new Map(
+      sessions.map((s) => [s.id, { n: runOf(s), exited: s.status === 'exited' }]),
+    );
+  });
+  const exitedCard = (s: Session) => s.status === 'exited' && !s.homeMissing && !s.startRefusal;
   const groupOne = layout.groups[0];
   // A layout effect: the terminal stack is shown in this same commit, and xterm cannot take focus
   // while it is display:none.
@@ -346,7 +379,7 @@ export function CenterPane({
     // Terminals stay mounted (hidden while a doc tab is active) so the PTY survives. Split mode
     // shows the active + split sessions side by side.
     <div className="termstack" style={{ display: groupOne.activeDocId !== null ? 'none' : 'flex' }}>
-      {running.map((s) => {
+      {mountedPanes.map((s) => {
         const isSplit = s.id === splitId && s.id !== activeId;
         const visible = s.id === activeId || isSplit;
         return (
@@ -364,6 +397,51 @@ export function CenterPane({
               </div>
             )}
             <div className="termhost__body">
+              {s.runtime?.spawn === 'unconfirmed' && (
+                <div className="launch-banner">
+                  <div className="launch-banner__msg" role="status" aria-live="polite">
+                    Conduit couldn't confirm this agent started. It may still come up on its own.
+                  </div>
+                  <div className="launch-banner__actions">
+                    <button
+                      type="button"
+                      className="btn btn--primary"
+                      disabled={serverState.state !== 'connected'}
+                      onClick={() => onRetryLaunch(s.id)}
+                    >
+                      Retry launch
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={serverState.state !== 'connected'}
+                      onClick={() => onDiscardLaunch(s.id)}
+                    >
+                      Discard
+                    </button>
+                  </div>
+                </div>
+              )}
+              {exitedCard(s) && (
+                <div className="exit-banner">
+                  <div className="exit-banner__msg" role="status" aria-live="polite">
+                    Process exited
+                  </div>
+                  <div className="exit-banner__actions">
+                    {onOpenTimedMessages && (
+                      <WaitingLine sessionId={s.id} onOpen={() => onOpenTimedMessages(s.id)} />
+                    )}
+                    <button
+                      type="button"
+                      ref={s.id === activeId ? relaunchRef : undefined}
+                      className="btn btn--primary"
+                      onClick={() => onRelaunch(s.id)}
+                    >
+                      ↻ Restart
+                    </button>
+                  </div>
+                </div>
+              )}
               <AgentScopeBanner session={s} />
               <McpSetupBanner
                 session={s}
@@ -372,12 +450,13 @@ export function CenterPane({
                 onOpenMcpSettings={onOpenMcpSettings}
               />
               <TerminalPane
-                key={`${s.id}:${s.restartSeq ?? 0}`}
+                key={paneKeyOf(s)}
                 sessionId={s.id}
                 agentId={s.agentId}
                 cwd={s.cwd ?? s.home}
                 rootsSig={rootsSigOf(s)}
                 visible={visible && groupOne.activeDocId === null}
+                serverState={serverState}
                 onOpenFile={onOpenFileAt}
                 onRevealFolder={onRevealFolder}
                 onOpenCommitReview={onOpenCommitReview}
@@ -422,7 +501,7 @@ export function CenterPane({
           )}
         </div>
       )}
-      {active && active.status === 'exited' && !active.homeMissing && !active.startRefusal && (
+      {active && exitedCard(active) && !mountedPanes.includes(active) && (
         <div className="session-stale">
           <p className="session-stale__title">Process exited</p>
           <button

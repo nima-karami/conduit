@@ -640,6 +640,7 @@ function mockHost(msg: WebviewToHost) {
   if (msg.type === 'ready') {
     setTimeout(() => {
       emit(mockState());
+      emit({ type: 'server:state', state: { state: 'connected' } });
       // Opens the mark controls' load gate in the preview shell (§4: they stay disabled until the
       // first review:marks arrives).
       emit({ type: 'review:marks', repos: [] });
@@ -664,6 +665,20 @@ function mockHost(msg: WebviewToHost) {
     }, 20);
     return;
   }
+  if (
+    msg.type === 'server:retry' ||
+    msg.type === 'server:restartService' ||
+    msg.type === 'server:stopAllAndContinue'
+  ) {
+    emit({ type: 'server:state', state: { state: 'connected' } });
+    return;
+  }
+  if (
+    msg.type === 'session:retryLaunch' ||
+    msg.type === 'session:discardLaunch' ||
+    msg.type === 'app:quitAndStopAgents'
+  )
+    return;
   if (msg.type === 'mcp:thread:get') {
     setTimeout(() => emit({ type: 'mcp:thread', requestId: msg.requestId, thread: null }), 5);
     return;

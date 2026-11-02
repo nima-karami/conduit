@@ -57,6 +57,17 @@ export function serverDownReply(m: WebviewToHost, error: unknown): HostToWebview
       return { type: 'launcher:added', requestId, error: error.message };
     case 'project:create':
       return { type: 'project:opResult', requestId, ok: false, reason: 'store-unavailable' };
+    case 'openRepo':
+      return { type: 'openRepo:result', requestId, droppedRoots: [], error: 'server-unavailable' };
+    case 'folder:probe':
+      return { type: 'folder:probeResult', requestId, results: [], error: 'server-unavailable' };
+    case 'session:addRoot':
+    case 'session:removeRoot':
+    case 'session:setHome':
+    case 'session:setProject':
+      return { type: 'session:opResult', requestId, ok: false, reason: 'server-unavailable' };
+    case 'session:locateFolder':
+      return { type: 'session:locateResult', requestId, ok: false, reason: 'server-unavailable' };
     default:
       return undefined;
   }

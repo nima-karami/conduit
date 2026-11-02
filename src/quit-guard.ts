@@ -63,12 +63,24 @@ function middleEllipsize(name: string): string {
   return `${name.slice(0, room - tail)}…${name.slice(name.length - tail)}`;
 }
 
-const RUNNING_VERB: Record<Exclude<DirtyCloseReason, 'sessionMove'>, string> = {
-  quit: 'Quitting',
-  update: 'Quitting',
+// F4: a quit (or an update relaunch) leaves agents running in hc; closing a window or a session
+// still ends them.
+const STOP_VERB: Record<'windowClose' | 'sessionClose', string> = {
   windowClose: 'Closing this window',
   sessionClose: 'Closing',
 };
+
+function runningLine(
+  reason: 'quit' | 'update' | 'windowClose' | 'sessionClose',
+  running: number,
+  busy: number,
+  verb: 'will stop' | 'will also stop',
+): string {
+  const busyClause = busy > 0 ? ` (${busy} actively working)` : '';
+  if (reason === 'quit' || reason === 'update')
+    return `Your ${countNoun(running, 'agent', 'agents')}${busyClause} will keep running after Conduit closes.`;
+  return `${STOP_VERB[reason]} ${verb} ${countNoun(running, 'running agent', 'running agents')}${busyClause}.`;
+}
 
 function tagText(file: DirtyFile): { tag: string | null; danger: boolean } {
   switch (file.tag) {
@@ -96,12 +108,8 @@ export function dirtyCloseCopy(input: DirtyCloseCopyInput): DirtyCloseCopy {
     pending.length === 1 ? pending[0].name : countNoun(pending.length, 'file', 'files');
 
   const lines: string[] = [];
-  if (running > 0 && reason !== 'sessionMove') {
-    const busyClause = busy > 0 ? ` (${busy} actively working)` : '';
-    lines.push(
-      `${RUNNING_VERB[reason]} will also stop ${countNoun(running, 'running agent', 'running agents')}${busyClause}.`,
-    );
-  }
+  if (running > 0 && reason !== 'sessionMove')
+    lines.push(runningLine(reason, running, busy, 'will also stop'));
   if (reason === 'update') lines.push('Conduit will relaunch to install the update.');
   if (exitedSession !== undefined) {
     lines.push(`“${exitedSession}” has exited. Closing it closes its tabs.`);
@@ -159,26 +167,14 @@ export function busySessions(sessions: Session[]): Session[] {
 }
 
 /**
- * Build the dialog copy for the quit/close/update confirmation.
- *
- * - Quit/close: title "N session(s) still running", body "Quitting will stop them …",
- *   destructive button "Quit".
- * - Update: same body but destructive button "Relaunch & update".
- * - When busy === 0 the "(M actively working)" clause is omitted.
- * - Singular/plural handled throughout.
+ * The dialog copy for the quit/close/update confirmation: a quit or an update relaunch says the
+ * agents keep running (F4); closing a window says they stop. Destructive button "Quit", or
+ * "Relaunch & update" for an update.
  */
 export function quitConfirmCopy({ running, busy, reason }: QuitConfirmCopyInput): QuitConfirmCopy {
-  const n = running;
-  const sessionWord = n === 1 ? 'session' : 'sessions';
-  const title = `${n} ${sessionWord} still running`;
-
-  const busyClause = busy > 0 ? ` (${busy} actively working)` : '';
-  const body =
-    reason === 'update'
-      ? `This closes ${n} running agent${n === 1 ? '' : 's'}${busyClause}. They'll be restored as stale on relaunch.`
-      : `Quitting will stop ${n} running agent${n === 1 ? '' : 's'}${busyClause}.`;
-
+  const title = `${running} ${running === 1 ? 'session' : 'sessions'} still running`;
+  const line = runningLine(reason, running, busy, 'will stop');
+  const body = reason === 'update' ? `${line} Conduit will relaunch to install the update.` : line;
   const confirmLabel = reason === 'update' ? 'Relaunch & update' : 'Quit';
-
   return { title, body, confirmLabel };
 }

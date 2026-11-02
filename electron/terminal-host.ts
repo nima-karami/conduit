@@ -115,7 +115,12 @@ export function createTerminalHost(d: TerminalHostDeps) {
     held = link;
   }
 
-  async function run(sessionId: string, pane: Pane): Promise<void> {
+  /** `sessions.retryLaunch` answers like `sessions.start`, so a retry takes this same path (W7 S4). */
+  async function run(
+    sessionId: string,
+    pane: Pane,
+    method: 'sessions.start' | 'sessions.retryLaunch' = 'sessions.start',
+  ): Promise<void> {
     const c = d.client();
     if (!c || pane.starting || pane.retired) return;
     pane.starting = true;
@@ -126,9 +131,9 @@ export function createTerminalHost(d: TerminalHostDeps) {
       if (f) c.notify('term.facts', { sessionId, facts: f });
       let r: StartResult;
       try {
-        r = await c.call('sessions.start', { sessionId });
+        r = await c.call(method, { sessionId });
       } catch (error) {
-        d.log('warn', 'sessions.start failed', { sessionId, err: String(error) });
+        d.log('warn', `${method} failed`, { sessionId, err: String(error) });
         return;
       }
       if (!current(sessionId, pane)) return;
@@ -174,6 +179,22 @@ export function createTerminalHost(d: TerminalHostDeps) {
       };
       panes.set(m.sessionId, pane);
       await run(m.sessionId, pane);
+    },
+
+    /** A person's Retry launch on an unconfirmed spawn; with no mounted pane, sessionsChanged attaches. */
+    async retryLaunch(sessionId: string): Promise<void> {
+      const pane = panes.get(sessionId);
+      if (pane) {
+        await run(sessionId, pane, 'sessions.retryLaunch');
+        return;
+      }
+      const c = d.client();
+      if (!c) return;
+      try {
+        await c.call('sessions.retryLaunch', { sessionId });
+      } catch (error) {
+        d.log('warn', 'sessions.retryLaunch failed', { sessionId, err: String(error) });
+      }
     },
 
     /** D29: dropped, never buffered, while down or before the session has a generation. */

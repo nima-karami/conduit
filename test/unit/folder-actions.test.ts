@@ -58,6 +58,28 @@ const fail =
     ({ ok: false, reason }) as never;
 
 describe('FolderActions.add', () => {
+  it('server unavailable uses the banner retry message for add and locate refusals', async () => {
+    const add = harness({
+      'folder:pick': () => ({ path: '/w/api-contracts' }),
+      'session:addRoot': fail('server-unavailable'),
+    });
+    await add.actions.add();
+    expect(add.toasts).toEqual([
+      {
+        message: "Conduit's background service isn't running — Retry from the banner.",
+        variant: 'error',
+      },
+    ]);
+    const locate = harness({ 'session:locateFolder': fail('server-unavailable') });
+    await locate.actions.locate(sec());
+    expect(locate.toasts).toEqual([
+      {
+        message: "Conduit's background service isn't running — Retry from the banner.",
+        variant: 'error',
+      },
+    ]);
+  });
+
   it('add: pick → addRoot with requestId → added outcome', async () => {
     const h = harness({ 'folder:pick': () => ({ path: 'C:\\W\\Api' }), 'session:addRoot': ok });
     expect(await h.actions.add()).toEqual({ kind: 'added', key: 'c:/w/api', name: 'Api' });

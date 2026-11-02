@@ -71,11 +71,30 @@ describe('TerminalPane GPU registration', () => {
     document.body.appendChild(host);
     const r = createRoot(host);
     root = r;
-    await act(async () => r.render(<TerminalPane sessionId="s1" rootsSig="" visible />));
+    await act(async () =>
+      r.render(
+        <TerminalPane sessionId="s1" rootsSig="" visible serverState={{ state: 'connected' }} />,
+      ),
+    );
     await act(async () => r.unmount());
     root = null;
     expect(gpu.state.initThrew).toBe(true);
     expect(gpu.state.registered).toBe(gpu.state.unregistered);
+    host.remove();
+  });
+
+  it('pauses terminal input behind a reconnecting overlay', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const r = createRoot(host);
+    root = r;
+    await act(async () =>
+      r.render(
+        <TerminalPane sessionId="s1" rootsSig="" visible serverState={{ state: 'reconnecting' }} />,
+      ),
+    );
+    expect(host.textContent).toContain('Reconnecting — input paused');
+    expect(host.querySelector('[role="status"]')).not.toBeNull();
     host.remove();
   });
 });
