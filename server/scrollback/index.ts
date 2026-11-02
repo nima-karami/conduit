@@ -84,6 +84,11 @@ export class ServerScrollback implements ScrollbackPort {
     this.append(sessionId, GAP_MARKER + paint, size);
   }
 
+  /** Ends the current segment even if nothing follows: a cold replay resizes there too. */
+  resized(sessionId: string, size: TermGeometry): void {
+    this.append(sessionId, '', size);
+  }
+
   replayForColdStart(sessionId: string): FirstPaint | null {
     this.hydrate(sessionId);
     const replay = this.store.replayForColdStart(sessionId, () => undefined);

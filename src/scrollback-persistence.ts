@@ -130,9 +130,16 @@ export interface ColdReplay {
   tail?: ScrollbackSegment;
 }
 
+/**
+ * The segments a replay applies: those with bytes, and a resize no output followed. That resize
+ * still counts: a shrink pushes rows into xterm's scrollback, and the next output is addressed at
+ * the cursor row the pseudoconsole was left at.
+ */
+const replayed = (ring: ScrollbackRing) => ring.filter((s) => s.data || s.geometry);
+
 /** The ring as one string plus the runs that say which size each segment is written at. */
 function replayOf(ring: ScrollbackRing, tail = ''): { data: string; runs: ReplayRun[] } {
-  const segments = ring.filter((s) => s.data);
+  const segments = ring.some((s) => s.data) ? replayed(ring) : [];
   const texts = segments.map((s, i) => (i === segments.length - 1 ? s.data + tail : s.data));
   return {
     data: texts.join(''),
@@ -152,7 +159,7 @@ function replayOf(ring: ScrollbackRing, tail = ''): { data: string; runs: Replay
 export function coldReplay(ring: ScrollbackRing): ColdReplay {
   const replay = replayOf(ring, REPLAY_TAIL);
   if (!replay.data) return { data: '', runs: [] };
-  const lastGeometry = ring.filter((s) => s.data).at(-1)?.geometry;
+  const lastGeometry = replayed(ring).at(-1)?.geometry;
   const tail: ScrollbackSegment = lastGeometry
     ? { data: REPLAY_TAIL, geometry: lastGeometry }
     : { data: REPLAY_TAIL };

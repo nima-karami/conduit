@@ -101,6 +101,22 @@ const persistedGeometries = (id) => {
   const segments = JSON.parse(readFileSync(file, 'utf8')).segments ?? [];
   return segments.filter((g) => g.cols && g.rows).map((g) => `${g.cols}x${g.rows}`);
 };
+/**
+ * Waits on what the remounted pane shows, not on the term:data tap: a reloaded pane attaches as
+ * soon as it mounts, which can be before tapBridge subscribes again.
+ */
+const waitForShown = (page, id, text) =>
+  page.waitForFunction(
+    ({ s, t }) => {
+      const b = window.__terms?.[s]?.buffer.active;
+      if (!b) return false;
+      for (let i = 0; i < b.length; i++)
+        if (b.getLine(i)?.translateToString(true).includes(t)) return true;
+      return false;
+    },
+    { s: id, t: text },
+    { timeout: 30000 },
+  );
 // Trailing blanks are not content: a repaint omits the ones the shell's own echo wrote.
 const nonEmpty = (lines) => (lines ?? []).map((l) => l.trimEnd()).filter((l) => l !== '');
 
@@ -186,7 +202,7 @@ try {
     timeout: 20000,
   });
   await page.click(`[data-sessionid="${sid}"]`);
-  await waitForOutput(page, sid, 'R2-END', 1);
+  await waitForShown(page, sid, 'R2-END');
   await page.waitForTimeout(2000);
   const reloaded = (await logicalLines(page, sid)) ?? [];
   dump('after reload (last 90)', reloaded.slice(-90));
@@ -229,7 +245,7 @@ try {
       timeout: 20000,
     });
     await page.click(`[data-sessionid="${sid}"]`);
-    await waitForOutput(page, sid, 'R2-END', 1);
+    await waitForShown(page, sid, 'R2-END');
     await page.waitForTimeout(3000);
     const after = nonEmpty(await logicalLines(page, sid)).filter((l) => l !== '— attached —');
     const lost = before.filter((l) => !after.includes(l));

@@ -95,6 +95,48 @@ describe('scrollback-persistence', () => {
     it('is empty for an empty ring', () => {
       expect(coldReplay([])).toEqual({ data: '', runs: [] });
       expect(coldReplay([{ data: '', geometry: A }])).toEqual({ data: '', runs: [] });
+      expect(
+        coldReplay([
+          { data: '', geometry: A },
+          { data: '', geometry: B },
+        ]),
+      ).toEqual({
+        data: '',
+        runs: [],
+      });
+    });
+
+    it('replays a resize that no output followed as an empty run at its size', () => {
+      // 44 -> 12 -> 44 rows with nothing printed at 12: the shrink still pushed rows into xterm's
+      // scrollback, and the next output is addressed at the cursor row the shrink left.
+      const tall = { cols: 100, rows: 44 };
+      const short = { cols: 100, rows: 12 };
+      let ring: ScrollbackRing = [];
+      ring = appendToRing(ring, 'RUN1', tall, 100);
+      ring = appendToRing(ring, '', short, 100);
+      ring = appendToRing(ring, '', tall, 100);
+      ring = appendToRing(ring, 'RUN2', tall, 100);
+      const { data, runs, tail } = coldReplay(ring);
+      expect(data).toBe(`RUN1RUN2${tail?.data}`);
+      expect(runs).toEqual([
+        { length: 4, geometry: tall },
+        { length: 0, geometry: short },
+        { length: 4 + (tail?.data.length ?? 0), geometry: tall },
+      ]);
+    });
+
+    it('ends on the last size even when no output followed it', () => {
+      const ring: ScrollbackRing = [
+        { data: 'out', geometry: A },
+        { data: '', geometry: B },
+      ];
+      const { data, runs, tail } = coldReplay(ring);
+      expect(tail).toEqual({ data: `${REPLAY_MODE_NEUTRALIZER}\r\n`, geometry: B });
+      expect(data).toBe(`out${tail?.data}`);
+      expect(runs).toEqual([
+        { length: 3, geometry: A },
+        { length: tail?.data.length, geometry: B },
+      ]);
     });
 
     it('is exactly the ring plus the tail, each run at its size, the tail in the last', () => {
@@ -124,7 +166,12 @@ describe('scrollback-persistence', () => {
       ];
       const { data, runs } = attachReplay(ring);
       expect(data).toBe('oldv1-ishlive');
-      expect(runs).toEqual([{ length: 3, geometry: A }, { length: 6 }, { length: 4, geometry: B }]);
+      expect(runs).toEqual([
+        { length: 3, geometry: A },
+        { length: 0, geometry: B },
+        { length: 6 },
+        { length: 4, geometry: B },
+      ]);
       expect(data).not.toContain(REPLAY_MODE_NEUTRALIZER);
       expect(data).not.toContain('relaunched');
     });

@@ -40,6 +40,11 @@ import { ServerScreens } from './screens';
 export interface RuntimeRing {
   append(sessionId: string, data: string, size: TermGeometry | undefined): void;
   gap(sessionId: string, paint: string, size: TermGeometry): void;
+  /**
+   * The PTY took a new size. Recorded even when no output follows: the pinned hc sends no repaint
+   * after a resize, and a cold replay must still resize where the pane did.
+   */
+  resized(sessionId: string, size: TermGeometry): void;
 }
 
 export interface HcRuntimeDeps {
@@ -64,7 +69,18 @@ interface Tracked {
   generation: number;
   launchId: string;
   address: string;
+  /** The app's last requested size (D31: the screen model follows it, as the pane's xterm does). */
   size: TermGeometry;
+  /**
+   * The size hc reports the PTY at: what the output arriving now is addressed at, so the ring is
+   * labelled with it. hc applies a resize asynchronously and has no in-band size frame.
+   */
+  ptySize: TermGeometry;
+  /**
+   * This launch's output is in the ring already (streamed here, or by the server run whose live
+   * token row was adopted), so `terminal.read`'s dump of it must not be appended again.
+   */
+  ringFed: boolean;
   stream?: HcStream;
   /**
    * An attach is in flight: hc's `finished`/`lost` then decides nothing, the attach does (a
@@ -562,6 +578,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
     t.painting = true;
     t.stream = stream;
     t.size = plan.size;
+    t.ptySize = plan.size;
     if (!t.announced) {
       t.announced = true;
       this.emit({
@@ -597,6 +614,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
     });
     stream.onData((bytes) => {
       const text = decoder.decode(bytes, { stream: true });
+      t.ringFed = true;
       if (!paint.done) {
         if (plan.cause === 'gap' && !gapMarked) {
           gapMarked = true;
@@ -606,7 +624,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
         paint.push(text);
         return;
       }
-      this.deps.ring.append(t.sessionId, text, t.size);
+      this.deps.ring.append(t.sessionId, text, t.ptySize);
       stream.credit(bytes.byteLength);
       this.tails.set(
         t.sessionId,
@@ -659,7 +677,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
         lines: SERVER_REATTACH_HISTORY_LINES,
       });
       output = asTerminalText(read.text);
-      if (output) this.deps.ring.append(t.sessionId, output, t.size);
+      if (output && !t.ringFed) this.deps.ring.append(t.sessionId, output, t.ptySize);
     } catch (error) {
       if (!isNotFound(error)) throw error;
     }
@@ -690,9 +708,12 @@ export class HcTerminalRuntime implements TerminalRuntime {
   ): Promise<AdoptedTerminal | undefined> {
     const existing = this.byAddress.get(record.address);
     if (existing?.stream || existing?.attaching) return undefined;
-    const t =
-      existing ??
-      this.track(row.sessionId, row, record.address, { cols: record.cols, rows: record.rows });
+    let t = existing;
+    if (!t) {
+      t = this.track(row.sessionId, row, record.address, { cols: record.cols, rows: record.rows });
+      // A live row this process never tracked: an earlier server run streamed it into the ring.
+      t.ringFed = row.state === 'live';
+    }
     const attached =
       record.state === 'live' &&
       (await this.attach(t, {
@@ -755,6 +776,8 @@ export class HcTerminalRuntime implements TerminalRuntime {
       launchId: ids.launchId,
       address,
       size,
+      ptySize: size,
+      ringFed: false,
       attaching: false,
       endSeen: false,
       painting: false,
@@ -848,8 +871,13 @@ export class HcTerminalRuntime implements TerminalRuntime {
     else if (e.type === 'title')
       this.emit({ type: 'title', sessionId: t.sessionId, title: e.data.title });
     else if (e.type === 'size') {
-      t.size = { cols: e.data.cols, rows: e.data.rows };
-      this.emit({ type: 'size', sessionId: t.sessionId, size: t.size });
+      const size = { cols: e.data.cols, rows: e.data.rows };
+      t.size = size;
+      if (t.ptySize.cols !== size.cols || t.ptySize.rows !== size.rows) {
+        t.ptySize = size;
+        this.deps.ring.resized(t.sessionId, size);
+      }
+      this.emit({ type: 'size', sessionId: t.sessionId, size });
     } else if (e.type === 'foreground')
       this.emit({ type: 'foreground', sessionId: t.sessionId, foreground: e.data });
   }
