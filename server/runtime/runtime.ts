@@ -168,7 +168,7 @@ const asTerminalText = (text: string) => text.replace(/\r?\n/g, '\r\n');
 
 /**
  * Collects an attach's first paint by C1's boundary rule (D20): quiet for PAINT_QUIET_MS, capped
- * at PAINT_MAX_MS after the first byte.
+ * at PAINT_MAX_MS after the attach is held.
  */
 class PaintCollector {
   private chunks: string[] = [];
@@ -176,7 +176,7 @@ class PaintCollector {
   private cap?: ReturnType<typeof setTimeout>;
   done = false;
 
-  /** Armed when the attach succeeds: a viewer that is never painted still ends its paint. */
+  /** Armed when the attach is held: a viewer that is never painted still ends its paint. */
   constructor(private readonly onEnd: (data: string) => void) {
     this.cap = setTimeout(() => this.end(), PAINT_MAX_MS);
   }
@@ -512,10 +512,9 @@ export class HcTerminalRuntime implements TerminalRuntime {
       // Released before the awaited write: a reconnect's reconcile must see this row as no
       // longer owned, or a late registration found by name would be skipped.
       this.inFlight.delete(ids.launchId);
-      // created() may already have adopted it under that release: then it is not unconfirmed.
-      const adopted = this.sessions.get(sessionId)?.launchId === ids.launchId;
-      if (!launch.settledBy && !adopted) {
+      if (!launch.settledBy) {
         await this.deps.tokens.markUnconfirmed(ids.launchId);
+        // created() may adopt it during that write: then the reconcile owns the announcement.
         if (this.sessions.get(sessionId)?.launchId !== ids.launchId)
           this.emitUnconfirmed({ sessionId, ...ids });
       }
@@ -578,6 +577,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
       stream.close();
       return false;
     }
+    t.painting = true;
     t.stream = stream;
     t.size = plan.size;
     if (!t.announced) {
@@ -596,7 +596,6 @@ export class HcTerminalRuntime implements TerminalRuntime {
   private wire(t: Tracked, stream: HcStream, plan: AttachPlan): void {
     const decoder = new TextDecoder();
     let gapMarked = false;
-    t.painting = true;
     const paint = new PaintCollector((data) => {
       if (t.stream !== stream) return;
       t.painting = false;
@@ -611,7 +610,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
       });
       // A `term.resize` during the attach or its paint had to wait for the paint's own grid.
       const latest = this.lastSize.get(t.sessionId);
-      if (latest && (latest.cols !== t.size.cols || latest.rows !== t.size.rows))
+      if (latest && (latest.cols !== plan.size.cols || latest.rows !== plan.size.rows))
         this.resize(t.sessionId, latest);
     });
     stream.onData((bytes) => {
