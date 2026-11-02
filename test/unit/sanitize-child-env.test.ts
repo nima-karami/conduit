@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeChildEnv } from '../../src/pty-host';
+import { sanitizeChildEnv } from '../../src/launch-spec';
 
 describe('sanitizeChildEnv', () => {
   it('removes TERM_PROGRAM', () => {

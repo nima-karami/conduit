@@ -2,16 +2,10 @@ import { randomBytes } from 'node:crypto';
 import { copyFileSync, existsSync, promises as fsp, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { join, resolve } from 'node:path';
-import { AgentScopeTracker } from '../../electron/agent-scope-tracker';
-import { LauncherHost } from '../../electron/launcher-host';
-import {
-  briefKeepIds,
-  createRoleBriefHost,
-  parseBriefRequest,
-} from '../../electron/role-brief-host';
 import { runAddDir } from '../../src/add-dir-delivery';
 import { AgentRegistry } from '../../src/agent-registry';
 import { scopeFromSpawnArgs } from '../../src/agent-scope';
+import { AgentScopeTracker } from '../../src/agent-scope-tracker';
 import { atomicWriteFile, atomicWriteFileSync } from '../../src/atomic-write';
 import type { McpOpenRequest } from '../../src/conduit-mcp/control-tools';
 import { loadAgentsConfig, readBlob, readFileState } from '../../src/config';
@@ -62,6 +56,7 @@ import { getGitInfo } from '../../src/git-info';
 import { lastNonEmptyLine } from '../../src/last-line';
 import { previewLaunch } from '../../src/launch-preview';
 import { buildLaunchSpec } from '../../src/launch-spec';
+import { LauncherHost } from '../../src/launcher-host';
 import {
   decideLimitAction,
   type LimitEpisode,
@@ -75,6 +70,7 @@ import { userRootsOf } from '../../src/path-link-roots';
 import { parseSessions, serializeSessions } from '../../src/persistence';
 import { ProjectStore, parseProjects, serializeProjects } from '../../src/project-store';
 import type { LimitOffer, TermGeometry } from '../../src/protocol';
+import { briefKeepIds, createRoleBriefHost, parseBriefRequest } from '../../src/role-brief-host';
 import { spawnPrelude } from '../../src/scrollback-persistence';
 import {
   COMMAND_AGENT_ID,

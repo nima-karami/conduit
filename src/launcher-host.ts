@@ -1,5 +1,5 @@
-import type { AgentRegistry } from '../src/agent-registry';
-import type { FileRead } from '../src/config';
+import type { AgentRegistry } from './agent-registry';
+import type { FileRead } from './config';
 import {
   addCustomLauncher,
   bumpUsage,
@@ -7,10 +7,10 @@ import {
   parseLaunchers,
   removeCustomLauncher,
   serializeLaunchers,
-} from '../src/launcher-store';
-import { composeLaunchers, type LauncherDTO, type LauncherKind } from '../src/launchers';
-import type { HostPlatform } from '../src/lsp-binary';
-import type { AgentDefinition } from '../src/types';
+} from './launcher-store';
+import { composeLaunchers, type LauncherDTO, type LauncherKind } from './launchers';
+import type { HostPlatform } from './lsp-binary';
+import type { AgentDefinition } from './types';
 
 export interface LauncherHostDeps {
   registry: AgentRegistry;

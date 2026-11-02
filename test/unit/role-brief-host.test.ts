@@ -2,14 +2,14 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { scopeFromSpawnArgs } from '../../src/agent-scope';
+import type { HostPlatform } from '../../src/lsp-binary';
 import {
   briefKeepIds,
   createRoleBriefHost,
   parseBriefRequest,
   type RoleBriefHostDeps,
-} from '../../electron/role-brief-host';
-import { scopeFromSpawnArgs } from '../../src/agent-scope';
-import type { HostPlatform } from '../../src/lsp-binary';
+} from '../../src/role-brief-host';
 import type {
   AgentBriefSource,
   AgentDefinition,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AgentScopeTracker } from '../../electron/agent-scope-tracker';
 import type { AgentScope } from '../../src/agent-scope';
+import { AgentScopeTracker } from '../../src/agent-scope-tracker';
 import type { Session } from '../../src/types';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));

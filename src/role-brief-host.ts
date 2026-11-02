@@ -3,11 +3,11 @@
 // inside term:start's synchronous block after the isAlive re-check (spec §4 race row).
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { atomicWriteFileSync } from '../src/atomic-write';
-import { adapterFor, type BriefSupport } from '../src/conduit-mcp/adapters';
-import { batchGuarded } from '../src/launch-args';
-import type { HostPlatform } from '../src/lsp-binary';
-import type { HostToWebview } from '../src/protocol';
+import { atomicWriteFileSync } from './atomic-write';
+import { adapterFor, type BriefSupport } from './conduit-mcp/adapters';
+import { batchGuarded } from './launch-args';
+import type { HostPlatform } from './lsp-binary';
+import type { HostToWebview } from './protocol';
 import {
   type BriefBannerReason,
   briefArgs,
@@ -17,8 +17,8 @@ import {
   decodeBrief,
   decodeBriefText,
   planBriefSpawn,
-} from '../src/role-brief';
-import type { SessionManager } from '../src/session-manager';
+} from './role-brief';
+import type { SessionManager } from './session-manager';
 import type {
   AgentBriefSource,
   AgentDefinition,
@@ -26,8 +26,7 @@ import type {
   BriefRequest,
   BriefState,
   SpawnSpec,
-} from '../src/types';
-import type { Logger } from './logger';
+} from './types';
 
 export interface RoleBriefHostDeps {
   userData: string;
@@ -35,7 +34,10 @@ export interface RoleBriefHostDeps {
   mgr: Pick<SessionManager, 'get' | 'setBrief' | 'mintId'>;
   platform: HostPlatform;
   e2e: boolean;
-  log: Pick<Logger, 'info' | 'warn' | 'error'>;
+  log: Record<
+    'info' | 'warn' | 'error',
+    (scope: string, msg: string, data?: Record<string, unknown>) => void
+  >;
 }
 
 export type BriefCreation =
