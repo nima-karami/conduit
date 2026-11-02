@@ -39,7 +39,7 @@ async function until(check: () => boolean, what: string): Promise<void> {
 }
 
 async function harness(
-  o: { supervisorLive?: boolean; marker?: boolean; serverVersion?: string } = {},
+  o: { supervisorLive?: boolean; marker?: boolean; serverVersion?: string; hcExe?: string } = {},
 ) {
   const fake = new FakeHc();
   await fake.listen();
@@ -90,7 +90,7 @@ async function harness(
   const cliCalls: string[][] = [];
   const cliResult = { code: 0, stdout: '', stderr: '' };
   const cli: HcCliDeps = {
-    hcExe: 'hc',
+    hcExe: o.hcExe ?? 'hc',
     env: { HC_SESSION: 'conduit-abc' },
     coreCwd: '/u/runtime/hc/0.1.16',
     execFile: async (_file, args) => {
@@ -113,6 +113,7 @@ async function harness(
   };
   const clock = { now: 1_000_000 };
   const spawned: number[] = [];
+  const detachedArgs: (string[] | undefined)[] = [];
   let clients = 0;
   let settled = 0;
   const states: ServerLifecycleState[] = [];
@@ -121,7 +122,7 @@ async function harness(
     layout: {
       nodeExe: 'node',
       superviseJs: '/repo/out/server/supervise.js',
-      hcExe: 'hc',
+      hcExe: o.hcExe ?? 'hc',
       hcVersion: '0.1.16',
       coreCwd: '/u/runtime/hc/0.1.16',
     },
@@ -149,7 +150,10 @@ async function harness(
     deleteMarker: async () => {
       flags.marker = false;
     },
-    spawnDetachedSupervisor: () => spawned.push(clock.now),
+    spawnDetachedSupervisor: (args) => {
+      spawned.push(clock.now);
+      detachedArgs.push(args);
+    },
     now: () => clock.now,
     log: () => {},
   });
@@ -165,6 +169,7 @@ async function harness(
     cliResult,
     clock,
     spawned,
+    detachedArgs,
     states,
     clients: () => clients,
     settled: () => settled,
@@ -179,6 +184,23 @@ async function harness(
 }
 
 describe('createServerLifecycle start rule', () => {
+  it('passes the selected hc executable to normal and detached supervisor argv', async () => {
+    const selected = '/private runtime/hc/selected-hc';
+    const h = await harness({ hcExe: selected });
+    h.cliResult.code = 1;
+    await h.lifecycle.start();
+    const expected = [
+      '/repo/out/server/supervise.js',
+      '--user-data',
+      '/u',
+      '--hc',
+      selected,
+      '--e2e',
+    ];
+    expect(h.cliCalls[0].slice(h.cliCalls[0].indexOf('--') + 2)).toEqual(expected);
+    expect(h.detachedArgs).toEqual([expected]);
+  });
+
   it('start rule: live conduit-server-<h> → connect only, no run', async () => {
     const h = await harness({ supervisorLive: true });
     await h.lifecycle.start();
@@ -233,6 +255,53 @@ describe('createServerLifecycle start rule', () => {
 });
 
 describe('createServerLifecycle versions (F6, D26)', () => {
+  it.each(['server.restart', 'server.stopAll'] as const)(
+    'bounds an unanswered %s RPC by the exit deadline',
+    async (method) => {
+      const h = await harness({
+        supervisorLive: true,
+        serverVersion: method === 'server.restart' ? '0.51.0' : '0.53.0',
+      });
+      h.c2.on(method, () => new Promise(() => {}));
+      if (method === 'server.stopAll') await h.lifecycle.start();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      let settled = false;
+      const operation = (
+        method === 'server.restart' ? h.lifecycle.start() : h.lifecycle.stopAllAndContinue()
+      ).then(() => {
+        settled = true;
+      });
+      await until(() => h.c2.calls(method).length === 1, method);
+      vi.advanceTimersByTime(SERVER_RESTART_EXIT_WAIT_MS);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(h.lifecycle.current()).toMatchObject({
+        state: 'unavailable',
+        reason: 'restart-wait-timeout',
+      });
+      expect(settled).toBe(true);
+      await operation;
+      await until(() => h.c2.sockets.size === 0, 'client closed');
+      expect(h.cliCalls).toEqual([]);
+    },
+  );
+
+  it('downgrade continuation waits for the exact supervisor after C2 closes', async () => {
+    const h = await harness({ supervisorLive: true, serverVersion: '0.53.0' });
+    await h.lifecycle.start();
+    h.c2.on('server.stopAll', () => ({ killed: 2 }));
+    const continued = h.lifecycle.stopAllAndContinue();
+    await until(() => h.c2.calls('server.stopAll').length === 1, 'stopAll');
+    h.c2.dropClients();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(h.state()).toBe('connecting');
+    expect(h.runs()).toBe(0);
+    h.flags.serverVersion = APP_VERSION;
+    await h.killSupervisorTerminal();
+    await continued;
+    expect(h.runs()).toBe(1);
+    expect(h.state()).toBe('connected');
+  });
+
   it('appNewer → server.restart{update}, waits finished of hello.supervisor.terminal, then start rule', async () => {
     const h = await harness({ supervisorLive: true, serverVersion: '0.51.0' });
     const old = h.supervisor()?.address;
@@ -298,6 +367,72 @@ describe('createServerLifecycle versions (F6, D26)', () => {
 });
 
 describe('createServerLifecycle F9 and explicit actions', () => {
+  it('tracks the unique-name supervisor address before the first hello', async () => {
+    const h = await harness({ supervisorLive: true });
+    let hellos = 0;
+    h.c2.on('hello', () => {
+      if (++hellos === 1) return new Promise(() => {});
+      return {
+        serverVersion: APP_VERSION,
+        generation: 1,
+        instance: 'abc',
+        pid: 1,
+        supervisor: { name: SUPERVISOR, terminal: h.supervisor()?.address },
+      };
+    });
+    const started = h.lifecycle.start();
+    await until(() => h.c2.calls('hello').length === 1, 'first hello');
+    await h.killSupervisorTerminal();
+    await vi.waitFor(() => expect(h.runs()).toBe(1));
+    await vi.waitFor(() => expect(h.state()).toBe('connected'));
+    await started;
+    expect(h.c2.calls('hello')).toHaveLength(2);
+  });
+
+  it('observes exhaustion reached during C2 recovery', async () => {
+    const h = await harness({ supervisorLive: true });
+    await h.lifecycle.start();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await h.c2.close();
+    await until(() => h.state() === 'reconnecting' && vi.getTimerCount() > 0, 'recovery');
+    vi.advanceTimersByTime(500);
+    await until(() => h.settled() === 2 && vi.getTimerCount() > 0, 'failed reconnect');
+    h.flags.marker = true;
+    vi.advanceTimersByTime(1000);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(h.lifecycle.current()).toMatchObject({ state: 'unavailable', reason: 'exhausted' });
+    expect(h.cliCalls).toEqual([]);
+  });
+
+  it.each(['missed', 'ended', 'reconnect'])(
+    'reconciles a supervisor exit in a %s subscription gap without a finished event',
+    async (recovery) => {
+      const h = await harness({ supervisorLive: true });
+      await h.lifecycle.start();
+      const old = h.supervisor();
+      if (!old) throw new Error('missing supervisor');
+      h.c2.dropClients();
+      await until(
+        () =>
+          h.state() === 'reconnecting' &&
+          h.fake.calls.filter((c) => c.method === 'terminal.get').length >= 2,
+        'live recovery check',
+      );
+      h.fake.terminals.splice(h.fake.terminals.indexOf(old), 1);
+      if (recovery === 'reconnect') h.fake.disconnect();
+      else if (recovery === 'ended') h.fake.end(h.fake.channels[0]);
+      else
+        h.fake.notify(h.fake.channels[0], {
+          jsonrpc: '2.0',
+          method: 'missed',
+          params: { seq: 1, terminals: [] },
+        });
+      await vi.waitFor(() => expect(h.runs()).toBe(1));
+      await vi.waitFor(() => expect(h.state()).toBe('connected'));
+      expect(h.supervisor()?.address).not.toBe(old.address);
+    },
+  );
+
   it('finished of supervisor without marker → start rule, 4th within the hour → stopped', async () => {
     const h = await harness();
     await h.lifecycle.start();

@@ -153,7 +153,13 @@ describe('compose: sessions.changed carries attention', () => {
       needsAttention: true,
       completedRun: false,
     });
-    await vi.waitFor(() => expect(of(h.sent, 'sessions.changed').length).toBeGreaterThan(0));
+    await vi.waitFor(() =>
+      expect(
+        of(h.sent, 'sessions.changed')
+          .at(-1)
+          ?.sessions.some((s) => s.id === id),
+      ).toBe(true),
+    );
     const last = (): SessionView | undefined =>
       of(h.sent, 'sessions.changed')
         .at(-1)

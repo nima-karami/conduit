@@ -66,9 +66,18 @@ export function hcClient(
 
 const notFound = (error: unknown) => error instanceof HcRpcError && error.kind === 'not_found';
 
+function hasOtherLiveTerminal(
+  terminals: readonly { name?: string | null; state: string }[],
+  supervisorName: string,
+): boolean {
+  return terminals.some(
+    (terminal) => terminal.state === 'live' && terminal.name !== supervisorName,
+  );
+}
+
 /**
  * `--stop-all` with no server answering (F12): kill every session terminal of this instance and
- * the supervisor by its unique name, then stop our core. No core reachable = nothing is running.
+ * the supervisor by its unique name, then stop our core if no other live terminal remains.
  */
 export async function directStopAll(
   hc: HcClient,
@@ -95,6 +104,8 @@ export async function directStopAll(
     } catch (error) {
       if (!notFound(error)) throw error;
     }
+    const remaining = await hc.call('terminal.list', {});
+    if (hasOtherLiveTerminal(remaining.terminals, names.supervisorName)) return killed;
   } catch (error) {
     if (error instanceof HcDisconnectedError) return 0;
     throw error;
@@ -119,7 +130,7 @@ export function supervisorCore(
       const hc = connect();
       try {
         const { terminals } = await hc.call('terminal.list', {});
-        return terminals.some((t) => t.state === 'live' && t.name !== names.supervisorName);
+        return hasOtherLiveTerminal(terminals, names.supervisorName);
       } catch (error) {
         // A core we can't read may be running anything: leave it.
         log(`supervisor: terminal.list failed: ${String(error)}`);

@@ -110,7 +110,9 @@ describe('server domain: persisted formats', () => {
     const h = harness({ files });
     h.domain.adopted([]);
     const id = await h.create();
-    await h.call('sessions.start', { sessionId: id });
+    await expect(h.call('sessions.start', { sessionId: id })).rejects.toSatisfy((e: unknown) =>
+      isFault(e, 'unavailable'),
+    );
     await h.call('timers.set', {
       schedule: { sessionId: id, message: 'x', trigger: { kind: 'in', delayMs: 3_600_000 } },
     });

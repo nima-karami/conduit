@@ -1,4 +1,4 @@
-import type { HcClient, HcEvent, HcNotification } from '../src/contracts/hc';
+import type { HcClient, HcEvent, HcNotification, HcTerminal } from '../src/contracts/hc';
 import type { AppLog } from './server-client';
 
 type TerminalEvent = Exclude<HcEvent, { type: 'unknown' }>;
@@ -14,10 +14,12 @@ export function createHcEvents(
   log: AppLog,
 ): {
   on(terminal: string, cb: (e: HcEvent) => void): () => void;
+  onSnapshot(cb: (terminals: HcTerminal[]) => void): () => void;
   ready(): Promise<void>;
   close(): void;
 } {
   const listeners = new Map<string, Set<(e: HcEvent) => void>>();
+  const snapshotListeners = new Set<(terminals: HcTerminal[]) => void>();
   let attempt = 0;
   let current: { close(): void } | undefined;
   let inFlight = false;
@@ -57,6 +59,13 @@ export function createHcEvents(
           return;
         }
         current = sub;
+        for (const cb of [...snapshotListeners]) {
+          try {
+            cb(sub.snapshot);
+          } catch (error) {
+            log('error', 'hc-events: snapshot listener threw', { err: String(error) });
+          }
+        }
         markReady();
       },
       (error: unknown) => {
@@ -75,6 +84,10 @@ export function createHcEvents(
   subscribe();
 
   return {
+    onSnapshot(cb) {
+      snapshotListeners.add(cb);
+      return () => snapshotListeners.delete(cb);
+    },
     on(terminal, cb) {
       let set = listeners.get(terminal);
       if (!set) {
@@ -94,6 +107,7 @@ export function createHcEvents(
       current?.close();
       current = undefined;
       listeners.clear();
+      snapshotListeners.clear();
     },
   };
 }

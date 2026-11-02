@@ -14,6 +14,13 @@ export interface HcCliDeps {
 
 const HC_CLI_TIMEOUT_MS = 20_000;
 
+export function supervisorArgs(
+  hcExe: string,
+  a: { superviseJs: string; userData: string; serverArgs: string[] },
+): string[] {
+  return [a.superviseJs, '--user-data', a.userData, '--hc', hcExe, ...a.serverArgs];
+}
+
 async function runCli(d: HcCliDeps, args: string[]): Promise<{ ok: boolean; reason?: string }> {
   try {
     const r = await d.execFile(d.hcExe, args, {
@@ -49,10 +56,7 @@ export async function startSupervisor(
     `conduit.instance=${a.names.instance}`,
     '--',
     a.nodeExe,
-    a.superviseJs,
-    '--user-data',
-    a.userData,
-    ...a.serverArgs,
+    ...supervisorArgs(d.hcExe, a),
   ]);
   return r.ok ? { ok: true } : { ok: false, reason: r.reason ?? 'hc run failed' };
 }

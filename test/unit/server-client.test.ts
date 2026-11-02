@@ -1,3 +1,4 @@
+import { Duplex } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ServerCallError, ServerClient } from '../../electron/server-client';
 import {
@@ -36,6 +37,58 @@ const rejection = async (p: Promise<unknown>): Promise<ServerCallError> => {
 };
 
 describe('ServerClient', () => {
+  it.each([false, true])(
+    'installs batched snapshots before subsequent events (replacement=%s)',
+    async (replacement) => {
+      let subscriptions = 0;
+      const socket = new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) {
+          const request = JSON.parse(String(chunk)) as { id: number; method: string };
+          const seq = ++subscriptions * 10;
+          const result =
+            request.method === 'hello'
+              ? { serverVersion: '1.0.0', generation: 1, instance: 'abc', pid: 1 }
+              : { seq, sessions: [] };
+          const messages: unknown[] = [{ jsonrpc: '2.0', id: request.id, result }];
+          if (request.method === 'events.subscribe') {
+            messages.push({
+              jsonrpc: '2.0',
+              method: 'event',
+              params: { seq: seq + 1, type: 'attention.flash', data: { sessionId: 's' } },
+            });
+            if (replacement && subscriptions === 2)
+              messages.push({
+                jsonrpc: '2.0',
+                method: 'event',
+                params: { seq: seq + 2, type: 'missed', data: {} },
+              });
+          }
+          this.push(`${messages.map((message) => JSON.stringify(message)).join('\n')}\n`);
+          callback();
+        },
+      });
+      client = new ServerClient({
+        endpoint: 'memory',
+        appVersion: '0.52.0',
+        connect: () => socket,
+        log: () => {},
+      });
+      const seen: string[] = [];
+      await client.open();
+      await client.subscribe({
+        snapshot: (s) => seen.push(`snapshot:${s.seq}`),
+        event: (e) => seen.push(`event:${e.seq}`),
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(seen).toEqual(
+        replacement
+          ? ['snapshot:20', 'event:21', 'snapshot:30', 'event:31']
+          : ['snapshot:20', 'event:21'],
+      );
+    },
+  );
+
   it('open resolves hello and sends generation', async () => {
     const { server, client } = await setup();
     const hello = await client.open();

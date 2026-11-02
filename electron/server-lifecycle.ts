@@ -10,7 +10,7 @@ import {
 } from '../src/contracts/server-protocol';
 import type { InstanceNames } from '../src/contracts/session-identity';
 import { HcRpcError } from '../src/hc-client';
-import { type HcCliDeps, killSupervisor, startSupervisor } from './hc-cli';
+import { type HcCliDeps, killSupervisor, startSupervisor, supervisorArgs } from './hc-cli';
 import type { createHcEvents } from './hc-events';
 import type { RuntimeLayout } from './runtime-layout';
 import { type AppLog, ServerCallError, type ServerClient } from './server-client';
@@ -45,7 +45,7 @@ export interface ServerLifecycleDeps {
   cli: HcCliDeps;
   markerExists(): Promise<boolean>;
   deleteMarker(): Promise<void>;
-  spawnDetachedSupervisor(): void;
+  spawnDetachedSupervisor(args?: string[]): void;
   now(): number;
   log: AppLog;
 }
@@ -81,6 +81,7 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
   let state: ServerLifecycleState = { state: 'connecting' };
   /** The open connection, also while `downgrade` (stopAllAndContinue needs it). */
   let conn: ServerClient | null = null;
+  let connHello: Hello | null = null;
   let offWatch: (() => void) | null = null;
   let vanishedAt: number[] = [];
   /** Every transition bumps it; an async step that finds it moved stops. */
@@ -113,12 +114,14 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
     offWatch = null;
     conn?.close();
     conn = null;
+    connHello = null;
   };
 
   /** By the unique name; the role label decides nothing. */
-  const supervisorLive = async (): Promise<'live' | 'absent' | 'unreachable'> => {
+  const supervisorLive = async (e: number): Promise<'live' | 'absent' | 'unreachable'> => {
     try {
       const t = await d.hc.call('terminal.get', { terminal: d.names.supervisorName });
+      if (live(e) && t.state === 'live') watch(t.address);
       return t.state === 'live' ? 'live' : 'absent';
     } catch (error) {
       if (error instanceof HcRpcError && error.kind === 'not_found') return 'absent';
@@ -135,11 +138,15 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
         done = true;
         clearTimeout(timer);
         off();
+        offSnapshot();
         resolve(finished);
       };
       const timer = setTimeout(() => finish(false), timeoutMs);
       const off = d.hcEvents.on(terminal, (e) => {
         if (ENDED.has(e.type)) finish(true);
+      });
+      const offSnapshot = d.hcEvents.onSnapshot((terminals) => {
+        if (!terminals.some((t) => t.address === terminal && t.state === 'live')) finish(true);
       });
       // Covers an end that came before the subscription was up.
       void d.hcEvents.ready().then(async () => {
@@ -167,10 +174,31 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
     });
 
   /** F6: the old server and its supervisor are gone before a new one is started. */
-  const awaitSupervisorExit = (c: ServerClient, hello: Hello) =>
-    hello.supervisor
+  const awaitSupervisorExit = (c: ServerClient, hello: Hello | null) =>
+    hello?.supervisor
       ? waitFinished(hello.supervisor.terminal, SERVER_RESTART_EXIT_WAIT_MS)
       : waitClosed(c, SERVER_RESTART_EXIT_WAIT_MS);
+
+  const stopAndWait = async (
+    e: number,
+    c: ServerClient,
+    hello: Hello | null,
+    method: 'server.restart' | 'server.stopAll',
+  ): Promise<boolean> => {
+    offWatch?.();
+    offWatch = null;
+    const exited = awaitSupervisorExit(c, hello);
+    const reply =
+      method === 'server.restart' ? c.call(method, { reason: 'update' }) : c.call(method, {});
+    void reply.catch((error: unknown) => {
+      d.log('info', `${method} reply lost; waiting for exit`, { err: String(error) });
+    });
+    const finished = await exited;
+    if (!live(e)) return false;
+    drop();
+    if (!finished) unavailable('restart-wait-timeout');
+    return finished;
+  };
 
   const startRule = async (e: number): Promise<void> => {
     set({ state: 'connecting' });
@@ -178,7 +206,7 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
       if (live(e)) unavailable('exhausted');
       return;
     }
-    const supervisor = await supervisorLive();
+    const supervisor = await supervisorLive(e);
     if (!live(e)) return;
     if (supervisor !== 'live') {
       const run = await startSupervisor(d.cli, {
@@ -194,8 +222,16 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
         d.log('warn', 'hc run of the supervisor failed; spawning it directly', {
           reason: run.reason,
         });
-        d.spawnDetachedSupervisor();
+        d.spawnDetachedSupervisor(
+          supervisorArgs(d.cli.hcExe, {
+            superviseJs: d.layout.superviseJs,
+            userData: d.userData,
+            serverArgs: d.serverArgs,
+          }),
+        );
       }
+      await supervisorLive(e);
+      if (!live(e)) return;
     }
     await connect(e);
   };
@@ -205,12 +241,16 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
     let delay: number = RECONNECT_BACKOFF_MS.first;
     for (;;) {
       const c = d.client();
+      conn = c;
       let hello: Hello;
       try {
         hello = await c.open();
       } catch (error) {
         c.close();
         if (!live(e)) return;
+        const supervisor = await supervisorLive(e);
+        if (!live(e)) return;
+        if (supervisor === 'absent' && offWatch) return vanished();
         if (error instanceof ServerCallError && error.kind === 'timeout')
           return unavailable('hello-timeout', error.message);
         if (d.now() >= deadline) return unavailable('hello-timeout', String(error));
@@ -229,30 +269,21 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
 
   const greeted = async (e: number, c: ServerClient, hello: Hello): Promise<void> => {
     conn = c;
+    connHello = hello;
     const order = versionOrder(
       { generation: SERVER_PROTOCOL_GENERATION, version: d.appVersion },
       { generation: hello.generation, version: hello.serverVersion },
     );
+    if (hello.supervisor) watch(hello.supervisor.terminal);
     if (order === 'appOlder') {
       set({ state: 'downgrade', serverVersion: hello.serverVersion });
       return;
     }
     if (order === 'appNewer') {
       d.log('info', 'server is older; restarting it', { serverVersion: hello.serverVersion });
-      const exited = awaitSupervisorExit(c, hello);
-      try {
-        await c.call('server.restart', { reason: 'update' });
-      } catch (error) {
-        // The server may exit before its reply lands; the exit wait decides.
-        d.log('info', 'server.restart reply lost', { err: String(error) });
-      }
-      const finished = await exited;
-      if (!live(e)) return;
-      drop();
-      if (!finished) return unavailable('restart-wait-timeout');
-      return startRule(e);
+      if (await stopAndWait(e, c, hello, 'server.restart')) return startRule(e);
+      return;
     }
-    if (hello.supervisor) watch(hello.supervisor.terminal);
     c.onClose(() => {
       if (conn === c && live(e)) void lostConnection();
     });
@@ -269,9 +300,19 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
   /** F9: a supervisor that ends on its own (no marker) is restarted, within the budget. */
   const watch = (terminal: string) => {
     offWatch?.();
-    const off = d.hcEvents.on(terminal, (ev) => {
+    const offEvent = d.hcEvents.on(terminal, (ev) => {
       if (ENDED.has(ev.type) && offWatch === off) void vanished();
     });
+    const offSnapshot = d.hcEvents.onSnapshot((terminals) => {
+      const supervisor = terminals.find(
+        (t) => t.name === d.names.supervisorName && t.address === terminal,
+      );
+      if (offWatch === off && supervisor?.state !== 'live') void vanished();
+    });
+    const off = () => {
+      offEvent();
+      offSnapshot();
+    };
     offWatch = off;
   };
 
@@ -302,8 +343,9 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
   const lostConnection = async (): Promise<void> => {
     const e = begin();
     conn = null;
+    connHello = null;
     set({ state: 'reconnecting' });
-    const supervisor = await supervisorLive();
+    const supervisor = await supervisorLive(e);
     if (!live(e)) return;
     if (supervisor === 'absent') {
       await vanished();
@@ -313,7 +355,16 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
     for (;;) {
       await sleep(delay);
       if (!live(e)) return;
+      if (await d.markerExists()) {
+        if (live(e)) {
+          drop();
+          unavailable('exhausted');
+        }
+        return;
+      }
+      if (!live(e)) return;
       const c = d.client();
+      conn = c;
       try {
         const hello = await c.open();
         if (!live(e)) {
@@ -364,24 +415,13 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
     },
     async stopAllAndContinue() {
       const c = conn;
-      const hello = state.state === 'connected' ? state.hello : null;
+      const hello = connHello;
       const e = begin();
       offWatch?.();
       offWatch = null;
       set({ state: 'connecting' });
       if (c) {
-        const exited = hello
-          ? awaitSupervisorExit(c, hello)
-          : waitClosed(c, SERVER_RESTART_EXIT_WAIT_MS);
-        try {
-          await c.call('server.stopAll', {});
-        } catch (error) {
-          d.log('warn', 'server.stopAll failed', { err: String(error) });
-        }
-        const finished = await exited;
-        if (!live(e)) return;
-        drop();
-        if (!finished) return unavailable('restart-wait-timeout');
+        if (!(await stopAndWait(e, c, hello, 'server.stopAll'))) return;
       }
       if (live(e)) await startRule(e);
     },

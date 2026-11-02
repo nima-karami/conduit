@@ -91,6 +91,7 @@ export class ServerClient {
   private subscriber: Subscriber | undefined;
   /** null while (re)subscribing: no snapshot yet to order events against. */
   private snapshotSeq: number | null = null;
+  private dispatch = Promise.resolve();
 
   constructor(private readonly o: ServerClientOptions) {}
 
@@ -120,7 +121,11 @@ export class ServerClient {
         for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
           const line = buffer.slice(0, end);
           buffer = buffer.slice(end + 1);
-          if (line.trim()) this.receive(line);
+          // Reply continuations must install their snapshot before the next notification runs.
+          if (line.trim())
+            this.dispatch = this.dispatch.then(() => {
+              if (this.state !== 'closed') this.receive(line);
+            });
           if (this.state === 'closed') return;
         }
       });

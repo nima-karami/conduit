@@ -17,7 +17,7 @@ export const GAP_MARKER = '\r\n\x1b[2m— output may be missing here —\x1b[0m\
 
 export interface ScrollbackFiles {
   read(fileName: string): string | undefined;
-  write(fileName: string, blob: string): void;
+  write(fileName: string, blob: string): void | Promise<void>;
   remove(fileName: string): void;
 }
 
@@ -25,8 +25,13 @@ export function diskScrollbackFiles(dir: string, log: (message: string) => void)
   return {
     read: (fileName) => readBlob(join(dir, fileName)),
     write(fileName, blob) {
-      atomicWriteFile(join(dir, fileName), blob, (error) => {
-        if (error) log(`scrollback: write ${fileName} failed: ${String(error)}`);
+      return new Promise<void>((resolve, reject) => {
+        atomicWriteFile(join(dir, fileName), blob, (error) => {
+          if (error) {
+            log(`scrollback: write ${fileName} failed: ${String(error)}`);
+            reject(error);
+          } else resolve();
+        });
       });
     },
     remove(fileName) {
@@ -49,6 +54,9 @@ export class ServerScrollback implements ScrollbackPort {
   private readonly store: ScrollbackStore;
   /** A file a newer version wrote is never read back or overwritten this run. */
   private readonly gate: ScrollbackWriteGate;
+  private readonly hydrated = new Set<string>();
+  private readonly pendingWrites = new Set<Promise<void>>();
+  private writeFailure: { error: unknown } | undefined;
 
   constructor(private readonly deps: ServerScrollbackDeps) {
     this.gate = new ScrollbackWriteGate((name) => deps.files.read(name));
@@ -56,7 +64,7 @@ export class ServerScrollback implements ScrollbackPort {
       (sessionId, blob) => {
         if (!deps.recording()) return;
         const name = scrollbackFileName(sessionId);
-        this.gate.run(name, () => deps.files.write(name, blob));
+        this.gate.run(name, () => this.trackWrite(() => deps.files.write(name, blob)));
       },
       {
         send: (sessionId, data) => deps.emit('term.show', { sessionId, data }),
@@ -67,23 +75,23 @@ export class ServerScrollback implements ScrollbackPort {
 
   /** PTY output from the active stream; the caller grants hc credit after this returns. */
   append(sessionId: string, data: string, size: TermGeometry | undefined): void {
+    this.hydrate(sessionId);
     this.store.append(sessionId, data, size);
   }
 
   /** The ring never resets on a gap: it records that output may be missing, then the repaint. */
   gap(sessionId: string, paint: string, size: TermGeometry): void {
-    this.store.append(sessionId, GAP_MARKER + paint, size);
+    this.append(sessionId, GAP_MARKER + paint, size);
   }
 
   replayForColdStart(sessionId: string): FirstPaint | null {
-    const replay = this.store.replayForColdStart(
-      sessionId,
-      () => this.gate.restore(scrollbackFileName(sessionId))?.segments,
-    );
+    this.hydrate(sessionId);
+    const replay = this.store.replayForColdStart(sessionId, () => undefined);
     return replay?.data ? { data: replay.data, replay: replay.runs } : null;
   }
 
   show(sessionId: string, data: string): void {
+    this.hydrate(sessionId);
     const size = this.deps.sizeOf(sessionId);
     if (size) this.store.show(sessionId, data, size);
     else {
@@ -93,16 +101,44 @@ export class ServerScrollback implements ScrollbackPort {
   }
 
   record(sessionId: string, data: string): void {
-    this.store.append(sessionId, data, this.deps.sizeOf(sessionId));
+    this.append(sessionId, data, this.deps.sizeOf(sessionId));
   }
 
   forget(sessionId: string): void {
     this.store.drop(sessionId);
+    this.hydrated.delete(sessionId);
     const name = scrollbackFileName(sessionId);
     this.gate.run(name, () => this.deps.files.remove(name));
   }
 
-  flushPending(): void {
+  async flushPending(): Promise<void> {
     this.store.flushPending();
+    await Promise.all([...this.pendingWrites]);
+    if (this.writeFailure) throw this.writeFailure.error;
+  }
+
+  private hydrate(sessionId: string): void {
+    if (this.hydrated.has(sessionId)) return;
+    this.hydrated.add(sessionId);
+    const segments = this.gate.restore(scrollbackFileName(sessionId))?.segments;
+    for (const segment of segments ?? [])
+      this.store.append(sessionId, segment.data, segment.geometry);
+  }
+
+  private trackWrite(write: () => void | Promise<void>): void {
+    let pending: Promise<void>;
+    try {
+      pending = Promise.resolve(write());
+    } catch (error) {
+      pending = Promise.reject(error);
+    }
+    this.pendingWrites.add(pending);
+    void pending.then(
+      () => this.pendingWrites.delete(pending),
+      (error) => {
+        this.writeFailure ??= { error };
+        this.pendingWrites.delete(pending);
+      },
+    );
   }
 }

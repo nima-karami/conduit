@@ -84,8 +84,8 @@ export interface PersistentTokenStoreOptions {
 /**
  * The sole owner of tokens.json (C7 TokenStorePort, D21). Each change is on disk before its call
  * resolves, so a reservation exists before its run. An unreadable or newer file is left untouched for
- * the run (reconcile adopts and kills nothing, the endpoint welcomes `draining`); a reservation then
- * still mints a token so the launch runs, but it is neither kept nor resolvable until a person acts.
+ * the run (reconcile adopts and kills nothing, the endpoint welcomes `draining`); new reservations
+ * fail because their adoption identity cannot be saved (D21).
  */
 export function createPersistentTokenStore(opts: PersistentTokenStoreOptions): TokenStorePort {
   const randomToken = opts.randomToken ?? (() => randomBytes(32).toString('hex'));
@@ -120,6 +120,7 @@ export function createPersistentTokenStore(opts: PersistentTokenStoreOptions): T
 
   return {
     async reserve(sessionId, ids) {
+      if (unreadable) throw new Error('token store unreadable');
       const token = randomToken();
       commit((draft) => [
         ...draft.flatMap((row): TokenRecord[] => {

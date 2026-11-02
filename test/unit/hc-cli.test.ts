@@ -64,6 +64,8 @@ describe('hc-cli', () => {
       '/rt/server/supervise.js',
       '--user-data',
       '/u',
+      '--hc',
+      '/rt/hc.exe',
       '--e2e',
     ]);
     expect(CORE_START_RUN_FLAGS).toEqual(['--bg', '--no-parent']);

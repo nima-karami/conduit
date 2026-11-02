@@ -124,8 +124,7 @@ describe('persistent TokenStorePort', () => {
     fs.writeFileSync(file, '{"version":1,"rows":[{"sessionId":');
     const store = createPersistentTokenStore({ file, randomToken: tokenSource() });
     expect(store.rows()).toEqual({ state: 'unreadable' });
-    const { token } = await store.reserve('s1', ids(1));
-    expect(token).toBe('tok-1');
+    await expect(store.reserve('s1', ids(1))).rejects.toThrow('token store unreadable');
     await store.revoke({ sessionId: 's1' });
     expect(store.rows()).toEqual({ state: 'unreadable' });
     expect(fs.readFileSync(file, 'utf8')).toBe('{"version":1,"rows":[{"sessionId":');
@@ -138,7 +137,7 @@ describe('persistent TokenStorePort', () => {
     fs.writeFileSync(file, newer);
     const store = createPersistentTokenStore({ file, randomToken: tokenSource() });
     expect(store.rows()).toEqual({ state: 'unreadable' });
-    await store.reserve('s1', ids(1));
+    await expect(store.reserve('s1', ids(1))).rejects.toThrow('token store unreadable');
     await store.markSuperseded(ids(1).launchId);
     expect(fs.readFileSync(file, 'utf8')).toBe(newer);
   });

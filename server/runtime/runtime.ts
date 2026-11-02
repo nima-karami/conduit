@@ -179,6 +179,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
   private stopping: 'restart' | 'stopAll' | undefined;
   private clean = false;
   private sub?: { close(): void };
+  private streamsDetached = false;
   private resyncing?: Promise<void>;
   private resyncAgain = false;
   private hcVersion = HC_PINNED_VERSION;
@@ -277,6 +278,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
       try {
         await step(row);
       } catch (error) {
+        if (row.state !== 'superseded') this.emitUnconfirmed(row);
         this.deps.log(`runtime: reconcile of ${row.launchId} failed: ${String(error)}`);
       }
     };
@@ -435,9 +437,15 @@ export class HcTerminalRuntime implements TerminalRuntime {
 
   async close(): Promise<void> {
     this.offConnection();
-    this.sub?.close();
-    for (const t of this.sessions.values()) t.stream?.close();
+    this.detachStreams();
     this.deps.hc.close();
+  }
+
+  detachStreams(): void {
+    this.streamsDetached = true;
+    this.sub?.close();
+    this.sub = undefined;
+    for (const t of this.sessions.values()) t.stream?.close();
   }
 
   on(listener: (e: RuntimeEvent) => void): () => void {
@@ -521,6 +529,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
    * false: the program ended, and finishUnattached records it.
    */
   private async attach(t: Tracked, plan: AttachPlan): Promise<boolean> {
+    if (this.streamsDetached) return true;
     let attached: Awaited<ReturnType<HcClient['attach']>>;
     t.attaching = true;
     try {
@@ -542,6 +551,10 @@ export class HcTerminalRuntime implements TerminalRuntime {
       t.endSeen = false;
     }
     const { stream } = attached;
+    if (this.streamsDetached) {
+      stream.close();
+      return true;
+    }
     if (t.exit) {
       stream.close();
       return false;
@@ -689,6 +702,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
       }));
     if (!attached) {
       await this.finishUnattached(t);
+      await this.deps.tokens.revoke({ launchId: row.launchId });
       return undefined;
     }
     this.emit({
