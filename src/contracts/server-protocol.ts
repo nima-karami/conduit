@@ -498,8 +498,12 @@ export interface ServerEvents {
    * them into the xterm the way it writes `prelude`; mid-stream ones come framed ESC7…ESC8.
    */
   'term.show': { sessionId: string; data: string };
-  /** A message for a renderer: mcp:state/ask/askClosed/ui/thread, openFileInEditor, activateSession. */
-  'ui.post': { route: UiRoute; message: HostToWebview };
+  /**
+   * A message for a renderer: mcp:state/ask/askClosed/ui/thread, openFileInEditor, activateSession.
+   * `raise` brings the routed window to the front: today's focus_session raises only when the target
+   * window differs from the caller's, and only the server knows both owners.
+   */
+  'ui.post': { route: UiRoute; message: HostToWebview; raise?: boolean };
   'approvals.changed': { pending: PendingAsk[] };
   /** The app decides whether to show an OS notification (D9). */
   'attention.edge': { sessionId: string; kind: 'run-end' | 'bell' | 'urgent-message' | 'ask' };
