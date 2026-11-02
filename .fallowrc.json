@@ -64,9 +64,25 @@
         "killSessions"
       ]
     },
-    { "implements": "ScreenPort", "members": ["ensure", "keepTail", "release"] },
-    { "implements": "AttentionPort", "members": ["forgetSession"] },
-    { "extends": "Error", "members": ["reason"] },
-    { "implements": "HcStream", "members": ["facts", "receive"] }
+    {
+      "implements": "ScreenPort",
+      "members": ["ensure", "keepTail", "release"]
+    },
+    {
+      "implements": "AttentionPort",
+      "members": ["forgetSession"]
+    },
+    {
+      "extends": "Error",
+      "members": ["reason"]
+    },
+    {
+      "implements": "HcStream",
+      "members": ["facts", "receive"]
+    },
+    {
+      "implements": "RuntimeRing",
+      "members": ["append", "gap", "resized", "launchStarted"]
+    }
   ]
 }

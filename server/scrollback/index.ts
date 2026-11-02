@@ -8,6 +8,7 @@ import { ScrollbackWriteGate } from '../../src/persistence-write-gates';
 import type { TermGeometry } from '../../src/protocol';
 import { scrollbackFileName } from '../../src/scrollback-files';
 import { ScrollbackStore } from '../../src/scrollback-store';
+import type { RuntimeRing } from '../runtime/runtime';
 
 /**
  * Appended before a `paint{cause:'gap'}`: output between the last byte and the repaint may be
@@ -50,7 +51,7 @@ export interface ServerScrollbackDeps {
 }
 
 /** The ring + files (D18). The runtime appends on its credit path; W4 uses the ScrollbackPort half. */
-export class ServerScrollback implements ScrollbackPort {
+export class ServerScrollback implements ScrollbackPort, RuntimeRing {
   private readonly store: ScrollbackStore;
   /** A file a newer version wrote is never read back or overwritten this run. */
   private readonly gate: ScrollbackWriteGate;
