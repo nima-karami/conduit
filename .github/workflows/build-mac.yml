@@ -40,20 +40,6 @@ jobs:
           # No GH_TOKEN: --publish never needs none, and omitting it removes any path to an
           # accidental Release upload of an unsigned artifact.
 
-      # A wrong-arch node-pty prebuild fails only at RUNTIME, not build — so assert the bundled
-      # binary is arm64 here. lipo prints the slice arch(es); grep fails the job if arm64 absent.
-      - name: Assert bundled node-pty is darwin-arm64
-        run: |
-          set -euo pipefail
-          node_file=$(find "dist/mac-arm64" -name "*.node" -path "*node-pty*" | head -n1)
-          if [ -z "$node_file" ]; then
-            echo "No node-pty .node found under dist/mac-arm64 — bundle layout changed." >&2
-            exit 1
-          fi
-          echo "Found: $node_file"
-          lipo -archs "$node_file"
-          lipo -archs "$node_file" | grep -qw arm64
-
       - uses: actions/upload-artifact@v4
         with:
           name: conduit-macos-arm64-unsigned

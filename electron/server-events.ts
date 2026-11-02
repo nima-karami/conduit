@@ -40,6 +40,83 @@ export interface ServerEventRouterDeps {
   log: AppLog;
 }
 
+export interface PendingAppCreateMatcher {
+  begin(windowId: number): symbol;
+  opened(event: ServerEvents['sessions.opened']): void;
+  resolve(token: symbol, sessionId: string): void;
+  cancel(token: symbol): void;
+  isHeld(sessionId: string): boolean;
+}
+
+/** Matches app-created sessions by the id returned from C2, even when opened arrives first. */
+export function createPendingAppCreateMatcher(
+  place: (event: ServerEvents['sessions.opened'], windowId?: number) => void,
+): PendingAppCreateMatcher {
+  const pending = new Map<symbol, { windowId: number; sessionId?: string }>();
+  const unresolved = new Set<symbol>();
+  const bySession = new Map<string, symbol>();
+  const opened = new Map<string, ServerEvents['sessions.opened']>();
+
+  const flushUnmatched = () => {
+    if (unresolved.size > 0) return;
+    for (const [sessionId, event] of opened) {
+      if (bySession.has(sessionId)) continue;
+      opened.delete(sessionId);
+      place(event);
+    }
+  };
+
+  const consume = (token: symbol, event: ServerEvents['sessions.opened']) => {
+    const create = pending.get(token);
+    if (!create) return false;
+    pending.delete(token);
+    unresolved.delete(token);
+    if (create.sessionId !== undefined) bySession.delete(create.sessionId);
+    place(event, create.windowId);
+    flushUnmatched();
+    return true;
+  };
+
+  return {
+    begin(windowId) {
+      const token = Symbol('app-create');
+      pending.set(token, { windowId });
+      unresolved.add(token);
+      return token;
+    },
+    opened(event) {
+      if (event.openerSessionId !== undefined) return;
+      const token = bySession.get(event.sessionId);
+      if (token !== undefined && consume(token, event)) return;
+      if (unresolved.size === 0) place(event);
+      else opened.set(event.sessionId, event);
+    },
+    resolve(token, sessionId) {
+      const create = pending.get(token);
+      if (!create) return;
+      create.sessionId = sessionId;
+      unresolved.delete(token);
+      bySession.set(sessionId, token);
+      const event = opened.get(sessionId);
+      if (event) {
+        opened.delete(sessionId);
+        consume(token, event);
+      } else flushUnmatched();
+    },
+    cancel(token) {
+      const create = pending.get(token);
+      if (!create) return;
+      pending.delete(token);
+      unresolved.delete(token);
+      if (create.sessionId !== undefined) bySession.delete(create.sessionId);
+      flushUnmatched();
+    },
+    isHeld(sessionId) {
+      return opened.has(sessionId);
+    },
+  };
+}
+
 /** One switch over C2's events: each lands in the store, a renderer message or an OS effect. */
 export function createServerEventRouter(d: ServerEventRouterDeps): {
   snapshot(s: ServerSnapshot): void;

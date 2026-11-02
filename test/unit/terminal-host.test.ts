@@ -190,6 +190,20 @@ describe('terminal-host', () => {
     expect(r.sent.filter((m) => m.type === 'term:exit')).toHaveLength(1);
   });
 
+  it('running→exited with no code emits the process exited line', async () => {
+    const r = rig([live()]);
+    await r.host.start(START);
+    const exited = view({ status: 'exited', exitCode: null });
+    const prev = r.setViews([exited]);
+    r.host.sessionsChanged(prev, [exited]);
+    expect(r.sent).toContainEqual({
+      type: 'term:data',
+      sessionId: 's1',
+      data: '\r\n\x1b[2m[process exited]\x1b[0m\r\n',
+    });
+    expect(r.sent.filter((m) => m.type === 'term:exit')).toHaveLength(0);
+  });
+
   it('input dropped while client null', async () => {
     const r = rig([live()]);
     await r.host.start(START);
@@ -255,6 +269,29 @@ describe('terminal-host', () => {
     r.host.hcReconnected();
     await flush();
     expect(r.attaches.map((a) => a.history)).toEqual([APP_ATTACH_HISTORY_LINES, 0]);
+  });
+
+  it('hc reconnect does not reattach a generation that already ended', async () => {
+    const r = rig([live()]);
+    await r.host.start(START);
+    r.attaches[0].events.closed('exited', null, false);
+    await flush();
+    r.host.hcReconnected();
+    await flush();
+    expect(r.attaches).toHaveLength(1);
+  });
+
+  it('server reconnect does not restart a generation that already ended', async () => {
+    const r = rig([live()]);
+    await r.host.start(START);
+    r.attaches[0].events.closed('exited', null, false);
+    await flush();
+    r.setConnected(false);
+    r.setConnected(true);
+    r.host.serverConnected();
+    await flush();
+    expect(r.trace.filter((entry) => entry === 'call:sessions.start')).toHaveLength(1);
+    expect(r.attaches).toHaveLength(1);
   });
 
   it('a start while down runs on serverConnected', async () => {

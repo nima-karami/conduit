@@ -38,11 +38,9 @@ import type {
   WindowPresence as C2WindowPresence,
   DataStores,
   ServerEvents,
-  ServerMethod,
   ServerMethods,
   SessionMutation,
 } from '../src/contracts/server-protocol';
-import { APP_HELLO_TIMEOUT_MS } from '../src/contracts/server-protocol';
 import { coreStartEnv, SERVER_EXHAUSTED_FILE } from '../src/contracts/session-identity';
 import { decideCrashRecovery } from '../src/crash-recovery';
 import { ExpiringCache } from '../src/expiring-cache';
@@ -169,6 +167,7 @@ import {
   restoreSettings,
   serializeSettings,
 } from '../src/settings';
+import { mirrorServerKeys, serverPatchOf, uiOnly } from '../src/settings-mirror';
 import { expandShortNames, hasShortComponent, hostShortNameDeps } from '../src/short-names';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 import { INDEX_FILE_CAP, isOversizedForIndex, selectIndexCandidates } from '../src/source-index';
@@ -251,11 +250,17 @@ import { ProposalWatcher } from './proposal-watcher';
 import { createRepoTrackerHost } from './repo-tracker-host';
 import { collectRuntimeGarbage } from './runtime-gc';
 import { runtimeLayout } from './runtime-layout';
+import {
+  createServerCalls,
+  installDownResult,
+  installDownStatus,
+  serverDownReply,
+  waitForServerSnapshot,
+} from './server-calls';
 import { type AppLog, ServerCallError, ServerClient } from './server-client';
-import { createServerEventRouter } from './server-events';
+import { createPendingAppCreateMatcher, createServerEventRouter } from './server-events';
 import { createServerLifecycle } from './server-lifecycle';
 import { SessionFolderRuntime } from './session-folder-runtime';
-import { mirrorServerKeys, serverPatchOf, uiOnly } from './settings-mirror';
 import { installSkill, listSkills } from './skills-service';
 import { createTerminalHost } from './terminal-host';
 import { createTerminalLinkFactory } from './terminal-link';
@@ -373,6 +378,7 @@ const focusedWindow = (): BrowserWindow | undefined =>
 // against an external `git checkout` made while the app was unfocused (Slice A refresh), and the
 // active session's folders are health-checked (mf-model spec §2.6).
 let onWindowFocus: (() => void) | null = null;
+let onWindowPresenceChanged: (() => void) | null = null;
 
 // Set by the app-ready closure; broadcasts the `win:list` picker payload (needs the engine
 // to count owned sessions). Called on window create/close/focus + after a session move
@@ -1016,6 +1022,7 @@ function createWindow(opts: {
   w.on('move', () => schedulePersistLayout?.());
   // Stop taskbar flash when the window regains focus (T1A). Track most-recently-focused
   // for launch-target routing when no window currently holds OS focus.
+  w.on('blur', () => onWindowPresenceChanged?.());
   w.on('focus', () => {
     lastFocusedWindowId = w.id;
     w.flashFrame(false);
@@ -1436,9 +1443,6 @@ app.whenReady().then(() => {
   // activity/gitDemand, which fail open (spec 2026-10-30-conduit-mcp-tool-policy §2.3).
   const presence = createWindowPresence();
 
-  // Each window's last `visible` report, for C2 presence; window-presence decides if it still holds.
-  const visibleBy = new Map<number, string[]>();
-
   // The overlay's own mutators (repo scans, pins, cwd follow) re-post; server lists post themselves.
   store.onChange(() => postState());
 
@@ -1618,12 +1622,6 @@ app.whenReady().then(() => {
     }
   };
 
-  /**
-   * App creates in call order. Their `sessions.opened` carries no opener and comes before the
-   * reply, so the first unplaced one names the window to place it in.
-   */
-  const pendingCreates: { windowId: number; placed: boolean }[] = [];
-
   // Open a folder in the chosen terminal (C2 sessions.create) and remember it in history. `cardId`
   // (N2) stamps the session with the board card it was started for; `ownerWindowId` is the window
   // the new session belongs to (multi-window Slice A).
@@ -1633,8 +1631,7 @@ app.whenReady().then(() => {
     ownerWindowId: number,
     opts: { roots?: string[]; projectId?: string; cardId?: string; brief?: BriefRequest } = {},
   ): Promise<ServerMethods['sessions.create']['result']> {
-    const pending = { windowId: ownerWindowId, placed: false };
-    pendingCreates.push(pending);
+    const pending = pendingCreates.begin(ownerWindowId);
     try {
       const r = await callServer('sessions.create', {
         agentId,
@@ -1645,6 +1642,7 @@ app.whenReady().then(() => {
         ...(opts.brief ? { brief: opts.brief } : {}),
       });
       assignOwner(sessionOwner, r.sessionId, ownerWindowId);
+      pendingCreates.resolve(pending, r.sessionId);
       rememberOpen(
         agentId,
         home,
@@ -1654,8 +1652,9 @@ app.whenReady().then(() => {
       postState();
       schedulePresence();
       return r;
-    } finally {
-      pendingCreates.splice(pendingCreates.indexOf(pending), 1);
+    } catch (error) {
+      pendingCreates.cancel(pending);
+      throw error;
     }
   }
 
@@ -2028,38 +2027,8 @@ app.whenReady().then(() => {
   const hcEvents = createHcEvents(hc, { 'conduit.instance': names.instance }, appLog);
   let lifecycle: ReturnType<typeof createServerLifecycle> | null = null;
   const serverClient = () => lifecycle?.client() ?? null;
-  /**
-   * A person's action while the service is starting or reconnecting waits for it, bounded like a
-   * hello; keystrokes never do (terminal-host drops them, D29). Any other state refuses at once.
-   */
-  const connectWaiters = new Set<{ settle(c: ServerClient | null): void }>();
-  const settleWaiters = (c: ServerClient | null) => {
-    for (const w of [...connectWaiters]) w.settle(c);
-  };
-  const connectedClient = (): Promise<ServerClient> => {
-    const c = serverClient();
-    if (c) return Promise.resolve(c);
-    const state = lifecycle?.current().state ?? 'connecting';
-    const down = () =>
-      new ServerCallError('disconnected', "Conduit's background service is not connected");
-    if (state !== 'connecting' && state !== 'reconnecting') return Promise.reject(down());
-    return new Promise((resolve, reject) => {
-      const waiter = {
-        settle: (client: ServerClient | null) => {
-          clearTimeout(timer);
-          connectWaiters.delete(waiter);
-          if (client) resolve(client);
-          else reject(down());
-        },
-      };
-      const timer = setTimeout(() => waiter.settle(null), APP_HELLO_TIMEOUT_MS);
-      connectWaiters.add(waiter);
-    });
-  };
-  const callServer = async <M extends ServerMethod>(
-    m: M,
-    p: ServerMethods[M]['params'],
-  ): Promise<ServerMethods[M]['result']> => (await connectedClient()).call(m, p);
+  const serverCalls = createServerCalls(() => lifecycle);
+  const callServer = serverCalls.call;
   let resolveFirstSnapshot = () => {};
   /** OS opens wait for it: they need the server's agents. */
   const firstSnapshot = new Promise<void>((resolve) => {
@@ -2105,9 +2074,10 @@ app.whenReady().then(() => {
       windowId,
       focused: focusedId === windowId,
       ready: presence.isReady(windowId),
-      visibleSessionIds: (visibleBy.get(windowId) ?? []).filter((id) =>
-        presence.isOnScreen(windowId, id),
-      ),
+      visibleSessionIds: store
+        .list()
+        .filter((s) => presence.isOnScreen(windowId, s.id))
+        .map((s) => s.id),
       ownedSessionIds: [...sessionOwner].filter(([, w]) => w === windowId).map(([id]) => id),
     }));
     serverClient()
@@ -2123,20 +2093,21 @@ app.whenReady().then(() => {
     });
   };
 
+  onWindowPresenceChanged = schedulePresence;
+
   /** Created with no app, restored without a layout, or its window is gone. */
   const fallbackWindow = (): number =>
     focusedWindow()?.id ?? (windows.has(primaryWindowId) ? primaryWindowId : -1);
 
-  const place = (e: ServerEvents['sessions.opened']) => {
+  const applyPlacement = (e: ServerEvents['sessions.opened'], appWindowId?: number) => {
     const openerWindow =
       e.openerSessionId !== undefined ? sessionOwner.get(e.openerSessionId) : undefined;
-    let windowId: number;
-    if (openerWindow !== undefined && windows.has(openerWindow)) windowId = openerWindow;
-    else {
-      const mine = e.openerSessionId === undefined && pendingCreates.find((p) => !p.placed);
-      if (mine) mine.placed = true;
-      windowId = mine ? mine.windowId : fallbackWindow();
-    }
+    const windowId =
+      appWindowId !== undefined && windows.has(appWindowId)
+        ? appWindowId
+        : openerWindow !== undefined && windows.has(openerWindow)
+          ? openerWindow
+          : fallbackWindow();
     assignOwner(sessionOwner, e.sessionId, windowId);
     if (!e.focus)
       windows.get(windowId)?.webContents.send('to-webview', {
@@ -2145,7 +2116,18 @@ app.whenReady().then(() => {
       } satisfies HostToWebview);
     // An app open focuses through its own openRepo:result; an MCP open is activated here.
     else if (e.openerSessionId !== undefined) pendingActivate.add(e.sessionId);
+    if (store.get(e.sessionId)) {
+      postState();
+      broadcastWinList?.();
+      schedulePersistLayout?.();
+    }
     schedulePresence();
+  };
+
+  const pendingCreates = createPendingAppCreateMatcher(applyPlacement);
+  const place = (e: ServerEvents['sessions.opened']) => {
+    if (e.openerSessionId === undefined) pendingCreates.opened(e);
+    else applyPlacement(e);
   };
 
   /** Each session's last home, for the plan watch a removed session may have held alone. */
@@ -2182,7 +2164,8 @@ app.whenReady().then(() => {
       homes.set(s.id, s.home);
       if (d.kind === 'added') {
         membership = true;
-        if (!sessionOwner.has(s.id)) assignOwner(sessionOwner, s.id, fallbackWindow());
+        if (!sessionOwner.has(s.id) && !pendingCreates.isHeld(s.id))
+          assignOwner(sessionOwner, s.id, fallbackWindow());
       }
       // Multi-repo: a cd inside a detected sub-repo auto-follows (the store ignores it while pinned).
       if (d.cwdChanged && s.cwd) store.setAutoRepo(s.id, repoForPath(s.repos ?? [], s.cwd));
@@ -2367,11 +2350,10 @@ app.whenReady().then(() => {
     // S4 renders these; until then they are logged and terminals show "starting".
     lifecycle.onState((s) => {
       log.info('server', `state ${s.state}`, { ...s });
-      if (s.state !== 'connecting' && s.state !== 'reconnecting' && s.state !== 'connected')
-        settleWaiters(null);
+      serverCalls.stateChanged(s);
     });
     lifecycle.onConnected((c) => {
-      settleWaiters(c);
+      serverCalls.connected(c);
       c.call('server.setLogging', { logging: settings.logging, logLevel: settings.logLevel }).catch(
         (err: unknown) => log.warn('server', 'setLogging failed', { err: String(err) }),
       );
@@ -3272,7 +3254,6 @@ app.whenReady().then(() => {
           break;
         case 'visible':
           presence.setVisible(senderId, m.ids);
-          visibleBy.set(senderId, [...m.ids]);
           // What this window has on screen: the server's attention exemptions and ask gate read it.
           schedulePresence();
           {
@@ -3925,6 +3906,11 @@ app.whenReady().then(() => {
           break;
       }
     } catch (err: unknown) {
+      const refusal = serverDownReply(m, err);
+      if (refusal) {
+        replyHere(refusal);
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       log.error('ipc', `handler failed: ${m.type}`, { message });
       replyHere({ type: 'error', message });
@@ -4204,12 +4190,16 @@ app.whenReady().then(() => {
 
   // MCP install (spec 2026-10-27-conduit-mcp-install §3.6): nothing is written without a click.
   ipcMain.handle('mcpInstall:status', (_e, p: unknown) =>
-    callServer('mcp.installStatus', { projectPath: typeof p === 'string' ? p : null }),
+    callServer('mcp.installStatus', { projectPath: typeof p === 'string' ? p : null }).catch(
+      installDownStatus,
+    ),
   );
   ipcMain.handle('mcpInstall:act', async (_e, v: unknown) => {
     const req = coerceInstallRequest(v);
     if (!req) throw new Error('invalid mcpInstall request');
-    const r = await callServer('mcp.installAct', { request: req });
+    const r = await callServer('mcp.installAct', { request: req }).catch((err: unknown) =>
+      installDownResult(req, err),
+    );
     if (r.ok && r.permissionErrorCode) {
       log.warn('mcp-install', 'permission rule not written', {
         cli: req.cli,
@@ -4348,7 +4338,6 @@ app.whenReady().then(() => {
       onClosed: (windowId) => {
         closeGuard.onWindowGone(windowId);
         presence.drop(windowId);
-        visibleBy.delete(windowId);
         // Its visible-session set dies with it, or sessions it was showing would stay
         // exempt from attention forever.
         schedulePresence();
@@ -4521,7 +4510,15 @@ app.whenReady().then(() => {
 
   /** A new session for an OS open, once the server's agents are known. */
   const openFromOS = async (home: string, ownerWindowId: number): Promise<string | undefined> => {
-    await firstSnapshot;
+    try {
+      await serverCalls.whenConnected();
+      if (!lifecycle) throw new ServerCallError('disconnected', 'Background service unavailable');
+      await waitForServerSnapshot(firstSnapshot, lifecycle);
+    } catch (err) {
+      log.warn('app', 'os-open unavailable', { home, err: String(err) });
+      dialog.showErrorBox('Conduit', 'No terminals available.');
+      return undefined;
+    }
     const agentId = stores.agents[0]?.id;
     if (!agentId) {
       dialog.showErrorBox('Conduit', 'No terminals available.');

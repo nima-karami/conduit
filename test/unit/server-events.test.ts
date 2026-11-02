@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AppSessionStore } from '../../electron/app-session-store';
+import * as serverEvents from '../../electron/server-events';
 import { createServerEventRouter, type ServerEventRouterDeps } from '../../electron/server-events';
 import type {
   ServerEventEnvelope,
@@ -94,6 +95,53 @@ const snapshot = (sessions: SessionView[]): ServerSnapshot => ({
 });
 
 describe('server-events router', () => {
+  it('matches an openerless opened event to the create that resolved its session id', () => {
+    expect(serverEvents.createPendingAppCreateMatcher).toBeTypeOf('function');
+    const placed: Array<{ sessionId: string; windowId?: number }> = [];
+    const matcher = serverEvents.createPendingAppCreateMatcher((event, windowId) =>
+      placed.push({ sessionId: event.sessionId, windowId }),
+    );
+    const first = matcher.begin(1);
+    const second = matcher.begin(2);
+    const opened = (sessionId: string) => ({ sessionId, focus: true });
+
+    matcher.opened(opened('s2'));
+    expect(matcher.isHeld('s2')).toBe(true);
+    matcher.resolve(second, 's2');
+    expect(matcher.isHeld('s2')).toBe(false);
+    matcher.resolve(first, 's1');
+    matcher.opened(opened('s1'));
+    expect(placed).toEqual([
+      { sessionId: 's2', windowId: 2 },
+      { sessionId: 's1', windowId: 1 },
+    ]);
+    const third = matcher.begin(3);
+    matcher.opened(opened('external'));
+    matcher.cancel(third);
+    expect(placed.at(-1)).toEqual({ sessionId: 'external', windowId: undefined });
+  });
+
+  it('matches an opened event that arrives after its create reply', () => {
+    const placed: Array<{ sessionId: string; windowId?: number }> = [];
+    const matcher = serverEvents.createPendingAppCreateMatcher((event, windowId) =>
+      placed.push({ sessionId: event.sessionId, windowId }),
+    );
+    const token = matcher.begin(4);
+    matcher.resolve(token, 'later');
+    expect(placed).toEqual([]);
+    matcher.opened({ sessionId: 'later', focus: true });
+    expect(placed).toEqual([{ sessionId: 'later', windowId: 4 }]);
+  });
+
+  it('falls back for openerless events when no app create can match', () => {
+    const placed: Array<{ sessionId: string; windowId?: number }> = [];
+    const matcher = serverEvents.createPendingAppCreateMatcher((event, windowId) =>
+      placed.push({ sessionId: event.sessionId, windowId }),
+    );
+    matcher.opened({ sessionId: 'external', focus: true });
+    expect(placed).toEqual([{ sessionId: 'external', windowId: undefined }]);
+  });
+
   it('sessions.opened{focus:false} applied before the session first appears in state', () => {
     const r = rig();
     r.router.snapshot(snapshot([]));

@@ -10,9 +10,9 @@ import {
   type RepoTrackerDeps,
   type TrackerUpdate,
 } from '../src/repo-tracker';
-import type { SessionManager } from '../src/session-manager';
 import type { SessionResourceDemand } from '../src/session-resource-demand';
 import { shouldIgnoreWatchPath } from '../src/watch-filter';
+import type { AppSessionStore } from './app-session-store';
 import type { Logger } from './logger';
 import { watchDirWhilePresent } from './watch-dir';
 
@@ -20,7 +20,7 @@ import { watchDirWhilePresent } from './watch-dir';
 // (Contracts, electron/repo-tracker-host.ts).
 
 export interface RepoTrackerHostDeps {
-  mgr: Pick<SessionManager, 'get' | 'list' | 'mergeRepoGit'>;
+  mgr: Pick<AppSessionStore, 'get' | 'list' | 'mergeRepoGit'>;
   demand: Pick<SessionResourceDemand, 'isVisible' | 'isShownInWindow' | 'shownIn'>;
   /** Whether the window owns the session (main's sessionOwner). */
   owns: (windowId: number, sessionId: string) => boolean;

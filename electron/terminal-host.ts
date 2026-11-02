@@ -59,6 +59,12 @@ export function createTerminalHost(d: TerminalHostDeps) {
     if (pane.exitShown) return;
     pane.exitShown = true;
     if (typeof code === 'number') d.sendToOwner(sessionId, { type: 'term:exit', sessionId, code });
+    else
+      d.sendToOwner(sessionId, {
+        type: 'term:data',
+        sessionId,
+        data: '\r\n\x1b[2m[process exited]\x1b[0m\r\n',
+      });
   };
 
   const current = (sessionId: string, pane: Pane) => panes.get(sessionId) === pane;
@@ -76,6 +82,8 @@ export function createTerminalHost(d: TerminalHostDeps) {
     try {
       link = await d.links.attach(sessionId, target, pane.size, history, {
         data: (data) => {
+          // First-paint completion resolves the attach promise on a microtask; later data in the
+          // same stream turn must wait so it cannot be emitted ahead of the first paint.
           if (!held) early.push(data);
           else if (pane.link === held)
             d.sendToOwner(sessionId, { type: 'term:data', sessionId, data });
@@ -228,6 +236,7 @@ export function createTerminalHost(d: TerminalHostDeps) {
       const c = d.client();
       if (!c) return;
       for (const [sessionId, pane] of panes) {
+        if (pane.endedGeneration !== null && pane.generation === pane.endedGeneration) continue;
         if (!pane.link) {
           void run(sessionId, pane);
           continue;
@@ -242,6 +251,7 @@ export function createTerminalHost(d: TerminalHostDeps) {
     hcReconnected(): void {
       for (const [sessionId, pane] of panes) {
         if (pane.link || !pane.target || pane.retired) continue;
+        if (pane.endedGeneration !== null && pane.generation === pane.endedGeneration) continue;
         void attach(sessionId, pane, pane.target, pane.generation, 0);
       }
     },

@@ -8,9 +8,9 @@ import {
   useRef,
   useState,
 } from 'react';
-import { serverPatchOf } from '../electron/settings-mirror';
 import type { AppSettings } from '../src/settings';
 import { DEFAULT_SETTINGS, FONT_SIZE_SCALE } from '../src/settings';
+import { serverPatchOf } from '../src/settings-mirror';
 import { decideHydrate, jsonEqual, makeGate, onLocalEdit, onPostFired } from '../src/settings-sync';
 import { initialSettings, post } from './bridge';
 import { coupleThemeDefaults } from './themes';

@@ -15,6 +15,7 @@ import type {
 } from './conduit-mcp/ui-types';
 import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-search';
 import type { DisplayFacts } from './contracts/frames';
+import type { ServerSettings } from './contracts/server-protocol';
 import type { DroppedRoot, SessionOpReason } from './folder-validation';
 import type { GitFailure } from './git-exec';
 import type { RefEndpoint } from './git-range';
@@ -1134,7 +1135,7 @@ export type WebviewToHost =
   | { type: 'updateSettings'; settings: AppSettings }
   // Key-scoped and sent at once, so a stale window can't revert another window's change (D7). The
   // host forwards only the server's keys (SERVER_SETTINGS_KEYS); C2 imports this file, not the reverse.
-  | { type: 'updateServerSettings'; patch: Partial<AppSettings> }
+  | { type: 'updateServerSettings'; patch: Partial<ServerSettings> }
   // Quick-open corpus: every file under root. `root` must be one of the session's folders or
   // registered repos (host-checked). `fresh` skips the host's short-lived index cache: the
   // renderer sends it after a `fileIndexChanged`, when that cache may predate the change.

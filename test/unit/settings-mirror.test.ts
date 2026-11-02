@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { mirrorServerKeys, serverPatchOf, uiOnly } from '../../electron/settings-mirror';
 import { SERVER_SETTINGS_KEYS, type ServerSettings } from '../../src/contracts/server-protocol';
 import { type AppSettings, DEFAULT_SETTINGS } from '../../src/settings';
+import { mirrorServerKeys, serverPatchOf, uiOnly } from '../../src/settings-mirror';
 
 const serverOf = (s: AppSettings): ServerSettings =>
   Object.fromEntries(SERVER_SETTINGS_KEYS.map((k) => [k, s[k]])) as ServerSettings;
