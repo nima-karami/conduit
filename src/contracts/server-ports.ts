@@ -211,6 +211,12 @@ export interface ScrollbackPort {
    * Never through TypingPort, which would type them into the program.
    */
   show(sessionId: string, data: string): void;
+  /**
+   * Appends host-composed bytes to the ring at the session's current size WITHOUT `term.show`: for
+   * bytes the app writes itself as part of a start's `prelude` (the relaunch marker, ConPTY padding),
+   * which must be in the ring before the program's first output.
+   */
+  record(sessionId: string, data: string): void;
   forget(sessionId: string): void;
 }
 
