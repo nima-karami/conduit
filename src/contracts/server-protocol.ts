@@ -540,6 +540,28 @@ export type ServerErrorKind =
   | 'server_stopping';
 
 /**
+ * Every server event travels as one JSON-RPC notification method, so a reader dispatches on
+ * `params.type` and orders on `params.seq` without a method table per event.
+ */
+export const SERVER_EVENT_METHOD = 'event';
+export interface ServerEventNotification<E extends ServerEvent = ServerEvent> {
+  jsonrpc: '2.0';
+  method: typeof SERVER_EVENT_METHOD;
+  params: ServerEventEnvelope<E>;
+}
+
+/**
+ * Domain refusals share one JSON-RPC code; the kind is in `data`. Parse/invalid-request/
+ * method-not-found keep the standard JSON-RPC codes.
+ */
+export const SERVER_ERROR_RPC_CODE = -32000;
+export interface ServerRpcError {
+  code: typeof SERVER_ERROR_RPC_CODE;
+  message: string;
+  data: { kind: ServerErrorKind };
+}
+
+/**
  * The frozen calls' required field names; contracts.test.ts fails if they change within a
  * generation. Optional fields may be added beside them.
  */

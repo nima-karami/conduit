@@ -28,12 +28,16 @@ import {
   APP_SESSION_FIELDS,
   FROZEN_SHAPES,
   mergeAppOverlay,
+  SERVER_ERROR_RPC_CODE,
+  SERVER_EVENT_METHOD,
   SERVER_PROTOCOL_GENERATION,
   SERVER_SETTINGS_KEYS,
   type ServerErrorKind,
+  type ServerEventNotification,
   type ServerEvents,
   type ServerMethods,
   type ServerNotifications,
+  type ServerRpcError,
   type ServerSettings,
   type SessionView,
   STOP_ALL_ANSWER_TIMEOUT_MS,
@@ -608,5 +612,24 @@ describe('frozen shim protocol', () => {
       id: '1',
       error: { code: -32000, data: { code: 'host_unavailable', retryable: true } },
     });
+  });
+});
+
+describe('C2 wire wrappers', () => {
+  it('sends every event as one notification method carrying the envelope', () => {
+    const wire: ServerEventNotification<'runtime.changed'> = JSON.parse(
+      '{"jsonrpc":"2.0","method":"event","params":{"seq":4,"type":"runtime.changed","data":{"state":"ready","hcVersion":"0.1.16"}}}',
+    );
+    expect(wire.method).toBe(SERVER_EVENT_METHOD);
+    expect(wire.params.seq).toBe(4);
+  });
+  it('puts a domain refusal kind under one code', () => {
+    const err: ServerRpcError = {
+      code: SERVER_ERROR_RPC_CODE,
+      message: 'server is stopping',
+      data: { kind: 'server_stopping' },
+    };
+    expect(err.code).toBe(-32000);
+    expectTypeOf(err.data.kind).toEqualTypeOf<ServerErrorKind>();
   });
 });
