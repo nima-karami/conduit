@@ -3,6 +3,8 @@
   "entry": [
     "electron/main.ts",
     "electron/preload.ts",
+    "server/main.ts",
+    "server/supervise.ts",
     "webview/index.tsx",
     "webview/ts.worker.ts",
     "src/content-search-worker.ts",

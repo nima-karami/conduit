@@ -8,7 +8,7 @@ import {
   projectTarget,
   type TargetEnv,
   userTarget,
-} from '../../electron/mcp-install-targets';
+} from '../../src/conduit-mcp/install-targets';
 
 const base: TargetEnv = { homeDir: '/h', env: {}, userDataDir: '/u', platform: 'linux' };
 const withEnv = (env: Record<string, string>): TargetEnv => ({ ...base, env });

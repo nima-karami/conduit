@@ -4,20 +4,21 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMcpEndpoint } from '../../electron/conduit-mcp-endpoint';
+import { createSessionScreens, type SessionScreens } from '../../electron/session-screens';
+import { MCP_ADAPTERS } from '../../src/conduit-mcp/adapters';
+import type { McpFileRequest, McpOpenRequest, PathKind } from '../../src/conduit-mcp/control-tools';
 import {
   type ConduitMcpHost,
   type ConduitMcpHostDeps,
   createConduitMcpHost,
   ENDPOINT_READY_WAIT_MS,
   type McpRendererMessage,
-} from '../../electron/conduit-mcp-host';
-import { createSessionScreens, type SessionScreens } from '../../electron/session-screens';
-import { MCP_ADAPTERS } from '../../src/conduit-mcp/adapters';
-import type { McpFileRequest, McpOpenRequest, PathKind } from '../../src/conduit-mcp/control-tools';
+} from '../../src/conduit-mcp/host';
 import { ECHO_POLL_MS } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
 import { screenVerdict } from '../../src/conduit-mcp/screen-verdict';
 import type { StoreIo } from '../../src/conduit-mcp/store';
+import { createTokenStore } from '../../src/conduit-mcp/token-store';
 import {
   type CliPolicyLayers,
   DEFAULT_TOOL_POLICY,
@@ -28,6 +29,13 @@ import {
   withPolicyPatch,
 } from '../../src/conduit-mcp/tool-policy';
 import { toolError } from '../../src/conduit-mcp/types';
+import type { McpHostDeps, TokenStorePort } from '../../src/contracts/server-ports';
+import type { ServerEvents } from '../../src/contracts/server-protocol';
+import type {
+  LaunchIds,
+  RuntimeEvent,
+  RuntimeTerminal,
+} from '../../src/contracts/terminal-runtime';
 import type { HostToWebview } from '../../src/protocol';
 import { createPtyWriter } from '../../src/pty-writer';
 import { COMMAND_AGENT_ID, commandDef } from '../../src/session-command';
@@ -133,6 +141,13 @@ interface Harness {
   advance(ms: number): void;
   addRoots: Array<{ id: string; path: string }>;
   activations: Array<{ id: string; raise: boolean }>;
+  closes: string[];
+  tokens: TokenStorePort;
+  prepareLaunch(sessionId: string, def: AgentDefinition, spec: SpawnSpec): Promise<SpawnSpec>;
+  spawn(sessionId: string, cols?: number, rows?: number): void;
+  resize(sessionId: string, cols: number, rows: number): void;
+  exit(sessionId: string, code?: number | null): void;
+  output(sessionId: string, data: string): void;
 }
 
 const dirs: string[] = [];
@@ -179,7 +194,7 @@ function harness(
     kinds?: Record<string, PathKind>;
     /** Records every line the host sends into `calls`, so ordering against setMcp is visible. */
     recordSends?: boolean;
-    installState?: ConduitMcpHostDeps['installState'];
+    installState?: McpHostDeps['domain']['installState'];
     toolPolicy?: () => { global: GlobalPolicy; byCli: CliPolicyLayers };
     kindOf?: (abs: string) => Promise<PathKind>;
     /** Timers fire only through advance(); otherwise asks and UI waits never expire. */
@@ -199,11 +214,27 @@ function harness(
   const calls: string[] = [];
   const alive = new Set<string>();
   const gens = new Map<string, number>();
+  const launchIds = new Map<string, string>();
+  const terminals = new Map<string, RuntimeTerminal>();
+  const runtimeListeners = new Set<(event: RuntimeEvent) => void>();
+  let launchN = 0;
+  let tokenN = 0;
+  const allocateLaunch = (id: string): LaunchIds => {
+    const generation = (gens.get(id) ?? 0) + 1;
+    const launchId = (++launchN).toString(16).padStart(32, '0');
+    gens.set(id, generation);
+    launchIds.set(id, launchId);
+    return { generation, launchId };
+  };
+  const emitRuntime = (event: RuntimeEvent) => {
+    for (const listener of runtimeListeners) listener(event);
+  };
   const gaps: Array<() => void> = [];
   const opens: McpOpenRequest[] = [];
   const files: McpFileRequest[] = [];
   const lagged: Array<[string, string]> = [];
   const screens = createSessionScreens();
+  const tokens = createTokenStore({ randomToken: () => `tok${++tokenN}` });
   const timers = new Map<number, { fn: () => void; at: number }>();
   let timerN = 0;
   const advance = (ms: number) => {
@@ -219,11 +250,40 @@ function harness(
   const toOwner: Harness['toOwner'] = [];
   const toWindow: Harness['toWindow'] = [];
   const flashed: string[] = [];
+  const closes: string[] = [];
   const owners = new Map<string, number | null>();
   const presence: Harness['presence'] = { ready: new Set([1, 2]), shown: new Map() };
   let askN = 0;
-  let tokenN = 0;
   let host: ConduitMcpHost;
+  const output: Harness['output'] = (id, data) => {
+    screens.feed(id, data);
+    emitRuntime({ type: 'data', sessionId: id, generation: gens.get(id) ?? 0, data });
+  };
+  const spawn: Harness['spawn'] = (id, cols = 40, rows = 24) => {
+    const generation = gens.get(id) ?? 0;
+    alive.add(id);
+    terminals.set(id, {
+      sessionId: id,
+      generation,
+      launchId: launchIds.get(id) ?? '0'.repeat(32),
+      state: 'live',
+      size: { cols, rows },
+      target: { hcSession: 'hc-test', terminal: id },
+    });
+    emitRuntime({ type: 'spawned', sessionId: id, generation, size: { cols, rows } });
+  };
+  const resize: Harness['resize'] = (id, cols, rows) => {
+    const terminal = terminals.get(id);
+    if (terminal) terminal.size = { cols, rows };
+    screens.resize(id, cols, rows);
+    emitRuntime({ type: 'size', sessionId: id, size: { cols, rows } });
+  };
+  const exit: Harness['exit'] = (id, code = 0) => {
+    const generation = gens.get(id) ?? 0;
+    alive.delete(id);
+    terminals.delete(id);
+    emitRuntime({ type: 'exit', sessionId: id, generation, code, reason: 'exited' });
+  };
   const writer = createPtyWriter({
     generation: (id) => gens.get(id),
     input: (id, data) => {
@@ -231,14 +291,140 @@ function harness(
       // The PTY echoes typed text back, which the host's screen model then shows.
       if (!echo.has(id)) return true;
       if (data === '\r') {
-        if (opts.echoSubmit) host.onOutput(id, '\r\nfake❯ ');
+        if (opts.echoSubmit) output(id, '\r\nfake❯ ');
       } else if (opts.lagEcho) lagged.push([id, data]);
-      else host.onOutput(id, data);
+      else output(id, data);
       return true;
     },
     sleep: () => (opts.holdGaps ? new Promise<void>((r) => gaps.push(r)) : Promise.resolve()),
     gapMs: 0,
   });
+  const sessionStore: McpHostDeps['sessions'] = {
+    get: (id: string) => sessions.get(id),
+    list: () => [...sessions.values()],
+    setMcp: (id: string, patch: Partial<Session>) => {
+      const s = sessions.get(id);
+      if (!s) return false;
+      const counters = fs.existsSync(path.join(dir, 'handles.json'))
+        ? fs.readFileSync(path.join(dir, 'handles.json'), 'utf8')
+        : '';
+      calls.push(`setMcp ${JSON.stringify(patch)} handles=${counters.replace(/\s/g, '')}`);
+      Object.assign(s, patch);
+      return true;
+    },
+    setMcpToolPolicy: (
+      id: string,
+      tool: ToolName,
+      patch: Parameters<typeof withPolicyPatch>[2],
+    ) => {
+      const s = sessions.get(id);
+      if (!s) return false;
+      const next = withPolicyPatch(s.mcpToolPolicy, tool, patch);
+      if (next) s.mcpToolPolicy = next;
+      else delete s.mcpToolPolicy;
+      return true;
+    },
+    touch: (id: string, at: number) => {
+      const s = sessions.get(id);
+      if (!s) return false;
+      s.lastActiveAt = at;
+      return true;
+    },
+    setStatus: (id: string, status: Session['status']) => {
+      const s = sessions.get(id);
+      if (!s) return false;
+      s.status = status;
+      return true;
+    },
+    onChange: () => ({ dispose: () => [] }),
+    allocateLaunch,
+  };
+  const domain: McpHostDeps['domain'] = {
+    homeOf: (id: string) => sessions.get(id)?.home,
+    resolvePath: (h: string, rel: string) => (rel.startsWith('/') ? rel : `${h}/${rel}`),
+    kindOf: opts.kindOf ?? (async (abs: string) => opts.kinds?.[abs] ?? 'missing'),
+    agentIds: () => DEFS.map((d) => d.id),
+    resolveCommand: (c: string) => `/usr/bin/${c}`,
+    openSession: async (req: McpOpenRequest) => {
+      const id = `n${opens.length + 1}`;
+      opens.push(req);
+      sessions.set(
+        id,
+        session(id, {
+          agentId: req.launch.kind === 'agent' ? req.launch.agentId : COMMAND_AGENT_ID,
+          home: req.home,
+          ...(req.launch.kind === 'command' ? { command: req.launch.command } : {}),
+        }),
+      );
+      return { ok: true as const, sessionId: id, label: `S ${id}` };
+    },
+    closeSession: async (id: string) => {
+      closes.push(id);
+      sessions.delete(id);
+      return { ok: true as const };
+    },
+    foldersOf: (id: string) => {
+      const s = sessions.get(id);
+      return s ? { home: s.home, roots: [...s.roots] } : undefined;
+    },
+    addRoot: async (id: string, p: string) => {
+      addRoots.push({ id, path: p });
+      sessions.get(id)?.roots.push(p);
+      return { ok: true as const };
+    },
+    git: async () => ({ ok: false as const, stdout: '', stderr: 'not a git repository' }),
+    defOf: (id: string) => defOfSession(sessions.get(id)),
+    projectName: () => null,
+    installState: opts.installState ?? (() => 'not-installed' as const),
+    messagingOn: opts.messagingOn ?? (() => true),
+    toolPolicy: opts.toolPolicy ?? (() => ({ global: DEFAULT_TOOL_POLICY, byCli: {} })),
+  };
+  const attentionListeners = new Set<Parameters<McpHostDeps['attention']['onEdge']>[0]>();
+  const attention: McpHostDeps['attention'] = {
+    statusOf: (id) => ({ busy: busy.has(id), needsAttention: false, completedRun: false }),
+    lastOutputAt: (id) => lastOut.get(id),
+    setVisible: () => false,
+    dropWindow: () => undefined,
+    recordInput: (id, at) => lastOut.set(id, at),
+    clearAll: () => undefined,
+    onEdge: (listener) => {
+      attentionListeners.add(listener);
+      return () => attentionListeners.delete(listener);
+    },
+  };
+  const screenPort: McpHostDeps['screens'] = {
+    ensure: (id) => {
+      const size = terminals.get(id)?.size ?? { cols: 40, rows: 24 };
+      if (!screens.has(id)) screens.start(id, size.cols, size.rows);
+    },
+    keepTail: (id) => {
+      const size = terminals.get(id)?.size ?? { cols: 40, rows: 24 };
+      screens.keepTail(id, size.cols, size.rows);
+    },
+    release: (id) => screens.dispose(id),
+  };
+  const emit: McpHostDeps['emit'] = (type, data) => {
+    if (type === 'ui.post') {
+      const post = data as ServerEvents['ui.post'];
+      if (post.route.kind === 'owner')
+        toOwner.push({ to: post.route.sessionId, msg: post.message });
+      else if (post.route.kind === 'window')
+        toWindow.push({ windowId: post.route.windowId, msg: post.message });
+      else broadcasts.push(post.message);
+      if (post.message.type === 'activateSession')
+        activations.push({ id: post.message.sessionId, raise: post.raise === true });
+      if (post.message.type === 'openFileInEditor' && post.message.source === 'mcp')
+        files.push({
+          callerSessionId: post.message.sessionId,
+          path: post.message.path,
+          line: post.message.line,
+          column: post.message.column,
+          focus: post.message.focus,
+        });
+    } else if (type === 'attention.flash') {
+      flashed.push((data as ServerEvents['attention.flash']).sessionId);
+    }
+  };
   host = createConduitMcpHost({
     dir,
     homeDir: dir,
@@ -247,108 +433,47 @@ function harness(
     shimPath: '/opt/conduit/resources/conduit-mcp/conduit-mcp-shim.cjs',
     platform: opts.platform ?? 'linux',
     e2e: true,
-    mgr: {
-      get: (id) => sessions.get(id),
-      list: () => [...sessions.values()],
-      setMcp: (id, patch) => {
-        const s = sessions.get(id);
-        if (!s) return false;
-        const counters = fs.existsSync(path.join(dir, 'handles.json'))
-          ? fs.readFileSync(path.join(dir, 'handles.json'), 'utf8')
-          : '';
-        calls.push(`setMcp ${JSON.stringify(patch)} handles=${counters.replace(/\s/g, '')}`);
-        Object.assign(s, patch);
-        return true;
+    sessions: sessionStore,
+    domain,
+    attention,
+    typing: {
+      submit: writer.submit,
+      write: (id, data) => {
+        inputs.push([id, data]);
+        return alive.has(id);
       },
-      setMcpToolPolicy: (id, tool, patch) => {
-        const s = sessions.get(id);
-        if (!s) return false;
-        const next = withPolicyPatch(s.mcpToolPolicy, tool, patch);
-        if (next) s.mcpToolPolicy = next;
-        else delete s.mcpToolPolicy;
-        return true;
+      forget: writer.forget,
+    },
+    screens: screenPort,
+    tokens,
+    runtime: {
+      get: (id) => terminals.get(id),
+      screen: async (id) => (await screens.snapshot(id)) ?? null,
+      on: (listener) => {
+        runtimeListeners.add(listener);
+        return () => runtimeListeners.delete(listener);
       },
     },
-    toolPolicy: opts.toolPolicy ?? (() => ({ global: DEFAULT_TOOL_POLICY, byCli: {} })),
+    emit,
     ownerWindowOf: (id) => (owners.has(id) ? (owners.get(id) ?? null) : 1),
-    presence: {
-      isReady: (w) => presence.ready.has(w),
-      isOnScreen: (w, id) => presence.shown.get(w)?.has(id) ?? true,
-    },
-    sendToOwner: (to, msg) => toOwner.push({ to, msg }),
-    sendToWindow: (windowId, msg) => toWindow.push({ windowId, msg }),
-    flashOwner: (id) => flashed.push(id),
+    windowReady: (w) => presence.ready.has(w),
+    onScreen: (w, id) => presence.shown.get(w)?.has(id) ?? true,
     newAskId: () => `ask-${++askN}`,
-    // Asks never expire on their own here; host tests end them by answer or cancel.
     setTimer: (fn, ms) => {
       if (!opts.manualTimers) return undefined;
       timers.set(++timerN, { fn, at: clock.t + ms });
       return timerN;
     },
-    clearTimer: (h) => {
-      timers.delete(h as number);
-    },
-    installState: opts.installState ?? (() => 'not-installed'),
+    clearTimer: (h) => timers.delete(h as number),
     detectGraceMs: GRACE,
-    defOf: (id) => defOfSession(sessions.get(id)),
-    agentIds: () => DEFS.map((d) => d.id),
-    control: {
-      homeOf: (id) => sessions.get(id)?.home,
-      resolvePath: (h, rel) => (rel.startsWith('/') ? rel : `${h}/${rel}`),
-      kindOf: opts.kindOf ?? (async (abs) => opts.kinds?.[abs] ?? 'missing'),
-      resolveCommand: (c) => `/usr/bin/${c}`,
-      // Stands in for main's createMcpSession: the session exists, unlaunched and unhandled.
-      openSession: async (req) => {
-        const id = `n${opens.length + 1}`;
-        opens.push(req);
-        sessions.set(
-          id,
-          session(id, {
-            agentId: req.launch.kind === 'agent' ? req.launch.agentId : COMMAND_AGENT_ID,
-            home: req.home,
-            ...(req.launch.kind === 'command' ? { command: req.launch.command } : {}),
-          }),
-        );
-        return { ok: true, sessionId: id, label: `S ${id}` };
-      },
-      openFile: async (req) => {
-        files.push(req);
-        return { sessionId: req.callerSessionId };
-      },
-      foldersOf: (id) => {
-        const s = sessions.get(id);
-        return s ? { home: s.home, roots: [...s.roots] } : undefined;
-      },
-      addRoot: async (id, p) => {
-        addRoots.push({ id, path: p });
-        sessions.get(id)?.roots.push(p);
-        return { ok: true };
-      },
-      activateSession: (id, raise) => activations.push({ id, raise }),
-      git: async () => ({ ok: false, stdout: '', stderr: 'not a git repository' }),
-    },
-    pty: {
-      isAlive: (id) => alive.has(id),
-      generation: (id) => gens.get(id),
-    },
-    writer,
-    activity: {
-      statusOf: (id) => ({ busy: busy.has(id), needsAttention: false, completedRun: false }),
-      lastOutputAt: (id) => lastOut.get(id),
-    },
-    messagingOn: opts.messagingOn ?? (() => true),
-    projectName: () => null,
-    broadcast: (m) => broadcasts.push(m),
     log: opts.log ?? noLog,
     now: () => clock.t,
     sleep: async (ms) => {
       clock.t += ms;
       opts.duringWait?.(host);
-      for (const [id, data] of lagged.splice(0)) host.onOutput(id, data);
+      for (const [id, data] of lagged.splice(0)) output(id, data);
     },
-    randomToken: () => `tok${++tokenN}`,
     storeIo: opts.storeIo,
-    screens,
     listen: opts.listen ?? true,
     tickMs: opts.tickMs ?? 0,
     createEndpoint:
@@ -370,7 +495,7 @@ function harness(
                   close: () => conn.close(),
                 }),
             })
-        : undefined),
+        : (o) => createMcpEndpoint(o)),
   });
   hosts.push(host);
   return {
@@ -400,6 +525,13 @@ function harness(
     advance,
     addRoots,
     activations,
+    closes,
+    tokens,
+    prepareLaunch: (id, def, sp) => host.prepareLaunch(id, def, sp, allocateLaunch(id)),
+    spawn,
+    resize,
+    exit,
+    output,
   };
 }
 
@@ -482,21 +614,19 @@ async function helloOnly(ep: string, token: string | null) {
   return { request, closed, notifications };
 }
 
-/** Launch a fake session through prepareLaunch + onSpawn, returning its token. */
-function launch(h: Harness, id: string, def = FAKE, sp = spec()) {
+/** Launch a fake session through prepareLaunch + the runtime's spawned event. */
+async function launch(h: Harness, id: string, def = FAKE, sp = spec()) {
   if (!h.sessions.has(id)) h.sessions.set(id, session(id, { agentId: def.id }));
-  const out = h.host.prepareLaunch(id, def, sp);
-  h.alive.add(id);
-  h.gens.set(id, (h.gens.get(id) ?? 0) + 1);
-  h.host.onSpawn(id, 40, 24);
+  const out = await h.prepareLaunch(id, def, sp);
+  h.spawn(id, 40, 24);
   return { spec: out, token: out.env?.CONDUIT_SESSION_TOKEN ?? null };
 }
 
 /** Bring a session to an open gate: settled, quiet, idle prompt on screen, connected. */
 async function ready(h: Harness, id: string) {
-  const { token } = launch(h, id);
+  const { token } = await launch(h, id);
   const c = await client(h.ep, token);
-  h.host.onOutput(id, 'fake❯ ');
+  h.output(id, 'fake❯ ');
   h.echo.add(id);
   return c;
 }
@@ -518,7 +648,7 @@ describe('createConduitMcpHost — launch', () => {
     await h.host.start();
     h.sessions.set('c1', session('c1', { agentId: 'cursor' }));
     const original = spec('/usr/bin/agent');
-    expect(h.host.prepareLaunch('c1', CURSOR, original)).toBe(original);
+    expect(await h.prepareLaunch('c1', CURSOR, original)).toBe(original);
     expect(h.host.uiState().sessions.c1?.unavailable).toBe('cursor-not-connected');
   });
 
@@ -548,7 +678,7 @@ describe('createConduitMcpHost — launch', () => {
     await h.host.start();
     h.sessions.set('c1', session('c1', { agentId: 'cursor' }));
     const original = spec('/usr/bin/agent');
-    expect(h.host.prepareLaunch('c1', CURSOR, original)).toBe(original);
+    expect(await h.prepareLaunch('c1', CURSOR, original)).toBe(original);
     expect(h.host.uiState().sessions.c1?.unavailable).toBe('cursor-not-connected');
   });
 
@@ -574,7 +704,7 @@ describe('createConduitMcpHost — launch', () => {
     await h.host.start();
     h.sessions.set('c1', session('c1', { agentId: 'cursor' }));
     const original = spec('/usr/bin/agent');
-    const out = h.host.prepareLaunch('c1', CURSOR, original);
+    const out = await h.prepareLaunch('c1', CURSOR, original);
     expect(out.args).toEqual(original.args);
     expect(out.env).toMatchObject({ CONDUIT_SESSION_TOKEN: 'tok1', CONDUIT_MCP_ENDPOINT: h.ep });
     expect(h.host.uiState().sessions.c1?.unavailable).toBeNull();
@@ -584,7 +714,7 @@ describe('createConduitMcpHost — launch', () => {
     const h = harness();
     await h.host.start();
     h.sessions.set('s1', session('s1'));
-    const out = h.host.prepareLaunch('s1', FAKE, spec());
+    const out = await h.prepareLaunch('s1', FAKE, spec());
     const cfgPath = path.join(h.dir, 'launch', 's1.json');
     expect(out.args?.slice(0, 3)).toEqual(['fake.mjs', '--mcp-config', cfgPath]);
     expect(out.args?.[3]).toBe('--allowedTools');
@@ -597,6 +727,29 @@ describe('createConduitMcpHost — launch', () => {
     expect(h.sessions.get('s1')?.mcpHandle).toBe('fake-1');
   });
 
+  it('async prepareLaunch reserves the token row with the caller allocated launch ids', async () => {
+    const h = harness();
+    await h.host.start();
+    h.sessions.set('s1', session('s1'));
+    const ids: LaunchIds = { generation: 7, launchId: 'f'.repeat(32) };
+    const pending = h.host.prepareLaunch('s1', FAKE, spec(), ids);
+    expect(pending).toBeInstanceOf(Promise);
+    const wired = await pending;
+    expect(wired.env?.CONDUIT_SESSION_TOKEN).toBe('tok1');
+    expect(h.tokens.rows()).toMatchObject({
+      state: 'loaded',
+      rows: [
+        {
+          sessionId: 's1',
+          generation: 7,
+          launchId: ids.launchId,
+          state: 'reserved',
+          hcAddress: null,
+        },
+      ],
+    });
+  });
+
   it('the token value reaches only the PTY env: never args or a config file', async () => {
     const h = harness();
     await h.host.start();
@@ -605,7 +758,7 @@ describe('createConduitMcpHost — launch', () => {
       ['s2', CODEX, '/usr/bin/codex'],
     ] as const) {
       h.sessions.set(id, session(id, { agentId: def.id }));
-      const out = h.host.prepareLaunch(id, def, spec(cmd));
+      const out = await h.prepareLaunch(id, def, spec(cmd));
       const token = out.env?.CONDUIT_SESSION_TOKEN;
       expect(token).toMatch(/^tok\d+$/);
       expect(out.args.join(' ')).not.toContain(token);
@@ -620,7 +773,7 @@ describe('createConduitMcpHost — launch', () => {
     await h.host.start();
     h.sessions.set('s1', session('s1', { agentId: 'pwsh' }));
     const sp = spec('/usr/bin/pwsh');
-    const out = h.host.prepareLaunch('s1', SHELL, sp);
+    const out = await h.prepareLaunch('s1', SHELL, sp);
     expect(out.env).toEqual({ A: '1', CONDUIT_SESSION_TOKEN: 'tok1', CONDUIT_MCP_ENDPOINT: h.ep });
     expect(out.args).toEqual(sp.args);
     expect(out.command).toBe(sp.command);
@@ -635,10 +788,10 @@ describe('createConduitMcpHost — launch', () => {
     h.sessions.set('s1', session('s1', { agentId: 'pwsh' }));
     const sp = spec('/usr/bin/pwsh');
     on = true;
-    expect(h.host.prepareLaunch('s1', SHELL, sp)).toBe(sp);
+    expect(await h.prepareLaunch('s1', SHELL, sp)).toBe(sp);
     await h.host.start();
     on = false;
-    expect(h.host.prepareLaunch('s1', SHELL, sp)).toBe(sp);
+    expect(await h.prepareLaunch('s1', SHELL, sp)).toBe(sp);
     expect(h.sessions.get('s1')?.mcpHandle).toBeUndefined();
     expect(h.host.uiState().sessions).toEqual({});
   });
@@ -648,7 +801,7 @@ describe('createConduitMcpHost — launch', () => {
     await h.host.start();
     h.sessions.set('s1', session('s1'));
     const sp = spec();
-    expect(h.host.prepareLaunch('s1', FAKE, sp)).toBe(sp);
+    expect(await h.prepareLaunch('s1', FAKE, sp)).toBe(sp);
     expect(h.host.uiState().sessions.s1).toMatchObject({
       handle: 'fake-1',
       unavailable: 'messaging-off',
@@ -662,7 +815,7 @@ describe('createConduitMcpHost — launch', () => {
     const id = 'a&b';
     h.sessions.set(id, session(id));
     const sp = spec('C:\\npm\\fake.cmd');
-    expect(h.host.prepareLaunch(id, FAKE, sp)).toBe(sp);
+    expect(await h.prepareLaunch(id, FAKE, sp)).toBe(sp);
     expect(h.host.uiState().sessions[id]?.unavailable).toBe('cmd-metachar');
   });
 
@@ -670,7 +823,7 @@ describe('createConduitMcpHost — launch', () => {
     const h = harness();
     await h.host.start();
     h.sessions.set('s1', session('s1'));
-    h.host.prepareLaunch('s1', FAKE, spec());
+    await h.prepareLaunch('s1', FAKE, spec());
     expect(h.calls).toEqual(['setMcp {"mcpHandle":"fake-1"} handles={"fake":1}']);
   });
 
@@ -678,23 +831,24 @@ describe('createConduitMcpHost — launch', () => {
     const h = harness();
     await h.host.start();
     h.sessions.set('s1', session('s1'));
-    h.host.prepareLaunch('s1', FAKE, spec());
-    h.host.prepareLaunch('s1', FAKE, spec());
+    await h.prepareLaunch('s1', FAKE, spec());
+    await h.prepareLaunch('s1', FAKE, spec());
     expect(h.calls).toHaveLength(1);
     h.sessions.set('s2', session('s2', { mcpHandle: 'fake-1' }));
-    h.host.prepareLaunch('s2', FAKE, spec());
+    await h.prepareLaunch('s2', FAKE, spec());
     expect(h.sessions.get('s2')?.mcpHandle).toBe('fake-2');
   });
 
   it('onExit revokes the token and deletes the launch config', async () => {
     const h = harness();
     await h.host.start();
-    const { token } = launch(h, 's1');
+    const { token } = await launch(h, 's1');
     const c = await client(h.ep, token);
     const closed = new Promise<void>((r) => c.sock.on('close', () => r()));
     const cfg = path.join(h.dir, 'launch', 's1.json');
     expect(fs.existsSync(cfg)).toBe(true);
-    h.host.onExit('s1');
+    h.exit('s1');
+    expect(h.tokens.rows()).toMatchObject({ state: 'loaded', rows: [] });
     await closed;
     await expect.poll(() => fs.existsSync(cfg)).toBe(false);
     const again = await client(h.ep, token);
@@ -704,11 +858,11 @@ describe('createConduitMcpHost — launch', () => {
   it('a connection that said hello but had not initialized does not survive the exit', async () => {
     const h = harness();
     await h.host.start();
-    const { token } = launch(h, 's1');
+    const { token } = await launch(h, 's1');
     const c = await helloOnly(h.ep, token);
     const list = (await c.request(1, 'tools/list')) as { result: { tools: unknown[] } };
     expect(list.result.tools.length).toBeGreaterThan(0);
-    h.host.onExit('s1');
+    h.exit('s1');
     h.alive.delete('s1');
     await c.closed;
     expect(h.host.uiState().sessions.s1?.connected).toBe(false);
@@ -717,10 +871,10 @@ describe('createConduitMcpHost — launch', () => {
   it('initialize on a connection whose token was re-minted does not make the session live', async () => {
     const h = harness();
     await h.host.start();
-    const { token } = launch(h, 's1');
+    const { token } = await launch(h, 's1');
     const c = await helloOnly(h.ep, token);
     await c.request(1, 'tools/list');
-    h.host.prepareLaunch('s1', FAKE, spec());
+    await h.prepareLaunch('s1', FAKE, spec());
     const init = c.request(2, 'initialize', { protocolVersion: '2025-06-18' });
     await Promise.race([init, c.closed]);
     await c.closed;
@@ -730,9 +884,9 @@ describe('createConduitMcpHost — launch', () => {
   it('a revoked token is refused by an already-initialized connection', async () => {
     const h = harness();
     await h.host.start();
-    const { token } = launch(h, 's1');
+    const { token } = await launch(h, 's1');
     const c = await client(h.ep, token);
-    h.host.prepareLaunch('s1', FAKE, spec());
+    await h.prepareLaunch('s1', FAKE, spec());
     const r = await c.call('list_sessions');
     expect(r.body.error.code).toBe('not_in_session');
   });
@@ -743,11 +897,11 @@ describe('createConduitMcpHost — launch', () => {
     fs.mkdirSync(path.join(h.dir, 'handles.json'));
     h.sessions.set('s1', session('s1'));
     const sp = spec();
-    expect(h.host.prepareLaunch('s1', FAKE, sp)).toBe(sp);
+    expect(await h.prepareLaunch('s1', FAKE, sp)).toBe(sp);
     fs.rmSync(path.join(h.dir, 'handles.json'), { recursive: true });
     h.sessions.set('s2', session('s2'));
     fs.mkdirSync(path.join(h.dir, 'launch', 's2.json'), { recursive: true });
-    expect(h.host.prepareLaunch('s2', FAKE, sp)).toBe(sp);
+    expect(await h.prepareLaunch('s2', FAKE, sp)).toBe(sp);
     expect(h.host.uiState().sessions.s2?.unavailable).toBe('launch-io');
   });
 
@@ -755,10 +909,10 @@ describe('createConduitMcpHost — launch', () => {
     const h = harness();
     h.sessions.set('s1', session('s1'));
     const sp = spec();
-    expect(h.host.prepareLaunch('s1', FAKE, sp)).toBe(sp);
+    expect(await h.prepareLaunch('s1', FAKE, sp)).toBe(sp);
     expect(h.host.uiState().sessions.s1?.unavailable).toBe('endpoint-down');
     await h.host.start();
-    const wired = h.host.prepareLaunch('s1', FAKE, sp);
+    const wired = await h.prepareLaunch('s1', FAKE, sp);
     expect(wired.env?.CONDUIT_SESSION_TOKEN).toBeDefined();
     expect(h.host.uiState().sessions.s1?.unavailable).toBeNull();
   });
@@ -786,7 +940,7 @@ describe('createConduitMcpHost — launch', () => {
     await expect
       .poll(() => {
         h.sessions.set('s1', session('s1'));
-        return h.host.prepareLaunch('s1', FAKE, spec()).env?.CONDUIT_SESSION_TOKEN;
+        return h.prepareLaunch('s1', FAKE, spec()).then((out) => out.env?.CONDUIT_SESSION_TOKEN);
       })
       .toBeDefined();
     expect(h.host.uiState().loading).toBe(true);
@@ -805,7 +959,7 @@ describe('createConduitMcpHost — launch', () => {
     process.on('unhandledRejection', onUnhandled);
     try {
       await h.host.start();
-      launch(h, 's1');
+      await launch(h, 's1');
       // The activity tracker is read only by the tick, so the throw stays inside it.
       h.busy.has = () => {
         throw new Error('boom');
@@ -831,8 +985,8 @@ describe('createConduitMcpHost — tools over the endpoint', () => {
   it('a socket with a valid token sends; recipient gets queued; mcp:state broadcast', async () => {
     const h = harness();
     await h.host.start();
-    const a = launch(h, 's1');
-    launch(h, 's2');
+    const a = await launch(h, 's1');
+    await launch(h, 's2');
     const c = await client(h.ep, a.token);
     const sessions = await c.call('list_sessions');
     expect(sessions.body.sessions.map((s: { handle: string }) => s.handle)).toEqual([
@@ -851,7 +1005,7 @@ describe('createConduitMcpHost — tools over the endpoint', () => {
   it('list_sessions omits a session that has no handle', async () => {
     const h = harness();
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     h.sessions.set('s2', session('s2'));
     h.alive.add('s2');
     const c = await client(h.ep, a.token);
@@ -864,7 +1018,7 @@ describe('createConduitMcpHost — tools over the endpoint', () => {
   it('invalid token → tools/list [] and not_in_session', async () => {
     const h = harness();
     await h.host.start();
-    launch(h, 's1');
+    await launch(h, 's1');
     const c = await client(h.ep, 'forged');
     const list = (await c.request('tools/list')) as { result: { tools: unknown[] } };
     expect(list.result.tools).toEqual([]);
@@ -879,7 +1033,7 @@ describe('createConduitMcpHost — tools over the endpoint', () => {
     const rec = recordingLog();
     const h = harness({ log: rec.log });
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const forged = await client(h.ep, 'forged');
     await forged.call('list_sessions');
     const c = await client(h.ep, a.token);
@@ -894,7 +1048,7 @@ describe('createConduitMcpHost — tools over the endpoint', () => {
     let on = true;
     const h = harness({ messagingOn: () => on });
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const c = await client(h.ep, a.token);
     on = false;
     expect((await c.call('list_sessions')).body.error.code).toBe('messaging_off');
@@ -903,7 +1057,7 @@ describe('createConduitMcpHost — tools over the endpoint', () => {
   it('mcp:compose as you', async () => {
     const h = harness();
     await h.host.start();
-    launch(h, 's1');
+    await launch(h, 's1');
     const replies: HostToWebview[] = [];
     await h.host.handleRenderer(
       {
@@ -928,8 +1082,8 @@ describe('createConduitMcpHost — tools over the endpoint', () => {
   it('onSessionDeleted marks unread undelivered', async () => {
     const h = harness();
     await h.host.start();
-    const a = launch(h, 's1');
-    launch(h, 's2');
+    const a = await launch(h, 's1');
+    await launch(h, 's2');
     const c = await client(h.ep, a.token);
     const sent = await c.call('send_message', { to: ['fake-2'], body: 'hi' });
     await h.host.onSessionDeleted('s2');
@@ -950,7 +1104,7 @@ describe('createConduitMcpHost — tools over the endpoint', () => {
 describe('createConduitMcpHost — notices', () => {
   async function pair(h: Harness) {
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const ca = await client(h.ep, a.token);
     const cb = await ready(h, 's2');
     settle(h);
@@ -1059,9 +1213,9 @@ describe('createConduitMcpHost — notices', () => {
     const rec = recordingLog();
     const h = harness({ log: rec.log });
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const ca = await client(h.ep, a.token);
-    launch(h, 's2');
+    await launch(h, 's2');
     await ca.call('send_message', { to: ['fake-2'], body: 'a-private-body' });
     await ca.call('read_attachment', { message_id: 'nope', attachment_id: 'nope' });
     expect(
@@ -1114,7 +1268,7 @@ describe('createConduitMcpHost — notices', () => {
   it('blocking screen 15 rows below the cursor → no submit', async () => {
     const h = harness();
     const { ca } = await pair(h);
-    h.host.onOutput('s2', '\x1b[2J\x1b[1;1Hfake❯ \x1b[17;1HEsc to cancel\x1b[1;7H');
+    h.output('s2', '\x1b[2J\x1b[1;1Hfake❯ \x1b[17;1HEsc to cancel\x1b[1;7H');
     await ca.call('send_message', { to: ['fake-2'], body: 'see' });
     await h.host.tick();
     expect(writesTo(h, 's2')).toEqual([]);
@@ -1192,13 +1346,13 @@ describe('createConduitMcpHost — notices', () => {
   it('codex session gets a handle and is never typed into while its own prompt is not on screen', async () => {
     const h = harness();
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const ca = await client(h.ep, a.token);
     h.sessions.set('s3', session('s3', { agentId: 'codex' }));
-    const c = launch(h, 's3', CODEX, spec('/usr/bin/codex'));
+    const c = await launch(h, 's3', CODEX, spec('/usr/bin/codex'));
     expect(c.spec.args.filter((x) => x === '-c')).toHaveLength(6);
     await client(h.ep, c.token);
-    h.host.onOutput('s3', 'fake❯ ');
+    h.output('s3', 'fake❯ ');
     settle(h);
     await ca.call('send_message', { to: ['codex-1'], body: 'see' });
     await h.host.tick();
@@ -1212,13 +1366,13 @@ describe('createConduitMcpHost — notices', () => {
   it('claude session whose input row holds only a dim suggested prompt gets its notice', async () => {
     const h = harness();
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const ca = await client(h.ep, a.token);
     h.sessions.set('s4', session('s4', { agentId: 'claude' }));
-    const c = launch(h, 's4', CLAUDE, spec('/usr/bin/claude'));
+    const c = await launch(h, 's4', CLAUDE, spec('/usr/bin/claude'));
     await client(h.ep, c.token);
     // Claude 2.1.310 after a turn: bare prompt, a faint suggestion, cursor parked before it.
-    h.host.onOutput('s4', '❯ \x1b[2myes, go ahead\x1b[22m\x1b[3G');
+    h.output('s4', '❯ \x1b[2myes, go ahead\x1b[22m\x1b[3G');
     h.echo.add('s4');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
@@ -1229,12 +1383,12 @@ describe('createConduitMcpHost — notices', () => {
   it('claude session with typed (normal-weight) text on the input row is not typed into', async () => {
     const h = harness();
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const ca = await client(h.ep, a.token);
     h.sessions.set('s4', session('s4', { agentId: 'claude' }));
-    const c = launch(h, 's4', CLAUDE, spec('/usr/bin/claude'));
+    const c = await launch(h, 's4', CLAUDE, spec('/usr/bin/claude'));
     await client(h.ep, c.token);
-    h.host.onOutput('s4', '❯ yes, go ahead');
+    h.output('s4', '❯ yes, go ahead');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
     await h.host.tick();
@@ -1245,10 +1399,10 @@ describe('createConduitMcpHost — notices', () => {
   it('no live connection → never typed into', async () => {
     const h = harness();
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const ca = await client(h.ep, a.token);
-    launch(h, 's2');
-    h.host.onOutput('s2', 'fake❯ ');
+    await launch(h, 's2');
+    h.output('s2', 'fake❯ ');
     h.echo.add('s2');
     settle(h);
     await ca.call('send_message', { to: ['fake-2'], body: 'see' });
@@ -1294,7 +1448,7 @@ describe('createConduitMcpHost — store', () => {
     await h.host.start();
     expect(h.host.uiState()).toMatchObject({ loading: false });
     expect(h.host.uiState().storeError).toContain('disk gone');
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const c = await client(h.ep, a.token);
     expect((await c.call('list_sessions')).body.error.code).toBe('store_unavailable');
     io.fail = false;
@@ -1309,7 +1463,7 @@ describe('createConduitMcpHost — store', () => {
     const h = harness();
     const a = await (async () => {
       await h.host.start();
-      const x = launch(h, 's1');
+      const x = await launch(h, 's1');
       return client(h.ep, x.token);
     })();
     const cb = await ready(h, 's2');
@@ -1341,7 +1495,7 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
     await h.host.whenLaunchReady();
     // Released by the listen itself, not by the bound.
     expect(Date.now() - t0).toBeLessThan(ENDPOINT_READY_WAIT_MS);
-    const out = h.host.prepareLaunch('s1', FAKE, spec());
+    const out = await h.prepareLaunch('s1', FAKE, spec());
     expect(out.env?.CONDUIT_SESSION_TOKEN).toBeDefined();
     expect(h.host.uiState().sessions.s1?.unavailable).toBeNull();
     await started;
@@ -1365,7 +1519,7 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
       await waited;
       expect(ENDPOINT_READY_WAIT_MS).toBe(3_000);
       const sp = spec();
-      expect(h.host.prepareLaunch('s1', FAKE, sp)).toBe(sp);
+      expect(await h.prepareLaunch('s1', FAKE, sp)).toBe(sp);
       expect(h.host.uiState().sessions.s1?.unavailable).toBe('endpoint-down');
     } finally {
       vi.useRealTimers();
@@ -1385,7 +1539,7 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
     await h.host.whenLaunchReady();
     expect(Date.now() - t0).toBeLessThan(ENDPOINT_READY_WAIT_MS);
     const sp = spec();
-    expect(h.host.prepareLaunch('s1', FAKE, sp)).toBe(sp);
+    expect(await h.prepareLaunch('s1', FAKE, sp)).toBe(sp);
     expect(h.host.uiState().sessions.s1?.unavailable).toBe('endpoint-down');
     await started;
   });
@@ -1408,7 +1562,7 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
     await h.host.whenLaunchReady();
     expect(Date.now() - t0).toBeLessThan(ENDPOINT_READY_WAIT_MS);
     const sp = spec();
-    expect(h.host.prepareLaunch('s1', FAKE, sp)).toBe(sp);
+    expect(await h.prepareLaunch('s1', FAKE, sp)).toBe(sp);
     expect(h.host.uiState().sessions.s1?.unavailable).toBe('endpoint-down');
     expect(await started).toBe('resolved');
   });
@@ -1424,7 +1578,7 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
     expect(done).toBe(false);
     const started = h.host.start();
     await waited;
-    const out = h.host.prepareLaunch('sh', SHELL, spec('/usr/bin/pwsh'));
+    const out = await h.prepareLaunch('sh', SHELL, spec('/usr/bin/pwsh'));
     expect(out.env?.CONDUIT_SESSION_TOKEN).toBeDefined();
     await started;
   });
@@ -1482,7 +1636,7 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     let on = true;
     const h = harness({ messagingOn: () => on });
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const c = await client(h.ep, a.token);
     on = false;
     expect(await c.listed()).toEqual([...TOOL_NAMES]);
@@ -1497,7 +1651,7 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
   it('master on, defaults → open_terminal tool_disabled; list is every tool whose access ≠ off', async () => {
     const h = harness();
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const c = await client(h.ep, a.token);
     expect(await c.listed()).toEqual(DEFAULT_LIST);
     const r = await c.call('open_terminal', { path: '/w', command: 'node' });
@@ -1507,7 +1661,7 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
   it('tool_disabled precedes store_unavailable', async () => {
     const h = harness({ storeIo: failingIo() });
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const c = await client(h.ep, a.token);
     policyOf(h, 's1', { send_message: { access: 'off' } });
     expect((await c.call('send_message', { to: ['x'], body: 'b' })).body.error.code).toBe(
@@ -1522,8 +1676,8 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
   it('a session layer for one session lists open_terminal only on that connection', async () => {
     const h = harness();
     await h.host.start();
-    const a = launch(h, 's1');
-    const b = launch(h, 's2');
+    const a = await launch(h, 's1');
+    const b = await launch(h, 's2');
     policyOf(h, 's1', { open_terminal: { access: 'ask' } });
     const ca = await client(h.ep, a.token);
     const cb = await client(h.ep, b.token);
@@ -1534,7 +1688,7 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
   it('a policy change sends list_changed once to an initialized connection, not an uninitialized one, not again when unchanged', async () => {
     const h = harness();
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const c = await client(h.ep, a.token);
     await c.listed();
     const raw = await helloOnly(h.ep, a.token);
@@ -1570,8 +1724,8 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     let global: GlobalPolicy = DEFAULT_TOOL_POLICY;
     const h = harness({ toolPolicy: () => ({ global, byCli: {} }) });
     await h.host.start();
-    const a = launch(h, 's1');
-    const b = launch(h, 's2');
+    const a = await launch(h, 's1');
+    const b = await launch(h, 's2');
     policyOf(h, 's2', { open_terminal: { access: 'off' } });
     const ca = await client(h.ep, a.token);
     const cb = await client(h.ep, b.token);
@@ -1618,7 +1772,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
   it('open_session with the switch on calls control.openSession and returns the claimed handle', async () => {
     const h = harness({ kinds: { '/w/wt': 'dir' } });
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     on(h, 's1', ['open_session']);
     const c = await client(h.ep, a.token);
     const r = await c.call('open_session', { path: 'wt', agent: 'e2e-fake-mcp', focus: false });
@@ -1645,12 +1799,12 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
   it('claimHandle at create: a later prepareLaunch keeps the same handle', async () => {
     const h = harness({ kinds: { '/w/wt': 'dir' } });
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     on(h, 's1', ['open_session']);
     const c = await client(h.ep, a.token);
     await c.call('open_session', { path: 'wt', agent: 'e2e-fake-mcp' });
     const handles = fs.readFileSync(path.join(h.dir, 'handles.json'), 'utf8');
-    launch(h, 'n1');
+    await launch(h, 'n1');
     expect(h.sessions.get('n1')?.mcpHandle).toBe('fake-2');
     expect(fs.readFileSync(path.join(h.dir, 'handles.json'), 'utf8')).toBe(handles);
   });
@@ -1658,7 +1812,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
   it('open_terminal: a command with no adapter gets no handle', async () => {
     const h = harness({ kinds: { '/w': 'dir' } });
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     on(h, 's1', ['open_terminal']);
     const c = await client(h.ep, a.token);
     const r = await c.call('open_terminal', { path: '/w', command: 'node', args: ['-e', 'x'] });
@@ -1669,14 +1823,14 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
   it('open_terminal: a command whose leaf matches an adapter gets a handle at create and MCP wiring at launch', async () => {
     const h = harness({ kinds: { '/w': 'dir' } });
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     on(h, 's1', ['open_terminal']);
     const c = await client(h.ep, a.token);
     const r = await c.call('open_terminal', { path: '/w', command: '/opt/bin/claude' });
     expect(r.body).toMatchObject({ session_id: 'n1', handle: 'claude-1', agent: 'claude' });
     const n1 = h.sessions.get('n1');
     if (!n1?.command) throw new Error('n1 has no command');
-    const out = launch(h, 'n1', commandDef(n1.command), spec('/opt/bin/claude'));
+    const out = await launch(h, 'n1', commandDef(n1.command), spec('/opt/bin/claude'));
     expect(out.token).toEqual(expect.any(String));
     expect(h.sessions.get('n1')?.mcpHandle).toBe('claude-1');
   });
@@ -1685,7 +1839,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     const rec = recordingLog();
     const h = harness({ kinds: { '/w/wt': 'dir' }, log: rec.log });
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     on(h, 's1', ['open_session']);
     const c = await client(h.ep, a.token);
     fs.rmSync(path.join(h.dir, 'handles.json'));
@@ -1699,7 +1853,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
   it('open_file routes to control.openFile', async () => {
     const h = harness({ kinds: { '/w/src/a.ts': 'file' } });
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     on(h, 's1', ['open_file']);
     const c = await client(h.ep, a.token);
     const r = await c.call('open_file', { path: 'src/a.ts', line: 3 });
@@ -1712,7 +1866,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
   it('a control tool with the store down is not store_unavailable', async () => {
     const h = harness({ kinds: { '/w/src/a.ts': 'file' }, storeIo: failingIo() });
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     on(h, 's1', ['open_file']);
     const c = await client(h.ep, a.token);
     expect((await c.call('send_message', { to: ['x'], body: 'b' })).body.error.code).toBe(
@@ -1731,7 +1885,7 @@ describe('lazy identity: token for every session, handle from clientInfo (spec 2
   it('AC2 first initialize from claude-code allocates claude-<n> before the reply', async () => {
     const h = harness({ recordSends: true });
     await h.host.start();
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     const c = await helloOnly(h.ep, token);
     await c.request(1, 'initialize', {
       protocolVersion: '2025-06-18',
@@ -1751,7 +1905,7 @@ describe('lazy identity: token for every session, handle from clientInfo (spec 2
   it('a server/discover request before initialize is answered -32601 and initialize still connects', async () => {
     const h = harness();
     await h.host.start();
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     const c = await helloOnly(h.ep, token);
     const discover = (await c.request(1, 'server/discover', {})) as {
       error?: { code: number };
@@ -1770,8 +1924,8 @@ describe('lazy identity: token for every session, handle from clientInfo (spec 2
   it('AC2 unknown client → agent-<n>; a missing clientInfo too', async () => {
     const h = harness();
     await h.host.start();
-    await client(h.ep, shell(h, 'sh1').token, 'some-ide');
-    await client(h.ep, shell(h, 'sh2').token);
+    await client(h.ep, (await shell(h, 'sh1')).token, 'some-ide');
+    await client(h.ep, (await shell(h, 'sh2')).token);
     expect(h.sessions.get('sh1')?.mcpHandle).toBe('agent-1');
     expect(h.sessions.get('sh2')?.mcpHandle).toBe('agent-2');
   });
@@ -1779,7 +1933,7 @@ describe('lazy identity: token for every session, handle from clientInfo (spec 2
   it('AC2 second CLI in the same shell keeps the handle', async () => {
     const h = harness();
     await h.host.start();
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     await client(h.ep, token, 'claude-code');
     await client(h.ep, token, 'codex-mcp-client');
     expect(h.sessions.get('sh1')?.mcpHandle).toBe('claude-1');
@@ -1789,9 +1943,9 @@ describe('lazy identity: token for every session, handle from clientInfo (spec 2
   it('AC2 the lazily named session is in list_sessions with agent = live kind, else prefix', async () => {
     const h = harness();
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const ca = await client(h.ep, a.token);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     const claude = await client(h.ep, token, 'claude-code');
     const codex = await client(h.ep, token, 'codex-mcp-client');
     const list = async () => handlesOf((await ca.call('list_sessions')).body);
@@ -1817,9 +1971,9 @@ describe('lazy identity: token for every session, handle from clientInfo (spec 2
   it('B2 a health check does not enrol a shell: after it closes the session is absent', async () => {
     const h = harness();
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const ca = await client(h.ep, a.token);
-    const check = await client(h.ep, shell(h, 'sh1').token, 'claude-code');
+    const check = await client(h.ep, (await shell(h, 'sh1')).token, 'claude-code');
     expect(h.sessions.get('sh1')?.mcpHandle).toBe('claude-1');
     await expect.poll(() => Object.keys(h.host.uiState().sessions).sort()).toEqual(['s1', 'sh1']);
     check.sock.destroy();
@@ -1835,8 +1989,8 @@ describe('lazy identity: token for every session, handle from clientInfo (spec 2
   it('an adapter session stays listed without a connection', async () => {
     const h = harness();
     await h.host.start();
-    const a = launch(h, 's1');
-    launch(h, 's2');
+    const a = await launch(h, 's1');
+    await launch(h, 's2');
     const ca = await client(h.ep, a.token);
     expect(handlesOf((await ca.call('list_sessions')).body).map(([x]) => x)).toEqual([
       'fake-1',
@@ -1847,7 +2001,7 @@ describe('lazy identity: token for every session, handle from clientInfo (spec 2
   it('a forged token initialize allocates nothing', async () => {
     const h = harness();
     await h.host.start();
-    shell(h, 'sh1');
+    await shell(h, 'sh1');
     const c = await client(h.ep, 'forged', 'claude-code');
     expect(await c.listed()).toEqual([]);
     expect(h.sessions.get('sh1')?.mcpHandle).toBeUndefined();
@@ -1858,10 +2012,10 @@ describe('lazy identity: token for every session, handle from clientInfo (spec 2
     const h = harness();
     await h.host.start();
     fs.mkdirSync(path.join(h.dir, 'handles.json'));
-    await client(h.ep, shell(h, 'sh1').token, 'claude-code');
+    await client(h.ep, (await shell(h, 'sh1')).token, 'claude-code');
     expect(h.sessions.get('sh1')?.mcpHandle).toBeUndefined();
     fs.rmSync(path.join(h.dir, 'handles.json'), { recursive: true });
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     await client(h.ep, token, 'claude-code');
     expect(h.sessions.get('sh1')?.mcpHandle).toBe('claude-1');
     await expect.poll(() => h.host.uiState().sessions.sh1?.unavailable).toBeNull();
@@ -1870,7 +2024,7 @@ describe('lazy identity: token for every session, handle from clientInfo (spec 2
   it('S1 switchable includes a shell once it has a handle', async () => {
     const h = harness();
     await h.host.start();
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     expect(h.host.uiState().switchable).toEqual([]);
     const c = await client(h.ep, token, 'claude-code');
     expect(h.host.uiState().switchable).toEqual(['sh1']);
@@ -1884,26 +2038,26 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   const shell = (h: Harness, id: string) => launch(h, id, SHELL, spec('/usr/bin/pwsh'));
   async function sender(h: Harness) {
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     return client(h.ep, a.token);
   }
 
   /** `❯ ` is Claude's empty input row, and just as much a starship/pure shell prompt. */
   function idlePrompt(h: Harness, id: string) {
-    h.host.onOutput(id, '❯ ');
+    h.output(id, '❯ ');
     h.echo.add(id);
   }
   /** Claude's ruled input box at `launch`'s 40 cols: a rule, the `❯ ` row holding the cursor, a rule. */
   function claudeBox(h: Harness, id: string) {
     const rule = '─'.repeat(40);
-    h.host.onOutput(id, `${rule}\r\n❯ \r\n${rule}\x1b[1A\r\x1b[2C`);
+    h.output(id, `${rule}\r\n❯ \r\n${rule}\x1b[1A\r\x1b[2C`);
     h.echo.add(id);
   }
 
   it('AC3 `claude` typed, then claude-code connects → claude notices', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
     await client(h.ep, token, 'claude-code');
     claudeBox(h, 'sh1');
@@ -1916,12 +2070,12 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('F1 Claude paints its box before initialize: the lazy model is seeded from the output tail', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
-    h.host.onResize('sh1', CLAUDE_BEFORE_INIT.cols, CLAUDE_BEFORE_INIT.rows);
+    const { token } = await shell(h, 'sh1');
+    h.resize('sh1', CLAUDE_BEFORE_INIT.cols, CLAUDE_BEFORE_INIT.rows);
     h.host.onRendererInput('sh1', 'claude --model haiku\r');
-    h.host.onOutput('sh1', CLAUDE_BEFORE_INIT.beforeInitialize);
+    h.output('sh1', CLAUDE_BEFORE_INIT.beforeInitialize);
     await client(h.ep, token, 'claude-code');
-    h.host.onOutput('sh1', CLAUDE_BEFORE_INIT.afterInitialize);
+    h.output('sh1', CLAUDE_BEFORE_INIT.afterInitialize);
     const snap = await h.screens.snapshot('sh1');
     const claude = MCP_ADAPTERS.find((a) => a.id === 'claude');
     expect(snap && claude && screenVerdict(claude.screen, snap)).toBe('empty-input');
@@ -1946,8 +2100,8 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     ] as const) {
       const h = harness({ messagingOn: () => on });
       await h.host.start();
-      shell(h, 'sh1');
-      h.host.onOutput('sh1', 'before');
+      await shell(h, 'sh1');
+      h.output('sh1', 'before');
       expect(await seededRow(h, 'sh1')).toBe(row);
     }
   });
@@ -1956,30 +2110,31 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     const h = harness();
     await h.host.start();
     const keepTail = vi.spyOn(h.screens, 'keepTail');
-    launch(h, 'c1', CLAUDE);
+    await launch(h, 'c1', CLAUDE);
     expect(keepTail).not.toHaveBeenCalled();
     expect(h.screens.has('c1')).toBe(true);
-    shell(h, 'sh1');
+    await shell(h, 'sh1');
     expect(keepTail).toHaveBeenCalledWith('sh1', 40, 24);
   });
 
   it('S6 exit and delete drop the tail; a relaunch keeps only the new generation', async () => {
     const h = harness();
     await h.host.start();
-    shell(h, 'ex');
-    h.host.onOutput('ex', 'old');
-    h.host.onExit('ex');
+    await shell(h, 'ex');
+    h.output('ex', 'old');
+    h.exit('ex');
     expect(await seededRow(h, 'ex')).toBe('');
+    expect(h.tokens.rows()).toMatchObject({ state: 'loaded', rows: [] });
 
-    shell(h, 'del');
-    h.host.onOutput('del', 'old');
+    await shell(h, 'del');
+    h.output('del', 'old');
     await h.host.onSessionDeleted('del');
     expect(await seededRow(h, 'del')).toBe('');
 
-    shell(h, 're');
-    h.host.onOutput('re', 'old');
-    shell(h, 're');
-    h.host.onOutput('re', 'new');
+    await shell(h, 're');
+    h.output('re', 'old');
+    await shell(h, 're');
+    h.output('re', 'new');
     expect(await seededRow(h, 're')).toBe('new');
   });
 
@@ -1990,7 +2145,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     it(`F6 \`claude\`, then ${what} before initialize → still bound`, async () => {
       const h = harness();
       const ca = await sender(h);
-      const { token } = shell(h, 'sh1');
+      const { token } = await shell(h, 'sh1');
       h.host.onRendererInput('sh1', 'claude\r');
       h.host.onRendererInput('sh1', keys);
       await client(h.ep, token, 'claude-code');
@@ -2005,7 +2160,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('D-F6 `claude`, an untyped Enter 30 s later, then the client → bound', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
     h.clock.t += 30_000;
     h.host.onRendererInput('sh1', '\x1b[B\r');
@@ -2021,7 +2176,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('D-F6 `claude`, an untyped Enter 90 s later → a later client is not bound', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
     h.clock.t += 90_000;
     h.host.onRendererInput('sh1', '\x1b[A\r');
@@ -2037,7 +2192,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('F6 `claude`, then `ls` → a later client is not bound', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
     h.host.onRendererInput('sh1', 'ls\r');
     await client(h.ep, token, 'claude-code');
@@ -2052,7 +2207,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('notice rule: `code .` typed, then a claude-code client connects → nothing typed at the shell prompt', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'code .\r');
     await client(h.ep, token, 'claude-code');
     idlePrompt(h, 'sh1');
@@ -2066,7 +2221,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('notice rule: no line typed at all → pull-only', async () => {
     const h = harness();
     const ca = await sender(h);
-    await client(h.ep, shell(h, 'sh1').token, 'claude-code');
+    await client(h.ep, (await shell(h, 'sh1')).token, 'claude-code');
     idlePrompt(h, 'sh1');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
@@ -2078,7 +2233,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('notice rule: `claude`, connect, a prompt typed into it → still bound', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
     await client(h.ep, token, 'claude-code');
     h.host.onRendererInput('sh1', 'fix the failing test\r');
@@ -2093,7 +2248,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('notice rule: `claude`, connect, the connection closes, then `ls` → a later client stays pull-only', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
     const first = await client(h.ep, token, 'claude-code');
     first.sock.destroy();
@@ -2111,7 +2266,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('notice rule: `claude`, connect, Ctrl+Z → pull-only while it is suspended', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
     await client(h.ep, token, 'claude-code');
     h.host.onRendererInput('sh1', '\x1a');
@@ -2126,7 +2281,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('notice rule: a second claude-code client never binds; when the bound one closes → pull-only', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
     const bound = await client(h.ep, token, 'claude-code');
     await client(h.ep, token, 'claude-code');
@@ -2143,7 +2298,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('SF-1 a bound claude with a plain `❯ ` prompt and no rules on screen → nothing typed', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
     await client(h.ep, token, 'claude-code');
     idlePrompt(h, 'sh1');
@@ -2161,7 +2316,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     it(`SF-1 \`claude\` typed, ${key} out of it unconnected, then a claude-code client connects → pull-only`, async () => {
       const h = harness();
       const ca = await sender(h);
-      const { token } = shell(h, 'sh1');
+      const { token } = await shell(h, 'sh1');
       h.host.onRendererInput('sh1', 'claude\r');
       h.host.onRendererInput('sh1', byte);
       await client(h.ep, token, 'claude-code');
@@ -2177,10 +2332,10 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('SF-3 a relaunch ends the binding even while the old connection is still open', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
     await client(h.ep, token, 'claude-code');
-    shell(h, 'sh1');
+    await shell(h, 'sh1');
     claudeBox(h, 'sh1');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
@@ -2192,9 +2347,9 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('SF-3 a relaunch drops the typed line: a client of the new generation does not bind', async () => {
     const h = harness();
     const ca = await sender(h);
-    shell(h, 'sh1');
+    await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     await client(h.ep, token, 'claude-code');
     claudeBox(h, 'sh1');
     settle(h);
@@ -2207,7 +2362,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('notice rule: a connection that initialized before the `claude` line does not count', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     await client(h.ep, token, 'claude-code');
     h.host.onRendererInput('sh1', 'claude\r');
     idlePrompt(h, 'sh1');
@@ -2220,7 +2375,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('notice rule: `codex` typed, then a claude-code client connects → pull-only', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'codex\r');
     await client(h.ep, token, 'claude-code');
     idlePrompt(h, 'sh1');
@@ -2234,7 +2389,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('notice rule: a recalled line the tracker cannot read never binds', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', '\x1b[A\r');
     await client(h.ep, token, 'claude-code');
     idlePrompt(h, 'sh1');
@@ -2247,8 +2402,8 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('AC3 opencode / unmapped client → pull-only, nothing typed', async () => {
     const h = harness();
     const ca = await sender(h);
-    const sh1 = shell(h, 'sh1');
-    const sh2 = shell(h, 'sh2');
+    const sh1 = await shell(h, 'sh1');
+    const sh2 = await shell(h, 'sh2');
     h.host.onRendererInput('sh1', 'opencode\r');
     h.host.onRendererInput('sh2', 'claude\r');
     await client(h.ep, sh1.token, 'opencode');
@@ -2266,7 +2421,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('AC3 no live connection → no notice; badge gate null for a non-adapter session', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
     const c = await client(h.ep, token, 'claude-code');
     idlePrompt(h, 'sh1');
@@ -2283,7 +2438,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('AC3 the bound CLI decides; a later client of another CLI or an unmapped one is skipped', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = shell(h, 'sh1');
+    const { token } = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'codex\r');
     const codex = await client(h.ep, token, 'codex-mcp-client');
     await client(h.ep, token, 'claude-code');
@@ -2304,9 +2459,9 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('definition adapter still wins in a profile session', async () => {
     const h = harness();
     const ca = await sender(h);
-    const { token } = launch(h, 's2');
+    const { token } = await launch(h, 's2');
     await client(h.ep, token, 'claude-code');
-    h.host.onOutput('s2', 'fake❯ ');
+    h.output('s2', 'fake❯ ');
     h.echo.add('s2');
     settle(h);
     await ca.call('send_message', { to: ['fake-2'], body: 'see' });
@@ -2318,8 +2473,8 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     const h = harness();
     await h.host.start();
     const start = vi.spyOn(h.screens, 'start');
-    const { token } = shell(h, 'sh1');
-    h.host.onResize('sh1', 100, 30);
+    const { token } = await shell(h, 'sh1');
+    h.resize('sh1', 100, 30);
     expect(h.screens.has('sh1')).toBe(false);
     await client(h.ep, token, 'claude-code');
     expect(h.screens.has('sh1')).toBe(true);
@@ -2331,8 +2486,29 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
   it('a profile session still starts its screen model at spawn', async () => {
     const h = harness();
     await h.host.start();
-    launch(h, 's1');
+    await launch(h, 's1');
     expect(h.screens.has('s1')).toBe(true);
+  });
+
+  it('a profile session respawned with no exit (a retired PTY) gets a fresh screen model', async () => {
+    const h = harness();
+    await h.host.start();
+    await launch(h, 's1');
+    h.output('s1', 'old child');
+    expect((await h.screens.snapshot('s1'))?.lines[0]).toBe('old child');
+    await launch(h, 's1');
+    expect(h.screens.has('s1')).toBe(true);
+    expect((await h.screens.snapshot('s1'))?.lines[0]).toBe('');
+  });
+
+  it('an exit whose token revoke fails is logged, not left unhandled', async () => {
+    const rec = recordingLog();
+    const h = harness({ log: rec.log });
+    await h.host.start();
+    await launch(h, 's1');
+    vi.spyOn(h.tokens, 'revoke').mockRejectedValueOnce(new Error('store down'));
+    h.exit('s1');
+    await expect.poll(() => rec.of('token not revoked').length).toBe(1);
   });
 });
 
@@ -2348,7 +2524,7 @@ describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-
   it('AC11 typed codex + no initialize within the grace → notConnected {cli: codex, install, reason: no-initialize}', async () => {
     const h = harness();
     await h.host.start();
-    shell(h, 'sh1');
+    await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'codex\r');
     h.clock.t += GRACE - 1;
     await h.host.tick();
@@ -2378,7 +2554,9 @@ describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-
     await expect
       .poll(() => {
         h.sessions.set('sh1', session('sh1', { agentId: 'pwsh' }));
-        return h.host.prepareLaunch('sh1', SHELL, spec('/usr/bin/pwsh')).env?.CONDUIT_SESSION_TOKEN;
+        return h
+          .prepareLaunch('sh1', SHELL, spec('/usr/bin/pwsh'))
+          .then((out) => out.env?.CONDUIT_SESSION_TOKEN);
       })
       .toBeDefined();
     await typedAndWaited(h, 'sh1', 'claude\r');
@@ -2390,14 +2568,14 @@ describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-
   it('AC11 initialize inside the grace → nothing; initialize after → cleared', async () => {
     const h = harness();
     await h.host.start();
-    const a = shell(h, 'sh1');
+    const a = await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'claude\r');
     await client(h.ep, a.token, 'claude-code');
     h.clock.t += GRACE;
     await h.host.tick();
     expect(notConnected(h)).toEqual({});
 
-    const b = shell(h, 'sh2');
+    const b = await shell(h, 'sh2');
     await typedAndWaited(h, 'sh2', 'claude\r');
     expect(notConnected(h).sh2?.reason).toBe('no-initialize');
     await client(h.ep, b.token, 'claude-code');
@@ -2407,18 +2585,18 @@ describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-
   it('AC11 exit clears; relaunch clears and bumps launch', async () => {
     const h = harness();
     await h.host.start();
-    shell(h, 'sh1');
+    await shell(h, 'sh1');
     await typedAndWaited(h, 'sh1', 'claude\r');
     expect(notConnected(h).sh1?.launch).toBe(1);
-    h.host.onExit('sh1');
+    h.exit('sh1');
     expect(notConnected(h)).toEqual({});
     await typedAndWaited(h, 'sh1', 'claude\r');
     expect(notConnected(h)).toEqual({});
 
-    shell(h, 'sh1');
+    await shell(h, 'sh1');
     await typedAndWaited(h, 'sh1', 'claude\r');
     expect(notConnected(h).sh1?.launch).toBe(2);
-    shell(h, 'sh1');
+    await shell(h, 'sh1');
     expect(notConnected(h)).toEqual({});
     await typedAndWaited(h, 'sh1', 'claude\r');
     expect(notConnected(h).sh1?.launch).toBe(3);
@@ -2427,7 +2605,7 @@ describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-
   it('AC11 skip-list line is not a candidate', async () => {
     const h = harness();
     await h.host.start();
-    shell(h, 'sh1');
+    await shell(h, 'sh1');
     await typedAndWaited(h, 'sh1', 'codex --help\r');
     await typedAndWaited(h, 'sh1', 'claude mcp list\r');
     expect(notConnected(h)).toEqual({});
@@ -2436,7 +2614,7 @@ describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-
   it('N2 focus reports and device-attribute replies mid-line are not typed input', async () => {
     const h = harness();
     await h.host.start();
-    shell(h, 'sh1');
+    await shell(h, 'sh1');
     h.host.onRendererInput('sh1', 'cod');
     h.host.onRendererInput('sh1', '\x1b[I');
     h.host.onRendererInput('sh1', '\x1b[?1;2c');
@@ -2449,8 +2627,8 @@ describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-
   it('adapter sessions never detect', async () => {
     const h = harness();
     await h.host.start();
-    launch(h, 's1');
-    launch(h, 'c1', CODEX, spec('/usr/bin/codex'));
+    await launch(h, 's1');
+    await launch(h, 'c1', CODEX, spec('/usr/bin/codex'));
     await typedAndWaited(h, 's1', 'codex\r');
     await typedAndWaited(h, 'c1', 'claude\r');
     expect(notConnected(h)).toEqual({});
@@ -2459,7 +2637,7 @@ describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-
   it('a line typed while a CLI is live is ignored', async () => {
     const h = harness();
     await h.host.start();
-    await client(h.ep, shell(h, 'sh1').token, 'claude-code');
+    await client(h.ep, (await shell(h, 'sh1')).token, 'claude-code');
     await typedAndWaited(h, 'sh1', 'codex\r');
     expect(notConnected(h)).toEqual({});
   });
@@ -2468,7 +2646,7 @@ describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-
     let on = true;
     const h = harness({ messagingOn: () => on });
     await h.host.start();
-    shell(h, 'sh1');
+    await shell(h, 'sh1');
     await typedAndWaited(h, 'sh1', 'claude\r');
     expect(Object.keys(notConnected(h))).toEqual(['sh1']);
     on = false;
@@ -2479,12 +2657,12 @@ describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-
     const h = harness({ installState: (cli) => (cli === 'cursor' ? 'conflict' : 'not-installed') });
     await h.host.start();
     h.sessions.set('c1', session('c1', { agentId: 'cursor' }));
-    h.host.prepareLaunch('c1', CURSOR, spec('/usr/bin/agent'));
+    await h.prepareLaunch('c1', CURSOR, spec('/usr/bin/agent'));
     expect(notConnected(h)).toEqual({
       c1: { cli: 'cursor', install: 'conflict', launch: 1, reason: 'cursor-not-connected' },
     });
     // A Cursor client connecting cannot clear it: the session never got a token.
-    h.host.onExit('c1');
+    h.exit('c1');
     expect(notConnected(h)).toEqual({});
   });
 
@@ -2498,8 +2676,8 @@ describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-
       },
     });
     await h.host.start();
-    shell(h, 'sh1');
-    shell(h, 'sh2');
+    await shell(h, 'sh1');
+    await shell(h, 'sh2');
     await typedAndWaited(h, 'sh1', 'claude\r');
     await typedAndWaited(h, 'sh2', 'claude\r');
     reads.length = 0;
@@ -2588,7 +2766,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
   async function asking(over: Parameters<typeof harness>[0] = {}) {
     const h = harness({ kinds: { '/w': 'dir', '/w/a.ts': 'file' }, ...over });
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const c = await rawClient(h.ep, a.token);
     return { h, c };
   }
@@ -2618,6 +2796,25 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     h.presence.ready.delete(1);
     c.call(6, 'list_sessions');
     expect(c.errorOf(await c.reply(6))).toBe('ok');
+  });
+
+  it('on/viewing open_session runs with an unready owner or no owner window', async () => {
+    for (const owner of ['unready', 'none'] as const) {
+      const h = harness({ kinds: { '/w': 'dir' } });
+      await h.host.start();
+      const a = await launch(h, 's1');
+      setPolicy(h, { open_session: { access: 'on' } });
+      const c = await client(h.ep, a.token);
+      if (owner === 'unready') h.presence.ready.delete(1);
+      else h.owners.set('s1', null);
+
+      const result = await c.call('open_session', OPEN);
+      expect(result.isError).toBe(false);
+      expect(result.body).toMatchObject({ session_id: 'n1' });
+      expect(h.opens).toHaveLength(1);
+      expect(h.toOwner.filter((entry) => entry.msg.type === 'mcp:ask')).toEqual([]);
+      expect(h.toWindow.filter((entry) => entry.msg.type === 'mcp:ui')).toEqual([]);
+    }
   });
 
   it("the gate asks about the caller's own window, not any window", async () => {
@@ -2823,6 +3020,16 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(c.errorOf(c.lines.find((l) => l.id === 1))).toBe('cancelled');
   });
 
+  it('onSessionDeleted releases the screen and token before it first yields', async () => {
+    const { h } = await asking();
+    if (!h.screens.has('s1')) h.screens.start('s1', 40, 24);
+    expect(h.tokens.rows()).toMatchObject({ rows: [{ sessionId: 's1' }] });
+    const deleted = h.host.onSessionDeleted('s1');
+    expect(h.screens.has('s1')).toBe(false);
+    expect(h.tokens.rows()).toMatchObject({ state: 'loaded', rows: [] });
+    await deleted;
+  });
+
   it('onSessionDeleted answers every waiting ask before it closes', async () => {
     const { h, c } = await asking();
     for (const id of [1, 2, 3]) c.call(id, 'open_session', OPEN);
@@ -2892,7 +3099,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
   it('mcp:setToolPolicy replies unknown-session / unknown-tool / invalid-value / ok', async () => {
     const h = harness();
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const c = await client(h.ep, a.token);
     await c.listed();
     const set = async (m: { sessionId: string; tool: string; patch: unknown }) => {
@@ -2953,9 +3160,9 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
   async function twoSessions(over: Parameters<typeof harness>[0] = {}) {
     const h = harness(over);
     await h.host.start();
-    const a = launch(h, 's1');
+    const a = await launch(h, 's1');
     const c = await rawClient(h.ep, a.token);
-    const b = launch(h, 's2');
+    const b = await launch(h, 's2');
     const peer = await client(h.ep, b.token);
     await peer.listed();
     h.owners.set('s2', 2);
@@ -2986,6 +3193,26 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
     });
     await uiResult(h, ui.requestId, { kind: 'closeSession', ok: true }, 2);
     expect(resultOf(await c.reply(1))).toEqual({ closed: 's2' });
+  });
+
+  it('close_session without a ready owner uses the domain close and does not post renderer UI', async () => {
+    const h = harness();
+    await h.host.start();
+    const a = await launch(h, 's1');
+    const b = await launch(h, 's2');
+    const c = await rawClient(h.ep, a.token);
+    const peer = await client(h.ep, b.token);
+    await peer.listed();
+    h.owners.set('s2', null);
+    const caller = h.sessions.get('s1');
+    if (!caller) throw new Error('no session s1');
+    caller.mcpToolPolicy = { close_session: { access: 'on', reach: 'any' } };
+
+    c.call(1, 'close_session', { session: h.sessions.get('s2')?.mcpHandle });
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    expect(resultOf(c.lines.find((line) => line.id === 1))).toEqual({ closed: 's2' });
+    expect(h.closes).toEqual(['s2']);
+    expect(h.toWindow.filter((entry) => entry.msg.type === 'mcp:ui')).toEqual([]);
   });
 
   it('self close: the reply is written before the drained connection closes', async () => {
@@ -3075,7 +3302,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
   it('a launch-wired codex ask waits 170 s less the UI step (single-gate spec)', async () => {
     const h = harness({ manualTimers: true });
     await h.host.start();
-    const a = launch(h, 's3', CODEX, spec('/usr/bin/codex'));
+    const a = await launch(h, 's3', CODEX, spec('/usr/bin/codex'));
     expect(a.spec.args).toContain('mcp_servers.conduit.tool_timeout_sec=180');
     const c = await rawClient(h.ep, a.token);
     allow(h, 's3', { open_url: { access: 'ask' } });

@@ -2,15 +2,19 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ConfigIo } from '../../electron/config-file-io';
-import { createMcpInstall, type McpInstallDeps, migrateGateOnce } from '../../electron/mcp-install';
+import type { ConfigIo } from '../../src/conduit-mcp/config-file-io';
+import {
+  createMcpInstall,
+  type McpInstallDeps,
+  migrateGateOnce,
+} from '../../src/conduit-mcp/install';
+import { conduitEntry, legacyConduitEntry } from '../../src/conduit-mcp/install-entries';
 import {
   claudeLocalTarget,
   permissionTarget,
   projectTarget,
   userTarget,
-} from '../../electron/mcp-install-targets';
-import { conduitEntry, legacyConduitEntry } from '../../src/conduit-mcp/install-entries';
+} from '../../src/conduit-mcp/install-targets';
 import type { AgentCli, CliInstallStatus } from '../../src/conduit-mcp/install-types';
 import { readCodexConduit } from '../../src/conduit-mcp/toml-config';
 import { folderKey } from '../../src/folder-key';

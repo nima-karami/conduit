@@ -138,9 +138,9 @@ export type RuntimeEvent =
   | { type: 'title'; sessionId: string; title: string }
   | { type: 'size'; sessionId: string; size: TermGeometry }
   /**
-   * hc's `foreground` (~2/s): what runs in the terminal and where. If M27 passes it is the single
-   * source of the live cwd and of a CLI typed into a shell, replacing the cwd OSC injection,
-   * CwdScanner and keystroke inference (§Reuse audit). Null once the program finished.
+   * hc's `foreground` (~2/s). Unused by Conduit: on Windows it reports only the terminal's root
+   * process (M27 failed). The live cwd comes from the ported CwdScanner on `data` (W4), the typed CLI
+   * from detectTyped on `term.input` (W5); D38. Kept because hc emits it. Null once the program finished.
    */
   | { type: 'foreground'; sessionId: string; foreground: RuntimeForeground | null }
   /** The core connection came back and reconcile() ran; events in between may be missing (D22). */
@@ -191,6 +191,8 @@ export interface TerminalRuntime {
    *   listed-then-retried (D21).
    * - Stopping: ServerStopping, before any run.
    * One start in flight per session; the caller dedupes concurrent starts.
+   * The run env sets `TERM_PROGRAM=conduit` and `TERM_PROGRAM_VERSION=<app version>`: hc otherwise
+   * defaults to ghostty and answers XTVERSION with it (M10).
    */
   spawn(
     sessionId: string,

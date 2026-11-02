@@ -134,7 +134,10 @@ function appRun(blob: string | undefined) {
       const t = new Terminal({ ...pane, allowProposedApi: true });
       term = t;
       const fitToPane = () => t.resize(pane.cols, pane.rows);
-      const replay = store.replayForColdStart(SID, () => restoreScrollback(blob)?.segments);
+      const replay = store.replayForColdStart(SID, () => {
+        const r = restoreScrollback(blob);
+        return r.kind === 'ok' ? r.scrollback.segments : undefined;
+      });
       const replayed = !!replay?.data;
       if (replay?.data) {
         await new Promise<void>((resolve) =>

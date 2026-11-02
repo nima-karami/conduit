@@ -542,13 +542,13 @@ describe('the persisted file', () => {
     expect(back.schedules.map((s) => s.id)).toEqual(['tm-1']);
   });
 
-  it('treats an absent, corrupt or foreign-version file as empty', () => {
+  it('treats absent and corrupt files as empty, and explicitly refuses newer versions', () => {
     expect(parseTimedMessagesFile(undefined).schedules).toEqual([]);
     expect(parseTimedMessagesFile('{oops').schedules).toEqual([]);
     expect(parseTimedMessagesFile('[]').schedules).toEqual([]);
     expect(
-      parseTimedMessagesFile(JSON.stringify({ version: 2, schedules: [schedule()] })).schedules,
-    ).toEqual([]);
+      parseTimedMessagesFile(JSON.stringify({ version: 2, schedules: [schedule()] })),
+    ).toMatchObject({ kind: 'newer' });
   });
 
   it('refuses a record whose numbers are out of range', () => {

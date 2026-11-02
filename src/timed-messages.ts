@@ -5,6 +5,8 @@
  * ever disagree by disagreeing with this file. Same role src/review-marks.ts plays for marks.
  */
 
+import { judgePersistedVersion } from './contracts/session-identity';
+
 export type TimedMessageKind = 'once' | 'interval';
 export type TimedMessageState = 'armed' | 'waiting' | 'done';
 export type TimedMessageOrigin = 'manual' | 'limit';
@@ -48,6 +50,7 @@ export interface TimedMessage {
 export interface TimedMessagesFile {
   version: 1;
   schedules: TimedMessage[];
+  kind?: 'newer';
 }
 
 /** What the composer submits. `nextAt` is deliberately absent: the host derives it (§3). */
@@ -486,6 +489,9 @@ export function parseTimedMessagesFile(blob: string | undefined): TimedMessagesF
     return emptyTimedMessagesFile();
   }
   const { version, schedules } = parsed as { version?: unknown; schedules?: unknown };
+  if (judgePersistedVersion('timed-messages.json', version) === 'newer') {
+    return { version: 1, schedules: [], kind: 'newer' };
+  }
   if (version !== 1 || !Array.isArray(schedules)) return emptyTimedMessagesFile();
   return {
     version: 1,

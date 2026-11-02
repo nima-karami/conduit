@@ -31,6 +31,8 @@ export type ToolErrorCode =
   | 'invalid_args'
   | 'command_not_found'
   | 'brief_unavailable'
+  | 'spawn_unconfirmed'
+  | 'server_stopping'
   | 'open_failed'
   | 'window_not_ready'
   | 'caller_not_visible'
@@ -50,6 +52,7 @@ export interface ToolError {
   code: ToolErrorCode;
   message: string;
   retryable: boolean;
+  sessionId?: string;
 }
 export type Result<T> = { ok: true; value: T } | { ok: false; error: ToolError };
 
@@ -58,10 +61,16 @@ const RETRYABLE: ReadonlySet<ToolErrorCode> = new Set([
   'store_unavailable',
   'host_unavailable',
   'window_not_ready',
+  'server_stopping',
 ]);
 
-export function toolError(code: ToolErrorCode, message: string): ToolError {
-  return { code, message, retryable: RETRYABLE.has(code) };
+export function toolError(code: ToolErrorCode, message: string, sessionId?: string): ToolError {
+  return {
+    code,
+    message,
+    retryable: RETRYABLE.has(code),
+    ...(sessionId === undefined ? {} : { sessionId }),
+  };
 }
 
 export interface AttachmentRecord {

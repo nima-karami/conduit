@@ -33,6 +33,14 @@ const contentSearchWorker = {
   format: 'cjs',
 };
 
+const serverShell = {
+  ...common,
+  entryPoints: ['server/main.ts', 'server/supervise.ts'],
+  outdir: 'out/server',
+  platform: 'node',
+  format: 'cjs',
+};
+
 // Renderer (React + xterm). Imported CSS is emitted as out/webview.css.
 const web = {
   ...common,
@@ -100,7 +108,7 @@ function writeHtml() {
 
 if (watch) {
   const ctxs = await Promise.all(
-    [main, preload, web, monacoWorker, pdfWorker, contentSearchWorker].map((c) =>
+    [main, preload, web, monacoWorker, pdfWorker, contentSearchWorker, serverShell].map((c) =>
       esbuild.context(c),
     ),
   );
@@ -108,7 +116,9 @@ if (watch) {
   writeHtml();
 } else {
   await Promise.all(
-    [main, preload, web, monacoWorker, pdfWorker, contentSearchWorker].map((c) => esbuild.build(c)),
+    [main, preload, web, monacoWorker, pdfWorker, contentSearchWorker, serverShell].map((c) =>
+      esbuild.build(c),
+    ),
   );
   writeHtml();
 }

@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import * as path from 'node:path';
-import { type PermissionCli, permissionCli } from '../src/conduit-mcp/cli-permissions';
-import { type AgentCli, BACKUP_SUFFIX, type ProjectScope } from '../src/conduit-mcp/install-types';
-import type { JsonObject } from '../src/conduit-mcp/json-config';
-import { folderKey } from '../src/folder-key';
-import type { HostPlatform } from '../src/lsp-binary';
+import { folderKey } from '../folder-key';
+import type { HostPlatform } from '../lsp-binary';
+import { type PermissionCli, permissionCli } from './cli-permissions';
+import { type AgentCli, BACKUP_SUFFIX, type ProjectScope } from './install-types';
+import type { JsonObject } from './json-config';
 
 export interface TargetEnv {
   homeDir: string;

@@ -1,0 +1,17 @@
+== start core from rtA with cwd rtA
+rename rtA, core only (no holder yet): FAILED (in use)
+   36252 ppid=19904 <scratch>\rtA\hc.exe serve
+   11092 ppid=36252 <scratch>\rtA\hc.exe hold 
+rename rtA, core + holder: FAILED (in use)
+== restart through rtB with cwd rtB
+   11092 ppid=36252 <scratch>\rtA\hc.exe hold 
+   48680 ppid=29468 <scratch>\rtB\hc.exe serve
+rename rtA, old holder draining t-old: FAILED (in use)
+rename rtB, new core: FAILED (in use)
+   48680 ppid=29468 <scratch>\rtB\hc.exe serve
+rename rtA after the old holder drained: RENAMED (not in use)
+rename rtB after stop: RENAMED (not in use)
+== can a mapped hc.exe be deleted after a successful dir rename? (core from rtA, cwd elsewhere)
+   delete hc.exe failed: Access to the path 'C:\Users\karam\AppData\Local\Temp\claude-scratch\hc-spike\rtA.gc\hc.exe' is denied.
+   deleted conpty.dll (not loaded by the core yet)
+{"stopped":true}

@@ -1,6 +1,8 @@
 // The three open tools (spec 2026-10-27-conduit-mcp-control-tools §3.1) and the pipeline every
 // control tool shares; the app-control tools live in app-control-tools.ts. No IO here: stat,
 // registry, command resolution, session creation and git are deps, so tests run on POSIX fakes.
+
+import type { DomainOpenOutcome, DomainPort } from '../contracts/server-ports';
 import { coerceSessionCommand, commandLabel } from '../session-command';
 import type { SessionOpResult } from '../session-ops';
 import type { SessionCommand, SessionOpener } from '../types';
@@ -44,9 +46,7 @@ export interface McpOpenRequest {
   focus: boolean;
   launch: McpLaunch;
 }
-export type McpOpenOutcome =
-  | { ok: true; sessionId: string; label: string }
-  | { ok: false; code: 'unknown_agent' | 'brief_unavailable'; message: string };
+export type McpOpenOutcome = DomainOpenOutcome;
 export interface McpFileRequest {
   callerSessionId: string;
   path: string;
@@ -57,6 +57,7 @@ export interface McpFileRequest {
 /** A stat failure of any errno is 'missing'. */
 export type PathKind = 'dir' | 'file' | 'other' | 'missing';
 export interface ControlDeps {
+  closeSession: DomainPort['closeSession'];
   /** Persisted home of a live session; undefined ⇒ not_in_session. */
   homeOf(sessionId: string): string | undefined;
   resolvePath(home: string, p: string): string;
@@ -420,7 +421,15 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
           } catch (e) {
             return failed(tool, caller, e, abs);
           }
-          if (!outcome.ok) return fail(outcome.code, outcome.message);
+          if (!outcome.ok)
+            return {
+              ok: false,
+              error: toolError(
+                outcome.code,
+                outcome.message,
+                outcome.code === 'spawn_unconfirmed' ? outcome.sessionId : undefined,
+              ),
+            };
           token.keep();
           deps.info('control open', {
             tool,

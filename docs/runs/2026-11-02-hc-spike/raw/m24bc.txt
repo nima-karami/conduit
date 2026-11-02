@@ -1,0 +1,10 @@
+start {"core":{"id":"31e1327ae8424d877c9b4d9819c767fa","name":"awby-desktop"},"finishe
+first run on fresh core, drop at 0ms {"replyBeforeDrop":false,"probe":{"negatives":3,"firstNegDt":1,"lastNegDt":27,"found":{"dt":42,"ok":"live"}},"createdDt":64,"stateAfter":"live"}
+steady state, drop at 0ms {"replyBeforeDrop":false,"probe":{"negatives":1,"firstNegDt":1,"lastNegDt":1,"found":{"dt":16,"ok":"live"}},"createdDt":23,"stateAfter":"live"}
+steady state, drop at 5ms {"replyBeforeDrop":false,"probe":{"negatives":0,"found":{"dt":16,"ok":"live"}},"createdDt":22,"stateAfter":"live"}
+steady state, drop at 30ms {"replyBeforeDrop":true,"probe":{"negatives":0,"found":{"dt":46,"ok":"live"}},"createdDt":22,"stateAfter":"live"}
+reference run reply ms 27 live
+(c) created old dt 22 created new dt 41 new reply dt 49 new started dt 1
+(c) kill old by name -> finished killed ms 28 duplicate live window ms 557
+events [["created","m24-b1",null],["created","m24-b2",null],["foreground","node.exe",null],["foreground","node.exe",null],["created","m24-b3",null],["foreground","node.exe",null],["created","m24-b4",null],["created","m24-ref",null],["created","m24-c-old",null],["created","m24-c-new",null],["foreground","node.exe",null],["foreground","node.exe",null],["foreground","node.exe",null],["foreground","node.exe",null],["finished","t6","killed"],["finished","t1","killed"],["finished","t2","killed"],["finished","t3","killed"],["finished","t4","killed"],["finished","t5","killed"],["finished","t7","killed"]]
+stop {"stopped":true}

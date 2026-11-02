@@ -200,7 +200,12 @@ export type HcEvent =
 export type HcNotification =
   | { method: 'event'; params: HcEvent }
   | { method: 'heartbeat'; params: { seq: number } }
-  | { method: 'missed'; params: { seq: number; terminals: HcTerminal[] } };
+  | { method: 'missed'; params: { seq: number; terminals: HcTerminal[] } }
+  /**
+   * Client-made, never on the wire: the subscription's channel closed or broke, so nothing more
+   * arrives on it. Unlike `missed` it carries no snapshot; the caller subscribes again and reconciles.
+   */
+  | { method: 'ended'; params: { reason: 'closed' | 'malformed' } };
 
 /** Stable error kinds the client branches on; anything else is surfaced as-is. */
 export type HcErrorKind =
@@ -212,7 +217,11 @@ export type HcErrorKind =
   | 'finished'
   | 'spawn_failed'
   /** `terminal.run` with the name of a live terminal: the earlier run registered and is live (D21). */
-  | 'name_taken';
+  | 'name_taken'
+  /** `terminal.rm` of a terminal that is still running. */
+  | 'live'
+  /** A framed-only method called on a plain connection. */
+  | 'needs_framed';
 
 /** `disconnected`: our connection to the core dropped; the terminal may well still be live (F10). */
 export type HcStreamEnd = CloseReason | { reason: 'disconnected' };
@@ -255,7 +264,11 @@ export interface HcClient {
   attach(
     params: HcMethods['terminal.attach']['params'],
   ): Promise<{ result: HcMethods['terminal.attach']['result']; stream: HcStream }>;
-  /** Snapshot first, then events with seq > snapshot.seq; `missed` re-snapshots in place. */
+  /**
+   * Snapshot first, then events with seq > snapshot.seq. seq is core-wide, so a filtered subscription
+   * sees gaps (measured). On any `missed`, from hc or from the client when the channel ends, the
+   * caller subscribes again and reconciles; the client never restores a subscription itself.
+   */
   subscribe(
     params: HcMethods['events.subscribe']['params'],
     onNotification: (n: HcNotification) => void,

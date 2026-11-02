@@ -1,0 +1,3 @@
+argv node (core PATH lacks nodejs; registry PATH has it): NODE-RAN true
+line node: LINE-NODE-RAN
+argv claude: 2.1.316 (Claude Code)

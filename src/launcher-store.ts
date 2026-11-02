@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { AgentRegistry } from './agent-registry';
 import { formatCommandLine, splitCommandLine } from './command-line';
+import { judgePersistedVersion } from './contracts/session-identity';
 import { MAX_CUSTOM_LAUNCHERS } from './launchers';
 import type { HostPlatform } from './lsp-binary';
 import type { AgentDefinition } from './types';
@@ -31,7 +32,7 @@ const isCustomDef = (d: unknown): d is AgentDefinition =>
   Array.isArray(d.args) &&
   d.args.every((a) => typeof a === 'string');
 
-export function parseLaunchers(blob: string | undefined): LaunchersFile {
+export function parseLaunchers(blob: string | undefined): LaunchersFile | { kind: 'newer' } {
   if (!blob) return emptyFile();
   let raw: unknown;
   try {
@@ -39,7 +40,9 @@ export function parseLaunchers(blob: string | undefined): LaunchersFile {
   } catch {
     return emptyFile();
   }
-  if (!isRecord(raw) || raw.version !== 1) return emptyFile();
+  if (!isRecord(raw)) return emptyFile();
+  if (judgePersistedVersion('launchers.json', raw.version) === 'newer') return { kind: 'newer' };
+  if (raw.version !== 1) return emptyFile();
   const usage: Record<string, LauncherUsage> = {};
   if (isRecord(raw.usage)) {
     for (const [id, u] of Object.entries(raw.usage)) {

@@ -1,0 +1,8 @@
+direct node: events [{"dt":138,"cwd":"<scratch>","name":"node.exe"},{"dt":2181,"cwd":"C:\\Windows","name":"node.exe"}]
+cmd /c node: get 0 undefined
+cmd /c node: get 1 undefined
+cmd /c node: get 2 undefined
+cmd /c node: get 3 undefined
+cmd /c node: get 4 undefined
+cmd /c node: get 5 undefined
+cmd /c node events []
