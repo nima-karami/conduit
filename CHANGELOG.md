@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.53.2] — 2026-11-03
+
 ### Fixed
 - **Conduit uses much less memory over a long day.**
   - **Code intelligence:** opening a JavaScript file could add over a gigabyte, because the
