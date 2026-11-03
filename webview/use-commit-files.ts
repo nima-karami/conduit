@@ -1,6 +1,7 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import type { DiffTruncation, FileDiffDTO, HostToWebview } from '../src/protocol';
 import { post, subscribe } from './bridge';
+import { evictOldest } from './content-cache';
 
 /**
  * Shared loader for a commit's per-file diffs, keyed by `${sessionId}\0${sha}\0${root ?? ''}`.
@@ -23,6 +24,11 @@ export interface CommitFiles {
   error?: string;
 }
 
+// A commit's entry is every changed file's head+work text (up to 1000 files, plus image data URLs):
+// ~100 MB for one vendor commit. Eight keeps back/forward browsing instant without holding a
+// whole history's worth; entries a mounted view subscribes to are never evicted.
+const CACHE_MAX = 8;
+
 const LOADING: CommitFiles = { status: 'loading', files: [] };
 
 const cache = new Map<string, CommitFiles>();
@@ -30,6 +36,8 @@ const listeners = new Map<string, Set<() => void>>();
 const latestReq = new Map<string, number>();
 let reqCounter = 0;
 let wired = false;
+
+const trim = () => evictOldest(cache, CACHE_MAX, (k) => (listeners.get(k)?.size ?? 0) > 0);
 
 const keyFor = (sessionId: string, sha: string, root?: string) =>
   `${sessionId}\0${sha}\0${root ?? ''}`;
@@ -48,12 +56,14 @@ function ensureWired() {
     const key = keyFor(msg.sessionId, msg.sha, msg.root);
     // Latest-wins: drop a reply older than the newest request issued for this key.
     if ((latestReq.get(key) ?? 0) > msg.requestId) return;
+    cache.delete(key);
     cache.set(
       key,
       msg.error
         ? { status: 'error', files: [], error: msg.error }
         : { status: 'ready', files: msg.files, truncated: msg.truncated },
     );
+    trim();
     emit(key);
   });
 }
@@ -62,7 +72,9 @@ function send(sessionId: string, sha: string, root: string | undefined, key: str
   ensureWired();
   reqCounter += 1;
   latestReq.set(key, reqCounter);
+  cache.delete(key);
   cache.set(key, LOADING);
+  trim();
   post({
     type: 'git:commitDiff',
     sessionId,

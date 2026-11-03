@@ -24,6 +24,7 @@ import {
   IconSparkle,
   IconWarning,
 } from '../icons';
+import { markModelActive, markModelIdle } from '../idle-models';
 import { sendMention } from '../mention-bus';
 import { monacoKeybindingFor } from '../monaco-keybinding';
 import { ensureTokenizer } from '../monaco-languages';
@@ -217,6 +218,7 @@ export function CodeViewer({
     // Monaco creates a navigation target's model itself, hardcoding `typescript` as the
     // language (LibFiles.getOrCreateModel). Landing on a .js/.json/.md file that way and
     // then opening it as a tab would leave it tokenized as TypeScript forever.
+    markModelActive(model);
     if (existing && !doc.binary && existing.getLanguageId() !== doc.language)
       monaco.editor.setModelLanguage(existing, doc.language);
     // The store owns the baseline, the dirty flag, the save entry and the reseed of a reused
@@ -514,7 +516,7 @@ export function CodeViewer({
     const blurSub = editor.onDidBlurEditorWidget(() => fileSaves.trigger(doc.path, 'editorBlur'));
     setEditor(editor);
 
-    // Don't dispose models we keep for cross-file resolution; only dispose the editor.
+    // Closed tabs' models are kept for cross-file resolution, capped by idle-models.ts.
     return () => {
       debouncedCapture.cancel();
       captureViewState(); // sync final capture BEFORE dispose, else saveViewState has no editor
@@ -533,6 +535,7 @@ export function CodeViewer({
       blameUnsub();
       onReseedRef.current = null;
       editor.dispose();
+      markModelIdle(model);
       editorRef.current = null;
       setEditor(null);
     };

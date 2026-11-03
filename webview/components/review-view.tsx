@@ -62,6 +62,7 @@ import {
 import type { RightPaneTab } from '../../src/settings';
 import type { GitInfo } from '../../src/types';
 import { gitAction } from '../bridge';
+import { forgetEvictedRequests } from '../content-cache';
 import { DIFF_READ_ERROR_NOTICE } from '../diff-tab-scope';
 import type { OpenMode, ReviewSource } from '../docs';
 import { useFocusTargetRef } from '../focus-targets';
@@ -634,6 +635,7 @@ export function ReviewView({
   // tree changes under a Review that isn't mounted, so the re-request a remount triggers is what
   // keeps the content honest.
   const requestedRef = useRef<Set<string>>(new Set());
+  const settledDiffsRef = useRef<Set<string>>(new Set());
   // Collapsing every card at once invalidates the scroll offset outright. Re-anchor to the file
   // the user was on after each measurement until the offset stops moving — the ResizeObserver
   // reports the new heights over the next frame or two (Lane B plan, assumption 14).
@@ -755,6 +757,10 @@ export function ReviewView({
     requestedRef.current.clear();
     hunkCountsRef.current.clear();
   }
+  // app.tsx's diff cache is bounded, so a card's diff can leave it; the request-once guard has to
+  // follow, in render for the same child-first reason as above.
+  if (!preloaded)
+    forgetEvictedRequests(requestedRef.current, settledDiffsRef.current, effectiveDiffs);
 
   // Per-file reviewed marks. Durable, host-owned and shared across windows (spec
   // 2026-08-27-review-supercharge §2 Lane B) — this view only reads them and toggles one.

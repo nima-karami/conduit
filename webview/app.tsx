@@ -151,6 +151,7 @@ import type { UpdateStatus } from './components/update-card';
 import { WebPromptModal } from './components/web-prompt-modal';
 import { type ReleaseNotesView, WhatsNewDialog } from './components/whats-new-dialog';
 import { MCP_STR } from './conduit-mcp-strings';
+import { pruneDiffs, pruneFiles, rereadsOnFocus, setNewest } from './content-cache';
 import { decideShortcut, type ShortcutContext } from './decide-shortcut';
 import { createDiffReadQueue, type DiffReadQueue, diffReadTargets } from './diff-read-queue';
 import { diffTabKey } from './diff-tab-scope';
@@ -553,6 +554,14 @@ export function App() {
     for (const t of diffReadTargets(docState.docs, (d) => !diffs.has(diffTabKey(d))))
       diffReadQueueRef.current.ensure(t);
   }, [docState.docs, diffs]);
+  // Content outlives its tab only as a bounded cache; see content-cache.ts for what stays.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: files/diffs re-trigger it so a reply for a closed tab is pruned on arrival
+  useEffect(() => {
+    setFiles((m) => pruneFiles(m, docState.docs));
+    setDiffs((m) => pruneDiffs(m, docState.docs));
+  }, [docState.docs, files, diffs]);
+  const filesRef = useRef(files);
+  filesRef.current = files;
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
   const [settingsFocusCli, setSettingsFocusCli] = useState<AgentCli | undefined>(undefined);
@@ -815,7 +824,7 @@ export function App() {
         }
       } else if (msg.type === 'fileDiff') {
         const key = diffKey(msg.doc.path, scopeFromDiffArgs(msg));
-        setDiffs((m) => new Map(m).set(key, msg.doc));
+        setDiffs((m) => setNewest(m, key, msg.doc));
         diffReadQueueRef.current.settle(key);
       } else if (msg.type === 'searchResults') {
         setCorpus((c) => acceptSearchResults(c, msg, presentFolders(activeRef.current)));
@@ -2247,7 +2256,8 @@ export function App() {
   const visibleFilePathsRef = useRef<readonly string[]>([]);
   useEffect(() => {
     for (const path of visibleFilePaths) {
-      if (!visibleFilePathsRef.current.includes(path)) post({ type: 'readFile', path });
+      if (!visibleFilePathsRef.current.includes(path) && rereadsOnFocus(filesRef.current.get(path)))
+        post({ type: 'readFile', path });
     }
     visibleFilePathsRef.current = visibleFilePaths;
   }, [visibleFilePaths]);
@@ -2424,7 +2434,9 @@ export function App() {
     // On regaining focus, also re-read every visible file tab so it reflects any on-disk
     // change made while the app was backgrounded (dirty-buffer protection still applies).
     const rereadVisibleFiles = () => {
-      for (const path of visibleFilePathsRef.current) post({ type: 'readFile', path });
+      for (const path of visibleFilePathsRef.current) {
+        if (rereadsOnFocus(filesRef.current.get(path))) post({ type: 'readFile', path });
+      }
     };
     const onFocus = () => {
       if (document.visibilityState !== 'hidden') {
