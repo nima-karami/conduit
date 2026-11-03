@@ -15,6 +15,9 @@ const { libs, models } = vi.hoisted(() => ({
     disposed: boolean;
     isDisposed: () => boolean;
     dispose: () => void;
+    getLanguageId: () => string;
+    onDidChangeContent: () => { dispose: () => void };
+    onWillDispose: () => { dispose: () => void };
   }[],
 }));
 
@@ -38,6 +41,8 @@ vi.mock('monaco-editor', () => {
     editor: {
       getModels: () => models.filter((m) => !m.disposed),
       getEditors: () => [],
+      onDidCreateModel: () => ({ dispose: () => {} }),
+      onDidChangeModelLanguage: () => ({ dispose: () => {} }),
     },
     typescript: {
       typescriptDefaults: defaults(),
@@ -63,6 +68,9 @@ function model(path: string) {
     dispose: () => {
       m.disposed = true;
     },
+    getLanguageId: () => 'typescript',
+    onDidChangeContent: () => ({ dispose: () => {} }),
+    onWillDispose: () => ({ dispose: () => {} }),
   };
   models.push(m);
   return m;

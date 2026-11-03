@@ -9,10 +9,62 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Monaco's addExtraLib semantics, per defaults object: the same content again is a no-op, a
 // handle only removes the version it added, and every change inside one tick is ONE re-post of
 // the whole map to the worker (`_fireOnDidExtraLibsChangeSoon` is a setTimeout(0)).
-const { ts, js, warn } = vi.hoisted(() => {
+const { ts, js, warn, mon } = vi.hoisted(() => {
   const make = () => ({ libs: new Map<string, { content: string; version: number }>(), posts: 0 });
-  return { ts: make(), js: make(), warn: { calls: [] as unknown[][] } };
+  return {
+    ts: make(),
+    js: make(),
+    warn: { calls: [] as unknown[][] },
+    mon: {
+      models: [] as JsModel[],
+      created: new Set<(m: unknown) => void>(),
+    },
+  };
 });
+
+interface JsModel {
+  uri: { toString: () => string; path: string };
+  getValue: () => string;
+  setValue: (text: string) => void;
+  getLanguageId: () => string;
+  isDisposed: () => boolean;
+  dispose: () => void;
+  onDidChangeContent: (cb: () => void) => { dispose: () => void };
+  onWillDispose: (cb: () => void) => { dispose: () => void };
+}
+
+/** A model as monaco's editor creates one: listed, then announced to onDidCreateModel. */
+function openModel(path: string, text: string, language = 'javascript'): JsModel {
+  let value = text;
+  let disposed = false;
+  const edits = new Set<() => void>();
+  const closes = new Set<() => void>();
+  const m: JsModel = {
+    uri: { toString: () => `file://${path}`, path },
+    getValue: () => value,
+    setValue: (t) => {
+      value = t;
+      for (const cb of edits) cb();
+    },
+    getLanguageId: () => language,
+    isDisposed: () => disposed,
+    dispose: () => {
+      for (const cb of closes) cb();
+      disposed = true;
+    },
+    onDidChangeContent: (cb) => {
+      edits.add(cb);
+      return { dispose: () => edits.delete(cb) };
+    },
+    onWillDispose: (cb) => {
+      closes.add(cb);
+      return { dispose: () => closes.delete(cb) };
+    },
+  };
+  mon.models.push(m);
+  for (const cb of mon.created) cb(m);
+  return m;
+}
 
 vi.mock('monaco-editor', () => {
   let version = 0;
@@ -48,7 +100,15 @@ vi.mock('monaco-editor', () => {
   };
   return {
     Uri: { file: (p: string) => ({ toString: () => `file://${p}`, path: p }) },
-    editor: { getModels: () => [], getEditors: () => [] },
+    editor: {
+      getModels: () => mon.models.filter((m) => !m.isDisposed()),
+      getEditors: () => [],
+      onDidCreateModel: (cb: (m: unknown) => void) => {
+        mon.created.add(cb);
+        return { dispose: () => mon.created.delete(cb) };
+      },
+      onDidChangeModelLanguage: () => ({ dispose: () => {} }),
+    },
     typescript: {
       typescriptDefaults: defaults(ts),
       javascriptDefaults: defaults(js),
@@ -93,11 +153,13 @@ const chunk = (
 };
 
 const tsKeys = () => [...ts.libs.keys()].sort();
+const jsKeys = () => [...js.libs.keys()].sort();
 
 beforeEach(() => {
   vi.useFakeTimers();
   resetIndexForTest();
   vi.runAllTimers();
+  mon.models.length = 0;
   ts.libs.clear();
   js.libs.clear();
   ts.posts = 0;
@@ -252,11 +314,104 @@ describe('indexed-bytes budget', () => {
 });
 
 describe('javascript worker', () => {
-  it('holds the same files as the TS worker, and loses them on eviction too', () => {
-    // A .js file in an allowJs repo navigates into sibling .ts sources (F12 parity).
-    chunk('/w', { '/w/a.ts': 'a', '/w/b.js': 'b', '/w/c.d.ts': 'c' });
-    expect([...js.libs.keys()].sort()).toEqual(tsKeys());
+  it('holds only JS sources and declarations while no JS model imports a .ts file', () => {
+    chunk('/w', {
+      '/w/a.ts': 'a',
+      '/w/t.tsx': 't',
+      '/w/b.js': 'b',
+      '/w/e.mjs': 'e',
+      '/w/c.d.ts': 'c',
+      '/w/m.d.mts': 'm',
+    });
+    expect(jsKeys()).toEqual([
+      'file:///w/b.js',
+      'file:///w/c.d.ts',
+      'file:///w/e.mjs',
+      'file:///w/m.d.mts',
+    ]);
+    expect(tsKeys().length).toBe(6);
     retainIndexRoots([]);
     expect(js.libs.size).toBe(0);
+  });
+
+  it('gets the .ts sources an open JS model imports, transitively, and nothing unrelated', () => {
+    // F12 / hover from a .js file in an allowJs repo into a sibling .ts source.
+    chunk('/w', {
+      '/w/main.js': "import { foo } from './foo.ts';",
+      '/w/foo.ts': "export { deep as foo } from './lib/deep.js';",
+      '/w/lib/deep.ts': 'export const deep = 1;',
+      '/w/unrelated.ts': 'export const u = 1;',
+    });
+    openModel('/w/main.js', "import { foo } from './foo.ts';");
+    vi.advanceTimersByTime(1000);
+    expect(js.libs.has('file:///w/foo.ts')).toBe(true);
+    expect(js.libs.has('file:///w/lib/deep.ts')).toBe(true);
+    expect(js.libs.has('file:///w/unrelated.ts')).toBe(false);
+    expect(ts.libs.has('file:///w/unrelated.ts')).toBe(true);
+  });
+
+  it('follows an import added while editing, and lets go of .ts files once the JS tab closes', () => {
+    chunk('/w', { '/w/a.ts': 'export const a = 1;', '/w/b.ts': 'export const b = 1;' });
+    const m = openModel('/w/main.js', "import { a } from './a';");
+    vi.advanceTimersByTime(1000);
+    expect(jsKeys()).toEqual(['file:///w/a.ts']);
+    m.setValue("import { a } from './a';\nimport { b } from './b';");
+    vi.advanceTimersByTime(1000);
+    expect(jsKeys()).toEqual(['file:///w/a.ts', 'file:///w/b.ts']);
+    m.dispose();
+    vi.advanceTimersByTime(1000);
+    expect(jsKeys()).toEqual([]);
+    expect(tsKeys()).toEqual(['file:///w/a.ts', 'file:///w/b.ts']);
+  });
+
+  it('a .ts file a JS model imports reaches the JS worker when it is indexed after the tab opened', () => {
+    openModel('/w/main.js', "import { a } from './a';");
+    chunk('/w', { '/w/a.ts': 'export const a = 1;' });
+    vi.advanceTimersByTime(1000);
+    expect(jsKeys()).toEqual(['file:///w/a.ts']);
+  });
+
+  it('an on-demand resolution reaches the JS worker too — a .js navigation may be waiting on it', () => {
+    chunk('/w', { '/w/x.ts': 'x' });
+    vi.advanceTimersByTime(1);
+    addIndexedFiles([{ path: '/w/packages/p/src/index.ts', content: 'export {}' }]);
+    expect(js.libs.has('file:///w/packages/p/src/index.ts')).toBe(true);
+    expect(js.libs.has('file:///w/x.ts')).toBe(false);
+  });
+});
+
+describe('a new file saved under an indexed root', () => {
+  it('joins the index on the next push, without waiting for the fsChanged top-up', () => {
+    chunk('/a', { '/a/x.ts': 'x' });
+    vi.advanceTimersByTime(1);
+    refreshIndexedFile('/a/src/b.ts', 'export const b = 1;');
+    vi.advanceTimersByTime(1000);
+    expect(tsKeys()).toEqual(['file:///a/src/b.ts', 'file:///a/x.ts']);
+    // Owned by the root: it leaves with it.
+    retainIndexRoots([]);
+    expect(tsKeys()).toEqual([]);
+  });
+
+  it('stays out when it is not a source the host would index, or no indexed root holds it', () => {
+    chunk('/a', { '/a/x.ts': 'x' });
+    refreshIndexedFile('/a/node_modules/p/index.ts', 'n');
+    refreshIndexedFile('/elsewhere/c.ts', 'c');
+    vi.advanceTimersByTime(5000);
+    expect(tsKeys()).toEqual(['file:///a/x.ts']);
+  });
+});
+
+describe('retaining roots', () => {
+  it("never evicts the active session's roots, even when the session list is briefly empty", () => {
+    const evicted: string[] = [];
+    const off = onIndexRootEvicted((k) => evicted.push(k));
+    setActiveIndexRoots(['/a']);
+    chunk('/a', { '/a/x.ts': 'a' });
+    chunk('/b', { '/b/y.ts': 'b' });
+    vi.advanceTimersByTime(1000);
+    retainIndexRoots([]);
+    off();
+    expect(evicted).toEqual(['/b']);
+    expect(tsKeys()).toEqual(['file:///a/x.ts']);
   });
 });
