@@ -48,7 +48,12 @@ vi.mock('monaco-editor', () => {
 });
 vi.mock('../../webview/monaco-warmup', () => ({ warmLanguageWorker: () => {} }));
 
-import { applyProjectFiles, forgetIndexedPath, moveIndexedPath } from '../../webview/ts-project';
+import {
+  __resetIndexForTest,
+  applyProjectFiles,
+  forgetIndexedPath,
+  moveIndexedPath,
+} from '../../webview/ts-project';
 
 function model(path: string) {
   const m = {
@@ -76,7 +81,7 @@ const index = (files: Record<string, string>) =>
   });
 
 beforeEach(() => {
-  forgetIndexedPath('/w', () => false);
+  __resetIndexForTest();
   libs.clear();
   models.length = 0;
 });

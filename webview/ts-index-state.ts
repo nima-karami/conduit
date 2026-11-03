@@ -39,6 +39,8 @@ export interface IndexTracker {
   note(root: string, note: IndexNote): void;
   /** Record that `n` more files reached the worker. */
   markLoaded(n: number): void;
+  /** A root left the index, taking the `loaded` files it contributed with it. */
+  forget(root: string, loaded: number): void;
   status(): IndexProgress;
   reset(): void;
 }
@@ -57,6 +59,10 @@ export function createIndexTracker(): IndexTracker {
     },
     markLoaded(n) {
       loaded += n;
+    },
+    forget(root, n) {
+      roots.delete(root);
+      loaded = Math.max(0, loaded - n);
     },
     status() {
       let total = 0;

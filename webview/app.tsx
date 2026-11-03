@@ -344,8 +344,12 @@ import { runToolOpen, useDrainAfterCommit } from './tool-open-focus';
 import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';
 import {
   applyProjectFiles,
+  expectIndexRoot,
   forgetIndexedPath,
   moveIndexedPath,
+  onIndexRootEvicted,
+  retainIndexRoots,
+  setActiveIndexRoots,
   setCompilerOptionsRoot,
 } from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
@@ -2857,8 +2861,26 @@ export function App() {
     const key = folderKey(root);
     if (indexedRoots.current.has(key)) return;
     indexedRoots.current.add(key);
+    expectIndexRoot(root);
     post({ type: 'indexProject', root, seeds });
   }, []);
+  // The index may drop a root (budget, or no session presents it); asking again must re-index it.
+  useEffect(() => onIndexRootEvicted((key) => indexedRoots.current.delete(key)), []);
+  // Null until the host state arrives, so a cold start never reads as "every session closed".
+  const windowRootKeys = useMemo(
+    () =>
+      state
+        ? [...new Set(hostSessions.flatMap((s) => presentFolders(s)).map(folderKey))]
+            .sort()
+            .join('\n')
+        : null,
+    [state, hostSessions],
+  );
+  // A root no session in this window presents (closed, folder removed, moved away) leaves the
+  // TS index — otherwise every root ever activated stays in the language workers for good.
+  useEffect(() => {
+    if (windowRootKeys !== null) retainIndexRoots(windowRootKeys ? windowRootKeys.split('\n') : []);
+  }, [windowRootKeys]);
   // Every present folder, home first (spec §2.11): an added or located folder is new here and
   // gets indexed through the same effect.
   const lastPresent = useRef<{ id: string | undefined; folders: string[] }>({
@@ -2872,6 +2894,7 @@ export function App() {
     // A folder that left while unwatched may have changed; re-adding it (Undo) must re-index it.
     for (const k of foldersLeft(lastPresent.current, now)) indexedRoots.current.delete(k);
     lastPresent.current = now;
+    setActiveIndexRoots(folders);
     if (folders.length === 0) return;
     // Deliberately behind the session's own startup (PTY spawn, git interrogation, first
     // paint): indexing reads every source file in the project, and racing it against those
