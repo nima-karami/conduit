@@ -22,6 +22,12 @@ All notable user-facing changes to Conduit. Format follows
     receives.
   - The app now runs the production build of its UI framework, which no longer records a profiling
     entry for every screen update.
+- **A session opened on your home folder (or a whole drive) no longer keeps Conduit busy while
+  idle.** Conduit watched everything under it, so constant background writes (AppData, browser
+  caches) kept it re-reading the folder and re-checking its health, at up to 40% of a CPU core.
+  Such a folder is now watched one level deep; projects and repositories inside it are still
+  watched in full. A folder whose watch keeps reporting lost changes is re-checked at most twice a
+  minute.
 
 ## [0.53.0] — 2026-11-03
 

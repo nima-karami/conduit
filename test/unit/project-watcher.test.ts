@@ -5,12 +5,18 @@ import { type FsFire, ProjectWatcher } from '../../electron/project-watcher';
 
 type Listener = (event: string, filename: string | Buffer | null) => void;
 
-function setup(opts: { throwOn?: string[] } = {}) {
-  const watches: { dir: string; cb: Listener; w: EventEmitter; closed: boolean }[] = [];
+function setup(opts: { throwOn?: string[]; homeDir?: string } = {}) {
+  const watches: {
+    dir: string;
+    cb: Listener;
+    w: EventEmitter;
+    closed: boolean;
+    recursive?: boolean;
+  }[] = [];
   const closed: string[] = [];
-  const watch = (dir: string, _o: { recursive?: boolean }, cb: Listener): fs.FSWatcher => {
+  const watch = (dir: string, o: { recursive?: boolean }, cb: Listener): fs.FSWatcher => {
     if (opts.throwOn?.includes(dir)) throw new Error(`ENOENT ${dir}`);
-    const entry = { dir, cb, closed: false, w: new EventEmitter() };
+    const entry = { dir, cb, closed: false, w: new EventEmitter(), recursive: o.recursive };
     const close = () => {
       entry.closed = true;
       closed.push(dir);
@@ -27,6 +33,7 @@ function setup(opts: { throwOn?: string[] } = {}) {
   const pw = new ProjectWatcher((f) => fires.push(f), {
     debounceMs: 300,
     watch,
+    homeDir: opts.homeDir ?? '/nobody',
     log: (m) => logs.push(m),
     onSuspect: (folders) => suspects.push(folders),
     onPath: (p) => paths.push(p),
@@ -309,3 +316,62 @@ describe('ProjectWatcher', () => {
 function collectionSize(v: Set<unknown> | Map<unknown, unknown> | unknown[]): number {
   return Array.isArray(v) ? v.length : v.size;
 }
+
+describe('ProjectWatcher — a home directory or filesystem root', () => {
+  const HOME = 'C:\\Users\\me';
+  const APP = 'C:\\Users\\me\\src\\app';
+
+  it('is watched top-level only; a project or repo inside it keeps its own recursive watch', () => {
+    const h = setup({ homeDir: HOME });
+    h.pw.setFolders(['C:/users/ME', APP, 'C:\\w\\p']);
+    expect(h.open().map((w) => [w.dir, w.recursive])).toEqual([
+      ['C:/users/ME', false],
+      [APP, true],
+      ['C:\\w\\p', true],
+    ]);
+  });
+
+  it('a filesystem root is top-level only too, and does not fold the folders under it', () => {
+    const h = setup();
+    h.pw.setFolders(['D:\\', 'D:\\repo', '/', '/srv/x']);
+    expect(h.open().map((w) => [w.dir, w.recursive])).toEqual([
+      ['D:\\', false],
+      ['D:\\repo', true],
+      ['/', false],
+      ['/srv/x', true],
+    ]);
+  });
+
+  it('a folder above home still folds home into its recursive watch', () => {
+    const h = setup({ homeDir: HOME });
+    h.pw.setFolders([HOME, 'C:\\Users']);
+    expect(h.open().map((w) => [w.dir, w.recursive])).toEqual([['C:\\Users', true]]);
+  });
+
+  it('onLive reports only recursive roots: the top-level watch covers no repo below it', () => {
+    const h = setup({ homeDir: HOME });
+    h.pw.setFolders([HOME, APP]);
+    expect(h.live.at(-1)).toEqual(['c:/users/me/src/app']);
+  });
+
+  it('an unreliable top-level watch is suspect for home alone, not every folder under it', () => {
+    const h = setup({ homeDir: HOME });
+    h.pw.setFolders([HOME, APP]);
+    h.emit(HOME, null);
+    expect(h.suspects).toEqual([[HOME]]);
+    expect(h.lost).toEqual([[HOME]]);
+    vi.advanceTimersByTime(300);
+    expect(h.fires).toEqual([{ root: HOME, folders: [HOME] }]);
+  });
+
+  it('a change under the nested project reports both it and home; a top-level one, home', () => {
+    const h = setup({ homeDir: HOME });
+    h.pw.setFolders([HOME, APP]);
+    h.emit(APP, 'a.ts');
+    vi.advanceTimersByTime(300);
+    expect(h.fires).toEqual([{ root: HOME, folders: [HOME, APP] }]);
+    h.emit(HOME, 'notes.txt');
+    vi.advanceTimersByTime(300);
+    expect(h.fires[1]).toEqual({ root: HOME, folders: [HOME] });
+  });
+});

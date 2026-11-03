@@ -1,6 +1,14 @@
+import * as os from 'node:os';
 import { folderKey } from '../src/folder-key';
+import { isAncestorOf } from '../src/owning-session';
 import { sessionContains, sessionHasFolderKey, watchFoldersFor } from '../src/session-folders';
+import {
+  createSuspectBackoff,
+  SUSPECT_WINDOW_MS,
+  type SuspectBackoff,
+} from '../src/suspect-backoff';
 import type { Session } from '../src/types';
+import { isBroadWatchRoot } from '../src/watch-scope';
 import type { SessionFolderDiff } from './app-session-store';
 import type { FsFire, ProjectWatcher } from './project-watcher';
 
@@ -18,6 +26,7 @@ export interface SessionFolderRuntimeDeps {
   /** The server owns folder health (W4); a lost or renamed watch is its only signal (C2 folders.suspect). */
   suspect: (sessionId: string, path: string) => void;
   log: (level: 'info' | 'warn', msg: string, data?: Record<string, unknown>) => void;
+  homeDir?: string;
 }
 
 /** The server's health marks, compared per list so a returning folder rescans its repos. */
@@ -31,12 +40,19 @@ export class SessionFolderRuntime {
   private listeners: ((sessionId: string) => void)[] = [];
   private readonly watcher: Pick<ProjectWatcher, 'setFolders' | 'stop'>;
   private readonly health = new Map<string, string>();
+  private readonly homeDir: string;
+  private readonly backoff: SuspectBackoff<string>;
   private readonly projectsByWindow = new Map<
     number,
     { p: string; sessionId: string | undefined }
   >();
 
   constructor(private readonly deps: SessionFolderRuntimeDeps) {
+    this.homeDir = deps.homeDir ?? os.homedir();
+    this.backoff = createSuspectBackoff({
+      windowMs: SUSPECT_WINDOW_MS,
+      onRecheck: (path, repeats) => this.recheck(path, repeats),
+    });
     this.watcher = deps.createWatcher(
       (f) => this.fired(f),
       (folders) => this.suspect(folders),
@@ -112,6 +128,7 @@ export class SessionFolderRuntime {
   }
 
   stop(): void {
+    this.backoff.dispose();
     this.watcher.stop();
     this.listeners = [];
   }
@@ -124,28 +141,46 @@ export class SessionFolderRuntime {
     );
   }
 
+  /** `sessionId` is the session that contributed a folder of its own, the only kind the server rechecks. */
   private watchEntries(): { path: string; sessionId: string | undefined }[] {
-    const projects = [...this.projectsByWindow.values()].flatMap(({ p, sessionId }) =>
-      watchFoldersFor(p, sessionId ? this.deps.store.get(sessionId) : undefined).map((path) => ({
-        path,
-        sessionId,
-      })),
-    );
+    const armed = new Set<Session>();
+    const projects = [...this.projectsByWindow.values()].flatMap(({ p, sessionId }) => {
+      const s = sessionId ? this.deps.store.get(sessionId) : undefined;
+      if (s) armed.add(s);
+      return watchFoldersFor(p, s).map((path) => ({ path, sessionId }));
+    });
     const visible = this.deps.visibleSessionIds().flatMap((id) => {
       const s = this.deps.store.get(id);
+      if (s) armed.add(s);
       return s ? watchFoldersFor(s.home, s).map((path) => ({ path, sessionId: id })) : [];
     });
     // Hidden too: a write then marks only its repo, and switching back runs git for that repo
     // alone (multi-repo-tracking spec §2 "no catch-up git"). Bounded by open sessions; the
     // watcher folds nested roots into their ancestor's watch.
-    const tracking = this.deps.store
-      .list()
-      .flatMap((s) =>
-        s.repos?.length
-          ? watchFoldersFor(s.home, s).map((path) => ({ path, sessionId: s.id }))
-          : [],
-      );
-    return [...projects, ...visible, ...tracking];
+    const tracking = this.deps.store.list().flatMap((s) => {
+      if (!s.repos?.length) return [];
+      armed.add(s);
+      return watchFoldersFor(s.home, s).map((path) => ({ path, sessionId: s.id }));
+    });
+    return [...projects, ...visible, ...tracking, ...this.reposUnderBroad(armed)];
+  }
+
+  /**
+   * A home or drive folder is watched top-level only (isBroadWatchRoot), so the repos inside it
+   * would see no working-tree event at all; each gets the recursive watch the folder no longer
+   * gives it.
+   */
+  private reposUnderBroad(
+    sessions: ReadonlySet<Session>,
+  ): { path: string; sessionId: undefined }[] {
+    return [...sessions].flatMap((s) => {
+      const broad = watchFoldersFor(s.home, s)
+        .filter((f) => isBroadWatchRoot(f, this.homeDir))
+        .map(folderKey);
+      return (s.repos ?? [])
+        .filter((r) => broad.some((b) => isAncestorOf(b, folderKey(r.root))))
+        .map((r) => ({ path: r.root, sessionId: undefined }));
+    });
   }
 
   private arm() {
@@ -165,27 +200,23 @@ export class SessionFolderRuntime {
     }
   }
 
+  /** A folder's watch overflowing every second (a busy tree) must not recheck every second. */
   private suspect(folders: string[]) {
-    this.deps.log('warn', 'watch suspect', { folders });
-    const suspectKeys = new Set(folders.map(folderKey));
-    const owned = new Map<string, Map<string, string>>();
-    const addOwned = (sessionId: string, path: string) => {
-      let pathsByKey = owned.get(sessionId);
-      if (!pathsByKey) {
-        pathsByKey = new Map();
-        owned.set(sessionId, pathsByKey);
-      }
-      pathsByKey.set(folderKey(path), path);
-    };
+    for (const f of folders) this.backoff.hit(folderKey(f), f);
+  }
 
-    for (const { path, sessionId } of this.watchEntries()) if (sessionId) addOwned(sessionId, path);
-
+  private recheck(path: string, repeats: number) {
+    this.deps.log(
+      'warn',
+      'watch suspect',
+      repeats > 1 ? { folders: [path], repeats, windowMs: SUSPECT_WINDOW_MS } : { folders: [path] },
+    );
+    const key = folderKey(path);
     // The server rechecks only a path this session contributed to the armed set.
-    for (const [id, pathsByKey] of owned)
-      for (const key of suspectKeys) {
-        const path = pathsByKey.get(key);
-        if (path !== undefined) this.deps.suspect(id, path);
-      }
+    const owned = new Map<string, string>();
+    for (const e of this.watchEntries())
+      if (e.sessionId && folderKey(e.path) === key) owned.set(e.sessionId, e.path);
+    for (const [id, p] of owned) this.deps.suspect(id, p);
   }
 
   private emit(sessionId: string) {

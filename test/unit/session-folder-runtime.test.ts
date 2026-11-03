@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionFolderDiff } from '../../electron/app-session-store';
 import type { FsFire } from '../../electron/project-watcher';
 import { SessionFolderRuntime } from '../../electron/session-folder-runtime';
+import { SUSPECT_WINDOW_MS } from '../../src/suspect-backoff';
 import type { Session } from '../../src/types';
 
 function session(id: string, home: string, roots: string[] = []): Session {
@@ -17,13 +18,14 @@ function session(id: string, home: string, roots: string[] = []): Session {
   };
 }
 
-function harness() {
+function harness(homeDir = '/nobody') {
   // The store's own objects, so a test's edit to one is the session the runtime reads.
   const sessions: Session[] = [];
   const add = (...more: Session[]) => sessions.push(...more);
   add(session('a', '/w/a'), session('b', '/w/b'));
   const events: string[] = [];
   const logs: string[] = [];
+  const logData: (Record<string, unknown> | undefined)[] = [];
   const armed: string[][] = [];
   const suspects: string[] = [];
   let fire: (f: FsFire) => void = () => {};
@@ -45,7 +47,11 @@ function harness() {
       };
     },
     suspect: (id, path) => suspects.push(`${id}:${path}`),
-    log: (level, msg) => logs.push(`${level}:${msg}`),
+    log: (level, msg, data) => {
+      logs.push(`${level}:${msg}`);
+      logData.push(data);
+    },
+    homeDir,
   });
   return {
     rt,
@@ -53,6 +59,7 @@ function harness() {
     add,
     events,
     logs,
+    logData,
     armed,
     suspects,
     fire: (f: FsFire) => fire(f),
@@ -157,7 +164,8 @@ describe('SessionFolderRuntime (server list)', () => {
   it('onSuspect sends folders.suspect per watched session and folder', () => {
     const h = harness();
     h.sessions[0].roots = ['/x/R'];
-    h.suspect(['/x/R']);
+    // Not '/x/R': a second suspect for it inside the backoff window would be deferred.
+    h.suspect(['/x/S']);
     expect(h.suspects).toEqual([]);
     expect(h.logs).toHaveLength(1);
     h.rt.requestProject('/w/a', 'a', 1);
@@ -278,5 +286,73 @@ describe('SessionFolderRuntime (watcher)', () => {
     h.sessions[1].roots = ['/x/S'];
     h.rt.foldersChanged('b', { homeChanged: false });
     expect(h.armed).toEqual([['/w/a', '/w/b', '/x/S']]);
+  });
+});
+
+describe('SessionFolderRuntime (a session whose folder is the home directory)', () => {
+  const repo = (root: string) => ({ root, name: root, folder: '/home/me', tag: 'home' as const });
+
+  it('arms each repo inside it as a watch of its own; a normal folder adds none', () => {
+    const h = harness('/home/me');
+    h.add(session('h', '/home/me'));
+    h.sessions[2].repos = [repo('/home/me/src/app'), repo('/home/me'), repo('/elsewhere/r')];
+    h.sessions[1].repos = [{ root: '/w/b/sub', name: 'sub', folder: '/w/b', tag: 'home' }];
+    h.setVisible(['h', 'b']);
+    h.rt.visibilityChanged();
+    expect(h.armed.at(-1)).toEqual(['/home/me', '/w/b', '/home/me/src/app']);
+  });
+
+  it('a lost repo watch is not a session folder, so the server is not asked to recheck it', () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness('/home/me');
+      h.add(session('h', '/home/me'));
+      h.sessions[2].repos = [repo('/home/me/src/app')];
+      h.rt.reposChanged();
+      h.suspect(['/home/me/src/app']);
+      expect(h.suspects).toEqual([]);
+      h.suspect(['/home/me']);
+      expect(h.suspects).toEqual(['h:/home/me']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('SessionFolderRuntime (suspect backoff)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('a folder suspect every second rechecks at once, then once per window with one log line', () => {
+    const h = harness();
+    h.rt.requestProject('/w/a', 'a', 1);
+    for (let i = 0; i < 10; i++) {
+      h.suspect(['/w/a']);
+      vi.advanceTimersByTime(1000);
+    }
+    expect(h.suspects).toEqual(['a:/w/a']);
+    expect(h.logs).toEqual(['warn:watch suspect']);
+    vi.advanceTimersByTime(SUSPECT_WINDOW_MS - 10_000);
+    expect(h.suspects).toEqual(['a:/w/a', 'a:/w/a']);
+    expect(h.logs).toEqual(['warn:watch suspect', 'warn:watch suspect']);
+    expect(h.logData.at(-1)).toMatchObject({ folders: ['/w/a'], repeats: 9 });
+    vi.advanceTimersByTime(SUSPECT_WINDOW_MS * 2);
+    expect(h.suspects).toHaveLength(2);
+  });
+
+  it('folders back off independently, and stop drops a pending trailing recheck', () => {
+    const h = harness();
+    h.rt.requestProject('/w/a', 'a', 1);
+    h.rt.requestProject('/w/b', 'b', 2);
+    h.suspect(['/w/a']);
+    h.suspect(['/w/a', '/w/b']);
+    expect(h.suspects).toEqual(['a:/w/a', 'b:/w/b']);
+    h.rt.stop();
+    vi.advanceTimersByTime(SUSPECT_WINDOW_MS);
+    expect(h.suspects).toEqual(['a:/w/a', 'b:/w/b']);
   });
 });
