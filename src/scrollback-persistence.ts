@@ -64,22 +64,19 @@ const entryOf = (data: string, geometry: TermGeometry | undefined, cont: boolean
 export class RingBuffer {
   private entries: RingEntry[] = [];
   private head = 0;
-  private chars = 0;
   private cached: ScrollbackRing | undefined;
   /** Bumps on every change, so a writer can tell whether anything moved since it last looked. */
   version = 0;
+  /** Characters held; written only by this class. */
+  charCount = 0;
 
   static from(ring: ScrollbackRing): RingBuffer {
     const b = new RingBuffer();
     for (const s of ring) {
       b.entries.push(entryOf(s.data, s.geometry, false));
-      b.chars += s.data.length;
+      b.charCount += s.data.length;
     }
     return b;
-  }
-
-  get length(): number {
-    return this.chars;
   }
 
   append(chunk: string, geometry: TermGeometry | undefined, cap: number): void {
@@ -93,17 +90,17 @@ export class RingBuffer {
     } else {
       this.entries.push(entryOf(chunk, geometry, false));
     }
-    this.chars += chunk.length;
-    let excess = this.chars - cap;
+    this.charCount += chunk.length;
+    let excess = this.charCount - cap;
     while (excess > 0) {
       const first = this.entries[this.head];
       if (first.data.length <= excess) {
         this.head++;
         excess -= first.data.length;
-        this.chars -= first.data.length;
+        this.charCount -= first.data.length;
       } else {
         first.data = first.data.slice(excess);
-        this.chars -= excess;
+        this.charCount -= excess;
         excess = 0;
       }
     }

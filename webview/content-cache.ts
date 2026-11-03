@@ -6,7 +6,7 @@ import type { OpenDoc } from './docs';
  * beyond the open diff tabs stay so scrolling back doesn't refetch; the rest is whole-file text
  * (up to 2 MB a side) or image data URLs that nothing else would ever free.
  */
-export const REVIEW_DIFF_CACHE_MAX = 64;
+const REVIEW_DIFF_CACHE_MAX = 64;
 
 /** `files` holds a file's text, or an image/PDF as a base64 data URL (up to ~67 MB): only a path
  *  an open file tab shows is worth keeping. Returns `files` itself when nothing goes. */

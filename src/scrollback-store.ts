@@ -51,11 +51,11 @@ export class ScrollbackStore {
       ring = new RingBuffer();
       this.rings.set(sessionId, ring);
     }
-    const had = ring.length;
+    const had = ring.charCount;
     ring.append(chunk, geometry, this.cap);
     const before = this.beforeLaunch.get(sessionId);
     if (before !== undefined) {
-      const trimmed = had + chunk.length - ring.length;
+      const trimmed = had + chunk.length - ring.charCount;
       this.beforeLaunch.set(sessionId, Math.max(0, before - trimmed));
     }
     if (this.timers.has(sessionId)) return;
@@ -106,8 +106,12 @@ export class ScrollbackStore {
   }
 
   /** A new launch starts here: what the ring holds now is the launches before it. */
-  markLaunch(sessionId: string, at = this.rings.get(sessionId)?.length ?? 0): void {
+  markLaunch(sessionId: string, at = this.heldChars(sessionId)): void {
     this.beforeLaunch.set(sessionId, at);
+  }
+  private heldChars(sessionId: string): number {
+    const ring = this.rings.get(sessionId);
+    return ring ? ring.charCount : 0;
   }
 
   /**

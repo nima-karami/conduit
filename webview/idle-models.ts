@@ -8,7 +8,7 @@ import { disposeWhenDetached } from './model-lifetime';
 import { fileUri } from './project-index';
 
 /** Idle (tab closed) models kept for cross-file resolution; see {@link createIdleModels}. */
-export const MAX_IDLE_MODELS = 50;
+const MAX_IDLE_MODELS = 50;
 
 // Only a model whose file the TS project index also holds is ever disposed: the worker falls back
 // to that extraLib (kept current on save by refreshIndexedFile), so resolution is unchanged. A
