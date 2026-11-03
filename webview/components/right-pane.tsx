@@ -9,6 +9,7 @@ import type { Session } from '../../src/types';
 import { CHROME_STR } from '../chrome-strings';
 import type { OpenMode } from '../docs';
 import type { FsOp } from '../fs-undo';
+import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { reviewModeStatusLabel } from '../review-commit';
 import { getReviewNav, subscribeReviewNav } from '../review-nav-store';
 import type { ReviewScope } from '../review-scope';
@@ -58,6 +59,7 @@ export function RightPane({
   onFileRenamed,
   onReviewScope,
   reviewMode,
+  moveGrip,
   onMoveMenu,
   paneRef,
   recordFsOp,
@@ -103,6 +105,8 @@ export function RightPane({
   /** Review mode's navigator section icons (§2 Lane D). */
   onReviewScope: (scope: ReviewScope, repoRoot?: string) => void;
   reviewMode: boolean;
+  // Barless panel: the title band is the panel-move drag surface.
+  moveGrip?: MoveGrip;
   onMoveMenu?: (anchor: DOMRect) => void;
   paneRef?: React.MutableRefObject<RightPaneHandle | null>;
   /** Record a successful fs op into the app-level undo stack. */
@@ -185,6 +189,9 @@ export function RightPane({
         }
       }}
     >
+      <div className="panel-head panel-head--ruled" {...panelMoveDragProps(moveGrip)}>
+        <span className="panel-title">{CHROME_STR.view[tab]}</span>
+      </div>
       <span className="sr-only" role="status">
         {statusText}
       </span>

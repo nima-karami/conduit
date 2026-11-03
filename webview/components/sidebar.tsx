@@ -827,9 +827,9 @@ export function Sidebar({
 
   return (
     <aside className="sidebar">
-      <div className="sidebar__head" {...panelMoveDragProps(moveGrip)}>
+      <div className="panel-head" {...panelMoveDragProps(moveGrip)}>
         <span className="panel-title">{SIDEBAR_STR.spaces}</span>
-        <div className="sidebar__head-actions">
+        <div className="panel-head__actions">
           <button
             type="button"
             className="iconbtn iconbtn--sm"
@@ -885,10 +885,10 @@ export function Sidebar({
         )}
       </div>
 
-      <div className="sidebar__head">
+      <div className="panel-head">
         <span className="panel-title">{SIDEBAR_STR.agents}</span>
         {liveCount > 0 && <span className="sidebar__live">{SIDEBAR_STR.live(liveCount)}</span>}
-        <div className="sidebar__head-actions">
+        <div className="panel-head__actions">
           <button
             ref={searchRef}
             type="button"

@@ -405,6 +405,26 @@ runScenario('right-panel-toggles', async ({ app, page, log }) => {
       return p.right <= c.left + 1 ? 'left' : p.left >= c.right - 1 ? 'right' : 'overlap';
     });
   assert((await sideOfCenter()) === 'right', 'the panel starts right of the center');
+  // The title band names the view and is the move-drag surface, like the sidebar's Spaces band.
+  const head = page.locator('#right-pane > .panel-head');
+  assert(
+    (await head.locator('.panel-title').textContent()) === 'Changes',
+    'the title band names the shown view',
+  );
+  assert((await head.getAttribute('draggable')) === 'true', 'the title band is a drag surface');
+  await head.dragTo(page.locator('main.centerpane'));
+  s = await waitSettings(app, (x) => x.layout !== 'sessions,center,explorer');
+  assert(
+    s && (await sideOfCenter()) !== 'right',
+    `dragging the title band onto the center re-docks the panel (layout ${s?.layout})`,
+  );
+  await head.dragTo(page.locator('main.centerpane'));
+  s = await waitSettings(app, (x) => x.layout === 'sessions,center,explorer');
+  assert(
+    s && (await sideOfCenter()) === 'right',
+    `dragging it back restores the default dock (layout ${s?.layout})`,
+  );
+  log('title band re-docks the panel both ways ✓');
   // The panel root keeps keyboard access to its move menu after the grip is removed.
   const panelRoot = page.locator('#right-pane');
   await panelRoot.focus();

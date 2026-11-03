@@ -1452,10 +1452,10 @@ body.resizing .panel__resize::after {
   user-select: none;
 }
 
-/* The Spaces and Agents bands. Their dividers belong to the Spaces list between them
-   (.spaces), so the Spaces band sits between the same two lines as the editor tabs — the panel
-   is barless and this band IS its top bar and drag surface. */
-.sidebar__head {
+/* A side panel's title band (Spaces, Agents, the right panel's view). In a barless panel the top
+   band IS the bar and its drag surface, between the same two lines as the editor tabs. The
+   sidebar's dividers belong to its Spaces list (.spaces); a panel without one rules its own. */
+.panel-head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1463,13 +1463,16 @@ body.resizing .panel__resize::after {
   height: var(--density-tabbar-h);
   padding: 0 6px 0 14px;
 }
-.sidebar__head[draggable="true"]:hover {
+.panel-head[draggable="true"]:hover {
   cursor: grab;
 }
-.sidebar__head[draggable="true"]:active {
+.panel-head[draggable="true"]:active {
   cursor: grabbing;
 }
-.sidebar__head-actions {
+.panel-head--ruled {
+  border-bottom: 1px solid var(--border);
+}
+.panel-head__actions {
   display: flex;
   align-items: center;
   gap: 6px;
