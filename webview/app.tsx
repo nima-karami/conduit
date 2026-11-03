@@ -151,7 +151,14 @@ import type { UpdateStatus } from './components/update-card';
 import { WebPromptModal } from './components/web-prompt-modal';
 import { type ReleaseNotesView, WhatsNewDialog } from './components/whats-new-dialog';
 import { MCP_STR } from './conduit-mcp-strings';
-import { pruneDiffs, pruneFiles, rereadsOnFocus, setNewest } from './content-cache';
+import {
+  getPinnedDiffs,
+  pruneDiffs,
+  pruneFiles,
+  rereadsOnFocus,
+  setNewest,
+  subscribePinnedDiffs,
+} from './content-cache';
 import { decideShortcut, type ShortcutContext } from './decide-shortcut';
 import { createDiffReadQueue, type DiffReadQueue, diffReadTargets } from './diff-read-queue';
 import { diffTabKey } from './diff-tab-scope';
@@ -252,6 +259,7 @@ import {
   IconWarning,
   SessionGlyph,
 } from './icons';
+import { syncOpenFileTabs } from './idle-models';
 import { createLiveAnnouncer } from './live-region';
 import { registerLspHoverProvider } from './lsp-nav';
 import {
@@ -559,11 +567,14 @@ export function App() {
       diffReadQueueRef.current.ensure(t);
   }, [docState.docs, diffs]);
   // Content outlives its tab only as a bounded cache; see content-cache.ts for what stays.
+  const reviewDiffPins = useSyncExternalStore(subscribePinnedDiffs, getPinnedDiffs, getPinnedDiffs);
   // biome-ignore lint/correctness/useExhaustiveDependencies: files/diffs re-trigger it so a reply for a closed tab is pruned on arrival
   useEffect(() => {
     setFiles((m) => pruneFiles(m, docState.docs));
-    setDiffs((m) => pruneDiffs(m, docState.docs));
-  }, [docState.docs, files, diffs]);
+    setDiffs((m) => pruneDiffs(m, docState.docs, reviewDiffPins));
+  }, [docState.docs, files, diffs, reviewDiffPins]);
+  // After the close dispatch, so releaseFileTab has already dropped the path's dirty/save state.
+  useEffect(() => syncOpenFileTabs(docState.docs), [docState.docs]);
   const filesRef = useRef(files);
   filesRef.current = files;
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);

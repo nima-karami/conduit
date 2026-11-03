@@ -62,7 +62,7 @@ import {
 import type { RightPaneTab } from '../../src/settings';
 import type { GitInfo } from '../../src/types';
 import { gitAction } from '../bridge';
-import { forgetEvictedRequests } from '../content-cache';
+import { forgetEvictedRequests, pinDiffs } from '../content-cache';
 import { DIFF_READ_ERROR_NOTICE } from '../diff-tab-scope';
 import type { OpenMode, ReviewSource } from '../docs';
 import { useFocusTargetRef } from '../focus-targets';
@@ -145,6 +145,7 @@ import {
   workingReviewFiles,
 } from '../review-repos';
 import {
+  diffKey,
   diffsForScope,
   inScope,
   REVIEW_SCOPES,
@@ -587,6 +588,12 @@ export function ReviewView({
   // Every per-file key below is the file's ABSOLUTE path (K1): two repos changing the same
   // relative path must never share a card, mark, fold or anchor.
   const fileKeys = useMemo(() => files.map(reviewFileKey), [files]);
+  // While mounted, app.tsx's bounded diff cache keeps this whole changeset; see pinDiffs.
+  const pinOwner = useId();
+  useEffect(() => {
+    pinDiffs(pinOwner, preloaded ? [] : fileKeys.map((k) => diffKey(k, scope)));
+  }, [preloaded, pinOwner, fileKeys, scope]);
+  useEffect(() => () => pinDiffs(pinOwner, []), [pinOwner]);
   const pathIndex = useMemo(() => {
     const m = new Map<string, number>();
     for (let i = 0; i < fileKeys.length; i++) m.set(fileKeys[i], i);

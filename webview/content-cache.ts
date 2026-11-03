@@ -22,22 +22,68 @@ export function pruneFiles<T>(files: Map<string, T>, docs: readonly OpenDoc[]): 
   return next ?? files;
 }
 
-/** Keeps every open diff tab's entry (its effect refetches a missing one, forever) plus the
- *  newest {@link REVIEW_DIFF_CACHE_MAX} others, oldest-inserted first out. Returns `diffs` itself
- *  when nothing goes. */
+const NO_PINS: ReadonlySet<string> = new Set();
+
+/** Keeps every open diff tab's entry (its effect refetches a missing one, forever), every key in
+ *  `pinned` (see {@link pinDiffs}), plus the newest {@link REVIEW_DIFF_CACHE_MAX} others,
+ *  oldest-inserted first out. Returns `diffs` itself when nothing goes. */
 export function pruneDiffs<T>(
   diffs: Map<string, T>,
   docs: readonly OpenDoc[],
+  pinned: ReadonlySet<string> = NO_PINS,
   max = REVIEW_DIFF_CACHE_MAX,
 ): Map<string, T> {
-  const pinned = new Set<string>();
-  for (const d of docs) if (d.kind === 'diff') pinned.add(diffTabKey(d));
-  const loose = [...diffs.keys()].filter((k) => !pinned.has(k));
+  const tabs = new Set<string>();
+  for (const d of docs) if (d.kind === 'diff') tabs.add(diffTabKey(d));
+  const loose = [...diffs.keys()].filter((k) => !tabs.has(k) && !pinned.has(k));
   const drop = loose.slice(0, Math.max(0, loose.length - max));
   if (drop.length === 0) return diffs;
   const next = new Map(diffs);
   for (const k of drop) next.delete(k);
   return next;
+}
+
+/**
+ * Cache keys each mounted Review holds, by view. The whole changeset stays while its Review is
+ * open: "Search all files" requests every key missing from the cache until none is, so any cap
+ * below the changeset size evicts and re-requests forever. The cap applies only to diffs no open
+ * view needs.
+ */
+const pinsByView = new Map<string, readonly string[]>();
+let pinSnapshot: ReadonlySet<string> = NO_PINS;
+const pinListeners = new Set<() => void>();
+
+function publishPins(): void {
+  pinSnapshot = new Set([...pinsByView.values()].flat());
+  for (const cb of pinListeners) cb();
+}
+
+const sameKeys = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((k, i) => k === b[i]);
+
+/** Replaces `view`'s pinned keys (empty releases them). Publishes only on a real change: callers
+ *  re-derive `keys` per render, and every publish re-renders the subscribing app. */
+export function pinDiffs(view: string, keys: readonly string[]): void {
+  const prev = pinsByView.get(view);
+  if (keys.length === 0) {
+    if (!prev) return;
+    pinsByView.delete(view);
+  } else {
+    if (prev && sameKeys(prev, keys)) return;
+    pinsByView.set(view, keys);
+  }
+  publishPins();
+}
+
+export function getPinnedDiffs(): ReadonlySet<string> {
+  return pinSnapshot;
+}
+
+export function subscribePinnedDiffs(cb: () => void): () => void {
+  pinListeners.add(cb);
+  return () => {
+    pinListeners.delete(cb);
+  };
 }
 
 /** Insert-or-refresh: a re-set key moves to the newest end, which `Map#set` alone won't do. */
