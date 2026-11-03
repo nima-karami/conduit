@@ -20,6 +20,13 @@ describe('CHROME_STR', () => {
     expect(CHROME_STR.messagesBadge(1, 1)).toBe('1 unread message, 1 urgent message');
   });
 
+  it('names unread messages outside the current scope only when there are some', () => {
+    expect(CHROME_STR.messagesBadge(3, 0, 0)).toBe('3 unread messages');
+    expect(CHROME_STR.messagesBadge(3, 1, 2)).toBe(
+      '3 unread messages, 1 urgent message; 2 unread messages outside current scope',
+    );
+  });
+
   it('the footer need-you name is the existing chip copy, and empty at zero', () => {
     expect(CHROME_STR.needYou(1)).toBe(attentionChipLabel(1));
     expect(CHROME_STR.needYou(4)).toBe(attentionChipLabel(4));

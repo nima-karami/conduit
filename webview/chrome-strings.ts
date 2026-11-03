@@ -32,8 +32,11 @@ export const CHROME_STR = {
     messages: 'Messages',
   } satisfies Record<RightPaneTab, string>,
   changesBadge: (n: number) => noun(n, 'change', 'changes'),
-  messagesBadge: (unread: number, urgent: number, outside = 0) =>
-    `${urgent > 0 ? `${noun(unread, 'unread message', 'unread messages')}, ${noun(urgent, 'urgent message', 'urgent messages')}` : noun(unread, 'unread message', 'unread messages')}; ${noun(outside, 'unread message', 'unread messages')} outside current scope`,
+  messagesBadge: (unread: number, urgent: number, outside = 0) => {
+    const total = noun(unread, 'unread message', 'unread messages');
+    const head = urgent > 0 ? `${total}, ${noun(urgent, 'urgent message', 'urgent messages')}` : total;
+    return outside > 0 ? `${head}; ${noun(outside, 'unread message', 'unread messages')} outside current scope` : head;
+  },
   panelGroup: 'Side panel',
   statusBar: 'Session status',
   machine: 'This computer',
