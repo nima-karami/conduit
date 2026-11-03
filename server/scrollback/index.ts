@@ -108,6 +108,12 @@ export class ServerScrollback implements ScrollbackPort, RuntimeRing {
     return replay?.data ? { data: replay.data, replay: replay.runs } : null;
   }
 
+  replayForView(sessionId: string): FirstPaint | null {
+    this.hydrate(sessionId);
+    const replay = this.store.replayForView(sessionId);
+    return replay?.data ? { data: replay.data, replay: replay.runs } : null;
+  }
+
   show(sessionId: string, data: string): void {
     this.hydrate(sessionId);
     const size = this.deps.sizeOf(sessionId);

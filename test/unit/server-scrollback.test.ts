@@ -11,7 +11,11 @@ import {
 import type { ServerEvent, ServerEvents } from '../../src/contracts/server-protocol';
 import type { TermGeometry } from '../../src/protocol';
 import { scrollbackFileName } from '../../src/scrollback-files';
-import { restoreScrollback, serializeScrollback } from '../../src/scrollback-persistence';
+import {
+  coldReplay,
+  restoreScrollback,
+  serializeScrollback,
+} from '../../src/scrollback-persistence';
 
 const SIZE: TermGeometry = { cols: 80, rows: 24 };
 
@@ -95,6 +99,25 @@ describe('ServerScrollback', () => {
     s.flushPending();
     expect(onDisk('a')?.[0].data).toBe(replay?.data);
     expect(make().replayForColdStart('none')).toBeNull();
+  });
+
+  it('a view replay is the cold replay, neutralizer included, and records nothing', () => {
+    const segments = [{ data: 'old\x1b[?1049h\x1b[?1000h', geometry: SIZE }];
+    disk.set(
+      scrollbackFileName('a'),
+      serializeScrollback({ version: 2, sessionId: 'a', segments }),
+    );
+    const before = disk.get(scrollbackFileName('a'));
+    const s = make();
+    const viewed = s.replayForView('a');
+    expect(viewed?.data).toBe(coldReplay(segments).data);
+    expect(viewed?.data.length).toBeGreaterThan(segments[0].data.length);
+    expect(s.replayForView('a')).toEqual(viewed);
+    s.flushPending();
+    vi.runAllTimers();
+    expect(disk.get(scrollbackFileName('a'))).toBe(before);
+    expect(shown).toEqual([]);
+    expect(make().replayForView('none')).toBeNull();
   });
 
   it('hydrates the persisted ring before appending adoption output in a fresh instance', async () => {

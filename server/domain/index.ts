@@ -801,6 +801,22 @@ export function createDomain(deps: DomainDeps): Domain {
     return run;
   }
 
+  /** `mode: 'view'`: a live session attaches; any other is shown its stored output, never spawned. */
+  async function view(id: string): Promise<SessionStartResult> {
+    // Before the first reconcile, or under a start in flight, a live terminal isn't known yet.
+    await reconciledReady;
+    await starts.get(id)?.catch(() => undefined);
+    if (!mgr.get(id)) throw new RpcFault('not_found', 'Session no longer exists');
+    const live = attachResult(id);
+    if (live) return live;
+    const history = settings().scrollbackPersistence ? scrollback.replayForView(id) : null;
+    return {
+      ok: true,
+      viewed: { exitCode: exitCodes.get(id) ?? null },
+      prelude: history ?? { data: '', replay: [] },
+    };
+  }
+
   const refuseStart = (id: string, text: string) => {
     scrollback.show(id, dim(text));
     pendingRelaunchMarker.delete(id);
@@ -1269,7 +1285,8 @@ export function createDomain(deps: DomainDeps): Domain {
 
   const methods: Handlers = {
     'sessions.create': (p) => createFromApp(p),
-    'sessions.start': (p) => start(str(p, 'sessionId'), false),
+    'sessions.start': (p) =>
+      p.mode === 'view' ? view(str(p, 'sessionId')) : start(str(p, 'sessionId'), false),
     'sessions.retryLaunch': (p) => start(str(p, 'sessionId'), true),
     'sessions.discardLaunch': async (p) => {
       const id = str(p, 'sessionId');

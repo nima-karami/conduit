@@ -208,6 +208,11 @@ export interface ScrollbackPort {
    */
   replayForColdStart(sessionId: string): FirstPaint | null;
   /**
+   * For a `mode: 'view'` start of a session that isn't live: the same neutralized replay, recording
+   * nothing — no child continues that stream, so the ring stays what a later cold start replays.
+   */
+  replayForView(sessionId: string): FirstPaint | null;
+  /**
    * For a start that finds the session already live: the ring recorded before its current launch
    * (earlier runs, relaunch markers, host-composed lines), run by run and recording nothing. The
    * observer's hc history covers the live launch itself. Null = nothing before it.
