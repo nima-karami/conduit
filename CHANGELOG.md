@@ -6,14 +6,16 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.53.0] — 2026-11-03
+
 ### Added
-
-- Show bundled release notes from the update card and after installing an update.
-
-### Fixed
-
-- Keep update status labels readable in crowded status bars and release notes on an opaque
-  dialog surface, with the update card hidden while notes are open.
+- **See what's new before and after you update.** When an update is ready, the update card has a
+  **What's new** link that opens the release notes, with **Relaunch to update** right there. After
+  Conduit updates, a one-time **Updated to vX · What's new** notice opens the notes for the version
+  you're now on. The notes come from this changelog and ship with the app, so they open offline.
+- **Update progress in the status bar.** While an update downloads, the status bar shows
+  **Updating · 42%**; once it's ready, **Update ready**. Click it to open the notes or the update
+  card.
 
 ## [0.52.1] — 2026-11-03
 
