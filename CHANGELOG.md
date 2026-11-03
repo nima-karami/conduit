@@ -66,6 +66,7 @@ All notable user-facing changes to Conduit. Format follows
   again and **Discard** drops it.
 
 ### Fixed
+- Review restores its scroll position and note target when reopened or moved between split groups.
 - Review keeps measurements for each pane width when moved between split groups.
 - An agent finishing a run while its terminal is viewed stays Idle without briefly showing Done.
 - File reveals expand ancestor folders even when a Windows target path uses different casing.

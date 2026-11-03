@@ -21,6 +21,22 @@ export interface WindowInput {
 /** Per-path measured slot heights, separated by the scroller width they were measured at. */
 export type ReviewMeasurementsByWidth = Map<number, Map<string, number>>;
 
+/** Skip anchoring until restore owns a stable layout; a mount width is only a table selection. */
+export function shouldCaptureReviewWidthAnchor(
+  previousWidth: number,
+  nextWidth: number,
+  hasPendingAnchor: boolean,
+  scrollRestored: boolean,
+): boolean {
+  return (
+    previousWidth > 0 &&
+    nextWidth > 0 &&
+    previousWidth !== nextWidth &&
+    scrollRestored &&
+    !hasPendingAnchor
+  );
+}
+
 /** Return the path-height table for one exact scroller width, creating it on first use. */
 export function measurementsAtWidth(
   measurements: ReviewMeasurementsByWidth,

@@ -67,7 +67,9 @@ describe('review anchor restore runs pre-paint', () => {
     const at = only('if (scrollRestoredRef.current) return;');
     // Anything short of an early `return` leaves the restore writing an offset the scroller has
     // no height to accept, which clamps it straight back to 0.
-    expect(VIEW.slice(at, at + 600)).toMatch(/viewportHeight === 0\)\s*return;/);
+    expect(VIEW.slice(at, at + 600)).toMatch(
+      /if\s*\([^)]*viewportHeight === 0[^)]*viewportWidth === 0[^)]*el\.clientWidth !== viewportWidth[^)]*\)\s*return;/,
+    );
   });
 
   it('selects measurements for the scroller width before resolving the saved anchor', () => {
@@ -81,6 +83,18 @@ describe('review anchor restore runs pre-paint', () => {
   it('switches width tables while carrying the live anchor across a resize', () => {
     expect(VIEW).toMatch(/pendingWidthAnchorRef\.current = computeReviewAnchor/);
     expect(VIEW).toMatch(/resolveReviewAnchor\(anchor, itemCount, heightOf, indexOfKey\)/);
+    expect(VIEW.match(/shouldCaptureReviewWidthAnchor\(/g)).toHaveLength(2);
+    expect(VIEW).toMatch(
+      /pendingWidthAnchorRef\.current = null;\s*const saved = id \? getViewState/,
+    );
+  });
+
+  it('an explicit reveal supersedes both pending width restoration and saved restore', () => {
+    const jump = only('const scrollToFile = useCallback(');
+    const end = VIEW.indexOf('// Computed inline', jump);
+    const toFile = VIEW.slice(jump, end);
+    expect(toFile).toMatch(/pendingWidthAnchorRef\.current = null;/);
+    expect(toFile).toMatch(/scrollRestoredRef\.current = true;/);
   });
 
   it('does not write a resized card into the old width table or shift against the old layout', () => {

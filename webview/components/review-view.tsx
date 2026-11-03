@@ -175,6 +175,7 @@ import {
   type ReviewListItem,
   resolveReviewAnchor,
   reviewListItems,
+  shouldCaptureReviewWidthAnchor,
 } from '../review-window';
 import { useSettings } from '../settings';
 import { applyEmphasis, highlightLine, hljsLanguageFor } from '../syntax-highlight';
@@ -1250,14 +1251,22 @@ export function ReviewView({
     if (scrollRestoredRef.current) return;
     const el = scrollerRef.current;
     const id = viewStateIdRef.current;
-    if (!el || !id || files.length === 0 || viewportHeight === 0) return;
+    if (
+      !el ||
+      files.length === 0 ||
+      viewportHeight === 0 ||
+      viewportWidth === 0 ||
+      el.clientWidth !== viewportWidth
+    )
+      return;
     scrollRestoredRef.current = true;
-    const saved = getViewState(id);
+    pendingWidthAnchorRef.current = null;
+    const saved = id ? getViewState(id) : undefined;
     if (saved?.kind !== 'reviewAnchor' || saved.topPath === '') return;
     const top = resolveReviewAnchor(saved, itemCount, heightOf, indexOfKey);
     el.scrollTop = top;
     setScrollTop(top);
-  }, [files.length, itemCount, viewportHeight, heightOf, indexOfKey]);
+  }, [files.length, itemCount, viewportHeight, viewportWidth, heightOf, indexOfKey]);
 
   // Navigator click → scroll a file's card to the top of the viewport. Routed through the SAME
   // offset math the windower/anchor use (resolveReviewAnchor sums heightOf up to the target), so
@@ -1267,9 +1276,10 @@ export function ReviewView({
       const el = scrollerRef.current;
       if (!el || itemIndexOfKey.get(key) === undefined) return;
       const top = resolveReviewAnchor({ topPath: key, offset: 0 }, itemCount, heightOf, indexOfKey);
-      // An explicit jump supersedes a pending "keep this file in view" anchor from a bulk
-      // collapse: otherwise the next measurement drags the scroller straight back (onMeasure).
+      // Explicit navigation owns the scroll position; deferred restoration would undo the jump.
       keepInViewRef.current = null;
+      pendingWidthAnchorRef.current = null;
+      scrollRestoredRef.current = true;
       el.scrollTop = top;
       setScrollTop(top);
       setReveal((r) => ({ path: key, nonce: r.nonce + 1, showAll }));
@@ -1317,7 +1327,15 @@ export function ReviewView({
     const measureViewport = () => {
       const width = el.clientWidth;
       if (width !== viewportWidth) {
-        if (pendingWidthAnchorRef.current === null && viewportWidth > 0 && itemCount > 0) {
+        if (
+          shouldCaptureReviewWidthAnchor(
+            viewportWidth,
+            width,
+            pendingWidthAnchorRef.current !== null,
+            scrollRestoredRef.current,
+          ) &&
+          itemCount > 0
+        ) {
           pendingWidthAnchorRef.current = computeReviewAnchor(
             el.scrollTop,
             itemCount,
@@ -1367,7 +1385,14 @@ export function ReviewView({
       const actualWidth = el?.clientWidth ?? viewportWidth;
       const widthChanged = actualWidth !== viewportWidth;
       if (widthChanged && el) {
-        if (pendingWidthAnchorRef.current === null) {
+        if (
+          shouldCaptureReviewWidthAnchor(
+            viewportWidth,
+            actualWidth,
+            pendingWidthAnchorRef.current !== null,
+            scrollRestoredRef.current,
+          )
+        ) {
           pendingWidthAnchorRef.current = computeReviewAnchor(
             el.scrollTop,
             itemCount,

@@ -11,6 +11,7 @@ import {
   REVIEW_GROUP_HEAD_H,
   resolveReviewAnchor,
   reviewListItems,
+  shouldCaptureReviewWidthAnchor,
   type WindowInput,
 } from '../../webview/review-window';
 
@@ -248,6 +249,25 @@ describe('review scroll anchor', () => {
     const a = computeReviewAnchor(250, 4, h, pathOf);
     expect(a).not.toBeNull();
     if (a) expect(resolveReviewAnchor(a, 4, h, indexOfPath)).toBe(250);
+  });
+
+  it('a first measured width cannot replace a restored scroll with its mount-time top anchor', () => {
+    const mountAnchor = shouldCaptureReviewWidthAnchor(0, 524, false, false)
+      ? computeReviewAnchor(0, 4, h, pathOf)
+      : null;
+    const savedAnchor = computeReviewAnchor(250, 4, h, pathOf);
+    if (!savedAnchor) throw new Error('expected a saved anchor');
+
+    let scrollTop = resolveReviewAnchor(savedAnchor, 4, h, indexOfPath);
+    if (mountAnchor) scrollTop = resolveReviewAnchor(mountAnchor, 4, h, indexOfPath);
+
+    expect(scrollTop).toBe(250);
+  });
+
+  it('captures a real resize anchor once, from the previously committed width', () => {
+    expect(shouldCaptureReviewWidthAnchor(225, 524, false, true)).toBe(true);
+    expect(shouldCaptureReviewWidthAnchor(225, 524, true, true)).toBe(false);
+    expect(shouldCaptureReviewWidthAnchor(225, 524, false, false)).toBe(false);
   });
 
   it.each([
