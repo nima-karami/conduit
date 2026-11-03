@@ -1,11 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   evictOldest,
   forgetEvictedRequests,
+  getPinnedDiffs,
+  pinDiffs,
   pruneDiffs,
   pruneFiles,
   rereadsOnFocus,
   setNewest,
+  subscribePinnedDiffs,
 } from '../../webview/content-cache';
 import type { OpenDoc } from '../../webview/docs';
 import { createIdleLru } from '../../webview/idle-model-lru';
@@ -42,24 +45,59 @@ describe('pruneFiles', () => {
 describe('pruneDiffs', () => {
   const diffs = (n: number) => new Map(Array.from({ length: n }, (_, i) => [`/f${i}`, i]));
   it('caps non-open entries to the newest max, oldest out first', () => {
-    const next = pruneDiffs(diffs(5), [], 2);
+    const next = pruneDiffs(diffs(5), [], undefined, 2);
     expect([...next.keys()]).toEqual(['/f3', '/f4']);
   });
   it('never drops an open diff tab entry, even over the cap', () => {
     const next = pruneDiffs(
       diffs(5),
       [doc('diff', '/f0'), doc('diff', '/f1', { diffScope: 'staged' })],
+      undefined,
       1,
     );
     expect([...next.keys()]).toEqual(['/f0', '/f4']);
   });
   it('keys a scoped tab by its scope', () => {
     const m = new Map([['staged\u0000/f1', 1]]);
-    expect(pruneDiffs(m, [doc('diff', '/f1', { diffScope: 'staged' })], 0)).toBe(m);
+    expect(pruneDiffs(m, [doc('diff', '/f1', { diffScope: 'staged' })], undefined, 0)).toBe(m);
   });
   it('returns the same map under the cap', () => {
     const m = diffs(3);
-    expect(pruneDiffs(m, [], 3)).toBe(m);
+    expect(pruneDiffs(m, [], undefined, 3)).toBe(m);
+  });
+  it('never drops a pinned key, even over the cap', () => {
+    const next = pruneDiffs(diffs(5), [], new Set(['/f0', '/f1']), 1);
+    expect([...next.keys()]).toEqual(['/f0', '/f1', '/f4']);
+  });
+});
+
+describe('pinDiffs', () => {
+  it('unions every view, and an empty set releases only that view', () => {
+    pinDiffs('a', ['/x', '/y']);
+    pinDiffs('b', ['/y', '/z']);
+    expect([...getPinnedDiffs()].sort()).toEqual(['/x', '/y', '/z']);
+    pinDiffs('a', []);
+    expect([...getPinnedDiffs()].sort()).toEqual(['/y', '/z']);
+    pinDiffs('b', []);
+    expect(getPinnedDiffs().size).toBe(0);
+  });
+  it('replaces a view’s keys', () => {
+    pinDiffs('v', ['/old']);
+    pinDiffs('v', ['/new']);
+    expect([...getPinnedDiffs()]).toEqual(['/new']);
+    pinDiffs('v', []);
+  });
+  it('notifies only on a real change, so a re-derived equal list cannot loop a render', () => {
+    const cb = vi.fn();
+    const unsubscribe = subscribePinnedDiffs(cb);
+    pinDiffs('n', ['/k']);
+    const snapshot = getPinnedDiffs();
+    pinDiffs('n', ['/k']);
+    pinDiffs('gone', []);
+    expect(getPinnedDiffs()).toBe(snapshot);
+    pinDiffs('n', []);
+    expect(cb).toHaveBeenCalledTimes(2);
+    unsubscribe();
   });
 });
 
