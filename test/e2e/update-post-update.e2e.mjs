@@ -25,16 +25,77 @@ const sample = section
   .trim();
 
 const userDataDir = profileDir('update-post-update');
-writeFileSync(
-  join(userDataDir, 'settings.json'),
-  JSON.stringify({ version: packageJson.version, settings: {} }),
-);
+writeFileSync(join(userDataDir, 'settings.json'), JSON.stringify({ version: 1, settings: {} }));
+
+async function logNotesFailure(app, page, log) {
+  try {
+    const inputs = await app.evaluate(({ app }, expectedVersion) => {
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+      const settingsExist = fs.existsSync(settingsPath);
+      const persisted = settingsExist ? JSON.parse(fs.readFileSync(settingsPath, 'utf8')) : null;
+      const changelogPath = app.isPackaged
+        ? path.join(process.resourcesPath, 'CHANGELOG.md')
+        : path.join(app.getAppPath(), 'CHANGELOG.md');
+      return {
+        expectedVersion,
+        version: app.getVersion(),
+        packaged: app.isPackaged,
+        appPath: app.getAppPath(),
+        settingsPath,
+        settingsExist,
+        settingsSchemaVersion: persisted?.version ?? null,
+        lastSeenVersion: persisted?.settings?.lastSeenVersion ?? null,
+        changelogPath,
+        changelogExists: fs.existsSync(changelogPath),
+      };
+    }, currentVersion);
+    log(`release-notes host inputs: ${JSON.stringify(inputs)}`);
+  } catch (error) {
+    log(`release-notes host diagnostics unavailable: ${error.stack ?? error}`);
+  }
+  try {
+    const decision = await page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          const unsubscribe = window.agentDeck.subscribe((message) => {
+            if (message.type !== 'releaseNotes') return;
+            clearTimeout(timer);
+            unsubscribe();
+            resolve({
+              version: message.version,
+              notesFound: !!message.notes?.trim(),
+              notesLength: message.notes?.length ?? 0,
+              showToast: message.showToast,
+            });
+          });
+          const timer = setTimeout(() => {
+            unsubscribe();
+            resolve({ responseTimedOut: true });
+          }, 2000);
+          window.agentDeck.post({ type: 'getReleaseNotes' });
+        }),
+    );
+    log(`release-notes diagnostic response: ${JSON.stringify(decision)}`);
+  } catch (error) {
+    log(`release-notes renderer diagnostics unavailable: ${error.stack ?? error}`);
+  }
+}
 
 runScenario(
   'update-post-update',
-  async ({ page, log }) => {
+  async ({ app, page, log }) => {
+    log(
+      `release-notes seed: ${JSON.stringify({ userDataDir, schemaVersion: 1, lastSeenVersion: null, expectedVersion: currentVersion, notesFound: !!section.trim() })}`,
+    );
     const toast = page.locator('[data-post-update-toast]');
-    await toast.waitFor({ state: 'visible', timeout: 10000 });
+    try {
+      await toast.waitFor({ state: 'visible', timeout: 10000 });
+    } catch (error) {
+      await logNotesFailure(app, page, log);
+      throw error;
+    }
     await page.waitForFunction(
       (version) =>
         document

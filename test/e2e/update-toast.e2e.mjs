@@ -151,8 +151,18 @@ const cardFacts = (page) =>
           (b) => b.textContent?.trim() === 'Relaunch to update',
         ),
         links: el.querySelectorAll('a').length,
+        notesControl: (() => {
+          const button = el.querySelector('button.update-card__notes');
+          return button
+            ? {
+                tag: button.tagName.toLowerCase(),
+                text: button.textContent?.trim() ?? '',
+                ariaLabel: button.getAttribute('aria-label'),
+              }
+            : null;
+        })(),
         whatsNew:
-          el.querySelector('.update-card__notes button')?.textContent?.trim() === "What's new",
+          el.querySelector('button.update-card__notes')?.textContent?.trim() === "What's new",
       };
     },
     { card: CARD, stack: STACK },
@@ -362,7 +372,10 @@ runScenario('update-toast', async ({ app, page, log }) => {
   assert(ready.relaunch, 'ready offers Relaunch to update');
   assert(ready.dismiss, 'ready keeps Dismiss update');
   assert(ready.bar === null && ready.percent === null, 'ready shows no progress');
-  assert(ready.links === 0 && ready.whatsNew, 'ready offers a What’s new button, not a link');
+  assert(
+    ready.links === 0 && ready.whatsNew,
+    `ready offers a What's new button, not a link (notes control: ${JSON.stringify(ready.notesControl)})`,
+  );
   assert(ready.inSidebar === 0, 'ready: no update card inside the sidebar');
   sameAnchor(ready, 'ready (taller card grows upward)');
   assert(
