@@ -3,8 +3,6 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
-import rehypeRaw from 'rehype-raw';
-import rehypeSanitize from 'rehype-sanitize';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 import { remarkMathPlugin } from '../md-math';
@@ -19,13 +17,12 @@ import { tabStateKey, useEditorGroup } from '../editor-group-context';
 import { useFocusTargetRef } from '../focus-targets';
 import { IconCopy, IconDoc } from '../icons';
 import { buildMarkdownMenuItems } from '../markdown-menu';
+import { MARKDOWN_SAFETY_PLUGINS } from '../markdown-safety';
 import { remarkAlerts } from '../md-alerts';
 import { MdFindController, type MdMatch } from '../md-find';
 import { remarkFrontmatterCard } from '../md-frontmatter';
-import { rehypePreserveLinkTarget } from '../md-link-target';
 import { remoteImageHost, resolveMdImage, resolveMdLink } from '../md-links';
 import { findBlockForLine, rehypeHeadingIds, rehypeSourceLine } from '../md-reveal';
-import { markdownSanitizeSchema } from '../md-sanitize';
 import { buildTocEntries, type HeadingInfo, pickActiveIndex, TOC_MIN_HEADINGS } from '../md-toc';
 import { middleClickProps } from '../middle-click';
 import { hasReveal, subscribeReveal, takeReveal } from '../project-index';
@@ -59,10 +56,7 @@ const REMARK_PLUGINS: React.ComponentProps<typeof ReactMarkdown>['remarkPlugins'
 // BEFORE our trusted plugins (highlight/katex/ids) enrich it, so their output is never
 // re-sanitized. See md-sanitize.ts for the schema.
 const REHYPE_PLUGINS: React.ComponentProps<typeof ReactMarkdown>['rehypePlugins'] = [
-  rehypeRaw,
-  // Stash each link's target before sanitize strips a non-web scheme off it (md-link-target.ts).
-  rehypePreserveLinkTarget,
-  [rehypeSanitize, markdownSanitizeSchema],
+  ...MARKDOWN_SAFETY_PLUGINS,
   rehypeHeadingIds,
   rehypeSourceLine,
   rehypeHighlight,

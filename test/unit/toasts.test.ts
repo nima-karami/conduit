@@ -37,7 +37,7 @@ const chrome: WorkbenchChromeContextValue = {
   },
   commandHint: '',
   focusAttention: noop,
-  update: { status: null, dismissed: false, dismiss: noop },
+  update: { status: null, dismissed: false, dismiss: noop, reveal: noop, openNotes: noop },
 };
 
 function mount(): void {

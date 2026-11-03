@@ -31,6 +31,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -40,6 +42,8 @@ jobs:
       - run: npm ci
 
       - run: npm run build
+      - name: Prepare release notes
+        run: node tools/release-notes.mjs "$env:GITHUB_REF_NAME"
       # The pinned node.exe and hc the installer bundles (ADR 0007); build/runtime-pins.json checks them.
       - run: node build/fetch-runtime.mjs
 
@@ -58,7 +62,7 @@ jobs:
       # from the cert subject. Hardcoding it on an UNSIGNED build embeds publisherName into
       # app-update.yml and makes electron-updater reject every (unsigned) update — the 0.1.13→0.2.0
       # auto-update breakage. See docs/WINDOWS-SIGNING.md.
-      - run: npx electron-builder --win --publish never
+      - run: npx electron-builder --win --publish never -c.releaseInfo.releaseNotesFile=build/release-notes.md
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -66,12 +70,12 @@ jobs:
       # One atomic `gh release create` uploads all three artifacts to a single release.
       # artifactName (package.json) yields a hyphenated installer name with no spaces, so
       # the uploaded asset name matches the url inside latest.yml exactly (else the updater
-      # 404s). --generate-notes fills the body from commits since the previous tag.
+      # 404s). Release notes come from the matching CHANGELOG section.
       - name: Publish GitHub Release
         shell: bash
         run: |
           gh release create "$GITHUB_REF_NAME" \
             dist/*.exe dist/*.exe.blockmap dist/latest.yml \
-            --title "Conduit $GITHUB_REF_NAME" --generate-notes
+            --title "Conduit $GITHUB_REF_NAME" --notes-file build/release-notes.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

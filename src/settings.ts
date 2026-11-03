@@ -74,6 +74,8 @@ export type LimitResumeMode = 'off' | 'offer' | 'arm';
 export type ChangesViewMode = 'all' | 'active';
 
 export interface AppSettings {
+  /** See docs/specs/2026-11-03-whats-new.md §2: the update acknowledgement is host-owned. */
+  lastSeenVersion?: string;
   theme: string; // theme id (see webview/themes.ts)
   fontUi: string; // ui font id
   fontMono: string; // mono font id
@@ -436,6 +438,10 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
   );
   const iconPackPinned = bool(payload.iconPackPinned, DEFAULT_SETTINGS.iconPackPinned);
   return {
+    ...(typeof payload.lastSeenVersion === 'string' &&
+    /^\d+\.\d+\.\d+$/.test(payload.lastSeenVersion)
+      ? { lastSeenVersion: payload.lastSeenVersion }
+      : {}),
     theme,
     fontUi: fontUiPinned ? str(payload.fontUi, themeDef.fontUi) : themeDef.fontUi,
     fontMono: fontMonoPinned ? str(payload.fontMono, themeDef.fontMono) : themeDef.fontMono,

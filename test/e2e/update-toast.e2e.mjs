@@ -12,7 +12,7 @@
  *  - no card inside `.sidebar`; the percent is a clamped number with a matching progressbar;
  *  - a generic toast shares the same stack, above the update item;
  *  - Dismiss hides it until the next `ready`; Relaunch posts the existing `updateRelaunch`,
- *    captured at the host so nothing installs or quits; no "What's new" link.
+ *    captured at the host so nothing installs or quits; ready notes open the bundled-notes dialog.
  */
 import { assert, runCommand, runScenario } from './harness.mjs';
 
@@ -151,7 +151,8 @@ const cardFacts = (page) =>
           (b) => b.textContent?.trim() === 'Relaunch to update',
         ),
         links: el.querySelectorAll('a').length,
-        whatsNew: /what['’]s new|release notes/i.test(el.textContent ?? ''),
+        whatsNew:
+          el.querySelector('.update-card__notes button')?.textContent?.trim() === "What's new",
       };
     },
     { card: CARD, stack: STACK },
@@ -343,6 +344,14 @@ runScenario('update-toast', async ({ app, page, log }) => {
     (await page.locator(CARD).count()) === 0,
     'a dismissed update stays hidden while downloading',
   );
+  const updateStatus = page.locator('button[data-status-item="update"]');
+  await updateStatus.waitFor({ state: 'visible', timeout: 5000 });
+  await updateStatus.click();
+  await page.waitForSelector(CARD, { state: 'visible', timeout: 5000 });
+  assert(
+    (await updateStatus.textContent())?.trim() === 'Updating · 90%',
+    'downloading status item reports the current percent and reveals the card',
+  );
   await deliver(app, page, { status: 'ready', version: VERSION, releaseNotes: 'notes' });
   await page.waitForSelector(CARD, { state: 'visible', timeout: 5000 });
   const ready = await cardFacts(page);
@@ -353,7 +362,7 @@ runScenario('update-toast', async ({ app, page, log }) => {
   assert(ready.relaunch, 'ready offers Relaunch to update');
   assert(ready.dismiss, 'ready keeps Dismiss update');
   assert(ready.bar === null && ready.percent === null, 'ready shows no progress');
-  assert(ready.links === 0 && !ready.whatsNew, 'no What’s new / release-notes link');
+  assert(ready.links === 0 && ready.whatsNew, 'ready offers a What’s new button, not a link');
   assert(ready.inSidebar === 0, 'ready: no update card inside the sidebar');
   sameAnchor(ready, 'ready (taller card grows upward)');
   assert(
@@ -361,6 +370,28 @@ runScenario('update-toast', async ({ app, page, log }) => {
     'ready: the card uses equal window insets',
   );
   assertNoShift(baseline, await workbenchRects(page), 'the ready card');
+
+  // What’s new opens the incoming release notes and Later closes it.
+  await page.locator(`${CARD} button.update-card__notes`).click();
+  const dialog = page.locator('[role="dialog"][data-whats-new]');
+  await dialog.waitFor({ state: 'visible', timeout: 5000 });
+  assert(
+    (await dialog
+      .getByRole('heading', { name: `What's new in v${VERSION}`, exact: true })
+      .count()) === 1,
+    'incoming notes dialog names the available version',
+  );
+  const currentVersion = await app.evaluate(({ app }) => app.getVersion());
+  assert(
+    (await dialog.textContent())?.includes(`you have v${currentVersion}`),
+    'incoming notes dialog identifies the installed version',
+  );
+  await dialog.getByRole('button', { name: 'Later' }).click();
+  await dialog.waitFor({ state: 'detached', timeout: 5000 });
+  await updateStatus.click();
+  await dialog.waitFor({ state: 'visible', timeout: 5000 });
+  await dialog.getByRole('button', { name: 'Later' }).click();
+  await dialog.waitFor({ state: 'detached', timeout: 5000 });
 
   // ── Relaunch posts the existing message, and nothing installs ─────────────
   await page.locator(CARD).getByRole('button', { name: 'Relaunch to update' }).click();
@@ -385,7 +416,7 @@ runScenario('update-toast', async ({ app, page, log }) => {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length > 0),
     'the captured relaunch neither quit nor installed',
   );
-  log('ready: Relaunch posts updateRelaunch (captured), dismiss/reset, no What’s new ✓');
+  log('ready: What’s new opens incoming notes; Later closes; Relaunch posts updateRelaunch ✓');
 
   // ── Leaving the visible states hides the card again ───────────────────────
   for (const [status, extra] of [

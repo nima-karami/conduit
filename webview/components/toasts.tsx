@@ -1,5 +1,6 @@
 import { type ReactNode, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
+import { CHROME_STR } from '../chrome-strings';
 import { IconClose } from '../icons';
 import { dismissToast, getToastsSnapshot, subscribeToasts } from '../toast-store';
 import { useWorkbenchChromeState } from '../workbench-chrome-state';
@@ -56,12 +57,31 @@ export function Toasts({ children }: { children?: ReactNode }) {
           </button>
         </div>
       ))}
+      {update.installedToast && (
+        <div className="toast toast--info" data-post-update-toast>
+          <span className="toast__msg" role="status">
+            {CHROME_STR.update.updated(update.installedToast.version)}
+          </span>
+          <button type="button" className="toast__action" onClick={update.installedToast.open}>
+            {CHROME_STR.update.whatsNew}
+          </button>
+          <button
+            type="button"
+            className="toast__close"
+            aria-label={CHROME_STR.update.dismiss}
+            onClick={update.installedToast.dismiss}
+          >
+            <IconClose size={12} />
+          </button>
+        </div>
+      )}
       {update.status && (
         <UpdateCard
           key="update"
           status={update.status}
           dismissed={update.dismissed}
           onDismiss={update.dismiss}
+          onWhatsNew={update.openNotes}
         />
       )}
     </div>,

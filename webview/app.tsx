@@ -149,6 +149,7 @@ import { Toasts } from './components/toasts';
 import { TopBar } from './components/top-bar';
 import type { UpdateStatus } from './components/update-card';
 import { WebPromptModal } from './components/web-prompt-modal';
+import { type ReleaseNotesView, WhatsNewDialog } from './components/whats-new-dialog';
 import { MCP_STR } from './conduit-mcp-strings';
 import { decideShortcut, type ShortcutContext } from './decide-shortcut';
 import { createDiffReadQueue, type DiffReadQueue, diffReadTargets } from './diff-read-queue';
@@ -574,6 +575,24 @@ export function App() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const dismissUpdate = useCallback(() => setUpdateDismissed(true), []);
+  const revealUpdate = useCallback(() => setUpdateDismissed(false), []);
+  const [installedNotes, setInstalledNotes] = useState<Extract<
+    HostToWebview,
+    { type: 'releaseNotes' }
+  > | null>(null);
+  const [installedToastDismissed, setInstalledToastDismissed] = useState(false);
+  const [releaseNotesView, setReleaseNotesView] = useState<
+    (ReleaseNotesView & { incoming: boolean }) | null
+  >(null);
+  const openIncomingNotes = useCallback(() => {
+    if (updateStatus?.version && updateStatus.releaseNotes?.trim()) {
+      setReleaseNotesView({
+        version: updateStatus.version,
+        notes: updateStatus.releaseNotes,
+        incoming: true,
+      });
+    }
+  }, [updateStatus]);
   // This window's sidebar UI: hydrated once from the host, edits persisted back
   // (sidebar-tree-state.tsx). The ref is the authority so a step never reads a stale render.
   const [sidebarSync, setSidebarSync] = useState(INITIAL_SIDEBAR_UI_SYNC);
@@ -853,6 +872,8 @@ export function App() {
             bumpHtmlReload(tabStateKey(changed.id, g));
           }
         }
+      } else if (msg.type === 'releaseNotes') {
+        setInstalledNotes(msg);
       } else if (msg.type === 'updateStatus') {
         setUpdateStatus(msg);
         // A freshly-staged update un-dismisses the update toast (the user may have
@@ -887,6 +908,7 @@ export function App() {
   // Mount-only deps: a re-post makes the host re-send its one-shot restoreDocs.
   useEffect(() => {
     post({ type: 'ready' });
+    post({ type: 'getReleaseNotes' });
   }, []);
 
   // K3: subscribe to successful saves so the files map is updated immediately
@@ -2089,7 +2111,26 @@ export function App() {
       status: statusModel,
       commandHint: comboLabel('openCommands', settings.shortcuts) ?? '',
       focusAttention,
-      update: { status: updateStatus, dismissed: updateDismissed, dismiss: dismissUpdate },
+      update: {
+        status: updateStatus,
+        dismissed: updateDismissed,
+        dismiss: dismissUpdate,
+        reveal: revealUpdate,
+        openNotes: openIncomingNotes,
+        installedToast:
+          installedNotes?.showToast && installedNotes.notes && !installedToastDismissed
+            ? {
+                version: installedNotes.version,
+                open: () =>
+                  setReleaseNotesView({
+                    version: installedNotes.version,
+                    notes: installedNotes.notes ?? '',
+                    incoming: false,
+                  }),
+                dismiss: () => setInstalledToastDismissed(true),
+              }
+            : undefined,
+      },
     }),
     [
       settings.explorerCollapsed,
@@ -2102,6 +2143,10 @@ export function App() {
       updateStatus,
       updateDismissed,
       dismissUpdate,
+      revealUpdate,
+      openIncomingNotes,
+      installedNotes,
+      installedToastDismissed,
     ],
   );
   // A layout effect, so no commit the user (or the Back button) can observe has the new session's
@@ -5187,6 +5232,18 @@ export function App() {
   return (
     <SidebarTreeProvider value={sidebarTree}>
       <WorkbenchChromeProvider value={chrome}>
+        {releaseNotesView && (!releaseNotesView.incoming || installedNotes) && (
+          <WhatsNewDialog
+            release={{
+              ...releaseNotesView,
+              currentVersion: releaseNotesView.incoming ? installedNotes?.version : undefined,
+            }}
+            ready={
+              updateStatus?.status === 'ready' && updateStatus.version === releaseNotesView.version
+            }
+            onClose={() => setReleaseNotesView(null)}
+          />
+        )}
         <div className="shell">
           <AnimatedBg />
           <div ref={navLiveRef} className="sr-only" aria-live="polite" role="status" />

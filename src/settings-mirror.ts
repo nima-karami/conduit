@@ -17,6 +17,8 @@ export function mirrorServerKeys(ui: AppSettings, server: ServerSettings): AppSe
  */
 export function uiOnly(incoming: AppSettings, current: AppSettings): AppSettings {
   const next: AppSettings = { ...incoming };
+  delete next.lastSeenVersion;
+  if (current.lastSeenVersion) next.lastSeenVersion = current.lastSeenVersion;
   for (const k of SERVER_SETTINGS_KEYS) Object.assign(next, { [k]: current[k] });
   return next;
 }

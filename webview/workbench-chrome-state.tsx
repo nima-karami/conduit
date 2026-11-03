@@ -19,7 +19,14 @@ export interface WorkbenchChromeContextValue {
   /** The bound openCommands combo for display; '' when unbound. */
   commandHint: string;
   focusAttention(entry: AttentionEntry): void;
-  update: { status: UpdateStatus | null; dismissed: boolean; dismiss(): void };
+  update: {
+    status: UpdateStatus | null;
+    dismissed: boolean;
+    dismiss(): void;
+    reveal(): void;
+    openNotes(): void;
+    installedToast?: { version: string; open(): void; dismiss(): void };
+  };
 }
 
 const WorkbenchChromeContext = createContext<WorkbenchChromeContextValue | null>(null);

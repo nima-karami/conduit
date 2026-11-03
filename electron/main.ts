@@ -27,6 +27,7 @@ import { isAppIndexUrl } from '../src/app-navigation';
 import { asyncSingleFlight } from '../src/async-singleflight';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
+import { changelogSection } from '../src/changelog';
 import {
   createCloseGuard,
   createQuitGrant,
@@ -144,6 +145,7 @@ import { summarizeQueue } from '../src/queue-summary';
 import { busySessions, runningSessions } from '../src/quit-guard';
 import { resolveRangePreset } from '../src/range-preset';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
+import { releaseNotesDecision } from '../src/release-notes-decision';
 import { createRepoFileIndex } from '../src/repo-file-index';
 import {
   filterExistingRepos,
@@ -2562,6 +2564,25 @@ app.whenReady().then(() => {
         case 'revealLogs':
           void shell.openPath(userData());
           break;
+        case 'getReleaseNotes': {
+          const version = app.getVersion();
+          const changelogPath = app.isPackaged
+            ? path.join(process.resourcesPath, 'CHANGELOG.md')
+            : path.join(app.getAppPath(), 'CHANGELOG.md');
+          let notes: string | null = null;
+          try {
+            notes = changelogSection(fs.readFileSync(changelogPath, 'utf8'), version);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          }
+          const decision = releaseNotesDecision(version, settings.lastSeenVersion, notes);
+          if (decision.persistVersion && settings.lastSeenVersion !== decision.persistVersion) {
+            settings = { ...settings, lastSeenVersion: decision.persistVersion };
+            persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
+          }
+          replyHere({ type: 'releaseNotes', version, notes, showToast: decision.showToast });
+          break;
+        }
         case 'window:sidebar':
           // Sender-scoped: a window only ever writes its own entry, validated like a restore. A
           // sender outside the registry (closing, or a guest) would leave an entry no close drops.

@@ -6,6 +6,10 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Show bundled release notes from the update card and after installing an update.
+
 ## [0.52.1] — 2026-11-03
 
 ### Changed

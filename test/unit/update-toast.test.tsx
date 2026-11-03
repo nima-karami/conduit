@@ -62,6 +62,7 @@ function render(
   dismissed = false,
   dismiss: () => void = noop,
   dock?: React.ReactNode,
+  extra: Partial<WorkbenchChromeContextValue['update']> = {},
 ): void {
   if (!root) {
     const host = document.createElement('div');
@@ -71,7 +72,9 @@ function render(
   const r = root;
   act(() =>
     r.render(
-      <WorkbenchChromeProvider value={chrome({ status, dismissed, dismiss })}>
+      <WorkbenchChromeProvider
+        value={chrome({ status, dismissed, dismiss, reveal: noop, openNotes: noop, ...extra })}
+      >
         <Toasts>{dock}</Toasts>
       </WorkbenchChromeProvider>,
     ),
@@ -82,6 +85,28 @@ const stack = () => document.querySelector<HTMLElement>('.toasts[data-toast-stac
 const card = () => document.querySelector<HTMLElement>('.update-card[data-update-toast]');
 
 describe('floating update item (sidebar-agent-tree spec §7, plan T3.4)', () => {
+  it('routes the ready notes button to the shared dialog action', () => {
+    const openNotes = vi.fn();
+    render(st('ready', { releaseNotes: 'notes' }), false, noop, undefined, { openNotes });
+    act(() => card()?.querySelector<HTMLButtonElement>('.update-card__notes')?.click());
+    expect(openNotes).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares the stack with the installed-version toast, with polite text, notes and dismiss actions', () => {
+    const installedToast = { version: '2.0.0', open: vi.fn(), dismiss: vi.fn() };
+    render(null, false, noop, undefined, { installedToast });
+    const toast = document.querySelector('[data-post-update-toast]');
+    expect(toast?.closest('[data-toast-stack]')).toBe(stack());
+    expect(toast?.querySelector('[role="status"]')?.textContent).toBe('Updated to v2.0.0');
+    const buttons = [...(toast?.querySelectorAll('button') ?? [])];
+    expect(buttons[0]?.textContent).toBe("What's new");
+    act(() => buttons[0]?.click());
+    act(() => buttons[1]?.click());
+    expect(installedToast.open).toHaveBeenCalledTimes(1);
+    expect(installedToast.dismiss).toHaveBeenCalledTimes(1);
+    render(null);
+    expect(document.querySelector('[data-post-update-toast]')).toBeNull();
+  });
   it('mounts the one outlet even with an empty toast store, as a labelled region', () => {
     render(null);
     expect(stack()?.getAttribute('role')).toBe('region');
@@ -171,12 +196,16 @@ describe('floating update item (sidebar-agent-tree spec §7, plan T3.4)', () => 
     expect(document.querySelectorAll('.toasts')).toHaveLength(1);
   });
 
-  it('offers only Dismiss and Relaunch — no release-notes link', () => {
+  it("offers What's new before Relaunch only when the ready update has notes", () => {
     render(st('ready', { releaseNotes: 'notes' }));
     expect(card()?.querySelectorAll('a')).toHaveLength(0);
     const labels = [...(card()?.querySelectorAll('button') ?? [])].map(
       (b) => b.getAttribute('aria-label') ?? b.textContent,
     );
-    expect(labels).toEqual(['Dismiss update', 'Relaunch to update']);
+    expect(labels).toEqual(['Dismiss update', "What's new", 'Relaunch to update']);
+    render(st('ready', { releaseNotes: '  ' }));
+    expect(card()?.querySelector('.update-card__notes')).toBeNull();
+    render(st('downloading', { releaseNotes: 'notes' }));
+    expect(card()?.querySelector('.update-card__notes')).toBeNull();
   });
 });

@@ -41,6 +41,17 @@ describe('settings-mirror (D7)', () => {
     expect(next.terminalFontSize).toBe(DEFAULT_SETTINGS.terminalFontSize + 2);
   });
 
+  it('uiOnly keeps host-owned release-note acknowledgement from a stale window', () => {
+    const current: AppSettings = { ...DEFAULT_SETTINGS, lastSeenVersion: '0.53.0' };
+    const staleWindow: AppSettings = { ...DEFAULT_SETTINGS, lastSeenVersion: '0.52.0' };
+    expect(uiOnly(staleWindow, current).lastSeenVersion).toBe('0.53.0');
+  });
+
+  it('uiOnly drops a renderer-supplied acknowledgement when none is persisted', () => {
+    const incoming: AppSettings = { ...DEFAULT_SETTINGS, lastSeenVersion: '9.9.9' };
+    expect(uiOnly(incoming, DEFAULT_SETTINGS).lastSeenVersion).toBeUndefined();
+  });
+
   it('serverPatchOf picks only the server keys present in the patch', () => {
     expect(serverPatchOf({ trackCwd: false, theme: DEFAULT_SETTINGS.theme })).toEqual({
       trackCwd: false,

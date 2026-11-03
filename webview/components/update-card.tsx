@@ -9,6 +9,7 @@ interface UpdateCardProps {
   status: UpdateStatus;
   dismissed: boolean;
   onDismiss: () => void;
+  onWhatsNew: () => void;
 }
 
 /** Checking, up to date and error stay Settings → About's business (spec §7 floating updates). */
@@ -23,7 +24,7 @@ export function updateCardVisible(status: UpdateStatus | null, dismissed: boolea
  * The one persistent update item in the toast stack. Every state renders the same root element,
  * so a progress tick or the ready swap updates it in place instead of stacking a second card.
  */
-export function UpdateCard({ status, dismissed, onDismiss }: UpdateCardProps) {
+export function UpdateCard({ status, dismissed, onDismiss, onWhatsNew }: UpdateCardProps) {
   if (!updateCardVisible(status, dismissed)) return null;
   const s = status.status;
   const pct = clampPercent(status.percent);
@@ -65,13 +66,20 @@ export function UpdateCard({ status, dismissed, onDismiss }: UpdateCardProps) {
         </div>
       )}
       {s === 'ready' && (
-        <button
-          type="button"
-          className="update-card__action"
-          onClick={() => post({ type: 'updateRelaunch' })}
-        >
-          {CHROME_STR.update.relaunch}
-        </button>
+        <>
+          {status.releaseNotes?.trim() && (
+            <button type="button" className="update-card__notes" onClick={onWhatsNew}>
+              {CHROME_STR.update.whatsNew}
+            </button>
+          )}
+          <button
+            type="button"
+            className="update-card__action"
+            onClick={() => post({ type: 'updateRelaunch' })}
+          >
+            {CHROME_STR.update.relaunch}
+          </button>
+        </>
       )}
     </div>
   );

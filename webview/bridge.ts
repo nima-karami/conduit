@@ -886,6 +886,10 @@ function mockHost(msg: WebviewToHost) {
   ) {
     return; // no-op in preview
   }
+  if (msg.type === 'getReleaseNotes') {
+    emit({ type: 'releaseNotes', version: '0.1.0', notes: null, showToast: false });
+    return;
+  }
   if (msg.type === 'updateRelaunch') {
     return; // no-op in preview (the real host quits and installs)
   }

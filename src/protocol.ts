@@ -442,6 +442,7 @@ export type ServerUiState = (
 ) & { runtime?: RuntimeHealth };
 
 export type HostToWebview =
+  | { type: 'releaseNotes'; version: string; notes: string | null; showToast: boolean }
   | { type: 'server:state'; state: ServerUiState }
   | { type: 'confirmStopAgentsFailed'; requestId: number; reason: string }
   | { type: 'serverSettings:result'; requestId: number; ok: boolean; settings: ServerSettings }
@@ -961,6 +962,7 @@ export type HostToWebview =
   | { type: 'web:openTab'; guestId: number; url: string; background: boolean };
 
 export type WebviewToHost =
+  | { type: 'getReleaseNotes' }
   | { type: 'ready' }
   // Renderer→host log line, routed through the host's leveled file logger. Back-compatible:
   // a bare `{ type: 'log', message }` defaults to level `info`, scope `'renderer'`.

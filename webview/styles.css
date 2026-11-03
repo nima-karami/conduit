@@ -1353,6 +1353,7 @@ body.resizing .panel__resize::after {
    --status-bar-h token. Aero floats it as a panel card; Neon lays it flush
    with one hairline above, since the side panels' own rings already draw its other edges. */
 .statusbar {
+  container-type: inline-size;
   flex: 0 0 var(--status-bar-h);
   height: var(--status-bar-h);
   box-sizing: border-box;
@@ -1414,6 +1415,29 @@ body.resizing .panel__resize::after {
   font-family: var(--font-mono);
   font-size: calc(10.5px * var(--font-scale));
   color: var(--text-faint);
+}
+.statusbar__update {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.statusbar__update svg {
+  flex: 0 0 auto;
+}
+@container (max-width: 620px) {
+  .statusbar__hint,
+  [data-status-item="worktree"] {
+    display: none;
+  }
+}
+@container (max-width: 440px) {
+  [data-status-item="machine"],
+  [data-status-item="branch"] {
+    display: none;
+  }
 }
 
 /* ---------- sidebar ---------- */
@@ -7542,6 +7566,68 @@ body.gh-resizing {
 }
 .update-card__action:hover {
   filter: brightness(1.1);
+}
+.update-card__notes {
+  margin: 0 8px 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(12px * var(--font-scale));
+  text-decoration: underline;
+}
+.whats-new {
+  -webkit-app-region: no-drag;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  width: min(680px, calc(100vw - 32px));
+  max-height: 90vh;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  background: var(--surface-panel);
+  color: var(--text);
+  box-shadow: var(--elev-3);
+}
+.whats-new__title {
+  margin: 0;
+  font-size: calc(20px * var(--font-scale));
+}
+.whats-new__current {
+  margin: 0;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+.whats-new__body {
+  min-height: 0;
+  overflow: auto;
+  max-height: 70vh;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.whats-new__body img {
+  max-width: 100%;
+}
+.whats-new__body pre {
+  overflow: auto;
+}
+.whats-new a {
+  color: var(--accent);
+  cursor: pointer;
+}
+.whats-new__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: calc(12px * var(--font-scale));
+}
+.whats-new__spacer {
+  flex: 1;
 }
 .cust__item--static {
   cursor: default;
