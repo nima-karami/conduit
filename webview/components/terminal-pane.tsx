@@ -69,7 +69,6 @@ import { CONTEXT_WINDOW_LINES, inferContextRoot } from '../terminal-context-root
 import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
 import { terminalFontFamily } from '../terminal-fonts';
 import { terminalGpu } from '../terminal-gpu';
-import { createGpuVisibilityGate, type GpuVisibilityGate } from '../terminal-gpu-visibility';
 import { lastPick, notePick } from '../terminal-link-picks';
 import {
   detectCommitTokens,
@@ -297,7 +296,6 @@ export function TerminalPane({
   // tell the host, or the PTY addresses rows the xterm doesn't have (cursor below the prompt).
   const sentSizeRef = useRef<TermGeometry | null>(null);
   const visibleRef = useRef(visible);
-  const gpuGateRef = useRef<GpuVisibilityGate | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const { settings, update } = useSettings();
 
@@ -525,11 +523,15 @@ export function TerminalPane({
     if (!visible) setPicker(null);
   }, [visible]);
 
-  // A layout effect: the release must land before xterm's observer sees the pane hidden (see
-  // terminal-gpu-visibility.ts). On mount it runs before the terminal exists, which reads the ref.
+  // A hidden pane holds no WebGL context (memory audit 2026-11-03). A layout effect, so it lands
+  // before the ResizeObserver's fit in the same frame: the DOM and WebGL renderers size the cell
+  // differently, and a renderer swapped after the fit leaves the cols fitted to the wrong cell.
+  // Hiding also lands before xterm's own observer pauses rendering, so the DOM renderer still
+  // draws its rows. On mount it runs before the terminal exists; register reads the ref.
   useLayoutEffect(() => {
     visibleRef.current = visible;
-    gpuGateRef.current?.setWanted(visible);
+    const term = termRef.current;
+    if (term) terminalGpu.setVisible(term, visible);
   }, [visible]);
 
   useEffect(() => {
@@ -541,7 +543,6 @@ export function TerminalPane({
     let fit: FitAddon;
     let search: SearchAddon;
     let unregisterGpu: (() => void) | null = null;
-    let gpuObserver: IntersectionObserver | null = null;
     // Assigned once the fit/facts helpers below exist; a font refresh only arrives after that.
     let refitAfterFonts = () => {};
     const reportGpuLoss = () => terminalGpu.reportLoss(term);
@@ -654,31 +655,12 @@ export function TerminalPane({
         if (lines !== 0) term.scrollLines(lines);
         return false;
       });
-      const registered = term;
-      const gpuGate = createGpuVisibilityGate(visibleRef.current, (v) =>
-        terminalGpu.setVisible(registered, v),
-      );
-      // Created after term.open, so it reports after xterm's own observer on the same element.
-      const screenEl = term.element?.querySelector('.xterm-screen');
-      if (screenEl && typeof IntersectionObserver !== 'undefined') {
-        gpuObserver = new IntersectionObserver(
-          (entries) => {
-            const last = entries[entries.length - 1];
-            if (last) gpuGate.intersection(last.isIntersecting);
-          },
-          { threshold: 0 },
-        );
-        gpuObserver.observe(screenEl);
-      }
-      gpuGateRef.current = gpuGate;
       // Last in the try: a throw before it would return from the effect with no cleanup, leaking
       // the terminal's WebGL slot. The renderer draws box/block glyphs to fill the cell (crisper).
       unregisterGpu = terminalGpu.register(term, () => refitAfterFonts(), {
         visible: visibleRef.current,
       });
     } catch (e) {
-      gpuObserver?.disconnect();
-      gpuGateRef.current = null;
       logToHost(`xterm init failed: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
@@ -1194,8 +1176,6 @@ export function TerminalPane({
       factsAfterFitRef.current = () => {};
       disposeLinkCaches();
       if (started) post({ type: 'term:dispose', sessionId });
-      gpuObserver?.disconnect();
-      gpuGateRef.current = null;
       unregisterGpu?.();
       disposeTerminal(term, [fit, search]);
       {

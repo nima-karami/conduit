@@ -45,6 +45,9 @@ vi.mock('@xterm/xterm', () => ({
     loadAddon() {}
     open(parent: HTMLElement) {
       this.element = document.createElement('div');
+      const screen = document.createElement('div');
+      screen.className = 'xterm-screen';
+      this.element.appendChild(screen);
       parent.appendChild(this.element);
     }
     attachCustomWheelEventHandler() {
@@ -176,6 +179,45 @@ describe('TerminalPane WebGL follows visibility', () => {
       await render(r, true);
       await render(r, false);
       expect(gpu.state.calls).toEqual(['register:false', 'visible:true', 'visible:false']);
+    } finally {
+      gpu.state.throwInit = true;
+      vi.unstubAllGlobals();
+      host.remove();
+    }
+  });
+
+  // terminal-local-font regression: the DOM and WebGL renderers size the cell differently, so an
+  // attach after the show's fit leaves the cols fitted to the wrong cell (and resizes the PTY twice).
+  it('attaches WebGL in the commit that shows the pane, before its first fit', async () => {
+    gpu.state.throwInit = false;
+    gpu.state.calls = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    // A real observer reports a display:none pane as not intersecting, and reports it shown only
+    // after the frame that first paints it.
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(private cb: (e: { isIntersecting: boolean }[]) => void) {}
+        observe() {
+          this.cb([{ isIntersecting: false }]);
+        }
+        disconnect() {}
+      },
+    );
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const r = createRoot(host);
+    root = r;
+    try {
+      await render(r, false);
+      await render(r, true);
+      expect(gpu.state.calls).toEqual(['register:false', 'visible:true']);
     } finally {
       gpu.state.throwInit = true;
       vi.unstubAllGlobals();
