@@ -25,7 +25,6 @@ import {
   openFromExplorer,
   replaySplitToE6,
   same,
-  sleep,
   tabOf,
   tokenPoint,
   waitPolite,
@@ -109,6 +108,7 @@ const reviewAnchor = (page, g) =>
     const el = document.querySelector(`${sel} .review__scroll`);
     if (!el) return null;
     const y = el.getBoundingClientRect().top;
+    const contentTop = y + Number.parseFloat(getComputedStyle(el).paddingTop);
     const card = [...el.querySelectorAll('.rcard')]
       .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
       .find((c) => c.getBoundingClientRect().bottom > y);
@@ -116,6 +116,7 @@ const reviewAnchor = (page, g) =>
       scrollTop: Math.round(el.scrollTop),
       path: card?.getAttribute('data-path') ?? null,
       offset: card ? Math.round(y - card.getBoundingClientRect().top) : null,
+      logicalOffset: card ? Math.round(contentTop - card.getBoundingClientRect().top) : null,
       metrics: {
         width: el.clientWidth,
         viewportHeight: el.clientHeight,
@@ -132,6 +133,48 @@ const reviewAnchor = (page, g) =>
       },
     };
   }, G(g));
+
+async function waitReviewSettled(page, g) {
+  const selector = `${G(g)} .review__scroll`;
+  await page
+    .waitForFunction(
+      (sel) =>
+        new Promise((resolve) => {
+          const el = document.querySelector(sel);
+          if (!el) return resolve(false);
+          let previous = el.scrollTop;
+          let stableFrames = 0;
+          const frame = () => {
+            const current = el.scrollTop;
+            stableFrames = Math.abs(current - previous) < 0.5 ? stableFrames + 1 : 0;
+            previous = current;
+            if (stableFrames >= 4) resolve(true);
+            else requestAnimationFrame(frame);
+          };
+          requestAnimationFrame(frame);
+        }),
+      selector,
+      { timeout: 15000 },
+    )
+    .catch(() => assert(false, `RV: group ${g} scrollTop did not settle`));
+  const sample = await reviewAnchor(page, g);
+  assert(sample?.path, `RV: group ${g} has no visible card after settling`);
+  await page
+    .waitForFunction(
+      ({ group, path, offset }) => {
+        const id = group === 1 ? 'review:@review' : `g${group}:review:@review`;
+        const anchor = window.__rvSaved?.[id];
+        return (
+          anchor?.topPath?.replaceAll('\\', '/').endsWith(path) &&
+          Math.abs(anchor.offset - offset) <= 2
+        );
+      },
+      { group: g, path: sample.path, offset: sample.logicalOffset },
+      { timeout: 5000 },
+    )
+    .catch(() => assert(false, `RV: group ${g} anchor capture did not settle for ${sample.path}`));
+  return reviewAnchor(page, g);
+}
 
 // The bundled closures own the saved anchor and measured slots; debugger logpoints observe
 // those values without changing the scroll/restore code under test.
@@ -158,12 +201,17 @@ async function traceReviewMove(page) {
     /const (\w+) = getViewState\((\w+)\)/,
   );
   const restored = at(lines[restore.lineNumber], /(\w+)\.scrollTop = (\w+);/);
-  const measured = at('const slot = cardHeight + GAP', /measuredRef\.current\.set\((\w+), (\w+)\)/);
-  const previous = at('const slot = cardHeight + GAP', /const (\w+) = measuredRef\.current\.get/);
+  const measured = at('const slot = cardHeight + GAP', /(\w+)\.set\((\w+), (\w+)\)/);
+  const previous = at(
+    'const slot = cardHeight + GAP',
+    /const (\w+) = (\w+)\.get\((\w+)\) \?\? estimateSlot/,
+  );
   const [saveId, next] = save.match.slice(1);
   const [saved, restoreId] = restore.match.slice(1);
   const [element, top] = restored.match.slice(1);
-  const [key, slot] = measured.match.slice(1);
+  const [table, key, slot] = measured.match.slice(1);
+  const [oldHeight, previousTable] = previous.match.slice(1);
+  assert(table === previousTable, 'RV diagnostics: previous and next heights use different tables');
   const points = [
     [
       save.lineNumber,
@@ -175,7 +223,7 @@ async function traceReviewMove(page) {
     ],
     [
       measured.lineNumber,
-      `console.log('[RV onMeasure]', JSON.stringify({key: ${key}, old: ${previous.match[1]}, next: ${slot}, scrollTop: scrollerRef.current?.scrollTop, group: scrollerRef.current?.closest('.editor-group')?.dataset.group}))`,
+      `console.log('[RV onMeasure]', JSON.stringify({key: ${key}, old: ${oldHeight}, next: ${slot}, width: scrollerRef.current?.clientWidth, scrollTop: scrollerRef.current?.scrollTop, group: scrollerRef.current?.closest('.editor-group')?.dataset.group}))`,
     ],
   ];
   const listener = (message) => {
@@ -205,7 +253,7 @@ async function pressMove(page, g, key) {
   await page
     .waitForSelector(`${G(to)}[data-active="true"] .review__scroll`, { timeout: 10000 })
     .catch(() => assert(false, `RV: Review did not move to an active group ${to}`));
-  await sleep(900);
+  await waitReviewSettled(page, to);
   log('RV: destination saved anchors', JSON.stringify(await page.evaluate(() => window.__rvSaved)));
   return reviewAnchor(page, to);
 }
@@ -231,9 +279,9 @@ async function phaseReviewMove(page) {
   await page.$eval(`${G(1)} .review__scroll`, (el) => {
     el.scrollTop = 1500;
   });
-  // Past the 120ms anchor-capture debounce and the re-measure it triggers.
-  await sleep(900);
-  const before = await reviewAnchor(page, 1);
+  // A measurement can still shift the scroller after the debounce interval; sample only after
+  // those shifts stop and the live top card has reached the saved-anchor capture.
+  const before = await waitReviewSettled(page, 1);
   assert(
     before?.path && before.scrollTop > 200,
     `RV: expected a scrolled Review, got ${JSON.stringify(before)}`,

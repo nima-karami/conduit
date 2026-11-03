@@ -18,6 +18,33 @@ export interface WindowInput {
   measured: ReadonlyMap<number, number>;
 }
 
+/** Per-path measured slot heights, separated by the scroller width they were measured at. */
+export type ReviewMeasurementsByWidth = Map<number, Map<string, number>>;
+
+/** Return the path-height table for one exact scroller width, creating it on first use. */
+export function measurementsAtWidth(
+  measurements: ReviewMeasurementsByWidth,
+  width: number,
+): Map<string, number> {
+  let table = measurements.get(width);
+  if (!table) {
+    table = new Map();
+    measurements.set(width, table);
+  }
+  return table;
+}
+
+/** Preserve the active height for its scroll delta; other widths must remeasure changed card UI. */
+export function invalidateReviewMeasurementPath(
+  measurements: ReviewMeasurementsByWidth,
+  path: string,
+  activeWidth: number,
+): void {
+  for (const [width, table] of measurements) {
+    if (width !== activeWidth) table.delete(path);
+  }
+}
+
 export interface WindowResult {
   /** First mounted card (inclusive). */
   startIndex: number;

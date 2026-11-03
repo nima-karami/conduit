@@ -66,6 +66,8 @@ All notable user-facing changes to Conduit. Format follows
   again and **Discard** drops it.
 
 ### Fixed
+- Review keeps measurements for each pane width when moved between split groups.
+- An agent finishing a run while its terminal is viewed stays Idle without briefly showing Done.
 - File reveals expand ancestor folders even when a Windows target path uses different casing.
 - Approval buttons stay in place when the next queued request has a shorter summary.
 - A qualifying agent run after its startup prompt settles counts toward Done during the startup grace period.

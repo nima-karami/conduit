@@ -167,7 +167,9 @@ import {
   computeWindow,
   estimateCardHeight,
   fileAtOrAfter,
+  invalidateReviewMeasurementPath,
   measuredScrollShift,
+  measurementsAtWidth,
   planRowCap,
   REVIEW_GROUP_HEAD_H,
   type ReviewListItem,
@@ -621,10 +623,9 @@ export function ReviewView({
   // for all three sources; binary files count in `files` with 0 lines.
   const stat = useMemo(() => computeDiffstat(files), [files]);
 
-  // key → measured SLOT height (card border-box + GAP); keyed by path so it survives
-  // re-scan/reorder of `changes` (index is not stable, path is). Owned by the store, not by
-  // this instance — see ReviewListState.
-  const measuredRef = useRef(memory.measured);
+  // Per-width tables prevent a split-group measurement from describing a differently wrapped card.
+  // The active table is selected before restore and render from the measured scroller width.
+  const measuredRef = useRef(new Map<string, number>());
   // Per-path card UI (folds, "Show remaining", collapse). Also the store's, same reason.
   const uiCacheRef = useRef(memory.ui);
   // Absolute paths already requested — dedupes a card scrolled out and back (Decision D1).
@@ -648,6 +649,9 @@ export function ReviewView({
 
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  measuredRef.current = measurementsAtWidth(memory.measuredByWidth, viewportWidth);
+  const pendingWidthAnchorRef = useRef<{ topPath: string; offset: number } | null>(null);
   // Bumped purely to force a re-render when a measured height changes (the cache lives in a ref
   // for stable closures, so mutating it doesn't re-render on its own). `win` is recomputed
   // inline below, so the next render reads the fresh cache — otherwise totalHeight + padBottom
@@ -1310,38 +1314,79 @@ export function ReviewView({
   useLayoutEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
-    setViewportHeight(el.clientHeight);
-    const ro = new ResizeObserver(() => setViewportHeight(el.clientHeight));
+    const measureViewport = () => {
+      const width = el.clientWidth;
+      if (width !== viewportWidth) {
+        if (pendingWidthAnchorRef.current === null && viewportWidth > 0 && itemCount > 0) {
+          pendingWidthAnchorRef.current = computeReviewAnchor(
+            el.scrollTop,
+            itemCount,
+            heightOf,
+            (i) => itemKeys[i],
+          );
+        }
+        setViewportWidth(width);
+      }
+      setViewportHeight(el.clientHeight);
+    };
+    measureViewport();
+    const ro = new ResizeObserver(measureViewport);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [heightOf, itemCount, itemKeys, viewportWidth]);
+
+  useLayoutEffect(() => {
+    const anchor = pendingWidthAnchorRef.current;
+    if (!anchor) return;
+    const el = scrollerRef.current;
+    if (!el || el.clientWidth !== viewportWidth) return;
+    pendingWidthAnchorRef.current = null;
+    const top = resolveReviewAnchor(anchor, itemCount, heightOf, indexOfKey);
+    el.scrollTop = top;
+    setScrollTop(top);
+  }, [viewportWidth, itemCount, heightOf, indexOfKey]);
 
   // Re-measure invalidation on font-scale change: row heights are scale-derived, so cached
   // measurements would misplace cards. Drop the cache and re-measure on the next mount.
   useEffect(() => {
     const root = document.documentElement;
     const obs = new MutationObserver(() => {
-      measuredRef.current.clear();
+      for (const table of memory.measuredByWidth.values()) table.clear();
       setMeasureTick((t) => t + 1);
     });
     obs.observe(root, { attributes: true, attributeFilter: ['style'] });
     return () => obs.disconnect();
-  }, []);
+  }, [memory.measuredByWidth]);
 
   const onMeasure = useCallback(
     (key: string, cardHeight: number) => {
       const slot = cardHeight + GAP;
       const fi = pathIndex.get(key);
       if (fi === undefined) return;
-      const prev = measuredRef.current.get(key) ?? estimateSlot(files[fi]);
-      if (measuredRef.current.get(key) === slot) return;
-      measuredRef.current.set(key, slot);
+      const el = scrollerRef.current;
+      const actualWidth = el?.clientWidth ?? viewportWidth;
+      const widthChanged = actualWidth !== viewportWidth;
+      if (widthChanged && el) {
+        if (pendingWidthAnchorRef.current === null) {
+          pendingWidthAnchorRef.current = computeReviewAnchor(
+            el.scrollTop,
+            itemCount,
+            heightOf,
+            (i) => itemKeys[i],
+          );
+        }
+        measuredRef.current = measurementsAtWidth(memory.measuredByWidth, actualWidth);
+        setViewportWidth(actualWidth);
+      }
+      const table = measuredRef.current;
+      const prev = table.get(key) ?? estimateSlot(files[fi]);
+      if (table.get(key) === slot) return;
+      table.set(key, slot);
 
       // Scroll anchoring: a card ABOVE the viewport that changes height shifts the scroller by
       // the delta, so the content under the viewport stays put (no jump).
-      const el = scrollerRef.current;
       const idx = itemIndexOfKey.get(key);
-      if (el && idx !== undefined) {
+      if (el && idx !== undefined && !widthChanged) {
         let itemTop = 0;
         for (let i = 0; i < idx; i++) itemTop += heightOf(i);
         const shift = measuredScrollShift(el.scrollTop, itemTop, prev, slot);
@@ -1370,7 +1415,18 @@ export function ReviewView({
       }
       setMeasureTick((t) => t + 1);
     },
-    [files, pathIndex, itemIndexOfKey, itemCount, estimateSlot, heightOf, indexOfKey],
+    [
+      files,
+      pathIndex,
+      itemIndexOfKey,
+      itemCount,
+      estimateSlot,
+      heightOf,
+      indexOfKey,
+      itemKeys,
+      memory.measuredByWidth,
+      viewportWidth,
+    ],
   );
 
   // onMeasure's shift assumes the offset still belongs to the layout before the card resized.
@@ -1403,9 +1459,21 @@ export function ReviewView({
     [requestOnce],
   );
 
-  const setCardUi = useCallback((key: string, next: CardUiState) => {
-    uiCacheRef.current.set(key, next);
-  }, []);
+  const setCardUi = useCallback(
+    (key: string, next: CardUiState) => {
+      const previous = uiCacheRef.current.get(key);
+      uiCacheRef.current.set(key, next);
+      if (
+        !previous ||
+        previous.collapsed !== next.collapsed ||
+        previous.showRemaining !== next.showRemaining ||
+        previous.folds !== next.folds
+      ) {
+        invalidateReviewMeasurementPath(memory.measuredByWidth, key, viewportWidth);
+      }
+    },
+    [memory.measuredByWidth, viewportWidth],
+  );
 
   // A bulk toggle has to reach cards the window hasn't mounted, so it writes the per-path cache
   // (which a fresh mount seeds from) AND bumps a nonce the mounted cards react to.
@@ -1416,12 +1484,15 @@ export function ReviewView({
       for (const key of fileKeys) {
         const prev = uiCacheRef.current.get(key) ?? emptyUi(collapsed);
         uiCacheRef.current.set(key, { ...prev, collapsed });
+        if (prev.collapsed !== collapsed) {
+          invalidateReviewMeasurementPath(memory.measuredByWidth, key, viewportWidth);
+        }
       }
       keepInViewRef.current = activePathRef.current;
       setBulk((b) => ({ collapsed, nonce: b.nonce + 1 }));
       setAnnounce(collapsed ? 'Collapsed every file' : 'Expanded every file');
     },
-    [fileKeys],
+    [fileKeys, memory.measuredByWidth, viewportWidth],
   );
 
   // The two caches above ARE the store's own objects, but React state cannot be aliased —

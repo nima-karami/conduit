@@ -69,4 +69,25 @@ describe('review anchor restore runs pre-paint', () => {
     // no height to accept, which clamps it straight back to 0.
     expect(VIEW.slice(at, at + 600)).toMatch(/viewportHeight === 0\)\s*return;/);
   });
+
+  it('selects measurements for the scroller width before resolving the saved anchor', () => {
+    const select = only('measurementsAtWidth(memory.measuredByWidth, viewportWidth)');
+    const restore = only('const top = resolveReviewAnchor(saved, itemCount, heightOf, indexOfKey)');
+    expect(select).toBeLessThan(restore);
+    expect(VIEW).toMatch(/const width = el\.clientWidth;/);
+    expect(effectKindAt(only('setViewportWidth(width)'))).toBe('useLayoutEffect');
+  });
+
+  it('switches width tables while carrying the live anchor across a resize', () => {
+    expect(VIEW).toMatch(/pendingWidthAnchorRef\.current = computeReviewAnchor/);
+    expect(VIEW).toMatch(/resolveReviewAnchor\(anchor, itemCount, heightOf, indexOfKey\)/);
+  });
+
+  it('does not write a resized card into the old width table or shift against the old layout', () => {
+    const measure = only('const actualWidth = el?.clientWidth ?? viewportWidth;');
+    const write = only('table.set(key, slot);');
+    const shift = only('if (el && idx !== undefined && !widthChanged) {');
+    expect(measure).toBeLessThan(write);
+    expect(write).toBeLessThan(shift);
+  });
 });

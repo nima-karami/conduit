@@ -82,13 +82,7 @@ import {
   sessionSections,
 } from '../src/session-sections';
 import type { ChangesViewMode, RightPaneTab } from '../src/settings';
-import {
-  type AgentRuntime,
-  advanceAgentRuntime,
-  defaultNewAgentProject,
-  parseSidebarUi,
-  type SidebarUiState,
-} from '../src/sidebar-state';
+import { defaultNewAgentProject, parseSidebarUi, type SidebarUiState } from '../src/sidebar-state';
 import {
   autoRelaunchTargets,
   canRelaunch,
@@ -353,6 +347,7 @@ import {
 } from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
 import { sessionDirtyPaths } from './unsaved-files';
+import { useAgentRuntime } from './use-agent-runtime';
 import { useBackgroundOpenFeedback } from './use-background-open-feedback';
 import { useConduitMcp } from './use-conduit-mcp';
 import { useDirtyClose } from './use-dirty-close';
@@ -1964,29 +1959,13 @@ export function App() {
     () => new Set(viewedTerminalId === undefined ? [] : [viewedTerminalId]),
     [viewedTerminalId],
   );
-  const [agentRuntime, setAgentRuntime] = useState<AgentRuntime>({ seen: {}, stateSince: {} });
-  const runtimeStepRef = useRef<{
-    previous: AgentRuntime | null;
-    before: readonly Session[];
-    asks: ReadonlySet<string>;
-  }>({ previous: null, before: [], asks: new Set() });
   const sessionsLoaded = state?.sessionsLoaded === true;
-  useEffect(() => {
-    // Until the first authoritative snapshot there is nothing to baseline against.
-    if (!sessionsLoaded) return;
-    const step = runtimeStepRef.current;
-    const next = advanceAgentRuntime({
-      previous: step.previous,
-      before: step.before,
-      sessions: treeSessions,
-      previousAskSessionIds: step.asks,
-      askSessionIds,
-      viewedTerminalIds,
-      now: Date.now(),
-    });
-    runtimeStepRef.current = { previous: next, before: treeSessions, asks: askSessionIds };
-    setAgentRuntime(next);
-  }, [sessionsLoaded, treeSessions, askSessionIds, viewedTerminalIds]);
+  const nextAgentRuntime = useAgentRuntime({
+    sessionsLoaded,
+    sessions: treeSessions,
+    askSessionIds,
+    viewedTerminalIds,
+  });
   const [lastFocusedId, setLastFocusedId] = useState<string | undefined>(undefined);
   const [lastFocusedBySpace, setLastFocusedBySpace] = useState<Readonly<Record<string, string>>>(
     {},
@@ -2037,7 +2016,7 @@ export function App() {
   const sidebarTree = useMemo<SidebarTreeContextValue>(
     () => ({
       ui: sidebarUi,
-      runtime: agentRuntime,
+      runtime: nextAgentRuntime,
       askSessionIds,
       bindings,
       lastFocusedBySpace,
@@ -2048,7 +2027,7 @@ export function App() {
     }),
     [
       sidebarUi,
-      agentRuntime,
+      nextAgentRuntime,
       askSessionIds,
       bindings,
       lastFocusedBySpace,

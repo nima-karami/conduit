@@ -171,6 +171,12 @@ async function phaseSections({ page, log, sid }) {
   log('collapse → bar only; expand → top level ✓');
 
   // AC8: a terminal cd moves session.cwd but not the Files sections.
+  // The PowerShell cwd hook emits the current path before its default `PS <path>>` prompt.
+  await page.waitForFunction(
+    ({ s, prompt }) => (window.__capBy?.[s] ?? '').toLowerCase().includes(prompt.toLowerCase()),
+    { s: sid, prompt: `${rmb}>` },
+    { timeout: 30000 },
+  );
   await page.evaluate(
     ({ s, sub }) => {
       window.agentDeck.post({ type: 'term:input', sessionId: s, data: `cd "${sub}"\r` });

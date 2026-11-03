@@ -121,6 +121,8 @@ describe('advanceAgentRuntime', () => {
     // behind an editor, a background split or an unfocused window is simply absent from this set.
     const r1 = step(r0, [a0, b0], [a1, b1], { viewed: ids('b') });
     expect(r1.seen).toEqual({ a: 0, b: 1 });
+    expect(agentOwnState(a1, r1.seen.a, false)).toBe('done');
+    expect(agentOwnState(b1, r1.seen.b, false)).toBe('idle');
   });
 
   it('clamps seen to a counter that decreased (a server restart)', () => {

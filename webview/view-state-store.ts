@@ -1,4 +1,5 @@
 import type * as monaco from 'monaco-editor';
+import type { ReviewMeasurementsByWidth } from './review-window';
 
 /**
  * Per-tab view-state store (spec 2026-06-30-tab-scroll-state-memory §3). A module
@@ -41,8 +42,8 @@ export interface ReviewCardUi {
 /**
  * Everything the Review list remembers besides its scroll anchor.
  *
- * `ui` and `measured` are the LIVE objects the view mutates — `uiCacheRef.current` and
- * `measuredRef.current` point AT them rather than copying, so nothing has to be captured before
+ * `ui` and `measuredByWidth` are the LIVE objects the view mutates — `uiCacheRef.current` and
+ * the selected `measuredRef.current` point AT them rather than copying, so nothing has to be captured before
  * the unmount a tab switch causes and there is no second copy that could drift. The rest is
  * React state, which cannot be aliased, so the view mirrors it here after every render.
  */
@@ -52,8 +53,8 @@ export interface ReviewListState {
    *  is unmounted, and a ref born on the next mount cannot see that the content changed. */
   sourceKey: string;
   ui: Map<string, ReviewCardUi>;
-  /** path → measured slot height (card border-box + gap). */
-  measured: Map<string, number>;
+  /** Scroller width → path → measured slot height (card border-box + gap). */
+  measuredByWidth: ReviewMeasurementsByWidth;
   bulk: { collapsed: boolean; nonce: number };
   /** The navigator's fuzzy path filter. */
   filter: string;
@@ -73,7 +74,7 @@ function freshReviewListState(): ReviewListState {
   return {
     sourceKey: '',
     ui: new Map(),
-    measured: new Map(),
+    measuredByWidth: new Map(),
     bulk: { collapsed: false, nonce: 0 },
     filter: '',
     search: { open: false, query: '', caseSensitive: false, all: false, matchIndex: 0 },
@@ -242,7 +243,7 @@ export function adoptReviewSource(id: string | undefined, sourceKey: string): bo
   if (list.sourceKey === sourceKey) return false;
   list.sourceKey = sourceKey;
   list.ui.clear();
-  list.measured.clear();
+  list.measuredByWidth.clear();
   if (id !== undefined) mergeReviewViewState(id, { anchor: { topPath: '', offset: 0 } });
   return true;
 }

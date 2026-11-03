@@ -183,10 +183,10 @@ describe('review list state', () => {
   it('hands the same bag back on a remount, so the view can alias its maps', () => {
     const first = acquireReviewListState(ID);
     first.ui.set('a.ts', { folds: new Map(), showRemaining: true, collapsed: true });
-    first.measured.set('a.ts', 412);
+    first.measuredByWidth.set(225, new Map([['a.ts', 412]]));
     expect(acquireReviewListState(ID)).toBe(first);
     expect(acquireReviewListState(ID).ui.get('a.ts')?.collapsed).toBe(true);
-    expect(acquireReviewListState(ID).measured.get('a.ts')).toBe(412);
+    expect(acquireReviewListState(ID).measuredByWidth.get(225)?.get('a.ts')).toBe(412);
   });
 
   it('keeps the bag when the anchor moves', () => {
@@ -216,7 +216,8 @@ describe('review list state', () => {
     const list = acquireReviewListState(ID);
     adoptReviewSource(ID, sourceKey);
     list.ui.set('a.ts', { folds: new Map(), showRemaining: true, collapsed: true });
-    list.measured.set('a.ts', 412);
+    list.measuredByWidth.set(225, new Map([['a.ts', 412]]));
+    list.measuredByWidth.set(524, new Map([['a.ts', 218]]));
     list.filter = 'src/';
     mergeReviewViewState(ID, { anchor: { topPath: 'a.ts', offset: 90 } });
     return list;
@@ -230,7 +231,7 @@ describe('review list state', () => {
     // Same object: a mounted view holds these maps by reference and must see them emptied.
     expect(acquireReviewListState(ID)).toBe(list);
     expect(list.ui.size).toBe(0);
-    expect(list.measured.size).toBe(0);
+    expect(list.measuredByWidth.size).toBe(0);
     expect(getViewState(ID)).toMatchObject({ topPath: '', offset: 0 });
     // The find bar and the file filter are not content — a source change leaves them alone.
     expect(list.filter).toBe('src/');
@@ -242,7 +243,7 @@ describe('review list state', () => {
     expect(adoptReviewSource(ID, 'working')).toBe(false);
 
     expect(list.ui.size).toBe(1);
-    expect(list.measured.get('a.ts')).toBe(412);
+    expect(list.measuredByWidth.get(225)?.get('a.ts')).toBe(412);
     expect(getViewState(ID)).toMatchObject({ topPath: 'a.ts', offset: 90 });
   });
 
@@ -258,7 +259,7 @@ describe('review list state', () => {
     expect(remounted).toBe(list);
     expect(adoptReviewSource(ID, 'commit:abc123')).toBe(true);
     expect(remounted.ui.size).toBe(0);
-    expect(remounted.measured.size).toBe(0);
+    expect(remounted.measuredByWidth.size).toBe(0);
   });
 
   it('a first adopt on a fresh bag reports a reset without anything to lose', () => {

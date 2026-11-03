@@ -4,7 +4,9 @@ import {
   computeWindow,
   estimateCardHeight,
   fileAtOrAfter,
+  invalidateReviewMeasurementPath,
   measuredScrollShift,
+  measurementsAtWidth,
   planRowCap,
   REVIEW_GROUP_HEAD_H,
   resolveReviewAnchor,
@@ -248,6 +250,44 @@ describe('review scroll anchor', () => {
     if (a) expect(resolveReviewAnchor(a, 4, h, indexOfPath)).toBe(250);
   });
 
+  it.each([
+    [225, 767, 524, 460],
+    [524, 460, 225, 767],
+  ])(
+    'round-trips from width %i through height %i to width %i and back',
+    (width, slot, otherWidth, otherSlot) => {
+      const byWidth = new Map<number, Map<string, number>>();
+      const first = measurementsAtWidth(byWidth, width);
+      for (const path of paths) first.set(path, slot);
+      const originalTop = slot * 2 + 16;
+      const original = computeReviewAnchor(
+        originalTop,
+        3,
+        (i) => first.get(paths[i]) ?? 100,
+        pathOf,
+      );
+      if (!original) throw new Error('expected an anchor for the measured list');
+
+      const other = measurementsAtWidth(byWidth, otherWidth);
+      expect(other.size).toBe(0);
+      for (const path of paths) other.set(path, otherSlot);
+      expect(resolveReviewAnchor(original, 3, (i) => other.get(paths[i]) ?? 100, indexOfPath)).toBe(
+        otherSlot * 2 + 16,
+      );
+
+      const back = resolveReviewAnchor(
+        original,
+        3,
+        (i) => measurementsAtWidth(byWidth, width).get(paths[i]) ?? 100,
+        indexOfPath,
+      );
+      expect(computeReviewAnchor(back, 3, (i) => first.get(paths[i]) ?? 100, pathOf)).toEqual(
+        original,
+      );
+      expect(back).toBe(originalTop);
+    },
+  );
+
   it('resolves to the same card even when heights changed (offset preserved)', () => {
     // Card b is now 60px tall above it (a=0..60), so b starts at 60; anchor {b, 20} → 80.
     const variable = (i: number) => (i === 0 ? 60 : 100);
@@ -260,6 +300,35 @@ describe('review scroll anchor', () => {
 
   it('last card anchors even when scrolled past content end', () => {
     expect(computeReviewAnchor(99999, 4, h, pathOf)?.topPath).toBe('d');
+  });
+});
+
+describe('width-specific review measurements', () => {
+  it('invalidates other widths but preserves the active measurement for scroll anchoring', () => {
+    const byWidth = new Map<number, Map<string, number>>([
+      [
+        225,
+        new Map([
+          ['a', 767],
+          ['b', 751],
+        ]),
+      ],
+      [
+        524,
+        new Map([
+          ['a', 460],
+          ['b', 443],
+        ]),
+      ],
+    ]);
+    invalidateReviewMeasurementPath(byWidth, 'a', 225);
+    expect(byWidth.get(225)).toEqual(
+      new Map([
+        ['a', 767],
+        ['b', 751],
+      ]),
+    );
+    expect(byWidth.get(524)).toEqual(new Map([['b', 443]]));
   });
 });
 
