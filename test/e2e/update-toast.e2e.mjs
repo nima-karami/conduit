@@ -101,14 +101,20 @@ function assertNoShift(before, after, what) {
   }
 }
 
-/** Facts about the card and its stack, read in one tick. */
+/** Facts about the card and its stack, read after toast-in has settled. */
 const cardFacts = (page) =>
   page.evaluate(
-    ({ card, stack }) => {
+    async ({ card, stack }) => {
       const cards = document.querySelectorAll(card);
       const el = cards[0];
       const stacks = document.querySelectorAll(stack);
       if (!el) return { count: 0, stacks: stacks.length };
+      // toast-in starts at translateY(6px); measuring mid-animation under-reports bottom inset.
+      const stackEl = el.closest(stack);
+      const waitFinished = (node) =>
+        Promise.all((node?.getAnimations?.() ?? []).map((a) => a.finished.catch(() => {})));
+      await waitFinished(el);
+      await waitFinished(stackEl);
       const r = el.getBoundingClientRect();
       const bar = el.querySelector('[role="progressbar"]');
       const cx = r.x + r.width / 2;

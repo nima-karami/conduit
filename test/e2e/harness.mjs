@@ -1245,21 +1245,29 @@ export function terminalFace(page) {
 /**
  * Delays the bundled terminal faces, so a reload settles its layout late (the timing behind the
  * terminal-size scenarios). The faces are local files, which Playwright's page.route cannot see,
- * so the window's session delays them in webRequest; the page's cache is disabled so a reload
- * re-requests them instead of reusing the faces the last document held. `delayMs` must exceed the
- * boot font timeout (webview/terminal-fonts.ts, 3 s), or the app waits for the face before its
- * first terminal and nothing is late. `assertFontsHeldBack` proves the hold was exercised.
+ * so the window's session delays them in webRequest (also the URL recorder — Electron allows only
+ * one onBeforeRequest listener per session). `delayMs` must exceed the boot font timeout
+ * (webview/terminal-fonts.ts, 3 s), or the app waits for the face before its first terminal and
+ * nothing is late. `assertFontsHeldBack` proves the hold was exercised.
+ *
+ * Root cause for reload: Playwright's `page.reload()` uses ignoreCache:false, and CDP
+ * `Network.setCacheDisabled` on the pre-reload target does not force file:// face re-fetches —
+ * Blink reuses the previous document's IBM Plex Mono faces without hitting webRequest, so
+ * assertFontsPending sees them already loaded. While the hold is armed, `page.reload` is routed
+ * through `webContents.reloadIgnoringCache()` so the hold sees the reloaded document's requests.
  */
 export async function holdBackLocalFonts(app, page, delayMs) {
   await app.evaluate(
     ({ BrowserWindow }, { ms, src }) => {
       const re = new RegExp(src, 'i');
-      const hold = { requests: 0 };
+      const hold = { requests: 0, urls: [] };
       globalThis.__e2eFontHold = hold;
       const ses = BrowserWindow.getAllWindows()[0].webContents.session;
       ses.webRequest.onBeforeRequest({ urls: ['file:///*'] }, (details, callback) => {
-        if (!re.test(decodeURI(details.url))) return callback({});
+        const url = decodeURI(details.url);
+        if (!re.test(url)) return callback({});
         hold.requests++;
+        hold.urls.push(url);
         setTimeout(() => callback({}), ms);
       });
     },
@@ -1268,7 +1276,37 @@ export async function holdBackLocalFonts(app, page, delayMs) {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Network.enable');
   await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
-  return { app, cdp };
+
+  const originalReload = page.reload.bind(page);
+  page.reload = async (options) => {
+    try {
+      await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
+    } catch {
+      /* target may be mid-navigation; reloadIgnoringCache still bypasses the face cache */
+    }
+    const waitUntil = options?.waitUntil ?? 'load';
+    await Promise.all([
+      page.waitForNavigation({ waitUntil, timeout: options?.timeout }),
+      app.evaluate(({ BrowserWindow }) => {
+        BrowserWindow.getAllWindows()[0].webContents.reloadIgnoringCache();
+      }),
+    ]);
+  };
+  // Keep a handle so callers can restore if they ever need the stock reload.
+  page.reload._e2eOriginal = originalReload;
+
+  return { app, cdp, page };
+}
+
+/**
+ * out/*.ttf URLs matched by the hold/recorder onBeforeRequest listener. Same tap as
+ * holdBackLocalFonts (Electron allows only one listener per session).
+ *
+ * @param {object} app
+ * @param {object} [_page]
+ */
+export async function tapLocalFontRequests(app, _page) {
+  return app.evaluate(() => globalThis.__e2eFontHold?.urls ?? []);
 }
 
 /** At mount: the terminal font's faces are registered and none of them has loaded yet. */
