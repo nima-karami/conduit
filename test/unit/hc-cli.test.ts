@@ -5,7 +5,14 @@ import {
   startSupervisor,
   supervisorEnv,
 } from '../../electron/hc-cli';
-import { HC_XDG_ISOLATED_ENV, serverChildEnv, serverProcessEnv } from '../../server/hc-cli';
+import {
+  directStopAll,
+  directStopSessions,
+  HC_XDG_ISOLATED_ENV,
+  serverChildEnv,
+  serverProcessEnv,
+} from '../../server/hc-cli';
+import type { HcClient } from '../../src/contracts/hc';
 import {
   CORE_START_RUN_FLAGS,
   coreStartEnv,
@@ -88,6 +95,136 @@ const START = {
 };
 
 describe('hc-cli', () => {
+  it('strips inherited Node IPC variables before spawning hc descendants', () => {
+    const env = serverChildEnv(
+      {
+        ...APP_ENV,
+        NODE_CHANNEL_FD: '3',
+        NODE_CHANNEL_SERIALIZATION_MODE: 'json',
+      },
+      names,
+    );
+    expect(Object.keys(env).filter((key) => key.startsWith('NODE_CHANNEL_'))).toEqual([]);
+    expect(env.PATH).toBe('/bin');
+    expect(env.HC_SESSION).toBe(names.hcSession);
+  });
+
+  function stopClient(options: { killError?: Error; listError?: Error } = {}) {
+    const trace: unknown[] = [];
+    let lists = 0;
+    const hc: HcClient = {
+      call: (async (method: string, params: unknown) => {
+        trace.push({ method, params });
+        if (method === 'terminal.list') {
+          if (options.listError) throw options.listError;
+          return {
+            terminals:
+              ++lists === 1
+                ? [
+                    { address: 'agent-1', state: 'live' },
+                    { address: 'agent-2', state: 'live' },
+                  ]
+                : [],
+          };
+        }
+        if (method === 'terminal.get') return { address: 'supervisor', state: 'live' };
+        if (method === 'terminal.kill' && options.killError) throw options.killError;
+        return {};
+      }) as HcClient['call'],
+      attach: async () => {
+        throw new Error('unexpected terminal attach');
+      },
+      subscribe: async () => {
+        throw new Error('unexpected terminal subscription');
+      },
+      onConnection: () => {
+        throw new Error('unexpected connection subscription');
+      },
+      close: () => {
+        trace.push('close');
+      },
+    };
+    return { hc, trace };
+  }
+
+  it('directStopSessions kills only the labelled sessions and leaves its client to the caller', async () => {
+    const { hc, trace } = stopClient();
+    await expect(directStopSessions(hc, names)).resolves.toBe(2);
+    expect(trace).toEqual([
+      {
+        method: 'terminal.list',
+        params: { labels: { 'conduit.instance': 'abc', 'conduit.role': 'session' } },
+      },
+      { method: 'terminal.kill', params: { terminal: 'agent-1' } },
+      { method: 'terminal.kill', params: { terminal: 'agent-2' } },
+    ]);
+  });
+
+  it('directStopSessions tolerates terminals disappearing without counting them as killed', async () => {
+    const { hc, trace } = stopClient({
+      killError: new HcRpcError(-32000, 'gone', { kind: 'not_found' }),
+    });
+    await expect(directStopSessions(hc, names)).resolves.toBe(0);
+    expect(trace).toEqual([
+      {
+        method: 'terminal.list',
+        params: { labels: { 'conduit.instance': 'abc', 'conduit.role': 'session' } },
+      },
+      { method: 'terminal.kill', params: { terminal: 'agent-1' } },
+      { method: 'terminal.kill', params: { terminal: 'agent-2' } },
+    ]);
+  });
+
+  it('directStopSessions reports hc disconnects and kill failures to its caller', async () => {
+    for (const options of [
+      { listError: new HcDisconnectedError() },
+      { killError: new Error('kill denied') },
+    ]) {
+      const { hc } = stopClient(options);
+      await expect(directStopSessions(hc, names)).rejects.toBe(
+        options.listError ?? options.killError,
+      );
+    }
+  });
+
+  it('directStopAll keeps its session, supervisor, re-list, close and core-stop ordering', async () => {
+    const { hc, trace } = stopClient();
+    await expect(
+      directStopAll(hc, names, async () => {
+        trace.push('stop');
+      }),
+    ).resolves.toBe(2);
+    expect(trace).toEqual([
+      {
+        method: 'terminal.list',
+        params: { labels: { 'conduit.instance': 'abc', 'conduit.role': 'session' } },
+      },
+      { method: 'terminal.kill', params: { terminal: 'agent-1' } },
+      { method: 'terminal.kill', params: { terminal: 'agent-2' } },
+      { method: 'terminal.get', params: { terminal: 'conduit-server-abc' } },
+      { method: 'terminal.kill', params: { terminal: 'supervisor' } },
+      { method: 'terminal.list', params: {} },
+      'close',
+      'stop',
+    ]);
+  });
+
+  it('directStopAll preserves its disconnected-core result and closes the client', async () => {
+    const { hc, trace } = stopClient({ listError: new HcDisconnectedError() });
+    await expect(
+      directStopAll(hc, names, async () => {
+        trace.push('stop');
+      }),
+    ).resolves.toBe(0);
+    expect(trace).toEqual([
+      {
+        method: 'terminal.list',
+        params: { labels: { 'conduit.instance': 'abc', 'conduit.role': 'session' } },
+      },
+      'close',
+    ]);
+  });
+
   it('startSupervisor ensures the core, then terminal.run with the unique name, labels, no_parent and argv', async () => {
     const { deps, trace, runs, execCalls, closed } = cli();
     expect(await startSupervisor(deps, START)).toEqual({ ok: true });
