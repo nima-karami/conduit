@@ -24,7 +24,7 @@ import { classifyLinkUri, dispatchLinkUri, type LinkUriSinks } from '../../src/l
 import { isAncestorOf } from '../../src/owning-session';
 import type { ResolveRoot } from '../../src/path-link-roots';
 import type { PathCandidate, TokenResolution } from '../../src/path-resolve';
-import type { HostToWebview, ServerUiState, TermGeometry } from '../../src/protocol';
+import type { HostToWebview, ServerUiState, TermGeometry, TermStartMode } from '../../src/protocol';
 import { withTimeout } from '../../src/with-timeout';
 import {
   logToHost,
@@ -243,6 +243,7 @@ export function TerminalPane({
   onOpenAsSession,
   openAsSessionHint,
   inputBox,
+  startMode = 'run',
 }: {
   sessionId: string;
   agentId?: string;
@@ -282,6 +283,8 @@ export function TerminalPane({
   openAsSessionHint?: string;
   /** The session agent's input prompt row and prompt echo, when it has an adapter (inputBoxPrompt). */
   inputBox?: InputBoxPrompt;
+  /** Read when the pane first starts: a session that exited before then is viewed, never spawned. */
+  startMode?: TermStartMode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -324,6 +327,8 @@ export function TerminalPane({
   rootsSigRef.current = rootsSig;
   const agentIdRef = useRef(agentId);
   agentIdRef.current = agentId;
+  const startModeRef = useRef(startMode);
+  startModeRef.current = startMode;
   const inputBoxRef = useRef(inputBox);
   inputBoxRef.current = inputBox;
   const onOpenFileRef = useRef(onOpenFile);
@@ -1123,6 +1128,7 @@ export function TerminalPane({
           rows: term.rows,
           agentId: agentIdRef.current,
           cwd: cwdRef.current,
+          ...(startModeRef.current === 'view' ? { mode: 'view' as const } : {}),
         });
         term.focus();
       } else {

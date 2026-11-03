@@ -89,6 +89,12 @@ export class ScrollbackStore {
     return replay;
   }
 
+  /** `replayForColdStart` for a pane over no child: nothing follows the replay, so nothing is recorded. */
+  replayForView(sessionId: string): ColdReplay | undefined {
+    const ring = this.rings.get(sessionId);
+    return ring ? coldReplay(ring.toRing()) : undefined;
+  }
+
   /**
    * A host-composed line in the session's stream. The ring must hold exactly what the terminal
    * was shown, or a later replay drifts from it: a spawn clear replayed without the padding that

@@ -49,6 +49,13 @@ export interface TermGeometry {
   rows: number;
 }
 
+/**
+ * How a pane's `term:start` starts its session. `run` spawns one that isn't live; `view` never
+ * spawns: an exited session's pane is remounted with its stored output and exit line, so it need
+ * not stay mounted to keep them. A live session attaches either way.
+ */
+export type TermStartMode = 'run' | 'view';
+
 /** The next `length` chars of a replay's data, and the size to write them at (absent: the pane's). */
 export interface ReplayRun {
   length: number;
@@ -1262,6 +1269,8 @@ export type WebviewToHost =
       rows: number;
       agentId?: string;
       cwd?: string;
+      /** Absent = 'run', what an older renderer sends. */
+      mode?: TermStartMode;
     }
   | { type: 'term:input'; sessionId: string; data: string }
   // The pane's colours and cell size, sent before term:start and on a theme or font change: the

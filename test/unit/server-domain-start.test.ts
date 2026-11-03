@@ -687,3 +687,99 @@ describe('server domain: exit codes and dropped roots', () => {
     });
   });
 });
+
+describe("server domain: sessions.start mode 'view'", () => {
+  const viewStart = async (h: ReturnType<typeof harness>, sessionId: string, mode: unknown) =>
+    (await h.call('sessions.start', { sessionId, mode })) as SessionStartResult;
+  const history = { data: 'old output', replay: [{ length: 10 }] };
+
+  const exitedSession = async (h: ReturnType<typeof harness>, code: number | null) => {
+    const id = await h.create();
+    await start(h, id);
+    h.runtime.terminals.delete(id);
+    h.runtime.fire({ type: 'exit', sessionId: id, generation: 1, code, reason: 'exited' });
+    expect(h.domain.sessions.get(id)?.status).toBe('exited');
+    return id;
+  };
+
+  it('an exited session: the stored history and exit code, with no spawn, record, show or status change', async () => {
+    const h = harness({ replay: history });
+    const id = await exitedSession(h, 7);
+    const spawns = h.runtime.spawns.length;
+    const recorded = h.recorded.length;
+    const coldReplays = h.calls.filter((c) => c.startsWith('replay:')).length;
+    const r = await viewStart(h, id, 'view');
+    expect(r).toEqual({ ok: true, viewed: { exitCode: 7 }, prelude: history });
+    expect(h.runtime.spawns).toHaveLength(spawns);
+    expect(h.recorded).toHaveLength(recorded);
+    expect(h.calls.filter((c) => c.startsWith('replay:'))).toHaveLength(coldReplays);
+    expect(h.calls.filter((c) => c === `view:${id}`)).toHaveLength(1);
+    expect(h.shown).toEqual([]);
+    expect(h.domain.sessions.get(id)?.status).toBe('exited');
+    // Viewing again is the same paint: nothing was added to replay twice.
+    expect(await viewStart(h, id, 'view')).toEqual(r);
+  });
+
+  it('with no stored history: an empty paint, and a null exit code when none is known', async () => {
+    const h = harness();
+    const id = await exitedSession(h, null);
+    expect(await viewStart(h, id, 'view')).toEqual({
+      ok: true,
+      viewed: { exitCode: null },
+      prelude: { data: '', replay: [] },
+    });
+    expect(h.runtime.spawns).toHaveLength(1);
+  });
+
+  it('takes no replay with scrollback persistence off', async () => {
+    const h = harness({
+      replay: history,
+      files: {
+        'server-settings.json': JSON.stringify({
+          version: 1,
+          settings: { scrollbackPersistence: false },
+        }),
+      },
+    });
+    const id = await exitedSession(h, 0);
+    expect(await viewStart(h, id, 'view')).toMatchObject({ prelude: { data: '', replay: [] } });
+    expect(h.calls.some((c) => c.startsWith('view:'))).toBe(false);
+  });
+
+  it('a live session attaches as a run start does', async () => {
+    const h = harness();
+    const id = await h.create();
+    await start(h, id);
+    expect(await viewStart(h, id, 'view')).toMatchObject({
+      ok: true,
+      spawned: false,
+      generation: 1,
+    });
+    expect(h.runtime.spawns).toHaveLength(1);
+  });
+
+  it('never spawns a session that is not live, whatever its status says', async () => {
+    const h = harness();
+    const id = await h.create();
+    await h.call('sessions.relaunch', { sessionIds: [id] });
+    expect(await viewStart(h, id, 'view')).toMatchObject({ ok: true, viewed: {} });
+    expect(h.runtime.spawns).toHaveLength(0);
+  });
+
+  it("an absent or unknown mode is 'run' (an older app's start spawns as before)", async () => {
+    const h = harness();
+    const a = await exitedSession(h, 1);
+    expect(await viewStart(h, a, undefined)).toMatchObject({ ok: true, spawned: true });
+    const b = await exitedSession(h, 1);
+    expect(await viewStart(h, b, 'later')).toMatchObject({ ok: true, spawned: true });
+    const c = await exitedSession(h, 1);
+    expect(await viewStart(h, c, 'run')).toMatchObject({ ok: true, spawned: true });
+  });
+
+  it('refuses a missing session as not_found', async () => {
+    const h = harness();
+    await expect(viewStart(h, 'nope', 'view')).rejects.toSatisfy((e: unknown) =>
+      isFault(e, 'not_found'),
+    );
+  });
+});

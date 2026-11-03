@@ -16,7 +16,7 @@ import type {
 import type { McpUiState } from '../conduit-mcp/ui-types';
 import type { DroppedRoot } from '../folder-validation';
 import type { LauncherDTO } from '../launchers';
-import type { HostToWebview, TermGeometry, WebviewToHost } from '../protocol';
+import type { HostToWebview, TermGeometry, TermStartMode, WebviewToHost } from '../protocol';
 import type { AppSettings } from '../settings';
 import type {
   AgentDefinition,
@@ -248,6 +248,16 @@ export type SessionStartResult =
     }
   | {
       /**
+       * `mode: 'view'` on a session that isn't live: nothing spawned, recorded or changed. `prelude`
+       * is the stored history with the cold replay's mode neutralizer (empty with none); the app
+       * writes it, then the exit line for `exitCode`, and attaches nothing.
+       */
+      ok: true;
+      viewed: { exitCode: number | null };
+      prelude: FirstPaint;
+    }
+  | {
+      /**
        * Nothing spawned. The pane's text for it (today's can't-start line) arrives as `term.show`
        * before this reply, through ScrollbackPort.show, so it is in the ring too.
        */
@@ -395,10 +405,11 @@ export interface ServerMethods {
    * Spawns if not live; concurrent calls for one session share one spawn (F2). Resolves on hc's
    * reply or a core connection loss, never a clock; the loss is a `spawn_unconfirmed` refusal and the
    * session shows `unconfirmed` until it registers late or a person retries or discards it (D21).
-   * `prelude` comes from C7 ScrollbackPort.
+   * `prelude` comes from C7 ScrollbackPort. `mode: 'view'` never spawns: a live session attaches,
+   * any other answers `viewed`. Absent or unknown = 'run', so an older app's start is unchanged.
    */
   'sessions.start': {
-    params: { sessionId: string };
+    params: { sessionId: string; mode?: TermStartMode };
     result: SessionStartResult;
   };
   /**

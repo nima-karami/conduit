@@ -34,10 +34,12 @@ function rig(results: StartResult[], opts: { connected?: boolean; firstPaint?: s
   const trace: string[] = [];
   const sent: HostToWebview[] = [];
   const attaches: { history: number; events: TerminalLinkEvents; closed: boolean }[] = [];
+  const params: unknown[] = [];
   let connected = opts.connected ?? true;
   let views: AppSessionView[] = [view()];
   const client = {
-    call: async (m: string) => {
+    call: async (m: string, p?: unknown) => {
+      params.push(p);
       trace.push(`call:${m}`);
       const r = results.shift();
       if (!r) throw new Error('no scripted result');
@@ -82,6 +84,7 @@ function rig(results: StartResult[], opts: { connected?: boolean; firstPaint?: s
     trace,
     sent,
     attaches,
+    params,
     setViews: (v: AppSessionView[]) => {
       const prev = views;
       views = v;
@@ -376,5 +379,78 @@ describe('terminal-host', () => {
     r.host.serverConnected();
     await flush();
     expect(r.attaches).toHaveLength(1);
+  });
+
+  describe("mode 'view'", () => {
+    const VIEW = { ...START, mode: 'view' } as const;
+    const exited = view({
+      status: 'exited',
+      exitCode: 7,
+      runtime: { generation: 1, spawn: 'none', reportedStatus: null, lastSize: null },
+    });
+    const viewed = (exitCode: number | null, data = 'OLD'): StartResult => ({
+      ok: true,
+      viewed: { exitCode },
+      prelude: data ? paint(data) : { data: '', replay: [] },
+    });
+
+    it("a run start's params carry no mode, as an older app's did", async () => {
+      const r = rig([live()]);
+      await r.host.start(START);
+      expect(r.params).toEqual([{ sessionId: 's1' }]);
+    });
+
+    it('asks for a view, writes the stored output, then the exit line, and attaches nothing', async () => {
+      const r = rig([viewed(7)]);
+      r.setViews([exited]);
+      await r.host.start(VIEW);
+      expect(r.params).toEqual([{ sessionId: 's1', mode: 'view' }]);
+      expect(r.trace.filter((t) => !t.startsWith('notify'))).toEqual([
+        'call:sessions.start',
+        'data:OLD:replay',
+        'exit:7',
+      ]);
+      expect(r.attaches).toHaveLength(0);
+    });
+
+    it('with no stored output and no code: only the process exited line', async () => {
+      const r = rig([viewed(null, '')]);
+      r.setViews([exited]);
+      await r.host.start(VIEW);
+      expect(r.sent).toEqual([
+        { type: 'term:data', sessionId: 's1', data: '\r\n\x1b[2m[process exited]\x1b[0m\r\n' },
+      ]);
+    });
+
+    it('a server reconnect does not paint the view again, with or without a generation', async () => {
+      for (const generation of [1, null]) {
+        const r = rig([viewed(7)]);
+        r.setViews([{ ...exited, runtime: { ...exited.runtime, generation } }]);
+        await r.host.start(VIEW);
+        r.host.serverConnected();
+        r.host.hcReconnected();
+        await flush();
+        expect(r.trace.filter((t) => t === 'call:sessions.start')).toHaveLength(1);
+        expect(r.sent.filter((m) => m.type === 'term:exit')).toHaveLength(1);
+      }
+    });
+
+    it('a view of a session the server has live attaches', async () => {
+      const r = rig([live()]);
+      await r.host.start(VIEW);
+      expect(r.params).toEqual([{ sessionId: 's1', mode: 'view' }]);
+      expect(r.attaches).toHaveLength(1);
+    });
+
+    it('a view pane mounted while down asks for a view on serverConnected', async () => {
+      const r = rig([viewed(7)], { connected: false });
+      r.setViews([exited]);
+      await r.host.start(VIEW);
+      r.setConnected(true);
+      r.host.serverConnected();
+      await flush();
+      expect(r.params).toEqual([{ sessionId: 's1', mode: 'view' }]);
+      expect(r.attaches).toHaveLength(0);
+    });
   });
 });

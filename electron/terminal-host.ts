@@ -7,7 +7,7 @@ import {
   type TerminalLink,
   type TerminalLinkFactory,
 } from '../src/contracts/terminal-link';
-import type { HostToWebview, TermGeometry, WebviewToHost } from '../src/protocol';
+import type { HostToWebview, TermGeometry, TermStartMode, WebviewToHost } from '../src/protocol';
 import type { AppSessionStore } from './app-session-store';
 import type { AppLog, ServerClient } from './server-client';
 
@@ -30,6 +30,9 @@ interface Pane {
   /** restartSeq bumped: the renderer remounts this pane, so it attaches nothing more. */
   retired: boolean;
   exitShown: boolean;
+  mode: TermStartMode;
+  /** A view's stored output is in the xterm: a reconnect must not write it again. */
+  viewed: boolean;
 }
 
 export interface TerminalHostDeps {
@@ -144,7 +147,9 @@ export function createTerminalHost(d: TerminalHostDeps) {
       if (f) c.notify('term.facts', { sessionId, facts: f });
       let r: StartResult;
       try {
-        r = await c.call(method, { sessionId });
+        // A run start's params stay what an older app sent; a retry is always a new launch.
+        const view = method === 'sessions.start' && pane.mode === 'view';
+        r = await c.call(method, view ? { sessionId, mode: 'view' } : { sessionId });
       } catch (error) {
         d.log('warn', `${method} failed`, { sessionId, err: String(error) });
         return;
@@ -165,6 +170,14 @@ export function createTerminalHost(d: TerminalHostDeps) {
         showExit(sessionId, pane, r.finished.exitCode);
         return;
       }
+      if ('viewed' in r) {
+        pane.viewed = true;
+        writePaint(sessionId, r.prelude);
+        releaseShow(sessionId, pane);
+        showExit(sessionId, pane, r.viewed.exitCode);
+        return;
+      }
+      pane.viewed = false;
       if (r.prelude) writePaint(sessionId, r.prelude);
       releaseShow(sessionId, pane);
       await attach(sessionId, pane, r.target, r.generation, APP_ATTACH_HISTORY_LINES);
@@ -197,6 +210,8 @@ export function createTerminalHost(d: TerminalHostDeps) {
         heldShow: null,
         retired: false,
         exitShown: false,
+        mode: m.mode === 'view' ? 'view' : 'run',
+        viewed: false,
       };
       panes.set(m.sessionId, pane);
       await run(m.sessionId, pane);
@@ -284,6 +299,7 @@ export function createTerminalHost(d: TerminalHostDeps) {
       if (!c) return;
       for (const [sessionId, pane] of panes) {
         if (pane.endedGeneration !== null && pane.generation === pane.endedGeneration) continue;
+        if (pane.viewed) continue;
         if (!pane.link) {
           void run(sessionId, pane);
           continue;
