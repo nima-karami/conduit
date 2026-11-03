@@ -6,6 +6,13 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Switching between terminal sessions no longer flashes black.** 0.53.1 released a hidden
+  terminal's graphics renderer and attached it again when you came back, which painted one or two
+  blank frames. Hidden terminals keep their renderer again (up to 12 per window, as before 0.53.1);
+  measured on a hardware GPU, releasing it saved no measurable graphics memory, so 0.53.1's note that
+  hidden terminals no longer hold graphics memory did not hold.
+
 ## [0.53.1] — 2026-11-03
 
 ### Fixed
