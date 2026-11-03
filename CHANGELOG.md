@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.52.0] — 2026-11-03
+
 ### Changed
 - Selecting an agent restores its remembered editor tabs and split group. Use **Go to** or an
   attention target to jump straight to its Terminal tab.
