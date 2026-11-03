@@ -156,6 +156,9 @@ export function FilesView({
   presentRef.current = present;
   const homePath = present[0]?.path;
   const [searchText, setSearchText] = useState('');
+  const [pendingReveal, setPendingReveal] = useState<{ sessionId: string; path: string } | null>(
+    null,
+  );
   // D5 drag-and-drop, pane-wide so moves between folders work (spec §2.2). `draggedPaths` is the
   // internal drag set ([] for an OS-origin drag); `dropTargetPath` is the SINGLE folder path to
   // highlight — keyed on its own path so only one row or section lights up (spec M1).
@@ -284,11 +287,24 @@ export function FilesView({
         // our mirror) so the revealed file is actually visible in the tree below.
         searchPaneRef.current?.clear();
         setSearchText('');
-        sectionFor(absPath)?.revealInTree(absPath);
+        setPendingReveal({ sessionId, path: absPath });
       },
     }),
-    [searchPaneRef, sectionFor],
+    [searchPaneRef, sessionId],
   );
+
+  // The pane queue can drain before this session's folder sections have mounted.
+  useEffect(() => {
+    if (!pendingReveal) return;
+    if (pendingReveal.sessionId !== sessionId) {
+      setPendingReveal(null);
+      return;
+    }
+    const section = sectionFor(pendingReveal.path);
+    if (!section) return;
+    section.revealInTree(pendingReveal.path);
+    setPendingReveal(null);
+  });
 
   /** Announce an outcome via the polite live region (things only visible users get from toasts). */
   const announce = useCallback((msg: string) => {

@@ -116,6 +116,20 @@ const reviewAnchor = (page, g) =>
       scrollTop: Math.round(el.scrollTop),
       path: card?.getAttribute('data-path') ?? null,
       offset: card ? Math.round(y - card.getBoundingClientRect().top) : null,
+      metrics: {
+        width: el.clientWidth,
+        viewportHeight: el.clientHeight,
+        scrollHeight: el.scrollHeight,
+        pads: [...el.querySelectorAll('.review__pad')].map((p) => p.getBoundingClientRect().height),
+        cards: [...el.querySelectorAll('.rcard')].map((c) => ({
+          path: c.getAttribute('data-path'),
+          height: c.getBoundingClientRect().height,
+        })),
+        font: card?.querySelector('.rline')
+          ? getComputedStyle(card.querySelector('.rline')).font
+          : null,
+        fonts: document.fonts.status,
+      },
     };
   }, G(g));
 

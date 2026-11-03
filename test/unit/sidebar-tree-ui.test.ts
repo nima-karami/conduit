@@ -544,6 +544,27 @@ describe('search', () => {
 });
 
 describe('states and ages', () => {
+  it('keeps row identity across snapshots and shows a start refusal as Stopped with its reason', async () => {
+    const s = session('nope', { agentId: 'nope-agent' });
+    await render({ sessions: [s], ui: { foldedGroups: [] } });
+    const before = rowEl('nope');
+    for (let i = 0; i < 5; i++) {
+      await act(async () => setSessions([{ ...s, lastActiveAt: NOW + i }]));
+      expect(rowEl('nope')).toBe(before);
+    }
+    await act(async () =>
+      setSessions([
+        {
+          ...s,
+          status: 'stale',
+          startRefusal: { reason: 'unresolvable', command: 'conduit-nope-xyz' },
+        },
+      ]),
+    );
+    expect(rowEl('nope')).toBe(before);
+    expect(before.getAttribute('aria-label')).toBe('nope, Stopped');
+    expect(before.title).toContain("Can't start: conduit-nope-xyz wasn't found");
+  });
   it('hydrating shows a loading placeholder, not the first-run state', async () => {
     await render({ sessions: [], sessionsLoaded: false });
     expect(document.body.textContent).toContain('Loading agents…');

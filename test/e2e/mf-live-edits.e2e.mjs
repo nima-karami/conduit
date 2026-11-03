@@ -50,6 +50,7 @@ import {
   profileDir,
   REPO,
   removeDir,
+  revealSessionRow,
   showRightView,
   shutdownApp,
   stopServer,
@@ -588,7 +589,15 @@ const rowCantStart = (page, id) =>
 
 async function phaseCantStart({ page, sid }) {
   const nope = await openSession(page, { path: S, agentId: 'nope-agent' });
-  await page.locator(`.session[data-sessionid="${nope}"]`).click();
+  await page.waitForFunction(
+    (id) => window.__sessions?.some((s) => s.id === id && s.status !== 'running'),
+    nope,
+    { timeout: 10_000 },
+  );
+  await revealSessionRow(page, nope);
+  await page
+    .locator(`[data-agent-tree] .session[data-sessionid="${nope}"] [data-agent-action="select"]`)
+    .click();
   const reason = page.locator('.session-stale .session-stale__detail');
   const shows = async () =>
     (await rowCantStart(page, nope))?.stopped === true &&
@@ -606,7 +615,9 @@ async function phaseCantStart({ page, sid }) {
   await page.waitForTimeout(1500);
   assert(await shows(), 'B1: after Relaunch refuses again, the reason is still shown');
   await page.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), nope);
-  await page.locator(`.session[data-sessionid="${sid}"]`).click();
+  await page
+    .locator(`[data-agent-tree] .session[data-sessionid="${sid}"] [data-agent-action="select"]`)
+    .click();
   log("B1: Can't start — conduit-nope-xyz wasn't found, Relaunch retries ✓");
 }
 

@@ -64,6 +64,9 @@ All notable user-facing changes to Conduit. Format follows
   again and **Discard** drops it.
 
 ### Fixed
+- Approval buttons stay in place when the next queued request has a shorter summary.
+- A qualifying agent run after its startup prompt settles counts toward Done during the startup grace period.
+- File reveals wait for their folder section to mount before expanding the tree.
 - **Terminal symbols render in the right font.** Characters like ✔ ❯ ⚠ ⏺ ⎿ ● no longer come out
   in a mismatched fallback font, and a font that finishes loading late no longer leaves a mix of
   fonts on screen. Cascadia Mono and Segoe UI Symbol now back every mono font.

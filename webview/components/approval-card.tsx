@@ -202,20 +202,6 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
           </button>
         </div>
       </div>
-      <div className="askcard__actions" key={ask.askId}>
-        {ANSWERS.map((answer) => (
-          <button
-            key={answer}
-            type="button"
-            className={answer === 'approve' ? 'btn btn--sm btn--primary' : 'btn btn--sm'}
-            data-answer={answer}
-            aria-disabled={guarded}
-            onClick={() => onAnswer(answer)}
-          >
-            {STR[answer]}
-          </button>
-        ))}
-      </div>
       <div className="askcard__summary">{summaryText(ask.summary)}</div>
       <div className="askcard__reason">{reasonText(ask)}</div>
       <div className="askcard__raw">
@@ -232,6 +218,20 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
         <div id={rawId} hidden={!rawOpen}>
           {rawOpen && <pre className="askcard__args">{JSON.stringify(ask.args, null, 2)}</pre>}
         </div>
+      </div>
+      <div className="askcard__actions" key={ask.askId}>
+        {ANSWERS.map((answer) => (
+          <button
+            key={answer}
+            type="button"
+            className={answer === 'approve' ? 'btn btn--sm btn--primary' : 'btn btn--sm'}
+            data-answer={answer}
+            aria-disabled={guarded}
+            onClick={() => onAnswer(answer)}
+          >
+            {STR[answer]}
+          </button>
+        ))}
       </div>
     </section>
   );

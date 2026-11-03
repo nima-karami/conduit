@@ -394,9 +394,23 @@ describe('server domain: sessions.start', () => {
     expect(r).toEqual({ ok: false, refusal: { reason: 'unresolvable', command: 'sh' } });
     expect(h.shown.find((s) => s.sessionId === id)?.data).toContain("can't start: sh not found");
     expect(h.runtime.spawns).toHaveLength(0);
-    expect(h.domain.snapshot().sessions.find((s) => s.id === id)?.startRefusal).toEqual({
+    const view = h.domain.snapshot().sessions.find((s) => s.id === id);
+    expect(view?.status).toBe('stale');
+    expect(view?.startRefusal).toEqual({
       reason: 'unresolvable',
       command: 'sh',
+    });
+    expect(h.events).toContainEqual({
+      type: 'sessions.changed',
+      data: {
+        sessions: expect.arrayContaining([
+          expect.objectContaining({
+            id,
+            status: 'stale',
+            startRefusal: { reason: 'unresolvable', command: 'sh' },
+          }),
+        ]),
+      },
     });
   });
 

@@ -406,17 +406,17 @@ describe('ApprovalCard', () => {
     });
   });
 
-  it('the title row holds the pager and the actions sit right under it, above the text (QA L2)', () => {
+  it('the bottom-docked actions follow all variable-height content (QA L2)', () => {
     mount();
     emit(ask('a1'));
     emit(ask('a2', { handle: 'codex-2' }));
     const order = () => [...(region()?.children ?? [])].map((c) => c.className);
     const want = [
       'askcard__head',
-      'askcard__actions',
       'askcard__summary',
       'askcard__reason',
       'askcard__raw',
+      'askcard__actions',
     ];
     expect(order()).toEqual(want);
     expect(region()?.querySelector('.askcard__head .askcard__pager')?.textContent).toContain(

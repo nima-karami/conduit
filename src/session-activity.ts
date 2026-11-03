@@ -77,6 +77,7 @@ interface Entry {
    */
   doneStartAt: number | undefined;
   doneBytes: number;
+  startupSettled: boolean;
   pendingBell: boolean;
   /** Episode latch: an armed session cannot arm again until it is acknowledged. */
   armed: boolean;
@@ -95,6 +96,7 @@ const newEntry = (at: number): Entry => ({
   runBytes: 0,
   doneStartAt: undefined,
   doneBytes: 0,
+  startupSettled: false,
   pendingBell: false,
   armed: false,
   spawnAt: undefined,
@@ -147,16 +149,19 @@ export class SessionActivity {
     const wasBusy = e.busy;
     e.busy = true;
 
+    // See sidebar-agent-tree spec §4: a new run after startup settles can complete without
+    // changing the legacy notification grace below.
+    if (!this.inSpawnGrace(e, now) || e.startupSettled) {
+      if (e.doneStartAt === undefined || sinceLast >= this.busyWindowMs) {
+        e.doneStartAt = now;
+        e.doneBytes = 0;
+      }
+      e.doneBytes += bytes;
+    } else clearDone(e);
     if (this.inSpawnGrace(e, now)) {
       clearRun(e);
-      clearDone(e);
       return !wasBusy;
     }
-    if (e.doneStartAt === undefined || sinceLast >= this.busyWindowMs) {
-      e.doneStartAt = now;
-      e.doneBytes = 0;
-    }
-    e.doneBytes += bytes;
     // A session the user is already watching is not attention evidence (contract 4); it still
     // completes runs, above.
     if (this.isVisible(id)) {
@@ -186,6 +191,7 @@ export class SessionActivity {
     e.armed = false;
     e.exited = false;
     e.spawnAt = now;
+    e.startupSettled = false;
     this.entries.set(id, e);
   }
 
@@ -250,11 +256,12 @@ export class SessionActivity {
       if (e.busy && now - e.lastOutputAt >= this.busyWindowMs) {
         e.busy = false;
         e.completedRun = true;
+        e.startupSettled = true;
         changed = true;
       }
       if (
         !e.exited &&
-        !this.inSpawnGrace(e, now) &&
+        (!this.inSpawnGrace(e, now) || e.startupSettled) &&
         this.quietQualified(e.doneStartAt, e.doneBytes, e.lastOutputAt, now)
       ) {
         completedIds.push(id);

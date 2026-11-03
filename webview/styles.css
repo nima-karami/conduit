@@ -7053,10 +7053,8 @@ body.gh-resizing {
   outline-offset: 2px;
   box-shadow: var(--focus-ring), var(--elev-3);
 }
-/* The action row sits at a fixed offset from the card's top: a swap to the next ask (pager gone,
-   another summary length) never moves a button under a press already on its way (QA L2). So the
-   head is one line and the pager keeps its slot with one ask, and everything that varies goes
-   below. */
+/* See QA L2: actions are last so variable-height content grows upward in the bottom-anchored
+   toast dock, keeping buttons at a fixed offset from the bottom during a request swap. */
 .askcard__head {
   display: flex;
   align-items: center;

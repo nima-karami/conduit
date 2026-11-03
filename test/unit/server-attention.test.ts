@@ -174,6 +174,40 @@ describe('ServerAttention — completions and reasons (sidebar-agent-tree spec �
     return { attentionReason: s.attentionReason, completions: s.completions };
   };
 
+  it('counts the fake MCP agent busy run after its startup prompt has settled', () => {
+    setup();
+    at(100);
+    data('fake❯');
+    at(1600);
+    attention.sweep();
+    expect(attention.statusOf('a').busy).toBe(false);
+    for (let n = 1; n <= 30; n++) {
+      at(1700 + n * 100);
+      data(`working ${n}\r\n`);
+      attention.sweep();
+    }
+    data('fake❯');
+    at(8700);
+    attention.sweep();
+    expect(facts().completions).toBe(1);
+    expect(edges).toEqual([]);
+    at(30_000);
+    attention.sweep();
+    expect(facts().completions).toBe(1);
+  });
+
+  it('does not count small mid-turn dribbles separated by busy-window pauses', () => {
+    setup();
+    for (let n = 0; n < 10; n++) {
+      at(10_000 + n * 2000);
+      data(`working ${n}\r\n`);
+      attention.sweep();
+    }
+    at(40_000);
+    attention.sweep();
+    expect(facts().completions).toBe(0);
+  });
+
   it('an untracked session reads neutral facts', () => {
     setup();
     expect(attention.statusOf('nobody')).toEqual({

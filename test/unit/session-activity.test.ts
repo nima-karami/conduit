@@ -405,6 +405,15 @@ describe('SessionActivity — output clock accessor', () => {
 });
 
 describe('SessionActivity — completion evidence (sidebar-agent-tree spec §4)', () => {
+  it('counts a new run after startup has gone idle, even before the grace deadline', () => {
+    const a = make();
+    a.recordSpawn('s', 0);
+    a.recordOutput('s', 100, 6, 0);
+    a.sweep(100 + WINDOW);
+    for (let n = 1; n <= 30; n++) a.recordOutput('s', 1700 + n * 100, 12, 0);
+    expect(a.sweep(8700).completedIds).toEqual(['s']);
+    expect(a.sweep(30_000).completedIds).toEqual([]);
+  });
   it('a qualifying run reports one completion after the quiet gap, alongside the legacy edge', () => {
     const a = make();
     const end = runByDuration(a, 's', 0);
