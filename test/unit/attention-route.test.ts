@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { AttentionEntry } from '../../src/attention';
 import { activateSessionTerminal, routeAttention } from '../../src/attention-route';
 import type { Handle } from '../../src/conduit-mcp/types';
-import { groupActive } from '../../webview/doc-groups';
+import { activeGroupOf, groupActive } from '../../webview/doc-groups';
 import { docsReducer, initialDocs } from '../../webview/docs';
 
 const entry = (over: Partial<AttentionEntry>): AttentionEntry => ({
@@ -13,6 +15,43 @@ const entry = (over: Partial<AttentionEntry>): AttentionEntry => ({
   reason: null,
   handle: null,
   ...over,
+});
+
+it('App rows select without activating a document; explicit Go to and attention target Terminal', () => {
+  const app = readFileSync(join(__dirname, '../../webview/app.tsx'), 'utf8');
+  expect(app.includes('onSelect={selectAgent}')).toBe(true);
+  const action = app.slice(app.indexOf('const selectAgent ='), app.indexOf('const goToTerminal ='));
+  expect(action).toContain('setActiveId(sessionId)');
+  expect(action).toContain("setCenterView('editor')");
+  expect(action).not.toMatch(/dispatchDocs|requestTerminalFocus|activateSessionTerminal/);
+  expect(app).toContain('select: () => goToTerminal(s.id)');
+  expect(app).toContain('focusSession: goToTerminal');
+});
+
+it('a bare session switch restores both groups and the focused group, including a re-selection', () => {
+  let docs = docsReducer(initialDocs, {
+    type: 'open',
+    kind: 'file',
+    path: '/left.ts',
+    sessionId: 's1',
+  });
+  docs = docsReducer(docs, { type: 'splitRight', sessionId: 's1' });
+  docs = docsReducer(docs, {
+    type: 'open',
+    kind: 'file',
+    path: '/right.ts',
+    sessionId: 's1',
+    group: 2,
+  });
+  const remembered = docs.layouts.s1;
+  docs = docsReducer(docs, { type: 'switchSession', sessionId: 's2' });
+  docs = docsReducer(docs, { type: 'switchSession', sessionId: 's1' });
+  expect(docs.layouts.s1).toBe(remembered);
+  expect(groupActive(docs, 's1', 1)).toBe('file:/left.ts');
+  expect(groupActive(docs, 's1', 2)).toBe('file:/right.ts');
+  expect(activeGroupOf(docs, 's1')).toBe(2);
+  expect(docs.activeId).toBe('file:/right.ts');
+  expect(docsReducer(docs, { type: 'switchSession', sessionId: 's1' })).toEqual(docs);
 });
 
 function routes() {

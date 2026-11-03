@@ -7,6 +7,8 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Changed
+- Selecting an agent restores its remembered editor tabs and split group. Use **Go to** or an
+  attention target to jump straight to its Terminal tab.
 - **The sidebar is now Spaces and Agents.** Projects are called **Spaces**: pick one at the top to
   filter, or **All**. Below it, agents are grouped by status — Pinned, Needs you, Done, Working,
   Idle, Stopped — with Stopped folded at first. **Done** means an agent finished a run you haven't
@@ -64,6 +66,7 @@ All notable user-facing changes to Conduit. Format follows
   again and **Discard** drops it.
 
 ### Fixed
+- File reveals expand ancestor folders even when a Windows target path uses different casing.
 - Approval buttons stay in place when the next queued request has a shorter summary.
 - A qualifying agent run after its startup prompt settles counts toward Done during the startup grace period.
 - File reveals wait for their folder section to mount before expanding the tree.

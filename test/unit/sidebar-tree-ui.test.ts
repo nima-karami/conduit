@@ -313,11 +313,14 @@ describe('keyboard', () => {
     expect(rowEl('p').querySelector('.session__kids')?.textContent).toBe('2');
   });
 
-  it('Enter goes to the agent; F2 renames; buttons never activate the row', async () => {
+  it('click and Enter select the agent; F2 renames; buttons never activate the row', async () => {
     const onSelect = vi.fn();
     const onSetRenaming = vi.fn();
     const onKill = vi.fn();
     await render({ sessions: family(), onSelect, onSetRenaming, onKill });
+    await click(rowEl('l').querySelector('[data-agent-action="select"]'));
+    expect(onSelect).toHaveBeenCalledWith('l');
+    onSelect.mockClear();
     await key(rowEl('l'), 'Enter');
     expect(onSelect).toHaveBeenCalledWith('l');
     await key(rowEl('l'), 'F2');

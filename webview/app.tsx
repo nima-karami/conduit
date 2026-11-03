@@ -2068,6 +2068,10 @@ export function App() {
     () => buildStatusBarModel({ sessions, activeId, entries: needYou }),
     [sessions, activeId, needYou],
   );
+  const selectAgent = useCallback((sessionId: string) => {
+    setActiveId(sessionId);
+    setCenterView('editor');
+  }, []);
   const goToTerminal = useCallback((sessionId: string) => {
     activateSessionTerminal(sessionId, {
       select: setActiveId,
@@ -5064,7 +5068,7 @@ export function App() {
             agents={agents}
             activeId={activeId}
             moveGrip={{ onDragStart: sdock.onDragStart, onDragEnd: sdock.onDragEnd }}
-            onSelect={goToTerminal}
+            onSelect={selectAgent}
             onNew={() => newAgentRef.current()}
             onKill={requestKill}
             onCloseAll={() =>

@@ -308,17 +308,21 @@ export function FolderSection({
     if (!target) return;
     const chain = ancestorDirChain(target, root);
     if (chain.length === 0) return; // not under this folder (yet) — wait or skip
+    let nodes = rootsRef.current;
     for (const dir of chain) {
       if (dir === root) {
         if (rootsRef.current.length === 0) return; // root not loaded yet — wait for it
         continue;
       }
-      const node = findNode(rootsRef.current, dir);
-      if (!node?.children) {
-        post({ type: 'readDir', path: dir }); // parent is loaded (we got here) → this lands
+      const dirKey = folderKey(dir);
+      const node = nodes.find((n) => n.kind === 'dir' && folderKey(n.path) === dirKey);
+      if (!node) return;
+      if (!node.children) {
+        post({ type: 'readDir', path: node.path });
         return;
       }
-      if (!node.expanded) setRoots((prev) => expandNode(prev, dir));
+      if (!node.expanded) setRoots((prev) => expandNode(prev, node.path));
+      nodes = node.children;
     }
     revealTargetRef.current = null;
   }, [root]);

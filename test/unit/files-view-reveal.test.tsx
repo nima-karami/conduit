@@ -2,10 +2,12 @@
 import { act, createElement, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { canonicalPath } from '../../src/canonical-path';
 import { folderKey } from '../../src/folder-key';
 import type { HostToWebview, WebviewToHost } from '../../src/protocol';
 import { activeTarget } from '../../webview/active-target';
 import { FilesView, type FilesViewHandle } from '../../webview/components/files-view';
+import type { TreeNode } from '../../webview/file-tree';
 import { SettingsProvider } from '../../webview/settings';
 
 const listeners = vi.hoisted(() => new Set<(m: HostToWebview) => void>());
@@ -22,7 +24,7 @@ vi.mock('../../webview/bridge', async (orig) => ({
 const noop = () => {};
 let root: Root | null = null;
 const pane = { current: null as FilesViewHandle | null };
-const home = 'D:/work/conduit';
+const home = 'D:\\work\\conduit';
 const path = `${home}/webview/components/right-pane.tsx`;
 let open: () => void;
 let showSections: () => void;
@@ -53,15 +55,49 @@ async function reply(dir: string, name: string, kind: 'dir' | 'file') {
   });
 }
 
-it.each([false, true])('reveals a search hit with delayed sections: %s', async (delayed) => {
-  const folderUi = { treeCache: new Map(), collapsed: new Set([folderKey(home)]) };
+const cases = [false, true].flatMap((delayed) =>
+  [false, true].flatMap((cached) =>
+    [false, true].map((caseVariant) => ({ delayed, cached, caseVariant })),
+  ),
+);
+
+it.each(cases)('reveals a search hit: %j', async ({ delayed, cached, caseVariant }) => {
+  const folderUi = {
+    treeCache: new Map<string, TreeNode[]>(
+      cached
+        ? [
+            [
+              folderKey(home),
+              [
+                {
+                  name: 'webview',
+                  path: `${home}/webview`,
+                  kind: 'dir',
+                  expanded: false,
+                  children: [
+                    {
+                      name: 'components',
+                      path: `${home}/webview/components`,
+                      kind: 'dir',
+                      expanded: false,
+                    },
+                  ],
+                },
+              ],
+            ],
+          ]
+        : [],
+    ),
+    collapsed: new Set([folderKey(home)]),
+  };
   function Harness() {
     const [target, setTarget] = useState<ReturnType<typeof activeTarget>>(null);
     const [ready, setReady] = useState(!delayed);
     showSections = () => setReady(true);
     open = () => {
-      setTarget(activeTarget({ kind: 'file', path }, 'editor'));
-      pane.current?.revealInTree(path);
+      const targetPath = canonicalPath(caseVariant ? path.replace('webview', 'WEBVIEW') : path);
+      setTarget(activeTarget({ kind: 'file', path: targetPath }, 'editor'));
+      pane.current?.revealInTree(targetPath);
     };
     return createElement(FilesView, {
       sessionId: 's',
@@ -108,9 +144,9 @@ it.each([false, true])('reveals a search hit with delayed sections: %s', async (
     await reply(home, 'webview', 'dir');
   }
   expect(folderUi.collapsed.size).toBe(0);
-  expect(posted).toContainEqual({ type: 'readDir', path: `${home}/webview` });
   await reply(`${home}/webview`, 'components', 'dir');
-  expect(posted).toContainEqual({ type: 'readDir', path: `${home}/webview/components` });
   await reply(`${home}/webview/components`, 'right-pane.tsx', 'file');
   expect(host.querySelector('.filerow--revealed')?.getAttribute('data-path')).toBe(path);
+  if (!cached) expect(posted).toContainEqual({ type: 'readDir', path: `${home}/webview` });
+  expect(posted).toContainEqual({ type: 'readDir', path: `${home}/webview/components` });
 });
