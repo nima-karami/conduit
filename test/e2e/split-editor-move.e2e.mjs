@@ -198,7 +198,7 @@ async function traceReviewMove(page) {
   const save = at('function mergeReviewViewState(', /store\.set\((\w+), (\w+)\)/);
   const restore = at(
     '// webview/components/review-view.tsx',
-    /const (\w+) = getViewState\((\w+)\)/,
+    /const (\w+) = (?:\w+ \? )?getViewState\((\w+)\)/,
   );
   const restored = at(lines[restore.lineNumber], /(\w+)\.scrollTop = (\w+);/);
   const measured = at('const slot = cardHeight + GAP', /(\w+)\.set\((\w+), (\w+)\)/);
@@ -355,7 +355,12 @@ try {
   await phaseMoveOneGroup(page);
 
   await phaseMove(page);
-  const stopReviewTrace = await traceReviewMove(page);
+  // The trace reads bundle internals that refactors legitimately reshape; losing it must not
+  // hide the Review assertions it exists to explain.
+  const stopReviewTrace = await traceReviewMove(page).catch((error) => {
+    console.log(`[RV diagnostics unavailable] ${error.message}`);
+    return async () => {};
+  });
   try {
     await phaseReviewMove(page);
   } finally {
