@@ -80,7 +80,8 @@ jobs:
       # from the cert subject. Hardcoding it on an UNSIGNED build embeds publisherName into
       # app-update.yml and makes electron-updater reject every (unsigned) update — the 0.1.13→0.2.0
       # auto-update breakage. See docs/WINDOWS-SIGNING.md.
-      - run: npx electron-builder --win --publish never -c.releaseInfo.releaseNotesFile=build/release-notes.md
+      # Quoted long form: pwsh splits an unquoted `-c.x=y` into `-c` and `.x=y`.
+      - run: npx electron-builder --win --publish never "--config.releaseInfo.releaseNotesFile=build/release-notes.md"
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
