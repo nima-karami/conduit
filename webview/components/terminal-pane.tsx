@@ -523,11 +523,11 @@ export function TerminalPane({
     if (!visible) setPicker(null);
   }, [visible]);
 
-  // A hidden pane holds no WebGL context (memory audit 2026-11-03). A layout effect, so it lands
-  // before the ResizeObserver's fit in the same frame: the DOM and WebGL renderers size the cell
-  // differently, and a renderer swapped after the fit leaves the cols fitted to the wrong cell.
-  // Hiding also lands before xterm's own observer pauses rendering, so the DOM renderer still
-  // draws its rows. On mount it runs before the terminal exists; register reads the ref.
+  // Which hidden panes keep WebGL is terminal-gpu.ts's call (RECENT_WEBGL_TERMINALS). A layout
+  // effect, so an attach lands before the ResizeObserver's fit in the same frame: the DOM and
+  // WebGL renderers size the cell differently, and a renderer swapped after the fit leaves the
+  // cols fitted to the wrong cell. On mount it runs before the terminal exists; register reads
+  // the ref.
   useLayoutEffect(() => {
     visibleRef.current = visible;
     const term = termRef.current;

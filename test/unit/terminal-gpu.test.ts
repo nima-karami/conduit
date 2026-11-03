@@ -5,6 +5,7 @@ import {
   GPU_REATTACH_DELAY_MS,
   GPU_UNAVAILABLE_RETRY_MS,
   MAX_WEBGL_TERMINALS,
+  RECENT_WEBGL_TERMINALS,
   remeasureFont,
 } from '../../webview/terminal-gpu';
 
@@ -266,9 +267,22 @@ describe('terminal GPU coordinator', () => {
     });
   });
 
-  // A hidden pane holds no WebGL context (memory audit 2026-11-03, mem-terminals finding 2).
+  // A hidden pane keeps WebGL while among the RECENT_WEBGL_TERMINALS (= the cap) most recently
+  // shown: a fresh attach on show blanks the frame (see the constant).
   describe('hidden terminals', () => {
     const names = (n: number, prefix = 't') => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
+    type Gpu = ReturnType<typeof harness>['gpu'];
+    /** Show `term` and hide `prev`, as one session switch does. */
+    const switchTo = (gpu: Gpu, prev: string, term: string) => {
+      gpu.setVisible(prev, false);
+      gpu.setVisible(term, true);
+    };
+    /** Register `ts[0]` shown and the rest hidden, then show each in turn. */
+    const cycle = (gpu: Gpu, ts: string[]) => {
+      gpu.register(ts[0] as string);
+      for (const t of ts.slice(1)) gpu.register(t, undefined, { visible: false });
+      for (let i = 1; i < ts.length; i++) switchTo(gpu, ts[i - 1] as string, ts[i] as string);
+    };
 
     it('a terminal registered hidden holds no WebGL until it is shown', () => {
       const { gpu, live, attempts } = harness();
@@ -278,26 +292,55 @@ describe('terminal GPU coordinator', () => {
       expect(live('a')).toHaveLength(1);
     });
 
-    it('hiding disposes the addon and showing attaches a fresh one', () => {
+    it('a recently shown terminal keeps its addon while hidden and is not re-attached on show', () => {
+      const { gpu, attempts, live } = harness();
+      cycle(gpu, ['a', 'b']);
+      switchTo(gpu, 'b', 'a');
+      expect(live().map((h) => h.term)).toEqual(['a', 'b']);
+      expect(attempts).toEqual(['a', 'b']);
+    });
+
+    it(`keeps the ${RECENT_WEBGL_TERMINALS} most recently shown, releasing the one before them`, () => {
       const { gpu, handles, live } = harness();
-      gpu.register('a');
+      cycle(gpu, names(RECENT_WEBGL_TERMINALS));
+      expect(handles[0]?.disposed).toBe(false);
+      gpu.register('next', undefined, { visible: false });
+      switchTo(gpu, `t${RECENT_WEBGL_TERMINALS - 1}`, 'next');
+      expect(handles[0]?.disposed).toBe(true);
+      expect(live()).toHaveLength(RECENT_WEBGL_TERMINALS);
+    });
+
+    it('showing a released terminal attaches a fresh addon', () => {
+      const { gpu, live, handles } = harness();
+      const ts = names(RECENT_WEBGL_TERMINALS + 1);
+      cycle(gpu, ts);
       const first = handles[0];
-      gpu.setVisible('a', false);
-      expect(first?.disposed).toBe(true);
-      expect(live()).toEqual([]);
-      gpu.setVisible('a', true);
+      switchTo(gpu, ts[ts.length - 1] as string, 't0');
+      expect(live('t0')).toHaveLength(1);
+      expect(live('t0')[0]).not.toBe(first);
+    });
+
+    it('a visible terminal is never released by recency', () => {
+      const { gpu, live } = harness();
+      gpu.register('split');
+      gpu.register('a');
+      for (const t of names(RECENT_WEBGL_TERMINALS + 2, 'h')) {
+        gpu.register(t, undefined, { visible: false });
+        switchTo(gpu, 'a', t);
+        switchTo(gpu, t, 'a');
+      }
+      expect(live('split')).toHaveLength(1);
       expect(live('a')).toHaveLength(1);
-      expect(live('a')[0]).not.toBe(first);
     });
 
     it('a repeated show or hide changes nothing', () => {
-      const { gpu, attempts, live } = harness();
+      const { gpu, attempts } = harness();
       gpu.register('a');
       gpu.setVisible('a', true);
+      gpu.setVisible('a', false);
+      gpu.setVisible('a', false);
+      gpu.setVisible('a', true);
       expect(attempts).toEqual(['a']);
-      gpu.setVisible('a', false);
-      gpu.setVisible('a', false);
-      expect(live()).toEqual([]);
     });
 
     it('ignores visibility for a terminal that is not registered', () => {
@@ -309,42 +352,35 @@ describe('terminal GPU coordinator', () => {
       expect(attempts).toEqual(['a']);
     });
 
-    it('unregistering a hidden terminal promotes nobody', () => {
+    it('an unregistered terminal leaves the recent set', () => {
       const { gpu, live } = harness();
-      for (const t of names(MAX_WEBGL_TERMINALS)) gpu.register(t);
-      gpu.register('wait0');
-      const offHidden = gpu.register('h', undefined, { visible: false });
-      offHidden();
-      expect(live('wait0')).toHaveLength(0);
+      const ts = names(RECENT_WEBGL_TERMINALS);
+      const offs = ts.map((t) => gpu.register(t));
+      for (const t of ts) gpu.setVisible(t, false);
+      offs[0]?.();
+      gpu.register('n');
+      expect(live().map((h) => h.term)).toEqual([...ts.slice(1), 'n']);
     });
 
-    it(`the cap of ${MAX_WEBGL_TERMINALS} counts visible terminals only`, () => {
+    it(`at the cap of ${MAX_WEBGL_TERMINALS} a shown terminal takes the slot of the least recent hidden one`, () => {
       const { gpu, live } = harness();
-      for (const t of names(MAX_WEBGL_TERMINALS)) gpu.register(t, undefined, { visible: false });
-      for (const t of names(MAX_WEBGL_TERMINALS, 'v')) gpu.register(t);
-      expect(live().map((h) => h.term)).toEqual(names(MAX_WEBGL_TERMINALS, 'v'));
-    });
-
-    it('hiding a WebGL terminal promotes the oldest visible waiting one, never a hidden one', () => {
-      const { gpu, live } = harness();
-      for (const t of names(MAX_WEBGL_TERMINALS)) gpu.register(t);
-      gpu.register('w0');
-      gpu.setVisible('w0', false);
-      gpu.register('w1');
-      gpu.setVisible('t3', false);
-      expect(live('w0')).toHaveLength(0);
-      expect(live('w1')).toHaveLength(1);
+      gpu.register('old');
+      gpu.setVisible('old', false);
+      for (const t of names(MAX_WEBGL_TERMINALS - 1, 'v')) gpu.register(t);
+      gpu.register('n', undefined, { visible: false });
+      gpu.setVisible('n', true);
+      expect(live('old')).toHaveLength(0);
+      expect(live('n')).toHaveLength(1);
       expect(live()).toHaveLength(MAX_WEBGL_TERMINALS);
     });
 
-    it('a terminal shown at the cap waits on the DOM renderer for a free slot', () => {
+    it('a terminal shown while every slot is visible waits on the DOM renderer', () => {
       const { gpu, live } = harness();
       for (const t of names(MAX_WEBGL_TERMINALS)) gpu.register(t);
       gpu.register('h', undefined, { visible: false });
       gpu.setVisible('h', true);
       expect(live('h')).toHaveLength(0);
-      gpu.setVisible('t0', false);
-      expect(live('h')).toHaveLength(1);
+      expect(live()).toHaveLength(MAX_WEBGL_TERMINALS);
     });
 
     it('the re-attach after a loss attaches visible terminals only and counts itself complete', () => {
@@ -356,6 +392,8 @@ describe('terminal GPU coordinator', () => {
       advance(GPU_REATTACH_DELAY_MS);
       expect(live().map((h) => h.term)).toEqual(['a']);
       expect(events).toEqual(['context-lost', 'reattach']);
+      gpu.setVisible('b', true);
+      expect(live('b')).toHaveLength(1);
     });
 
     it('a terminal shown during the fallback waits for the re-attach', () => {
