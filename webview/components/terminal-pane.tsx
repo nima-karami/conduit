@@ -1,7 +1,15 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { type ILinkProvider, Terminal } from '@xterm/xterm';
-import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import '@xterm/xterm/css/xterm.css';
 import type { DisplayFacts } from '../../src/contracts/frames';
 import { FILE_INDEX_TTL_MS } from '../../src/file-index-ttl';
@@ -61,6 +69,7 @@ import { CONTEXT_WINDOW_LINES, inferContextRoot } from '../terminal-context-root
 import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
 import { terminalFontFamily } from '../terminal-fonts';
 import { terminalGpu } from '../terminal-gpu';
+import { createGpuVisibilityGate, type GpuVisibilityGate } from '../terminal-gpu-visibility';
 import { lastPick, notePick } from '../terminal-link-picks';
 import {
   detectCommitTokens,
@@ -284,6 +293,8 @@ export function TerminalPane({
   // The size the host's PTY was last given. Any fit that leaves the xterm at another size must
   // tell the host, or the PTY addresses rows the xterm doesn't have (cursor below the prompt).
   const sentSizeRef = useRef<TermGeometry | null>(null);
+  const visibleRef = useRef(visible);
+  const gpuGateRef = useRef<GpuVisibilityGate | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const { settings, update } = useSettings();
 
@@ -509,6 +520,13 @@ export function TerminalPane({
     if (!visible) setPicker(null);
   }, [visible]);
 
+  // A layout effect: the release must land before xterm's observer sees the pane hidden (see
+  // terminal-gpu-visibility.ts). On mount it runs before the terminal exists, which reads the ref.
+  useLayoutEffect(() => {
+    visibleRef.current = visible;
+    gpuGateRef.current?.setWanted(visible);
+  }, [visible]);
+
   useEffect(() => {
     if (!ref.current) return;
     const suppressLinkMiddleDown = (e: MouseEvent) => {
@@ -518,6 +536,7 @@ export function TerminalPane({
     let fit: FitAddon;
     let search: SearchAddon;
     let unregisterGpu: (() => void) | null = null;
+    let gpuObserver: IntersectionObserver | null = null;
     // Assigned once the fit/facts helpers below exist; a font refresh only arrives after that.
     let refitAfterFonts = () => {};
     const reportGpuLoss = () => terminalGpu.reportLoss(term);
@@ -630,10 +649,31 @@ export function TerminalPane({
         if (lines !== 0) term.scrollLines(lines);
         return false;
       });
+      const registered = term;
+      const gpuGate = createGpuVisibilityGate(visibleRef.current, (v) =>
+        terminalGpu.setVisible(registered, v),
+      );
+      // Created after term.open, so it reports after xterm's own observer on the same element.
+      const screenEl = term.element?.querySelector('.xterm-screen');
+      if (screenEl && typeof IntersectionObserver !== 'undefined') {
+        gpuObserver = new IntersectionObserver(
+          (entries) => {
+            const last = entries[entries.length - 1];
+            if (last) gpuGate.intersection(last.isIntersecting);
+          },
+          { threshold: 0 },
+        );
+        gpuObserver.observe(screenEl);
+      }
+      gpuGateRef.current = gpuGate;
       // Last in the try: a throw before it would return from the effect with no cleanup, leaking
       // the terminal's WebGL slot. The renderer draws box/block glyphs to fill the cell (crisper).
-      unregisterGpu = terminalGpu.register(term, () => refitAfterFonts());
+      unregisterGpu = terminalGpu.register(term, () => refitAfterFonts(), {
+        visible: visibleRef.current,
+      });
     } catch (e) {
+      gpuObserver?.disconnect();
+      gpuGateRef.current = null;
       logToHost(`xterm init failed: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
@@ -1148,6 +1188,8 @@ export function TerminalPane({
       factsAfterFitRef.current = () => {};
       disposeLinkCaches();
       if (started) post({ type: 'term:dispose', sessionId });
+      gpuObserver?.disconnect();
+      gpuGateRef.current = null;
       unregisterGpu?.();
       disposeTerminal(term, [fit, search]);
       {

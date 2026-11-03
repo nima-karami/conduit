@@ -14,6 +14,7 @@ import { GPU_LOSS_WINDOW_MS, noteGpuLoss } from './gpu-loss-policy';
 import { log } from './log';
 
 export const GPU_REATTACH_DELAY_MS = 1000;
+// Counts visible terminals only: a hidden pane holds no context (memory audit 2026-11-03).
 // Under Chromium's ~16 live contexts per page, leaving room for the shader background: past the
 // limit Chromium evicts the oldest context, which would read here as a GPU reset.
 export const MAX_WEBGL_TERMINALS = 12;
@@ -50,7 +51,9 @@ export interface GpuCoordinator<T> {
    * Returns the unregister, which disposes the terminal's WebGL addon if it has one.
    * `onFontRefresh` re-fits the pane and re-reports its facts after a font refresh.
    */
-  register(term: T, onFontRefresh?: () => void): () => void;
+  register(term: T, onFontRefresh?: () => void, opts?: { visible?: boolean }): () => void;
+  /** Hidden: the addon is disposed and its slot freed. Shown: attaches when a slot is free. */
+  setVisible(term: T, visible: boolean): void;
   reportLoss(term: T): void;
   /** A face finished loading: every live terminal re-rasterises (spec 2026-11-02 §8). */
   refreshFonts(): void;
@@ -60,6 +63,7 @@ export interface GpuCoordinator<T> {
 export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordinator<T> {
   const entries = new Map<T, WebglHandle | null>();
   const fontRefresh = new Map<T, () => void>();
+  const hidden = new Set<T>();
   let mode: 'webgl' | 'fallback' | 'dom' = 'webgl';
   let losses: number[] = [];
   let live = 0;
@@ -82,9 +86,9 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
     failed.clear();
     for (const [term, handle] of entries) {
       if (live >= MAX_WEBGL_TERMINALS) break;
-      if (!handle) attach(term);
+      if (!handle && !hidden.has(term)) attach(term);
     }
-    if (live >= Math.min(entries.size, MAX_WEBGL_TERMINALS)) {
+    if (live >= Math.min(entries.size - hidden.size, MAX_WEBGL_TERMINALS)) {
       retriesUsed = 0;
       deps.log('reattach', { terminals: entries.size, attached: live });
       return;
@@ -111,27 +115,45 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
 
   const promoteOldestWaiting = () => {
     for (const [term, handle] of entries) {
-      if (!handle && !failed.has(term) && attach(term)) return;
+      if (!handle && !failed.has(term) && !hidden.has(term) && attach(term)) return;
     }
   };
 
+  const freeSlot = (handle: WebglHandle) => {
+    handle.dispose();
+    live--;
+    // Only a WebGL terminal frees a slot, and none exist outside webgl mode.
+    promoteOldestWaiting();
+  };
+
   return {
-    register(term, onFontRefresh) {
+    register(term, onFontRefresh, opts) {
       entries.set(term, null);
       if (onFontRefresh) fontRefresh.set(term, onFontRefresh);
-      if (mode === 'webgl' && live < MAX_WEBGL_TERMINALS) attach(term);
+      if (opts?.visible === false) hidden.add(term);
+      else if (mode === 'webgl' && live < MAX_WEBGL_TERMINALS) attach(term);
       return () => {
         fontRefresh.delete(term);
         if (!entries.has(term)) return;
         const handle = entries.get(term);
         entries.delete(term);
         failed.delete(term);
-        if (!handle) return;
-        handle.dispose();
-        live--;
-        // Only a WebGL terminal frees a slot, and none exist outside webgl mode.
-        promoteOldestWaiting();
+        hidden.delete(term);
+        if (handle) freeSlot(handle);
       };
+    },
+    setVisible(term, visible) {
+      if (!entries.has(term) || hidden.has(term) !== visible) return;
+      if (visible) {
+        hidden.delete(term);
+        if (mode === 'webgl' && live < MAX_WEBGL_TERMINALS && !failed.has(term)) attach(term);
+        return;
+      }
+      // Hidden before the release, so the freed slot never promotes this terminal again.
+      hidden.add(term);
+      const handle = entries.get(term);
+      entries.set(term, null);
+      if (handle) freeSlot(handle);
     },
     reportLoss(term) {
       // Every context in the document is lost together, so the rest of the burst lands here.

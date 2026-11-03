@@ -266,6 +266,129 @@ describe('terminal GPU coordinator', () => {
     });
   });
 
+  // A hidden pane holds no WebGL context (memory audit 2026-11-03, mem-terminals finding 2).
+  describe('hidden terminals', () => {
+    const names = (n: number, prefix = 't') => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
+
+    it('a terminal registered hidden holds no WebGL until it is shown', () => {
+      const { gpu, live, attempts } = harness();
+      gpu.register('a', undefined, { visible: false });
+      expect(attempts).toEqual([]);
+      gpu.setVisible('a', true);
+      expect(live('a')).toHaveLength(1);
+    });
+
+    it('hiding disposes the addon and showing attaches a fresh one', () => {
+      const { gpu, handles, live } = harness();
+      gpu.register('a');
+      const first = handles[0];
+      gpu.setVisible('a', false);
+      expect(first?.disposed).toBe(true);
+      expect(live()).toEqual([]);
+      gpu.setVisible('a', true);
+      expect(live('a')).toHaveLength(1);
+      expect(live('a')[0]).not.toBe(first);
+    });
+
+    it('a repeated show or hide changes nothing', () => {
+      const { gpu, attempts, live } = harness();
+      gpu.register('a');
+      gpu.setVisible('a', true);
+      expect(attempts).toEqual(['a']);
+      gpu.setVisible('a', false);
+      gpu.setVisible('a', false);
+      expect(live()).toEqual([]);
+    });
+
+    it('ignores visibility for a terminal that is not registered', () => {
+      const { gpu, attempts } = harness();
+      const off = gpu.register('a');
+      off();
+      gpu.setVisible('a', true);
+      gpu.setVisible('ghost', true);
+      expect(attempts).toEqual(['a']);
+    });
+
+    it('unregistering a hidden terminal promotes nobody', () => {
+      const { gpu, live } = harness();
+      for (const t of names(MAX_WEBGL_TERMINALS)) gpu.register(t);
+      gpu.register('wait0');
+      const offHidden = gpu.register('h', undefined, { visible: false });
+      offHidden();
+      expect(live('wait0')).toHaveLength(0);
+    });
+
+    it(`the cap of ${MAX_WEBGL_TERMINALS} counts visible terminals only`, () => {
+      const { gpu, live } = harness();
+      for (const t of names(MAX_WEBGL_TERMINALS)) gpu.register(t, undefined, { visible: false });
+      for (const t of names(MAX_WEBGL_TERMINALS, 'v')) gpu.register(t);
+      expect(live().map((h) => h.term)).toEqual(names(MAX_WEBGL_TERMINALS, 'v'));
+    });
+
+    it('hiding a WebGL terminal promotes the oldest visible waiting one, never a hidden one', () => {
+      const { gpu, live } = harness();
+      for (const t of names(MAX_WEBGL_TERMINALS)) gpu.register(t);
+      gpu.register('w0');
+      gpu.setVisible('w0', false);
+      gpu.register('w1');
+      gpu.setVisible('t3', false);
+      expect(live('w0')).toHaveLength(0);
+      expect(live('w1')).toHaveLength(1);
+      expect(live()).toHaveLength(MAX_WEBGL_TERMINALS);
+    });
+
+    it('a terminal shown at the cap waits on the DOM renderer for a free slot', () => {
+      const { gpu, live } = harness();
+      for (const t of names(MAX_WEBGL_TERMINALS)) gpu.register(t);
+      gpu.register('h', undefined, { visible: false });
+      gpu.setVisible('h', true);
+      expect(live('h')).toHaveLength(0);
+      gpu.setVisible('t0', false);
+      expect(live('h')).toHaveLength(1);
+    });
+
+    it('the re-attach after a loss attaches visible terminals only and counts itself complete', () => {
+      const { gpu, live, advance, events } = harness();
+      gpu.register('a');
+      gpu.register('b');
+      gpu.setVisible('b', false);
+      gpu.reportLoss('a');
+      advance(GPU_REATTACH_DELAY_MS);
+      expect(live().map((h) => h.term)).toEqual(['a']);
+      expect(events).toEqual(['context-lost', 'reattach']);
+    });
+
+    it('a terminal shown during the fallback waits for the re-attach', () => {
+      const { gpu, live, advance } = harness();
+      gpu.register('a');
+      gpu.register('b', undefined, { visible: false });
+      gpu.reportLoss('a');
+      gpu.setVisible('b', true);
+      expect(live()).toEqual([]);
+      advance(GPU_REATTACH_DELAY_MS);
+      expect(live().map((h) => h.term)).toEqual(['a', 'b']);
+    });
+
+    it('a terminal shown after giving up stays on the DOM renderer', () => {
+      const { gpu, live, advance } = harness();
+      gpu.register('a');
+      gpu.register('b', undefined, { visible: false });
+      for (let i = 0; i <= GPU_GIVE_UP_LOSSES; i++) {
+        gpu.reportLoss('a');
+        advance(GPU_REATTACH_DELAY_MS);
+      }
+      gpu.setVisible('b', true);
+      expect(live()).toEqual([]);
+    });
+
+    it('fonts still refresh on a hidden terminal', () => {
+      const { gpu, fontCalls } = harness();
+      gpu.register('a', () => fontCalls.push('fit:a'), { visible: false });
+      gpu.refreshFonts();
+      expect(fontCalls).toEqual(['measure:a', 'clear:a', 'refresh:a', 'fit:a']);
+    });
+  });
+
   // After a repeat GPU reset Chromium can refuse every new WebGL context for the page for a while.
   describe('WebGL unavailable after a re-attach', () => {
     const count = (attempts: string[], term: string) => attempts.filter((t) => t === term).length;
