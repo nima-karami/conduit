@@ -32,6 +32,7 @@ export interface PreparedRuntime {
   mainJs: string;
   hcExe: string;
   shimDir: string;
+  trayExe: string;
 }
 
 const NODE_EXE = 'node.exe';
@@ -56,7 +57,7 @@ export async function prepareRuntime(options: PrepareRuntimeOptions): Promise<Pr
   const shimDir = join(root, shimDirName(options.shimVersion));
 
   await ensureDir(fs, hcDir, [{ contentsOf: join(bundled, 'hc') }]);
-  await ensureDir(fs, appDir, [nodeSource, join(bundled, 'server')]);
+  await ensureDir(fs, appDir, [nodeSource, join(bundled, 'server'), join(bundled, 'tray')]);
   await ensureDir(fs, shimDir, [nodeSource, join(options.resourcesDir, 'conduit-mcp', SHIM_LEAF)]);
 
   return {
@@ -65,6 +66,7 @@ export async function prepareRuntime(options: PrepareRuntimeOptions): Promise<Pr
     mainJs: join(appDir, 'server', 'main.js'),
     hcExe: join(hcDir, HC_EXE),
     shimDir,
+    trayExe: join(appDir, 'tray', 'conduit-tray.exe'),
   };
 }
 

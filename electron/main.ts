@@ -19,7 +19,8 @@ import {
   type WebContents,
   webContents,
 } from 'electron';
-import { hcClient, startCore } from '../server/hc-cli';
+import { directStopAll, hcClient, startCore, stopCore } from '../server/hc-cli';
+import { stopAll } from '../server/lifecycle/stop-all';
 import { CURRENT_SHIM_GENERATION, prepareRuntime } from '../server/runtime-dir/prepare';
 import { activeCwd, sessionGitRoot } from '../src/active-cwd';
 import { repoForPath, requestGitRoot, resolveRequestRepoRoot } from '../src/active-repo';
@@ -236,6 +237,7 @@ import { execFileBounded } from './exec-bounded';
 import { createFolderPicker } from './folder-picker';
 import { type HcCliDeps, supervisorEnv } from './hc-cli';
 import { createHcEvents } from './hc-events';
+import { jumpListTasks, runStopAllAgents, STOP_ALL_AGENTS_FLAG } from './jump-list';
 import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
 import { startLanguageServer } from './lsp-server';
@@ -1133,6 +1135,75 @@ function createWindow(opts: {
   return w;
 }
 
+async function confirmStopAllAgents(owner?: BrowserWindow): Promise<boolean> {
+  if (process.env.CONDUIT_E2E === '1' && process.env.CONDUIT_E2E_STOP_CONFIRM === 'accept')
+    return true;
+  const options: Electron.MessageBoxOptions = {
+    type: 'warning',
+    buttons: ['Cancel', 'Stop all agents'],
+    defaultId: 0,
+    cancelId: 0,
+    message: 'Stop all agents?',
+    detail:
+      "This stops every agent Conduit is running in the background. Anything they haven't saved is lost.",
+  };
+  const result = await (owner
+    ? dialog.showMessageBox(owner, options)
+    : dialog.showMessageBox(options));
+  return result.response === 1;
+}
+
+async function stopAllAgentsHeadless(): Promise<void> {
+  let secondInstance = false;
+  let relaunchArgs = process.argv.slice(1).filter((arg) => arg !== STOP_ALL_AGENTS_FLAG);
+  const arrived = (_event: Electron.Event, argv: string[]) => {
+    secondInstance = true;
+    relaunchArgs = argv.slice(1).filter((arg) => arg !== STOP_ALL_AGENTS_FLAG);
+  };
+  app.on('second-instance', arrived);
+  try {
+    const outcome = await runStopAllAgents({
+      confirm: () => confirmStopAllAgents(),
+      stopAll: () => {
+        const names = instanceNames(
+          userData(),
+          process.platform === 'win32' ? 'win32' : 'posix',
+          os.tmpdir(),
+        );
+        const env = coreStartEnv(process.env, names, true);
+        const layout = runtimeLayout({
+          packaged: app.isPackaged,
+          userData: userData(),
+          appVersion: aboutInfo.version,
+          appPath: app.getAppPath(),
+          env: process.env,
+        });
+        return stopAll({
+          endpoint: names.serverEndpoint,
+          version: aboutInfo.version,
+          directFallback: () =>
+            directStopAll(
+              hcClient(names, env, (message) => console.warn('hc', message)),
+              names,
+              () => stopCore(layout.hcExe, env),
+            ),
+        });
+      },
+      error: async (message) => dialog.showErrorBox('Conduit', message),
+      secondInstanceArrived: () => secondInstance,
+    });
+    if (outcome === 'relaunch') app.relaunch({ args: relaunchArgs });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('headless stop failed', message);
+    dialog.showErrorBox('Conduit', message);
+    if (secondInstance) app.relaunch({ args: relaunchArgs });
+  } finally {
+    app.removeListener('second-instance', arrived);
+    app.quit();
+  }
+}
+
 app.whenReady().then(() => {
   // Single-instance: a second launch (e.g. the "Open in Conduit" context menu while the
   // app is already running) must route its folder into THIS instance, not open a duplicate.
@@ -1141,6 +1212,14 @@ app.whenReady().then(() => {
     app.quit();
     return;
   }
+
+  if (app.isPackaged && process.platform === 'win32')
+    app.setUserTasks(jumpListTasks(process.execPath));
+  if (process.argv.includes(STOP_ALL_AGENTS_FLAG)) {
+    void stopAllAgentsHeadless();
+    return;
+  }
+  let jumpListStopPending = false;
 
   // Cold launch ("app was closed → Open with Conduit") parses the open target right after
   // createWindow(), long before the renderer has loaded and subscribed to 'to-webview'.
@@ -2378,6 +2457,7 @@ app.whenReady().then(() => {
       if (w && !w.isFocused()) w.flashFrame(true);
     },
     place,
+    noteStopping: (reason) => lifecycle?.noteStopping(reason),
     log: appLog,
   });
 
@@ -2451,6 +2531,11 @@ app.whenReady().then(() => {
       userData: userData(),
       appVersion,
       serverArgs,
+      app: {
+        exe: process.execPath,
+        args: app.isPackaged ? [] : [app.getAppPath()],
+        cwd: app.isPackaged ? path.dirname(process.execPath) : app.getAppPath(),
+      },
       client: () => new ServerClient({ endpoint: names.serverEndpoint, appVersion, log: appLog }),
       hc,
       hcEvents,
@@ -4762,6 +4847,28 @@ app.whenReady().then(() => {
   app.on('second-instance', (_event, argv) => {
     log.info('app', 'second-instance');
     const target = focusedWindow();
+    if (argv.includes(STOP_ALL_AGENTS_FLAG)) {
+      if (jumpListStopPending) return;
+      jumpListStopPending = true;
+      if (target) {
+        if (target.isMinimized()) target.restore();
+        target.show();
+        target.focus();
+      }
+      void (async () => {
+        if (!(await confirmStopAllAgents(target ?? undefined))) return;
+        if (lifecycle) await lifecycle.stopAllAndContinue();
+        else dialog.showErrorBox('Conduit', 'The background service is unavailable.');
+      })()
+        .catch((error: unknown) => {
+          log.error('app', 'Jump List stop failed', { err: String(error) });
+          dialog.showErrorBox('Conduit', error instanceof Error ? error.message : String(error));
+        })
+        .finally(() => {
+          jumpListStopPending = false;
+        });
+      return;
+    }
     void openArg(argv, target?.id ?? primaryWindowId);
     if (target) {
       if (target.isMinimized()) target.restore();

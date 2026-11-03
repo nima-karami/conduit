@@ -18,6 +18,36 @@ const fresh = () => {
 const coreCwd = (u: string) => join(u, 'runtime', 'hc', HC_PINNED_VERSION);
 
 describe('runtimeLayout', () => {
+  it('selects the packaged Windows tray source and disables it on other platforms', () => {
+    const u = fresh();
+    const input = { packaged: true, userData: u, appVersion: '1.2.3', appPath: u, env: {} };
+    expect(runtimeLayout({ ...input, platform: 'win32' }).trayExe).toBe(
+      join(u, 'runtime', '1.2.3', 'tray', 'conduit-tray.exe'),
+    );
+    for (const platform of ['darwin', 'linux'] as const)
+      expect(runtimeLayout({ ...input, platform }).trayExe).toBeNull();
+  });
+
+  it('uses the dev build only when present, with an explicit override taking precedence', () => {
+    const u = fresh();
+    const input = {
+      packaged: false,
+      userData: u,
+      appVersion: '1.2.3',
+      appPath: u,
+      env: {},
+      platform: 'win32' as const,
+    };
+    expect(runtimeLayout(input).trayExe).toBeNull();
+    const built = join(u, 'build', 'vendor', 'tray', 'conduit-tray.exe');
+    mkdirSync(join(built, '..'), { recursive: true });
+    writeFileSync(built, 'helper');
+    expect(runtimeLayout(input).trayExe).toBe(built);
+    const env = { CONDUIT_TRAY_BINARY: '/custom/tray.exe' };
+    expect(runtimeLayout({ ...input, env }).trayExe).toBe('/custom/tray.exe');
+    expect(runtimeLayout({ ...input, env, platform: 'linux' }).trayExe).toBeNull();
+  });
+
   it('packaged paths are the ones prepareRuntime produces', async () => {
     const u = fresh();
     const layout = runtimeLayout({
@@ -26,6 +56,7 @@ describe('runtimeLayout', () => {
       appVersion: '0.52.0',
       appPath: '/ignored',
       env: { CONDUIT_NODE_BINARY: '/dev/node', CONDUIT_HC_BINARY: '/dev/hc' },
+      platform: 'win32',
     });
     const prepared = await prepareRuntime({
       resourcesDir: join(u, 'resources'),
@@ -47,6 +78,7 @@ describe('runtimeLayout', () => {
       hcExe: prepared.hcExe,
       hcVersion: HC_PINNED_VERSION,
       coreCwd: coreCwd(u),
+      trayExe: prepared.trayExe,
     });
     expect(layout.nodeExe).toBe(join(u, 'runtime', '0.52.0', 'node.exe'));
     expect(existsSync(layout.coreCwd)).toBe(true);
@@ -64,6 +96,7 @@ describe('runtimeLayout', () => {
       hcExe: '/dev/hc',
       hcVersion: HC_PINNED_VERSION,
       coreCwd: coreCwd(u),
+      trayExe: null,
     });
     const bare = runtimeLayout({
       packaged: false,
