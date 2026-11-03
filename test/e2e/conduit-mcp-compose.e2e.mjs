@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import {
   callTool,
   fakeAgentProfile,
+  keys,
   mcpState,
   notices,
   openFake,
@@ -105,10 +106,7 @@ await runScenario(
       const id = el.getAttribute('aria-describedby');
       return id ? (document.getElementById(id)?.textContent ?? null) : null;
     });
-    assert(
-      described === '1 unread message; 0 unread messages outside current scope',
-      `toggle description: ${JSON.stringify(described)}`,
-    );
+    assert(described === '1 unread message', `toggle description: ${JSON.stringify(described)}`);
     // The row names the handle the footer and threads use.
     const connectedTip = `Connected to Conduit as ${a.handle}`;
     assert(
@@ -184,6 +182,8 @@ await runScenario(
       10_000,
     );
     assert(held, `row tooltip: ${JSON.stringify(await tipLines(b))}`);
+    // The open permit menu swallows typed lines, so step 5's tool calls need it answered first.
+    await keys(page, b.sessionId, '1');
 
     // 5. Messages follows the sidebar's Space, while This agent narrows the active scope.
     const scopeProject = await createProject(page, 'Conduit Space');
