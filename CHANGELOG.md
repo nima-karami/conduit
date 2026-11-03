@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.52.1] — 2026-11-03
+
 ### Changed
 - **The right panel has a title band again.** Files, Changes or Messages is named at the top of
   the panel in the same style as the sidebar's Spaces band, and dragging it moves the panel.
