@@ -1,16 +1,17 @@
 import { unlink } from 'node:fs/promises';
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
-import { StringDecoder } from 'node:string_decoder';
 import type { ServerEventSink } from '../../src/contracts/server-ports';
 import {
   APP_HELLO_TIMEOUT_MS,
   SERVER_ERROR_RPC_CODE,
   SERVER_EVENT_METHOD,
+  SERVER_LINE_MAX_BYTES,
   type ServerErrorKind,
   type ServerEventNotification,
   type ServerRpcError,
   type VersionOrder,
 } from '../../src/contracts/server-protocol';
+import { LineReader } from '../../src/line-reader';
 
 export interface RpcRequest {
   id?: string | number | null;
@@ -138,16 +139,15 @@ export class PipeTransport {
     this.onConnect();
     // C2 names no server-side hello bound; the app's own is reused so a silent peer can't hold a slot.
     const helloTimer = setTimeout(() => socket.destroy(), APP_HELLO_TIMEOUT_MS);
-    const decoder = new StringDecoder('utf8');
-    let buffer = '';
-    socket.on('data', (chunk: Buffer) => {
-      buffer += decoder.write(chunk);
-      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
-        const line = buffer.slice(0, end);
-        buffer = buffer.slice(end + 1);
-        void this.receive(socket, peer, line, handler, () => clearTimeout(helloTimer));
-      }
-    });
+    const reader = new LineReader(
+      () => SERVER_LINE_MAX_BYTES,
+      (line) => void this.receive(socket, peer, line, handler, () => clearTimeout(helloTimer)),
+      () => {
+        this.onError(new Error('transport: inbound line over the frame cap; dropping the peer'));
+        socket.destroy();
+      },
+    );
+    socket.on('data', (chunk: Buffer) => reader.write(chunk));
     socket.on('error', (error) => {
       if (codeOf(error) !== 'EPIPE' && codeOf(error) !== 'ECONNRESET') this.onError(error);
       socket.destroy();

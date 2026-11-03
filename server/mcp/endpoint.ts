@@ -13,6 +13,7 @@ import {
   type ShimResume,
   type ShimWelcome,
 } from '../../src/contracts/shim-protocol';
+import { LineReader } from '../../src/line-reader';
 
 /** As v0.51's endpoint: bounds one relayed line so a stray client can't grow the server. */
 const INBOUND_LINE_MAX_BYTES = 4 * 1024 * 1024;
@@ -86,7 +87,6 @@ export function createShimEndpoint(opts: {
   const accept = (socket: net.Socket) => {
     sockets.add(socket);
     const id = nextId++;
-    let pending: Buffer = Buffer.alloc(0);
     let deliver: ((line: string) => void) | undefined;
     const closeCbs: Array<() => void> = [];
     // A repeat close() while flushing would find the socket unwritable and destroy it early.
@@ -176,20 +176,19 @@ export function createShimEndpoint(opts: {
       open(hello);
     };
 
-    socket.on('data', (chunk: Buffer) => {
-      pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
-      let nl = pending.indexOf(0x0a);
-      // Nothing read after close() reaches the host.
-      while (nl >= 0 && socket.writable && !closing) {
-        const line = pending.subarray(0, nl).toString('utf8').replace(/\r$/, '');
-        pending = pending.subarray(nl + 1);
+    const reader = new LineReader(
+      () => (deliver ? INBOUND_LINE_MAX_BYTES : SHIM_HELLO_MAX_BYTES),
+      (raw) => {
+        const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
         if (deliver) deliver(line);
         else onHello(line);
-        nl = pending.indexOf(0x0a);
-      }
-      const limit = deliver ? INBOUND_LINE_MAX_BYTES : SHIM_HELLO_MAX_BYTES;
-      if (pending.length > limit) drop(deliver ? 'line too large' : 'hello too large');
-    });
+      },
+      () => drop(deliver ? 'line too large' : 'hello too large'),
+    );
+    socket.on('data', (chunk: Buffer) =>
+      // Nothing read after close() reaches the host.
+      reader.write(chunk, () => socket.writable && !closing),
+    );
     socket.on('error', (err) =>
       opts.log.debug('conduit-mcp', 'endpoint socket error', { id, err: String(err) }),
     );

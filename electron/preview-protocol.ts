@@ -9,6 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { Readable } from 'node:stream';
 import { protocol, type Session } from 'electron';
 import { isInsideRoot, realPathLeaf } from '../src/path-guard';
 import {
@@ -192,6 +193,28 @@ function failure(reason: PreviewReason, status: 404 | 413 | 500, contentType = '
   });
 }
 
+/**
+ * The file as a streamed body. Opened before the Response exists so an unreadable file still
+ * fails the request, and the handle closes with the stream (end, error or cancel).
+ */
+export async function previewFileResponse(file: string, contentType: string): Promise<Response> {
+  const handle = await fs.promises.open(file, 'r');
+  try {
+    const { size } = await handle.stat();
+    const body = Readable.toWeb(handle.createReadStream()) as ReadableStream<Uint8Array>;
+    return new Response(body, {
+      headers: {
+        'content-type': contentType,
+        'content-length': String(size),
+        'x-content-type-options': 'nosniff',
+      },
+    });
+  } catch (err) {
+    await handle.close();
+    throw err;
+  }
+}
+
 export function registerPreviewProtocol(
   ses: Session,
   getRoots: () => string[],
@@ -207,13 +230,7 @@ export function registerPreviewProtocol(
     if (!verdict.ok) return failure(verdict.reason, verdict.status, leafType);
 
     try {
-      const bytes = await fs.promises.readFile(verdict.path);
-      return new Response(bytes, {
-        headers: {
-          'content-type': verdict.contentType,
-          'x-content-type-options': 'nosniff',
-        },
-      });
+      return await previewFileResponse(verdict.path, verdict.contentType);
     } catch {
       return failure('unreadable', 500, verdict.contentType);
     }

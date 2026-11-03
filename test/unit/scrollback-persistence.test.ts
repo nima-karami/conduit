@@ -84,6 +84,45 @@ describe('scrollback-persistence', () => {
       ]);
     });
 
+    it('matches a flat reference across many mixed appends and trims', () => {
+      const geoms = [A, B, undefined];
+      let seed = 7;
+      const rand = (n: number) => {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        return seed % n;
+      };
+      const cap = 9000;
+      let fast: ScrollbackRing = [];
+      let ref: ScrollbackRing = [];
+      for (let i = 0; i < 400; i++) {
+        const g = geoms[rand(3)];
+        const chunk = String.fromCharCode(97 + (i % 26)).repeat(
+          rand(5) === 0 ? rand(7000) : rand(40),
+        );
+        fast = appendToRing(fast, chunk, g, cap);
+        const last = ref[ref.length - 1];
+        const next =
+          last &&
+          (last.geometry === g ||
+            (last.geometry && g && last.geometry.cols === g.cols && last.geometry.rows === g.rows))
+            ? [...ref.slice(0, -1), { ...last, data: last.data + chunk }]
+            : [...ref, g ? { data: chunk, geometry: g } : { data: chunk }];
+        let excess = next.reduce((n, x) => n + x.data.length, 0) - cap;
+        while (excess > 0) {
+          const h = next[0];
+          if (h.data.length <= excess) {
+            next.shift();
+            excess -= h.data.length;
+          } else {
+            next[0] = { ...h, data: h.data.slice(excess) };
+            excess = 0;
+          }
+        }
+        ref = next;
+        expect(fast).toEqual(ref);
+      }
+    });
+
     it('does not mutate the ring it is given', () => {
       const ring: ScrollbackRing = [{ data: 'x', geometry: A }];
       appendToRing(ring, 'y', A, 100);

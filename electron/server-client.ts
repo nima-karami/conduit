@@ -1,10 +1,10 @@
 import { connect as openSocket } from 'node:net';
 import type { Duplex } from 'node:stream';
-import { StringDecoder } from 'node:string_decoder';
 import {
   APP_HELLO_TIMEOUT_MS,
   SERVER_ERROR_RPC_CODE,
   SERVER_EVENT_METHOD,
+  SERVER_LINE_MAX_BYTES,
   SERVER_PROTOCOL_GENERATION,
   type ServerErrorKind,
   type ServerEventEnvelope,
@@ -14,6 +14,7 @@ import {
   type ServerNotifications,
   type ServerSnapshot,
 } from '../src/contracts/server-protocol';
+import { LineReader } from '../src/line-reader';
 
 export type AppLog = (
   level: 'info' | 'warn' | 'error',
@@ -113,22 +114,22 @@ export class ServerClient {
         this.teardown();
         reject(new ServerCallError('timeout', `no hello within ${APP_HELLO_TIMEOUT_MS} ms`));
       }, APP_HELLO_TIMEOUT_MS);
-      const decoder = new StringDecoder('utf8');
-      let buffer = '';
       let failed: 'eof' | 'error' = 'eof';
-      socket.on('data', (chunk: Buffer) => {
-        buffer += decoder.write(chunk);
-        for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
-          const line = buffer.slice(0, end);
-          buffer = buffer.slice(end + 1);
+      const reader = new LineReader(
+        () => SERVER_LINE_MAX_BYTES,
+        (line) => {
           // Reply continuations must install their snapshot before the next notification runs.
           if (line.trim())
             this.dispatch = this.dispatch.then(() => {
               if (this.state !== 'closed') this.receive(line);
             });
-          if (this.state === 'closed') return;
-        }
-      });
+        },
+        () => {
+          this.o.log('error', 'server-client: inbound line over the frame cap; closing', {});
+          socket.destroy();
+        },
+      );
+      socket.on('data', (chunk: Buffer) => reader.write(chunk, () => this.state !== 'closed'));
       socket.on('error', () => {
         failed = 'error';
       });
