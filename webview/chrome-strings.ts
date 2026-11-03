@@ -34,8 +34,11 @@ export const CHROME_STR = {
   changesBadge: (n: number) => noun(n, 'change', 'changes'),
   messagesBadge: (unread: number, urgent: number, outside = 0) => {
     const total = noun(unread, 'unread message', 'unread messages');
-    const head = urgent > 0 ? `${total}, ${noun(urgent, 'urgent message', 'urgent messages')}` : total;
-    return outside > 0 ? `${head}; ${noun(outside, 'unread message', 'unread messages')} outside current scope` : head;
+    const head =
+      urgent > 0 ? `${total}, ${noun(urgent, 'urgent message', 'urgent messages')}` : total;
+    return outside > 0
+      ? `${head}; ${noun(outside, 'unread message', 'unread messages')} outside current scope`
+      : head;
   },
   panelGroup: 'Side panel',
   statusBar: 'Session status',
