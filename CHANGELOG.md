@@ -10,6 +10,11 @@ All notable user-facing changes to Conduit. Format follows
 
 - Show bundled release notes from the update card and after installing an update.
 
+### Fixed
+
+- Keep update status labels readable in crowded status bars and release notes on an opaque
+  dialog surface, with the update card hidden while notes are open.
+
 ## [0.52.1] — 2026-11-03
 
 ### Changed

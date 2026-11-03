@@ -584,6 +584,8 @@ export function App() {
   const [releaseNotesView, setReleaseNotesView] = useState<
     (ReleaseNotesView & { incoming: boolean }) | null
   >(null);
+  const releaseNotesOpen =
+    releaseNotesView !== null && (!releaseNotesView.incoming || installedNotes !== null);
   const openIncomingNotes = useCallback(() => {
     if (updateStatus?.version && updateStatus.releaseNotes?.trim()) {
       setReleaseNotesView({
@@ -2117,6 +2119,7 @@ export function App() {
         dismiss: dismissUpdate,
         reveal: revealUpdate,
         openNotes: openIncomingNotes,
+        notesOpen: releaseNotesOpen,
         installedToast:
           installedNotes?.showToast && installedNotes.notes && !installedToastDismissed
             ? {
@@ -2145,6 +2148,7 @@ export function App() {
       dismissUpdate,
       revealUpdate,
       openIncomingNotes,
+      releaseNotesOpen,
       installedNotes,
       installedToastDismissed,
     ],
@@ -5232,7 +5236,7 @@ export function App() {
   return (
     <SidebarTreeProvider value={sidebarTree}>
       <WorkbenchChromeProvider value={chrome}>
-        {releaseNotesView && (!releaseNotesView.incoming || installedNotes) && (
+        {releaseNotesOpen && releaseNotesView && (
           <WhatsNewDialog
             release={{
               ...releaseNotesView,

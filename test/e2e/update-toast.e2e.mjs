@@ -173,6 +173,30 @@ const blur = (page) =>
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   });
 
+async function assertOpaqueSurface(locator, label) {
+  const surface = await locator.evaluate(async (node) => {
+    const animations = [];
+    for (let parent = node; parent; parent = parent.parentElement) {
+      animations.push(...parent.getAnimations());
+    }
+    await Promise.all(animations.map((animation) => animation.finished));
+    const probe = document.createElement('div');
+    probe.style.backgroundColor = 'var(--raise)';
+    document.body.append(probe);
+    const raised = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    let opacity = 1;
+    for (let parent = node; parent; parent = parent.parentElement) {
+      opacity *= Number(getComputedStyle(parent).opacity);
+    }
+    return { background: getComputedStyle(node).backgroundColor, raised, opacity };
+  });
+  assert(
+    surface.background === surface.raised && surface.opacity === 1,
+    `${label} uses the opaque raised surface (${JSON.stringify(surface)})`,
+  );
+}
+
 runScenario('update-toast', async ({ app, page, log }) => {
   await tapHostMessages(app, { record: ['updateRelaunch'], swallow: ['updateRelaunch'] });
   await page.waitForSelector(STACK, { state: 'attached', timeout: 20000 });
@@ -301,6 +325,8 @@ runScenario('update-toast', async ({ app, page, log }) => {
   assert(together.stacks === 1, 'a generic toast opens no second outlet');
   assert(together.sameStack, 'the generic toast shares the update card’s stack');
   assert(together.toastAbove, 'the generic toast stacks above the update item');
+  await assertOpaqueSurface(toast, 'toast');
+  await assertOpaqueSurface(page.locator(CARD), 'update card');
   sameAnchor(await cardFacts(page), 'with a generic toast');
   log('generic toast shares the stack above the update item ✓');
 
@@ -388,6 +414,8 @@ runScenario('update-toast', async ({ app, page, log }) => {
   await page.locator(`${CARD} button.update-card__notes`).click();
   const dialog = page.locator('[role="dialog"][data-whats-new]');
   await dialog.waitFor({ state: 'visible', timeout: 5000 });
+  assert(await page.locator(CARD).isHidden(), 'the notes dialog hides its redundant ready card');
+  await assertOpaqueSurface(dialog, 'notes dialog');
   assert(
     (await dialog
       .getByRole('heading', { name: `What's new in v${VERSION}`, exact: true })
@@ -401,10 +429,18 @@ runScenario('update-toast', async ({ app, page, log }) => {
   );
   await dialog.getByRole('button', { name: 'Later' }).click();
   await dialog.waitFor({ state: 'detached', timeout: 5000 });
+  await page.waitForSelector(CARD, { state: 'visible', timeout: 5000 });
+  await page.waitForFunction(
+    (selector) => document.activeElement === document.querySelector(selector),
+    `${CARD} button.update-card__notes`,
+  );
   await updateStatus.click();
   await dialog.waitFor({ state: 'visible', timeout: 5000 });
   await dialog.getByRole('button', { name: 'Later' }).click();
   await dialog.waitFor({ state: 'detached', timeout: 5000 });
+  await page.waitForFunction(() =>
+    document.activeElement?.matches('button[data-status-item="update"]'),
+  );
 
   // ── Relaunch posts the existing message, and nothing installs ─────────────
   await page.locator(CARD).getByRole('button', { name: 'Relaunch to update' }).click();

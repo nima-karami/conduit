@@ -1380,6 +1380,9 @@ body.resizing .panel__resize::after {
   min-width: 0;
   white-space: nowrap;
 }
+.statusbar__item > svg {
+  flex: 0 0 auto;
+}
 .statusbar__text {
   max-width: 28ch;
   overflow: hidden;
@@ -1411,23 +1414,21 @@ body.resizing .panel__resize::after {
 }
 .statusbar__hint {
   margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: var(--font-mono);
   font-size: calc(10.5px * var(--font-scale));
   color: var(--text-faint);
 }
 .statusbar__update {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
+  flex: 0 0 auto;
+  min-width: max-content;
   padding: 0;
   border: 0;
   background: transparent;
   color: var(--text-dim);
   font: inherit;
   cursor: pointer;
-}
-.statusbar__update svg {
-  flex: 0 0 auto;
 }
 
 /* ---------- sidebar ---------- */
@@ -7577,9 +7578,9 @@ body.gh-resizing {
   width: min(680px, calc(100vw - 32px));
   max-height: 90vh;
   padding: 24px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-2);
   border-radius: var(--r-panel);
-  background: var(--surface-panel);
+  background: var(--raise);
   color: var(--text);
   box-shadow: var(--elev-3);
 }

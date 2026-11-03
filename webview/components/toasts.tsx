@@ -112,6 +112,7 @@ export function Toasts({ children }: { children?: ReactNode }) {
           dismissed={update.dismissed}
           onDismiss={update.dismiss}
           onWhatsNew={update.openNotes}
+          hidden={update.notesOpen}
         />
       )}
     </div>,

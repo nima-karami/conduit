@@ -86,9 +86,85 @@ const runningCount = (page) =>
 
 const treeRows = (page) => page.locator('[data-agent-tree] .session').count();
 
+async function checkUpdateLabelFits(app, page, log) {
+  const size = await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    const previous = win.getContentSize();
+    win.setContentSize(1320, 820);
+    return previous;
+  });
+  const previousTheme = await page.evaluate(() => document.documentElement.dataset.theme);
+  try {
+    await page.waitForFunction(() => innerWidth === 1320 && innerHeight === 820);
+    for (const theme of ['aero', 'aero-dark', 'neon']) {
+      await page.evaluate((id) => {
+        document.documentElement.dataset.theme = id;
+      }, theme);
+      for (const [status, label] of [
+        ['downloading', 'Updating · 42%'],
+        ['ready', 'Update ready'],
+      ]) {
+        await app.evaluate(({ BrowserWindow }, state) => {
+          BrowserWindow.getAllWindows()[0].webContents.send('to-webview', {
+            type: 'updateStatus',
+            status: state,
+            version: '9.9.9',
+            percent: 42,
+          });
+        }, status);
+        await waitItem(page, 'update', label, `${theme} ${status}`);
+        const facts = await page.evaluate(async () => {
+          await document.fonts.ready;
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+          const footer = document.querySelector('footer[data-status-bar]');
+          const item = footer.querySelector('[data-status-item="update"]');
+          const text = item.querySelector('.statusbar__text');
+          const lowerPriority = ['machine', 'branch', 'worktree'].map((name) => {
+            const node = footer.querySelector(`[data-status-item="${name}"]`);
+            const label = node?.querySelector('.statusbar__text');
+            return {
+              name,
+              visible: !!node && getComputedStyle(node).display !== 'none',
+              clipped: !!label && label.scrollWidth > label.clientWidth,
+            };
+          });
+          return {
+            itemFits: item.scrollWidth <= item.clientWidth,
+            textFits: text.scrollWidth <= text.clientWidth,
+            footerFits: footer.scrollWidth <= footer.clientWidth,
+            lowerPriority,
+          };
+        });
+        log(`${theme} ${status} footer geometry: ${JSON.stringify(facts)}`);
+        assert(
+          facts.itemFits && facts.textFits && facts.footerFits,
+          `${theme} ${label} must fit in full at 1320px (${JSON.stringify(facts)})`,
+        );
+        assert(
+          facts.lowerPriority.every((item) => item.visible) &&
+            facts.lowerPriority.some((item) => item.clipped),
+          `${theme}: lower-priority labels ellipsize and remain present`,
+        );
+      }
+    }
+  } finally {
+    await app.evaluate(({ BrowserWindow }, previous) => {
+      BrowserWindow.getAllWindows()[0].webContents.send('to-webview', {
+        type: 'updateStatus',
+        status: 'up-to-date',
+      });
+      BrowserWindow.getAllWindows()[0].setContentSize(...previous);
+    }, size);
+    await page.evaluate((previous) => {
+      if (previous === undefined) delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = previous;
+    }, previousTheme);
+  }
+}
+
 await runScenario(
   'status-bar',
-  async ({ page, log }) => {
+  async ({ app, page, log }) => {
     await tapMcp(page);
     const root = mkdtempSync(join(tmpdir(), 'conduit-status-bar-'));
     const main = join(root, 'main');
@@ -96,8 +172,10 @@ await runScenario(
     writeFileSync(join(main, 'readme.txt'), 'status bar fixture\n');
     commitBase(main);
     git(main, 'branch', '-M', 'sb-main');
-    const linked = join(root, 'wt-linked');
-    git(main, 'worktree', 'add', '-q', '-b', 'sb-wt', linked);
+    const linkedName = `wt-linked-${'long-name-'.repeat(6)}`;
+    const linkedBranch = `sb-wt-${'long-branch-'.repeat(6)}`;
+    const linked = join(root, linkedName);
+    git(main, 'worktree', 'add', '-q', '-b', linkedBranch, linked);
     const work = join(root, 'work');
     const target = join(root, 'target');
     mkdirSync(work);
@@ -116,8 +194,9 @@ await runScenario(
     await waitItem(page, 'branch', 'sb-main', 'a plain repo');
     assert((await itemText(page, 'worktree')) === null, 'a plain repo showed a worktree item');
     await selectRow(page, W);
-    await waitItem(page, 'branch', 'sb-wt', 'a linked worktree');
-    await waitItem(page, 'worktree', 'worktree wt-linked', 'a linked worktree');
+    await waitItem(page, 'branch', linkedBranch, 'a linked worktree');
+    await waitItem(page, 'worktree', `worktree ${linkedName}`, 'a linked worktree');
+    await checkUpdateLabelFits(app, page, log);
     await selectRow(page, M);
     await waitItem(page, 'worktree', null, 'back on the plain repo');
     await waitItem(page, 'commands', 'Ctrl + Shift + P commands', 'default openCommands hint');

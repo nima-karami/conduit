@@ -376,6 +376,35 @@ describe('the centre state block', () => {
   }
 });
 
+describe('release notes floating surfaces', () => {
+  const background = (selector: string, tokens: Record<string, string>) => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const body = CSS.match(new RegExp(`^${escaped} \\{([^}]+)\\}`, 'm'))?.[1];
+    const value = body?.match(/^\s+background:\s*([^;]+);/m)?.[1];
+    if (!value) throw new Error(`No background for ${selector}`);
+    return resolve({ ...tokens, '--test-background': value }, '--test-background');
+  };
+
+  for (const { id } of THEMES) {
+    it(`${id}: notes use the opaque confirm-dialog material with readable version text`, () => {
+      const tokens = theme(id);
+      const surface = background('.whats-new', tokens);
+      expect(surface).toBe(background('.confirm', tokens));
+      expect(channels(surface)).toHaveLength(3);
+      expect(contrast(resolve(tokens, '--text-dim'), surface)).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it(`${id}: the update card and installed toast cover underlying text with opaque surfaces`, () => {
+      const tokens = theme(id);
+      for (const selector of ['.update-card', '.toast']) {
+        const surface = background(selector, tokens);
+        expect(channels(surface)).toHaveLength(3);
+        expect(contrast(resolve(tokens, '--text'), surface)).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+  }
+});
+
 describe('token block discovery', () => {
   it('finds every :root block, and none of them is conditional', () => {
     expect(blockCount(':root')).toBe(4);

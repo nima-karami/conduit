@@ -82,8 +82,8 @@ export function WhatsNewDialog({
   const titleId = useId();
   const { restoreFocus } = useFocusTrap(dialogRef);
   const close = () => {
-    restoreFocus();
     onClose();
+    requestAnimationFrame(restoreFocus);
   };
   return (
     <ModalLayer onDismiss={close}>

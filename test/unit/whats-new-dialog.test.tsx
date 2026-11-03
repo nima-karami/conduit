@@ -15,6 +15,7 @@ afterEach(() => {
   root = null;
   document.body.innerHTML = '';
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 function render({
   currentVersion,
@@ -96,15 +97,18 @@ describe("What's new dialog", () => {
     expect(openExternal).toHaveBeenLastCalledWith('https://example.com/notes');
   });
   it('Later and Escape close and restore focus to the opener', () => {
+    vi.useFakeTimers();
     const opener = document.createElement('button');
     document.body.append(opener);
     opener.focus();
     const close = render();
     expect(document.activeElement?.textContent).toBe('Later');
     act(() => button('Later')?.click());
+    act(() => vi.advanceTimersToNextFrame());
     expect(close).toHaveBeenCalledTimes(1);
     expect(document.activeElement).toBe(opener);
     act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    act(() => vi.advanceTimersToNextFrame());
     expect(close).toHaveBeenCalledTimes(2);
   });
   it('traps Tab within the dialog', () => {

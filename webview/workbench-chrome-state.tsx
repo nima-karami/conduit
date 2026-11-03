@@ -25,6 +25,7 @@ export interface WorkbenchChromeContextValue {
     dismiss(): void;
     reveal(): void;
     openNotes(): void;
+    notesOpen?: boolean;
     installedToast?: { version: string; open(): void; dismiss(): void };
   };
 }

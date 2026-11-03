@@ -32,7 +32,7 @@ export function StatusBar(): React.JSX.Element {
     <footer className="statusbar" data-status-bar aria-label={CHROME_STR.statusBar}>
       <span className="statusbar__item" data-status-item="machine">
         <Monitor size={13} aria-hidden />
-        {CHROME_STR.machine}
+        <span className="statusbar__text">{CHROME_STR.machine}</span>
       </span>
       {status.branch !== null && (
         <span className="statusbar__item" data-status-item="branch" title={status.branch}>
