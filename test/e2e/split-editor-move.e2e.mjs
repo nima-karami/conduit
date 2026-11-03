@@ -133,14 +133,80 @@ const reviewAnchor = (page, g) =>
     };
   }, G(g));
 
+// The bundled closures own the saved anchor and measured slots; debugger logpoints observe
+// those values without changing the scroll/restore code under test.
+async function traceReviewMove(page) {
+  const cdp = await page.context().newCDPSession(page);
+  const scripts = [];
+  cdp.on('Debugger.scriptParsed', (script) => scripts.push(script));
+  await cdp.send('Debugger.enable');
+  const script = scripts.find((s) => /\/webview\.js$/.test(s.url));
+  assert(script, 'RV diagnostics: renderer bundle was not found');
+  const { scriptSource } = await cdp.send('Debugger.getScriptSource', {
+    scriptId: script.scriptId,
+  });
+  const lines = scriptSource.split('\n');
+  const at = (start, pattern) => {
+    const from = lines.findIndex((line) => line.includes(start));
+    const lineNumber = lines.findIndex((line, i) => i > from && pattern.test(line));
+    assert(from >= 0 && lineNumber >= 0, `RV diagnostics: missing ${start} / ${pattern}`);
+    return { lineNumber, match: lines[lineNumber].match(pattern) };
+  };
+  const save = at('function mergeReviewViewState(', /store\.set\((\w+), (\w+)\)/);
+  const restore = at(
+    '// webview/components/review-view.tsx',
+    /const (\w+) = getViewState\((\w+)\)/,
+  );
+  const restored = at(lines[restore.lineNumber], /(\w+)\.scrollTop = (\w+);/);
+  const measured = at('const slot = cardHeight + GAP', /measuredRef\.current\.set\((\w+), (\w+)\)/);
+  const previous = at('const slot = cardHeight + GAP', /const (\w+) = measuredRef\.current\.get/);
+  const [saveId, next] = save.match.slice(1);
+  const [saved, restoreId] = restore.match.slice(1);
+  const [element, top] = restored.match.slice(1);
+  const [key, slot] = measured.match.slice(1);
+  const points = [
+    [
+      save.lineNumber,
+      `(window.__rvSaved ??= {})[${saveId}] = {topPath: ${next}.topPath, offset: ${next}.offset}`,
+    ],
+    [
+      restored.lineNumber + 1,
+      `console.log('[RV restore]', JSON.stringify({id: ${restoreId}, saved: {topPath: ${saved}.topPath, offset: ${saved}.offset}, requested: ${top}, actual: ${element}.scrollTop}))`,
+    ],
+    [
+      measured.lineNumber,
+      `console.log('[RV onMeasure]', JSON.stringify({key: ${key}, old: ${previous.match[1]}, next: ${slot}, scrollTop: scrollerRef.current?.scrollTop, group: scrollerRef.current?.closest('.editor-group')?.dataset.group}))`,
+    ],
+  ];
+  const listener = (message) => {
+    if (message.text().startsWith('[RV ')) log(message.text());
+  };
+  page.on('console', listener);
+  for (const [lineNumber, expression] of points) {
+    await cdp.send('Debugger.setBreakpoint', {
+      location: { scriptId: script.scriptId, lineNumber },
+      condition: `(${expression}, false)`,
+    });
+  }
+  return async () => {
+    page.off('console', listener);
+    await cdp.detach();
+  };
+}
+
 async function pressMove(page, g, key) {
   await page.focus(`${G(g)} .review__scroll`);
+  log(
+    'RV: saved anchors immediately before move',
+    JSON.stringify(await page.evaluate(() => window.__rvSaved)),
+  );
   await page.keyboard.press(key);
   const to = g === 1 ? 2 : 1;
   await page
     .waitForSelector(`${G(to)}[data-active="true"] .review__scroll`, { timeout: 10000 })
     .catch(() => assert(false, `RV: Review did not move to an active group ${to}`));
   await sleep(900);
+  log('RV: destination saved anchors', JSON.stringify(await page.evaluate(() => window.__rvSaved)));
   return reviewAnchor(page, to);
 }
 
@@ -241,7 +307,12 @@ try {
   await phaseMoveOneGroup(page);
 
   await phaseMove(page);
-  await phaseReviewMove(page);
+  const stopReviewTrace = await traceReviewMove(page);
+  try {
+    await phaseReviewMove(page);
+  } finally {
+    await stopReviewTrace();
+  }
   if (hasGit) {
     await phaseE4(page);
   } else {

@@ -74,12 +74,10 @@ const tabInfo = (page) =>
     })),
   );
 
-let firstApp;
-let secondApp;
 try {
   // ── Launch 1: open tabs, pin a.txt, preview b.txt ────────────────────────────
   const first = await launch();
-  firstApp = first.app;
+  const firstApp = first.app;
   const { page: page1 } = first;
 
   const sid = await openSession(page1, { path: repoArg });
@@ -130,12 +128,11 @@ try {
   );
 
   await closeApp(firstApp, page1);
-  firstApp = null;
   log('launch 1 closed ✓');
 
   // ── Launch 2: tabs restore for the restored session ──────────────────────────
   const second = await launch();
-  secondApp = second.app;
+  const secondApp = second.app;
   const { page: page2 } = second;
   await tapBridge(page2);
 
@@ -183,26 +180,14 @@ try {
   log('PASS: a.txt permanent + b.txt active preview restored across restart ✓');
 
   await closeApp(secondApp, page2);
-  secondApp = null;
 
   log('PASS ✓ editor-tabs-persist: all assertions passed');
   await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
-  if (isAssertion) {
-    console.log('[editor-tabs-persist] FAIL ✗', e.message);
-    await finishScenario(1);
-  }
-  console.error('[editor-tabs-persist] ERROR:', e?.message || e);
-  try {
-    if (firstApp) await firstApp.close();
-  } catch {
-    /* ignore */
-  }
-  try {
-    if (secondApp) await secondApp.close();
-  } catch {
-    /* ignore */
-  }
-  await finishScenario(2);
+  console[isAssertion ? 'log' : 'error'](
+    `[editor-tabs-persist] ${isAssertion ? 'FAIL ✗' : 'ERROR:'}`,
+    e?.message || e,
+  );
+  await finishScenario(isAssertion ? 1 : 2);
 }

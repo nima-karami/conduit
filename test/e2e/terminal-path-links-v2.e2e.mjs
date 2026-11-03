@@ -131,12 +131,15 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
         const cellW = r.width / term.cols;
         const cellH = r.height / term.rows;
         const screenRow = row - buf.viewportY;
+        const resetRow = screenRow === 0 ? 1 : 0;
         return {
           row,
           col,
           onScreen: row >= 0 && screenRow >= 0 && screenRow < term.rows && r.width > 0,
           x: r.x + (col + 0.5) * cellW,
           y: r.y + (screenRow + 0.5) * cellH,
+          resetX: r.x + cellW / 2,
+          resetY: r.y + (resetRow + 0.5) * cellH,
         };
       },
       { id: sid, needle, charIdx },
@@ -147,17 +150,34 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   const clickAt = async (needle, charIdx, { onLink = true, button = 'left' } = {}) => {
     const c = await cellOf(needle, charIdx);
     assert(c.onScreen, `"${needle}" is not on screen: ${JSON.stringify(c)}`);
+    if (onLink && needle === LINE_BOTTOM) {
+      const providerLinks = await page.evaluate(
+        ({ id, row }) =>
+          new Promise((resolve) => {
+            const timer = setTimeout(() => resolve({ timedOut: true }), 2000);
+            window.__termLinkProviders[id].provideLinks(row + 1, (links) => {
+              clearTimeout(timer);
+              resolve({
+                timedOut: false,
+                links: (links ?? []).map((link) => ({ text: link.text, range: link.range })),
+              });
+            });
+          }),
+        { id: sid, row: c.row },
+      );
+      log('bottom-link provider before hover:', JSON.stringify({ cell: c, result: providerLinks }));
+    }
     const hovering = () =>
       page.evaluate(
         (id) => !!window.__terms[id].element.querySelector('.xterm-cursor-pointer'),
         sid,
       );
-    for (let attempt = 0; attempt < 40; attempt++) {
+    for (let attempt = 0; attempt < 8; attempt++) {
       // Off the cell first: xterm re-resolves a cell's link only on a mousemove into it, and the
       // pointer may still rest where an earlier, since-repainted link was.
-      await page.mouse.move(c.x, c.y + 400);
-      await page.mouse.move(c.x, c.y, { steps: 4 });
-      await page.waitForTimeout(400);
+      await page.mouse.move(c.resetX, c.resetY);
+      await page.mouse.move(c.x, c.y);
+      await page.waitForTimeout(150);
       if (!onLink || (await hovering())) break;
     }
     if (onLink) assert(await hovering(), `"${needle}" never showed the link pointer`);

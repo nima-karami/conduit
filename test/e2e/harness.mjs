@@ -1250,11 +1250,9 @@ export function terminalFace(page) {
  * (webview/terminal-fonts.ts, 3 s), or the app waits for the face before its first terminal and
  * nothing is late. `assertFontsHeldBack` proves the hold was exercised.
  *
- * Root cause for reload: Playwright's `page.reload()` uses ignoreCache:false, and CDP
- * `Network.setCacheDisabled` on the pre-reload target does not force file:// face re-fetches —
- * Blink reuses the previous document's IBM Plex Mono faces without hitting webRequest, so
- * assertFontsPending sees them already loaded. While the hold is armed, `page.reload` is routed
- * through `webContents.reloadIgnoringCache()` so the hold sees the reloaded document's requests.
+ * A reload can reuse previously loaded file:// faces despite setCacheDisabled. Clear the
+ * browser cache as well as reloading without cache; fontHoldDiagnostics and the pending/held
+ * assertions must still prove that the next document actually exercised the hold.
  */
 export async function holdBackLocalFonts(app, page, delayMs) {
   await app.evaluate(
@@ -1279,12 +1277,11 @@ export async function holdBackLocalFonts(app, page, delayMs) {
 
   const originalReload = page.reload.bind(page);
   page.reload = async (options) => {
-    try {
-      await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
-    } catch {
-      /* target may be mid-navigation; reloadIgnoringCache still bypasses the face cache */
-    }
-    const waitUntil = options?.waitUntil ?? 'load';
+    await cdp.send('Network.clearBrowserCache');
+    await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
+    // The load event can wait for font resources; observing it would consume the hold before
+    // assertFontsPending and the fallback-terminal checks can inspect the late-font interval.
+    const waitUntil = options?.waitUntil ?? 'domcontentloaded';
     await Promise.all([
       page.waitForNavigation({ waitUntil, timeout: options?.timeout }),
       app.evaluate(({ BrowserWindow }) => {
@@ -1340,6 +1337,22 @@ export async function assertFontsHeldBack(hold, label) {
     requests > 0,
     `font hold-back not exercised (${label}): no local terminal face request was held`,
   );
+}
+
+/** Snapshot the hold tap and this document's face states while a reload is under investigation. */
+export async function fontHoldDiagnostics(hold, page) {
+  const [requests, urls, documentState] = await Promise.all([
+    hold.app.evaluate(() => globalThis.__e2eFontHold?.requests ?? 0),
+    hold.app.evaluate(() => globalThis.__e2eFontHold?.urls ?? []),
+    page.evaluate(() => ({
+      navigationMs: Math.round(performance.now()),
+      status: document.fonts.status,
+      faces: [...document.fonts]
+        .filter((face) => /IBM Plex Mono/i.test(face.family))
+        .map((face) => ({ family: face.family, weight: face.weight, status: face.status })),
+    })),
+  ]);
+  return { requests, urls, ...documentState };
 }
 
 /**

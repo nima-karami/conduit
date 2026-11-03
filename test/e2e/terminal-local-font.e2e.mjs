@@ -21,6 +21,7 @@
 import {
   assert,
   assertFontsHeldBack,
+  fontHoldDiagnostics,
   holdBackLocalFonts,
   logicalLines,
   measureCellWidth,
@@ -303,6 +304,9 @@ runScenario('terminal-local-font', async ({ app, page, log }) => {
   const lateHold = await holdBackLocalFonts(app, page, LATE_HOLD_MS);
   since = await mainNow(app);
   await reloadInstrumented(page);
+  log(
+    `font hold after late-face reload: ${JSON.stringify(await fontHoldDiagnostics(lateHold, page))}`,
+  );
   await waitTerms(page, [a, b], LATE_HOLD_MS);
   const early = await page.evaluate(
     ({ ids, fam }) => ({

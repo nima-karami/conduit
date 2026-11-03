@@ -19,6 +19,7 @@ import {
   assertFontsHeldBack,
   assertFontsPending,
   finishScenario,
+  fontHoldDiagnostics,
   holdBackLocalFonts,
   launchElectron,
   makeLog,
@@ -118,6 +119,9 @@ try {
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
   await tapBridge(page);
+  log(
+    `font hold after fresh-document reload: ${JSON.stringify(await fontHoldDiagnostics(hold, page))}`,
+  );
   await assertFontsPending(page, 'fresh document');
 
   // ── 1. A fresh session, its font arriving after its first fit ─────────────
@@ -138,6 +142,7 @@ try {
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
   await tapBridge(page);
+  log(`font hold after attach reload: ${JSON.stringify(await fontHoldDiagnostics(hold, page))}`);
   await assertFontsPending(page, 'reload');
   await page.waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), sid, {
     timeout: 20000,

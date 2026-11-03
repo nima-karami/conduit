@@ -51,6 +51,7 @@ import {
   REPO,
   removeDir,
   revealSessionRow,
+  rowLabel,
   showRightView,
   shutdownApp,
   stopServer,
@@ -740,7 +741,11 @@ async function phaseMissingHome({ app, page, sid, t0 }) {
     (await page.locator('.session-stale button', { hasText: '↻ Relaunch' }).count()) === 1,
     'E6: Relaunch offered',
   );
-  assert((await cardState.textContent()) === 'Stale', 'E6: the card says Stale');
+  const cardState = await rowLabel(page, sid);
+  assert(
+    cardState?.includes('Stopped'),
+    `E6: the tree row says Stopped (got ${JSON.stringify(cardState)})`,
+  );
   await page.waitForTimeout(1000);
   assert((await launches(page, sid)).length === launchesAfterStart, 'E6: still no launch');
   log('E6: home back → Session not running, no spawn ✓');
