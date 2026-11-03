@@ -323,6 +323,14 @@ export async function writeFile(
   }
 }
 
+const imageOverCap = (absPath: string): FileDiffDTO => ({
+  path: absPath,
+  head: '',
+  work: '',
+  binary: true,
+  image: { status: 'modified', overCap: true },
+});
+
 /** Build the image side of a diff (or the text side as before). Pure over its inputs
  *  so the status/over-cap decision is unit-testable without git or the filesystem. */
 export function buildImageDiff(
@@ -338,15 +346,7 @@ export function buildImageDiff(
   const headOver = headBuf != null && headBuf.length > MAX_IMAGE_BYTES;
   // Either side over the cap ⇒ degrade to the plain "no preview" notice (never a
   // misleading one-sided diff). binary:true keeps non-image consumers unaffected.
-  if (workOver || headOver) {
-    return {
-      path: absPath,
-      head: '',
-      work: '',
-      binary: true,
-      image: { status: 'modified', overCap: true },
-    };
-  }
+  if (workOver || headOver) return imageOverCap(absPath);
 
   const work = workBuf ? { dataUrl: toData(workBuf), bytes: workBuf.length } : undefined;
   const head = headBuf ? { dataUrl: toData(headBuf), bytes: headBuf.length } : undefined;
@@ -362,6 +362,18 @@ export const UNMERGED = { unmerged: true } as const;
 export type Unmerged = typeof UNMERGED;
 const isUnmerged = (v: unknown): v is Unmerged =>
   typeof v === 'object' && v !== null && 'unmerged' in v;
+
+const OVER_CAP = Symbol('over-cap');
+
+// Stat first: buildImageDiff only sees the buffer after it is already allocated.
+async function readWorkImage(absPath: string): Promise<Buffer | null | typeof OVER_CAP> {
+  try {
+    if ((await fs.promises.stat(absPath)).size > MAX_IMAGE_BYTES) return OVER_CAP;
+    return await fs.promises.readFile(absPath);
+  } catch {
+    return null;
+  }
+}
 
 export async function readDiff(
   absPath: string,
@@ -385,8 +397,9 @@ export async function readDiff(
     const workBuf =
       side === 'index'
         ? await gitShowBuffer(absPath, 'index').catch(() => null)
-        : await fs.promises.readFile(absPath).catch(() => null);
+        : await readWorkImage(absPath);
     const headBuf = await gitShowBuffer(absPath, base).catch(() => null);
+    if (workBuf === OVER_CAP) return imageOverCap(absPath);
     if (isUnmerged(workBuf) || isUnmerged(headBuf)) return conflicted;
     return buildImageDiff(absPath, workBuf, headBuf);
   }

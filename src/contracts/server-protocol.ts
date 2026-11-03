@@ -611,3 +611,10 @@ export const FROZEN_SHAPES = {
 } as const satisfies Partial<
   Record<ServerMethod, { params: readonly string[]; result: readonly string[] }>
 >;
+
+/**
+ * Longest single JSON-RPC line either end accepts before dropping the connection. The channel
+ * carries snapshots and events, not file content (the 25 MB image / 50 MB PDF DTOs go over the
+ * app's own IPC), so this sits far above any legitimate message and only bounds a runaway peer.
+ */
+export const SERVER_LINE_MAX_BYTES = 64 * 1024 * 1024;
