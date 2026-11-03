@@ -570,6 +570,21 @@ describe('states and ages', () => {
     expect(before.getAttribute('aria-label')).toBe('nope, Stopped');
     expect(before.title).toContain("Can't start: conduit-nope-xyz wasn't found");
   });
+  it('an active row hidden by the Space is not revealed later when the Space changes', async () => {
+    await render({
+      sessions: family(),
+      activeId: 'l',
+      ui: { selection: { kind: 'space', projectId: 'p-a' }, foldedGroups: ['idle'] },
+    });
+    expect(rowEl('l')).toBeNull();
+    await click(q('button[data-space-id="all"]'));
+    expect(spies.updateUi).toHaveBeenCalledTimes(1);
+    expect(spies.updateUi).toHaveBeenLastCalledWith(
+      expect.objectContaining({ selection: { kind: 'all' }, foldedGroups: ['idle'] }),
+    );
+    expect(rowEl('l')).toBeNull();
+  });
+
   it('hydrating shows a loading placeholder, not the first-run state', async () => {
     await render({ sessions: [], sessionsLoaded: false });
     expect(document.body.textContent).toContain('Loading agents…');

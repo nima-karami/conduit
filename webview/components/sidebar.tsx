@@ -428,16 +428,18 @@ export function Sidebar({
     () => buildAgentTree({ sessions, runtime, ui, matchingIds, askSessionIds }),
     [sessions, runtime, ui, matchingIds, askSessionIds],
   );
-  // Reveal once per change of the active agent, as soon as its row exists and the saved fold
+  // Reveal once per change of the active agent, as soon as its session exists and the saved fold
   // state has landed; a fold the user makes afterwards stays folded.
   const revealedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!tree.hydrated || activeId === undefined || revealedRef.current === activeId) return;
-    if (!model.rows[activeId]) return;
+    if (!sessions.some((s) => s.id === activeId)) return;
+    // A Space or search that hides the active row consumes the reveal; switching Space later must
+    // not unfold what the user folded.
     revealedRef.current = activeId;
     const next = revealActive(ui, model, activeId);
     if (next !== ui) updateUi(next);
-  }, [tree.hydrated, activeId, model, ui, updateUi]);
+  }, [tree.hydrated, activeId, sessions, model, ui, updateUi]);
   // One flat list of direct children of the tree — group headers and rows alike — so a row whose
   // state moves it to another group keeps its DOM node, its focus and an open rename.
   const items = useMemo(() => {
