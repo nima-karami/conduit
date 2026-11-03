@@ -1,0 +1,5 @@
+{
+  "valid": true,
+  "dir": "fromHelper",
+  "line": "{\"type\":\"openFailed\",\"reason\":\"The application executable was not found.\"}"
+}

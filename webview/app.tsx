@@ -702,7 +702,7 @@ export function App() {
         askDirty: (req) => dirtyCloseRef.current.ask(req),
         askSessions: ({ reason, running, busy, onShown, signal }) =>
           new Promise<boolean | { proceed: boolean; stopAgents?: boolean }>((resolve) => {
-            const copy = quitConfirmCopy({ running, busy, reason });
+            const copy = quitConfirmCopy({ running, busy, reason, trayHint: false });
             const key = nextModalKey();
             signal.addEventListener(
               'abort',

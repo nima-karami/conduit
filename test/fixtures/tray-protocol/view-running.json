@@ -1,0 +1,5 @@
+{
+  "valid": true,
+  "dir": "toHelper",
+  "line": "{\"type\":\"view\",\"view\":{\"visible\":true,\"confirm\":{\"confirm\":\"Stop all agents\",\"title\":\"Stop all agents?\",\"body\":\"3 agents are running in Conduit’s background service. Stopping ends them. Anything they haven’t saved is lost.\",\"cancel\":\"Cancel\"},\"icon\":\"normal\",\"openFailed\":{\"body\":\"Conduit could not be opened: {reason}\",\"title\":\"Could not open Conduit\"},\"items\":[{\"kind\":\"label\",\"text\":\"3 agents running\"},{\"kind\":\"separator\"},{\"isDefault\":true,\"enabled\":true,\"id\":\"open\",\"text\":\"Open Conduit\",\"kind\":\"action\"},{\"enabled\":true,\"id\":\"stopAll\",\"text\":\"Stop all agents…\",\"kind\":\"action\"}],\"tooltip\":\"Conduit — 3 agents running\"}}"
+}
