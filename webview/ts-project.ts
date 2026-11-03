@@ -14,8 +14,11 @@
  */
 
 import { editor as monacoEditor, typescript as monacoTs } from 'monaco-editor';
-import { pathBelow, renamedPath } from '../src/canonical-path';
+import { canonicalPath, pathBelow, renamedPath } from '../src/canonical-path';
 import { folderKey } from '../src/folder-key';
+import { IGNORED_DIRS } from '../src/ignore-dirs';
+import { resolveRelative, scanImports } from '../src/import-graph';
+import { isOversizedForIndex, selectIndexCandidates } from '../src/source-index';
 import type { TsconfigDTO } from '../src/tsconfig-map';
 import { toCompilerOptions } from '../src/tsconfig-map';
 import { log } from './log';
@@ -51,16 +54,29 @@ const FLUSH_IDLE_MS = 250;
 const PUSH_INTERVAL_MS = 1000;
 
 /**
- * Source text the window may hand the workers, summed over roots. The worker holds every
- * extraLib as a root SourceFile (~5–10× the text once parsed) and the JS worker can hold a
- * second copy, so this bounds the workers near a GB; past it, the least recently active roots
- * leave first. `length` stands in for bytes: V8 stores ASCII source one byte per char.
+ * Source text the window may hand the TS worker, summed over roots. Measured on the built app
+ * (memory audit pass 2): a language worker costs ~29× the extraLib text it holds (39 MB of
+ * source → +1.18 GB private), so 24 MB keeps one worker near 700 MB. Past it, the least
+ * recently active roots leave first. `length` stands in for bytes: V8 stores ASCII source one
+ * byte per char.
  */
-export const MAX_INDEXED_SOURCE_BYTES = 64 * 1024 * 1024;
+export const MAX_INDEXED_SOURCE_BYTES = 24 * 1024 * 1024;
+
+/**
+ * How many files the open JS models' import walk may visit. Same bound as the host's priority
+ * wave (`src/import-graph.ts`); it only decides which `.ts` sources the JS worker gets.
+ */
+const JS_CLOSURE_CAP = 300;
 
 interface IndexedFile {
   path: string;
   content: string;
+}
+
+interface Held extends IndexedFile {
+  ts: { dispose(): void };
+  /** Null while the JS worker doesn't hold this file. */
+  js: { dispose(): void } | null;
 }
 
 /** Streamed, waiting for the flush that counts it as loaded for `root`. */
@@ -69,8 +85,18 @@ const pending = new Map<string, IndexedFile & { root: string }>();
 const outbox = new Map<string, IndexedFile>();
 // What the workers hold, with the handles that take it out again: a rename or delete must remove
 // the old path, and only the handle of the latest add can (monaco versions each extraLib).
-const indexed = new Map<string, IndexedFile & { handles: { dispose(): void }[] }>();
+const indexed = new Map<string, Held>();
 let indexedBytes = 0;
+/** On-demand resolutions: a navigation from either worker may be waiting on them. */
+const jsPinned = new Set<string>();
+/** Indexed TS sources the open JS models import, transitively. */
+let jsPulled = new Set<string>();
+let jsClosureDirty = true;
+let jsModelsEdited = false;
+let jsTracking: { dispose(): void }[] | null = null;
+const importSignature = new WeakMap<monacoEditor.ITextModel, string>();
+/** Monaco still lists a model while its onWillDispose runs, and a push can run inside it. */
+const closing = new WeakSet<monacoEditor.ITextModel>();
 /** Root keys each uri belongs to; it leaves when its last root does. Unowned is never evicted. */
 const owners = new Map<string, Set<string>>();
 /** Every root the index knows, with the project files it has loaded for it. */
@@ -132,18 +158,140 @@ export function onIndexRootEvicted(listener: (rootKey: string) => void): () => v
   };
 }
 
-/** Drop every root no session in this window presents any more. */
+/** Drop every root no session in this window presents any more — never the active session's:
+ *  a briefly empty session list (a server restart) must not rebuild the whole index. */
 export function retainIndexRoots(used: readonly string[]): void {
   const keep = new Set(used.map(folderKey));
-  for (const key of [...loadedByRoot.keys()]) if (!keep.has(key)) evictRoot(key);
+  for (const key of [...loadedByRoot.keys()]) {
+    if (!keep.has(key) && !activeRoots.has(key)) evictRoot(key);
+  }
 }
 
 function dropIndexed(uri: string): void {
   const f = indexed.get(uri);
   if (!f) return;
-  for (const h of f.handles) h.dispose();
+  f.ts.dispose();
+  f.js?.dispose();
   indexed.delete(uri);
+  jsPinned.delete(uri);
+  jsPulled.delete(uri);
   indexedBytes -= f.content.length;
+  jsClosureDirty = true;
+}
+
+/**
+ * What the JS worker gets without being asked: JS sources and declarations. A `.ts` source
+ * reaches it only when an open JS model imports it, or a navigation resolved it — handing it
+ * every `.ts` file made the first `.js` tab pay the whole index a second time.
+ */
+function isJsNative(path: string): boolean {
+  return /\.(?:[mc]?jsx?|d\.[mc]?ts)$/i.test(path);
+}
+
+function wantsJs(uri: string, path: string): boolean {
+  return isJsNative(path) || jsPinned.has(uri) || jsPulled.has(uri);
+}
+
+/** The spelling `src/import-graph.ts` resolves in. */
+const slashPath = (p: string) => canonicalPath(p).replace(/\\/g, '/');
+
+function openJsModels(): monacoEditor.ITextModel[] {
+  return monacoEditor
+    .getModels()
+    .filter((m) => !m.isDisposed() && !closing.has(m) && m.getLanguageId() === 'javascript');
+}
+
+/** Indexed non-JS files reachable from the open JS models through relative imports, bounded. */
+function jsClosure(models: readonly monacoEditor.ITextModel[]): Set<string> {
+  const out = new Set<string>();
+  if (!models.length) return out;
+  const uriOf = new Map<string, string>();
+  for (const [uri, f] of indexed) uriOf.set(slashPath(f.path), uri);
+  const live = new Map<string, string>();
+  const queue: string[] = [];
+  for (const m of models) {
+    const key = slashPath(pathForUri(m.uri));
+    uriOf.set(key, m.uri.toString());
+    live.set(key, m.getValue());
+    queue.push(key);
+  }
+  const candidates = new Set(uriOf.keys());
+  const seen = new Set(queue);
+  for (let visited = 0; visited < JS_CLOSURE_CAP; visited++) {
+    const key = queue.shift();
+    if (key === undefined) break;
+    const uri = uriOf.get(key);
+    if (uri === undefined) continue;
+    if (!isJsNative(key) && indexed.has(uri)) out.add(uri);
+    const text = live.get(key) ?? indexed.get(uri)?.content;
+    if (text === undefined) continue;
+    for (const spec of scanImports(text)) {
+      const target = resolveRelative(key, spec, candidates);
+      if (target && !seen.has(target)) {
+        seen.add(target);
+        queue.push(target);
+      }
+    }
+  }
+  return out;
+}
+
+/** Re-walk only when a JS model's imports changed, not on every keystroke. */
+function noteJsModelEdits(models: readonly monacoEditor.ITextModel[]): void {
+  for (const m of models) {
+    const sig = scanImports(m.getValue()).join('\n');
+    if (importSignature.get(m) === sig) continue;
+    importSignature.set(m, sig);
+    jsClosureDirty = true;
+  }
+}
+
+/** Bring the JS worker's extraLibs in line with `wantsJs`. */
+function syncJsWorker(): void {
+  const models = openJsModels();
+  if (jsModelsEdited) {
+    jsModelsEdited = false;
+    noteJsModelEdits(models);
+  }
+  if (!jsClosureDirty) return;
+  jsClosureDirty = false;
+  jsPulled = jsClosure(models);
+  for (const [uri, f] of indexed) {
+    const want = wantsJs(uri, f.path);
+    if (want && !f.js) f.js = monacoTs.javascriptDefaults.addExtraLib(f.content, uri);
+    else if (!want && f.js) {
+      f.js.dispose();
+      f.js = null;
+    }
+  }
+}
+
+/** Installed by the first push; models opened before any index arrived are picked up then. */
+function trackJsModels(): void {
+  if (jsTracking) return;
+  const changed = () => {
+    jsClosureDirty = true;
+    schedulePush();
+  };
+  const watch = (m: monacoEditor.ITextModel, announce = true) => {
+    m.onDidChangeContent(() => {
+      if (m.getLanguageId() !== 'javascript') return;
+      jsModelsEdited = true;
+      schedulePush();
+    });
+    m.onWillDispose(() => {
+      closing.add(m);
+      if (m.getLanguageId() === 'javascript') changed();
+    });
+    if (announce && m.getLanguageId() === 'javascript') changed();
+  };
+  jsTracking = [
+    monacoEditor.onDidCreateModel((m) => watch(m)),
+    monacoEditor.onDidChangeModelLanguage(changed),
+  ];
+  // The push installing this walks them already.
+  jsClosureDirty = true;
+  for (const m of monacoEditor.getModels()) watch(m, false);
 }
 
 function evictRoot(key: string): void {
@@ -189,6 +337,7 @@ function push(): void {
     clearTimeout(pushTimer);
     pushTimer = null;
   }
+  trackJsModels();
   lastPush = Date.now();
   streamInOutbox = false;
   // One synchronous pass, so monaco's own setTimeout(0) coalescing makes it ONE re-post.
@@ -198,15 +347,16 @@ function push(): void {
     if (prev?.content === content) continue;
     // Version-stable per file — unlike setExtraLibs, which re-versions every file on every call
     // and would invalidate the whole program per push.
-    const handles = [
-      monacoTs.typescriptDefaults.addExtraLib(content, uri),
-      monacoTs.javascriptDefaults.addExtraLib(content, uri),
-    ];
+    const ts = monacoTs.typescriptDefaults.addExtraLib(content, uri);
+    const js =
+      prev?.js || wantsJs(uri, path) ? monacoTs.javascriptDefaults.addExtraLib(content, uri) : null;
     indexedBytes += content.length - (prev?.content.length ?? 0);
-    indexed.set(uri, { path, content, handles });
+    indexed.set(uri, { path, content, ts, js });
+    jsClosureDirty = true;
   }
   outbox.clear();
   enforceBudget();
+  syncJsWorker();
 }
 
 /** At most one push per PUSH_INTERVAL_MS; immediate when the last one is old enough. */
@@ -219,9 +369,13 @@ function schedulePush(): void {
 
 /** Roots an out-of-index file belongs to: those containing it, else the active session's. */
 function ownersFor(path: string): string[] {
-  const k = folderKey(path);
-  const containing = [...loadedByRoot.keys()].filter((r) => k === r || k.startsWith(`${r}/`));
+  const containing = containingRoots(path);
   return containing.length ? containing : [...activeRoots];
+}
+
+function containingRoots(path: string): string[] {
+  const k = folderKey(path);
+  return [...loadedByRoot.keys()].filter((r) => k === r || k.startsWith(`${r}/`));
 }
 
 /**
@@ -235,6 +389,7 @@ export function addIndexedFiles(files: readonly IndexedFile[]): void {
   for (const f of files) {
     const uri = fileUri(f.path).toString();
     for (const r of ownersFor(f.path)) own(uri, r);
+    jsPinned.add(uri);
     outbox.set(uri, { path: f.path, content: f.content });
   }
   push();
@@ -380,8 +535,8 @@ export function applyProjectFiles(chunk: ProjectFilesChunk): void {
 /**
  * Refresh one indexed file's content (e.g. after a save), so files that resolve INTO it see
  * the new text. A file open in a tab is a live model and already correct — this is for the
- * rest of the project. A file the index never held stays out: the fsChanged top-up is what
- * brings new files in.
+ * rest of the project. A new source file saved under an indexed root joins it here too: the
+ * fsChanged top-up is debounced, and never comes at all for a folder nothing watches.
  */
 export function refreshIndexedFile(path: string, content: string): void {
   const uri = fileUri(path).toString();
@@ -390,9 +545,26 @@ export function refreshIndexedFile(path: string, content: string): void {
     queued.content = content;
     return;
   }
-  if (!indexed.has(uri) && !outbox.has(uri)) return;
+  if (!indexed.has(uri) && !outbox.has(uri)) {
+    const roots = containingRoots(path).filter((r) => isIndexSource(path, r, content));
+    if (!roots.length) return;
+    for (const r of roots) own(uri, r);
+  }
   outbox.set(uri, { path, content });
   schedulePush();
+}
+
+/** The host's selection rule (`src/source-index.ts`) and walk exclusions, for one saved file. */
+function isIndexSource(path: string, rootKey: string, content: string): boolean {
+  const rel = folderKey(path).slice(rootKey.length).replace(/^\/+/, '');
+  return (
+    !isOversizedForIndex(content.length) &&
+    !rel
+      .split('/')
+      .slice(0, -1)
+      .some((dir) => IGNORED_DIRS.has(dir)) &&
+    selectIndexCandidates([{ rel, abs: slashPath(path) }]).length === 1
+  );
 }
 
 export function __resetIndexForTest(): void {
@@ -403,6 +575,12 @@ export function __resetIndexForTest(): void {
   lastPush = Number.NEGATIVE_INFINITY;
   for (const m of [pending, outbox, owners, loadedByRoot, lastActive]) m.clear();
   evicted.clear();
+  jsPinned.clear();
+  jsPulled = new Set();
+  jsClosureDirty = true;
+  jsModelsEdited = false;
+  for (const d of jsTracking ?? []) d.dispose();
+  jsTracking = null;
   activeRoots = new Set();
   budgetLogged = false;
   streamInOutbox = false;
