@@ -2022,6 +2022,7 @@ export function App() {
   const sidebarTree = useMemo<SidebarTreeContextValue>(
     () => ({
       ui: sidebarUi,
+      hydrated: sidebarSync.hydrated,
       runtime: nextAgentRuntime,
       askSessionIds,
       bindings,
@@ -2033,6 +2034,7 @@ export function App() {
     }),
     [
       sidebarUi,
+      sidebarSync.hydrated,
       nextAgentRuntime,
       askSessionIds,
       bindings,

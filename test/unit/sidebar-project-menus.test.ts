@@ -24,6 +24,7 @@ vi.mock('../../webview/host-request', () => ({
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Element.prototype.scrollIntoView = () => {};
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -83,6 +84,7 @@ async function render(
           value: {
             ui: defaultSidebarUi(),
             runtime: { seen: {}, stateSince: {} },
+            hydrated: true,
             askSessionIds: new Set<string>(),
             bindings: {},
             lastFocusedBySpace: {},

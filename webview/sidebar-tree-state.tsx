@@ -7,6 +7,8 @@ import { type AgentRuntime, defaultSidebarUi, type SidebarUiState } from '../src
  */
 export interface SidebarTreeContextValue {
   ui: SidebarUiState;
+  /** False until the host's saved sidebar state landed; an edit before it is never persisted. */
+  hydrated: boolean;
   runtime: AgentRuntime;
   askSessionIds: ReadonlySet<string>;
   bindings: Readonly<Record<string, { cli?: string; handle?: string }>>;

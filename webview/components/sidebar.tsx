@@ -14,6 +14,7 @@ import {
   type AgentTreeModel,
   buildAgentTree,
   buildSpaceRows,
+  revealActive,
   type SpaceRowModel,
 } from '../../src/agent-tree';
 import type { McpNotConnected, McpSessionBadge } from '../../src/conduit-mcp/ui-types';
@@ -427,6 +428,16 @@ export function Sidebar({
     () => buildAgentTree({ sessions, runtime, ui, matchingIds, askSessionIds }),
     [sessions, runtime, ui, matchingIds, askSessionIds],
   );
+  // Reveal once per change of the active agent, as soon as its row exists and the saved fold
+  // state has landed; a fold the user makes afterwards stays folded.
+  const revealedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!tree.hydrated || activeId === undefined || revealedRef.current === activeId) return;
+    if (!model.rows[activeId]) return;
+    revealedRef.current = activeId;
+    const next = revealActive(ui, model, activeId);
+    if (next !== ui) updateUi(next);
+  }, [tree.hydrated, activeId, model, ui, updateUi]);
   // One flat list of direct children of the tree — group headers and rows alike — so a row whose
   // state moves it to another group keeps its DOM node, its focus and an open rename.
   const items = useMemo(() => {
@@ -470,6 +481,13 @@ export function Sidebar({
       : activeId !== undefined && navIds.includes(activeId)
         ? activeId
         : (navIds[0] ?? null);
+  const activeShown = activeId !== undefined && navIds.includes(activeId);
+  useEffect(() => {
+    if (activeId === undefined || !activeShown) return;
+    treeRef.current
+      ?.querySelector(`[role="treeitem"][data-sessionid="${cssId(activeId)}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [activeId, activeShown]);
   const focusItem = useCallback((navId: string) => {
     setFocusId(navId);
     const sel = isGroupNavId(navId)

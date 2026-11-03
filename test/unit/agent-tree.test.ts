@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentStateRank, buildAgentTree, buildSpaceRows } from '../../src/agent-tree';
+import { agentStateRank, buildAgentTree, buildSpaceRows, revealActive } from '../../src/agent-tree';
 import { type AgentRuntime, defaultSidebarUi, type SidebarUiState } from '../../src/sidebar-state';
 import type { Project, Session } from '../../src/types';
 
@@ -373,5 +373,47 @@ describe('buildAgentTree — age fallback', () => {
     expect(t.rows.past.stateSince).toBe(5);
     expect(t.rows.future.stateSince).toBeGreaterThanOrEqual(before);
     expect(t.rows.future.stateSince).toBeLessThanOrEqual(Date.now());
+  });
+});
+
+describe('revealActive', () => {
+  const X = { status: 'exited' } as Partial<Session>;
+  const ui = (over: Partial<SidebarUiState> = {}) => ({ ...defaultSidebarUi(), ...over });
+  const run = (sessions: Session[], u: SidebarUiState, id: string | null) =>
+    revealActive(
+      u,
+      buildAgentTree({
+        sessions,
+        runtime: runtimeOf(sessions),
+        ui: u,
+        matchingIds: new Set(sessions.map((s) => s.id)),
+        askSessionIds: new Set(),
+      }),
+      id,
+    );
+
+  it('unfolds the Stopped group holding the active agent', () => {
+    const u = ui();
+    const next = run([S('a', X)], u, 'a');
+    expect(next.foldedGroups).not.toContain('stopped');
+  });
+  it('unfolds folded ancestors and their group', () => {
+    const sessions = [S('p', X), child('c', 'p', X), child('g', 'c', X)];
+    const next = run(sessions, ui({ foldedSessions: ['p', 'c'] }), 'g');
+    expect(next.foldedSessions).toEqual([]);
+    expect(next.foldedGroups).not.toContain('stopped');
+  });
+  it('keeps unrelated folds', () => {
+    const sessions = [S('p'), child('c', 'p'), S('q'), child('d', 'q')];
+    const next = run(sessions, ui({ foldedSessions: ['p', 'q'], foldedGroups: ['done'] }), 'c');
+    expect(next.foldedSessions).toEqual(['q']);
+    expect(next.foldedGroups).toEqual(['done']);
+  });
+  it('is the same object when already visible, null, or not in the tree', () => {
+    const sessions = [S('a')];
+    const u = ui();
+    expect(run(sessions, u, 'a')).toBe(u);
+    expect(run(sessions, u, null)).toBe(u);
+    expect(run(sessions, u, 'zzz')).toBe(u);
   });
 });

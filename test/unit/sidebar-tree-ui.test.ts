@@ -25,6 +25,7 @@ vi.mock('../../webview/bridge', async (orig) => ({
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Element.prototype.scrollIntoView = () => {};
 });
 
 let root: Root | null = null;
@@ -104,6 +105,7 @@ async function render(s: Setup) {
     setSessions = setList;
     const value: SidebarTreeContextValue = {
       ui,
+      hydrated: true,
       runtime: { seen: {}, stateSince: {} },
       askSessionIds: new Set(),
       bindings: {},

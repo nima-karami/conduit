@@ -210,6 +210,33 @@ export function buildAgentTree(input: {
   return { rows, groups, visibleIds };
 }
 
+/**
+ * The active agent's row is always visible, like an explorer's reveal: unfold its group and every
+ * folded ancestor. Returns `ui` itself when nothing needs to change, or the id is not in the tree
+ * (filtered or out of the selected Space).
+ */
+export function revealActive(
+  ui: SidebarUiState,
+  tree: AgentTreeModel,
+  activeId: string | null | undefined,
+): SidebarUiState {
+  if (activeId === null || activeId === undefined || !tree.rows[activeId]) return ui;
+  const unfoldSessions = new Set<string>();
+  let root = activeId;
+  for (let p = tree.rows[activeId].parentId; p !== null; p = tree.rows[p]?.parentId ?? null) {
+    if (ui.foldedSessions.includes(p)) unfoldSessions.add(p);
+    root = p;
+  }
+  const group = tree.groups.find((g) => g.rootIds.includes(root));
+  const groupKey = group !== undefined && ui.foldedGroups.includes(group.key) ? group.key : null;
+  if (groupKey === null && unfoldSessions.size === 0) return ui;
+  return {
+    ...ui,
+    foldedGroups: ui.foldedGroups.filter((g) => g !== groupKey),
+    foldedSessions: ui.foldedSessions.filter((id) => !unfoldSessions.has(id)),
+  };
+}
+
 export type SpaceHue = 'green' | 'violet' | 'blue' | 'accent' | 'neutral';
 export interface SpaceRowModel {
   key: string;
