@@ -274,30 +274,26 @@ async function phasePanelDock(page) {
     'PD: dropping the strip background on the explorer did not re-dock the center panel',
   );
 
-  // The explorer is barless: its top-edge grip is its move-drag surface.
-  const grip = await page.evaluate(() => {
-    const row = document.querySelector('.panel--explorer .rightpane__grip');
-    const box = row?.getBoundingClientRect();
-    if (!box) return null;
-    const y = box.top + box.height / 2;
-    for (let x = box.right - 2; x > box.left; x -= 4) {
-      if (document.elementFromPoint(x, y) === row) return { x, y };
-    }
-    return null;
-  });
-  assert(grip, 'PD: no background point on the explorer grip');
-  const seenBar = await drag(page, grip, await center(body(page, 1), 'PD center'), {
-    during: async () => ({
-      centerArmed: await page.evaluate(
-        () => !!document.querySelector('.centerpane.centerpane--droptarget'),
-      ),
-      groupOverlays: (await overlays(page)).length,
-    }),
-  });
-  log('PD: side-panel drag over the center', JSON.stringify(seenBar));
-  assert(seenBar.centerArmed, 'PD: .centerpane--droptarget did not appear');
-  assert(seenBar.groupOverlays === 0, 'PD: a panel drag armed the group overlays');
-  log('PD ✓ panel re-dock drags are untouched');
+  // The panel context menu is the remaining move path for the barless explorer.
+  await page.locator('#right-pane').click({ button: 'right', position: { x: 8, y: 8 } });
+  await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 5000 });
+  const labels = await page
+    .locator('.ctxmenu .ctxmenu__label')
+    .evaluateAll((els) => els.map((el) => el.textContent ?? ''));
+  const moveAction = labels.find((label) => /Move side panel after workspace/i.test(label));
+  assert(moveAction, `PD: no context-menu action moves the explorer after workspace: ${labels}`);
+  await page.locator('.ctxmenu .ctxmenu__item', { hasText: moveAction }).click();
+  await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
+  await page.waitForFunction(
+    () => {
+      const panel = document.querySelector('.panel--explorer')?.getBoundingClientRect();
+      const center = document.querySelector('.centerpane')?.getBoundingClientRect();
+      return !!panel && !!center && panel.left >= center.right - 1;
+    },
+    null,
+    { timeout: 10000 },
+  );
+  log('PD ✓ center strip drag and context-menu explorer re-dock');
 }
 
 let launched = null;

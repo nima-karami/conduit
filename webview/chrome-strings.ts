@@ -32,12 +32,9 @@ export const CHROME_STR = {
     messages: 'Messages',
   } satisfies Record<RightPaneTab, string>,
   changesBadge: (n: number) => noun(n, 'change', 'changes'),
-  messagesBadge: (unread: number, urgent: number) =>
-    urgent > 0
-      ? `${noun(unread, 'unread message', 'unread messages')}, ${noun(urgent, 'urgent message', 'urgent messages')}`
-      : noun(unread, 'unread message', 'unread messages'),
+  messagesBadge: (unread: number, urgent: number, outside = 0) =>
+    `${urgent > 0 ? `${noun(unread, 'unread message', 'unread messages')}, ${noun(urgent, 'urgent message', 'urgent messages')}` : noun(unread, 'unread message', 'unread messages')}; ${noun(outside, 'unread message', 'unread messages')} outside current scope`,
   panelGroup: 'Side panel',
-  movePanel: 'Move side panel',
   statusBar: 'Session status',
   machine: 'This computer',
   worktree: 'worktree',

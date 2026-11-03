@@ -38,6 +38,7 @@ import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../
 import type { LspNotSyncedCause } from '../src/lsp-protocol';
 import { isHtmlDocPath } from '../src/media-kind';
 import { type Rect, triggerMenu } from '../src/menu-position';
+import { unreadMessagesOutsideScope } from '../src/messages-scope';
 import type { ApplyResult } from '../src/nav-history';
 import { type NewSessionPrefill, projectForNewSession } from '../src/new-session-seed';
 import { resolveOwningSession } from '../src/owning-session';
@@ -516,6 +517,7 @@ export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
   const [serverState, setServerState] = useState<ServerUiState>({ state: 'connecting' });
   const [activeId, setActiveId] = useState<string | undefined>();
+  const [messagesFilterHandle, setMessagesFilterHandle] = useState<Handle | null>(null);
   const [snapshots, setSnapshots] = useState<SessionSnapshots>({});
   // Read by the once-registered subscribe below; assigned where `visible` is posted.
   const visibleIdsRef = useRef<string[]>([]);
@@ -1980,6 +1982,10 @@ export function App() {
       );
   }, [activeId, activeSpace, active]);
   const sidebarUi = sidebarSync.ui;
+  const selectedProjectId =
+    sidebarUi.selection.kind === 'space' ? sidebarUi.selection.projectId : null;
+  const sidebarSpaceName =
+    state?.projects.find((project) => project.id === selectedProjectId)?.name ?? null;
   // Prune only against an authoritative list: before the first snapshot every id looks vanished.
   const projectsList = state?.projects;
   useEffect(() => {
@@ -5086,9 +5092,6 @@ export function App() {
         </PanelFrame>
       );
     }
-    // Like sessions: barless, with the RightPane's tab row (Changes/Search/Files)
-    // doubling as the panel's top band + move-drag surface, so it aligns with the
-    // sessions header and the center tab strip.
     const edock = dockHandlers('explorer');
     return (
       <PanelFrame
@@ -5143,12 +5146,16 @@ export function App() {
               />
             ) : null
           }
-          moveGrip={{ onDragStart: edock.onDragStart, onDragEnd: edock.onDragEnd }}
           onOpenFile={(p, mode) => openFile(p, undefined, mode)}
           onOpenMatch={openMatch}
           paneRef={rightPaneRef}
           mcp={mcp}
           sessions={sessions}
+          sidebarSelection={sidebarUi.selection}
+          sidebarSpaceName={sidebarSpaceName}
+          selectedAgentHandle={active ? (mcp.state?.sessions[active.id]?.handle ?? null) : null}
+          messagesFilterHandle={messagesFilterHandle}
+          onMessagesFilterHandleChange={setMessagesFilterHandle}
           onOpenSettings={() => openSettingsAt('mcp')}
           onOpenDiff={(repoRoot, rel, diffScope, mode) =>
             openDiff(joinPath(repoRoot, rel), undefined, { diffScope, mode })
@@ -5196,6 +5203,19 @@ export function App() {
             changesModel={changesViewModel}
             reviewMode={reviewMode}
             mcpState={mcp.state}
+            unreadOutsideScope={
+              mcp.state
+                ? unreadMessagesOutsideScope({
+                    unreadByThread: mcp.state.youUnreadByThread,
+                    sessions,
+                    handlesBySession: Object.fromEntries(
+                      Object.entries(mcp.state.sessions).map(([id, badge]) => [id, badge.handle]),
+                    ),
+                    selection: sidebarUi.selection,
+                    filterHandle: messagesFilterHandle,
+                  })
+                : 0
+            }
             onContextMenu={onPanelTogglesMenu}
           />
           <ServerBanner

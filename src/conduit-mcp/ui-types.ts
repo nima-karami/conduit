@@ -109,6 +109,8 @@ export interface McpUiState {
   attention: McpAttentionItem[];
   youUnread: number;
   youUrgent: number;
+  /** Exact unread-message counts and participants, including threads beyond the visible 500. */
+  youUnreadByThread: Array<{ participants: Handle[]; count: number }>;
   /** Session ids whose effective definition has an MCP adapter, or that have a handle: they get the MCP tools… item (spec 2026-10-27-conduit-mcp-control-tools §4). */
   switchable: string[];
   /** By sessionId; {} while messaging is off. */

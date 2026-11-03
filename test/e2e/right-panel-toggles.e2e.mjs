@@ -12,7 +12,7 @@
  *     file follows into Files. Both are transient: the remembered rightPaneTab is unchanged.
  *  6. Persistence across reload: the remembered view, and the panel's open/closed state.
  *  7. Palette routes: feature board, architecture canvas, back to the editor.
- *  8. The Move side panel grip re-docks the panel; the panel context menu's move action does too.
+ *  8. The panel context menu moves the side panel.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -393,10 +393,10 @@ runScenario('right-panel-toggles', async ({ app, page, log }) => {
   log('palette: board, canvas, back to workspace ✓');
 
   // ── 8. Moving the panel ───────────────────────────────────────────────────
-  const grip = page.locator('#right-pane .rightpane__grip');
-  await grip.waitFor({ state: 'attached', timeout: 5000 });
-  assert((await grip.getAttribute('title')) === 'Move side panel', 'the grip is "Move side panel"');
-  assert((await grip.getAttribute('draggable')) === 'true', 'the grip is a drag surface');
+  assert(
+    (await page.locator('#right-pane .rightpane__grip').count()) === 0,
+    'the right panel has no dedicated move grip',
+  );
   const sideOfCenter = () =>
     page.evaluate(() => {
       const p = document.querySelector('#right-pane')?.getBoundingClientRect();
@@ -405,39 +405,10 @@ runScenario('right-panel-toggles', async ({ app, page, log }) => {
       return p.right <= c.left + 1 ? 'left' : p.left >= c.right - 1 ? 'right' : 'overlap';
     });
   assert((await sideOfCenter()) === 'right', 'the panel starts right of the center');
-  await grip.dragTo(page.locator('main.centerpane'));
-  await page
-    .waitForFunction(
-      () => {
-        const p = document.querySelector('#right-pane')?.getBoundingClientRect();
-        const c = document.querySelector('main.centerpane')?.getBoundingClientRect();
-        return !!p && !!c && p.right <= c.left + 1;
-      },
-      null,
-      { timeout: 10000 },
-    )
-    .catch(() => {});
-  assert(
-    (await sideOfCenter()) === 'left',
-    `dragging the grip onto the center re-docks the panel (now ${await sideOfCenter()})`,
-  );
-  s = await waitSettings(app, (x) => x.layout === 'sessions,explorer,center');
-  assert(s?.layout === 'sessions,explorer,center', `the move persists (layout ${s?.layout})`);
-  await grip.dragTo(page.locator('main.centerpane'));
-  s = await waitSettings(app, (x) => x.layout === 'sessions,center,explorer');
-  assert(
-    s?.layout === 'sessions,center,explorer' && (await sideOfCenter()) === 'right',
-    `dragging it back restores the default dock (layout ${s?.layout})`,
-  );
-  await waitShown(page, 'changes', 'the panel after moving');
-  log('grip re-docks the panel both ways ✓');
-
-  // The keyboard alternative (spec §7): the panel's context menu moves it too.
-  const gripBox = await grip.boundingBox();
-  assert(gripBox, 'the grip has a box');
-  await page.mouse.click(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2, {
-    button: 'right',
-  });
+  // The panel root keeps keyboard access to its move menu after the grip is removed.
+  const panelRoot = page.locator('#right-pane');
+  await panelRoot.focus();
+  await panelRoot.press('Shift+F10');
   await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 5000 });
   const labels = await page
     .locator('.ctxmenu .ctxmenu__label')
@@ -445,7 +416,7 @@ runScenario('right-panel-toggles', async ({ app, page, log }) => {
   const moveItem = labels.find((l) => /\bmove\b/i.test(l));
   assert(
     moveItem,
-    `the panel context menu offers a move action (spec §7 keyboard alternative); items: ${JSON.stringify(labels)}`,
+    `the keyboard panel context menu offers a move action (spec §7); items: ${JSON.stringify(labels)}`,
   );
   await page.locator('.ctxmenu .ctxmenu__item', { hasText: moveItem }).first().click();
   await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
@@ -454,5 +425,5 @@ runScenario('right-panel-toggles', async ({ app, page, log }) => {
     s && s.layout !== 'sessions,center,explorer' && (await sideOfCenter()) !== 'right',
     `"${moveItem}" moves the panel (layout ${s?.layout}, side ${await sideOfCenter()})`,
   );
-  log(`context menu "${moveItem}" moves the panel ✓`);
+  log(`keyboard context menu "${moveItem}" moves the panel ✓`);
 });

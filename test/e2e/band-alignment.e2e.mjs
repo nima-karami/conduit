@@ -14,7 +14,7 @@
 
 import { assert, closeApp, runScenario } from './harness.mjs';
 
-const BANDS = ['.sidebar__head', '.tabbar-wrap', '.rightpane__grip'];
+const BANDS = ['.sidebar__head', '.tabbar-wrap', '.panel--explorer'];
 const THEMES = ['aero', 'aero-dark', 'neon'];
 const DENSITIES = ['comfortable', 'compact'];
 

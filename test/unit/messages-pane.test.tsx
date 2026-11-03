@@ -76,6 +76,7 @@ function uiState(o: Partial<McpUiState> = {}): McpUiState {
     attention: [],
     youUnread: 0,
     youUrgent: 0,
+    youUnreadByThread: [],
     switchable: [],
     notConnected: {},
     awaitingApproval: [],
@@ -135,9 +136,12 @@ function props(api: ConduitMcpApi, o: Partial<MessagesPaneProps> = {}): Messages
     api,
     sessions: SESSIONS,
     filterHandle: null,
-    onClearFilter: vi.fn(),
+    onFilterHandleChange: vi.fn(),
     onOpenSettings: vi.fn(),
     initialThreadId: null,
+    selection: { kind: 'all' },
+    spaceName: null,
+    selectedAgentHandle: null,
     ...o,
   };
 }
@@ -179,6 +183,76 @@ const key = (el: Element, k: string) =>
   });
 
 describe('MessagesPane states (spec §8)', () => {
+  it('scopes the bar and rows by Space, This agent, No space, and an empty Space', async () => {
+    const threads = [
+      summary({ threadId: 'mine', subject: 'Mine', participants: ['claude-1', 'you'] }),
+      summary({ threadId: 'same', subject: 'Same space', participants: ['codex-1', 'you'] }),
+      summary({ threadId: 'other', subject: 'Other space', participants: ['cursor-1', 'you'] }),
+      summary({ threadId: 'no-space', subject: 'No space', participants: ['opencode-1', 'you'] }),
+    ];
+    const badge = (handle: string) => ({ handle }) as McpUiState['sessions'][string];
+    const api = fakeApi(
+      uiState({
+        threads,
+        sessions: {
+          a: badge('claude-1'),
+          b: badge('codex-1'),
+          c: badge('cursor-1'),
+          d: badge('opencode-1'),
+        },
+      }),
+    );
+    const sessions = [
+      { id: 'a', projectId: 'p-a' },
+      { id: 'b', projectId: 'p-a' },
+      { id: 'c', projectId: 'p-b' },
+      { id: 'd', projectId: undefined },
+    ] as Session[];
+    const p = props(api, {
+      sessions,
+      selection: { kind: 'space', projectId: 'p-a' },
+      spaceName: 'Conduit',
+      selectedAgentHandle: 'claude-1',
+    });
+    const rerender = await render(p);
+    expect(document.body.textContent).toContain('Space Conduit · 2 threads');
+    expect(
+      [...document.querySelectorAll('[role="option"]')].map((row) => row.textContent),
+    ).toHaveLength(2);
+    await click(byText('This agent'));
+    expect(p.onFilterHandleChange).toHaveBeenCalledWith('claude-1');
+    await rerender({ ...p, filterHandle: 'claude-1' });
+    expect(document.body.textContent).toContain('This agent · claude-1');
+    expect(document.querySelectorAll('.mcpmsg__scopetext')).toHaveLength(1);
+    expect(document.querySelectorAll('[role="option"]')).toHaveLength(1);
+    await click(q('button[aria-label="Clear filter"]'));
+    expect(p.onFilterHandleChange).toHaveBeenLastCalledWith(null);
+    await rerender({ ...p, selection: { kind: 'space', projectId: 'p-b' }, spaceName: 'Other' });
+    expect(document.body.textContent).toContain('Space Other · 1 thread');
+    expect(
+      [...document.querySelectorAll('[role="option"]')].map((row) => row.textContent),
+    ).toHaveLength(1);
+    await rerender({ ...p, selection: { kind: 'none' }, filterHandle: null });
+    expect(document.body.textContent).toContain('No space · 1 thread');
+    await rerender({
+      ...p,
+      selection: { kind: 'space', projectId: 'p-empty' },
+      spaceName: 'Empty',
+    });
+    expect(document.body.textContent).toContain('No messages in this scope');
+  });
+
+  it('returns from an open thread to the list when the sidebar scope changes', async () => {
+    const api = fakeApi(uiState({ threads: [summary({ threadId: 'outside' })] }));
+    const rerender = await render(
+      props(api, { initialThreadId: 'outside', selection: { kind: 'all' } }),
+    );
+    expect(q('.mcpmsg__bartitle').textContent).toBe('Build fix');
+    await rerender({
+      ...props(api, { initialThreadId: 'outside', selection: { kind: 'space', projectId: 'p1' } }),
+    });
+    expect(q('.emptystate__title').textContent).toBe('No messages in this scope');
+  });
   it('first-run text and New message', async () => {
     await render(props(fakeApi(uiState())));
     expect(text()).toContain(

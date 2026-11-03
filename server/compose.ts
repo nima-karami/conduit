@@ -46,6 +46,7 @@ export function emptySnapshot(): Omit<ServerSnapshot, 'seq' | 'runtime'> {
       attention: [],
       youUnread: 0,
       youUrgent: 0,
+      youUnreadByThread: [],
       switchable: [],
       notConnected: {},
       awaitingApproval: [],

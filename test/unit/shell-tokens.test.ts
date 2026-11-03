@@ -75,6 +75,60 @@ describe('the shell consumes the shape + material axes', () => {
   });
 });
 
+describe('sidebar workbench controls share centered content geometry', () => {
+  const centered = [
+    '.topbar__toggle',
+    '.iconbtn',
+    '.omnibar',
+    '.winctl__btn',
+    '.statusbar__attn',
+    '.space',
+    '.proj__label',
+    '.session__select',
+    '.session__fold',
+    '.search__toggle',
+    '.toast__action',
+    '.btn',
+    '.update-card__action',
+    '.footbtn',
+  ];
+
+  it('centers flex controls and normalizes their line box in every theme and density', () => {
+    for (const selector of centered) {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const rule = new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(CSS)?.[1];
+      expect(rule, `${selector} has a base sizing rule`).toBeTruthy();
+      expect(rule, `${selector} establishes a centering layout`).toMatch(
+        /display:\s*(?:inline-)?(?:flex|grid)\s*;/,
+      );
+      expect(rule, `${selector} centers its contents`).toMatch(
+        /(?:align-items|place-items):\s*center/,
+      );
+      expect(rule, `${selector} uses a normalized line box`).toMatch(/line-height:\s*1(?:;|\s)/);
+      const declarations = rule ?? '';
+      expect(
+        declarations.lastIndexOf('line-height:'),
+        `${selector} does not reset its line box with a later font shorthand`,
+      ).toBeGreaterThan(declarations.lastIndexOf('font:'));
+    }
+  });
+
+  it('gives floating close controls a fixed centered icon box', () => {
+    for (const selector of ['.toast__close', '.update-card__dismiss']) {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const rule = new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(CSS)?.[1];
+      expect(rule, selector).toMatch(/display:\s*(?:inline-)?grid/);
+      expect(rule, selector).toMatch(/place-items:\s*center/);
+      expect(rule, selector).toMatch(/width:\s*var\(--density-toast-close-h\)/);
+      expect(rule, selector).toMatch(/height:\s*var\(--density-toast-close-h\)/);
+    }
+  });
+
+  it('removes the obsolete right panel grip styling', () => {
+    expect(CSS).not.toContain('.rightpane__grip');
+  });
+});
+
 describe('the chrome bands are one band', () => {
   // The sessions header, the centre tab row and the right-rail tabs are the same horizontal
   // band at the same altitude across three panels. They shipped at 34 / 34 / 40 with two

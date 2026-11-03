@@ -990,6 +990,22 @@ describe('createConduitMcpHost — launch', () => {
 });
 
 describe('createConduitMcpHost — tools over the endpoint', () => {
+  it('projects exact unread-message counts per thread for the header scope tooltip', async () => {
+    const h = harness();
+    await h.host.start();
+    const { token } = await launch(h, 's1');
+    const c = await client(h.ep, token);
+    const first = await c.call('send_message', { to: ['you'], body: 'first' });
+    expect(first.isError).toBe(false);
+    const threadId = first.body.thread_id as string;
+    await c.call('send_message', { to: ['you'], body: 'second', thread_id: threadId });
+    const state = h.host.uiState();
+    expect(state.youUnread).toBe(2);
+    expect(state.youUnreadByThread).toEqual([
+      { participants: expect.arrayContaining(['you', 'fake-1']), count: 2 },
+    ]);
+  });
+
   it('a socket with a valid token sends; recipient gets queued; mcp:state broadcast', async () => {
     const h = harness();
     await h.host.start();

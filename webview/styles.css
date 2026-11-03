@@ -1004,6 +1004,7 @@ body.resizing .panel__resize::after {
   /* Band labels read as one row too — one size, not three. */
   --density-band-font: 12px;
   --density-topctl-h: 30px; /* topbar controls: omnibar, right-panel toggles */
+  --density-toast-close-h: 22px;
   --density-tab-inset: 3px; /* breathing room above/below a doc tab inside the tab row */
   --density-crumb-h: 32px; /* breadcrumb / diff-controls band INSIDE the doc panel */
   --density-agent-row-h: 30px; /* agent tree root row and Space row */
@@ -1052,6 +1053,7 @@ body.resizing .panel__resize::after {
   --density-band-h: 31px;
   --density-band-font: 11px;
   --density-topctl-h: 25px;
+  --density-toast-close-h: 20px;
   --density-tab-inset: 2px;
   --density-crumb-h: 26px;
   --density-agent-row-h: 26px;
@@ -1092,6 +1094,7 @@ body.resizing .panel__resize::after {
 .iconbtn {
   display: grid;
   place-items: center;
+  line-height: 1;
   width: 26px;
   height: 26px;
   /* Zero the UA button padding (1px 6px in Chromium): it shrinks the grid content box
@@ -1236,6 +1239,7 @@ body.resizing .panel__resize::after {
   height: var(--density-topctl-h);
   padding: 0 12px;
   font-size: calc(12px * var(--font-scale));
+  line-height: 1;
   color: var(--text-dim);
   /* A recessed field on the topbar surface: the neutral overlay wash darkens on light and
      lightens on dark, so one declaration reads on all three themes. */
@@ -1279,6 +1283,7 @@ body.resizing .panel__resize::after {
   align-items: center;
   gap: 4px;
   height: var(--density-topctl-h);
+  line-height: 1;
   padding: 0 8px;
   border: 0;
   border-radius: var(--r-ctl);
@@ -1327,7 +1332,8 @@ body.resizing .panel__resize::after {
   display: grid;
   place-items: center;
   width: 38px;
-  height: 30px;
+  height: var(--density-topctl-h);
+  line-height: 1;
   border: 0;
   border-radius: var(--r-sm);
   background: transparent;
@@ -1392,11 +1398,14 @@ body.resizing .panel__resize::after {
 /* The attention ink tier: pure --amber misses 4.5:1 on the panel, so it is mixed toward the
    theme's text (the recipe the removed header chip used). */
 .statusbar__attn {
+  display: inline-flex;
+  align-items: center;
   padding: 0;
   border: 0;
   border-radius: var(--r-ctl);
   background: transparent;
   font: inherit;
+  line-height: 1;
   color: color-mix(in srgb, var(--amber) 70%, var(--text));
   cursor: pointer;
 }
@@ -2299,6 +2308,7 @@ body.resizing .panel__resize::after {
   background: transparent;
   color: var(--text);
   font: inherit;
+  line-height: 1;
   font-size: calc(12.5px * var(--font-scale));
   text-align: start;
   cursor: pointer;
@@ -2390,6 +2400,7 @@ body.resizing .panel__resize::after {
 .proj__label {
   display: flex;
   align-items: center;
+  line-height: 1;
   gap: 4px;
   width: 100%;
   border: 0;
@@ -2484,6 +2495,7 @@ body.resizing .panel__resize::after {
   color: inherit;
   font: inherit;
   font-size: calc(12.5px * var(--font-scale));
+  line-height: 1;
   text-align: start;
   cursor: pointer;
 }
@@ -2564,6 +2576,7 @@ body.resizing .panel__resize::after {
 .session__fold {
   flex: 0 0 auto;
   height: 20px;
+  line-height: 1;
   min-width: 18px;
   display: inline-flex;
   align-items: center;
@@ -5194,27 +5207,6 @@ body.gh-resizing {
   width: 100%;
   background: var(--panel);
 }
-/* The panel's move surface now that the header toggles replaced its tab row (spec §7): a small
-   strip at the top edge, grabbable only where it is draggable. */
-.rightpane__grip {
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  height: 10px;
-}
-.rightpane__grip[draggable="true"]:hover {
-  cursor: grab;
-}
-.rightpane__grip[draggable="true"]:active {
-  cursor: grabbing;
-}
-.rightpane__grip-bar {
-  width: 28px;
-  height: 3px;
-  border-radius: var(--r-badge);
-  background: var(--border-2);
-}
-
 /* Folded header: summary + kebab — replaces old button-row (.right__actions removed). */
 .changes__header {
   display: flex;
@@ -5272,6 +5264,9 @@ body.gh-resizing {
    selector list caps the notch at --notch-sm for a surface this short. */
 /* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order — base .btn rule kept after the contextual .session-stale .btn override */
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: var(--raise);
   color: var(--text);
   /* Custom properties inherit, so a button inside a card or menu would otherwise pick up
@@ -5282,6 +5277,7 @@ body.gh-resizing {
   padding: var(--density-btn-pad);
   font: inherit;
   font-size: calc(12px * var(--font-scale));
+  line-height: 1;
   font-weight: 500;
   letter-spacing: var(--label-track);
   text-transform: var(--label-case);
@@ -5462,6 +5458,9 @@ body.gh-resizing {
   margin-left: auto;
 }
 .search__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 4px;
@@ -7003,9 +7002,13 @@ body.gh-resizing {
    second primary: the toast is a notification with a way out, not a dialog. */
 .toast__action {
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 2px 8px;
   font: inherit;
   font-size: calc(11.5px * var(--font-scale));
+  line-height: 1;
   color: var(--accent);
   background: transparent;
   border: 1px solid var(--border-2);
@@ -7020,7 +7023,9 @@ body.gh-resizing {
   flex: 0 0 auto;
   display: inline-grid;
   place-items: center;
-  margin-top: 1px;
+  width: var(--density-toast-close-h);
+  height: var(--density-toast-close-h);
+  line-height: 1;
   padding: 1px;
   border: 0;
   border-radius: 4px;
@@ -7445,6 +7450,7 @@ body.gh-resizing {
   font: inherit;
   font-size: calc(12.5px * var(--font-scale));
   font-weight: 500;
+  line-height: 1;
   cursor: pointer;
   transition:
     background 0.12s,
@@ -7496,6 +7502,10 @@ body.gh-resizing {
   border: none;
   color: var(--text-faint);
   cursor: pointer;
+  display: grid;
+  place-items: center;
+  width: var(--density-toast-close-h);
+  height: var(--density-toast-close-h);
   padding: 2px;
   border-radius: var(--r-sm);
   line-height: 1;
@@ -7511,10 +7521,13 @@ body.gh-resizing {
 }
 .update-card__action {
   --focus-ring: var(--focus-ring-on-fill);
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: calc(100% - 16px);
   margin: 0 8px 8px;
   padding: 5px 10px;
+  line-height: 1;
   background: var(--accent);
   color: var(--on-accent);
   border: none;
@@ -14265,8 +14278,6 @@ button.toggle--on .toggle__knob {
   border-bottom: 1px solid var(--border);
 }
 .mcpmsg__bar .btn {
-  display: inline-flex;
-  align-items: center;
   gap: 5px;
 }
 .mcpmsg__filter[aria-pressed="true"] {

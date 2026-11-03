@@ -77,13 +77,21 @@ const INSTALL_ERROR_TEXT: Readonly<Record<string, string>> = {
 };
 const PROJECT_SCOPE = { project: 'Project', local: 'Local' } satisfies Record<ProjectScope, string>;
 const installErrorText = (code: string): string => INSTALL_ERROR_TEXT[code] ?? code;
+const scopeThreadCount = (n: number) => `${n.toLocaleString()} ${n === 1 ? 'thread' : 'threads'}`;
 
 export const MCP_STR = {
   tab: 'Messages',
   firstRun: 'Agents in your sessions can message each other and you. Messages appear here.',
   noUnread: 'No unread messages',
+  noMessagesInScope: 'No messages in this scope',
+  noMessagesForFilter: 'No messages match this filter',
   showAll: 'Show all',
   unreadOnly: 'Unread only',
+  thisAgent: 'This agent',
+  scopeAll: (n: number) => `All · ${scopeThreadCount(n)}`,
+  scopeNoSpace: (n: number) => `No space · ${scopeThreadCount(n)}`,
+  scopeSpace: (name: string, n: number) => `Space ${name} · ${scopeThreadCount(n)}`,
+  scopeThisAgent: (handle: string) => `This agent · ${handle}`,
   loadError: 'Messages couldn’t be loaded',
   retry: 'Retry',
   off: 'Messaging is turned off',
@@ -165,7 +173,6 @@ export const MCP_STR = {
   threadList: 'Threads',
   thread: 'Thread',
   back: 'Back to threads',
-  filteredTo: (h: string) => `Showing ${h}`,
   clearFilter: 'Clear filter',
   recipients: 'To',
   noRecipients: 'No session has messaging yet',

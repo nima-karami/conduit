@@ -23,8 +23,13 @@ All notable user-facing changes to Conduit. Format follows
 - **Files, Changes and Messages are toggles in the top bar.** Click one to open the side panel on
   that view; click the pressed one to close it. The Workspace/Board/Canvas switcher and the
   attention chip are gone from the header; Board, Canvas and Workspace are still in the command
-  palette and on their shortcuts. Drag the grip at the panel's top edge to move it, or focus the
-  grip and press Enter to use its move menu.
+  palette and on their shortcuts. Use the panel's context menu to move it; the extra drag grip
+  has been removed.
+- **Messages follow your selected Space.** All shows every thread; a Space or No space shows
+  threads involving its agents. Use **This agent** to narrow the list to the selected agent.
+  The header badge still counts all unread messages, with a tooltip for those outside the view.
+- **Chrome controls align vertically** across themes and densities, including sidebar actions,
+  panel bars, status items and notification buttons.
 - **A status bar under the terminal and editor.** It shows this computer, the active session's
   branch and worktree, how many agents are live, a **need you** button that jumps to the first
   thing waiting on you, and your Command palette shortcut.

@@ -18,13 +18,22 @@ import { join } from 'node:path';
 import {
   callTool,
   fakeAgentProfile,
+  mcpState,
   notices,
   openFake,
   sleep,
   tapMcp,
   until,
 } from './conduit-mcp-helpers.mjs';
-import { assert, runScenario, showRightView, statusItem, typeLine } from './harness.mjs';
+import {
+  assert,
+  createProject,
+  runScenario,
+  selectSpace,
+  showRightView,
+  statusItem,
+  typeLine,
+} from './harness.mjs';
 
 // Once a fake goes quiet the gate wants its busy window (1.5 s) + 3 s quiet + a 0.5 s tick, then
 // text + gap + Enter; the slack covers polling and a loaded runner (see conduit-mcp-gate).
@@ -96,7 +105,10 @@ await runScenario(
       const id = el.getAttribute('aria-describedby');
       return id ? (document.getElementById(id)?.textContent ?? null) : null;
     });
-    assert(described === '1 unread message', `toggle description: ${JSON.stringify(described)}`);
+    assert(
+      described === '1 unread message; 0 unread messages outside current scope',
+      `toggle description: ${JSON.stringify(described)}`,
+    );
     // The row names the handle the footer and threads use.
     const connectedTip = `Connected to Conduit as ${a.handle}`;
     assert(
@@ -172,6 +184,182 @@ await runScenario(
       10_000,
     );
     assert(held, `row tooltip: ${JSON.stringify(await tipLines(b))}`);
+
+    // 5. Messages follows the sidebar's Space, while This agent narrows the active scope.
+    const scopeProject = await createProject(page, 'Conduit Space');
+    await page.evaluate(
+      ({ sid, pid }) =>
+        window.agentDeck.post({ type: 'session:setProject', sessionId: sid, projectId: pid }),
+      { sid: a.sessionId, pid: scopeProject },
+    );
+    await page.evaluate((sid) => {
+      window.agentDeck.post({ type: 'session:setProject', sessionId: sid, projectId: null });
+    }, b.sessionId);
+    await page.waitForFunction(
+      ({ aId, bId, pid }) => {
+        const sessions = window.__sessions || [];
+        return (
+          sessions.find((s) => s.id === aId)?.projectId === pid &&
+          sessions.find((s) => s.id === bId)?.projectId == null
+        );
+      },
+      { aId: a.sessionId, bId: b.sessionId, pid: scopeProject },
+      { timeout: 10000 },
+    );
+
+    const spaceOnlySubject = 'scope check: Space only';
+    const noSpaceSubject = 'scope check: No space only';
+    const crossSpaceSubject = 'scope check: A and B';
+    const toYouFromA = await callTool(page, a.sessionId, 'send_message', {
+      to: ['you'],
+      subject: spaceOnlySubject,
+      body: 'Space-only participant thread',
+    });
+    assert(
+      toYouFromA.recipients?.[0]?.status === 'queued',
+      `send A to you: ${JSON.stringify(toYouFromA)}`,
+    );
+    const toYou = await callTool(page, b.sessionId, 'send_message', {
+      to: ['you'],
+      subject: noSpaceSubject,
+      body: 'No-space participant thread',
+    });
+    assert(toYou.recipients?.[0]?.status === 'queued', `send B to you: ${JSON.stringify(toYou)}`);
+    const crossSpace = await callTool(page, b.sessionId, 'send_message', {
+      to: ['you', a.handle],
+      subject: crossSpaceSubject,
+      body: 'Both Space and No-space participants',
+    });
+    assert(
+      crossSpace.recipients?.every((r) => r.status === 'queued'),
+      `send cross-Space thread: ${JSON.stringify(crossSpace)}`,
+    );
+
+    await showRightView(page, 'messages');
+    const clearFilter = page.getByRole('button', { name: 'Clear filter', exact: true });
+    if (await clearFilter.count()) await clearFilter.click();
+    const messageRows = page.locator('.mcpmsg [role="option"]');
+    const thread = (subject) => messageRows.filter({ hasText: subject });
+    const waitForStateThread = async (subject, participants) => {
+      const foundInState = await until(async () => {
+        const state = await mcpState(page);
+        return (state?.threads || []).some(
+          (t) => t.subject === subject && participants.every((h) => t.participants.includes(h)),
+        );
+      }, 15_000);
+      assert(
+        foundInState,
+        `MCP state lacks ${subject} with participants ${participants.join(', ')}`,
+      );
+      await thread(subject).waitFor({ state: 'visible', timeout: 10000 });
+    };
+
+    await waitForStateThread(spaceOnlySubject, ['you', a.handle]);
+    await waitForStateThread(noSpaceSubject, ['you', b.handle]);
+    await waitForStateThread(crossSpaceSubject, ['you', a.handle, b.handle]);
+
+    await selectSpace(page, scopeProject);
+    await page
+      .locator('.mcpmsg__scopetext')
+      .filter({ hasText: /^Space Conduit Space ·/ })
+      .waitFor({ timeout: 10000 });
+    await thread(spaceOnlySubject).waitFor({ state: 'visible', timeout: 5000 });
+    await thread(crossSpaceSubject).waitFor({ state: 'visible', timeout: 5000 });
+    assert((await thread(noSpaceSubject).count()) === 0, 'Space A excludes the B-only thread');
+    const unreadOutsideA = (state) =>
+      (state?.youUnreadByThread || []).reduce(
+        (count, threadState) =>
+          threadState.participants.includes(a.handle) ? count : count + threadState.count,
+        0,
+      );
+    let scopedUnreadState;
+    const unreadSnapshotReady = await until(async () => {
+      const state = await mcpState(page);
+      if (state?.youUnread >= 3 && unreadOutsideA(state) === 1) {
+        scopedUnreadState = state;
+        return true;
+      }
+      return false;
+    }, 15000);
+    assert(
+      unreadSnapshotReady,
+      `global unread snapshot did not settle: ${JSON.stringify(await mcpState(page))}`,
+    );
+    await toggleBadge.waitFor({ state: 'visible', timeout: 5000 });
+    const globalBadgeCount = Number.parseInt((await toggleBadge.textContent())?.trim() ?? '', 10);
+    assert(
+      globalBadgeCount === scopedUnreadState.youUnread,
+      `global badge ${globalBadgeCount} differs from MCP unread ${scopedUnreadState.youUnread}`,
+    );
+    await page.waitForFunction(
+      () => {
+        const toggle = document.querySelector('button[data-right-view="messages"]');
+        const id = toggle?.getAttribute('aria-describedby');
+        return id
+          ? (document.getElementById(id)?.textContent ?? '').includes(
+              '1 unread message outside current scope',
+            )
+          : false;
+      },
+      null,
+      { timeout: 10000 },
+    );
+    const scopedDescription = await messagesToggle.evaluate((el) => {
+      const id = el.getAttribute('aria-describedby');
+      return id ? (document.getElementById(id)?.textContent ?? null) : null;
+    });
+    assert(
+      scopedDescription?.includes('1 unread message outside current scope'),
+      `Space A keeps the global outside-scope unread count: ${JSON.stringify(scopedDescription)}`,
+    );
+    assert(
+      scopedDescription?.startsWith(`${scopedUnreadState.youUnread} unread message`),
+      `tooltip preserves global unread count ${scopedUnreadState.youUnread}: ${JSON.stringify(scopedDescription)}`,
+    );
+
+    await selectSpace(page, 'all');
+    await page
+      .locator('.mcpmsg__scopetext')
+      .filter({ hasText: /^All ·/ })
+      .waitFor({ timeout: 10000 });
+    await thread(spaceOnlySubject).waitFor({ state: 'visible', timeout: 5000 });
+    await thread(noSpaceSubject).waitFor({ state: 'visible', timeout: 5000 });
+    await thread(crossSpaceSubject).waitFor({ state: 'visible', timeout: 5000 });
+
+    await card(b).locator('[data-agent-action="select"]').click();
+    await page
+      .locator(`[data-agent-tree] .session[data-sessionid="${b.sessionId}"][aria-selected="true"]`)
+      .waitFor({ timeout: 5000 });
+    const thisAgent = page.getByRole('button', { name: 'This agent', exact: true });
+    await thisAgent.waitFor({ state: 'visible', timeout: 5000 });
+    await thisAgent.click();
+    await page
+      .locator('.mcpmsg__scopetext')
+      .filter({ hasText: `This agent · ${b.handle}` })
+      .waitFor({ timeout: 10000 });
+    await thread(noSpaceSubject).waitFor({ state: 'visible', timeout: 5000 });
+    await thread(crossSpaceSubject).waitFor({ state: 'visible', timeout: 5000 });
+    assert(
+      (await thread(spaceOnlySubject).count()) === 0,
+      'This agent B excludes the A-only thread',
+    );
+    await page.getByRole('button', { name: 'Clear filter', exact: true }).click();
+    await page
+      .locator('.mcpmsg__scopetext')
+      .filter({ hasText: /^All ·/ })
+      .waitFor({ timeout: 10000 });
+    await thread(noSpaceSubject).waitFor({ state: 'visible', timeout: 5000 });
+    await thread(crossSpaceSubject).waitFor({ state: 'visible', timeout: 5000 });
+    await thread(spaceOnlySubject).waitFor({ state: 'visible', timeout: 5000 });
+
+    await selectSpace(page, 'no-space');
+    await page
+      .locator('.mcpmsg__scopetext')
+      .filter({ hasText: /^No space ·/ })
+      .waitFor({ timeout: 10000 });
+    await thread(noSpaceSubject).waitFor({ state: 'visible', timeout: 5000 });
+    await thread(crossSpaceSubject).waitFor({ state: 'visible', timeout: 5000 });
+    assert((await thread(spaceOnlySubject).count()) === 0, 'No space excludes the A-only thread');
   },
   { userDataDir: fakeAgentProfile('conduit-mcp-compose') },
 );

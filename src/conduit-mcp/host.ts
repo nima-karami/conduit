@@ -1148,6 +1148,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       unreadForYou: t.unreadFor.includes(HUMAN_HANDLE),
     }));
     const youPending = store.available() ? store.pending(HUMAN_HANDLE) : [];
+    const participantsByThread = new Map(
+      all.map((thread) => [thread.threadId, thread.participants]),
+    );
+    const youUnreadByThread = new Map<string, number>();
+    for (const message of youPending)
+      youUnreadByThread.set(message.threadId, (youUnreadByThread.get(message.threadId) ?? 0) + 1);
     return {
       enabled: deps.domain.messagingOn(),
       storeError,
@@ -1157,6 +1163,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       attention: [...attention, ...youAttention(all, new Date(now()).toISOString())],
       youUnread: youPending.length,
       youUrgent: youPending.filter((m) => m.priority === 'urgent').length,
+      youUnreadByThread: [...youUnreadByThread].flatMap(([threadId, count]) => {
+        const participants = participantsByThread.get(threadId);
+        return participants ? [{ participants, count }] : [];
+      }),
       // A listed shell gets per-session tool overrides too (plan amendment S1); one B2 hides has
       // no badge to hang the menu on.
       switchable: deps.sessions

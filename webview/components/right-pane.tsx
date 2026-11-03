@@ -4,11 +4,11 @@ import type { Handle } from '../../src/conduit-mcp/types';
 import type { DeleteOutcome } from '../../src/delete-confirm';
 import type { ChangeKind, RepoChanges } from '../../src/protocol';
 import type { FolderSectionModel } from '../../src/session-sections';
+import type { SpaceSelection } from '../../src/sidebar-state';
 import type { Session } from '../../src/types';
 import { CHROME_STR } from '../chrome-strings';
 import type { OpenMode } from '../docs';
 import type { FsOp } from '../fs-undo';
-import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { reviewModeStatusLabel } from '../review-commit';
 import { getReviewNav, subscribeReviewNav } from '../review-nav-store';
 import type { ReviewScope } from '../review-scope';
@@ -34,7 +34,6 @@ export interface RightPaneHandle {
 
 /** Where the Messages tab lands; `seq` remounts the pane so a repeat jump re-applies. */
 interface MessagesNav {
-  filterHandle: Handle | null;
   threadId: string | null;
   seq: number;
 }
@@ -59,7 +58,6 @@ export function RightPane({
   onFileRenamed,
   onReviewScope,
   reviewMode,
-  moveGrip,
   onMoveMenu,
   paneRef,
   recordFsOp,
@@ -68,6 +66,11 @@ export function RightPane({
   searchScope,
   mcp,
   sessions,
+  sidebarSelection,
+  sidebarSpaceName,
+  selectedAgentHandle,
+  messagesFilterHandle,
+  onMessagesFilterHandleChange,
   onOpenSettings,
   ...changesProps
 }: Omit<ChangesViewProps, 'model' | 'collapsedRepos'> & {
@@ -100,8 +103,6 @@ export function RightPane({
   /** Review mode's navigator section icons (§2 Lane D). */
   onReviewScope: (scope: ReviewScope, repoRoot?: string) => void;
   reviewMode: boolean;
-  // Barless panel: the top-edge grip is the panel-move drag surface.
-  moveGrip?: MoveGrip;
   onMoveMenu?: (anchor: DOMRect) => void;
   paneRef?: React.MutableRefObject<RightPaneHandle | null>;
   /** Record a successful fs op into the app-level undo stack. */
@@ -112,6 +113,11 @@ export function RightPane({
   /** Messaging state and requests; the Messages tab is app-wide, not per session. */
   mcp: ConduitMcpApi;
   sessions: readonly Session[];
+  sidebarSelection: SpaceSelection;
+  sidebarSpaceName: string | null;
+  selectedAgentHandle: Handle | null;
+  messagesFilterHandle: Handle | null;
+  onMessagesFilterHandleChange: (handle: Handle | null) => void;
   onOpenSettings: () => void;
 }) {
   // Fully controlled: App's chrome state is the one view authority (sidebar-agent-tree plan T1.3).
@@ -133,7 +139,6 @@ export function RightPane({
   const folderUiRef = useRef<FolderUiCache>({ treeCache: new Map(), collapsed: new Set() });
   const changesCollapsedRef = useRef<Set<string>>(new Set());
   const [messagesNav, setMessagesNav] = useState<MessagesNav>({
-    filterHandle: null,
     threadId: null,
     seq: 0,
   });
@@ -156,10 +161,11 @@ export function RightPane({
         requestAnimationFrame(() => filesPaneRef.current?.revealInTree(path));
       },
       showMessages(filterHandle, threadId) {
-        setMessagesNav((cur) => ({ filterHandle, threadId: threadId ?? null, seq: cur.seq + 1 }));
+        onMessagesFilterHandleChange(filterHandle);
+        setMessagesNav((cur) => ({ threadId: threadId ?? null, seq: cur.seq + 1 }));
       },
     }),
-    [],
+    [onMessagesFilterHandleChange],
   );
 
   return (
@@ -168,31 +174,17 @@ export function RightPane({
       className="rightpane"
       data-right-view={tab}
       aria-label={CHROME_STR.view[tab]}
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (
+          e.target === e.currentTarget &&
+          (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))
+        ) {
+          e.preventDefault();
+          onMoveMenu?.(e.currentTarget.getBoundingClientRect());
+        }
+      }}
     >
-      {/* The panel's move surface now that the tab row is gone (spec §7); the panel context
-          menu's move actions are its keyboard alternative. */}
-      <div
-        className="rightpane__grip"
-        title={CHROME_STR.movePanel}
-        role="button"
-        tabIndex={0}
-        aria-label={CHROME_STR.movePanel}
-        onClick={(e) => onMoveMenu?.(e.currentTarget.getBoundingClientRect())}
-        onKeyDown={(e) => {
-          if (
-            e.key === 'Enter' ||
-            e.key === ' ' ||
-            e.key === 'ContextMenu' ||
-            (e.shiftKey && e.key === 'F10')
-          ) {
-            e.preventDefault();
-            onMoveMenu?.(e.currentTarget.getBoundingClientRect());
-          }
-        }}
-        {...panelMoveDragProps(moveGrip)}
-      >
-        <span className="rightpane__grip-bar" aria-hidden />
-      </div>
       <span className="sr-only" role="status">
         {statusText}
       </span>
@@ -201,8 +193,11 @@ export function RightPane({
           key={messagesNav.seq}
           api={mcp}
           sessions={sessions}
-          filterHandle={messagesNav.filterHandle}
-          onClearFilter={() => setMessagesNav((cur) => ({ ...cur, filterHandle: null }))}
+          selection={sidebarSelection}
+          spaceName={sidebarSpaceName}
+          selectedAgentHandle={selectedAgentHandle}
+          filterHandle={messagesFilterHandle}
+          onFilterHandleChange={onMessagesFilterHandleChange}
           onOpenSettings={onOpenSettings}
           initialThreadId={messagesNav.threadId}
         />

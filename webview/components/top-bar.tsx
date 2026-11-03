@@ -98,6 +98,7 @@ export function TopBar({
   changesModel,
   reviewMode = false,
   mcpState = null,
+  unreadOutsideScope = 0,
   onContextMenu,
 }: {
   isDev?: boolean;
@@ -112,6 +113,7 @@ export function TopBar({
   reviewMode?: boolean;
   /** The Messages toggle's unread/urgent badge source. */
   mcpState?: McpUiState | null;
+  unreadOutsideScope?: number;
   // Right-click the top bar to open the panel show/hide menu.
   onContextMenu?: (e: React.MouseEvent) => void;
 }) {
@@ -139,7 +141,7 @@ export function TopBar({
         ? {
             count: mcpBadge.count,
             urgent: mcpBadge.urgent,
-            text: CHROME_STR.messagesBadge(mcpBadge.count, mcpState.youUrgent),
+            text: CHROME_STR.messagesBadge(mcpBadge.count, mcpState.youUrgent, unreadOutsideScope),
           }
         : null,
   };

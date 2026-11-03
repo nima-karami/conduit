@@ -81,7 +81,13 @@ const ready = (count: number): ChangesModel =>
 const mcp = (youUnread: number, youUrgent: number): McpUiState =>
   ({ youUnread, youUrgent }) as unknown as McpUiState;
 
-function topBar(props: { changesModel?: ChangesModel; mcpState?: McpUiState | null } = {}) {
+function topBar(
+  props: {
+    changesModel?: ChangesModel;
+    mcpState?: McpUiState | null;
+    unreadOutsideScope?: number;
+  } = {},
+) {
   return createElement(TopBar, {
     onOpenSearch: noop,
     onBack: noop,
@@ -124,14 +130,19 @@ describe('header toggles (selector contract: Header toggles)', () => {
   });
 
   it('badges are described, not part of the name; urgent messages take the urgent badge', async () => {
-    await render(chrome(), topBar({ changesModel: ready(6), mcpState: mcp(2, 1) }));
+    await render(
+      chrome(),
+      topBar({ changesModel: ready(6), mcpState: mcp(2, 1), unreadOutsideScope: 1 }),
+    );
     const changes = toggle('changes');
     expect(changes?.getAttribute('aria-label')).toBe('Changes');
     const desc = document.getElementById(changes?.getAttribute('aria-describedby') ?? '');
     expect(desc?.textContent).toBe('6 changes');
     const messages = toggle('messages');
     const mdesc = document.getElementById(messages?.getAttribute('aria-describedby') ?? '');
-    expect(mdesc?.textContent).toBe('2 unread messages, 1 urgent message');
+    expect(mdesc?.textContent).toBe(
+      '2 unread messages, 1 urgent message; 1 unread message outside current scope',
+    );
     expect(messages?.querySelector('.topbar__badge--urgent')).not.toBeNull();
     expect(toggle('files')?.hasAttribute('aria-describedby')).toBe(false);
   });
@@ -198,8 +209,12 @@ function rightPane(
     onRepoContext: noop,
     onPickActiveRepo: noop,
     renderChip: () => null,
-    moveGrip: { onDragStart: noop, onDragEnd: noop },
     paneRef,
+    sidebarSelection: { kind: 'all' },
+    sidebarSpaceName: null,
+    selectedAgentHandle: null,
+    messagesFilterHandle: null,
+    onMessagesFilterHandleChange: noop,
     mcp: {
       state: null,
       getThread: async () => null,
@@ -219,15 +234,15 @@ function rightPane(
 const pane = () => document.querySelector<HTMLElement>('aside#right-pane');
 
 describe('right panel (selector contract: Right panel)', () => {
-  it('opens the panel move menu from its focusable grip with the keyboard', async () => {
+  it('opens the context menu from the panel root keyboard shortcut without a move grip', async () => {
     const open = vi.fn();
     await render(chrome(), rightPane(undefined, open));
-    const grip = document.querySelector<HTMLElement>('.rightpane__grip');
-    expect(grip?.tabIndex).toBe(0);
-    expect(grip?.getAttribute('aria-label')).toBe('Move side panel');
-    for (const key of ['Enter', ' ', 'ContextMenu', 'F10']) {
+    expect(document.querySelector('.rightpane__grip')).toBeNull();
+    const root = pane();
+    expect(root?.tabIndex).toBe(0);
+    for (const key of ['ContextMenu', 'F10']) {
       await act(async () => {
-        grip?.dispatchEvent(
+        root?.dispatchEvent(
           new KeyboardEvent('keydown', {
             key,
             shiftKey: key === 'F10',
@@ -237,7 +252,21 @@ describe('right panel (selector contract: Right panel)', () => {
         );
       });
     }
-    expect(open).toHaveBeenCalledTimes(4);
+    expect(open).toHaveBeenCalledTimes(2);
+    const nestedControl = document.createElement('button');
+    root?.append(nestedControl);
+    await act(async () => {
+      nestedControl.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'F10',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(open).toHaveBeenCalledTimes(2);
+    nestedControl.remove();
   });
   it('names its effective view and has no tab row', async () => {
     await render(chrome({ rightTab: 'changes' }), rightPane());
@@ -266,13 +295,6 @@ describe('right panel (selector contract: Right panel)', () => {
       ref.current?.showMessages(null);
     });
     expect(pane()?.dataset.rightView).toBe('changes');
-  });
-
-  it('keeps a dedicated, draggable Move side panel grip', async () => {
-    await render(chrome(), rightPane());
-    const grip = document.querySelector<HTMLElement>('.rightpane__grip');
-    expect(grip?.getAttribute('title')).toBe('Move side panel');
-    expect(grip?.getAttribute('draggable')).toBe('true');
   });
 });
 

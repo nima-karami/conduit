@@ -3,6 +3,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { needsSetup } from '../../src/conduit-mcp/install-types';
 import { type Handle, HUMAN_HANDLE } from '../../src/conduit-mcp/types';
 import type { McpThreadSummary, McpUiState } from '../../src/conduit-mcp/ui-types';
+import { scopeMessageThreads } from '../../src/messages-scope';
+import type { SpaceSelection } from '../../src/sidebar-state';
 import type { Session } from '../../src/types';
 import { mcpInstallStatus, onMcpInstallChanged } from '../bridge';
 import { MCP_STR } from '../conduit-mcp-strings';
@@ -26,9 +28,12 @@ export interface MessagesPaneProps {
   api: ConduitMcpApi;
   sessions: readonly Session[];
   filterHandle: Handle | null;
-  onClearFilter(): void;
+  onFilterHandleChange(handle: Handle | null): void;
   onOpenSettings(): void;
   initialThreadId: string | null;
+  selection: SpaceSelection;
+  spaceName: string | null;
+  selectedAgentHandle: Handle | null;
 }
 
 /** §10: one summary per 5 s at most, so a burst of agent traffic is one announcement. */
@@ -192,9 +197,12 @@ function MessagesView({
   api,
   sessions,
   filterHandle,
-  onClearFilter,
+  onFilterHandleChange,
   onOpenSettings,
   initialThreadId,
+  selection,
+  spaceName,
+  selectedAgentHandle,
 }: MessagesPaneProps) {
   const { state } = api;
   const [view, setView] = useState<View>(() =>
@@ -204,6 +212,8 @@ function MessagesView({
   // By id, not index: a thread arriving above the active one must not move the selection.
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const scopeKey = selection.kind === 'space' ? `space:${selection.projectId}` : selection.kind;
+  const lastScope = useRef(scopeKey);
   const baseId = useId();
   const listRef = useRef<HTMLDivElement>(null);
   const newMessageRef = useRef<HTMLButtonElement>(null);
@@ -213,6 +223,13 @@ function MessagesView({
   useEffect(() => {
     if (initialThreadId) setView({ t: 'thread', threadId: initialThreadId });
   }, [initialThreadId]);
+
+  useEffect(() => {
+    if (lastScope.current === scopeKey) return;
+    lastScope.current = scopeKey;
+    setActiveThreadId(null);
+    setView({ t: 'list' });
+  }, [scopeKey]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: a view switch is the trigger.
   useEffect(() => {
@@ -312,7 +329,16 @@ function MessagesView({
     );
   }
 
-  const threads = visibleThreads(state.threads, { unreadOnly, handle: filterHandle });
+  const scopedThreads = scopeMessageThreads({
+    threads: state.threads,
+    sessions,
+    handlesBySession: Object.fromEntries(
+      Object.entries(state.sessions).map(([sessionId, badge]) => [sessionId, badge.handle]),
+    ),
+    selection,
+  });
+  const activeHandle = filterHandle;
+  const threads = visibleThreads(scopedThreads, { unreadOnly, handle: activeHandle });
   const activeIndex = Math.max(
     threads.findIndex((t) => t.threadId === activeThreadId),
     0,
@@ -371,42 +397,75 @@ function MessagesView({
           {MCP_STR.unreadOnly}
         </button>
       )}
-      {filterHandle && (
+      {selectedAgentHandle && (
+        <button
+          type="button"
+          className={`btn btn--sm mcpmsg__filter${filterHandle === selectedAgentHandle ? ' mcpmsg__filter--on' : ''}`}
+          aria-pressed={filterHandle === selectedAgentHandle}
+          onClick={() =>
+            onFilterHandleChange(filterHandle === selectedAgentHandle ? null : selectedAgentHandle)
+          }
+        >
+          {MCP_STR.thisAgent}
+        </button>
+      )}
+      {activeHandle && (
         <span className="mcpmsg__scope">
-          <span className="mcpmsg__scopetext">{MCP_STR.filteredTo(filterHandle)}</span>
+          <span className="mcpmsg__scopetext">{MCP_STR.scopeThisAgent(activeHandle)}</span>
           <button
             type="button"
             className="iconbtn"
             title={MCP_STR.clearFilter}
             aria-label={MCP_STR.clearFilter}
-            onClick={onClearFilter}
+            onClick={() => {
+              onFilterHandleChange(null);
+            }}
           >
             <IconClose size={11} />
           </button>
+        </span>
+      )}
+      {!activeHandle && (
+        <span className="mcpmsg__scopetext">
+          {selection.kind === 'all'
+            ? MCP_STR.scopeAll(scopedThreads.length)
+            : selection.kind === 'none'
+              ? MCP_STR.scopeNoSpace(scopedThreads.length)
+              : MCP_STR.scopeSpace(spaceName ?? selection.projectId, scopedThreads.length)}
         </span>
       )}
     </div>
   );
 
   let body: React.ReactNode;
-  if (state.threads.length === 0) {
+  if (state.threads.length === 0 && selection.kind !== 'all') {
+    body = <EmptyState variant="panel" title={MCP_STR.noMessagesInScope} />;
+  } else if (state.threads.length === 0) {
     body = <SetupEmptyState onOpenSettings={onOpenSettings} />;
   } else if (threads.length === 0) {
     body = (
       <EmptyState
         variant="panel"
-        title={MCP_STR.noUnread}
+        title={
+          unreadOnly
+            ? MCP_STR.noUnread
+            : activeHandle
+              ? MCP_STR.noMessagesForFilter
+              : MCP_STR.noMessagesInScope
+        }
         action={
-          <button
-            type="button"
-            className="btn btn--sm"
-            onClick={() => {
-              setUnreadOnly(false);
-              if (filterHandle) onClearFilter();
-            }}
-          >
-            {MCP_STR.showAll}
-          </button>
+          activeHandle || unreadOnly ? (
+            <button
+              type="button"
+              className="btn btn--sm"
+              onClick={() => {
+                setUnreadOnly(false);
+                if (filterHandle) onFilterHandleChange(null);
+              }}
+            >
+              {filterHandle ? MCP_STR.clearFilter : MCP_STR.showAll}
+            </button>
+          ) : undefined
         }
       />
     );
