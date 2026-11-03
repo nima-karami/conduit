@@ -30,6 +30,7 @@ import {
   runScenario,
   TERMINAL_FACE_FILE,
   tapBridge,
+  tapLocalFontRequests,
   terminalFace,
   typeLine,
   waitForOutput,
@@ -238,12 +239,15 @@ runScenario('terminal-local-font', async ({ app, page, log }) => {
     `a ${GATE_HOLD_MS}ms face is waited for, not given up on (fonts logs ${JSON.stringify(logs)})`,
   );
 
-  const offline = await page.evaluate((faceSrc) => {
-    const faceRe = new RegExp(faceSrc, 'i');
-    const fontEntries = performance
-      .getEntriesByType('resource')
-      .map((e) => decodeURI(e.name))
-      .filter((n) => /\.(ttf|otf|woff2?)(\?|#|$)/i.test(n));
+  // performance.getEntriesByType('resource') lists no file: font loads in Electron; the
+  // holdBackLocalFonts onBeforeRequest tap records the emitted out/*.ttf URLs instead.
+  const recordedFonts = await tapLocalFontRequests(app, page);
+  const bundledMono = recordedFonts.filter((n) => TERMINAL_FACE_FILE.test(n));
+  const nonLocal = recordedFonts.filter((n) => !n.startsWith('file:'));
+  log(`offline: ${recordedFonts.length} font files, e.g. ${bundledMono[0]}`);
+  assert(nonLocal.length === 0, `every font is a local file (${nonLocal.join(', ')})`);
+  assert(bundledMono.length > 0, 'the terminal face came from the emitted out/ files');
+  const offline = await page.evaluate(() => {
     const remoteRules = [];
     for (const sheet of document.styleSheets) {
       let rules;
@@ -260,9 +264,6 @@ runScenario('terminal-local-font', async ({ app, page, log }) => {
       }
     }
     return {
-      fontEntries,
-      nonLocal: fontEntries.filter((n) => !n.startsWith('file:')),
-      bundledMono: fontEntries.filter((n) => faceRe.test(n)),
       remoteRules,
       csp:
         document
@@ -270,13 +271,7 @@ runScenario('terminal-local-font', async ({ app, page, log }) => {
           ?.getAttribute('content') ?? null,
       violations: window.__fontEv.csp,
     };
-  }, TERMINAL_FACE_FILE.source);
-  log(`offline: ${offline.fontEntries.length} font files, e.g. ${offline.bundledMono[0]}`);
-  assert(
-    offline.nonLocal.length === 0,
-    `every font is a local file (${offline.nonLocal.join(', ')})`,
-  );
-  assert(offline.bundledMono.length > 0, 'the terminal face came from the emitted out/ files');
+  });
   assert(offline.remoteRules.length === 0, `no remote @import/@font-face (${offline.remoteRules})`);
   const fontSrc = /font-src([^;]*)/.exec(offline.csp ?? '')?.[1]?.trim();
   assert(fontSrc === "'self'", `CSP font-src is 'self' only (got ${JSON.stringify(fontSrc)})`);
