@@ -50,6 +50,9 @@ export const CHROME_STR = {
   commands: (combo: string) => `${combo} commands`,
   update: {
     whatsNew: "What's new",
+    loadImage: (host: string, alt: string | undefined) =>
+      `Load image from ${host}${alt ? ` — ${alt}` : ''}`,
+    imageUnavailable: 'Image unavailable',
     title: (version: string) => `What's new in v${version}`,
     current: (version: string) => `you have v${version}`,
     updated: (version: string) => `Updated to v${version}`,

@@ -145,7 +145,7 @@ import { summarizeQueue } from '../src/queue-summary';
 import { busySessions, runningSessions } from '../src/quit-guard';
 import { resolveRangePreset } from '../src/range-preset';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
-import { releaseNotesDecision } from '../src/release-notes-decision';
+import { releaseNotesAckVersion, releaseNotesDecision } from '../src/release-notes-decision';
 import { createRepoFileIndex } from '../src/repo-file-index';
 import {
   filterExistingRepos,
@@ -1439,7 +1439,9 @@ app.whenReady().then(() => {
   const movingSessions = new Set<string>();
 
   // User settings (theme/fonts/layout/behaviour), persisted to settings.json.
+  const settingsFileExistedAtLoad = fs.existsSync(settingsFile());
   let settings: AppSettings = restoreSettings(readBlob(settingsFile()));
+  const releaseNotesOffers = new Map<number, string>();
 
   // Diagnostics logger (Slice A): the host's sole disk writer. Constructed here — before
   // window creation — so startup seams are captured. Level comes from settings and is
@@ -2575,12 +2577,29 @@ app.whenReady().then(() => {
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
           }
-          const decision = releaseNotesDecision(version, settings.lastSeenVersion, notes);
+          const decision = releaseNotesDecision(
+            version,
+            settings.lastSeenVersion,
+            notes,
+            settingsFileExistedAtLoad,
+          );
           if (decision.persistVersion && settings.lastSeenVersion !== decision.persistVersion) {
             settings = { ...settings, lastSeenVersion: decision.persistVersion };
             persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
           }
+          if (decision.showToast) releaseNotesOffers.set(senderId, version);
+          else releaseNotesOffers.delete(senderId);
           replyHere({ type: 'releaseNotes', version, notes, showToast: decision.showToast });
+          break;
+        }
+        case 'releaseNotesShown': {
+          const version = releaseNotesAckVersion(releaseNotesOffers.get(senderId), m.version);
+          if (!version) break;
+          releaseNotesOffers.delete(senderId);
+          if (settings.lastSeenVersion !== version) {
+            settings = { ...settings, lastSeenVersion: version };
+            persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
+          }
           break;
         }
         case 'window:sidebar':
@@ -4560,6 +4579,7 @@ app.whenReady().then(() => {
       onUnresponsive: (windowId) => closeGuard.onUnresponsive(windowId),
       onSessionEnd: flushStateSync,
       onClosed: (windowId) => {
+        releaseNotesOffers.delete(windowId);
         closeGuard.onWindowGone(windowId);
         presence.drop(windowId);
         sidebarUiByWindow.delete(windowId);

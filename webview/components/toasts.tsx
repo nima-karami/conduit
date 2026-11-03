@@ -1,10 +1,55 @@
-import { type ReactNode, useSyncExternalStore } from 'react';
+import { type ReactNode, useEffect, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
+import { post } from '../bridge';
 import { CHROME_STR } from '../chrome-strings';
 import { IconClose } from '../icons';
 import { dismissToast, getToastsSnapshot, subscribeToasts } from '../toast-store';
 import { useWorkbenchChromeState } from '../workbench-chrome-state';
 import { UpdateCard } from './update-card';
+
+function InstalledUpdateToast({
+  version,
+  open,
+  dismiss,
+}: {
+  version: string;
+  open(): void;
+  dismiss(): void;
+}) {
+  const [announced, setAnnounced] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setAnnounced(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  useEffect(() => {
+    if (announced) post({ type: 'releaseNotesShown', version });
+  }, [announced, version]);
+  return (
+    <div className="toast toast--info" data-post-update-toast>
+      <span className="toast__msg" role="status" aria-live="polite" aria-atomic="true">
+        {announced ? CHROME_STR.update.updated(version) : ''}
+      </span>
+      <button
+        type="button"
+        className="toast__action"
+        onClick={() => {
+          open();
+          dismiss();
+        }}
+      >
+        {CHROME_STR.update.whatsNew}
+      </button>
+      <button
+        type="button"
+        className="toast__close"
+        aria-label={CHROME_STR.update.dismiss}
+        onClick={dismiss}
+      >
+        <IconClose size={12} />
+      </button>
+    </div>
+  );
+}
 
 /**
  * The window's one floating stack (K2; sidebar-agent-tree spec §7 floating updates). Portals to
@@ -58,22 +103,7 @@ export function Toasts({ children }: { children?: ReactNode }) {
         </div>
       ))}
       {update.installedToast && (
-        <div className="toast toast--info" data-post-update-toast>
-          <span className="toast__msg" role="status">
-            {CHROME_STR.update.updated(update.installedToast.version)}
-          </span>
-          <button type="button" className="toast__action" onClick={update.installedToast.open}>
-            {CHROME_STR.update.whatsNew}
-          </button>
-          <button
-            type="button"
-            className="toast__close"
-            aria-label={CHROME_STR.update.dismiss}
-            onClick={update.installedToast.dismiss}
-          >
-            <IconClose size={12} />
-          </button>
-        </div>
+        <InstalledUpdateToast key={update.installedToast.version} {...update.installedToast} />
       )}
       {update.status && (
         <UpdateCard

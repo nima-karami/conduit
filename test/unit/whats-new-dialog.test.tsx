@@ -46,6 +46,19 @@ const button = (label: string) =>
   [...document.querySelectorAll('button')].find((b) => b.textContent === label);
 
 describe("What's new dialog", () => {
+  it('does not fetch remote images until the user chooses to load them', () => {
+    render({ notes: '![Release screenshot](https://example.com/screen.png)' });
+    expect(document.querySelector('.whats-new__body img')).toBeNull();
+    act(() => button('Load image from example.com — Release screenshot')?.click());
+    expect(document.querySelector('.whats-new__body img')?.getAttribute('src')).toBe(
+      'https://example.com/screen.png',
+    );
+    render({
+      notes: '<img src="https://other.example/track.gif" onerror="alert(1)" alt="Remote">',
+    });
+    expect(document.querySelector('.whats-new__body img')).toBeNull();
+    expect(button('Load image from other.example — Remote')).toBeDefined();
+  });
   it('incoming notes have a labelled, portalled dialog, current version and ready-only relaunch', () => {
     render({ currentVersion: '1.0.0', ready: true });
     const dialog = document.querySelector('[role="dialog"]');
@@ -123,7 +136,7 @@ describe("What's new dialog", () => {
     });
     const body = document.querySelector('.whats-new__body');
     expect(body?.querySelector('script')).toBeNull();
-    expect(body?.querySelector('img')?.hasAttribute('onerror')).toBe(false);
+    expect(body?.querySelector('[onerror]')).toBeNull();
     expect(body?.querySelector('a')?.hasAttribute('href')).toBe(false);
     expect(body?.querySelector('strong')?.textContent).toBe('Safe');
     act(() => body?.querySelector('a')?.click());

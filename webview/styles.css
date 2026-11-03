@@ -1353,7 +1353,6 @@ body.resizing .panel__resize::after {
    --status-bar-h token. Aero floats it as a panel card; Neon lays it flush
    with one hairline above, since the side panels' own rings already draw its other edges. */
 .statusbar {
-  container-type: inline-size;
   flex: 0 0 var(--status-bar-h);
   height: var(--status-bar-h);
   box-sizing: border-box;
@@ -1417,6 +1416,9 @@ body.resizing .panel__resize::after {
   color: var(--text-faint);
 }
 .statusbar__update {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
   padding: 0;
   border: 0;
   background: transparent;
@@ -1426,18 +1428,6 @@ body.resizing .panel__resize::after {
 }
 .statusbar__update svg {
   flex: 0 0 auto;
-}
-@container (max-width: 620px) {
-  .statusbar__hint,
-  [data-status-item="worktree"] {
-    display: none;
-  }
-}
-@container (max-width: 440px) {
-  [data-status-item="machine"],
-  [data-status-item="branch"] {
-    display: none;
-  }
 }
 
 /* ---------- sidebar ---------- */

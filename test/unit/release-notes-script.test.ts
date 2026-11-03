@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runGitBin } from '../../src/git-exec';
 
-const scratchRoot = join(tmpdir(), 'Codex-scratch');
+const scratchRoot = join(tmpdir(), 'conduit-release-notes');
 mkdirSync(scratchRoot, { recursive: true });
 const trees: string[] = [];
 const scriptPath = join(process.cwd(), 'tools', 'release-notes.mjs');

@@ -962,6 +962,7 @@ export type HostToWebview =
   | { type: 'web:openTab'; guestId: number; url: string; background: boolean };
 
 export type WebviewToHost =
+  | { type: 'releaseNotesShown'; version: string }
   | { type: 'getReleaseNotes' }
   | { type: 'ready' }
   // Renderer→host log line, routed through the host's leveled file logger. Back-compatible:

@@ -10,7 +10,7 @@ const [rawVersion, changelogPath = 'CHANGELOG.md', outputPath = 'build/release-n
 if (!rawVersion)
   throw new Error('Usage: node tools/release-notes.mjs <version> [changelog] [output]');
 const version = rawVersion.replace(/^v/, '');
-const scratchRoot = join(tmpdir(), 'Codex-scratch');
+const scratchRoot = join(tmpdir(), 'conduit-release-notes');
 mkdirSync(scratchRoot, { recursive: true });
 const scratch = mkdtempSync(join(scratchRoot, 'release-notes-'));
 try {

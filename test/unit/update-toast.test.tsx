@@ -27,6 +27,7 @@ afterEach(() => {
   document.body.innerHTML = '';
   __resetToastsForTest();
   post.mockReset();
+  vi.useRealTimers();
 });
 
 const noop = () => {};
@@ -93,19 +94,34 @@ describe('floating update item (sidebar-agent-tree spec §7, plan T3.4)', () => 
   });
 
   it('shares the stack with the installed-version toast, with polite text, notes and dismiss actions', () => {
+    vi.useFakeTimers();
     const installedToast = { version: '2.0.0', open: vi.fn(), dismiss: vi.fn() };
     render(null, false, noop, undefined, { installedToast });
     const toast = document.querySelector('[data-post-update-toast]');
     expect(toast?.closest('[data-toast-stack]')).toBe(stack());
+    expect(toast?.querySelector('[role="status"]')?.textContent).toBe('');
+    expect(post).not.toHaveBeenCalledWith({ type: 'releaseNotesShown', version: '2.0.0' });
+    act(() => vi.advanceTimersByTime(20));
     expect(toast?.querySelector('[role="status"]')?.textContent).toBe('Updated to v2.0.0');
+    expect(post).toHaveBeenCalledExactlyOnceWith({ type: 'releaseNotesShown', version: '2.0.0' });
     const buttons = [...(toast?.querySelectorAll('button') ?? [])];
     expect(buttons[0]?.textContent).toBe("What's new");
     act(() => buttons[0]?.click());
+    expect(installedToast.dismiss).toHaveBeenCalledTimes(1);
     act(() => buttons[1]?.click());
     expect(installedToast.open).toHaveBeenCalledTimes(1);
-    expect(installedToast.dismiss).toHaveBeenCalledTimes(1);
+    expect(installedToast.dismiss).toHaveBeenCalledTimes(2);
     render(null);
     expect(document.querySelector('[data-post-update-toast]')).toBeNull();
+  });
+  it('does not acknowledge a toast removed before its announcement mounts', () => {
+    vi.useFakeTimers();
+    render(null, false, noop, undefined, {
+      installedToast: { version: '2.0.0', open: noop, dismiss: noop },
+    });
+    render(null);
+    act(() => vi.advanceTimersByTime(20));
+    expect(post).not.toHaveBeenCalledWith({ type: 'releaseNotesShown', version: '2.0.0' });
   });
   it('mounts the one outlet even with an empty toast store, as a labelled region', () => {
     render(null);

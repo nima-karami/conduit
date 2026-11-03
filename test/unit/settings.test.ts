@@ -40,6 +40,11 @@ describe('settings persistence', () => {
     );
     expect(restored.lastSeenVersion).toBe('0.53.0');
     expect(
+      restoreSettings(
+        JSON.stringify({ version: 1, settings: { lastSeenVersion: '0.54.0-beta.1' } }),
+      ).lastSeenVersion,
+    ).toBeUndefined();
+    expect(
       restoreSettings(JSON.stringify({ version: 1, settings: { lastSeenVersion: '../bad' } }))
         .lastSeenVersion,
     ).toBeUndefined();

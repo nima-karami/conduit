@@ -27,7 +27,7 @@ const sample = section
 const userDataDir = profileDir('update-post-update');
 writeFileSync(
   join(userDataDir, 'settings.json'),
-  JSON.stringify({ version: packageJson.version, settings: { lastSeenVersion: '0.0.1' } }),
+  JSON.stringify({ version: packageJson.version, settings: {} }),
 );
 
 runScenario(
@@ -35,11 +35,36 @@ runScenario(
   async ({ page, log }) => {
     const toast = page.locator('[data-post-update-toast]');
     await toast.waitFor({ state: 'visible', timeout: 10000 });
+    await page.waitForFunction(
+      (version) =>
+        document
+          .querySelector('[data-post-update-toast] [role="status"]')
+          ?.textContent?.includes(`Updated to v${version}`),
+      currentVersion,
+      { timeout: 5000 },
+    );
     assert(
       (await toast.textContent())?.includes(`Updated to v${currentVersion}`),
       'toast names the installed version',
     );
+    const settingsFile = join(userDataDir, 'settings.json');
+    const deadline = Date.now() + 5000;
+    let persisted;
+    while (Date.now() < deadline) {
+      try {
+        persisted = JSON.parse(readFileSync(settingsFile, 'utf8'));
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      if (persisted?.settings?.lastSeenVersion === currentVersion) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert(
+      persisted?.settings?.lastSeenVersion === currentVersion,
+      `mounted toast acknowledgement persists lastSeenVersion ${currentVersion}`,
+    );
     await toast.getByRole('button', { name: "What's new" }).click();
+    await toast.waitFor({ state: 'detached', timeout: 5000 });
     const dialog = page.locator('[role="dialog"][data-whats-new]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
     assert(
@@ -64,24 +89,46 @@ runScenario(
         'dialog renders content from the bundled changelog section',
       );
     }
-    const settingsFile = join(userDataDir, 'settings.json');
-    const deadline = Date.now() + 5000;
-    let persisted;
-    while (Date.now() < deadline) {
-      try {
-        persisted = JSON.parse(readFileSync(settingsFile, 'utf8'));
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
+    await dialog.getByRole('button', { name: 'Later' }).click();
+    await dialog.waitFor({ state: 'detached', timeout: 5000 });
+
+    await page.addInitScript(() => {
+      window.__releaseNotesSeen = [];
+      const attach = () => {
+        const bridge = window.agentDeck;
+        if (!bridge || typeof bridge.subscribe !== 'function') return false;
+        bridge.subscribe((message) => {
+          if (message.type === 'releaseNotes') window.__releaseNotesSeen.push(message);
+        });
+        return true;
+      };
+      if (!attach()) {
+        const timer = setInterval(() => {
+          if (attach()) clearInterval(timer);
+        }, 25);
+        setTimeout(() => clearInterval(timer), 20000);
       }
-      if (persisted?.settings?.lastSeenVersion === currentVersion) break;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    });
+    await page.reload();
+    await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
+    await page.waitForSelector('[data-toast-stack]', { state: 'attached', timeout: 10000 });
+    await page.waitForFunction(
+      (version) =>
+        window.__releaseNotesSeen?.some(
+          (message) => message.version === version && message.showToast === false,
+        ),
+      currentVersion,
+      { timeout: 10000 },
+    );
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
     assert(
-      persisted?.settings?.lastSeenVersion === currentVersion,
-      `toast persists lastSeenVersion ${currentVersion}`,
+      (await page.locator('[data-post-update-toast]').count()) === 0,
+      'persisted mount acknowledgement prevents the toast from repeating after renderer reload',
     );
     log(
-      `seeded lastSeenVersion 0.0.1; first-launch toast opened bundled notes for v${currentVersion}`,
+      `legacy settings showed the installed notes once for v${currentVersion}; reload did not repeat it`,
     );
   },
   { userDataDir },
