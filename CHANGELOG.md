@@ -7,15 +7,6 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Fixed
-- **Switching between terminal sessions no longer flashes black.** 0.53.1 released a hidden
-  terminal's graphics renderer and attached it again when you came back, which painted one or two
-  blank frames. Hidden terminals keep their renderer again (up to 12 per window, as before 0.53.1);
-  measured on a hardware GPU, releasing it saved no measurable graphics memory, so 0.53.1's note that
-  hidden terminals no longer hold graphics memory did not hold.
-
-## [0.53.1] — 2026-11-03
-
-### Fixed
 - **Conduit uses much less memory over a long day.**
   - **Code intelligence:** opening a JavaScript file could add over a gigabyte, because the
     JavaScript language service was given every TypeScript file of every project you had opened. It
@@ -25,8 +16,7 @@ All notable user-facing changes to Conduit. Format follows
   - **Closed tabs** now free their content. Before, every image, PDF and file you had opened stayed in
     memory until the window reloaded.
   - **Terminals:** a finished session no longer holds its terminal while you're looking elsewhere. Its
-    output and exit line come back when you return, and the agent is not started again. Hidden
-    terminals no longer hold graphics memory.
+    output and exit line come back when you return, and the agent is not started again.
   - **Background service:** it no longer rebuilds a busy session's saved output on every chunk it
     receives.
   - The app now runs the production build of its UI framework, which no longer records a profiling

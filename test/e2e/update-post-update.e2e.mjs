@@ -21,7 +21,8 @@ const sample = section
   .replaceAll('**', '')
   .replaceAll('`', '')
   .split('. ')[0]
-  ?.concat('.')
+  // A bullet that is a single sentence already ends with its period.
+  ?.replace(/\.?\s*$/, '.')
   .trim();
 
 const userDataDir = profileDir('update-post-update');
