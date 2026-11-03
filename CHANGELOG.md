@@ -6,6 +6,23 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Conduit uses much less memory over a long day.**
+  - **Code intelligence:** opening a JavaScript file could add over a gigabyte, because the
+    JavaScript language service was given every TypeScript file of every project you had opened. It
+    now gets only JavaScript files, type declarations and the TypeScript files your open JavaScript
+    files import. Projects no session uses any more are dropped from code intelligence, and the total
+    is capped.
+  - **Closed tabs** now free their content. Before, every image, PDF and file you had opened stayed in
+    memory until the window reloaded.
+  - **Terminals:** a finished session no longer holds its terminal while you're looking elsewhere. Its
+    output and exit line come back when you return, and the agent is not started again. Hidden
+    terminals no longer hold graphics memory.
+  - **Background service:** it no longer rebuilds a busy session's saved output on every chunk it
+    receives.
+  - The app now runs the production build of its UI framework, which no longer records a profiling
+    entry for every screen update.
+
 ## [0.53.0] — 2026-11-03
 
 ### Added
