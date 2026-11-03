@@ -142,7 +142,11 @@ runScenario(
       !dialogText?.includes('you have v'),
       'installed notes omit the incoming-update sub-line',
     );
-    assert(!dialogText?.includes('Relaunch to update'), 'installed notes omit Relaunch');
+    // The notes body may itself mention the relaunch control, so assert on the control.
+    assert(
+      (await dialog.getByRole('button', { name: 'Relaunch to update' }).count()) === 0,
+      'installed notes omit Relaunch',
+    );
     if (sample) {
       const normalized = (value) => value?.replace(/\s+/g, ' ').trim() ?? '';
       assert(
