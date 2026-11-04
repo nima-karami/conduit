@@ -101,6 +101,30 @@ it('a minimized window keeps its own set: shown, though not visible', () => {
   demand.stop();
 });
 
+it('before any window reports, nothing is visible or shown', async () => {
+  vi.useFakeTimers();
+  const run = vi.fn();
+  const demand = createSessionResourceDemand(run);
+  expect(demand.isVisible('a')).toBe(false);
+  expect(demand.visibleIds()).toEqual([]);
+  expect(demand.isVisibleInWindow(1, 'a')).toBe(false);
+  expect(demand.isShownInWindow(1, 'a')).toBe(false);
+  demand.schedule('a');
+  await vi.advanceTimersByTimeAsync(200);
+  expect(run).not.toHaveBeenCalled();
+  demand.stop();
+});
+
+it('the first report wakes exactly the reported ids', async () => {
+  vi.useFakeTimers();
+  const run = vi.fn();
+  const demand = createSessionResourceDemand(run);
+  demand.setVisible(1, ['a']);
+  await vi.advanceTimersByTimeAsync(150);
+  expect(run).toHaveBeenCalledExactlyOnceWith(['a']);
+  demand.stop();
+});
+
 it('isSuspended reports a minimized window until it is restored or dropped', () => {
   const demand = createSessionResourceDemand(vi.fn());
   demand.setVisible(1, ['a']);
