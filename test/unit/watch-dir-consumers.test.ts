@@ -182,6 +182,7 @@ describe('BoardWatcher when .conduit/ comes back', () => {
       await recreate(dir);
       poll();
       expect(watches).toHaveLength(2);
+      await delay(0);
       fs.writeFileSync(path.join(dir, BOARD_FILE_NAME), serializeBoardArtifact(board(cards('b'))));
       await waitFor(() => seen.length > 0, 3000);
       expect(seen.at(-1)?.cards.map((c) => c.id)).toEqual(['b']);
@@ -200,6 +201,7 @@ describe('BoardWatcher when .conduit/ comes back', () => {
       fs.mkdirSync(conduitDir(root));
       poll();
       expect(watches).toHaveLength(1);
+      await delay(0);
       fs.writeFileSync(
         path.join(conduitDir(root), BOARD_FILE_NAME),
         serializeBoardArtifact(board(cards('c'))),
@@ -288,6 +290,7 @@ describe('PlanWatcher when .conduit/plans/ comes back', () => {
       await recreate(plans);
       poll();
       expect(watches).toHaveLength(2);
+      await delay(0);
       await writePlanFile(root, 'next', '# Next\n');
       await waitFor(() => seen.includes('next'), 3000);
     } finally {
@@ -334,6 +337,7 @@ describe('OpenFileWatcher when a watched file directory comes back', () => {
       poll();
       expect(watches).toHaveLength(2);
       expect(watches[1].dir).toBe(sub);
+      await delay(0);
       fs.writeFileSync(file, 'y');
       await waitFor(() => changed.mock.calls.length > 0, 3000);
       expect(changed).toHaveBeenCalledWith(file);

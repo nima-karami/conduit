@@ -19,7 +19,7 @@ function mkdirAndWatch(): string[] {
 }
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), 'conduit-propwatch-'));
+  root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'conduit-propwatch-')));
   watcher = new ProposalWatcher(40);
 });
 
@@ -31,6 +31,7 @@ afterEach(() => {
 describe('ProposalWatcher', () => {
   it('fires when a board proposal appears', async () => {
     const seen = mkdirAndWatch();
+    await delay(0);
 
     fs.writeFileSync(
       proposalPath(root, 'board'),
@@ -49,6 +50,7 @@ describe('ProposalWatcher', () => {
     );
     const seen: string[] = [];
     watcher.watch(root, (kind) => seen.push(kind));
+    await delay(0);
 
     fs.rmSync(proposalPath(root, 'board'));
     await waitFor(() => seen.includes('board'));

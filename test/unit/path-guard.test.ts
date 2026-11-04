@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isInsideAnyRoot, isInsideRoot, realPathLeaf, validateWrite } from '../../src/path-guard';
 import { tempRoots } from '../helpers/temp-roots';
 
@@ -114,6 +114,26 @@ describe('validateWrite — the trust boundary', () => {
     const target = path.join(linkedDir, 'new.ts'); // not yet existing
     const res = validateWrite(target, [r]);
     expect(res.ok).toBe(false);
+  });
+
+  it('accepts a target when the workspace root and target resolve through the same path alias', () => {
+    const r = root();
+    const aliasRoot = path.join(r, 'alias');
+    const canonicalRoot = path.join(r, 'canonical');
+    const target = path.join(aliasRoot, 'new.ts');
+    const canonicalTarget = path.join(canonicalRoot, 'new.ts');
+    const realpath = fs.realpathSync.native;
+    const resolve = vi.spyOn(fs.realpathSync, 'native').mockImplementation((value) => {
+      const resolved = path.resolve(value.toString());
+      if (resolved === path.resolve(aliasRoot)) return canonicalRoot;
+      if (resolved === path.resolve(target)) return canonicalTarget;
+      return realpath(value);
+    });
+    try {
+      expect(validateWrite(target, [aliasRoot])).toEqual({ ok: true, path: canonicalTarget });
+    } finally {
+      resolve.mockRestore();
+    }
   });
 });
 

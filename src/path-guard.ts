@@ -81,6 +81,12 @@ export function realPathLeaf(target: string): string {
   }
 }
 
+/** Root aliases must be canonicalized too or `/var` and `/private/var` reject a valid child. */
+export function isInsideAnyRealRoot(child: string, roots: readonly string[]): boolean {
+  const realChild = realPathLeaf(child);
+  return roots.some((root) => isInsideRoot(realChild, realPathLeaf(root)));
+}
+
 /**
  * Validate a write request against the workspace roots. Returns the canonical
  * absolute path to write on success, or a rejection with a human-readable reason.
@@ -111,7 +117,7 @@ export function validateWrite(target: string, roots: readonly string[]): WriteRe
   }
   // Stage 2 — real-path containment (rejects symlink traversal).
   const real = realPathLeaf(abs);
-  if (!isInsideAnyRoot(real, roots)) {
+  if (!isInsideAnyRealRoot(real, roots)) {
     return { ok: false, error: `Refusing to write outside the workspace (symlink): ${target}` };
   }
   // Never clobber a directory.

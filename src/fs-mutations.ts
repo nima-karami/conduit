@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { isInsideAnyRoot, realPathLeaf } from './path-guard';
+import { isInsideAnyRealRoot, isInsideAnyRoot } from './path-guard';
 
 /**
  * File-tree mutation layer (L2). The Explorer can ask the host to create / rename /
@@ -12,7 +12,7 @@ import { isInsideAnyRoot, realPathLeaf } from './path-guard';
  * Two halves, both small and testable (mirroring `git-actions.ts`):
  *  - PURE validation (`planMutation`): turns a request into a typed plan or a typed
  *    rejection. No IO — unit-tested without Electron. Containment is enforced here via
- *    `isInsideAnyRoot` + `realPathLeaf` from path-guard (case-insensitive on win32,
+ *    `isInsideAnyRoot` + `isInsideAnyRealRoot` from path-guard (case-insensitive on win32,
  *    symlink-resolved), so a `..`/absolute/symlink escape can never reach `fs`.
  *  - Thin executors (`createFile`, `createDir`, `rename`, `remove`, `removePermanent`):
  *    run a validated plan against the real filesystem. `remove` takes an INJECTED
@@ -48,9 +48,24 @@ function eqPath(a: string, b: string): boolean {
   return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y;
 }
 
+// A case-insensitive FS (macOS default, not just win32) names one entry many ways; the inode decides.
+function samePathEntry(a: string, b: string): boolean {
+  if (eqPath(a, b)) return true;
+  const x = resolvedNoSep(a);
+  const y = resolvedNoSep(b);
+  if (x.toLowerCase() !== y.toLowerCase()) return false;
+  try {
+    const xStat = fs.lstatSync(x);
+    const yStat = fs.lstatSync(y);
+    return xStat.dev === yStat.dev && xStat.ino === yStat.ino;
+  } catch {
+    return false;
+  }
+}
+
 /** True when `target` resolves to one of the workspace roots itself (never mutate a root). */
 function isWorkspaceRoot(target: string, roots: readonly string[]): boolean {
-  return roots.some((r) => eqPath(target, r));
+  return roots.some((r) => samePathEntry(target, r));
 }
 
 /**
@@ -63,7 +78,7 @@ function isWorkspaceRoot(target: string, roots: readonly string[]): boolean {
 function contained(target: string, roots: readonly string[]): boolean {
   const abs = path.resolve(target);
   if (!isInsideAnyRoot(abs, roots)) return false;
-  return isInsideAnyRoot(realPathLeaf(abs), roots);
+  return isInsideAnyRealRoot(abs, roots);
 }
 
 /**
@@ -101,7 +116,7 @@ export function planMutation(req: FsMutationRequest, roots: readonly string[]): 
     }
     // Collision: reject unless `to` is just a case-rename of `from` on a
     // case-insensitive filesystem (renaming `Foo`→`foo` is legitimate there).
-    if (fs.existsSync(path.resolve(to)) && !eqPath(from, to)) {
+    if (fs.existsSync(path.resolve(to)) && !samePathEntry(from, to)) {
       return { kind: 'reject', error: 'A file or folder with that name already exists.' };
     }
     return { kind: 'rename', from: path.resolve(from), to: path.resolve(to) };

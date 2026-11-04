@@ -249,7 +249,9 @@ d(
     });
 
     it('linked worktree interrogation returns its own gitDir and the main commonDir', async () => {
-      const root = mkTmp();
+      // Git stores a linked worktree's paths canonically, so an aliased temp dir (macOS /var →
+      // /private/var) would compare an alias against its target; repo identity is lexical by design.
+      const root = fs.realpathSync.native(mkTmp());
       gitInit(root, 'main');
       commit(root);
       git(root, ['branch', 'feature']);

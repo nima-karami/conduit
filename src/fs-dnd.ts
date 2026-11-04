@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { uniqueDestPath } from './fs-import';
-import { isInsideAnyRoot, realPathLeaf } from './path-guard';
+import { isInsideAnyRealRoot, isInsideAnyRoot } from './path-guard';
 
 /**
  * Guarded filesystem move/copy operations for drag-and-drop (D5).
@@ -35,7 +35,7 @@ export interface DndOpts {
 function contained(target: string, roots: readonly string[]): boolean {
   const abs = path.resolve(target);
   if (!isInsideAnyRoot(abs, roots)) return false;
-  return isInsideAnyRoot(realPathLeaf(abs), roots);
+  return isInsideAnyRealRoot(abs, roots);
 }
 
 /** True when `child` is inside (or equal to) `ancestor` — guards a replace that would eat the source. */
