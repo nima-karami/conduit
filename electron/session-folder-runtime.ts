@@ -136,36 +136,34 @@ export class SessionFolderRuntime {
     this.listeners = [];
   }
 
-  /** Whether the session's folders are in the armed set: shown in a window, or tracking repos. */
+  /** Whether the session's folders are in the armed set: shown in a window. */
   private armsFor(sessionId: string): boolean {
     return (
-      !!this.deps.store.get(sessionId)?.repos?.length ||
-      [...this.projectsByWindow.values()].some((p) => p.sessionId === sessionId)
+      this.deps.visibleSessionIds().includes(sessionId) ||
+      [...this.projectsByWindow].some(
+        ([windowId, project]) =>
+          project.sessionId === sessionId && !this.deps.isWindowSuspended(windowId),
+      )
     );
   }
 
   /** `sessionId` is the session that contributed a folder of its own, the only kind the server rechecks. */
   private watchEntries(): { path: string; sessionId: string | undefined }[] {
     const armed = new Set<Session>();
-    const projects = [...this.projectsByWindow.values()].flatMap(({ p, sessionId }) => {
-      const s = sessionId ? this.deps.store.get(sessionId) : undefined;
-      if (s) armed.add(s);
-      return watchFoldersFor(p, s).map((path) => ({ path, sessionId }));
-    });
+    const projects = [...this.projectsByWindow]
+      .filter(([windowId]) => !this.deps.isWindowSuspended(windowId))
+      .flatMap(([, { p, sessionId }]) => {
+        const s = sessionId ? this.deps.store.get(sessionId) : undefined;
+        if (s) armed.add(s);
+        return watchFoldersFor(p, s).map((path) => ({ path, sessionId }));
+      });
     const visible = this.deps.visibleSessionIds().flatMap((id) => {
       const s = this.deps.store.get(id);
       if (s) armed.add(s);
       return s ? watchFoldersFor(s.home, s).map((path) => ({ path, sessionId: id })) : [];
     });
-    // Hidden too: a write then marks only its repo, and switching back runs git for that repo
-    // alone (multi-repo-tracking spec §2 "no catch-up git"). Bounded by open sessions; the
-    // watcher folds nested roots into their ancestor's watch.
-    const tracking = this.deps.store.list().flatMap((s) => {
-      if (!s.repos?.length) return [];
-      armed.add(s);
-      return watchFoldersFor(s.home, s).map((path) => ({ path, sessionId: s.id }));
-    });
-    return [...projects, ...visible, ...tracking, ...this.reposUnderBroad(armed)];
+    // Hidden sessions hold no watch (spec 2026-11-03-demand-driven-resources §3.2).
+    return [...projects, ...visible, ...this.reposUnderBroad(armed)];
   }
 
   /**
