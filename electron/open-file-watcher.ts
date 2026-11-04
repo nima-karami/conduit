@@ -87,7 +87,7 @@ export class OpenFileWatcher {
    * Replace the watched set with exactly `paths`. Idempotent: re-sending the same set
    * is cheap (dirs already watched are reused; dirs no longer needed are dropped).
    */
-  setPaths(paths: readonly string[]): void {
+  private setPaths(paths: readonly string[]): void {
     const wanted = planWatchDirs(paths);
 
     this.fullByKey.clear();

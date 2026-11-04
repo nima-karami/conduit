@@ -26,7 +26,7 @@ describe('OpenFileWatcher change cadence', () => {
     const file = path.join('r', 'a.ts');
     const seen: string[] = [];
     const w = new OpenFileWatcher((p) => seen.push(p), 150);
-    w.setPaths([file]);
+    w.setWindowPaths(1, [file]);
     for (let i = 0; i < 10; i++) {
       writeTo(file);
       vi.advanceTimersByTime(100);
@@ -42,7 +42,7 @@ describe('OpenFileWatcher change cadence', () => {
     const file = path.join('r', 'app.log.1');
     const seen: number[] = [];
     const w = new OpenFileWatcher(() => seen.push(Date.now()), 150);
-    w.setPaths([file]);
+    w.setWindowPaths(1, [file]);
     const start = Date.now();
     for (let i = 0; i < 30; i++) {
       writeTo(file);

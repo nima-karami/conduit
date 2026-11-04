@@ -6,6 +6,11 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **Sessions you aren't looking at no longer watch their folders or run git.** Their branch and
+  change count update when the agent finishes a turn. Opening one shows its last state and
+  catches up in about a second. Minimized windows count as not looking.
+
 ## [0.53.2] — 2026-11-03
 
 ### Fixed

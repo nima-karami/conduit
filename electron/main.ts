@@ -1294,6 +1294,7 @@ app.whenReady().then(() => {
   // `state` broadcast via Session.repoGit. See docs/plans/2026-10-16-multi-repo-tracking.plan.md.
   const gitDemand = createSessionResourceDemand(
     (ids) => {
+      folders.visibilityChanged();
       for (const id of ids) if (deferredRepoScans.has(id)) scheduleRepoScan(id);
       for (const w of windows.values()) {
         const shown = ids
@@ -1302,13 +1303,14 @@ app.whenReady().then(() => {
             const s = store.get(id);
             return s ? [s.home, ...presentRoots(s)] : [];
           });
-        const stale = shown.filter((root) => pendingFsByWindow.get(w.id)?.has(root));
-        for (const root of stale) pendingFsByWindow.get(w.id)?.delete(root);
-        if (stale.length)
+        // A hidden session held no folder watch, so nothing was queued for it: every shown root
+        // re-reads once (spec 2026-11-03 §3.5).
+        for (const root of shown) pendingFsByWindow.get(w.id)?.delete(root);
+        if (shown.length)
           w.webContents.send('to-webview', {
             type: 'fsChanged',
-            root: stale[0],
-            folders: [...new Set(stale)],
+            root: shown[0],
+            folders: [...new Set(shown)],
           });
       }
       for (const [windowId, request] of deferredProjectRequests) {
@@ -1334,6 +1336,8 @@ app.whenReady().then(() => {
         repoScanner.forget(id);
         deferredRepoScans.add(id);
       }
+      folders.visibilityChanged();
+      repoTrackerHost.tracker.visibilityChanged();
     },
   );
   const deferredRepoScans = new Set<string>();
@@ -2905,7 +2909,7 @@ app.whenReady().then(() => {
           // Watch exactly the files the renderer reports open. These paths were all served
           // via readFile, so they're files the host already chose to expose — watching is
           // read-only and adds no new trust surface.
-          openFileWatcher.setPaths(m.paths);
+          openFileWatcher.setWindowPaths(senderId, m.paths);
           break;
         }
         case 'persistDocs': {
@@ -3464,11 +3468,12 @@ app.whenReady().then(() => {
             // gitDemand's set decides which windows get a session's repo deltas.
             const ownIds = repoTrackerHost.ownedIds(senderId, m.ids);
             gitDemand.setVisible(senderId, ownIds);
+            // Watches re-arm before the tracker's catch-up so nothing written meanwhile is lost.
+            folders.visibilityChanged();
             // Unconditional, even for an unchanged set: a reloaded renderer re-posts the same
             // ids and has to re-hydrate from the cache.
             repoTrackerHost.windowShown(senderId, ownIds);
           }
-          folders.visibilityChanged();
           for (const id of m.ids) if (deferredRepoScans.has(id)) scheduleRepoScan(id);
           break;
         case 'changes:subscribe':
@@ -4595,6 +4600,7 @@ app.whenReady().then(() => {
         windowConfirmed.delete(windowId);
         gitDemand.dropWindow(windowId);
         repoTrackerHost.dropWindow(windowId);
+        openFileWatcher.dropWindow(windowId);
         deferredProjectRequests.delete(windowId);
         pendingFsByWindow.delete(windowId);
         for (const [key, request] of deferredIndexes)
@@ -4615,10 +4621,13 @@ app.whenReady().then(() => {
     w.once('closed', () => lspManager.dropWebContents(wcId));
     w.on('minimize', () => {
       gitDemand.setSuspended(w.id, true);
+      openFileWatcher.setWindowSuspended(w.id, true);
       lspManager.setWindowMinimized(wcId, true);
     });
     w.on('restore', () => {
       gitDemand.setSuspended(w.id, false);
+      folders.visibilityChanged();
+      openFileWatcher.setWindowSuspended(w.id, false);
       repoTrackerHost.windowRestored(w.id);
       lspManager.setWindowMinimized(wcId, false);
     });

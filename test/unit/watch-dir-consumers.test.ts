@@ -326,7 +326,7 @@ describe('OpenFileWatcher when a watched file directory comes back', () => {
     const changed = vi.fn();
     const ow = new OpenFileWatcher(changed, 20);
     try {
-      ow.setPaths([file]);
+      ow.setWindowPaths(1, [file]);
       expect(watches).toHaveLength(1);
       removeWatched(watches[0]);
       expect(watches[0].close).toHaveBeenCalledTimes(1);
@@ -353,7 +353,7 @@ describe('OpenFileWatcher when a watched file directory comes back', () => {
     const changed = vi.fn();
     const ow = new OpenFileWatcher(changed, 20);
     try {
-      ow.setPaths([a, b]);
+      ow.setWindowPaths(1, [a, b]);
       removeWatched(watches[0]);
       await recreate(sub);
       fs.writeFileSync(a, 'restored');
