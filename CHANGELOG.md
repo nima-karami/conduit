@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.56.0] — 2026-11-04
+
 ### Added
 - **Every release's notes are now in Settings → Release notes.** Pick a version on the left to
   read what changed in it. About and the What's-new dialog both link there.
