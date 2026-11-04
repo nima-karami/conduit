@@ -34,6 +34,90 @@ function storeWith(...ids: string[]) {
 }
 
 describe('AppSessionStore D39 overlay', () => {
+  it('completions rising on a reporting program is one turnEnded', () => {
+    const store = new AppSessionStore();
+    store.applyServer([view('s1')]);
+
+    expect(
+      store.applyServer([
+        view('s1', {
+          completions: 1,
+          runtime: {
+            generation: 3,
+            spawn: 'live',
+            reportedStatus: { state: 'done' },
+            lastSize: null,
+          },
+        }),
+      ]),
+    ).toEqual([{ sessionId: 's1', kind: 'turnEnded' }]);
+  });
+
+  it('completions rising with reportedStatus null emits nothing', () => {
+    const store = new AppSessionStore();
+    store.applyServer([view('s1')]);
+
+    expect(store.applyServer([view('s1', { completions: 1 })])).toEqual([]);
+  });
+
+  it('running → exited emits turnEnded even without a report', () => {
+    const store = new AppSessionStore();
+    store.applyServer([view('s1')]);
+
+    expect(store.applyServer([view('s1', { status: 'exited' })])).toEqual([
+      { sessionId: 's1', kind: 'turnEnded' },
+    ]);
+  });
+
+  it('a server restart (completions 5 → 0) emits nothing; then 0 → 1 with a report emits one', () => {
+    const store = new AppSessionStore();
+    store.applyServer([view('s1', { completions: 5 })]);
+    const reporting = (completions: number): SessionView =>
+      view('s1', {
+        completions,
+        runtime: {
+          generation: 3,
+          spawn: 'live',
+          reportedStatus: { state: 'done' },
+          lastSize: null,
+        },
+      });
+
+    expect(store.applyServer([reporting(0)])).toEqual([]);
+    expect(store.applyServer([reporting(1)])).toEqual([{ sessionId: 's1', kind: 'turnEnded' }]);
+  });
+
+  it('a new session emits added only', () => {
+    const store = new AppSessionStore();
+
+    expect(store.applyServer([view('s1', { completions: 1 })])).toEqual([
+      { sessionId: 's1', kind: 'added', homeChanged: true, cwdChanged: false },
+    ]);
+  });
+
+  it('a cwd change and a turn end in one list emit both diffs, folder diff first', () => {
+    const store = new AppSessionStore();
+    store.applyServer([view('s1')]);
+
+    expect(
+      store.applyServer([
+        view('s1', {
+          cwd: '/work/A/sub',
+          completions: 1,
+          runtime: {
+            generation: 3,
+            spawn: 'live',
+            reportedStatus: { state: 'done' },
+            lastSize: null,
+          },
+        }),
+      ]),
+    ).toEqual([
+      { sessionId: 's1', kind: 'changed', homeChanged: false, cwdChanged: true },
+      { sessionId: 's1', kind: 'turnEnded' },
+    ]);
+  });
+
   it('overlay wins over a snapshot carrying repo fields', () => {
     const { store } = storeWith();
     store.setRepos('s1', repos);

@@ -74,7 +74,7 @@ export class AppSessionStore {
 
   /** No onChange: the caller broadcasts once per server list, with the diff in hand. */
   applyServer(views: SessionView[]): SessionDiff[] {
-    const diffs: SessionFolderDiff[] = [];
+    const diffs: SessionDiff[] = [];
     const next = new Map(views.map((v) => [v.id, v]));
     for (const v of views) {
       const prev = this.byId.get(v.id);
@@ -91,6 +91,11 @@ export class AppSessionStore {
       const cwdChanged = prev.cwd !== v.cwd;
       if (homeChanged || cwdChanged || !sameList(prev.roots, v.roots))
         diffs.push({ sessionId: v.id, kind: 'changed', homeChanged, cwdChanged });
+      if (
+        (v.completions > prev.completions && v.runtime.reportedStatus !== null) ||
+        (prev.status === 'running' && v.status === 'exited')
+      )
+        diffs.push({ sessionId: v.id, kind: 'turnEnded' });
     }
     for (const id of this.byId.keys())
       if (!next.has(id)) {
@@ -102,6 +107,7 @@ export class AppSessionStore {
     for (const [id, v] of next) this.byId.set(id, v);
     // The opened root is the active repo's fallback, so a moved home re-resolves it.
     for (const d of diffs) {
+      if (d.kind === 'turnEnded') continue;
       const overlay = this.overlays.get(d.sessionId);
       const view = this.byId.get(d.sessionId);
       if (d.homeChanged && overlay && view) this.recompute(view, overlay);
