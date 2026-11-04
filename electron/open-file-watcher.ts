@@ -48,7 +48,7 @@ export class OpenFileWatcher {
   private watchedByDir = new Map<string, Set<string>>();
   private fullByKey = new Map<string, string>();
   private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  // A window's post replaces only its own set; a minimized window's set is kept but not watched.
+  // see spec 2026-11-03-demand-driven-resources §3.2 G4 / D10
   private byWindow = new Map<number, readonly string[]>();
   private suspendedWindows = new Set<number>();
 
