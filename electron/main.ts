@@ -1303,8 +1303,7 @@ app.whenReady().then(() => {
             const s = store.get(id);
             return s ? [s.home, ...presentRoots(s)] : [];
           });
-        // A hidden session held no folder watch, so nothing was queued for it: every shown root
-        // re-reads once (spec 2026-11-03 §3.5).
+        // see spec 2026-11-03-demand-driven-resources §3.5
         for (const root of shown) pendingFsByWindow.get(w.id)?.delete(root);
         if (shown.length)
           w.webContents.send('to-webview', {
@@ -3468,7 +3467,7 @@ app.whenReady().then(() => {
             // gitDemand's set decides which windows get a session's repo deltas.
             const ownIds = repoTrackerHost.ownedIds(senderId, m.ids);
             gitDemand.setVisible(senderId, ownIds);
-            // Watches re-arm before the tracker's catch-up so nothing written meanwhile is lost.
+            // see spec 2026-11-03-demand-driven-resources §3.5 (order: watches, then catch-up)
             folders.visibilityChanged();
             // Unconditional, even for an unchanged set: a reloaded renderer re-posts the same
             // ids and has to re-hydrate from the cache.

@@ -102,6 +102,7 @@ it('hidden from start: no git status until shown; the first visible runs the cat
   h.addSession('s1', '/w/a');
   await vi.advanceTimersByTimeAsync(5_000);
   expect(h.reads).toEqual([]);
+  expect(h.interrogations).toEqual(['/w/a']);
   h.show(['s1']);
   expect(h.deltas().some((d) => d.sessionId === 's1' && d.full)).toBe(true);
   await vi.advanceTimersByTimeAsync(50);
@@ -146,8 +147,36 @@ it('minimize then restore: no run while minimized; restore sends full and runs o
   const fullsBefore = h.deltas().filter((d) => d.full).length;
   h.demand.setSuspended(1, false);
   h.host.windowRestored(1);
-  expect(h.deltas().filter((d) => d.full).length).toBe(fullsBefore + 1);
+  const fulls = h.deltas().filter((d) => d.full);
+  expect(fulls.length).toBe(fullsBefore + 1);
+  expect(fulls.at(-1)?.repos['/w/a']).toMatchObject({ stale: true });
+  expect(h.reads.length).toBe(readsBefore);
   await vi.advanceTimersByTimeAsync(1_000);
   expect(h.reads.length).toBe(readsBefore + 1);
+  const fresh = h.deltas().at(-1)?.repos['/w/a'];
+  expect(fresh && 'stale' in fresh).toBe(false);
+  h.host.tracker.stop();
+});
+
+it('showing a hidden session with a cached snapshot replays it stale, then fresh', async () => {
+  const h = harness();
+  h.addSession('s1', '/w/a');
+  h.addSession('s2', '/w/b');
+  h.show(['s1']);
+  await vi.advanceTimersByTimeAsync(15_000);
+  h.show(['s2']);
+  await vi.advanceTimersByTimeAsync(15_000);
+  const readsBefore = h.reads.length;
+  h.show(['s1']);
+  const full = h
+    .deltas()
+    .filter((d) => d.full && d.sessionId === 's1')
+    .at(-1);
+  expect(full?.repos['/w/a']).toMatchObject({ stale: true, changes: [{ path: 'a.txt' }] });
+  expect(h.reads.length).toBe(readsBefore);
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(h.reads.slice(readsBefore)).toEqual([{ root: '/w/a', lines: false }]);
+  const fresh = h.deltas().at(-1)?.repos['/w/a'];
+  expect(fresh && 'stale' in fresh).toBe(false);
   h.host.tracker.stop();
 });
