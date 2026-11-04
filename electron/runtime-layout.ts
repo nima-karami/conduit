@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { HC_PINNED_VERSION } from '../src/contracts/hc';
 import { coreStartCwd } from '../src/instance-names';
+import { runtimeBinaryName } from '../src/runtime-binary';
 
 export interface RuntimeLayout {
   nodeExe: string;
@@ -16,19 +17,24 @@ export interface RuntimeLayout {
  * whose spelling (`node.EXE`) the server then writes into every CLI's MCP entry; a bare hc is
  * resolved inside an hc terminal, whose PATH hc rebuilds rather than taking the app's.
  */
-function onPath(env: NodeJS.ProcessEnv, name: 'node' | 'hc'): string | undefined {
+function onPath(
+  env: NodeJS.ProcessEnv,
+  name: 'node' | 'hc',
+  platform: NodeJS.Platform,
+  exists: (file: string) => boolean,
+): string | undefined {
   const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH');
-  const exe = process.platform === 'win32' ? `${name}.exe` : name;
+  const exe = runtimeBinaryName(name, platform);
   return (key ? (env[key] ?? '') : '')
-    .split(delimiter)
+    .split(platform === 'win32' ? ';' : ':')
     .filter(Boolean)
     .map((dir) => join(dir, exe))
-    .find((candidate) => existsSync(candidate));
+    .find(exists);
 }
 
 /**
  * Packaged uses the copied runtime so installers can replace the install dir (D2). Unpackaged
- * prefers vendored hc on Windows so a newer global install doesn't cause `core replaced`.
+ * prefers vendored hc on supported platforms so a newer global install doesn't cause `core replaced`.
  */
 export function runtimeLayout(i: {
   packaged: boolean;
@@ -40,29 +46,33 @@ export function runtimeLayout(i: {
   exists?: (file: string) => boolean;
 }): RuntimeLayout {
   const runtimeRoot = join(i.userData, 'runtime');
+  const platform = i.platform ?? process.platform;
+  const exists = i.exists ?? existsSync;
+  const nodeBinary = runtimeBinaryName('node', platform);
+  const hcBinary = runtimeBinaryName('hc', platform);
   const hcVersion = HC_PINNED_VERSION;
   const coreCwd = coreStartCwd(runtimeRoot, hcVersion);
   mkdirSync(coreCwd, { recursive: true });
   if (i.packaged) {
     const appDir = join(runtimeRoot, i.appVersion);
     return {
-      nodeExe: join(appDir, 'node.exe'),
+      nodeExe: join(appDir, nodeBinary),
       superviseJs: join(appDir, 'server', 'supervise.js'),
-      hcExe: join(coreCwd, 'hc.exe'),
+      hcExe: join(coreCwd, hcBinary),
       hcVersion,
       coreCwd,
     };
   }
-  const vendorHc = join(i.appPath, 'build', 'vendor', 'hc', 'hc.exe');
+  const vendorHc = join(i.appPath, 'build', 'vendor', 'hc', hcBinary);
   return {
-    nodeExe: i.env.CONDUIT_NODE_BINARY ?? onPath(i.env, 'node') ?? 'node',
+    nodeExe: i.env.CONDUIT_NODE_BINARY ?? onPath(i.env, 'node', platform, exists) ?? 'node',
     superviseJs: join(i.appPath, 'out', 'server', 'supervise.js'),
     hcExe:
       i.env.CONDUIT_HC_BINARY ??
-      ((i.platform ?? process.platform) === 'win32' && (i.exists ?? existsSync)(vendorHc)
+      ((platform === 'win32' || platform === 'darwin') && exists(vendorHc)
         ? vendorHc
         : undefined) ??
-      onPath(i.env, 'hc') ??
+      onPath(i.env, 'hc', platform, exists) ??
       'hc',
     hcVersion,
     coreCwd,

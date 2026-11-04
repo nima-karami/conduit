@@ -1,7 +1,5 @@
 /**
- * `node build/fetch-runtime.mjs` — fetches the vendored runtime `npm run dist` packages (node.exe,
- * hc) into build/vendor/, each checked against build/runtime-pins.json. Binaries are never
- * committed (three-process program W9). Idempotent: a present file whose hash matches is kept.
+ * See ADR 0007, W9: pinned runtimes are fetched at build time, never committed.
  */
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -48,6 +46,21 @@ async function systemExtractZip(zip, dir) {
   }
 }
 
+async function systemExtractTar(archive, dir, stripComponents = 0) {
+  await mkdir(dir, { recursive: true });
+  const tar =
+    process.platform === 'win32'
+      ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+      : 'tar';
+  await promisify(execFile)(tar, [
+    '-xf',
+    archive,
+    '-C',
+    dir,
+    `--strip-components=${stripComponents}`,
+  ]);
+}
+
 /** Downloads to `<file>`, and deletes it again unless its sha256 is the pinned one. */
 async function downloadVerified(pin, file, download) {
   await rm(file, { force: true });
@@ -72,7 +85,7 @@ export async function ensurePinned(pin, deps) {
   const download = deps.download ?? httpDownload;
   const target = join(deps.vendorDir, pin.dest);
 
-  if (pin.archive !== 'zip') {
+  if (!pin.archive) {
     if ((await exists(target)) && (await sha256File(target)) === pin.sha256) return 'skipped';
     await mkdir(dirname(target), { recursive: true });
     await downloadVerified(pin, `${target}.tmp`, download);
@@ -84,14 +97,17 @@ export async function ensurePinned(pin, deps) {
   if ((await exists(target)) && (await exists(stamp))) {
     if ((await readFile(stamp, 'utf8')).trim() === pin.sha256) return 'skipped';
   }
-  const extractZip = deps.extractZip ?? systemExtractZip;
-  const zip = `${target}.zip.tmp`;
+  const archive = `${target}.${pin.archive}.tmp`;
   const staging = `${target}.tmp`;
   await mkdir(deps.vendorDir, { recursive: true });
-  await downloadVerified(pin, zip, download);
+  await downloadVerified(pin, archive, download);
   try {
     await rm(staging, { recursive: true, force: true });
-    await extractZip(zip, staging);
+    if (pin.archive === 'tar.gz') {
+      await (deps.extractTar ?? systemExtractTar)(archive, staging, pin.stripComponents ?? 0);
+    } else {
+      await (deps.extractZip ?? systemExtractZip)(archive, staging);
+    }
     for (const [from, to] of Object.entries(pin.rename ?? {})) {
       await rename(join(staging, from), join(staging, to));
     }
@@ -101,13 +117,21 @@ export async function ensurePinned(pin, deps) {
     await writeFile(stamp, `${pin.sha256}\n`);
   } finally {
     await rm(staging, { recursive: true, force: true });
-    await rm(zip, { force: true });
+    await rm(archive, { force: true });
   }
   return 'fetched';
 }
 
-export async function fetchRuntime({ pins, log = console.log, ...deps }) {
-  for (const [name, pin] of Object.entries(pins)) {
+export async function fetchRuntime({
+  pins,
+  platform = process.platform,
+  arch = process.arch,
+  log = console.log,
+  ...deps
+}) {
+  const selected = pins[`${platform}-${arch}`];
+  if (!selected) throw new Error(`No pinned runtime for ${platform}-${arch}`);
+  for (const [name, pin] of Object.entries(selected)) {
     const result = await ensurePinned(pin, deps);
     log(`${name} ${pin.version}: ${result}`);
   }
@@ -115,5 +139,16 @@ export async function fetchRuntime({ pins, log = console.log, ...deps }) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const pins = JSON.parse(await readFile(join(here, 'runtime-pins.json'), 'utf8'));
-  await fetchRuntime({ pins, vendorDir: join(here, 'vendor') });
+  const args = process.argv.slice(2);
+  const options = {};
+  while (args.length) {
+    const flag = args.shift();
+    if (!['--platform', '--arch'].includes(flag) || !args[0] || args[0].startsWith('--')) {
+      throw new Error(
+        'Usage: node build/fetch-runtime.mjs [--platform darwin|win32] [--arch arm64|x64]',
+      );
+    }
+    options[flag.slice(2)] = args.shift();
+  }
+  await fetchRuntime({ pins, vendorDir: join(here, 'vendor'), ...options });
 }

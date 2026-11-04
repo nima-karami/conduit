@@ -6,9 +6,19 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.55.0] — 2026-11-04
+
 ### Added
 - **Drag an open file tab onto the terminal to paste its path**, the same as dragging a file from
   the Files explorer.
+
+### Fixed
+- **Typing in a terminal no longer does extra work on every key.** A leftover scroll diagnostic
+  measured the page and wrote a log line on each keystroke, which made typing stutter on a busy
+  machine.
+- **Mac builds start their background service again.** Since 0.52.0 a Mac build was missing the
+  runtime it needs, so sessions and other actions failed with "background service is not
+  connected".
 
 ## [0.54.0] — 2026-11-04
 
