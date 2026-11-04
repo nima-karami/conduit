@@ -23,7 +23,13 @@ interface FakeWatch {
   closed: boolean;
 }
 
-function harness(opts: { git?: Record<string, GitInterrogation> } = {}) {
+function harness(
+  opts: {
+    git?: Record<string, GitInterrogation>;
+    homeDir?: string;
+    onSend?: (windowId: number, msg: HostToWebview) => void;
+  } = {},
+) {
   const sessions = new Map<string, AppSessionView>();
   const shown = new Map<number, Set<string>>();
   const suspended = new Set<number>();
@@ -61,10 +67,14 @@ function harness(opts: { git?: Record<string, GitInterrogation> } = {}) {
     windows: () =>
       [1, 2].map((id) => ({
         id,
-        send: (msg: HostToWebview) => sent.set(id, [...(sent.get(id) ?? []), msg]),
+        send: (msg: HostToWebview) => {
+          sent.set(id, [...(sent.get(id) ?? []), msg]);
+          opts.onSend?.(id, msg);
+        },
       })),
     log: { debug: vi.fn(), warn },
     watchDirWhilePresent: fakeWatch,
+    homeDir: opts.homeDir,
     trackerDeps: {
       async readChanges(root, o) {
         reads.push({ root, lines: o.lines });
@@ -340,5 +350,94 @@ it('a malformed changes:subscribe or repo:refresh payload is logged and ignored'
   await vi.advanceTimersByTimeAsync(2000);
   expect(h.reads).toHaveLength(reads);
   expect(h.warn).toHaveBeenCalledTimes(10);
+  h.host.stop();
+});
+
+const orderHarness = () => {
+  const calls: string[] = [];
+  const h = harness({
+    onSend: (_w, msg) => {
+      if (msg.type === 'repoDelta' && msg.full) calls.push(`full:${msg.sessionId}`);
+    },
+  });
+  return { h, calls };
+};
+
+const recordTracker = (h: ReturnType<typeof harness>, calls: string[]) => {
+  vi.spyOn(h.host.tracker, 'sessionShown').mockImplementation((ids) => {
+    calls.push(`sessionShown:${ids.join(',')}`);
+  });
+  vi.spyOn(h.host.tracker, 'visibilityChanged').mockImplementation(() => {
+    calls.push('visibilityChanged');
+  });
+};
+
+it('windowShown calls sessionShown, then sends full, then reconsiders', async () => {
+  const { h, calls } = orderHarness();
+  h.shown.set(1, new Set(['s1']));
+  h.addSession('s1', [repo('/w/a')]);
+  await vi.advanceTimersByTimeAsync(10);
+  recordTracker(h, calls);
+  calls.length = 0;
+  h.host.windowShown(1, ['s1']);
+  expect(calls).toEqual(['sessionShown:s1', 'full:s1', 'visibilityChanged']);
+  h.host.stop();
+});
+
+it("windowRestored runs sessionShown for the window's own shown sessions before the full send", async () => {
+  const { h, calls } = orderHarness();
+  h.shown.set(1, new Set(['s1', 's9']));
+  h.addSession('s1', [repo('/w/a')], 1);
+  h.addSession('s9', [repo('/w/b')], 2);
+  await vi.advanceTimersByTimeAsync(10);
+  recordTracker(h, calls);
+  calls.length = 0;
+  h.host.windowRestored(1);
+  expect(calls).toEqual(['sessionShown:s1', 'full:s1', 'visibilityChanged']);
+  h.host.stop();
+});
+
+it('a git-dir watch on the home folder or a filesystem root is refused and logged once', async () => {
+  const git = (commonDir: string): GitInterrogation => ({
+    info: { kind: 'branch', branch: 'main' },
+    gitDir: `${commonDir}/.git`,
+    commonDir,
+  });
+  const h = harness({ homeDir: '/home/u', git: { '/home/u': git('/home/u'), 'D:/': git('D:/') } });
+  h.shown.set(1, new Set(['s1', 's2']));
+  h.addSession('s1', [repo('/home/u')]);
+  h.addSession('s2', [repo('D:/')]);
+  await vi.advanceTimersByTimeAsync(10);
+  // Covering a common dir closes its watch and uncovering re-requests it: the second request is the one that must not warn again.
+  for (let i = 0; i < 2; i++) {
+    h.host.tracker.setLiveRoots(['/home/u', 'D:/']);
+    h.host.tracker.setLiveRoots([]);
+    await vi.advanceTimersByTimeAsync(2000);
+  }
+  expect(h.watches).toEqual([]);
+  const refused = h.warn.mock.calls.filter(([, msg]) =>
+    String(msg).includes('git dir watch refused'),
+  );
+  expect(refused.map(([, , data]) => data)).toEqual([
+    { commonDir: '/home/u' },
+    { commonDir: 'D:' },
+  ]);
+  h.host.stop();
+});
+
+it('a repo whose common dir is the posix filesystem root never opens a git-dir watch', async () => {
+  // The tracker skips an empty common-dir key (folderKey('/') is ''), so the host wrapper is never asked: see plan Slice H.
+  const h = harness({
+    homeDir: '/home/u',
+    git: {
+      '/': { info: { kind: 'branch', branch: 'main' }, gitDir: '/.git', commonDir: '/' },
+    },
+  });
+  h.shown.set(1, new Set(['s1']));
+  h.addSession('s1', [repo('/')]);
+  await vi.advanceTimersByTimeAsync(10);
+  h.host.tracker.refreshNow('/');
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(h.watches).toEqual([]);
   h.host.stop();
 });
