@@ -32,8 +32,14 @@ const KEY_STEP: Record<string, (index: number, last: number) => number> = {
   End: (_i, last) => last,
 };
 
-/** Settings → Release notes: every version in the bundled CHANGELOG.md, one at a time. */
-export function ReleaseNotesPage({ installedVersion }: { installedVersion?: string }) {
+export function ReleaseNotesPage({
+  installedVersion,
+  takeFocus = false,
+}: {
+  installedVersion?: string;
+  /** The caller moved focus here before the changelog arrived; the selected version claims it. */
+  takeFocus?: boolean;
+}) {
   const [load, setLoad] = useState<Load>({ state: 'loading' });
   const [selected, setSelected] = useState(0);
   const mounted = useRef(true);
@@ -86,6 +92,7 @@ export function ReleaseNotesPage({ installedVersion }: { installedVersion?: stri
         entries={entries}
         selected={selected}
         installedVersion={installedVersion}
+        takeFocus={takeFocus}
         onSelect={setSelected}
       />
       {entries[selected] && (
@@ -102,11 +109,13 @@ function VersionRail({
   entries,
   selected,
   installedVersion,
+  takeFocus,
   onSelect,
 }: {
   entries: ChangelogEntry[];
   selected: number;
   installedVersion?: string;
+  takeFocus: boolean;
   onSelect(index: number): void;
 }) {
   const railRef = useRef<HTMLDivElement>(null);
@@ -115,7 +124,9 @@ function VersionRail({
   // Opening on the installed version must show it even when it sits far down the rail.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only the first list, not every move
   useLayoutEffect(() => {
-    railRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+    const option = railRef.current?.querySelector<HTMLElement>('[aria-selected="true"]');
+    option?.scrollIntoView({ block: 'nearest' });
+    if (takeFocus) option?.focus();
   }, [entries]);
 
   const onKeyDown = useCallback(

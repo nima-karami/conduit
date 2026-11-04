@@ -22,7 +22,6 @@ export function changelogSection(markdown: string, version: string): string | nu
 
 export interface ChangelogEntry {
   version: string;
-  /** `YYYY-MM-DD` as written in the heading, or null when the heading carries none. */
   date: string | null;
   body: string;
   /** False for a `[YANKED]` heading — Keep a Changelog's marker, used here for a version that
@@ -67,13 +66,11 @@ export function changelogEntries(markdown: string): ChangelogEntry[] {
   return entries;
 }
 
-/** The installed version's entry when the changelog has it, else the newest. */
 export function defaultEntryIndex(entries: readonly ChangelogEntry[], installed?: string): number {
   const at = installed ? entries.findIndex((e) => e.version === installed) : -1;
   return at < 0 ? 0 : at;
 }
 
-/** A `YYYY-MM-DD` heading date for display. `omitYear` drops the year when it matches. */
 export function releaseDateLabel(
   date: string,
   style: 'short' | 'long',

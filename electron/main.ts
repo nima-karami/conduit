@@ -279,7 +279,6 @@ import { createTerminalLinkFactory } from './terminal-link';
 import { checkForUpdate, initUpdater, quitAndInstall } from './updater';
 import { closeWindowSessions, reconcileSessionOwners } from './window-session-close';
 
-/** The CHANGELOG.md this build shipped with, or null when the build has none. */
 function readBundledChangelog(): string | null {
   const changelogPath = app.isPackaged
     ? path.join(process.resourcesPath, 'CHANGELOG.md')

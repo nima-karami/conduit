@@ -112,6 +112,13 @@ export function SettingsModal({
 }) {
   const { settings, update } = useSettings();
   const [tab, setTab] = useState<Tab>(initialTab);
+  // Arriving from elsewhere (What's new, About → View all) unmounts the control that had focus,
+  // so Settings must place it; a nav click keeps focus on its own button.
+  const [handoff, setHandoff] = useState(initialTab === 'releases');
+  const navRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    if (handoff) navRef.current?.querySelector<HTMLElement>('.settings__navitem--active')?.focus();
+  }, [handoff]);
   // One pane element serves every section, so it would carry the last section's scroll into the next.
   const paneRef = useRef<HTMLDivElement>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new section starts at its top
@@ -146,12 +153,15 @@ export function SettingsModal({
         </div>
 
         <div className="settings__body">
-          <nav className="settings__nav">
+          <nav ref={navRef} className="settings__nav">
             {TAB_LABELS.map(({ id, label }) => (
               <button
                 key={id}
                 className={`settings__navitem ${tab === id ? 'settings__navitem--active' : ''}`}
-                onClick={() => setTab(id)}
+                onClick={() => {
+                  setHandoff(false);
+                  setTab(id);
+                }}
               >
                 {label}
               </button>
@@ -159,7 +169,7 @@ export function SettingsModal({
           </nav>
 
           {tab === 'releases' ? (
-            <ReleaseNotesPage installedVersion={about?.version} />
+            <ReleaseNotesPage installedVersion={about?.version} takeFocus={handoff} />
           ) : (
             <div ref={paneRef} className="settings__pane">
               {tab === 'appearance' && <Appearance settings={settings} update={update} />}
@@ -190,7 +200,10 @@ export function SettingsModal({
                   updateStatus={updateStatus ?? null}
                   onCheckUpdate={onCheckUpdate ?? (() => {})}
                   onRelaunch={onRelaunch ?? (() => {})}
-                  onShowReleaseNotes={() => setTab('releases')}
+                  onShowReleaseNotes={() => {
+                    setHandoff(true);
+                    setTab('releases');
+                  }}
                 />
               )}
             </div>

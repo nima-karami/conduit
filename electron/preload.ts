@@ -51,7 +51,6 @@ const api = {
   copyDiagnostics(): Promise<string | null> {
     return ipcRenderer.invoke('copyDiagnostics');
   },
-  /** The bundled CHANGELOG.md, or null when the build shipped without one. */
   readChangelog(): Promise<string | null> {
     return ipcRenderer.invoke('readChangelog');
   },

@@ -61,7 +61,6 @@ const COMPONENTS: Components = {
   ),
 };
 
-/** Changelog markdown as the What's-new dialog and Settings → Release notes both show it. */
 export function ReleaseNotesMarkdown({ markdown }: { markdown: string }) {
   return (
     <ReactMarkdown

@@ -182,7 +182,7 @@ export function readLogTail(n: number): Promise<{ off: boolean; tail: string }> 
   return Promise.resolve({ off: true, tail: '' });
 }
 
-/** The bundled CHANGELOG.md. The browser preview has no host to read it from: null. */
+/** The browser preview has no host to read it from: null. */
 export function readChangelog(): Promise<string | null> {
   if (host) return host.readChangelog();
   return Promise.resolve(null);

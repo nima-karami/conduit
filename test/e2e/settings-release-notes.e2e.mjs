@@ -33,6 +33,28 @@ async function waitShown(page, version) {
   );
 }
 
+// The control that was activated unmounts, so Settings has to take focus or Tab walks the workbench.
+async function assertFocusLanded(page, route) {
+  const landed = await page
+    .waitForFunction(
+      () => {
+        const active = document.activeElement;
+        return (
+          !!document.querySelector('.modal.settings')?.contains(active) &&
+          active?.getAttribute('aria-selected') === 'true'
+        );
+      },
+      null,
+      { timeout: 5000 },
+    )
+    .then(
+      () => true,
+      () => false,
+    );
+  const where = await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 120));
+  assert(landed, `${route}: focus lands on the selected version inside Settings (got ${where})`);
+}
+
 async function closeSettings(page) {
   await page.locator('.settings .iconbtn[aria-label="Close settings"]').click();
   await page.locator('.modal.settings').waitFor({ state: 'detached', timeout: 5000 });
@@ -114,6 +136,7 @@ runScenario(
       (await page.locator('.settings__navitem--active').textContent()) === 'Release notes',
       'About → View all switches the section to Release notes',
     );
+    await assertFocusLanded(page, 'About → View all');
     await closeSettings(page);
 
     // 4. What's new → "All release notes" closes the dialog and opens Settings on the page.
@@ -128,6 +151,7 @@ runScenario(
       (await page.locator('.settings__navitem--active').textContent()) === 'Release notes',
       "What's new → All release notes opens Settings on Release notes",
     );
+    await assertFocusLanded(page, "What's new → All release notes");
     log('About row and What’s-new link both land on Release notes');
   },
   { userDataDir },
