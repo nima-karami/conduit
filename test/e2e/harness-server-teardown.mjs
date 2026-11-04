@@ -13,6 +13,7 @@ export const STOP_ALL_CONNECT_TIMEOUT_MS = 5_000;
 export const STOP_ALL_ANSWER_TIMEOUT_MS = 20_000;
 export const SERVER_PROTOCOL_GENERATION = 1;
 
+const BACKSLASH = String.fromCharCode(92);
 const MAX_SOCKET_PATH_BYTES = 100;
 const HC_CALL_TIMEOUT_MS = 20_000;
 
@@ -167,6 +168,120 @@ export function stopAllViaServer({
   });
 }
 
+/** @typedef {{ ProcessId: number, ParentProcessId?: number, Name?: string, CommandLine?: string | null }} ProcessRow */
+
+/** See docs/runs/2026-11-02-hc-spike/raw/m21.txt:3-5. */
+function executableAndArgs(commandLine) {
+  const match = /^(?:"([^"]+)"|(\S+))\s+(.*)$/.exec(
+    (commandLine ?? '').toLowerCase().replaceAll(BACKSLASH, '/'),
+  );
+  return match ? { executable: match[1] ?? match[2], args: match[3] } : null;
+}
+
+/**
+ * See docs/runs/2026-11-02-hc-spike/raw/m21.txt:3-5 for the core/holder/ConPTY relationship.
+ * A core whose holders have all exited is invisible here: its profile link is only in env/XDG,
+ * never on a command line.
+ * @param {ProcessRow[]} procs
+ * @param {string} userDataDir
+ * @param {ReturnType<typeof teardownNames>} names
+ */
+export function profileLeftovers(procs, userDataDir, names) {
+  const dir = userDataDir.toLowerCase().replaceAll(BACKSLASH, '/');
+  const holderToken = `-${names.hcSession.toLowerCase()}.holder`;
+  const matches = procs.filter((p) => {
+    // Teardown may itself be a worker whose command line contains this profile.
+    if (p.ProcessId === process.pid) return false;
+    const cmd = (p.CommandLine ?? '').toLowerCase();
+    return cmd.replaceAll(BACKSLASH, '/').includes(dir) || cmd.includes(holderToken);
+  });
+  const selected = new Set(matches.map((p) => p.ProcessId));
+  const holders = new Set(
+    matches
+      .filter((p) => (p.CommandLine ?? '').toLowerCase().includes(holderToken))
+      .map((p) => p.ProcessId),
+  );
+  const byPid = new Map(procs.map((p) => [p.ProcessId, p]));
+  for (const matched of matches) {
+    const parent = byPid.get(matched.ParentProcessId);
+    const core = executableAndArgs(parent?.CommandLine);
+    const child = executableAndArgs(matched.CommandLine);
+    if (core && child && core.executable === child.executable && /^serve(?:\s|$)/.test(core.args))
+      selected.add(parent.ProcessId);
+  }
+  return procs.filter(
+    (p) =>
+      p.ProcessId !== process.pid && (selected.has(p.ProcessId) || holders.has(p.ParentProcessId)),
+  );
+}
+
+const LEFTOVER_WAIT_MS = 3_000;
+const LEFTOVER_POLL_MS = 500;
+
+const wqlLike = (value) =>
+  value
+    .replaceAll(BACKSLASH, BACKSLASH + BACKSLASH)
+    .replaceAll("'", `${BACKSLASH}'`)
+    .replaceAll('[', '[[]')
+    .replaceAll('%', '[%]')
+    .replaceAll('_', '[_]');
+
+/** Profile and PID filters avoid fetching every process command line on each app teardown. */
+export function listProfileProcs(
+  userDataDir,
+  names,
+  { platform = process.platform, run = spawnSync } = {},
+) {
+  if (platform !== 'win32') return [];
+  const needles = new Set([
+    userDataDir,
+    userDataDir.replaceAll(BACKSLASH, '/'),
+    userDataDir.replaceAll('/', BACKSLASH),
+    `-${names.hcSession}.holder`,
+  ]);
+  const filter = `ProcessId <> ${process.pid} AND (${[...needles]
+    .map((needle) => `CommandLine LIKE '%${wqlLike(needle)}%'`)
+    .join(' OR ')})`;
+  const script = `
+    $ErrorActionPreference = 'Stop'
+    $seeds = @(Get-CimInstance Win32_Process -Filter $env:E2E_SCAN_FILTER -ErrorAction Stop)
+    $rows = @($seeds)
+    if ($seeds.Count -gt 0) {
+      $relatedFilter = @(
+        foreach ($row in $seeds) {
+          if ($row.ParentProcessId -gt 0) { "ProcessId = " + $row.ParentProcessId }
+          "ParentProcessId = " + $row.ProcessId
+        }
+      ) -join ' OR '
+      $rows += @(Get-CimInstance Win32_Process -Filter $relatedFilter -ErrorAction Stop)
+    }
+    ConvertTo-Json -InputObject @($rows | Sort-Object ProcessId -Unique | Select-Object ProcessId,ParentProcessId,Name,CommandLine) -Compress
+  `;
+  const r = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 15_000,
+    maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, E2E_SCAN_FILTER: filter },
+  });
+  if (r.error) throw r.error;
+  if (r.status !== 0) throw new Error(`PowerShell exit ${r.status ?? r.signal}`);
+  const parsed = JSON.parse(r.stdout);
+  if (
+    !Array.isArray(parsed) ||
+    !parsed.every(
+      (p) =>
+        p !== null &&
+        Number.isInteger(p.ProcessId) &&
+        Number.isInteger(p.ParentProcessId) &&
+        typeof p.Name === 'string' &&
+        (p.CommandLine === null || typeof p.CommandLine === 'string'),
+    )
+  )
+    throw new Error('invalid process table');
+  return parsed;
+}
+
 const realExec = (bin, args, opts) =>
   spawnSync(bin, args, { ...opts, encoding: 'utf8', windowsHide: true });
 
@@ -175,7 +290,8 @@ const realExec = (bin, args, opts) =>
  * scenario's own result must survive a teardown failure.
  * @param {{ userDataDir: string, log: (...a: any[]) => void, platform?: string, tmpdir: string,
  *   env?: Record<string, string | undefined>, exec?: Exec, stopAll?: typeof stopAllViaServer,
- *   appVersion?: string }} o
+ *   appVersion?: string, listProcs?: () => ProcessRow[],
+ *   waitMs?: number }} o
  */
 export async function teardownScenarioServer({
   userDataDir,
@@ -186,6 +302,8 @@ export async function teardownScenarioServer({
   exec = realExec,
   stopAll = stopAllViaServer,
   appVersion,
+  listProcs,
+  waitMs = LEFTOVER_WAIT_MS,
 }) {
   const names = teardownNames(userDataDir, platform === 'win32' ? 'win32' : 'posix', tmpdir);
   assertOwnSession(names.hcSession, env.HC_SESSION);
@@ -196,6 +314,23 @@ export async function teardownScenarioServer({
     const r = await stopAll({ endpoint: names.serverEndpoint, appVersion: version });
     log(`teardown: server.stopAll ${r.outcome}${r.detail ? ` (${r.detail})` : ''}`);
     stopHc({ exec, bin: env.CONDUIT_HC_BINARY || 'hc', names, inheritedEnv: env, log });
+    // An injected exec is a simulated world: the real process table says nothing about it.
+    const list =
+      listProcs ?? (exec === realExec ? () => listProfileProcs(userDataDir, names) : () => []);
+    try {
+      let left = profileLeftovers(list(), userDataDir, names);
+      for (let waited = 0; left.length > 0 && waited < waitMs; waited += LEFTOVER_POLL_MS) {
+        await new Promise((r) => setTimeout(r, LEFTOVER_POLL_MS));
+        left = profileLeftovers(list(), userDataDir, names);
+      }
+      if (left.length > 0) {
+        log(
+          `teardown: STILL RUNNING for this profile: ${left.map((p) => `${p.ProcessId} ${p.Name}`).join(', ')}`,
+        );
+      }
+    } catch (e) {
+      log(`teardown: process scan failed: ${e?.code ?? e?.message ?? e}`);
+    }
   } catch (e) {
     log(`teardown: failed: ${e?.message || e}`);
   }
