@@ -66,7 +66,7 @@ import {
   writeReplay,
 } from '../terminal-conpty';
 import { CONTEXT_WINDOW_LINES, inferContextRoot } from '../terminal-context-root';
-import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
+import { formatPathForTerminal, TERMINAL_PATH_MIME, terminalDropEffect } from '../terminal-drop';
 import { terminalFontFamily } from '../terminal-fonts';
 import { terminalGpu } from '../terminal-gpu';
 import { lastPick, notePick } from '../terminal-link-picks';
@@ -1292,7 +1292,7 @@ export function TerminalPane({
   const onPathDragOver = (e: React.DragEvent) => {
     if (!isPathDrag(e)) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
+    e.dataTransfer.dropEffect = terminalDropEffect(e.dataTransfer.effectAllowed);
     if (!pathDragOver) setPathDragOver(true);
   };
   const onPathDragLeave = (e: React.DragEvent) => {

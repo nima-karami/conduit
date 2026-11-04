@@ -6,6 +6,7 @@ import type { WebviewToHost } from '../../src/protocol';
 import { DocTabs } from '../../webview/components/doc-tabs';
 import type { OpenDoc } from '../../webview/docs';
 import { currentTabDrag, endTabDrag, TAB_DRAG_MIME } from '../../webview/tab-drag';
+import { TERMINAL_PATH_MIME } from '../../webview/terminal-drop';
 
 const posted = vi.hoisted((): WebviewToHost[] => []);
 vi.mock('../../webview/bridge', async (orig) => ({
@@ -99,7 +100,7 @@ afterEach(async () => {
 });
 
 describe('DocTabs drag-out', () => {
-  it('a file tab stamps DownloadURL and allows copy; reorder still works', async () => {
+  it('a file tab stamps DownloadURL and its terminal path and allows copy; reorder still works', async () => {
     await render();
     const { data, dt } = stubDt();
     await act(async () => {
@@ -107,6 +108,8 @@ describe('DocTabs drag-out', () => {
     });
     expect(data.get('DownloadURL')).toBe('application/octet-stream:a.ts:file:///w/a.ts');
     expect(data.get(TAB_DRAG_MIME)).toBe('file:/w/a.ts');
+    expect(data.get(TERMINAL_PATH_MIME)).toBe('/w/a.ts');
+    expect(currentTabDrag()?.terminalPath).toBe('/w/a.ts');
     expect(dt.effectAllowed).toBe('copyMove');
     expect(posted).toEqual([{ type: 'fs:armDragDownload', path: '/w/a.ts' }]);
     await act(async () => {
