@@ -28,8 +28,9 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   applyQuarantine,
   classify,
@@ -39,6 +40,7 @@ import {
   killTimerStart,
   orphanVictims,
   parseRunnerArgs,
+  profilePrefix,
   resolveSelection,
 } from './smoke-select.mjs';
 
@@ -87,180 +89,247 @@ function sweepOrphanElectrons() {
   return pids.length;
 }
 
-if (process.platform !== 'win32') {
-  console.log('[smoke] SKIP (suite is Windows-only)');
-  process.exit(0);
+/** @param {{ name: string, isDirectory: () => boolean }[]} entries @param {string} runId */
+export function selectRunProfiles(entries, runId) {
+  if (!runId) return [];
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith(profilePrefix(runId)))
+    .map((entry) => entry.name);
 }
 
-const args = parseRunnerArgs(process.argv.slice(2));
-if (args.error) {
-  console.log(`[smoke] ${args.error}`);
-  process.exit(2);
+async function sweepScenarioServers() {
+  const root = tmpdir();
+  let profiles;
+  try {
+    profiles = selectRunProfiles(readdirSync(root, { withFileTypes: true }), RUN_ID);
+  } catch (e) {
+    console.log(`[smoke] profile sweep failed: ${e.message}`);
+    return;
+  }
+  for (const profile of profiles) {
+    // A separate process bounds even synchronous hc calls and process-table scans.
+    const script = `
+      import { teardownScenarioServer } from ${JSON.stringify(new URL('./harness-server-teardown.mjs', import.meta.url).href)};
+      import { resolveHcBinary } from ${JSON.stringify(new URL('./harness.mjs', import.meta.url).href)};
+      await teardownScenarioServer({
+        userDataDir: process.argv[1],
+        tmpdir: process.argv[2],
+        env: { ...process.env, CONDUIT_HC_BINARY: resolveHcBinary() || 'hc' },
+        log: (...args) => console.log('[smoke] ' + process.argv[3] + ':', ...args),
+      });
+    `;
+    await new Promise((done) => {
+      const child = spawn(
+        process.execPath,
+        ['--input-type=module', '-e', script, join(root, profile), root, profile],
+        {
+          stdio: ['ignore', 'inherit', 'inherit'],
+          windowsHide: true,
+          timeout: 90_000,
+        },
+      );
+      child.on('error', (e) => {
+        console.log(`[smoke] ${profile}: teardown worker failed: ${e.message}`);
+        done();
+      });
+      child.on('exit', (code, signal) => {
+        if (code !== 0)
+          console.log(`[smoke] ${profile}: teardown worker exit ${code ?? signal} (90s limit)`);
+        done();
+      });
+    });
+  }
 }
-const ci = process.env.GITHUB_ACTIONS === 'true';
-const stems = readdirSync(here)
-  .filter((f) => f.endsWith('.e2e.mjs'))
-  .map((f) => f.replace('.e2e.mjs', ''));
-const requested = [
-  ...args.names,
-  ...(args.namesFile ? JSON.parse(readFileSync(args.namesFile, 'utf8')) : []),
-];
-const selection = resolveSelection({
-  names: requested,
-  stems,
-  ci,
-  localFull: process.env.CONDUIT_E2E_LOCAL_FULL === '1',
-});
-if ('exit' in selection) {
-  console.log(selection.message);
-  process.exit(selection.exit);
-}
-if (selection.banner) console.log(`${selection.banner}\n`);
-const names = selection.names;
-const artifactsRoot = args.artifacts ? resolve(args.artifacts) : null;
-const quarantine = args.quarantine ? JSON.parse(readFileSync(args.quarantine, 'utf8')) : null;
 
-console.log(`[smoke] Running ${names.length} scenario(s) sequentially...\n`);
+async function main() {
+  if (process.platform !== 'win32') {
+    console.log('[smoke] SKIP (suite is Windows-only)');
+    process.exit(0);
+  }
 
-/**
- * One scenario attempt as a child process. Output is buffered (it is only shown for a failure),
- * except the e2e lock's lines: a scenario waiting on another checkout's run must say so live.
- */
-function runAttempt(name, attempt) {
-  const start = Date.now();
-  const child = spawn(
-    process.execPath,
-    ['--experimental-vm-modules', join(here, `${name}.e2e.mjs`)],
-    {
-      cwd: join(here, '..', '..'),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      // CONDUIT_E2E launches the app hidden (main.ts reads it). A scenario run directly, not
-      // through this runner, still shows its window for debugging.
-      env: {
-        ...process.env,
-        CONDUIT_E2E: '1',
-        E2E_SCENARIO: name,
-        E2E_RUN_ID: RUN_ID,
-        E2E_ATTEMPT: String(attempt),
-        E2E_DEADLINE_MS: String(DEADLINE_MS),
-        ...(artifactsRoot ? { E2E_ARTIFACT_DIR: artifactsRoot } : {}),
+  const args = parseRunnerArgs(process.argv.slice(2));
+  if (args.error) {
+    console.log(`[smoke] ${args.error}`);
+    process.exit(2);
+  }
+  const ci = process.env.GITHUB_ACTIONS === 'true';
+  const stems = readdirSync(here)
+    .filter((f) => f.endsWith('.e2e.mjs'))
+    .map((f) => f.replace('.e2e.mjs', ''));
+  const requested = [
+    ...args.names,
+    ...(args.namesFile ? JSON.parse(readFileSync(args.namesFile, 'utf8')) : []),
+  ];
+  const selection = resolveSelection({
+    names: requested,
+    stems,
+    ci,
+    localFull: process.env.CONDUIT_E2E_LOCAL_FULL === '1',
+  });
+  if ('exit' in selection) {
+    console.log(selection.message);
+    process.exit(selection.exit);
+  }
+  if (selection.banner) console.log(`${selection.banner}\n`);
+  const names = selection.names;
+  const artifactsRoot = args.artifacts ? resolve(args.artifacts) : null;
+  const quarantine = args.quarantine ? JSON.parse(readFileSync(args.quarantine, 'utf8')) : null;
+
+  console.log(`[smoke] Running ${names.length} scenario(s) sequentially...\n`);
+
+  /**
+   * One scenario attempt as a child process. Output is buffered (it is only shown for a failure),
+   * except the e2e lock's lines: a scenario waiting on another checkout's run must say so live.
+   */
+  function runAttempt(name, attempt) {
+    const start = Date.now();
+    const child = spawn(
+      process.execPath,
+      ['--experimental-vm-modules', join(here, `${name}.e2e.mjs`)],
+      {
+        cwd: join(here, '..', '..'),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        // CONDUIT_E2E launches the app hidden (main.ts reads it). A scenario run directly, not
+        // through this runner, still shows its window for debugging.
+        env: {
+          ...process.env,
+          CONDUIT_E2E: '1',
+          E2E_SCENARIO: name,
+          E2E_RUN_ID: RUN_ID,
+          E2E_ATTEMPT: String(attempt),
+          E2E_DEADLINE_MS: String(DEADLINE_MS),
+          ...(artifactsRoot ? { E2E_ARTIFACT_DIR: artifactsRoot } : {}),
+        },
       },
-    },
-  );
-  const r = { stdout: '', stderr: '', status: null, signal: null };
-  let partial = '';
-  let timer = killTimerStart(start, { killMs: KILL_MS });
-  let lockTimeout = false;
-  let kill;
-  const arm = () => {
-    clearTimeout(kill);
-    kill = setTimeout(
-      () => {
-        if (timer.reason === 'lock-wait') {
-          lockTimeout = true;
-          console.log(
-            `\n  [e2e-lock] lock wait timeout: gave up after ${timer.waitCapMs / 60_000} min waiting for another e2e app`,
-          );
-        }
-        child.kill();
-      },
-      Math.max(0, timer.deadline - Date.now()),
     );
-  };
-  arm();
-  child.stdout.setEncoding('utf8').on('data', (d) => {
-    r.stdout += d;
-    const lines = (partial + d).split('\n');
-    partial = lines.pop();
-    for (const line of lines) {
-      if (!line.startsWith('[e2e-lock]')) continue;
-      console.log(`\n  ${line}`);
-      const next = killTimerOnLine(timer, line.trimEnd(), Date.now());
-      if (next !== timer) {
-        timer = next;
-        arm();
-      }
-    }
-  });
-  child.stderr.setEncoding('utf8').on('data', (d) => {
-    r.stderr += d;
-  });
-  return new Promise((resolveAttempt) => {
-    let done = false;
-    const finish = (status, signal) => {
-      if (done) return;
-      done = true;
+    const r = { stdout: '', stderr: '', status: null, signal: null };
+    let partial = '';
+    let timer = killTimerStart(start, { killMs: KILL_MS });
+    let lockTimeout = false;
+    let kill;
+    const arm = () => {
       clearTimeout(kill);
-      r.status = status;
-      r.signal = signal;
-      const output = r.stdout + r.stderr;
-      const result = classify({ status, signal, output, lockTimeout });
-      const seconds = Number(((Date.now() - start) / 1000).toFixed(1));
-      resolveAttempt({ name, attempt, status: result, seconds, exit: status ?? signal, r, output });
+      kill = setTimeout(
+        () => {
+          if (timer.reason === 'lock-wait') {
+            lockTimeout = true;
+            console.log(
+              `\n  [e2e-lock] lock wait timeout: gave up after ${timer.waitCapMs / 60_000} min waiting for another e2e app`,
+            );
+          }
+          child.kill();
+        },
+        Math.max(0, timer.deadline - Date.now()),
+      );
     };
-    child.on('close', finish);
-    // An orphaned Electron can keep the pipes open after the scenario died, so 'close' may never come.
-    child.on('exit', (status, signal) => setTimeout(() => finish(status, signal), 2000));
-  });
-}
-
-/** A non-clean attempt: dump its output, keep its log beside the harness's artifacts, sweep. */
-function afterFailure({ name, attempt, exit, r, output }) {
-  if (r.stdout) process.stdout.write(r.stdout);
-  if (r.stderr) process.stderr.write(r.stderr);
-  if (artifactsRoot) {
-    const dir = join(artifactsRoot, name, `attempt-${attempt}`);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'log.txt'), `exit ${exit}\n${output}`);
+    arm();
+    child.stdout.setEncoding('utf8').on('data', (d) => {
+      r.stdout += d;
+      const lines = (partial + d).split('\n');
+      partial = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('[e2e-lock]')) continue;
+        console.log(`\n  ${line}`);
+        const next = killTimerOnLine(timer, line.trimEnd(), Date.now());
+        if (next !== timer) {
+          timer = next;
+          arm();
+        }
+      }
+    });
+    child.stderr.setEncoding('utf8').on('data', (d) => {
+      r.stderr += d;
+    });
+    return new Promise((resolveAttempt) => {
+      let done = false;
+      const finish = (status, signal) => {
+        if (done) return;
+        done = true;
+        clearTimeout(kill);
+        r.status = status;
+        r.signal = signal;
+        const output = r.stdout + r.stderr;
+        const result = classify({ status, signal, output, lockTimeout });
+        const seconds = Number(((Date.now() - start) / 1000).toFixed(1));
+        resolveAttempt({
+          name,
+          attempt,
+          status: result,
+          seconds,
+          exit: status ?? signal,
+          r,
+          output,
+        });
+      };
+      child.on('close', finish);
+      // An orphaned Electron can keep the pipes open after the scenario died, so 'close' may never come.
+      child.on('exit', (status, signal) => setTimeout(() => finish(status, signal), 2000));
+    });
   }
-  // Only after a non-clean exit: a scenario that finished normally already shut its app down,
-  // and the sweep costs a PowerShell spawn we don't want on the happy path.
-  const swept = sweepOrphanElectrons();
-  if (swept > 0) console.log(`  ↳ swept ${swept} orphaned Electron process(es)`);
-}
 
-const settle = () => new Promise((r) => setTimeout(r, SETTLE_MS));
-const ICON = { PASS: '✓', SKIP: '○', FLAKY: '~', 'QUARANTINED-FAIL': 'q' };
-const results = [];
-
-for (const name of names) {
-  process.stdout.write(`  ${name} ... `);
-  const first = await runAttempt(name, 1);
-  let last = first;
-  // A retry after a lock-wait timeout would only wait on the same other app again.
-  if (args.retry && !isGreen(first.status) && first.status !== 'LOCK-TIMEOUT') {
-    console.log(`${first.status} (${first.seconds}s, exit ${first.exit}), retrying`);
-    afterFailure(first);
-    await settle();
-    process.stdout.write(`  ${name} (attempt 2) ... `);
-    last = await runAttempt(name, 2);
+  /** A non-clean attempt: dump its output, keep its log beside the harness's artifacts, sweep. */
+  async function afterFailure({ name, attempt, exit, r, output }) {
+    if (r.stdout) process.stdout.write(r.stdout);
+    if (r.stderr) process.stderr.write(r.stderr);
+    if (artifactsRoot) {
+      const dir = join(artifactsRoot, name, `attempt-${attempt}`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'log.txt'), `exit ${exit}\n${output}`);
+    }
+    // Only after a non-clean exit: a scenario that finished normally already shut its app down,
+    // and the sweep costs a PowerShell spawn we don't want on the happy path.
+    const swept = sweepOrphanElectrons();
+    if (swept > 0) console.log(`  ↳ swept ${swept} orphaned Electron process(es)`);
+    await sweepScenarioServers();
   }
-  const status = applyQuarantine(
-    name,
-    finalStatus(first.status, last === first ? undefined : last.status),
-    quarantine,
-  );
-  const exitNote = status === 'FAIL' ? `, exit ${last.exit}` : '';
-  console.log(`${ICON[status] ?? '✗'} ${status} (${last.seconds}s${exitNote})`);
-  if (last.status !== 'PASS' && last.status !== 'SKIP') afterFailure(last);
-  results.push({ name, status, seconds: last.seconds, attempts: last === first ? 1 : 2 });
-  // Rewritten after every scenario so a shard that dies mid-run still reports what it finished.
-  if (args.json) writeFileSync(args.json, `${JSON.stringify(results, null, 2)}\n`);
-  if (name !== names[names.length - 1]) await settle();
-}
 
-const count = (s) => results.filter((r) => r.status === s).length;
-const failed = results.filter((r) => !isGreen(r.status));
-console.log('\n── Summary ──────────────────────────────────────');
-console.log(
-  `  ${count('PASS')} passed  ${count('FLAKY')} flaky  ${count('SKIP')} skipped  ` +
-    `${count('QUARANTINED-FAIL')} quarantined-failed  ${failed.length} failed`,
-);
-console.log('─────────────────────────────────────────────────\n');
-if (failed.length && !ci) {
+  const settle = () => new Promise((r) => setTimeout(r, SETTLE_MS));
+  const ICON = { PASS: '✓', SKIP: '○', FLAKY: '~', 'QUARANTINED-FAIL': 'q' };
+  const results = [];
+
+  for (const name of names) {
+    process.stdout.write(`  ${name} ... `);
+    const first = await runAttempt(name, 1);
+    let last = first;
+    // A retry after a lock-wait timeout would only wait on the same other app again.
+    if (args.retry && !isGreen(first.status) && first.status !== 'LOCK-TIMEOUT') {
+      console.log(`${first.status} (${first.seconds}s, exit ${first.exit}), retrying`);
+      await afterFailure(first);
+      await settle();
+      process.stdout.write(`  ${name} (attempt 2) ... `);
+      last = await runAttempt(name, 2);
+    }
+    const status = applyQuarantine(
+      name,
+      finalStatus(first.status, last === first ? undefined : last.status),
+      quarantine,
+    );
+    const exitNote = status === 'FAIL' ? `, exit ${last.exit}` : '';
+    console.log(`${ICON[status] ?? '✗'} ${status} (${last.seconds}s${exitNote})`);
+    if (last.status !== 'PASS' && last.status !== 'SKIP') await afterFailure(last);
+    results.push({ name, status, seconds: last.seconds, attempts: last === first ? 1 : 2 });
+    // Rewritten after every scenario so a shard that dies mid-run still reports what it finished.
+    if (args.json) writeFileSync(args.json, `${JSON.stringify(results, null, 2)}\n`);
+    if (name !== names[names.length - 1]) await settle();
+  }
+
+  await sweepScenarioServers();
+
+  const count = (s) => results.filter((r) => r.status === s).length;
+  const failed = results.filter((r) => !isGreen(r.status));
+  console.log('\n── Summary ──────────────────────────────────────');
   console.log(
-    '[smoke] A loaded machine fails PTY scenarios the way a regression does. Confirm remotely ' +
-      `before debugging: npm run e2e:remote -- ${failed.map((r) => r.name).join(' ')}`,
+    `  ${count('PASS')} passed  ${count('FLAKY')} flaky  ${count('SKIP')} skipped  ` +
+      `${count('QUARANTINED-FAIL')} quarantined-failed  ${failed.length} failed`,
   );
+  console.log('─────────────────────────────────────────────────\n');
+  if (failed.length && !ci) {
+    console.log(
+      '[smoke] A loaded machine fails PTY scenarios the way a regression does. Confirm remotely ' +
+        `before debugging: npm run e2e:remote -- ${failed.map((r) => r.name).join(' ')}`,
+    );
+  }
+  process.exit(failed.length ? 1 : 0);
 }
-process.exit(failed.length ? 1 : 0);
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
