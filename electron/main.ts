@@ -2422,6 +2422,7 @@ app.whenReady().then(() => {
           appVersion,
           hcVersion: HC_PINNED_VERSION,
           shimVersion: CURRENT_SHIM_GENERATION,
+          warn: (message) => log.warn('runtime', message),
         })
       : undefined;
     const layout = runtimeLayout({

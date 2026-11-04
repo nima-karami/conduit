@@ -1,8 +1,13 @@
+import { execFile } from 'node:child_process';
 import { promises } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 import { SHIM_LEAF } from '../../src/conduit-mcp/install-entries';
 import { SHIM_RUNTIME_DIR } from '../../src/contracts/session-identity';
 import { coreStartCwd } from '../../src/instance-names';
+import { runtimeBinaryName } from '../../src/runtime-binary';
+
+const runCommand = promisify(execFile);
 
 /** The slice of node:fs/promises preparation uses; injected so a failed copy can be tested. */
 export interface RuntimeFs {
@@ -17,13 +22,16 @@ export interface RuntimeFs {
 export const CURRENT_SHIM_GENERATION = 1;
 
 export interface PrepareRuntimeOptions {
-  /** A packaged app's `process.resourcesPath`: `runtime/` and `conduit-mcp/` (package.json `build.win`). */
+  /** A packaged app's `process.resourcesPath`: see package.json extraResources. */
   resourcesDir: string;
   userData: string;
   appVersion: string;
   hcVersion: string;
   shimVersion: number;
+  platform?: NodeJS.Platform;
   fs?: RuntimeFs;
+  run?: (file: string, args: string[]) => Promise<unknown>;
+  warn?: (message: string) => void;
 }
 
 export interface PreparedRuntime {
@@ -33,9 +41,6 @@ export interface PreparedRuntime {
   hcExe: string;
   shimDir: string;
 }
-
-const NODE_EXE = 'node.exe';
-const HC_EXE = 'hc.exe';
 
 function shimDirName(generation: number): string {
   return generation === 1 ? SHIM_RUNTIME_DIR : `${SHIM_RUNTIME_DIR}-${generation}`;
@@ -48,22 +53,41 @@ function shimDirName(generation: number): string {
  */
 export async function prepareRuntime(options: PrepareRuntimeOptions): Promise<PreparedRuntime> {
   const fs = options.fs ?? promises;
+  const platform = options.platform ?? process.platform;
+  const nodeBinary = runtimeBinaryName('node', platform);
+  const hcBinary = runtimeBinaryName('hc', platform);
   const bundled = join(options.resourcesDir, 'runtime');
-  const nodeSource = join(bundled, NODE_EXE);
+  const nodeSource = join(bundled, nodeBinary);
   const root = join(options.userData, 'runtime');
   const appDir = join(root, options.appVersion);
   const hcDir = coreStartCwd(root, options.hcVersion);
   const shimDir = join(root, shimDirName(options.shimVersion));
 
-  await ensureDir(fs, hcDir, [{ contentsOf: join(bundled, 'hc') }]);
-  await ensureDir(fs, appDir, [nodeSource, join(bundled, 'server')]);
-  await ensureDir(fs, shimDir, [nodeSource, join(options.resourcesDir, 'conduit-mcp', SHIM_LEAF)]);
+  const beforeRename = async (staging: string) => {
+    if (platform !== 'darwin') return;
+    try {
+      await (options.run ?? runCommand)('xattr', ['-dr', 'com.apple.quarantine', staging]);
+    } catch (error) {
+      (options.warn ?? console.warn)(
+        `Could not remove quarantine from ${staging}: ${String(error)}`,
+      );
+    }
+  };
+
+  await ensureDir(fs, hcDir, [{ contentsOf: join(bundled, 'hc') }], beforeRename);
+  await ensureDir(fs, appDir, [nodeSource, join(bundled, 'server')], beforeRename);
+  await ensureDir(
+    fs,
+    shimDir,
+    [nodeSource, join(options.resourcesDir, 'conduit-mcp', SHIM_LEAF)],
+    beforeRename,
+  );
 
   return {
-    nodeExe: join(appDir, NODE_EXE),
+    nodeExe: join(appDir, nodeBinary),
     superviseJs: join(appDir, 'server', 'supervise.js'),
     mainJs: join(appDir, 'server', 'main.js'),
-    hcExe: join(hcDir, HC_EXE),
+    hcExe: join(hcDir, hcBinary),
     shimDir,
   };
 }
@@ -75,7 +99,12 @@ type Source = string | { contentsOf: string };
  * A final dir only ever appears by renaming a fully copied `<dir>.tmp`, so one that exists is
  * complete and is reused untouched; that is also what keeps the shim dir write-once (D2b).
  */
-async function ensureDir(fs: RuntimeFs, target: string, sources: Source[]): Promise<void> {
+async function ensureDir(
+  fs: RuntimeFs,
+  target: string,
+  sources: Source[],
+  beforeRename: (staging: string) => Promise<void>,
+): Promise<void> {
   if (await exists(fs, target)) return;
   const staging = `${target}.tmp`;
   await fs.rm(staging, { recursive: true, force: true });
@@ -88,6 +117,7 @@ async function ensureDir(fs: RuntimeFs, target: string, sources: Source[]): Prom
         await fs.cp(source.contentsOf, staging, { recursive: true });
       }
     }
+    await beforeRename(staging);
     await fs.rename(staging, target);
   } catch (error) {
     await fs.rm(staging, { recursive: true, force: true });

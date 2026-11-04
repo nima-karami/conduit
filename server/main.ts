@@ -6,6 +6,7 @@ import { SHIM_LEAF } from '../src/conduit-mcp/install-entries';
 import type { InstanceNames } from '../src/contracts/session-identity';
 import { instanceNames } from '../src/instance-names';
 import { formatRecord } from '../src/logging';
+import { runtimeBinaryName } from '../src/runtime-binary';
 import { compose } from './compose';
 import { directStopAll, hcBinaryOf, hcClient, serverChildEnv, startCore, stopCore } from './hc-cli';
 import { argValue, requireUserData } from './lifecycle/cli-args';
@@ -16,6 +17,8 @@ import { createServices, type Services } from './services';
 import { PipeTransport, type RpcHandler } from './transport/pipe';
 
 export interface MainDependencies {
+  /** Keeps the native IPC transport usable when exercising services for another OS. */
+  platform?: NodeJS.Platform;
   core?: ShellCore;
   directFallback?: () => Promise<number>;
   exit?: (code: number) => Promise<void> | void;
@@ -64,6 +67,7 @@ export async function runServer(
     const previousExe = argValue(args, '--previous-exe');
     const previousShim = argValue(args, '--previous-shim');
     services = createServerServices({
+      platform: dependencies.platform ?? process.platform,
       userData,
       names,
       logPath,
@@ -127,6 +131,7 @@ export async function runServer(
 
 /** The real services over our hc core; tests pass a ShellCore instead. */
 function createServerServices(o: {
+  platform: NodeJS.Platform;
   userData: string;
   names: InstanceNames;
   logPath: string;
@@ -155,7 +160,7 @@ function createServerServices(o: {
   return createServices({
     userData: o.userData,
     names: o.names,
-    platform: process.platform,
+    platform: o.platform,
     e2e: o.e2e,
     appVersion: version,
     logPath: o.logPath,
@@ -167,7 +172,7 @@ function createServerServices(o: {
     previousShims: o.previousShims,
     shim: o.shimDir
       ? {
-          execPath: path.join(o.shimDir, 'node.exe'),
+          execPath: path.join(o.shimDir, runtimeBinaryName('node', o.platform)),
           shimPath: path.join(o.shimDir, SHIM_LEAF),
         }
       : {

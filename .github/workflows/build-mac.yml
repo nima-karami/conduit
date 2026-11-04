@@ -31,6 +31,9 @@ jobs:
       # genuine mac-only failure ever surfaces.
       - run: npm run verify
 
+      - name: Fetch pinned arm64 background runtime
+        run: node build/fetch-runtime.mjs
+
       - name: Build unsigned arm64 (.dmg + .zip)
         run: npx electron-builder --mac --arm64 --publish never
         env:
@@ -39,6 +42,16 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           # No GH_TOKEN: --publish never needs none, and omitting it removes any path to an
           # accidental Release upload of an unsigned artifact.
+
+      - name: Check packaged background runtime
+        shell: bash
+        run: |
+          runtime="dist/mac-arm64/Conduit.app/Contents/Resources/runtime"
+          test -x "$runtime/node"
+          test -x "$runtime/hc/hc"
+          test -f "$runtime/server/supervise.js"
+          "$runtime/node" --version
+          "$runtime/hc/hc" --version
 
       - uses: actions/upload-artifact@v4
         with:

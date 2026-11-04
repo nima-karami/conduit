@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- Mac builds now start their background service so sessions and other server actions work.
+
 ## [0.54.0] — 2026-11-04
 
 ### Changed
