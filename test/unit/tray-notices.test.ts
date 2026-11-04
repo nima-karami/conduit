@@ -1,48 +1,31 @@
-import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { runtimeLockCrates } from './tray-lock-notices';
 
 const ROOT = join(__dirname, '..', '..');
 const MANIFEST = join(ROOT, 'native/tray/Cargo.toml');
 const LOCK = join(ROOT, 'native/tray/Cargo.lock');
-
-function crateNamesFromCargoTree(output: string): Set<string> {
-  const names = new Set<string>();
-  for (const line of output.split('\n')) {
-    const m = /^([A-Za-z0-9_-]+) v/.exec(line.trim());
-    if (m) names.add(m[1]);
-  }
-  return names;
-}
-
-describe('crateNamesFromCargoTree', () => {
-  it('collects unique crate names from tree output', () => {
-    expect(
-      [...crateNamesFromCargoTree('serde v1.0.0\n  serde_json v1.0.0\nwindows-sys v0.59.0')].sort(),
-    ).toEqual(['serde', 'serde_json', 'windows-sys']);
-  });
-});
 
 describe('tray helper THIRD_PARTY notices', () => {
   const notices = readFileSync(join(ROOT, 'THIRD_PARTY_NOTICES.txt'), 'utf8');
 
   it('names the conduit-tray helper binary section', () => {
     expect(notices).toContain('conduit-tray.exe');
+    expect(notices).toContain('resources/licenses/tray/MIT.txt');
   });
 
-  it.skipIf(!existsSync(LOCK))(
+  const manifestPresent = existsSync(MANIFEST);
+
+  it.skipIf(!manifestPresent)(
     'lists every runtime crate from the tray lock in THIRD_PARTY_NOTICES',
     () => {
-      const tree = spawnSync(
-        'cargo',
-        ['tree', '--manifest-path', MANIFEST, '--locked', '-e', 'normal', '--prefix', 'none'],
-        { encoding: 'utf8', cwd: ROOT },
-      );
-      expect(tree.status, tree.stderr).toBe(0);
-      const names = crateNamesFromCargoTree(tree.stdout);
-      names.delete('conduit-tray');
-      for (const name of names) {
+      if (!existsSync(LOCK)) {
+        throw new Error('native/tray/Cargo.toml exists but Cargo.lock is missing');
+      }
+      const manifest = readFileSync(MANIFEST, 'utf8');
+      const lock = readFileSync(LOCK, 'utf8');
+      for (const name of runtimeLockCrates(lock, manifest)) {
         expect(notices, `missing notice entry for ${name}`).toMatch(
           new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`),
         );

@@ -102,6 +102,10 @@
           "to": "licenses/node/LICENSE"
         },
         {
+          "from": "assets/tray/licenses",
+          "to": "licenses/tray"
+        },
+        {
           "from": "THIRD_PARTY_NOTICES.txt",
           "to": "THIRD_PARTY_NOTICES.txt"
         }

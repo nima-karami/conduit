@@ -2,11 +2,19 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { quickSteps } from '../../tools/verify-quick.mjs';
+import { jobSteps, stepIndex } from './gh-workflow-steps';
 
 const ROOT = join(__dirname, '..', '..');
 
 function read(rel: string) {
   return readFileSync(join(ROOT, rel), 'utf8');
+}
+
+function runIndex(steps: ReturnType<typeof jobSteps>, needle: string | RegExp): number {
+  return stepIndex(steps, (s) => {
+    const run = s.run ?? '';
+    return typeof needle === 'string' ? run.includes(needle) : needle.test(run);
+  });
 }
 
 describe('tray helper packaging and CI', () => {
@@ -15,6 +23,10 @@ describe('tray helper packaging and CI', () => {
     expect(pkg.build.win.extraResources).toContainEqual({
       from: 'build/vendor/tray',
       to: 'runtime/tray',
+    });
+    expect(pkg.build.win.extraResources).toContainEqual({
+      from: 'assets/tray/licenses',
+      to: 'licenses/tray',
     });
   });
 
@@ -27,27 +39,41 @@ describe('tray helper packaging and CI', () => {
     );
   });
 
-  it('verify workflow runs Rust tray helper checks', () => {
-    const yml = read('.github/workflows/verify.yml');
-    expect(yml).toContain('Rust tray helper checks');
-    expect(yml).toContain('npm run tray:check');
+  it('verify workflow runs Rust tray helper checks after unit tests', () => {
+    const steps = jobSteps(read('.github/workflows/verify.yml'), 'verify');
+    const unit = stepIndex(steps, (s) => s.run === 'npm run test:unit');
+    const tray = stepIndex(steps, (s) => s.name === 'Rust tray helper checks');
+    expect(tray).toBeGreaterThan(-1);
+    expect(steps[tray].run).toBe('npm run tray:check');
+    expect(tray).toBeGreaterThan(unit);
   });
 
-  it('release workflow caches the tray crate and builds before packaging', () => {
-    const yml = read('.github/workflows/release.yml');
-    expect(yml).toContain('native/tray/target');
-    expect(yml).toContain('npm run tray:build');
-    expect(yml).toContain('Get-AuthenticodeSignature');
-    expect(yml).toContain('runtime\\tray\\conduit-tray.exe');
+  it('release workflow builds tray after fetch-runtime and asserts Authenticode after electron-builder', () => {
+    const steps = jobSteps(read('.github/workflows/release.yml'), 'build-and-publish');
+    const fetch = runIndex(steps, 'node build/fetch-runtime.mjs');
+    const tray = runIndex(steps, 'npm run tray:build');
+    const builder = runIndex(steps, 'electron-builder');
+    const auth = stepIndex(steps, (s) => s.name === 'Assert tray helper Authenticode signature');
+    expect(fetch).toBeGreaterThan(-1);
+    expect(tray).toBeGreaterThan(fetch);
+    expect(builder).toBeGreaterThan(tray);
+    expect(auth).toBeGreaterThan(builder);
+    const ghCscLink = '$' + '{{ secrets.CSC_LINK }}';
+    expect(steps[auth].env?.CSC_LINK).toBe(ghCscLink);
+    expect(steps[auth].run).toContain('Get-AuthenticodeSignature');
+    expect(steps[auth].run).toContain('$env:CSC_LINK');
+    const cache = stepIndex(steps, (s) => (s.uses ?? '').includes('actions/cache'));
+    expect(cache).toBeGreaterThan(-1);
+    expect(read('.github/workflows/release.yml')).toContain('restore-keys:');
   });
 
   it('e2e Windows shards build the tray helper after the app bundle', () => {
-    const yml = read('.github/workflows/e2e.yml');
-    expect(yml).toContain('native/tray/target');
-    expect(yml).toContain('npm run tray:build');
-    const buildIdx = yml.indexOf('npm run build');
-    const trayIdx = yml.lastIndexOf('npm run tray:build');
-    expect(trayIdx).toBeGreaterThan(buildIdx);
+    const steps = jobSteps(read('.github/workflows/e2e.yml'), 'shard');
+    const build = runIndex(steps, 'npm run build');
+    const tray = runIndex(steps, 'npm run tray:build');
+    expect(build).toBeGreaterThan(-1);
+    expect(tray).toBeGreaterThan(build);
+    expect(read('.github/workflows/e2e.yml')).toContain('restore-keys:');
   });
 
   it('ignores native/tray/target in git', () => {
@@ -61,5 +87,14 @@ describe('tray helper packaging and CI', () => {
       cwd: ROOT,
     });
     expect(steps.some((s) => s.name === 'tray:check')).toBe(true);
+  });
+
+  it('does not add tray:check to verify:quick when nothing under native/ changed', () => {
+    const steps = quickSteps({
+      files: ['src/a.ts', 'tools/tray-check.mjs'],
+      base: 'abc',
+      cwd: ROOT,
+    });
+    expect(steps.some((s) => s.name === 'tray:check')).toBe(false);
   });
 });

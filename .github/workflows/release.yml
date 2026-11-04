@@ -50,6 +50,8 @@ jobs:
             ~/.cargo/git
             native/tray/target
           key: tray-${{ runner.os }}-${{ hashFiles('native/tray/Cargo.lock', 'native/tray/rust-toolchain.toml') }}
+          restore-keys: |
+            tray-${{ runner.os }}-
 
       - run: npm run tray:build
 

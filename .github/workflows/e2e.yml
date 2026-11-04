@@ -205,6 +205,8 @@ jobs:
             ~/.cargo/git
             native/tray/target
           key: tray-${{ runner.os }}-${{ hashFiles('native/tray/Cargo.lock', 'native/tray/rust-toolchain.toml') }}
+          restore-keys: |
+            tray-${{ runner.os }}-
       - run: npm run tray:build
       # Agents run in the pinned herdr-core (ADR 0007); the app finds `hc` on PATH unpackaged.
       - run: node build/fetch-runtime.mjs

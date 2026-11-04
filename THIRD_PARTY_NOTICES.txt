@@ -56,6 +56,14 @@ Conduit background-service tray helper, built from native/tray/. MIT License (Co
 binary statically links the Rust crates named below (and their transitive runtime dependencies
 checked by test/unit/tray-notices.test.ts).
 
+License: resources/licenses/tray/MIT.txt, resources/licenses/tray/Apache-2.0.txt (crates marked
+MIT OR Apache-2.0 may be used under either license).
+
+itoa — MIT OR Apache-2.0. https://github.com/dtolnay/itoa
+memchr — MIT OR Apache-2.0 / Unlicense. https://github.com/BurntSushi/memchr
+ryu — Apache-2.0 / BSL-1.0. https://github.com/dtolnay/ryu
 serde — MIT OR Apache-2.0. https://github.com/serde-rs/serde
 serde_json — MIT OR Apache-2.0. https://github.com/serde-rs/json
 windows-sys — MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+windows-targets — MIT OR Apache-2.0. https://github.com/microsoft/windows-rs
+windows_x86_64_msvc — MIT OR Apache-2.0. https://github.com/microsoft/windows-rs

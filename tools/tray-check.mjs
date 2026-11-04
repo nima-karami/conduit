@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { checkRust } from './check-rust.mjs';
 
-const MANIFEST = join('native/tray/Cargo.toml');
+/** rust-toolchain.toml is picked up from this cwd (not --manifest-path). */
+export const TRAY_CRATE_DIR = join('native', 'tray');
 const MSVC = 'x86_64-pc-windows-msvc';
 
 /**
@@ -11,9 +12,9 @@ const MSVC = 'x86_64-pc-windows-msvc';
  * @param {typeof spawnSync} spawn
  */
 function runCargo(cargoArgs, spawn = spawnSync) {
-  const args = [...cargoArgs, '--manifest-path', MANIFEST];
+  const args = [...cargoArgs];
   if (cargoArgs[0] !== 'fmt') args.push('--locked');
-  return spawn('cargo', args, { stdio: 'inherit' });
+  return spawn('cargo', args, { stdio: 'inherit', cwd: TRAY_CRATE_DIR });
 }
 
 /**

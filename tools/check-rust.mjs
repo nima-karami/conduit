@@ -15,16 +15,27 @@ export const TRAY_RUST_INSTALL_MESSAGE =
  */
 export function checkRust(spawn = spawnSync) {
   const r = spawn('cargo', ['--version'], { encoding: 'utf8' });
-  if (r.status !== 0) return { ok: false, message: TRAY_RUST_INSTALL_MESSAGE };
+  if (r.error?.code === 'ENOENT' || r.status !== 0) {
+    return { ok: false, message: TRAY_RUST_INSTALL_MESSAGE };
+  }
   return { ok: true };
 }
 
-function main() {
-  const result = checkRust();
+/**
+ * @param {typeof spawnSync} [spawn]
+ * @returns {number}
+ */
+export function runCheckRustCli(spawn = spawnSync) {
+  const result = checkRust(spawn);
   if (!result.ok) {
     console.error(result.message);
-    process.exit(1);
+    return 1;
   }
+  return 0;
+}
+
+function main() {
+  process.exit(runCheckRustCli());
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
