@@ -212,8 +212,9 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
         if (e.armed && e.background) disarm(e);
         else if (!e.parked) continue;
         e.parked = false;
-        // Shown demand must not retain the background cooldown (spec §3.4).
-        arm(key, e, Math.max(0, e.lastStart + REFRESH_COOLDOWN_MS - deps.now()));
+        // Shown demand must not retain the background cooldown (spec §3.4), and the show catch-up's
+        // immediate mark must not wait out even the normal one (spec §3.5 freshness target).
+        arm(key, e, e.immediate ? 0 : Math.max(0, e.lastStart + REFRESH_COOLDOWN_MS - deps.now()));
       }
       drain();
     },

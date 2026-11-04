@@ -183,6 +183,22 @@ describe('createRefreshScheduler', () => {
     expect(runs.map((r) => r.key)).toEqual(['bg0', 'bg1', 'bg2', 'bg3']);
   });
 
+  it('reconsider keeps an immediate show mark immediate', async () => {
+    let visible = false;
+    const { s, runs } = harness({ eligible: () => visible, autoMs: 10 });
+    const t0 = Date.now();
+    s.mark('a', 'tree', { background: true });
+    await settle(400);
+    s.mark('a', 'tree', { background: true });
+    await settle(100);
+    visible = true;
+    // The host's show order: sessionShown's immediate mark, then visibilityChanged -> reconsider.
+    s.mark('a', 'meta', { immediate: true });
+    s.reconsider();
+    await settle(0);
+    expect(runs.map((r) => r.at - t0)).toEqual([300, 500]);
+  });
+
   it('reconsider re-arms an eligible background timer at the normal cooldown', async () => {
     let visible = false;
     const { s, runs } = harness({ eligible: () => visible, autoMs: 10 });
