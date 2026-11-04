@@ -182,11 +182,18 @@ export async function stopServer(app) {
 /** app -> its profile dir, until that app's server/hc teardown has run (once per app). */
 const pendingTeardown = new Map();
 
+/**
+ * Profiles a scenario drove with ownHc() without (or beyond) launching an app on them: ownHc can
+ * start a core, and nothing else would ever stop it.
+ */
+const hcOnlyProfiles = new Set();
+
 /** Runs after Electron is gone; teardownScenarioServer logs its own failures and only the session guard throws. */
 async function teardownServerFor(app) {
   const userDataDir = pendingTeardown.get(app);
   if (!userDataDir) return;
   pendingTeardown.delete(app);
+  hcOnlyProfiles.delete(userDataDir);
   await teardownScenarioServer({
     userDataDir,
     tmpdir: tmpdir(),
@@ -301,9 +308,13 @@ export async function launchElectron(launchOpts) {
   launchStartedAt = Date.now();
   armOnce(lockWaitMs);
   const { _electron } = loadPlaywright();
+  const env = launchOpts.env ?? process.env;
+  const withHc =
+    RESOLVED_HC && !env.CONDUIT_HC_BINARY ? { ...env, CONDUIT_HC_BINARY: RESOLVED_HC } : env;
   // The runner's orphan sweep kills only apps carrying its own run id (run-smoke.mjs).
   const app = await _electron.launch({
     ...launchOpts,
+    env: withHc,
     args: [...(launchOpts.args ?? []), `${RUN_MARKER}=${runId()}`],
   });
   liveApps.add(app);
@@ -387,6 +398,14 @@ export function finishScenario(code) {
         console.error('[harness] server teardown failed:', e?.message || e);
       }
     }
+    for (const dir of [...hcOnlyProfiles]) {
+      hcOnlyProfiles.delete(dir);
+      await teardownScenarioServer({
+        userDataDir: dir,
+        tmpdir: tmpdir(),
+        log: (...a) => console.log(`[${scenarioName()}]`, ...a),
+      });
+    }
     process.exit(code);
   })();
   return finishing;
@@ -401,6 +420,26 @@ export function onPath(name) {
     .map((dir) => join(dir, exe))
     .find((candidate) => existsSync(candidate));
 }
+
+/**
+ * The hc every side of a scenario uses: the app's core and this harness's teardown/ownHc must be
+ * the same binary, and a global hc on PATH can be a different version than the pinned one
+ * (src/contracts/hc.ts). Same precedence as the app: override, bundled vendor copy, PATH.
+ */
+export function resolveHcBinary() {
+  if (process.env.CONDUIT_HC_BINARY) return process.env.CONDUIT_HC_BINARY;
+  const vendored = join(
+    REPO,
+    'build',
+    'vendor',
+    'hc',
+    process.platform === 'win32' ? 'hc.exe' : 'hc',
+  );
+  return existsSync(vendored) ? vendored : onPath('hc');
+}
+
+const RESOLVED_HC = resolveHcBinary();
+if (RESOLVED_HC) process.env.CONDUIT_HC_BINARY = RESOLVED_HC;
 
 /**
  * A caller that replaces PATH (stub CLIs, a bare System32) would leave the unpackaged server
@@ -1593,6 +1632,7 @@ export function ownHc(userDataDir, args, { timeout = 30000 } = {}) {
     tmpdir(),
   );
   assertOwnSession(names.hcSession, process.env.HC_SESSION);
+  hcOnlyProfiles.add(userDataDir);
   const env = {
     ...hcEnv(process.env, names),
     CONDUIT_USER_XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME ?? '',
@@ -1601,7 +1641,7 @@ export function ownHc(userDataDir, args, { timeout = 30000 } = {}) {
   };
   const cwd = join(userDataDir, 'runtime', 'hc', HC_PINNED);
   mkdirSync(cwd, { recursive: true });
-  const r = spawnSync(process.env.CONDUIT_HC_BINARY || 'hc', args, {
+  const r = spawnSync(resolveHcBinary() || 'hc', args, {
     env,
     cwd,
     encoding: 'utf8',

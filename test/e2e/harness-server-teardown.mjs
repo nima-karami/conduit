@@ -13,6 +13,7 @@ export const STOP_ALL_CONNECT_TIMEOUT_MS = 5_000;
 export const STOP_ALL_ANSWER_TIMEOUT_MS = 20_000;
 export const SERVER_PROTOCOL_GENERATION = 1;
 
+const BACKSLASH = String.fromCharCode(92);
 const MAX_SOCKET_PATH_BYTES = 100;
 const HC_CALL_TIMEOUT_MS = 20_000;
 
@@ -167,6 +168,46 @@ export function stopAllViaServer({
   });
 }
 
+/**
+ * Processes still tied to a profile: a command line naming its directory, or the hc session
+ * instance its holder socket carries (hc serve/hold take no profile argument, only that name).
+ * @param {{ ProcessId: number, Name?: string, CommandLine?: string | null }[]} procs
+ * @param {string} userDataDir
+ * @param {ReturnType<typeof teardownNames>} names
+ */
+export function profileLeftovers(procs, userDataDir, names) {
+  const dir = userDataDir.toLowerCase().replaceAll(BACKSLASH, '/');
+  const instance = names.hcSession.toLowerCase();
+  return procs.filter((p) => {
+    const cmd = (p.CommandLine ?? '').toLowerCase();
+    return cmd.replaceAll(BACKSLASH, '/').includes(dir) || cmd.includes(`-${instance}.holder`);
+  });
+}
+
+const LEFTOVER_WAIT_MS = 3_000;
+const LEFTOVER_POLL_MS = 500;
+
+/** Win32 process table via PowerShell; other platforms have no scenarios to scan for. */
+function realListProcs() {
+  if (process.platform !== 'win32') return [];
+  const r = spawnSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      'Get-CimInstance Win32_Process | Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress',
+    ],
+    { encoding: 'utf8', windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024 * 1024 },
+  );
+  try {
+    const parsed = JSON.parse(r.stdout);
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    return [];
+  }
+}
+
 const realExec = (bin, args, opts) =>
   spawnSync(bin, args, { ...opts, encoding: 'utf8', windowsHide: true });
 
@@ -175,7 +216,8 @@ const realExec = (bin, args, opts) =>
  * scenario's own result must survive a teardown failure.
  * @param {{ userDataDir: string, log: (...a: any[]) => void, platform?: string, tmpdir: string,
  *   env?: Record<string, string | undefined>, exec?: Exec, stopAll?: typeof stopAllViaServer,
- *   appVersion?: string }} o
+ *   appVersion?: string, listProcs?: () => { ProcessId: number, Name?: string, CommandLine?: string | null }[],
+ *   waitMs?: number }} o
  */
 export async function teardownScenarioServer({
   userDataDir,
@@ -186,6 +228,8 @@ export async function teardownScenarioServer({
   exec = realExec,
   stopAll = stopAllViaServer,
   appVersion,
+  listProcs,
+  waitMs = LEFTOVER_WAIT_MS,
 }) {
   const names = teardownNames(userDataDir, platform === 'win32' ? 'win32' : 'posix', tmpdir);
   assertOwnSession(names.hcSession, env.HC_SESSION);
@@ -196,6 +240,18 @@ export async function teardownScenarioServer({
     const r = await stopAll({ endpoint: names.serverEndpoint, appVersion: version });
     log(`teardown: server.stopAll ${r.outcome}${r.detail ? ` (${r.detail})` : ''}`);
     stopHc({ exec, bin: env.CONDUIT_HC_BINARY || 'hc', names, inheritedEnv: env, log });
+    // An injected exec is a simulated world: the real process table says nothing about it.
+    const list = listProcs ?? (exec === realExec ? realListProcs : () => []);
+    let left = profileLeftovers(list(), userDataDir, names);
+    for (let waited = 0; left.length > 0 && waited < waitMs; waited += LEFTOVER_POLL_MS) {
+      await new Promise((r) => setTimeout(r, LEFTOVER_POLL_MS));
+      left = profileLeftovers(list(), userDataDir, names);
+    }
+    if (left.length > 0) {
+      log(
+        `teardown: STILL RUNNING for this profile: ${left.map((p) => `${p.ProcessId} ${p.Name}`).join(', ')}`,
+      );
+    }
   } catch (e) {
     log(`teardown: failed: ${e?.message || e}`);
   }
