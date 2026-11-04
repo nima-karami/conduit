@@ -7,10 +7,9 @@ export function createSessionResourceDemand(
   const windows = new Map<number, Set<string>>();
   const suspended = new Set<number>();
   const dirty = new Set<string>();
-  let reported = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const visible = (id: string) =>
-    !reported || [...windows].some(([windowId, ids]) => !suspended.has(windowId) && ids.has(id));
+    [...windows].some(([windowId, ids]) => !suspended.has(windowId) && ids.has(id));
   const visibleSet = () =>
     new Set([...windows.values()].flatMap((ids) => [...ids]).filter(visible));
   const hidden = (before: Set<string>) => onHidden([...before].filter((id) => !visible(id)));
@@ -32,11 +31,11 @@ export function createSessionResourceDemand(
     /** Union of the non-suspended windows' sets, in insertion order. */
     visibleIds: (): string[] => [...visibleSet()],
     isVisibleInWindow(windowId: number, id: string) {
-      return !reported || (!suspended.has(windowId) && windows.get(windowId)?.has(id) === true);
+      return !suspended.has(windowId) && windows.get(windowId)?.has(id) === true;
     },
     /** Like isVisibleInWindow, but a minimized window still counts its own sessions. */
     isShownInWindow(windowId: number, id: string) {
-      return !reported || windows.get(windowId)?.has(id) === true;
+      return windows.get(windowId)?.has(id) === true;
     },
     /** The window is minimized (its own set is kept, but it shows nothing). */
     isSuspended: (windowId: number): boolean => suspended.has(windowId),
@@ -48,8 +47,7 @@ export function createSessionResourceDemand(
     },
     setVisible(windowId: number, ids: readonly string[]) {
       const before = visibleSet();
-      const newlyVisible = ids.filter((id) => !visible(id) || !reported);
-      reported = true;
+      const newlyVisible = ids.filter((id) => !visible(id));
       windows.set(windowId, new Set(ids));
       hidden(before);
       wake(newlyVisible);
