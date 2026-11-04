@@ -6,10 +6,16 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.54.0] — 2026-11-04
+
 ### Changed
 - **Sessions you aren't looking at no longer watch their folders or run git.** Their branch and
   change count update when the agent finishes a turn. Opening one shows its last state and
   catches up in about a second. Minimized windows count as not looking.
+
+### Fixed
+- **Checking for updates in a build that can't update now says so.** It used to show a raw
+  "file not found" error.
 
 ## [0.53.2] — 2026-11-03
 
