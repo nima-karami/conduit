@@ -57,7 +57,6 @@ export function EditorGroups({
   renderWeb: (doc: OpenDoc, onGuestFocus: () => void) => React.ReactNode;
   onFocusGroup: (g: GroupIndex) => void;
   onMoveTab: (id: string, toGroup: GroupIndex, beforeId: string | null, duplicate: boolean) => void;
-  /** The group whose body is showing the terminal, if any. */
   terminalGroup: GroupIndex | null;
 }) {
   const gridRef = useRef<HTMLDivElement>(null);

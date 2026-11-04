@@ -67,6 +67,13 @@ async function drag(page, from, to, { during } = {}) {
   return seen;
 }
 
+/** What is under the held pointer: the paste proves the drop, this proves who took the hit test. */
+const hitUnder = (page, at) =>
+  page.evaluate(({ x, y }) => {
+    const el = document.elementFromPoint(x + 2, y + 2);
+    return { terminal: !!el?.closest('.termpane'), overlay: !!el?.closest('.editorgroups__drop') };
+  }, at);
+
 const overlays = (page) =>
   page.evaluate(() =>
     [...document.querySelectorAll('.editorgroups__drop')].map((el) => ({
@@ -114,11 +121,11 @@ async function phaseTerminalPaste(page, sid) {
   const before = await both(page);
   const from = await center(tabOf(page, 1, fileA), 'TP tab');
   const to = await center(body(page, 1), 'TP terminal', 0.3, 0.5);
-  const seen = await drag(page, from, to, { during: () => overlays(page) });
-  log('TP: overlays mid-drag', JSON.stringify(seen));
+  const hit = await drag(page, from, to, { during: () => hitUnder(page, to) });
+  log('TP: hit test mid-drag', JSON.stringify(hit));
   assert(
-    !seen.some((o) => o.over === 'group'),
-    `TP: a group overlay took the terminal drop (${JSON.stringify(seen)})`,
+    hit.terminal && !hit.overlay,
+    `TP: the terminal is not what the pointer is over (${JSON.stringify(hit)})`,
   );
   await assertPasted(page, sid, A, 'TP');
   const s = await both(page);

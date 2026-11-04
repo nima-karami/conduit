@@ -335,7 +335,6 @@ export function DocTabs({
               draggable={!!onReorder}
               onDragStart={(e) => {
                 beginTabDrag({ id: d.id, group, terminalPath: tabTerminalPath(d) }, e.dataTransfer);
-                // beginTabDrag stamps the terminal path: the group drop overlays read it too.
                 if (d.kind === 'file') {
                   stampFileDrag(e.dataTransfer, d.path, { download: true, terminal: false });
                 }
