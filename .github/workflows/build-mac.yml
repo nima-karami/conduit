@@ -26,13 +26,17 @@ jobs:
 
       - run: npm ci
 
+      - run: npm run build
+
+      - name: Smoke test the Mac background service socket
+        run: |
+          node build/fetch-runtime.mjs
+          node tools/smoke-mac-hc.mjs
+
       # Cross-platform gate (same as CI verify). The e2e smoke suite is not part of verify,
       # so this should not be mac-fragile; narrow a specific check (never disable verify) if a
       # genuine mac-only failure ever surfaces.
       - run: npm run verify
-
-      - name: Fetch pinned arm64 background runtime
-        run: node build/fetch-runtime.mjs
 
       - name: Build unsigned arm64 (.dmg + .zip)
         run: npx electron-builder --mac --arm64 --publish never

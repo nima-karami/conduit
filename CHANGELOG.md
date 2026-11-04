@@ -10,6 +10,12 @@ All notable user-facing changes to Conduit. Format follows
 - **Every release's notes are now in Settings → Release notes.** Pick a version on the left to
   read what changed in it. About and the What's-new dialog both link there.
 
+### Fixed
+- **Mac builds can start the background service and run agents.** The service's socket path was
+  longer than macOS allows, so it never started; it now uses a short private path.
+- **On a Mac, saving or renaming files inside a folder opened through a symlink works**, and
+  renaming a file to change only its letter case (Foo → foo) no longer reports a name clash.
+
 ## [0.55.1] — 2026-11-04
 
 ### Added

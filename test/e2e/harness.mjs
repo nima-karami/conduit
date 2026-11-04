@@ -1606,11 +1606,7 @@ const HC_PINNED = /HC_PINNED_VERSION = '([^']+)'/.exec(
  * @returns {{ status: number | null, out: string, json: () => any }}
  */
 export function ownHc(userDataDir, args, { timeout = 30000 } = {}) {
-  const names = teardownNames(
-    userDataDir,
-    process.platform === 'win32' ? 'win32' : 'posix',
-    tmpdir(),
-  );
+  const names = teardownNames(userDataDir, process.platform, tmpdir());
   assertOwnSession(names.hcSession, process.env.HC_SESSION);
   hcOnlyProfiles.add(userDataDir);
   const env = {
@@ -1621,6 +1617,7 @@ export function ownHc(userDataDir, args, { timeout = 30000 } = {}) {
   };
   const cwd = join(userDataDir, 'runtime', 'hc', HC_PINNED);
   mkdirSync(cwd, { recursive: true });
+  require(join(REPO, 'out', 'server', 'instance-names.js')).ensureHcSocketDirectory(names);
   const r = spawnSync(resolveHcBinary() || 'hc', args, {
     env,
     cwd,

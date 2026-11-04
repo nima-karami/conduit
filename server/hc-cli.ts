@@ -1,13 +1,9 @@
 import { execFile } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { HC_PINNED_VERSION, type HcClient } from '../src/contracts/hc';
-import {
-  coreStartEnv,
-  type InstanceNames,
-  USER_XDG_PASSTHROUGH,
-} from '../src/contracts/session-identity';
+import { type InstanceNames, USER_XDG_PASSTHROUGH } from '../src/contracts/session-identity';
 import { HcDisconnectedError, HcRpcError, NodeHcClient } from '../src/hc-client';
-import { coreStartCwd } from '../src/instance-names';
+import { coreStartCwd, coreStartEnv, ensureHcSocketDirectory } from '../src/instance-names';
 
 /**
  * Set by the app's supervisor start when our core runs isolated: the supervisor and server get the
@@ -80,6 +76,7 @@ function runHc(
 
 /** May start a core, so cwd = coreStartCwd (M21, D23): only a cwd blocks the GC rename. */
 export async function startCore(bin: string, names: InstanceNames, env: Record<string, string>) {
+  ensureHcSocketDirectory(names);
   const cwd = coreStartCwd(names.runtimeRoot, HC_PINNED_VERSION);
   await mkdir(cwd, { recursive: true });
   await runHc(bin, ['server', 'start'], env, cwd);

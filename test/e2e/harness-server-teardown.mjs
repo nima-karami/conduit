@@ -1,11 +1,12 @@
-// Per-scenario Conduit server + hc session teardown (program W8, architecture F12). Pure parts are
-// exported for test/unit/e2e-harness-teardown.test.ts; node cannot import src/*.ts, so the name
-// derivation is mirrored here and pinned to src/instance-names.ts by that test.
+// See architecture F12: using the built identity keeps teardown on the endpoint the app starts.
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { connect as netConnect } from 'node:net';
-import { posix, win32 } from 'node:path';
+
+const { instanceNames, coreStartEnv } = createRequire(import.meta.url)(
+  '../../out/server/instance-names.js',
+);
 
 // Mirror STOP_ALL_*_TIMEOUT_MS and SERVER_PROTOCOL_GENERATION in src/contracts/server-protocol.ts
 // (pinned by the unit test).
@@ -14,27 +15,10 @@ export const STOP_ALL_ANSWER_TIMEOUT_MS = 20_000;
 export const SERVER_PROTOCOL_GENERATION = 1;
 
 const BACKSLASH = String.fromCharCode(92);
-const MAX_SOCKET_PATH_BYTES = 100;
 const HC_CALL_TIMEOUT_MS = 20_000;
 
-/** @param {string} userData @param {'win32'|'posix'} platform @param {string} tmpdir */
-export function teardownNames(userData, platform, tmpdir) {
-  const identity = platform === 'win32' ? userData.toLowerCase() : userData;
-  const instance = createHash('sha256').update(identity).digest('hex').slice(0, 16);
-  const path = platform === 'win32' ? win32 : posix;
-  const profileEndpoint = path.join(userData, 'conduit-server.sock');
-  return {
-    serverEndpoint:
-      platform === 'win32'
-        ? `\\\\.\\pipe\\conduit-server-${instance}`
-        : Buffer.byteLength(profileEndpoint, 'utf8') > MAX_SOCKET_PATH_BYTES
-          ? posix.join(tmpdir, `conduit-server-${instance}.sock`)
-          : profileEndpoint,
-    supervisorName: `conduit-server-${instance}`,
-    hcConfigHome: path.join(userData, 'hc', 'config'),
-    hcStateHome: path.join(userData, 'hc', 'state'),
-    hcSession: `conduit-${instance}`,
-  };
+export function teardownNames(userData, platform, tmpdir, options) {
+  return instanceNames(userData, platform, tmpdir, options);
 }
 
 /**
@@ -52,14 +36,7 @@ export function assertOwnSession(hcSession, inheritedSession) {
 
 /** Every inherited HC_* dropped (hc would otherwise address the runner's core), then our session and the XDG dirs the app starts its core with. */
 export function hcEnv(inherited, names) {
-  const env = {};
-  for (const [k, v] of Object.entries(inherited)) {
-    if (!k.toUpperCase().startsWith('HC_')) env[k] = v;
-  }
-  env.HC_SESSION = names.hcSession;
-  env.XDG_CONFIG_HOME = names.hcConfigHome;
-  env.XDG_STATE_HOME = names.hcStateHome;
-  return env;
+  return coreStartEnv(inherited, names, true);
 }
 
 export function hcCalls(supervisorName) {
@@ -305,7 +282,7 @@ export async function teardownScenarioServer({
   listProcs,
   waitMs = LEFTOVER_WAIT_MS,
 }) {
-  const names = teardownNames(userDataDir, platform === 'win32' ? 'win32' : 'posix', tmpdir);
+  const names = teardownNames(userDataDir, platform, tmpdir);
   assertOwnSession(names.hcSession, env.HC_SESSION);
   try {
     const version =

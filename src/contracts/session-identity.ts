@@ -132,6 +132,8 @@ export interface InstanceNames {
   /** XDG_CONFIG_HOME / XDG_STATE_HOME for our core only: userData/hc/config and userData/hc/state (D24). */
   hcConfigHome: string;
   hcStateHome: string;
+  /** Over-budget POSIX endpoints move here; panes inherit it with HC_SESSION (D24, M22). */
+  hcSocket?: string;
 }
 
 /** Write-once: never swapped. A new shim Node or protocol goes to a new dir (D2b). */
@@ -231,7 +233,7 @@ export const CORE_START_RUN_FLAGS = ['--bg', '--no-parent'] as const;
  */
 export function coreStartEnv(
   parent: Readonly<Record<string, string | undefined>>,
-  names: Pick<InstanceNames, 'hcSession' | 'hcConfigHome' | 'hcStateHome'>,
+  names: Pick<InstanceNames, 'hcSession' | 'hcConfigHome' | 'hcStateHome' | 'hcSocket'>,
   isolateXdg: boolean,
 ): Record<string, string> {
   const env: Record<string, string> = {};
@@ -264,5 +266,6 @@ export function coreStartEnv(
     env.XDG_STATE_HOME = names.hcStateHome;
   }
   env.HC_SESSION = names.hcSession;
+  if (names.hcSocket) env.HC_SOCKET = names.hcSocket;
   return env;
 }
