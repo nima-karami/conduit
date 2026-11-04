@@ -74,7 +74,7 @@ export class AppSessionStore {
 
   /** No onChange: the caller broadcasts once per server list, with the diff in hand. */
   applyServer(views: SessionView[]): SessionDiff[] {
-    const diffs: SessionDiff[] = [];
+    const diffs: SessionFolderDiff[] = [];
     const next = new Map(views.map((v) => [v.id, v]));
     for (const v of views) {
       const prev = this.byId.get(v.id);
