@@ -14,7 +14,9 @@ function runSnippet(body: string) {
 describe('tray-check.mjs', () => {
   it('runs fmt, clippy host, clippy msvc, then test in native/tray cwd', () => {
     const r = runSnippet(`
-      import { runTrayCheck, TRAY_CRATE_DIR } from './tools/tray-check.mjs';
+      import { runTrayCheck } from './tools/tray-check.mjs';
+      import { join } from 'node:path';
+      const wantCwd = join('native', 'tray');
       const calls = [];
       const spawn = (cmd, args, opts) => {
         calls.push({ cmd, args: [...args], cwd: opts?.cwd });
@@ -25,7 +27,7 @@ describe('tray-check.mjs', () => {
       const cargo = calls.filter((c) => c.cmd === 'cargo' && c.args[0] !== '--version');
       const kinds = cargo.map((c) => c.args[0]);
       if (JSON.stringify(kinds) !== JSON.stringify(['fmt','clippy','clippy','test'])) process.exit(3);
-      if (!cargo.every((c) => c.cwd === TRAY_CRATE_DIR)) process.exit(4);
+      if (!cargo.every((c) => c.cwd === wantCwd)) process.exit(4);
       if (!cargo[0].args.includes('--check')) process.exit(5);
       if (!cargo[2].args.includes('--target')) process.exit(6);
       if (!cargo.every((c) => c.args[0] === 'fmt' || c.args.includes('--locked'))) process.exit(7);
@@ -63,13 +65,14 @@ describe('tray-build.mjs', () => {
   it('builds in native/tray cwd and rejects binaries over 2 MiB', () => {
     const r = runSnippet(`
       import { runTrayBuild } from './tools/tray-build.mjs';
-      import { TRAY_CRATE_DIR } from './tools/tray-check.mjs';
+      import { join } from 'node:path';
+      const wantCwd = join('native', 'tray');
       let buildArgs = [];
       const spawn = (cmd, args, opts) => {
         if (cmd === 'cargo' && args[0] === '--version') return { status: 0, stdout: '', stderr: '' };
         if (cmd === 'cargo' && args[0] === 'build') {
           buildArgs = args;
-          if (opts?.cwd !== TRAY_CRATE_DIR) process.exit(2);
+          if (opts?.cwd !== wantCwd) process.exit(2);
           return { status: 0, stdout: '', stderr: '' };
         }
         return { status: 0, stdout: '', stderr: '' };

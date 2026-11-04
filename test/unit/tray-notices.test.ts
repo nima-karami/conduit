@@ -26,8 +26,9 @@ describe('tray helper THIRD_PARTY notices', () => {
       const manifest = readFileSync(MANIFEST, 'utf8');
       const lock = readFileSync(LOCK, 'utf8');
       for (const name of runtimeLockCrates(lock, manifest)) {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         expect(notices, `missing notice entry for ${name}`).toMatch(
-          new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`),
+          new RegExp(`^${escaped}\\s*—`, 'm'),
         );
       }
     },

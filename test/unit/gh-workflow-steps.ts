@@ -97,6 +97,12 @@ export function jobSteps(yml: string, jobId: string): WorkflowStep[] {
       }
     }
     if (inSteps) {
+      if (/^ {2}\w/.test(line) && !line.startsWith('    ')) {
+        flush();
+        inSteps = false;
+        inJob = false;
+        continue;
+      }
       if (/^ {4}\w/.test(line) && !line.startsWith('      ')) {
         flush();
         inSteps = false;
