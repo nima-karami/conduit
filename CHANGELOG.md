@@ -13,8 +13,8 @@ All notable user-facing changes to Conduit. Format follows
 ### Fixed
 - **Mac builds can start the background service and run agents.** The service's socket path was
   longer than macOS allows, so it never started; it now uses a short private path.
-- **On a Mac, saving or renaming files inside a folder opened through a symlink works**, and
-  renaming a file to change only its letter case (Foo → foo) no longer reports a name clash.
+- **Saving or renaming files inside a folder opened through a symlink or junction works**, and
+  on a Mac renaming a file to change only its letter case (Foo → foo) no longer reports a name clash.
 
 ## [0.55.1] — 2026-11-04
 
