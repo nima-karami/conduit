@@ -38,6 +38,12 @@ jobs:
       - name: Unit tests
         run: npm run test:unit
 
+      - name: Rust tray helper checks
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt clippy --target x86_64-pc-windows-msvc
+          rustup default 1.98.1
+          npm run tray:check
+
       - name: Codebase analysis (Fallow — dead code + duplication)
         run: npm run fallow:check
 

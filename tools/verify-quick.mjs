@@ -16,6 +16,7 @@ const BIN = {
   biome: join('node_modules', '@biomejs', 'biome', 'bin', 'biome'),
   tsc: join('node_modules', 'typescript', 'bin', 'tsc'),
   vitest: join('node_modules', 'vitest', 'vitest.mjs'),
+  trayCheck: join('tools', 'tray-check.mjs'),
 };
 
 /**
@@ -23,7 +24,7 @@ const BIN = {
  * through a junction, so its file name carries a hash of the checkout path.
  *
  * @param {{ files: string[], base: string, cwd: string }} o
- * @returns {{ name: string, tool: 'biome' | 'tsc' | 'vitest', args: string[] }[]}
+ * @returns {{ name: string, tool: 'biome' | 'tsc' | 'vitest' | 'trayCheck', args: string[] }[]}
  */
 export function quickSteps({ files, base, cwd }) {
   const tag = createHash('sha256').update(cwd).digest('hex').slice(0, 8);
@@ -48,6 +49,9 @@ export function quickSteps({ files, base, cwd }) {
         join('node_modules', '.cache', 'verify-quick', `${cfg}-${tag}.tsbuildinfo`),
       ],
     });
+  }
+  if (files.some((f) => f.replaceAll('\\', '/').startsWith('native/'))) {
+    steps.push({ name: 'tray:check', tool: 'trayCheck', args: [] });
   }
   steps.push({ name: 'vitest --changed', tool: 'vitest', args: ['run', '--changed', base] });
   return steps;
