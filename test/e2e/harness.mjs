@@ -400,11 +400,15 @@ export function finishScenario(code) {
     }
     for (const dir of [...hcOnlyProfiles]) {
       hcOnlyProfiles.delete(dir);
-      await teardownScenarioServer({
-        userDataDir: dir,
-        tmpdir: tmpdir(),
-        log: (...a) => console.log(`[${scenarioName()}]`, ...a),
-      });
+      try {
+        await teardownScenarioServer({
+          userDataDir: dir,
+          tmpdir: tmpdir(),
+          log: (...a) => console.log(`[${scenarioName()}]`, ...a),
+        });
+      } catch (e) {
+        console.error('[harness] server teardown failed:', e?.message || e);
+      }
     }
     process.exit(code);
   })();

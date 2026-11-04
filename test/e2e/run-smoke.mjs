@@ -30,7 +30,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import {
   applyQuarantine,
   classify,
@@ -40,8 +40,8 @@ import {
   killTimerStart,
   orphanVictims,
   parseRunnerArgs,
-  profilePrefix,
   resolveSelection,
+  selectRunProfiles,
 } from './smoke-select.mjs';
 
 /** Settle delay between scenarios: gives the prior Electron process time to fully
@@ -89,52 +89,61 @@ function sweepOrphanElectrons() {
   return pids.length;
 }
 
-/** @param {{ name: string, isDirectory: () => boolean }[]} entries @param {string} runId */
-export function selectRunProfiles(entries, runId) {
-  if (!runId) return [];
-  return entries
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith(profilePrefix(runId)))
-    .map((entry) => entry.name);
-}
-
-async function sweepScenarioServers() {
-  const root = tmpdir();
-  let profiles;
+function runProfiles(existingProfiles = new Set()) {
   try {
-    profiles = selectRunProfiles(readdirSync(root, { withFileTypes: true }), RUN_ID);
+    return selectRunProfiles(
+      readdirSync(tmpdir(), { withFileTypes: true }),
+      RUN_ID,
+      existingProfiles,
+    );
   } catch (e) {
     console.log(`[smoke] profile sweep failed: ${e.message}`);
-    return;
+    return null;
   }
-  for (const profile of profiles) {
+}
+
+async function sweepScenarioServers(profilesBefore) {
+  // Without a snapshot we cannot distinguish this attempt's profiles from cleanly finished ones.
+  if (profilesBefore === null) return;
+  const root = tmpdir();
+  for (const profile of runProfiles(profilesBefore) ?? []) {
     // A separate process bounds even synchronous hc calls and process-table scans.
     const script = `
       import { teardownScenarioServer } from ${JSON.stringify(new URL('./harness-server-teardown.mjs', import.meta.url).href)};
-      import { resolveHcBinary } from ${JSON.stringify(new URL('./harness.mjs', import.meta.url).href)};
       await teardownScenarioServer({
-        userDataDir: process.argv[1],
-        tmpdir: process.argv[2],
-        env: { ...process.env, CONDUIT_HC_BINARY: resolveHcBinary() || 'hc' },
-        log: (...args) => console.log('[smoke] ' + process.argv[3] + ':', ...args),
+        userDataDir: process.env.E2E_SWEEP_PROFILE,
+        tmpdir: process.env.E2E_SWEEP_ROOT,
+        env: process.env,
+        log: (...args) => console.log('[smoke] ' + process.env.E2E_SWEEP_NAME + ':', ...args),
       });
     `;
     await new Promise((done) => {
-      const child = spawn(
-        process.execPath,
-        ['--input-type=module', '-e', script, join(root, profile), root, profile],
-        {
-          stdio: ['ignore', 'inherit', 'inherit'],
-          windowsHide: true,
-          timeout: 90_000,
+      const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+        stdio: ['ignore', 'inherit', 'inherit'],
+        windowsHide: true,
+        env: {
+          ...process.env,
+          E2E_SWEEP_PROFILE: join(root, profile),
+          E2E_SWEEP_ROOT: root,
+          E2E_SWEEP_NAME: profile,
         },
-      );
+      });
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGTERM');
+      }, 90_000);
       child.on('error', (e) => {
+        clearTimeout(timeout);
         console.log(`[smoke] ${profile}: teardown worker failed: ${e.message}`);
         done();
       });
       child.on('exit', (code, signal) => {
+        clearTimeout(timeout);
         if (code !== 0)
-          console.log(`[smoke] ${profile}: teardown worker exit ${code ?? signal} (90s limit)`);
+          console.log(
+            `[smoke] ${profile}: teardown worker exit ${code ?? signal}${timedOut && signal === 'SIGTERM' ? ' (90s limit)' : ''}`,
+          );
         done();
       });
     });
@@ -182,6 +191,8 @@ async function main() {
    * except the e2e lock's lines: a scenario waiting on another checkout's run must say so live.
    */
   function runAttempt(name, attempt) {
+    const profiles = runProfiles();
+    const profilesBefore = profiles === null ? null : new Set(profiles);
     const start = Date.now();
     const child = spawn(
       process.execPath,
@@ -259,6 +270,7 @@ async function main() {
           exit: status ?? signal,
           r,
           output,
+          profilesBefore,
         });
       };
       child.on('close', finish);
@@ -268,7 +280,7 @@ async function main() {
   }
 
   /** A non-clean attempt: dump its output, keep its log beside the harness's artifacts, sweep. */
-  async function afterFailure({ name, attempt, exit, r, output }) {
+  async function afterFailure({ name, attempt, exit, r, output, profilesBefore }) {
     if (r.stdout) process.stdout.write(r.stdout);
     if (r.stderr) process.stderr.write(r.stderr);
     if (artifactsRoot) {
@@ -280,7 +292,7 @@ async function main() {
     // and the sweep costs a PowerShell spawn we don't want on the happy path.
     const swept = sweepOrphanElectrons();
     if (swept > 0) console.log(`  ↳ swept ${swept} orphaned Electron process(es)`);
-    await sweepScenarioServers();
+    await sweepScenarioServers(profilesBefore);
   }
 
   const settle = () => new Promise((r) => setTimeout(r, SETTLE_MS));
@@ -313,8 +325,6 @@ async function main() {
     if (name !== names[names.length - 1]) await settle();
   }
 
-  await sweepScenarioServers();
-
   const count = (s) => results.filter((r) => r.status === s).length;
   const failed = results.filter((r) => !isGreen(r.status));
   console.log('\n── Summary ──────────────────────────────────────');
@@ -332,4 +342,4 @@ async function main() {
   process.exit(failed.length ? 1 : 0);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
+await main();

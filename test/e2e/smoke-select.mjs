@@ -6,6 +6,23 @@
 /** Exit code of the harness watchdog (`finishScenario(EXIT_WATCHDOG)`); artifacts were captured. */
 export const EXIT_WATCHDOG = 124;
 
+/**
+ * @param {{ name: string, isDirectory: () => boolean }[]} entries
+ * @param {string} runId
+ * @param {ReadonlySet<string>} existingProfiles
+ */
+export function selectRunProfiles(entries, runId, existingProfiles = new Set()) {
+  if (!runId) return [];
+  return entries
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        entry.name.startsWith(profilePrefix(runId)) &&
+        !existingProfiles.has(entry.name),
+    )
+    .map((entry) => entry.name);
+}
+
 const VALUE_FLAGS = {
   '--names-file': 'namesFile',
   '--json': 'json',

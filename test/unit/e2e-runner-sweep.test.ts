@@ -1,10 +1,40 @@
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmdirSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-// @ts-expect-error plain .mjs runner module, no declarations
-import { selectRunProfiles } from '../e2e/run-smoke.mjs';
+import { selectRunProfiles } from '../e2e/smoke-select.mjs';
 
 const entry = (name: string, directory = true) => ({ name, isDirectory: () => directory });
 const runId = '123-abcd1234';
 const own = `conduit-ud-${runId}-`;
+
+it('executes the runner when launched through a directory junction or symlink', () => {
+  const scratchRoot = join(tmpdir(), 'Codex-scratch');
+  mkdirSync(scratchRoot, { recursive: true });
+  const scratchDir = mkdtempSync(join(scratchRoot, 'smoke-entry-'));
+  const alias = join(scratchDir, 'checkout');
+  let linked = false;
+  try {
+    symlinkSync(process.cwd(), alias, 'junction');
+    linked = true;
+    const result = spawnSync(
+      process.execPath,
+      [join(alias, 'test', 'e2e', 'run-smoke.mjs'), '--not-a-runner-flag'],
+      { encoding: 'utf8', timeout: 10_000, windowsHide: true },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(process.platform === 'win32' ? 2 : 0);
+    expect(result.stdout).toContain(
+      process.platform === 'win32'
+        ? 'unknown flag --not-a-runner-flag'
+        : 'SKIP (suite is Windows-only)',
+    );
+  } finally {
+    if (linked) rmdirSync(alias);
+    rmdirSync(scratchDir);
+  }
+});
 
 describe('selectRunProfiles', () => {
   it('selects every profile of this invocation, including retries and hc-only profiles', () => {
@@ -40,5 +70,21 @@ describe('selectRunProfiles', () => {
 
   it('does not select profiles without a run identity', () => {
     expect(selectRunProfiles([entry('conduit-ud--abc123')], '')).toEqual([]);
+  });
+
+  it('selects only profiles created since the attempt snapshot', () => {
+    const before = new Set([`${own}clean`, `${own}already-swept`]);
+    expect(
+      selectRunProfiles(
+        [
+          entry(`${own}clean`),
+          entry(`${own}already-swept`),
+          entry(`${own}failed-attempt`),
+          entry('conduit-ud-other-run-failed'),
+        ],
+        runId,
+        before,
+      ),
+    ).toEqual([`${own}failed-attempt`]);
   });
 });
