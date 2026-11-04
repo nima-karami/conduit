@@ -43,6 +43,7 @@ const render = () =>
         },
         onFocusGroup,
         onMoveTab: () => {},
+        terminalGroup: null,
       }),
     );
   });

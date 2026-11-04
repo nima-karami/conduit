@@ -6,6 +6,10 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Drag an open file tab onto the terminal to paste its path**, the same as dragging a file from
+  the Files explorer.
+
 ## [0.54.0] — 2026-11-04
 
 ### Changed

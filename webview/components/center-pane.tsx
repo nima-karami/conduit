@@ -627,6 +627,7 @@ export function CenterPane({
           )}
           onFocusGroup={onFocusGroup}
           onMoveTab={onMoveTab}
+          terminalGroup={groupOne.activeDocId === null ? 1 : null}
         />
       )}
 
