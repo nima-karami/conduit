@@ -14,10 +14,12 @@ const section = changelog
   ?.split(/^## \[/m)[0];
 if (!section?.trim())
   throw new Error(`No changelog section for installed version ${currentVersion}`);
+// A bullet wraps onto indented continuation lines; its first sentence can span them.
 const sample = section
-  .split(/\r?\n/)
-  .find((line) => /^- /.test(line))
+  .split(/\r?\n(?=- |\S)/)
+  .find((bullet) => /^- /.test(bullet))
   ?.replace(/^- /, '')
+  .replace(/\s*\r?\n\s+/g, ' ')
   .replaceAll('**', '')
   .replaceAll('`', '')
   .split('. ')[0]
