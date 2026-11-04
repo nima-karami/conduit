@@ -23,7 +23,7 @@ interface FakeWatch {
   closed: boolean;
 }
 
-function harness(opts: { git?: Record<string, GitInterrogation> } = {}) {
+function harness(opts: { git?: Record<string, GitInterrogation>; homeDir?: string } = {}) {
   const sessions = new Map<string, AppSessionView>();
   const shown = new Map<number, Set<string>>();
   const suspended = new Set<number>();
@@ -65,6 +65,7 @@ function harness(opts: { git?: Record<string, GitInterrogation> } = {}) {
       })),
     log: { debug: vi.fn(), warn },
     watchDirWhilePresent: fakeWatch,
+    homeDir: opts.homeDir,
     trackerDeps: {
       async readChanges(root, o) {
         reads.push({ root, lines: o.lines });
@@ -340,5 +341,73 @@ it('a malformed changes:subscribe or repo:refresh payload is logged and ignored'
   await vi.advanceTimersByTimeAsync(2000);
   expect(h.reads).toHaveLength(reads);
   expect(h.warn).toHaveBeenCalledTimes(10);
+  h.host.stop();
+});
+
+it('windowShown calls sessionShown, then sends full, then reconsiders', async () => {
+  const h = harness();
+  h.shown.set(1, new Set(['s1']));
+  h.addSession('s1', [repo('/w/a')]);
+  await vi.advanceTimersByTimeAsync(10);
+  const calls: string[] = [];
+  vi.spyOn(h.host.tracker, 'sessionShown').mockImplementation((ids) => {
+    calls.push(`sessionShown:${ids.join(',')}`);
+  });
+  vi.spyOn(h.host.tracker, 'visibilityChanged').mockImplementation(() => {
+    for (const d of h.deltas(1)) calls.push(`full:${d.sessionId}`);
+    calls.push('visibilityChanged');
+  });
+  h.sent.clear();
+  h.host.windowShown(1, ['s1']);
+  expect(calls).toEqual(['sessionShown:s1', 'full:s1', 'visibilityChanged']);
+  h.host.stop();
+});
+
+it("windowRestored runs sessionShown for the window's own shown sessions before the full send", async () => {
+  const h = harness();
+  h.shown.set(1, new Set(['s1', 's9']));
+  h.addSession('s1', [repo('/w/a')], 1);
+  h.addSession('s9', [repo('/w/b')], 2);
+  await vi.advanceTimersByTimeAsync(10);
+  const calls: string[] = [];
+  const shownSpy = vi.spyOn(h.host.tracker, 'sessionShown').mockImplementation((ids) => {
+    calls.push(`sessionShown:${ids.join(',')}`);
+  });
+  vi.spyOn(h.host.tracker, 'visibilityChanged').mockImplementation(() => {
+    for (const d of h.deltas(1)) calls.push(`full:${d.sessionId}`);
+    calls.push('visibilityChanged');
+  });
+  h.sent.clear();
+  h.host.windowRestored(1);
+  expect(shownSpy).toHaveBeenCalledWith(['s1']);
+  expect(calls).toEqual(['sessionShown:s1', 'full:s1', 'visibilityChanged']);
+  h.host.stop();
+});
+
+it('a git-dir watch on the home folder or a filesystem root is refused and logged once', async () => {
+  const git = (commonDir: string): GitInterrogation => ({
+    info: { kind: 'branch', branch: 'main' },
+    gitDir: `${commonDir}/.git`,
+    commonDir,
+  });
+  const h = harness({ homeDir: '/home/u', git: { '/home/u': git('/home/u'), 'D:/': git('D:/') } });
+  h.shown.set(1, new Set(['s1', 's2']));
+  h.addSession('s1', [repo('/home/u')]);
+  h.addSession('s2', [repo('D:/')]);
+  await vi.advanceTimersByTimeAsync(10);
+  h.host.tracker.refreshNow('/home/u');
+  h.host.tracker.refreshNow('D:/');
+  await vi.advanceTimersByTimeAsync(2000);
+  h.host.tracker.refreshNow('/home/u');
+  h.host.tracker.refreshNow('D:/');
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(h.watches).toEqual([]);
+  const refused = h.warn.mock.calls.filter(([, msg]) =>
+    String(msg).includes('git dir watch refused'),
+  );
+  expect(refused.map(([, , data]) => data)).toEqual([
+    { commonDir: '/home/u' },
+    { commonDir: 'D:' },
+  ]);
   h.host.stop();
 });

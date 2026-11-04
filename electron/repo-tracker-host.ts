@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { folderKey } from '../src/folder-key';
 import { interrogateGit } from '../src/git-info';
@@ -12,6 +13,7 @@ import {
 } from '../src/repo-tracker';
 import type { SessionResourceDemand } from '../src/session-resource-demand';
 import { shouldIgnoreWatchPath } from '../src/watch-filter';
+import { isBroadWatchRoot } from '../src/watch-scope';
 import type { AppSessionStore } from './app-session-store';
 import type { Logger } from './logger';
 import { watchDirWhilePresent } from './watch-dir';
@@ -30,6 +32,8 @@ export interface RepoTrackerHostDeps {
   trackerDeps?: Partial<RepoTrackerDeps>;
   /** Tests only. */
   watchDirWhilePresent?: typeof watchDirWhilePresent;
+  /** Default `os.homedir()`; tests pass a posix path. */
+  homeDir?: string;
 }
 
 export interface RepoTrackerHost {
@@ -63,6 +67,8 @@ async function indexMtime(root: string): Promise<number> {
 export function createRepoTrackerHost(deps: RepoTrackerHostDeps): RepoTrackerHost {
   const { mgr, demand, log } = deps;
   const watchWhilePresent = deps.watchDirWhilePresent ?? watchDirWhilePresent;
+  const homeDir = deps.homeDir ?? os.homedir();
+  const refusedGitDirs = new Set<string>();
   const linesDemand = new Map<number, Set<string>>();
 
   // The tracker keys by folderKey, so each session gets the root as its own RepoInfo spells it.
@@ -104,8 +110,17 @@ export function createRepoTrackerHost(deps: RepoTrackerHostDeps): RepoTrackerHos
     interrogate: (root) => interrogateGit(root, { skipDirty: true }),
     isSessionVisible: (id) => demand.isVisible(id),
     wantsLines: (id) => [...linesDemand.values()].some((ids) => ids.has(id)),
-    watchGitDir: (commonDir, onPath, onLost) =>
-      watchWhilePresent(
+    watchGitDir: (commonDir, onPath, onLost) => {
+      // A recursive watch here would cover everything the user owns (src/watch-scope.ts).
+      if (isBroadWatchRoot(commonDir, homeDir)) {
+        const key = folderKey(commonDir);
+        if (!refusedGitDirs.has(key)) {
+          refusedGitDirs.add(key);
+          log.warn('repo-tracker', 'git dir watch refused: home or filesystem root', { commonDir });
+        }
+        return { close() {} };
+      }
+      return watchWhilePresent(
         commonDir,
         {
           recursive: true,
@@ -120,7 +135,8 @@ export function createRepoTrackerHost(deps: RepoTrackerHostDeps): RepoTrackerHos
           if (shouldIgnoreWatchPath(`.git/${rel}`)) return;
           onPath(folderKey(`${commonDir}/${rel}`));
         },
-      ),
+      );
+    },
     indexMtime: (root) =>
       indexMtime(root).catch((error: unknown) => {
         log.debug('repo-tracker', 'index mtime unreadable; ranked last', {
@@ -161,12 +177,17 @@ export function createRepoTrackerHost(deps: RepoTrackerHostDeps): RepoTrackerHos
     lostFolders: (folders) => tracker.lostFolders(folders),
     setLiveRoots: (roots) => tracker.setLiveRoots(roots),
     ownedIds: owned,
+    // Catch-up marks precede the full send so it reads stale (spec 2026-11-03-demand-driven-resources §3.5).
     windowShown(windowId, ids) {
+      tracker.sessionShown(owned(windowId, ids));
       sendFull(windowId, ids);
       tracker.visibilityChanged();
     },
     windowRestored(windowId) {
-      sendFull(windowId, demand.shownIn(windowId));
+      const ids = owned(windowId, demand.shownIn(windowId));
+      tracker.sessionShown(ids);
+      sendFull(windowId, ids);
+      tracker.visibilityChanged();
     },
     setLinesDemand(windowId, sessionIds) {
       if (!Array.isArray(sessionIds) || !sessionIds.every((id) => typeof id === 'string')) {
