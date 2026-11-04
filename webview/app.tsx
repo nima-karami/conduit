@@ -371,6 +371,7 @@ import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-histo
 import { useReviewModeLayout } from './use-review-mode-layout';
 import { useSnooze } from './use-snooze';
 import { fileViewStateIds, renameViewState } from './view-state-store';
+import { shownFilePaths } from './watched-files';
 import {
   type WorkbenchChromeContextValue,
   WorkbenchChromeProvider,
@@ -2198,15 +2199,12 @@ export function App() {
     return () => cancelAnimationFrame(raf);
   }, [activeId]);
 
-  // Tell the host which files are open in editor/markdown tabs so it watches them on
-  // disk and pings us (fileChanged) when one changes externally. Sorted + joined into a
-  // stable key so an unrelated docs change (reorder/active) doesn't re-send the set.
+  // Tell the host which files are open in the shown sessions' editor/markdown tabs so it
+  // watches them on disk and pings us (fileChanged) when one changes externally. Sorted + joined
+  // into a stable key so an unrelated docs change (reorder/active) doesn't re-send the set.
   const openFilePathsKey = useMemo(
-    () =>
-      Array.from(new Set(docState.docs.filter((d) => d.kind === 'file').map((d) => d.path)))
-        .sort()
-        .join('\n'),
-    [docState.docs],
+    () => shownFilePaths(docState.docs, visibleSessionIds(activeId, splitId)).join('\n'),
+    [docState.docs, activeId, splitId],
   );
   useEffect(() => {
     post({ type: 'watchFiles', paths: openFilePathsKey ? openFilePathsKey.split('\n') : [] });
