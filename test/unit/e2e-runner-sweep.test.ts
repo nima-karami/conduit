@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmdirSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmdirSync, symlinkSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -29,7 +29,9 @@ it('executes the runner when launched through a directory junction or symlink', 
         : 'SKIP (suite is Windows-only)',
     );
   } finally {
-    if (linked) rmdirSync(alias);
+    // Remove only the link, never its target (the checkout): a Windows junction is a directory
+    // entry, a POSIX symlink is a file entry.
+    if (linked) (process.platform === 'win32' ? rmdirSync : unlinkSync)(alias);
     rmdirSync(scratchDir);
   }
 });
