@@ -127,6 +127,7 @@ describe('floating update item (sidebar-agent-tree spec §7, plan T3.4)', () => 
               release={{ version: '1.2.3', currentVersion: '1.0.0', notes: 'notes' }}
               ready
               onClose={() => setNotesOpen(false)}
+              onShowAllNotes={() => setNotesOpen(false)}
             />
           )}
         </WorkbenchChromeProvider>

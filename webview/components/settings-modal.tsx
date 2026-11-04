@@ -44,6 +44,7 @@ import {
   readLogTail,
   revealLogs,
 } from '../bridge';
+import { CHROME_STR } from '../chrome-strings';
 import { MCP_STR } from '../conduit-mcp-strings';
 import { IconCheck, IconClose, IconDownload, IconRefreshCw } from '../icons';
 import { useSettings } from '../settings';
@@ -54,13 +55,22 @@ import { AutoSaveDelayField } from './auto-save-delay-field';
 import { McpInstallRow } from './mcp-install-row';
 import { McpProjectEntries } from './mcp-project-entries';
 import { ModalLayer } from './modal-layer';
+import { ReleaseNotesPage } from './release-notes-page';
 import { SelectField } from './select-field';
 import { AgentRowPreview } from './session-card';
 import { ShortcutsTab } from './shortcuts-tab';
 import { ToolPolicyEditor } from './tool-policy-editor';
 import type { UpdateStatus } from './update-card';
 
-type Tab = 'general' | 'mcp' | 'appearance' | 'shortcuts' | 'skills' | 'about';
+export type SettingsTab =
+  | 'general'
+  | 'mcp'
+  | 'appearance'
+  | 'shortcuts'
+  | 'skills'
+  | 'about'
+  | 'releases';
+type Tab = SettingsTab;
 
 const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'none', label: 'None' },
@@ -111,6 +121,7 @@ export function SettingsModal({
     { id: 'shortcuts', label: 'Shortcuts' },
     { id: 'skills', label: 'Skills' },
     { id: 'about', label: 'About' },
+    { id: 'releases', label: CHROME_STR.releaseNotes.tab },
   ];
 
   return (
@@ -139,38 +150,43 @@ export function SettingsModal({
             ))}
           </nav>
 
-          <div className="settings__pane">
-            {tab === 'appearance' && <Appearance settings={settings} update={update} />}
-            {tab === 'general' && (
-              <General
-                settings={settings}
-                update={update}
-                agents={agents}
-                onSetChangesView={onSetChangesView}
-                serverConnected={serverConnected}
-              />
-            )}
-            {tab === 'mcp' && (
-              <McpTab
-                settings={settings}
-                update={update}
-                projectPath={projectPath}
-                focusCli={focusCli}
-                onFocusCliSpent={spendFocusCli}
-                serverConnected={serverConnected}
-              />
-            )}
-            {tab === 'shortcuts' && <ShortcutsTab settings={settings} update={update} />}
-            {tab === 'skills' && <Skills projectPath={projectPath} />}
-            {tab === 'about' && (
-              <About
-                about={about}
-                updateStatus={updateStatus ?? null}
-                onCheckUpdate={onCheckUpdate ?? (() => {})}
-                onRelaunch={onRelaunch ?? (() => {})}
-              />
-            )}
-          </div>
+          {tab === 'releases' ? (
+            <ReleaseNotesPage installedVersion={about?.version} />
+          ) : (
+            <div className="settings__pane">
+              {tab === 'appearance' && <Appearance settings={settings} update={update} />}
+              {tab === 'general' && (
+                <General
+                  settings={settings}
+                  update={update}
+                  agents={agents}
+                  onSetChangesView={onSetChangesView}
+                  serverConnected={serverConnected}
+                />
+              )}
+              {tab === 'mcp' && (
+                <McpTab
+                  settings={settings}
+                  update={update}
+                  projectPath={projectPath}
+                  focusCli={focusCli}
+                  onFocusCliSpent={spendFocusCli}
+                  serverConnected={serverConnected}
+                />
+              )}
+              {tab === 'shortcuts' && <ShortcutsTab settings={settings} update={update} />}
+              {tab === 'skills' && <Skills projectPath={projectPath} />}
+              {tab === 'about' && (
+                <About
+                  about={about}
+                  updateStatus={updateStatus ?? null}
+                  onCheckUpdate={onCheckUpdate ?? (() => {})}
+                  onRelaunch={onRelaunch ?? (() => {})}
+                  onShowReleaseNotes={() => setTab('releases')}
+                />
+              )}
+            </div>
+          )}
         </div>
       </div>
     </ModalLayer>
@@ -1357,11 +1373,13 @@ function About({
   updateStatus,
   onCheckUpdate,
   onRelaunch,
+  onShowReleaseNotes,
 }: {
   about?: AboutInfo;
   updateStatus: UpdateStatus | null;
   onCheckUpdate: () => void;
   onRelaunch: () => void;
+  onShowReleaseNotes: () => void;
 }) {
   const repoUrl = about?.repoUrl ?? GITHUB_URL;
   return (
@@ -1396,6 +1414,12 @@ function About({
         <div className="about__row">
           <span className="about__rowlabel">Updates</span>
           <UpdatesControl status={updateStatus} onCheck={onCheckUpdate} onRelaunch={onRelaunch} />
+        </div>
+        <div className="about__row">
+          <span className="about__rowlabel">{CHROME_STR.releaseNotes.tab}</span>
+          <button type="button" className="about__checkbtn" onClick={onShowReleaseNotes}>
+            {CHROME_STR.releaseNotes.viewAll}
+          </button>
         </div>
       </div>
 

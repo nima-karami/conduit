@@ -141,7 +141,7 @@ import { QuitScrim } from './components/quit-scrim';
 import { RightPane, type RightPaneHandle } from './components/right-pane';
 import type { SearchScopeModel } from './components/search-pane';
 import { ServerBanner } from './components/server-banner';
-import { SettingsModal } from './components/settings-modal';
+import { SettingsModal, type SettingsTab } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
 import { StatusBar } from './components/status-bar';
 import { TimedMessageDialog } from './components/timed-message-dialog';
@@ -378,7 +378,6 @@ import {
 } from './workbench-chrome-state';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
-type SettingsTab = 'general' | 'mcp' | 'appearance' | 'shortcuts' | 'skills' | 'about';
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
 /** `record: false` for an open that is not a navigation (a Back reopen, a rename). */
@@ -5290,6 +5289,10 @@ export function App() {
               updateStatus?.status === 'ready' && updateStatus.version === releaseNotesView.version
             }
             onClose={() => setReleaseNotesView(null)}
+            onShowAllNotes={() => {
+              setReleaseNotesView(null);
+              openSettingsAt('releases');
+            }}
           />
         )}
         <div className="shell">

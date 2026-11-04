@@ -6,6 +6,10 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Every release's notes are now in Settings → Release notes.** Pick a version on the left to
+  read what changed in it. About and the What's-new dialog both link there.
+
 ## [0.55.1] — 2026-11-04
 
 ### Added
@@ -453,7 +457,7 @@ All notable user-facing changes to Conduit. Format follows
 
 0.47.0 was not published; its changes ship in this release.
 
-## [0.47.0] — 2026-10-08
+## [0.47.0] — 2026-10-08 [YANKED]
 
 ### Added
 - **Python, Rust and C/C++ code navigation.** With basedpyright (`pip install basedpyright`),
@@ -727,7 +731,7 @@ All notable user-facing changes to Conduit. Format follows
 - Nothing user-facing: the v0.41.0 tag never built (a unit test assumed Windows paths and failed
   the Linux gate), so 0.41.1 is the first published build of everything under 0.41.0 below.
 
-## [0.41.0] — 2026-09-25
+## [0.41.0] — 2026-09-25 [YANKED]
 
 ### Added
 - **Review covers every repo in the session.** With two or more repos, Review opens on

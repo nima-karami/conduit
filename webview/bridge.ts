@@ -81,6 +81,7 @@ interface HostBridge {
   revealLogs(): void;
   copyDiagnostics(): Promise<string | null>;
   readLogTail(n: number): Promise<{ off: boolean; tail: string }>;
+  readChangelog(): Promise<string | null>;
   skills: {
     list(projectRoot: string | null): Promise<SkillInfo[]>;
     install(
@@ -179,6 +180,12 @@ export function copyDiagnostics(): Promise<string | null> {
 export function readLogTail(n: number): Promise<{ off: boolean; tail: string }> {
   if (host) return host.readLogTail(n);
   return Promise.resolve({ off: true, tail: '' });
+}
+
+/** The bundled CHANGELOG.md. The browser preview has no host to read it from: null. */
+export function readChangelog(): Promise<string | null> {
+  if (host) return host.readChangelog();
+  return Promise.resolve(null);
 }
 
 /**

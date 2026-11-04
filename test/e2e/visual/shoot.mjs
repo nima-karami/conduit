@@ -409,6 +409,12 @@ const SCENES = {
     await clickText('.settings__navitem', 'MCP');
     await nap(1500);
     await shot('settings-mcp');
+    await clickText('.settings__navitem', 'About');
+    await nap(1000);
+    await shot('settings-about');
+    await clickText('.settings__navitem', 'Release notes');
+    await nap(1500);
+    await shot('settings-release-notes');
   },
 
   async 'new-session'({ click, dismiss, shot, nap }) {

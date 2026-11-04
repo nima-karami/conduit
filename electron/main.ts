@@ -279,6 +279,19 @@ import { createTerminalLinkFactory } from './terminal-link';
 import { checkForUpdate, initUpdater, quitAndInstall } from './updater';
 import { closeWindowSessions, reconcileSessionOwners } from './window-session-close';
 
+/** The CHANGELOG.md this build shipped with, or null when the build has none. */
+function readBundledChangelog(): string | null {
+  const changelogPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'CHANGELOG.md')
+    : path.join(app.getAppPath(), 'CHANGELOG.md');
+  try {
+    return fs.readFileSync(changelogPath, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
 function readAboutInfo(): AboutInfo {
   try {
     // package.json lives one directory above __dirname (out/main.js → root).
@@ -2578,15 +2591,8 @@ app.whenReady().then(() => {
           break;
         case 'getReleaseNotes': {
           const version = app.getVersion();
-          const changelogPath = app.isPackaged
-            ? path.join(process.resourcesPath, 'CHANGELOG.md')
-            : path.join(app.getAppPath(), 'CHANGELOG.md');
-          let notes: string | null = null;
-          try {
-            notes = changelogSection(fs.readFileSync(changelogPath, 'utf8'), version);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-          }
+          const changelog = readBundledChangelog();
+          const notes = changelog === null ? null : changelogSection(changelog, version);
           const decision = releaseNotesDecision(
             version,
             settings.lastSeenVersion,
@@ -4481,6 +4487,8 @@ app.whenReady().then(() => {
     }
     return bundle;
   });
+
+  ipcMain.handle('readChangelog', () => readBundledChangelog());
 
   // Recent log tail for Settings→About (Slice B). Bounded host-side; disk content is already
   // redacted. `off` lets the renderer show a "logging is off" note instead of an empty block.

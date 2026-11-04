@@ -1,13 +1,10 @@
-import { type ImgHTMLAttributes, useId, useRef, useState } from 'react';
-import ReactMarkdown, { type Components } from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { useId, useRef } from 'react';
 import { openExternal, post } from '../bridge';
 import { CHROME_STR } from '../chrome-strings';
-import { MARKDOWN_SAFETY_PLUGINS } from '../markdown-safety';
-import { remoteImageHost } from '../md-links';
 import { middleClickProps } from '../middle-click';
 import { useFocusTrap } from '../use-focus-trap';
 import { ModalLayer } from './modal-layer';
+import { ReleaseNotesMarkdown, releaseTagUrl } from './release-notes-markdown';
 
 export interface ReleaseNotesView {
   version: string;
@@ -15,68 +12,17 @@ export interface ReleaseNotesView {
   currentVersion?: string;
 }
 
-const REMARK_PLUGINS = [remarkGfm];
-function ReleaseNoteImage({ src, alt, title }: ImgHTMLAttributes<HTMLImageElement>) {
-  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
-  const remoteSrc =
-    typeof src === 'string' && /^(?:https?:)?\/\//i.test(src)
-      ? src.startsWith('//')
-        ? `https:${src}`
-        : src
-      : null;
-  if (remoteSrc && loadedSrc !== remoteSrc) {
-    const label = CHROME_STR.update.loadImage(remoteImageHost(remoteSrc), alt);
-    return (
-      <button
-        type="button"
-        className="markdown-img-status markdown-img-load"
-        title={title}
-        aria-label={label}
-        onClick={() => setLoadedSrc(remoteSrc)}
-      >
-        {label}
-      </button>
-    );
-  }
-  if (remoteSrc || (typeof src === 'string' && /^data:image\//i.test(src))) {
-    return <img src={remoteSrc ?? src} alt={alt ?? ''} title={title} />;
-  }
-  return (
-    <span
-      className="markdown-img-status"
-      role="img"
-      aria-label={alt || CHROME_STR.update.imageUnavailable}
-    >
-      {alt || CHROME_STR.update.imageUnavailable}
-    </span>
-  );
-}
-const COMPONENTS: Components = {
-  img: ReleaseNoteImage,
-  a: ({ href, children }) => (
-    <a
-      href={href}
-      {...middleClickProps(() => {
-        if (href) openExternal(href);
-      })}
-      onClick={(e) => {
-        e.preventDefault();
-        if (href) openExternal(href);
-      }}
-    >
-      {children}
-    </a>
-  ),
-};
-
 export function WhatsNewDialog({
   release,
   ready,
   onClose,
+  onShowAllNotes,
 }: {
   release: ReleaseNotesView;
   ready: boolean;
   onClose(): void;
+  /** Settings takes focus from here, so the dialog does not hand it back to its opener. */
+  onShowAllNotes(): void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -102,22 +48,15 @@ export function WhatsNewDialog({
           <p className="whats-new__current">{CHROME_STR.update.current(release.currentVersion)}</p>
         )}
         <div className="whats-new__body">
-          <ReactMarkdown
-            remarkPlugins={REMARK_PLUGINS}
-            rehypePlugins={MARKDOWN_SAFETY_PLUGINS}
-            components={COMPONENTS}
-          >
-            {release.notes}
-          </ReactMarkdown>
+          <ReleaseNotesMarkdown markdown={release.notes} />
         </div>
         <div className="whats-new__footer">
+          <button type="button" className="whats-new__linkbtn" onClick={onShowAllNotes}>
+            {CHROME_STR.update.allNotes}
+          </button>
           <a
-            href={`https://github.com/nima-karami/conduit/releases/tag/v${release.version}`}
-            {...middleClickProps(() =>
-              openExternal(
-                `https://github.com/nima-karami/conduit/releases/tag/v${release.version}`,
-              ),
-            )}
+            href={releaseTagUrl(release.version)}
+            {...middleClickProps(() => openExternal(releaseTagUrl(release.version)))}
             onClick={(e) => {
               e.preventDefault();
               openExternal(e.currentTarget.href);

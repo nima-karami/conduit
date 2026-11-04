@@ -10,6 +10,7 @@ beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 let root: Root | null = null;
+let showAll = vi.fn();
 afterEach(() => {
   act(() => root?.unmount());
   root = null;
@@ -32,12 +33,14 @@ function render({
     root = createRoot(host);
   }
   const close = vi.fn();
+  showAll = vi.fn();
   act(() =>
     root?.render(
       <WhatsNewDialog
         release={{ version: '2.0.0', notes, currentVersion }}
         ready={ready}
         onClose={close}
+        onShowAllNotes={showAll}
       />,
     ),
   );
@@ -96,6 +99,12 @@ describe("What's new dialog", () => {
     expect(middle.defaultPrevented).toBe(true);
     expect(openExternal).toHaveBeenLastCalledWith('https://example.com/notes');
   });
+  it('All release notes hands off to Settings without closing back to the opener', () => {
+    const close = render();
+    act(() => button('All release notes')?.click());
+    expect(showAll).toHaveBeenCalledTimes(1);
+    expect(close).not.toHaveBeenCalled();
+  });
   it('Later and Escape close and restore focus to the opener', () => {
     vi.useFakeTimers();
     const opener = document.createElement('button');
@@ -113,7 +122,7 @@ describe("What's new dialog", () => {
   });
   it('traps Tab within the dialog', () => {
     render({ currentVersion: '1.0.0', ready: true });
-    const first = document.querySelector<HTMLAnchorElement>('a');
+    const first = button('All release notes');
     act(() => button('Relaunch to update')?.focus());
     act(() =>
       button('Relaunch to update')?.dispatchEvent(
