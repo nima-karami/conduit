@@ -92,7 +92,46 @@ describe('runtimeLayout', () => {
     expect(layout.nodeExe).toBe(exe);
   });
 
-  it('unpackaged hc is the first one on PATH, absolute: an hc terminal never sees our PATH', () => {
+  it('unpackaged Windows prefers vendored hc over a different hc on PATH', () => {
+    const u = fresh();
+    const appPath = join(u, 'repo');
+    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'hc.exe');
+    const bin = join(u, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, process.platform === 'win32' ? 'hc.exe' : 'hc'), '');
+    const layout = runtimeLayout({
+      packaged: false,
+      userData: u,
+      appVersion: '0.52.0',
+      appPath,
+      env: { Path: bin },
+      platform: 'win32',
+      exists: (file) => file === vendorExe,
+    });
+    expect(layout.hcExe).toBe(vendorExe);
+  });
+
+  it('an explicit hc override wins over the Windows vendor and PATH', () => {
+    const u = fresh();
+    const appPath = join(u, 'repo');
+    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'hc.exe');
+    const overrideExe = join(u, 'override', 'hc.exe');
+    const bin = join(u, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, process.platform === 'win32' ? 'hc.exe' : 'hc'), '');
+    const layout = runtimeLayout({
+      packaged: false,
+      userData: u,
+      appVersion: '0.52.0',
+      appPath,
+      env: { CONDUIT_HC_BINARY: overrideExe, Path: bin },
+      platform: 'win32',
+      exists: (file) => file === vendorExe,
+    });
+    expect(layout.hcExe).toBe(overrideExe);
+  });
+
+  it('unpackaged hc falls back to the first PATH executable when the Windows vendor is absent', () => {
     const u = fresh();
     const bin = join(u, 'bin');
     mkdirSync(bin);
@@ -104,7 +143,32 @@ describe('runtimeLayout', () => {
       appVersion: '0.52.0',
       appPath: join(u, 'repo'),
       env: { Path: [join(u, 'missing'), bin].join(delimiter) },
+      platform: 'win32',
+      exists: () => false,
     });
     expect(layout.hcExe).toBe(exe);
   });
+
+  it.each(['linux', 'darwin'] as const)(
+    'unpackaged %s ignores the Windows vendor and uses PATH',
+    (platform) => {
+      const u = fresh();
+      const appPath = join(u, 'repo');
+      const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'hc.exe');
+      const bin = join(u, 'bin');
+      mkdirSync(bin);
+      const exe = join(bin, process.platform === 'win32' ? 'hc.exe' : 'hc');
+      writeFileSync(exe, '');
+      const layout = runtimeLayout({
+        packaged: false,
+        userData: u,
+        appVersion: '0.52.0',
+        appPath,
+        env: { Path: bin },
+        platform,
+        exists: (file) => file === vendorExe,
+      });
+      expect(layout.hcExe).toBe(exe);
+    },
+  );
 });

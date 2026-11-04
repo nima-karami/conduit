@@ -27,8 +27,8 @@ function onPath(env: NodeJS.ProcessEnv, name: 'node' | 'hc'): string | undefined
 }
 
 /**
- * Packaged: what server/runtime-dir/prepare.ts copies out of the install dir (D2). Unpackaged: the
- * repo's own build plus the node and hc on PATH, overridable for dev and e2e.
+ * Packaged uses the copied runtime so installers can replace the install dir (D2). Unpackaged
+ * prefers vendored hc on Windows so a newer global install doesn't cause `core replaced`.
  */
 export function runtimeLayout(i: {
   packaged: boolean;
@@ -36,6 +36,8 @@ export function runtimeLayout(i: {
   appVersion: string;
   appPath: string;
   env: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  exists?: (file: string) => boolean;
 }): RuntimeLayout {
   const runtimeRoot = join(i.userData, 'runtime');
   const hcVersion = HC_PINNED_VERSION;
@@ -51,10 +53,17 @@ export function runtimeLayout(i: {
       coreCwd,
     };
   }
+  const vendorHc = join(i.appPath, 'build', 'vendor', 'hc', 'hc.exe');
   return {
     nodeExe: i.env.CONDUIT_NODE_BINARY ?? onPath(i.env, 'node') ?? 'node',
     superviseJs: join(i.appPath, 'out', 'server', 'supervise.js'),
-    hcExe: i.env.CONDUIT_HC_BINARY ?? onPath(i.env, 'hc') ?? 'hc',
+    hcExe:
+      i.env.CONDUIT_HC_BINARY ??
+      ((i.platform ?? process.platform) === 'win32' && (i.exists ?? existsSync)(vendorHc)
+        ? vendorHc
+        : undefined) ??
+      onPath(i.env, 'hc') ??
+      'hc',
     hcVersion,
     coreCwd,
   };
