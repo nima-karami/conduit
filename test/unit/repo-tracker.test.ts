@@ -251,6 +251,50 @@ describe('createRepoTracker', () => {
     expect(h.openWatches()).toEqual([]);
   });
 
+  it.each([false, true])(
+    'a shown session joining an unshown repo after its show catches up (covered: %s)',
+    async (covered) => {
+      const h = harness();
+      h.tracker.setSessionRepos('A', [info('/w/R', 'home')]);
+      await settleAll();
+      h.visible.add('B');
+      h.tracker.sessionShown(['B']);
+      if (covered) h.tracker.setLiveRoots(['/w']);
+      await settleAll();
+      h.clear();
+      h.tracker.setSessionRepos('B', [info('/w/R', 'attached')]);
+      expect(h.openWatches()).toEqual(covered ? [] : [folderKey('/w/R/.git')]);
+      await flush();
+      expect(h.reads).toEqual([{ root: '/w/R', lines: false }]);
+      expect(h.tracker.snapshotsFor('B')['/w/R'].stale).toBeUndefined();
+      expect(h.updates.at(-1)?.snapshot?.stale).toBeUndefined();
+      expect(h.updates.at(-1)?.sessions).toEqual(['A', 'B']);
+      await flush(20_000);
+      expect(h.reads).toHaveLength(1);
+    },
+  );
+
+  it.each([false, true])(
+    'a shared repo losing its shown member updates staleness and watches (another shown: %s)',
+    async (anotherShown) => {
+      const h = harness();
+      h.visible.add('front');
+      if (anotherShown) h.visible.add('other');
+      h.tracker.setSessionRepos('front', [info('/w/R', 'home')]);
+      h.tracker.setSessionRepos('other', [info('/w/R', 'attached')]);
+      await settleAll();
+      expect(h.tracker.snapshotsFor('other')['/w/R'].stale).toBeUndefined();
+      expect(h.openWatches()).toEqual([folderKey('/w/R/.git')]);
+      h.clear();
+      h.tracker.dropSession('front');
+      expect(h.tracker.snapshotsFor('other')['/w/R'].stale).toBe(anotherShown ? undefined : true);
+      expect(h.openWatches()).toEqual(anotherShown ? [folderKey('/w/R/.git')] : []);
+      await flush(5000);
+      expect(h.reads).toEqual([]);
+      expect(h.interrogations).toEqual([]);
+    },
+  );
+
   it('turn end on a hidden session refreshes once, lines:false, and invalidates its file index', async () => {
     expect(BACKGROUND_PRIORITY).toBe(FOCUS_PRIORITY + 1);
     const h = harness();
@@ -307,6 +351,30 @@ describe('createRepoTracker', () => {
     ]);
   });
 
+  it('four hidden turn ends leave a slot for shown refreshNow before any hidden read resolves', async () => {
+    const h = harness();
+    h.visible.add('front');
+    h.tracker.setSessionRepos('front', [info('/w/front', 'home')]);
+    for (let i = 0; i < 4; i++) h.tracker.setSessionRepos(`bg${i}`, [info(`/w/bg${i}`, 'home')]);
+    await flush(10_000);
+    h.clear();
+    const release = h.gateReads();
+    for (let i = 0; i < 4; i++) h.tracker.sessionTurnEnded(`bg${i}`);
+    await flush(300);
+    h.tracker.refreshNow('/w/front');
+    await flush();
+    expect(h.reads.map((r) => r.root)).toEqual(['/w/bg0', '/w/bg1', '/w/bg2', '/w/front']);
+    release();
+    await flush();
+    expect(h.reads.map((r) => r.root)).toEqual([
+      '/w/bg0',
+      '/w/bg1',
+      '/w/bg2',
+      '/w/front',
+      '/w/bg3',
+    ]);
+  });
+
   it('a turn end for a repo that has a shown session does nothing extra', async () => {
     const h = harness();
     h.visible.add('front');
@@ -346,7 +414,7 @@ describe('createRepoTracker', () => {
     expect(h.reads).toHaveLength(2);
   });
 
-  it('sessionShown marks each unshown repo once; home/attached first, nested by index mtime', async () => {
+  it('sessionShown catches up unshown repos; home/attached first, nested by index mtime', async () => {
     const h = harness();
     h.mtimes.set('/w/n1', 10);
     h.mtimes.set('/w/n2', 30);
@@ -776,7 +844,7 @@ describe('createRepoTracker', () => {
     expect(h.reads.map((r) => r.root)).toEqual(['/w/U', '/w/S']);
   });
 
-  it('snapshotsFor marks pending repos stale; a completed publish never carries stale', async () => {
+  it('pending and hidden snapshots stay stale; completed shown publishes are fresh', async () => {
     const h = harness();
     h.visible.add('s1');
     h.tracker.setSessionRepos('s1', [info('/w/A', 'home')]);

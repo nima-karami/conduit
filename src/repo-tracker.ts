@@ -333,14 +333,16 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
     if (next.length > 0) sessionRepos.set(sessionId, next);
     else sessionRepos.delete(sessionId);
     const added: Array<{ repo: Repo; info: RepoInfo }> = [];
-    const joined: Repo[] = [];
+    const joined: Array<{ repo: Repo; info: RepoInfo }> = [];
+    const touched = new Set<Repo>();
     for (const ri of next) {
       const key = folderKey(ri.root);
       const existing = repos.get(key);
       if (existing) {
         if (!existing.sessions.has(sessionId)) {
           existing.sessions.add(sessionId);
-          joined.push(existing);
+          joined.push({ repo: existing, info: ri });
+          touched.add(existing);
         }
         continue;
       }
@@ -351,9 +353,9 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
         covered: isCovered(key),
         pending: false,
       };
-      if (!isShown(repo)) repo.unshownSince = deps.now();
       repos.set(key, repo);
       added.push({ repo, info: ri });
+      touched.add(repo);
     }
     let removedAny = false;
     for (const key of prevKeys) {
@@ -361,17 +363,22 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
       const repo = repos.get(key);
       if (!repo) continue;
       repo.sessions.delete(sessionId);
+      touched.add(repo);
       if (repo.sessions.size === 0) {
         removeRepo(repo, [sessionId]);
         removedAny = true;
       }
     }
+    for (const repo of touched)
+      if (repo.sessions.size > 0 && !isShown(repo) && repo.unshownSince === undefined)
+        repo.unshownSince = deps.now();
     if (added.length > 0 || removedAny) {
       rebuildPathMap();
-      reconcileWatches();
     }
+    if (touched.size > 0) reconcileWatches();
+    markRanked(joined.filter(({ repo }) => isShown(repo) && repo.unshownSince !== undefined));
     // A session joining an already-read repo would otherwise wait for its next run.
-    for (const repo of joined) {
+    for (const { repo } of joined) {
       const snapshot = snapshotOf(repo);
       if (!snapshot && !repo.info) continue;
       deps.publish({

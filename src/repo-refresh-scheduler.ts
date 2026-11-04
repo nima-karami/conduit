@@ -60,6 +60,7 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
   // By key, not entry: a run outlives forget(), and a re-marked key must still wait for it.
   const running = new Set<string>();
   let inFlight = 0;
+  let backgroundInFlight = 0;
   let enqueueSeq = 0;
   let stopped = false;
 
@@ -102,6 +103,7 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
     if (entries.get(key) !== e || !e.pending) return;
     if (!deps.eligible(key) && !e.background) {
       e.parked = true;
+      e.immediate = false;
       return;
     }
     if (deferCooldown(key, e)) return;
@@ -116,6 +118,9 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
     for (const key of queue) {
       const e = entries.get(key);
       if (!e || e.queued === undefined) continue;
+      // Keep shown work responsive while hidden git calls are in flight.
+      if (e.background && !deps.eligible(key) && backgroundInFlight >= REFRESH_CONCURRENCY - 1)
+        continue;
       if (
         !bestEntry ||
         e.priority < bestEntry.priority ||
@@ -138,6 +143,7 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
       e.queued = undefined;
       if (!deps.eligible(key) && !e.background) {
         e.parked = true;
+        e.immediate = false;
         continue;
       }
       if (deferCooldown(key, e)) continue;
@@ -146,6 +152,7 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
   };
 
   const start = (key: string, e: Entry, kinds: PendingKinds) => {
+    const background = e.background && !deps.eligible(key);
     e.pending = undefined;
     e.background = false;
     e.immediate = false;
@@ -153,8 +160,10 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
     e.lastStart = deps.now();
     running.add(key);
     inFlight++;
+    if (background) backgroundInFlight++;
     const done = () => {
       inFlight--;
+      if (background) backgroundInFlight--;
       running.delete(key);
       const cur = entries.get(key);
       if (!stopped && cur?.pending && !cur.armed && cur.queued === undefined)
@@ -199,11 +208,14 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
     reconsider() {
       if (stopped) return;
       for (const [key, e] of entries) {
-        if (!e.parked || !e.pending || !deps.eligible(key)) continue;
+        if (!e.pending || !deps.eligible(key)) continue;
+        if (e.armed && e.background) disarm(e);
+        else if (!e.parked) continue;
         e.parked = false;
-        // The settle already elapsed while parked; only the cooldown still applies.
+        // Shown demand must not retain the background cooldown (spec §3.4).
         arm(key, e, Math.max(0, e.lastStart + REFRESH_COOLDOWN_MS - deps.now()));
       }
+      drain();
     },
     forget(key) {
       const e = entries.get(key);

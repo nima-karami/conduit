@@ -153,6 +153,85 @@ describe('createRefreshScheduler', () => {
     expect(runs.map((r) => r.at - t0)).toEqual([300, 1100]);
   });
 
+  it('background jobs reserve one slot for shown work until a background run finishes', async () => {
+    const { s, runs, active, peak } = harness({ eligible: (key) => key === 'shown' });
+    for (let i = 0; i < 4; i++) s.mark(`bg${i}`, 'tree', { background: true });
+    await settle(300);
+    expect(runs.map((r) => r.key)).toEqual(['bg0', 'bg1', 'bg2']);
+    s.mark('shown', 'tree', { immediate: true });
+    await settle();
+    expect(runs.map((r) => r.key)).toEqual(['bg0', 'bg1', 'bg2', 'shown']);
+    expect(active()).toBe(4);
+    runs[3].resolve();
+    await settle();
+    expect(runs).toHaveLength(4);
+    runs[0].resolve();
+    await settle();
+    expect(runs.at(-1)?.key).toBe('bg3');
+    expect(peak()).toBe(4);
+  });
+
+  it('reconsider uses the reserved slot for a queued background repo that becomes shown', async () => {
+    const shown = new Set<string>();
+    const { s, runs } = harness({ eligible: (key) => shown.has(key) });
+    for (let i = 0; i < 4; i++) s.mark(`bg${i}`, 'tree', { background: true });
+    await settle(300);
+    expect(runs).toHaveLength(3);
+    shown.add('bg3');
+    s.reconsider();
+    await settle();
+    expect(runs.map((r) => r.key)).toEqual(['bg0', 'bg1', 'bg2', 'bg3']);
+  });
+
+  it('reconsider re-arms an eligible background timer at the normal cooldown', async () => {
+    let visible = false;
+    const { s, runs } = harness({ eligible: () => visible, autoMs: 10 });
+    const t0 = Date.now();
+    s.mark('a', 'tree', { background: true });
+    await settle(400);
+    s.mark('a', 'tree', { background: true });
+    await settle(100);
+    visible = true;
+    s.reconsider();
+    s.reconsider();
+    await settle(599);
+    expect(runs).toHaveLength(1);
+    await settle(1);
+    expect(runs.map((r) => r.at - t0)).toEqual([300, 1100]);
+    await settle(20_000);
+    expect(runs).toHaveLength(2);
+  });
+
+  it.each([false, true])(
+    'parking clears immediate before a later background mark (queued: %s)',
+    async (queued) => {
+      let visible = true;
+      const { s, runs } = harness({ eligible: () => visible });
+      const t0 = Date.now();
+      s.mark('a', 'tree', { immediate: true });
+      await settle();
+      runs[0].resolve();
+      await settle(100);
+      if (queued) {
+        for (let i = 0; i < 4; i++) s.mark(`busy${i}`, 'tree', { immediate: true });
+        await settle();
+      } else visible = false;
+      s.mark('a', 'meta', { immediate: true });
+      await settle();
+      if (queued) {
+        visible = false;
+        runs[1].resolve();
+        await settle();
+      }
+      await settle(100);
+      s.mark('a', 'tree', { background: true });
+      await settle(9799);
+      expect(runs.filter((r) => r.key === 'a')).toHaveLength(1);
+      await settle(1);
+      expect(runs.filter((r) => r.key === 'a').map((r) => r.at - t0)).toEqual([0, 10_000]);
+    },
+  );
+
   it('a background mark joining an armed shown edit waits out the hidden cooldown', async () => {
     let visible = true;
     const { s, runs } = harness({ eligible: () => visible, autoMs: 10 });
