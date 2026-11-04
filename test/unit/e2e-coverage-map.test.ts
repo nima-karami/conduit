@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { Session } from 'node:inspector/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +17,9 @@ import {
 } from '../e2e/ci-coverage-map.mjs';
 import { executedRanges } from '../e2e/coverage-capture.mjs';
 
-const dir = mkdtempSync(join(tmpdir(), 'cov-map-'));
+// esbuild resolves the entry through any alias (macOS /var -> /private/var) but not the outfile, so
+// an aliased dir maps every source outside the project.
+const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'cov-map-')));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 /**
