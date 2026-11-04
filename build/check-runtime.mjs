@@ -14,13 +14,20 @@ export default async function checkRuntime(context) {
     'build/vendor/node/LICENSE',
     `build/vendor/hc/hc${extension}`,
     'build/vendor/hc/LICENSE',
-    'build/vendor/hc/THIRD-PARTY-NOTICES',
     'out/server/main.js',
     'out/server/supervise.js',
     'resources/conduit-mcp/conduit-mcp-shim.cjs',
     'THIRD_PARTY_NOTICES.txt',
   ];
+  // hc's Windows archive ships its notices as a folder, the macOS one as a single file.
+  const notices = 'build/vendor/hc/THIRD-PARTY-NOTICES';
   const missing = [];
+  try {
+    await stat(join(context.packager.projectDir, notices));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    missing.push(notices);
+  }
   for (const file of required) {
     try {
       if (!(await stat(join(context.packager.projectDir, file))).isFile()) missing.push(file);

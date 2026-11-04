@@ -17,7 +17,10 @@ function fixture(platform: 'win32' | 'darwin') {
     'build/vendor/node/LICENSE',
     `build/vendor/hc/hc${extension}`,
     'build/vendor/hc/LICENSE',
-    'build/vendor/hc/THIRD-PARTY-NOTICES',
+    // The shapes hc's real archives have: a folder on Windows, a file on macOS.
+    platform === 'win32'
+      ? 'build/vendor/hc/THIRD-PARTY-NOTICES/herdr-core.txt'
+      : 'build/vendor/hc/THIRD-PARTY-NOTICES',
     'out/server/main.js',
     'out/server/supervise.js',
     'resources/conduit-mcp/conduit-mcp-shim.cjs',
@@ -61,6 +64,12 @@ describe('electron-builder runtime preflight', () => {
     rmSync(binary);
     mkdirSync(binary);
     await expect(checkRuntime(context)).rejects.toThrow(/node build\/fetch-runtime\.mjs/);
+  });
+
+  it.each(['win32', 'darwin'] as const)('rejects missing %s hc notices', async (platform) => {
+    const context = fixture(platform);
+    rmSync(join(projectDir, 'build/vendor/hc/THIRD-PARTY-NOTICES'), { recursive: true });
+    await expect(checkRuntime(context)).rejects.toThrow('build/vendor/hc/THIRD-PARTY-NOTICES');
   });
 
   it('rejects Intel macOS instead of shipping arm64 binaries', async () => {
