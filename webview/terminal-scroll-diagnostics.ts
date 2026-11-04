@@ -109,8 +109,8 @@ export function attachScrollDiagnostics(
   const onDomScroll = () => around('domscroll');
   scroller?.addEventListener('scroll', onDomScroll, { passive: true });
 
-  const onKey = () => around('keydown');
-  container.addEventListener('keydown', onKey, { capture: true });
+  // No keydown recorder: a snapshot, a rAF and a synchronous host-log append per keystroke made
+  // typing stutter under load (docs/runs/2026-11-04-typing-latency).
 
   // Hidden ↔ shown is the trigger condition in the report, so mark the transitions.
   let wasVisible = container.offsetParent !== null;
@@ -128,7 +128,6 @@ export function attachScrollDiagnostics(
   return () => {
     container.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
     scroller?.removeEventListener('scroll', onDomScroll);
-    container.removeEventListener('keydown', onKey, { capture: true } as EventListenerOptions);
     ro.disconnect();
   };
 }
