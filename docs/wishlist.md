@@ -15,6 +15,15 @@ shipped lives in `docs/runs/`, not here.
 
 Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live in.
 
+- **Agents on different machines talk to each other (2026-11-04, user).** Two people (e.g. Nima
+  and James), each running Conduit, authorize their agents to message each other and share
+  information across machines — today's messaging (`send_message`, inbox, handles) is local to
+  one Conduit server. Open questions for the spec: transport (relay vs. direct, NAT), identity
+  and the authorization handshake (who approves, per-agent or per-person, revocation), what can
+  be shared (messages only vs. files/attachments/session context), policy integration with the
+  existing MCP tool policies, and what a remote peer looks like in `list_sessions`. Relates to
+  the tasks+messaging spec awaiting D1–D12.
+
 - **Terminal still reported "stuck" with the agent idle.** v0.27.0/v0.27.1 fixed two real
   mechanisms (see `docs/runs/2026-08-06-terminal-follow/report.md`), but the originally
   reported symptom — scrolled up, agent has *stopped* producing, still cannot reach the
