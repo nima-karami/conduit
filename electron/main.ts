@@ -204,7 +204,7 @@ import {
 } from '../src/window-registry';
 import { currentWindowsPty } from '../src/windows-pty-info';
 import { parseTrustStore, serializeTrustStore } from '../src/workspace-trust';
-import { AppSessionStore, type SessionFolderDiff } from './app-session-store';
+import { AppSessionStore, type SessionDiff } from './app-session-store';
 import { extractOpenTarget, gitRootOf } from './arg-utils';
 import { BoardWatcher } from './board-watcher';
 import {
@@ -1783,6 +1783,7 @@ app.whenReady().then(() => {
     suspect: (sessionId, folder) =>
       serverClient()?.notify('folders.suspect', { sessionId, path: folder }),
     visibleSessionIds: () => gitDemand.visibleIds(),
+    isWindowSuspended: (windowId) => gitDemand.isSuspended(windowId),
     log: (level, msg, data) => log[level]('folders', msg, data),
   });
   folders.onFoldersChanged(() => pruneFileIndexes());
@@ -2267,7 +2268,7 @@ app.whenReady().then(() => {
   };
 
   /** The app's side of every server list: owners, cwd auto-follow, folder runtime, indexes. */
-  const sessionsApplied = (diffs: SessionFolderDiff[]) => {
+  const sessionsApplied = (diffs: SessionDiff[]) => {
     let membership = reconcileSessionOwners(
       sessionOwner,
       store.list().map((s) => s.id),
@@ -2276,6 +2277,11 @@ app.whenReady().then(() => {
       (id) => pendingCreates.isHeld(id),
     );
     for (const d of diffs) {
+      if (d.kind === 'turnEnded') {
+        if (!gitDemand.isVisible(d.sessionId))
+          repoTrackerHost.tracker.sessionTurnEnded(d.sessionId);
+        continue;
+      }
       if (d.kind === 'removed') {
         forgetSession(d.sessionId);
         membership = true;

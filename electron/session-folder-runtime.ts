@@ -9,7 +9,7 @@ import {
 } from '../src/suspect-backoff';
 import type { Session } from '../src/types';
 import { isBroadWatchRoot } from '../src/watch-scope';
-import type { SessionFolderDiff } from './app-session-store';
+import type { SessionDiff } from './app-session-store';
 import type { FsFire, ProjectWatcher } from './project-watcher';
 
 export interface SessionFolderRuntimeDeps {
@@ -26,6 +26,8 @@ export interface SessionFolderRuntimeDeps {
   /** The server owns folder health (W4); a lost or renamed watch is its only signal (C2 folders.suspect). */
   suspect: (sessionId: string, path: string) => void;
   log: (level: 'info' | 'warn', msg: string, data?: Record<string, unknown>) => void;
+  /** The window is minimized; its sessions hold no folder watch (spec 2026-11-03 G1). */
+  isWindowSuspended: (windowId: number) => boolean;
   homeDir?: string;
 }
 
@@ -60,9 +62,10 @@ export class SessionFolderRuntime {
   }
 
   /** Every server list, with the store's diff against the previous one. */
-  applied(diffs: readonly SessionFolderDiff[]): void {
+  applied(diffs: readonly SessionDiff[]): void {
     let removed = false;
     for (const d of diffs) {
+      if (d.kind === 'turnEnded') continue;
       if (d.kind === 'added') this.created(d.sessionId);
       else if (d.kind === 'changed') this.foldersChanged(d.sessionId, d);
       else {

@@ -100,3 +100,16 @@ it('a minimized window keeps its own set: shown, though not visible', () => {
   expect(demand.shownIn(2)).toEqual([]);
   demand.stop();
 });
+
+it('isSuspended reports a minimized window until it is restored or dropped', () => {
+  const demand = createSessionResourceDemand(vi.fn());
+  demand.setVisible(1, ['a']);
+  demand.setSuspended(1, true);
+  expect(demand.isSuspended(1)).toBe(true);
+  demand.setSuspended(1, false);
+  expect(demand.isSuspended(1)).toBe(false);
+  demand.setSuspended(1, true);
+  demand.dropWindow(1);
+  expect(demand.isSuspended(1)).toBe(false);
+  demand.stop();
+});

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionFolderDiff } from '../../electron/app-session-store';
+import type { SessionDiff, SessionFolderDiff } from '../../electron/app-session-store';
 import type { FsFire } from '../../electron/project-watcher';
 import { SessionFolderRuntime } from '../../electron/session-folder-runtime';
 import { SUSPECT_WINDOW_MS } from '../../src/suspect-backoff';
@@ -31,9 +31,11 @@ function harness(homeDir = '/nobody') {
   let fire: (f: FsFire) => void = () => {};
   let suspect: (folders: string[]) => void = () => {};
   let visible: readonly string[] = [];
+  const suspended = new Set<number>();
   const rt = new SessionFolderRuntime({
     store: { get: (id) => sessions.find((s) => s.id === id), list: () => sessions },
     visibleSessionIds: () => visible,
+    isWindowSuspended: (windowId) => suspended.has(windowId),
     scheduleRepoScan: (id) => events.push(`scan:${id}`),
     reconcilePlans: (homes) => events.push(`plans:${homes.join(',')}`),
     broadcastFsChanged: (f) => events.push(`fs:${f.root}|${f.folders.join(',')}`),
@@ -62,6 +64,7 @@ function harness(homeDir = '/nobody') {
     logData,
     armed,
     suspects,
+    suspended,
     fire: (f: FsFire) => fire(f),
     suspect: (f: string[]) => suspect(f),
     setVisible: (ids: readonly string[]) => {
@@ -159,6 +162,19 @@ describe('SessionFolderRuntime (server list)', () => {
     h.events.length = 0;
     h.rt.applied([]);
     expect(h.events).toEqual([]);
+  });
+
+  it('a turnEnded diff is neither a removal nor a folder change', () => {
+    const h = harness();
+    h.sessions[0].roots = ['/x/R'];
+    h.rt.applied([diff('a', 'added'), diff('b', 'added')]);
+    h.events.length = 0;
+    const turnEnded: SessionDiff = { sessionId: 'a', kind: 'turnEnded' };
+    h.rt.applied([turnEnded]);
+    expect(h.events).toEqual([]);
+    h.sessions[0].missingRoots = ['/x/R'];
+    h.rt.applied([]);
+    expect(h.events).toContain('scan:a');
   });
 
   it('onSuspect sends folders.suspect per watched session and folder', () => {

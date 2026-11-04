@@ -38,6 +38,8 @@ export function createSessionResourceDemand(
     isShownInWindow(windowId: number, id: string) {
       return !reported || windows.get(windowId)?.has(id) === true;
     },
+    /** The window is minimized (its own set is kept, but it shows nothing). */
+    isSuspended: (windowId: number): boolean => suspended.has(windowId),
     /** The window's own last-reported set, minimized or not. */
     shownIn: (windowId: number): string[] => [...(windows.get(windowId) ?? [])],
     schedule(id: string) {

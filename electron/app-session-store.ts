@@ -15,6 +15,14 @@ export interface SessionFolderDiff {
   cwdChanged: boolean;
 }
 
+/** A session's reporting program finished a turn, or its process exited (spec 2026-11-03 §3.4). */
+export interface SessionTurnEndedDiff {
+  sessionId: string;
+  kind: 'turnEnded';
+}
+
+export type SessionDiff = SessionFolderDiff | SessionTurnEndedDiff;
+
 /** Shallow value-equality for GitInfo so setRepoGit only emits on a real change. */
 function sameGit(a: GitInfo | undefined, b: GitInfo | undefined): boolean {
   if (a === b) return true;
@@ -65,8 +73,8 @@ export class AppSessionStore {
   private readonly listeners = new Set<() => void>();
 
   /** No onChange: the caller broadcasts once per server list, with the diff in hand. */
-  applyServer(views: SessionView[]): SessionFolderDiff[] {
-    const diffs: SessionFolderDiff[] = [];
+  applyServer(views: SessionView[]): SessionDiff[] {
+    const diffs: SessionDiff[] = [];
     const next = new Map(views.map((v) => [v.id, v]));
     for (const v of views) {
       const prev = this.byId.get(v.id);

@@ -69,6 +69,11 @@ export interface RepoTracker {
   windowFocused(): void;
   /** Explicit Retry (repo:refresh). Root must already be registered (else no-op). */
   refreshNow(root: string): void;
+  /** These sessions just went on screen: catch-up marks for their repos that had no shown session
+   *  (spec 2026-11-03 §3.5). Called after the demand reports them visible, before the full send. */
+  sessionShown(sessionIds: readonly string[]): void;
+  /** A hidden session's reporting program finished a turn, or its process exited (spec §3.4). */
+  sessionTurnEnded(sessionId: string): void;
   /** Keyed by RepoInfo.root. */
   snapshotsFor(sessionId: string): Record<string, RepoSnapshot>;
   /** A repo's file listing (key) or the loose files outside every repo (null) may have changed.
@@ -402,6 +407,8 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
       const repo = repos.get(folderKey(root));
       if (repo) mark(repo, ['meta', 'tree'], { immediate: true });
     },
+    sessionShown() {},
+    sessionTurnEnded() {},
     snapshotsFor(sessionId) {
       const out: Record<string, RepoSnapshot> = {};
       for (const ri of sessionRepos.get(sessionId) ?? []) {
