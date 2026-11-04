@@ -6,7 +6,7 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
-## [0.55.0] — 2026-11-04
+## [0.55.1] — 2026-11-04
 
 ### Added
 - **Drag an open file tab onto the terminal to paste its path**, the same as dragging a file from
