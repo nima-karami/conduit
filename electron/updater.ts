@@ -1,8 +1,11 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { app } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import type { HostToWebview } from '../src/protocol';
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+export const UPDATES_UNAVAILABLE_MSG = "Updates aren't available in this build.";
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
 // The version offered by the most recent `update-available`. electron-updater's
@@ -11,11 +14,33 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
 // read an undefined version mid-download and render "Updating to v?…".
 let pendingVersion: string | undefined;
 
+// An unpacked build (electron-builder --dir) is isPackaged but ships no
+// resources/app-update.yml; electron-updater then ENOENTs on every check.
+export function updatesSupported(resourcesPath: string, exists: (p: string) => boolean): boolean {
+  return exists(path.join(resourcesPath, 'app-update.yml'));
+}
+
+function isSupported(): boolean {
+  return updatesSupported(process.resourcesPath, fs.existsSync);
+}
+
+let lastSend: ((msg: HostToWebview) => void) | null = null;
+
 export function initUpdater(
   send: (msg: HostToWebview) => void,
   onEvent: (event: string, data?: Record<string, unknown>) => void = () => {},
 ): () => void {
   if (!app.isPackaged) return () => {};
+
+  lastSend = send;
+
+  if (!isSupported()) {
+    onEvent('unsupported');
+    send({ type: 'updateStatus', status: 'error', message: UPDATES_UNAVAILABLE_MSG });
+    return () => {
+      lastSend = null;
+    };
+  }
 
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -76,11 +101,16 @@ export function initUpdater(
       clearInterval(intervalId);
       intervalId = null;
     }
+    lastSend = null;
   };
 }
 
 export function checkForUpdate(): void {
   if (!app.isPackaged) return;
+  if (!isSupported()) {
+    lastSend?.({ type: 'updateStatus', status: 'error', message: UPDATES_UNAVAILABLE_MSG });
+    return;
+  }
   void autoUpdater.checkForUpdates().catch(() => {});
 }
 
