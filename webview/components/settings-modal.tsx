@@ -4,6 +4,8 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
+  useRef,
   useState,
 } from 'react';
 import { AGENT_CLIS, type AgentCli } from '../../src/conduit-mcp/install-types';
@@ -110,6 +112,12 @@ export function SettingsModal({
 }) {
   const { settings, update } = useSettings();
   const [tab, setTab] = useState<Tab>(initialTab);
+  // One pane element serves every section, so it would carry the last section's scroll into the next.
+  const paneRef = useRef<HTMLDivElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new section starts at its top
+  useLayoutEffect(() => {
+    if (paneRef.current) paneRef.current.scrollTop = 0;
+  }, [tab]);
   // Spent once the row has taken focus, so switching back to the MCP tab doesn't pull it again.
   const [focusCli, setFocusCli] = useState(initialCli);
   const spendFocusCli = useCallback(() => setFocusCli(undefined), []);
@@ -153,7 +161,7 @@ export function SettingsModal({
           {tab === 'releases' ? (
             <ReleaseNotesPage installedVersion={about?.version} />
           ) : (
-            <div className="settings__pane">
+            <div ref={paneRef} className="settings__pane">
               {tab === 'appearance' && <Appearance settings={settings} update={update} />}
               {tab === 'general' && (
                 <General

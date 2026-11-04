@@ -152,7 +152,10 @@ function VersionRail({
         >
           <span className="relnotes__vername">v{entry.version}</span>
           {entry.version === installedVersion && (
-            <span className="relnotes__tag">{STR.installed}</span>
+            <>
+              <span className="relnotes__dot" aria-hidden="true" />
+              <span className="sr-only">{STR.installed}</span>
+            </>
           )}
           {entry.date && (
             <span className="relnotes__verdate">

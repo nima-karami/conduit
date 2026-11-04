@@ -7762,6 +7762,14 @@ body.gh-resizing {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* The installed version's mark in the rail; the header says it in words. */
+.relnotes__dot {
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--state-on-fg);
+}
 /* The vocabulary's on step — an accent edge over no fill — so it still reads on a selected
    row, whose fill is the accent's own soft tint. */
 .relnotes__tag {
