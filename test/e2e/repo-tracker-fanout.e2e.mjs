@@ -11,7 +11,7 @@
  * Hidden sessions hold no watches and run no git (spec 2026-11-03-demand-driven-resources):
  * while the parent is hidden only the shown worktree's common dir (repoA/.git) is watched, and
  * switching back runs exactly one catch-up status per repo that was unshown (D8) — the worktree,
- * shown throughout via the ticket, runs none. After a renderer reload the worktree catches up once.
+ * shown throughout via the ticket, runs none. After a renderer reload the shown session's repos catch up once.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -286,23 +286,34 @@ runScenario('repo-tracker-fanout', async ({ app, page, log }) => {
       shownFiles,
     );
     // The list above rendered from the host's cache. The reloaded renderer first reports nothing
-    // visible, so the worktree goes unshown and gets one catch-up when the ticket shows (D8, plus
-    // the possible lines upgrade); the still-hidden parent's repos run nothing.
+    // visible, so every fixture repo goes unshown; whichever session comes back on screen catches
+    // up its repos once each (D8, plus the possible lines upgrade) and the hidden one's run nothing.
+    const activeAfterReload = await page.evaluate(
+      () => document.querySelector('.session--active')?.getAttribute('data-sessionid') ?? null,
+    );
+    assert(
+      activeAfterReload === ticketId || activeAfterReload === parentId,
+      `after a reload no fixture session is active (${activeAfterReload})`,
+    );
+    const shownRepos = activeAfterReload === parentId ? [wt, repoA, repoB] : [wt];
     await pause(SWITCH_BACK_WINDOW_MS);
     const afterReload = statusCalls(await readGitProbe(app))
       .slice(statusBeforeReload)
       .filter((c) => fixture.has(c.cwd));
     const reloadAt = (dir) => afterReload.filter((c) => c.cwd === key(dir)).length;
     assert(
-      reloadAt(wt) >= 1 && reloadAt(wt) <= 2 && reloadAt(repoA) === 0 && reloadAt(repoB) === 0,
-      `after a reload: worktree catch-up 1–2, hidden repoA/repoB 0 (worktree ${reloadAt(wt)}, repoA ${reloadAt(repoA)}, repoB ${reloadAt(repoB)})`,
+      [wt, repoA, repoB].every((dir) => {
+        const n = reloadAt(dir);
+        return shownRepos.includes(dir) ? n >= 1 && n <= 2 : n === 0;
+      }),
+      `after a reload with ${activeAfterReload === parentId ? 'the parent' : 'the ticket'} shown: its repos catch up 1–2, others 0 (worktree ${reloadAt(wt)}, repoA ${reloadAt(repoA)}, repoB ${reloadAt(repoB)})`,
     );
     assert(
       (await page.evaluate(() => document.querySelectorAll('.repo-head__stale').length)) === 0,
       'a repo was still marked stale after the reload catch-up window',
     );
     log(
-      'reload → list restored from cache, then one worktree catch-up, none for the hidden parent',
+      `reload → list restored from cache, then one catch-up per repo of the shown ${activeAfterReload === parentId ? 'parent' : 'ticket'}`,
     );
   } finally {
     // shutdownApp, not closeApp: a quit leaves the agents running in the fixture (F4), and their
