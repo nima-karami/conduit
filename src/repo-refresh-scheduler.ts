@@ -7,6 +7,7 @@ import type { DirtyKind } from './repo-path-map';
 export const REFRESH_SETTLE_MS = 300;
 // Not 1000: lag under continuous writes is ~U(0, cooldown) + status time (spec §13).
 export const REFRESH_COOLDOWN_MS = 800;
+export const BACKGROUND_COOLDOWN_MS = 10_000;
 export const REFRESH_CONCURRENCY = 4;
 
 export interface PendingKinds {
@@ -28,6 +29,8 @@ export interface MarkOptions {
   immediate?: boolean;
   /** Lower runs first among ready jobs; default 0. First fill passes its rank. */
   priority?: number;
+  /** Runs while ineligible; while ineligible its cooldown is BACKGROUND_COOLDOWN_MS (spec 2026-11-03-demand-driven-resources §3.4). */
+  background?: boolean;
 }
 
 export interface RefreshScheduler {
@@ -40,6 +43,7 @@ export interface RefreshScheduler {
 
 interface Entry {
   pending: PendingKinds | undefined;
+  background: boolean;
   immediate: boolean;
   priority: number;
   timer: unknown;
@@ -56,6 +60,7 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
   // By key, not entry: a run outlives forget(), and a re-marked key must still wait for it.
   const running = new Set<string>();
   let inFlight = 0;
+  let backgroundInFlight = 0;
   let enqueueSeq = 0;
   let stopped = false;
 
@@ -75,20 +80,33 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
     }, delay);
   };
 
+  const cooldownFor = (key: string, e: Entry) =>
+    e.background && !deps.eligible(key) ? BACKGROUND_COOLDOWN_MS : REFRESH_COOLDOWN_MS;
+
   const armAfterSettle = (key: string, e: Entry) => {
     const now = deps.now();
     const at = e.immediate
       ? now
-      : Math.max(now + REFRESH_SETTLE_MS, e.lastStart + REFRESH_COOLDOWN_MS);
+      : Math.max(now + REFRESH_SETTLE_MS, e.lastStart + cooldownFor(key, e));
     arm(key, e, at - now);
+  };
+
+  // Visibility can change after a timer was armed or a slot was queued (spec §3.4).
+  const deferCooldown = (key: string, e: Entry) => {
+    const remaining = e.immediate ? 0 : e.lastStart + cooldownFor(key, e) - deps.now();
+    if (remaining <= 0) return false;
+    arm(key, e, remaining);
+    return true;
   };
 
   const fire = (key: string, e: Entry) => {
     if (entries.get(key) !== e || !e.pending) return;
-    if (!deps.eligible(key)) {
+    if (!deps.eligible(key) && !e.background) {
       e.parked = true;
+      e.immediate = false;
       return;
     }
+    if (deferCooldown(key, e)) return;
     e.queued = enqueueSeq++;
     queue.add(key);
     drain();
@@ -100,6 +118,9 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
     for (const key of queue) {
       const e = entries.get(key);
       if (!e || e.queued === undefined) continue;
+      // Keep shown work responsive while hidden git calls are in flight.
+      if (e.background && !deps.eligible(key) && backgroundInFlight >= REFRESH_CONCURRENCY - 1)
+        continue;
       if (
         !bestEntry ||
         e.priority < bestEntry.priority ||
@@ -120,23 +141,29 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
       const e = entries.get(key);
       if (!e?.pending) continue;
       e.queued = undefined;
-      if (!deps.eligible(key)) {
+      if (!deps.eligible(key) && !e.background) {
         e.parked = true;
+        e.immediate = false;
         continue;
       }
+      if (deferCooldown(key, e)) continue;
       start(key, e, e.pending);
     }
   };
 
   const start = (key: string, e: Entry, kinds: PendingKinds) => {
+    const background = e.background && !deps.eligible(key);
     e.pending = undefined;
+    e.background = false;
     e.immediate = false;
     e.priority = Number.POSITIVE_INFINITY;
     e.lastStart = deps.now();
     running.add(key);
     inFlight++;
+    if (background) backgroundInFlight++;
     const done = () => {
       inFlight--;
+      if (background) backgroundInFlight--;
       running.delete(key);
       const cur = entries.get(key);
       if (!stopped && cur?.pending && !cur.armed && cur.queued === undefined)
@@ -155,6 +182,7 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
       if (!e) {
         e = {
           pending: undefined,
+          background: false,
           immediate: false,
           priority: Number.POSITIVE_INFINITY,
           timer: undefined,
@@ -168,6 +196,7 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
       e.pending = { meta: false, tree: false, ...e.pending, [kind]: true };
       e.priority = Math.min(e.priority, opts.priority ?? 0);
       if (opts.immediate) e.immediate = true;
+      if (opts.background) e.background = true;
       if (running.has(key) || e.queued !== undefined) return;
       if (e.armed) {
         if (!opts.immediate) return;
@@ -179,11 +208,15 @@ export function createRefreshScheduler(deps: RefreshSchedulerDeps): RefreshSched
     reconsider() {
       if (stopped) return;
       for (const [key, e] of entries) {
-        if (!e.parked || !e.pending || !deps.eligible(key)) continue;
+        if (!e.pending || !deps.eligible(key)) continue;
+        if (e.armed && e.background) disarm(e);
+        else if (!e.parked) continue;
         e.parked = false;
-        // The settle already elapsed while parked; only the cooldown still applies.
-        arm(key, e, Math.max(0, e.lastStart + REFRESH_COOLDOWN_MS - deps.now()));
+        // Shown demand must not retain the background cooldown (spec §3.4), and the show catch-up's
+        // immediate mark must not wait out even the normal one (spec §3.5 freshness target).
+        arm(key, e, e.immediate ? 0 : Math.max(0, e.lastStart + REFRESH_COOLDOWN_MS - deps.now()));
       }
+      drain();
     },
     forget(key) {
       const e = entries.get(key);
