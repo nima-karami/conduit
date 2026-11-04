@@ -24,6 +24,13 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
   existing MCP tool policies, and what a remote peer looks like in `list_sessions`. Relates to
   the tasks+messaging spec awaiting D1–D12.
 
+- **Repo identity under path aliases.** A repo opened through a symlink, junction, subst/mapped
+  drive or macOS `/var`→`/private/var` is keyed lexically, while git reports a linked worktree's
+  gitdir canonically, so `RepoPathMap.classify`/`isCovered` can miss and double-watch `.git`.
+  Root fix: dual-key lexical + real, like `folderKeysOf(folders, realKeys)`
+  (`src/folder-validation.ts`). Realpath-ing git output alone was tried and rejected in review
+  (2026-11-04): it breaks the lexical match for normal aliased repos.
+
 - **Terminal still reported "stuck" with the agent idle.** v0.27.0/v0.27.1 fixed two real
   mechanisms (see `docs/runs/2026-08-06-terminal-follow/report.md`), but the originally
   reported symptom — scrolled up, agent has *stopped* producing, still cannot reach the
