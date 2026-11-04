@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  BACKGROUND_COOLDOWN_MS,
   createRefreshScheduler,
   type PendingKinds,
   REFRESH_CONCURRENCY,
@@ -71,6 +72,121 @@ afterEach(() => {
 describe('createRefreshScheduler', () => {
   it('pins the locked tuning', () => {
     expect([REFRESH_SETTLE_MS, REFRESH_COOLDOWN_MS, REFRESH_CONCURRENCY]).toEqual([300, 800, 4]);
+    expect(BACKGROUND_COOLDOWN_MS).toBe(10_000);
+  });
+
+  it('a background mark runs while ineligible after the settle', async () => {
+    const { s, runs } = harness({ eligible: () => false });
+    const t0 = Date.now();
+    s.mark('a', 'tree', { background: true });
+    await settle(299);
+    expect(runs).toHaveLength(0);
+    await settle(1);
+    expect(runs.map((r) => [r.key, r.at - t0])).toEqual([['a', 300]]);
+  });
+
+  it('a background key runs at most once per 10 s, with one trailing run', async () => {
+    const { s, runs } = harness({ eligible: () => false, autoMs: 10 });
+    const t0 = Date.now();
+    s.mark('a', 'tree', { background: true });
+    await settle(1000);
+    s.mark('a', 'tree', { background: true });
+    await settle(1000);
+    s.mark('a', 'meta', { background: true });
+    await settle(3000);
+    s.mark('a', 'tree', { background: true });
+    await settle(5299);
+    expect(runs).toHaveLength(1);
+    await settle(1);
+    expect(runs.map((r) => [r.at - t0, r.kinds])).toEqual([
+      [300, { meta: false, tree: true }],
+      [10_300, { meta: true, tree: true }],
+    ]);
+    await settle(30_000);
+    expect(runs).toHaveLength(2);
+  });
+
+  it('a background mark during a run makes the trailing run background', async () => {
+    let visible = true;
+    const { s, runs } = harness({ eligible: () => visible });
+    const t0 = Date.now();
+    s.mark('a', 'tree', { immediate: true });
+    await settle();
+    visible = false;
+    s.mark('a', 'meta', { background: true });
+    runs[0].resolve();
+    await settle(9999);
+    expect(runs).toHaveLength(1);
+    await settle(1);
+    expect(runs.map((r) => r.at - t0)).toEqual([0, 10_000]);
+    runs[1].resolve();
+    await settle();
+    s.mark('a', 'tree');
+    await settle(30_000);
+    expect(runs).toHaveLength(2);
+  });
+
+  it('a queued background entry still runs after losing eligibility', async () => {
+    let visible = true;
+    const { s, runs } = harness({ eligible: () => visible });
+    for (let i = 0; i < 4; i++) s.mark(`busy${i}`, 'tree', { immediate: true });
+    await settle();
+    s.mark('a', 'tree', { background: true });
+    await settle(300);
+    visible = false;
+    runs[0].resolve();
+    await settle();
+    expect(runs.map((r) => r.key)).toEqual(['busy0', 'busy1', 'busy2', 'busy3', 'a']);
+  });
+
+  it('a background entry that becomes eligible uses the normal cooldown', async () => {
+    let visible = false;
+    const { s, runs } = harness({ eligible: () => visible, autoMs: 10 });
+    const t0 = Date.now();
+    s.mark('a', 'tree', { background: true });
+    await settle(400);
+    visible = true;
+    s.mark('a', 'tree', { background: true });
+    await settle(699);
+    expect(runs).toHaveLength(1);
+    await settle(1);
+    expect(runs.map((r) => r.at - t0)).toEqual([300, 1100]);
+  });
+
+  it('a background mark joining an armed shown edit waits out the hidden cooldown', async () => {
+    let visible = true;
+    const { s, runs } = harness({ eligible: () => visible, autoMs: 10 });
+    const t0 = Date.now();
+    s.mark('a', 'tree', { immediate: true });
+    await settle(100);
+    s.mark('a', 'tree');
+    await settle(100);
+    visible = false;
+    s.mark('a', 'meta', { background: true });
+    await settle(9799);
+    expect(runs).toHaveLength(1);
+    await settle(1);
+    expect(runs.map((r) => r.at - t0)).toEqual([0, 10_000]);
+  });
+
+  it('a queued background entry rechecks the cooldown after becoming hidden', async () => {
+    let visible = true;
+    const { s, runs } = harness({ eligible: () => visible });
+    const t0 = Date.now();
+    s.mark('a', 'tree', { immediate: true });
+    await settle();
+    runs[0].resolve();
+    await settle(100);
+    for (let i = 0; i < 4; i++) s.mark(`busy${i}`, 'tree', { immediate: true });
+    await settle();
+    s.mark('a', 'tree', { background: true });
+    await settle(700);
+    visible = false;
+    runs[1].resolve();
+    await settle(9199);
+    expect(runs).toHaveLength(5);
+    await settle(1);
+    expect(runs.filter((r) => r.key === 'a').map((r) => r.at - t0)).toEqual([0, 10_000]);
   });
 
   it('the stress lane mirrors the cooldown its status caps derive from', () => {
