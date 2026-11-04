@@ -34,7 +34,7 @@ export async function runServer(
 }> {
   const userData = requireUserData(args);
   const platform = process.platform === 'win32' ? 'win32' : 'posix';
-  const names = instanceNames(userData, platform, tmpdir());
+  const names = instanceNames(userData, process.platform, tmpdir());
   const hcEnv = serverChildEnv(process.env, names);
   const hcBin = hcBinaryOf(argValue(args, '--hc'));
   if (args.includes('--stop-all')) {

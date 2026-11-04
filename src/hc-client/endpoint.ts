@@ -8,6 +8,7 @@ export interface EndpointOptions {
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   uid?: number;
+  runtimeDir?: string;
 }
 
 /**
@@ -44,7 +45,8 @@ export function resolveHcEndpoint(options: EndpointOptions = {}): string {
   const uid = options.uid ?? process.getuid?.();
   const userRuntime = uid === undefined ? undefined : `/run/user/${uid}`;
   const runtime =
-    env.XDG_RUNTIME_DIR || (userRuntime && existsSync(userRuntime) ? userRuntime : undefined);
+    options.runtimeDir ??
+    (env.XDG_RUNTIME_DIR || (userRuntime && existsSync(userRuntime) ? userRuntime : undefined));
   const stateHome = env.XDG_STATE_HOME || posix.join(env.HOME || homedir(), '.local', 'state');
   const directory = runtime
     ? posix.join(runtime, 'herdr-core')

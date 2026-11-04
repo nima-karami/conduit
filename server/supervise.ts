@@ -210,7 +210,7 @@ async function runCli(): Promise<void> {
   const args = process.argv.slice(2);
   const userData = requireUserData(args);
   const supervisorTerminal = process.env.HC_TERMINAL_ID;
-  const names = instanceNames(userData, process.platform === 'win32' ? 'win32' : 'posix', tmpdir());
+  const names = instanceNames(userData, process.platform, tmpdir());
   const env = serverChildEnv(process.env, names);
   const hc = hcBinaryOf(argValue(args, '--hc'));
   const childArgs = [path.join(__dirname, 'main.js'), ...args];

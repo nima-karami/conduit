@@ -36,7 +36,11 @@ const contentSearchWorker = {
 
 const serverShell = {
   ...common,
-  entryPoints: ['server/main.ts', 'server/supervise.ts'],
+  entryPoints: {
+    main: 'server/main.ts',
+    supervise: 'server/supervise.ts',
+    'instance-names': 'src/instance-names.ts',
+  },
   outdir: 'out/server',
   platform: 'node',
   format: 'cjs',

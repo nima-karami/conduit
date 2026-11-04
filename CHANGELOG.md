@@ -6,6 +6,10 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Mac builds can start the background service and run agents.** Long profile paths no longer
+  prevent the service from starting.
+
 ## [0.55.1] — 2026-11-04
 
 ### Added

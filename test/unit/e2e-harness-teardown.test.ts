@@ -22,13 +22,7 @@ describe('teardown name derivation', () => {
     ['win32', WIN_DIR.toUpperCase()],
   ] as const)('mirrors instanceNames (%s %s)', (platform, dir) => {
     const want = instanceNames(dir, platform, '/tmp');
-    expect(td.teardownNames(dir, platform, '/tmp')).toEqual({
-      serverEndpoint: want.serverEndpoint,
-      supervisorName: want.supervisorName,
-      hcConfigHome: want.hcConfigHome,
-      hcStateHome: want.hcStateHome,
-      hcSession: want.hcSession,
-    });
+    expect(td.teardownNames(dir, platform, '/tmp')).toEqual(want);
   });
 
   it('mirrors the protocol constants', () => {
@@ -51,6 +45,27 @@ describe('session guard', () => {
 });
 
 describe('hc env', () => {
+  it('teardown stops the same short Mac endpoint the app starts', () => {
+    const options = { home: '/Users/james', uid: 501, runtimeDir: '' };
+    const profile = '/Users/james/Library/Application Support/conduit';
+    const names = td.teardownNames(profile, 'darwin', '/tmp', options);
+    const app = instanceNames(profile, 'darwin', '/tmp', options);
+    const calls: { env: Record<string, string> }[] = [];
+    td.stopHc({
+      exec: (_bin: string, _args: string[], o: { env: Record<string, string> }) => {
+        calls.push(o);
+        return { status: 0 };
+      },
+      bin: 'hc',
+      names,
+      inheritedEnv: { HC_SOCKET: '/foreign.sock' },
+      log: () => {},
+    });
+    expect(app.hcSocket).toBeDefined();
+    expect(calls).toHaveLength(2);
+    for (const call of calls) expect(call.env.HC_SOCKET).toBe(app.hcSocket);
+  });
+
   it('strips every inherited HC_* and sets our session and XDG dirs', () => {
     const env = td.hcEnv(
       { PATH: '/bin', HC_SESSION: 'x', hc_config_home: '/c', HC_STATE_HOME: '/s', HOME: '/h' },
@@ -62,6 +77,9 @@ describe('hc env', () => {
       HC_SESSION: 'conduit-1',
       XDG_CONFIG_HOME: '/u/hc/config',
       XDG_STATE_HOME: '/u/hc/state',
+      CONDUIT_USER_XDG_CONFIG_HOME: '',
+      CONDUIT_USER_XDG_STATE_HOME: '',
+      CONDUIT_USER_XDG_CAPTURED: '1',
     });
   });
 });

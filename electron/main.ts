@@ -49,7 +49,7 @@ import type {
   ServerMethods,
   SessionMutation,
 } from '../src/contracts/server-protocol';
-import { coreStartEnv, SERVER_EXHAUSTED_FILE } from '../src/contracts/session-identity';
+import { SERVER_EXHAUSTED_FILE } from '../src/contracts/session-identity';
 import { decideCrashRecovery } from '../src/crash-recovery';
 import { ExpiringCache } from '../src/expiring-cache';
 import { indexToSearchHits, walkFilesAsync } from '../src/file-search';
@@ -103,7 +103,7 @@ import {
   takeChunks,
   wantsFullIndex,
 } from '../src/index-streams';
-import { instanceNames } from '../src/instance-names';
+import { coreStartEnv, instanceNames } from '../src/instance-names';
 import { type HostPlatform, resolveServerBinary, type SearchContext } from '../src/lsp-binary';
 import { compileRootMarkers, compileWatchGlobs, LANGUAGE_SERVERS } from '../src/lsp-registry';
 import { resolveServerRoot } from '../src/lsp-root';
@@ -2135,11 +2135,9 @@ app.whenReady().then(() => {
   // client of it. See docs/plans/2026-11-02-three-process-w7-app-client.plan.md.
   const e2e = process.env.CONDUIT_E2E === '1';
   const appLog: AppLog = (level, msg, data) => log[level]('server', msg, data);
-  const names = instanceNames(
-    userData(),
-    process.platform === 'win32' ? 'win32' : 'posix',
-    os.tmpdir(),
-  );
+  const names = instanceNames(userData(), process.platform, os.tmpdir(), {
+    log: (m) => log.warn('hc', m),
+  });
   // M22: isolated XDG for our core; every app hc call goes through this env (our HC_SESSION).
   const hcEnv = coreStartEnv(process.env, names, true);
   const hc = hcClient(names, hcEnv, (m) => log.warn('hc', m));
