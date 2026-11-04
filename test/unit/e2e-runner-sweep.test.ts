@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmdirSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -10,9 +10,7 @@ const runId = '123-abcd1234';
 const own = `conduit-ud-${runId}-`;
 
 it('executes the runner when launched through a directory junction or symlink', () => {
-  const scratchRoot = join(tmpdir(), 'Codex-scratch');
-  mkdirSync(scratchRoot, { recursive: true });
-  const scratchDir = mkdtempSync(join(scratchRoot, 'smoke-entry-'));
+  const scratchDir = mkdtempSync(join(tmpdir(), 'conduit-unit-'));
   const alias = join(scratchDir, 'checkout');
   let linked = false;
   try {

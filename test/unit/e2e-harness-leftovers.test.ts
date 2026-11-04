@@ -1,5 +1,5 @@
 import childProcess from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -141,9 +141,7 @@ describe('profile process query', () => {
 });
 
 it('finishScenario logs an ownHc guard refusal and still exits with the scenario code', async () => {
-  const scratchRoot = join(tmpdir(), 'Codex-scratch');
-  mkdirSync(scratchRoot, { recursive: true });
-  const profile = mkdtempSync(join(scratchRoot, 'own-hc-guard-'));
+  const profile = mkdtempSync(join(tmpdir(), 'conduit-unit-'));
   vi.stubEnv('HC_SESSION', 'unit-runner');
   vi.stubEnv('CONDUIT_HC_BINARY', 'unit-test-hc');
   vi.stubEnv('E2E_ARTIFACT_DIR', '');
@@ -159,8 +157,7 @@ it('finishScenario logs an ownHc guard refusal and still exits with the scenario
       stderr: '',
     });
     syncBuiltinESMExports();
-    const harnessPath = '../e2e/harness.mjs';
-    const harness = await import(harnessPath);
+    const harness = await import('../e2e/harness.mjs');
     vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => logs.push(a.join(' ')));
     vi.spyOn(process, 'exit').mockImplementation((code) => {
       throw new Error(`scenario exited ${code}`);

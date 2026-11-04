@@ -31,6 +31,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveHcBinary } from './hc-binary.mjs';
 import {
   applyQuarantine,
   classify,
@@ -106,6 +107,7 @@ async function sweepScenarioServers(profilesBefore) {
   // Without a snapshot we cannot distinguish this attempt's profiles from cleanly finished ones.
   if (profilesBefore === null) return;
   const root = tmpdir();
+  const hcBinary = resolveHcBinary();
   for (const profile of runProfiles(profilesBefore) ?? []) {
     // A separate process bounds even synchronous hc calls and process-table scans.
     const script = `
@@ -123,6 +125,8 @@ async function sweepScenarioServers(profilesBefore) {
         windowsHide: true,
         env: {
           ...process.env,
+          // The app ran the vendored core; teardown must stop that one, not a global hc on PATH.
+          ...(hcBinary ? { CONDUIT_HC_BINARY: hcBinary } : {}),
           E2E_SWEEP_PROFILE: join(root, profile),
           E2E_SWEEP_ROOT: root,
           E2E_SWEEP_NAME: profile,

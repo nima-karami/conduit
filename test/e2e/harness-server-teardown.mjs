@@ -180,6 +180,8 @@ function executableAndArgs(commandLine) {
 
 /**
  * See docs/runs/2026-11-02-hc-spike/raw/m21.txt:3-5 for the core/holder/ConPTY relationship.
+ * A core whose holders have all exited is invisible here: its profile link is only in env/XDG,
+ * never on a command line.
  * @param {ProcessRow[]} procs
  * @param {string} userDataDir
  * @param {ReturnType<typeof teardownNames>} names

@@ -22,7 +22,7 @@ import {
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { markCoverageIncomplete, startCoverage, stopCoverage } from './coverage-capture.mjs';
 import { attemptDir, screenshotWindows, startCapture, stopTrace } from './failure-artifacts.mjs';
@@ -32,6 +32,7 @@ import {
   teardownNames,
   teardownScenarioServer,
 } from './harness-server-teardown.mjs';
+import { onPath, resolveHcBinary } from './hc-binary.mjs';
 import { acquireE2eLock, setBelowNormal } from './local-guard.mjs';
 import { EXIT_WATCHDOG, profilePrefix, RUN_MARKER, watchdogDelayMs } from './smoke-select.mjs';
 
@@ -415,32 +416,7 @@ export function finishScenario(code) {
   return finishing;
 }
 
-/** `name` as the first PATH entry holding it, the way the app's spawn of a bare name finds it. */
-export function onPath(name) {
-  const exe = process.platform === 'win32' ? `${name}.exe` : name;
-  return (process.env.PATH ?? '')
-    .split(delimiter)
-    .filter(Boolean)
-    .map((dir) => join(dir, exe))
-    .find((candidate) => existsSync(candidate));
-}
-
-/**
- * The hc every side of a scenario uses: the app's core and this harness's teardown/ownHc must be
- * the same binary, and a global hc on PATH can be a different version than the pinned one
- * (src/contracts/hc.ts). Same precedence as the app: override, bundled vendor copy, PATH.
- */
-export function resolveHcBinary() {
-  if (process.env.CONDUIT_HC_BINARY) return process.env.CONDUIT_HC_BINARY;
-  const vendored = join(
-    REPO,
-    'build',
-    'vendor',
-    'hc',
-    process.platform === 'win32' ? 'hc.exe' : 'hc',
-  );
-  return existsSync(vendored) ? vendored : onPath('hc');
-}
+export { onPath, resolveHcBinary };
 
 const RESOLVED_HC = resolveHcBinary();
 if (RESOLVED_HC) process.env.CONDUIT_HC_BINARY = RESOLVED_HC;
