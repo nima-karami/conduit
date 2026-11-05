@@ -6,13 +6,18 @@ import { SettingsModal, type SettingsTab } from '../../webview/components/settin
 import { WhatsNewDialog } from '../../webview/components/whats-new-dialog';
 import { SettingsProvider } from '../../webview/settings';
 
-const changelog = vi.hoisted(() => ({
-  resolve: (_text: string | null) => {},
-  read: () =>
-    new Promise<string | null>((resolve) => {
-      changelog.resolve = resolve;
-    }),
-}));
+const changelog = vi.hoisted(() => {
+  let rejectRead: ((reason?: unknown) => void) | undefined;
+  return {
+    resolve: (_text: string | null) => {},
+    read: () =>
+      new Promise<string | null>((resolve, reject) => {
+        changelog.resolve = resolve;
+        rejectRead = reject;
+      }),
+    reject: () => rejectRead?.(new Error('fail')),
+  };
+});
 vi.mock('../../webview/bridge', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../webview/bridge')>()),
   readLogTail: () => Promise.resolve({ off: true, tail: '' }),
@@ -81,15 +86,26 @@ async function mount(initial: 'whats-new' | { tab: SettingsTab; releaseNotes?: b
 }
 const button = (label: string | RegExp) =>
   [...document.querySelectorAll<HTMLElement>('button')].find((b) =>
-    typeof label === 'string' ? b.textContent === label : label.test(b.textContent ?? ''),
+    typeof label === 'string'
+      ? b.textContent === label || b.getAttribute('aria-label') === label
+      : label.test(b.textContent ?? ''),
   );
 const settings = () => document.querySelector('.modal.settings');
+const backdrop = () => document.querySelector('.modal__backdrop');
 const navLabels = () =>
   [...document.querySelectorAll('.settings__navitem')].map((b) => b.textContent);
+
+function assertFocusInsideSettings() {
+  const active = document.activeElement;
+  expect(active).not.toBe(document.body);
+  expect(settings()?.contains(active)).toBe(true);
+}
 
 async function handOffAndLoad(trigger: HTMLElement | undefined) {
   trigger?.focus();
   await act(async () => trigger?.click());
+  assertFocusInsideSettings();
+  expect(document.activeElement?.getAttribute('aria-label')).toBe('Back');
   expect(document.querySelector('.settings__navitem--active')?.textContent).toBe('About');
   expect(document.querySelector('.about__subtitle')?.textContent).toBe('Release notes');
   await act(async () => changelog.resolve(CHANGELOG));
@@ -117,14 +133,41 @@ describe('Settings About release notes', () => {
     ).toBeGreaterThanOrEqual(2);
   });
 
+  it("What's new → All release notes keeps focus inside Settings while the changelog loads", async () => {
+    await mount('whats-new');
+    await act(async () => button('All release notes')?.click());
+    assertFocusInsideSettings();
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Back');
+    await act(async () => changelog.resolve(CHANGELOG));
+    expect(document.activeElement?.getAttribute('aria-selected')).toBe('true');
+  });
+
   it("What's new → All release notes puts focus on the selected version", async () => {
     await mount('whats-new');
     await handOffAndLoad(button('All release notes'));
   });
 
+  it('About → Release notes keeps focus inside Settings while the changelog loads', async () => {
+    await mount({ tab: 'about' });
+    await act(async () => button('Release notes')?.click());
+    assertFocusInsideSettings();
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Back');
+    await act(async () => changelog.resolve(CHANGELOG));
+    expect(document.activeElement?.getAttribute('aria-selected')).toBe('true');
+  });
+
   it('About → Release notes puts focus on the selected version', async () => {
     await mount({ tab: 'about' });
     await handOffAndLoad(button('Release notes'));
+  });
+
+  it('a failed changelog load keeps focus on Back', async () => {
+    await mount({ tab: 'about' });
+    await act(async () => button('Release notes')?.click());
+    await act(async () => changelog.reject());
+    assertFocusInsideSettings();
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Back');
+    expect(document.querySelector('[data-release-notes="failed"]')).toBeTruthy();
   });
 
   it('Back returns to About and focuses the Release notes button', async () => {
@@ -144,16 +187,38 @@ describe('Settings About release notes', () => {
     });
     expect(settings()).toBeTruthy();
     expect(document.querySelector('.about__subtitle')).toBeNull();
+    expect(document.activeElement?.textContent).toBe('Release notes');
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     });
     expect(settings()).toBeNull();
   });
 
-  it('opening with initialAboutReleaseNotes lands on the sub-page', async () => {
+  it('the settings close control closes Settings from the sub-page', async () => {
+    await mount({ tab: 'about' });
+    await act(async () => button('Release notes')?.click());
+    await act(async () => button('Close settings')?.click());
+    expect(settings()).toBeNull();
+  });
+
+  it('a scrim click closes Settings from the sub-page', async () => {
+    await mount({ tab: 'about' });
+    await act(async () => button('Release notes')?.click());
+    const scrim = backdrop();
+    if (!scrim) throw new Error('no backdrop');
+    await act(async () => {
+      scrim.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(settings()).toBeNull();
+  });
+
+  it('opening with initialAboutReleaseNotes lands on the sub-page with focus inside Settings', async () => {
     await mount({ tab: 'about', releaseNotes: true });
+    assertFocusInsideSettings();
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Back');
     await act(async () => changelog.resolve(CHANGELOG));
     expect(document.querySelector('.about__subtitle')?.textContent).toBe('Release notes');
     expect(document.querySelector('.settings__navitem--active')?.textContent).toBe('About');
+    expect(document.activeElement?.getAttribute('aria-selected')).toBe('true');
   });
 });

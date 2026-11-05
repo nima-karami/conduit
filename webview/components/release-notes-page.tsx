@@ -35,12 +35,10 @@ const KEY_STEP: Record<string, (index: number, last: number) => number> = {
 export function ReleaseNotesPage({
   installedVersion,
   takeFocus = false,
-  onTakeFocusComplete,
 }: {
   installedVersion?: string;
-  /** The caller moved focus here before the changelog arrived; the selected version claims it. */
+  /** Once entries arrive, the selected version claims focus (the opener unmounts). */
   takeFocus?: boolean;
-  onTakeFocusComplete?: () => void;
 }) {
   const [load, setLoad] = useState<Load>({ state: 'loading' });
   const [selected, setSelected] = useState(0);
@@ -95,7 +93,6 @@ export function ReleaseNotesPage({
         selected={selected}
         installedVersion={installedVersion}
         takeFocus={takeFocus}
-        onTakeFocusComplete={onTakeFocusComplete}
         onSelect={setSelected}
       />
       {entries[selected] && (
@@ -113,14 +110,12 @@ function VersionRail({
   selected,
   installedVersion,
   takeFocus,
-  onTakeFocusComplete,
   onSelect,
 }: {
   entries: ChangelogEntry[];
   selected: number;
   installedVersion?: string;
   takeFocus: boolean;
-  onTakeFocusComplete?: () => void;
   onSelect(index: number): void;
 }) {
   const railRef = useRef<HTMLDivElement>(null);
@@ -133,11 +128,7 @@ function VersionRail({
   useLayoutEffect(() => {
     const option = railRef.current?.querySelector<HTMLElement>('[aria-selected="true"]');
     option?.scrollIntoView({ block: 'nearest' });
-    if (takeFocusRef.current) {
-      option?.focus();
-      // Spend handoff after focus commits; a sync setState here re-renders and drops focus in jsdom.
-      queueMicrotask(() => onTakeFocusComplete?.());
-    }
+    if (takeFocusRef.current) option?.focus();
   }, [entries]);
 
   const onKeyDown = useCallback(

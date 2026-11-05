@@ -112,16 +112,6 @@ export function SettingsModal({
   const [aboutReleaseNotes, setAboutReleaseNotes] = useState(initialAboutReleaseNotes);
   const releaseNotesBtnRef = useRef<HTMLButtonElement>(null);
   const pendingReleaseNotesBtnFocusRef = useRef(false);
-  // Arriving from elsewhere (What's new) unmounts the control that had focus, so Settings must
-  // place it; a nav click keeps focus on its own button.
-  const [handoff, setHandoff] = useState(initialAboutReleaseNotes);
-  const handoffSpentRef = useRef(false);
-  const navRef = useRef<HTMLElement>(null);
-  useLayoutEffect(() => {
-    if (handoff && !handoffSpentRef.current && !aboutReleaseNotes) {
-      navRef.current?.querySelector<HTMLElement>('.settings__navitem--active')?.focus();
-    }
-  }, [handoff, aboutReleaseNotes]);
   useLayoutEffect(() => {
     if (!aboutReleaseNotes && pendingReleaseNotesBtnFocusRef.current) {
       pendingReleaseNotesBtnFocusRef.current = false;
@@ -148,51 +138,38 @@ export function SettingsModal({
 
   const leaveReleaseNotes = useCallback(() => {
     setAboutReleaseNotes(false);
-    handoffSpentRef.current = false;
-    setHandoff(false);
     pendingReleaseNotesBtnFocusRef.current = true;
   }, []);
 
-  const dismissSettings = () => {
-    if (aboutReleaseNotes) {
-      leaveReleaseNotes();
-      return;
-    }
-    onClose();
-  };
+  const closeSettings = () => onClose();
 
   const openReleaseNotes = useCallback(() => {
     setTab('about');
-    handoffSpentRef.current = false;
-    setHandoff(true);
     setAboutReleaseNotes(true);
   }, []);
-
-  const spendHandoff = useCallback(() => {
-    handoffSpentRef.current = true;
-  }, []);
   return (
-    <ModalLayer onDismiss={dismissSettings}>
+    <ModalLayer
+      onDismiss={closeSettings}
+      onEscape={aboutReleaseNotes ? leaveReleaseNotes : closeSettings}
+    >
       <div className="modal settings" onClick={(e) => e.stopPropagation()}>
         <div className="modal__head settings__head">
           <div>
             <span className="modal__title">Settings</span>
             <span className="modal__sub">Tune the look and behaviour of Conduit</span>
           </div>
-          <button className="iconbtn" aria-label="Close settings" onClick={dismissSettings}>
+          <button className="iconbtn" aria-label="Close settings" onClick={closeSettings}>
             <IconClose size={15} />
           </button>
         </div>
 
         <div className="settings__body">
-          <nav ref={navRef} className="settings__nav">
+          <nav className="settings__nav">
             {TAB_LABELS.map(({ id, label }) => (
               <button
                 key={id}
                 className={`settings__navitem ${tab === id ? 'settings__navitem--active' : ''}`}
                 onClick={() => {
-                  setHandoff(false);
-                  handoffSpentRef.current = false;
                   setAboutReleaseNotes(false);
                   setTab(id);
                 }}
@@ -202,7 +179,10 @@ export function SettingsModal({
             ))}
           </nav>
 
-          <div ref={paneRef} className="settings__pane">
+          <div
+            ref={paneRef}
+            className={`settings__pane${aboutReleaseNotes ? ' settings__pane--relnotes' : ''}`}
+          >
             {tab === 'appearance' && <Appearance settings={settings} update={update} />}
             {tab === 'general' && (
               <General
@@ -227,12 +207,7 @@ export function SettingsModal({
             {tab === 'skills' && <Skills projectPath={projectPath} />}
             {tab === 'about' &&
               (aboutReleaseNotes ? (
-                <AboutReleaseNotes
-                  installedVersion={about?.version}
-                  takeFocus={handoff && !handoffSpentRef.current}
-                  onHandoffSpent={spendHandoff}
-                  onBack={leaveReleaseNotes}
-                />
+                <AboutReleaseNotes installedVersion={about?.version} onBack={leaveReleaseNotes} />
               ) : (
                 <About
                   about={about}
@@ -1381,10 +1356,11 @@ function UpdatesControl({
   releaseNotesBtnRef: RefObject<HTMLButtonElement | null>;
 }) {
   const s = status?.status;
+  let branch: React.ReactNode;
 
   if (s === 'ready') {
-    return (
-      <div className="about__updatectl">
+    branch = (
+      <>
         <span className="about__updatestatus about__updatestatus--ready">
           <IconRefreshCw size={13} />v{status?.version ?? '?'} ready
         </span>
@@ -1395,52 +1371,38 @@ function UpdatesControl({
         >
           Relaunch
         </button>
-        <button
-          ref={releaseNotesBtnRef}
-          type="button"
-          className="about__checkbtn"
-          onClick={onShowReleaseNotes}
-        >
-          {CHROME_STR.releaseNotes.tab}
+      </>
+    );
+  } else if (s === 'available' || s === 'downloading') {
+    branch = (
+      <span className="about__updatestatus">
+        <IconDownload size={13} />
+        {s === 'downloading' ? `Downloading… ${status?.percent ?? 0}%` : 'Update available'}
+      </span>
+    );
+  } else {
+    const checking = s === 'checking';
+    branch = (
+      <>
+        {s === 'up-to-date' && (
+          <span className="about__updatestatus about__updatestatus--ok">
+            <IconCheck size={13} />
+            Up to date
+          </span>
+        )}
+        {s === 'error' && (
+          <span className="about__updatestatus about__updatestatus--err">Check failed</span>
+        )}
+        <button type="button" className="about__checkbtn" onClick={onCheck} disabled={checking}>
+          {checking ? 'Checking…' : s === 'error' ? 'Retry' : 'Check now'}
         </button>
-      </div>
+      </>
     );
   }
 
-  if (s === 'available' || s === 'downloading') {
-    return (
-      <div className="about__updatectl">
-        <span className="about__updatestatus">
-          <IconDownload size={13} />
-          {s === 'downloading' ? `Downloading… ${status?.percent ?? 0}%` : 'Update available'}
-        </span>
-        <button
-          ref={releaseNotesBtnRef}
-          type="button"
-          className="about__checkbtn"
-          onClick={onShowReleaseNotes}
-        >
-          {CHROME_STR.releaseNotes.tab}
-        </button>
-      </div>
-    );
-  }
-
-  const checking = s === 'checking';
   return (
     <div className="about__updatectl">
-      {s === 'up-to-date' && (
-        <span className="about__updatestatus about__updatestatus--ok">
-          <IconCheck size={13} />
-          Up to date
-        </span>
-      )}
-      {s === 'error' && (
-        <span className="about__updatestatus about__updatestatus--err">Check failed</span>
-      )}
-      <button type="button" className="about__checkbtn" onClick={onCheck} disabled={checking}>
-        {checking ? 'Checking…' : s === 'error' ? 'Retry' : 'Check now'}
-      </button>
+      {branch}
       <button
         ref={releaseNotesBtnRef}
         type="button"
@@ -1455,29 +1417,31 @@ function UpdatesControl({
 
 function AboutReleaseNotes({
   installedVersion,
-  takeFocus,
-  onHandoffSpent,
   onBack,
 }: {
   installedVersion?: string;
-  takeFocus: boolean;
-  onHandoffSpent: () => void;
   onBack: () => void;
 }) {
+  const backRef = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    backRef.current?.focus();
+  }, []);
+
   return (
     <div className="about about--relnotes">
       <div className="about__subhead">
-        <button type="button" className="about__backbtn" onClick={onBack}>
+        <button
+          ref={backRef}
+          type="button"
+          className="iconbtn"
+          aria-label={CHROME_STR.back}
+          onClick={onBack}
+        >
           <IconChevron size={15} className="about__backicon" aria-hidden />
-          <span className="sr-only">Back</span>
         </button>
         <span className="about__subtitle">{CHROME_STR.releaseNotes.tab}</span>
       </div>
-      <ReleaseNotesPage
-        installedVersion={installedVersion}
-        takeFocus={takeFocus}
-        onTakeFocusComplete={onHandoffSpent}
-      />
+      <ReleaseNotesPage installedVersion={installedVersion} takeFocus />
     </div>
   );
 }

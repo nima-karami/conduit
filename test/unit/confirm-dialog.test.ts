@@ -211,6 +211,34 @@ describe('ConfirmDialog', () => {
     await act(async () => click(close));
     expect(order).toEqual(['cancel', 'close']);
   });
+
+  it('Enter with focusClose does not run onConfirm', async () => {
+    const onCancel = vi.fn();
+    const { state, dialog } = await open({
+      hideCancel: true,
+      showClose: true,
+      focusClose: true,
+      onCancel,
+      secondaryLabel: 'Quit and stop all agents',
+      onSecondary: vi.fn(),
+    });
+    const close = dialog.querySelector<HTMLButtonElement>('.iconbtn[aria-label="Close"]');
+    expect(document.activeElement).toBe(close);
+    await act(async () => {
+      close?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      close?.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+    });
+    expect(state.onConfirm).not.toHaveBeenCalled();
+  });
+
+  it('Escape with hideCancel and focusClose calls onCancel', async () => {
+    const onCancel = vi.fn();
+    await open({ hideCancel: true, showClose: true, focusClose: true, onCancel });
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(onCancel).toHaveBeenCalled();
+  });
 });
 
 describe('useFocusTrap', () => {

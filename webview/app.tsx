@@ -1635,7 +1635,6 @@ export function App() {
       openSettings: () => {
         setSettingsTab('general');
         setSettingsFocusCli(undefined);
-        setSettingsAboutReleaseNotes(false);
         setSettingsOpen(true);
       },
       // Global save (K2): route Mod+S — pressed ANYWHERE, including the terminal or
