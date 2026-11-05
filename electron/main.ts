@@ -3183,6 +3183,8 @@ app.whenReady().then(() => {
           if (!root) break;
           try {
             const doc = await readPlan(root, m.slug);
+            planWatcher.recordShown(root, m.slug, 'plan', contentHash(doc.markdown ?? ''));
+            planWatcher.recordShown(root, m.slug, 'comments', commentsFingerprint(doc.comments));
             broadcast({
               type: 'plan:doc',
               root,
@@ -3212,7 +3214,7 @@ app.whenReady().then(() => {
           const root = normalizeRoot(m.root);
           if (!root) break;
           // Before the fingerprint, not inside the write: a slug the write would reject anyway
-          // must not leave a `lastWritten` entry keyed on it, and markdown the loader would
+          // must not leave a fingerprint keyed on it, and markdown the loader would
           // refuse must not reach the disk (electron/conduit-fs.ts planWriteRefusal).
           const refusal = planWriteRefusal(m.slug, m.markdown);
           if (refusal) {
@@ -3263,8 +3265,9 @@ app.whenReady().then(() => {
               origin: 'ack',
             });
             const fingerprint = commentsFingerprint(next);
+            // The ack is what every window now shows, whether or not it needs writing.
+            planWatcher.recordShown(root, m.slug, 'comments', fingerprint);
             if (fingerprint !== commentsFingerprint(current)) {
-              planWatcher.recordWrite(root, m.slug, 'comments', fingerprint);
               await writePlanCommentsFile(root, m.slug, next);
             }
           } catch (err) {
@@ -3682,9 +3685,10 @@ app.whenReady().then(() => {
               });
             };
           // Per-project board at `<root>/.conduit/board.json` (empty if absent/none).
-          sendBoardBundle(replyHere)(readBoardForProject(m.path));
+          const shown = readBoardForProject(m.path);
+          sendBoardBundle(replyHere)(shown);
           // Live watch so an external agent's edits update the open board without reopening.
-          boardWatcher.watch(m.path, sendBoardBundle(broadcast));
+          boardWatcher.watch(m.path, shown, sendBoardBundle(broadcast));
           // Surface any pending board proposal (N1) + watch for it appearing/clearing live.
           sendProposal(replyHere, m.path, 'board');
           armProposalWatch(m.path);

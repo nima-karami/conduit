@@ -2,9 +2,9 @@
 // picking up an EXTERNAL (agent) edit to a plan document or its comments sidecar — `.conduit/` is
 // out of the fs firehose (src/watch-filter.ts), so this is the only path such a change takes to
 // the renderer. A settle emits only content that differs from what is already known for that
-// file — the app's own last write, the file as it was when the watch was armed, or the last
-// emit — because an event is not proof of a change: FSEvents also reports writes made shortly
-// BEFORE the watch was armed.
+// file — what the renderer was last shown (a load, the app's own write, an emit), else the file
+// as it was when the watch was armed — because an event is not proof of a change: FSEvents also
+// reports writes made shortly BEFORE the watch was armed.
 // Unlike notes-watcher.ts this is armed per OPENED PROJECT, so every root has its own watch.
 // See docs/plans/2026-09-19-interactive-plan.plan.md Task 3.3.
 
@@ -69,10 +69,17 @@ function keyOf(root: string, ref: PlanFileRef): string {
   return `${root}|${ref.slug}|${ref.file}`;
 }
 
+interface Known {
+  fingerprint: string;
+  /** The renderer was handed this content (load, the app's own write, an emit). The plan store
+   *  never evicts a document, so this outlives the watch; an arm-time disk read does not. */
+  shown: boolean;
+}
+
 export class PlanWatcher {
   private readonly roots = new Map<string, RootWatch>();
-  /** Per `${root}|${slug}|${file}`: the fingerprint of the content already known for that file. */
-  private readonly known = new Map<string, string>();
+  /** Per `${root}|${slug}|${file}`: the content already known for that file. */
+  private readonly known = new Map<string, Known>();
 
   constructor(
     private readonly onChange: OnPlanChange,
@@ -88,8 +95,10 @@ export class PlanWatcher {
       rescanAll: false,
     };
     this.roots.set(projectRoot, entry);
-    this.recordBaseline(projectRoot);
+    this.recordBaseline(projectRoot, entry);
     this.arm(projectRoot, entry);
+    // What the renderer still shows may have changed while nothing watched; that raised no event.
+    if (entry.touched.size > 0) this.settleSoon(projectRoot, entry);
   }
 
   /**
@@ -109,16 +118,21 @@ export class PlanWatcher {
     if (!entry) return;
     this.roots.delete(projectRoot);
     this.teardown(entry);
-    // Drop this root's fingerprints with it, so a re-open can never suppress a real edit made
-    // while the project was closed.
-    for (const key of [...this.known.keys()]) {
-      if (key.startsWith(`${projectRoot}|`)) this.known.delete(key);
+    // A disk read is stale once nothing watches; what the renderer was shown stays true of it,
+    // and is what a re-watch compares against.
+    for (const [key, k] of [...this.known]) {
+      if (!k.shown && key.startsWith(`${projectRoot}|`)) this.known.delete(key);
     }
   }
 
   /** Fingerprint of the file the app is about to write, so the imminent FS event is its own echo. */
   recordWrite(root: string, slug: string, file: PlanFileKind, fingerprint: string): void {
-    this.known.set(keyOf(root, { slug, file }), fingerprint);
+    this.recordShown(root, slug, file, fingerprint);
+  }
+
+  /** Fingerprint of content the host just sent the renderer for this file. */
+  recordShown(root: string, slug: string, file: PlanFileKind, fingerprint: string): void {
+    this.known.set(keyOf(root, { slug, file }), { fingerprint, shown: true });
   }
 
   stop(): void {
@@ -127,24 +141,31 @@ export class PlanWatcher {
     this.known.clear();
   }
 
-  /** Synchronous so the baseline is in place before any event the new watch delivers settles. */
-  private recordBaseline(root: string): void {
+  /**
+   * Synchronous so the baseline is in place before any event the new watch delivers settles.
+   * A file the renderer was shown keeps that baseline and is queued for a re-read instead.
+   */
+  private recordBaseline(root: string, entry: RootWatch): void {
+    for (const [key, k] of this.known) {
+      if (k.shown && key.startsWith(`${root}|`)) entry.touched.add(key.slice(root.length + 1));
+    }
     let names: string[];
     try {
       names = fs.readdirSync(plansDir(root));
     } catch {
-      return; // no plans dir yet: nothing is known, so whatever appears is news
+      return; // no plans dir yet: nothing is on disk, so whatever appears is news
     }
     for (const name of names) {
       const ref = classify(root, name);
-      if (!ref) continue;
+      if (!ref || this.known.get(keyOf(root, ref))?.shown) continue;
       try {
-        this.known.set(
-          keyOf(root, ref),
-          ref.file === 'plan'
-            ? contentHash(readPlanMarkdownSync(root, ref.slug) ?? '')
-            : commentsFingerprint(readPlanCommentsSync(root, ref.slug)),
-        );
+        this.known.set(keyOf(root, ref), {
+          fingerprint:
+            ref.file === 'plan'
+              ? contentHash(readPlanMarkdownSync(root, ref.slug) ?? '')
+              : commentsFingerprint(readPlanCommentsSync(root, ref.slug)),
+          shown: false,
+        });
       } catch {
         // Unreadable now (oversized, not UTF-8, mid-write): nothing is known, so a later
         // readable version is news.
@@ -169,16 +190,18 @@ export class PlanWatcher {
         entry.touched.add(`${ref.slug}|${ref.file}`);
         return true;
       },
-      // `settle` is async where notes-watcher.ts:35 is synchronous, so its rejection has nowhere
-      // to go — and it calls the host's broadcast closure, whose throw would otherwise surface as
-      // an unhandled rejection in the main process.
-      () => {
-        this.settle(root, entry).catch((err) => {
-          console.warn('[plan-watcher] settle failed for', root, err);
-        });
-      },
+      () => this.settleSoon(root, entry),
       { subdir: PLANS_DIR_NAME },
     );
+  }
+
+  // `settle` is async where notes-watcher.ts:35 is synchronous, so its rejection has nowhere to
+  // go — and it calls the host's broadcast closure, whose throw would otherwise surface as an
+  // unhandled rejection in the main process.
+  private settleSoon(root: string, entry: RootWatch): void {
+    this.settle(root, entry).catch((err) => {
+      console.warn('[plan-watcher] settle failed for', root, err);
+    });
   }
 
   private async settle(root: string, entry: RootWatch): Promise<void> {
@@ -204,10 +227,10 @@ export class PlanWatcher {
       const current =
         ref.file === 'plan' ? contentHash(markdown ?? '') : commentsFingerprint(comments);
       const key = keyOf(root, ref);
-      if (current === this.known.get(key)) continue;
-      // An unwatch during the awaited read must not leave this root's fingerprint behind.
+      if (current === this.known.get(key)?.fingerprint) continue;
+      // Unwatched during the awaited read: the re-watch replays against the unchanged baseline.
       if (this.roots.get(root) !== entry) return;
-      this.known.set(key, current);
+      this.known.set(key, { fingerprint: current, shown: true });
       this.onChange(root, ref.slug, ref.file, markdown, comments);
     }
   }

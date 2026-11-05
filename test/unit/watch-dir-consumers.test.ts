@@ -9,6 +9,7 @@ import {
   BOARD_FILE_NAME,
   conduitDir,
   PLANS_DIR_NAME,
+  readBoardForProject,
   writePlanCommentsFile,
   writePlanFile,
 } from '../../electron/conduit-fs';
@@ -17,6 +18,7 @@ import { PlanWatcher } from '../../electron/plan-watcher';
 import { EXISTS_POLL_MS, watchDirWhilePresent } from '../../electron/watch-dir';
 import type { BoardData } from '../../src/board';
 import { serializeBoardArtifact } from '../../src/conduit-store';
+import { contentHash } from '../../src/review-marks';
 import { board, delay, waitFor } from './watch-test-helpers';
 
 type Listener = (event: string, filename: string | null) => void;
@@ -175,7 +177,7 @@ describe('BoardWatcher when .conduit/ comes back', () => {
     const seen: BoardData[] = [];
     const bw = new BoardWatcher(20);
     try {
-      bw.watch(root, (b) => seen.push(b));
+      bw.watch(root, readBoardForProject(root), (b) => seen.push(b));
       expect(watches).toHaveLength(1);
       removeWatched(watches[0]);
       poll();
@@ -197,7 +199,7 @@ describe('BoardWatcher when .conduit/ comes back', () => {
     const seen: BoardData[] = [];
     const bw = new BoardWatcher(20);
     try {
-      bw.watch(root, (b) => seen.push(b));
+      bw.watch(root, readBoardForProject(root), (b) => seen.push(b));
       expect(watches).toHaveLength(0);
       fs.mkdirSync(conduitDir(root));
       poll();
@@ -221,7 +223,7 @@ describe('BoardWatcher when .conduit/ comes back', () => {
     const seen: BoardData[] = [];
     const bw = new BoardWatcher(20);
     try {
-      bw.watch(root, (b) => seen.push(b));
+      bw.watch(root, readBoardForProject(root), (b) => seen.push(b));
       removeWatched(watches[0]);
       await recreate(dir);
       fs.writeFileSync(path.join(dir, BOARD_FILE_NAME), serializeBoardArtifact(board(cards('r'))));
@@ -239,7 +241,7 @@ describe('BoardWatcher when .conduit/ comes back', () => {
     const seen: BoardData[] = [];
     const bw = new BoardWatcher(20);
     try {
-      bw.watch(root, (b) => seen.push(b));
+      bw.watch(root, readBoardForProject(root), (b) => seen.push(b));
       fs.mkdirSync(conduitDir(root));
       fs.writeFileSync(
         path.join(conduitDir(root), BOARD_FILE_NAME),
@@ -264,7 +266,7 @@ describe('BoardWatcher when .conduit/ comes back', () => {
     const seen: BoardData[] = [];
     const bw = new BoardWatcher(20);
     try {
-      bw.watch(root, (b) => seen.push(b));
+      bw.watch(root, readBoardForProject(root), (b) => seen.push(b));
       expect(watches).toHaveLength(1);
       await delay(100);
       expect(seen).toEqual([]);
@@ -282,7 +284,7 @@ describe('BoardWatcher when .conduit/ comes back', () => {
     const seen: BoardData[] = [];
     const bw = new BoardWatcher(20);
     try {
-      bw.watch(root, (b) => seen.push(b));
+      bw.watch(root, readBoardForProject(root), (b) => seen.push(b));
       watches[0].cb('change', BOARD_FILE_NAME);
       await delay(100);
       expect(seen).toEqual([]);
@@ -292,6 +294,26 @@ describe('BoardWatcher when .conduit/ comes back', () => {
       watches[0].cb('change', BOARD_FILE_NAME);
       await delay(100);
       expect(seen.map((b) => b.cards.map((c) => c.id))).toEqual([['t']]);
+    } finally {
+      bw.stop();
+    }
+  });
+
+  it('an edit between sending the board and arming the watch is delivered', async () => {
+    const root = mkRoot();
+    const file = path.join(conduitDir(root), BOARD_FILE_NAME);
+    fs.mkdirSync(conduitDir(root));
+    fs.writeFileSync(file, serializeBoardArtifact(board(cards('sent'))));
+    const seen: BoardData[] = [];
+    const bw = new BoardWatcher(20);
+    try {
+      const shown = readBoardForProject(root);
+      fs.writeFileSync(file, serializeBoardArtifact(board(cards('raced'))));
+      bw.watch(root, shown, (b) => seen.push(b));
+      await waitFor(() => seen.length > 0, 3000);
+      watches[0].cb('change', BOARD_FILE_NAME);
+      await delay(100);
+      expect(seen.map((b) => b.cards.map((c) => c.id))).toEqual([['raced']]);
     } finally {
       bw.stop();
     }
@@ -341,6 +363,31 @@ describe('PlanWatcher when .conduit/plans/ comes back', () => {
     } finally {
       pw.stop();
       warn.mockRestore();
+    }
+  });
+
+  it('re-watched after an edit made while unwatched: a plan the renderer was shown is re-sent', async () => {
+    const root = mkRoot();
+    const file = path.join(conduitDir(root), PLANS_DIR_NAME, 'open.md');
+    await writePlanFile(root, 'open', '# Shown\n');
+    await writePlanFile(root, 'other', '# Never opened\n');
+    const seen: string[] = [];
+    const pw = new PlanWatcher((_r, slug, _f, markdown) => seen.push(`${slug}|${markdown}`), 20);
+    try {
+      pw.recordShown(root, 'open', 'plan', contentHash('# Shown\n'));
+      pw.watch(root);
+      pw.unwatch(root);
+      pw.watch(root);
+      await delay(100);
+      expect(seen).toEqual([]);
+      pw.unwatch(root);
+      fs.writeFileSync(file, '# Edited while closed\n');
+      pw.watch(root);
+      await waitFor(() => seen.length > 0, 3000);
+      await delay(100);
+      expect(seen).toEqual(['open|# Edited while closed\n']);
+    } finally {
+      pw.stop();
     }
   });
 

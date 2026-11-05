@@ -18,7 +18,7 @@ export type OnExternalChange = (board: BoardData) => void;
  * targets the `.conduit/` directory (robust to the atomic write's rename, which swaps the
  * file's inode) and filters to `board.json`. Events are debounced; on settle the board is
  * re-read and emitted only if it differs from the board the renderer already holds: the
- * app's own last write (so the write→watch→emit→… loop can't form), the board on disk when
+ * app's own last write (so the write→watch→emit→… loop can't form), the board sent when
  * the watch was armed, or the last board emitted. An event is not proof of a change —
  * FSEvents also reports writes made shortly BEFORE the watch was armed.
  */
@@ -33,15 +33,17 @@ export class BoardWatcher {
     this.watch_ = new ConduitDirWatch(debounceMs, 'board-watcher');
   }
 
-  /** Start watching `<projectRoot>/.conduit/board.json`; replaces any prior watch. */
-  watch(projectRoot: string, onChange: OnExternalChange): void {
+  /**
+   * Start watching `<projectRoot>/.conduit/board.json`; replaces any prior watch. `shown` is the
+   * board the caller already sent the renderer. It is the baseline rather than a fresh read: an
+   * edit landing after the caller's read would otherwise become the baseline and never arrive.
+   */
+  watch(projectRoot: string, shown: BoardData, onChange: OnExternalChange): void {
     this.stop();
     if (!projectRoot) return; // no project => nothing to watch
     this.root = projectRoot;
     this.onChange = onChange;
-    // The caller sends the renderer this same on-disk board in the tick it arms the watch.
-    const blob = readBoardBlob(projectRoot);
-    if (blob !== undefined) this.known = fingerprint(readBoardArtifact(blob));
+    this.known = fingerprint(shown);
     this.watch_.start(
       projectRoot,
       // `filename` can be null on some platforms; in that case react to any event.
@@ -49,6 +51,8 @@ export class BoardWatcher {
       (filename) => !filename || filename === BOARD_FILE_NAME,
       () => this.readbackAndEmit(),
     );
+    // An edit between the caller's read and the arm raised no event; anything later will.
+    this.readbackAndEmit();
   }
 
   /**

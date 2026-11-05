@@ -3,7 +3,12 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BoardWatcher } from '../../electron/board-watcher';
-import { conduitDir, conduitPath, writeBoardArtifactFile } from '../../electron/conduit-fs';
+import {
+  conduitDir,
+  conduitPath,
+  readBoardForProject,
+  writeBoardArtifactFile,
+} from '../../electron/conduit-fs';
 import type { BoardData } from '../../src/board';
 import { fingerprint } from '../../src/board-watch';
 import { serializeBoardArtifact } from '../../src/conduit-store';
@@ -19,7 +24,7 @@ async function seedAndWatch(): Promise<BoardData[]> {
     board([{ id: 'a', title: 'A', notes: '', stage: 'wishlist' }]),
   );
   const seen: BoardData[] = [];
-  watcher.watch(root, (b) => seen.push(b));
+  watcher.watch(root, readBoardForProject(root), (b) => seen.push(b));
   return seen;
 }
 
@@ -27,7 +32,7 @@ async function seedAndWatch(): Promise<BoardData[]> {
 function mkdirAndWatch(): BoardData[] {
   fs.mkdirSync(conduitDir(root), { recursive: true });
   const seen: BoardData[] = [];
-  watcher.watch(root, (b) => seen.push(b));
+  watcher.watch(root, readBoardForProject(root), (b) => seen.push(b));
   return seen;
 }
 
@@ -100,14 +105,14 @@ describe('BoardWatcher', () => {
   });
 
   it('is a no-op for a falsy root', () => {
-    expect(() => watcher.watch('', () => {})).not.toThrow();
+    expect(() => watcher.watch('', readBoardForProject(''), () => {})).not.toThrow();
   });
 
   it('does not create a .conduit/ directory just from watching (no read-path side effect)', () => {
     // A project with no .conduit/ yet: opening the board must not litter it with an
     // empty committed directory.
     expect(fs.existsSync(conduitDir(root))).toBe(false);
-    watcher.watch(root, () => {});
+    watcher.watch(root, readBoardForProject(root), () => {});
     expect(fs.existsSync(conduitDir(root))).toBe(false);
   });
 
@@ -119,12 +124,12 @@ describe('BoardWatcher', () => {
       const moved = board([{ id: 'x', title: 'X', notes: '', stage: 'done' }]);
       fs.mkdirSync(conduitDir(a), { recursive: true });
       fs.mkdirSync(conduitDir(b), { recursive: true });
-      watcher.watch(a, () => {});
+      watcher.watch(a, readBoardForProject(a), () => {});
       watcher.recordWrite(fingerprint(moved));
 
       // Switch to B (watch() calls stop(), which must clear the A fingerprint).
       const seen: BoardData[] = [];
-      watcher.watch(b, (board) => seen.push(board));
+      watcher.watch(b, readBoardForProject(b), (board) => seen.push(board));
 
       // An external edit in B whose cards equal A's recorded fingerprint must NOT be
       // suppressed as a self-echo (it was never our write in B).
