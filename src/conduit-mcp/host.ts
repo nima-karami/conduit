@@ -633,6 +633,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     gen: number | undefined,
     seq: number,
     handle: Handle | undefined,
+    r: Runtime,
     onFinal: (outcome: SubmitOutcome) => void | Promise<void>,
   ) => {
     let cancelled = false;
@@ -651,7 +652,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         sameGeneration: gen !== undefined && deps.runtime.get(sessionId)?.generation === gen,
         connectionLive: registry.isLive(sessionId),
         screen: await screenOf(sessionId, adapter, text),
-        inputSinceText: rt(sessionId).inputSeq !== seq,
+        inputSinceText: r.inputSeq !== seq,
       });
     };
 
@@ -668,13 +669,15 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     (async () => {
       const start = now();
       for (;;) {
+        if (cancelled) return;
         const verdict = await recheckForLateEcho();
         if (cancelled) return;
-        const waitedMs = now() - start;
+        let waitedMs = now() - start;
         if (verdict.open) {
           const submitOutcome = await deps.typing.submitEnter(sessionId, {
             beforeEnter: async () => !cancelled && (await recheckForLateEcho()).open,
           });
+          if (cancelled) return;
           if (submitOutcome === 'submitted') {
             deps.log.info('conduit-mcp', 'notice late echo submitted', {
               sessionId,
@@ -684,20 +687,30 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             await finish(submitOutcome);
             return;
           }
-          if (cancelled) return;
+          if (submitOutcome !== 'withheld') {
+            deps.log.info('conduit-mcp', 'notice late echo abandoned', {
+              sessionId,
+              handle,
+              reason: submitOutcome,
+              waitedMs: now() - start,
+            });
+            await finish(submitOutcome);
+            return;
+          }
           const after = await recheckForLateEcho();
-          if (!after.open) {
+          if (cancelled) return;
+          if (!after.open && after.reason !== 'no-echo') {
             deps.log.info('conduit-mcp', 'notice late echo abandoned', {
               sessionId,
               handle,
               reason: after.reason,
               waitedMs: now() - start,
             });
+            await finish('withheld');
+            return;
           }
-          await finish(submitOutcome);
-          return;
-        }
-        if (verdict.reason !== 'no-echo') {
+          waitedMs = now() - start;
+        } else if (verdict.reason !== 'no-echo') {
           deps.log.info('conduit-mcp', 'notice late echo abandoned', {
             sessionId,
             handle,
@@ -717,7 +730,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           return;
         }
         await sleep(LATE_ECHO_POLL_MS);
-        if (cancelled) return;
       }
     })().catch((err: unknown) => {
       deps.log.warn('conduit-mcp', 'notice late echo failed', { sessionId, err: String(err) });
@@ -782,8 +794,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     if (outcome === 'submitted' || outcome === 'withheld') r.lastNoticeAt = now();
     if (outcome === 'withheld' && enterReason === 'no-echo' && typedFor) {
       const adapter = typedFor;
-      watchLateEcho(sessionId, text, adapter, gen, seq, handle, (finalOutcome) => {
+      watchLateEcho(sessionId, text, adapter, gen, seq, handle, r, (finalOutcome) => {
         if (finalOutcome === 'submitted') {
+          r.lastNoticeAt = now();
           if (handle) dispatch({ t: 'notice-submitted', handle });
           confirmSubmit(sessionId, adapter, handle).catch((err: unknown) => {
             deps.log.warn('conduit-mcp', 'notice confirm failed', { sessionId, err: String(err) });

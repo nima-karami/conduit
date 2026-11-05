@@ -214,6 +214,7 @@ describe('createPtyWriter', () => {
   it('submitEnter gates inside the slot', async () => {
     const h = harness();
     let gated = false;
+    const ahead = h.writer.submit('a', 'queued-ahead');
     const p = h.writer.submitEnter('a', {
       beforeEnter: () => {
         gated = true;
@@ -221,9 +222,13 @@ describe('createPtyWriter', () => {
       },
     });
     await h.flush();
+    expect(gated).toBe(false);
+    expect(writes(h.log, 'a')).toEqual(['queued-ahead']);
+    await h.releaseGap();
+    expect(await ahead).toBe('submitted');
     expect(gated).toBe(true);
     expect(await p).toBe('submitted');
-    expect(writes(h.log, 'a')).toEqual(['\r']);
+    expect(writes(h.log, 'a')).toEqual(['queued-ahead', '\r', '\r']);
   });
 
   it('submitEnter with a closed gate → withheld, no \r', async () => {
@@ -250,6 +255,19 @@ describe('createPtyWriter', () => {
   it('submitEnter with no pty → no-pty', async () => {
     const h = harness();
     expect(await h.writer.submitEnter('nope')).toBe('no-pty');
+    expect(h.log).toEqual([]);
+  });
+
+  it('submitEnter hook respawns the session and returns true → generation-changed, no \\r', async () => {
+    const h = harness();
+    const p = h.writer.submitEnter('a', {
+      beforeEnter: () => {
+        h.gens.set('a', 2);
+        return true;
+      },
+    });
+    await h.flush();
+    expect(await p).toBe('generation-changed');
     expect(h.log).toEqual([]);
   });
 
