@@ -54,8 +54,8 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
     ids: [],
     wiring: 'mcp-config-flag',
     screen: {
-      blocking: [/Esc to cancel/, /^\s*❯\s*\d+\.\s/],
-      emptyInput: [/^\s*❯\s*$/],
+      blocking: [/Esc to cancel/, /^\s*[❯>]\s*\d+\.\s/],
+      emptyInput: [/^\s*[❯>]\s*$/],
       placeholder: 'dim',
     },
     e2eOnly: false,

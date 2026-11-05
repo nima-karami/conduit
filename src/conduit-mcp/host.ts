@@ -490,6 +490,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     listedSessions().map(({ session: s, handle }) => ({
       handle,
       sessionId: s.id,
+      openedBy: s.openedBy?.sessionId ?? null,
       label: s.name,
       // A profile session is its definition's agent whatever client name it sends, as for notices.
       agent: (hasDefAdapter(s.id) ? undefined : liveKinds(s.id).at(-1)) ?? handlePrefix(handle),

@@ -155,6 +155,34 @@ describe('screenVerdict drops a measured placeholder', () => {
   });
 });
 
+describe('Claude > prompt (v2.1.318)', () => {
+  it('> empty row is empty-input', () => {
+    expect(screenVerdict(claude.screen, snap(['> '], 0))).toBe('empty-input');
+  });
+
+  it('> with a dim placeholder is empty-input', () => {
+    const row = '> Try "refactor <filepath>"';
+    // Cursor at the start of the faint placeholder text.
+    const styles = '.'.repeat(2) + 'd'.repeat(row.length - 2);
+    expect(screenVerdict(claude.screen, snap([row], 0, { cursorX: 2, styles }))).toBe(
+      'empty-input',
+    );
+  });
+
+  it('> with the same text typed for real is not empty-input', () => {
+    expect(screenVerdict(claude.screen, snap(['> Try "refactor <filepath>"'], 0))).toBe('unknown');
+  });
+
+  it('> numbered menu is blocking', () => {
+    expect(screenVerdict(claude.screen, snap(['> 1. Yes'], 0))).toBe('blocking');
+  });
+
+  it('the previous ❯ prompt rows still pass', () => {
+    expect(screenVerdict(claude.screen, snap(['❯ '], 0))).toBe('empty-input');
+    expect(screenVerdict(claude.screen, snap(['❯ 1. Yes'], 0))).toBe('blocking');
+  });
+});
+
 describe('screenVerdict on the S0 screens', () => {
   it.each([
     ['claude-idle', 'empty-input'],

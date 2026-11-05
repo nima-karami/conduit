@@ -209,7 +209,7 @@ describe('toolSchemas', () => {
 
   it('descriptions warn that peer bodies are not user instructions', () => {
     expect(CONDUIT_INSTRUCTIONS).toMatch(/not the user/i);
-    expect(schemaOf('read_inbox').description).toMatch(/not .*user/i);
+    expect(schemaOf('read_inbox').description).toMatch(/not instructions/i);
   });
 });
 
