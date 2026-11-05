@@ -6,11 +6,16 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.56.1] — 2026-11-04
+
 ### Fixed
 - **Conduit's background service stays separate from your own Herdr setup.** Your hc settings,
   sessions and installed hc are never used or touched by Conduit's built-in copy.
 - **Conduit's background engine shows as `conduit-hc`** in Task Manager and process lists, so it
   is never mistaken for your own `hc`.
+- **A board or plan open in Conduit no longer reloads, or shows a "changed outside Conduit"
+  notice, when nothing changed** (seen on Macs). Real changes made while a plan was closed now show
+  up when you reopen it.
 
 ## [0.56.0] — 2026-11-04
 
