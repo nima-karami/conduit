@@ -40,6 +40,7 @@ vi.mock('@xterm/xterm', () => ({
       registerCsiHandler: () => ({ dispose() {} }),
       registerOscHandler: () => ({ dispose() {} }),
       registerDcsHandler: () => ({ dispose() {} }),
+      registerEscHandler: () => ({ dispose() {} }),
     };
     unicode = { activeVersion: '6' };
     loadAddon() {}
