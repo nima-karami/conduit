@@ -173,6 +173,26 @@ describe('Claude > prompt (v2.1.318)', () => {
     expect(screenVerdict(claude.screen, snap(['> Try "refactor <filepath>"'], 0))).toBe('unknown');
   });
 
+  it('> with a non-dim quoted Try hint and cursor at its start is empty-input', () => {
+    const row = '> Try "fix lint errors"';
+    expect(screenVerdict(claude.screen, snap([row], 0, { cursorX: 2 }))).toBe('empty-input');
+  });
+
+  it('> with the same hint but cursor after it is not empty-input', () => {
+    const row = '> Try "fix lint errors"';
+    expect(screenVerdict(claude.screen, snap([row], 0, { cursorX: row.length }))).toBe('unknown');
+  });
+
+  it('> text that looks like a hint but has extra words is not empty-input', () => {
+    expect(screenVerdict(claude.screen, snap(['> Try "x" and more'], 0, { cursorX: 2 }))).toBe(
+      'unknown',
+    );
+  });
+
+  it('> non-quoted placeholder text is not empty-input', () => {
+    expect(screenVerdict(claude.screen, snap(['> go ahead'], 0, { cursorX: 2 }))).toBe('unknown');
+  });
+
   it('> numbered menu is blocking', () => {
     expect(screenVerdict(claude.screen, snap(['> 1. Yes'], 0))).toBe('blocking');
   });

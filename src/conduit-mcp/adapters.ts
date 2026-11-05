@@ -15,6 +15,12 @@ export interface ScreenPatterns {
   /** How the CLI draws its input placeholder and suggested prompt; absent ⇒ never dropped. */
   placeholder?: 'dim';
   /**
+   * A non-dim placeholder that still means "empty" because it is server-written text the cursor
+   * sits at the start of. The regex must match the text from the cursor to the end of the row
+   * (spec 2026-10-26-conduit-mcp-cursor §3.4).
+   */
+  placeholderText?: RegExp;
+  /**
    * Where the input box starts, for keeping it out of terminal link detection, when `inputRow`
    * doesn't already say (spec 2026-10-27-input-box-links §3).
    */
@@ -57,6 +63,7 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
       blocking: [/Esc to cancel/, /^\s*[❯>]\s*\d+\.\s/],
       emptyInput: [/^\s*[❯>]\s*$/],
       placeholder: 'dim',
+      placeholderText: /^Try "[^"\r\n]*"\s*$/,
     },
     e2eOnly: false,
     brief: { readAccess: 'add-dir' },
