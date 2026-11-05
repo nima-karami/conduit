@@ -10,6 +10,17 @@ afterEach(() => {
 });
 
 describe('hc endpoint resolution', () => {
+  it('uses hc ASCII-only account spelling even when USERNAME contains Unicode', () => {
+    expect(
+      resolveHcEndpoint({
+        platform: 'win32',
+        env: {
+          USERNAME: 'José 李-42',
+          XDG_CONFIG_HOME: '/no-hc-config',
+        },
+      }),
+    ).toBe('\\\\.\\pipe\\herdr-core-Jos42-default.sock');
+  });
   it('resolves the session socket under XDG_RUNTIME_DIR independently of host platform', () => {
     expect(
       resolveHcEndpoint({

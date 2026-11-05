@@ -15,7 +15,7 @@ const fresh = () => {
   userData = mkdtempSync(join(tmpdir(), 'runtime-layout-'));
   return userData;
 };
-const coreCwd = (u: string) => join(u, 'runtime', 'hc', HC_PINNED_VERSION);
+const coreCwd = (u: string) => join(u, 'runtime', 'conduit-hc', HC_PINNED_VERSION);
 
 describe('runtimeLayout', () => {
   it.each(['win32', 'darwin'] as const)(
@@ -55,12 +55,14 @@ describe('runtimeLayout', () => {
       expect(layout.nodeExe).toBe(
         join(u, 'runtime', '0.52.0', platform === 'win32' ? 'node.exe' : 'node'),
       );
-      expect(layout.hcExe).toBe(join(coreCwd(u), platform === 'win32' ? 'hc.exe' : 'hc'));
+      expect(layout.hcExe).toBe(
+        join(coreCwd(u), platform === 'win32' ? 'conduit-hc.exe' : 'conduit-hc'),
+      );
       expect(existsSync(layout.coreCwd)).toBe(true);
     },
   );
 
-  it('unpackaged uses the build output and the env overrides, else PATH', () => {
+  it('unpackaged uses the build output and explicit overrides, never a user hc on PATH', () => {
     const u = fresh();
     const appPath = join(u, 'repo');
     const env = { CONDUIT_NODE_BINARY: '/dev/node', CONDUIT_HC_BINARY: '/dev/hc' };
@@ -80,7 +82,16 @@ describe('runtimeLayout', () => {
       appPath,
       env: {},
     });
-    expect([bare.nodeExe, bare.hcExe]).toEqual(['node', 'hc']);
+    expect(bare.nodeExe).toBe('node');
+    expect(bare.hcExe).toBe(
+      join(
+        appPath,
+        'build',
+        'vendor',
+        'hc',
+        process.platform === 'win32' ? 'conduit-hc.exe' : 'conduit-hc',
+      ),
+    );
     expect(existsSync(bare.coreCwd)).toBe(true);
   });
 
@@ -103,7 +114,7 @@ describe('runtimeLayout', () => {
   it('unpackaged Windows prefers vendored hc over a different hc on PATH', () => {
     const u = fresh();
     const appPath = join(u, 'repo');
-    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'hc.exe');
+    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'conduit-hc.exe');
     const bin = join(u, 'bin');
     mkdirSync(bin);
     writeFileSync(join(bin, 'hc.exe'), '');
@@ -122,7 +133,7 @@ describe('runtimeLayout', () => {
   it('an explicit hc override wins over the Windows vendor and PATH', () => {
     const u = fresh();
     const appPath = join(u, 'repo');
-    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'hc.exe');
+    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'conduit-hc.exe');
     const overrideExe = join(u, 'override', 'hc.exe');
     const bin = join(u, 'bin');
     mkdirSync(bin);
@@ -139,7 +150,7 @@ describe('runtimeLayout', () => {
     expect(layout.hcExe).toBe(overrideExe);
   });
 
-  it('unpackaged hc falls back to the first PATH executable when the Windows vendor is absent', () => {
+  it('a missing Windows vendor never selects the user hc executable on PATH', () => {
     const u = fresh();
     const bin = join(u, 'bin');
     mkdirSync(bin);
@@ -154,13 +165,13 @@ describe('runtimeLayout', () => {
       platform: 'win32',
       exists: existsSync,
     });
-    expect(layout.hcExe).toBe(exe);
+    expect(layout.hcExe).toBe(join(u, 'repo', 'build', 'vendor', 'hc', 'conduit-hc.exe'));
   });
 
-  it('unpackaged Linux ignores an existing vendored hc and uses PATH', () => {
+  it('unpackaged Linux also keeps hc separate from the user executable on PATH', () => {
     const u = fresh();
     const appPath = join(u, 'repo');
-    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'hc');
+    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'conduit-hc');
     const bin = '/bin';
     const exe = join(bin, 'hc');
     const layout = runtimeLayout({
@@ -172,13 +183,13 @@ describe('runtimeLayout', () => {
       platform: 'linux',
       exists: (file) => file === vendorExe || file === exe,
     });
-    expect(layout.hcExe).toBe(exe);
+    expect(layout.hcExe).toBe(vendorExe);
   });
 
   it('unpackaged macOS prefers its vendored hc over PATH', () => {
     const u = fresh();
     const appPath = join(u, 'repo');
-    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'hc');
+    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'conduit-hc');
     const pathExe = join('/bin', 'hc');
     const layout = runtimeLayout({
       packaged: false,

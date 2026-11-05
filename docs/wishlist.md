@@ -15,6 +15,11 @@ shipped lives in `docs/runs/`, not here.
 
 Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live in.
 
+- **Full separation inside Conduit terminals.** A user's own `hc` typed in a Conduit terminal
+  currently reaches Conduit's core: hc copies the core's HC_SESSION into panes after applying
+  their environment (`hc` 0.1.16, `api/run.rs:221–224`). Options validated 2026-11-04: run the
+  core session-less, or an upstream fix.
+
 - **Agents on different machines talk to each other (2026-11-04, user).** Two people (e.g. Nima
   and James), each running Conduit, authorize their agents to message each other and share
   information across machines — today's messaging (`send_message`, inbox, handles) is local to

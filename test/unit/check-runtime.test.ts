@@ -15,7 +15,7 @@ function fixture(platform: 'win32' | 'darwin') {
   const files = [
     `build/vendor/node/node${extension}`,
     'build/vendor/node/LICENSE',
-    `build/vendor/hc/hc${extension}`,
+    `build/vendor/hc/conduit-hc${extension}`,
     'build/vendor/hc/LICENSE',
     // The shapes hc's real archives have: a folder on Windows, a file on macOS.
     platform === 'win32'

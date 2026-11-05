@@ -21,16 +21,16 @@ describe('resolveHcBinary', () => {
   it('prefers the vendored hc over PATH when it exists', () => {
     expect(
       resolveHcBinary({ env: { PATH: 'bin' }, platform: 'win32', exists: () => true, repo }),
-    ).toBe(vendored('hc.exe'));
+    ).toBe(vendored('conduit-hc.exe'));
   });
 
   it('uses the platform executable name for the vendored copy', () => {
     expect(resolveHcBinary({ env: {}, platform: 'linux', exists: () => true, repo })).toBe(
-      vendored('hc'),
+      vendored('conduit-hc'),
     );
   });
 
-  it('falls back to the first PATH entry holding hc', () => {
+  it('never falls back to a user hc on PATH', () => {
     const second = pathHc('b', 'hc.exe');
     const found = resolveHcBinary({
       env: { PATH: ['a', 'b', 'c'].join(process.platform === 'win32' ? ';' : ':') },
@@ -38,7 +38,7 @@ describe('resolveHcBinary', () => {
       exists: (p) => p === second || p === pathHc('c', 'hc.exe'),
       repo,
     });
-    expect(found).toBe(second);
+    expect(found).toBeUndefined();
   });
 
   it('is undefined when nothing provides hc', () => {

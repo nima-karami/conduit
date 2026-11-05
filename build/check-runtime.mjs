@@ -12,7 +12,7 @@ export default async function checkRuntime(context) {
   const required = [
     `build/vendor/node/node${extension}`,
     'build/vendor/node/LICENSE',
-    `build/vendor/hc/hc${extension}`,
+    `build/vendor/hc/conduit-hc${extension}`,
     'build/vendor/hc/LICENSE',
     'out/server/main.js',
     'out/server/supervise.js',

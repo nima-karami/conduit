@@ -126,7 +126,7 @@ async function run() {
     CONDUIT_USER_XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? '',
     CONDUIT_USER_XDG_CAPTURED: '1',
   };
-  const coreCwd = join(userData, 'runtime', 'hc', HC_VERSION);
+  const coreCwd = join(userData, 'runtime', 'conduit-hc', HC_VERSION);
   mkdirSync(coreCwd, { recursive: true });
   const hcOptions = { env, windowsHide: true, timeout: 20_000, cwd: coreCwd };
   const startSupervisor = () =>

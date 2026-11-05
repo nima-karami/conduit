@@ -33,8 +33,7 @@ function onPath(
 }
 
 /**
- * Packaged uses the copied runtime so installers can replace the install dir (D2). Unpackaged
- * prefers vendored hc on supported platforms so a newer global install doesn't cause `core replaced`.
+ * See D2/D24: a missing Conduit hc must never select the user's installed executable.
  */
 export function runtimeLayout(i: {
   packaged: boolean;
@@ -67,13 +66,7 @@ export function runtimeLayout(i: {
   return {
     nodeExe: i.env.CONDUIT_NODE_BINARY ?? onPath(i.env, 'node', platform, exists) ?? 'node',
     superviseJs: join(i.appPath, 'out', 'server', 'supervise.js'),
-    hcExe:
-      i.env.CONDUIT_HC_BINARY ??
-      ((platform === 'win32' || platform === 'darwin') && exists(vendorHc)
-        ? vendorHc
-        : undefined) ??
-      onPath(i.env, 'hc', platform, exists) ??
-      'hc',
+    hcExe: i.env.CONDUIT_HC_BINARY ?? vendorHc,
     hcVersion,
     coreCwd,
   };

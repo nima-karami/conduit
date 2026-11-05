@@ -1615,7 +1615,7 @@ export function ownHc(userDataDir, args, { timeout = 30000 } = {}) {
     CONDUIT_USER_XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? '',
     CONDUIT_USER_XDG_CAPTURED: '1',
   };
-  const cwd = join(userDataDir, 'runtime', 'hc', HC_PINNED);
+  const cwd = join(userDataDir, 'runtime', 'conduit-hc', HC_PINNED);
   mkdirSync(cwd, { recursive: true });
   require(join(REPO, 'out', 'server', 'instance-names.js')).ensureHcSocketDirectory(names);
   const r = spawnSync(resolveHcBinary() || 'hc', args, {

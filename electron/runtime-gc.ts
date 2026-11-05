@@ -63,6 +63,7 @@ export async function collectRuntimeGarbage(
   };
   await sweep(runtimeRoot, keep.appVersion);
   await sweep(join(runtimeRoot, 'hc'), keep.hcVersion);
+  await sweep(join(runtimeRoot, 'conduit-hc'), keep.hcVersion);
   return { removed, inUse };
 }
 

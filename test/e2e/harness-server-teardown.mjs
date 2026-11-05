@@ -4,9 +4,8 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { connect as netConnect } from 'node:net';
 
-const { instanceNames, coreStartEnv } = createRequire(import.meta.url)(
-  '../../out/server/instance-names.js',
-);
+const require = createRequire(import.meta.url);
+const runtimeIdentity = () => require('../../out/server/instance-names.js');
 
 // Mirror STOP_ALL_*_TIMEOUT_MS and SERVER_PROTOCOL_GENERATION in src/contracts/server-protocol.ts
 // (pinned by the unit test).
@@ -18,7 +17,7 @@ const BACKSLASH = String.fromCharCode(92);
 const HC_CALL_TIMEOUT_MS = 20_000;
 
 export function teardownNames(userData, platform, tmpdir, options) {
-  return instanceNames(userData, platform, tmpdir, options);
+  return runtimeIdentity().instanceNames(userData, platform, tmpdir, options);
 }
 
 /**
@@ -36,7 +35,8 @@ export function assertOwnSession(hcSession, inheritedSession) {
 
 /** Every inherited HC_* dropped (hc would otherwise address the runner's core), then our session and the XDG dirs the app starts its core with. */
 export function hcEnv(inherited, names) {
-  return coreStartEnv(inherited, names, true);
+  if (names.hcEndpointError) throw new Error(names.hcEndpointError);
+  return runtimeIdentity().coreStartEnv(inherited, names);
 }
 
 export function hcCalls(supervisorName) {

@@ -52,10 +52,12 @@ jobs:
         run: |
           runtime="dist/mac-arm64/Conduit.app/Contents/Resources/runtime"
           test -x "$runtime/node"
-          test -x "$runtime/hc/hc"
+          test -x "$runtime/hc/conduit-hc"
+          test ! -e "$runtime/hc/hc"
+          test ! -e "$runtime/hc/herdr-core"
           test -f "$runtime/server/supervise.js"
           "$runtime/node" --version
-          "$runtime/hc/hc" --version
+          "$runtime/hc/conduit-hc" --version
 
       - uses: actions/upload-artifact@v4
         with:

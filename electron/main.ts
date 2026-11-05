@@ -2151,7 +2151,7 @@ app.whenReady().then(() => {
     log: (m) => log.warn('hc', m),
   });
   // M22: isolated XDG for our core; every app hc call goes through this env (our HC_SESSION).
-  const hcEnv = coreStartEnv(process.env, names, true);
+  const hcEnv = coreStartEnv(process.env, names);
   const hc = hcClient(names, hcEnv, (m) => log.warn('hc', m));
   // Before the lifecycle: the start rule and its F6/F9 waits read this one subscription.
   const hcEvents = createHcEvents(hc, { 'conduit.instance': names.instance }, appLog);
