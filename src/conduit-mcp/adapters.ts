@@ -15,9 +15,9 @@ export interface ScreenPatterns {
   /** How the CLI draws its input placeholder and suggested prompt; absent ⇒ never dropped. */
   placeholder?: 'dim';
   /**
-   * A non-dim placeholder that still means "empty" because it is server-written text the cursor
-   * sits at the start of. The regex must match the text from the cursor to the end of the row
-   * (spec 2026-10-26-conduit-mcp-cursor §3.4).
+   * Hint text the CLI draws without dim (Claude's startup `Try "…"`), dropped only when the cursor
+   * sits at its start: nobody types that exact quoted form and then homes the cursor to it.
+   * Matched against the text from the cursor to the end of the row.
    */
   placeholderText?: RegExp;
   /**
