@@ -52,6 +52,8 @@ import {
   evaluateGate,
   type GateVerdict,
   IDLE_QUIET_MS,
+  LATE_ECHO_POLL_MS,
+  LATE_ECHO_WAIT_MS,
 } from './notice-gate';
 import { type AttentionRaise, createNotifier, type Notifier } from './notifier';
 import { type ScreenSnapshot, screenVerdict } from './screen-verdict';
@@ -77,6 +79,7 @@ import {
   UNTYPED_ENTER_KEEP_MS,
 } from './typed-command';
 import {
+  type GateClosedReason,
   type Handle,
   HUMAN_HANDLE,
   type McpAttentionItem,
@@ -322,6 +325,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   let retentionTimer: ReturnType<typeof setInterval> | undefined;
   let broadcastTimer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
+  const lateEchoWatchers = new Map<string, () => void>();
 
   const rt = (sessionId: string): Runtime => {
     let r = runtime.get(sessionId);
@@ -520,6 +524,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   // ---- gate -------------------------------------------------------------------------------
 
+  const cancelLateEcho = (sessionId: string) => {
+    const cancel = lateEchoWatchers.get(sessionId);
+    if (!cancel) return;
+    cancel();
+    if (lateEchoWatchers.get(sessionId) === cancel) lateEchoWatchers.delete(sessionId);
+  };
+
   const screenOf = async (
     sessionId: string,
     adapter: McpAdapter,
@@ -615,13 +626,119 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     }
   };
 
-  const submitNotice = async (sessionId: string, text: string): Promise<SubmitOutcome> => {
+  const watchLateEcho = (
+    sessionId: string,
+    text: string,
+    adapter: McpAdapter,
+    gen: number | undefined,
+    seq: number,
+    handle: Handle | undefined,
+    onFinal: (outcome: SubmitOutcome) => void | Promise<void>,
+  ) => {
+    let cancelled = false;
+    const cancel = () => {
+      cancelled = true;
+    };
+    lateEchoWatchers.set(sessionId, cancel);
+
+    const recheckForLateEcho = async (): Promise<GateVerdict> => {
+      const session = deps.sessions.get(sessionId);
+      if (!session) return { open: false, reason: 'not-running' };
+      return evaluateEnterRecheck({
+        messagingOn: deps.domain.messagingOn(),
+        paused: session.mcpNoticesPaused === true,
+        running: deps.runtime.get(sessionId)?.state === 'live',
+        sameGeneration: gen !== undefined && deps.runtime.get(sessionId)?.generation === gen,
+        connectionLive: registry.isLive(sessionId),
+        screen: await screenOf(sessionId, adapter, text),
+        inputSinceText: rt(sessionId).inputSeq !== seq,
+      });
+    };
+
+    const finish = (outcome: SubmitOutcome) => {
+      if (lateEchoWatchers.get(sessionId) === cancel) lateEchoWatchers.delete(sessionId);
+      return Promise.resolve(onFinal(outcome)).catch((err: unknown) => {
+        deps.log.warn('conduit-mcp', 'notice late echo outcome callback failed', {
+          sessionId,
+          err: String(err),
+        });
+      });
+    };
+
+    (async () => {
+      const start = now();
+      for (;;) {
+        const verdict = await recheckForLateEcho();
+        if (cancelled) return;
+        const waitedMs = now() - start;
+        if (verdict.open) {
+          const submitOutcome = await deps.typing.submitEnter(sessionId, {
+            beforeEnter: async () => !cancelled && (await recheckForLateEcho()).open,
+          });
+          if (submitOutcome === 'submitted') {
+            deps.log.info('conduit-mcp', 'notice late echo submitted', {
+              sessionId,
+              handle,
+              waitedMs,
+            });
+            await finish(submitOutcome);
+            return;
+          }
+          if (cancelled) return;
+          const after = await recheckForLateEcho();
+          if (!after.open) {
+            deps.log.info('conduit-mcp', 'notice late echo abandoned', {
+              sessionId,
+              handle,
+              reason: after.reason,
+              waitedMs: now() - start,
+            });
+          }
+          await finish(submitOutcome);
+          return;
+        }
+        if (verdict.reason !== 'no-echo') {
+          deps.log.info('conduit-mcp', 'notice late echo abandoned', {
+            sessionId,
+            handle,
+            reason: verdict.reason,
+            waitedMs,
+          });
+          await finish('withheld');
+          return;
+        }
+        if (waitedMs >= LATE_ECHO_WAIT_MS) {
+          deps.log.info('conduit-mcp', 'notice late echo expired', {
+            sessionId,
+            handle,
+            waitedMs,
+          });
+          await finish('withheld');
+          return;
+        }
+        await sleep(LATE_ECHO_POLL_MS);
+        if (cancelled) return;
+      }
+    })().catch((err: unknown) => {
+      deps.log.warn('conduit-mcp', 'notice late echo failed', { sessionId, err: String(err) });
+      void finish('withheld');
+    });
+  };
+
+  const submitNotice = async (
+    sessionId: string,
+    text: string,
+    onOutcome?: (outcome: SubmitOutcome) => void | Promise<void>,
+  ): Promise<SubmitOutcome> => {
+    cancelLateEcho(sessionId);
+
     const r = rt(sessionId);
     const handle = handleOf(sessionId);
     let gen: number | undefined;
     let seq = 0;
     /** The adapter whose screen admitted the text; its echo decides the Enter, whoever connects since. */
     let typedFor: McpAdapter | null = null;
+    let enterReason: GateClosedReason | undefined;
     const recheck = async (adapter: McpAdapter): Promise<GateVerdict> => {
       const session = deps.sessions.get(sessionId);
       if (!session) return { open: false, reason: 'not-running' };
@@ -651,6 +768,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           now,
           sleep,
         });
+        enterReason = verdict.open ? undefined : verdict.reason;
         deps.log.info('conduit-mcp', 'notice echo', {
           sessionId,
           handle,
@@ -662,12 +780,26 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     });
     deps.log.info('conduit-mcp', 'notice result', { sessionId, handle, outcome });
     if (outcome === 'submitted' || outcome === 'withheld') r.lastNoticeAt = now();
+    if (outcome === 'withheld' && enterReason === 'no-echo' && typedFor) {
+      const adapter = typedFor;
+      watchLateEcho(sessionId, text, adapter, gen, seq, handle, (finalOutcome) => {
+        if (finalOutcome === 'submitted') {
+          if (handle) dispatch({ t: 'notice-submitted', handle });
+          confirmSubmit(sessionId, adapter, handle).catch((err: unknown) => {
+            deps.log.warn('conduit-mcp', 'notice confirm failed', { sessionId, err: String(err) });
+          });
+        }
+        return onOutcome?.(finalOutcome);
+      });
+      return outcome;
+    }
     if (outcome === 'submitted' && handle) dispatch({ t: 'notice-submitted', handle });
     if (outcome === 'submitted' && typedFor) {
       confirmSubmit(sessionId, typedFor, handle).catch((err: unknown) => {
         deps.log.warn('conduit-mcp', 'notice confirm failed', { sessionId, err: String(err) });
       });
     }
+    await onOutcome?.(outcome);
     return outcome;
   };
 
@@ -1330,6 +1462,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     } else if (event.type === 'exit') {
       // A late exit of an older generation would revoke the live launch's token and binding.
       if (!r || event.generation !== r.launch) return;
+      cancelLateEcho(sessionId);
       deps.tokens.revoke({ sessionId }).catch((err: unknown) => {
         deps.log.warn('conduit-mcp', 'token not revoked', { sessionId, err: String(err) });
       });
@@ -1513,6 +1646,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       drainConnectionsOf(sessionId);
       screens.release(sessionId);
       notifier?.forget(sessionId);
+      cancelLateEcho(sessionId);
       deps.typing.forget(sessionId);
       runtime.delete(sessionId);
       await revoked;
@@ -1717,6 +1851,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       if (retentionTimer) clearInterval(retentionTimer);
       if (broadcastTimer) clearTimeout(broadcastTimer);
       broadcastTimer = undefined;
+      for (const sessionId of lateEchoWatchers.keys()) cancelLateEcho(sessionId);
       flow.dispose();
       for (const c of conns.values()) c.close();
       await endpoint?.close();

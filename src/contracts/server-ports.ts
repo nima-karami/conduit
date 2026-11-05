@@ -177,6 +177,7 @@ export interface TypingPort {
   submit: PtyWriter['submit'];
   /** One raw write, not queued behind a submit's gap, as today. */
   write(sessionId: string, data: string, opts?: TypingWriteOptions): boolean;
+  submitEnter: PtyWriter['submitEnter'];
   forget: PtyWriter['forget'];
 }
 
