@@ -1,6 +1,7 @@
 import {
   Fragment,
   type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
   useCallback,
   useEffect,
   useId,
@@ -48,7 +49,7 @@ import {
 } from '../bridge';
 import { CHROME_STR } from '../chrome-strings';
 import { MCP_STR } from '../conduit-mcp-strings';
-import { IconCheck, IconClose, IconDownload, IconRefreshCw } from '../icons';
+import { IconCheck, IconChevron, IconClose, IconDownload, IconRefreshCw } from '../icons';
 import { useSettings } from '../settings';
 import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
 import { MONO_FONTS, THEMES, type ThemeDef, UI_FONTS } from '../themes';
@@ -64,14 +65,7 @@ import { ShortcutsTab } from './shortcuts-tab';
 import { ToolPolicyEditor } from './tool-policy-editor';
 import type { UpdateStatus } from './update-card';
 
-export type SettingsTab =
-  | 'general'
-  | 'mcp'
-  | 'appearance'
-  | 'shortcuts'
-  | 'skills'
-  | 'about'
-  | 'releases';
+export type SettingsTab = 'general' | 'mcp' | 'appearance' | 'shortcuts' | 'skills' | 'about';
 type Tab = SettingsTab;
 
 const BG_OPTS: { id: Background; label: string }[] = [
@@ -86,6 +80,7 @@ const BG_OPTS: { id: Background; label: string }[] = [
 export function SettingsModal({
   agents,
   initialTab = 'general',
+  initialAboutReleaseNotes = false,
   about,
   projectPath = null,
   initialCli,
@@ -98,6 +93,8 @@ export function SettingsModal({
 }: {
   agents: AgentDefinition[];
   initialTab?: Tab;
+  /** Opens About with the release-notes sub-page (What's new, status bar, About button). */
+  initialAboutReleaseNotes?: boolean;
   about?: AboutInfo;
   projectPath?: string | null;
   /** Opens the MCP tab at that CLI's row (banner, card menu). */
@@ -111,15 +108,26 @@ export function SettingsModal({
   updateStatus?: UpdateStatus | null;
 }) {
   const { settings, update } = useSettings();
-  const [tab, setTab] = useState<Tab>(initialTab);
-  // Arriving from elsewhere (What's new, About → View all) unmounts the control that had focus,
-  // so Settings must place it; a nav click keeps focus on its own button.
-  const [handoff, setHandoff] = useState(initialTab === 'releases');
+  const [tab, setTab] = useState<Tab>(initialAboutReleaseNotes ? 'about' : initialTab);
+  const [aboutReleaseNotes, setAboutReleaseNotes] = useState(initialAboutReleaseNotes);
+  const releaseNotesBtnRef = useRef<HTMLButtonElement>(null);
+  const pendingReleaseNotesBtnFocusRef = useRef(false);
+  // Arriving from elsewhere (What's new) unmounts the control that had focus, so Settings must
+  // place it; a nav click keeps focus on its own button.
+  const [handoff, setHandoff] = useState(initialAboutReleaseNotes);
+  const handoffSpentRef = useRef(false);
   const navRef = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
-    if (handoff) navRef.current?.querySelector<HTMLElement>('.settings__navitem--active')?.focus();
-  }, [handoff]);
-  // One pane element serves every section, so it would carry the last section's scroll into the next.
+    if (handoff && !handoffSpentRef.current && !aboutReleaseNotes) {
+      navRef.current?.querySelector<HTMLElement>('.settings__navitem--active')?.focus();
+    }
+  }, [handoff, aboutReleaseNotes]);
+  useLayoutEffect(() => {
+    if (!aboutReleaseNotes && pendingReleaseNotesBtnFocusRef.current) {
+      pendingReleaseNotesBtnFocusRef.current = false;
+      releaseNotesBtnRef.current?.focus();
+    }
+  }, [aboutReleaseNotes]);
   const paneRef = useRef<HTMLDivElement>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new section starts at its top
   useLayoutEffect(() => {
@@ -136,18 +144,42 @@ export function SettingsModal({
     { id: 'shortcuts', label: 'Shortcuts' },
     { id: 'skills', label: 'Skills' },
     { id: 'about', label: 'About' },
-    { id: 'releases', label: CHROME_STR.releaseNotes.tab },
   ];
 
+  const leaveReleaseNotes = useCallback(() => {
+    setAboutReleaseNotes(false);
+    handoffSpentRef.current = false;
+    setHandoff(false);
+    pendingReleaseNotesBtnFocusRef.current = true;
+  }, []);
+
+  const dismissSettings = () => {
+    if (aboutReleaseNotes) {
+      leaveReleaseNotes();
+      return;
+    }
+    onClose();
+  };
+
+  const openReleaseNotes = useCallback(() => {
+    setTab('about');
+    handoffSpentRef.current = false;
+    setHandoff(true);
+    setAboutReleaseNotes(true);
+  }, []);
+
+  const spendHandoff = useCallback(() => {
+    handoffSpentRef.current = true;
+  }, []);
   return (
-    <ModalLayer onDismiss={onClose}>
+    <ModalLayer onDismiss={dismissSettings}>
       <div className="modal settings" onClick={(e) => e.stopPropagation()}>
         <div className="modal__head settings__head">
           <div>
             <span className="modal__title">Settings</span>
             <span className="modal__sub">Tune the look and behaviour of Conduit</span>
           </div>
-          <button className="iconbtn" aria-label="Close settings" onClick={onClose}>
+          <button className="iconbtn" aria-label="Close settings" onClick={dismissSettings}>
             <IconClose size={15} />
           </button>
         </div>
@@ -160,6 +192,8 @@ export function SettingsModal({
                 className={`settings__navitem ${tab === id ? 'settings__navitem--active' : ''}`}
                 onClick={() => {
                   setHandoff(false);
+                  handoffSpentRef.current = false;
+                  setAboutReleaseNotes(false);
                   setTab(id);
                 }}
               >
@@ -168,46 +202,48 @@ export function SettingsModal({
             ))}
           </nav>
 
-          {tab === 'releases' ? (
-            <ReleaseNotesPage installedVersion={about?.version} takeFocus={handoff} />
-          ) : (
-            <div ref={paneRef} className="settings__pane">
-              {tab === 'appearance' && <Appearance settings={settings} update={update} />}
-              {tab === 'general' && (
-                <General
-                  settings={settings}
-                  update={update}
-                  agents={agents}
-                  onSetChangesView={onSetChangesView}
-                  serverConnected={serverConnected}
+          <div ref={paneRef} className="settings__pane">
+            {tab === 'appearance' && <Appearance settings={settings} update={update} />}
+            {tab === 'general' && (
+              <General
+                settings={settings}
+                update={update}
+                agents={agents}
+                onSetChangesView={onSetChangesView}
+                serverConnected={serverConnected}
+              />
+            )}
+            {tab === 'mcp' && (
+              <McpTab
+                settings={settings}
+                update={update}
+                projectPath={projectPath}
+                focusCli={focusCli}
+                onFocusCliSpent={spendFocusCli}
+                serverConnected={serverConnected}
+              />
+            )}
+            {tab === 'shortcuts' && <ShortcutsTab settings={settings} update={update} />}
+            {tab === 'skills' && <Skills projectPath={projectPath} />}
+            {tab === 'about' &&
+              (aboutReleaseNotes ? (
+                <AboutReleaseNotes
+                  installedVersion={about?.version}
+                  takeFocus={handoff && !handoffSpentRef.current}
+                  onHandoffSpent={spendHandoff}
+                  onBack={leaveReleaseNotes}
                 />
-              )}
-              {tab === 'mcp' && (
-                <McpTab
-                  settings={settings}
-                  update={update}
-                  projectPath={projectPath}
-                  focusCli={focusCli}
-                  onFocusCliSpent={spendFocusCli}
-                  serverConnected={serverConnected}
-                />
-              )}
-              {tab === 'shortcuts' && <ShortcutsTab settings={settings} update={update} />}
-              {tab === 'skills' && <Skills projectPath={projectPath} />}
-              {tab === 'about' && (
+              ) : (
                 <About
                   about={about}
                   updateStatus={updateStatus ?? null}
                   onCheckUpdate={onCheckUpdate ?? (() => {})}
                   onRelaunch={onRelaunch ?? (() => {})}
-                  onShowReleaseNotes={() => {
-                    setHandoff(true);
-                    setTab('releases');
-                  }}
+                  releaseNotesBtnRef={releaseNotesBtnRef}
+                  onShowReleaseNotes={openReleaseNotes}
                 />
-              )}
-            </div>
-          )}
+              ))}
+          </div>
         </div>
       </div>
     </ModalLayer>
@@ -1335,10 +1371,14 @@ function UpdatesControl({
   status,
   onCheck,
   onRelaunch,
+  onShowReleaseNotes,
+  releaseNotesBtnRef,
 }: {
   status: UpdateStatus | null;
   onCheck: () => void;
   onRelaunch: () => void;
+  onShowReleaseNotes: () => void;
+  releaseNotesBtnRef: RefObject<HTMLButtonElement | null>;
 }) {
   const s = status?.status;
 
@@ -1355,6 +1395,14 @@ function UpdatesControl({
         >
           Relaunch
         </button>
+        <button
+          ref={releaseNotesBtnRef}
+          type="button"
+          className="about__checkbtn"
+          onClick={onShowReleaseNotes}
+        >
+          {CHROME_STR.releaseNotes.tab}
+        </button>
       </div>
     );
   }
@@ -1366,6 +1414,14 @@ function UpdatesControl({
           <IconDownload size={13} />
           {s === 'downloading' ? `Downloading… ${status?.percent ?? 0}%` : 'Update available'}
         </span>
+        <button
+          ref={releaseNotesBtnRef}
+          type="button"
+          className="about__checkbtn"
+          onClick={onShowReleaseNotes}
+        >
+          {CHROME_STR.releaseNotes.tab}
+        </button>
       </div>
     );
   }
@@ -1385,6 +1441,43 @@ function UpdatesControl({
       <button type="button" className="about__checkbtn" onClick={onCheck} disabled={checking}>
         {checking ? 'Checking…' : s === 'error' ? 'Retry' : 'Check now'}
       </button>
+      <button
+        ref={releaseNotesBtnRef}
+        type="button"
+        className="about__checkbtn"
+        onClick={onShowReleaseNotes}
+      >
+        {CHROME_STR.releaseNotes.tab}
+      </button>
+    </div>
+  );
+}
+
+function AboutReleaseNotes({
+  installedVersion,
+  takeFocus,
+  onHandoffSpent,
+  onBack,
+}: {
+  installedVersion?: string;
+  takeFocus: boolean;
+  onHandoffSpent: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <div className="about about--relnotes">
+      <div className="about__subhead">
+        <button type="button" className="about__backbtn" onClick={onBack}>
+          <IconChevron size={15} className="about__backicon" aria-hidden />
+          <span className="sr-only">Back</span>
+        </button>
+        <span className="about__subtitle">{CHROME_STR.releaseNotes.tab}</span>
+      </div>
+      <ReleaseNotesPage
+        installedVersion={installedVersion}
+        takeFocus={takeFocus}
+        onTakeFocusComplete={onHandoffSpent}
+      />
     </div>
   );
 }
@@ -1394,12 +1487,14 @@ function About({
   updateStatus,
   onCheckUpdate,
   onRelaunch,
+  releaseNotesBtnRef,
   onShowReleaseNotes,
 }: {
   about?: AboutInfo;
   updateStatus: UpdateStatus | null;
   onCheckUpdate: () => void;
   onRelaunch: () => void;
+  releaseNotesBtnRef: RefObject<HTMLButtonElement | null>;
   onShowReleaseNotes: () => void;
 }) {
   const repoUrl = about?.repoUrl ?? GITHUB_URL;
@@ -1434,13 +1529,13 @@ function About({
         </div>
         <div className="about__row">
           <span className="about__rowlabel">Updates</span>
-          <UpdatesControl status={updateStatus} onCheck={onCheckUpdate} onRelaunch={onRelaunch} />
-        </div>
-        <div className="about__row">
-          <span className="about__rowlabel">{CHROME_STR.releaseNotes.tab}</span>
-          <button type="button" className="about__checkbtn" onClick={onShowReleaseNotes}>
-            {CHROME_STR.releaseNotes.viewAll}
-          </button>
+          <UpdatesControl
+            status={updateStatus}
+            onCheck={onCheckUpdate}
+            onRelaunch={onRelaunch}
+            onShowReleaseNotes={onShowReleaseNotes}
+            releaseNotesBtnRef={releaseNotesBtnRef}
+          />
         </div>
       </div>
 

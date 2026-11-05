@@ -579,6 +579,7 @@ export function App() {
   filesRef.current = files;
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+  const [settingsAboutReleaseNotes, setSettingsAboutReleaseNotes] = useState(false);
   const [settingsFocusCli, setSettingsFocusCli] = useState<AgentCli | undefined>(undefined);
   const [recentsBySession, setRecentsBySession] = useState<Record<string, RecentDoc[]>>({});
   const [corpus, setCorpus] = useState<FolderCorpus>({});
@@ -766,8 +767,10 @@ export function App() {
                 confirmLabel: copy.confirmLabel,
                 // F4: only a window close ends agents; a quit's destructive choice is the secondary.
                 danger: reason === 'windowClose' || reason === 'quitAndStop',
-                // Cancel is the keyboard default so an accidental Enter never quits.
-                focusCancel: true,
+                hideCancel: true,
+                showClose: true,
+                // The close button is the keyboard default so an accidental Enter never quits.
+                focusClose: true,
                 onShown,
                 onCancel: () => resolve(false),
                 onConfirm: () => resolve(true),
@@ -1632,6 +1635,7 @@ export function App() {
       openSettings: () => {
         setSettingsTab('general');
         setSettingsFocusCli(undefined);
+        setSettingsAboutReleaseNotes(false);
         setSettingsOpen(true);
       },
       // Global save (K2): route Mod+S — pressed ANYWHERE, including the terminal or
@@ -3171,11 +3175,15 @@ export function App() {
   // close button + Esc. Defined here because it needs forceCloseDoc (declared above).
   const closeReviewTab = useCallback(() => forceCloseDoc(REVIEW_DOC_ID), [forceCloseDoc]);
 
-  const openSettingsAt = useCallback((tab: SettingsTab, cli?: AgentCli) => {
-    setSettingsTab(tab);
-    setSettingsFocusCli(cli);
-    setSettingsOpen(true);
-  }, []);
+  const openSettingsAt = useCallback(
+    (tab: SettingsTab, cli?: AgentCli, opts?: { releaseNotes?: boolean }) => {
+      setSettingsTab(tab);
+      setSettingsFocusCli(cli);
+      setSettingsAboutReleaseNotes(!!opts?.releaseNotes);
+      setSettingsOpen(true);
+    },
+    [],
+  );
 
   // Cross-file go-to-definition: CodeViewer resolves the target (worker) and calls
   // this to open it as a doc tab (the reveal position is set alongside).
@@ -5291,7 +5299,7 @@ export function App() {
             onClose={() => setReleaseNotesView(null)}
             onShowAllNotes={() => {
               setReleaseNotesView(null);
-              openSettingsAt('releases');
+              openSettingsAt('about', undefined, { releaseNotes: true });
             }}
           />
         )}
@@ -5381,10 +5389,14 @@ export function App() {
             <SettingsModal
               agents={agents}
               initialTab={settingsTab}
+              initialAboutReleaseNotes={settingsAboutReleaseNotes}
               initialCli={settingsFocusCli}
               about={state?.about}
               projectPath={active?.home || null}
-              onClose={() => setSettingsOpen(false)}
+              onClose={() => {
+                setSettingsAboutReleaseNotes(false);
+                setSettingsOpen(false);
+              }}
               onCheckUpdate={() => post({ type: 'updateCheck' })}
               onRelaunch={() => post({ type: 'updateRelaunch' })}
               updateStatus={updateStatus}

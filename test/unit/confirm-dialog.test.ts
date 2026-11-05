@@ -183,6 +183,34 @@ describe('ConfirmDialog', () => {
     expect(buttons[0].hasAttribute('data-modal-default')).toBe(true);
     expect(buttons[buttons.length - 1].hasAttribute('data-modal-default')).toBe(false);
   });
+
+  it('hideCancel with showClose and focusClose focuses the close control', async () => {
+    const { dialog, buttons } = await open({
+      hideCancel: true,
+      showClose: true,
+      focusClose: true,
+      secondaryLabel: 'Quit and stop all agents',
+      onSecondary: vi.fn(),
+    });
+    const close = dialog.querySelector<HTMLButtonElement>('.iconbtn[aria-label="Close"]');
+    expect(close).toBeTruthy();
+    expect(document.activeElement).toBe(close);
+    expect(close?.hasAttribute('data-modal-default')).toBe(true);
+    expect(buttons.some((b) => b.textContent === 'Cancel')).toBe(false);
+  });
+
+  it('close button calls onCancel then onClose', async () => {
+    const order: string[] = [];
+    const onClose = vi.fn(() => order.push('close'));
+    const { dialog } = await open(
+      { hideCancel: true, showClose: true, focusClose: true, onCancel: () => order.push('cancel') },
+      onClose,
+    );
+    const close = dialog.querySelector<HTMLButtonElement>('.iconbtn[aria-label="Close"]');
+    if (!close) throw new Error('close button missing');
+    await act(async () => click(close));
+    expect(order).toEqual(['cancel', 'close']);
+  });
 });
 
 describe('useFocusTrap', () => {

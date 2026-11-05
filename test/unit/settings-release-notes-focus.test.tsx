@@ -33,11 +33,18 @@ afterEach(async () => {
   document.body.innerHTML = '';
 });
 
-/** The app's wiring: What's new hands off to Settings opened on Release notes. */
-function Workbench({ initial }: { initial: 'whats-new' | SettingsTab }) {
+/** The app's wiring: What's new hands off to Settings → About → Release notes. */
+function Workbench({
+  initial,
+}: {
+  initial: 'whats-new' | { tab: SettingsTab; releaseNotes?: boolean };
+}) {
   const [notesOpen, setNotesOpen] = useState(initial === 'whats-new');
-  const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(
-    initial === 'whats-new' ? null : initial,
+  const [settings, setSettings] = useState<{
+    tab: SettingsTab;
+    releaseNotes: boolean;
+  } | null>(
+    initial === 'whats-new' ? null : { tab: initial.tab, releaseNotes: !!initial.releaseNotes },
   );
   return (
     <SettingsProvider>
@@ -48,16 +55,17 @@ function Workbench({ initial }: { initial: 'whats-new' | SettingsTab }) {
           onClose={() => setNotesOpen(false)}
           onShowAllNotes={() => {
             setNotesOpen(false);
-            setSettingsTab('releases');
+            setSettings({ tab: 'about', releaseNotes: true });
           }}
         />
       )}
-      {settingsTab && (
+      {settings && (
         <SettingsModal
           agents={[]}
-          initialTab={settingsTab}
+          initialTab={settings.tab}
+          initialAboutReleaseNotes={settings.releaseNotes}
           about={{ version: '1.0.0' } as never}
-          onClose={() => setSettingsTab(null)}
+          onClose={() => setSettings(null)}
           onSetChangesView={() => {}}
         />
       )}
@@ -65,22 +73,25 @@ function Workbench({ initial }: { initial: 'whats-new' | SettingsTab }) {
   );
 }
 
-async function mount(initial: 'whats-new' | SettingsTab) {
+async function mount(initial: 'whats-new' | { tab: SettingsTab; releaseNotes?: boolean }) {
   const host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
   await act(async () => root?.render(<Workbench initial={initial} />));
 }
-const button = (label: string) =>
-  [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent === label);
+const button = (label: string | RegExp) =>
+  [...document.querySelectorAll<HTMLElement>('button')].find((b) =>
+    typeof label === 'string' ? b.textContent === label : label.test(b.textContent ?? ''),
+  );
 const settings = () => document.querySelector('.modal.settings');
+const navLabels = () =>
+  [...document.querySelectorAll('.settings__navitem')].map((b) => b.textContent);
 
 async function handOffAndLoad(trigger: HTMLElement | undefined) {
   trigger?.focus();
   await act(async () => trigger?.click());
-  // While the changelog is read, focus waits on the section's own nav button.
-  expect(document.activeElement).toBe(document.querySelector('.settings__navitem--active'));
-  expect(document.activeElement?.textContent).toBe('Release notes');
+  expect(document.querySelector('.settings__navitem--active')?.textContent).toBe('About');
+  expect(document.querySelector('.about__subtitle')?.textContent).toBe('Release notes');
   await act(async () => changelog.resolve(CHANGELOG));
   const option = document.activeElement;
   expect(settings()?.contains(option)).toBe(true);
@@ -89,23 +100,60 @@ async function handOffAndLoad(trigger: HTMLElement | undefined) {
   expect(option?.textContent).toContain('v1.0.0');
 }
 
-describe('handing off to Settings → Release notes', () => {
-  it("What's new → All release notes puts focus inside Settings", async () => {
+describe('Settings About release notes', () => {
+  it('has no Release notes tab in the nav', async () => {
+    await mount({ tab: 'about' });
+    expect(navLabels()).not.toContain('Release notes');
+  });
+
+  it('shows a Release notes button beside update controls on About', async () => {
+    await mount({ tab: 'about' });
+    const updatesRow = [...document.querySelectorAll('.about__row')].find(
+      (row) => row.querySelector('.about__rowlabel')?.textContent === 'Updates',
+    );
+    expect(updatesRow?.querySelector('.about__updatectl')?.textContent).toContain('Release notes');
+    expect(
+      updatesRow?.querySelector('.about__updatectl')?.querySelectorAll('button').length,
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it("What's new → All release notes puts focus on the selected version", async () => {
     await mount('whats-new');
     await handOffAndLoad(button('All release notes'));
   });
 
-  it('About → View all puts focus inside Settings', async () => {
-    await mount('about');
-    await handOffAndLoad(button('View all'));
+  it('About → Release notes puts focus on the selected version', async () => {
+    await mount({ tab: 'about' });
+    await handOffAndLoad(button('Release notes'));
   });
 
-  it('a nav click leaves focus on the nav button', async () => {
-    await mount('about');
-    const nav = button('Release notes');
-    nav?.focus();
-    await act(async () => nav?.click());
+  it('Back returns to About and focuses the Release notes button', async () => {
+    await mount({ tab: 'about' });
+    await handOffAndLoad(button('Release notes'));
+    await act(async () => button('Back')?.click());
+    expect(document.querySelector('.about__subtitle')).toBeNull();
+    expect(document.activeElement?.textContent).toBe('Release notes');
+  });
+
+  it('Escape on the sub-page goes back before closing Settings', async () => {
+    await mount({ tab: 'about' });
+    await act(async () => button('Release notes')?.click());
     await act(async () => changelog.resolve(CHANGELOG));
-    expect(document.activeElement).toBe(nav);
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(settings()).toBeTruthy();
+    expect(document.querySelector('.about__subtitle')).toBeNull();
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(settings()).toBeNull();
+  });
+
+  it('opening with initialAboutReleaseNotes lands on the sub-page', async () => {
+    await mount({ tab: 'about', releaseNotes: true });
+    await act(async () => changelog.resolve(CHANGELOG));
+    expect(document.querySelector('.about__subtitle')?.textContent).toBe('Release notes');
+    expect(document.querySelector('.settings__navitem--active')?.textContent).toBe('About');
   });
 });
