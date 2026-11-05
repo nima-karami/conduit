@@ -60,7 +60,7 @@ await runScenario('terminal-kitty-keys', async ({ page, log }) => {
   await page.keyboard.press('Control+Enter');
   const kittyBytes = await drainPtyIn();
   assert(
-    kittyBytes.includes('1b5b31333b3575'),
+    kittyBytes === '\x1b[13;5u',
     `Ctrl+Enter with kitty mode should send \\x1b[13;5u, got ${JSON.stringify(kittyBytes)}`,
   );
   log('PASS: Ctrl+Enter encoded as kitty sequence ✓');
@@ -70,7 +70,7 @@ await runScenario('terminal-kitty-keys', async ({ page, log }) => {
   await page.keyboard.press('Control+Enter');
   const legacyBytes = await drainPtyIn();
   assert(
-    legacyBytes.includes('\r') || legacyBytes.includes('0d'),
+    legacyBytes === '\r',
     `Ctrl+Enter after pop should send legacy CR, got ${JSON.stringify(legacyBytes)}`,
   );
   log('PASS: after pop, Ctrl+Enter sends legacy \\r ✓');
