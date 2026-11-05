@@ -1,18 +1,27 @@
 // Host-side live watcher for a project's `.conduit/plans/` directory. It exists for ONE reason:
 // picking up an EXTERNAL (agent) edit to a plan document or its comments sidecar — `.conduit/` is
 // out of the fs firehose (src/watch-filter.ts), so this is the only path such a change takes to
-// the renderer, and the app's own writes are suppressed here via the shared `isSelfEcho`.
+// the renderer. A settle emits only content that differs from what is already known for that
+// file — the app's own last write, the file as it was when the watch was armed, or the last
+// emit — because an event is not proof of a change: FSEvents also reports writes made shortly
+// BEFORE the watch was armed.
 // Unlike notes-watcher.ts this is armed per OPENED PROJECT, so every root has its own watch.
 // See docs/plans/2026-09-19-interactive-plan.plan.md Task 3.3.
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { isSelfEcho } from '../src/board-watch';
 import { commentsFingerprint, type PlanCommentsData } from '../src/plan-comments';
 import { PLAN_SLUG_RE, planSlugFromPath } from '../src/plan-path';
 import { contentHash } from '../src/review-marks';
 import { ConduitDirWatch } from './conduit-dir-watch';
-import { conduitDir, PLANS_DIR_NAME, readPlan, readPlanComments } from './conduit-fs';
+import {
+  conduitDir,
+  PLANS_DIR_NAME,
+  readPlan,
+  readPlanComments,
+  readPlanCommentsSync,
+  readPlanMarkdownSync,
+} from './conduit-fs';
 
 /** `markdown` is only read for a `file: 'plan'` event; a sidecar event never reads the `.md`. */
 export type OnPlanChange = (
@@ -56,9 +65,14 @@ function classify(root: string, filename: string): PlanFileRef | null {
   return slug ? { slug, file: 'plan' } : null;
 }
 
+function keyOf(root: string, ref: PlanFileRef): string {
+  return `${root}|${ref.slug}|${ref.file}`;
+}
+
 export class PlanWatcher {
   private readonly roots = new Map<string, RootWatch>();
-  private readonly lastWritten = new Map<string, string>();
+  /** Per `${root}|${slug}|${file}`: the fingerprint of the content already known for that file. */
+  private readonly known = new Map<string, string>();
 
   constructor(
     private readonly onChange: OnPlanChange,
@@ -74,6 +88,7 @@ export class PlanWatcher {
       rescanAll: false,
     };
     this.roots.set(projectRoot, entry);
+    this.recordBaseline(projectRoot);
     this.arm(projectRoot, entry);
   }
 
@@ -96,20 +111,45 @@ export class PlanWatcher {
     this.teardown(entry);
     // Drop this root's fingerprints with it, so a re-open can never suppress a real edit made
     // while the project was closed.
-    for (const key of [...this.lastWritten.keys()]) {
-      if (key.startsWith(`${projectRoot}|`)) this.lastWritten.delete(key);
+    for (const key of [...this.known.keys()]) {
+      if (key.startsWith(`${projectRoot}|`)) this.known.delete(key);
     }
   }
 
   /** Fingerprint of the file the app is about to write, so the imminent FS event is its own echo. */
   recordWrite(root: string, slug: string, file: PlanFileKind, fingerprint: string): void {
-    this.lastWritten.set(`${root}|${slug}|${file}`, fingerprint);
+    this.known.set(keyOf(root, { slug, file }), fingerprint);
   }
 
   stop(): void {
     for (const entry of this.roots.values()) this.teardown(entry);
     this.roots.clear();
-    this.lastWritten.clear();
+    this.known.clear();
+  }
+
+  /** Synchronous so the baseline is in place before any event the new watch delivers settles. */
+  private recordBaseline(root: string): void {
+    let names: string[];
+    try {
+      names = fs.readdirSync(plansDir(root));
+    } catch {
+      return; // no plans dir yet: nothing is known, so whatever appears is news
+    }
+    for (const name of names) {
+      const ref = classify(root, name);
+      if (!ref) continue;
+      try {
+        this.known.set(
+          keyOf(root, ref),
+          ref.file === 'plan'
+            ? contentHash(readPlanMarkdownSync(root, ref.slug) ?? '')
+            : commentsFingerprint(readPlanCommentsSync(root, ref.slug)),
+        );
+      } catch {
+        // Unreadable now (oversized, not UTF-8, mid-write): nothing is known, so a later
+        // readable version is news.
+      }
+    }
   }
 
   private teardown(entry: RootWatch): void {
@@ -163,7 +203,11 @@ export class PlanWatcher {
       }
       const current =
         ref.file === 'plan' ? contentHash(markdown ?? '') : commentsFingerprint(comments);
-      if (isSelfEcho(this.lastWritten.get(`${root}|${ref.slug}|${ref.file}`), current)) continue;
+      const key = keyOf(root, ref);
+      if (current === this.known.get(key)) continue;
+      // An unwatch during the awaited read must not leave this root's fingerprint behind.
+      if (this.roots.get(root) !== entry) return;
+      this.known.set(key, current);
       this.onChange(root, ref.slug, ref.file, markdown, comments);
     }
   }

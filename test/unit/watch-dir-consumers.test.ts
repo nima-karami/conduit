@@ -9,6 +9,7 @@ import {
   BOARD_FILE_NAME,
   conduitDir,
   PLANS_DIR_NAME,
+  writePlanCommentsFile,
   writePlanFile,
 } from '../../electron/conduit-fs';
 import { OpenFileWatcher } from '../../electron/open-file-watcher';
@@ -271,6 +272,30 @@ describe('BoardWatcher when .conduit/ comes back', () => {
       bw.stop();
     }
   });
+
+  // FSEvents reports a write made just before the watch armed as an event after it.
+  it('an event that leaves the board as it was is not delivered, before or after an edit', async () => {
+    const root = mkRoot();
+    const file = path.join(conduitDir(root), BOARD_FILE_NAME);
+    fs.mkdirSync(conduitDir(root));
+    fs.writeFileSync(file, serializeBoardArtifact(board(cards('s'))));
+    const seen: BoardData[] = [];
+    const bw = new BoardWatcher(20);
+    try {
+      bw.watch(root, (b) => seen.push(b));
+      watches[0].cb('change', BOARD_FILE_NAME);
+      await delay(100);
+      expect(seen).toEqual([]);
+      fs.writeFileSync(file, serializeBoardArtifact(board(cards('t'))));
+      await waitFor(() => seen.length > 0, 3000);
+      await delay(100);
+      watches[0].cb('change', BOARD_FILE_NAME);
+      await delay(100);
+      expect(seen.map((b) => b.cards.map((c) => c.id))).toEqual([['t']]);
+    } finally {
+      bw.stop();
+    }
+  });
 });
 
 describe('PlanWatcher when .conduit/plans/ comes back', () => {
@@ -306,6 +331,7 @@ describe('PlanWatcher when .conduit/plans/ comes back', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       pw.watch(root);
+      fs.writeFileSync(path.join(conduitDir(root), PLANS_DIR_NAME, 'kept.md'), '# Kept, edited\n');
       watches[0].cb('change', 'kept.md');
       watches[0].w.emit('error', new Error('EPERM'));
       expect(watches).toHaveLength(1);
@@ -315,6 +341,46 @@ describe('PlanWatcher when .conduit/plans/ comes back', () => {
     } finally {
       pw.stop();
       warn.mockRestore();
+    }
+  });
+
+  // FSEvents reports a write made just before the watch armed as an event after it.
+  it('an event that leaves a plan or its comments as they were is not delivered', async () => {
+    const root = mkRoot();
+    await writePlanFile(root, 'kept', '# Kept\n');
+    await writePlanCommentsFile(root, 'kept', {
+      version: 1,
+      comments: [
+        {
+          id: 'c-1',
+          author: 'human',
+          text: 'hi',
+          anchor: { index: 0, hash: 'abcd1234', snippet: 'kept' },
+          status: 'open',
+          createdAt: '2026-11-04T10:00:00.000Z',
+        },
+      ],
+    });
+    const seen: string[] = [];
+    const pw = new PlanWatcher(
+      (_r, slug, file, markdown) => seen.push(`${slug}|${file}|${markdown}`),
+      20,
+    );
+    try {
+      pw.watch(root);
+      watches[0].cb('change', 'kept.md');
+      watches[0].cb('change', 'kept.comments.json');
+      watches[0].cb('rename', null);
+      await delay(100);
+      expect(seen).toEqual([]);
+      fs.writeFileSync(path.join(conduitDir(root), PLANS_DIR_NAME, 'kept.md'), '# Kept, edited\n');
+      await waitFor(() => seen.length > 0, 3000);
+      await delay(100);
+      watches[0].cb('change', 'kept.md');
+      await delay(100);
+      expect(seen).toEqual(['kept|plan|# Kept, edited\n']);
+    } finally {
+      pw.stop();
     }
   });
 });
