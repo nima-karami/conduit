@@ -121,7 +121,7 @@ export function encodeKey(ev: KittyKeyEvent, flags: number): string | null {
   const mods = kittyModifiers(ev);
   const functional = FUNCTIONAL[ev.key];
   if (functional !== undefined) {
-    if (ev.key === 'Escape' && !hasModifier(ev)) return '[27u';
+    if (ev.key === 'Escape' && !hasModifier(ev)) return '\x1b[27u';
     return hasModifier(ev) ? csiKey(functional, mods) : null;
   }
   if (ev.key.length !== 1 || !(ev.ctrlKey || ev.altKey || ev.metaKey)) return null;

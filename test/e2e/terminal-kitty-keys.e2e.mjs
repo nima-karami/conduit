@@ -49,7 +49,7 @@ await runScenario('terminal-kitty-keys', async ({ page, log }) => {
   await page.evaluate((id) => window.__terms[id].focus(), sid);
   await typeLine(page, sid, `node "${probeScript.replace(/\\/g, '/')}"`);
 
-  await page.waitForFunction((id) => (window.__capBy?.[id] ?? '').includes('1b5b3e31u'), sid, {
+  await page.waitForFunction((id) => (window.__capBy?.[id] ?? '').includes('\x1b[>1u'), sid, {
     timeout: 20000,
   });
   log('probe pushed kitty keyboard and entered raw mode');
