@@ -3,6 +3,7 @@
 // derivation that feeds the existing review card renderer lives here — DOM-free and unit-testable.
 
 import { endpointLabel, shortSha } from '../src/git-range';
+import type { ParsedPatchFile } from '../src/patch-parse';
 import type { ChangeDTO, ChangeKind, CommitNode, FileDiffDTO } from '../src/protocol';
 import { computeFileReview } from '../src/review-hunks';
 import type { ReviewSource } from './docs';
@@ -55,9 +56,20 @@ export function commitChangesFromFiles(files: FileDiffDTO[]): ChangeDTO[] {
   });
 }
 
+/** Derive review `ChangeDTO[]` from an agent-supplied patch. Preserves rename ('R') badges; copy
+ *  ('C') and pure mode changes ('T') map to 'M' because the protocol has no 'C' change kind. */
+export function patchChangesFromFiles(files: ParsedPatchFile[]): ChangeDTO[] {
+  return files.map((f) => {
+    const kind: ChangeKind =
+      f.changeKind === 'R' ? 'R' : f.changeKind === 'A' ? 'A' : f.changeKind === 'D' ? 'D' : 'M';
+    return { path: f.path, added: f.counts.added, removed: f.counts.removed, kind, staged: false };
+  });
+}
+
 /** Header label for the Review source. Absent (canonical working default) ⇒ working tree. */
 export function reviewSourceLabel(source: ReviewSource | undefined): string {
   if (!source || source.kind === 'working') return 'Reviewing working tree';
+  if (source.kind === 'patch') return `Diff from ${source.handle ?? 'agent'}`;
   if (source.kind === 'range') {
     return `Comparing ${endpointLabel(source.base)} to ${endpointLabel(source.head)}`;
   }
@@ -75,6 +87,7 @@ export function reviewSourceLabel(source: ReviewSource | undefined): string {
  */
 export function conciseSourceLabel(source: ReviewSource | undefined): string {
   if (!source || source.kind === 'working') return 'Working tree';
+  if (source.kind === 'patch') return source.title ?? `Diff from ${source.handle ?? 'agent'}`;
   if (source.kind === 'range') {
     return `${endpointLabel(source.base)}…${endpointLabel(source.head)}`;
   }
@@ -85,6 +98,7 @@ export function conciseSourceLabel(source: ReviewSource | undefined): string {
 /** What the pane announces when review mode turns on (spec 2026-09-05-review-mode §2.3). */
 export function reviewModeStatusLabel(source: ReviewSource | undefined): string {
   if (source === undefined || source.kind === 'working') return 'Reviewing working tree';
+  if (source.kind === 'patch') return source.title ?? `Diff from ${source.handle ?? 'agent'}`;
   if (source.kind === 'commit') return `Reviewing commit ${shortSha(source.sha)}`;
   return `Comparing ${endpointLabel(source.base)} to ${endpointLabel(source.head)}`;
 }

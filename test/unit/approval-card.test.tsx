@@ -160,6 +160,11 @@ describe('ApprovalCard', () => {
       [{ tool: 'close_files', count: 1, all: false }, 'Close 1 tab'],
       [{ tool: 'close_files', count: 0, all: true }, 'Close all of its tabs'],
       [{ tool: 'open_review', what: 'v1…feature' }, 'Open Review for v1…feature'],
+      [{ tool: 'open_diff', title: 'a.txt' }, 'Show a diff: a.txt'],
+      [
+        { tool: 'open_diff', title: '/home/main/changes.diff' },
+        'Show a diff: /home/main/changes.diff',
+      ],
       [{ tool: 'open_git_history', ref: null }, 'Open the commit history'],
       [{ tool: 'open_git_history', ref: 'main' }, 'Open the commit history at main'],
       [{ tool: 'open_url', url: 'http://x/' }, 'Open http://x/ in a Conduit tab'],

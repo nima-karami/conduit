@@ -1,4 +1,5 @@
 import type { RefEndpoint } from '../src/git-range';
+import type { ParsedPatchFile } from '../src/patch-parse';
 import type { DiffTabScope, PersistedDoc } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
 import { displayTitleForUrl } from '../src/web-url';
@@ -44,7 +45,11 @@ export type ReviewSource =
   // on All, and it is never persisted.
   | { kind: 'working'; scope?: ReviewScope; repoRoot?: string }
   | { kind: 'commit'; sha: string; subject?: string; repoRoot?: string }
-  | { kind: 'range'; base: RefEndpoint; head: RefEndpoint; repoRoot?: string };
+  | { kind: 'range'; base: RefEndpoint; head: RefEndpoint; repoRoot?: string }
+  // A diff supplied by an agent via the `open_diff` MCP tool. `files` is the parsed patch;
+  // `title` overrides the tab label; `handle` is the agent handle for the default label.
+  // Not persisted (like the other reviewSource kinds).
+  | { kind: 'patch'; files: ParsedPatchFile[]; title?: string; handle?: string };
 
 export interface OpenDoc {
   id: string; // `${kind}:${path}` (preview commit/commit-diff docs use `${kind}:@preview`)
@@ -709,6 +714,10 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         action.source.repoRoot === undefined
           ? undefined
           : action.source;
+      const title =
+        reviewSource?.kind === 'patch'
+          ? (reviewSource.title ?? `Diff from ${reviewSource.handle ?? 'agent'}`)
+          : REVIEW_DOC_TITLE;
       return openForeground(state, {
         sessionId: action.sessionId,
         group: action.group,
@@ -719,11 +728,11 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
           id: REVIEW_DOC_ID,
           kind: 'review',
           path: REVIEW_DOC_PATH,
-          title: REVIEW_DOC_TITLE,
+          title,
           sessionId: action.sessionId,
           reviewSource,
         }),
-        patch: (d) => ({ ...d, reviewSource }),
+        patch: (d) => ({ ...d, reviewSource, title }),
         shown: action.shown,
       });
     }

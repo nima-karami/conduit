@@ -736,6 +736,20 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
     now,
     info: (message, data) => deps.log.info('conduit-mcp', message, data),
+    readTextFile: async (absPath) => {
+      try {
+        return await fs.promises.readFile(absPath, 'utf8');
+      } catch {
+        return null;
+      }
+    },
+    fileSize: async (absPath) => {
+      try {
+        return (await fs.promises.stat(absPath)).size;
+      } catch {
+        return null;
+      }
+    },
     // Listed sessions only: a tool never reaches a session list_sessions doesn't show (spec A7).
     targets: () =>
       listedSessions().map(({ session: s, handle }) => ({
@@ -963,6 +977,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return app.prepareCloseFiles(caller, args, ctx);
       case 'open_review':
         return app.prepareOpenReview(caller, args, ctx);
+      case 'open_diff':
+        return app.prepareOpenDiff(caller, args, ctx);
       case 'open_git_history':
         return app.prepareOpenGitHistory(caller, args, ctx);
       case 'open_url':

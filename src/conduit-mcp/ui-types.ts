@@ -3,6 +3,7 @@
 // renderer never reaches a node-backed one (plan ruling 8). The ../protocol ↔ ui-types cycle is
 // type-only and erased at build.
 import type { RefEndpoint } from '../git-range';
+import type { ParsedPatchFile } from '../patch-parse';
 import type { CommitNode } from '../protocol';
 import type { AgentCli, UserInstallState } from './install-types';
 import type {
@@ -31,6 +32,7 @@ export type AskSummary =
   | { tool: 'close_files'; count: number; all: boolean }
   /** 'working', a short sha, or 'base…head'. */
   | { tool: 'open_review'; what: string }
+  | { tool: 'open_diff'; title: string }
   | { tool: 'open_git_history'; ref: string | null }
   | { tool: 'open_url'; url: string };
 
@@ -40,7 +42,8 @@ export type McpReviewScope = 'all' | 'staged' | 'unstaged';
 export type McpReviewSource =
   | { kind: 'working'; scope: McpReviewScope; repoRoot: string }
   | { kind: 'commit'; sha: string; subject: string; repoRoot: string }
-  | { kind: 'range'; base: RefEndpoint; head: RefEndpoint; repoRoot: string };
+  | { kind: 'range'; base: RefEndpoint; head: RefEndpoint; repoRoot: string }
+  | { kind: 'patch'; files: ParsedPatchFile[]; title?: string; handle?: string };
 
 /** Host → renderer UI request (spec 2026-10-30-conduit-mcp-app-control §2.3). */
 export type McpUiAction =

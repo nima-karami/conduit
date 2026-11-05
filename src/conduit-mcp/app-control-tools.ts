@@ -1,7 +1,9 @@
 // The seven app-control tools (spec 2026-10-30-conduit-mcp-app-control §2.1) on the shared
 // prepared() pipeline. Node-free: git, folders, windows and the renderer step are deps.
+import { extname } from 'node:path';
 import { folderKey } from '../folder-key';
 import type { RefEndpoint } from '../git-range';
+import { MAX_PATCH_BYTES, parsePatch, patchOverSizeCap } from '../patch-parse';
 import type { CommitNode } from '../protocol';
 import { normalizeUrl } from '../web-url';
 import {
@@ -42,6 +44,10 @@ interface OpenReviewOutput {
   opened: 'review';
   source: ReviewSourceOut;
 }
+interface OpenDiffOutput {
+  opened: 'review';
+  source: { kind: 'patch' };
+}
 interface OpenGitHistoryOutput {
   opened: 'git-history';
   selected: string | null;
@@ -51,6 +57,8 @@ interface OpenUrlOutput {
 }
 export const MAX_CLOSE_PATHS = 50;
 export const MAX_URL_BYTES = 2048;
+export const MAX_DIFF_TITLE_CHARS = 200;
+const PATCH_FILE_EXTENSIONS = ['.diff', '.patch'] as const;
 const tooLong = (url: string): boolean => new TextEncoder().encode(url).length > MAX_URL_BYTES;
 const urlTooLong = (): Fail =>
   fail('invalid_args', `url must be a string of up to ${MAX_URL_BYTES} bytes`);
@@ -66,6 +74,7 @@ export interface AppControlHandlers {
   prepareAttachFolder: Prepare<AttachFolderOutput>;
   prepareCloseFiles: Prepare<CloseFilesOutcome>;
   prepareOpenReview: Prepare<OpenReviewOutput>;
+  prepareOpenDiff: Prepare<OpenDiffOutput>;
   prepareOpenGitHistory: Prepare<OpenGitHistoryOutput>;
   prepareOpenUrl: Prepare<OpenUrlOutput>;
 }
@@ -443,6 +452,66 @@ export function createAppControlHandlers(
               opened: 'review' as const,
               source: out,
             },
+          ),
+        };
+      }),
+
+    prepareOpenDiff: (caller, raw, ctx) =>
+      prepared('open_diff', caller, async (who) => {
+        const o = parseKeys(raw, ['patch', 'patch_file', 'title', 'focus']);
+        if (isFail(o)) return o;
+        if ((o.patch === undefined) === (o.patch_file === undefined)) {
+          return fail('invalid_args', 'pass exactly one of patch or patch_file');
+        }
+        if (o.title !== undefined && (typeof o.title !== 'string' || o.title.length === 0)) {
+          return fail('invalid_args', 'title must be a non-empty string');
+        }
+        if (o.title !== undefined && o.title.length > MAX_DIFF_TITLE_CHARS) {
+          return fail('invalid_args', `title must be ${MAX_DIFF_TITLE_CHARS} characters or fewer`);
+        }
+        let patchText: string;
+        let patchFilePath: string | undefined;
+        if (typeof o.patch === 'string') {
+          patchText = o.patch;
+        } else {
+          const filePath = deps.resolvePath(who.home, o.patch_file as string);
+          patchFilePath = filePath;
+          const kind = await deps.kindOf(filePath);
+          if (kind !== 'file') return fail('path_missing', `no such file: ${filePath}`);
+          const ext = extname(filePath).toLowerCase();
+          if (!PATCH_FILE_EXTENSIONS.some((e) => e === ext)) {
+            return fail('invalid_args', 'patch_file must have a .diff or .patch extension');
+          }
+          const size = await deps.fileSize(filePath);
+          if (size === null) return fail('path_missing', `could not read: ${filePath}`);
+          if (size > MAX_PATCH_BYTES) {
+            return fail('invalid_args', 'patch exceeds 5 MB size cap');
+          }
+          const text = await deps.readTextFile(filePath);
+          if (text === null) return fail('path_missing', `could not read: ${filePath}`);
+          patchText = text;
+        }
+        if (patchOverSizeCap(patchText)) {
+          return fail('invalid_args', 'patch exceeds 5 MB size cap');
+        }
+        const parsed = parsePatch(patchText);
+        if (!parsed.ok) return fail('invalid_input', parsed.reason);
+        const files = parsed.files;
+        const summaryTitle =
+          typeof o.title === 'string' ? o.title : (patchFilePath ?? files[0]?.path ?? 'diff');
+        const title = typeof o.title === 'string' ? o.title : undefined;
+        const w = routeWindow(who.sessionId);
+        if (isFail(w)) return w;
+        return {
+          summary: { tool: 'open_diff', title: summaryTitle },
+          routesUi: true,
+          exec: openExec(
+            'open_diff',
+            caller,
+            who,
+            ctx,
+            { kind: 'openReview', source: { kind: 'patch', files, title, handle: caller.handle } },
+            { opened: 'review' as const, source: { kind: 'patch' } },
           ),
         };
       }),

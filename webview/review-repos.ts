@@ -42,6 +42,7 @@ export function resolveReviewRepo(
   reviewRepos: readonly { root: string }[],
   fallbackRoot: string | undefined,
 ): string | null {
+  if (source?.kind === 'patch') return '';
   if (source && source.kind !== 'working') return source.repoRoot ?? fallbackRoot ?? null;
   const matched =
     source?.repoRoot === undefined ? undefined : findRepo(reviewRepos, source.repoRoot);
@@ -221,6 +222,7 @@ export function reviewRequestRoot(
   reviewRepos: readonly { root: string }[],
   fallbackRoot: string | undefined,
 ): string | undefined {
+  if (source?.kind === 'patch') return undefined;
   if (source && source.kind !== 'working' && source.repoRoot !== undefined) return source.repoRoot;
   if (reviewRepos.length === 0) return undefined;
   return resolveReviewRepo(source, reviewRepos, fallbackRoot) ?? undefined;

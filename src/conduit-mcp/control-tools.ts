@@ -74,6 +74,10 @@ export interface ControlDeps {
   /** raise: the target's window isn't the caller's (show + focus it, as moveSessionToWindow does). */
   activateSession(sessionId: string, raise: boolean): void;
   git: GitCall;
+  /** Read a text file from an absolute path; missing/unreadable files resolve to null. */
+  readTextFile(absPath: string): Promise<string | null>;
+  /** Byte length of a file; null when the path is missing or unreadable. */
+  fileSize(absPath: string): Promise<number | null>;
   /** list_sessions' sessions: the only ones a tool may target (tool-policy spec A7). */
   targets(): readonly TargetSession[];
   ownerWindowOf(sessionId: string): number | null;

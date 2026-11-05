@@ -232,6 +232,8 @@ export interface FileContentDTO {
   readOnlyReason?: 'invalid-utf8' | 'mixed-eol';
 }
 
+import type { ReviewHunk } from './review-hunks';
+
 export interface FileDiffDTO {
   path: string;
   head: string;
@@ -264,6 +266,9 @@ export interface FileDiffDTO {
   /** The host could not produce this diff at all; `head`/`work` are ''. Only a THROWN read
    *  sets it — a missing blob reads as '' by design (spec 2026-09-22-scoped-diff-tabs §13 D7). */
   error?: string;
+  /** Pre-computed hunks with real line numbers, supplied by patch sources so original
+   *  @@ start lines are preserved instead of re-diffing from concatenated sides. */
+  hunks?: ReviewHunk[];
 }
 
 /** A multi-file diff (commit/range) truncated to a file-count cap: `shown` of `total` files were
