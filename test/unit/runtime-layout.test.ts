@@ -81,6 +81,7 @@ describe('runtimeLayout', () => {
       appVersion: '0.52.0',
       appPath,
       env: {},
+      exists: () => true,
     });
     expect(bare.nodeExe).toBe('node');
     expect(bare.hcExe).toBe(
@@ -105,7 +106,17 @@ describe('runtimeLayout', () => {
       appVersion: '0.52.0',
       appPath: join(u, 'repo'),
       platform,
-      exists: (file) => file === exe,
+      exists: (file) =>
+        file === exe ||
+        file ===
+          join(
+            u,
+            'repo',
+            'build',
+            'vendor',
+            'hc',
+            platform === 'win32' ? 'conduit-hc.exe' : 'conduit-hc',
+          ),
       env: { PATH: [join(u, 'missing'), bin].join(platform === 'win32' ? ';' : ':') },
     });
     expect(layout.nodeExe).toBe(exe);
@@ -118,16 +129,21 @@ describe('runtimeLayout', () => {
     const bin = join(u, 'bin');
     mkdirSync(bin);
     writeFileSync(join(bin, 'hc.exe'), '');
-    const layout = runtimeLayout({
+    const options = {
       packaged: false,
       userData: u,
       appVersion: '0.52.0',
       appPath,
       env: { Path: bin },
-      platform: 'win32',
-      exists: (file) => file === vendorExe,
-    });
+      platform: 'win32' as const,
+      exists: existsSync,
+    };
+    mkdirSync(join(vendorExe, '..'), { recursive: true });
+    writeFileSync(vendorExe, 'pinned engine');
+    const layout = runtimeLayout(options);
     expect(layout.hcExe).toBe(vendorExe);
+    rmSync(vendorExe);
+    expect(() => runtimeLayout(options)).toThrow(/run node build\/fetch-runtime\.mjs/);
   });
 
   it('an explicit hc override wins over the Windows vendor and PATH', () => {
@@ -156,16 +172,17 @@ describe('runtimeLayout', () => {
     mkdirSync(bin);
     const exe = join(bin, 'hc.exe');
     writeFileSync(exe, '');
-    const layout = runtimeLayout({
-      packaged: false,
-      userData: u,
-      appVersion: '0.52.0',
-      appPath: join(u, 'repo'),
-      env: { Path: [join(u, 'missing'), bin].join(';') },
-      platform: 'win32',
-      exists: existsSync,
-    });
-    expect(layout.hcExe).toBe(join(u, 'repo', 'build', 'vendor', 'hc', 'conduit-hc.exe'));
+    expect(() =>
+      runtimeLayout({
+        packaged: false,
+        userData: u,
+        appVersion: '0.52.0',
+        appPath: join(u, 'repo'),
+        env: { Path: [join(u, 'missing'), bin].join(';') },
+        platform: 'win32',
+        exists: existsSync,
+      }),
+    ).toThrow(/run node build\/fetch-runtime\.mjs/);
   });
 
   it('unpackaged Linux also keeps hc separate from the user executable on PATH', () => {

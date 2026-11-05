@@ -62,6 +62,7 @@ export async function collectRuntimeGarbage(
     }
   };
   await sweep(runtimeRoot, keep.appVersion);
+  // Retaining legacy versions matters on POSIX: busy renames succeed, and hc respawns holders from its exe path.
   await sweep(join(runtimeRoot, 'hc'), keep.hcVersion);
   await sweep(join(runtimeRoot, 'conduit-hc'), keep.hcVersion);
   return { removed, inUse };

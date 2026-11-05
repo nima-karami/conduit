@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { connect as netConnect } from 'node:net';
+import { resolveHcBinary } from './hc-binary.mjs';
 
 const require = createRequire(import.meta.url);
 const runtimeIdentity = () => require('../../out/server/instance-names.js');
@@ -263,8 +264,7 @@ const realExec = (bin, args, opts) =>
   spawnSync(bin, args, { ...opts, encoding: 'utf8', windowsHide: true });
 
 /**
- * Stop the server and hc session a scenario's profile owns. Only the session guard throws; the
- * scenario's own result must survive a teardown failure.
+ * An unowned session or missing pinned engine must fail before teardown can reach another install.
  * @param {{ userDataDir: string, log: (...a: any[]) => void, platform?: string, tmpdir: string,
  *   env?: Record<string, string | undefined>, exec?: Exec, stopAll?: typeof stopAllViaServer,
  *   appVersion?: string, listProcs?: () => ProcessRow[],
@@ -284,13 +284,14 @@ export async function teardownScenarioServer({
 }) {
   const names = teardownNames(userDataDir, platform, tmpdir);
   assertOwnSession(names.hcSession, env.HC_SESSION);
+  const bin = resolveHcBinary({ env, platform });
   try {
     const version =
       appVersion ??
       JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
     const r = await stopAll({ endpoint: names.serverEndpoint, appVersion: version });
     log(`teardown: server.stopAll ${r.outcome}${r.detail ? ` (${r.detail})` : ''}`);
-    stopHc({ exec, bin: env.CONDUIT_HC_BINARY || 'hc', names, inheritedEnv: env, log });
+    stopHc({ exec, bin, names, inheritedEnv: env, log });
     // An injected exec is a simulated world: the real process table says nothing about it.
     const list =
       listProcs ?? (exec === realExec ? () => listProfileProcs(userDataDir, names) : () => []);

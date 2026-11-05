@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { until } from './conduit-mcp-helpers.mjs';
-import { assert as harnessAssert, phase, REPO, runScenario } from './harness.mjs';
+import { assert as harnessAssert, phase, REPO, resolveHcBinary, runScenario } from './harness.mjs';
 
 const execFile = promisify(execFileCallback);
 const requireFromRepo = createRequire(join(REPO, 'package.json'));
@@ -116,7 +116,7 @@ async function settleCleanup(actions) {
 }
 
 runScenario('hc-client', async ({ log }) => {
-  const hc = process.env.CONDUIT_HC_BINARY || 'hc';
+  const hc = resolveHcBinary();
   const version = await execFile(hc, ['--version'], { windowsHide: true });
   const versionText = `${version.stdout}${version.stderr}`;
   harnessAssert(

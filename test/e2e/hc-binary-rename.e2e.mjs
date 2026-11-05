@@ -25,12 +25,9 @@ const log = makeLog('hc-binary-rename');
 
 async function run() {
   const source = resolveHcBinary();
-  assert(source, 'pinned engine missing; provide CONDUIT_HC_BINARY');
   const version = await execFile(source, ['--version'], { windowsHide: true });
   assert(version.stdout.includes('0.1.16'), `expected pinned hc 0.1.16: ${version.stdout}`);
-  const scratch = join(tmpdir(), 'Codex-scratch');
-  await mkdir(scratch, { recursive: true });
-  const root = await mkdtemp(join(scratch, 'conduit-hc-rename-'));
+  const root = await mkdtemp(join(tmpdir(), 'runtime-rename-'));
   const extension = process.platform === 'win32' ? '.exe' : '';
   let client;
   let coreStarted = false;

@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   type HcCliDeps,
   killSupervisor,
@@ -95,6 +95,25 @@ const START = {
 };
 
 describe('hc-cli', () => {
+  it('logs a permanent endpoint error once across reconnect backoff attempts', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const log = vi.fn();
+    const client = hcClient({ ...names, hcEndpointError: 'unsafe endpoint directory' }, {}, log);
+    try {
+      for (const delay of [250, 500, 1000, 2000]) {
+        const failed = expect(client.call('terminal.list', {})).rejects.toMatchObject({
+          cause: { message: 'unsafe endpoint directory' },
+        });
+        await vi.advanceTimersByTimeAsync(delay);
+        await failed;
+      }
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('unsafe endpoint directory'));
+    } finally {
+      client.close();
+      vi.useRealTimers();
+    }
+  });
   it('standalone and uninstall calls default to the copied Conduit runtime, not PATH', () => {
     expect(hcBinaryOf(undefined, names, 'linux')).toBe(
       join('/u/runtime', 'conduit-hc', '0.1.16', 'conduit-hc'),

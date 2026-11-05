@@ -25,6 +25,7 @@ describe('teardown and cross-process identity', () => {
     try {
       const file = join(directory, 'harness.mjs');
       copyFileSync(join(__dirname, '..', 'e2e', 'harness-server-teardown.mjs'), file);
+      copyFileSync(join(__dirname, '..', 'e2e', 'hc-binary.mjs'), join(directory, 'hc-binary.mjs'));
       const unloaded = await import(pathToFileURL(file).href);
       expect(() => unloaded.assertOwnSession('conduit-test', undefined)).not.toThrow();
     } finally {
@@ -126,7 +127,7 @@ describe('teardownScenarioServer', () => {
     const logs: string[] = [];
     await td.teardownScenarioServer({
       ...base,
-      env: { HC_SESSION: 'conduit-keep' },
+      env: { HC_SESSION: 'conduit-keep', CONDUIT_HC_BINARY: '/test/conduit-hc' },
       log: (m: string) => logs.push(m),
       stopAll: async () => ({ outcome: 'no-server' }),
       exec: (...a: unknown[]) => {
@@ -171,7 +172,7 @@ describe('teardownScenarioServer', () => {
     ];
     await td.teardownScenarioServer({
       ...base,
-      env: {},
+      env: { CONDUIT_HC_BINARY: '/test/conduit-hc' },
       log: (m: string) => logs.push(m),
       stopAll: async () => ({ outcome: 'closed' }),
       exec: () => results.shift(),
@@ -181,7 +182,7 @@ describe('teardownScenarioServer', () => {
     const logs2: string[] = [];
     await td.teardownScenarioServer({
       ...base,
-      env: {},
+      env: { CONDUIT_HC_BINARY: '/test/conduit-hc' },
       log: (m: string) => logs2.push(m),
       stopAll: async () => ({ outcome: 'closed' }),
       exec: () => ({ status: 3, stderr: 'boom' }),
@@ -194,7 +195,7 @@ describe('teardownScenarioServer', () => {
     let n = 0;
     await td.teardownScenarioServer({
       ...base,
-      env: {},
+      env: { CONDUIT_HC_BINARY: '/test/conduit-hc' },
       log: (m: string) => logs.push(m),
       stopAll: async () => ({ outcome: 'closed' }),
       exec: () => {
@@ -222,7 +223,7 @@ describe('teardownScenarioServer', () => {
     const logs: string[] = [];
     await td.teardownScenarioServer({
       ...base,
-      env: {},
+      env: { CONDUIT_HC_BINARY: '/test/conduit-hc' },
       log: (m: string) => logs.push(m),
       stopAll: async () => ({ outcome: 'stopped' }),
       exec: () => {

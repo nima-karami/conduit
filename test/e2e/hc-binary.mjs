@@ -27,7 +27,7 @@ export function onPath(
 /**
  * The hc every side of a scenario uses: the app's core and this harness's teardown/ownHc must be
  * the same binary, and a global hc on PATH can be a different version than the pinned one
- * (src/contracts/hc.ts). Same precedence as the app: override, bundled vendor copy.
+ * (src/contracts/hc.ts). An explicit override wins; otherwise the vendored conduit-hc is required.
  * @param {{ env?: Record<string, string | undefined>, platform?: string,
  *   exists?: (p: string) => boolean, repo?: string }} [o]
  */
@@ -45,5 +45,10 @@ export function resolveHcBinary({
     'hc',
     platform === 'win32' ? 'conduit-hc.exe' : 'conduit-hc',
   );
-  return exists(vendored) ? vendored : undefined;
+  if (!exists(vendored)) {
+    throw new Error(
+      `Missing vendored conduit-hc at ${vendored}; run node build/fetch-runtime.mjs or set CONDUIT_HC_BINARY.`,
+    );
+  }
+  return vendored;
 }

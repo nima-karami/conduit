@@ -94,6 +94,7 @@ export function hcClient(
   env: Record<string, string>,
   log: (m: string) => void,
 ) {
+  if (names.hcEndpointError) log(`hc endpoint unavailable: ${names.hcEndpointError}`);
   return new NodeHcClient({
     session: names.hcSession,
     env,

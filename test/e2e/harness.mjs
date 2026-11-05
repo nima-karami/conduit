@@ -416,10 +416,10 @@ export function finishScenario(code) {
   return finishing;
 }
 
-export { onPath, resolveHcBinary };
+export { resolveHcBinary };
 
 const RESOLVED_HC = resolveHcBinary();
-if (RESOLVED_HC) process.env.CONDUIT_HC_BINARY = RESOLVED_HC;
+process.env.CONDUIT_HC_BINARY = RESOLVED_HC;
 
 /**
  * A caller that replaces PATH (stub CLIs, a bare System32) would leave the unpackaged server
@@ -429,9 +429,9 @@ function serverRuntimeEnv(env) {
   if (!Object.keys(env).some((k) => k.toUpperCase() === 'PATH')) return {};
   const pinned = {};
   const node = process.env.CONDUIT_NODE_BINARY ?? onPath('node');
-  const hc = process.env.CONDUIT_HC_BINARY ?? onPath('hc');
+  const hc = resolveHcBinary();
   if (node) pinned.CONDUIT_NODE_BINARY = node;
-  if (hc) pinned.CONDUIT_HC_BINARY = hc;
+  pinned.CONDUIT_HC_BINARY = hc;
   return pinned;
 }
 
@@ -1618,7 +1618,7 @@ export function ownHc(userDataDir, args, { timeout = 30000 } = {}) {
   const cwd = join(userDataDir, 'runtime', 'conduit-hc', HC_PINNED);
   mkdirSync(cwd, { recursive: true });
   require(join(REPO, 'out', 'server', 'instance-names.js')).ensureHcSocketDirectory(names);
-  const r = spawnSync(resolveHcBinary() || 'hc', args, {
+  const r = spawnSync(resolveHcBinary(), args, {
     env,
     cwd,
     encoding: 'utf8',
