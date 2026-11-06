@@ -15,6 +15,10 @@ All notable user-facing changes to Conduit. Format follows
 - The notification-area "needs you" count ignores Snooze in the app.
 
 ### Fixed
+- **Sessions come back as stale, not exited, after Conduit stops its agents.** A cold stop could replay the
+  stop's own kill and make a session look like its agent had quit.
+- **Typing in a plan right before an agent saves it no longer loses your edit.** The editor now notices the edit
+  at the keystroke, so the agent's write raises the conflict banner instead of reloading over it.
 - **Terminal history is recorded at the terminal's real width.** A size measured before the terminal's
   font loaded could reach the background service, so lines wrapped at the wrong width after a reload.
 
