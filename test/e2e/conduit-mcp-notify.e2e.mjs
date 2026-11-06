@@ -3,7 +3,7 @@
  * notified and reads a message with an attachment" (plan T9.4). Two fake MCP agents (A, B) in one
  * folder. A sends B a normal request attaching spec.md; the scenario then rewrites spec.md.
  *   - within 5 s exactly one `[conduit] New messages for you.` line is submitted in B;
- *   - B's read_inbox body is framed as from A, an agent, not the user;
+ *   - B's read_inbox body is framed as from A, an agent, not the user or the lead;
  *   - B's read_attachment returns the text spec.md had AT SEND TIME (a snapshot, not a path).
  */
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -72,7 +72,7 @@ await runScenario(
     assert(msg, `inbox empty: ${JSON.stringify(inbox)}`);
     assert(
       msg.body.startsWith('[conduit message') &&
-        msg.body.includes(`from session ${a.handle} (an agent, not the user)`),
+        msg.body.includes(`from session ${a.handle} (an agent, not your user or your lead)`),
       `body not framed as from ${a.handle}: ${msg.body}`,
     );
     const att = msg.attachments?.[0];
