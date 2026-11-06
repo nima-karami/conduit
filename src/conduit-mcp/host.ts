@@ -1160,10 +1160,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return composeUnreadBanner(bannerCandidates(store.pending(handle)));
   };
 
-  /**
-   * A read that blocks: resolves targets as close_session does, then waits (session-waits). The
-   * caller's connection and request id are its cancel key.
-   */
+  /** The connection id and request id are the wait's cancel key. */
   const runWait = async (
     caller: Caller,
     args: unknown,
@@ -1844,6 +1841,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       flow.sessionGone(sessionId);
       sessionWaits.cancel((w) => w.caller.sessionId === sessionId);
       const handle = handleOf(sessionId);
+      sessionWaits.forget(sessionId, handle);
       // Awaited after the teardown: the caller removes the session as soon as this yields.
       const revoked = deps.tokens.revoke({ sessionId });
       drainConnectionsOf(sessionId);

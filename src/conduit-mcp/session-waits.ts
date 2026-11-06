@@ -156,6 +156,8 @@ export interface SessionWaits {
   notify(): void;
   /** Ends each open wait that matches, unanswered. */
   cancel(match: (w: OpenWait) => boolean): void;
+  /** Drops the turn-end memo for a deleted session, as a target and as a caller. */
+  forget(sessionId: string, handle: Handle | undefined): void;
   dispose(): void;
 }
 
@@ -167,24 +169,38 @@ interface Entry {
 
 export function createSessionWaits(deps: SessionWaitsDeps): SessionWaits {
   const open = new Set<Entry>();
-  // A turn end the caller has been told about, per caller handle and session. Keyed by handle so a
-  // reconnected caller keeps its place; a reset counter (server restart) reads as no new turn ends.
-  const reported = new Map<string, number>();
-  const memoKey = (callerHandle: Handle, sessionId: string) => `${callerHandle}\u0000${sessionId}`;
+  // The run count each caller has been told about, by session then caller handle. Keyed by handle so
+  // a reconnected caller keeps its place.
+  const reported = new Map<string, Map<Handle, number>>();
+
+  /** A count above the memo's is a turn end; a count below it means the counter reset (restart). */
+  const seenTurnEnds = (callerHandle: Handle, r: WaitReading): number => {
+    const byCaller = reported.get(r.sessionId);
+    const seen = byCaller?.get(callerHandle) ?? 0;
+    if (byCaller && seen > r.completions) {
+      byCaller.set(callerHandle, r.completions);
+      return r.completions;
+    }
+    return seen;
+  };
 
   const finish = (e: Entry, out: WaitOutput | null, turnEnds: readonly WaitReading[] = []) => {
     if (!open.delete(e)) return;
     deps.clearTimer(e.timer);
-    for (const r of turnEnds)
-      reported.set(memoKey(e.wait.caller.handle, r.sessionId), r.completions);
+    for (const r of turnEnds) {
+      let byCaller = reported.get(r.sessionId);
+      if (!byCaller) {
+        byCaller = new Map();
+        reported.set(r.sessionId, byCaller);
+      }
+      byCaller.set(e.wait.caller.handle, r.completions);
+    }
     e.resolve(out);
   };
 
   const check = (e: Entry, deadline: boolean) => {
     const readings = e.wait.targets.map((t) => deps.read(e.wait.caller.handle, t));
-    const ev = evaluateWait(e.wait.until, readings, (r) =>
-      Math.min(reported.get(memoKey(e.wait.caller.handle, r.sessionId)) ?? 0, r.completions),
-    );
+    const ev = evaluateWait(e.wait.until, readings, (r) => seenTurnEnds(e.wait.caller.handle, r));
     if (ev.fired.length > 0)
       finish(e, { fired: ev.fired, timed_out: false, states: ev.states }, ev.turnEnds);
     else if (deadline) finish(e, { fired: [], timed_out: true, states: ev.states });
@@ -208,6 +224,11 @@ export function createSessionWaits(deps: SessionWaitsDeps): SessionWaits {
 
     cancel: (match) => {
       for (const e of [...open]) if (match(e.wait)) finish(e, null);
+    },
+
+    forget: (sessionId, handle) => {
+      reported.delete(sessionId);
+      if (handle !== undefined) for (const byCaller of reported.values()) byCaller.delete(handle);
     },
 
     dispose: () => {

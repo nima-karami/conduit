@@ -4067,6 +4067,15 @@ describe('createConduitMcpHost — wait_sessions', () => {
     });
   });
 
+  it('a turn end that finished before the first wait is reported by it', async () => {
+    const h = harness();
+    const { ca } = await pairForWait(h);
+    h.busy.add('s2');
+    h.finishTurn('s2');
+    const r = await ca.call('wait_sessions', { sessions: ['fake-2'], until: ['turn_end'] });
+    expect(r.body.fired).toEqual([{ session: 'fake-2', condition: 'turn_end' }]);
+  });
+
   it('a turn end that landed between two waits is reported by the second', async () => {
     const h = harness({ manualTimers: true });
     const { ca } = await pairForWait(h);

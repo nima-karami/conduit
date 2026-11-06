@@ -426,3 +426,4 @@ It marks nothing: notice state, the §2 urgent escalation and the busy→idle re
 - **Result.** `{ fired: [{session, condition}], timed_out, states: [{session, presence, needs_you, unread_from}] }`. `fired` lists every session and condition true at return, often one. On timeout `fired` is `[]` and `timed_out` is `true`. `states` covers every requested session.
 - **Lifecycle.** A wait re-reads on each change of attention, the message store or a runtime exit; it does not poll. A `notifications/cancelled` for its request, the caller's connection closing, or the caller session being deleted releases it with no reply and no timer left behind. At most 4 waits per caller; a fifth is `rate_limited`.
 - **Client limits.** Keep `timeout_s` within the client's tool timeout (Codex: 180 s).
+- **Self-wait.** A session cannot wait on itself: a `sessions` entry that resolves to the caller is `invalid_args`.
