@@ -17,6 +17,23 @@ if (process.platform !== 'win32') {
   await finishScenario(0);
 }
 
+/** Stop-all kills the last session and the idle core stops with it: an `hc ls` that lands mid-stop
+ * reports `unavailable`, which means no terminal can be live. Any other failure still throws. */
+function sessionTerminalGone(userDataDir, sessionId) {
+  const r = ownHc(userDataDir, ['ls', '--json', '--label', `conduit.session=${sessionId}`]);
+  if (r.status !== 0) {
+    let kind;
+    try {
+      kind = JSON.parse(r.out).error?.kind;
+    } catch {
+      kind = undefined;
+    }
+    if (kind === 'unavailable') return true;
+    throw new Error(`hc ls: exit ${r.status}: ${r.out.slice(0, 300)}`);
+  }
+  return !hcTerminalOf(userDataDir, sessionId);
+}
+
 let launched;
 let code = 0;
 try {
@@ -46,7 +63,7 @@ try {
   await waitForLine(join(userDataDir, 'tray.log'), (line) =>
     /tray stopAll id=\d+ killed=1/.test(line),
   );
-  await waitUntil(() => !hcTerminalOf(userDataDir, sid), 'session terminal exit');
+  await waitUntil(() => sessionTerminalGone(userDataDir, sid), 'session terminal exit');
   await waitUntil(() => {
     const result = ownHc(userDataDir, ['ls', '--json', '--label', 'conduit.role=server']);
     if (result.status !== 0) return false;
