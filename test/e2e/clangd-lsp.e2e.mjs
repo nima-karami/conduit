@@ -22,10 +22,11 @@ import {
   trustViaHost,
   waitDefinition,
   waitObserved,
+  waitServerIdle,
   waitServerState,
 } from './lsp-fixture.mjs';
 
-const READY_CEILING_MS = 60_000;
+const READY_CEILING_MS = 90_000;
 const GREET_FILE = /greet\.(hpp|cpp)$/i;
 
 runScenario('clangd-lsp', async ({ app, page, log }) => {
@@ -38,6 +39,9 @@ runScenario('clangd-lsp', async ({ app, page, log }) => {
   // ── B3 ──
   await openDoc(app, page, sid, fx.main);
   const live = await waitServerState(page, 'cpp', 'ready', log, READY_CEILING_MS);
+  // clangd keeps `$/progress` tokens open while indexing; `ready` is only initialize.
+  // A definition sent in that window is loading-timeout (electron/lsp-manager.ts:1252).
+  await waitServerIdle(page, 'cpp', log, READY_CEILING_MS);
   const def = await waitDefinition(
     page,
     fx.main,
@@ -85,7 +89,7 @@ runScenario('clangd-lsp', async ({ app, page, log }) => {
     fx.header.replace(/\\/g, '/'),
   );
   assert(headerLang === 'c', `util.h opened as ${headerLang}`);
-  await page.waitForTimeout(1_000);
+  await waitServerIdle(page, 'cpp', log, READY_CEILING_MS);
   const snap = await lsp(page, { type: 'lsp:statusSnapshot' });
   const clangd = snap.servers.filter((s) => s.languageId === 'cpp');
   log(`clangd records with util.h open → ${JSON.stringify(clangd)}`);
