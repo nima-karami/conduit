@@ -191,11 +191,21 @@ try {
   launched = await launchApp();
   const { app, page } = launched;
 
+  await page.evaluate(() => {
+    window.__terms = {};
+  });
   await tapBridge(page);
 
   // Wait for initial terminal output before launching the reader.
   const sid = await openSession(page, { path: REPO.replace(/\\/g, '/'), agentId: 'shell:cmd' });
   await page.waitForFunction(() => window.__cap.length > 0, null, { timeout: 20000 });
+  // The app may auto-open a second session for the launch folder; make the scenario's own
+  // session the active one so the paste cannot land in a sibling terminal.
+  await page.locator(`.session[data-sessionid="${sid}"]`).click();
+  await page.waitForSelector(`.session--active[data-sessionid="${sid}"]`, { timeout: 5000 });
+  await page.waitForFunction((id) => (window.__terms?.[id]?.element?.offsetWidth ?? 0) > 0, sid, {
+    timeout: 20000,
+  });
 
   // Wait for the pre-compilation to finish (it started above, in parallel).
   log('waiting for K.dll compilation to complete...');
@@ -228,7 +238,14 @@ try {
   // When the pre-compiled DLL is used, this is near-instant (<1s).
   // If we fell back to inline Add-Type, allow up to 120s for csc.exe under load.
   await page.waitForFunction(() => window.__cap.includes('READY'), null, { timeout: 120000 });
-  await page.waitForTimeout(900); // let xterm process ESC[?2004h
+  // The paste is only bracketed once this session's xterm has processed the reader's ESC[?2004h.
+  await page.waitForFunction(
+    (id) => window.__terms?.[id]?.modes?.bracketedPasteMode === true,
+    sid,
+    {
+      timeout: 20000,
+    },
+  );
 
   // Real Ctrl+V — exercises the terminal-pane handler → xterm.paste() (bracketed).
   // Electron's clipboard.writeText fails SILENTLY when Windows refuses OpenClipboard, and the
@@ -244,17 +261,24 @@ try {
       `PRECONDITION (machine, not product): the system clipboard is not usable — wrote ${payload.length} bytes, read back ${roundTrip.length}. ${clipboardDiagnosis()}`,
     );
   }
-  // Use the visible termpane (there may be multiple if the app auto-opened a session
-  // from the REPO argument; pick the one that's actually visible/active).
-  await page.click('.termpane:visible');
-  await page.waitForTimeout(150);
+  await page.click(`.termhost[data-sessionid="${sid}"] .termpane`);
+  await page.waitForFunction(
+    (id) => !!document.activeElement?.closest(`.termhost[data-sessionid="${id}"] .xterm`),
+    sid,
+    { timeout: 5000 },
+  );
   await page.keyboard.press('Control+V');
   log(`pressed Ctrl+V (${LINES}-line paste, ${payload.length} bytes)`);
   // The reader now breaks only on the real terminator (ESC[201~), never on the sentinel — the
   // sentinel precedes it, so breaking there could stop six bytes short and fail spuriously.
-  // A genuinely truncated paste therefore ends at EOF when cleanup closes the pty, and the
-  // dump still carries the short count, which is what the assertion wants to see.
-  await page.waitForTimeout(4000);
+  // A genuinely truncated paste never writes the terminator, so the wait expires and cleanup
+  // closes the pty; the dump then still carries the short count, which is what the assertion
+  // wants to see.
+  const dumpDeadline = Date.now() + 60000;
+  while (Date.now() < dumpDeadline) {
+    if (existsSync(DUMP) && readFileSync(DUMP, 'utf8').includes('has201=')) break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
   await launched.cleanup();
 
   const result = existsSync(DUMP) ? readFileSync(DUMP, 'utf8').trim() : '(no dump)';

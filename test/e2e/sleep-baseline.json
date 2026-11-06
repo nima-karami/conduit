@@ -64,7 +64,6 @@
   "test/e2e/os-import.e2e.mjs": 1,
   "test/e2e/overlay-modals.e2e.mjs": 1,
   "test/e2e/overlay-popovers.e2e.mjs": 2,
-  "test/e2e/paste.e2e.mjs": 3,
   "test/e2e/peek-tree-layout.e2e.mjs": 3,
   "test/e2e/plan-blocks.e2e.mjs": 2,
   "test/e2e/plan-editor.e2e.mjs": 1,
