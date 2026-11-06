@@ -12,6 +12,7 @@ All notable user-facing changes to Conduit. Format follows
 
 ### Changed
 - The quit dialog mentions the notification-area icon when it will be available.
+- The notification-area "needs you" count ignores Snooze in the app.
 
 ## [0.56.2] — 2026-11-05
 

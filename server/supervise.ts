@@ -297,62 +297,67 @@ export async function runCliWith(deps: {
           }),
         })
       : null;
-  const exit = await (deps.supervise ?? supervise)({
-    userData,
-    logPath: path.join(userData, 'server.log'),
-    spawnChild: () =>
-      spawnServerChild(
-        process.execPath,
-        childArgs,
-        serverProcessEnv(process.env, names),
-        __dirname,
-        logToStderr,
-        relay
-          ? (child) =>
-              relay.attachServer({
-                send: (m) => {
-                  if (child.connected) child.send(m);
-                },
-                onMessage: (cb) => {
-                  const listener = (m: ServerToSupervisor) => cb(m);
-                  child.on('message', listener);
-                  return () => {
-                    child.off('message', listener);
-                  };
-                },
-                closed: new Promise<void>((resolve) => {
-                  child.once('close', () => resolve());
-                }),
-              })
-          : undefined,
-      ),
-    ...(relay
-      ? {
-          stopSignal: relay.stopSignal,
-          hooks: relay.hooks,
-          stopSessions: async () => {
-            const client = hcClient(names, env, logToStderr);
-            try {
-              return await directStopSessions(client, names);
-            } finally {
-              client.close();
-            }
-          },
-        }
-      : {}),
-    // Without an hc terminal of our own we run as a plain spawn and there is no core of ours.
-    ...(supervisorTerminal
-      ? {
-          core: supervisorCore(
-            () => hcClient(names, env, logToStderr),
-            names,
-            () => stopCore(hc, env),
-            logToStderr,
-          ),
-        }
-      : {}),
-  });
-  await relay?.finish(exit);
+  let exit: SuperviseExit | undefined;
+  try {
+    exit = await (deps.supervise ?? supervise)({
+      userData,
+      logPath: path.join(userData, 'server.log'),
+      spawnChild: () =>
+        spawnServerChild(
+          process.execPath,
+          childArgs,
+          serverProcessEnv(process.env, names),
+          __dirname,
+          logToStderr,
+          relay
+            ? (child) =>
+                relay.attachServer({
+                  send: (m) => {
+                    if (child.connected) child.send(m);
+                  },
+                  onMessage: (cb) => {
+                    const listener = (m: ServerToSupervisor) => cb(m);
+                    child.on('message', listener);
+                    return () => {
+                      child.off('message', listener);
+                    };
+                  },
+                  closed: new Promise<void>((resolve) => {
+                    child.once('close', () => resolve());
+                  }),
+                })
+            : undefined,
+        ),
+      ...(relay
+        ? {
+            stopSignal: relay.stopSignal,
+            hooks: relay.hooks,
+            stopSessions: async () => {
+              const client = hcClient(names, env, logToStderr);
+              try {
+                return await directStopSessions(client, names);
+              } finally {
+                client.close();
+              }
+            },
+          }
+        : {}),
+      // Without an hc terminal of our own we run as a plain spawn and there is no core of ours.
+      ...(supervisorTerminal
+        ? {
+            core: supervisorCore(
+              () => hcClient(names, env, logToStderr),
+              names,
+              () => stopCore(hc, env),
+              logToStderr,
+            ),
+          }
+        : {}),
+    });
+  } finally {
+    // see docs/specs/2026-11-03-tray-helper.md F9 / AC6
+    await relay?.finish(exit ?? { reason: 'done' });
+  }
 }
 
 if (require.main === module) {
