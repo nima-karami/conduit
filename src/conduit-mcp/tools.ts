@@ -80,7 +80,7 @@ const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp
 // A body line that looks like a frame line could close the real frame and open a forged one.
 const FRAME_LIKE_LINE = /^(\s*)(\[(?:end of )?conduit message )/gm;
 
-export type PeerRelation = 'human' | 'lead' | 'helper' | 'peer';
+type PeerRelation = 'human' | 'lead' | 'helper' | 'peer';
 
 function peerRelation(
   senderHandle: Handle,

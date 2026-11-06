@@ -57,7 +57,7 @@ interface OpenUrlOutput {
 }
 export const MAX_CLOSE_PATHS = 50;
 export const MAX_URL_BYTES = 2048;
-export const MAX_DIFF_TITLE_CHARS = 200;
+const MAX_DIFF_TITLE_CHARS = 200;
 const PATCH_FILE_EXTENSIONS = ['.diff', '.patch'] as const;
 const isPatchExtension = (p: string): boolean =>
   PATCH_FILE_EXTENSIONS.some((e) => e === extname(p).toLowerCase());
