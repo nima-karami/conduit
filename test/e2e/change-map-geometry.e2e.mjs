@@ -96,10 +96,11 @@ const decorationCount = (suffix) => {
   };
 };
 
-const minimapHasHue = ({ rgb, tol }) => {
-  const el = document.querySelector('.minimap-decorations-layer');
+const canvasHasHue = ({ selector, rgb, tol, previous }) => {
+  const el = document.querySelector(selector);
   const ctx = el?.getContext('2d');
   if (!ctx) return false;
+  if (previous && el.toDataURL() === previous) return false;
   const img = ctx.getImageData(0, 0, el.width, el.height);
   for (let i = 0; i < img.data.length; i += 4) {
     if (img.data[i + 3] === 0) continue;
@@ -112,6 +113,22 @@ const minimapHasHue = ({ rgb, tol }) => {
   }
   return false;
 };
+
+const canvasesHaveNoChangeHue = (hues) =>
+  ['.decorationsOverviewRuler', '.minimap-decorations-layer'].every((selector) => {
+    const el = document.querySelector(selector);
+    const ctx = el?.getContext('2d');
+    if (!ctx) return false;
+    const { data } = ctx.getImageData(0, 0, el.width, el.height);
+    for (let i = 0; i < data.length; i += 4) {
+      if (
+        data[i + 3] !== 0 &&
+        hues.some((rgb) => rgb.every((channel, j) => Math.abs(data[i + j] - channel) <= 2))
+      )
+        return false;
+    }
+    return true;
+  });
 
 const rulerHasNewRightLane = ({ before, xAfter }) => {
   const el = document.querySelector('.decorationsOverviewRuler');
@@ -172,6 +189,11 @@ runScenario('change-map-geometry', async ({ app, page, log }) => {
     changeHues.push(await tokenRgb(page, name));
   }
   const changeColor = changeHues[0];
+  await page.waitForFunction(
+    canvasHasHue,
+    { selector: '.decorationsOverviewRuler', rgb: changeColor, tol: 2 },
+    { timeout: 10_000 },
+  );
   const ruler = await page.evaluate(sampleCanvas, { selector: '.decorationsOverviewRuler' });
   log(`overview ruler: ${JSON.stringify(ruler)}`);
   assert(!ruler.error, `overview ruler canvas missing: ${ruler.error}`);
@@ -232,6 +254,13 @@ runScenario('change-map-geometry', async ({ app, page, log }) => {
   // the canvas edge at 50% alpha, so it reads as a band without hiding the code shape under it.
   // Each mark is checked by scrolling it into view.
   for (const line of SCATTERED_AT) {
+    const beforeScroll = await page.evaluate(() => ({
+      top: window.monaco.editor
+        .getEditors()
+        .find((e) => e.getModel()?.uri.toString().endsWith('scattered.ts'))
+        .getScrollTop(),
+      canvas: document.querySelector('.minimap-decorations-layer').toDataURL(),
+    }));
     await page.evaluate(
       ({ s, l }) => {
         const ed = window.monaco.editor
@@ -241,7 +270,22 @@ runScenario('change-map-geometry', async ({ app, page, log }) => {
       },
       { s: 'scattered.ts', l: line },
     );
-    await page.waitForFunction(minimapHasHue, { rgb: changeColor, tol: 2 }, { timeout: 10_000 });
+    const scrollTop = await page.evaluate(() =>
+      window.monaco.editor
+        .getEditors()
+        .find((e) => e.getModel()?.uri.toString().endsWith('scattered.ts'))
+        .getScrollTop(),
+    );
+    await page.waitForFunction(
+      canvasHasHue,
+      {
+        selector: '.minimap-decorations-layer',
+        rgb: changeColor,
+        tol: 2,
+        previous: scrollTop === beforeScroll.top ? null : beforeScroll.canvas,
+      },
+      { timeout: 10_000 },
+    );
     const mm = await page.evaluate(sampleCanvas, { selector: '.minimap-decorations-layer' });
     const hit = mm.groups.find(isChange);
     const cssW = hit ? hit.widthDevicePx * (mm.cssWidth / mm.deviceWidth) : 0;
@@ -380,6 +424,7 @@ runScenario('change-map-geometry', async ({ app, page, log }) => {
     .locator('.margin-view-overlays .cdec--added')
     .first()
     .waitFor({ state: 'attached', timeout: 10000 });
+  await page.waitForFunction(canvasesHaveNoChangeHue, changeHues, { timeout: 10_000 });
   const freshRuler = await page.evaluate(sampleCanvas, { selector: '.decorationsOverviewRuler' });
   const freshMinimap = await page.evaluate(sampleCanvas, {
     selector: '.minimap-decorations-layer',
