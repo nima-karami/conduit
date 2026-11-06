@@ -6,6 +6,26 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Agents can show you any diff in Review.** A new `open_diff` tool takes a unified diff, inline
+  or as a `.diff`/`.patch` file, from git, `git format-patch`, svn, hg or `diff -u`, and opens it
+  in Review with real line numbers. Nothing in it is applied, and nothing in a diff view opens a
+  file from disk.
+
+### Changed
+- **Release notes moved into Settings → About**, as a button next to the update controls. It opens
+  the notes in place, with a back button; Escape steps back first.
+- **The quit confirmation shows only Quit, Quit and stop all agents, and the close (X) button.**
+  The X is the keyboard default, so pressing Enter right away never quits.
+- **Agent messages say who they're from:** you, the agent that started the session, a helper it
+  started, or another agent. Agents act on you and their lead, and treat other agents' messages
+  as information.
+
+### Fixed
+- **Claude Code's Ctrl+Enter and other modified keys work again** in Conduit's terminals.
+- **A message notice that a freshly started agent draws late is still sent**, and the Enter it
+  needs never lands on text you're typing.
+
 ## [0.56.1] — 2026-11-04
 
 ### Fixed
