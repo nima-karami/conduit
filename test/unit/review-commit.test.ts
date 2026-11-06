@@ -122,6 +122,15 @@ describe('patchChangesFromFiles', () => {
     expect(out.map((c) => c.path)).toEqual(['a.ts', 'a.ts (2)']);
   });
 
+  it('keeps a real file named like a suffix distinct from a duplicate-path key', () => {
+    const out = patchChangesFromFiles([
+      patchFile({ path: 'f.ts' }),
+      patchFile({ path: 'f.ts' }),
+      patchFile({ path: 'f.ts (2)' }),
+    ]);
+    expect(out.map((c) => c.path)).toEqual(['f.ts', 'f.ts (2)', 'f.ts (2) (2)']);
+  });
+
   it('maps copy and mode-only to M', () => {
     const [copy] = patchChangesFromFiles([
       patchFile({ path: 'copy.txt', changeKind: 'C', counts: { added: 5, removed: 0 } }),

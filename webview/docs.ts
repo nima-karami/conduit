@@ -174,6 +174,7 @@ export type DocsAction =
       /** The session the window shows. A foreground open into another session lands active in
        *  that session's layout and leaves `activeId` on the shown one; absent ⇒ `sessionId`. */
       shown?: string;
+      mode?: 'background';
     }
   // Promote a preview tab to a pinned one (double-click the tab).
   | { type: 'pinDoc'; id: string; group?: GroupIndex }
@@ -715,23 +716,23 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         reviewSource?.kind === 'patch'
           ? (reviewSource.title ?? `Diff from ${reviewSource.handle ?? 'agent'}`)
           : REVIEW_DOC_TITLE;
-      return openForeground(state, {
+      const spec = {
         sessionId: action.sessionId,
         group: action.group,
         id: REVIEW_DOC_ID,
-        kind: 'review',
-        preview: false,
+        kind: 'review' as const,
         create: () => ({
           id: REVIEW_DOC_ID,
-          kind: 'review',
+          kind: 'review' as const,
           path: REVIEW_DOC_PATH,
           title,
           sessionId: action.sessionId,
           reviewSource,
         }),
-        patch: (d) => ({ ...d, reviewSource, title }),
-        shown: action.shown,
-      });
+        patch: (d: OpenDoc) => ({ ...d, reviewSource, title }),
+      };
+      if (action.mode === 'background') return openInBackground(state, spec);
+      return openForeground(state, { ...spec, preview: false, shown: action.shown });
     }
     case 'openCommitFile':
       return openCommitDiff(state, action);

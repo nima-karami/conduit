@@ -236,7 +236,7 @@ describe('Review scope control', () => {
   });
 
   it('a patch source is not a repo picker and does not show LOCK_REASON', () => {
-    const el = mount({ kind: 'patch', files: [] }, () => {}, false);
+    const el = mount({ kind: 'patch', files: [] }, () => {}, true);
     const btn = trigger(el);
     expect(btn?.getAttribute('aria-disabled')).toBe('true');
     expect(btn?.getAttribute('title')).toBe(reviewSourceLabel({ kind: 'patch', files: [] }));

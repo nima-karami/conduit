@@ -466,19 +466,19 @@ export function createAppControlHandlers(
           return fail('invalid_args', 'pass exactly one of patch or patch_file');
         }
         if (o.patch !== undefined && typeof o.patch !== 'string') {
-          return fail('invalid_input', 'patch must be a string');
+          return fail('invalid_args', 'patch must be a string');
         }
         if (o.patch_file !== undefined && typeof o.patch_file !== 'string') {
-          return fail('invalid_input', 'patch_file must be a string');
+          return fail('invalid_args', 'patch_file must be a string');
         }
         if (o.title !== undefined && typeof o.title !== 'string') {
-          return fail('invalid_input', 'title must be a string');
+          return fail('invalid_args', 'title must be a string');
         }
         if (o.title !== undefined && o.title.length === 0) {
-          return fail('invalid_input', 'title must be a non-empty string');
+          return fail('invalid_args', 'title must be a non-empty string');
         }
         if (o.title !== undefined && o.title.length > MAX_DIFF_TITLE_CHARS) {
-          return fail('invalid_input', `title must be ${MAX_DIFF_TITLE_CHARS} characters or fewer`);
+          return fail('invalid_args', `title must be ${MAX_DIFF_TITLE_CHARS} characters or fewer`);
         }
         if (o.focus !== undefined && typeof o.focus !== 'boolean') {
           return fail('invalid_args', 'focus must be a boolean');
@@ -496,6 +496,11 @@ export function createAppControlHandlers(
           if (real === null) return fail('path_missing', `no such file: ${filePath}`);
           if (!isPatchExtension(real)) {
             return fail('invalid_args', 'patch_file must have a .diff or .patch extension');
+          }
+          // A FIFO named *.patch blocks a libuv thread forever on Mac/Linux, before approval.
+          const kind = await deps.kindOf(real);
+          if (kind !== 'file') {
+            return fail('invalid_input', 'patch_file is not a regular file');
           }
           const bytes = await deps.readBytes(real, MAX_PATCH_BYTES + 1);
           if (bytes === null) return fail('path_missing', `could not read: ${real}`);
@@ -515,7 +520,7 @@ export function createAppControlHandlers(
         const summaryTitle = title ?? files[0]?.path ?? 'diff';
         const w = routeWindow(who.sessionId);
         if (isFail(w)) return w;
-        const focus = ctx.move === 'no' ? false : o.focus !== false;
+        const focus = o.focus !== false;
         return {
           summary: {
             tool: 'open_diff',

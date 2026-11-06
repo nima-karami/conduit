@@ -671,6 +671,69 @@ index 111..222 100644
     expect(dtos[0].work).toBe('first\n');
     expect(dtos[1].work).toBe('second\n');
   });
+
+  it('keeps a real file named like a suffix distinct from a duplicate-path key', () => {
+    const patch = `--- a/f.ts
++++ b/f.ts
+@@ -1 +1 @@
+-old
++first
+--- a/f.ts
++++ b/f.ts
+@@ -1 +1 @@
+-old
++second
+--- a/f.ts (2)
++++ b/f.ts (2)
+@@ -1 +1 @@
+-old
++third
+`;
+    const files = okFiles(patch);
+    expect(files.map((f) => f.path)).toEqual(['f.ts', 'f.ts', 'f.ts (2)']);
+    expect(files.map((f) => f.key)).toEqual(['f.ts', 'f.ts (2)', 'f.ts (2) (2)']);
+    expect(new Set(patchFilesToFileDiffs(files).map((d) => d.path)).size).toBe(3);
+  });
+
+  it('converts 20k same-path files in well under a second', () => {
+    const one = (path: string): ParsedPatchFile => ({
+      path,
+      head: '',
+      work: 'x\n',
+      binary: false,
+      changeKind: 'M',
+      counts: { added: 1, removed: 0 },
+      hunks: [],
+    });
+    const files = Array.from({ length: 20_000 }, () => one('x.ts'));
+    const t0 = performance.now();
+    const dtos = patchFilesToFileDiffs(files);
+    expect(performance.now() - t0).toBeLessThan(2000);
+    expect(new Set(dtos.map((d) => d.path)).size).toBe(20_000);
+  });
+
+  it('treats same-letter mnemonic paths as --no-prefix, not a/b prefixes', () => {
+    const files = okFiles(`diff --git w/y.ts w/y.ts
+--- w/y.ts
++++ w/y.ts
+@@ -1 +1 @@
+-a
++b
+`);
+    expect(files[0].path).toBe('w/y.ts');
+  });
+
+  it('does not treat -- 2.47.0 after a hunk as a format-patch trailer', () => {
+    expect(
+      failReason(`--- a/f
++++ b/f
+@@ -1 +1 @@
+-a
++b
+-- 2.47.0
+`),
+    ).toBe('hunk line count mismatch');
+  });
 });
 
 describe('decodePatchBytes', () => {

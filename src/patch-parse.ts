@@ -27,6 +27,8 @@ export interface PatchHunk {
 export interface ParsedPatchFile {
   /** The new/current path (the one Review should list). */
   path: string;
+  /** Unique card/diff-map key; set at parse so duplicate paths never collide. */
+  key?: string;
   /** The previous path, present for renames and copies. */
   oldPath?: string;
   /** Old-side content; empty for adds, binaries, and mode-only changes. */
@@ -110,6 +112,7 @@ export function parsePatch(text: string): PatchParseResult {
   }
 
   if (files.length === 0) return { ok: false, reason: 'not a unified diff' };
+  assignPatchKeys(files);
   return { ok: true, files };
 }
 
@@ -119,8 +122,9 @@ export function parsePatch(text: string): PatchParseResult {
  * @@ -100 renders from line 100 and separate hunks stay separate.
  */
 export function patchFilesToFileDiffs(files: ParsedPatchFile[]): FileDiffDTO[] {
-  return files.map((f, i) => ({
-    path: disambiguatePatchPath(f.path, i, files),
+  const keyed = withPatchKeys(files);
+  return keyed.map((f) => ({
+    path: f.key ?? f.path,
     head: f.head,
     work: f.work,
     binary: f.binary,
@@ -129,15 +133,40 @@ export function patchFilesToFileDiffs(files: ParsedPatchFile[]): FileDiffDTO[] {
   }));
 }
 
-/** Second-and-later copies of the same path keep a unique card/diff-map key. */
-export function disambiguatePatchPath(
+/** O(n) keys: a literal `f.ts (2)` never collides with the second `f.ts`. */
+function assignPatchKeys(files: ParsedPatchFile[]): void {
+  const used = new Set<string>();
+  const nextSuffix = new Map<string, number>();
+  for (const f of files) {
+    f.key = nextDisambiguatedKey(f.path, used, nextSuffix);
+  }
+}
+
+export function withPatchKeys(files: ParsedPatchFile[]): ParsedPatchFile[] {
+  if (files.every((f) => f.key !== undefined)) return files;
+  assignPatchKeys(files);
+  return files;
+}
+
+function nextDisambiguatedKey(
   path: string,
-  index: number,
-  files: readonly { path: string }[],
+  used: Set<string>,
+  nextSuffix: Map<string, number>,
 ): string {
-  let earlier = 0;
-  for (let i = 0; i < index; i++) if (files[i]?.path === path) earlier++;
-  return earlier === 0 ? path : `${path} (${earlier + 1})`;
+  if (!used.has(path)) {
+    used.add(path);
+    nextSuffix.set(path, 2);
+    return path;
+  }
+  let n = nextSuffix.get(path) ?? 2;
+  let key = `${path} (${n})`;
+  while (used.has(key)) {
+    n += 1;
+    key = `${path} (${n})`;
+  }
+  used.add(key);
+  nextSuffix.set(path, n + 1);
+  return key;
 }
 
 function fileHunksToReviewHunks(hunks: PatchHunk[]): ReviewHunk[] {
@@ -521,7 +550,7 @@ function applyGitPrefixes(
   }
   const oldPre = MNEMONIC_PREFIXES.find((p) => oldP.startsWith(p));
   const newPre = MNEMONIC_PREFIXES.find((p) => newP.startsWith(p));
-  if (oldPre && newPre) {
+  if (oldPre && newPre && oldPre !== newPre) {
     return {
       oldPath: oldP.slice(oldPre.length),
       newPath: newP.slice(newPre.length),
@@ -578,7 +607,7 @@ function pathFromHeader(line: string, prefixes: readonly string[]): string | nul
 }
 
 function isPatchTrailer(line: string): boolean {
-  return /^--\s*$/.test(line) || /^-- \d/.test(line);
+  return /^--\s*$/.test(line);
 }
 
 function isSurplusHunkLine(line: string): boolean {

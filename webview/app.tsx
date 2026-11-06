@@ -1142,15 +1142,28 @@ export function App() {
   // `byUser`: a user's open lands keyboard focus in Review, as its mount did; a tool-driven one
   // lands it only through landToolOpen (spec 2026-10-30-conduit-mcp-app-control §2.1 "Focus").
   const openReviewIn = useCallback(
-    (sessionId: string, source: ReviewSource, group?: GroupIndex, byUser = false) => {
+    (
+      sessionId: string,
+      source: ReviewSource,
+      group?: GroupIndex,
+      byUser = false,
+      mode?: OpenMode,
+    ) => {
       const shown = activeIdRef.current ?? '';
       const g = group ?? openTargetGroup(docStateRef.current, sessionId);
       const wasShown = reviewShownIn(sessionId, g);
-      if (sessionId === shown) {
+      const background = mode === 'background';
+      if (!background && sessionId === shown) {
         recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
         setCenterView('editor');
       }
-      dispatchDocs({ type: 'openReview', sessionId, source, group: g, shown });
+      dispatchDocs({
+        type: 'openReview',
+        sessionId,
+        source,
+        group: g,
+        ...(background ? { mode: 'background' as const } : { shown }),
+      });
       // After recordNav, which cancels any focus request still waiting to mount.
       if (byUser && !wasShown) focusView(sessionId, g, REVIEW_DOC_ID);
     },
@@ -3316,15 +3329,14 @@ export function App() {
         closeDirtyUnprompted,
       }),
     openReview: (id, source, focus = true) => {
-      if (!focus) {
-        openReviewIn(id, source);
-        return;
-      }
       landToolOpen(
         id,
         'Review',
         (d) => d.kind === 'review',
-        (group) => openReviewIn(id, source, group),
+        (group) => {
+          if (focus && id === activeIdRef.current) setCenterView('editor');
+          openReviewIn(id, source, group, false, focus ? undefined : 'background');
+        },
       );
     },
     openGitHistory: (id, root, commit) =>

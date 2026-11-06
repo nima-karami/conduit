@@ -255,6 +255,7 @@ const ANNOUNCE_THRESHOLD = 8;
 const NO_MEASURED = new Map<number, number>();
 /** Stable empty list so the preloaded-files memo doesn't re-run for working/streaming sources. */
 const EMPTY_FILES: FileDiffDTO[] = [];
+const EMPTY_CHANGES: ChangeDTO[] = [];
 /** Stable empty list so a repo with no marks doesn't re-identify the memo on every render. */
 const EMPTY_MARKS: ReviewMark[] = [];
 /** Stable identity, same reason as EMPTY_MARKS: an unnoted card must not re-run its memo. */
@@ -556,6 +557,10 @@ export function ReviewView({
     () => (patchFiles ? patchFilesToFileDiffs(patchFiles) : EMPTY_FILES),
     [patchFiles],
   );
+  const patchChanges = useMemo(
+    () => (patchFiles ? patchChangesFromFiles(patchFiles) : EMPTY_CHANGES),
+    [patchFiles],
+  );
   const preloadedFiles: FileDiffDTO[] = patchMode
     ? patchDiffs
     : commitMode
@@ -577,10 +582,10 @@ export function ReviewView({
     () =>
       preloaded
         ? patchMode
-          ? patchChangesFromFiles(source.files).map((c) => ({ ...c, repoRoot: sourceRoot }))
+          ? patchChanges.map((c) => ({ ...c, repoRoot: sourceRoot }))
           : commitChangesFromFiles(preloadedFiles).map((c) => ({ ...c, repoRoot: sourceRoot }))
         : (repoChanges ?? []).flatMap((r) => r.changes.map((c) => ({ ...c, repoRoot: r.root }))),
-    [preloaded, patchMode, source, preloadedFiles, sourceRoot, repoChanges],
+    [preloaded, patchMode, patchChanges, preloadedFiles, sourceRoot, repoChanges],
   );
   const effectiveRequestDiff = preloaded ? noopRequestDiff : onRequestDiff;
   const preloadLoading = patchMode
@@ -606,13 +611,22 @@ export function ReviewView({
   const allFiles = useMemo<ReviewFile[]>(() => {
     if (preloaded)
       return patchMode
-        ? tagReviewFiles(patchChangesFromFiles(source.files), sourceRoot)
+        ? tagReviewFiles(patchChanges, sourceRoot)
         : tagReviewFiles(commitChangesFromFiles(preloadedFiles), sourceRoot);
     const scoped = (repoChanges ?? []).map((r) =>
       scope === 'all' ? r : { ...r, changes: r.changes.filter((c) => inScope(c, scope)) },
     );
     return workingReviewFiles(scoped, resolved);
-  }, [preloaded, patchMode, source, preloadedFiles, sourceRoot, repoChanges, scope, resolved]);
+  }, [
+    preloaded,
+    patchMode,
+    patchChanges,
+    preloadedFiles,
+    sourceRoot,
+    repoChanges,
+    scope,
+    resolved,
+  ]);
   const linesPendingRoots = useMemo(
     () => new Set((repoChanges ?? []).filter((r) => !r.lines).map((r) => folderKey(r.root))),
     [repoChanges],

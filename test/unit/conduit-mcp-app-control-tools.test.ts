@@ -848,6 +848,7 @@ describe('open_diff', () => {
     const h = harness();
     const bytes = new TextEncoder().encode(validPatch);
     h.deps.realPath = async (p) => p;
+    h.deps.kindOf = async () => 'file';
     h.deps.readBytes = async () => bytes;
     const app = build(h);
     const { ctx, calls } = context();
@@ -865,6 +866,7 @@ describe('open_diff', () => {
   it('ask summary includes the resolved patch_file path even when title is set', async () => {
     const h = harness();
     h.deps.realPath = async (p) => p;
+    h.deps.kindOf = async () => 'file';
     h.deps.readBytes = async () => new TextEncoder().encode(validPatch);
     const app = build(h);
     const { ctx } = context();
@@ -882,6 +884,7 @@ describe('open_diff', () => {
     const h = harness();
     let maxAsked = 0;
     h.deps.realPath = async (p) => p;
+    h.deps.kindOf = async () => 'file';
     h.deps.readBytes = async (_p, max) => {
       maxAsked = max;
       return new Uint8Array(max);
@@ -937,6 +940,7 @@ describe('open_diff', () => {
     const h = harness();
     const body = Buffer.from(validPatch, 'utf16le');
     h.deps.realPath = async (p) => p;
+    h.deps.kindOf = async () => 'file';
     h.deps.readBytes = async () =>
       Uint8Array.from(Buffer.concat([Buffer.from([0xff, 0xfe]), body]));
     const app = build(h);
@@ -991,24 +995,24 @@ describe('open_diff', () => {
     );
   });
 
-  it('rejects an empty or too-long title as invalid_input', async () => {
+  it('rejects an empty or too-long title as invalid_args', async () => {
     const app = build(harness());
     const { ctx } = context();
     expect(code(await app.prepareOpenDiff(caller(), { patch: validPatch, title: '' }, ctx))).toBe(
-      'invalid_input',
+      'invalid_args',
     );
     expect(
       code(await app.prepareOpenDiff(caller(), { patch: validPatch, title: 'x'.repeat(201) }, ctx)),
-    ).toBe('invalid_input');
+    ).toBe('invalid_args');
   });
 
-  it('rejects non-string patch, patch_file and title as invalid_input', async () => {
+  it('rejects non-string patch, patch_file and title as invalid_args', async () => {
     const app = build(harness());
     const { ctx } = context();
-    expect(code(await app.prepareOpenDiff(caller(), { patch: 1 }, ctx))).toBe('invalid_input');
-    expect(code(await app.prepareOpenDiff(caller(), { patch_file: 1 }, ctx))).toBe('invalid_input');
+    expect(code(await app.prepareOpenDiff(caller(), { patch: 1 }, ctx))).toBe('invalid_args');
+    expect(code(await app.prepareOpenDiff(caller(), { patch_file: 1 }, ctx))).toBe('invalid_args');
     expect(code(await app.prepareOpenDiff(caller(), { patch: validPatch, title: 1 }, ctx))).toBe(
-      'invalid_input',
+      'invalid_args',
     );
   });
 
@@ -1024,6 +1028,34 @@ describe('open_diff', () => {
     expect(
       code(await app.prepareOpenDiff(caller(), { patch: validPatch, focus: 'yes' }, ctx)),
     ).toBe('invalid_args');
+  });
+
+  it('move:no leaves focus true unless the caller passed false, as open_url does', async () => {
+    const app = build(harness());
+    const { ctx, calls } = context({ move: 'no' });
+    ok(await ok(await app.prepareOpenDiff(caller(), { patch: validPatch }, ctx)).run());
+    expect(calls[0].action).toMatchObject({ kind: 'openReview', focus: true });
+    ok(
+      await ok(await app.prepareOpenDiff(caller(), { patch: validPatch, focus: false }, ctx)).run(),
+    );
+    expect(calls[1].action).toMatchObject({ kind: 'openReview', focus: false });
+  });
+
+  it('rejects a non-file patch_file without reading', async () => {
+    const h = harness();
+    let reads = 0;
+    h.deps.realPath = async (p) => p;
+    h.deps.kindOf = async () => 'other';
+    h.deps.readBytes = async () => {
+      reads += 1;
+      return new TextEncoder().encode(validPatch);
+    };
+    const app = build(h);
+    const { ctx } = context();
+    expect(code(await app.prepareOpenDiff(caller(), { patch_file: 'fifo.patch' }, ctx))).toBe(
+      'invalid_input',
+    );
+    expect(reads).toBe(0);
   });
 });
 

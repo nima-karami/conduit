@@ -196,14 +196,23 @@ describe('Review patch source', () => {
     mount(patchSource(TWO_HUNKS));
     expect(host.textContent).not.toContain('All repos reviews the working tree');
     const more = host.querySelector<HTMLButtonElement>('.review__more');
+    expect(more).not.toBeNull();
     act(() => {
       more?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(host.textContent).not.toContain('Ignore whitespace');
+    const items = [...document.querySelectorAll('.ctxmenu__item')];
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.some((el) => el.textContent?.includes('Ignore whitespace'))).toBe(false);
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(document.querySelector('.ctxmenu')).toBeNull();
     const src = host.querySelector<HTMLButtonElement>('button.review__source');
+    expect(src).not.toBeNull();
     act(() => {
       src?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(host.querySelector('[role="menu"]')).toBeNull();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.querySelector('.commit-picker')).toBeNull();
   });
 });

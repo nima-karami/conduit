@@ -845,6 +845,24 @@ describe('docsReducer — openReview (review source)', () => {
     expect(s.docs[0].title).toBe('Agent diff');
   });
 
+  it('focus:false / background openReview does not come to the front', () => {
+    const prev = open(initialDocs, 'file', '/a.ts');
+    const next = docsReducer(prev, {
+      type: 'openReview',
+      sessionId: 'S1',
+      source: { kind: 'patch', files: [], handle: 'claude-1' },
+      mode: 'background',
+    });
+    expect(next.docs.some((d) => d.id === REVIEW_DOC_ID)).toBe(true);
+    expect(next.activeId).toBe(prev.activeId);
+    expect(remembered(next, 'S1')).toBe(remembered(prev, 'S1'));
+    expect(next.docs.find((d) => d.id === REVIEW_DOC_ID)?.reviewSource).toEqual({
+      kind: 'patch',
+      files: [],
+      handle: 'claude-1',
+    });
+  });
+
   it('transfers ownership + reactivates when reopened under another session', () => {
     let s = docsReducer(initialDocs, {
       type: 'openReview',

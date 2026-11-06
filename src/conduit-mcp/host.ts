@@ -10,6 +10,7 @@ import type { HostPlatform } from '../lsp-binary';
 import { mcpLaunchWiring, mcpServerCommand } from '../mcp-launch';
 import type { HostToWebview, WebviewToHost } from '../protocol';
 import type { SubmitOutcome } from '../pty-writer';
+import { readCappedBytes } from '../read-capped';
 import { PTY_SETTLE_MS } from '../timed-messages';
 import type { AgentDefinition, SpawnSpec } from '../types';
 import { adapterFor, MCP_ADAPTERS, type McpAdapter, notifiable } from './adapters';
@@ -747,9 +748,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       try {
         const fh = await fs.promises.open(absPath, 'r');
         try {
-          const buf = Buffer.allocUnsafe(max);
-          const { bytesRead } = await fh.read(buf, 0, max, 0);
-          return buf.subarray(0, bytesRead);
+          return await readCappedBytes(
+            (buffer, offset, length, position) => fh.read(buffer, offset, length, position),
+            max,
+          );
         } finally {
           await fh.close();
         }
