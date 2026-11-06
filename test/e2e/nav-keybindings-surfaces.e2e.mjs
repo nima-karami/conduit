@@ -73,7 +73,8 @@ async function setShortcuts(page, shortcuts) {
       }),
     shortcuts,
   );
-  // The renderer's own subscriber got the same message; give React one commit to rebuild rules.
+  // STOP (CON-134): host echoed shortcuts, but Monaco's rebuilt nav rules are not
+  // UI-exposed (no data-* / __navRules). One React commit is still a fixed wait.
   await page.waitForTimeout(300);
 }
 
@@ -110,13 +111,29 @@ function planLine(page) {
 }
 
 async function waitPlanLine(page, line, timeout = 10000) {
-  const until = Date.now() + timeout;
-  while (Date.now() < until) {
-    if ((await planLine(page)) === line) return true;
-    await page.waitForTimeout(100);
+  try {
+    await page.waitForFunction(
+      (want) => {
+        const ed = (window.monaco?.editor.getEditors() ?? []).find(
+          (e) =>
+            e.getDomNode()?.closest('.plan__code') && e.getModel()?.getValue().includes('Square'),
+        );
+        return ed?.getPosition()?.lineNumber === want;
+      },
+      line,
+      { timeout },
+    );
+    return true;
+  } catch {
+    return false;
   }
-  return false;
 }
+
+/** Bounded window for a negative: a rebound-away chord must not navigate. */
+const observeNothingFor = async (page, ms, check) => {
+  await page.waitForTimeout(ms);
+  return check();
+};
 
 /** The peek's embedded editor: model path + caret, or null when no peek is open. */
 function peekState(page) {
@@ -141,9 +158,9 @@ async function snapshot(page) {
 async function assertInert(page, key, what) {
   const before = await snapshot(page);
   await page.keyboard.press(key);
-  await page.waitForTimeout(1000);
+  const held = await observeNothingFor(page, 1000, async () => (await snapshot(page)) === before);
   const after = await snapshot(page);
-  assert(after === before, `${what}: ${key} must be inert, went ${before} → ${after}`);
+  assert(held && after === before, `${what}: ${key} must be inert, went ${before} → ${after}`);
 }
 
 runScenario('nav-keybindings-surfaces', async ({ page, log }) => {
@@ -185,9 +202,8 @@ runScenario('nav-keybindings-surfaces', async ({ page, log }) => {
   );
   await caretInPlan(page, 'localTarget', 1);
   await page.keyboard.press('Control+F12');
-  await page.waitForTimeout(1000);
   assert(
-    (await planLine(page)) === 4,
+    await observeNothingFor(page, 1000, async () => (await planLine(page)) === 4),
     `AC-5c mirror: Ctrl+F12 in the plan block must be inert, at ${await planLine(page)}`,
   );
   log('AC-5c mirror plan block: Implementations on Alt+I, Ctrl+F12 inert ✓');
@@ -202,8 +218,10 @@ runScenario('nav-keybindings-surfaces', async ({ page, log }) => {
   );
   await caretInPlan(page, 'localTarget', 1);
   await page.keyboard.press('F12');
-  await page.waitForTimeout(1000);
-  assert((await planLine(page)) === 4, 'AC-5: F12 in the plan block must be inert');
+  assert(
+    await observeNothingFor(page, 1000, async () => (await planLine(page)) === 4),
+    'AC-5: F12 in the plan block must be inert',
+  );
   log('AC-5 plan block follows the rebind; F12 inert ✓');
 
   await caretInPlan(page, 'area', 0);
@@ -274,11 +292,14 @@ runScenario('nav-keybindings-surfaces', async ({ page, log }) => {
   log(`peek embedded editor focused on ${await embedded.jsonValue()}`);
   const beforeF12 = await snapshot(page);
   await page.keyboard.press('F12');
-  await page.waitForTimeout(1000);
+  const f12Stayed = await observeNothingFor(page, 1000, async () => {
+    const peek = await peekState(page);
+    return (await activeTab(page)) === 'a.ts' && !peek?.path.endsWith('/b.ts');
+  });
   const afterF12 = await snapshot(page);
   const f12Peek = await peekState(page);
   assert(
-    (await activeTab(page)) === 'a.ts' && !f12Peek?.path.endsWith('/b.ts'),
+    f12Stayed && (await activeTab(page)) === 'a.ts' && !f12Peek?.path.endsWith('/b.ts'),
     `AC-5b: F12 in the peek must not run Definition (b.ts:40), went ${beforeF12} → ${afterF12}`,
   );
   log(`AC-5b F12 in the peek did not run Definition: ${beforeF12} → ${afterF12}`);
@@ -295,15 +316,33 @@ runScenario('nav-keybindings-surfaces', async ({ page, log }) => {
   assert(refocused, 'AC-5b: the peek must still be open with its embedded editor focusable');
   const beforeAltD = await snapshot(page);
   await page.keyboard.press('Alt+D');
-  let moved = false;
-  for (let i = 0; i < 100 && !moved; i++) {
-    const tab = await activeTab(page);
-    const peek = await peekState(page);
-    moved =
-      (tab === 'b.ts' && (await cursorLine(page)) === 40) ||
-      (!!peek && peek.path.endsWith('/b.ts') && peek.line === 40);
-    if (!moved) await page.waitForTimeout(100);
-  }
+  const moved = await page
+    .waitForFunction(
+      () => {
+        const tab =
+          document.querySelector('.tabbar [role="tab"].tab--active span')?.textContent ?? null;
+        const eds = (window.monaco?.editor.getEditors() ?? []).filter((e) => {
+          const n = e.getDomNode();
+          return n?.isConnected && !n.closest('.zone-widget');
+        });
+        const codeEd = eds.find((e) => e.hasTextFocus()) ?? eds[eds.length - 1];
+        const codeLine = codeEd?.getPosition()?.lineNumber ?? null;
+        const peekEd = (window.monaco?.editor.getEditors() ?? []).find((e) =>
+          e.getDomNode()?.closest('.zone-widget'),
+        );
+        const peekPath = peekEd?.getDomNode()?.isConnected
+          ? (peekEd.getModel()?.uri.path ?? '')
+          : '';
+        const peekLine = peekEd?.getPosition()?.lineNumber ?? null;
+        return (
+          (tab === 'b.ts' && codeLine === 40) || (peekPath.endsWith('/b.ts') && peekLine === 40)
+        );
+      },
+      null,
+      { timeout: 10000 },
+    )
+    .then(() => true)
+    .catch(() => false);
   assert(
     moved,
     `AC-5b: Alt+D in the peek's embedded editor must reach b.ts:40, went ${beforeAltD} → ${await snapshot(page)}`,

@@ -16,7 +16,7 @@
  * Until that key exists, this file exits SKIP.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import {
@@ -39,6 +39,50 @@ if (process.platform !== 'win32') {
 }
 
 const log = makeLog('scrollback');
+
+/** Poll a scrollback ring until `test` accepts its contents, or the deadline. */
+async function waitForRingFile(path, test, timeout = 15000) {
+  const deadline = Date.now() + timeout;
+  let lastErr = 'missing';
+  while (Date.now() < deadline) {
+    try {
+      if (existsSync(path)) {
+        const raw = readFileSync(path, 'utf8');
+        if (test(raw)) return JSON.parse(raw);
+        lastErr = `content did not match (${raw.length} bytes)`;
+      } else lastErr = 'missing';
+    } catch (e) {
+      lastErr = e?.message ?? String(e);
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`scrollback ring never matched at ${path}: ${lastErr}`);
+}
+
+/** Wait until the rendered xterm buffer (window.__terms) holds every needle. */
+function waitRenderedNeedles(page, sid, needles, opts = {}) {
+  const { timeout = 20000, marker = null, markerCount = 0 } = opts;
+  return page.waitForFunction(
+    ({ id, want, marker: m, markerCount: n }) => {
+      const t = window.__terms?.[id];
+      if (!t) return false;
+      const b = t.buffer.active;
+      const out = [];
+      for (let i = 0; i < b.length; i++) {
+        const line = b.getLine(i);
+        if (!line) continue;
+        const text = line.translateToString(true);
+        if (line.isWrapped && out.length) out[out.length - 1] += text;
+        else out.push(text);
+      }
+      if (!want.every((s) => out.includes(s) || out.some((l) => l.includes(s)))) return false;
+      if (!m) return true;
+      return out.filter((l) => l.includes(m)).length >= n;
+    },
+    { id: sid, want: needles, marker, markerCount },
+    { timeout },
+  );
+}
 
 // ── Feature-presence gate ───────────────────────────────────────────────────
 // Check whether scrollback persistence has landed by inspecting the settings
@@ -116,6 +160,7 @@ try {
   const SENTINEL = `conduit-scrollback-sentinel-${Date.now()}`;
   const LINE_COUNT = 80;
   const RELAUNCH_MARKER = '— session relaunched —';
+  const lastScreen = Array.from({ length: 10 }, (_, i) => `sb-line-${LINE_COUNT - 9 + i}`);
 
   // The REPO launch arg already opened a session of its own (os-open), so "the first running
   // session" is that one, not ours — the echo went to a pane that was never shown.
@@ -144,14 +189,12 @@ try {
   );
   log('sentinel written to terminal ✓');
 
-  // Wait for persistence (implementation would write scrollback to userData).
-  await page1.waitForTimeout(1000);
   await shutdownApp(firstApp, page1);
   firstApp = null;
 
   // The ring on disk records the size its bytes were painted at (src/scrollback-files.ts names it).
   const ringFile = join(userDataDir, `scrollback-${sid.replace(/[^\w.-]/g, '_')}.json`);
-  const persisted = JSON.parse(readFileSync(ringFile, 'utf8'));
+  const persisted = await waitForRingFile(ringFile, (raw) => raw.includes(`sb-line-${LINE_COUNT}`));
   const segments = Array.isArray(persisted.segments) ? persisted.segments : [];
   const lastSegment = segments[segments.length - 1];
   log(`persisted v${persisted.version}: ${segments.map((s) => `${s.cols}x${s.rows}`).join(', ')}`);
@@ -179,16 +222,13 @@ try {
   await page2.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
   await tapBridge(page2);
 
-  // Wait for the restored session (persistence brings it back as 'stale').
+  // Wait for the restored session (persistence brings it back as 'stale') — that is the
+  // kill-race guard's "session is in the manager" condition.
   await page2.waitForFunction(
-    (id) => (window.__sessions || []).find((s) => s.id === id) || null,
+    (id) => (window.__sessions || []).some((s) => s.id === id && s.status === 'stale'),
     sid,
     { timeout: 20000 },
   );
-
-  // Let the restored session fully register in the host before relaunching it (a term:start
-  // that races session restore would be dropped by the kill-race guard).
-  await page2.waitForTimeout(1000);
 
   // Relaunch the restored session the way the UI does: the pane mounts and sends `term:start`,
   // and the host replays the scrollback BEFORE the fresh PTY starts. `__terms` exposes the real
@@ -217,7 +257,10 @@ try {
     sid,
     { timeout: 20000 },
   );
-  await page2.waitForTimeout(1500);
+  await waitRenderedNeedles(page2, sid, [SENTINEL, ...lastScreen], {
+    marker: RELAUNCH_MARKER,
+    markerCount: 1,
+  });
   const rendered = await logicalLines(page2, sid);
   assert(rendered, 'Relaunched terminal was not exposed on window.__terms');
   log(
@@ -231,7 +274,6 @@ try {
     sentinelAt >= 0,
     "Dead session's last screen was erased on relaunch: its last output line is not in the buffer",
   );
-  const lastScreen = Array.from({ length: 10 }, (_, i) => `sb-line-${LINE_COUNT - 9 + i}`);
   const missing = lastScreen.filter((l) => !rendered.includes(l));
   assert(missing.length === 0, `Last-screen lines missing after relaunch: ${missing.join(', ')}`);
   const markerLines = rendered.filter((l) => l.includes(RELAUNCH_MARKER));
@@ -261,8 +303,11 @@ try {
     { id: sid, n: bannersBefore },
     { timeout: 30000 },
   );
-  // The replay carries earlier banners too; give the new child time to print its own.
-  await page2.waitForTimeout(3000);
+  await waitRenderedNeedles(page2, sid, [SENTINEL, ...lastScreen], {
+    marker: RELAUNCH_MARKER,
+    markerCount: 2,
+    timeout: 30000,
+  });
   const inRun = await logicalLines(page2, sid);
   assert(inRun, 'Restarted terminal was not exposed on window.__terms');
   log(
@@ -297,7 +342,7 @@ try {
     { id: sid, s: RUN2_SENTINEL },
     { timeout: 20000 },
   );
-  await page2.waitForTimeout(1000);
+  await waitForRingFile(ringFile, (raw) => raw.includes(RUN2_SENTINEL));
   await shutdownApp(secondApp, page2);
   secondApp = null;
 
@@ -310,10 +355,11 @@ try {
   await page3.waitForLoadState('domcontentloaded');
   await page3.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
   await tapBridge(page3);
-  await page3.waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), sid, {
-    timeout: 20000,
-  });
-  await page3.waitForTimeout(1000);
+  await page3.waitForFunction(
+    (id) => (window.__sessions || []).some((s) => s.id === id && s.status === 'stale'),
+    sid,
+    { timeout: 20000 },
+  );
   await page3.evaluate(() => {
     window.__terms = {};
   });
@@ -325,7 +371,11 @@ try {
     sid,
     { timeout: 30000 },
   );
-  await page3.waitForTimeout(1500);
+  await waitRenderedNeedles(page3, sid, [SENTINEL, RUN2_SENTINEL, ...lastScreen], {
+    marker: RELAUNCH_MARKER,
+    markerCount: 3,
+    timeout: 30000,
+  });
   const third = await logicalLines(page3, sid);
   assert(third, 'Third-run terminal was not exposed on window.__terms');
   log(
