@@ -2,7 +2,7 @@
 // prepare → (ask) → run, and every way an ask can end (plan 2026-10-30-conduit-mcp-tool-policy,
 // call-flow contract). The host only wires it.
 import type { HostToWebview } from '../protocol';
-import type { PreparedCall } from './control-tools';
+import type { Prepared, PreparedCall } from './control-tools';
 import type { JsonRpcId } from './json-rpc';
 import {
   type CliKind,
@@ -61,7 +61,7 @@ export interface ControlCall<T> {
   /** The layer that set `access` (for the card's reason line). */
   source: PolicySource;
   args: unknown;
-  prepare(): Promise<Result<PreparedCall<T>>>;
+  prepare(): Promise<Result<Prepared<T>>>;
 }
 export interface CallFlowDeps {
   now(): number;
@@ -418,6 +418,11 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       const prepared = await c.prepare();
       if (!prepared.ok) return prepared;
       const p = prepared.value;
+      // Already answered at prepare, with no token held: nothing to ask or run, but 'off' still refuses.
+      if ('done' in p) {
+        if (c.policy.access === 'off') return { ok: false, error: toolDisabled(c.tool) };
+        return c.inflight.cancelled ? null : p.done;
+      }
       if (c.inflight.cancelled) {
         p.release();
         return null;
@@ -426,7 +431,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         case 'on':
           return runNow(c, p);
         case 'ask':
-          return p.noAsk ? runNow(c, p) : ask(c, p);
+          return ask(c, p);
         case 'off':
           p.release();
           return { ok: false, error: toolDisabled(c.tool) };

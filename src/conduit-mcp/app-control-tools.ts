@@ -16,7 +16,7 @@ import {
   type Fail,
   fail,
   isFail,
-  type PreparedCall,
+  type Prepared,
   parseKeys,
   parseObject,
   type TargetSession,
@@ -88,7 +88,7 @@ type Prepare<T> = (
   caller: Caller,
   args: unknown,
   ctx: ControlCallContext,
-) => Promise<Result<PreparedCall<T>>>;
+) => Promise<Result<Prepared<T>>>;
 export interface AppControlHandlers {
   /** close_session's routing, also used by closeWhenDone when a program exits on its own. */
   closeRouted(
@@ -340,6 +340,8 @@ export function createAppControlHandlers(
       seen.add(e.target.sessionId);
       return true;
     });
+    // Nothing to close is known at prepare: no card, no token spent.
+    if (entries.length === 0) return { done: { ok: true, value: { results: [] } } };
     const routesUi = entries.some((e) => !isFail(e.target) && windowReadyOf(e.target.sessionId));
     return {
       summary: {
@@ -348,8 +350,6 @@ export function createAppControlHandlers(
         total: entries.length,
       },
       ...(routesUi ? { routesUi: true as const } : {}),
-      // No targets: the answer is known now, so no card is worth asking for.
-      ...(entries.length === 0 ? { noAsk: true as const } : {}),
       exec: async (token) => {
         // The call's own token gives way to one per target attempted.
         token.refund();

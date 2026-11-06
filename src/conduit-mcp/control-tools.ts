@@ -106,12 +106,12 @@ export interface TargetSession {
   handle: Handle;
   openerSessionId: string | null;
 }
+/** A prepare answer: a call to ask about and run, or a result known without acting (no token spent). */
+export type Prepared<T> = PreparedCall<T> | { done: Result<T> };
 export interface PreparedCall<T> {
   summary: AskSummary;
   /** Its run waits on a renderer (mcp:ui): the ask budget shrinks by UI_TIMEOUT_MS. */
   routesUi: boolean;
-  /** Nothing to act on, so an 'ask' policy runs it without a card (its 'off' still refuses). */
-  noAsk: boolean;
   /** Executes; refunds the rate token itself when the open fails (step 9). */
   run(): Promise<Result<T>>;
   /** Refunds the token for a refusal between prepare and run that isn't an ask outcome. Idempotent. */
@@ -129,23 +129,23 @@ export interface ControlHandlers {
     caller: Caller,
     args: unknown,
     ctx: ControlCallContext,
-  ): Promise<Result<PreparedCall<OpenSessionOutput>>>;
+  ): Promise<Result<Prepared<OpenSessionOutput>>>;
   prepareOpenTerminal(
     caller: Caller,
     args: unknown,
     ctx: ControlCallContext,
-  ): Promise<Result<PreparedCall<OpenSessionOutput>>>;
+  ): Promise<Result<Prepared<OpenSessionOutput>>>;
   prepareOpenFile(
     caller: Caller,
     args: unknown,
     ctx: ControlCallContext,
-  ): Promise<Result<PreparedCall<OpenFileOutput>>>;
+  ): Promise<Result<Prepared<OpenFileOutput>>>;
   /** reserve → home → check → refund unless the exec kept the token. */
   prepared<T>(
     tool: ControlTool,
     caller: Caller,
     check: (who: CallWho) => Promise<CheckResult<T>>,
-  ): Promise<Result<PreparedCall<T>>>;
+  ): Promise<Result<Prepared<T>>>;
 }
 
 export type Fail = { ok: false; error: ToolError };
@@ -359,10 +359,10 @@ interface Token {
 export type CallWho = { sessionId: string; home: string; spend(): Token | Fail };
 export type CheckResult<T> =
   | Fail
+  | { done: Result<T> }
   | {
       summary: AskSummary;
       routesUi?: true;
-      noAsk?: true;
       exec: (token: Token) => Promise<Result<T>>;
     };
 
@@ -456,7 +456,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     tool: ControlTool,
     caller: Caller,
     check: (who: CallWho) => Promise<CheckResult<T>>,
-  ): Promise<Result<PreparedCall<T>>> {
+  ): Promise<Result<Prepared<T>>> {
     const token = reserve(tool, caller);
     if (isFail(token)) return token;
     let handed = false;
@@ -470,6 +470,8 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         return failed(tool, caller, e);
       }
       if (isFail(c)) return c;
+      // Nothing to run: the reservation is refunded by the finally below, as for any refusal.
+      if ('done' in c) return { ok: true, value: { done: c.done } };
       const exec = c.exec;
       handed = true;
       return {
@@ -477,7 +479,6 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         value: {
           summary: c.summary,
           routesUi: c.routesUi === true,
-          noAsk: c.noAsk === true,
           async run() {
             try {
               return await exec(token);
@@ -528,7 +529,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     a: Common & OpenExtras & Partial<SessionExtras>,
     launch: McpLaunch,
     agent: string,
-  ): Promise<Result<PreparedCall<OpenSessionOutput>>> {
+  ): Promise<Result<Prepared<OpenSessionOutput>>> {
     return prepared(tool, caller, async (who) => {
       const abs = deps.resolvePath(who.home, a.path);
       const bad = await checkKind(abs, 'dir');

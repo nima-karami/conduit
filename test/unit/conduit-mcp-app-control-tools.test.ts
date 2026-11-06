@@ -10,6 +10,7 @@ import {
   type ControlCallContext,
   type ControlDeps,
   createControlHandlers,
+  type Prepared,
   type PreparedCall,
   SHOW_RATE_PER_CALLER,
   type TargetSession,
@@ -187,16 +188,23 @@ const ok = <T>(r: Result<T>): T => {
 };
 const build = (h: Harness): AppControlHandlers =>
   createAppControlHandlers(h.deps, createControlHandlers(h.deps).prepared);
-async function runIt<T>(p: Promise<Result<PreparedCall<T>>>): Promise<Result<T>> {
+/** A prepare answer that must be a call to ask about and run. */
+const call = <T>(r: Result<Prepared<T>>): PreparedCall<T> => {
+  const p = ok(r);
+  if ('done' in p) throw new Error('expected a call, got a done answer');
+  return p;
+};
+async function runIt<T>(p: Promise<Result<Prepared<T>>>): Promise<Result<T>> {
   const r = await p;
-  return r.ok ? r.value.run() : r;
+  if (!r.ok) return r;
+  return 'done' in r.value ? r.value.done : r.value.run();
 }
 
 /** Proves earlier refusals were refunded: `app`'s full budget is still there, then spent. */
 async function budgetIntact(app: AppControlHandlers, tool: 'act' | 'show') {
   const { ctx } = context({ reach: 'any' });
   const n = tool === 'act' ? ACT_RATE_PER_CALLER : SHOW_RATE_PER_CALLER;
-  const next = (): Promise<Result<PreparedCall<unknown>>> =>
+  const next = (): Promise<Result<Prepared<unknown>>> =>
     tool === 'act'
       ? app.prepareCloseSession(caller(), { session: 'claude-2' }, ctx)
       : app.prepareOpenUrl(caller(), { url: 'http://x/' }, ctx);
@@ -273,10 +281,10 @@ describe('targets and reach', () => {
     expect(
       code(await app.prepareAttachFolder(caller(), { path: 'sub', session: 'claude-2' }, self)),
     ).toBe('out_of_reach');
-    ok(await app.prepareAttachFolder(caller(), { path: 'sub' }, self));
-    ok(await app.prepareAttachFolder(caller(), { path: 'sub', session: 'claude-1' }, self));
+    call(await app.prepareAttachFolder(caller(), { path: 'sub' }, self));
+    call(await app.prepareAttachFolder(caller(), { path: 'sub', session: 'claude-1' }, self));
     const opened = context({ reach: 'opened' }).ctx;
-    ok(await app.prepareAttachFolder(caller(), { path: 'sub', session: 'claude-2' }, opened));
+    call(await app.prepareAttachFolder(caller(), { path: 'sub', session: 'claude-2' }, opened));
     expect(
       code(await app.prepareAttachFolder(caller(), { path: 'sub', session: 'codex-1' }, opened)),
     ).toBe('out_of_reach');
@@ -298,7 +306,7 @@ describe('targets and reach', () => {
     expect(code(await app.prepareCloseSession(caller(), { session: 'codex-2' }, ctx))).toBe(
       'out_of_reach',
     );
-    ok(await app.prepareCloseSession(caller(), { session: 'claude-1' }, ctx));
+    call(await app.prepareCloseSession(caller(), { session: 'claude-1' }, ctx));
   });
 
   it('move no refuses focus_session', async () => {
@@ -351,7 +359,7 @@ describe('window routing', () => {
     const h = harness();
     const app = build(h);
     const { ctx } = context({ reach: 'any', move: 'yes' });
-    const routes = async (p: Promise<Result<PreparedCall<unknown>>>) => ok(await p).routesUi;
+    const routes = async (p: Promise<Result<Prepared<unknown>>>) => call(await p).routesUi;
     expect(await routes(app.prepareCloseSession(caller(), { session: 'codex-2' }, ctx))).toBe(true);
     expect(await routes(app.prepareCloseFiles(caller(), { all: true }, ctx))).toBe(true);
     expect(
@@ -384,7 +392,7 @@ describe('window routing', () => {
         const h = harness();
         const app = build(h);
         const { ctx, calls } = context({ reach: 'window', move: 'yes' });
-        const p = ok<PreparedCall<unknown>>(
+        const p = call<unknown>(
           await (tool === 'close'
             ? app.prepareCloseSession(caller(), { session: 'codex-1' }, ctx)
             : tool === 'focus'
@@ -410,7 +418,7 @@ describe('window routing', () => {
     const app = build(h);
     const { ctx } = context({ reach: 'window' });
     for (let i = 0; i < ACT_RATE_PER_CALLER + 2; i++) {
-      const p = ok(await app.prepareCloseSession(caller(), { session: 'codex-1' }, ctx));
+      const p = call(await app.prepareCloseSession(caller(), { session: 'codex-1' }, ctx));
       h.windows.set('same-1', 2);
       expect(code(await p.run())).toBe('out_of_reach');
       h.windows.set('same-1', 1);
@@ -422,7 +430,7 @@ describe('window routing', () => {
     const h = harness();
     const app = build(h);
     const { ctx, calls } = context();
-    const p = ok(await app.prepareOpenUrl(caller(), { url: 'http://x/' }, ctx));
+    const p = call(await app.prepareOpenUrl(caller(), { url: 'http://x/' }, ctx));
     h.notReady.add(1);
     expect(code(await p.run())).toBe('window_not_ready');
     expect(calls).toEqual([]);
@@ -435,7 +443,7 @@ describe('close_session', () => {
     h.windows.set('other-1', null);
     const app = build(h);
     const { ctx, calls } = context({ reach: 'any' });
-    const p = ok(await app.prepareCloseSession(caller(), { session: 'codex-2' }, ctx));
+    const p = call(await app.prepareCloseSession(caller(), { session: 'codex-2' }, ctx));
     expect(await p.run()).toStrictEqual({ ok: true, value: { closed: 'other-1' } });
     expect(h.closes).toEqual(['other-1']);
     expect(calls).toEqual([]);
@@ -464,7 +472,7 @@ describe('close_session', () => {
     const h = harness();
     const app = build(h);
     const { ctx, calls } = context({ reach: 'any' });
-    const p = ok(await app.prepareCloseSession(caller(), { session: 'codex-2' }, ctx));
+    const p = call(await app.prepareCloseSession(caller(), { session: 'codex-2' }, ctx));
     expect(p.summary).toEqual({ tool: 'close_session', target: 'codex-2' });
     expect(await p.run()).toStrictEqual({ ok: true, value: { closed: 'other-1' } });
     expect(calls).toEqual([
@@ -643,7 +651,7 @@ describe('close_session list forms', () => {
   it('the ask summary names the handles, eight at most, and the total', async () => {
     const app = build(harness());
     const { ctx } = context({ reach: 'any' });
-    const four = ok(
+    const four = call(
       await app.prepareCloseSession(
         caller(),
         { sessions: ['codex-1', 'other-1', 'claude-2', 'claude-1'] },
@@ -656,7 +664,7 @@ describe('close_session list forms', () => {
       total: 4,
     });
     const nine = Array.from({ length: 9 }, (_, i) => `s${i + 1}`);
-    const many = ok(await app.prepareCloseSession(caller(), { sessions: nine }, ctx));
+    const many = call(await app.prepareCloseSession(caller(), { sessions: nine }, ctx));
     expect(many.summary).toStrictEqual({
       tool: 'close_session',
       targets: nine.slice(0, 8),
@@ -705,7 +713,7 @@ describe('close_session list forms', () => {
     const h = harness();
     const app = build(h);
     const { ctx, calls } = context({ reach: 'any' });
-    const p = ok(
+    const p = call(
       await app.prepareCloseSession(caller(), { sessions: ['codex-1', 'same-1', 'codex-1'] }, ctx),
     );
     expect(p.summary).toStrictEqual({ tool: 'close_session', targets: ['codex-1'], total: 1 });
@@ -716,15 +724,51 @@ describe('close_session list forms', () => {
     expect(calls.map((c) => c.routed)).toEqual(['same-1']);
   });
 
-  it('children with none needs no approval card; with some it does', async () => {
+  it('children with none is answered at prepare, with no card and no token', async () => {
     const h = harness();
     const app = build(h);
-    const { ctx } = context({ reach: 'any' });
-    expect(ok(await app.prepareCloseSession(caller(), { children: true }, ctx)).noAsk).toBe(false);
+    const { ctx, calls } = context({ reach: 'any' });
     h.targets = h.targets.filter((t) => t.openerSessionId !== 'caller-1');
-    const none = ok(await app.prepareCloseSession(caller(), { children: true }, ctx));
-    expect(none.noAsk).toBe(true);
-    expect(await none.run()).toStrictEqual({ ok: true, value: { results: [] } });
+    const none = await app.prepareCloseSession(caller(), { children: true }, ctx);
+    expect(none).toStrictEqual({ ok: true, value: { done: { ok: true, value: { results: [] } } } });
+    expect(calls).toEqual([]);
+    h.targets = [...TARGETS];
+    await budgetIntact(app, 'act');
+  });
+
+  it('children with some is a call to ask about', async () => {
+    const app = build(harness());
+    const { ctx } = context({ reach: 'any' });
+    expect(call(await app.prepareCloseSession(caller(), { children: true }, ctx)).summary).toEqual({
+      tool: 'close_session',
+      targets: ['claude-2'],
+      total: 1,
+    });
+  });
+
+  it('an entry whose close throws is refunded and reported as open_failed', async () => {
+    const h = harness();
+    const app = build(h);
+    const { ctx } = context({
+      reach: 'any',
+      answer: () => {
+        throw new Error('ipc gone');
+      },
+    });
+    const r = await runIt(app.prepareCloseSession(caller(), { sessions: ['codex-1'] }, ctx));
+    expect(r).toStrictEqual({
+      ok: true,
+      value: {
+        results: [
+          {
+            session: 'codex-1',
+            closed: false,
+            error: { code: 'open_failed', message: 'ipc gone' },
+          },
+        ],
+      },
+    });
+    await budgetIntact(app, 'act');
   });
 });
 
@@ -752,7 +796,7 @@ describe('attach_folder', () => {
     const h = harness();
     const app = build(h);
     const { ctx } = context({ reach: 'self' });
-    const p = ok(await app.prepareAttachFolder(caller(), { path: 'sub' }, ctx));
+    const p = call(await app.prepareAttachFolder(caller(), { path: 'sub' }, ctx));
     expect(p.summary).toEqual({ tool: 'attach_folder', path: `${HOME}/sub`, target: 'claude-1' });
     expect(await p.run()).toStrictEqual({
       ok: true,
@@ -823,13 +867,13 @@ describe('close_files', () => {
     ];
     for (const a of bad)
       expect([a, code(await app.prepareCloseFiles(caller(), a, ctx))]).toEqual([a, 'invalid_args']);
-    const p = ok(await app.prepareCloseFiles(caller(), { paths: ['a.ts', '/abs/b.ts'] }, ctx));
+    const p = call(await app.prepareCloseFiles(caller(), { paths: ['a.ts', '/abs/b.ts'] }, ctx));
     expect(p.summary).toEqual({ tool: 'close_files', count: 2, all: false });
     expect(ok(await p.run())).toStrictEqual({
       closed: [`${HOME}/a.ts`, '/abs/b.ts'],
       skipped: [],
     });
-    const all = ok(await app.prepareCloseFiles(caller(), { all: true }, ctx));
+    const all = call(await app.prepareCloseFiles(caller(), { all: true }, ctx));
     expect(all.summary).toEqual({ tool: 'close_files', count: 0, all: true });
     ok(await all.run());
     expect(calls).toEqual([
@@ -868,7 +912,7 @@ describe('open_review', () => {
     const h = harness();
     const app = build(h);
     const { ctx, calls } = context();
-    const w = ok(await app.prepareOpenReview(caller(), { source: { kind: 'working' } }, ctx));
+    const w = call(await app.prepareOpenReview(caller(), { source: { kind: 'working' } }, ctx));
     expect(w.summary).toEqual({ tool: 'open_review', what: 'working' });
     expect(ok(await w.run())).toStrictEqual({
       opened: 'review',
@@ -880,7 +924,7 @@ describe('open_review', () => {
       ),
     );
     expect(staged.source).toStrictEqual({ kind: 'working', scope: 'staged' });
-    const c = ok(
+    const c = call(
       await app.prepareOpenReview(caller(), { source: { kind: 'commit', ref: 'c1' } }, ctx),
     );
     expect(c.summary).toEqual({ tool: 'open_review', what: SHA.slice(0, 7) });
@@ -888,7 +932,7 @@ describe('open_review', () => {
       opened: 'review',
       source: { kind: 'commit', sha: SHA },
     });
-    const r = ok(
+    const r = call(
       await app.prepareOpenReview(
         caller(),
         { source: { kind: 'range', base: 'v1', head: 'feature' } },
@@ -1005,7 +1049,7 @@ describe('open_diff', () => {
     const h = harness();
     const app = build(h);
     const { ctx, calls } = context();
-    const p = ok(await app.prepareOpenDiff(caller(), { patch: validPatch }, ctx));
+    const p = call(await app.prepareOpenDiff(caller(), { patch: validPatch }, ctx));
     expect(p.summary).toEqual({ tool: 'open_diff', title: 'a.txt' });
     expect(ok(await p.run())).toStrictEqual({ opened: 'review', source: { kind: 'patch' } });
     expect(calls).toHaveLength(1);
@@ -1031,7 +1075,9 @@ describe('open_diff', () => {
     const h = harness();
     const app = build(h);
     const { ctx, calls } = context();
-    const p = ok(await app.prepareOpenDiff(caller(), { patch: validPatch, title: 'My diff' }, ctx));
+    const p = call(
+      await app.prepareOpenDiff(caller(), { patch: validPatch, title: 'My diff' }, ctx),
+    );
     expect(p.summary).toEqual({ tool: 'open_diff', title: 'My diff' });
     expect(ok(await p.run())).toStrictEqual({ opened: 'review', source: { kind: 'patch' } });
     const action = calls[0].action as {
@@ -1049,7 +1095,7 @@ describe('open_diff', () => {
     h.deps.readBytes = async () => bytes;
     const app = build(h);
     const { ctx, calls } = context();
-    const p = ok(await app.prepareOpenDiff(caller(), { patch_file: 'changes.diff' }, ctx));
+    const p = call(await app.prepareOpenDiff(caller(), { patch_file: 'changes.diff' }, ctx));
     expect(p.summary).toEqual({
       tool: 'open_diff',
       title: 'a.txt',
@@ -1067,7 +1113,7 @@ describe('open_diff', () => {
     h.deps.readBytes = async () => new TextEncoder().encode(validPatch);
     const app = build(h);
     const { ctx } = context();
-    const p = ok(
+    const p = call(
       await app.prepareOpenDiff(caller(), { patch_file: 'changes.diff', title: 'My diff' }, ctx),
     );
     expect(p.summary).toEqual({
@@ -1216,10 +1262,12 @@ describe('open_diff', () => {
   it('defaults focus true, honours false, and rejects a non-boolean', async () => {
     const app = build(harness());
     const { ctx, calls } = context();
-    ok(await ok(await app.prepareOpenDiff(caller(), { patch: validPatch }, ctx)).run());
+    ok(await call(await app.prepareOpenDiff(caller(), { patch: validPatch }, ctx)).run());
     expect(calls[0].action).toMatchObject({ kind: 'openReview', focus: true });
     ok(
-      await ok(await app.prepareOpenDiff(caller(), { patch: validPatch, focus: false }, ctx)).run(),
+      await call(
+        await app.prepareOpenDiff(caller(), { patch: validPatch, focus: false }, ctx),
+      ).run(),
     );
     expect(calls[1].action).toMatchObject({ kind: 'openReview', focus: false });
     expect(
@@ -1230,10 +1278,12 @@ describe('open_diff', () => {
   it('move:no leaves focus true unless the caller passed false, as open_url does', async () => {
     const app = build(harness());
     const { ctx, calls } = context({ move: 'no' });
-    ok(await ok(await app.prepareOpenDiff(caller(), { patch: validPatch }, ctx)).run());
+    ok(await call(await app.prepareOpenDiff(caller(), { patch: validPatch }, ctx)).run());
     expect(calls[0].action).toMatchObject({ kind: 'openReview', focus: true });
     ok(
-      await ok(await app.prepareOpenDiff(caller(), { patch: validPatch, focus: false }, ctx)).run(),
+      await call(
+        await app.prepareOpenDiff(caller(), { patch: validPatch, focus: false }, ctx),
+      ).run(),
     );
     expect(calls[1].action).toMatchObject({ kind: 'openReview', focus: false });
   });
@@ -1261,10 +1311,10 @@ describe('open_git_history', () => {
     const h = harness();
     const app = build(h);
     const { ctx, calls } = context();
-    const none = ok(await app.prepareOpenGitHistory(caller(), {}, ctx));
+    const none = call(await app.prepareOpenGitHistory(caller(), {}, ctx));
     expect(none.summary).toEqual({ tool: 'open_git_history', ref: null });
     expect(ok(await none.run())).toStrictEqual({ opened: 'git-history', selected: null });
-    const at = ok(await app.prepareOpenGitHistory(caller(), { ref: 'v1' }, ctx));
+    const at = call(await app.prepareOpenGitHistory(caller(), { ref: 'v1' }, ctx));
     expect(at.summary).toEqual({ tool: 'open_git_history', ref: 'v1' });
     expect(ok(await at.run())).toStrictEqual({ opened: 'git-history', selected: SHA });
     expect(calls.map((c) => c.action)).toEqual([
@@ -1337,7 +1387,7 @@ describe('open_url', () => {
     expect(code(await app.prepareOpenUrl(caller(), { url: grows }, ctx))).toBe('invalid_args');
     for (const a of [{}, { url: 1 }, { url: 'http://x/', focus: 'no' }, { url: 'http://x/', y: 1 }])
       expect(code(await app.prepareOpenUrl(caller(), a, ctx))).toBe('invalid_args');
-    const p = ok(await app.prepareOpenUrl(caller(), { url: 'localhost:5173' }, ctx));
+    const p = call(await app.prepareOpenUrl(caller(), { url: 'localhost:5173' }, ctx));
     expect(p.summary).toEqual({ tool: 'open_url', url: 'http://localhost:5173/' });
     expect(ok(await p.run())).toStrictEqual({ opened: 'http://localhost:5173/' });
     ok(await runIt(app.prepareOpenUrl(caller(), { url: 'https://a.b/c', focus: false }, ctx)));

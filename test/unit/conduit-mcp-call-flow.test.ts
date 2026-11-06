@@ -9,7 +9,7 @@ import {
   MAX_ASKS_PER_CALLER,
   UI_TIMEOUT_MS,
 } from '../../src/conduit-mcp/call-flow';
-import type { PreparedCall } from '../../src/conduit-mcp/control-tools';
+import type { Prepared, PreparedCall } from '../../src/conduit-mcp/control-tools';
 import type { JsonRpcId } from '../../src/conduit-mcp/json-rpc';
 import type {
   CliKind,
@@ -114,7 +114,7 @@ function setup() {
       connId?: number;
       prepareGate?: ReturnType<typeof gate>;
       runGate?: ReturnType<typeof gate>;
-      prepareResult?: Result<PreparedCall<string>>;
+      prepareResult?: Result<Prepared<string>>;
       kind?: CliKind;
       wiredAtLaunch?: boolean;
       routesUi?: boolean;
@@ -127,7 +127,6 @@ function setup() {
     const prepared: PreparedCall<string> = {
       summary: { tool: 'open_session', path: '/repo', agent: 'claude', focus: true },
       routesUi: o.routesUi ?? false,
-      noAsk: false,
       run: async () => {
         spies.run++;
         if (o.runGate) await o.runGate.hold();
@@ -249,26 +248,26 @@ describe('createCallFlow', () => {
     expect(t.closed()).toEqual([]);
   });
 
-  it('noAsk runs an ask-policy call without a card', async () => {
+  it('a done answer shows no card under ask, and off still refuses it', async () => {
     const t = setup();
-    const ran: string[] = [];
-    const c = t.call({
-      prepareResult: {
-        ok: true,
-        value: {
-          summary: { tool: 'open_session', path: '/repo', agent: 'claude', focus: true },
-          routesUi: false,
-          noAsk: true,
-          run: async () => {
-            ran.push('run');
-            return { ok: true, value: 'opened' };
-          },
-          release: () => {},
-        },
+    const done: Result<string> = { ok: true, value: 'answered' };
+    const onAsk = t.call({ policy: ASK, prepareResult: { ok: true, value: { done } } });
+    expect(await onAsk.promise).toEqual(done);
+    expect(t.asks()).toEqual([]);
+    const onOn = t.call({ policy: ON, prepareResult: { ok: true, value: { done } } });
+    expect(await onOn.promise).toEqual(done);
+    const off = t.call({
+      policy: { ...ASK, access: 'off' },
+      prepareResult: { ok: true, value: { done } },
+    });
+    expect(await off.promise).toEqual({
+      ok: false,
+      error: {
+        code: 'tool_disabled',
+        message: 'open_session is not enabled for this session',
+        retryable: false,
       },
     });
-    expect(await c.promise).toEqual({ ok: true, value: 'opened' });
-    expect(ran).toEqual(['run']);
     expect(t.asks()).toEqual([]);
   });
 

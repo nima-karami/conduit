@@ -10,6 +10,7 @@ import {
   type McpOpenOutcome,
   type McpOpenRequest,
   type PathKind,
+  type Prepared,
   type PreparedCall,
   SHOW_RATE_PER_CALLER,
 } from '../../src/conduit-mcp/control-tools';
@@ -120,9 +121,10 @@ const code = <T>(r: Result<T>) => (r.ok ? 'ok' : r.error.code);
 function whenOn(deps: ControlDeps) {
   const c: ControlHandlers = createControlHandlers(deps);
   const NO_MOVE = ctxOf();
-  const run = async <T>(p: Promise<Result<PreparedCall<T>>>): Promise<Result<T>> => {
+  const run = async <T>(p: Promise<Result<Prepared<T>>>): Promise<Result<T>> => {
     const r = await p;
-    return r.ok ? r.value.run() : r;
+    if (!r.ok) return r;
+    return 'done' in r.value ? r.value.done : r.value.run();
   };
   return {
     openSession: (who: Caller, args: unknown) => run(c.prepareOpenSession(who, args, NO_MOVE)),
@@ -647,24 +649,29 @@ describe('prepare/run (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
     if (!r.ok) throw new Error(`expected ok, got ${r.error.code}`);
     return r.value;
   };
+  const call = <T>(r: Result<Prepared<T>>): PreparedCall<T> => {
+    const p = ok(r);
+    if ('done' in p) throw new Error('expected a call, got a done answer');
+    return p;
+  };
   const NO_MOVE = ctxOf();
 
   it('prepare resolves and summarises', async () => {
     const h = harness({ agentIds: () => ['a'] });
     h.kinds['/home/main/w'] = 'dir';
     const c = createControlHandlers(h.deps);
-    const s = ok(await c.prepareOpenSession(caller(), { path: 'w', agent: 'a' }, NO_MOVE));
+    const s = call(await c.prepareOpenSession(caller(), { path: 'w', agent: 'a' }, NO_MOVE));
     expect(s.summary).toEqual({
       tool: 'open_session',
       path: '/home/main/w',
       agent: 'a',
       focus: true,
     });
-    const s2 = ok(await c.prepareOpenSession(caller(), { path: 'w', agent: 'a' }, NO_MOVE));
+    const s2 = call(await c.prepareOpenSession(caller(), { path: 'w', agent: 'a' }, NO_MOVE));
     expect(h.opens).toEqual([]);
     expect(code(await s2.run())).toBe('ok');
     expect(h.opens).toHaveLength(1);
-    const t = ok(
+    const t = call(
       await c.prepareOpenTerminal(
         caller(),
         { path: '/repo', command: 'node', args: ['-e', '1'], focus: false },
@@ -677,17 +684,17 @@ describe('prepare/run (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
       command: 'node -e 1',
       focus: false,
     });
-    const f = ok(await c.prepareOpenFile(caller(), { path: 'src/a.ts', line: 4 }, NO_MOVE));
+    const f = call(await c.prepareOpenFile(caller(), { path: 'src/a.ts', line: 4 }, NO_MOVE));
     expect(f.summary).toEqual({ tool: 'open_file', path: '/home/main/src/a.ts', line: 4 });
-    const f2 = ok(await c.prepareOpenFile(caller(), { path: '/repo/a.ts' }, NO_MOVE));
+    const f2 = call(await c.prepareOpenFile(caller(), { path: '/repo/a.ts' }, NO_MOVE));
     expect(f2.summary).toEqual({ tool: 'open_file', path: '/repo/a.ts', line: null });
   });
 
   it('move no forces focus false', async () => {
     const h = harness();
     const c = createControlHandlers(h.deps);
-    const s = ok(await c.prepareOpenSession(caller(), sessionArgs({ focus: true }), ctxOf('no')));
-    const t = ok(
+    const s = call(await c.prepareOpenSession(caller(), sessionArgs({ focus: true }), ctxOf('no')));
+    const t = call(
       await c.prepareOpenTerminal(caller(), { path: '/repo', command: 'node' }, ctxOf('no')),
     );
     expect(s.summary).toMatchObject({ focus: false });
@@ -695,7 +702,7 @@ describe('prepare/run (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
     await s.run();
     await t.run();
     expect(h.opens.map((o) => o.focus)).toEqual([false, false]);
-    const y = ok(await c.prepareOpenSession(caller(), sessionArgs(), ctxOf('yes')));
+    const y = call(await c.prepareOpenSession(caller(), sessionArgs(), ctxOf('yes')));
     expect(y.summary).toMatchObject({ focus: true });
     await y.run();
     expect(h.opens[2].focus).toBe(true);
@@ -712,7 +719,7 @@ describe('prepare/run (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
       );
     expect(code(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE))).toBe('rate_limited');
     for (let i = ACT_RATE_PER_CALLER; i < ACT_RATE_GLOBAL; i++)
-      ok(await c.prepareOpenSession(caller(2 + (i % 3)), sessionArgs(), NO_MOVE));
+      call(await c.prepareOpenSession(caller(2 + (i % 3)), sessionArgs(), NO_MOVE));
     const r = await c.prepareOpenSession(caller(99), sessionArgs(), NO_MOVE);
     expect(code(r)).toBe('rate_limited');
     expect(r.ok ? '' : r.error.message).toBe('too many actions in Conduit this minute');
@@ -722,7 +729,7 @@ describe('prepare/run (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
     const h = harness();
     const c = createControlHandlers(h.deps);
     for (let i = 0; i < SHOW_RATE_PER_CALLER; i++)
-      ok(await c.prepareOpenFile(caller(), { path: '/repo/a.ts' }, NO_MOVE));
+      call(await c.prepareOpenFile(caller(), { path: '/repo/a.ts' }, NO_MOVE));
     expect(code(await c.prepareOpenFile(caller(), { path: '/repo/a.ts' }, NO_MOVE))).toBe(
       'rate_limited',
     );
@@ -754,12 +761,12 @@ describe('prepare/run (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
     h.outcome = async () => ({ ok: false, code: 'brief_unavailable', message: 'x' });
     const c = createControlHandlers(h.deps);
     for (let i = 0; i < ACT_RATE_PER_CALLER + 5; i++) {
-      const p = ok(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE));
+      const p = call(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE));
       expect(code(await p.run())).toBe('brief_unavailable');
     }
     h.outcome = async (req) => ({ ok: true, sessionId: 's', label: req.label ?? 'x' });
     for (let i = 0; i < ACT_RATE_PER_CALLER; i++) {
-      const p = ok(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE));
+      const p = call(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE));
       expect(code(await p.run())).toBe('ok');
       p.release();
     }
@@ -771,7 +778,7 @@ describe('prepare/run (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
     const c = createControlHandlers(h.deps);
     const held = [];
     for (let i = 0; i < ACT_RATE_PER_CALLER; i++)
-      held.push(ok(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE)));
+      held.push(call(await c.prepareOpenSession(caller(), sessionArgs(), NO_MOVE)));
     held[0].release();
     held[0].release();
     held[0].release();
@@ -874,7 +881,7 @@ describe('open_session model and message (CON-148)', () => {
       sessionArgs({ path: 'w', model: 'opus' }),
       NO_MOVE,
     );
-    expect(s.ok && s.value.summary).toEqual({
+    expect(s.ok && 'summary' in s.value && s.value.summary).toEqual({
       tool: 'open_session',
       path: '/home/main/w',
       agent: 'claude',
@@ -891,7 +898,7 @@ describe('open_session model and message (CON-148)', () => {
       sessionArgs({ path: 'w', message: '😀😀x' }),
       NO_MOVE,
     );
-    expect(s.ok && s.value.summary).toEqual({
+    expect(s.ok && 'summary' in s.value && s.value.summary).toEqual({
       tool: 'open_session',
       path: '/home/main/w',
       agent: 'claude',

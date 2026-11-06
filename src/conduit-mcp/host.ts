@@ -29,7 +29,7 @@ import {
   type ControlCallContext,
   type ControlDeps,
   createControlHandlers,
-  type PreparedCall,
+  type Prepared,
 } from './control-tools';
 import { isCountedInput, nextDraftState, settleDraft, stripTerminalReplies } from './draft-input';
 import {
@@ -1235,7 +1235,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     name: ToolName,
     args: unknown,
     ctx: ControlCallContext,
-  ): Promise<Result<PreparedCall<unknown>>> => {
+  ): Promise<Result<Prepared<unknown>>> => {
     switch (name) {
       case 'open_session':
         return control.prepareOpenSession(caller, args, ctx);

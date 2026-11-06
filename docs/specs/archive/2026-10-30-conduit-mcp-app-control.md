@@ -210,7 +210,8 @@ stays flat (B5).
 - `sessions`: 1–30 handles or ids. Result `{ results: [{ session, closed: true } | { session,
   closed: false, error: { code, message } }] }`, one entry per listed name, in order.
 - `children: true`: every session whose opener is the caller, excluding the caller. None means
-  `{ results: [] }` at once, with no approval card (an `off` policy still refuses).
+  `{ results: [] }`, answered at prepare: no approval card, no token spent. An `off` policy still
+  refuses it.
 
 Rules for the list forms:
 
