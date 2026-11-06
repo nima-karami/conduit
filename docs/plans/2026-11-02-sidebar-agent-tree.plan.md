@@ -1,7 +1,7 @@
 # Spaces and agent tree: implementation plan
 
 **Status:** active, Revisions 1–2 (2026-11-02).
-**Spec:** `docs/specs/2026-11-02-sidebar-agent-tree.md`.
+**Spec:** `docs/specs/archive/2026-11-02-sidebar-agent-tree.md`.
 **Tier:** FULL. Six slices, four lanes; lead contracts/foundation first, G4 after G1/G2 merge. Revision 1 supersedes earlier completion, CSS, font and ownership decisions.
 
 ## Goal

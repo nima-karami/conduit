@@ -1,6 +1,6 @@
 /**
  * conduit-mcp-policy-migrate — a v0.50 profile migrates to tool policies (spec
- * docs/specs/2026-10-30-conduit-mcp-tool-policy.md §3.1; plan T3.4). The profile starts with
+ * docs/specs/archive/2026-10-30-conduit-mcp-tool-policy.md §3.1; plan T3.4). The profile starts with
  * v0.50's `mcpTools` switches and no `mcpToolPolicy`:
  *   - open_session `true` → On · Always: it runs from an off-screen caller without a card;
  *   - open_file `false` (a control tool) → its new default, On · While on screen: refused off

@@ -165,7 +165,7 @@ export function stopAgentsFailureCopy(reason: string): {
   };
 }
 
-// See docs/specs/2026-11-03-tray-helper.md §5.
+// See docs/specs/archive/2026-11-03-tray-helper.md §5.
 export function runningSessions<T extends Pick<Session, 'status'>>(sessions: readonly T[]): T[] {
   return sessions.filter((s) => s.status === 'running');
 }
@@ -194,7 +194,7 @@ export function quitConfirmCopy({
       ? `Stop ${countNoun(running, 'agent', 'agents')} and quit?`
       : `${running} ${running === 1 ? 'session' : 'sessions'} still running`;
   let line = runningLine(reason, running, busy, 'will stop');
-  // See docs/specs/2026-11-03-tray-helper.md §10.
+  // See docs/specs/archive/2026-11-03-tray-helper.md §10.
   if (trayHint && (reason === 'quit' || reason === 'update'))
     line += " Stop them any time from Conduit's icon in the notification area.";
   const body = reason === 'update' ? `${line} Conduit will relaunch to install the update.` : line;

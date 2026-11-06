@@ -3,7 +3,7 @@ import type { McpThreadSummary } from './conduit-mcp/ui-types';
 import type { SpaceSelection } from './sidebar-state';
 import type { Session } from './types';
 
-/** Messages in the sidebar's current Space context (docs/specs/2026-11-02-sidebar-agent-tree.md §7). */
+/** Messages in the sidebar's current Space context (docs/specs/archive/2026-11-02-sidebar-agent-tree.md §7). */
 export function scopeMessageThreads(input: {
   threads: readonly McpThreadSummary[];
   sessions: readonly Pick<Session, 'id' | 'projectId'>[];

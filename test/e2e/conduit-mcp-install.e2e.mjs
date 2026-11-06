@@ -1,6 +1,6 @@
 /**
  * conduit-mcp-install — Install from Settings → MCP, then a CLI typed in a plain shell joins
- * messaging through that entry (spec docs/specs/2026-10-27-conduit-mcp-install.md AC2–AC4, AC7;
+ * messaging through that entry (spec docs/specs/archive/2026-10-27-conduit-mcp-install.md AC2–AC4, AC7;
  * plan T5.2). Every config file lives in an isolated home inside the profile.
  *   1. The Claude Code row reads Not installed; Install writes exactly the §3.4 entry, keeps
  *      `other`, and backs the file up.

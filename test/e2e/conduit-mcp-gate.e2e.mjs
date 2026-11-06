@@ -1,6 +1,6 @@
 /**
  * conduit-mcp-gate — the notice gate holds on a busy agent, a permission prompt and a human draft,
- * and an idle agent stays output-quiet (spec docs/specs/2026-10-25-conduit-mcp-server.md §2 gate,
+ * and an idle agent stays output-quiet (spec docs/specs/archive/2026-10-25-conduit-mcp-server.md §2 gate,
  * §7 Gherkin; plan T9.4). Fresh sessions per case, so the 30 s notice spacing never interferes.
  *   (a) B `busy 20000`, A sends urgent: no notice while busy; the host raises "urgent message
  *       waiting for B" (its mcp:state attention item); once idle, exactly one notice.

@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { toolSchemas } from '../../src/conduit-mcp/tool-schemas';
 
-// AC11: the MCP surface never carries a role brief (docs/specs/2026-10-26-conduit-role-brief.md §3.4).
+// AC11: the MCP surface never carries a role brief (docs/specs/archive/2026-10-26-conduit-role-brief.md §3.4).
 const root = path.resolve(__dirname, '..', '..');
 const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
 

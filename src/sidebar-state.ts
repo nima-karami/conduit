@@ -2,7 +2,7 @@ import type { AttentionReason, Session } from './types';
 
 /**
  * The sidebar's per-agent status, window UI state and renderer runtime
- * (docs/specs/2026-11-02-sidebar-agent-tree.md §3–§4). Pure.
+ * (docs/specs/archive/2026-11-02-sidebar-agent-tree.md §3–§4). Pure.
  */
 
 /** 'blocked' is the Needs you state; the copy lives with the UI. */

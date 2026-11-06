@@ -95,7 +95,7 @@ function peerRelation(
   return 'peer';
 }
 
-/** Provenance framing: docs/specs/2026-10-25-conduit-mcp-server.md §3.2. */
+/** Provenance framing: docs/specs/archive/2026-10-25-conduit-mcp-server.md §3.2. */
 export function frameBody(
   from: Handle,
   messageId: string,

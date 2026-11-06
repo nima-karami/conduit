@@ -1,6 +1,6 @@
 # Architecture critique — round 1 (fresh Opus critic, 2026-11-01)
 
-Reviewed: ADR 0007, `2026-11-01-three-process-architecture.md`, `-program.md`, `hc-runtime-spike.md`,
+Reviewed: ADR 0007, `docs/specs/archive/2026-11-01-three-process-architecture.md`, `-program.md`, `hc-runtime-spike.md`,
 `src/contracts/*.ts` at the first draft.
 
 **Verdict: REVISE.** The ownership rule and D1/D3 are sound. But the design's main promise, that

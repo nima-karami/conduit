@@ -605,7 +605,7 @@ export type HostToWebview =
   // A rejected timer:set / timer:sendOnce, back to the SENDER only: the other window did not
   // ask for anything and must not toast. Never a silent drop (§3).
   | { type: 'timer:error'; message: string }
-  // Conduit MCP server (docs/specs/2026-10-25-conduit-mcp-server.md §8): one coalesced state
+  // Conduit MCP server (docs/specs/archive/2026-10-25-conduit-mcp-server.md §8): one coalesced state
   // broadcast, plus replies to the sender's mcp:* requests.
   | { type: 'mcp:state'; state: McpUiState }
   | { type: 'mcp:thread'; requestId: number; thread: McpThreadView | null }

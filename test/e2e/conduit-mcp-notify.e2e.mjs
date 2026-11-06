@@ -1,5 +1,5 @@
 /**
- * conduit-mcp-notify — spec docs/specs/2026-10-25-conduit-mcp-server.md §7 Gherkin "Idle agent is
+ * conduit-mcp-notify — spec docs/specs/archive/2026-10-25-conduit-mcp-server.md §7 Gherkin "Idle agent is
  * notified and reads a message with an attachment" (plan T9.4). Two fake MCP agents (A, B) in one
  * folder. A sends B a normal request attaching spec.md; the scenario then rewrites spec.md.
  *   - within 5 s exactly one `[conduit] New messages for you.` line is submitted in B;

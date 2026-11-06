@@ -1,7 +1,7 @@
 # Three-process simplification review
 
 Range: `3c65d47faa50ca5d346968125bae8e0b233c371b..325ad040769dbe1fad39adba47bd5332d4a2548c`.
-Requirements: `docs/specs/2026-11-01-three-process-architecture.md` and `docs/specs/2026-11-01-three-process-program.md`; W7's implementation plan checked for the app seams.
+Requirements: `docs/specs/archive/2026-11-01-three-process-architecture.md` and `docs/specs/archive/2026-11-01-three-process-program.md`; W7's implementation plan checked for the app seams.
 All anchors below refer to the pinned head. The live branch advanced during review; later commits are outside this report.
 Read-only review; no gate run or implementation changes. Byte scan of all 298 added/changed blobs found no NUL, BOM, invalid UTF-8, mixed EOL, lone CR or unexpected control bytes.
 `git diff --check` flags trailing whitespace in earlier review documents and spike transcripts; those documentation-only findings are outside the simplification list.

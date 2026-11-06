@@ -113,7 +113,7 @@ export interface AttentionEntry {
 
 /**
  * The chip's entries: waiting asks first (oldest first), then sessions that need you (rail order),
- * then the host's message items by time (docs/specs/2026-10-25-conduit-mcp-server.md §8 Attention
+ * then the host's message items by time (docs/specs/archive/2026-10-25-conduit-mcp-server.md §8 Attention
  * chip). An item tied to a snoozed session is hidden with it, so Snooze silences the whole
  * session; an ask is not, because its call times out unanswered. Pure.
  */
@@ -158,7 +158,7 @@ export function attentionEntries<T extends SessionStateFields & { id: string }>(
 }
 
 /**
- * The footer's entries under the new model (docs/specs/2026-11-02-sidebar-agent-tree.md §4): the
+ * The footer's entries under the new model (docs/specs/archive/2026-11-02-sidebar-agent-tree.md §4): the
  * legacy aggregator fed clones whose needsAttention is the server's attentionReason, so a
  * finished-but-unseen session is no longer counted and a blocked one counts while busy. Order,
  * keys, snooze and click targets are attentionEntries' own.

@@ -1,5 +1,5 @@
 /**
- * conduit-mcp-refusals — the host refuses what it must (spec docs/specs/2026-10-25-conduit-mcp-server.md
+ * conduit-mcp-refusals — the host refuses what it must (spec docs/specs/archive/2026-10-25-conduit-mcp-server.md
  * §3.2, §3.3, §7; plan T9.4). Notices are paused for every session here, so no notice can land in
  * the middle of a typed `call` line.
  *   - `../../.ssh/id_rsa` → path_outside_roots, and B's inbox stays empty;

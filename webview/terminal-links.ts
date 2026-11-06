@@ -1,7 +1,7 @@
 /**
  * Pure path-token detection for the terminal link provider (D11). The xterm link-provider
  * wiring lives in terminal-pane.tsx and consumes this side-effect-free core. The rules are
- * docs/specs/2026-10-16-terminal-path-links.md §3.1; resolution is host-side (src/path-resolve.ts).
+ * docs/specs/archive/2026-10-16-terminal-path-links.md §3.1; resolution is host-side (src/path-resolve.ts).
  */
 import { langFromPath } from '../src/lang';
 import { MAX_ALTS } from '../src/path-resolve';

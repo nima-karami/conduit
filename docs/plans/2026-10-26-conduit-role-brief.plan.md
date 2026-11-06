@@ -1,6 +1,6 @@
 # Plan: Role brief at launch
 
-Spec: [2026-10-26-conduit-role-brief.md](../specs/2026-10-26-conduit-role-brief.md) (FULL), with
+Spec: [docs/specs/archive/2026-10-26-conduit-role-brief.md](../specs/archive/2026-10-26-conduit-role-brief.md) (FULL), with
 the S0 results in [s0.md](../runs/2026-10-26-role-brief/s0.md).
 
 **Tier: FULL.** The feature adds a host-private store and a new launch-arg seam in the shared spawn
@@ -117,7 +117,7 @@ DIALOG brief:agentPreview / brief:probe / file:pick ─► host ─► replies (
   - Never narrow, skip or disable a check.
   - Capture exit codes directly, never through `tail`/`head`.
 - **Comments say why only.** When the why is in the spec, use a one-line pointer
-  (`// see docs/specs/2026-10-26-conduit-role-brief.md §3.3`).
+  (`// see docs/specs/archive/2026-10-26-conduit-role-brief.md §3.3`).
 - **No band-aids:** no `as any`, `@ts-ignore`, swallowed errors or fallbacks. Every `catch` maps to
   a named `BriefError`/banner or logs through the injected `log`.
 - **Node-free:** `src/role-brief.ts`, `src/conduit-mcp/adapters.ts` and `webview/role-brief-*.ts`
@@ -167,7 +167,7 @@ export type BriefRequest =
   | { kind: 'agent' } | { kind: 'none' } | { kind: 'text'; text: string } | { kind: 'file'; path: string };
 export type BriefError = 'brief-unreadable' | 'brief-too-large' | 'brief-invalid' | 'brief-io';
 // Session gains:
-  /** Role brief state (docs/specs/2026-10-26-conduit-role-brief.md §2.3). Persisted. */
+  /** Role brief state (docs/specs/archive/2026-10-26-conduit-role-brief.md §2.3). Persisted. */
   brief?: BriefState;
 ```
 
@@ -469,7 +469,7 @@ passes, and `npm run verify:quick` is green.
   `./types`.
 - Modify: `src/conduit-mcp/adapters.ts`:
   - add `BriefSupport`, and `brief` on `McpAdapter` and on all four entries;
-  - add to the header comment: `// Brief support: docs/specs/2026-10-26-conduit-role-brief.md §3.2`.
+  - add to the header comment: `// Brief support: docs/specs/archive/2026-10-26-conduit-role-brief.md §3.2`.
 - Test: `test/unit/role-brief.test.ts` (create), `test/unit/conduit-mcp-adapters.test.ts` (modify).
 
 **Interfaces:**
@@ -779,7 +779,7 @@ until T4.1, so **T3.3 and T4.1 merge together**. The S3+S4 merge is one integrat
 - [ ] Right after `pty.start(…)`: `brief.commit(pty.isAlive(m.sessionId));`
 - [ ] Change `scopeFromSpawnArgs(spec.cwd, spec.args, …)` to
   `scopeFromSpawnArgs(spec.cwd, scopeArgs, …)`, with the comment
-  `// brief --add-dir is not a session root (docs/specs/2026-10-26-conduit-role-brief.md §3.2)`.
+  `// brief --add-dir is not a session root (docs/specs/archive/2026-10-26-conduit-role-brief.md §3.2)`.
 - [ ] Nothing between the `isAlive` re-check (`:4095`) and `pty.start` may `await`. Verify by
   reading the block.
 - [ ] Run `npm run verify:quick`. Green.

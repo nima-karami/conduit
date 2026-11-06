@@ -1,6 +1,6 @@
 # Run report: Conduit MCP control tools (2026-10-27)
 
-Spec: [2026-10-27-conduit-mcp-control-tools](../../specs/2026-10-27-conduit-mcp-control-tools.md) ·
+Spec: [2026-10-27-conduit-mcp-control-tools](../../specs/archive/2026-10-27-conduit-mcp-control-tools.md) ·
 Plan: [plan](../../plans/2026-10-27-conduit-mcp-control-tools.plan.md) · Branch `feat/mcp-control`
 (base `935b32c0`, head `3799e499`). **Not merged** into `feat/conduit-mcp` or `main`.
 

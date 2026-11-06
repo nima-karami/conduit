@@ -5,7 +5,7 @@ date: 2026-10-26
 
 # Feature Spec: Cursor sessions join Conduit messaging
 
-Extends [conduit-mcp-server](2026-10-25-conduit-mcp-server.md) §3.1. **Tier FULL, feature type UI**
+Extends [conduit-mcp-server](archive/2026-10-25-conduit-mcp-server.md) §3.1. **Tier FULL, feature type UI**
 (Settings row) **+ host** (wiring, screen patterns). Self-hosting backlog item 1.
 
 ## 1. Problem frame
@@ -43,7 +43,7 @@ gets no notices (`screen: null`). So the cheapest executor on the team can't mes
 ## 3. Behavior
 
 ### 3.1 Connect / Disconnect (Settings → Agent messaging)
-> **Superseded by [2026-10-27-conduit-mcp-install](2026-10-27-conduit-mcp-install.md) §2.3, §3.5–§3.6:**
+> **Superseded by [2026-10-27-conduit-mcp-install](archive/2026-10-27-conduit-mcp-install.md) §2.3, §3.5–§3.6:**
 > the Cursor row is one of four on Settings → **MCP**; Connect/Disconnect are **Install/Uninstall**,
 > through the generic `mcpInstall` status/act channels (the `cursor-connect:*` channels are gone).
 > The old `stale` state is split into `other-conduit` (another Conduit's entry: Use this Conduit, no

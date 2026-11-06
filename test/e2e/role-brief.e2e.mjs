@@ -1,6 +1,6 @@
 /**
  * role-brief — a session created with a typed role brief launches its CLI with the one-turn
- * prompt exactly once (docs/specs/2026-10-26-conduit-role-brief.md §7; plan T6.2):
+ * prompt exactly once (docs/specs/archive/2026-10-26-conduit-role-brief.md §7; plan T6.2):
  *   New session dialog → Role brief → Text → Start; the fake agent's ARGV record ends
  *   `-- Read your role brief at <file> and follow it.` and the file holds the typed text.
  *   Then `quit` (the fake exits), Relaunch, and the second ARGV record has no prompt.

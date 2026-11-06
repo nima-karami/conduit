@@ -31,7 +31,7 @@ export interface ScreenPatterns {
    */
   promptEcho?: RegExp;
 }
-// Brief support: docs/specs/2026-10-26-conduit-role-brief.md §3.2
+// Brief support: docs/specs/archive/2026-10-26-conduit-role-brief.md §3.2
 export interface BriefSupport {
   readAccess: 'add-dir' | 'none';
 }

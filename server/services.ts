@@ -275,7 +275,7 @@ export function createServices(o: ServicesOptions) {
         adoptedOnce = true;
       }
       if (!mcpStarted) {
-        // See docs/specs/2026-11-01-three-process-architecture.md F1.4.5-6.
+        // See docs/specs/archive/2026-11-01-three-process-architecture.md F1.4.5-6.
         await server.start();
         mcpStarted = true;
       }

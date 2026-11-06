@@ -1,6 +1,6 @@
 # Plan: Conduit MCP control tools and per-tool switches
 
-Spec: [2026-10-27-conduit-mcp-control-tools.md](../specs/2026-10-27-conduit-mcp-control-tools.md)
+Spec: [docs/specs/archive/2026-10-27-conduit-mcp-control-tools.md](../specs/archive/2026-10-27-conduit-mcp-control-tools.md)
 (FULL, reviewed r1). S0 results go to `docs/runs/2026-10-27-mcp-control/s0.md`.
 
 **Tier: FULL.** The feature adds three MCP tools, a call-time gate, a new persisted session kind

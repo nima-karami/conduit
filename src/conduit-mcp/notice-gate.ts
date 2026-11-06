@@ -1,6 +1,6 @@
 import type { GateClosedReason, ScreenVerdict } from './types';
 
-// Conditions and their order: docs/specs/2026-10-25-conduit-mcp-server.md §2 notice gate.
+// Conditions and their order: docs/specs/archive/2026-10-25-conduit-mcp-server.md §2 notice gate.
 
 export const IDLE_QUIET_MS = 3_000;
 export const NOTICE_SPACING_MS = 30_000;

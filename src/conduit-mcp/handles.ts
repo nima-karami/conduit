@@ -1,7 +1,7 @@
 import type { CliKind } from './tool-policy';
 import type { Handle } from './types';
 
-// Handle rule: docs/specs/2026-10-25-conduit-mcp-server.md §3.1 (prefix = adapter id, see plan
+// Handle rule: docs/specs/archive/2026-10-25-conduit-mcp-server.md §3.1 (prefix = adapter id, see plan
 // Spec staleness).
 
 export function slugHandlePrefix(id: string): string {

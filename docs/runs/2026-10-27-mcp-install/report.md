@@ -1,7 +1,7 @@
 # Run report: Conduit MCP install and discovery, plus input-box links (2026-10-27)
 
-Spec: [conduit-mcp-install](../../specs/2026-10-27-conduit-mcp-install.md) and
-[input-box-links](../../specs/2026-10-27-input-box-links.md) ·
+Spec: [conduit-mcp-install](../../specs/archive/2026-10-27-conduit-mcp-install.md) and
+[input-box-links](../../specs/archive/2026-10-27-input-box-links.md) ·
 Plan: [plan](../../plans/2026-10-27-conduit-mcp-install.plan.md) · S0: [s0.md](s0.md) · Branch
 `feat/mcp-install` (base main `9090737b` = v0.49.0). It contains `fix/input-box-links`, merged in
 `2559c67f`.

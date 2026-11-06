@@ -1,4 +1,4 @@
-// Owns every role-brief file operation (docs/specs/2026-10-26-conduit-role-brief.md §2-§4;
+// Owns every role-brief file operation (docs/specs/archive/2026-10-26-conduit-role-brief.md §2-§4;
 // plan Contracts §role-brief-host). Brief IO on the spawn path is sync on purpose: it must sit
 // inside term:start's synchronous block after the isAlive re-check (spec §4 race row).
 import * as fs from 'node:fs';

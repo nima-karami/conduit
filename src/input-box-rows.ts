@@ -89,7 +89,7 @@ function promptTop(rowAt: RowAt, cursorRow: number, o: InputBoxOpts, p: InputBox
 /**
  * First buffer row of the live input box, or null when none is on screen. Everything from it to the
  * end of the buffer is the CLI's own chrome, never agent output.
- * Spec docs/specs/2026-10-27-input-box-links.md §2.
+ * Spec docs/specs/archive/2026-10-27-input-box-links.md §2.
  */
 export function inputBoxTop(rowAt: RowAt, cursorRow: number, opts: InputBoxOpts): number | null {
   return (

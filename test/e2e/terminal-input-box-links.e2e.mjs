@@ -1,6 +1,6 @@
 /**
  * An agent CLI's live input box and the prompts it echoes into history are not linked; the agent's
- * output is, even when it starts with a markdown quote (docs/specs/2026-10-27-input-box-links.md).
+ * output is, even when it starts with a markdown quote (docs/specs/archive/2026-10-27-input-box-links.md).
  *
  * A Claude Code screen is written straight into the live xterm — the box is two full-width `─`
  * rules around the `❯` input rows, with the cursor parked inside, exactly as the captured screens

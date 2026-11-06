@@ -1,6 +1,6 @@
 # Plan: Install Conduit MCP for agent CLIs, and let users find it
 
-Spec: [2026-10-27-conduit-mcp-install.md](../specs/2026-10-27-conduit-mcp-install.md) (FULL;
+Spec: [docs/specs/archive/2026-10-27-conduit-mcp-install.md](../specs/archive/2026-10-27-conduit-mcp-install.md) (FULL;
 §14 conductor rulings override §13 defaults). S0 results go to
 `docs/runs/2026-10-27-mcp-install/s0.md`, runtime QA to `docs/runs/2026-10-27-mcp-install/qa.md`.
 
@@ -731,7 +731,7 @@ CSS classes (all added in T4.8): `.mcp-install-row`, `__status`, `__path`, `__no
 | `test/e2e/conduit-mcp-cursor-connect.e2e.mjs` | modify | New tab and button names; status via `window.agentDeck.mcpInstall` |
 | `test/e2e/visual/text-fit-sweep.mjs`, `test/e2e/visual/shoot.mjs` | modify | Isolated home env; MCP tab navigation |
 | Existing tests: `test/unit/conduit-mcp-host.test.ts`, `conduit-mcp-shim.test.ts`, `coerce-settings.test.ts`, `cursor-config.test.ts`, `settings-mcp-tools.test.tsx`, `session-card.test.ts`, `messages-pane.test.tsx`, `conduit-mcp-view-model.test.ts` | modify | Follow the changed contracts + new cases |
-| `CHANGELOG.md`, `docs/specs/2026-10-25-conduit-mcp-server.md` (§3.1), `docs/specs/2026-10-26-conduit-mcp-cursor.md` (§3.1), `docs/specs/2026-10-27-conduit-mcp-install.md` (status) | modify | Docs (T5.6) |
+| `CHANGELOG.md`, `docs/specs/archive/2026-10-25-conduit-mcp-server.md` (§3.1), `docs/specs/2026-10-26-conduit-mcp-cursor.md` (§3.1), `docs/specs/archive/2026-10-27-conduit-mcp-install.md` (status) | modify | Docs (T5.6) |
 
 ## Scripts
 
@@ -1569,11 +1569,11 @@ MCP tab and banner-free settings shots; fix any finding in T4.8's CSS.
   settings moved to their own tab"; Cursor "Connect" is now "Install". **Fixed** — the `conduit`
   server outside Conduit no longer shows as failed in Claude Code and OpenCode. Note: "Uninstall
   here before removing Conduit".
-- `docs/specs/2026-10-25-conduit-mcp-server.md` §3.1: every session gets token + endpoint; lazy
+- `docs/specs/archive/2026-10-25-conduit-mcp-server.md` §3.1: every session gets token + endpoint; lazy
   handles from `clientInfo`.
 - `docs/specs/2026-10-26-conduit-mcp-cursor.md` §3.1: Connect/Disconnect → Install/Uninstall via
   `mcpInstall`; `stale` split into `other-conduit`/`conflict`.
-- `docs/specs/2026-10-27-conduit-mcp-install.md` front matter `status: built`.
+- `docs/specs/archive/2026-10-27-conduit-mcp-install.md` front matter `status: built`.
 
 ---
 

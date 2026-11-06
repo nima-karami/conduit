@@ -138,7 +138,7 @@ differentially repainted screen.
     allowlisted through Cursor's own first-call prompt; Conduit does not edit `cli-config.json`.
     Outside Conduit the shim has no endpoint and lists no tools. Conduit never passes
     `--approve-mcps` (that would approve every server). See the
-    [Cursor spec](2026-10-26-conduit-mcp-cursor.md) for Connect and launch behavior.
+    [Cursor spec](../2026-10-26-conduit-mcp-cursor.md) for Connect and launch behavior.
   - `ELECTRON_RUN_AS_NODE` goes only in the server's own env entry, **never in the PTY env**. Otherwise
     any Electron app started from that shell would run as Node.
   - The token is inherited by every process in the session, including a nested CLI, which then speaks

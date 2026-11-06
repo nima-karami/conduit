@@ -177,7 +177,7 @@ function SetupEmptyState({ onOpenSettings }: { onOpenSettings(): void }) {
 }
 
 /**
- * The Messages tab body (docs/specs/2026-10-25-conduit-mcp-server.md §8–§10). The live region
+ * The Messages tab body (docs/specs/archive/2026-10-25-conduit-mcp-server.md §8–§10). The live region
  * sits outside the view switch: one region, mounted for the pane's life.
  */
 export function MessagesPane(props: MessagesPaneProps) {

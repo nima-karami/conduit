@@ -3,8 +3,8 @@
 Branch `feat/mcp-policy` (worktree `G:\awby\conduit-wt\mcp-policy`), base main `1b4d90f2` (v0.50.0).
 114 commits, 111 files, +16.6k / −1.1k. **Not merged to main, not pushed, not released** (not asked).
 
-Specs: [tool-policy](../../specs/2026-10-30-conduit-mcp-tool-policy.md) (A),
-[app-control](../../specs/2026-10-30-conduit-mcp-app-control.md) (B).
+Specs: [tool-policy](../../specs/archive/2026-10-30-conduit-mcp-tool-policy.md) (A),
+[app-control](../../specs/archive/2026-10-30-conduit-mcp-app-control.md) (B).
 Plans: [A](../../plans/2026-10-30-conduit-mcp-tool-policy.plan.md), [B](../../plans/2026-10-30-conduit-mcp-app-control.plan.md).
 
 ## Shipped on the branch

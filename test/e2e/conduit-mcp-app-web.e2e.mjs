@@ -1,5 +1,5 @@
 /**
- * conduit-mcp-app-web — open_url end to end (spec docs/specs/2026-10-30-conduit-mcp-app-control.md
+ * conduit-mcp-app-web — open_url end to end (spec docs/specs/archive/2026-10-30-conduit-mcp-app-control.md
  * §2.1, §3, A4; plan T3.5). A loopback HTTP fixture and fake agents A and B:
  *   - a focused open lands an active web tab in A at the normalised URL; focus:false adds the tab
  *     and leaves the active one;

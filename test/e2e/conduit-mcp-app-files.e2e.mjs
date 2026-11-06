@@ -1,6 +1,6 @@
 /**
  * conduit-mcp-app-files — open_file and close_files end to end (spec
- * docs/specs/2026-10-30-conduit-mcp-app-control.md §2.1, §5 EARS 1; plan T3.3). Fake agents A
+ * docs/specs/archive/2026-10-30-conduit-mcp-app-control.md §2.1, §5 EARS 1; plan T3.3). Fake agents A
  * (home: a git repo) and B, B split beside A:
  *   - a split partner's open_file lands in its own session: A stays active, B stays split, A's
  *     tabs don't change;

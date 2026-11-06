@@ -1,7 +1,7 @@
 # Plan: Conduit MCP app-control tools (Part B)
 
-Spec: [2026-10-30-conduit-mcp-app-control.md](../specs/2026-10-30-conduit-mcp-app-control.md)
-(FULL, reviewed). Depends on [2026-10-30-conduit-mcp-tool-policy.md](../specs/2026-10-30-conduit-mcp-tool-policy.md)
+Spec: [docs/specs/archive/2026-10-30-conduit-mcp-app-control.md](../specs/archive/2026-10-30-conduit-mcp-app-control.md)
+(FULL, reviewed). Depends on [docs/specs/archive/2026-10-30-conduit-mcp-tool-policy.md](../specs/archive/2026-10-30-conduit-mcp-tool-policy.md)
 and builds on the Part A plan [2026-10-30-conduit-mcp-tool-policy.plan.md](2026-10-30-conduit-mcp-tool-policy.plan.md).
 
 **Tier: FULL.** Seven new MCP tools, a new host↔renderer request/response (`mcp:ui` /
@@ -763,7 +763,7 @@ open_url: (s) => `Open ${s.url} in a Conduit tab`,
 | `webview/components/web-prompt-modal.tsx`, `webview/components/web-view.tsx` | modify | Import path |
 | `test/unit/web-url.test.ts` | modify | Import path |
 | Existing tests: `conduit-mcp-tool-policy.test.ts`, `conduit-mcp-call-flow.test.ts`, `conduit-mcp-control-tools.test.ts`, `conduit-mcp-host.test.ts`, `docs.test.ts`, `git-history-state.test.ts`, `file-open-request.test.ts`, `tool-policy-editor.test.tsx`, `settings-mcp-tools.test.tsx` | modify | New cases; any Part A assertion pinning the catalog's length or group membership, or the `'opens'` label, follows |
-| `docs/specs/2026-10-30-conduit-mcp-app-control.md` | modify (done in planning) | §2.1 split partner, focus raise, history cites; §2.2 `--end-of-options`; §2.3 routing; §5 EARS 2 |
+| `docs/specs/archive/2026-10-30-conduit-mcp-app-control.md` | modify (done in planning) | §2.1 split partner, focus raise, history cites; §2.2 `--end-of-options`; §2.3 routing; §5 EARS 2 |
 | `CHANGELOG.md` | modify | Unreleased entry |
 
 ## Scripts

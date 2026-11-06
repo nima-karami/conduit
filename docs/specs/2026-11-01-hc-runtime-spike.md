@@ -6,7 +6,7 @@ revision: 9 (after critique-8 and cursor-review-8)
 
 # hc runtime spike — can herdr-core run Conduit's terminals on Windows?
 
-This is phase 2 of `2026-11-01-three-process-program.md` (workstream W2). It runs on the W1 hc
+This is phase 2 of `archive/2026-11-01-three-process-program.md` (workstream W2). It runs on the W1 hc
 client, through a throwaway harness. The spike feeds two decisions: ADR 0007 §1 (adopt hc, or
 build our own runtime behind C1), and whether C1, C3 and C5 change before they freeze. Output:
 `docs/runs/2026-11-xx-hc-spike/report.md`, with each measurement's hc version, method, raw numbers

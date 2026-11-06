@@ -1,6 +1,6 @@
 # Conduit MCP server — run report (2026-10-25)
 
-Autonomous run. Spec `docs/specs/2026-10-25-conduit-mcp-server.md`, plan
+Autonomous run. Spec `docs/specs/archive/2026-10-25-conduit-mcp-server.md`, plan
 `docs/plans/2026-10-25-conduit-mcp-server.plan.md`. Branch `feat/conduit-mcp` (worktree
 `G:\awby\conduit-wt\conduit-mcp`). **Not merged to main, not released, no version bump.** The user merges.
 

@@ -9,14 +9,14 @@ Builds on [conduit-mcp-server](2026-10-25-conduit-mcp-server.md) (adapters, §3.
 **Tier FULL, feature type UI** (New session dialog) **+ host** (launch args, brief store).
 Self-hosting backlog item 1b.
 
-> **S0 outcome (2026-10-26, [s0.md](../runs/2026-10-26-role-brief/s0.md)); edits applied below.**
+> **S0 outcome (2026-10-26, [s0.md](../../runs/2026-10-26-role-brief/s0.md)); edits applied below.**
 > `--` + prompt last works for all three CLIs and Claude needs it, so `--` is used uniformly and
 > the no-`--` fallback is gone (§3.2). Read access (D1, ruled): Claude `--add-dir <briefDir>`
 > (silent read); Codex reads in place and asks once to approve the read, which is accepted; Cursor
 > reads in place silently. Codex gets no `--add-dir` (it would make the dir writable). The §2.1
 > ASSUMED rows are confirmed. The prompt survives Claude's and Cursor's trust dialogs; Codex showed
 > none. Claude loaded no `CLAUDE.md` from the brief dir, so the dir is not made read-only (§12.6).
-> D2–D6 take their defaults. Plan: [role-brief plan](../plans/2026-10-26-conduit-role-brief.plan.md).
+> D2–D6 take their defaults. Plan: [role-brief plan](../../plans/2026-10-26-conduit-role-brief.plan.md).
 
 ## 1. Problem frame
 
@@ -55,7 +55,7 @@ after each launch.
 | A new session's first spawn, Relaunch, `session:restart` and an app-start restore all cold-spawn through `term:start` → `buildLaunchSpec` → `pty.start`. A window move takes the attach path and never spawns. | `electron/main.ts` `term:start` | Confirmed (S0 source check) |
 | `agents.json` is read once at startup, and no Settings UI edits agent definitions. | `loadAgents` call site; grep of `settings-modal.tsx` | Confirmed (S0 source check) |
 
-S0 (§12, [s0.md](../runs/2026-10-26-role-brief/s0.md)) measured the CLI behavior.
+S0 (§12, [s0.md](../../runs/2026-10-26-role-brief/s0.md)) measured the CLI behavior.
 
 ### 2.2 Flow
 

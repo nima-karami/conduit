@@ -88,7 +88,7 @@ export interface ServerMcp {
   launch: LaunchPort;
   /** For W4's runAddDir. */
   draft: DraftPort;
-  /** Startup ordering: see docs/specs/2026-11-01-three-process-architecture.md F1.4.5-6. */
+  /** Startup ordering: see docs/specs/archive/2026-11-01-three-process-architecture.md F1.4.5-6. */
   start(): Promise<void>;
   resumeAdopted(terminals: readonly AdoptedTerminal[]): void;
   stop(): Promise<void>;

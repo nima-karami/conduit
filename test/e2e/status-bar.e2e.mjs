@@ -1,5 +1,5 @@
 /**
- * status-bar — the center footer (spec docs/specs/2026-11-02-sidebar-agent-tree.md §7, §4 needs-you
+ * status-bar — the center footer (spec docs/specs/archive/2026-11-02-sidebar-agent-tree.md §7, §4 needs-you
  * projection; plan "E2e migration manifest"). Real sessions, real server facts, real asks/messages:
  *   - the active session's branch, and a worktree item only for a real linked git worktree;
  *   - "N agents" counts the window's live sessions whatever the Space filter, search or folds;

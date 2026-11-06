@@ -1,6 +1,6 @@
 /**
  * conduit-mcp-app-git — open_review and open_git_history end to end (spec
- * docs/specs/2026-10-30-conduit-mcp-app-control.md §2.1, §2.2, §3, §5 EARS 2 and 3, A4, A5; plan
+ * docs/specs/archive/2026-10-30-conduit-mcp-app-control.md §2.1, §2.2, §3, §5 EARS 2 and 3, A4, A5; plan
  * T3.4). A 600-commit repo (main; branch feature at c599; tag v1 at c1) is the home of fake agents
  * A and B:
  *   - open_file, then Review for the working tree, one commit, and ranges whose endpoints classify

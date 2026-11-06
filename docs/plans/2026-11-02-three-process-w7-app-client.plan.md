@@ -1,7 +1,7 @@
 # W7 "App as client": implementation plan
 
 **Status:** active (2026-11-02). Lead decisions are in the Decisions Needed section below.
-**Spec:** `docs/specs/2026-11-01-three-process-program.md` (the `| W7 |` row and its Invariants), `docs/specs/2026-11-01-three-process-architecture.md`, `docs/runs/2026-11-01-three-process-design/main-ts-ownership.md`, and `.autoloop/blockers.md`.
+**Spec:** `docs/specs/archive/2026-11-01-three-process-program.md` (the `| W7 |` row and its Invariants), `docs/specs/archive/2026-11-01-three-process-architecture.md`, `docs/runs/2026-11-01-three-process-design/main-ts-ownership.md`, and `.autoloop/blockers.md`.
 **Tier:** FULL. It touches many modules, adds new seams (the C2 client, C5 factory and lifecycle), runs as serialized lanes over a shared entry file, and changes the renderer contract.
 
 ## Goal

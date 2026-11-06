@@ -122,7 +122,7 @@ function hasOtherLiveTerminal(
   );
 }
 
-/** See docs/specs/2026-11-03-tray-helper.md §7a. */
+/** See docs/specs/archive/2026-11-03-tray-helper.md §7a. */
 export async function directStopSessions(hc: HcClient, names: InstanceNames): Promise<number> {
   let killed = 0;
   const { terminals } = await hc.call('terminal.list', {

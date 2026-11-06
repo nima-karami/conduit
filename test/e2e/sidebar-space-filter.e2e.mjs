@@ -1,6 +1,6 @@
 /**
  * sidebar-space-filter — the Spaces filter over the agent tree (spec
- * docs/specs/2026-11-02-sidebar-agent-tree.md §3, §5, §6; plan "New exact scenario files").
+ * docs/specs/archive/2026-11-02-sidebar-agent-tree.md §3, §5, §6; plan "New exact scenario files").
  * Sessions run the fake MCP agent; the child is opened through the real MCP `open_session`, so
  * its `openedBy` and its inherited Space are the host's.
  *   - All / one Space / No space show exactly their members; the dim "· Space" detail and the

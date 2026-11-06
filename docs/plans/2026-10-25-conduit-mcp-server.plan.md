@@ -1,6 +1,6 @@
 # Plan: Conduit MCP server
 
-Spec: [2026-10-25-conduit-mcp-server.md](../specs/2026-10-25-conduit-mcp-server.md) (FULL).
+Spec: [docs/specs/archive/2026-10-25-conduit-mcp-server.md](../specs/archive/2026-10-25-conduit-mcp-server.md) (FULL).
 
 **Tier: FULL.** This adds a new subsystem with a security surface: a local endpoint, a shim, token
 identity, a durable store, PTY injection behind a gate, and launch wiring for several CLIs. It
@@ -203,7 +203,7 @@ These come from the spec and the conductor's locked architecture:
   - Never narrow, skip or disable a check, and never use `--no-verify`. Capture exit codes
     directly, never through `tail`/`head`.
 - **Comments:** they explain **why** only. When the why lives in the spec, the comment is a
-  one-line pointer, e.g. `// see docs/specs/2026-10-25-conduit-mcp-server.md §2 gate`.
+  one-line pointer, e.g. `// see docs/specs/archive/2026-10-25-conduit-mcp-server.md §2 gate`.
 - **No band-aids:** no `as any`, `@ts-ignore`, swallowed errors, `!important` or magic offsets.
   Every `catch` either maps to a named error code or logs through the injected `log`.
 - **Platform-free unit tests (CI is ubuntu):**

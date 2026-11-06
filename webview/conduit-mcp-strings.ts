@@ -1,5 +1,5 @@
 // User-facing strings for the Messages tab, card badges and the attention chip: one place for the
-// future i18n seam (docs/specs/2026-10-25-conduit-mcp-server.md §10).
+// future i18n seam (docs/specs/archive/2026-10-25-conduit-mcp-server.md §10).
 
 import type {
   AgentCli,

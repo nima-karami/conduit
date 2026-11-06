@@ -1,5 +1,5 @@
 /**
- * conduit-mcp-policy — tool policies end to end (spec docs/specs/2026-10-30-conduit-mcp-tool-policy.md
+ * conduit-mcp-policy — tool policies end to end (spec docs/specs/archive/2026-10-30-conduit-mcp-tool-policy.md
  * §2, §7; plan T3.3). Two fake agents, A and B, so the real shim, gate, call flow and approval
  * card are in the path:
  *   - off: the global layer drops open_session from A's live tool list, and a call is refused;

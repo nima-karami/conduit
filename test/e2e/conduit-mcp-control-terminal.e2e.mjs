@@ -1,7 +1,7 @@
 /**
  * conduit-mcp-control-terminal — open_terminal runs an arbitrary command as argv, and the command
  * is persisted so Relaunch and Duplicate run it again (spec
- * docs/specs/2026-10-27-conduit-mcp-control-tools.md §7; plan T6.3). The command is this test's
+ * docs/specs/archive/2026-10-27-conduit-mcp-control-tools.md §7; plan T6.3). The command is this test's
  * own Node, printing a marker tagged with its pid, so each run of it is told apart from the
  * scrollback a relaunch may replay.
  */

@@ -222,7 +222,7 @@ export const USER_XDG_CAPTURED_ENV = 'CONDUIT_USER_XDG_CAPTURED';
 /** `hc run` flags for the supervisor start, from the app or from the server alike (D16, M17). */
 export const CORE_START_RUN_FLAGS = ['--bg', '--no-parent'] as const;
 
-/** See docs/specs/2026-11-01-three-process-architecture.md D24/M22. */
+/** See docs/specs/archive/2026-11-01-three-process-architecture.md D24/M22. */
 export function coreStartEnv(
   parent: Readonly<Record<string, string | undefined>>,
   names: Pick<InstanceNames, 'hcSession' | 'hcConfigHome' | 'hcStateHome' | 'hcSocket'>,

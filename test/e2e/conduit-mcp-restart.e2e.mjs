@@ -1,6 +1,6 @@
 /**
  * conduit-mcp-restart — messages and handles survive a quit, and sessions restored at startup get
- * messaging (spec docs/specs/2026-10-25-conduit-mcp-server.md §3.4, §7; plan T11.1 and the
+ * messaging (spec docs/specs/archive/2026-10-25-conduit-mcp-server.md §3.4, §7; plan T11.1 and the
  * conductor's endpoint-wait decision):
  *   run 1: A sends to B while B is busy, so nothing is noticed; quit, then stop the server and
  *   its agents: a plain quit leaves both running (F4), and the subject here is a cold restart.

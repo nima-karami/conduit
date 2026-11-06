@@ -1,6 +1,6 @@
 /**
  * conduit-mcp-install-banner — a typed agent CLI that never reaches Conduit is detected and the
- * setup banner offered (spec docs/specs/2026-10-27-conduit-mcp-install.md §2.5, AC11, AC12; plan
+ * setup banner offered (spec docs/specs/archive/2026-10-27-conduit-mcp-install.md §2.5, AC11, AC12; plan
  * T5.3). `claude` on PATH is a stub that only echoes, so no real Claude ever runs; the grace is
  * 1.5 s under CONDUIT_E2E_DETECT_GRACE_MS. Every config file lives in an isolated home.
  *   1. `claude` typed in a shell → notConnected {cli: claude}; the card shows the unplug with the

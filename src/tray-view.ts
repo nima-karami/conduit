@@ -9,7 +9,7 @@ import {
   TRAY_STRINGS,
 } from './tray-strings';
 
-// Snooze is deliberately ignored (L7): see docs/specs/2026-11-03-tray-helper.md §8.
+// Snooze is deliberately ignored (L7): see docs/specs/archive/2026-11-03-tray-helper.md §8.
 
 function hhmm(iso: string): string {
   const d = new Date(iso);

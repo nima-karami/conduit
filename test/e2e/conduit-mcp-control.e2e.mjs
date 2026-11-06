@@ -1,6 +1,6 @@
 /**
  * conduit-mcp-control — an agent opens sessions and files through the control tools (spec
- * docs/specs/2026-10-27-conduit-mcp-control-tools.md §7; plan T6.2). Sessions run the fake MCP
+ * docs/specs/archive/2026-10-27-conduit-mcp-control-tools.md §7; plan T6.2). Sessions run the fake MCP
  * agent, so the real shim, gate and per-connection tool lists are in the path:
  *   - main sets open_session On and worker sets it Off in their MCP tools dialogs; only worker's
  *     live connection changes (list_changed + a re-list without it), since open_session's

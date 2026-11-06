@@ -18,7 +18,7 @@ Reviewed the requested ADR, architecture, program, spike, ownership inventory, c
 
 ### B1 — A completed launch can execute again after its reply is lost
 
-**Anchors:** `docs/specs/2026-11-01-three-process-architecture.md`, F2.2.3 and D21; `src/contracts/terminal-runtime.ts`, `TerminalRuntime.spawn`; `src/contracts/hc.ts`, `terminal.run.params.name`.
+**Anchors:** `docs/specs/archive/2026-11-01-three-process-architecture.md`, F2.2.3 and D21; `src/contracts/terminal-runtime.ts`, `TerminalRuntime.spawn`; `src/contracts/hc.ts`, `terminal.run.params.name`.
 
 **Why:** The prescribed recovery blindly retries `terminal.run` with the original name and treats success as proof that the earlier run never registered. hc v0.1.16 checks name collisions only among **live** terminals. Its own test explicitly finishes a terminal and successfully creates another terminal with the same name. A command can therefore complete, lose its reply, and execute again when Conduit retries. This affects short commands and launchers that perform work before exiting, not merely long-running agents.
 

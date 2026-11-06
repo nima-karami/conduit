@@ -2,8 +2,8 @@
 
 **Status:** accepted 2026-11-02 (proposed 2026-11-01, revision 9.1; built on `feat/three-process`,
 see §As built) · **Date:** 2026-11-01
-**Design:** `docs/specs/2026-11-01-three-process-architecture.md` · **Program:**
-`docs/specs/2026-11-01-three-process-program.md` · **Spike:** `docs/specs/2026-11-01-hc-runtime-spike.md`
+**Design:** `docs/specs/archive/2026-11-01-three-process-architecture.md` · **Program:**
+`docs/specs/archive/2026-11-01-three-process-program.md` · **Spike:** `docs/specs/2026-11-01-hc-runtime-spike.md`
 · **Reviews:** `docs/runs/2026-11-01-three-process-design/`
 
 ## Context

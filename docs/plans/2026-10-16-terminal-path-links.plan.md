@@ -1,6 +1,6 @@
 # Plan: Terminal path links v2
 
-Spec: [2026-10-16-terminal-path-links.md](../specs/2026-10-16-terminal-path-links.md) (FULL).
+Spec: [docs/specs/archive/2026-10-16-terminal-path-links.md](../specs/archive/2026-10-16-terminal-path-links.md) (FULL).
 
 **Tier: FULL.** The work spans the renderer link layer, the host resolver, the
 `resolvePathToken` IPC seam and the New session entry. It adds a new picker and link menu, and
@@ -137,7 +137,7 @@ State ownership:
   - Never narrow, skip or disable a check. Capture exit codes directly, never through `tail`.
 - **Comments and fixes:**
   - Comments explain **why** only. When the why lives in the spec, the comment is a one-line
-    pointer, e.g. `// see docs/specs/2026-10-16-terminal-path-links.md §3.2`.
+    pointer, e.g. `// see docs/specs/archive/2026-10-16-terminal-path-links.md §3.2`.
   - No band-aids: no `as any`, `@ts-ignore`, swallowed errors, `!important` or magic offsets.
 - **Platform-free unit tests.** CI runs on ubuntu.
   - `src/path-resolve.ts`, `src/path-token-normalize.ts`, `src/path-link-roots.ts` and

@@ -27,7 +27,7 @@
 
 **Dimensions:** Data/state; failure realism.
 
-**Anchors:** `src/contracts/terminal-runtime.ts:69–85`; `docs/specs/2026-11-01-three-process-architecture.md:161–165` and D21 at `:291`.
+**Anchors:** `src/contracts/terminal-runtime.ts:69–85`; `docs/specs/archive/2026-11-01-three-process-architecture.md:161–165` and D21 at `:291`.
 
 The contract drops a null-address token row when listing finds no launch-id match, while promising that reconciliation before retry ensures one launch never spawns twice.
 

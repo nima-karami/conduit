@@ -1,7 +1,7 @@
 /**
  * conduit-mcp-compose — the human side of messaging, driven by real clicks (spec
- * docs/specs/2026-10-25-conduit-mcp-server.md §8–§9; plan T10.7; surfaces per
- * docs/specs/2026-11-02-sidebar-agent-tree.md §6–§7):
+ * docs/specs/archive/2026-10-25-conduit-mcp-server.md §8–§9; plan T10.7; surfaces per
+ * docs/specs/archive/2026-11-02-sidebar-agent-tree.md §6–§7):
  *   1. Messages view → New message → fake-1 → Send: the thread appears and fake-1 is noticed.
  *   2. fake-1 sends to `you` with an attachment: the footer's need-you button names the reason,
  *      the Messages toggle's badge shows 1, opening the thread clears it, and Open attachment shows

@@ -1,5 +1,5 @@
 // User-facing strings for the header, right panel, status bar and update toast: one place for
-// the future i18n seam (docs/specs/2026-11-02-sidebar-agent-tree.md §9).
+// the future i18n seam (docs/specs/archive/2026-11-02-sidebar-agent-tree.md §9).
 
 import { attentionChipLabel } from '../src/attention';
 import type { RightPaneTab } from '../src/settings';

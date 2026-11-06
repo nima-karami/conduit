@@ -9,7 +9,7 @@ import {
 import type { Project, Session } from './types';
 
 /**
- * The sidebar's agent forest and Space rows (docs/specs/2026-11-02-sidebar-agent-tree.md §3–§5).
+ * The sidebar's agent forest and Space rows (docs/specs/archive/2026-11-02-sidebar-agent-tree.md §3–§5).
  * Pure and iterative throughout: ancestry comes from persisted, possibly malformed records.
  */
 

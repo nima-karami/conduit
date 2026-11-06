@@ -11,7 +11,7 @@ shell, can use the Conduit MCP once the user has installed it for that CLI; user
 from an **MCP** Settings tab, a first-run prompt, the Messages empty state and a session-card status.
 **Mode:** autonomous. Brief: `.autoloop/goal.md` (user decisions 2026-10-27, not re-litigated here).
 Builds on [conduit-mcp-server](2026-10-25-conduit-mcp-server.md),
-[conduit-mcp-cursor](2026-10-26-conduit-mcp-cursor.md) (the Connect precedent this generalises — and
+[conduit-mcp-cursor](../2026-10-26-conduit-mcp-cursor.md) (the Connect precedent this generalises — and
 **changes**, §3.5), [conduit-mcp-control-tools](2026-10-27-conduit-mcp-control-tools.md).
 
 ## 1. Problem frame

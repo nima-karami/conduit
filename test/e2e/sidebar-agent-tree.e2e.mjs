@@ -1,6 +1,6 @@
 /**
  * sidebar-agent-tree — the agent forest from real server facts (spec
- * docs/specs/2026-11-02-sidebar-agent-tree.md §4–§5; plan "New exact scenario files").
+ * docs/specs/archive/2026-11-02-sidebar-agent-tree.md §4–§5; plan "New exact scenario files").
  * Every session runs the fake MCP agent; children are opened through the real MCP `open_session`,
  * so the host stamps `openedBy`. Status comes from the server: a qualifying `busy` run is a
  * heuristic completion, a BEL echoed while hidden is the `bell` Needs-you reason.

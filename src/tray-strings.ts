@@ -1,4 +1,4 @@
-// All tray copy lives here (spec docs/specs/2026-11-03-tray-helper.md §8, "i18n").
+// All tray copy lives here (spec docs/specs/archive/2026-11-03-tray-helper.md §8, "i18n").
 export function plural(n: number, one: string, other: string): string {
   return n === 1 ? one : other;
 }

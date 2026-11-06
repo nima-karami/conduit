@@ -96,7 +96,7 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
   let connHello: Hello | null = null;
   let offWatch: (() => void) | null = null;
   let vanishedAt: number[] = [];
-  // See docs/specs/2026-11-03-tray-helper.md F3a.
+  // See docs/specs/archive/2026-11-03-tray-helper.md F3a.
   let orderlyEnd = false;
   const tray = d.layout.trayExe && d.app ? { source: d.layout.trayExe, app: d.app } : undefined;
   /** Every transition bumps it; an async step that finds it moved stops. */

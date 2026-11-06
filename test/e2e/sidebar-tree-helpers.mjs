@@ -1,5 +1,5 @@
 /**
- * Shared driver for the sidebar agent-tree scenarios (docs/specs/2026-11-02-sidebar-agent-tree.md
+ * Shared driver for the sidebar agent-tree scenarios (docs/specs/archive/2026-11-02-sidebar-agent-tree.md
  * §3–§6; selector contract: docs/plans/2026-11-02-sidebar-agent-tree.plan.md S0 plus the lead's
  * amendment — group headers are level-1 treeitems that are siblings of the rows, rows sit at
  * depth+2, in one flat keyed list under `[data-agent-tree]`).

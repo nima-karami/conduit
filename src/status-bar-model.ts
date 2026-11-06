@@ -1,7 +1,7 @@
 import type { AttentionEntry } from './attention';
 import type { Session } from './types';
 
-/** The center footer's facts (docs/specs/2026-11-02-sidebar-agent-tree.md §7). Pure. */
+/** The center footer's facts (docs/specs/archive/2026-11-02-sidebar-agent-tree.md §7). Pure. */
 export interface StatusBarModel {
   branch: string | null;
   worktree: string | null;

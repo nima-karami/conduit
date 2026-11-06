@@ -58,7 +58,7 @@ export interface SweepResult {
   edges: AttentionEdge[];
   /**
    * One id per qualifying run that ended this sweep, whatever the visibility or the legacy
-   * episode latch: the server's completion counter (docs/specs/2026-11-02-sidebar-agent-tree.md §4).
+   * episode latch: the server's completion counter (docs/specs/archive/2026-11-02-sidebar-agent-tree.md §4).
    */
   completedIds: string[];
 }

@@ -1,7 +1,7 @@
 # Background tray helper: implementation plan
 
 **Status:** active, Revision 0 (2026-11-03).
-**Spec:** `docs/specs/2026-11-03-tray-helper.md` rev 2 (L1–L9 confirmed by the user).
+**Spec:** `docs/specs/archive/2026-11-03-tray-helper.md` rev 2 (L1–L9 confirmed by the user).
 **Tier:** FULL. S0 measurements, lead contracts C1, seven file-disjoint lanes, lead integration, then the e2e lane. Branch `feat/tray-helper` (base `main` 05402956 + spec c7b5e84d).
 
 ## Goal

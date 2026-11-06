@@ -18,7 +18,7 @@ Reviewed the requested documents, all C1–C7 files, the complete vendored OpenR
 
 ### 1. blocker — F3 cannot create workers without a ready app window
 
-**Anchors:** `docs/specs/2026-11-01-three-process-architecture.md`, F3 (line 226); `docs/specs/2026-11-01-three-process-program.md`, “Lane rule” and W0b/W5; `src/conduit-mcp/tool-policy.ts:385`, `gateToolCall`; `electron/conduit-mcp-host.ts:827`, the `ownerReady` argument.
+**Anchors:** `docs/specs/archive/2026-11-01-three-process-architecture.md`, F3 (line 226); `docs/specs/archive/2026-11-01-three-process-program.md`, “Lane rule” and W0b/W5; `src/conduit-mcp/tool-policy.ts:385`, `gateToolCall`; `electron/conduit-mcp-host.ts:827`, the `ownerReady` argument.
 
 F3 promises windowless MCP `open_session`/`open_terminal`. The program imports the existing MCP modules unchanged, while W0b promises no behavior change. That gate rejects **every non-messaging tool** when `ownerReady()` is false, including an open configured with `access:on` and `when:always`. The host derives readiness from the owner window; the ownership map explicitly makes missing presence fail closed. Consequently, the call fails with `window_not_ready` before reaching W4's server-side creation.
 

@@ -1,5 +1,5 @@
 // User-facing strings for the Spaces list, the agent tree and the session menu: one place for the
-// future i18n seam (docs/specs/2026-11-02-sidebar-agent-tree.md §9), in MCP_STR's function style.
+// future i18n seam (docs/specs/archive/2026-11-02-sidebar-agent-tree.md §9), in MCP_STR's function style.
 
 import type { AgentGroup, AgentState } from '../src/sidebar-state';
 

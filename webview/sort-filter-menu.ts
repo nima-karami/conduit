@@ -3,7 +3,7 @@ import { SIDEBAR_STR } from './sidebar-strings';
 /**
  * Pure builder for the Agents pane menu (right-click on empty list space). The tree orders itself
  * by status, so the old sort and group-by-project entries are gone; bulk close stays
- * (docs/specs/2026-11-02-sidebar-agent-tree.md §6). The component maps each spec to a MenuItem.
+ * (docs/specs/archive/2026-11-02-sidebar-agent-tree.md §6). The component maps each spec to a MenuItem.
  */
 
 type AgentsPaneAction = 'new' | 'closeAll' | 'closeAllStale';

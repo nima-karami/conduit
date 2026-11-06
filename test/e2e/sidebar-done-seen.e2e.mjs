@@ -1,6 +1,6 @@
 /**
  * sidebar-done-seen — the server's completion counter and the renderer's strict "seen" rule
- * (spec docs/specs/2026-11-02-sidebar-agent-tree.md §4; plan "E2e migration manifest"). Every fact
+ * (spec docs/specs/archive/2026-11-02-sidebar-agent-tree.md §4; plan "E2e migration manifest"). Every fact
  * comes from the real server: qualifying bursts, OSC 7501 reports and bare bells in cmd shells.
  *   - a qualifying run in a background session counts (`completions` on the broadcast) and the row
  *     reads Done in the Done group; a second run coalesces into the same single Done row;

@@ -1,5 +1,5 @@
 // Node-free: the renderer imports the catalog and resolution for Settings and the session dialog.
-// Model: docs/specs/2026-10-30-conduit-mcp-tool-policy.md §3.
+// Model: docs/specs/archive/2026-10-30-conduit-mcp-tool-policy.md §3.
 import type { ClientKind } from './client-info';
 import { type ToolError, toolError } from './types';
 

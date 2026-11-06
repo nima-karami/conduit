@@ -1,6 +1,6 @@
 # Spaces + agent tree — run report (2026-11-02 → 2026-11-03)
 
-Multi-agent build of `feat/sidebar-tree` on top of `feat/three-process`. Lead: Claude (Opus 5.5). Executors: Claude Opus/Sonnet subagents, Codex (gpt-6.1-sol, later as co-orchestrator with gpt-6-luna subagents), OpenCode, Cursor CLI. Spec `docs/specs/2026-11-02-sidebar-agent-tree.md`, plan `docs/plans/2026-11-02-sidebar-agent-tree.plan.md`. Design canvas (approved by the user): claude.ai artifact "Conduit sidebar redesign" (Design + Flows pages).
+Multi-agent build of `feat/sidebar-tree` on top of `feat/three-process`. Lead: Claude (Opus 5.5). Executors: Claude Opus/Sonnet subagents, Codex (gpt-6.1-sol, later as co-orchestrator with gpt-6-luna subagents), OpenCode, Cursor CLI. Spec `docs/specs/archive/2026-11-02-sidebar-agent-tree.md`, plan `docs/plans/2026-11-02-sidebar-agent-tree.plan.md`. Design canvas (approved by the user): claude.ai artifact "Conduit sidebar redesign" (Design + Flows pages).
 
 ## Outcome
 - Left panel: Spaces (filter: All / each Space / No space) + Agents grouped by status (Pinned, Needs you, Done, Working, Idle, Stopped folded), 30px rows (26px compact) with auto agent icons, ages, hover pin/close, nested sub-agents from `openedBy` with tree connectors; the active agent's row is always revealed once per activation.

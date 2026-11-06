@@ -1,6 +1,6 @@
 /**
  * Shared drivers for the sidebar-done-seen and status-bar scenarios (spec
- * docs/specs/2026-11-02-sidebar-agent-tree.md §4, §7). NOT a scenario — the runner only picks up
+ * docs/specs/archive/2026-11-02-sidebar-agent-tree.md §4, §7). NOT a scenario — the runner only picks up
  * `*.e2e.mjs`. Every producer here is the real server's: a qualifying burst for the heuristic run
  * end, an OSC 7501 report for the reported one, a bare BEL for the bell reason.
  */

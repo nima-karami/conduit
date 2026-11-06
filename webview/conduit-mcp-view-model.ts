@@ -1,4 +1,4 @@
-// Pure helpers for the Messages tab (docs/specs/2026-10-25-conduit-mcp-server.md §8–§10): what
+// Pure helpers for the Messages tab (docs/specs/archive/2026-10-25-conduit-mcp-server.md §8–§10): what
 // the list shows, what a row is called, what the tab badge and the live region say.
 import { type Handle, HUMAN_HANDLE, THREAD_AGENT_LIMIT } from '../src/conduit-mcp/types';
 import type { McpThreadSummary, McpUiState } from '../src/conduit-mcp/ui-types';

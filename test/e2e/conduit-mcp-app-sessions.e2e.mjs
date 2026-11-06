@@ -1,6 +1,6 @@
 /**
  * conduit-mcp-app-sessions — close_session, focus_session and attach_folder end to end (spec
- * docs/specs/2026-10-30-conduit-mcp-app-control.md §2.1, §2.3, §3; plan T3.2). Fake agents A, B, C
+ * docs/specs/archive/2026-10-30-conduit-mcp-app-control.md §2.1, §2.3, §3; plan T3.2). Fake agents A, B, C
  * in window 1 and E, F in window 2, so the real shim, gate, call flow, mcp:ui round trip and
  * approval card are in the path:
  *   - an off-screen caller is refused caller_not_visible and nothing moves;

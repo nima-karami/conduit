@@ -55,7 +55,7 @@ export type SessionIconKind =
   | 'gemini'
   | 'agent';
 
-/** Why a session needs the human now; see docs/specs/2026-11-02-sidebar-agent-tree.md §4. */
+/** Why a session needs the human now; see docs/specs/archive/2026-11-02-sidebar-agent-tree.md §4. */
 export type AttentionReason = 'blocked' | 'bell' | null;
 
 /** The server's runtime attention facts (ServerAttention); never persisted. */
@@ -133,11 +133,11 @@ export interface Session {
   // spreads ...s so all fields round-trip). Cleared by setting to undefined.
   iconOverride?: string;
   // Conduit MCP handle (`claude-1`): assigned at the first launch with a messaging adapter and
-  // never reused (docs/specs/2026-10-25-conduit-mcp-server.md §3.1). Persisted.
+  // never reused (docs/specs/archive/2026-10-25-conduit-mcp-server.md §3.1). Persisted.
   mcpHandle?: string;
   // The human paused message notices for this session (spec §5). Persisted.
   mcpNoticesPaused?: boolean;
-  /** Role brief state (docs/specs/2026-10-26-conduit-role-brief.md §2.3). Persisted. */
+  /** Role brief state (docs/specs/archive/2026-10-26-conduit-role-brief.md §2.3). Persisted. */
   brief?: BriefState;
   /** Session layer, per field; never copied by create/duplicate (spec 2026-10-30-conduit-mcp-tool-policy §3.1). Persisted. */
   mcpToolPolicy?: PolicyLayer;

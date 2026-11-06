@@ -1,6 +1,6 @@
 import type { RuntimeHealth, ServerEvents } from './server-protocol';
 
-// See docs/specs/2026-11-03-tray-helper.md §5.
+// See docs/specs/archive/2026-11-03-tray-helper.md §5.
 export const TRAY_PROTOCOL_VERSION = 1;
 
 export interface TrayCounts {

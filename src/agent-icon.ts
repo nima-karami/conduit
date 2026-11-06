@@ -3,7 +3,7 @@ import type { ResolvedSessionIcon } from './session-icon';
 import type { AgentDefinition, Session, SessionIconKind } from './types';
 
 /**
- * The one agent-glyph detector (docs/specs/2026-11-02-sidebar-agent-tree.md §6); session-icon's
+ * The one agent-glyph detector (docs/specs/archive/2026-11-02-sidebar-agent-tree.md §6); session-icon's
  * iconKindFromText delegates here. Glyph identity only, never MCP CliKind.
  */
 

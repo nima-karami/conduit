@@ -1,8 +1,8 @@
 # Plan: Conduit MCP tool policies (Part A)
 
-Spec: [2026-10-30-conduit-mcp-tool-policy.md](../specs/2026-10-30-conduit-mcp-tool-policy.md)
+Spec: [docs/specs/archive/2026-10-30-conduit-mcp-tool-policy.md](../specs/archive/2026-10-30-conduit-mcp-tool-policy.md)
 (FULL, reviewed twice). Sibling, built after this one:
-[2026-10-30-conduit-mcp-app-control.md](../specs/2026-10-30-conduit-mcp-app-control.md) (Part B).
+[docs/specs/archive/2026-10-30-conduit-mcp-app-control.md](../specs/archive/2026-10-30-conduit-mcp-app-control.md) (Part B).
 
 **Tier: FULL.** The feature replaces the v0.50 boolean switches with a three-layer policy model,
 adds a per-window presence store, a node-free call pipeline with an ask step and an in-app
@@ -844,7 +844,7 @@ call only messaging tools (grep), whose defaults stay `on` with no `when`: unaff
 | `test/e2e/fixtures/fake-mcp-agent.mjs`, `test/e2e/conduit-mcp-helpers.mjs` | modify | `cancel` command, `CALL` record; policy helpers, dialog selector, non-blocking call |
 | `test/e2e/conduit-mcp-control.e2e.mjs`, `test/e2e/conduit-mcp-control-terminal.e2e.mjs` | modify | New defaults and visibility |
 | Existing tests: `test/unit/conduit-mcp-host.test.ts`, `conduit-mcp-json-rpc.test.ts`, `conduit-mcp-control-tools.test.ts`, `conduit-mcp-handles.test.ts`, `conduit-mcp-view-model.test.ts`, `conduit-mcp-endpoint.test.ts`, `coerce-settings.test.ts`, `persistence.test.ts`, `session-manager.test.ts`, `mcp-tools-dialog.test.tsx`, `settings-mcp-tools.test.tsx`, `attention.test.ts`, `message-compose.test.tsx`, `messages-pane.test.tsx`, `right-pane-review-kebab.test.ts` | modify | Follow the changed contracts + new cases |
-| `docs/specs/2026-10-30-conduit-mcp-tool-policy.md` | modify (done in planning) | §2.4, §2.6 row 1, §3.1 migration, §5, §13 D3 |
+| `docs/specs/archive/2026-10-30-conduit-mcp-tool-policy.md` | modify (done in planning) | §2.4, §2.6 row 1, §3.1 migration, §5, §13 D3 |
 | `CHANGELOG.md` | modify | Unreleased entry |
 
 ## Scripts

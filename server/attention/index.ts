@@ -40,7 +40,7 @@ export class ServerAttention implements AttentionPort {
   private readonly bells = new Map<string, BellScanState>();
   private readonly inertTails = new Map<string, string>();
   /**
-   * The sidebar's facts (docs/specs/2026-11-02-sidebar-agent-tree.md §4). Completions outlive
+   * The sidebar's facts (docs/specs/archive/2026-11-02-sidebar-agent-tree.md §4). Completions outlive
    * spawn/exit resets on purpose, so a relaunch never resurrects an unseen run as new.
    */
   private readonly completions = new Map<string, number>();

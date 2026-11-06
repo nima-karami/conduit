@@ -1,4 +1,4 @@
-// Pure role-brief core, node-free so the renderer can import it (docs/specs/2026-10-26-conduit-role-brief.md §3).
+// Pure role-brief core, node-free so the renderer can import it (docs/specs/archive/2026-10-26-conduit-role-brief.md §3).
 import type { BriefSupport } from './conduit-mcp/adapters';
 import { firstCmdMetachar } from './launch-args';
 import type { AgentBriefSource, BriefError, BriefState } from './types';

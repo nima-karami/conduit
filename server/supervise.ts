@@ -116,7 +116,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** See docs/specs/2026-11-03-tray-helper.md §7a (W5/W6). */
+/** See docs/specs/archive/2026-11-03-tray-helper.md §7a (W5/W6). */
 async function coolDown(
   marker: SupervisorMarker,
   exhaustion: ServerExhaustion,
@@ -365,7 +365,7 @@ export async function runCliWith(deps: {
       ending: finishOnce,
     });
   } finally {
-    // see docs/specs/2026-11-03-tray-helper.md F9 / AC6
+    // see docs/specs/archive/2026-11-03-tray-helper.md F9 / AC6
     await finishOnce(exit ?? { reason: 'done' });
   }
 }

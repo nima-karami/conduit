@@ -74,7 +74,7 @@ export type LimitResumeMode = 'off' | 'offer' | 'arm';
 export type ChangesViewMode = 'all' | 'active';
 
 export interface AppSettings {
-  /** See docs/specs/2026-11-03-whats-new.md §2: the update acknowledgement is host-owned. */
+  /** See docs/specs/archive/2026-11-03-whats-new.md §2: the update acknowledgement is host-owned. */
   lastSeenVersion?: string;
   theme: string; // theme id (see webview/themes.ts)
   fontUi: string; // ui font id
@@ -187,16 +187,16 @@ export interface AppSettings {
   // debug/trace. The host logger reads this live (no restart).
   logLevel: LogLevel;
   // Behaviour: the Conduit MCP server lets agent sessions message each other and you. Default ON;
-  // off answers every tool call with messaging_off (docs/specs/2026-10-25-conduit-mcp-server.md §5).
+  // off answers every tool call with messaging_off (docs/specs/archive/2026-10-25-conduit-mcp-server.md §5).
   conduitMcp: boolean;
-  // Global and per-CLI tool policy layers (docs/specs/2026-10-30-conduit-mcp-tool-policy.md §3.1).
+  // Global and per-CLI tool policy layers (docs/specs/archive/2026-10-30-conduit-mcp-tool-policy.md §3.1).
   mcpToolPolicy: GlobalPolicy;
   mcpToolPolicyByCli: CliPolicyLayers;
   // Discovery banner switch; dismissals are permanent per CLI until this is turned back on
-  // (docs/specs/2026-10-27-conduit-mcp-install.md §3.6).
+  // (docs/specs/archive/2026-10-27-conduit-mcp-install.md §3.6).
   mcpInstallSuggest: boolean;
   mcpInstallPromptDismissed: InstallDismissals;
-  // Host-owned: the one-time pass that added the CLIs' permission rules ran (docs/specs/2026-10-31-conduit-mcp-single-gate.md §3.5).
+  // Host-owned: the one-time pass that added the CLIs' permission rules ran (docs/specs/archive/2026-10-31-conduit-mcp-single-gate.md §3.5).
   mcpGateMigrated: boolean;
 }
 
