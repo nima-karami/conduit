@@ -34,6 +34,7 @@ export interface SessionCreateOpts {
   /** Requires agentId === COMMAND_AGENT_ID. */
   command?: SessionCommand;
   openedBy?: SessionOpener;
+  closeWhenDone?: boolean;
 }
 
 function setMissing(s: Session, keys: ReadonlySet<string>) {
@@ -104,6 +105,7 @@ export class SessionManager {
         ? { command: { command: opts.command.command, args: [...opts.command.args] } }
         : {}),
       ...(opts.openedBy ? { openedBy: { ...opts.openedBy } } : {}),
+      ...(opts.closeWhenDone ? { closeWhenDone: true } : {}),
     };
     setMissing(session, new Set((opts.missingRoots ?? []).map(folderKey)));
     this.sessions.set(id, session);

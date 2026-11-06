@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   allocateHandle,
   cliKindOfHandle,
+  handlePrefixForCommand,
   parseHandleCounters,
   serializeHandleCounters,
   slugHandlePrefix,
@@ -71,5 +72,21 @@ describe('cliKindOfHandle', () => {
     ['claude-x-1', 'agent'],
   ])('cliKindOfHandle maps the prefix: %s → %s', (handle, kind) => {
     expect(cliKindOfHandle(handle)).toBe(kind);
+  });
+});
+
+describe('handlePrefixForCommand', () => {
+  it.each([
+    ['cursor-agent', 'cursor'],
+    ['/usr/local/bin/cursor-agent', 'cursor'],
+    ['C:\\Tools\\agent.cmd', 'cursor'],
+    ['codex', 'codex'],
+    ['Claude.EXE', 'claude'],
+    ['C:\\bin\\opencode.ps1', 'opencode'],
+    ['node', 'term'],
+    ['pwsh', 'term'],
+    ['', 'term'],
+  ])('%s → %s', (command, want) => {
+    expect(handlePrefixForCommand(command)).toBe(want);
   });
 });

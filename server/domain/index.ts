@@ -722,6 +722,15 @@ export function createDomain(deps: DomainDeps): Domain {
         }
         endEpisode(e.sessionId);
         scopes.ended(e.sessionId);
+        // Only a program that quit on its own: a kill from Conduit's own stop must not delete it.
+        if (e.reason === 'exited' && mgr.get(e.sessionId)?.closeWhenDone) {
+          closeSession(e.sessionId).catch((err: unknown) =>
+            log.warn('session', 'closeWhenDone close failed', {
+              sessionId: e.sessionId,
+              err: String(err),
+            }),
+          );
+        }
         return;
       case 'status':
         setFacts(e.sessionId, { reportedStatus: e.status });
@@ -1025,6 +1034,7 @@ export function createDomain(deps: DomainDeps): Domain {
     brief: BriefRequest | undefined;
     command?: SessionCommand;
     openedBy?: SessionOpener;
+    closeWhenDone?: boolean;
     cardId?: string;
     opener: { sessionId?: string; focus: boolean };
   }
@@ -1047,6 +1057,7 @@ export function createDomain(deps: DomainDeps): Domain {
         ...(i.name !== undefined ? { name: i.name } : {}),
         ...(i.command ? { command: i.command } : {}),
         ...(i.openedBy ? { openedBy: i.openedBy } : {}),
+        ...(i.closeWhenDone ? { closeWhenDone: true } : {}),
         id: c.id,
         ...(c.brief ? { brief: c.brief } : {}),
       }).id;
@@ -1124,6 +1135,7 @@ export function createDomain(deps: DomainDeps): Domain {
       brief: command ? { kind: 'none' } : undefined,
       ...(command ? { command } : {}),
       openedBy: req.openedBy,
+      closeWhenDone: req.closeWhenDone,
       opener: { sessionId: req.callerSessionId, focus: req.focus },
     });
     if ('error' in r) {

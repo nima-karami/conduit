@@ -45,6 +45,8 @@ export interface McpOpenRequest {
   label: string | undefined;
   focus: boolean;
   launch: McpLaunch;
+  /** The session closes once its program exits; finished output is lost (CON-152). */
+  closeWhenDone: boolean;
 }
 export type McpOpenOutcome = DomainOpenOutcome;
 export interface McpFileRequest {
@@ -183,21 +185,37 @@ function parseLabel(v: unknown): string | undefined | Fail {
   return v;
 }
 
+/** What only the two open-a-session tools carry. */
+interface OpenExtras {
+  closeWhenDone: boolean;
+}
+
 function common(o: Record<string, unknown>, label: string | undefined): Common {
   return { path: o.path as string, label, focus: o.focus !== false };
 }
 
-function parseSessionArgs(raw: unknown): (Common & { agent: string }) | Fail {
-  const o = parseObject(raw, ['path', 'agent', 'label', 'focus']);
+/** Optional boolean: true closes the session once its program exits (CON-152). */
+function parseCloseWhenDone(o: Record<string, unknown>): boolean | Fail {
+  if (o.close_when_done !== undefined && typeof o.close_when_done !== 'boolean')
+    return fail('invalid_args', 'close_when_done must be a boolean');
+  return o.close_when_done === true;
+}
+
+function parseSessionArgs(raw: unknown): (Common & OpenExtras & { agent: string }) | Fail {
+  const o = parseObject(raw, ['path', 'agent', 'label', 'focus', 'close_when_done']);
   if (isFail(o)) return o;
   if (typeof o.agent !== 'string') return fail('invalid_args', 'agent must be a string');
   const label = parseLabel(o.label);
   if (isFail(label)) return label;
-  return { ...common(o, label), agent: o.agent };
+  const closeWhenDone = parseCloseWhenDone(o);
+  if (isFail(closeWhenDone)) return closeWhenDone;
+  return { ...common(o, label), agent: o.agent, closeWhenDone };
 }
 
-function parseTerminalArgs(raw: unknown): (Common & { command: SessionCommand }) | Fail {
-  const o = parseObject(raw, ['path', 'command', 'args', 'label', 'focus']);
+function parseTerminalArgs(
+  raw: unknown,
+): (Common & OpenExtras & { command: SessionCommand }) | Fail {
+  const o = parseObject(raw, ['path', 'command', 'args', 'label', 'focus', 'close_when_done']);
   if (isFail(o)) return o;
   const command = coerceSessionCommand({
     command: o.command,
@@ -210,7 +228,9 @@ function parseTerminalArgs(raw: unknown): (Common & { command: SessionCommand })
     );
   const label = parseLabel(o.label);
   if (isFail(label)) return label;
-  return { ...common(o, label), command };
+  const closeWhenDone = parseCloseWhenDone(o);
+  if (isFail(closeWhenDone)) return closeWhenDone;
+  return { ...common(o, label), command, closeWhenDone };
 }
 
 const position = (v: unknown): v is number | undefined =>
@@ -382,7 +402,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
   function prepareOpen(
     tool: 'open_session' | 'open_terminal',
     caller: Caller,
-    a: Common,
+    a: Common & OpenExtras,
     launch: McpLaunch,
     agent: string,
   ): Promise<Result<PreparedCall<OpenSessionOutput>>> {
@@ -421,6 +441,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
               label: a.label,
               focus: a.focus,
               launch,
+              closeWhenDone: a.closeWhenDone,
             });
           } catch (e) {
             return failed(tool, caller, e, abs);
@@ -456,7 +477,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
   }
 
   // spec 2026-10-30-conduit-mcp-tool-policy §3.2: move:no runs a focus:true open as focus:false.
-  const focusFor = (a: Common, ctx: ControlCallContext): Common =>
+  const focusFor = <T extends Common>(a: T, ctx: ControlCallContext): T =>
     ctx.move === 'no' ? { ...a, focus: false } : a;
 
   return {

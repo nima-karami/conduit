@@ -145,6 +145,8 @@ export interface Session {
   command?: SessionCommand;
   /** The MCP caller that opened this session. Persisted. */
   openedBy?: SessionOpener;
+  /** Opened with close_when_done: closes once its program exits. Persisted. */
+  closeWhenDone?: boolean;
   /** live working dir (cd-tracked); falls back to home */
   cwd?: string;
   /** Runtime-only (stripped by serializeSessions). Keyed by RepoInfo.root exactly as in `repos`.

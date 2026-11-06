@@ -457,3 +457,18 @@ None blocking. The human ruled on 2026-10-27:
 - no first task (use `send_message`);
 - a `focus` flag;
 - global per-tool settings plus per-session overrides from the session menu.
+
+## 15. Amendment 2026-11-07 (CON-149, CON-152)
+
+- **Handle for every MCP-opened session (CON-149).** A session opened by `open_terminal` with no
+  adapter gets a handle with a prefix from its program's leaf: `cursor-agent` and `agent` → `cursor`,
+  `codex`, `claude` and `opencode` map to themselves, anything else → `term`
+  (`handlePrefixForCommand`, `src/conduit-mcp/handles.ts`). A CLI that connects later keeps that handle.
+- **Listed while it exists (CON-149).** A session with a handle and an `openedBy` is listed in
+  `list_sessions` and targetable by `close_session` whether or not an MCP client is live, so an exited
+  terminal stays visible with presence `exited` until its opener closes it. The lazy-shell rule (B2)
+  still applies to every other session.
+- **`close_when_done` (CON-152).** `open_session` and `open_terminal` accept an optional boolean
+  (default false); a non-boolean is `invalid_args`. It is persisted on the session as `closeWhenDone`.
+  When the program exits with reason `exited`, the session closes through the same domain close as
+  `close_session`. A `killed` or `lost` exit leaves it in place. Finished output is lost on close.
