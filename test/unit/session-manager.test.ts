@@ -400,6 +400,12 @@ describe('SessionManager role brief', () => {
     expect(m.mintId()).toBe('b');
   });
 
+  it('duplicate keeps the model the session was opened with', () => {
+    const m = new SessionManager(new AgentRegistry([claude]), seqIds());
+    const src = m.create('claude', '/w', { model: 'opus' });
+    expect(m.duplicate(src.id)?.model).toBe('opus');
+  });
+
   it('duplicate forwards id and brief; without opts there is no brief', () => {
     const m = new SessionManager(new AgentRegistry([claude]), seqIds());
     const src = m.create('claude', '/w', { brief: 'sent' });

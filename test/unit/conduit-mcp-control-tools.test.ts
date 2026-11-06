@@ -883,6 +883,23 @@ describe('open_session model and message (CON-148)', () => {
     });
   });
 
+  it('the approval summary counts the first message in characters, not bytes', async () => {
+    const h = harness();
+    h.kinds['/home/main/w'] = 'dir';
+    const s = await createControlHandlers(h.deps).prepareOpenSession(
+      caller(),
+      sessionArgs({ path: 'w', message: '😀😀x' }),
+      NO_MOVE,
+    );
+    expect(s.ok && s.value.summary).toEqual({
+      tool: 'open_session',
+      path: '/home/main/w',
+      agent: 'claude',
+      focus: true,
+      message: 3,
+    });
+  });
+
   it('a message is stored once from the caller to the new handle, and the result carries message_id', async () => {
     const h = harness();
     const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ message: 'start on T1' }));
@@ -942,6 +959,10 @@ describe('open_session model and message (CON-148)', () => {
     const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ message: 'hi' }));
     expect(code(r)).toBe('store_unavailable');
     expect(!r.ok && r.error.sessionId).toBe('new-1-0');
+    expect(!r.ok && r.error.handle).toBe('h-new-1-0');
+    expect(!r.ok && r.error.message).toBe(
+      'session opened; resend the task with send_message: disk full',
+    );
     expect(h.opens).toHaveLength(1);
   });
 

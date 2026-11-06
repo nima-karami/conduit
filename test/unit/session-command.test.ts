@@ -155,4 +155,9 @@ describe('session model (CON-148)', () => {
     );
     expect(d?.args).toEqual([]);
   });
+
+  it('effectiveDef adds no flag for a stored model that fails coerceModel', () => {
+    expect(effectiveDef({ agentId: 'claude', model: '--x y' }, registry)?.args).toEqual([]);
+    expect(effectiveDef({ agentId: 'claude', model: '' }, registry)?.args).toEqual([]);
+  });
 });

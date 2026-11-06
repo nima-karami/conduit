@@ -37,9 +37,11 @@ export function effectiveDef(
 ): AgentDefinition | undefined {
   if (s.agentId === COMMAND_AGENT_ID) return s.command ? commandDef(s.command) : undefined;
   const def = registry.get(s.agentId);
-  if (!def || s.model === undefined) return def;
+  // Re-checked here: the persisted value is only as trusted as the file it came from.
+  const model = s.model === undefined ? undefined : coerceModel(s.model);
+  if (!def || model === undefined) return def;
   // An agent whose command no longer has a model flag launches without the model, not refused.
-  const flags = modelArgs(adapterFor(def, { e2e: false })?.id, s.model) ?? [];
+  const flags = modelArgs(adapterFor(def, { e2e: false })?.id, model) ?? [];
   return { ...def, args: [...def.args, ...flags] };
 }
 

@@ -498,7 +498,17 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         error: toolError('open_failed', 'opened, but it has no handle to message', sessionId),
       };
     const sent = await deps.sendMessage(caller, { to: [handle], body });
-    if (!sent.ok) return { ok: false, error: { ...sent.error, sessionId } };
+    // The session is open and holds its handle, so the caller can resend the task itself.
+    if (!sent.ok)
+      return {
+        ok: false,
+        error: {
+          ...sent.error,
+          message: `session opened; resend the task with send_message: ${sent.error.message}`,
+          sessionId,
+          handle,
+        },
+      };
     return { ok: true, value: sent.value.message_id };
   }
 
@@ -535,6 +545,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
               agent,
               focus: a.focus,
               ...(a.model !== undefined ? { model: a.model } : {}),
+              ...(a.message !== undefined ? { message: Array.from(a.message).length } : {}),
             }
           : {
               tool: 'open_terminal',

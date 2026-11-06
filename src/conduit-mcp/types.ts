@@ -56,6 +56,8 @@ export interface ToolError {
   message: string;
   retryable: boolean;
   sessionId?: string;
+  /** Set when a session was opened but the call failed after it: the handle it holds. */
+  handle?: Handle;
 }
 export type Result<T> = { ok: true; value: T } | { ok: false; error: ToolError };
 

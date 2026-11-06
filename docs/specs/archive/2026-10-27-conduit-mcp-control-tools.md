@@ -491,3 +491,7 @@ None blocking. The human ruled on 2026-10-27:
   session with no handle, after the open returns the error with `session_id`; the session stays open.
   The result gains `message_id` when a message was stored.
 - **Not mapped.** `opencode` has no MCP adapter kind, so it takes no `model` until one exists.
+- **Follow-ups (CON-148 review).** The approval summary for a `message` adds "with a first message (N chars)",
+  counted in characters. A send failure after the open carries the new `handle` on the error, with the message
+  "session opened; resend the task with send_message: <cause>". `effectiveDef` re-checks a stored `model` with
+  `coerceModel`, so a bad value adds no flag. `duplicate` keeps the model.
