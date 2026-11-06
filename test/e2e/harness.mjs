@@ -1471,22 +1471,79 @@ export function waitForOutput(page, sessionId, text, occurrences = 2) {
 
 /**
  * Write `data` straight into a session's xterm, as program output, and resolve once it is parsed.
- * The promise stays referenced from `window` until a task after it settles: a resolved promise
- * nothing else holds can be collected before CDP's awaitPromise reaction runs, which fails the
- * evaluate with "Resulting promise was garbage collected" (review-multi-repo on the runner).
+ *
+ * Must not return a Promise from `page.evaluate`. Playwright/CDP's awaitPromise loses a settled
+ * thenable whose only in-page refs are the write callback (dropped after fire) and a Set entry
+ * this helper used to delete on `setTimeout(0)` — "Resulting promise was garbage collected" in
+ * ~34ms, after the bytes had already parsed (review-multi-repo trace call@232). The page records
+ * drain on `window`; Node waits on that flag (a JSON value), and rejects if the target terminal
+ * is missing, disposed, or replaced.
  */
-export function writeToTerminal(page, sessionId, data) {
-  return page.evaluate(
+export async function writeToTerminal(page, sessionId, data) {
+  const token = await page.evaluate(
     ([s, d]) => {
-      const p = new Promise((r) => window.__terms[s].write(d, r));
-      window.__termWrites ??= new Set();
-      const held = window.__termWrites;
-      held.add(p);
-      p.then(() => setTimeout(() => held.delete(p)));
-      return p;
+      const term = window.__terms?.[s];
+      if (!term) throw new Error(`writeToTerminal: no terminal for session ${s}`);
+      if (!window.__termWrites) window.__termWrites = new Map();
+      const writes = window.__termWrites;
+      window.__termWriteSeq = (window.__termWriteSeq ?? 0) + 1;
+      const next = window.__termWriteSeq;
+      const slot = { done: false, error: null, term, sessionId: s };
+      writes.set(next, slot);
+      try {
+        term.write(d, () => {
+          if (window.__terms?.[s] !== term) {
+            slot.error = `writeToTerminal: terminal ${s} was replaced during write`;
+          }
+          slot.done = true;
+        });
+      } catch (err) {
+        slot.error = `writeToTerminal: terminal ${s} disposed or unwritable (${err?.message ?? err})`;
+        slot.done = true;
+      }
+      return next;
     },
     [sessionId, data],
   );
+
+  try {
+    await page.waitForFunction((t) => {
+      const slot = window.__termWrites?.get(t);
+      if (!slot) return false;
+      if (slot.done) return true;
+      if (window.__terms?.[slot.sessionId] !== slot.term) {
+        slot.error = `writeToTerminal: terminal ${slot.sessionId} was disposed or replaced before the write drained`;
+        slot.done = true;
+        return true;
+      }
+      return false;
+    }, token);
+  } catch (err) {
+    const status = await page
+      .evaluate((t) => {
+        const slot = window.__termWrites?.get(t);
+        return {
+          done: slot?.done ?? null,
+          error: slot?.error ?? null,
+          ids: window.__terms ? Object.keys(window.__terms) : [],
+        };
+      }, token)
+      .catch(() => null);
+    if (status && !status.done) {
+      throw new Error(
+        `writeToTerminal: write to ${sessionId} never drained (terminals: [${status.ids.join(', ') || 'none'}])`,
+      );
+    }
+    throw err;
+  }
+
+  const error = await page.evaluate((t) => {
+    const writes = window.__termWrites;
+    const slot = writes?.get(t);
+    writes?.delete(t);
+    return slot?.error ?? null;
+  }, token);
+  if (error) throw new Error(error);
 }
 
 /**
