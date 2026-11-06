@@ -126,9 +126,24 @@ const scrollTo = async (page, top) => {
     },
     top,
   );
-  // Past the 120ms anchor-capture debounce, and past the re-window + re-measure it triggers
-  // (hidden windows throttle frames, so the ResizeObserver pass lands a beat later).
-  await page.waitForTimeout(900);
+  // Unmount capture is the debounce's safety net (VIEW_STATE_DEBOUNCE_MS); wait for the
+  // virtual list to mount a card at the new offset — that's the snapshot's topCard.
+  await page.waitForFunction(
+    (t) => {
+      const el = document.querySelector('.review__scroll');
+      if (!el) return false;
+      const at = Math.round(el.scrollTop);
+      // The assigned offset can clamp below `t` when the list is still measuring;
+      // the snapshot only needs a real offset (or the top, when asked).
+      if (t === 0 ? at !== 0 : at < 200) return false;
+      const y = el.getBoundingClientRect().top;
+      return Array.from(document.querySelectorAll('.review .rcard')).some(
+        (n) => n.getBoundingClientRect().bottom > y,
+      );
+    },
+    top,
+    { timeout: 10000 },
+  );
 };
 
 runScenario('review-tab-state', async ({ page, log }) => {
@@ -148,7 +163,7 @@ runScenario('review-tab-state', async ({ page, log }) => {
   // ── 1. Set the state up, in the order the app allows ────────────────────────────────────
   // The file filter resets the scroll on purpose, so it goes FIRST and the scroll last.
   await page.fill('.rightpane .review__filterinput', FILTER);
-  await page.waitForTimeout(200);
+  await page.locator('.review__filtercount').waitFor({ state: 'visible', timeout: 8000 });
 
   // Find bar: `/` is scoped to focus inside the scroller (Lane B keymap).
   await page.click('.review__scroll');
@@ -158,7 +173,15 @@ runScenario('review-tab-state', async ({ page, log }) => {
     timeout: 8000,
   });
   await page.fill('.term-find--review .term-find__input', QUERY);
-  await page.waitForTimeout(200);
+  await page.waitForFunction(
+    () => {
+      const t =
+        document.querySelector('.term-find--review .review__searchstatus')?.textContent ?? '';
+      return t.length > 0 && !t.includes('loading');
+    },
+    null,
+    { timeout: 15000 },
+  );
 
   await page.$eval(`${card(COLLAPSE)} .rcard__toggle`, (el) => el.click());
   await page.waitForFunction((sel) => !document.querySelector(`${sel} .rhunks`), card(COLLAPSE), {
@@ -174,7 +197,6 @@ runScenario('review-tab-state', async ({ page, log }) => {
     { sel: card(FOLD), before: foldRowsBefore },
     { timeout: 8000 },
   );
-  await page.waitForTimeout(600);
 
   const cardsBefore = await topState(page);
   log('cards BEFORE', JSON.stringify(cardsBefore));
@@ -187,20 +209,6 @@ runScenario('review-tab-state', async ({ page, log }) => {
   // ── 2. Scroll a meaningful distance ─────────────────────────────────────────────────────
   const target = await page.$eval('.review__scroll', (el) => Math.round(el.scrollHeight * 0.4));
   await scrollTo(page, target);
-  // The virtual list mounts the cards for a new offset a frame or more later; on a loaded runner
-  // that outlasts the fixed settle above, and the snapshot would see no card at the top.
-  await page.waitForFunction(
-    () => {
-      const el = document.querySelector('.review__scroll');
-      if (!el) return false;
-      const y = el.getBoundingClientRect().top;
-      return Array.from(document.querySelectorAll('.review .rcard')).some(
-        (n) => n.getBoundingClientRect().bottom > y,
-      );
-    },
-    null,
-    { timeout: 10000 },
-  );
   const before = await chrome(page);
   log('chrome BEFORE', JSON.stringify(before));
   assert(before.scrollTop > 200, `expected a meaningful scroll offset, got ${before.scrollTop}`);
@@ -224,8 +232,30 @@ runScenario('review-tab-state', async ({ page, log }) => {
     state: 'attached',
     timeout: 25000,
   });
-  // Same settle window the "before" reading got, so the two are taken under equal conditions.
-  await page.waitForTimeout(900);
+  await page
+    .waitForFunction(
+      (want) => {
+        const el = document.querySelector('.review__scroll');
+        if (!el) return false;
+        if (Math.abs(Math.round(el.scrollTop) - want.scrollTop) > 2) return false;
+        if (Math.abs(Math.round(el.scrollHeight) - want.scrollHeight) > 2) return false;
+        const y = el.getBoundingClientRect().top;
+        const c = Array.from(document.querySelectorAll('.review .rcard')).find(
+          (n) => n.getBoundingClientRect().bottom > y,
+        );
+        if (c?.getAttribute('data-path') !== want.topCard) return false;
+        const filter = document.querySelector('.rightpane .review__filterinput')?.value ?? null;
+        const query = document.querySelector('.term-find--review .term-find__input')?.value ?? null;
+        return (
+          filter === want.filter &&
+          query === want.query &&
+          !!document.querySelector('.term-find--review')
+        );
+      },
+      before,
+      { timeout: 15000 },
+    )
+    .catch(() => {});
 
   const after = await chrome(page);
   log('chrome AFTER ', JSON.stringify(after));
@@ -286,7 +316,12 @@ runScenario('review-tab-state', async ({ page, log }) => {
     state: 'attached',
     timeout: 20000,
   });
-  await page.waitForTimeout(600);
+  await page.waitForFunction(
+    (sel) =>
+      document.querySelector(`${sel} .rcard__toggle`)?.getAttribute('aria-expanded') === 'true',
+    card(COLLAPSE),
+    { timeout: 8000 },
+  );
 
   const onCommit = await topState(page);
   log('cards ON COMMIT', JSON.stringify(onCommit));
@@ -310,7 +345,12 @@ runScenario('review-tab-state', async ({ page, log }) => {
     state: 'attached',
     timeout: 20000,
   });
-  await page.waitForTimeout(600);
+  await page.waitForFunction(
+    (sel) =>
+      document.querySelector(`${sel} .rcard__toggle`)?.getAttribute('aria-expanded') === 'true',
+    card(COLLAPSE),
+    { timeout: 8000 },
+  );
 
   const backOnWorking = await topState(page);
   log('cards BACK ON WORKING', JSON.stringify(backOnWorking));

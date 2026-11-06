@@ -24,13 +24,12 @@ delete process.env.CONDUIT_E2E;
 
 const log = makeLog('attention');
 
-// Poll interval and maximum wait for flashFrame(true) to appear. The activity sweep
-// fires every 750ms and attention needs ATTENTION_QUIET_MS (4s) of silence after a
-// qualifying run. Under load (in-suite, back-to-back Electron launches) the sweep can
-// be delayed, so we poll for up to 20s rather than doing a single fixed wait.
-const FLASH_POLL_INTERVAL_MS = 300;
+// Maximum wait for needsAttention (the renderer-visible arm) after a qualifying run.
+// The activity sweep fires every 750ms and attention needs ATTENTION_QUIET_MS (4s) of
+// silence; under load the sweep can be delayed, so the ceiling is 20s.
 const FLASH_POLL_TIMEOUT_MS = 20000;
 // SPAWN_GRACE_MS (5s) plus margin: output before this is startup noise, not evidence.
+// STOP (CON-134): no session field exposes spawn-grace expiry; see report.
 const SPAWN_GRACE_WAIT_MS = 6500;
 // A run that QUALIFIES as evidence (>= MIN_RUN_BYTES in one burst). A bare `echo` no
 // longer arms attention — that trivial signal is what the 2026-08-21 spec set out to
@@ -57,9 +56,24 @@ try {
   const sidA = await openSession(page, { path: REPO.replace(/\\/g, '/'), agentId: 'shell:cmd' });
   const sidB = await openSession(page, { path: REPO.replace(/\\/g, '/'), agentId: 'shell:cmd' });
 
+  /** Bounded window for a negative: a second qualifying run must not re-flash. */
+  const observeNothingFor = async (ms, check) => {
+    await page.waitForTimeout(ms);
+    return check();
+  };
+
+  const waitNeedsAttention = (sid, timeout = FLASH_POLL_TIMEOUT_MS) =>
+    page.waitForFunction(
+      (id) => !!(window.__sessions || []).find((s) => s.id === id)?.needsAttention,
+      sid,
+      { timeout },
+    );
+
   // Report sidB as this window's visible session, leaving sidA in the background.
   const setVisible = async (ids) => {
     await page.evaluate((v) => window.agentDeck.post({ type: 'visible', ids: v }), ids);
+    // STOP (CON-134): visible is applied on the server via coalesced ui.presence; nothing
+    // in __sessions / the sidebar reflects the host-visible set (see report).
     await page.waitForTimeout(500);
   };
   await setVisible([sidB]);
@@ -99,20 +113,9 @@ try {
   });
   log('window isFocused after blur:', focusedBeforePoll);
 
-  log('session is busy — polling for sweep to detect idle and raise attention...');
-
-  // Poll until flashFrame(true) appears in the spy buffer.  The main-process spy
-  // is read via app.evaluate, so we poll from outside the page context.
-  // This is far more robust than a single fixed-length wait under load.
-  let callsAfterBlur = [];
-  let flashTrueFound = false;
-  const pollDeadline = Date.now() + FLASH_POLL_TIMEOUT_MS;
-  while (Date.now() < pollDeadline) {
-    callsAfterBlur = await getSpyCalls(app);
-    flashTrueFound = callsAfterBlur.some((c) => c.api === 'flashFrame' && c.args[0] === true);
-    if (flashTrueFound) break;
-    await page.waitForTimeout(FLASH_POLL_INTERVAL_MS);
-  }
+  log('session is busy — waiting for needsAttention (sweep idle → OS flash in the same turn)...');
+  await waitNeedsAttention(sidA);
+  const callsAfterBlur = await getSpyCalls(app);
   log(
     'spy calls after blur+busy→idle:',
     JSON.stringify(callsAfterBlur.map((c) => ({ api: c.api, args: c.args }))),
@@ -138,9 +141,7 @@ try {
   await clearSpyCalls(app);
   await setWindowFocus(app, true);
 
-  // The main process has win.on('focus', () => win.flashFrame(false)).
-  await page.waitForTimeout(500);
-
+  // setWindowFocus emits 'focus' in the same main-process turn as flashFrame(false).
   const callsAfterFocus = await getSpyCalls(app);
   log(
     'spy calls after focus:',
@@ -169,10 +170,8 @@ try {
   await page.waitForFunction(() => window.__cap.includes('conduit-busy-test'), null, {
     timeout: 15000,
   });
-  // Long enough for the quiet window (4s) plus a sweep; we're checking that something
-  // does NOT happen, so no polling loop is needed.
-  await page.waitForTimeout(10000);
-
+  // Sweep still arms needsAttention; OS flash is gated off because the window is focused.
+  await waitNeedsAttention(sidA);
   const callsWhileFocused = await getSpyCalls(app);
   const flashTrueWhileFocused = callsWhileFocused.find(
     (c) => c.api === 'flashFrame' && c.args[0] === true,
@@ -211,23 +210,25 @@ try {
 
   // Cycle 1: drive a qualifying run and WAIT for the single attention raise (baseline = 1).
   await driveQualifyingRun('conduit-dedup-1');
-  let sawFirstFlash = false;
-  const dedupDeadline = Date.now() + FLASH_POLL_TIMEOUT_MS;
-  while (Date.now() < dedupDeadline) {
-    const calls = await getSpyCalls(app);
-    if (calls.some((c) => c.api === 'flashFrame' && c.args[0] === true)) {
-      sawFirstFlash = true;
-      break;
-    }
-    await page.waitForTimeout(FLASH_POLL_INTERVAL_MS);
-  }
+  await waitNeedsAttention(sidA);
+  const sawFirstFlash = (await getSpyCalls(app)).some(
+    (c) => c.api === 'flashFrame' && c.args[0] === true,
+  );
   assert(sawFirstFlash, 'Cycle 1 should raise attention once (baseline)');
 
   // Cycle 2: another FULL qualifying run without the user ever looking at the session.
   // Stronger than the old "any second idle edge": even real new work must not re-fire an
   // episode the user has not acknowledged (spec contract 3).
   await driveQualifyingRun('conduit-dedup-2');
-  await page.waitForTimeout(10000); // quiet window + a sweep
+  assert(
+    await observeNothingFor(10000, async () => {
+      const n = (await getSpyCalls(app)).filter(
+        (c) => c.api === 'flashFrame' && c.args[0] === true,
+      ).length;
+      return n === 1;
+    }),
+    'second qualifying run must not raise another flashFrame(true) during the quiet window',
+  );
 
   const dedupCalls = await getSpyCalls(app);
   const flashTrueCount = dedupCalls.filter(
