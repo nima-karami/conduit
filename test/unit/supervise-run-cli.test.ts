@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
-import { runCliWith } from '../../server/supervise';
+import { runCliWith, supervise } from '../../server/supervise';
 import type { SuperviseOptions, TrayRelay } from '../../server/tray/contracts';
+import { SERVER_EXIT } from '../../src/contracts/session-identity';
 
 const spawn = vi.hoisted(() => {
   const impl = vi.fn(() => {
@@ -72,6 +73,34 @@ describe('supervisor CLI tray wiring', () => {
     expect(opts).not.toHaveProperty('stopSignal');
     expect(opts).not.toHaveProperty('hooks');
     expect(opts).not.toHaveProperty('stopSessions');
+  });
+
+  it('tells the helper to exit before a last-core stop that never returns', async () => {
+    const relay = trayRelay();
+    const order: string[] = [];
+    relay.finish.mockImplementation(async () => {
+      order.push('finish');
+    });
+    void runCliWith({
+      argv: ['--user-data', '/u', '--tray', '/tray.exe'],
+      platform: 'win32',
+      createRelay: () => relay,
+      supervise: (options) =>
+        supervise({
+          ...options,
+          spawnChild: async () => SERVER_EXIT.doneCoreIdle,
+          core: {
+            hasOtherLiveTerminals: async () => false,
+            stop: () => {
+              order.push('stopCore');
+              return new Promise(() => {});
+            },
+          },
+        }),
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(order).toEqual(['finish', 'stopCore']);
+    expect(relay.finish).toHaveBeenCalledWith({ reason: 'doneCoreIdle' });
   });
 
   it('finishes the relay when supervise throws, then propagates', async () => {

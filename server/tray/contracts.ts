@@ -31,6 +31,8 @@ export interface SuperviseOptions {
   stopSignal?: AbortSignal;
   stopSessions?: () => Promise<number>;
   hooks?: SuperviseHooks;
+  /** F9 before D17: `hc server stop` waits on this terminal, so the helper must get `exit` first. */
+  ending?: (exit: SuperviseExit) => Promise<void>;
 }
 
 export interface SuperviseHooks {

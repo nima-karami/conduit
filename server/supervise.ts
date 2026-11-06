@@ -159,12 +159,16 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseExi
     log,
   };
   const marker = options.marker ?? defaultMarker(options.userData, log);
+  const stopCoreIfIdle = async (exit: SuperviseExit): Promise<SuperviseExit> => {
+    await options.ending?.(exit);
+    if (options.core && !(await options.core.hasOtherLiveTerminals())) await options.core.stop();
+    return exit;
+  };
   const stop = async (): Promise<SuperviseExit> => {
     try {
       if (!options.stopSessions) throw new Error('Tray stop requested without stopSessions');
       const killed = await options.stopSessions();
-      if (options.core && !(await options.core.hasOtherLiveTerminals())) await options.core.stop();
-      return { reason: 'trayStop', ok: true, killed };
+      return await stopCoreIfIdle({ reason: 'trayStop', ok: true, killed });
     } catch (error) {
       const reason = message(error);
       log(`tray stop failed: ${reason}`);
@@ -186,8 +190,7 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseExi
     options.hooks?.childExit(exitCode);
     if (exitCode === SERVER_EXIT.done) return { reason: 'done' };
     if (exitCode === SERVER_EXIT.doneCoreIdle) {
-      if (options.core && !(await options.core.hasOtherLiveTerminals())) await options.core.stop();
-      return { reason: 'doneCoreIdle' };
+      return await stopCoreIfIdle({ reason: 'doneCoreIdle' });
     }
     if (options.stopSignal?.aborted) return stop();
 
@@ -298,6 +301,12 @@ export async function runCliWith(deps: {
         })
       : null;
   let exit: SuperviseExit | undefined;
+  let finished = false;
+  const finishOnce = async (value: SuperviseExit) => {
+    if (finished) return;
+    finished = true;
+    await relay?.finish(value);
+  };
   try {
     exit = await (deps.supervise ?? supervise)({
       userData,
@@ -353,10 +362,11 @@ export async function runCliWith(deps: {
             ),
           }
         : {}),
+      ending: finishOnce,
     });
   } finally {
     // see docs/specs/2026-11-03-tray-helper.md F9 / AC6
-    await relay?.finish(exit ?? { reason: 'done' });
+    await finishOnce(exit ?? { reason: 'done' });
   }
 }
 
