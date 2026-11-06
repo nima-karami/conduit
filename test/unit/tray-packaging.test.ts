@@ -97,4 +97,14 @@ describe('tray helper packaging and CI', () => {
     });
     expect(steps.some((s) => s.name === 'tray:check')).toBe(false);
   });
+
+  // The helper calls TaskDialogIndirect (Common Controls v6 only); without the manifest it can't start.
+  it('embeds a Common Controls v6 manifest in the helper', () => {
+    expect(read('native/tray/res/conduit-tray.rc')).toMatch(
+      /^1 RT_MANIFEST "conduit-tray.manifest"$/m,
+    );
+    expect(read('native/tray/res/conduit-tray.manifest')).toMatch(
+      /name="Microsoft.Windows.Common-Controls" version="6.0.0.0"/,
+    );
+  });
 });

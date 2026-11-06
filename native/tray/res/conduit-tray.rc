@@ -1,5 +1,8 @@
 #include <windows.h>
 
+// TaskDialogIndirect lives only in Common Controls v6; without this the loader binds v5 and the exe dies with 0xC0000139.
+1 RT_MANIFEST "conduit-tray.manifest"
+
 101 ICON "normal-light.ico"
 102 ICON "needs-light.ico"
 103 ICON "warning-light.ico"
