@@ -6,6 +6,7 @@ import { SHIM_LEAF } from '../src/conduit-mcp/install-entries';
 import type { InstanceNames } from '../src/contracts/session-identity';
 import { instanceNames } from '../src/instance-names';
 import { formatRecord } from '../src/logging';
+import { trayCounts } from '../src/tray-counts';
 import { compose } from './compose';
 import { directStopAll, hcBinaryOf, hcClient, serverChildEnv, startCore, stopCore } from './hc-cli';
 import { argValue, requireUserData } from './lifecycle/cli-args';
@@ -14,11 +15,14 @@ import { stopAll } from './lifecycle/stop-all';
 import type { PreviousShim } from './mcp/install';
 import { createServices, type Services } from './services';
 import { PipeTransport, type RpcHandler } from './transport/pipe';
+import { createEventTap, startTrayChannel, type TrayProc } from './tray-channel';
 
 export interface MainDependencies {
   core?: ShellCore;
   directFallback?: () => Promise<number>;
   exit?: (code: number) => Promise<void> | void;
+  /** The supervisor's IPC. Defaults to this process when it runs the real services (spec C8a). */
+  trayProc?: TrayProc | null;
 }
 
 export async function runServer(
@@ -58,6 +62,14 @@ export async function runServer(
   if (!(await transport.listen((request, peer) => handle(request, peer)))) return { code: 0 };
   const logPath = path.join(userData, 'server.log');
   const supervisorTerminal = argValue(args, '--supervisor-terminal');
+  const trayProc =
+    dependencies.trayProc === undefined
+      ? dependencies.core
+        ? null
+        : process
+      : dependencies.trayProc;
+  const tapped = trayProc ? createEventTap(transport.emit) : null;
+  if (tapped) transport.emit = tapped.emit;
   let services: Services | undefined;
   let composed: ReturnType<typeof compose> | undefined;
   if (!dependencies.core) {
@@ -115,9 +127,21 @@ export async function runServer(
   logError = (error) => shell.log('error', String(error));
   shell.log('info', 'server listening');
   shell.lifecycle.start();
+  const channel =
+    trayProc && tapped
+      ? startTrayChannel({
+          proc: trayProc,
+          tap: tapped.tap,
+          initial: () => trayCounts(core.snapshot().sessions, shell.lifecycle.runtime.state, null),
+          stopAll: shell.stopAll,
+          log: (message) => shell.log('warn', message),
+        })
+      : null;
+  channel?.ready();
   return {
     transport,
     close: async () => {
+      channel?.dispose();
       shell.lifecycle.dispose();
       await services?.close();
       await transport.close();
