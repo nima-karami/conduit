@@ -5,7 +5,15 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario, typeLine, writeToTerminal } from './harness.mjs';
+import {
+  assert,
+  openSession,
+  REPO,
+  runScenario,
+  tapBridge,
+  typeLine,
+  writeToTerminal,
+} from './harness.mjs';
 
 delete process.env.CONDUIT_E2E;
 
@@ -22,12 +30,38 @@ process.stdin.on('data', (d) => {
 `,
 );
 
+const launchFolder = REPO.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop().toLowerCase();
+
 await runScenario('terminal-kitty-keys', async ({ page, log }) => {
   await page.evaluate(() => {
     window.__terms = {};
   });
+  // CONDUIT_E2E is off so keyboard.press hits a real window; that also skips settleColdOpen,
+  // so the launch folder-arg session can land after openSession, auto-switch away, and leave
+  // this pane display:none — fitIfVisible then never sends term:start (harness.mjs openSession).
+  await tapBridge(page);
+  await page.waitForFunction(
+    (name) =>
+      (window.__sessions || []).some((s) => {
+        const base = String(s.home ?? '')
+          .replace(/\\/g, '/')
+          .replace(/\/+$/, '')
+          .split('/')
+          .pop()
+          .toLowerCase();
+        return base === name;
+      }),
+    launchFolder,
+    { timeout: 25000 },
+  );
+
   const sid = await openSession(page, { path: work.replace(/\\/g, '/') });
+  await page.locator(`.session[data-sessionid="${sid}"]`).click();
+  await page.waitForSelector(`.session--active[data-sessionid="${sid}"]`, { timeout: 5000 });
   await page.waitForFunction((id) => !!window.__terms?.[id], sid, { timeout: 20000 });
+  await page.waitForFunction((id) => (window.__terms?.[id]?.element?.offsetWidth ?? 0) > 0, sid, {
+    timeout: 20000,
+  });
 
   await page.evaluate((id) => {
     window.__ptyIn = [];
