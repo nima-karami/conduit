@@ -61,6 +61,13 @@ import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
 import { type ScreenSnapshot, screenVerdict } from './screen-verdict';
 import { assignHandle, createSessionRegistry } from './session-registry';
+import {
+  createSessionWaits,
+  parseWaitArgs,
+  WAIT_MAX_PER_CALLER,
+  type WaitOutput,
+  type WaitTarget,
+} from './session-waits';
 import { createMessageStore, type StoreIo } from './store';
 import { createFsStoreIo } from './store-fs';
 import {
@@ -122,7 +129,7 @@ type HostLog = Record<
 >;
 
 export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
-  attention: Pick<McpHostDeps['attention'], 'statusOf' | 'lastOutputAt'>;
+  attention: Pick<McpHostDeps['attention'], 'statusOf' | 'lastOutputAt' | 'onChange'>;
   dir: string;
   endpointPath: string;
   execPath: string;
@@ -479,10 +486,30 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       }
     }
   };
+  const sessionWaits = createSessionWaits({
+    setTimer: deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
+    clearTimer:
+      deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout> | undefined)),
+    read: (callerHandle, target) => {
+      const snap = deps.attention.statusOf(target.sessionId);
+      return {
+        ...target,
+        presence: presenceOf(target.sessionId),
+        needsYou: snap.attentionReason !== null,
+        completions: snap.completions,
+        unreadFrom: store.available()
+          ? store.pending(callerHandle).filter((m) => m.from === target.handle).length
+          : 0,
+      };
+    },
+  });
   store.onChange(() => {
     deriveAttentionFromStore();
     scheduleBroadcast();
+    sessionWaits.notify();
   });
+  // Set by start: a host that never listened has no connections, so no waits to wake.
+  let stopAttentionWatch: (() => void) | undefined;
 
   const loadCounters = (): HandleCounters => {
     if (counters) return counters;
@@ -1077,7 +1104,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               error: toolError('store_unavailable', storeError ?? 'message store unavailable'),
             };
           }
-          return runMessaging(caller, name, args);
+          return runMessaging(caller, name, args, ctx);
         }
         const controlCtx: ControlCallContext = {
           move: resolved.policy.move,
@@ -1133,10 +1160,63 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return composeUnreadBanner(bannerCandidates(store.pending(handle)));
   };
 
-  const runMessaging = async (caller: Caller, name: ToolName, args: unknown) => {
+  /**
+   * A read that blocks: resolves targets as close_session does, then waits (session-waits). The
+   * caller's connection and request id are its cancel key.
+   */
+  const runWait = async (
+    caller: Caller,
+    args: unknown,
+    ctx: CallContext,
+  ): Promise<Result<WaitOutput> | null> => {
+    const parsed = parseWaitArgs(args);
+    if (!parsed.ok) return parsed;
+    if (caller.sessionId === null)
+      return {
+        ok: false,
+        error: toolError('not_in_session', 'this MCP connection is not a Conduit session'),
+      };
+    const listed = listedSessions();
+    const targets: WaitTarget[] = [];
+    for (const v of parsed.value.sessions) {
+      const hit = listed.find((x) => x.handle === v) ?? listed.find((x) => x.session.id === v);
+      if (!hit)
+        return {
+          ok: false,
+          error: toolError('invalid_args', `no session "${v}" in list_sessions`),
+        };
+      if (hit.session.id === caller.sessionId)
+        return {
+          ok: false,
+          error: toolError('invalid_args', "a session can't wait on itself"),
+        };
+      if (!targets.some((t) => t.sessionId === hit.session.id))
+        targets.push({ sessionId: hit.session.id, handle: hit.handle });
+    }
+    if (sessionWaits.countFor(caller.sessionId) >= WAIT_MAX_PER_CALLER)
+      return {
+        ok: false,
+        error: toolError(
+          'rate_limited',
+          `more than ${WAIT_MAX_PER_CALLER} waits are open for this session`,
+        ),
+      };
+    const out = await sessionWaits.open({
+      caller: { sessionId: caller.sessionId, handle: caller.handle },
+      key: { connId: ctx.connId, requestId: ctx.requestId },
+      targets,
+      until: parsed.value.until,
+      timeoutMs: parsed.value.timeoutS * 1000,
+    });
+    return out === null ? null : { ok: true, value: out };
+  };
+
+  const runMessaging = async (caller: Caller, name: ToolName, args: unknown, ctx: CallContext) => {
     switch (name) {
       case 'list_sessions':
         return tools.listSessions(caller);
+      case 'wait_sessions':
+        return runWait(caller, args, ctx);
       case 'send_message':
         return tools.sendMessage(caller, args);
       case 'read_inbox':
@@ -1232,7 +1312,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return toolSchemas(deps.domain.agentIds()).filter((t) => names.some((n) => n === t.name));
       },
       call: (name, args, ctx) => callTool(current(), name, args, { ...ctx, connId: conn.id }),
-      cancelled: (requestId) => flow.cancelled(conn.id, requestId),
+      cancelled: (requestId) => {
+        flow.cancelled(conn.id, requestId);
+        sessionWaits.cancel((w) => w.key.connId === conn.id && w.key.requestId === requestId);
+      },
     });
     conn.onLine((line) => {
       const initFor = current();
@@ -1284,6 +1367,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         });
       }
       flow.connectionClosed(conn.id);
+      sessionWaits.cancel((w) => w.key.connId === conn.id);
       const owner = connSession.get(conn.id);
       const r = owner === undefined ? undefined : runtime.get(owner);
       if (owner !== undefined && r?.bound === conn.id) unbind(owner, r);
@@ -1558,6 +1642,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   return {
     async start() {
       if (stopped) return;
+      stopAttentionWatch = deps.attention.onChange(() => sessionWaits.notify());
       startupSweep = (async () => {
         try {
           // Configs left by a crash: they name a dead session and can't be reused.
@@ -1757,6 +1842,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     async onSessionDeleted(sessionId) {
       // Before the drain: the session's waiting asks end now, so their cancelled replies are owed.
       flow.sessionGone(sessionId);
+      sessionWaits.cancel((w) => w.caller.sessionId === sessionId);
       const handle = handleOf(sessionId);
       // Awaited after the teardown: the caller removes the session as soon as this yields.
       const revoked = deps.tokens.revoke({ sessionId });
@@ -1969,6 +2055,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       if (broadcastTimer) clearTimeout(broadcastTimer);
       broadcastTimer = undefined;
       for (const sessionId of lateEchoWatchers.keys()) cancelLateEcho(sessionId);
+      stopAttentionWatch?.();
+      sessionWaits.dispose();
       flow.dispose();
       for (const c of conns.values()) c.close();
       const storeStopped = store.stop();
