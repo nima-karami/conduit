@@ -206,6 +206,7 @@ export const MCP_STR = {
     not_a_directory: 'not a folder',
     not_a_file: 'not a file',
     invalid_args: 'the request is incomplete',
+    invalid_input: 'the diff is not valid',
     command_not_found: 'command not found',
     brief_unavailable: 'the role brief couldn’t be prepared',
     open_failed: 'Conduit couldn’t open it',
@@ -256,6 +257,7 @@ export const MCP_STR = {
       attach_folder: 'Lets an agent attach folders to sessions.',
       close_files: 'Lets an agent close tabs in its own session.',
       open_review: 'Lets an agent open Review at a commit, a range, or your working changes.',
+      open_diff: 'Lets an agent show a unified diff in Review without applying it.',
       open_git_history: 'Lets an agent open the commit history at a commit or branch.',
       open_url: 'Lets an agent open web pages in a Conduit tab.',
     } satisfies Record<ToolName, string>,
@@ -323,6 +325,10 @@ export const MCP_STR = {
       close_files: (s) =>
         s.all ? 'Close all of its tabs' : s.count === 1 ? 'Close 1 tab' : `Close ${s.count} tabs`,
       open_review: (s) => `Open Review for ${s.what}`,
+      open_diff: (s) =>
+        s.path && s.title !== s.path
+          ? `Show a diff: ${s.title} (${s.path})`
+          : `Show a diff: ${s.path ?? s.title}`,
       open_git_history: (s) =>
         s.ref === null ? 'Open the commit history' : `Open the commit history at ${s.ref}`,
       open_url: (s) => `Open ${s.url} in a Conduit tab`,

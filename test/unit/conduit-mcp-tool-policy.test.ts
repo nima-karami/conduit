@@ -330,7 +330,13 @@ describe('Part B catalog rows (app-control spec, tool-policy spec §3.2)', () =>
       when: 'viewing',
       reach: 'self',
     });
-    for (const t of ['close_files', 'open_review', 'open_git_history', 'open_url'] as const)
+    for (const t of [
+      'close_files',
+      'open_review',
+      'open_diff',
+      'open_git_history',
+      'open_url',
+    ] as const)
       expect(DEFAULT_TOOL_POLICY[t]).toStrictEqual({ access: 'on', when: 'viewing' });
     expect(TOOL_SPECS.close_session.budget).toBe('act');
     expect(TOOL_SPECS.attach_folder.budget).toBe('act');
@@ -338,6 +344,7 @@ describe('Part B catalog rows (app-control spec, tool-policy spec §3.2)', () =>
       'focus_session',
       'close_files',
       'open_review',
+      'open_diff',
       'open_git_history',
       'open_url',
     ] as const)
@@ -371,6 +378,7 @@ describe('Part B catalog rows (app-control spec, tool-policy spec §3.2)', () =>
       'open_file',
       'close_files',
       'open_review',
+      'open_diff',
       'open_git_history',
       'open_url',
     ]);

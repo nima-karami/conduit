@@ -22,6 +22,7 @@ import { endpointLabel } from '../../src/git-range';
 import { hunkRange } from '../../src/hunk-patch';
 import { type Rect, triggerMenu } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
+import { patchFilesToFileDiffs } from '../../src/patch-parse';
 import { plural } from '../../src/plural';
 import type {
   ChangeDTO,
@@ -94,7 +95,7 @@ import {
   IconSplit,
 } from '../icons';
 import { middleClickProps } from '../middle-click';
-import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
+import { commitChangesFromFiles, patchChangesFromFiles, reviewSourceLabel } from '../review-commit';
 import {
   clearReviewHighlights,
   highlightApiAvailable,
@@ -254,6 +255,7 @@ const ANNOUNCE_THRESHOLD = 8;
 const NO_MEASURED = new Map<number, number>();
 /** Stable empty list so the preloaded-files memo doesn't re-run for working/streaming sources. */
 const EMPTY_FILES: FileDiffDTO[] = [];
+const EMPTY_CHANGES: ChangeDTO[] = [];
 /** Stable empty list so a repo with no marks doesn't re-identify the memo on every render. */
 const EMPTY_MARKS: ReviewMark[] = [];
 /** Stable identity, same reason as EMPTY_MARKS: an unnoted card must not re-run its memo. */
@@ -323,9 +325,27 @@ function reviewOfDiff(d: FileDiffDTO, ignoreWhitespace: boolean): FileReview | n
   if (seen !== undefined) return seen;
   const value = d.binary
     ? null
-    : computeFileReview(d.head, d.work, undefined, undefined, { ignoreWhitespace });
+    : d.hunks
+      ? {
+          hunks: d.hunks,
+          folds: [],
+          added: countPatchAdded(d.hunks),
+          removed: countPatchRemoved(d.hunks),
+        }
+      : computeFileReview(d.head, d.work, undefined, undefined, { ignoreWhitespace });
   per.set(ignoreWhitespace, value);
   return value;
+}
+
+function countPatchAdded(hunks: ReviewHunk[]): number {
+  let n = 0;
+  for (const h of hunks) for (const l of h.lines) if (l.kind === 'add') n++;
+  return n;
+}
+function countPatchRemoved(hunks: ReviewHunk[]): number {
+  let n = 0;
+  for (const h of hunks) for (const l of h.lines) if (l.kind === 'del') n++;
+  return n;
 }
 
 /** Files "Search all files" asks the host for per pass; arrivals drive the next batch, so this
@@ -505,17 +525,19 @@ export function ReviewView({
   );
   const commitMode = source?.kind === 'commit';
   const rangeMode = source?.kind === 'range';
-  // Commit AND range sources both PRELOAD every file's diff (git show / git diff), so the same
-  // code path feeds the windowed renderer from a derived list with a no-op on-mount fetch. Only
-  // the working source streams per-card. See spec §3.2 + item 4 §A3.
-  const preloaded = commitMode || rangeMode;
+  const patchMode = source?.kind === 'patch';
+  // Commit, range, AND patch sources all PRELOAD every file's diff, so the same code path feeds
+  // the windowed renderer from a derived list with a no-op on-mount fetch. Only the working
+  // source streams per-card.
+  const preloaded = commitMode || rangeMode || patchMode;
 
   // null = All repos: every repo's working tree, grouped (spec 2026-09-23-mf-review §2.1).
-  const resolved = resolveReviewRepo(source, reviewRepos, fallbackRoot);
+  // A patch source is never grouped: it has no repo root and no git actions.
+  const resolved = patchMode ? '' : resolveReviewRepo(source, reviewRepos, fallbackRoot);
   const grouped = resolved === null;
   const requestRoot = reviewRequestRoot(source, reviewRepos, fallbackRoot);
   // A commit or comparison is about exactly one repo, and its change paths are relative to it.
-  const sourceRoot = preloaded ? (source.repoRoot ?? fallbackRoot ?? '') : '';
+  const sourceRoot = preloaded ? (patchMode ? '' : (source.repoRoot ?? fallbackRoot ?? '')) : '';
 
   // Rules of Hooks: always call both loaders; an inactive one is fed empty args and posts nothing.
   // An unstamped source posts no root, so the host reads the session's own git root as it always has.
@@ -530,7 +552,22 @@ export function ReviewView({
     rangeMode ? source.head : undefined,
     rangeMode ? source.repoRoot : undefined,
   );
-  const preloadedFiles = commitMode ? commit.files : rangeMode ? range.files : EMPTY_FILES;
+  const patchFiles = source?.kind === 'patch' ? source.files : null;
+  const patchDiffs = useMemo(
+    () => (patchFiles ? patchFilesToFileDiffs(patchFiles) : EMPTY_FILES),
+    [patchFiles],
+  );
+  const patchChanges = useMemo(
+    () => (patchFiles ? patchChangesFromFiles(patchFiles) : EMPTY_CHANGES),
+    [patchFiles],
+  );
+  const preloadedFiles: FileDiffDTO[] = patchMode
+    ? patchDiffs
+    : commitMode
+      ? commit.files
+      : rangeMode
+        ? range.files
+        : EMPTY_FILES;
 
   const noopRequestDiff = useCallback(() => {}, []);
   const effectiveDiffs = useMemo(() => {
@@ -544,31 +581,52 @@ export function ReviewView({
   const allChanges = useMemo<ReviewFile[]>(
     () =>
       preloaded
-        ? commitChangesFromFiles(preloadedFiles).map((c) => ({ ...c, repoRoot: sourceRoot }))
+        ? patchMode
+          ? patchChanges.map((c) => ({ ...c, repoRoot: sourceRoot }))
+          : commitChangesFromFiles(preloadedFiles).map((c) => ({ ...c, repoRoot: sourceRoot }))
         : (repoChanges ?? []).flatMap((r) => r.changes.map((c) => ({ ...c, repoRoot: r.root }))),
-    [preloaded, preloadedFiles, sourceRoot, repoChanges],
+    [preloaded, patchMode, patchChanges, preloadedFiles, sourceRoot, repoChanges],
   );
   const effectiveRequestDiff = preloaded ? noopRequestDiff : onRequestDiff;
-  const preloadLoading =
-    (commitMode && commit.status === 'loading') || (rangeMode && range.status === 'loading');
+  const preloadLoading = patchMode
+    ? false
+    : (commitMode && commit.status === 'loading') || (rangeMode && range.status === 'loading');
   const rangeError =
     rangeMode && range.status === 'error' ? (range.error ?? 'Unknown error') : null;
   const commitError =
     commitMode && commit.status === 'error' ? (commit.error ?? 'Unknown error') : null;
-  const preloadError = rangeError ?? commitError;
+  const preloadError = patchMode ? null : (rangeError ?? commitError);
   // A commit/comparison whose file count was capped host-side (spec 2026-07-07-git-host-robustness).
-  const truncated = commitMode ? commit.truncated : rangeMode ? range.truncated : undefined;
+  const truncated = patchMode
+    ? undefined
+    : commitMode
+      ? commit.truncated
+      : rangeMode
+        ? range.truncated
+        : undefined;
 
   // A change can appear twice (staged + unstaged side); review each PATH once per repo. Under a
   // narrowed scope only that side's entries qualify — filtered BEFORE the dedupe, so a path
   // changed on both sides appears in all three scopes with only that side's hunks (§2 Lane D).
   const allFiles = useMemo<ReviewFile[]>(() => {
-    if (preloaded) return tagReviewFiles(commitChangesFromFiles(preloadedFiles), sourceRoot);
+    if (preloaded)
+      return patchMode
+        ? tagReviewFiles(patchChanges, sourceRoot)
+        : tagReviewFiles(commitChangesFromFiles(preloadedFiles), sourceRoot);
     const scoped = (repoChanges ?? []).map((r) =>
       scope === 'all' ? r : { ...r, changes: r.changes.filter((c) => inScope(c, scope)) },
     );
     return workingReviewFiles(scoped, resolved);
-  }, [preloaded, preloadedFiles, sourceRoot, repoChanges, scope, resolved]);
+  }, [
+    preloaded,
+    patchMode,
+    patchChanges,
+    preloadedFiles,
+    sourceRoot,
+    repoChanges,
+    scope,
+    resolved,
+  ]);
   const linesPendingRoots = useMemo(
     () => new Set((repoChanges ?? []).filter((r) => !r.lines).map((r) => folderKey(r.root))),
     [repoChanges],
@@ -1045,9 +1103,11 @@ export function ReviewView({
       ? `commit ${source.sha.slice(0, 7)}`
       : source?.kind === 'range'
         ? `${endpointLabel(source.base)}…${endpointLabel(source.head)}`
-        : scope === 'all'
-          ? 'working tree'
-          : `${SCOPE_LABEL[scope].toLowerCase()} changes`;
+        : source?.kind === 'patch'
+          ? `Diff from ${source.handle ?? 'agent'}`
+          : scope === 'all'
+            ? 'working tree'
+            : `${SCOPE_LABEL[scope].toLowerCase()} changes`;
 
   // Group structure for All repos (spec §2.4). File indices are contiguous per group by
   // construction: workingReviewFiles emits in repo order and grouping keeps input order.
@@ -1843,13 +1903,13 @@ export function ReviewView({
   }, [noteTarget, fileOfDomKey, fileKeys, scrollToFile, viewportHeight]);
 
   const jumpToCurrent = useCallback(() => {
-    if (!current || !currentFile) return;
+    if (patchMode || !current || !currentFile) return;
     const el = scrollerRef.current?.querySelector<HTMLElement>(
       `${cardSelector(currentFile)} .rhunk__jump[data-hunk="${current.hunkIndex}"]`,
     );
     // The header button already knows its own work line; clicking it is the same path a mouse takes.
     el?.click();
-  }, [current, currentFile]);
+  }, [patchMode, current, currentFile]);
 
   // `s` runs whichever primary action the header is actually showing; binding it to a button
   // that is not on screen would be worse than binding it to the one that is (Lane E plan, 14).
@@ -1926,14 +1986,14 @@ export function ReviewView({
           navigate(prevFile);
           break;
         case 'toggleReviewed':
-          if (currentFile) onToggleReviewed(currentFile);
+          if (!patchMode && currentFile) onToggleReviewed(currentFile);
           break;
         case 'openHunk':
           jumpToCurrent();
           break;
         case 'addNote': {
           // The `+` on the current hunk’s first noteable row — the same path a mouse takes.
-          if (!currentFile) break;
+          if (patchMode || !currentFile) break;
           const card = scrollerRef.current?.querySelector<HTMLElement>(cardSelector(currentFile));
           const scope =
             current && current.hunkIndex >= 0
@@ -1975,6 +2035,7 @@ export function ReviewView({
       openSearch,
       runCurrentHunkOp,
       setAllCollapsed,
+      patchMode,
     ],
   );
 
@@ -2118,12 +2179,16 @@ export function ReviewView({
           onClick: () => setAllCollapsed(true),
         },
         { label: 'Expand all', hint: 'e', onClick: () => setAllCollapsed(false) },
-        {
-          label: 'Ignore whitespace',
-          icon: ignoreWhitespace ? <IconCheck size={13} /> : undefined,
-          checked: ignoreWhitespace,
-          onClick: () => update({ reviewIgnoreWhitespace: !ignoreWhitespace }),
-        },
+        ...(patchMode
+          ? []
+          : [
+              {
+                label: 'Ignore whitespace',
+                icon: ignoreWhitespace ? <IconCheck size={13} /> : undefined,
+                checked: ignoreWhitespace,
+                onClick: () => update({ reviewIgnoreWhitespace: !ignoreWhitespace }),
+              } satisfies MenuItem,
+            ]),
         {
           label: 'Keyboard shortcuts',
           hint: '?',
@@ -2133,7 +2198,7 @@ export function ReviewView({
       ];
       setMoreMenu({ ...placement, items });
     },
-    [compact, ignoreWhitespace, onSetSource, setAllCollapsed, source, update],
+    [compact, ignoreWhitespace, onSetSource, patchMode, setAllCollapsed, source, update],
   );
 
   const [barMenu, setBarMenu] = useState<MenuState | null>(null);
@@ -2446,7 +2511,10 @@ export function ReviewView({
                   )}
                   hunkOpsAvailable={hunkOpsAvailable}
                   onHunkOp={runHunkOp}
-                  onOpenDiff={onOpenDiff ? openDiffAtScope : undefined}
+                  onOpenDiff={patchMode || !onOpenDiff ? undefined : openDiffAtScope}
+                  allowDiskOpen={!patchMode}
+                  showMarks={!patchMode}
+                  notesEnabled={!patchMode}
                   reviewed={reviewed.has(key)}
                   canMark={canMark(c)}
                   onToggleReviewed={onToggleReviewed}
@@ -2480,7 +2548,7 @@ export function ReviewView({
           {announce}
         </div>
       </div>
-      {files.length > 0 && (
+      {files.length > 0 && !patchMode && (
         <div className="review__actionbar">
           <span className="review__notes">
             {repoNotes.length > 0
@@ -2629,6 +2697,9 @@ const ReviewFileCard = memo(function ReviewFileCard({
   hunkOpsAvailable,
   onHunkOp,
   onOpenDiff,
+  allowDiskOpen = true,
+  showMarks = true,
+  notesEnabled = true,
   reviewed,
   canMark,
   onToggleReviewed,
@@ -2671,6 +2742,12 @@ const ReviewFileCard = memo(function ReviewFileCard({
   hunkOpsAvailable: boolean;
   onHunkOp: (op: HunkOp, change: ReviewFile, hunk: ReviewHunk) => void;
   onOpenDiff: ((absPath: string, mode?: OpenMode) => void) | undefined;
+  /** False for a patch source: nothing in the view opens a path from disk. */
+  allowDiskOpen?: boolean;
+  /** False for a patch source: reviewed marks need a repo. */
+  showMarks?: boolean;
+  /** False for a patch source: notes need a repo. */
+  notesEnabled?: boolean;
   reviewed: boolean;
   canMark: boolean;
   onToggleReviewed: (file: ReviewFile) => void;
@@ -2887,19 +2964,21 @@ const ReviewFileCard = memo(function ReviewFileCard({
             )}
           </span>
         </button>
-        <button
-          type="button"
-          className="rcard__open"
-          title="Open this file in the editor"
-          aria-label={`Open ${change.path} in the editor`}
-          onClick={() => onJumpToHunk(abs, review?.hunks[0]?.startNewLine ?? 1)}
-          {...middleClickProps(() =>
-            onJumpToHunk(abs, review?.hunks[0]?.startNewLine ?? 1, 'background'),
-          )}
-        >
-          <IconExternal size={13} />
-        </button>
-        {onOpenDiff && !diff?.binary && !diff?.image && (
+        {allowDiskOpen && (
+          <button
+            type="button"
+            className="rcard__open"
+            title="Open this file in the editor"
+            aria-label={`Open ${change.path} in the editor`}
+            onClick={() => onJumpToHunk(abs, review?.hunks[0]?.startNewLine ?? 1)}
+            {...middleClickProps(() =>
+              onJumpToHunk(abs, review?.hunks[0]?.startNewLine ?? 1, 'background'),
+            )}
+          >
+            <IconExternal size={13} />
+          </button>
+        )}
+        {allowDiskOpen && onOpenDiff && !diff?.binary && !diff?.image && (
           <button
             type="button"
             className="iconbtn iconbtn--sm rcard__sbs"
@@ -2911,32 +2990,36 @@ const ReviewFileCard = memo(function ReviewFileCard({
             <IconSplit size={13} />
           </button>
         )}
-        <button
-          type="button"
-          className="rcard__reviewed"
-          aria-pressed={reviewed}
-          disabled={!canMark}
-          title={
-            canMark
-              ? reviewed
-                ? 'Clear the reviewed mark'
-                : 'Mark this file reviewed (m)'
-              : 'Loading diff…'
-          }
-          onClick={() => onToggleReviewed(change)}
-        >
-          {reviewed ? 'Reviewed' : 'Mark reviewed'}
-        </button>
+        {showMarks && (
+          <button
+            type="button"
+            className="rcard__reviewed"
+            aria-pressed={reviewed}
+            disabled={!canMark}
+            title={
+              canMark
+                ? reviewed
+                  ? 'Clear the reviewed mark'
+                  : 'Mark this file reviewed (m)'
+                : 'Loading diff…'
+            }
+            onClick={() => onToggleReviewed(change)}
+          >
+            {reviewed ? 'Reviewed' : 'Mark reviewed'}
+          </button>
+        )}
       </header>
 
       {!collapsed && (
         <div id={bodyId}>
-          <DetachedNotes
-            notes={anchored.detached}
-            disabled={!notesReady}
-            onResolve={onResolveNote}
-            onDelete={onDeleteNote}
-          />
+          {notesEnabled && (
+            <DetachedNotes
+              notes={anchored.detached}
+              disabled={!notesReady}
+              onResolve={onResolveNote}
+              onDelete={onDeleteNote}
+            />
+          )}
           {diff?.error !== undefined ? (
             <div className="rcard__notice">
               {DIFF_READ_ERROR_NOTICE}{' '}
@@ -2965,7 +3048,13 @@ const ReviewFileCard = memo(function ReviewFileCard({
           ) : !review ? (
             <div className="rcard__notice rcard__notice--loading">Loading diff…</div>
           ) : review.hunks.length === 0 ? (
-            <div className="rcard__notice">No textual changes.</div>
+            <div className="rcard__notice">
+              {change.kind === 'A'
+                ? 'empty file added'
+                : change.kind === 'D'
+                  ? 'empty file deleted'
+                  : 'No textual changes.'}
+            </div>
           ) : (
             <>
               {review.approx && (
@@ -2983,6 +3072,8 @@ const ReviewFileCard = memo(function ReviewFileCard({
                 ui={ui}
                 setUi={setUi}
                 onJumpToHunk={onJumpToHunk}
+                allowDiskOpen={allowDiskOpen}
+                notesEnabled={notesEnabled}
                 hljsLang={hljsLang}
                 currentHunkIndex={currentHunkIndex}
                 onSetCurrent={(hunkIndex) => onSetCurrent(abs, hunkIndex)}
@@ -3016,6 +3107,8 @@ function HunkList({
   ui,
   setUi,
   onJumpToHunk,
+  allowDiskOpen,
+  notesEnabled,
   hljsLang,
   currentHunkIndex,
   onSetCurrent,
@@ -3040,6 +3133,8 @@ function HunkList({
   ui: CardUiState;
   setUi: (updater: (prev: CardUiState) => CardUiState) => void;
   onJumpToHunk: (absPath: string, line: number, mode?: OpenMode) => void;
+  allowDiskOpen: boolean;
+  notesEnabled: boolean;
   hljsLang: string | null;
   currentHunkIndex: number;
   onSetCurrent: (hunkIndex: number) => void;
@@ -3097,6 +3192,8 @@ function HunkList({
           maxLines={shown[i]}
           abs={abs}
           onJumpToHunk={onJumpToHunk}
+          allowDiskOpen={allowDiskOpen}
+          notesEnabled={notesEnabled}
           onSetCurrent={onSetCurrent}
           hljsLang={hljsLang}
           mode={mode}
@@ -3254,6 +3351,8 @@ function Hunk({
   maxLines,
   abs,
   onJumpToHunk,
+  allowDiskOpen,
+  notesEnabled,
   onSetCurrent,
   hljsLang,
   mode,
@@ -3277,6 +3376,8 @@ function Hunk({
   maxLines: number;
   abs: string;
   onJumpToHunk: (absPath: string, line: number, mode?: OpenMode) => void;
+  allowDiskOpen: boolean;
+  notesEnabled: boolean;
   onSetCurrent: (hunkIndex: number) => void;
   hljsLang: string | null;
   mode: HunkButtonMode;
@@ -3308,13 +3409,14 @@ function Hunk({
           className={`rhunk__jump${current ? ' rhunk__jump--current' : ''}`}
           data-hunk={index}
           aria-current={current ? 'true' : undefined}
-          title="Open this hunk in the editor (o)"
+          title={allowDiskOpen ? 'Open this hunk in the editor (o)' : formatHunkHeader(hunk)}
           onClick={() => {
             onSetCurrent(index);
-            onJumpToHunk(abs, hunk.startNewLine);
+            if (allowDiskOpen) onJumpToHunk(abs, hunk.startNewLine);
           }}
-          // Queues the hunk without moving the Review's own current hunk.
-          {...middleClickProps(() => onJumpToHunk(abs, hunk.startNewLine, 'background'))}
+          {...(allowDiskOpen
+            ? middleClickProps(() => onJumpToHunk(abs, hunk.startNewLine, 'background'))
+            : {})}
         >
           {formatHunkHeader(hunk)}
         </button>
@@ -3368,22 +3470,23 @@ function Hunk({
                 line={l}
                 hljsLang={hljsLang}
                 emph={emphBySeq.get(l.seq)}
-                noteSide={anchorLine === null ? null : side}
-                noteAnchorLine={anchorLine}
-                noteCount={rowNotes.length}
+                noteSide={notesEnabled && anchorLine !== null ? side : null}
+                noteAnchorLine={notesEnabled ? anchorLine : null}
+                noteCount={notesEnabled ? rowNotes.length : 0}
                 notesReady={notesReady}
               />
-              {rowNotes.map((n) => (
-                <NoteThread
-                  key={n.id}
-                  note={n}
-                  disabled={!notesReady}
-                  onEdit={onEditNote}
-                  onResolve={onResolveNote}
-                  onDelete={onDeleteNote}
-                />
-              ))}
-              {composing && (
+              {notesEnabled &&
+                rowNotes.map((n) => (
+                  <NoteThread
+                    key={n.id}
+                    note={n}
+                    disabled={!notesReady}
+                    onEdit={onEditNote}
+                    onResolve={onResolveNote}
+                    onDelete={onDeleteNote}
+                  />
+                ))}
+              {notesEnabled && composing && (
                 <NoteComposer
                   label={`Note on line ${anchorLine}`}
                   refused={refusedMessage}

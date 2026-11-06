@@ -36,6 +36,8 @@ function summaryText(s: AskSummary): string {
       return STR.summary.close_files(s);
     case 'open_review':
       return STR.summary.open_review(s);
+    case 'open_diff':
+      return STR.summary.open_diff(s);
     case 'open_git_history':
       return STR.summary.open_git_history(s);
     case 'open_url':

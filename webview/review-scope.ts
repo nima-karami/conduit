@@ -2,6 +2,10 @@ import { rangeKey } from '../src/git-range';
 import type { DiffScope } from '../src/protocol';
 import type { ReviewSource } from './docs';
 
+/** Per-open identity for a patch source; WeakMap so a re-render of the same object stays stable. */
+const patchSourceKeys = new WeakMap<object, string>();
+let patchSourceSeq = 0;
+
 /**
  * Review's working-source scope (spec 2026-08-27-review-supercharge §2 Lane D). `all` is the
  * whole working tree against HEAD — what Review has always shown — so it maps to `readDiff`'s
@@ -69,6 +73,13 @@ export function workingSource(scope: ReviewScope, repoRoot?: string): ReviewSour
 export function reviewSourceKey(source: ReviewSource | undefined): string {
   if (source?.kind === 'commit') return `commit:${source.sha}`;
   if (source?.kind === 'range') return `range:${rangeKey(source.base, source.head)}`;
+  if (source?.kind === 'patch') {
+    const seen = patchSourceKeys.get(source);
+    if (seen !== undefined) return seen;
+    const key = `patch:${source.handle ?? 'agent'}:${++patchSourceSeq}`;
+    patchSourceKeys.set(source, key);
+    return key;
+  }
   const scope = scopeOfSource(source);
   return scope === 'all' ? 'working' : `working:${scope}`;
 }

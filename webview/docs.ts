@@ -1,4 +1,5 @@
 import type { RefEndpoint } from '../src/git-range';
+import type { ParsedPatchFile } from '../src/patch-parse';
 import type { DiffTabScope, PersistedDoc } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
 import { displayTitleForUrl } from '../src/web-url';
@@ -44,7 +45,8 @@ export type ReviewSource =
   // on All, and it is never persisted.
   | { kind: 'working'; scope?: ReviewScope; repoRoot?: string }
   | { kind: 'commit'; sha: string; subject?: string; repoRoot?: string }
-  | { kind: 'range'; base: RefEndpoint; head: RefEndpoint; repoRoot?: string };
+  | { kind: 'range'; base: RefEndpoint; head: RefEndpoint; repoRoot?: string }
+  | { kind: 'patch'; files: ParsedPatchFile[]; title?: string; handle?: string };
 
 export interface OpenDoc {
   id: string; // `${kind}:${path}` (preview commit/commit-diff docs use `${kind}:@preview`)
@@ -172,6 +174,7 @@ export type DocsAction =
       /** The session the window shows. A foreground open into another session lands active in
        *  that session's layout and leaves `activeId` on the shown one; absent ⇒ `sessionId`. */
       shown?: string;
+      mode?: 'background';
     }
   // Promote a preview tab to a pinned one (double-click the tab).
   | { type: 'pinDoc'; id: string; group?: GroupIndex }
@@ -709,23 +712,27 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         action.source.repoRoot === undefined
           ? undefined
           : action.source;
-      return openForeground(state, {
+      const title =
+        reviewSource?.kind === 'patch'
+          ? (reviewSource.title ?? `Diff from ${reviewSource.handle ?? 'agent'}`)
+          : REVIEW_DOC_TITLE;
+      const spec = {
         sessionId: action.sessionId,
         group: action.group,
         id: REVIEW_DOC_ID,
-        kind: 'review',
-        preview: false,
+        kind: 'review' as const,
         create: () => ({
           id: REVIEW_DOC_ID,
-          kind: 'review',
+          kind: 'review' as const,
           path: REVIEW_DOC_PATH,
-          title: REVIEW_DOC_TITLE,
+          title,
           sessionId: action.sessionId,
           reviewSource,
         }),
-        patch: (d) => ({ ...d, reviewSource }),
-        shown: action.shown,
-      });
+        patch: (d: OpenDoc) => ({ ...d, reviewSource, title }),
+      };
+      if (action.mode === 'background') return openInBackground(state, spec);
+      return openForeground(state, { ...spec, preview: false, shown: action.shown });
     }
     case 'openCommitFile':
       return openCommitDiff(state, action);

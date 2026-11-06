@@ -220,6 +220,24 @@ const APP_CONTROL_SCHEMAS: readonly ToolSchema[] = [
     },
   },
   {
+    name: 'open_diff',
+    description:
+      'Show a unified diff in Review. Pass the diff text as patch, or a .diff/.patch file path as patch_file. Nothing is applied to disk. For large diffs, write the diff to a .diff or .patch file and pass its path as patch_file instead of inlining it.',
+    inputSchema: {
+      ...OBJECT,
+      properties: {
+        patch: { type: 'string', description: 'The unified diff text.' },
+        patch_file: {
+          type: 'string',
+          description:
+            "Path to a .diff or .patch file, absolute or relative to your session's home folder.",
+        },
+        title: { type: 'string', maxLength: 200, description: 'Optional title for the diff tab.' },
+        focus: FOCUS,
+      },
+    },
+  },
+  {
     name: 'open_git_history',
     description:
       'Open the commit history in your session, optionally selecting the commit at ref (branch, tag or sha).',

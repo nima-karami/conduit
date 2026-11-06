@@ -1,7 +1,9 @@
 // The seven app-control tools (spec 2026-10-30-conduit-mcp-app-control §2.1) on the shared
 // prepared() pipeline. Node-free: git, folders, windows and the renderer step are deps.
+import { extname } from 'node:path';
 import { folderKey } from '../folder-key';
 import type { RefEndpoint } from '../git-range';
+import { decodePatchBytes, MAX_PATCH_BYTES, parsePatch, patchOverSizeCap } from '../patch-parse';
 import type { CommitNode } from '../protocol';
 import { normalizeUrl } from '../web-url';
 import {
@@ -42,6 +44,10 @@ interface OpenReviewOutput {
   opened: 'review';
   source: ReviewSourceOut;
 }
+interface OpenDiffOutput {
+  opened: 'review';
+  source: { kind: 'patch' };
+}
 interface OpenGitHistoryOutput {
   opened: 'git-history';
   selected: string | null;
@@ -51,6 +57,10 @@ interface OpenUrlOutput {
 }
 export const MAX_CLOSE_PATHS = 50;
 export const MAX_URL_BYTES = 2048;
+export const MAX_DIFF_TITLE_CHARS = 200;
+const PATCH_FILE_EXTENSIONS = ['.diff', '.patch'] as const;
+const isPatchExtension = (p: string): boolean =>
+  PATCH_FILE_EXTENSIONS.some((e) => e === extname(p).toLowerCase());
 const tooLong = (url: string): boolean => new TextEncoder().encode(url).length > MAX_URL_BYTES;
 const urlTooLong = (): Fail =>
   fail('invalid_args', `url must be a string of up to ${MAX_URL_BYTES} bytes`);
@@ -66,6 +76,7 @@ export interface AppControlHandlers {
   prepareAttachFolder: Prepare<AttachFolderOutput>;
   prepareCloseFiles: Prepare<CloseFilesOutcome>;
   prepareOpenReview: Prepare<OpenReviewOutput>;
+  prepareOpenDiff: Prepare<OpenDiffOutput>;
   prepareOpenGitHistory: Prepare<OpenGitHistoryOutput>;
   prepareOpenUrl: Prepare<OpenUrlOutput>;
 }
@@ -438,11 +449,96 @@ export function createAppControlHandlers(
             caller,
             who,
             ctx,
-            { kind: 'openReview', source },
+            { kind: 'openReview', source, focus: true },
             {
               opened: 'review' as const,
               source: out,
             },
+          ),
+        };
+      }),
+
+    prepareOpenDiff: (caller, raw, ctx) =>
+      prepared('open_diff', caller, async (who) => {
+        const o = parseKeys(raw, ['patch', 'patch_file', 'title', 'focus']);
+        if (isFail(o)) return o;
+        if ((o.patch === undefined) === (o.patch_file === undefined)) {
+          return fail('invalid_args', 'pass exactly one of patch or patch_file');
+        }
+        if (o.patch !== undefined && typeof o.patch !== 'string') {
+          return fail('invalid_args', 'patch must be a string');
+        }
+        if (o.patch_file !== undefined && typeof o.patch_file !== 'string') {
+          return fail('invalid_args', 'patch_file must be a string');
+        }
+        if (o.title !== undefined && typeof o.title !== 'string') {
+          return fail('invalid_args', 'title must be a string');
+        }
+        if (o.title !== undefined && o.title.length === 0) {
+          return fail('invalid_args', 'title must be a non-empty string');
+        }
+        if (o.title !== undefined && o.title.length > MAX_DIFF_TITLE_CHARS) {
+          return fail('invalid_args', `title must be ${MAX_DIFF_TITLE_CHARS} characters or fewer`);
+        }
+        if (o.focus !== undefined && typeof o.focus !== 'boolean') {
+          return fail('invalid_args', 'focus must be a boolean');
+        }
+        let patchText: string;
+        let patchFilePath: string | undefined;
+        if (o.patch !== undefined) {
+          patchText = o.patch;
+        } else {
+          const filePath = deps.resolvePath(who.home, o.patch_file as string);
+          if (!isPatchExtension(filePath)) {
+            return fail('invalid_args', 'patch_file must have a .diff or .patch extension');
+          }
+          const real = await deps.realPath(filePath);
+          if (real === null) return fail('path_missing', `no such file: ${filePath}`);
+          if (!isPatchExtension(real)) {
+            return fail('invalid_args', 'patch_file must have a .diff or .patch extension');
+          }
+          // A FIFO named *.patch blocks a libuv thread forever on Mac/Linux, before approval.
+          const kind = await deps.kindOf(real);
+          if (kind !== 'file') {
+            return fail('invalid_input', 'patch_file is not a regular file');
+          }
+          const bytes = await deps.readBytes(real, MAX_PATCH_BYTES + 1);
+          if (bytes === null) return fail('path_missing', `could not read: ${real}`);
+          if (bytes.length > MAX_PATCH_BYTES) {
+            return fail('invalid_args', 'patch exceeds 5 MB size cap');
+          }
+          patchFilePath = real;
+          patchText = decodePatchBytes(bytes);
+        }
+        if (patchOverSizeCap(patchText)) {
+          return fail('invalid_args', 'patch exceeds 5 MB size cap');
+        }
+        const parsed = parsePatch(patchText);
+        if (!parsed.ok) return fail('invalid_input', parsed.reason);
+        const files = parsed.files;
+        const title = typeof o.title === 'string' ? o.title : undefined;
+        const summaryTitle = title ?? files[0]?.path ?? 'diff';
+        const w = routeWindow(who.sessionId);
+        if (isFail(w)) return w;
+        const focus = o.focus !== false;
+        return {
+          summary: {
+            tool: 'open_diff',
+            title: summaryTitle,
+            ...(patchFilePath !== undefined ? { path: patchFilePath } : {}),
+          },
+          routesUi: true,
+          exec: openExec(
+            'open_diff',
+            caller,
+            who,
+            ctx,
+            {
+              kind: 'openReview',
+              source: { kind: 'patch', files, title, handle: caller.handle },
+              focus,
+            },
+            { opened: 'review' as const, source: { kind: 'patch' } },
           ),
         };
       }),

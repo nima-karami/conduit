@@ -20,6 +20,7 @@ const EDITOR_TOOL_NAMES = [
   'open_file',
   'close_files',
   'open_review',
+  'open_diff',
   'open_git_history',
   'open_url',
 ] as const;
@@ -156,6 +157,7 @@ export const TOOL_SPECS: Readonly<{
   },
   close_files: VIEW_SPEC,
   open_review: VIEW_SPEC,
+  open_diff: VIEW_SPEC,
   open_git_history: VIEW_SPEC,
   open_url: VIEW_SPEC,
 };

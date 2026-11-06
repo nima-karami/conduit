@@ -10,6 +10,7 @@ import type { HostPlatform } from '../lsp-binary';
 import { mcpLaunchWiring, mcpServerCommand } from '../mcp-launch';
 import type { HostToWebview, WebviewToHost } from '../protocol';
 import type { SubmitOutcome } from '../pty-writer';
+import { readCappedBytes } from '../read-capped';
 import { PTY_SETTLE_MS } from '../timed-messages';
 import type { AgentDefinition, SpawnSpec } from '../types';
 import { adapterFor, MCP_ADAPTERS, type McpAdapter, notifiable } from './adapters';
@@ -882,6 +883,34 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
     now,
     info: (message, data) => deps.log.info('conduit-mcp', message, data),
+    realPath: async (absPath) => {
+      try {
+        return await fs.promises.realpath(absPath);
+      } catch {
+        return null;
+      }
+    },
+    readBytes: async (absPath, max) => {
+      try {
+        // The path can be swapped for a FIFO after the caller's stat: a non-blocking open plus a stat
+        // on the handle keeps a pre-approval read from parking a threadpool thread forever.
+        const fh = await fs.promises.open(
+          absPath,
+          fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0),
+        );
+        try {
+          if (!(await fh.stat()).isFile()) return null;
+          return await readCappedBytes(
+            (buffer, offset, length, position) => fh.read(buffer, offset, length, position),
+            max,
+          );
+        } finally {
+          await fh.close();
+        }
+      } catch {
+        return null;
+      }
+    },
     // Listed sessions only: a tool never reaches a session list_sessions doesn't show (spec A7).
     targets: () =>
       listedSessions().map(({ session: s, handle }) => ({
@@ -1109,6 +1138,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return app.prepareCloseFiles(caller, args, ctx);
       case 'open_review':
         return app.prepareOpenReview(caller, args, ctx);
+      case 'open_diff':
+        return app.prepareOpenDiff(caller, args, ctx);
       case 'open_git_history':
         return app.prepareOpenGitHistory(caller, args, ctx);
       case 'open_url':

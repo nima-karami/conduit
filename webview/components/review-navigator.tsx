@@ -235,6 +235,7 @@ export function ReviewNavigator({
               : undefined
           }
           linesPendingRoots={linesPendingRoots}
+          showReviewed={source?.kind !== 'patch'}
         />
       )}
       {bulkMenu && (

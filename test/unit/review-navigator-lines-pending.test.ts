@@ -108,6 +108,12 @@ describe('ReviewNavigator line-count placeholder', () => {
     await render(model(0, { kind: 'commit', sha: 'abc', repoRoot }), [repo(false)]);
     expect(host.querySelector('.diffstat--pending')).toBeNull();
   });
+
+  it('hides the reviewed checkbox for a patch source', async () => {
+    await render(model(1, { kind: 'patch', files: [] }), [repo(true, 1)]);
+    expect(host.querySelector('.review__navrow')).not.toBeNull();
+    expect(host.querySelector('.review__check')).toBeNull();
+  });
 });
 
 describe('ReviewNavigator header total while a repo is counting (engine runtime QA2)', () => {
