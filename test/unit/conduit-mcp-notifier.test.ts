@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { GateVerdict } from '../../src/conduit-mcp/notice-gate';
-import { composeNotice } from '../../src/conduit-mcp/notice-text';
+import { composeNotice, composeUnreadBanner } from '../../src/conduit-mcp/notice-text';
 import {
   type AttentionRaise,
+  bannerCandidates,
   createNotifier,
   type NotifierSession,
 } from '../../src/conduit-mcp/notifier';
@@ -278,5 +279,57 @@ describe('createNotifier', () => {
     release();
     await Promise.all([first, second]);
     expect(h.submits).toHaveLength(1);
+  });
+});
+
+describe('in-band unread banner (CON-153)', () => {
+  it('names counts and sender handles only, never message text', () => {
+    const h = harness();
+    const a = h.add('urgent');
+    const b = h.add('normal');
+    const text = composeUnreadBanner(bannerCandidates([a, b], H));
+    expect(text).toBe('[conduit] 2 unread messages (1 urgent) from claude-1. Call read_inbox.');
+    expect(text).not.toContain('secret');
+  });
+
+  it('omits the urgent part at zero and uses the singular for one message', () => {
+    const h = harness();
+    const b = h.add('normal');
+    expect(composeUnreadBanner(bannerCandidates([b], H))).toBe(
+      '[conduit] 1 unread message from claude-1. Call read_inbox.',
+    );
+  });
+
+  it('lists at most five sender handles, then the rest as a count', () => {
+    const h = harness();
+    const ms = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((from) => ({ ...h.add('normal'), from }));
+    expect(composeUnreadBanner(bannerCandidates(ms, H))).toBe(
+      '[conduit] 7 unread messages from a, b, c, d, e and 2 more. Call read_inbox.',
+    );
+  });
+
+  it('fyi and already-noticed messages are not announced; nothing left means no banner', () => {
+    const h = harness();
+    const f = h.add('fyi');
+    const n = h.add('normal', 'noticed', 1);
+    expect(bannerCandidates([f, n], H)).toEqual([]);
+    expect(composeUnreadBanner([])).toBeNull();
+  });
+
+  it('a message delivered in-band is not typed when the gate opens; an undelivered one still is', async () => {
+    const h = harness();
+    h.setGate(CLOSED);
+    const a = h.add('normal');
+    await h.notifier.tick();
+    await h.notifier.noteDeliveredInBand(H, [a.messageId]);
+    h.setGate({ open: true });
+    await h.notifier.tick();
+    expect(h.submits).toEqual([]);
+    expect(h.marked).toEqual([[a.messageId]]);
+
+    const b = h.add('normal');
+    await h.notifier.tick();
+    expect(h.submits).toEqual([composeNotice(false)]);
+    expect(h.marked[1]).toContain(b.messageId);
   });
 });

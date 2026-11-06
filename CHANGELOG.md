@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- An agent that stays busy learns of new messages on its next Conduit tool call, not only when it goes idle.
+
 ## [0.57.0] — 2026-11-06
 
 ### Added

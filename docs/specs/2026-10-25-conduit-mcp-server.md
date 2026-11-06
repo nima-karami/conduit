@@ -409,3 +409,13 @@ role (urgent, with icon + label), existing badge tokens, focus ring. A new role 
 ## 14. Open questions
 
 None blocking; S0 results may reopen §2.
+
+## 15. Amendments
+
+**2026-11-07, CON-153 — unread line on tool results.** An autonomous lead redraws constantly, so the §2
+notice gate almost never opens and its messages waited for an idle window that did not come. Notices stay
+as they are. Additionally, every Conduit MCP tool result for a caller with un-noticed, non-`fyi` messages
+carries a second text item: `[conduit] N unread message(s) (M urgent) from <handles>. Call read_inbox.`
+It is built from counts and Conduit-assigned handles only, never message text. `read_inbox` carries none.
+Messages announced this way are marked noticed, as a typed notice marks them, so a busy→idle edge that
+finds one still unread re-notices it once (§2 re-notice).

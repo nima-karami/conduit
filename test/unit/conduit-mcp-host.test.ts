@@ -651,7 +651,11 @@ async function client(ep: string, token: string | null, clientName?: string) {
     const r = (await request('tools/call', { name, arguments: args })) as {
       result: { content: Array<{ text: string }>; isError?: boolean };
     };
-    return { isError: r.result.isError === true, body: JSON.parse(r.result.content[0].text) };
+    return {
+      isError: r.result.isError === true,
+      body: JSON.parse(r.result.content[0].text),
+      content: r.result.content,
+    };
   };
   const listed = async () => {
     const r = (await request('tools/list')) as { result: { tools: Array<{ name: string }> } };
@@ -1431,6 +1435,47 @@ describe('createConduitMcpHost — notices', () => {
       ['info', 'no-echo'],
     ]);
     expect(rec.of('notice result').map((e) => e.data?.outcome)).toEqual(['withheld']);
+  });
+
+  describe('unread banner on tool results (CON-153)', () => {
+    it('a busy recipient learns of queued messages in its next tool result, once', async () => {
+      const h = harness();
+      const { ca, cb } = await pair(h);
+      await ca.call('send_message', { to: ['fake-2'], body: 'one' });
+      await ca.call('send_message', { to: ['fake-2'], body: 'two' });
+      const first = await cb.call('list_sessions');
+      expect(first.content).toHaveLength(2);
+      expect(first.content[1].text).toBe(
+        '[conduit] 2 unread messages from fake-1. Call read_inbox.',
+      );
+      expect(first.body.sessions).toBeDefined();
+      expect((await cb.call('list_sessions')).content).toHaveLength(1);
+    });
+
+    it('the banner is delivered in-band, so the terminal is not typed into for it', async () => {
+      const h = harness();
+      const { ca, cb } = await pair(h);
+      // The first tick builds the recipient's notice state; a message noticed before it is re-armed (restart path).
+      await h.host.tick();
+      await ca.call('send_message', { to: ['fake-2'], body: 'one' });
+      expect((await cb.call('list_sessions')).content).toHaveLength(2);
+      await h.host.tick();
+      expect(writesTo(h, 's2')).toEqual([]);
+    });
+
+    it('read_inbox itself carries no banner', async () => {
+      const h = harness();
+      const { ca, cb } = await pair(h);
+      await ca.call('send_message', { to: ['fake-2'], body: 'one' });
+      expect((await cb.call('read_inbox')).content).toHaveLength(1);
+    });
+
+    it('fyi-only mail carries no banner', async () => {
+      const h = harness();
+      const { ca, cb } = await pair(h);
+      await ca.call('send_message', { to: ['fake-2'], body: 'note', priority: 'fyi' });
+      expect((await cb.call('list_sessions')).content).toHaveLength(1);
+    });
   });
 
   describe('late-echo watcher', () => {
