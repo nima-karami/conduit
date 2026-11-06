@@ -107,4 +107,9 @@ describe('tray helper packaging and CI', () => {
       /name="Microsoft.Windows.Common-Controls" version="6.0.0.0"/,
     );
   });
+
+  // A clean Windows has no VC++ redistributable, so the helper must not import VCRUNTIME140.dll.
+  it('links the helper CRT statically', () => {
+    expect(read('native/tray/.cargo/config.toml')).toContain('target-feature=+crt-static');
+  });
 });
