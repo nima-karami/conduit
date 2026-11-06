@@ -60,12 +60,7 @@ import {
 import { initialTermSearchState, termSearchReducer } from '../term-search';
 import { notifyTerminalBus, registerTerminal } from '../terminal-bus';
 import { terminalClipboardAction } from '../terminal-clipboard';
-import {
-  matchConhostCellWidths,
-  sizeDiffers,
-  windowsPtyOptions,
-  writeReplay,
-} from '../terminal-conpty';
+import { matchConhostCellWidths, windowsPtyOptions, writeReplay } from '../terminal-conpty';
 import { CONTEXT_WINDOW_LINES, inferContextRoot } from '../terminal-context-root';
 import { formatPathForTerminal, TERMINAL_PATH_MIME, terminalDropEffect } from '../terminal-drop';
 import { terminalFontFamily } from '../terminal-fonts';
@@ -92,6 +87,7 @@ import {
 } from '../terminal-query-replies';
 import { isViewportAtBottom, shouldHandleWheelLocally, wheelScrollLines } from '../terminal-scroll';
 import { attachScrollDiagnostics } from '../terminal-scroll-diagnostics';
+import { createPtySizeSync, terminalFaceLoaded } from '../terminal-size';
 import { createTerminalTokenCache } from '../terminal-token-cache';
 import { pushToast } from '../toast-store';
 import { buildXtermTheme, monoStack } from '../xterm-theme';
@@ -296,6 +292,7 @@ export function TerminalPane({
   // The size the host's PTY was last given. Any fit that leaves the xterm at another size must
   // tell the host, or the PTY addresses rows the xterm doesn't have (cursor below the prompt).
   const sentSizeRef = useRef<TermGeometry | null>(null);
+  const ptySyncRef = useRef<{ afterFit(): void; afterFontRefresh(): void } | null>(null);
   const visibleRef = useRef(visible);
   const searchRef = useRef<SearchAddon | null>(null);
   const { settings, update } = useSettings();
@@ -1077,6 +1074,37 @@ export function TerminalPane({
       return true;
     };
 
+    const ptySize = createPtySizeSync({
+      term,
+      faceLoaded: () =>
+        terminalFaceLoaded(
+          terminalFontFamily(),
+          termFontRef.current,
+          typeof document === 'undefined' ? undefined : document.fonts,
+        ),
+      report: (size, reason) => {
+        if (reason === 'start') {
+          started = true;
+          sentSizeRef.current = { cols: size.cols, rows: size.rows };
+          tellHostFacts(sessionId, term);
+          scheduleFactsAfterFit();
+          post({
+            type: 'term:start',
+            sessionId,
+            cols: size.cols,
+            rows: size.rows,
+            agentId: agentIdRef.current,
+            cwd: cwdRef.current,
+            ...(startModeRef.current === 'view' ? { mode: 'view' as const } : {}),
+          });
+          term.focus();
+        } else {
+          tellHostSize(sentSizeRef, sessionId, term);
+        }
+      },
+    });
+    ptySyncRef.current = ptySize;
+
     const onData = term.onData((data) => post({ type: 'term:input', sessionId, data }));
     // Capture the at-bottom state BEFORE the write: a large/chunked write can defeat
     // xterm's own auto-follow and strand a following user mid-scroll, so re-pin after.
@@ -1097,8 +1125,8 @@ export function TerminalPane({
             if (r.resyncDue) {
               r.resyncDue = false;
               sync();
-            } else if (fitIfVisible() && sizeDiffers(sentSizeRef.current, term)) {
-              tellHostSize(sentSizeRef, sessionId, term);
+            } else if (fitIfVisible()) {
+              ptySize.afterFit();
             }
             term.scrollToBottom();
           });
@@ -1109,34 +1137,18 @@ export function TerminalPane({
     });
 
     // Start the PTY on first real visibility (so it launches at the correct size);
-    // resize on every subsequent layout change.
+    // resize on every subsequent layout change. A fallback-face fit is held until the
+    // selected face is measured — see createPtySizeSync.
     const sync = () => {
       if (deferWhileReplaying(replayRef.current)) return;
       if (!fitIfVisible()) return;
-      if (!started) {
-        started = true;
-        sentSizeRef.current = { cols: term.cols, rows: term.rows };
-        tellHostFacts(sessionId, term);
-        scheduleFactsAfterFit();
-        post({
-          type: 'term:start',
-          sessionId,
-          cols: term.cols,
-          rows: term.rows,
-          agentId: agentIdRef.current,
-          cwd: cwdRef.current,
-          ...(startModeRef.current === 'view' ? { mode: 'view' as const } : {}),
-        });
-        term.focus();
-      } else {
-        tellHostSize(sentSizeRef, sessionId, term);
-      }
+      ptySize.afterFit();
     };
 
     refitAfterFonts = () => {
-      if (!fontsAlive || !started) return;
+      if (!fontsAlive) return;
       if (ref.current && !deferWhileReplaying(replayRef.current)) {
-        if (fitIfVisible()) tellHostSize(sentSizeRef, sessionId, term);
+        if (fitIfVisible()) ptySize.afterFontRefresh();
       }
       scheduleFactsAfterFit();
     };
@@ -1204,6 +1216,7 @@ export function TerminalPane({
       termRef.current = null;
       fitRef.current = null;
       searchRef.current = null;
+      ptySyncRef.current = null;
     };
     // Keyed on sessionId ONLY: agentId/cwd/fontMono are read via refs (above) or
     // applied live by the re-theme/zoom effects below, so they never recreate the
@@ -1219,12 +1232,12 @@ export function TerminalPane({
     if (deferWhileReplaying(replayRef.current)) return;
     try {
       fitRef.current?.fit();
-      tellHostSize(sentSizeRef, sessionId, term);
+      ptySyncRef.current?.afterFit();
       factsAfterFitRef.current();
     } catch {
       /* not visible yet */
     }
-  }, [sessionId]);
+  }, []);
 
   // Re-theme the live terminal on theme/surface-colour change so its background recolours in
   // place to keep matching the code block (wishlist I1).
