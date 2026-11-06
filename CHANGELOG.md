@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.58.0] — 2026-11-07
+
 ### Added
 - `open_session` takes a `model` to pick the agent's model and a `message` to send the new session its first task.
 - `open_session` and `open_terminal` take `close_when_done`: the session closes once its program exits.
@@ -14,11 +16,13 @@ All notable user-facing changes to Conduit. Format follows
 
 ### Changed
 - Terminals an agent opens get a handle and stay in `list_sessions` after they exit, so the agent can close them.
+- Sending a message to a terminal with no Conduit-connected agent in it now fails instead of queuing a message nothing can read.
 
 ### Fixed
 - An agent that stays busy learns of new messages on its next Conduit tool call, not only when it goes idle.
 - The notification-area icon is Conduit's app icon.
 - Clicking the notification-area icon works. Clicks used to wait until Conduit sent its next update.
+- A setting you change is no longer occasionally lost when Windows briefly locks the settings file.
 
 ## [0.57.0] — 2026-11-06
 
