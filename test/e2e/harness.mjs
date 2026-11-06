@@ -595,13 +595,25 @@ export async function openSession(page, { path, agentId = 'shell:cmd', roots, pr
     },
   );
   await page.waitForSelector('.termpane', { state: 'attached', timeout: 25000 });
+  // A session the app opens on its own (e.g. its startup folder) can appear after `before` was taken,
+  // so prefer the new session whose folder name matches; the basename survives realpath aliasing.
+  const want = path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop().toLowerCase();
   const sid = await page
     .waitForFunction(
-      (ids) => {
-        const cur = (window.__sessions || []).map((s) => s.id);
-        return cur.find((id) => !ids.includes(id)) || null;
+      ({ ids, name, since }) => {
+        const fresh = (window.__sessions || []).filter((s) => !ids.includes(s.id));
+        const base = (h) =>
+          String(h ?? '')
+            .replace(/\\/g, '/')
+            .replace(/\/+$/, '')
+            .split('/')
+            .pop()
+            .toLowerCase();
+        const match = fresh.find((s) => base(s.home) === name);
+        if (match) return match.id;
+        return Date.now() - since > 10000 ? (fresh[0]?.id ?? null) : null;
       },
-      before,
+      { ids: before, name: want, since: Date.now() },
       { timeout: 20000 },
     )
     .then((h) => h.jsonValue());
