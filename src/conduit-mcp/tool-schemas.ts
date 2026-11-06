@@ -1,6 +1,6 @@
 import { MAX_ARGS, MAX_COMMAND_BYTES } from '../session-command';
 import { MAX_CLOSE_PATHS, MAX_URL_BYTES } from './app-control-tools';
-import { MAX_LABEL_CHARS } from './control-tools';
+import { MAX_LABEL_CHARS, MAX_OPEN_FILE_PATHS } from './control-tools';
 import { MAX_REF_CHARS } from './git-refs';
 import type { ToolSchema } from './json-rpc';
 import { TOOL_NAMES } from './tool-policy';
@@ -134,16 +134,22 @@ function controlSchemas(agentIds: readonly string[]): ToolSchema[] {
     {
       name: 'open_file',
       description:
-        "Open a file in Conduit's editor (absolute, or relative to your session's home folder), optionally at a line and column.",
+        "Open a file in Conduit's editor (absolute, or relative to your session's home folder), optionally at a line and column. Pass paths (1–20 files) instead of path to open several at once; focus applies to the last one opened, the rest open in the background.",
       inputSchema: {
         ...OBJECT,
         properties: {
           path: PATH,
+          paths: {
+            type: 'array',
+            items: { type: 'string' },
+            minItems: 1,
+            maxItems: MAX_OPEN_FILE_PATHS,
+            description: 'Several files, instead of path. No line or column with paths.',
+          },
           line: { type: 'integer', minimum: 1 },
           column: { type: 'integer', minimum: 1 },
           focus: FOCUS,
         },
-        required: ['path'],
       },
     },
   ];

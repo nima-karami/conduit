@@ -31,10 +31,7 @@ export interface OpenSessionOutput {
   label: string;
   agent: string;
 }
-export interface OpenFileOutput {
-  opened: string;
-  session_id: string;
-}
+export type OpenFileOutput = { opened: string; session_id: string } | { results: OpenFileResult[] };
 export type McpLaunch =
   | { kind: 'agent'; agentId: string }
   | { kind: 'command'; command: SessionCommand };
@@ -216,15 +213,42 @@ function parseTerminalArgs(raw: unknown): (Common & { command: SessionCommand })
 const position = (v: unknown): v is number | undefined =>
   v === undefined || (Number.isInteger(v) && (v as number) >= 1);
 
-function parseFileArgs(
-  raw: unknown,
-): (Common & { line: number | undefined; column: number | undefined }) | Fail {
-  const o = parseObject(raw, ['path', 'line', 'column', 'focus']);
+export const MAX_OPEN_FILE_PATHS = 20;
+
+type FileArgs =
+  | (Common & { kind: 'one'; line: number | undefined; column: number | undefined })
+  | { kind: 'many'; paths: string[]; focus: boolean };
+
+function parseFileArgs(raw: unknown): FileArgs | Fail {
+  const o = parseKeys(raw, ['path', 'paths', 'line', 'column', 'focus']);
   if (isFail(o)) return o;
+  if ((o.path === undefined) === (o.paths === undefined))
+    return fail('invalid_args', 'pass exactly one of path or paths');
+  if (o.paths !== undefined) {
+    if (o.line !== undefined || o.column !== undefined)
+      return fail('invalid_args', 'line and column go with path, not paths');
+    const p = o.paths;
+    if (
+      !Array.isArray(p) ||
+      p.length < 1 ||
+      p.length > MAX_OPEN_FILE_PATHS ||
+      !p.every((x) => typeof x === 'string' && x.length > 0)
+    )
+      return fail('invalid_args', `paths must be 1–${MAX_OPEN_FILE_PATHS} non-empty strings`);
+    if (o.focus !== undefined && typeof o.focus !== 'boolean')
+      return fail('invalid_args', 'focus must be a boolean');
+    return { kind: 'many', paths: p as string[], focus: o.focus !== false };
+  }
+  const one = checkPathFocus(o);
+  if (isFail(one)) return one;
   if (!position(o.line) || !position(o.column))
     return fail('invalid_args', 'line and column must be integers ≥ 1');
-  return { ...common(o, undefined), line: o.line, column: o.column };
+  return { kind: 'one', ...common(one, undefined), line: o.line, column: o.column };
 }
+
+export type OpenFileResult =
+  | { path: string; opened: true }
+  | { path: string; opened: false; error: ToolError };
 
 /** Times of reserved or completed calls, oldest first. */
 class Window {
@@ -487,6 +511,51 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     async prepareOpenFile(caller, raw) {
       const a = parseFileArgs(raw);
       if (isFail(a)) return a;
+      if (a.kind === 'many') {
+        return prepared('open_file', caller, async (who) => {
+          const abs = a.paths.map((p) => deps.resolvePath(who.home, p));
+          const bad = await Promise.all(abs.map((p) => checkKind(p, 'file')));
+          // Focus goes to the last file that will open, so a trailing bad path doesn't steal it.
+          const lastGood = bad.reduce((last, b, i) => (b === null ? i : last), -1);
+          return {
+            summary: { tool: 'open_file', path: abs.join(', '), line: null },
+            exec: async (token) => {
+              const results: OpenFileResult[] = [];
+              let opened = 0;
+              for (let i = 0; i < abs.length; i++) {
+                const path = abs[i];
+                const refusal = bad[i];
+                if (refusal) {
+                  results.push({ path, opened: false, error: refusal.error });
+                  continue;
+                }
+                try {
+                  await deps.openFile({
+                    callerSessionId: who.sessionId,
+                    path,
+                    line: undefined,
+                    column: undefined,
+                    focus: a.focus && i === lastGood,
+                  });
+                } catch (e) {
+                  const err = failed('open_file', caller, e, path);
+                  results.push({ path, opened: false, error: err.error });
+                  continue;
+                }
+                opened++;
+                results.push({ path, opened: true });
+                deps.info('control open', {
+                  tool: 'open_file',
+                  caller: caller.handle,
+                  path,
+                });
+              }
+              if (opened > 0) token.keep();
+              return { ok: true, value: { results } };
+            },
+          };
+        });
+      }
       return prepared('open_file', caller, async (who) => {
         const abs = deps.resolvePath(who.home, a.path);
         const bad = await checkKind(abs, 'file');

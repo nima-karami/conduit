@@ -696,16 +696,7 @@ index 111..222 100644
   });
 
   it('converts 20k same-path files in well under a second', () => {
-    const one = (path: string): ParsedPatchFile => ({
-      path,
-      head: '',
-      work: 'x\n',
-      binary: false,
-      changeKind: 'M',
-      counts: { added: 1, removed: 0 },
-      hunks: [],
-    });
-    const files = Array.from({ length: 20_000 }, () => one('x.ts'));
+    const files = okFiles('--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new\n'.repeat(20_000));
     const t0 = performance.now();
     const dtos = patchFilesToFileDiffs(files);
     expect(performance.now() - t0).toBeLessThan(2000);

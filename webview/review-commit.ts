@@ -3,7 +3,7 @@
 // derivation that feeds the existing review card renderer lives here — DOM-free and unit-testable.
 
 import { endpointLabel, shortSha } from '../src/git-range';
-import { type ParsedPatchFile, withPatchKeys } from '../src/patch-parse';
+import type { ParsedPatchFile } from '../src/patch-parse';
 import type { ChangeDTO, ChangeKind, CommitNode, FileDiffDTO } from '../src/protocol';
 import { computeFileReview } from '../src/review-hunks';
 import type { ReviewSource } from './docs';
@@ -59,11 +59,11 @@ export function commitChangesFromFiles(files: FileDiffDTO[]): ChangeDTO[] {
 /** Derive review `ChangeDTO[]` from an agent-supplied patch. Preserves rename ('R') badges; copy
  *  ('C') and pure mode changes ('T') map to 'M' because the protocol has no 'C' change kind. */
 export function patchChangesFromFiles(files: ParsedPatchFile[]): ChangeDTO[] {
-  return withPatchKeys(files).map((f) => {
+  return files.map((f) => {
     const kind: ChangeKind =
       f.changeKind === 'R' ? 'R' : f.changeKind === 'A' ? 'A' : f.changeKind === 'D' ? 'D' : 'M';
     return {
-      path: f.key ?? f.path,
+      path: f.key,
       added: f.counts.added,
       removed: f.counts.removed,
       kind,

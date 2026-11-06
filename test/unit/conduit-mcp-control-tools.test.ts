@@ -185,6 +185,90 @@ describe('createControlHandlers', () => {
     ]);
   });
 
+  it('open_file with paths opens each in order and focuses only the last', async () => {
+    const h = harness();
+    const r = await whenOn(h.deps).openFile(caller(), { paths: ['/repo/a.ts', 'src/a.ts'] });
+    expect(r).toEqual({
+      ok: true,
+      value: {
+        results: [
+          { path: '/repo/a.ts', opened: true },
+          { path: '/home/main/src/a.ts', opened: true },
+        ],
+      },
+    });
+    expect(h.files.map((f) => [f.path, f.focus])).toEqual([
+      ['/repo/a.ts', false],
+      ['/home/main/src/a.ts', true],
+    ]);
+  });
+
+  it('open_file with paths: a bad path reports its own error and the others still open', async () => {
+    const h = harness();
+    const r = await whenOn(h.deps).openFile(caller(), {
+      paths: ['/repo/a.ts', '/repo/gone.ts', 'src/a.ts'],
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok || !('results' in r.value)) return;
+    const results = r.value.results;
+    expect(results).toHaveLength(3);
+    expect(results[0]).toEqual({ path: '/repo/a.ts', opened: true });
+    expect(results[1]).toMatchObject({
+      path: '/repo/gone.ts',
+      opened: false,
+      error: { code: 'path_missing' },
+    });
+    expect(results[2]).toEqual({ path: '/home/main/src/a.ts', opened: true });
+    expect(h.files.map((f) => [f.path, f.focus])).toEqual([
+      ['/repo/a.ts', false],
+      ['/home/main/src/a.ts', true],
+    ]);
+  });
+
+  it('open_file with paths: focus goes to the last file that opened, not the last listed', async () => {
+    const h = harness();
+    await whenOn(h.deps).openFile(caller(), { paths: ['/repo/a.ts', '/repo/gone.ts'] });
+    expect(h.files.map((f) => [f.path, f.focus])).toEqual([['/repo/a.ts', true]]);
+  });
+
+  it('open_file with paths where every path is bad opens nothing', async () => {
+    const h = harness();
+    const r = await whenOn(h.deps).openFile(caller(), { paths: ['/repo/gone.ts', '/repo'] });
+    expect(r.ok).toBe(true);
+    if (!r.ok || !('results' in r.value)) return;
+    expect(r.value.results).toEqual([
+      expect.objectContaining({ path: '/repo/gone.ts', opened: false }),
+      expect.objectContaining({ path: '/repo', opened: false }),
+    ]);
+    expect(h.files).toEqual([]);
+  });
+
+  it('open_file path+paths, neither, or paths with line/column → invalid_args', async () => {
+    const h = harness();
+    const c = whenOn(h.deps);
+    const bad = async (p: Promise<Result<unknown>>) => expect(code(await p)).toBe('invalid_args');
+    await bad(c.openFile(caller(), { path: '/repo/a.ts', paths: ['/repo/a.ts'] }));
+    await bad(c.openFile(caller(), {}));
+    await bad(c.openFile(caller(), { paths: ['/repo/a.ts'], line: 3 }));
+    await bad(c.openFile(caller(), { paths: ['/repo/a.ts'], column: 3 }));
+    await bad(c.openFile(caller(), { paths: [] }));
+    await bad(c.openFile(caller(), { paths: 'a.ts' }));
+    await bad(c.openFile(caller(), { paths: ['/repo/a.ts', ''] }));
+    await bad(c.openFile(caller(), { paths: ['/repo/a.ts', 2] }));
+    await bad(c.openFile(caller(), { paths: ['/repo/a.ts'], focus: 'yes' }));
+    expect(h.files).toEqual([]);
+  });
+
+  it('open_file accepts up to 20 paths and rejects 21', async () => {
+    const h = harness();
+    const c = whenOn(h.deps);
+    const twenty = Array.from({ length: 20 }, () => '/repo/a.ts');
+    expect(code(await c.openFile(caller(), { paths: twenty }))).toBe('ok');
+    expect(code(await c.openFile(caller(), { paths: [...twenty, '/repo/a.ts'] }))).toBe(
+      'invalid_args',
+    );
+  });
+
   it('unknown agent → unknown_agent listing the registered ids', async () => {
     const h = harness();
     const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'aider' }));

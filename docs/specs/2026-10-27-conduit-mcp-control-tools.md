@@ -140,6 +140,8 @@ agent output; same rule as attachments).
   - It opens in the window of the session it opens in.
   - `focus: true` activates that session and the file's tab; `false` opens the tab in the
     background.
+  - `paths` (1–20) replaces `path` to open several in one call; focus goes to the last file that
+    opens, and the result is one `{path, opened, error?}` entry per path, in order.
   - `openFileInEditor` gains `line?`, `column?` and `focus?`. The renderer routes MCP opens
     through `openFile(…, {reveal})` and the `'background'` mode (as `openTerminalFileLink` does)
     instead of the OS-open flush's forced editor/`'permanent'`. OS opens are unchanged.

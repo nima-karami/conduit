@@ -3329,7 +3329,6 @@ export function App() {
         'Review',
         (d) => d.kind === 'review',
         (group) => {
-          if (focus && id === activeIdRef.current) setCenterView('editor');
           openReviewIn(id, source, group, false, focus ? undefined : 'background');
         },
       );
