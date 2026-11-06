@@ -1,9 +1,14 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createTraySeam, type SeamFs } from '../../server/tray/seam';
+import {
+  createTraySeam,
+  type SeamFs,
+  TRAY_SEAM_IN_FILE,
+  TRAY_SEAM_OUT_FILE,
+} from '../../server/tray/seam';
 import type { HelperToSupervisor } from '../../src/contracts/tray-protocol';
 
-const IN = path.join('/u', 'tray-seam-in.jsonl');
+const IN = path.join('/u', TRAY_SEAM_IN_FILE);
 
 function harness() {
   const files = new Map<string, Buffer>();
@@ -42,7 +47,7 @@ describe('tray seam', () => {
     h.seam.mirror('out', { type: 'exit' });
     h.seam.mirror('in', { type: 'hidden' });
     const lines =
-      h.files.get(path.join('/u', 'tray-seam.jsonl'))?.toString().trim().split('\n') ?? [];
+      h.files.get(path.join('/u', TRAY_SEAM_OUT_FILE))?.toString().trim().split('\n') ?? [];
     expect(lines.map((l) => JSON.parse(l))).toEqual([
       { dir: 'out', message: { type: 'exit' } },
       { dir: 'in', message: { type: 'hidden' } },

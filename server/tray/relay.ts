@@ -8,6 +8,7 @@ import {
   TRAY_PROTOCOL_VERSION,
   type TraySource,
 } from '../../src/contracts/tray-protocol';
+import { TRAY_STOP_COPY } from '../../src/tray-strings';
 import type {
   HelperHandle,
   ServerChannel,
@@ -15,15 +16,6 @@ import type {
   TrayRelay,
   TrayRelayDeps,
 } from './contracts';
-
-// Spec §7 F3 step 4/5 copy. Belongs in src/tray-strings.ts (G2); moved there at S8.
-export const TRAY_STOP_COPY = {
-  title: 'Stop all agents',
-  body: (reason: string) => `Couldn't stop the agents: ${reason}`,
-  starting: 'The background service is starting. Try again in a moment.',
-  noAnswer: "The background service didn't answer in time.",
-  closed: 'The background service stopped before it answered.',
-} as const;
 
 interface ServerEntry {
   ch: ServerChannel;

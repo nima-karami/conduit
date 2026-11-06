@@ -28,6 +28,14 @@ export function serviceExhausted(retryAtHhmm: string): string {
   return `Background service stopped after repeated crashes. Retrying at ${retryAtHhmm}.`;
 }
 
+export const TRAY_STOP_COPY = {
+  title: 'Stop all agents',
+  body: (reason: string) => `Couldn't stop the agents: ${reason}`,
+  starting: 'The background service is starting. Try again in a moment.',
+  noAnswer: "The background service didn't answer in time.",
+  closed: 'The background service stopped before it answered.',
+} as const;
+
 export function confirmBody(running: number, needsYouClause: string | null): string {
   const verb = plural(running, 'is', 'are');
   const clause = needsYouClause ? ` (${needsYouClause})` : '';

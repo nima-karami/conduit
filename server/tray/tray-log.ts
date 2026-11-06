@@ -10,7 +10,7 @@ export interface TrayLogFs {
   rename(from: string, to: string): void;
 }
 
-export const nodeTrayLogFs: TrayLogFs = {
+const nodeTrayLogFs: TrayLogFs = {
   size(path) {
     try {
       return statSync(path).size;

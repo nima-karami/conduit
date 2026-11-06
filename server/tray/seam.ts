@@ -13,7 +13,7 @@ export interface SeamFs {
   read(path: string): Buffer | null;
 }
 
-export const nodeSeamFs: SeamFs = {
+const nodeSeamFs: SeamFs = {
   append: (p, text) => appendFileSync(p, text, 'utf8'),
   read(p) {
     try {

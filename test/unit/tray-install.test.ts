@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { type InstallFs, installTray } from '../../server/tray/install';
+import { type InstallFs, installTray, TRAY_EXE_NAME } from '../../server/tray/install';
 
 const STABLE = '/u/runtime/tray';
-const EXE = `${STABLE}/conduit-tray.exe`;
-const SOURCE = '/u/runtime/0.53.0/tray/conduit-tray.exe';
+const EXE = `${STABLE}/${TRAY_EXE_NAME}`;
+const SOURCE = `/u/runtime/0.53.0/tray/${TRAY_EXE_NAME}`;
 
 const errno = (code: string) => Object.assign(new Error(code), { code });
 
@@ -223,7 +223,7 @@ describe('installTray', () => {
 
   it('works with Windows separators', async () => {
     const stable = 'C:\\u\\runtime\\tray';
-    const exe = `${stable}\\conduit-tray.exe`;
+    const exe = `${stable}\\${TRAY_EXE_NAME}`;
     const files = new Map([
       [exe, 'v1'],
       ['C:\\src.exe', 'v2'],
@@ -235,7 +235,7 @@ describe('installTray', () => {
       sep: '\\',
       fs: {
         mkdir: async () => {},
-        readdir: async () => ['conduit-tray.exe'],
+        readdir: async () => [TRAY_EXE_NAME],
         exists: async (p) => files.has(p),
         unlink: async (p) => {
           files.delete(p);
