@@ -262,6 +262,15 @@ describe('server domain: persisted formats', () => {
     },
   );
 
+  it('a running session reads exited on any exit, a kill included', async () => {
+    const a = harness();
+    const id = await a.create();
+    await a.call('sessions.start', { sessionId: id });
+    expect(a.domain.snapshot().sessions.find((s) => s.id === id)?.status).toBe('running');
+    a.runtime.fire({ type: 'exit', sessionId: id, generation: 1, code: 1, reason: 'killed' });
+    expect(a.domain.snapshot().sessions.find((s) => s.id === id)?.status).toBe('exited');
+  });
+
   it('an agent that quit on its own while no server watched reads exited after restore', async () => {
     const a = harness();
     const id = await a.create();
