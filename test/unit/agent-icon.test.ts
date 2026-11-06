@@ -37,7 +37,9 @@ describe('agentIconKindFromText', () => {
   });
 
   it('keeps the generic AI mark for agents without their own, and null for the rest', () => {
-    expect(agentIconKindFromText('aider')).toBe('claude');
+    expect(agentIconKindFromText('aider')).toBe('agent');
+    expect(agentIconKindFromText('copilot')).toBe('agent');
+    expect(agentIconKindFromText('goose')).toBe('agent');
     expect(agentIconKindFromText('bash')).toBeNull();
     expect(agentIconKindFromText('')).toBeNull();
     expect(agentIconKindFromText('encoder')).toBeNull();

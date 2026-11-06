@@ -1,7 +1,7 @@
 // Minimal inline-SVG icon set. 16px grid, currentColor stroke.
 
 import * as LucideIcons from 'lucide-react';
-import type { JSX as ReactJSX } from 'react';
+import { type JSX as ReactJSX, useId } from 'react';
 import type { ArchKind } from '../src/architecture';
 import type { ResolvedSessionIcon, SessionIconKind } from '../src/session-icon';
 
@@ -407,7 +407,7 @@ export const IconWarning = glyph(
   </>,
 );
 
-const IconAgent = glyph(
+const IconTypeAgent = glyph(
   'agent',
   <>
     <rect x="3" y="5" width="10" height="7" rx="2" />
@@ -484,44 +484,183 @@ export const IconUnplug = glyph(
 );
 export const IconPause = glyph('pause', <path d="M6 4v8M10 4v8" />);
 
-// PowerShell-flavoured terminal — NOT the official logo.
-const IconPowerShell = glyph(
-  'powershell',
+/** 24×24 identity marks (CON-147). Not the 16px currentColor chrome set. */
+function mark(kind: string, solid: React.ReactNode, neon?: React.ReactNode) {
+  const Icon = ({ size = 16, className }: P) => (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={['agent-mark', `agent-mark--${kind}`, className].filter(Boolean).join(' ')}
+    >
+      {neon ? <g className="agent-mark__solid">{solid}</g> : solid}
+      {neon ? <g className="agent-mark__neon">{neon}</g> : null}
+    </svg>
+  );
+  return Icon;
+}
+
+const IconClaude = mark(
+  'claude',
   <>
-    <rect x="2" y="3" width="12" height="10" rx="1.5" />
-    <path d="M5 6l2.4 2-2.4 2M8.6 10.2h2.6" />
+    <g fill="var(--mark-claude)">
+      <rect x="4" y="6" width="16" height="10" />
+      <rect x="1" y="9" width="3" height="3" />
+      <rect x="20" y="9" width="3" height="3" />
+      <rect x="5" y="16" width="2" height="3" />
+      <rect x="9" y="16" width="2" height="3" />
+      <rect x="13" y="16" width="2" height="3" />
+      <rect x="17" y="16" width="2" height="3" />
+    </g>
+    <g fill="var(--mark-panel)">
+      <rect x="8" y="9" width="2" height="3" />
+      <rect x="14" y="9" width="2" height="3" />
+    </g>
   </>,
 );
-
-// Agent identity marks are our own simple drawings, never vendor logos (sidebar-agent-tree spec §6).
-const IconClaude = glyph(
-  'claude',
-  <path d="M8 2.2v3M8 10.8v3M2.2 8h3M10.8 8h3M3.9 3.9L6 6M10 10l2.1 2.1M12.1 3.9L10 6M6 10l-2.1 2.1" />,
-  HAIR,
-);
-const IconCodex = glyph(
+const IconCodex = mark(
   'codex',
   <>
-    <rect x="2.5" y="2.5" width="11" height="11" rx="3" />
-    <path d="M5.4 6.2L7.4 8l-2 1.8M8.6 10h2.2" />
+    <rect x="2.5" y="2.5" width="19" height="19" rx="5" fill="var(--mark-ink)" />
+    <path d="M7.5 8.5 11 12l-3.5 3.5" fill="none" stroke="var(--mark-panel)" strokeWidth="2" />
+    <line x1="12.5" y1="15.5" x2="16.5" y2="15.5" stroke="var(--mark-panel)" strokeWidth="2" />
+  </>,
+  <>
+    <path
+      className="agent-mark__join-round"
+      d="M5 2.5h14l2.5 2.5v14L19 21.5H5L2.5 19V5Z"
+      fill="none"
+      stroke="var(--mark-codex-neon)"
+      strokeWidth="1.6"
+    />
+    <path d="M7.5 8.5 11 12l-3.5 3.5" fill="none" stroke="var(--mark-codex-neon)" strokeWidth="2" />
+    <line x1="12.5" y1="15.5" x2="16.5" y2="15.5" stroke="var(--mark-codex-neon)" strokeWidth="2" />
   </>,
 );
-const IconOpenCode = glyph('opencode', <path d="M6.2 3H4.5v10h1.7M9.8 3h1.7v10H9.8" />);
-const IconCursor = glyph(
+const IconOpenCode = mark(
+  'opencode',
+  <>
+    <rect
+      x="3"
+      y="3"
+      width="18"
+      height="18"
+      rx="5"
+      fill="none"
+      stroke="var(--mark-opencode-frame)"
+      strokeWidth="1.4"
+    />
+    <path
+      d="M9.5 7.5H7v9h2.5M14.5 7.5H17v9h-2.5"
+      fill="none"
+      stroke="var(--mark-opencode)"
+      strokeWidth="2"
+    />
+  </>,
+);
+const IconCursor = mark(
   'cursor',
   <>
-    <path d="M8 1.8l5.4 3.1v6.2L8 14.2l-5.4-3.1V4.9z" />
-    <path d="M2.6 4.9L8 8l5.4-3.1M8 8v6.2" />
+    <polygon points="12,2.5 20.5,7.25 12,12 3.5,7.25" fill="var(--mark-cube-top)" />
+    <polygon points="3.5,7.25 12,12 12,21.5 3.5,16.75" fill="var(--mark-cube-left)" />
+    <polygon points="20.5,7.25 20.5,16.75 12,21.5 12,12" fill="var(--mark-ink)" />
   </>,
-  HAIR,
+  <>
+    <polygon
+      points="12,2.5 20.5,7.25 20.5,16.75 12,21.5 3.5,16.75 3.5,7.25"
+      fill="none"
+      stroke="var(--mark-cursor-neon)"
+      strokeWidth="1.6"
+    />
+    <path
+      d="M3.5 7.25 12 12l8.5-4.75M12 12v9.5"
+      fill="none"
+      stroke="var(--mark-cursor-neon)"
+      strokeWidth="1.3"
+    />
+    <polygon points="12,12 20.5,7.25 20.5,16.75 12,21.5" fill="var(--mark-cursor-neon-fill)" />
+  </>,
 );
-const IconGemini = glyph(
-  'gemini',
-  <path d="M8 1.8C8.4 5.4 10.6 7.6 14.2 8 10.6 8.4 8.4 10.6 8 14.2 7.6 10.6 5.4 8.4 1.8 8 5.4 7.6 7.6 5.4 8 1.8z" />,
+function IconGemini({ size = 16, className }: P) {
+  const gid = useId();
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={['agent-mark', 'agent-mark--gemini', className].filter(Boolean).join(' ')}
+    >
+      <defs>
+        <linearGradient id={gid} x1="3" y1="21" x2="21" y2="3" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="var(--mark-gemini-a)" />
+          <stop offset="1" stopColor="var(--mark-gemini-b)" />
+        </linearGradient>
+      </defs>
+      <path
+        d="M12 2c.6 5.4 4.6 9.4 10 10-5.4.6-9.4 4.6-10 10-.6-5.4-4.6-9.4-10-10 5.4-.6 9.4-4.6 10-10Z"
+        fill={`url(#${gid})`}
+      />
+    </svg>
+  );
+}
+const IconAgent = mark(
+  'agent',
+  <>
+    <rect
+      x="4"
+      y="8"
+      width="16"
+      height="12"
+      rx="4"
+      fill="none"
+      stroke="var(--mark-agent)"
+      strokeWidth="1.7"
+    />
+    <circle cx="9.5" cy="14" r="1.6" fill="var(--mark-agent)" />
+    <circle cx="14.5" cy="14" r="1.6" fill="var(--mark-agent)" />
+    <line x1="12" y1="8" x2="12" y2="4.8" stroke="var(--mark-agent)" strokeWidth="1.7" />
+    <circle cx="12" cy="3.6" r="1.5" fill="var(--mark-agent)" />
+  </>,
+);
+const IconShell = mark(
+  'terminal',
+  <>
+    <rect
+      x="2.5"
+      y="4"
+      width="19"
+      height="16"
+      rx="5"
+      fill="none"
+      stroke="var(--mark-dim)"
+      strokeWidth="1.6"
+    />
+    <path d="M6.5 9.5 9.5 12l-3 2.5" fill="none" stroke="var(--mark-dim)" strokeWidth="1.8" />
+    <line x1="11.5" y1="15" x2="16.5" y2="15" stroke="var(--mark-dim)" strokeWidth="1.8" />
+  </>,
+);
+const IconPowerShell = mark(
+  'powershell',
+  <>
+    <rect
+      x="2.5"
+      y="2.5"
+      width="19"
+      height="19"
+      rx="5"
+      fill="var(--mark-pwsh-fill)"
+      stroke="var(--mark-pwsh-stroke)"
+      strokeWidth="var(--mark-pwsh-stroke-w)"
+    />
+    <path d="M7 7.5 11.5 12 7 16.5" fill="none" stroke="var(--mark-pwsh-ink)" strokeWidth="2" />
+    <line x1="12.5" y1="16.5" x2="17" y2="16.5" stroke="var(--mark-pwsh-ink)" strokeWidth="2" />
+  </>,
 );
 
 const _customIcon: Record<string, (p: P) => ReactJSX.Element> = {
-  agent: IconAgent,
+  agent: IconTypeAgent,
   skill: IconSkill,
   doc: IconDoc,
   hook: IconHook,
@@ -537,11 +676,12 @@ const _agentIcon: Record<string, (p: P) => ReactJSX.Element> = {
 const SESSION_ICON: Record<SessionIconKind, (p: P) => ReactJSX.Element> = {
   claude: IconClaude,
   powershell: IconPowerShell,
-  terminal: IconTerminal,
+  terminal: IconShell,
   codex: IconCodex,
   opencode: IconOpenCode,
   cursor: IconCursor,
   gemini: IconGemini,
+  agent: IconAgent,
 };
 
 /**

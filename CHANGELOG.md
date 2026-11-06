@@ -13,6 +13,7 @@ All notable user-facing changes to Conduit. Format follows
 ### Changed
 - The quit dialog mentions the notification-area icon when it will be available.
 - The notification-area "needs you" count ignores Snooze in the app.
+- Agents show their own marks. Aider, Copilot and Goose get a neutral icon instead of Claude's.
 
 ### Fixed
 - **Sessions come back as stale, not exited, after Conduit stops its agents.** A cold stop could replay the

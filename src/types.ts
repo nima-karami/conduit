@@ -52,7 +52,8 @@ export type SessionIconKind =
   | 'codex'
   | 'opencode'
   | 'cursor'
-  | 'gemini';
+  | 'gemini'
+  | 'agent';
 
 /** Why a session needs the human now; see docs/specs/2026-11-02-sidebar-agent-tree.md §4. */
 export type AttentionReason = 'blocked' | 'bell' | null;
