@@ -9,6 +9,7 @@ export interface RuntimeLayout {
   hcExe: string;
   hcVersion: string;
   coreCwd: string;
+  trayExe: string | null;
 }
 
 /**
@@ -16,9 +17,13 @@ export interface RuntimeLayout {
  * whose spelling (`node.EXE`) the server then writes into every CLI's MCP entry; a bare hc is
  * resolved inside an hc terminal, whose PATH hc rebuilds rather than taking the app's.
  */
-function onPath(env: NodeJS.ProcessEnv, name: 'node' | 'hc'): string | undefined {
+function onPath(
+  env: NodeJS.ProcessEnv,
+  name: 'node' | 'hc',
+  platform: NodeJS.Platform,
+): string | undefined {
   const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH');
-  const exe = process.platform === 'win32' ? `${name}.exe` : name;
+  const exe = platform === 'win32' ? `${name}.exe` : name;
   return (key ? (env[key] ?? '') : '')
     .split(delimiter)
     .filter(Boolean)
@@ -36,7 +41,9 @@ export function runtimeLayout(i: {
   appVersion: string;
   appPath: string;
   env: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
 }): RuntimeLayout {
+  const platform = i.platform ?? process.platform;
   const runtimeRoot = join(i.userData, 'runtime');
   const hcVersion = HC_PINNED_VERSION;
   const coreCwd = coreStartCwd(runtimeRoot, hcVersion);
@@ -49,13 +56,19 @@ export function runtimeLayout(i: {
       hcExe: join(coreCwd, 'hc.exe'),
       hcVersion,
       coreCwd,
+      trayExe: platform === 'win32' ? join(appDir, 'tray', 'conduit-tray.exe') : null,
     };
   }
+  const devTray = join(i.appPath, 'build', 'vendor', 'tray', 'conduit-tray.exe');
   return {
-    nodeExe: i.env.CONDUIT_NODE_BINARY ?? onPath(i.env, 'node') ?? 'node',
+    nodeExe: i.env.CONDUIT_NODE_BINARY ?? onPath(i.env, 'node', platform) ?? 'node',
     superviseJs: join(i.appPath, 'out', 'server', 'supervise.js'),
-    hcExe: i.env.CONDUIT_HC_BINARY ?? onPath(i.env, 'hc') ?? 'hc',
+    hcExe: i.env.CONDUIT_HC_BINARY ?? onPath(i.env, 'hc', platform) ?? 'hc',
     hcVersion,
     coreCwd,
+    trayExe:
+      platform === 'win32'
+        ? (i.env.CONDUIT_TRAY_BINARY ?? (existsSync(devTray) ? devTray : null))
+        : null,
   };
 }

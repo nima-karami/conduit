@@ -4,11 +4,13 @@ import {
   APP_HELLO_TIMEOUT_MS,
   SERVER_PROTOCOL_GENERATION,
   SERVER_RESTART_EXIT_WAIT_MS,
+  type ServerEvents,
   type ServerMethods,
   STOP_ALL_ANSWER_TIMEOUT_MS,
   versionOrder,
 } from '../src/contracts/server-protocol';
 import type { InstanceNames } from '../src/contracts/session-identity';
+import type { AppLaunch } from '../src/contracts/tray-protocol';
 import { HcRpcError } from '../src/hc-client';
 import { type HcCliDeps, killSupervisor, startSupervisor, supervisorArgs } from './hc-cli';
 import type { createHcEvents } from './hc-events';
@@ -44,6 +46,7 @@ export interface ServerLifecycleDeps {
   userData: string;
   appVersion: string;
   serverArgs: string[];
+  app?: AppLaunch;
   client: () => ServerClient;
   hc: HcClient;
   hcEvents: ReturnType<typeof createHcEvents>;
@@ -80,6 +83,7 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
   retry(): Promise<void>;
   restartService(): Promise<void>;
   stopAllAndContinue(): Promise<void>;
+  noteStopping(reason: ServerEvents['server.stopping']['reason']): void;
   stopAll(): Promise<{ ok: boolean; killed?: number; reason?: string }>;
   dispose(): void;
 } {
@@ -92,6 +96,9 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
   let connHello: Hello | null = null;
   let offWatch: (() => void) | null = null;
   let vanishedAt: number[] = [];
+  // See docs/specs/2026-11-03-tray-helper.md F3a.
+  let orderlyEnd = false;
+  const tray = d.layout.trayExe && d.app ? { source: d.layout.trayExe, app: d.app } : undefined;
   /** Every transition bumps it; an async step that finds it moved stops. */
   let epoch = 0;
   let disposed = false;
@@ -241,6 +248,7 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
         superviseJs: d.layout.superviseJs,
         userData: d.userData,
         serverArgs: d.serverArgs,
+        tray,
       });
       if (!live(e)) return;
       // name_taken: a supervisor of this name is live after all (D21's rule for any hc name).
@@ -253,6 +261,7 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
             superviseJs: d.layout.superviseJs,
             userData: d.userData,
             serverArgs: d.serverArgs,
+            tray,
           }),
         );
       }
@@ -299,6 +308,7 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
   };
 
   const greeted = async (e: number, c: ServerClient, hello: Hello): Promise<void> => {
+    orderlyEnd = false;
     conn = c;
     connHello = hello;
     const order = versionOrder(
@@ -355,6 +365,11 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
       return;
     }
     if (!live(e)) return;
+    if (orderlyEnd) {
+      orderlyEnd = false;
+      await startRule(e);
+      return;
+    }
     const now = d.now();
     vanishedAt = vanishedAt.filter((t) => now - t < VANISHED_RESTART_BUDGET.windowMs);
     vanishedAt.push(now);
@@ -450,6 +465,9 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
   };
 
   return {
+    noteStopping(reason) {
+      if (reason === 'stopAll' || reason === 'idle') orderlyEnd = true;
+    },
     async start() {
       await startRule(fresh());
     },

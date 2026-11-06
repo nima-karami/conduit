@@ -31,6 +31,7 @@ function seedResources() {
   put(join(resourcesDir, 'runtime', 'server', 'main.js'), 'main-js');
   put(join(resourcesDir, 'runtime', 'server', 'supervise.js'), 'supervise-js');
   put(join(resourcesDir, 'runtime', 'hc', 'hc.exe'), 'hc-bytes');
+  put(join(resourcesDir, 'runtime', 'tray', 'conduit-tray.exe'), 'tray-bytes');
   put(join(resourcesDir, 'runtime', 'hc', 'conpty', 'conpty.dll'), 'conpty-bytes');
   put(join(resourcesDir, 'conduit-mcp', 'conduit-mcp-shim.cjs'), 'shim-v1');
 }
@@ -98,12 +99,14 @@ describe('prepareRuntime', () => {
       superviseJs: runtime('0.52.0', 'server', 'supervise.js'),
       mainJs: runtime('0.52.0', 'server', 'main.js'),
       hcExe: runtime('hc', '0.1.16', 'hc.exe'),
+      trayExe: runtime('0.52.0', 'tray', 'conduit-tray.exe'),
       shimDir: runtime('shim'),
     });
     expect(readFileSync(prepared.nodeExe, 'utf8')).toBe('node-bytes');
     expect(readFileSync(prepared.mainJs, 'utf8')).toBe('main-js');
     expect(readFileSync(prepared.superviseJs, 'utf8')).toBe('supervise-js');
     expect(readFileSync(prepared.hcExe, 'utf8')).toBe('hc-bytes');
+    expect(readFileSync(prepared.trayExe, 'utf8')).toBe('tray-bytes');
     expect(readFileSync(runtime('hc', '0.1.16', 'conpty', 'conpty.dll'), 'utf8')).toBe(
       'conpty-bytes',
     );

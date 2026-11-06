@@ -2,11 +2,12 @@ import { Socket } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stopAll } from '../../server/lifecycle/stop-all';
 import {
+  type ServerMethods,
   STOP_ALL_ANSWER_TIMEOUT_MS,
   STOP_ALL_CONNECT_TIMEOUT_MS,
 } from '../../src/contracts/server-protocol';
 
-function harness() {
+function harness(auth?: ServerMethods['hello']['params']['auth']) {
   const socket = new Socket();
   const requests: Record<string, unknown>[] = [];
   vi.spyOn(socket, 'write').mockImplementation((data) => {
@@ -17,6 +18,7 @@ function harness() {
   const result = stopAll({
     endpoint: '/pipe',
     version: '0.52.0',
+    auth,
     directFallback,
     connect: () => socket,
   });
@@ -35,6 +37,19 @@ function harness() {
 describe('uninstall stop-all client', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+
+  it('sends the app credential in hello only when supplied', async () => {
+    const x = harness('app-secret');
+    x.hello();
+    expect(x.requests[0].params).toMatchObject({ auth: 'app-secret' });
+    x.socket.emit('data', Buffer.from('{"jsonrpc":"2.0","id":2,"result":{"killed":0}}\n'));
+    await x.result;
+    const anonymous = harness();
+    anonymous.hello();
+    expect(anonymous.requests[0].params).not.toHaveProperty('auth');
+    anonymous.socket.emit('data', Buffer.from('{"jsonrpc":"2.0","id":2,"result":{"killed":0}}\n'));
+    await anonymous.result;
+  });
 
   it('falls back if no connection is made within five seconds', async () => {
     const x = harness();
