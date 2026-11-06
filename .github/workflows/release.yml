@@ -35,7 +35,7 @@ jobs:
     needs: release-notes-check
 
   # The full e2e suite at the tag's commit (spec docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md
-  # §14 Q2): passed or flaky-passed proceeds; a QUARANTINED-FAIL doesn't block. `gate` already
+  # §14 Q2): only passed proceeds (a flaky scenario fails the gate); a QUARANTINED-FAIL doesn't block. `gate` already
   # runs verify, so e2e doesn't repeat it.
   e2e:
     uses: ./.github/workflows/e2e.yml
