@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.57.0] — 2026-11-06
+
 ### Added
 - A notification-area icon shows how many agents are running and need you when you leave them running. Use it to open Conduit or stop all agents.
 - The taskbar Jump List offers **Stop all agents**.
