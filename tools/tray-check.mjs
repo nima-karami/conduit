@@ -13,7 +13,11 @@ const MSVC = 'x86_64-pc-windows-msvc';
  */
 function runCargo(cargoArgs, spawn = spawnSync) {
   const args = [...cargoArgs];
-  if (cargoArgs[0] !== 'fmt') args.push('--locked');
+  // Cargo's own flag: after `--` it would reach clippy-driver, which rejects it.
+  if (cargoArgs[0] !== 'fmt') {
+    const sep = args.indexOf('--');
+    args.splice(sep === -1 ? args.length : sep, 0, '--locked');
+  }
   return spawn('cargo', args, { stdio: 'inherit', cwd: TRAY_CRATE_DIR });
 }
 

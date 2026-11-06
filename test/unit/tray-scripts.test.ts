@@ -31,6 +31,8 @@ describe('tray-check.mjs', () => {
       if (!cargo[0].args.includes('--check')) process.exit(5);
       if (!cargo[2].args.includes('--target')) process.exit(6);
       if (!cargo.every((c) => c.args[0] === 'fmt' || c.args.includes('--locked'))) process.exit(7);
+      const beforeSep = (a) => !a.includes('--') || a.indexOf('--locked') < a.indexOf('--');
+      if (!cargo.every((c) => beforeSep(c.args))) process.exit(8);
     `);
     expect(r.status, r.stderr).toBe(0);
   });
