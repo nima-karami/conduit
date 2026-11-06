@@ -63,6 +63,8 @@ export interface GpuCoordinator<T> {
   /** A face finished loading: every live terminal re-rasterises (spec 2026-11-02 §8). */
   refreshFonts(): void;
   applyFontFamily(family: string): void;
+  /** True while this terminal has a live WebGL addon. */
+  hasAddon(term: T): boolean;
 }
 
 export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordinator<T> {
@@ -226,6 +228,9 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
     applyFontFamily(family) {
       for (const term of entries.keys()) deps.applyFontFamily(term, family);
       refreshAll();
+    },
+    hasAddon(term) {
+      return entries.get(term) != null;
     },
   };
 }

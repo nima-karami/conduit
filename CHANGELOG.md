@@ -14,6 +14,10 @@ All notable user-facing changes to Conduit. Format follows
 - The quit dialog mentions the notification-area icon when it will be available.
 - The notification-area "needs you" count ignores Snooze in the app.
 
+### Fixed
+- **Terminal history is recorded at the terminal's real width.** A size measured before the terminal's
+  font loaded could reach the background service, so lines wrapped at the wrong width after a reload.
+
 ## [0.56.2] — 2026-11-05
 
 ### Added
