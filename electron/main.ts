@@ -2235,6 +2235,7 @@ app.whenReady().then(() => {
   // Before the lifecycle: the start rule and its F6/F9 waits read this one subscription.
   const hcEvents = createHcEvents(hc, { 'conduit.instance': names.instance }, appLog);
   let lifecycle: ReturnType<typeof createServerLifecycle> | null = null;
+  let trayAvailable = false;
   const serverClient = () => lifecycle?.client() ?? null;
   const serverCalls = createServerCalls(() => lifecycle);
   const callServer = serverCalls.call;
@@ -2522,6 +2523,8 @@ app.whenReady().then(() => {
       appPath: app.getAppPath(),
       env: process.env,
     });
+    if (prepared) layout.trayExe = prepared.trayExe;
+    trayAvailable = layout.trayExe !== null;
     // D23: under the single-instance lock, before the start rule.
     try {
       const gc = await collectRuntimeGarbage(
@@ -4607,6 +4610,9 @@ app.whenReady().then(() => {
   // no preload can ever outrun it.
   ipcMain.on('settings:initial', (e) => {
     e.returnValue = settings;
+  });
+  ipcMain.on('tray:available', (e) => {
+    e.returnValue = trayAvailable;
   });
   ipcMain.on('pty:windowsPty', (e) => {
     e.returnValue = currentWindowsPty();

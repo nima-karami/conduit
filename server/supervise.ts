@@ -15,8 +15,11 @@ import {
   SUPERVISOR_GIVE_UP,
   SUPERVISOR_MARKER_POLL_MS,
 } from '../src/contracts/session-identity';
+import type { ServerToSupervisor } from '../src/contracts/tray-protocol';
 import { instanceNames } from '../src/instance-names';
+import { profileLabelOf, trayView } from '../src/tray-view';
 import {
+  directStopSessions,
   hcBinaryOf,
   hcClient,
   serverChildEnv,
@@ -25,7 +28,14 @@ import {
   supervisorCore,
 } from './hc-cli';
 import { argValue, requireUserData } from './lifecycle/cli-args';
-import type { SuperviseExit, SuperviseOptions } from './tray/contracts';
+import { seamEnabled, splitSupervisorArgs } from './tray/args';
+import type { SuperviseExit, SuperviseOptions, TrayRelay, TrayRelayDeps } from './tray/contracts';
+import { pollRunning } from './tray/hc-poll';
+import { createHelperLauncher, nodeSpawnHelper } from './tray/helper-process';
+import { installTray, nodeInstallFs, sha256File } from './tray/install';
+import { createTrayRelay } from './tray/relay';
+import { createTraySeam } from './tray/seam';
+import { createTrayLog } from './tray/tray-log';
 
 export { serverChildEnv } from './hc-cli';
 export type { SuperviseExit, SuperviseOptions } from './tray/contracts';
@@ -235,15 +245,59 @@ export function spawnServerChild(
 async function runCli(): Promise<void> {
   // hc run starts us with cwd = coreStartCwd; a cwd there would block that dir's GC rename (D23, M21).
   process.chdir(__dirname);
-  const args = process.argv.slice(2);
+  await runCliWith({ argv: process.argv.slice(2), platform: process.platform });
+}
+
+export async function runCliWith(deps: {
+  argv: string[];
+  platform: NodeJS.Platform;
+  createRelay?: (deps: TrayRelayDeps) => TrayRelay;
+  supervise?: (options: SuperviseOptions) => Promise<SuperviseExit>;
+}): Promise<void> {
+  const { tray, rest: args } = splitSupervisorArgs(deps.argv);
   const userData = requireUserData(args);
   const supervisorTerminal = process.env.HC_TERMINAL_ID;
-  const names = instanceNames(userData, process.platform, tmpdir());
+  const names = instanceNames(userData, deps.platform, tmpdir());
   const env = serverChildEnv(process.env, names);
   const hc = hcBinaryOf(argValue(args, '--hc'), names);
   const childArgs = [path.join(__dirname, 'main.js'), ...args];
   if (supervisorTerminal) childArgs.push('--supervisor-terminal', supervisorTerminal);
-  await supervise({
+  const setTimer = (ms: number, cb: () => void) => {
+    const timer = setTimeout(cb, ms);
+    return () => clearTimeout(timer);
+  };
+  const trayLog = createTrayLog(path.join(userData, 'tray.log'));
+  const relay =
+    deps.platform === 'win32' && tray
+      ? (deps.createRelay ?? createTrayRelay)({
+          tray,
+          view: trayView,
+          log: trayLog,
+          now: Date.now,
+          setTimer,
+          profileLabel: profileLabelOf(userData, process.env.APPDATA ?? '', '\\'),
+          seam: seamEnabled(args) ? createTraySeam({ userData, setTimer, log: trayLog }) : null,
+          pollRunning: () =>
+            pollRunning(() => hcClient(names, env, logToStderr), names, logToStderr),
+          launcher: createHelperLauncher({
+            install: () =>
+              installTray({
+                source: tray.source,
+                stableDir: path.join(names.runtimeRoot, 'tray'),
+                fs: nodeInstallFs,
+                sha256: sha256File,
+                tag: `${process.pid}.${randomUUID()}`,
+              }),
+            spawn: (exe, argv, options) => nodeSpawnHelper(exe, argv, options, logToStderr),
+            env: process.env,
+            cwd: __dirname,
+            log: trayLog,
+            now: Date.now,
+            setTimer,
+          }),
+        })
+      : null;
+  const exit = await (deps.supervise ?? supervise)({
     userData,
     logPath: path.join(userData, 'server.log'),
     spawnChild: () =>
@@ -252,7 +306,40 @@ async function runCli(): Promise<void> {
         childArgs,
         serverProcessEnv(process.env, names),
         __dirname,
+        logToStderr,
+        relay
+          ? (child) =>
+              relay.attachServer({
+                send: (m) => {
+                  if (child.connected) child.send(m);
+                },
+                onMessage: (cb) => {
+                  const listener = (m: ServerToSupervisor) => cb(m);
+                  child.on('message', listener);
+                  return () => {
+                    child.off('message', listener);
+                  };
+                },
+                closed: new Promise<void>((resolve) => {
+                  child.once('close', () => resolve());
+                }),
+              })
+          : undefined,
       ),
+    ...(relay
+      ? {
+          stopSignal: relay.stopSignal,
+          hooks: relay.hooks,
+          stopSessions: async () => {
+            const client = hcClient(names, env, logToStderr);
+            try {
+              return await directStopSessions(client, names);
+            } finally {
+              client.close();
+            }
+          },
+        }
+      : {}),
     // Without an hc terminal of our own we run as a plain spawn and there is no core of ours.
     ...(supervisorTerminal
       ? {
@@ -265,6 +352,7 @@ async function runCli(): Promise<void> {
         }
       : {}),
   });
+  await relay?.finish(exit);
 }
 
 if (require.main === module) {

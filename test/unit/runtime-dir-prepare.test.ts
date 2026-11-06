@@ -93,6 +93,18 @@ beforeEach(() => {
 afterEach(() => rmSync(base, { recursive: true, force: true }));
 
 describe('prepareRuntime', () => {
+  it('starts without a tray when the bundled helper is missing', async () => {
+    rmSync(join(resourcesDir, 'runtime', 'tray'), { recursive: true, force: true });
+    const prepared = await prepareRuntime({
+      resourcesDir,
+      userData,
+      appVersion: 'missing-tray',
+      hcVersion: '0.1.16',
+      shimVersion: 1,
+      platform: 'win32',
+    });
+    expect(prepared.trayExe).toBeNull();
+  });
   it('publishes the renamed engine beside an immutable legacy runtime', async () => {
     const legacy = runtime('hc', '0.1.16', 'hc.exe');
     put(legacy, 'live-legacy-engine');
@@ -201,6 +213,7 @@ describe('prepareRuntime', () => {
     expect(readFileSync(prepared.mainJs, 'utf8')).toBe('main-js');
     expect(readFileSync(prepared.superviseJs, 'utf8')).toBe('supervise-js');
     expect(readFileSync(prepared.hcExe, 'utf8')).toBe('hc-bytes');
+    if (!prepared.trayExe) throw new Error('Expected a prepared tray helper');
     expect(readFileSync(prepared.trayExe, 'utf8')).toBe('tray-bytes');
     expect(readFileSync(runtime('conduit-hc', '0.1.16', 'conpty', 'conpty.dll'), 'utf8')).toBe(
       'conpty-bytes',

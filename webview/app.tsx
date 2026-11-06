@@ -109,6 +109,7 @@ import {
   lspInvoke,
   post,
   subscribe,
+  trayHintFromHost,
 } from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
@@ -760,7 +761,14 @@ export function App() {
             slot.open({
               kind: 'confirm',
               key,
-              state: quitConfirmState({ running, busy, reason, onShown, resolve }),
+              state: quitConfirmState({
+                running,
+                busy,
+                reason,
+                onShown,
+                resolve,
+                trayHint: trayHintFromHost(window.agentDeck),
+              }),
             });
           }),
         focusDialog: focusOpenModal,

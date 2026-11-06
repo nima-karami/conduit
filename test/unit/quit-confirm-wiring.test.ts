@@ -35,6 +35,16 @@ async function renderQuitConfirm(
 }
 
 describe('quitConfirmState', () => {
+  it.each([true, false, undefined])('uses the tray availability fact %s', (trayHint) => {
+    const state = quitConfirmState({
+      reason: 'quit',
+      running: 2,
+      busy: 0,
+      resolve: vi.fn(),
+      trayHint,
+    });
+    expect(state.message.includes('notification area')).toBe(trayHint === true);
+  });
   it('sets hideCancel, showClose, and focusClose; never focusCancel', () => {
     const resolve = vi.fn();
     const state = quitConfirmState({ reason: 'quit', running: 2, busy: 1, resolve });
