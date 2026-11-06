@@ -39,6 +39,7 @@ export function parseRunnerArgs(argv) {
     retry: false,
     quarantine: null,
     repeat: 1,
+    attemptBase: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -50,6 +51,13 @@ export function parseRunnerArgs(argv) {
         return { error: '--repeat needs an integer ≥ 1' };
       }
       out.repeat = n;
+    } else if (a === '--attempt-base') {
+      const v = argv[++i];
+      const n = Number(v);
+      if (v === undefined || v.startsWith('--') || !Number.isInteger(n) || n < 1) {
+        return { error: '--attempt-base needs an integer ≥ 1' };
+      }
+      out.attemptBase = n;
     } else if (Object.hasOwn(VALUE_FLAGS, a)) {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) return { error: `${a} needs a value` };
@@ -58,6 +66,18 @@ export function parseRunnerArgs(argv) {
     else out.names.push(a);
   }
   return out;
+}
+
+/** Repeat mode is `--repeat > 1` or an explicit `--attempt-base` (1-run shards still count). */
+export function repeatMode(args) {
+  const attemptBase = args.attemptBase ?? null;
+  const active = attemptBase != null || args.repeat > 1;
+  return {
+    active,
+    retry: active ? false : Boolean(args.retry),
+    count: args.repeat,
+    attemptBase: attemptBase ?? 1,
+  };
 }
 
 /**

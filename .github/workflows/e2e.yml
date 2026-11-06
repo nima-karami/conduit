@@ -175,9 +175,13 @@ jobs:
             const include = shards.map((s) => ({
               shard: s.index + 1,
               names: s.names.join(" "),
-              ...(s.runs ? { runs: s.runs } : {}),
+              ...(s.runs ? { runs: s.runs, attemptBase: s.attemptBase } : {}),
             }));
-            const plan = { shards: shards.map((s) => ({ index: s.index, names: s.names })) };
+            const plan = { shards: shards.map((s) => ({
+              index: s.index,
+              names: s.names,
+              ...(s.runs ? { runs: s.runs, attemptBase: s.attemptBase } : {}),
+            })) };
             appendFileSync(process.env.GITHUB_OUTPUT, [
               `matrix=${JSON.stringify({ include })}`,
               `plan=${JSON.stringify(plan)}`,
@@ -290,7 +294,7 @@ jobs:
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'e2e-out'
           New-Item -ItemType Directory -Force "$out/results", "$out/artifacts" | Out-Null
-          node test/e2e/run-smoke.mjs @($env:E2E_NAMES -split " ") --json "$out/results/shard-$env:SHARD.json" --artifacts "$out/artifacts" --retry --quarantine test/e2e/quarantine.json --repeat ${{ matrix.runs || 1 }}
+          node test/e2e/run-smoke.mjs @($env:E2E_NAMES -split " ") --json "$out/results/shard-$env:SHARD.json" --artifacts "$out/artifacts" --retry --quarantine test/e2e/quarantine.json --repeat ${{ matrix.runs || 1 }}${{ matrix.attemptBase && format(' --attempt-base {0}', matrix.attemptBase) || '' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -46,7 +46,7 @@ export function infraRerunLine(
   sha?: string,
 ): string | null;
 export function mergeResults(
-  plan: { shards: { index: number; names: string[] }[] },
+  plan: { shards: { index: number; names: string[]; runs?: number; attemptBase?: number }[] },
   shardFiles: {
     shard: number;
     results: {

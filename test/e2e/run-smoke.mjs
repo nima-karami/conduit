@@ -12,16 +12,18 @@
  * Usage:
  *   node test/e2e/run-smoke.mjs <name…> [--names-file f.json] [--json out.json]
  *                                       [--artifacts dir] [--retry] [--quarantine q.json]
- *                                       [--repeat K]
+ *                                       [--repeat K] [--attempt-base N]
  *
  *   --names-file  JSON array of names, added to the positional ones
  *   --json        result rows `[{ name, status, seconds, attempts }]`, rewritten after each scenario;
- *                 with --repeat > 1 each attempt is `{ name, attempt, status, seconds, exit }`
+ *                 in repeat mode each attempt is `{ name, attempt, status, seconds, exit }`
  *   --artifacts   failure artifacts root: each non-PASS attempt's log (and, from the harness, its
  *                 trace and screenshots) lands in <dir>/<name>/attempt-<n>/
  *   --retry       a failed or timed-out scenario runs once more; a pass then is FLAKY
- *                 (ignored when --repeat > 1)
+ *                 (ignored in repeat mode)
  *   --repeat K    run each scenario K times (K ≥ 1, default 1); every attempt is its own result row
+ *   --attempt-base N  first attempt number (integer ≥ 1); implies repeat mode even when K is 1
+ *                     so a 1-run shard still disables --retry and emits `attempt`
  *   --quarantine  test/e2e/quarantine.json: a listed scenario that still fails is
  *                 QUARANTINED-FAIL, reported but not failing the run
  *
@@ -45,6 +47,7 @@ import {
   killTimerStart,
   orphanVictims,
   parseRunnerArgs,
+  repeatMode,
   resolveSelection,
   selectRunProfiles,
 } from './smoke-select.mjs';
@@ -307,20 +310,21 @@ async function main() {
   const ICON = { PASS: '✓', SKIP: '○', FLAKY: '~', 'QUARANTINED-FAIL': 'q' };
   const results = [];
   const flakyFirst = [];
-  const repeat = args.repeat ?? 1;
+  const mode = repeatMode(args);
   // CON-143: every attempt counts; a pass-on-retry FLAKY would hide a real fail.
-  if (repeat > 1 && args.retry) {
-    console.log('[smoke] --repeat > 1: --retry is ignored (every attempt counts)\n');
+  if (mode.active && args.retry) {
+    console.log('[smoke] repeat mode: --retry is ignored (every attempt counts)\n');
   }
-  const retry = repeat > 1 ? false : args.retry;
+  const retry = mode.retry;
 
   function recordJson() {
     if (args.json) writeFileSync(args.json, `${JSON.stringify(results, null, 2)}\n`);
   }
 
   for (const name of names) {
-    if (repeat > 1) {
-      for (let attempt = 1; attempt <= repeat; attempt++) {
+    if (mode.active) {
+      for (let local = 1; local <= mode.count; local++) {
+        const attempt = mode.attemptBase + local - 1;
         process.stdout.write(`  ${name} ... `);
         const last = await runAttempt(name, attempt);
         const status = applyQuarantine(name, last.status, quarantine);
@@ -335,7 +339,7 @@ async function main() {
           exit: last.exit,
         });
         recordJson();
-        if (attempt < repeat || name !== names[names.length - 1]) await settle();
+        if (local < mode.count || name !== names[names.length - 1]) await settle();
       }
       continue;
     }

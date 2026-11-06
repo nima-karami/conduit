@@ -13,6 +13,7 @@ import {
   parseRunnerArgs,
   profilePrefix,
   RUN_MARKER,
+  repeatMode,
   resolveSelection,
   watchdogDelayMs,
 } from '../e2e/smoke-select.mjs';
@@ -87,6 +88,7 @@ describe('parseRunnerArgs / applyExclusions', () => {
       retry: true,
       quarantine: null,
       repeat: 1,
+      attemptBase: null,
     });
     expect(parseRunnerArgs(['cwd', '--quarantine', 'q.json'])).toMatchObject({
       quarantine: 'q.json',
@@ -97,9 +99,23 @@ describe('parseRunnerArgs / applyExclusions', () => {
 
   it('parses --repeat N (integer ≥ 1; default 1)', () => {
     expect(parseRunnerArgs(['a', '--repeat', '3'])).toMatchObject({ names: ['a'], repeat: 3 });
-    expect(parseRunnerArgs(['a'])).toMatchObject({ repeat: 1 });
+    expect(parseRunnerArgs(['a'])).toMatchObject({ repeat: 1, attemptBase: null });
     expect(parseRunnerArgs(['a', '--repeat', '0'])).toHaveProperty('error');
     expect(parseRunnerArgs(['a', '--repeat', 'x'])).toHaveProperty('error');
+  });
+
+  it('parses --attempt-base N (integer ≥ 1) so a 1-run shard stays in repeat mode', () => {
+    expect(parseRunnerArgs(['a', '--repeat', '1', '--attempt-base', '2', '--retry'])).toMatchObject(
+      {
+        names: ['a'],
+        repeat: 1,
+        attemptBase: 2,
+        retry: true,
+      },
+    );
+    expect(parseRunnerArgs(['a', '--attempt-base', '0'])).toHaveProperty('error');
+    expect(parseRunnerArgs(['a', '--attempt-base', 'x'])).toHaveProperty('error');
+    expect(parseRunnerArgs(['a', '--attempt-base'])).toHaveProperty('error');
   });
 
   it('keeps excluded names off the runner with their reason', () => {
@@ -107,6 +123,34 @@ describe('parseRunnerArgs / applyExclusions', () => {
       run: ['a'],
       excluded: { b: 'focus' },
     });
+  });
+});
+
+describe('repeatMode', () => {
+  const parsed = (argv: string[]) => {
+    const a = parseRunnerArgs(argv);
+    if ('error' in a) throw new Error(a.error);
+    return a;
+  };
+
+  it('--repeat 1 without attempt-base is ordinary: retry stays on', () => {
+    expect(repeatMode(parsed(['a', '--repeat', '1', '--retry']))).toEqual({
+      active: false,
+      retry: true,
+      count: 1,
+      attemptBase: 1,
+    });
+  });
+
+  it('repeat 3 → 3 shards × 1 run: --attempt-base disables retry and numbers attempts 1..3', () => {
+    const attempts = [1, 2, 3].map((attemptBase) => {
+      const mode = repeatMode(
+        parsed(['go-lsp', '--repeat', '1', '--attempt-base', String(attemptBase), '--retry']),
+      );
+      expect(mode).toMatchObject({ active: true, retry: false, count: 1, attemptBase });
+      return mode.attemptBase;
+    });
+    expect(attempts).toEqual([1, 2, 3]);
   });
 });
 

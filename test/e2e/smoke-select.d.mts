@@ -17,8 +17,15 @@ export function parseRunnerArgs(argv: string[]):
       retry: boolean;
       quarantine: string | null;
       repeat: number;
+      attemptBase: number | null;
     }
   | { error: string };
+export function repeatMode(args: { retry: boolean; repeat: number; attemptBase: number | null }): {
+  active: boolean;
+  retry: boolean;
+  count: number;
+  attemptBase: number;
+};
 export function resolveSelection(o: {
   names: string[];
   stems: string[];

@@ -3,6 +3,8 @@
  * the `report` job of .github/workflows/e2e.yml. Spec: docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md §3.
  */
 
+import { plannedAttempts } from './ci-repeat-plan.mjs';
+
 const NO_ARTIFACT = new Set(['PASS', 'SKIP', 'EXCLUDED', 'INFRA']);
 const FAILED = new Set(['FAIL', 'TIMEOUT']);
 
@@ -67,10 +69,55 @@ function decorate(row, shard, meta) {
   return out;
 }
 
+function shardNameKey(shard, name) {
+  return `${shard}\0${name}`;
+}
+
+function attemptKey(shard, name, attempt) {
+  return `${shard}\0${name}\0${attempt}`;
+}
+
 export function mergeResults(plan, shardFiles, meta) {
+  const planned = plannedAttempts(plan.shards);
   const attempted = shardFiles.some((f) => f.results.some((r) => r.attempt != null));
   const results = [];
-  if (attempted) {
+  if (planned.length) {
+    const byExact = new Map();
+    const byShardName = new Map();
+    for (const f of shardFiles) {
+      for (const r of f.results) {
+        const row = { ...r, shard: f.shard };
+        if (r.attempt != null) byExact.set(attemptKey(f.shard, r.name, r.attempt), row);
+        else {
+          const k = shardNameKey(f.shard, r.name);
+          const bucket = byShardName.get(k);
+          if (bucket) bucket.push(row);
+          else byShardName.set(k, [row]);
+        }
+      }
+    }
+    for (const p of planned) {
+      const exact = byExact.get(attemptKey(p.shard, p.name, p.attempt));
+      if (exact) {
+        results.push(decorate(exact, p.shard, meta));
+        byExact.delete(attemptKey(p.shard, p.name, p.attempt));
+        continue;
+      }
+      const bucket = byShardName.get(shardNameKey(p.shard, p.name));
+      const fallback = bucket?.shift();
+      if (fallback) {
+        results.push(decorate({ ...fallback, attempt: p.attempt }, p.shard, meta));
+        continue;
+      }
+      results.push(
+        decorate({ name: p.name, status: 'INFRA', seconds: 0, attempt: p.attempt }, p.shard, meta),
+      );
+    }
+    for (const r of byExact.values()) results.push(decorate(r, r.shard, meta));
+    for (const bucket of byShardName.values()) {
+      for (const r of bucket) results.push(decorate(r, r.shard, meta));
+    }
+  } else if (attempted) {
     for (const f of shardFiles) {
       for (const r of f.results) results.push(decorate(r, f.shard, meta));
     }

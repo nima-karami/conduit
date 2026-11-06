@@ -140,6 +140,54 @@ describe('repeat aggregation', () => {
     expect(summaryMarkdown(r)).toMatch(/go-lsp \| 19\/20/);
     expect(summaryMarkdown(r)).toContain('FAIL@1#4');
   });
+
+  const repeat3 = {
+    shards: [
+      { index: 0, names: ['go-lsp'], runs: 1, attemptBase: 1 },
+      { index: 1, names: ['go-lsp'], runs: 1, attemptBase: 2 },
+      { index: 2, names: ['go-lsp'], runs: 1, attemptBase: 3 },
+    ],
+  };
+
+  it('one shard FAIL + two PASS → 2/3 and status failed (must not key by name)', () => {
+    const r = mergeResults(
+      repeat3,
+      [
+        { shard: 1, results: [{ name: 'go-lsp', status: 'FAIL', seconds: 1 }] },
+        { shard: 2, results: [{ name: 'go-lsp', status: 'PASS', seconds: 1 }] },
+        { shard: 3, results: [{ name: 'go-lsp', status: 'PASS', seconds: 1 }] },
+      ],
+      meta,
+    );
+    expect(r.status).toBe('failed');
+    expect(r.results).toHaveLength(3);
+    expect(r.results.map((x) => [x.attempt, x.status])).toEqual([
+      [1, 'FAIL'],
+      [2, 'PASS'],
+      [3, 'PASS'],
+    ]);
+    expect(summaryMarkdown(r)).toMatch(/go-lsp \| 2\/3/);
+  });
+
+  it('a missing shard is an INFRA attempt: 2/3, status not passed', () => {
+    const r = mergeResults(
+      repeat3,
+      [
+        { shard: 1, results: [{ name: 'go-lsp', attempt: 1, status: 'PASS', seconds: 1 }] },
+        { shard: 2, results: [{ name: 'go-lsp', attempt: 2, status: 'PASS', seconds: 1 }] },
+      ],
+      meta,
+    );
+    expect(r.status).not.toBe('passed');
+    expect(r.results).toHaveLength(3);
+    expect(r.results.find((x) => x.attempt === 3)).toMatchObject({
+      name: 'go-lsp',
+      status: 'INFRA',
+      shard: 3,
+    });
+    expect(summaryMarkdown(r)).toMatch(/go-lsp \| 2\/3/);
+    expect(summaryMarkdown(r)).toContain('INFRA@3#3');
+  });
 });
 
 describe('quarantine and nightly history in the report', () => {

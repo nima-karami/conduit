@@ -12,6 +12,22 @@ export function repeatMatrix(names, repeat) {
       index,
       names: [...names],
       runs,
+      // Unique across shards so a 1-run matrix cannot collide in the merger.
+      attemptBase: index * runs + 1,
     })),
   };
+}
+
+export function plannedAttempts(shards) {
+  const out = [];
+  for (const s of shards) {
+    if (!s.runs) continue;
+    const base = s.attemptBase ?? s.index * s.runs + 1;
+    for (const name of s.names) {
+      for (let i = 0; i < s.runs; i++) {
+        out.push({ name, shard: s.index + 1, attempt: base + i });
+      }
+    }
+  }
+  return out;
 }
