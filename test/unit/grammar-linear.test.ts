@@ -66,9 +66,7 @@ describe('grammar runner', () => {
 describe('grammar linearity', () => {
   for (const [name, grammar] of Object.entries(ALL)) {
     // Ratio, not a wall-clock bound: load stretches both sizes, not the 20k/2k quotient.
-    it(`${name} tokenizes adversarial 20 000-char lines linearly from every state`, {
-      retry: 2,
-    }, () => {
+    it(`${name} tokenizes adversarial 20 000-char lines linearly from every state`, () => {
       for (const state of grammarStates(grammar)) {
         const tokenizer = monarchTokenizer(grammar, state);
         for (const make of ADVERSARIAL) {
@@ -80,12 +78,9 @@ describe('grammar linearity', () => {
             t20k,
             `${name}@${state} hang guard on ${JSON.stringify(line.slice(0, 6))}…`,
           ).toBeLessThan(2000);
-          if (t2k <= 0) {
-            expect(t20k, `${name}@${state} unmeasurable 2k`).toBeLessThan(10);
-            continue;
-          }
+          // Floor the 2k time at the timer resolution so a near-zero sample can't divide by ~0.
           expect(
-            t20k / t2k,
+            t20k / Math.max(t2k, 0.05),
             `${name}@${state} on ${JSON.stringify(line.slice(0, 6))}…`,
           ).toBeLessThan(25);
         }
@@ -99,7 +94,6 @@ describe('grammar linearity', () => {
     // rule to ~6× at these sizes; 10× still sits well below quadratic.
     // The timeout leaves room for a quadratic rule to finish and fail the ratio, not time out.
     it(`${name} scales linearly on adversarial lines from every state`, {
-      retry: 2,
       timeout: 120_000,
     }, () => {
       for (const state of grammarStates(grammar)) {
