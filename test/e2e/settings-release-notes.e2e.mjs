@@ -1,7 +1,7 @@
 /**
- * settings-release-notes — Settings → Release notes reads the bundled CHANGELOG.md through the
- * host: it opens on the installed version, arrow keys move between versions, and both the About
- * row and the What's-new dialog land on it.
+ * settings-release-notes — Settings → About → Release notes sub-page reads bundled CHANGELOG.md
+ * through the host: it opens on the installed version, arrow keys move between versions, and
+ * both the About updates row and the What's-new dialog land on the sub-page.
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -11,6 +11,27 @@ import { assert, profileDir, runScenario } from './harness.mjs';
 const currentVersion = JSON.parse(
   readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
 ).version;
+
+/** Newest-first CHANGELOG sections; skips Unreleased. Used to pick the longest notes body without clicking every rail row. */
+function longestReleasedVersion(markdown) {
+  let best = { version: '', len: 0 };
+  for (const section of markdown
+    .replace(/\r\n?/g, '\n')
+    .split(/^## \[/m)
+    .slice(1)) {
+    const end = section.indexOf(']');
+    if (end < 0) continue;
+    const version = section.slice(0, end).trim();
+    if (!version || version.toLowerCase() === 'unreleased') continue;
+    const body = section.slice(section.indexOf('\n', end)).trim();
+    if (body.length > best.len) best = { version: version.replace(/^v/i, ''), len: body.length };
+  }
+  return best.version;
+}
+
+const longestNotesVersion = longestReleasedVersion(
+  readFileSync(new URL('../../CHANGELOG.md', import.meta.url), 'utf8'),
+);
 
 // A settings file with no lastSeenVersion is a legacy profile: the post-update toast offers the
 // installed version's notes, which is the What's-new entry point checked last.
@@ -55,6 +76,12 @@ async function assertFocusLanded(page, route) {
   assert(landed, `${route}: focus lands on the selected version inside Settings (got ${where})`);
 }
 
+async function openReleaseNotesFromAbout(page) {
+  await page.locator('.settings__navitem', { hasText: 'About' }).click();
+  await page.locator('.about__updatectl').getByRole('button', { name: 'Release notes' }).click();
+  await page.locator('[data-release-notes="ready"]').waitFor({ state: 'visible', timeout: 10000 });
+}
+
 async function closeSettings(page) {
   await page.locator('.settings .iconbtn[aria-label="Close settings"]').click();
   await page.locator('.modal.settings').waitFor({ state: 'detached', timeout: 5000 });
@@ -67,12 +94,13 @@ runScenario(
     const toast = page.locator('[data-post-update-toast]');
     await toast.waitFor({ state: 'visible', timeout: 15000 });
 
-    // 1. Settings → Release notes opens on the installed version and renders its notes.
+    // 1. Settings → About → Release notes opens on the installed version and renders its notes.
     await page.locator('.footbtn[title^="Settings"]').click();
-    await page.locator('.settings__navitem', { hasText: 'Release notes' }).click();
-    await page
-      .locator('[data-release-notes="ready"]')
-      .waitFor({ state: 'visible', timeout: 10000 });
+    assert(
+      (await page.locator('.settings__navitem', { hasText: 'Release notes' }).count()) === 0,
+      'Settings has no Release notes nav item',
+    );
+    await openReleaseNotesFromAbout(page);
     await waitShown(page, currentVersion);
     assert(
       (await selectedVersion(page)) === `v${currentVersion}`,
@@ -95,19 +123,48 @@ runScenario(
     );
     log(`opened on v${currentVersion}`);
 
-    // 2. Arrow keys move the selection (and focus) and swap the notes, scrolled to the top.
+    const paneFits = await page
+      .locator('.settings__pane')
+      .evaluate((el) => el.scrollHeight <= el.clientHeight);
+    assert(paneFits, 'the settings pane does not scroll');
+    const railScrolls = await page
+      .locator('.relnotes__rail')
+      .evaluate((el) => el.scrollHeight > el.clientHeight);
+    assert(railScrolls, 'the version rail scrolls');
+
     const options = page.locator('.relnotes__rail [role="option"]');
-    const index = Number(await installedRow.getAttribute('data-index'));
+    assert(longestNotesVersion, 'CHANGELOG has a released version with notes');
+    await options
+      .filter({ hasText: `v${longestNotesVersion}` })
+      .first()
+      .click();
+    await waitShown(page, longestNotesVersion);
+    const scrollable = await body.evaluate((el) => el.scrollHeight > el.clientHeight);
+    assert(scrollable, 'the longest entry notes body scrolls independently of the rail');
+    const subheadBefore = await page.locator('.about__subhead').boundingBox();
+    await body.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    const subheadAfter = await page.locator('.about__subhead').boundingBox();
+    assert(
+      subheadBefore?.y === subheadAfter?.y,
+      'the Back header stays visible while the notes body scrolls',
+    );
+
+    // 2. Arrow keys move the selection (and focus) and swap the notes, scrolled to the top.
+    const installedOption = page
+      .locator('.relnotes__rail [role="option"]')
+      .filter({ has: page.getByText('Installed', { exact: true }) });
+    await installedOption.click();
+    await waitShown(page, currentVersion);
+    const index = Number(await installedOption.getAttribute('data-index'));
+    await installedOption.press('ArrowDown');
     const nextVersion = (
       await options
         .nth(index + 1)
         .locator('.relnotes__vername')
         .textContent()
     )?.replace(/^v/, '');
-    await body.evaluate((el) => {
-      el.scrollTop = el.scrollHeight;
-    });
-    await installedRow.press('ArrowDown');
     await waitShown(page, nextVersion);
     assert(
       await page.evaluate(() => document.activeElement?.getAttribute('aria-selected') === 'true'),
@@ -125,21 +182,38 @@ runScenario(
     assert((await shownVersion(page)) === first?.replace(/^v/, ''), 'Up at the top stays put');
     log(`arrow keys: v${currentVersion} → v${nextVersion}, End → ${last}, Home → ${first}`);
 
-    // 3. About → Release notes "View all" lands on the page.
-    await page.locator('.settings__navitem', { hasText: 'About' }).click();
-    await page
-      .locator('.about__row', { hasText: 'Release notes' })
-      .getByRole('button', { name: 'View all' })
-      .click();
+    // 3. Back → Release notes button → reopen → Escape steps back, then closes Settings.
+    await page.locator('.about__subhead .iconbtn[aria-label="Back"]').click();
+    const releaseBtn = page
+      .locator('.about__updatectl')
+      .getByRole('button', { name: 'Release notes' });
+    await page.waitForFunction(
+      () => document.activeElement?.textContent?.trim() === 'Release notes',
+      null,
+      { timeout: 5000 },
+    );
+    await releaseBtn.click();
     await waitShown(page, currentVersion);
     assert(
-      (await page.locator('.settings__navitem--active').textContent()) === 'Release notes',
-      'About → View all switches the section to Release notes',
+      (await page.locator('.settings__navitem--active').textContent()) === 'About',
+      'reopen keeps About active',
     );
-    await assertFocusLanded(page, 'About → View all');
-    await closeSettings(page);
+    assert(
+      (await page.locator('.about__subtitle').textContent()) === 'Release notes',
+      'reopen shows the release-notes sub-page',
+    );
+    await assertFocusLanded(page, 'About → Release notes reopen');
+    await page.keyboard.press('Escape');
+    await page.locator('.about__subtitle').waitFor({ state: 'detached', timeout: 5000 });
+    assert(
+      await page.locator('.modal.settings').isVisible(),
+      'Settings stays open after first Escape',
+    );
+    await page.keyboard.press('Escape');
+    await page.locator('.modal.settings').waitFor({ state: 'detached', timeout: 5000 });
+    log('Back and Escape navigate the sub-page');
 
-    // 4. What's new → "All release notes" closes the dialog and opens Settings on the page.
+    // 4. What's new → "All release notes" closes the dialog and opens Settings on the sub-page.
     await toast.getByRole('button', { name: "What's new" }).click();
     const dialog = page.locator('[role="dialog"][data-whats-new]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
@@ -148,10 +222,15 @@ runScenario(
     await page.locator('.modal.settings').waitFor({ state: 'visible', timeout: 5000 });
     await waitShown(page, currentVersion);
     assert(
-      (await page.locator('.settings__navitem--active').textContent()) === 'Release notes',
-      "What's new → All release notes opens Settings on Release notes",
+      (await page.locator('.settings__navitem--active').textContent()) === 'About',
+      "What's new → All release notes opens Settings on About",
+    );
+    assert(
+      (await page.locator('.about__subtitle').textContent()) === 'Release notes',
+      "What's new lands on the release-notes sub-page",
     );
     await assertFocusLanded(page, "What's new → All release notes");
+    await closeSettings(page);
     log('About row and What’s-new link both land on Release notes');
   },
   { userDataDir },

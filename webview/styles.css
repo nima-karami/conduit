@@ -7701,10 +7701,36 @@ body.gh-resizing {
   padding: var(--density-settings-pane-pad);
   min-width: 0;
 }
+.settings__pane.settings__pane--relnotes {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
 
-/* Settings → Release notes. It stands in for .settings__pane rather than sitting inside it:
-   the version rail and the notes each scroll on their own, which a padded scrolling pane
-   would fight. */
+/* Settings → About → Release notes sub-page. The version rail and notes each scroll on their
+   own; the sub-page fills the pane height instead of the old top-level Release notes tab. */
+.about--relnotes {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.about__subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+.about__backicon {
+  transform: rotate(180deg);
+}
+.about__subtitle {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: calc(14px * var(--font-scale));
+}
 .relnotes {
   flex: 1;
   display: flex;
@@ -9043,7 +9069,15 @@ button.toggle--on .toggle__knob {
   padding: 20px;
   animation: modal-pop 0.12s ease;
 }
+.confirm__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
 .confirm__title {
+  flex: 1;
+  min-width: 0;
   font-family: var(--font-display);
   font-weight: 600;
   font-size: calc(15px * var(--font-scale));

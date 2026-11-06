@@ -75,7 +75,6 @@ export const CHROME_STR = {
     unpublished: 'Not published',
     unpublishedTitle: 'This version was tagged but never shipped; its changes are in the next one.',
     onGitHub: 'View on GitHub',
-    viewAll: 'View all',
     failed: 'Couldn’t load the release notes.',
     empty: 'This build has no release notes.',
     noBody: 'No notes for this version.',
