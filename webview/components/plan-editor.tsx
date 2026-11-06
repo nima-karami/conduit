@@ -38,6 +38,12 @@ export interface PlanEditorProps {
   fileReadOnly: boolean;
   onBody(next: string): void;
   onBodyRefused(reason: string): void;
+  /**
+   * A user transaction changed the document. Milkdown's `updated` listener is lodash-debounced
+   * 200 ms, and an agent write in that gap overwrites the keystroke unless dirtiness starts here
+   * (CON-134).
+   */
+  onDirty?(): void;
   onBlockFocus(index: number | null): void;
   agentChanged: ReadonlySet<string>;
   ref?: Ref<PlanEditorHandle>;
@@ -70,7 +76,24 @@ interface SpliceBase {
 }
 
 const changedKey = new PluginKey<ReadonlySet<string>>('MILKDOWN_PLAN_AGENT_CHANGED');
+const dirtyKey = new PluginKey('MILKDOWN_PLAN_DIRTY');
 const NO_HASHES: ReadonlySet<string> = new Set();
+
+/** Dirtiness starts on the transaction — Milkdown's `updated` is 200 ms too late (CON-134). */
+function dirtyPlugin(isReloading: () => boolean, onDirty: () => void): Plugin {
+  return new Plugin({
+    key: dirtyKey,
+    view() {
+      return {
+        update(view, prev) {
+          if (isReloading() || view.state.doc.eq(prev.doc)) return;
+          if (!view.editable) return;
+          onDirty();
+        },
+      };
+    },
+  });
+}
 
 /**
  * The top-level block an event landed in, by walking the DOM rather than asking ProseMirror:
@@ -166,6 +189,7 @@ interface SurfaceProps {
   agentChanged: ReadonlySet<string>;
   onBody(next: string): void;
   onBodyRefused(reason: string): void;
+  onDirty(): void;
   onBlockFocus(index: number | null): void;
   handle: Ref<PlanEditorHandle>;
 }
@@ -177,6 +201,7 @@ function PlanEditorSurface({
   agentChanged,
   onBody,
   onBodyRefused,
+  onDirty,
   onBlockFocus,
   handle,
 }: SurfaceProps) {
@@ -188,15 +213,16 @@ function PlanEditorSurface({
   const ctxRef = useRef<Ctx | null>(null);
   const bodyRef = useRef(body);
   const changedRef = useRef(agentChanged);
-  const callbacksRef = useRef({ onBody, onBodyRefused });
+  const callbacksRef = useRef({ onBody, onBodyRefused, onDirty });
   const readOnlyRef = useRef(readOnly);
   /** An external body that arrived while the caret was in the document; applied on blur. */
   const deferredRef = useRef<string | null>(null);
+  const reloadingRef = useRef(false);
 
   useEffect(() => {
     bodyRef.current = body;
     changedRef.current = agentChanged;
-    callbacksRef.current = { onBody, onBodyRefused };
+    callbacksRef.current = { onBody, onBodyRefused, onDirty };
   });
 
   const applyChanged = useCallback((ctx: Ctx, changed: ReadonlySet<string>): void => {
@@ -206,9 +232,14 @@ function PlanEditorSurface({
 
   const reload = useCallback(
     (ctx: Ctx, next: string, changed: ReadonlySet<string>): void => {
-      replaceAll(next, true)(ctx);
-      baseRef.current = baseOf(next, ctx.get(editorViewCtx).state.doc);
-      applyChanged(ctx, changed);
+      reloadingRef.current = true;
+      try {
+        replaceAll(next, true)(ctx);
+        baseRef.current = baseOf(next, ctx.get(editorViewCtx).state.doc);
+        applyChanged(ctx, changed);
+      } finally {
+        reloadingRef.current = false;
+      }
     },
     [applyChanged],
   );
@@ -302,6 +333,16 @@ function PlanEditorSurface({
         .use(listener)
         .use(history)
         .use($prose(() => agentChangedPlugin(() => baseRef.current.blocks)))
+        .use(
+          $prose(() =>
+            dirtyPlugin(
+              () => reloadingRef.current,
+              () => {
+                callbacksRef.current.onDirty();
+              },
+            ),
+          ),
+        )
         .use(
           $view(codeBlockSchema.node, () =>
             nodeViewFactory({
@@ -416,6 +457,7 @@ export function PlanEditor(props: PlanEditorProps) {
           agentChanged={props.agentChanged}
           onBody={props.onBody}
           onBodyRefused={props.onBodyRefused}
+          onDirty={props.onDirty ?? (() => {})}
           onBlockFocus={props.onBlockFocus}
           handle={props.ref ?? null}
         />

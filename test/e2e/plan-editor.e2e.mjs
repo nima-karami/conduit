@@ -219,9 +219,10 @@ try {
   // (c) An agent rewrite inside the 300 ms write debounce is a conflict, never a merge.
   await prose.locator('p').first().click();
   await page.keyboard.type(' PENDING-EDIT');
-  await page
-    .locator('.plan__save', { hasText: 'Saving…' })
-    .waitFor({ state: 'visible', timeout: 2000 });
+  await page.locator('.plan__save[data-plan-save="pending"]').waitFor({
+    state: 'visible',
+    timeout: 2000,
+  });
 
   const beforeConflict = readPlan();
   const theirs = beforeConflict.replace(
@@ -273,9 +274,10 @@ try {
   // it does.
   await prose.locator('p').first().click();
   await page.keyboard.type(' KEPT-EDIT');
-  await page
-    .locator('.plan__save', { hasText: 'Saving…' })
-    .waitFor({ state: 'visible', timeout: 2000 });
+  await page.locator('.plan__save[data-plan-save="pending"]').waitFor({
+    state: 'visible',
+    timeout: 2000,
+  });
 
   const beforeKeep = readPlan();
   const theirsAgain = beforeKeep.replace(

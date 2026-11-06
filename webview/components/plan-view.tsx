@@ -45,7 +45,7 @@ import {
 } from '../terminal-bus';
 import { pushToast } from '../toast-store';
 import { getViewState, planSourceViewStateId, setViewState } from '../view-state-store';
-import { PlanActionBar } from './plan-action-bar';
+import { PlanActionBar, type PlanSaveState } from './plan-action-bar';
 import { PlanDocContext } from './plan-code-block';
 import { CommentComposer, PlanCommentsPanel } from './plan-comments-panel';
 import { PlanEditor, type PlanEditorHandle } from './plan-editor';
@@ -202,6 +202,9 @@ export function PlanView({ doc, viewStateId, root, sessionId, file, onClose }: P
   const bodyRef = useRef<HTMLDivElement>(null);
   const bodyFocusRef = useFocusTargetRef(viewStateId, bodyRef);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const armedRef = useRef(false);
+  const pendingBodyRef = useRef<string | null>(null);
+  const awaitingBodyRef = useRef(false);
   const [armed, setArmed] = useState(false);
   const [everWrote, setEverWrote] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
@@ -224,13 +227,15 @@ export function PlanView({ doc, viewStateId, root, sessionId, file, onClose }: P
   const readOnly = state?.readOnly ?? false;
   const conflict = state?.conflict ?? null;
   const failure = refused ?? saveError;
-  const barSaveState: 'saved' | 'saving' | 'failed' | 'readonly' = readOnly
+  const barSaveState: PlanSaveState = readOnly
     ? 'readonly'
     : failure !== null
       ? 'failed'
-      : armed || (state?.pendingWrite ?? false)
-        ? 'saving'
-        : 'saved';
+      : armed
+        ? 'pending'
+        : state?.pendingWrite
+          ? 'saving'
+          : 'saved';
 
   useLayoutEffect(() => {
     const stored = getViewState(sourceKey);
@@ -242,6 +247,9 @@ export function PlanView({ doc, viewStateId, root, sessionId, file, onClose }: P
   const cancelWrite = useCallback((): void => {
     if (timerRef.current !== null) clearTimeout(timerRef.current);
     timerRef.current = null;
+    armedRef.current = false;
+    awaitingBodyRef.current = false;
+    pendingBodyRef.current = null;
     setArmed(false);
   }, []);
 
@@ -257,20 +265,54 @@ export function PlanView({ doc, viewStateId, root, sessionId, file, onClose }: P
     [root, slug],
   );
 
+  const flushWrite = useCallback((): void => {
+    timerRef.current = null;
+    const body = pendingBodyRef.current;
+    if (body === null) {
+      // Milkdown `updated` is still in its 200 ms debounce; handleBody writes when it arrives.
+      awaitingBodyRef.current = true;
+      return;
+    }
+    pendingBodyRef.current = null;
+    awaitingBodyRef.current = false;
+    armedRef.current = false;
+    setArmed(false);
+    save(body);
+  }, [save]);
+
+  const armWrite = useCallback((): void => {
+    if (slug === null) return;
+    markPending(root, slug);
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    awaitingBodyRef.current = false;
+    armedRef.current = true;
+    setArmed(true);
+    timerRef.current = setTimeout(flushWrite, WRITE_DEBOUNCE_MS);
+  }, [root, slug, flushWrite]);
+
+  const handleDirty = useCallback((): void => {
+    if (slug === null) return;
+    setRefused(null);
+    armWrite();
+  }, [slug, armWrite]);
+
   const handleBody = useCallback(
     (next: string): void => {
       if (slug === null) return;
       setRefused(null);
-      markPending(root, slug);
-      cancelWrite();
-      setArmed(true);
-      timerRef.current = setTimeout(() => {
-        timerRef.current = null;
+      pendingBodyRef.current = next;
+      if (awaitingBodyRef.current) {
+        awaitingBodyRef.current = false;
+        pendingBodyRef.current = null;
+        armedRef.current = false;
         setArmed(false);
         save(next);
-      }, WRITE_DEBOUNCE_MS);
+        return;
+      }
+      // The 300 ms write timer starts on the keystroke; resetting it here would add Milkdown's 200 ms.
+      if (!armedRef.current) armWrite();
     },
-    [root, slug, save, cancelWrite],
+    [slug, save, armWrite],
   );
 
   const handleBodyRefused = useCallback(
@@ -675,6 +717,7 @@ export function PlanView({ doc, viewStateId, root, sessionId, file, onClose }: P
               readOnly={docContext.readOnly}
               fileReadOnly={readOnly && conflict === null}
               onBody={handleBody}
+              onDirty={handleDirty}
               onBodyRefused={handleBodyRefused}
               onBlockFocus={handleBlockFocus}
               agentChanged={agentChanged}
