@@ -3,6 +3,17 @@ import type { GateVerdict } from './notice-gate';
 import { composeNotice } from './notice-text';
 import type { Handle, StoredMessage } from './types';
 
+/**
+ * What an in-band unread banner announces: un-noticed and never fyi, the same set a typed notice
+ * is due for (fyi is never noticed, see tickSession).
+ */
+export function bannerCandidates(
+  pending: readonly StoredMessage[],
+  handle: Handle,
+): StoredMessage[] {
+  return pending.filter((m) => m.priority !== 'fyi' && m.recipients[handle]?.status === 'queued');
+}
+
 export type AttentionRaise =
   | { kind: 'urgent-waiting'; handle: Handle; messageId: string }
   | { kind: 'unsent-notice'; handle: Handle }
@@ -28,6 +39,8 @@ export interface NotifierDeps {
 }
 export interface Notifier {
   tick(): Promise<void>;
+  /** A tool result carried an unread banner for these: they are noticed, as a typed notice would. */
+  noteDeliveredInBand(handle: Handle, messageIds: string[]): Promise<void>;
   forget(sessionId: string): void;
   /** Per-message ids held across ticks. Exists so a test can catch a leak. */
   trackedIds(): number;
@@ -123,6 +136,9 @@ export function createNotifier(deps: NotifierDeps, opts: { rearmAll: boolean }):
         }
       });
       await Promise.all(runs);
+    },
+    async noteDeliveredInBand(handle, messageIds) {
+      await deps.markNoticed(handle, messageIds);
     },
     forget(sessionId) {
       wasBusy.delete(sessionId);

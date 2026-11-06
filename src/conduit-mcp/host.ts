@@ -57,7 +57,8 @@ import {
   LATE_ECHO_POLL_MS,
   LATE_ECHO_WAIT_MS,
 } from './notice-gate';
-import { type AttentionRaise, createNotifier, type Notifier } from './notifier';
+import { composeUnreadBanner } from './notice-text';
+import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
 import { type ScreenSnapshot, screenVerdict } from './screen-verdict';
 import { assignHandle, createSessionRegistry } from './session-registry';
 import { createMessageStore, type StoreIo } from './store';
@@ -1106,10 +1107,35 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           ? { cancelled: true }
           : { ok: result.ok, ...(result.ok ? {} : { code: result.error.code }) }),
       });
-      return cancelled ? null : toToolCallResult(result);
+      if (cancelled) return null;
+      const built = toToolCallResult(result);
+      const banner = await unreadBannerFor(handle, name);
+      return banner === null
+        ? built
+        : { ...built, content: [...built.content, { type: 'text', text: banner }] };
     } finally {
       inflight.end();
     }
+  };
+
+  /**
+   * A busy lead never gets a typed notice (the gate waits for idle), so the unread count rides
+   * every tool result it makes. Marked noticed here, so the typed path does not repeat it.
+   */
+  const unreadBannerFor = async (
+    handle: Handle | undefined,
+    tool: string,
+  ): Promise<string | null> => {
+    if (!handle || !notifier || tool === 'read_inbox') return null;
+    if (!deps.domain.messagingOn() || !store.available()) return null;
+    const candidates = bannerCandidates(store.pending(handle), handle);
+    const text = composeUnreadBanner(candidates);
+    if (text === null) return null;
+    await notifier.noteDeliveredInBand(
+      handle,
+      candidates.map((m) => m.messageId),
+    );
+    return text;
   };
 
   const runMessaging = async (caller: Caller, name: ToolName, args: unknown) => {
