@@ -36,6 +36,7 @@ class FakeServer implements LspServerHandle {
   readonly pid = FakeServer.nextPid++;
   readonly initialized: Promise<void>;
   loading = false;
+  busy = false;
   notifies: {
     method: string;
     params: { textDocument?: { uri?: string; version?: number; text?: string } } & Record<
@@ -1338,6 +1339,7 @@ describe('LspManager — replies, re-home and status', () => {
     const t = setup();
     await t.open('/w/m/main.go');
     await t.ready();
+    (t.servers[0] as FakeServer).busy = true;
     expect(await t.send(1, 'e1', { type: 'lsp:statusSnapshot' })).toEqual({
       servers: [
         {
@@ -1346,6 +1348,7 @@ describe('LspManager — replies, re-home and status', () => {
           root: '/w/m',
           state: 'ready',
           pid: t.servers[0]?.pid,
+          busy: true,
         },
       ],
       languages: [

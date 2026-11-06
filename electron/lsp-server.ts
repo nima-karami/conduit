@@ -70,6 +70,7 @@ export interface LspServerHandle {
   readonly initialized: Promise<void>;
   /** Any `$/progress` begin token still open. Picks timeouts/state only — never gates a send. */
   readonly loading: boolean;
+  readonly busy: boolean;
   onProgress(cb: (loading: boolean, title: string | undefined) => void): void;
   onExit(cb: (e: LspExit) => void): void;
   notify(method: string, params: unknown): void;
@@ -102,6 +103,7 @@ function initializeParams(root: string, initializationOptions: unknown) {
     rootUri: uri,
     workspaceFolders: [{ uri, name: root }],
     capabilities: {
+      experimental: { serverStatusNotification: true },
       general: { positionEncodings: ['utf-16'] },
       textDocument: {
         synchronization: { dynamicRegistration: false },
@@ -148,6 +150,7 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
   });
 
   const openTokens = new Set<string | number>();
+  let serverBusy = false;
   const progressCbs: ((loading: boolean, title: string | undefined) => void)[] = [];
   const exitCbs: ((e: LspExit) => void)[] = [];
   let exited = false;
@@ -199,6 +202,9 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
       for (const cb of progressCbs) cb(openTokens.size > 0, p.value?.title);
     },
   );
+  conn.onNotification('experimental/serverStatus', (p: { quiescent?: boolean }) => {
+    if (typeof p?.quiescent === 'boolean') serverBusy = !p.quiescent;
+  });
   conn.onNotification('window/showMessage', (p: { message?: string }) =>
     log.info(SCOPE, `${spec.binary}: ${p?.message ?? ''}`),
   );
@@ -286,6 +292,9 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
     pid,
     initialized,
     exited: exitedP,
+    get busy() {
+      return openTokens.size > 0 || serverBusy;
+    },
     get loading() {
       return openTokens.size > 0;
     },
