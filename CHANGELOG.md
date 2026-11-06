@@ -6,6 +6,10 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- The notification-area icon is Conduit's app icon.
+- Clicking the notification-area icon works. Clicks used to wait until Conduit sent its next update.
+
 ## [0.57.0] — 2026-11-06
 
 ### Added
