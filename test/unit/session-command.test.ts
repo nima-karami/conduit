@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AgentRegistry } from '../../src/agent-registry';
 import {
   COMMAND_AGENT_ID,
+  coerceModel,
   coerceOpenedBy,
   coerceSessionCommand,
   commandDef,
@@ -124,5 +125,39 @@ describe('session-command', () => {
     expect(coerceOpenedBy({ handle: 1, sessionId: 's1' })).toBeUndefined();
     expect(coerceOpenedBy(null)).toBeUndefined();
     expect(coerceOpenedBy([])).toBeUndefined();
+  });
+});
+
+describe('session model (CON-148)', () => {
+  it('coerceModel keeps a plain model name and refuses anything else', () => {
+    expect(coerceModel('gpt-6.1-terra')).toBe('gpt-6.1-terra');
+    expect(coerceModel('openai/o3:high')).toBe('openai/o3:high');
+    expect(coerceModel('')).toBeUndefined();
+    expect(coerceModel('a b')).toBeUndefined();
+    expect(coerceModel('-m')).toBeUndefined();
+    expect(coerceModel('a&b')).toBeUndefined();
+    expect(coerceModel('x'.repeat(65))).toBeUndefined();
+    expect(coerceModel(3)).toBeUndefined();
+  });
+
+  it('effectiveDef adds the adapter model flags to the agent args and leaves the registry def alone', () => {
+    const d = effectiveDef({ agentId: 'claude', model: 'opus' }, registry);
+    expect(d?.args).toEqual(['--model', 'opus']);
+    expect(claude.args).toEqual([]);
+    expect(effectiveDef({ agentId: 'claude' }, registry)).toBe(claude);
+  });
+
+  it('effectiveDef ignores a model on a command session', () => {
+    const reg = { get: () => undefined };
+    const d = effectiveDef(
+      { agentId: COMMAND_AGENT_ID, command: { command: 'node', args: [] }, model: 'x' },
+      reg,
+    );
+    expect(d?.args).toEqual([]);
+  });
+
+  it('effectiveDef adds no flag for a stored model that fails coerceModel', () => {
+    expect(effectiveDef({ agentId: 'claude', model: '--x y' }, registry)?.args).toEqual([]);
+    expect(effectiveDef({ agentId: 'claude', model: '' }, registry)?.args).toEqual([]);
   });
 });

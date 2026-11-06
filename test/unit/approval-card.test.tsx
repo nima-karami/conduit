@@ -151,6 +151,24 @@ describe('ApprovalCard', () => {
     expect(r?.textContent).not.toContain('1 of');
   });
 
+  it('names the model and the first message length in the open_session summary', () => {
+    mount();
+    emit({
+      ...ask('a1'),
+      summary: {
+        tool: 'open_session',
+        path: '/w/a1',
+        agent: 'codex',
+        focus: true,
+        model: 'gpt-6.1-terra',
+        message: 5,
+      },
+    });
+    expect(region()?.textContent).toContain(
+      'Open a codex (model gpt-6.1-terra) session in /w/a1, with a first message (5 chars)',
+    );
+  });
+
   it('summarises each app-control tool', () => {
     const cases: [AskSummary, string][] = [
       [{ tool: 'close_session', target: 'fake-2' }, 'Close fake-2'],

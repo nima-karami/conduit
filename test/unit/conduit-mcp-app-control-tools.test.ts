@@ -116,6 +116,11 @@ function harness(): Harness {
       throw new Error('not used');
     },
     claimHandle: () => null,
+    adapterOf: () => undefined,
+    messageReady: () => false,
+    sendMessage: async () => {
+      throw new Error('not used');
+    },
     now: () => 1_000_000,
     info: () => {},
     foldersOf: (id) =>

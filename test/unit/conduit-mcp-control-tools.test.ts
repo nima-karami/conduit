@@ -16,7 +16,7 @@ import {
 import type { Move } from '../../src/conduit-mcp/tool-policy';
 import { toolSchemas } from '../../src/conduit-mcp/tool-schemas';
 import type { Caller } from '../../src/conduit-mcp/tools';
-import type { Result } from '../../src/conduit-mcp/types';
+import { type Result, toolError } from '../../src/conduit-mcp/types';
 
 const HOME = '/home/main';
 const noUi: ControlCallContext['ui'] = async () => {
@@ -29,6 +29,7 @@ interface Harness {
   opens: McpOpenRequest[];
   files: McpFileRequest[];
   logs: Array<{ message: string; data: Record<string, unknown> }>;
+  sent: Array<{ from: string; args: unknown }>;
   clock: { t: number };
   kinds: Record<string, PathKind>;
   outcome: (req: McpOpenRequest) => Promise<McpOpenOutcome>;
@@ -39,6 +40,7 @@ function harness(over: Partial<ControlDeps> = {}): Harness {
     opens: [] as McpOpenRequest[],
     files: [] as McpFileRequest[],
     logs: [] as Array<{ message: string; data: Record<string, unknown> }>,
+    sent: [] as Array<{ from: string; args: unknown }>,
     clock: { t: 1_000_000 },
     kinds: {
       [HOME]: 'dir',
@@ -97,6 +99,15 @@ function harness(over: Partial<ControlDeps> = {}): Harness {
     },
     windowReady: () => {
       throw new Error('windowReady: not an open tool');
+    },
+    adapterOf: (id) => (id === 'claude' ? 'claude' : id === 'codex' ? 'codex' : undefined),
+    messageReady: () => true,
+    sendMessage: async (who, args) => {
+      h.sent.push({ from: who.handle, args });
+      return {
+        ok: true,
+        value: { message_id: `m-${h.sent.length}`, thread_id: 't', recipients: [] },
+      };
     },
     ...over,
   };
@@ -825,5 +836,152 @@ describe('session tool descriptions', () => {
     for (const name of ['open_session', 'open_terminal'])
       expect(byName.get(name)?.endsWith(sentence)).toBe(true);
     expect(byName.get('open_file')).not.toContain('on-screen access');
+  });
+});
+
+describe('open_session model and message (CON-148)', () => {
+  const NO_MOVE = ctxOf();
+
+  it('passes a valid model through to openSession', async () => {
+    const h = harness();
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ model: 'gpt-6.1-terra' }));
+    expect(code(r)).toBe('ok');
+    expect(h.opens[0].model).toBe('gpt-6.1-terra');
+  });
+
+  it('a model outside the plain-name shape → invalid_args, nothing opened', async () => {
+    const h = harness();
+    const c = whenOn(h.deps);
+    for (const model of ['gpt 6', 'a&b', '-m', '', 'x'.repeat(65), 7]) {
+      expect(code(await c.openSession(caller(), sessionArgs({ model })))).toBe('invalid_args');
+    }
+    expect(h.opens).toEqual([]);
+  });
+
+  it('an agent with no adapter takes no model → invalid_args, nothing opened', async () => {
+    const h = harness({ agentIds: () => ['claude', 'sh'] });
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'sh', model: 'x' }));
+    expect(code(r)).toBe('invalid_args');
+    expect(!r.ok && r.error.message).toBe("this agent doesn't take a model");
+    expect(h.opens).toEqual([]);
+  });
+
+  it('the approval summary shows the model', async () => {
+    const h = harness();
+    h.kinds['/home/main/w'] = 'dir';
+    const s = await createControlHandlers(h.deps).prepareOpenSession(
+      caller(),
+      sessionArgs({ path: 'w', model: 'opus' }),
+      NO_MOVE,
+    );
+    expect(s.ok && s.value.summary).toEqual({
+      tool: 'open_session',
+      path: '/home/main/w',
+      agent: 'claude',
+      focus: true,
+      model: 'opus',
+    });
+  });
+
+  it('the approval summary counts the first message in characters, not bytes', async () => {
+    const h = harness();
+    h.kinds['/home/main/w'] = 'dir';
+    const s = await createControlHandlers(h.deps).prepareOpenSession(
+      caller(),
+      sessionArgs({ path: 'w', message: '😀😀x' }),
+      NO_MOVE,
+    );
+    expect(s.ok && s.value.summary).toEqual({
+      tool: 'open_session',
+      path: '/home/main/w',
+      agent: 'claude',
+      focus: true,
+      message: 3,
+    });
+  });
+
+  it('a message is stored once from the caller to the new handle, and the result carries message_id', async () => {
+    const h = harness();
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ message: 'start on T1' }));
+    expect(r).toEqual({
+      ok: true,
+      value: {
+        session_id: 'new-1-0',
+        handle: 'h-new-1-0',
+        label: 'T1',
+        agent: 'claude',
+        message_id: 'm-1',
+      },
+    });
+    expect(h.sent).toEqual([
+      { from: 'claude-1', args: { to: ['h-new-1-0'], body: 'start on T1' } },
+    ]);
+  });
+
+  it('a message outside 1..16000 chars → invalid_args, nothing opened', async () => {
+    const h = harness();
+    const c = whenOn(h.deps);
+    for (const message of ['', 'x'.repeat(16001)]) {
+      expect(code(await c.openSession(caller(), sessionArgs({ message })))).toBe('invalid_args');
+    }
+    expect(h.opens).toEqual([]);
+    expect(
+      code(await whenOn(h.deps).openSession(caller(), sessionArgs({ message: 'x'.repeat(16000) }))),
+    ).toBe('ok');
+  });
+
+  it('a message whose body is over the 32 KB send limit → invalid_args, nothing opened', async () => {
+    const h = harness();
+    const r = await whenOn(h.deps).openSession(
+      caller(),
+      sessionArgs({ message: '😀'.repeat(9000) }),
+    );
+    expect(code(r)).toBe('invalid_args');
+    expect(h.opens).toEqual([]);
+  });
+
+  it('message while messaging is off → invalid_args before anything opens', async () => {
+    const h = harness({ messageReady: () => false });
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ message: 'hi' }));
+    expect(code(r)).toBe('invalid_args');
+    expect(!r.ok && r.error.message).toBe('message needs messaging on');
+    expect(h.opens).toEqual([]);
+    expect(h.sent).toEqual([]);
+  });
+
+  it('a stored-message failure after the open keeps the session id and the open', async () => {
+    const h = harness({
+      sendMessage: async () => ({
+        ok: false,
+        error: toolError('store_unavailable', 'disk full'),
+      }),
+    });
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ message: 'hi' }));
+    expect(code(r)).toBe('store_unavailable');
+    expect(!r.ok && r.error.sessionId).toBe('new-1-0');
+    expect(!r.ok && r.error.handle).toBe('h-new-1-0');
+    expect(!r.ok && r.error.message).toBe(
+      'session opened; resend the task with send_message: disk full',
+    );
+    expect(h.opens).toHaveLength(1);
+  });
+
+  it('a message with no handle to address says so and keeps the session id', async () => {
+    const h = harness({ claimHandle: () => null });
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ message: 'hi' }));
+    expect(code(r)).toBe('open_failed');
+    expect(!r.ok && r.error.sessionId).toBe('new-1-0');
+    expect(h.sent).toEqual([]);
+  });
+
+  it('message is not an open_terminal argument', async () => {
+    const h = harness();
+    const r = await whenOn(h.deps).openTerminal(caller(), {
+      path: '/repo',
+      command: 'node',
+      message: 'hi',
+    });
+    expect(code(r)).toBe('invalid_args');
+    expect(h.opens).toEqual([]);
   });
 });

@@ -427,6 +427,7 @@ function harness(
     },
     git: async () => ({ ok: false as const, stdout: '', stderr: 'not a git repository' }),
     defOf: (id: string) => defOfSession(sessions.get(id)),
+    agentDef: (id: string) => DEFS.find((d) => d.id === id),
     projectName: () => null,
     installState: opts.installState ?? (() => 'not-installed' as const),
     messagingOn: opts.messagingOn ?? (() => true),
@@ -2392,6 +2393,34 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
       },
     ]);
     expect(h.sessions.get('n1')?.mcpHandle).toBe('fake-2');
+  });
+
+  it('open_session with a message stores it from the opener to the new handle (CON-148)', async () => {
+    const h = harness({ kinds: { '/w/wt': 'dir' } });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    on(h, 's1', ['open_session']);
+    const c = await client(h.ep, a.token);
+    const r = await c.call('open_session', {
+      path: 'wt',
+      agent: 'e2e-fake-mcp',
+      focus: false,
+      message: 'start on T1',
+    });
+    expect(r.body).toMatchObject({
+      session_id: 'n1',
+      handle: 'fake-2',
+      message_id: expect.any(String),
+    });
+    const n1 = await launch(h, 'n1');
+    const cb = await client(h.ep, n1.token);
+    const inbox = await cb.call('read_inbox');
+    expect(inbox.body.messages).toHaveLength(1);
+    expect(inbox.body.messages[0]).toMatchObject({
+      message_id: r.body.message_id,
+      from: 'fake-1',
+    });
+    expect(inbox.body.messages[0].body).toContain('start on T1');
   });
 
   it('claimHandle at create: a later prepareLaunch keeps the same handle', async () => {

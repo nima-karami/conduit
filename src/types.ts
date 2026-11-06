@@ -147,6 +147,8 @@ export interface Session {
   openedBy?: SessionOpener;
   /** Opened with close_when_done: closes once its program exits. Persisted. */
   closeWhenDone?: boolean;
+  /** The model the agent's CLI runs with, from open_session (CON-148); effectiveDef adds its flag. Persisted. */
+  model?: string;
   /** live working dir (cd-tracked); falls back to home */
   cwd?: string;
   /** Runtime-only (stripped by serializeSessions). Keyed by RepoInfo.root exactly as in `repos`.

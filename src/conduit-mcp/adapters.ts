@@ -132,3 +132,21 @@ export function adapterFor(
 export function notifiable(a: McpAdapter): boolean {
   return a.screen !== null && a.screen.emptyInput.length > 0;
 }
+
+/**
+ * The CLI's own model flag for an adapter kind; see the CON-148 amendment in
+ * docs/specs/archive/2026-10-27-conduit-mcp-control-tools.md. Null when that CLI has no
+ * model flag wired here, which open_session refuses. The fake adapter never takes one.
+ */
+export function modelArgs(kind: McpAdapterId | undefined, model: string): string[] | null {
+  switch (kind) {
+    case 'claude':
+    case 'cursor':
+      return ['--model', model];
+    case 'codex':
+      return ['-m', model];
+    case 'fake':
+    case undefined:
+      return null;
+  }
+}

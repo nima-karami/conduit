@@ -1,6 +1,6 @@
-import { MAX_ARGS, MAX_COMMAND_BYTES } from '../session-command';
+import { MAX_ARGS, MAX_COMMAND_BYTES, MAX_MODEL_CHARS } from '../session-command';
 import { MAX_CLOSE_PATHS, MAX_URL_BYTES } from './app-control-tools';
-import { MAX_LABEL_CHARS, MAX_OPEN_FILE_PATHS } from './control-tools';
+import { MAX_LABEL_CHARS, MAX_OPEN_FILE_PATHS, MAX_OPEN_MESSAGE_CHARS } from './control-tools';
 import { MAX_REF_CHARS } from './git-refs';
 import type { ToolSchema } from './json-rpc';
 import {
@@ -140,7 +140,7 @@ function controlSchemas(agentIds: readonly string[]): ToolSchema[] {
     {
       name: 'open_session',
       description:
-        "Open a new Conduit session running a registered agent in a folder (absolute, or relative to your session's home folder). close_when_done:true closes the session once its program exits; finished output is lost. focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.",
+        "Open a new Conduit session running a registered agent in a folder (absolute, or relative to your session's home folder). model picks the agent's model, for agents whose CLI takes one. message is the new session's first task, delivered once its prompt is ready. close_when_done:true closes the session once its program exits; finished output is lost. focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.",
       inputSchema: {
         ...OBJECT,
         properties: {
@@ -149,6 +149,16 @@ function controlSchemas(agentIds: readonly string[]): ToolSchema[] {
           label: LABEL,
           focus: FOCUS,
           close_when_done: CLOSE_WHEN_DONE,
+          model: {
+            type: 'string',
+            maxLength: MAX_MODEL_CHARS,
+            description: "The agent's model name, as its CLI takes it.",
+          },
+          message: {
+            type: 'string',
+            maxLength: MAX_OPEN_MESSAGE_CHARS,
+            description: 'The first task for the new session, sent as a message from you.',
+          },
         },
         required: ['path', 'agent'],
       },

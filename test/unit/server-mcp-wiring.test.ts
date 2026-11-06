@@ -129,6 +129,7 @@ function harness(opts: { manualTimers?: boolean } = {}) {
       addRoot: async () => ({ ok: true as const }),
       git: async () => ({ ok: false as const, stdout: '', stderr: '' }),
       defOf: (id: string) => (sessions.get(id)?.agentId === SHELL.id ? SHELL : FAKE),
+      agentDef: (id: string) => [FAKE, SHELL].find((d) => d.id === id),
       projectName: () => null,
       installState: () => 'not-installed' as const,
       messagingOn: () => true,

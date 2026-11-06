@@ -847,3 +847,26 @@ describe("server domain: sessions.start mode 'view'", () => {
     );
   });
 });
+
+describe('server domain: open_session model (CON-148)', () => {
+  it('launches the model flag and a relaunch of the persisted session uses it again', async () => {
+    const h = harness();
+    const caller = await h.create();
+    const out = await h.domain.domain.openSession({
+      callerSessionId: caller,
+      openedBy: { handle: 'a1', sessionId: caller },
+      home: h.home,
+      label: 'w',
+      focus: false,
+      launch: { kind: 'agent', agentId: 'claude' },
+      closeWhenDone: false,
+      model: 'opus',
+    });
+    if (!out.ok || !('sessionId' in out)) throw new Error('open failed');
+    expect(h.domain.sessions.get(out.sessionId)?.model).toBe('opus');
+    await h.call('sessions.relaunch', { sessionIds: [out.sessionId] });
+    await start(h, out.sessionId);
+    const args = h.runtime.spawns[0]?.spec.args ?? [];
+    expect(args[args.indexOf('--model') + 1]).toBe('opus');
+  });
+});
