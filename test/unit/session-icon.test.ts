@@ -30,9 +30,9 @@ describe('iconForAgent', () => {
     expect(iconForAgent(def({ command: 'npx', args: ['claude'] }))).toBe('claude');
   });
 
-  it('maps other AI agents without a mark of their own to the claude glyph', () => {
+  it('maps other AI agents without a mark of their own to the agent glyph', () => {
     for (const cmd of ['aider', 'copilot', 'goose']) {
-      expect(iconForAgent(def({ id: cmd, command: cmd }))).toBe('claude');
+      expect(iconForAgent(def({ id: cmd, command: cmd }))).toBe('agent');
     }
   });
 
@@ -120,7 +120,7 @@ describe('iconForSession', () => {
 describe('iconKindFromText', () => {
   it('detects a known AI app from a terminal title', () => {
     expect(iconKindFromText('claude — fixing paste')).toBe('claude');
-    expect(iconKindFromText('aider')).toBe('claude');
+    expect(iconKindFromText('aider')).toBe('agent');
   });
 
   it('detects PowerShell', () => {

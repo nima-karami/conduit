@@ -149,3 +149,27 @@ describe('content icon tier', () => {
     expect(CSS).not.toMatch(/^\.lucide[\s{]/m);
   });
 });
+
+describe('session identity marks', () => {
+  it("SessionGlyph renders the agent mark for kind 'agent'", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionGlyph, { icon: { type: 'kind', kind: 'agent' }, size: 15 }),
+    );
+    expect(html).toContain('agent-mark--agent');
+    expect(html).toContain('cx="9.5"');
+    expect(html).toContain('cx="14.5"');
+    expect(html).toContain('viewBox="0 0 24 24"');
+  });
+
+  it('two Gemini marks rendered together have different gradient ids', () => {
+    const html = renderToStaticMarkup(
+      createElement('div', null, [
+        createElement(SessionGlyph, { key: 'a', icon: { type: 'kind', kind: 'gemini' } }),
+        createElement(SessionGlyph, { key: 'b', icon: { type: 'kind', kind: 'gemini' } }),
+      ]),
+    );
+    const ids = [...html.matchAll(/linearGradient id="([^"]+)"/g)].map((m) => m[1]);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+});

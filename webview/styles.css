@@ -142,6 +142,23 @@
   --icon-cap: round;
   --icon-join: round;
 
+  /* Session identity marks (CON-147). Aero Dark values — :root is the default. */
+  --mark-panel: #1b1d24;
+  --mark-ink: #e7e9f0;
+  --mark-dim: #9aa0b2;
+  --mark-claude: #e3896a;
+  --mark-cube-top: #c7cbd8;
+  --mark-cube-left: #7b8193;
+  --mark-agent: #8b95f0;
+  --mark-gemini-a: #6f9bff;
+  --mark-gemini-b: #b48cff;
+  --mark-pwsh-fill: #3a78d6;
+  --mark-pwsh-ink: #ffffff;
+  --mark-pwsh-stroke: none;
+  --mark-pwsh-stroke-w: 0;
+  --mark-opencode-frame: #3b3f4b;
+  --mark-opencode: #e7e9f0;
+
   /* Legacy radius aliases (conductor decision D12). Several hundred rules still say
      --r / --r-sm; aliasing them onto the shape axis makes every one of them follow the
      theme now, and lets later lanes repoint individual rules where the design asks for
@@ -371,6 +388,20 @@
   --diff-editor-word-remove: rgba(232, 112, 102, 0.31);
   --change-peek-bg: #252939;
   --note-accent: #5a76d8;
+
+  --mark-panel: #ffffff;
+  --mark-ink: #1d2030;
+  --mark-dim: #5f6578;
+  --mark-claude: #c15f3c;
+  --mark-cube-top: #a7acbb;
+  --mark-cube-left: #5f6578;
+  --mark-agent: #4a56c8;
+  --mark-gemini-a: #3567db;
+  --mark-gemini-b: #8a55ea;
+  --mark-pwsh-fill: #2a64b8;
+  --mark-pwsh-ink: #ffffff;
+  --mark-opencode-frame: #c3c7d2;
+  --mark-opencode: #1d2030;
 }
 
 /* Neon - flush hairlines, zero radius, a chamfered bottom-right corner on every
@@ -417,6 +448,25 @@
   --icon-stroke: 1.6;
   --icon-cap: butt;
   --icon-join: miter;
+
+  --mark-panel: #0a0812;
+  --mark-ink: #c8c3e0;
+  --mark-dim: #9a92c8;
+  --mark-claude: #ff8a5c;
+  --mark-cube-top: #c8c3e0;
+  --mark-cube-left: #9a92c8;
+  --mark-agent: #9a92c8;
+  --mark-gemini-a: #00f0ff;
+  --mark-gemini-b: #ff2d9b;
+  --mark-pwsh-fill: none;
+  --mark-pwsh-ink: #5aa2ff;
+  --mark-pwsh-stroke: #5aa2ff;
+  --mark-pwsh-stroke-w: 1.6;
+  --mark-opencode-frame: #5a1f45;
+  --mark-opencode: #ff2d9b;
+  --mark-codex-neon: #00f0ff;
+  --mark-cursor-neon: #e9e4ff;
+  --mark-cursor-neon-fill: rgba(233, 228, 255, 0.18);
   /* rx/ry are CSS properties on <rect> in Chromium, so this squares off every authored corner
      radius in the icon set without touching the geometry. Declared only here: CSS beats the
      presentation attribute and no value means "keep the attribute", so an unconditional rule
@@ -654,6 +704,53 @@
 }
 [data-theme="neon"] .icon__geo--neon {
   display: inline;
+}
+
+/* Session identity marks (CON-147). One class family; theme picks colour, glow, and neon geometry. */
+.agent-mark {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.agent-mark__neon {
+  display: none;
+}
+[data-theme="neon"] .agent-mark__solid {
+  display: none;
+}
+[data-theme="neon"] .agent-mark__neon {
+  display: inline;
+}
+[data-theme="neon"] .agent-mark {
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+[data-theme="neon"] .agent-mark rect {
+  rx: 0;
+  ry: 0;
+}
+[data-theme="neon"] .agent-mark .agent-mark__join-round {
+  stroke-linejoin: round;
+}
+[data-theme="neon"] .agent-mark--claude {
+  filter: drop-shadow(0 0 1.5px var(--mark-claude)) drop-shadow(0 0 5px #ff8a5c88);
+}
+[data-theme="neon"] .agent-mark--codex {
+  filter: drop-shadow(0 0 1.5px var(--mark-codex-neon)) drop-shadow(0 0 5px #00f0ff88);
+}
+[data-theme="neon"] .agent-mark--cursor {
+  filter: drop-shadow(0 0 1.5px var(--mark-cursor-neon)) drop-shadow(0 0 5px #e9e4ff88);
+}
+[data-theme="neon"] .agent-mark--opencode {
+  filter: drop-shadow(0 0 1.5px var(--mark-opencode)) drop-shadow(0 0 5px #ff2d9b88);
+}
+[data-theme="neon"] .agent-mark--gemini {
+  filter: drop-shadow(0 0 1.5px #7f8dff) drop-shadow(0 0 5px #7f8dff88);
+}
+[data-theme="neon"] .agent-mark--agent {
+  filter: drop-shadow(0 0 1.5px var(--mark-agent)) drop-shadow(0 0 5px #9a92c888);
+}
+[data-theme="neon"] .agent-mark--powershell {
+  filter: drop-shadow(0 0 1.5px var(--mark-pwsh-ink)) drop-shadow(0 0 5px #5aa2ff88);
 }
 
 /* ---------- content glyphs (Lucide) ----------

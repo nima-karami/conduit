@@ -58,6 +58,7 @@ describe('legacy records', () => {
       'opencode',
       'cursor',
       'gemini',
+      'agent',
     ];
     for (const kind of kinds) {
       const html = renderToStaticMarkup(

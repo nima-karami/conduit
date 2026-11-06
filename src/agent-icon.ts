@@ -18,10 +18,10 @@ const AGENT_KINDS: Readonly<Record<string, SessionIconKind>> = {
   opencode: 'opencode',
   cursor: 'cursor',
   gemini: 'gemini',
-  // AI agents without a mark of their own keep the generic AI glyph they always had.
-  aider: 'claude',
-  copilot: 'claude',
-  goose: 'claude',
+  // Agents without a mark of their own share the neutral robot (CON-147), not Claude's.
+  aider: 'agent',
+  copilot: 'agent',
+  goose: 'agent',
 };
 const POWERSHELL = new Set(['powershell', 'pwsh']);
 
