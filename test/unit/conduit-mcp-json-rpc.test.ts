@@ -144,7 +144,7 @@ describe('createMcpServerCore', () => {
 describe('toolSchemas', () => {
   it('toolSchemas lists every catalog tool in order; every schema is a closed object', () => {
     expect(SCHEMAS.map((t) => t.name)).toEqual([...TOOL_NAMES]);
-    expect(SCHEMAS).toHaveLength(15);
+    expect(SCHEMAS).toHaveLength(TOOL_NAMES.length);
     for (const t of SCHEMAS) {
       expect(t.inputSchema.type).toBe('object');
       expect(t.inputSchema.additionalProperties).toBe(false);

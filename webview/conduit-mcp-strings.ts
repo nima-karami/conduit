@@ -247,6 +247,8 @@ export const MCP_STR = {
   tools: {
     description: {
       list_sessions: 'Lets an agent see the other sessions it can message.',
+      wait_sessions:
+        'Lets an agent block until a session finishes a turn, exits, needs you, or messages it.',
       send_message: 'Lets an agent message other sessions and you.',
       read_inbox: 'Lets an agent read the messages sent to it.',
       read_attachment: 'Lets an agent open files attached to its messages.',

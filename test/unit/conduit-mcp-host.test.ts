@@ -159,6 +159,12 @@ interface Harness {
   resize(sessionId: string, cols: number, rows: number): void;
   exit(sessionId: string, code?: number | null): void;
   output(sessionId: string, data: string): void;
+  /** Ends the session turn the way the server attention does: busy clears, the run counts. */
+  finishTurn(sessionId: string): void;
+  /** Flips the session needs-you reason, as the server attention does. */
+  setNeedsYou(sessionId: string, on: boolean): void;
+  /** Host timers armed and not yet fired or cleared. */
+  readonly pendingTimers: number;
 }
 
 const dirs: string[] = [];
@@ -325,6 +331,8 @@ function harness(
     alive.delete(id);
     terminals.delete(id);
     emitRuntime({ type: 'exit', sessionId: id, generation, code, reason: 'exited' });
+    // The server's attention records every runtime exit as a change.
+    notifyAttention();
   };
   let submitEnterCalls = 0;
   const writer = createPtyWriter({
@@ -425,20 +433,29 @@ function harness(
     toolPolicy: opts.toolPolicy ?? (() => ({ global: DEFAULT_TOOL_POLICY, byCli: {} })),
   };
   const attentionListeners = new Set<Parameters<McpHostDeps['attention']['onEdge']>[0]>();
+  const completions = new Map<string, number>();
+  const needing = new Set<string>();
+  const changeListeners = new Set<() => void>();
+  const notifyAttention = () => {
+    for (const l of changeListeners) l();
+  };
   const attention: McpHostDeps['attention'] = {
     statusOf: (id) => ({
       busy: busy.has(id),
       needsAttention: false,
       completedRun: false,
-      attentionReason: null,
-      completions: 0,
+      attentionReason: needing.has(id) ? 'blocked' : null,
+      completions: completions.get(id) ?? 0,
     }),
     lastOutputAt: (id) => lastOut.get(id),
     setVisible: () => false,
     dropWindow: () => undefined,
     recordInput: (id, at) => lastOut.set(id, at),
     clearAll: () => undefined,
-    onChange: () => () => undefined,
+    onChange: (listener) => {
+      changeListeners.add(listener);
+      return () => changeListeners.delete(listener);
+    },
     onEdge: (listener) => {
       attentionListeners.add(listener);
       return () => attentionListeners.delete(listener);
@@ -611,6 +628,19 @@ function harness(
     resize,
     exit,
     output,
+    finishTurn(id) {
+      busy.delete(id);
+      completions.set(id, (completions.get(id) ?? 0) + 1);
+      notifyAttention();
+    },
+    setNeedsYou(id, on) {
+      if (on) needing.add(id);
+      else needing.delete(id);
+      notifyAttention();
+    },
+    get pendingTimers() {
+      return timers.size;
+    },
   };
 }
 
@@ -3963,5 +3993,228 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
       roots: ['/w/sub'],
     });
     expect(uiOf(h)).toEqual([]);
+  });
+});
+
+describe('createConduitMcpHost — wait_sessions', () => {
+  /** s1 is the caller (fake-1), s2 the helper (fake-2); the caller's client is connected. */
+  async function pairForWait(h: Harness) {
+    await h.host.start();
+    const a = await launch(h, 's1');
+    const b = await launch(h, 's2');
+    const ca = await client(h.ep, a.token);
+    return { ca, s2Token: b.token };
+  }
+
+  /** Writes a tools/call with a chosen id, so a test can cancel it by that id. */
+  function rawWait(c: Awaited<ReturnType<typeof client>>, id: number, args: unknown) {
+    c.sock.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'wait_sessions', arguments: args } })}\n`,
+    );
+  }
+
+  it('wait_sessions is listed with its input schema', async () => {
+    const h = harness();
+    const { ca } = await pairForWait(h);
+    const list = (await ca.request('tools/list')) as {
+      result: {
+        tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }>;
+      };
+    };
+    const tool = list.result.tools.find((t) => t.name === 'wait_sessions');
+    expect(tool && Object.keys(tool.inputSchema.properties).sort()).toEqual([
+      'sessions',
+      'timeout_s',
+      'until',
+    ]);
+  });
+
+  it('a session that already exited returns at once', async () => {
+    const h = harness({ manualTimers: true });
+    const { ca } = await pairForWait(h);
+    h.exit('s2');
+    const r = await ca.call('wait_sessions', { sessions: ['fake-2'], until: ['exited'] });
+    expect(r.isError).toBe(false);
+    expect(r.body).toEqual({
+      fired: [{ session: 'fake-2', condition: 'exited' }],
+      timed_out: false,
+      states: [{ session: 'fake-2', presence: 'exited', needs_you: false, unread_from: 0 }],
+    });
+  });
+
+  it('exited fires when the session exits during the wait', async () => {
+    const h = harness({ manualTimers: true });
+    const { ca } = await pairForWait(h);
+    const base = h.pendingTimers;
+    const p = ca.call('wait_sessions', { sessions: ['fake-2'], until: ['exited'] });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    h.exit('s2');
+    expect((await p).body.fired).toEqual([{ session: 'fake-2', condition: 'exited' }]);
+  });
+
+  it('turn_end fires when a busy session finishes its turn after the call started', async () => {
+    const h = harness({ manualTimers: true });
+    const { ca } = await pairForWait(h);
+    h.busy.add('s2');
+    const base = h.pendingTimers;
+    const p = ca.call('wait_sessions', { sessions: ['fake-2'], until: ['turn_end'] });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    h.finishTurn('s2');
+    expect((await p).body).toEqual({
+      fired: [{ session: 'fake-2', condition: 'turn_end' }],
+      timed_out: false,
+      states: [{ session: 'fake-2', presence: 'idle', needs_you: false, unread_from: 0 }],
+    });
+  });
+
+  it('a turn end that finished before the first wait is reported by it', async () => {
+    const h = harness();
+    const { ca } = await pairForWait(h);
+    h.busy.add('s2');
+    h.finishTurn('s2');
+    const r = await ca.call('wait_sessions', { sessions: ['fake-2'], until: ['turn_end'] });
+    expect(r.body.fired).toEqual([{ session: 'fake-2', condition: 'turn_end' }]);
+  });
+
+  it('a turn end that landed between two waits is reported by the second', async () => {
+    const h = harness({ manualTimers: true });
+    const { ca } = await pairForWait(h);
+    h.busy.add('s2');
+    const base = h.pendingTimers;
+    const first = ca.call('wait_sessions', { sessions: ['fake-2'], until: ['turn_end'] });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    h.finishTurn('s2');
+    expect((await first).body.fired).toEqual([{ session: 'fake-2', condition: 'turn_end' }]);
+    h.busy.add('s2');
+    h.finishTurn('s2');
+    const second = await ca.call('wait_sessions', { sessions: ['fake-2'], until: ['turn_end'] });
+    expect(second.body.fired).toEqual([{ session: 'fake-2', condition: 'turn_end' }]);
+  });
+
+  it('message fires on an unread message from a listed session, not from another', async () => {
+    const h = harness({ manualTimers: true });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    const s2 = await launch(h, 's2');
+    const s3 = await launch(h, 's3');
+    const ca = await client(h.ep, a.token);
+    const c2 = await client(h.ep, s2.token);
+    const c3 = await client(h.ep, s3.token);
+    const base = h.pendingTimers;
+    const p = ca.call('wait_sessions', { sessions: ['fake-2'], until: ['message'] });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    await c3.call('send_message', { to: ['fake-1'], body: 'from three' });
+    expect(h.pendingTimers).toBe(base + 1);
+    await c2.call('send_message', { to: ['fake-1'], body: 'from two' });
+    expect((await p).body).toEqual({
+      fired: [{ session: 'fake-2', condition: 'message' }],
+      timed_out: false,
+      states: [{ session: 'fake-2', presence: 'idle', needs_you: false, unread_from: 1 }],
+    });
+  });
+
+  it('needs_you fires when the session needs the human', async () => {
+    const h = harness({ manualTimers: true });
+    const { ca } = await pairForWait(h);
+    const base = h.pendingTimers;
+    const p = ca.call('wait_sessions', { sessions: ['fake-2'], until: ['needs_you'] });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    h.setNeedsYou('s2', true);
+    expect((await p).body).toEqual({
+      fired: [{ session: 'fake-2', condition: 'needs_you' }],
+      timed_out: false,
+      states: [{ session: 'fake-2', presence: 'idle', needs_you: true, unread_from: 0 }],
+    });
+  });
+
+  it('times out with nothing fired and every requested session in states', async () => {
+    const h = harness({ manualTimers: true });
+    const { ca } = await pairForWait(h);
+    const base = h.pendingTimers;
+    const p = ca.call('wait_sessions', {
+      sessions: ['fake-2'],
+      until: ['turn_end', 'exited'],
+      timeout_s: 5,
+    });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    h.advance(5_000);
+    expect((await p).body).toEqual({
+      fired: [],
+      timed_out: true,
+      states: [{ session: 'fake-2', presence: 'idle', needs_you: false, unread_from: 0 }],
+    });
+    expect(h.pendingTimers).toBe(base);
+  });
+
+  it('a client cancel releases the wait and its timer without a reply', async () => {
+    const h = harness({ manualTimers: true });
+    const { ca } = await pairForWait(h);
+    const base = h.pendingTimers;
+    rawWait(ca, 900, { sessions: ['fake-2'], until: ['exited'] });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    ca.sock.write(
+      `${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 900 } })}\n`,
+    );
+    await expect.poll(() => h.pendingTimers).toBe(base);
+  });
+
+  it('closing the caller connection releases the wait and its timer', async () => {
+    const h = harness({ manualTimers: true });
+    const { ca } = await pairForWait(h);
+    const base = h.pendingTimers;
+    rawWait(ca, 901, { sessions: ['fake-2'], until: ['exited'] });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    ca.sock.destroy();
+    await expect.poll(() => h.pendingTimers).toBe(base);
+  });
+
+  it('deleting the caller session releases its waits', async () => {
+    const h = harness({ manualTimers: true });
+    const { ca } = await pairForWait(h);
+    const base = h.pendingTimers;
+    rawWait(ca, 902, { sessions: ['fake-2'], until: ['exited'] });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    await h.host.onSessionDeleted('s1');
+    await expect.poll(() => h.pendingTimers).toBe(base);
+  });
+
+  it('a fifth concurrent wait from one caller is rate_limited', async () => {
+    const h = harness({ manualTimers: true });
+    const { ca } = await pairForWait(h);
+    const base = h.pendingTimers;
+    for (let i = 0; i < 4; i += 1)
+      rawWait(ca, 1000 + i, { sessions: ['fake-2'], until: ['exited'] });
+    await expect.poll(() => h.pendingTimers).toBe(base + 4);
+    const r = await ca.call('wait_sessions', { sessions: ['fake-2'], until: ['exited'] });
+    expect(r.isError).toBe(true);
+    expect(r.body.error.code).toBe('rate_limited');
+  });
+
+  it('an unknown session is invalid_args naming it', async () => {
+    const h = harness();
+    const { ca } = await pairForWait(h);
+    const r = await ca.call('wait_sessions', { sessions: ['nope'], until: ['exited'] });
+    expect(r.body.error.code).toBe('invalid_args');
+    expect(r.body.error.message).toContain('nope');
+  });
+
+  it('a session cannot wait on itself', async () => {
+    const h = harness();
+    const { ca } = await pairForWait(h);
+    const r = await ca.call('wait_sessions', { sessions: ['fake-1'], until: ['exited'] });
+    expect(r.body.error.code).toBe('invalid_args');
+    expect(r.body.error.message).toBe("a session can't wait on itself");
+  });
+
+  it.each([
+    ['an empty until', { sessions: ['fake-2'], until: [] }],
+    ['an unknown condition', { sessions: ['fake-2'], until: ['bogus'] }],
+    ['a timeout above 540 s', { sessions: ['fake-2'], until: ['exited'], timeout_s: 541 }],
+    ['no sessions', { sessions: [], until: ['exited'] }],
+  ])('%s is invalid_args', async (_name, args) => {
+    const h = harness();
+    const { ca } = await pairForWait(h);
+    const r = await ca.call('wait_sessions', args);
+    expect(r.body.error.code).toBe('invalid_args');
   });
 });

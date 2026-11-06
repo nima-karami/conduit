@@ -3,6 +3,12 @@ import { MAX_CLOSE_PATHS, MAX_URL_BYTES } from './app-control-tools';
 import { MAX_LABEL_CHARS, MAX_OPEN_FILE_PATHS } from './control-tools';
 import { MAX_REF_CHARS } from './git-refs';
 import type { ToolSchema } from './json-rpc';
+import {
+  WAIT_CONDITIONS,
+  WAIT_DEFAULT_TIMEOUT_S,
+  WAIT_MAX_SESSIONS,
+  WAIT_MAX_TIMEOUT_S,
+} from './session-waits';
 import { TOOL_NAMES } from './tool-policy';
 
 // Inputs are exactly spec §3.2; every tool context-costs every agent, so descriptions stay short.
@@ -22,6 +28,36 @@ const MESSAGING_SCHEMAS: readonly ToolSchema[] = [
       'presence) ' +
       'plus the human, handle "you". Your own session is marked self.',
     inputSchema: { ...OBJECT, properties: {} },
+  },
+  {
+    name: 'wait_sessions',
+    description:
+      "Block until one of these sessions finishes a turn, exits, needs the human, or messages you; prefer this to polling files. Keep timeout_s within your client's tool timeout (Codex: 180 s).",
+    inputSchema: {
+      ...OBJECT,
+      properties: {
+        sessions: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          maxItems: WAIT_MAX_SESSIONS,
+          description: 'Handles or session ids from list_sessions.',
+        },
+        until: {
+          type: 'array',
+          items: { type: 'string', enum: [...WAIT_CONDITIONS] },
+          minItems: 1,
+          description: 'Returns when any listed session meets any of these.',
+        },
+        timeout_s: {
+          type: 'integer',
+          minimum: 1,
+          maximum: WAIT_MAX_TIMEOUT_S,
+          default: WAIT_DEFAULT_TIMEOUT_S,
+        },
+      },
+      required: ['sessions', 'until'],
+    },
   },
   {
     name: 'send_message',
