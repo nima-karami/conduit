@@ -746,8 +746,14 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
     readBytes: async (absPath, max) => {
       try {
-        const fh = await fs.promises.open(absPath, 'r');
+        // The path can be swapped for a FIFO after the caller's stat: a non-blocking open plus a stat
+        // on the handle keeps a pre-approval read from parking a threadpool thread forever.
+        const fh = await fs.promises.open(
+          absPath,
+          fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0),
+        );
         try {
+          if (!(await fh.stat()).isFile()) return null;
           return await readCappedBytes(
             (buffer, offset, length, position) => fh.read(buffer, offset, length, position),
             max,
