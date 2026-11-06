@@ -140,7 +140,7 @@ describe('server supervisor', () => {
       return code;
     };
 
-    await expect(supervise(h.options)).resolves.toBe(0);
+    await expect(supervise(h.options)).resolves.toEqual({ reason: 'done' });
 
     expect(h.sleeps).toEqual([1_000, 1_000, 1_000, 1_000, 1_000]);
     expect(h.spawnCount.value).toBe(6);
@@ -155,7 +155,7 @@ describe('server supervisor', () => {
       return code;
     };
 
-    await expect(supervise(h.options)).resolves.toBe(0);
+    await expect(supervise(h.options)).resolves.toEqual({ reason: 'done' });
 
     expect(h.sleeps).toEqual([1_000, 2_000, 1_000, 2_000]);
   });
@@ -163,7 +163,7 @@ describe('server supervisor', () => {
   it('counts a failed spawn as a crash instead of exiting', async () => {
     const h = harness([new Error('spawn EACCES'), 0]);
 
-    await expect(supervise(h.options)).resolves.toBe(0);
+    await expect(supervise(h.options)).resolves.toEqual({ reason: 'done' });
 
     expect(h.sleeps).toEqual([1_000]);
     expect(h.spawnCount.value).toBe(2);
@@ -180,7 +180,7 @@ describe('server supervisor', () => {
       remove: async () => {},
     };
 
-    await expect(supervise({ ...h.options, marker })).resolves.toBe(0);
+    await expect(supervise({ ...h.options, marker })).resolves.toEqual({ reason: 'done' });
 
     expect(h.sleeps.slice(4).reduce((a, b) => a + b, 0)).toBe(SUPERVISOR_EXHAUSTED_COOLDOWN_MS);
     expect(h.spawnCount.value).toBe(6);
@@ -208,7 +208,7 @@ describe('server supervisor', () => {
       },
     };
 
-    await expect(supervise({ ...h.options, marker })).resolves.toBe(0);
+    await expect(supervise({ ...h.options, marker })).resolves.toEqual({ reason: 'done' });
 
     expect(written).toMatchObject({ lastExitCode: 6, logPath: '/profile/server.log' });
     expect(h.sleeps).toEqual([1_000, 2_000, 5_000, 10_000, 5_000, 5_000]);
@@ -234,7 +234,7 @@ describe('server supervisor', () => {
       if (ms === 5_000) markerExists = false;
     };
 
-    await expect(supervise({ ...h.options, marker })).resolves.toBe(0);
+    await expect(supervise({ ...h.options, marker })).resolves.toEqual({ reason: 'done' });
 
     expect(h.spawnCount.value).toBe(6);
     expect(h.sleeps.slice(4)).toEqual([5_000]);
@@ -260,7 +260,7 @@ describe('server supervisor', () => {
       h.advance(ms);
     };
 
-    await expect(supervise({ ...h.options, marker })).resolves.toBe(0);
+    await expect(supervise({ ...h.options, marker })).resolves.toEqual({ reason: 'done' });
 
     expect(removed).toBe(true);
     expect(markerExists).toBe(false);
@@ -290,7 +290,7 @@ describe('server supervisor', () => {
             }
           },
         }),
-      ).resolves.toBe(0);
+      ).resolves.toEqual({ reason: 'done' });
 
       expect(written).toEqual({
         version: SERVER_FILE_VERSION[SERVER_EXHAUSTED_FILE],
@@ -326,7 +326,7 @@ describe('server supervisor', () => {
           now: () => time,
           log: () => {},
         }),
-      ).resolves.toBe(0);
+      ).resolves.toEqual({ reason: 'done' });
 
       await expect(readFile(markerPath, 'utf8')).resolves.toBe(newerMarker);
       expect(spawnCount).toBe(6);
@@ -360,7 +360,7 @@ describe('server supervisor', () => {
           now: () => Date.UTC(2026, 0, 1),
           log: () => {},
         }),
-      ).resolves.toBe(0);
+      ).resolves.toEqual({ reason: 'done' });
 
       expect(spawnCount).toBe(6);
       expect(sleeps.slice(4)).toEqual([SUPERVISOR_MARKER_POLL_MS]);
@@ -391,7 +391,7 @@ describe('server supervisor', () => {
               logs.push(message);
             },
           }),
-        ).resolves.toBe(0);
+        ).resolves.toEqual({ reason: 'done' });
 
         expect(spawnCount).toBe(6);
         expect(sleeps.slice(4).reduce((a, b) => a + b, 0)).toBe(SUPERVISOR_EXHAUSTED_COOLDOWN_MS);
@@ -410,6 +410,26 @@ describe('server supervisor', () => {
       }),
     ).resolves.toBeNull();
     expect(logs.join('\n')).toContain('ENOENT');
+  });
+
+  it('attaches the relay to a fresh IPC channel before the server child exits', async () => {
+    const received: unknown[] = [];
+    let connected = false;
+    const code = await spawnServerChild(
+      process.execPath,
+      ['-e', "process.on('message', m => process.send({ pong: m }, () => process.disconnect()))"],
+      {},
+      tmpdir(),
+      () => {},
+      (child) => {
+        connected = child.connected;
+        child.on('message', (value) => received.push(value));
+        child.send('ping');
+      },
+    );
+    expect(code).toBe(0);
+    expect(connected).toBe(true);
+    expect(received).toEqual([{ pong: 'ping' }]);
   });
 
   it('keeps the XDG isolation decided at the supervisor start (C4 coreStartEnv)', () => {
@@ -452,7 +472,7 @@ describe('server supervisor', () => {
           },
         },
       }),
-    ).resolves.toBe(0);
+    ).resolves.toEqual({ reason: 'done' });
 
     expect(stopped).toBe(false);
     expect(h.spawnCount.value).toBe(1);
@@ -472,7 +492,7 @@ describe('server supervisor', () => {
           },
         },
       }),
-    ).resolves.toBe(0);
+    ).resolves.toEqual({ reason: 'doneCoreIdle' });
 
     expect(stopped).toBe(false);
     expect(h.spawnCount.value).toBe(1);
@@ -492,7 +512,7 @@ describe('server supervisor', () => {
           },
         },
       }),
-    ).resolves.toBe(0);
+    ).resolves.toEqual({ reason: 'doneCoreIdle' });
 
     expect(stopped).toBe(true);
   });

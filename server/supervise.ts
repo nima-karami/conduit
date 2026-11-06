@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { access, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
@@ -25,28 +25,16 @@ import {
   supervisorCore,
 } from './hc-cli';
 import { argValue, requireUserData } from './lifecycle/cli-args';
+import type { SuperviseExit, SuperviseOptions } from './tray/contracts';
 
 export { serverChildEnv } from './hc-cli';
+export type { SuperviseExit, SuperviseOptions } from './tray/contracts';
 
 export interface SupervisorMarker {
   /** `newer`: a newer supervisor's marker is already there; it stands for ours and is never touched. */
   write(exhaustion: ServerExhaustion): Promise<'written' | 'newer'>;
   exists(): Promise<boolean>;
   remove(): Promise<void>;
-}
-
-export interface SuperviseOptions {
-  userData: string;
-  logPath: string;
-  spawnChild: () => Promise<number | null>;
-  core?: {
-    hasOtherLiveTerminals(): Promise<boolean>;
-    stop(): Promise<void>;
-  };
-  sleep?: (ms: number) => Promise<void>;
-  now?: () => number;
-  marker?: SupervisorMarker;
-  log?: (message: string) => void;
 }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -101,23 +89,37 @@ function defaultMarker(userData: string, log: (line: string) => void): Superviso
 
 interface Clock {
   now: () => number;
-  sleep: (ms: number) => Promise<void>;
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   log: (line: string) => void;
 }
 
-/** D17/F9: the supervisor never exits for good, so no marker failure may end the cooldown early. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener('abort', finish, { once: true });
+  });
+}
+
+/** See docs/specs/2026-11-03-tray-helper.md §7a (W5/W6). */
 async function coolDown(
   marker: SupervisorMarker,
   exhaustion: ServerExhaustion,
   retryAt: number,
   { now, sleep, log }: Clock,
+  signal?: AbortSignal,
 ): Promise<void> {
   let state: 'written' | 'newer';
   try {
     state = await marker.write(exhaustion);
   } catch (error) {
     log(`could not write ${SERVER_EXHAUSTED_FILE}: ${message(error)}`);
-    await sleep(Math.max(0, retryAt - now()));
+    await sleep(Math.max(0, retryAt - now()), signal);
     return;
   }
   const present = async () => {
@@ -128,8 +130,8 @@ async function coolDown(
       return true;
     }
   };
-  while (now() < retryAt && (await present())) {
-    await sleep(Math.min(SUPERVISOR_MARKER_POLL_MS, retryAt - now()));
+  while (!signal?.aborted && now() < retryAt && (await present())) {
+    await sleep(Math.min(SUPERVISOR_MARKER_POLL_MS, retryAt - now()), signal);
   }
   if (state !== 'written') return;
   try {
@@ -139,17 +141,31 @@ async function coolDown(
   }
 }
 
-export async function supervise(options: SuperviseOptions): Promise<number> {
+export async function supervise(options: SuperviseOptions): Promise<SuperviseExit> {
   const log = options.log ?? logToStderr;
   const clock: Clock = {
     now: options.now ?? Date.now,
-    sleep: options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
+    sleep: options.sleep ?? sleep,
     log,
   };
   const marker = options.marker ?? defaultMarker(options.userData, log);
+  const stop = async (): Promise<SuperviseExit> => {
+    try {
+      if (!options.stopSessions) throw new Error('Tray stop requested without stopSessions');
+      const killed = await options.stopSessions();
+      if (options.core && !(await options.core.hasOtherLiveTerminals())) await options.core.stop();
+      return { reason: 'trayStop', ok: true, killed };
+    } catch (error) {
+      const reason = message(error);
+      log(`tray stop failed: ${reason}`);
+      return { reason: 'trayStop', ok: false, error: reason };
+    }
+  };
   let crashTimes: number[] = [];
 
   for (;;) {
+    if (options.stopSignal?.aborted) return stop();
+    options.hooks?.phase({ phase: 'spawning' });
     let exitCode: number | null;
     try {
       exitCode = await options.spawnChild();
@@ -157,11 +173,13 @@ export async function supervise(options: SuperviseOptions): Promise<number> {
       log(`server spawn failed: ${message(error)}`);
       exitCode = null;
     }
-    if (exitCode === SERVER_EXIT.done) return 0;
+    options.hooks?.childExit(exitCode);
+    if (exitCode === SERVER_EXIT.done) return { reason: 'done' };
     if (exitCode === SERVER_EXIT.doneCoreIdle) {
       if (options.core && !(await options.core.hasOtherLiveTerminals())) await options.core.stop();
-      return 0;
+      return { reason: 'doneCoreIdle' };
     }
+    if (options.stopSignal?.aborted) return stop();
 
     const crashedAt = clock.now();
     crashTimes = crashTimes.filter((at) => crashedAt - at < SUPERVISOR_GIVE_UP.windowMs);
@@ -175,13 +193,16 @@ export async function supervise(options: SuperviseOptions): Promise<number> {
         lastExitCode: exitCode,
         logPath: options.logPath,
       };
-      await coolDown(marker, exhaustion, retryAt, clock);
+      options.hooks?.phase({ phase: 'exhausted', retryAt: exhaustion.retryAt });
+      await coolDown(marker, exhaustion, retryAt, clock, options.stopSignal);
       crashTimes = [];
       continue;
     }
 
+    options.hooks?.phase({ phase: 'restarting' });
     await clock.sleep(
       SUPERVISOR_BACKOFF_MS[Math.min(crashTimes.length - 1, SUPERVISOR_BACKOFF_MS.length - 1)],
+      options.stopSignal,
     );
   }
 }
@@ -193,14 +214,21 @@ export function spawnServerChild(
   env: Record<string, string>,
   cwd: string,
   log: (line: string) => void = logToStderr,
+  onSpawn?: (child: ChildProcess) => void,
 ): Promise<number | null> {
   return new Promise<number | null>((resolve) => {
-    const child = spawn(command, argv, { cwd, detached: false, stdio: 'inherit', env });
+    const child = spawn(command, argv, {
+      cwd,
+      detached: false,
+      stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
+      env,
+    });
     child.once('error', (error) => {
       log(`server spawn error: ${message(error)}`);
       resolve(null);
     });
     child.once('close', (code) => resolve(code));
+    onSpawn?.(child);
   });
 }
 
