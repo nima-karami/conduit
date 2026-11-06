@@ -40,16 +40,17 @@ const ADVERSARIAL: ((n: number) => string)[] = [
   (n) => ' '.repeat(n),
 ];
 
-/** Best of `runs` after a warm-up: a quadratic rule is slow every run, a GC pause only once. */
+/** Median of `runs` after a warm-up: a quadratic rule is slow every run, a GC pause only once. */
 function elapsed(fn: () => void, runs = 5): number {
   fn();
-  let best = Number.POSITIVE_INFINITY;
+  const samples: number[] = [];
   for (let i = 0; i < runs; i++) {
     const t = performance.now();
     fn();
-    best = Math.min(best, performance.now() - t);
+    samples.push(performance.now() - t);
   }
-  return best;
+  samples.sort((a, b) => a - b);
+  return samples[Math.floor(samples.length / 2)] ?? 0;
 }
 
 describe('grammar runner', () => {
@@ -64,17 +65,29 @@ describe('grammar runner', () => {
 
 describe('grammar linearity', () => {
   for (const [name, grammar] of Object.entries(ALL)) {
-    // Retried because the gate runs every suite in parallel; each attempt must meet the budget.
-    it(`${name} tokenizes adversarial 20 000-char lines in < 50 ms from every state`, {
+    // Ratio, not a wall-clock bound: load stretches both sizes, not the 20k/2k quotient.
+    it(`${name} tokenizes adversarial 20 000-char lines linearly from every state`, {
       retry: 2,
     }, () => {
       for (const state of grammarStates(grammar)) {
         const tokenizer = monarchTokenizer(grammar, state);
         for (const make of ADVERSARIAL) {
+          const short = make(2000);
           const line = make(20000);
-          // Followed by a second line, so a grammar that reads the EOL sees it.
-          const ms = elapsed(() => rawTokens(tokenizer, [line, '']));
-          expect(ms, `${name}@${state} on ${JSON.stringify(line.slice(0, 6))}…`).toBeLessThan(50);
+          const t2k = elapsed(() => rawTokens(tokenizer, [short, '']));
+          const t20k = elapsed(() => rawTokens(tokenizer, [line, '']));
+          expect(
+            t20k,
+            `${name}@${state} hang guard on ${JSON.stringify(line.slice(0, 6))}…`,
+          ).toBeLessThan(2000);
+          if (t2k <= 0) {
+            expect(t20k, `${name}@${state} unmeasurable 2k`).toBeLessThan(10);
+            continue;
+          }
+          expect(
+            t20k / t2k,
+            `${name}@${state} on ${JSON.stringify(line.slice(0, 6))}…`,
+          ).toBeLessThan(25);
         }
       }
     });

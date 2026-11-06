@@ -25,6 +25,7 @@ const shell: AgentDefinition = {
 };
 const cleanup: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
+  vi.useRealTimers();
   for (const fn of cleanup.splice(0).reverse()) await fn();
   vi.restoreAllMocks();
 });
@@ -257,12 +258,14 @@ it('refuses to run when the token reservation cannot be durable', async () => {
 
 it('publishes one combined sessions.changed for domain and attention invalidation', async () => {
   const h = await harness();
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   await h.services.core.start();
-  await new Promise((r) => setTimeout(r, 350));
+  // STATUS_RESEND_MS in server/services.ts — drain startup, then one window for create+start.
+  await vi.advanceTimersByTimeAsync(150);
   h.events.length = 0;
   const id = await h.create();
   await h.rpc('sessions.start', { sessionId: id });
-  await new Promise((r) => setTimeout(r, 350));
+  await vi.advanceTimersByTimeAsync(150);
   expect(h.events.filter((e) => e === 'sessions.changed')).toHaveLength(1);
 });
 
