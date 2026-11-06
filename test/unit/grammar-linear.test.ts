@@ -40,6 +40,12 @@ const ADVERSARIAL: ((n: number) => string)[] = [
   (n) => ' '.repeat(n),
 ];
 
+/** States with each numbered family (`interp1`…`interp8`) cut to its first member: the depth
+ *  states share every rule but the `next` target, so timing all of them repeats one measurement. */
+function representativeStates(grammar: Grammar): string[] {
+  return grammarStates(grammar).filter((state) => !/^\D+(?:[2-9]|\d{2,})$/.test(state));
+}
+
 /** Median of `runs` after a warm-up: a quadratic rule is slow every run, a GC pause only once. */
 function elapsed(fn: () => void, runs = 5): number {
   fn();
@@ -66,12 +72,16 @@ describe('grammar runner', () => {
 describe('grammar linearity', () => {
   for (const [name, grammar] of Object.entries(ALL)) {
     // A hang guard only: linearity is the 20k→80k ratio test below, which load can't move much.
+    // One run per cell, no warm-up or median: a hang is slow on its first run, and a grammar with
+    // many states (groovy's interpolation depths) otherwise pays six runs for each of them.
     it(`${name} tokenizes adversarial 20 000-char lines from every state without hanging`, () => {
       for (const state of grammarStates(grammar)) {
         const tokenizer = monarchTokenizer(grammar, state);
         for (const make of ADVERSARIAL) {
           const line = make(20000);
-          const t20k = elapsed(() => rawTokens(tokenizer, [line, '']));
+          const start = performance.now();
+          rawTokens(tokenizer, [line, '']);
+          const t20k = performance.now() - start;
           expect(
             t20k,
             `${name}@${state} hang guard on ${JSON.stringify(line.slice(0, 6))}…`,
@@ -89,7 +99,7 @@ describe('grammar linearity', () => {
     it(`${name} scales linearly on adversarial lines from every state`, {
       timeout: 120_000,
     }, () => {
-      for (const state of grammarStates(grammar)) {
+      for (const state of representativeStates(grammar)) {
         const tokenizer = monarchTokenizer(grammar, state);
         for (const make of ADVERSARIAL) {
           // 20 000 vs 80 000 chars: the shorter run must itself take long enough that timer and
