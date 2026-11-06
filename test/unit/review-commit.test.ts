@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ParsedPatchFile } from '../../src/patch-parse';
+import { type ParsedPatchFile, parsePatch } from '../../src/patch-parse';
 import type { CommitNode, FileDiffDTO } from '../../src/protocol';
 import {
   commitChangesFromFiles,
@@ -92,7 +92,6 @@ describe('commitChangesFromFiles', () => {
 
 describe('patchChangesFromFiles', () => {
   const patchFile = (over: Partial<ParsedPatchFile>): ParsedPatchFile => ({
-    path: 'x',
     head: '',
     work: '',
     binary: false,
@@ -100,6 +99,8 @@ describe('patchChangesFromFiles', () => {
     counts: { added: 0, removed: 0 },
     hunks: [],
     ...over,
+    path: over.path ?? 'x',
+    key: over.key ?? over.path ?? 'x',
   });
 
   it('presves rename badges', () => {
@@ -114,20 +115,24 @@ describe('patchChangesFromFiles', () => {
     expect(c).toMatchObject({ path: 'new.txt', kind: 'R', added: 1, removed: 1, staged: false });
   });
 
+  // Keys come from parsePatch, so these go through it rather than hand-built files.
+  const parsed = (text: string): ParsedPatchFile[] => {
+    const r = parsePatch(text);
+    if (!r.ok) throw new Error(r.reason);
+    return r.files;
+  };
+  const bare = (path: string, added: number) =>
+    `--- a/${path}\n+++ b/${path}\n@@ -1 +1,${added} @@\n-old\n${'+x\n'.repeat(added)}`;
+
   it('disambiguates duplicate paths so both rows survive', () => {
-    const out = patchChangesFromFiles([
-      patchFile({ path: 'a.ts', counts: { added: 1, removed: 0 } }),
-      patchFile({ path: 'a.ts', counts: { added: 2, removed: 0 } }),
-    ]);
+    const out = patchChangesFromFiles(parsed(bare('a.ts', 1) + bare('a.ts', 2)));
     expect(out.map((c) => c.path)).toEqual(['a.ts', 'a.ts (2)']);
   });
 
   it('keeps a real file named like a suffix distinct from a duplicate-path key', () => {
-    const out = patchChangesFromFiles([
-      patchFile({ path: 'f.ts' }),
-      patchFile({ path: 'f.ts' }),
-      patchFile({ path: 'f.ts (2)' }),
-    ]);
+    const out = patchChangesFromFiles(
+      parsed(bare('f.ts', 1) + bare('f.ts', 1) + bare('f.ts (2)', 1)),
+    );
     expect(out.map((c) => c.path)).toEqual(['f.ts', 'f.ts (2)', 'f.ts (2) (2)']);
   });
 

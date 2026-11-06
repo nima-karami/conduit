@@ -23,12 +23,15 @@ export interface PatchHunk {
   lines: { kind: 'context' | 'add' | 'del'; text: string; noNewline?: boolean }[];
 }
 
+/** A parsed patch file, before keys are assigned; the parser builds these and keys them last. */
+type PatchFileDraft = Omit<ParsedPatchFile, 'key'>;
+
 /** A parsed patch file; also the shape that travels to the renderer for a `patch` ReviewSource. */
 export interface ParsedPatchFile {
   /** The new/current path (the one Review should list). */
   path: string;
   /** Unique card/diff-map key; set at parse so duplicate paths never collide. */
-  key?: string;
+  key: string;
   /** The previous path, present for renames and copies. */
   oldPath?: string;
   /** Old-side content; empty for adds, binaries, and mode-only changes. */
@@ -91,7 +94,7 @@ export function parsePatch(text: string): PatchParseResult {
   if (text === '') return { ok: false, reason: 'empty patch' };
   const lines = splitLines(text);
   const state = new ParserState(lines);
-  const files: ParsedPatchFile[] = [];
+  const files: PatchFileDraft[] = [];
 
   while (!state.done()) {
     const cur = state.current();
@@ -112,8 +115,7 @@ export function parsePatch(text: string): PatchParseResult {
   }
 
   if (files.length === 0) return { ok: false, reason: 'not a unified diff' };
-  assignPatchKeys(files);
-  return { ok: true, files };
+  return { ok: true, files: keyPatchFiles(files) };
 }
 
 /**
@@ -122,9 +124,8 @@ export function parsePatch(text: string): PatchParseResult {
  * @@ -100 renders from line 100 and separate hunks stay separate.
  */
 export function patchFilesToFileDiffs(files: ParsedPatchFile[]): FileDiffDTO[] {
-  const keyed = withPatchKeys(files);
-  return keyed.map((f) => ({
-    path: f.key ?? f.path,
+  return files.map((f) => ({
+    path: f.key,
     head: f.head,
     work: f.work,
     binary: f.binary,
@@ -134,18 +135,10 @@ export function patchFilesToFileDiffs(files: ParsedPatchFile[]): FileDiffDTO[] {
 }
 
 /** O(n) keys: a literal `f.ts (2)` never collides with the second `f.ts`. */
-function assignPatchKeys(files: ParsedPatchFile[]): void {
+function keyPatchFiles(drafts: PatchFileDraft[]): ParsedPatchFile[] {
   const used = new Set<string>();
   const nextSuffix = new Map<string, number>();
-  for (const f of files) {
-    f.key = nextDisambiguatedKey(f.path, used, nextSuffix);
-  }
-}
-
-export function withPatchKeys(files: ParsedPatchFile[]): ParsedPatchFile[] {
-  if (files.every((f) => f.key !== undefined)) return files;
-  assignPatchKeys(files);
-  return files;
+  return drafts.map((f) => ({ ...f, key: nextDisambiguatedKey(f.path, used, nextSuffix) }));
 }
 
 function nextDisambiguatedKey(
@@ -295,7 +288,7 @@ function isSafePath(p: string): boolean {
   return parts.length > 0;
 }
 
-function parseGitFile(state: ParserState): ParseResult<ParsedPatchFile> {
+function parseGitFile(state: ParserState): ParseResult<PatchFileDraft> {
   const diffLine = state.current();
   const paths = parseDiffGitLine(diffLine);
   if (paths) {
@@ -488,7 +481,7 @@ function parseGitFile(state: ParserState): ParseResult<ParsedPatchFile> {
   };
 }
 
-function parseBareFile(state: ParserState): ParseResult<ParsedPatchFile> {
+function parseBareFile(state: ParserState): ParseResult<PatchFileDraft> {
   const header = parseFileHeaderPair(state, ['a/', 'b/']);
   if (!header.ok) return header;
   const oldPath = header.value.old;

@@ -809,6 +809,7 @@ describe('docsReducer — openReview (review source)', () => {
       files: [
         {
           path: 'a.txt',
+          key: 'a.txt',
           head: 'one\ntwo\n',
           work: 'one\nthree\n',
           binary: false,
@@ -831,6 +832,7 @@ describe('docsReducer — openReview (review source)', () => {
       files: [
         {
           path: 'a.txt',
+          key: 'a.txt',
           head: '',
           work: 'x\n',
           binary: false,

@@ -171,12 +171,18 @@ describe('toolSchemas', () => {
     expect(schemaOf('open_terminal').description).toMatch(/argv, not a shell/);
   });
 
-  it('open_file: line/column integers ≥ 1, required path', () => {
+  it('open_file: line/column integers ≥ 1; path or paths (1–20), neither required', () => {
     const s = schemaOf('open_file').inputSchema;
     const p = s.properties as Props;
     expect(p.line).toMatchObject({ type: 'integer', minimum: 1 });
     expect(p.column).toMatchObject({ type: 'integer', minimum: 1 });
-    expect(s.required).toEqual(['path']);
+    expect(p.paths).toMatchObject({
+      type: 'array',
+      items: { type: 'string' },
+      minItems: 1,
+      maxItems: 20,
+    });
+    expect(s.required).toBeUndefined();
   });
 
   it('open_diff description points large diffs at patch_file', () => {
