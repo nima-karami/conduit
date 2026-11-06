@@ -201,6 +201,7 @@ describe('startLanguageServer', () => {
     const p = await start().initParams;
     expect(p.capabilities).toMatchObject({ experimental: { serverStatusNotification: true } });
   });
+
   it('progress begin/end toggles loading', async () => {
     const h = start();
     await h.handle.initialized;
