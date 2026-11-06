@@ -65,6 +65,18 @@ jobs:
       # The pinned node.exe and hc the installer bundles (ADR 0007); build/runtime-pins.json checks them.
       - run: node build/fetch-runtime.mjs
 
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/tray/target
+          key: tray-${{ runner.os }}-${{ hashFiles('native/tray/Cargo.lock', 'native/tray/rust-toolchain.toml') }}
+          restore-keys: |
+            tray-${{ runner.os }}-
+
+      - run: npm run tray:build
+
       # Build the installer + update metadata (latest.yml, blockmap) into dist/, but do
       # NOT let electron-builder publish. Its GitHub publisher uploads assets concurrently
       # and each upload races to get-or-create the release, intermittently producing TWO
@@ -85,6 +97,17 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+
+      - name: Assert tray helper Authenticode signature
+        shell: pwsh
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+        run: |
+          if (-not $env:CSC_LINK) { exit 0 }
+          $sig = Get-AuthenticodeSignature dist\win-unpacked\resources\runtime\tray\conduit-tray.exe
+          if ($sig.Status -ne 'Valid') {
+            throw "conduit-tray.exe Authenticode status: $($sig.Status)"
+          }
 
       # One atomic `gh release create` uploads all three artifacts to a single release.
       # artifactName (package.json) yields a hyphenated installer name with no spaces, so

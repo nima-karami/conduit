@@ -1,0 +1,5 @@
+{
+  "valid": true,
+  "dir": "toHelper",
+  "line": "{\"ok\":false,\"body\":\"The background service did not stop the agents.\",\"title\":\"Could not stop agents\",\"type\":\"stopResult\"}"
+}

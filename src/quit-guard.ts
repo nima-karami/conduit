@@ -146,6 +146,7 @@ export interface QuitConfirmCopyInput {
   running: number;
   busy: number;
   reason: QuitReason;
+  trayHint?: boolean;
 }
 
 export interface QuitConfirmCopy {
@@ -164,8 +165,8 @@ export function stopAgentsFailureCopy(reason: string): {
   };
 }
 
-/** Sessions with a live PTY (`status === 'running'`). */
-export function runningSessions(sessions: Session[]): Session[] {
+// See docs/specs/2026-11-03-tray-helper.md §5.
+export function runningSessions<T extends Pick<Session, 'status'>>(sessions: readonly T[]): T[] {
   return sessions.filter((s) => s.status === 'running');
 }
 
@@ -182,12 +183,20 @@ export function busySessions(sessions: Session[]): Session[] {
  * agents keep running (F4); closing a window says they stop. Destructive button "Quit", or
  * "Relaunch & update" for an update.
  */
-export function quitConfirmCopy({ running, busy, reason }: QuitConfirmCopyInput): QuitConfirmCopy {
+export function quitConfirmCopy({
+  running,
+  busy,
+  reason,
+  trayHint,
+}: QuitConfirmCopyInput): QuitConfirmCopy {
   const title =
     reason === 'quitAndStop'
       ? `Stop ${countNoun(running, 'agent', 'agents')} and quit?`
       : `${running} ${running === 1 ? 'session' : 'sessions'} still running`;
-  const line = runningLine(reason, running, busy, 'will stop');
+  let line = runningLine(reason, running, busy, 'will stop');
+  // See docs/specs/2026-11-03-tray-helper.md §10.
+  if (trayHint && (reason === 'quit' || reason === 'update'))
+    line += " Stop them any time from Conduit's icon in the notification area.";
   const body = reason === 'update' ? `${line} Conduit will relaunch to install the update.` : line;
   const confirmLabel =
     reason === 'update' ? 'Relaunch & update' : reason === 'quitAndStop' ? 'Stop and quit' : 'Quit';
@@ -206,10 +215,11 @@ export function quitConfirmState({
   running,
   busy,
   reason,
+  trayHint,
   resolve,
   onShown,
 }: QuitConfirmStateInput) {
-  const copy = quitConfirmCopy({ running, busy, reason });
+  const copy = quitConfirmCopy({ running, busy, reason, trayHint });
   return {
     title: copy.title,
     message: copy.body,

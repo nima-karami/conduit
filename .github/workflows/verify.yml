@@ -38,6 +38,9 @@ jobs:
       - name: Unit tests
         run: npm run test:unit
 
+      - name: Rust tray helper checks
+        run: npm run tray:check
+
       - name: Codebase analysis (Fallow — dead code + duplication)
         run: npm run fallow:check
 

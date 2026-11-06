@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { HcCliDeps } from '../../electron/hc-cli';
+import { AppSessionStore } from '../../electron/app-session-store';
+import { type HcCliDeps, supervisorArgs } from '../../electron/hc-cli';
 import { createHcEvents } from '../../electron/hc-events';
 import { ServerClient } from '../../electron/server-client';
+import { createServerEventRouter } from '../../electron/server-events';
 import {
   createServerLifecycle,
   type ServerLifecycleState,
@@ -10,6 +12,7 @@ import {
 import type { HcTerminal } from '../../src/contracts/hc';
 import { SERVER_RESTART_EXIT_WAIT_MS } from '../../src/contracts/server-protocol';
 import type { InstanceNames } from '../../src/contracts/session-identity';
+import type { AppLaunch } from '../../src/contracts/tray-protocol';
 import { HcRpcError, NodeHcClient } from '../../src/hc-client';
 import { FakeHc } from '../../src/hc-client/testing/fake-hc';
 import { FakeC2Server } from './fake-c2-server';
@@ -44,6 +47,8 @@ async function harness(
     marker?: boolean;
     serverVersion?: string;
     hcExe?: string;
+    trayExe?: string;
+    app?: AppLaunch;
     hcEndpointError?: string;
   } = {},
 ) {
@@ -148,10 +153,12 @@ async function harness(
       hcExe: o.hcExe ?? 'hc',
       hcVersion: '0.1.16',
       coreCwd: '/u/runtime/hc/0.1.16',
+      trayExe: o.trayExe ?? null,
     },
     userData: '/u',
     appVersion: APP_VERSION,
     serverArgs: ['--e2e'],
+    app: o.app,
     client: () => {
       clients++;
       const c = new ServerClient({ endpoint: c2.endpoint, appVersion: APP_VERSION, log: () => {} });
@@ -183,12 +190,35 @@ async function harness(
     },
   });
   lifecycle.onState((s) => states.push(s));
+  const router = createServerEventRouter({
+    store: new AppSessionStore(),
+    terminals: { sessionsChanged() {}, show() {} },
+    broadcastState() {},
+    broadcast() {},
+    sendToWindow() {},
+    ownerWindowOf: () => undefined,
+    raiseWindow() {},
+    openFileInEditor() {},
+    sessionsApplied() {},
+    onServerSettings() {},
+    onStores() {},
+    onRuntime() {},
+    osAttention: () => false,
+    anyWindowFocused: () => false,
+    notifyAttention() {},
+    flash() {},
+    place() {},
+    log() {},
+    noteStopping: (reason) => lifecycle.noteStopping(reason),
+  });
   const h = {
     fake,
     c2,
     real,
     hcEvents,
     lifecycle,
+    stopping: (reason: 'stopAll' | 'idle' | 'update' | 'user') =>
+      router.event({ seq: 1, type: 'server.stopping', data: { reason } }),
     flags,
     cliCalls,
     cliResult,
@@ -210,6 +240,61 @@ async function harness(
 }
 
 describe('createServerLifecycle start rule', () => {
+  it('preserves every app argument as its own supervisor flag value', () => {
+    expect(
+      supervisorArgs('hc', {
+        superviseJs: 'supervise.js',
+        userData: '/u',
+        serverArgs: ['--e2e'],
+        tray: {
+          source: '/tray.exe',
+          app: { exe: '/Conduit.exe', args: ['/repo', '--e2e'], cwd: '/cwd' },
+        },
+      }),
+    ).toEqual([
+      'supervise.js',
+      '--user-data',
+      '/u',
+      '--hc',
+      'hc',
+      '--e2e',
+      '--tray',
+      '/tray.exe',
+      '--app-exe',
+      '/Conduit.exe',
+      '--app-arg',
+      '/repo',
+      '--app-arg',
+      '--e2e',
+      '--app-cwd',
+      '/cwd',
+    ]);
+  });
+
+  it.each([null, '/tray.exe'])(
+    'passes tray launch flags to both supervisor paths only with a tray source (%s)',
+    async (trayExe) => {
+      const h = await harness({
+        trayExe: trayExe ?? undefined,
+        app: { exe: '/Conduit.exe', args: [], cwd: '/cwd' },
+      });
+      h.cliResult.code = 1;
+      await h.lifecycle.start();
+      const argv = h.cliCalls[0].slice(h.cliCalls[0].indexOf('--') + 2);
+      expect(argv.includes('--tray')).toBe(trayExe !== null);
+      if (trayExe)
+        expect(argv.slice(-6)).toEqual([
+          '--tray',
+          trayExe,
+          '--app-exe',
+          '/Conduit.exe',
+          '--app-cwd',
+          '/cwd',
+        ]);
+      expect(h.detachedArgs).toEqual([argv]);
+    },
+  );
+
   it('publishes endpoint configuration failure without starting a supervisor or opening C2', async () => {
     const h = await harness({ hcEndpointError: 'hc holder cannot fit within 103 bytes' });
     open = h;
@@ -445,6 +530,61 @@ describe('createServerLifecycle versions (F6, D26)', () => {
 });
 
 describe('createServerLifecycle F9 and explicit actions', () => {
+  it.each(['c2-first', 'hc-first'] as const)(
+    'orderly stopAll and idle exits preserve the crash budget (%s)',
+    async (ordering) => {
+      const h = await harness();
+      await h.lifecycle.start();
+      let expectedRuns = 1;
+      for (const reason of ['stopAll', 'idle', 'stopAll', 'idle'] as const) {
+        h.stopping(reason);
+        if (ordering === 'c2-first') {
+          h.c2.dropClients();
+          await until(() => h.state() === 'reconnecting', 'C2 dropped');
+          await h.killSupervisorTerminal();
+        } else {
+          await h.killSupervisorTerminal();
+          h.c2.dropClients();
+        }
+        expectedRuns++;
+        await until(
+          () => h.runs() === expectedRuns && h.state() === 'connected',
+          'orderly restart',
+        );
+        expect(h.logs).toContainEqual({
+          message: 'orderly end: no restart budget spent',
+          data: undefined,
+        });
+      }
+      for (let crash = 0; crash < VANISHED_RESTART_BUDGET.attempts; crash++) {
+        await h.killSupervisorTerminal();
+        h.c2.dropClients();
+        expectedRuns++;
+        await until(() => h.runs() === expectedRuns && h.state() === 'connected', 'crash restart');
+      }
+      await h.killSupervisorTerminal();
+      h.c2.dropClients();
+      await until(() => h.state() === 'stopped', 'crash budget spent');
+    },
+  );
+
+  it('clears a recorded orderly end on a new hello before a later unannounced crash', async () => {
+    const h = await harness();
+    await h.lifecycle.start();
+    h.lifecycle.noteStopping('stopAll');
+    h.c2.dropClients();
+    await until(() => h.state() === 'reconnecting', 'reconnecting');
+    await vi.waitFor(() => expect(h.state()).toBe('connected'));
+    for (let crash = 1; crash <= VANISHED_RESTART_BUDGET.attempts; crash++) {
+      await h.killSupervisorTerminal();
+      h.c2.dropClients();
+      await until(() => h.runs() === crash + 1 && h.state() === 'connected', 'crash restart');
+    }
+    await h.killSupervisorTerminal();
+    h.c2.dropClients();
+    await until(() => h.state() === 'stopped', 'no stale orderly end');
+  });
+
   it('a real hello timeout during lostConnection becomes unavailable', async () => {
     const h = await harness({ supervisorLive: true });
     await h.lifecycle.start();

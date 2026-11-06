@@ -59,6 +59,7 @@ export interface WinControls {
 }
 
 interface HostBridge {
+  trayAvailable?: () => boolean;
   /** Persisted settings, available synchronously at boot (see electron/preload.ts). */
   initialSettings?: AppSettings;
   windowsPty?: WindowsPtyInfo;
@@ -94,6 +95,10 @@ interface HostBridge {
     status(projectPath: string | null): Promise<McpInstallStatus>;
     act(req: McpInstallRequest): Promise<McpInstallResult>;
   };
+}
+
+export function trayHintFromHost(host: Pick<HostBridge, 'trayAvailable'> | undefined): boolean {
+  return host?.trayAvailable?.() ?? false;
 }
 
 declare global {

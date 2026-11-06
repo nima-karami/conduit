@@ -1,6 +1,7 @@
 import { HC_XDG_ISOLATED_ENV } from '../server/hc-cli';
 import type { HcClient } from '../src/contracts/hc';
 import { type InstanceNames, USER_XDG_PASSTHROUGH } from '../src/contracts/session-identity';
+import type { AppLaunch } from '../src/contracts/tray-protocol';
 import { HcDisconnectedError, HcRpcError } from '../src/hc-client';
 
 /** hc calls that may start a core: env = coreStartEnv, cwd = coreStartCwd (D16, D23, M21). */
@@ -26,9 +27,20 @@ const HC_CLI_TIMEOUT_MS = 20_000;
 
 export function supervisorArgs(
   hcExe: string,
-  a: { superviseJs: string; userData: string; serverArgs: string[] },
+  a: {
+    superviseJs: string;
+    userData: string;
+    serverArgs: string[];
+    tray?: { source: string; app: AppLaunch };
+  },
 ): string[] {
-  return [a.superviseJs, '--user-data', a.userData, '--hc', hcExe, ...a.serverArgs];
+  const args = [a.superviseJs, '--user-data', a.userData, '--hc', hcExe, ...a.serverArgs];
+  if (a.tray) {
+    args.push('--tray', a.tray.source, '--app-exe', a.tray.app.exe);
+    for (const arg of a.tray.app.args) args.push('--app-arg', arg);
+    args.push('--app-cwd', a.tray.app.cwd);
+  }
+  return args;
 }
 
 /**
@@ -88,6 +100,7 @@ export async function startSupervisor(
     superviseJs: string;
     userData: string;
     serverArgs: string[];
+    tray?: { source: string; app: AppLaunch };
   },
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {

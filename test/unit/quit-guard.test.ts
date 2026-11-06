@@ -111,31 +111,56 @@ describe('quitConfirmCopy', () => {
 
   describe('reason: quit — plural, with busy', () => {
     it('title counts sessions', () => {
-      const { title } = quitConfirmCopy({ running: twoRunning, busy: 1, reason: 'quit' });
+      const { title } = quitConfirmCopy({
+        running: twoRunning,
+        busy: 1,
+        reason: 'quit',
+        trayHint: false,
+      });
       expect(title).toBe('2 sessions still running');
     });
 
     it('body says the agents keep running, with the busy clause (F4)', () => {
-      const { body } = quitConfirmCopy({ running: twoRunning, busy: 1, reason: 'quit' });
+      const { body } = quitConfirmCopy({
+        running: twoRunning,
+        busy: 1,
+        reason: 'quit',
+        trayHint: false,
+      });
       expect(body).toBe(
         'Your 2 agents (1 actively working) will keep running after Conduit closes.',
       );
     });
 
     it('confirmLabel is "Quit"', () => {
-      const { confirmLabel } = quitConfirmCopy({ running: twoRunning, busy: 1, reason: 'quit' });
+      const { confirmLabel } = quitConfirmCopy({
+        running: twoRunning,
+        busy: 1,
+        reason: 'quit',
+        trayHint: false,
+      });
       expect(confirmLabel).toBe('Quit');
     });
   });
 
   describe('reason: quit — plural, busy = 0', () => {
     it('omits the busy clause when busy = 0', () => {
-      const { body } = quitConfirmCopy({ running: twoRunning, busy: 0, reason: 'quit' });
+      const { body } = quitConfirmCopy({
+        running: twoRunning,
+        busy: 0,
+        reason: 'quit',
+        trayHint: false,
+      });
       expect(body).not.toContain('actively working');
     });
 
     it('still mentions the agent count', () => {
-      const { body } = quitConfirmCopy({ running: twoRunning, busy: 0, reason: 'quit' });
+      const { body } = quitConfirmCopy({
+        running: twoRunning,
+        busy: 0,
+        reason: 'quit',
+        trayHint: false,
+      });
       expect(body).toContain('2 agents');
     });
   });
@@ -144,12 +169,22 @@ describe('quitConfirmCopy', () => {
     const oneRunning = 1;
 
     it('title uses singular "session"', () => {
-      const { title } = quitConfirmCopy({ running: oneRunning, busy: 0, reason: 'quit' });
+      const { title } = quitConfirmCopy({
+        running: oneRunning,
+        busy: 0,
+        reason: 'quit',
+        trayHint: false,
+      });
       expect(title).toBe('1 session still running');
     });
 
     it('body uses singular "agent"', () => {
-      const { body } = quitConfirmCopy({ running: oneRunning, busy: 0, reason: 'quit' });
+      const { body } = quitConfirmCopy({
+        running: oneRunning,
+        busy: 0,
+        reason: 'quit',
+        trayHint: false,
+      });
       expect(body).toContain('1 agent');
       expect(body).not.toContain('agents');
     });
@@ -157,26 +192,46 @@ describe('quitConfirmCopy', () => {
 
   describe('reason: update — plural, with busy', () => {
     it('title counts sessions', () => {
-      const { title } = quitConfirmCopy({ running: twoRunning, busy: 2, reason: 'update' });
+      const { title } = quitConfirmCopy({
+        running: twoRunning,
+        busy: 2,
+        reason: 'update',
+        trayHint: false,
+      });
       expect(title).toBe('2 sessions still running');
     });
 
     it('body says the agents keep running and Conduit relaunches', () => {
-      const { body } = quitConfirmCopy({ running: twoRunning, busy: 2, reason: 'update' });
+      const { body } = quitConfirmCopy({
+        running: twoRunning,
+        busy: 2,
+        reason: 'update',
+        trayHint: false,
+      });
       expect(body).toBe(
         'Your 2 agents (2 actively working) will keep running after Conduit closes. Conduit will relaunch to install the update.',
       );
     });
 
     it('confirmLabel is "Relaunch & update"', () => {
-      const { confirmLabel } = quitConfirmCopy({ running: twoRunning, busy: 2, reason: 'update' });
+      const { confirmLabel } = quitConfirmCopy({
+        running: twoRunning,
+        busy: 2,
+        reason: 'update',
+        trayHint: false,
+      });
       expect(confirmLabel).toBe('Relaunch & update');
     });
   });
 
   describe('reason: update — plural, busy = 0', () => {
     it('omits the busy clause', () => {
-      const { body } = quitConfirmCopy({ running: twoRunning, busy: 0, reason: 'update' });
+      const { body } = quitConfirmCopy({
+        running: twoRunning,
+        busy: 0,
+        reason: 'update',
+        trayHint: false,
+      });
       expect(body).not.toContain('actively working');
     });
   });
@@ -185,21 +240,59 @@ describe('quitConfirmCopy', () => {
     const oneRunning = 1;
 
     it('title uses singular "session"', () => {
-      const { title } = quitConfirmCopy({ running: oneRunning, busy: 0, reason: 'update' });
+      const { title } = quitConfirmCopy({
+        running: oneRunning,
+        busy: 0,
+        reason: 'update',
+        trayHint: false,
+      });
       expect(title).toBe('1 session still running');
     });
 
     it('body uses singular "agent"', () => {
-      const { body } = quitConfirmCopy({ running: oneRunning, busy: 0, reason: 'update' });
+      const { body } = quitConfirmCopy({
+        running: oneRunning,
+        busy: 0,
+        reason: 'update',
+        trayHint: false,
+      });
       expect(body).toContain('1 agent');
       expect(body).not.toContain('agents');
     });
   });
 });
 
+describe('quitConfirmCopy tray hint', () => {
+  it.each(['quit', 'update'] as const)('adds the notification-area hint for %s', (reason) => {
+    expect(quitConfirmCopy({ running: 2, busy: 1, reason, trayHint: true }).body).toBe(
+      'Your 2 agents (1 actively working) will keep running after Conduit closes. ' +
+        "Stop them any time from Conduit's icon in the notification area." +
+        (reason === 'update' ? ' Conduit will relaunch to install the update.' : ''),
+    );
+  });
+
+  it('uses singular copy and preserves labels', () => {
+    expect(quitConfirmCopy({ running: 1, busy: 0, reason: 'quit', trayHint: true })).toEqual({
+      title: '1 session still running',
+      body:
+        'Your 1 agent will keep running after Conduit closes. ' +
+        "Stop them any time from Conduit's icon in the notification area.",
+      confirmLabel: 'Quit',
+    });
+  });
+
+  it.each(['windowClose', 'quitAndStop'] as const)('does not change %s copy', (reason) => {
+    expect(quitConfirmCopy({ running: 2, busy: 1, reason, trayHint: true })).toEqual(
+      quitConfirmCopy({ running: 2, busy: 1, reason, trayHint: false }),
+    );
+  });
+});
+
 describe('quitConfirmCopy windowClose', () => {
   it('closing a window still stops its agents', () => {
-    expect(quitConfirmCopy({ running: 2, busy: 1, reason: 'windowClose' })).toEqual({
+    expect(
+      quitConfirmCopy({ running: 2, busy: 1, reason: 'windowClose', trayHint: false }),
+    ).toEqual({
       title: '2 sessions still running',
       body: 'Closing this window will stop 2 running agents (1 actively working).',
       confirmLabel: 'Quit',
@@ -209,7 +302,9 @@ describe('quitConfirmCopy windowClose', () => {
 
 describe('quitConfirmCopy quitAndStop', () => {
   it('says it stops the agents, with one destructive confirm', () => {
-    expect(quitConfirmCopy({ running: 2, busy: 1, reason: 'quitAndStop' })).toEqual({
+    expect(
+      quitConfirmCopy({ running: 2, busy: 1, reason: 'quitAndStop', trayHint: false }),
+    ).toEqual({
       title: 'Stop 2 agents and quit?',
       body: 'Quitting will stop 2 running agents (1 actively working).',
       confirmLabel: 'Stop and quit',

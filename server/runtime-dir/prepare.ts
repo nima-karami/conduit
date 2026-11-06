@@ -40,6 +40,7 @@ export interface PreparedRuntime {
   mainJs: string;
   hcExe: string;
   shimDir: string;
+  trayExe: string | null;
 }
 
 function shimDirName(generation: number): string {
@@ -62,6 +63,8 @@ export async function prepareRuntime(options: PrepareRuntimeOptions): Promise<Pr
   const appDir = join(root, options.appVersion);
   const hcDir = coreStartCwd(root, options.hcVersion);
   const shimDir = join(root, shimDirName(options.shimVersion));
+  const traySource = join(bundled, 'tray');
+  const hasTray = platform === 'win32' && (await exists(fs, join(traySource, 'conduit-tray.exe')));
 
   const beforeRename = async (staging: string) => {
     if (platform !== 'darwin') return;
@@ -75,7 +78,12 @@ export async function prepareRuntime(options: PrepareRuntimeOptions): Promise<Pr
   };
 
   await ensureDir(fs, hcDir, [{ contentsOf: join(bundled, 'hc') }], beforeRename);
-  await ensureDir(fs, appDir, [nodeSource, join(bundled, 'server')], beforeRename);
+  await ensureDir(
+    fs,
+    appDir,
+    [nodeSource, join(bundled, 'server'), ...(hasTray ? [traySource] : [])],
+    beforeRename,
+  );
   await ensureDir(
     fs,
     shimDir,
@@ -89,6 +97,10 @@ export async function prepareRuntime(options: PrepareRuntimeOptions): Promise<Pr
     mainJs: join(appDir, 'server', 'main.js'),
     hcExe: join(hcDir, hcBinary),
     shimDir,
+    trayExe:
+      hasTray && (await exists(fs, join(appDir, 'tray', 'conduit-tray.exe')))
+        ? join(appDir, 'tray', 'conduit-tray.exe')
+        : null,
   };
 }
 

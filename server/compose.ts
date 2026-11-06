@@ -55,6 +55,11 @@ export function emptySnapshot(): Omit<ServerSnapshot, 'seq' | 'runtime'> {
   };
 }
 
+export type ShellStopAll =
+  | { kind: 'ok'; killed: number; afterReply(): Promise<void> }
+  | { kind: 'late' }
+  | { kind: 'failed'; error: unknown; afterReply(): Promise<void> };
+
 export interface ComposeOptions {
   transport: PipeTransport;
   core: ShellCore;
@@ -100,6 +105,16 @@ export function compose(options: ComposeOptions) {
     lifecycle.disconnected();
     options.disconnected?.(peer);
   };
+  // One stop transition for the C2 route and the tray channel (spec §7).
+  const stopAll = async (): Promise<ShellStopAll> => {
+    const stopped = await lifecycle.stop('stopAll', 'stopAll');
+    if (stopped.kind === 'late') return stopped;
+    if (stopped.kind === 'failed') {
+      log('error', `server.stopAll failed: ${String(stopped.error)}`);
+      return stopped;
+    }
+    return { kind: 'ok', killed: stopped.killed, afterReply: stopped.afterReply };
+  };
   const handle: RpcHandler = (request, peer) => {
     const params = request.params;
     if (typeof params !== 'object' || params === null || Array.isArray(params))
@@ -143,28 +158,27 @@ export function compose(options: ComposeOptions) {
       logging.logLevel = p.logLevel as ServerLogging['logLevel'];
       return { result: {} };
     }
-    if (request.method === 'server.restart' || request.method === 'server.stopAll') {
-      const stopAll = request.method === 'server.stopAll';
-      if (!stopAll && peer.order === 'appOlder')
+    if (request.method === 'server.stopAll') {
+      return stopAll().then((stopped): RpcAnswer => {
+        if (stopped.kind === 'late') return { reply: false };
+        if (stopped.kind === 'failed')
+          return { error: stopped.error, afterReply: stopped.afterReply };
+        return { result: { killed: stopped.killed }, afterReply: stopped.afterReply };
+      });
+    }
+    if (request.method === 'server.restart') {
+      if (peer.order === 'appOlder')
         throw new RpcFault('refused', 'A newer Conduit is running its agents');
-      if (!stopAll && p.reason !== 'update' && p.reason !== 'user')
+      if (p.reason !== 'update' && p.reason !== 'user')
         throw new RpcFault('invalid', 'Invalid restart reason');
-      return lifecycle
-        .stop(
-          stopAll ? 'stopAll' : 'restart',
-          stopAll ? 'stopAll' : (p.reason as 'update' | 'user'),
-        )
-        .then((stopped): RpcAnswer => {
-          if (stopped.kind === 'late') return { reply: false };
-          if (stopped.kind === 'failed') {
-            log('error', `${request.method} failed: ${String(stopped.error)}`);
-            return { error: stopped.error, afterReply: stopped.afterReply };
-          }
-          return {
-            result: stopAll ? { killed: stopped.killed } : {},
-            afterReply: stopped.afterReply,
-          };
-        });
+      return lifecycle.stop('restart', p.reason).then((stopped): RpcAnswer => {
+        if (stopped.kind === 'late') return { reply: false };
+        if (stopped.kind === 'failed') {
+          log('error', `server.restart failed: ${String(stopped.error)}`);
+          return { error: stopped.error, afterReply: stopped.afterReply };
+        }
+        return { result: {}, afterReply: stopped.afterReply };
+      });
     }
     if (lifecycle.stopping) {
       if (request.method === 'sessions.create')
@@ -176,5 +190,5 @@ export function compose(options: ComposeOptions) {
     if (options.dispatch) return options.dispatch(request, peer);
     throw new RpcProtocolFault(-32601, 'Method not found');
   };
-  return { lifecycle, handle, logging, log, record };
+  return { lifecycle, handle, logging, log, record, stopAll };
 }

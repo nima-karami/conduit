@@ -10,6 +10,7 @@ export interface RuntimeLayout {
   hcExe: string;
   hcVersion: string;
   coreCwd: string;
+  trayExe: string | null;
 }
 
 /**
@@ -57,8 +58,10 @@ export function runtimeLayout(i: {
       hcExe: join(coreCwd, hcBinary),
       hcVersion,
       coreCwd,
+      trayExe: platform === 'win32' ? join(appDir, 'tray', 'conduit-tray.exe') : null,
     };
   }
+  const devTray = join(i.appPath, 'build', 'vendor', 'tray', 'conduit-tray.exe');
   const vendorHc = join(i.appPath, 'build', 'vendor', 'hc', hcBinary);
   if (!i.env.CONDUIT_HC_BINARY && !exists(vendorHc)) {
     throw new Error(
@@ -71,5 +74,9 @@ export function runtimeLayout(i: {
     hcExe: i.env.CONDUIT_HC_BINARY || vendorHc,
     hcVersion,
     coreCwd,
+    trayExe:
+      platform === 'win32'
+        ? (i.env.CONDUIT_TRAY_BINARY ?? (exists(devTray) ? devTray : null))
+        : null,
   };
 }

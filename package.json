@@ -27,10 +27,12 @@
     "secret-scan": "node tools/secret-scan.mjs",
     "security": "node tools/security-scan.mjs && node tools/secret-scan.mjs",
     "check:e2e-sleeps": "node tools/check-e2e-sleeps.mjs",
-    "verify": "npm run check && npm run typecheck && npm run build && npm run test:unit && npm run fallow:check && npm run audit && npm run security && npm run check:e2e-sleeps",
+    "tray:check": "node tools/tray-check.mjs",
+    "tray:build": "node tools/tray-build.mjs",
+    "verify": "npm run check && npm run typecheck && npm run build && npm run test:unit && npm run tray:check && npm run fallow:check && npm run audit && npm run security && npm run check:e2e-sleeps",
     "verify:quick": "node tools/verify-quick.mjs",
-    "pack": "npm run build && node build/fetch-runtime.mjs && electron-builder --dir",
-    "dist": "npm run build && node build/fetch-runtime.mjs && electron-builder --win",
+    "pack": "npm run build && node build/fetch-runtime.mjs && npm run tray:build && electron-builder --dir",
+    "dist": "npm run build && node build/fetch-runtime.mjs && npm run tray:build && electron-builder --win",
     "release": "npm version patch && git push --follow-tags",
     "release:minor": "npm version minor && git push --follow-tags",
     "release:major": "npm version major && git push --follow-tags",
@@ -98,8 +100,16 @@
           ]
         },
         {
+          "from": "build/vendor/tray",
+          "to": "runtime/tray"
+        },
+        {
           "from": "build/vendor/node/LICENSE",
           "to": "licenses/node/LICENSE"
+        },
+        {
+          "from": "assets/tray/licenses",
+          "to": "licenses/tray"
         },
         {
           "from": "THIRD_PARTY_NOTICES.txt",

@@ -2,6 +2,7 @@ import { createConnection, type Socket } from 'node:net';
 import { StringDecoder } from 'node:string_decoder';
 import {
   SERVER_PROTOCOL_GENERATION,
+  type ServerMethods,
   STOP_ALL_ANSWER_TIMEOUT_MS,
   STOP_ALL_CONNECT_TIMEOUT_MS,
 } from '../../src/contracts/server-protocol';
@@ -9,6 +10,7 @@ import {
 export interface StopAllOptions {
   endpoint: string;
   version: string;
+  auth?: ServerMethods['hello']['params']['auth'];
   directFallback(): Promise<number>;
   connect?: () => Socket;
 }
@@ -60,7 +62,11 @@ export function stopAll(options: StopAllOptions): Promise<StopAllResult> {
             jsonrpc: '2.0',
             id: 1,
             method: 'hello',
-            params: { appVersion: options.version, generation: SERVER_PROTOCOL_GENERATION },
+            params: {
+              appVersion: options.version,
+              generation: SERVER_PROTOCOL_GENERATION,
+              ...(options.auth !== undefined ? { auth: options.auth } : {}),
+            },
           })}\n`,
         );
     });

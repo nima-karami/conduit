@@ -221,6 +221,16 @@ jobs:
       # first scenario's timeout.
       - run: node node_modules/electron/install.js
       - run: npm run build
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/tray/target
+          key: tray-${{ runner.os }}-${{ hashFiles('native/tray/Cargo.lock', 'native/tray/rust-toolchain.toml') }}
+          restore-keys: |
+            tray-${{ runner.os }}-
+      - run: npm run tray:build
       # A global hc may have a different protocol version (ADR 0007).
       - run: node build/fetch-runtime.mjs
       # loadPlaywright (harness.mjs) looks in node_modules first. Playwright is deliberately not a

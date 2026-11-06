@@ -25,6 +25,7 @@ const api = {
    * the wrong theme reaches the screen (see test/e2e/theme-first-paint.e2e.mjs).
    */
   initialSettings: ipcRenderer.sendSync('settings:initial') as AppSettings | undefined,
+  trayAvailable: (): boolean => ipcRenderer.sendSync('tray:available') as boolean,
   /** Synchronous for the same reason: a terminal is built with it, before its first byte. */
   windowsPty: ipcRenderer.sendSync('pty:windowsPty') as WindowsPtyInfo | undefined,
   post(msg: WebviewToHost): void {

@@ -21,6 +21,8 @@ export function serverChildEnv(
 ): Record<string, string> {
   const env = coreStartEnv(parent, names);
   delete env[HC_XDG_ISOLATED_ENV];
+  delete env.NODE_CHANNEL_FD;
+  delete env.NODE_CHANNEL_SERIALIZATION_MODE;
   return env;
 }
 
@@ -120,6 +122,23 @@ function hasOtherLiveTerminal(
   );
 }
 
+/** See docs/specs/2026-11-03-tray-helper.md §7a. */
+export async function directStopSessions(hc: HcClient, names: InstanceNames): Promise<number> {
+  let killed = 0;
+  const { terminals } = await hc.call('terminal.list', {
+    labels: { 'conduit.instance': names.instance, 'conduit.role': 'session' },
+  });
+  for (const terminal of terminals) {
+    try {
+      await hc.call('terminal.kill', { terminal: terminal.address });
+      killed++;
+    } catch (error) {
+      if (!notFound(error)) throw error;
+    }
+  }
+  return killed;
+}
+
 /**
  * `--stop-all` with no server answering (F12): kill every session terminal of this instance and
  * the supervisor by its unique name, then stop our core if no other live terminal remains.
@@ -131,17 +150,7 @@ export async function directStopAll(
 ): Promise<number> {
   let killed = 0;
   try {
-    const { terminals } = await hc.call('terminal.list', {
-      labels: { 'conduit.instance': names.instance, 'conduit.role': 'session' },
-    });
-    for (const t of terminals) {
-      try {
-        await hc.call('terminal.kill', { terminal: t.address });
-        killed++;
-      } catch (error) {
-        if (!notFound(error)) throw error;
-      }
-    }
+    killed = await directStopSessions(hc, names);
     try {
       const supervisor = await hc.call('terminal.get', { terminal: names.supervisorName });
       if (supervisor.state === 'live')

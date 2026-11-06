@@ -18,6 +18,36 @@ const fresh = () => {
 const coreCwd = (u: string) => join(u, 'runtime', 'conduit-hc', HC_PINNED_VERSION);
 
 describe('runtimeLayout', () => {
+  it('selects the packaged Windows tray source and disables it on other platforms', () => {
+    const u = fresh();
+    const input = { packaged: true, userData: u, appVersion: '1.2.3', appPath: u, env: {} };
+    expect(runtimeLayout({ ...input, platform: 'win32' }).trayExe).toBe(
+      join(u, 'runtime', '1.2.3', 'tray', 'conduit-tray.exe'),
+    );
+    for (const platform of ['darwin', 'linux'] as const)
+      expect(runtimeLayout({ ...input, platform }).trayExe).toBeNull();
+  });
+
+  it('uses the dev build only when present, with an explicit override taking precedence', () => {
+    const u = fresh();
+    const input = {
+      packaged: false,
+      userData: u,
+      appVersion: '1.2.3',
+      appPath: u,
+      env: { CONDUIT_HC_BINARY: '/hc' },
+      platform: 'win32' as const,
+    };
+    expect(runtimeLayout(input).trayExe).toBeNull();
+    const built = join(u, 'build', 'vendor', 'tray', 'conduit-tray.exe');
+    mkdirSync(join(built, '..'), { recursive: true });
+    writeFileSync(built, 'helper');
+    expect(runtimeLayout(input).trayExe).toBe(built);
+    const env = { CONDUIT_TRAY_BINARY: '/custom/tray.exe', CONDUIT_HC_BINARY: '/hc' };
+    expect(runtimeLayout({ ...input, env }).trayExe).toBe('/custom/tray.exe');
+    expect(runtimeLayout({ ...input, env, platform: 'linux' }).trayExe).toBeNull();
+  });
+
   it.each(['win32', 'darwin'] as const)(
     'packaged %s paths match prepareRuntime',
     async (platform) => {
@@ -51,6 +81,7 @@ describe('runtimeLayout', () => {
         hcExe: prepared.hcExe,
         hcVersion: HC_PINNED_VERSION,
         coreCwd: coreCwd(u),
+        trayExe: platform === 'win32' ? prepared.trayExe : null,
       });
       expect(layout.nodeExe).toBe(
         join(u, 'runtime', '0.52.0', platform === 'win32' ? 'node.exe' : 'node'),
@@ -74,6 +105,7 @@ describe('runtimeLayout', () => {
       hcExe: '/dev/hc',
       hcVersion: HC_PINNED_VERSION,
       coreCwd: coreCwd(u),
+      trayExe: null,
     });
     const bare = runtimeLayout({
       packaged: false,

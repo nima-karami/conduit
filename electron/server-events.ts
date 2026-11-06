@@ -37,6 +37,7 @@ export interface ServerEventRouterDeps {
   flash(sessionId: string): void;
   /** Before the `sessions.changed` that first lists the session (C2 sessions.opened). */
   place(e: ServerEvents['sessions.opened']): void;
+  noteStopping?(reason: ServerEvents['server.stopping']['reason']): void;
   log: AppLog;
 }
 
@@ -176,7 +177,10 @@ export function createServerEventRouter(d: ServerEventRouterDeps): {
     // Before the coalesced timers.changed: the toasts read this pre-fire record.
     'timers.fired': (data) => d.broadcast({ type: 'timer:fired', ...data }),
     'timers.changed': (data) => d.broadcast({ type: 'timer:state', ...data }),
-    'server.stopping': (data) => d.log('info', 'server stopping', { reason: data.reason }),
+    'server.stopping': (data) => {
+      d.noteStopping?.(data.reason);
+      d.log('info', 'server stopping', { reason: data.reason });
+    },
     // The client re-subscribes on it itself.
     missed: () => {},
   };

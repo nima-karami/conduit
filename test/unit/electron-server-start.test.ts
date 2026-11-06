@@ -13,7 +13,7 @@ const start = source.match(/^ {2}async function startServer\([\s\S]*?^ {2}\}/m)?
 if (!start) throw new Error('missing production startServer');
 const startupCode = transformSync(start, { loader: 'ts', target: 'es2022' }).code;
 
-async function harness(packaged: boolean, e2e = false) {
+async function harness(packaged: boolean, e2e = false, env: Record<string, string> = {}) {
   let lifecycleDeps: ServerLifecycleDeps | undefined;
   const layout = {
     nodeExe: '/runtime/version/node.exe',
@@ -28,7 +28,7 @@ async function harness(packaged: boolean, e2e = false) {
     app: { isPackaged: packaged, getAppPath: () => '/app' },
     aboutInfo: { version: 'test' },
     userData: () => '/profile',
-    process: { execPath: '/installed/Conduit.exe', resourcesPath: '/installed/resources', env: {} },
+    process: { execPath: '/installed/Conduit.exe', resourcesPath: '/installed/resources', env },
     prepareRuntime,
     CURRENT_SHIM_GENERATION: 2,
     HC_PINNED_VERSION: 'test',
@@ -60,6 +60,14 @@ async function harness(packaged: boolean, e2e = false) {
 }
 
 describe('Electron server startup', () => {
+  it('uses the version override only for e2e lifecycle comparisons', async () => {
+    const env = { CONDUIT_E2E_APP_VERSION: '9.8.7' };
+    expect((await harness(false, true, env)).deps.appVersion).toBe('9.8.7');
+    expect((await harness(false, true, env)).deps.serverArgs).toContain('--e2e-app-version');
+    expect((await harness(false, false, env)).deps.appVersion).toBe('test');
+    expect((await harness(false, false, env)).deps.serverArgs).not.toContain('--e2e-app-version');
+    expect((await harness(true, true, env)).deps.appVersion).toBe('test');
+  });
   it('passes the prepared shim generation and installed v0.51 paths only for packaged starts', async () => {
     const h = await harness(true);
     expect(h.deps.serverArgs).toEqual([
