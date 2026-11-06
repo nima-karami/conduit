@@ -326,6 +326,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   let retentionTimer: ReturnType<typeof setInterval> | undefined;
   let broadcastTimer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
+  let startupSweep: Promise<void> | undefined;
+  const reservations = new Set<Promise<unknown>>();
   const lateEchoWatchers = new Map<string, () => void>();
 
   const rt = (sessionId: string): Runtime => {
@@ -1525,13 +1527,18 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   });
   return {
     async start() {
-      try {
-        // Configs left by a crash: they name a dead session and can't be reused.
-        await fs.promises.rm(launchDir, { recursive: true, force: true });
-        await fs.promises.mkdir(launchDir, { recursive: true });
-      } catch (err) {
-        deps.log.warn('conduit-mcp', 'launch dir sweep failed', { err: String(err) });
-      }
+      if (stopped) return;
+      startupSweep = (async () => {
+        try {
+          // Configs left by a crash: they name a dead session and can't be reused.
+          await fs.promises.rm(launchDir, { recursive: true, force: true });
+          if (!stopped) await fs.promises.mkdir(launchDir, { recursive: true });
+        } catch (err) {
+          deps.log.warn('conduit-mcp', 'launch dir sweep failed', { err: String(err) });
+        }
+      })();
+      await startupSweep;
+      if (stopped) return;
       // Listening first: a launch wired before then would point its shim at nothing, and one
       // wired while the store loads only meets store_unavailable, which it can retry.
       // A listen that throws is a down endpoint like a refused one; either way the launches
@@ -1549,6 +1556,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       } finally {
         settleEndpoint();
       }
+      if (stopped) return;
       scheduleBroadcast();
       await loadStore();
       notifier = makeNotifier();
@@ -1583,10 +1591,19 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     async prepareLaunch(sessionId, def, spec, ids) {
+      if (stopped) return spec;
       const adapter = adapterFor(def, { e2e: deps.e2e });
       const session = deps.sessions.get(sessionId);
       if (!session) return spec;
-      const { token } = await deps.tokens.reserve(sessionId, ids);
+      const reservation = deps.tokens.reserve(sessionId, ids);
+      reservations.add(reservation);
+      let token: string;
+      try {
+        ({ token } = await reservation);
+      } finally {
+        reservations.delete(reservation);
+      }
+      if (stopped) return spec;
       const r = rt(sessionId);
       r.defAdapter = adapter;
       r.unavailable = null;
@@ -1898,7 +1915,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       for (const sessionId of lateEchoWatchers.keys()) cancelLateEcho(sessionId);
       flow.dispose();
       for (const c of conns.values()) c.close();
+      const storeStopped = store.stop();
       await endpoint?.close();
+      await startupSweep;
+      await storeStopped;
+      await Promise.allSettled(reservations);
     },
   };
 }

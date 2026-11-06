@@ -42,6 +42,7 @@ export interface RetentionResult {
 type RcptStatus = 'noticed' | 'read' | 'undelivered';
 type BlobInput = ReadonlyArray<{ sha256: string; data: Uint8Array }>;
 export interface MessageStore {
+  stop(): Promise<void>;
   load(): Promise<Result<void>>;
   available(): boolean;
   append(msg: MessageRecord, blobs: BlobInput): Promise<Result<void>>;
@@ -301,15 +302,20 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
   let refusedNewerVersion = false;
   const listeners = new Set<() => void>();
   let chain: Promise<unknown> = Promise.resolve();
+  let stopped = false;
 
   // Every StoreIo call runs on this one chain (plan ruling 2); it survives a rejected step.
-  function enqueue<T>(fn: () => Promise<T>): Promise<T> {
+  function enqueueRaw<T>(fn: () => Promise<T>): Promise<T> {
     const run = chain.then(fn);
     chain = run.then(
       () => undefined,
       () => undefined,
     );
     return run;
+  }
+
+  function enqueue<T>(fn: () => Promise<Result<T>>): Promise<Result<T>> {
+    return stopped ? Promise.resolve(unavailable('store stopped')) : enqueueRaw(fn);
   }
 
   const emit = () => {
@@ -330,6 +336,10 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
   const all = () => [...state.messages.values()];
 
   return {
+    stop: async () => {
+      stopped = true;
+      await chain;
+    },
     load: () =>
       enqueue(async () => {
         if (refusedNewerVersion) return unavailable('messages.log has a newer record version');
@@ -466,7 +476,8 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
       return n;
     },
 
-    readBlob: (sha256) => enqueue(() => io.readBlob(sha256)),
+    readBlob: (sha256) =>
+      stopped ? Promise.resolve(undefined) : enqueueRaw(() => io.readBlob(sha256)),
 
     enforceRetention: (now) =>
       enqueue(async (): Promise<Result<RetentionResult>> => {

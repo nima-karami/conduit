@@ -1038,6 +1038,85 @@ describe('createConduitMcpHost — launch', () => {
     await started;
   });
 
+  it('stop waits for an in-flight store repair', async () => {
+    let release = () => {};
+    let entered = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const writing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const io: StoreIo = {
+      readLog: async () => '{',
+      appendLog: async () => {},
+      rewriteLog: async () => {
+        entered();
+        await blocked;
+      },
+      writeBlob: async () => {},
+      readBlob: async () => undefined,
+      deleteBlob: async () => {},
+      listBlobs: async () => [],
+      sweepPartialBlobs: async () => {},
+    };
+    const h = harness({
+      storeIo: io,
+      createEndpoint: () => ({
+        listen: async () => ({ ok: true, value: undefined }),
+        close: async () => {},
+      }),
+    });
+    const started = h.host.start();
+    await writing;
+    let stopped = false;
+    const stopping = h.host.stop().then(() => {
+      stopped = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    try {
+      expect(stopped).toBe(false);
+    } finally {
+      release();
+    }
+    await stopping;
+    await started;
+  });
+
+  it('stop waits for a launch reservation before returning', async () => {
+    const h = harness();
+    h.sessions.set('s1', session('s1'));
+    let release = () => {};
+    let entered = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reserving = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const reserve = h.tokens.reserve.bind(h.tokens);
+    vi.spyOn(h.tokens, 'reserve').mockImplementation(async (...args) => {
+      entered();
+      await blocked;
+      return reserve(...args);
+    });
+    const launch = h.prepareLaunch('s1', FAKE, spec());
+    await reserving;
+    let stopped = false;
+    const stopping = h.host.stop().then(() => {
+      stopped = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    try {
+      expect(stopped).toBe(false);
+    } finally {
+      release();
+    }
+    await stopping;
+    await launch;
+    expect(fs.existsSync(path.join(h.dir, 'handles.json'))).toBe(false);
+  });
+
   it('a tick that throws is logged, not left unhandled', async () => {
     const errors: string[] = [];
     const h = harness({
@@ -1059,6 +1138,45 @@ describe('createConduitMcpHost — launch', () => {
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('stop waits for the startup directory sweep and prevents subsequent writes', async () => {
+    const h = harness({
+      createEndpoint: () => ({ listen: () => new Promise(() => {}), close: async () => {} }),
+    });
+    let release = () => {};
+    let entered = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const sweeping = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const original = fs.promises.rm;
+    const spy = vi.spyOn(fs.promises, 'rm').mockImplementation(async (...args) => {
+      if (args[0] === path.join(h.dir, 'launch')) {
+        entered();
+        await blocked;
+      }
+      return original(...args);
+    });
+    try {
+      void h.host.start();
+      await sweeping;
+      let stopped = false;
+      const stopping = h.host.stop().then(() => {
+        stopped = true;
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(stopped).toBe(false);
+      release();
+      await stopping;
+      expect(fs.existsSync(path.join(h.dir, 'launch'))).toBe(false);
+    } finally {
+      release();
+      spy.mockRestore();
     }
   });
 
