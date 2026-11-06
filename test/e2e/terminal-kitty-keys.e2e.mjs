@@ -8,14 +8,11 @@ import { join } from 'node:path';
 import {
   assert,
   openSession,
-  REPO,
   runScenario,
   tapBridge,
   typeLine,
   writeToTerminal,
 } from './harness.mjs';
-
-delete process.env.CONDUIT_E2E;
 
 const work = mkdtempSync(join(tmpdir(), 'conduit-kitty-keys-'));
 const probeScript = join(work, 'probe.mjs');
@@ -30,30 +27,11 @@ process.stdin.on('data', (d) => {
 `,
 );
 
-const launchFolder = REPO.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop().toLowerCase();
-
-await runScenario('terminal-kitty-keys', async ({ page, log }) => {
+await runScenario('terminal-kitty-keys', async ({ app, page, log }) => {
   await page.evaluate(() => {
     window.__terms = {};
   });
-  // CONDUIT_E2E is off so keyboard.press hits a real window; that also skips settleColdOpen,
-  // so the launch folder-arg session can land after openSession, auto-switch away, and leave
-  // this pane display:none — fitIfVisible then never sends term:start (harness.mjs openSession).
   await tapBridge(page);
-  await page.waitForFunction(
-    (name) =>
-      (window.__sessions || []).some((s) => {
-        const base = String(s.home ?? '')
-          .replace(/\\/g, '/')
-          .replace(/\/+$/, '')
-          .split('/')
-          .pop()
-          .toLowerCase();
-        return base === name;
-      }),
-    launchFolder,
-    { timeout: 25000 },
-  );
 
   const sid = await openSession(page, { path: work.replace(/\\/g, '/') });
   await page.locator(`.session[data-sessionid="${sid}"]`).click();
@@ -89,9 +67,17 @@ await runScenario('terminal-kitty-keys', async ({ page, log }) => {
   log('probe pushed kitty keyboard and entered raw mode');
 
   const drainPtyIn = () => page.evaluate(() => window.__ptyIn.splice(0).join(''));
+  const pressCtrlEnter = async () => {
+    await app.evaluate(({ BrowserWindow }) => {
+      const contents = BrowserWindow.getAllWindows()[0].webContents;
+      contents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter', modifiers: ['control'] });
+      contents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter', modifiers: ['control'] });
+    });
+    await page.waitForFunction(() => window.__ptyIn.length > 0);
+  };
 
   await drainPtyIn();
-  await page.keyboard.press('Control+Enter');
+  await pressCtrlEnter();
   const kittyBytes = await drainPtyIn();
   assert(
     kittyBytes === '\x1b[13;5u',
@@ -101,7 +87,7 @@ await runScenario('terminal-kitty-keys', async ({ page, log }) => {
 
   await writeToTerminal(page, sid, '\x1b[<u');
   await drainPtyIn();
-  await page.keyboard.press('Control+Enter');
+  await pressCtrlEnter();
   const legacyBytes = await drainPtyIn();
   assert(
     legacyBytes === '\r',
