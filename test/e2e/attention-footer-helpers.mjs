@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { C2 } from './c2-peer.mjs';
-import { assert, REPO, statusItem, typeLine } from './harness.mjs';
+import { assert, REPO, typeLine } from './harness.mjs';
 import { SERVER_PROTOCOL_GENERATION, teardownNames } from './harness-server-teardown.mjs';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -199,29 +199,47 @@ export async function setWindowLooking(page, looking) {
 export const documentLooking = (page) =>
   page.evaluate(() => ({ hasFocus: document.hasFocus(), visibility: document.visibilityState }));
 
+// Same selector as harness `statusItem(page, 'attention')`, as a string so each read runs in one
+// page.evaluate. A count() then a locator read races the item unmounting, and the locator read
+// auto-waits to a 30 s timeout instead of reporting the item gone.
+const ATTENTION_SEL = 'footer[data-status-bar] [data-status-item="attention"]';
+
 /** The footer need-you button's text and tooltip, or null when it is not shown. */
-export async function footerAttention(page) {
-  const btn = statusItem(page, 'attention');
-  if ((await btn.count()) === 0) return null;
-  return {
-    text: ((await btn.textContent()) ?? '').trim(),
-    title: (await btn.getAttribute('title')) ?? '',
-  };
+export function footerAttention(page) {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return null;
+    return { text: (el.textContent ?? '').trim(), title: el.getAttribute('title') ?? '' };
+  }, ATTENTION_SEL);
 }
 
-/** Wait until the footer need-you button reads `text` (null: absent); throws with the last read. */
+/**
+ * Wait until the footer need-you button reads `text` (null: absent); throws with the last read.
+ * The predicate returns the snapshot it matched, so the value returned is the one that satisfied
+ * the wait rather than a second read the item may already have left.
+ */
 export async function waitFooterAttention(page, text, what, ms = 10_000) {
-  const deadline = Date.now() + ms;
-  let got = null;
-  while (Date.now() < deadline) {
-    got = await footerAttention(page);
-    if ((got?.text ?? null) === text) return got;
-    await sleep(100);
+  const handle = await page
+    .waitForFunction(
+      ({ sel, want }) => {
+        const el = document.querySelector(sel);
+        const snap = el
+          ? { text: (el.textContent ?? '').trim(), title: el.getAttribute('title') ?? '' }
+          : null;
+        return (snap?.text ?? null) === want ? { snap } : false;
+      },
+      { sel: ATTENTION_SEL, want: text },
+      { timeout: ms },
+    )
+    .catch(() => null);
+  if (!handle) {
+    const last = await footerAttention(page);
+    assert(
+      false,
+      `${what}: footer attention ${JSON.stringify(last)}, want text ${JSON.stringify(text)}`,
+    );
   }
-  assert(
-    false,
-    `${what}: footer attention ${JSON.stringify(got)}, want text ${JSON.stringify(text)}`,
-  );
+  return (await handle.jsonValue()).snap;
 }
 
 const APP_VERSION = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version;
