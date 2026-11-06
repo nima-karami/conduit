@@ -219,6 +219,7 @@ describe('frozen server calls', () => {
 describe('server ports', () => {
   it('type through the existing PtyWriter', () => {
     expectTypeOf<TypingPort['submit']>().toEqualTypeOf<PtyWriter['submit']>();
+    expectTypeOf<TypingPort['submitEnter']>().toEqualTypeOf<PtyWriter['submitEnter']>();
     expectTypeOf<TypingPort['forget']>().toEqualTypeOf<PtyWriter['forget']>();
   });
 

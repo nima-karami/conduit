@@ -44,14 +44,30 @@ function findInputRow(
  */
 function inputText(patterns: ScreenPatterns, s: ScreenSnapshot, y: number): string {
   const row = s.lines[y] ?? '';
-  if (patterns.placeholder !== 'dim' || y !== s.cursorY) return row;
-  const start = s.cursorRowStyles.indexOf(STYLE_DIM);
-  if (start < 0 || s.cursorX !== start) return row;
-  for (let i = start; i < row.length; i += 1) {
-    if (s.cursorRowStyles[i] !== STYLE_DIM && !/\s/.test(row[i])) return row;
+  if (patterns.placeholder === 'dim' && y === s.cursorY) {
+    const start = s.cursorRowStyles.indexOf(STYLE_DIM);
+    if (start >= 0 && s.cursorX === start) {
+      let dimToEnd = true;
+      for (let i = start; i < row.length; i += 1) {
+        if (s.cursorRowStyles[i] !== STYLE_DIM && !/\s/.test(row[i])) {
+          dimToEnd = false;
+          break;
+        }
+      }
+      if (dimToEnd) {
+        const head = row.slice(0, start);
+        if (patterns.emptyInput.some((re) => re.test(head))) return head;
+      }
+    }
   }
-  const head = row.slice(0, start);
-  return patterns.emptyInput.some((re) => re.test(head)) ? head : row;
+  if (patterns.placeholderText && y === s.cursorY) {
+    const head = row.slice(0, s.cursorX);
+    const tail = row.slice(s.cursorX);
+    if (patterns.emptyInput.some((re) => re.test(head)) && patterns.placeholderText.test(tail)) {
+      return head;
+    }
+  }
+  return row;
 }
 
 // Blocking matches the whole viewport, because Claude's permission dialog sits ~15 rows below the

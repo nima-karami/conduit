@@ -15,6 +15,12 @@ export interface ScreenPatterns {
   /** How the CLI draws its input placeholder and suggested prompt; absent ⇒ never dropped. */
   placeholder?: 'dim';
   /**
+   * Hint text the CLI draws without dim (Claude's startup `Try "…"`), dropped only when the cursor
+   * sits at its start: nobody types that exact quoted form and then homes the cursor to it.
+   * Matched against the text from the cursor to the end of the row.
+   */
+  placeholderText?: RegExp;
+  /**
    * Where the input box starts, for keeping it out of terminal link detection, when `inputRow`
    * doesn't already say (spec 2026-10-27-input-box-links §3).
    */
@@ -54,9 +60,10 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
     ids: [],
     wiring: 'mcp-config-flag',
     screen: {
-      blocking: [/Esc to cancel/, /^\s*❯\s*\d+\.\s/],
-      emptyInput: [/^\s*❯\s*$/],
+      blocking: [/Esc to cancel/, /^\s*[❯>]\s*\d+\.\s/],
+      emptyInput: [/^\s*[❯>]\s*$/],
       placeholder: 'dim',
+      placeholderText: /^Try "[^"\r\n]*"\s*$/,
     },
     e2eOnly: false,
     brief: { readAccess: 'add-dir' },

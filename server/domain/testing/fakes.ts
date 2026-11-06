@@ -249,6 +249,7 @@ export function harness(opts: HarnessOptions = {}) {
         submitted.push({ sessionId, text });
         return 'submitted';
       },
+      submitEnter: async (): Promise<SubmitOutcome> => 'submitted',
       write: (sessionId, data, o) => {
         written.push({
           sessionId,
