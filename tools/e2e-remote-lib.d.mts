@@ -8,6 +8,7 @@ export interface RemoteArgs {
   verify: boolean;
   out: string | null;
   timeoutMin: number;
+  repeat: number;
 }
 export interface RunListItem {
   databaseId: number;
@@ -23,6 +24,7 @@ export function selectionKey(o: {
   names: string[];
   verify: boolean;
   base?: string;
+  repeat?: number;
 }): string;
 export function makeNonce(selKey: string, rand: string): string;
 export function parseTitle(
@@ -59,6 +61,7 @@ export function formatResults(result: {
     artifact?: string;
     reason?: string;
     alsoFailingOnNightly?: boolean;
+    attempt?: number;
   }[];
 }): string;
 export function isTransientGhError(message: unknown): boolean;

@@ -25,6 +25,9 @@ on:
       verify:
         type: boolean
         default: false
+      repeat:
+        type: string
+        default: '1'
   workflow_dispatch:
     inputs:
       selection:
@@ -57,6 +60,10 @@ on:
         type: choice
         options: [normal, nightly]
         default: normal
+      repeat:
+        description: Repeat named scenarios N times (2–50). Each shard runs ceil(N/shards) times.
+        type: string
+        default: '1'
 
 permissions:
   contents: read
@@ -127,10 +134,12 @@ jobs:
           SELECTION: ${{ inputs.selection || 'full' }}
           SCENARIOS: ${{ inputs.scenarios }}
           SHARDS: ${{ inputs.shards }}
+          REPEAT: ${{ inputs.repeat || '1' }}
         run: |
           node --input-type=module -e '
             import { existsSync, readdirSync, readFileSync, appendFileSync } from "node:fs";
             import { planShards } from "./test/e2e/ci-shard-plan.mjs";
+            import { repeatMatrix } from "./test/e2e/ci-repeat-plan.mjs";
             import { resolveTimings } from "./test/e2e/ci-state.mjs";
             import { applyExclusions } from "./test/e2e/smoke-select.mjs";
             const read = (f) => JSON.parse(readFileSync(f, "utf8"));
@@ -153,11 +162,21 @@ jobs:
             }
             const { run, excluded } = applyExclusions(names, read("test/e2e/remote-exclusions.json"));
             for (const [n, why] of Object.entries(excluded)) console.log(`EXCLUDED ${n}: ${why}`);
-            const { shards } = planShards(run, timings.medians, {
-              shards: Number(process.env.SHARDS) || 0, cap: 16,
-            });
-            for (const s of shards) console.log(`shard ${s.index + 1}: ~${Math.round(s.estSec)}s, ${s.names.length} scenarios`);
-            const include = shards.map((s) => ({ shard: s.index + 1, names: s.names.join(" ") }));
+            const repeat = Number(process.env.REPEAT) || 1;
+            const { shards } = repeat > 1
+              ? repeatMatrix(run, repeat)
+              : planShards(run, timings.medians, {
+                  shards: Number(process.env.SHARDS) || 0, cap: 16,
+                });
+            for (const s of shards) {
+              const extra = s.runs ? `, ${s.runs} runs` : `, ~${Math.round(s.estSec)}s`;
+              console.log(`shard ${s.index + 1}: ${s.names.length} scenarios${extra}`);
+            }
+            const include = shards.map((s) => ({
+              shard: s.index + 1,
+              names: s.names.join(" "),
+              ...(s.runs ? { runs: s.runs } : {}),
+            }));
             const plan = { shards: shards.map((s) => ({ index: s.index, names: s.names })) };
             appendFileSync(process.env.GITHUB_OUTPUT, [
               `matrix=${JSON.stringify({ include })}`,
@@ -271,7 +290,7 @@ jobs:
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'e2e-out'
           New-Item -ItemType Directory -Force "$out/results", "$out/artifacts" | Out-Null
-          node test/e2e/run-smoke.mjs @($env:E2E_NAMES -split " ") --json "$out/results/shard-$env:SHARD.json" --artifacts "$out/artifacts" --retry --quarantine test/e2e/quarantine.json
+          node test/e2e/run-smoke.mjs @($env:E2E_NAMES -split " ") --json "$out/results/shard-$env:SHARD.json" --artifacts "$out/artifacts" --retry --quarantine test/e2e/quarantine.json --repeat ${{ matrix.runs || 1 }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

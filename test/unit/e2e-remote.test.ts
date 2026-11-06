@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   checkExclusions,
@@ -51,6 +52,18 @@ describe('parseArgs', () => {
     expect(parseArgs(['--affected', 'cwd'])).toHaveProperty('error');
     expect(parseArgs(['--affected', '--full'])).toHaveProperty('error');
     expect(parseArgs(['--shards', 'x', 'cwd'])).toHaveProperty('error');
+  });
+
+  it('parses --repeat N only with named scenarios, 2–50', () => {
+    expect(parseArgs(['--repeat', '20', 'go-lsp'])).toMatchObject({
+      names: ['go-lsp'],
+      repeat: 20,
+      full: false,
+      affected: false,
+    });
+    expect(parseArgs(['--repeat', '20', '--full'])).toHaveProperty('error');
+    expect(parseArgs(['--repeat', '1'])).toHaveProperty('error');
+    expect(parseArgs(['--repeat', '51'])).toHaveProperty('error');
   });
 });
 
@@ -145,7 +158,7 @@ describe('verdict', () => {
 
   it.each([
     ['passed', 0],
-    ['flaky-passed', 0],
+    ['flaky', 1],
     ['failed', 1],
     ['infra-error', 2],
     ['cancelled', 2],
@@ -191,6 +204,19 @@ describe('verdict', () => {
     expect(out).toContain(
       'quarantine candidate: multi-repo (FLAKY 4 in 14 days); quarantine via test/e2e/quarantine.json',
     );
+  });
+
+  it('prints per-scenario pass rates when rows carry attempt', () => {
+    const results = Array.from({ length: 20 }, (_, i) => ({
+      name: 'go-lsp',
+      status: i === 3 ? 'FAIL' : 'PASS',
+      seconds: 1,
+      shard: 1,
+      attempt: i + 1,
+    }));
+    const out = formatResults({ status: 'failed', sha: 'abcdef123', results });
+    expect(out).toContain('go-lsp  19/20');
+    expect(out).toContain('FAIL@1#4');
   });
 });
 
@@ -312,5 +338,21 @@ describe('withGhRetry', () => {
       },
     );
     expect(seen).toEqual([[1, 2000]]);
+  });
+});
+
+describe('no leftover green-flake status name', () => {
+  it('owned runner sources do not contain the old alias', () => {
+    const needle = ['flaky', 'passed'].join('-');
+    const files = [
+      'tools/e2e-remote-lib.mjs',
+      'tools/e2e-remote.mjs',
+      'test/e2e/ci-merge-results.mjs',
+      'test/e2e/run-smoke.mjs',
+      'test/e2e/smoke-select.mjs',
+    ];
+    for (const f of files) {
+      expect(readFileSync(f, 'utf8'), f).not.toContain(needle);
+    }
   });
 });

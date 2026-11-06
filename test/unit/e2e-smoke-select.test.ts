@@ -86,12 +86,20 @@ describe('parseRunnerArgs / applyExclusions', () => {
       artifacts: 'a',
       retry: true,
       quarantine: null,
+      repeat: 1,
     });
     expect(parseRunnerArgs(['cwd', '--quarantine', 'q.json'])).toMatchObject({
       quarantine: 'q.json',
     });
     expect(parseRunnerArgs(['--json'])).toHaveProperty('error');
     expect(parseRunnerArgs(['--exact', 'cwd'])).toHaveProperty('error');
+  });
+
+  it('parses --repeat N (integer ≥ 1; default 1)', () => {
+    expect(parseRunnerArgs(['a', '--repeat', '3'])).toMatchObject({ names: ['a'], repeat: 3 });
+    expect(parseRunnerArgs(['a'])).toMatchObject({ repeat: 1 });
+    expect(parseRunnerArgs(['a', '--repeat', '0'])).toHaveProperty('error');
+    expect(parseRunnerArgs(['a', '--repeat', 'x'])).toHaveProperty('error');
   });
 
   it('keeps excluded names off the runner with their reason', () => {
@@ -109,6 +117,13 @@ describe('applyQuarantine', () => {
     expect(applyQuarantine('flaky', 'FAIL', q)).toBe('QUARANTINED-FAIL');
     expect(applyQuarantine('flaky', 'TIMEOUT', q)).toBe('QUARANTINED-FAIL');
     expect(isGreen('QUARANTINED-FAIL')).toBe(true);
+  });
+
+  it('FLAKY is not green (it fails the run) but still does not become QUARANTINED-FAIL', () => {
+    expect(isGreen('FLAKY')).toBe(false);
+    expect(isGreen('PASS')).toBe(true);
+    expect(isGreen('SKIP')).toBe(true);
+    expect(isGreen('FAIL')).toBe(false);
   });
 
   it('leaves passes, flakes and scenarios that are not quarantined alone', () => {

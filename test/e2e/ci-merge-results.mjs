@@ -15,13 +15,18 @@ const FAILED = new Set(['FAIL', 'TIMEOUT']);
 export function runStatus(results, { verify, prepare } = {}) {
   if (verify && verify !== 'success' && verify !== 'skipped') return 'failed';
   if (prepare && prepare !== 'success') return 'infra-error';
+  if (results.some((r) => r.attempt != null)) {
+    const ran = results.filter((r) => r.status !== 'EXCLUDED');
+    if (results.length === 0) return 'passed';
+    return ran.length && ran.every((r) => r.status === 'PASS') ? 'passed' : 'failed';
+  }
   const ran = results.filter((r) => r.status !== 'EXCLUDED');
   const has = (s) => ran.some((r) => r.status === s);
   if (results.length === 0) return 'passed';
   if (has('FAIL') || has('TIMEOUT')) return 'failed';
   if (has('INFRA')) return 'infra-error';
   if (!ran.some((r) => r.status === 'PASS' || r.status === 'FLAKY')) return 'failed';
-  if (has('FLAKY')) return 'flaky-passed';
+  if (has('FLAKY')) return 'flaky';
   return 'passed';
 }
 
@@ -52,29 +57,57 @@ export function infraRerunLine(results, sha) {
  *   quarantine?: { scenarios?: Record<string, { reason: string, since: string }> } | null,
  *   quarantineCandidates?: { name: string, count: number, last: string }[] }} meta
  */
+function decorate(row, shard, meta) {
+  const out = { ...row, shard };
+  const artifact = meta.artifactUrls?.[shard];
+  if (artifact && !NO_ARTIFACT.has(out.status)) out.artifact = artifact;
+  if (FAILED.has(out.status) && meta.lastNightly?.failing.includes(out.name)) {
+    out.alsoFailingOnNightly = true;
+  }
+  return out;
+}
+
 export function mergeResults(plan, shardFiles, meta) {
-  const got = new Map();
-  for (const f of shardFiles) for (const r of f.results) got.set(r.name, { ...r, shard: f.shard });
+  const attempted = shardFiles.some((f) => f.results.some((r) => r.attempt != null));
   const results = [];
-  for (const s of plan.shards) {
-    const shard = s.index + 1;
-    for (const name of s.names) {
-      const r = got.get(name);
-      const row = r
-        ? { name, status: r.status, seconds: r.seconds, attempts: r.attempts ?? 1, shard }
-        : { name, status: 'INFRA', seconds: 0, attempts: 0, shard };
-      const artifact = meta.artifactUrls?.[shard];
-      if (artifact && !NO_ARTIFACT.has(row.status)) row.artifact = artifact;
-      if (FAILED.has(row.status) && meta.lastNightly?.failing.includes(name)) {
-        row.alsoFailingOnNightly = true;
+  if (attempted) {
+    for (const f of shardFiles) {
+      for (const r of f.results) results.push(decorate(r, f.shard, meta));
+    }
+    const seen = new Set(results.map((r) => r.name));
+    for (const s of plan.shards) {
+      for (const name of s.names) {
+        if (seen.has(name)) continue;
+        results.push(
+          decorate({ name, status: 'INFRA', seconds: 0, attempt: 0 }, s.index + 1, meta),
+        );
+        seen.add(name);
       }
-      results.push(row);
+    }
+  } else {
+    const got = new Map();
+    for (const f of shardFiles)
+      for (const r of f.results) got.set(r.name, { ...r, shard: f.shard });
+    for (const s of plan.shards) {
+      const shard = s.index + 1;
+      for (const name of s.names) {
+        const r = got.get(name);
+        const row = r
+          ? { name, status: r.status, seconds: r.seconds, attempts: r.attempts ?? 1, shard }
+          : { name, status: 'INFRA', seconds: 0, attempts: 0, shard };
+        results.push(decorate(row, shard, meta));
+      }
     }
   }
   for (const [name, reason] of Object.entries(meta.excluded ?? {})) {
     results.push({ name, status: 'EXCLUDED', seconds: 0, attempts: 0, shard: null, reason });
   }
-  results.sort((a, b) => a.name.localeCompare(b.name));
+  results.sort(
+    (a, b) =>
+      a.name.localeCompare(b.name) ||
+      (a.shard ?? 0) - (b.shard ?? 0) ||
+      (a.attempt ?? 0) - (b.attempt ?? 0),
+  );
   const {
     artifactUrls: _a,
     excluded: _e,
@@ -96,7 +129,26 @@ export function mergeResults(plan, shardFiles, meta) {
   };
 }
 
-const ORDER = ['FAIL', 'TIMEOUT', 'INFRA', 'QUARANTINED-FAIL', 'FLAKY', 'EXCLUDED', 'SKIP', 'PASS'];
+const ORDER = ['FLAKY', 'FAIL', 'TIMEOUT', 'INFRA', 'QUARANTINED-FAIL', 'EXCLUDED', 'SKIP', 'PASS'];
+
+/** Per-scenario pass rate when result rows carry `attempt` (CON-143). */
+export function repeatRates(results) {
+  if (!results.some((r) => r.attempt != null)) return [];
+  const order = [];
+  const byName = new Map();
+  for (const r of results) {
+    if (r.status === 'EXCLUDED' || r.attempt == null) continue;
+    if (!byName.has(r.name)) {
+      byName.set(r.name, { name: r.name, passed: 0, total: 0, failures: [] });
+      order.push(r.name);
+    }
+    const g = byName.get(r.name);
+    g.total++;
+    if (r.status === 'PASS') g.passed++;
+    else g.failures.push(`${r.status}@${r.shard}#${r.attempt}`);
+  }
+  return order.map((n) => byName.get(n));
+}
 
 export function countByStatus(results) {
   const c = {};
@@ -116,6 +168,14 @@ export function summaryMarkdown(result) {
     md += '`test/e2e/quarantine.json` quarantines one):\n\n';
     for (const c of result.quarantineCandidates) {
       md += `- ${c.name}: FLAKY ${c.count}, last ${c.last}\n`;
+    }
+    md += '\n';
+  }
+  const rates = repeatRates(result.results);
+  if (rates.length) {
+    md += '### Repeat run\n\n| name | passed/total | failures |\n|---|---|---|\n';
+    for (const g of rates) {
+      md += `| ${g.name} | ${g.passed}/${g.total} | ${g.failures.join(', ')} |\n`;
     }
     md += '\n';
   }

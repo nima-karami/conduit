@@ -54,6 +54,17 @@ describe('mergeResults', () => {
     expect(r.status).toBe('failed');
   });
 
+  it('a FLAKY-only run is status flaky and still links e2e-fail-<shard>', () => {
+    const r = mergeResults(
+      { shards: [{ index: 0, names: ['c'] }] },
+      [{ shard: 1, results: [row('c', 'FLAKY')] }],
+      { ...meta, artifactUrls: { 1: 'u1' } },
+    );
+    expect(r.status).toBe('flaky');
+    expect(r.results[0]).toMatchObject({ name: 'c', artifact: 'u1' });
+    expect(summaryMarkdown(r)).toContain('[e2e-fail-1](u1)');
+  });
+
   it('lists exclusions as EXCLUDED with their reason, neutral to the verdict', () => {
     const r = mergeResults(plan, allPass, { ...meta, excluded: { z: 'needs OS focus' } });
     expect(r.status).toBe('passed');
@@ -82,10 +93,10 @@ describe('runStatus', () => {
     [s('SKIP', 'SKIP'), 'failed'],
     [s('SKIP', 'EXCLUDED'), 'failed'],
     [s('EXCLUDED'), 'failed'],
-    [s('PASS', 'FLAKY', 'SKIP'), 'flaky-passed'],
+    [s('PASS', 'FLAKY', 'SKIP'), 'flaky'],
     [s('PASS', 'SKIP', 'EXCLUDED'), 'passed'],
     [s('PASS', 'QUARANTINED-FAIL'), 'passed'],
-    [s('QUARANTINED-FAIL', 'FLAKY'), 'flaky-passed'],
+    [s('QUARANTINED-FAIL', 'FLAKY'), 'flaky'],
     [s('QUARANTINED-FAIL', 'FAIL'), 'failed'],
     [s('QUARANTINED-FAIL'), 'failed'],
     [s('QUARANTINED-FAIL', 'SKIP', 'EXCLUDED'), 'failed'],
@@ -107,7 +118,27 @@ describe('runStatus', () => {
 
   it('a successful or skipped verify leaves the scenario verdict alone', () => {
     expect(runStatus(s('PASS'), { verify: 'success' })).toBe('passed');
-    expect(runStatus(s('FLAKY'), { verify: 'skipped' })).toBe('flaky-passed');
+    expect(runStatus(s('FLAKY'), { verify: 'skipped' })).toBe('flaky');
+  });
+});
+
+describe('repeat aggregation', () => {
+  it('20 rows of one name with one FAIL → 19/20 and status failed', () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      name: 'go-lsp',
+      attempt: i + 1,
+      status: i === 3 ? 'FAIL' : 'PASS',
+      seconds: 1,
+    }));
+    const r = mergeResults(
+      { shards: [{ index: 0, names: ['go-lsp'] }] },
+      [{ shard: 1, results: rows }],
+      meta,
+    );
+    expect(r.status).toBe('failed');
+    expect(r.results).toHaveLength(20);
+    expect(summaryMarkdown(r)).toMatch(/go-lsp \| 19\/20/);
+    expect(summaryMarkdown(r)).toContain('FAIL@1#4');
   });
 });
 

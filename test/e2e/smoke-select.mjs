@@ -38,11 +38,19 @@ export function parseRunnerArgs(argv) {
     artifacts: null,
     retry: false,
     quarantine: null,
+    repeat: 1,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--retry') out.retry = true;
-    else if (Object.hasOwn(VALUE_FLAGS, a)) {
+    else if (a === '--repeat') {
+      const v = argv[++i];
+      const n = Number(v);
+      if (v === undefined || v.startsWith('--') || !Number.isInteger(n) || n < 1) {
+        return { error: '--repeat needs an integer ≥ 1' };
+      }
+      out.repeat = n;
+    } else if (Object.hasOwn(VALUE_FLAGS, a)) {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) return { error: `${a} needs a value` };
       out[VALUE_FLAGS[a]] = v;
@@ -117,14 +125,16 @@ export function finalStatus(first, retry) {
  * still runs and reports, but its failure no longer fails the run (spec §B4).
  */
 export function applyQuarantine(name, status, quarantine) {
-  if (isGreen(status) || !Object.hasOwn(quarantine?.scenarios ?? {}, name)) return status;
+  // CON-133: FLAKY is no longer green, but quarantine still only rewrites FAIL/TIMEOUT.
+  if (status === 'FLAKY' || isGreen(status) || !Object.hasOwn(quarantine?.scenarios ?? {}, name)) {
+    return status;
+  }
   return 'QUARANTINED-FAIL';
 }
 
 export function isGreen(status) {
-  return (
-    status === 'PASS' || status === 'SKIP' || status === 'FLAKY' || status === 'QUARANTINED-FAIL'
-  );
+  // CON-133: a flake is a failure
+  return status === 'PASS' || status === 'SKIP' || status === 'QUARANTINED-FAIL';
 }
 
 /** Harness watchdog delay: the deadline counts from process start, minus the e2e-lock wait. */

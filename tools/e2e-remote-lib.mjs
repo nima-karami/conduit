@@ -3,9 +3,10 @@
  * in-flight matching, state mapping and printing. Spec: docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md §A, §3.
  */
 import { createHash } from 'node:crypto';
+import { repeatRates } from '../test/e2e/ci-merge-results.mjs';
 
 export const USAGE =
-  'usage: npm run e2e:remote -- [--affected (default) | --full | <name>…] [--shards N] [--no-wait] [--no-verify] [--out <dir>] [--timeout <min>]';
+  'usage: npm run e2e:remote -- [--affected (default) | --full | <name>…] [--repeat N] [--shards N] [--no-wait] [--no-verify] [--out <dir>] [--timeout <min>]';
 
 const IN_FLIGHT = new Set(['queued', 'in_progress', 'waiting', 'pending', 'requested']);
 
@@ -19,6 +20,7 @@ export function parseArgs(argv) {
     verify: true,
     out: null,
     timeoutMin: 60,
+    repeat: 1,
   };
   const num = (flag, v) => {
     const n = Number(v);
@@ -30,7 +32,13 @@ export function parseArgs(argv) {
     else if (a === '--affected') o.affected = true;
     else if (a === '--no-wait') o.wait = false;
     else if (a === '--no-verify') o.verify = false;
-    else if (a === '--shards' || a === '--timeout') {
+    else if (a === '--repeat') {
+      const n = Number(argv[++i]);
+      if (!Number.isInteger(n) || n < 2 || n > 50) {
+        return { error: '--repeat needs an integer 2–50' };
+      }
+      o.repeat = n;
+    } else if (a === '--shards' || a === '--timeout') {
       const n = num(a, argv[++i]);
       if (typeof n === 'object') return n;
       if (a === '--shards') o.shards = n;
@@ -45,16 +53,20 @@ export function parseArgs(argv) {
     return { error: 'pass one of --affected, --full or names' };
   }
   if (!o.full && !o.names.length) o.affected = true;
+  if (o.repeat > 1 && (o.full || o.affected)) {
+    return { error: '--repeat only works with named scenarios' };
+  }
   o.names = [...new Set(o.names)].sort();
   return o;
 }
 
 /** `base` is the diff base of an `--affected` selection: the same HEAD and base select the same. */
-export function selectionKey({ full, affected, names, verify, base }) {
+export function selectionKey({ full, affected, names, verify, base, repeat }) {
   let key;
   if (full) key = 'full';
   else if (affected) key = `a-${base.slice(0, 7)}`;
   else key = `n-${createHash('sha256').update(names.join(' ')).digest('hex').slice(0, 8)}`;
+  if ((repeat ?? 1) > 1) key = `${key}-r${repeat}`;
   return verify ? key : `${key}-nv`;
 }
 
@@ -107,8 +119,8 @@ export function finalStatus(conclusion, result) {
 }
 
 export function exitCodeFor(status) {
-  if (status === 'passed' || status === 'flaky-passed') return 0;
-  if (status === 'failed') return 1;
+  if (status === 'passed') return 0;
+  if (status === 'failed' || status === 'flaky') return 1;
   return 2;
 }
 
@@ -135,16 +147,24 @@ const ICON = { PASS: '✓', FLAKY: '~', SKIP: '○', EXCLUDED: '-', 'QUARANTINED
 
 export function formatResults(result) {
   const lines = [];
-  for (const r of result.results) {
-    const where = r.shard ? ` [s${r.shard}]` : '';
-    let why = r.reason ? ` — ${r.reason}` : '';
-    if (r.status === 'EXCLUDED') why += `; run locally: ${localCommand(r.name)}`;
-    if (r.alsoFailingOnNightly) {
-      why += ` (also failing on the last nightly, ${result.lastNightlySha?.slice(0, 7)})`;
+  const rates = repeatRates(result.results);
+  if (rates.length) {
+    for (const g of rates) {
+      lines.push(`  ${g.name}  ${g.passed}/${g.total}`);
+      for (const f of g.failures) lines.push(`    ${f}`);
     }
-    lines.push(
-      `  ${r.name} ... ${ICON[r.status] ?? '✗'} ${r.status} (${r.seconds}s)${where}${why}`,
-    );
+  } else {
+    for (const r of result.results) {
+      const where = r.shard ? ` [s${r.shard}]` : '';
+      let why = r.reason ? ` — ${r.reason}` : '';
+      if (r.status === 'EXCLUDED') why += `; run locally: ${localCommand(r.name)}`;
+      if (r.alsoFailingOnNightly) {
+        why += ` (also failing on the last nightly, ${result.lastNightlySha?.slice(0, 7)})`;
+      }
+      lines.push(
+        `  ${r.name} ... ${ICON[r.status] ?? '✗'} ${r.status} (${r.seconds}s)${where}${why}`,
+      );
+    }
   }
   const c = {};
   for (const r of result.results) c[r.status] = (c[r.status] ?? 0) + 1;

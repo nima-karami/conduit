@@ -16,6 +16,7 @@ export function parseRunnerArgs(argv: string[]):
       artifacts: string | null;
       retry: boolean;
       quarantine: string | null;
+      repeat: number;
     }
   | { error: string };
 export function resolveSelection(o: {

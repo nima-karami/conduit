@@ -12,16 +12,20 @@
  * Usage:
  *   node test/e2e/run-smoke.mjs <name…> [--names-file f.json] [--json out.json]
  *                                       [--artifacts dir] [--retry] [--quarantine q.json]
+ *                                       [--repeat K]
  *
  *   --names-file  JSON array of names, added to the positional ones
- *   --json        result rows `[{ name, status, seconds, attempts }]`, rewritten after each scenario
+ *   --json        result rows `[{ name, status, seconds, attempts }]`, rewritten after each scenario;
+ *                 with --repeat > 1 each attempt is `{ name, attempt, status, seconds, exit }`
  *   --artifacts   failure artifacts root: each non-PASS attempt's log (and, from the harness, its
  *                 trace and screenshots) lands in <dir>/<name>/attempt-<n>/
  *   --retry       a failed or timed-out scenario runs once more; a pass then is FLAKY
+ *                 (ignored when --repeat > 1)
+ *   --repeat K    run each scenario K times (K ≥ 1, default 1); every attempt is its own result row
  *   --quarantine  test/e2e/quarantine.json: a listed scenario that still fails is
  *                 QUARANTINED-FAIL, reported but not failing the run
  *
- * Exit codes: 0 all PASS/SKIP/FLAKY/QUARANTINED-FAIL; 1 a scenario failed; 2 usage error or local refusal.
+ * Exit codes: 0 all PASS/SKIP/QUARANTINED-FAIL; 1 a scenario failed (including FLAKY); 2 usage error or local refusal.
  * On non-win32 platforms prints a suite-level SKIP and exits 0.
  */
 
@@ -302,13 +306,44 @@ async function main() {
   const settle = () => new Promise((r) => setTimeout(r, SETTLE_MS));
   const ICON = { PASS: '✓', SKIP: '○', FLAKY: '~', 'QUARANTINED-FAIL': 'q' };
   const results = [];
+  const flakyFirst = [];
+  const repeat = args.repeat ?? 1;
+  // CON-143: every attempt counts; a pass-on-retry FLAKY would hide a real fail.
+  if (repeat > 1 && args.retry) {
+    console.log('[smoke] --repeat > 1: --retry is ignored (every attempt counts)\n');
+  }
+  const retry = repeat > 1 ? false : args.retry;
+
+  function recordJson() {
+    if (args.json) writeFileSync(args.json, `${JSON.stringify(results, null, 2)}\n`);
+  }
 
   for (const name of names) {
+    if (repeat > 1) {
+      for (let attempt = 1; attempt <= repeat; attempt++) {
+        process.stdout.write(`  ${name} ... `);
+        const last = await runAttempt(name, attempt);
+        const status = applyQuarantine(name, last.status, quarantine);
+        const exitNote = status === 'FAIL' ? `, exit ${last.exit}` : '';
+        console.log(`${ICON[status] ?? '✗'} ${status} (${last.seconds}s${exitNote})`);
+        if (last.status !== 'PASS' && last.status !== 'SKIP') await afterFailure(last);
+        results.push({
+          name,
+          attempt,
+          status,
+          seconds: last.seconds,
+          exit: last.exit,
+        });
+        recordJson();
+        if (attempt < repeat || name !== names[names.length - 1]) await settle();
+      }
+      continue;
+    }
     process.stdout.write(`  ${name} ... `);
     const first = await runAttempt(name, 1);
     let last = first;
     // A retry after a lock-wait timeout would only wait on the same other app again.
-    if (args.retry && !isGreen(first.status) && first.status !== 'LOCK-TIMEOUT') {
+    if (retry && !isGreen(first.status) && first.status !== 'LOCK-TIMEOUT') {
       console.log(`${first.status} (${first.seconds}s, exit ${first.exit}), retrying`);
       await afterFailure(first);
       await settle();
@@ -323,9 +358,12 @@ async function main() {
     const exitNote = status === 'FAIL' ? `, exit ${last.exit}` : '';
     console.log(`${ICON[status] ?? '✗'} ${status} (${last.seconds}s${exitNote})`);
     if (last.status !== 'PASS' && last.status !== 'SKIP') await afterFailure(last);
+    if (status === 'FLAKY') {
+      flakyFirst.push({ name, firstStatus: first.status, firstSeconds: first.seconds });
+    }
     results.push({ name, status, seconds: last.seconds, attempts: last === first ? 1 : 2 });
     // Rewritten after every scenario so a shard that dies mid-run still reports what it finished.
-    if (args.json) writeFileSync(args.json, `${JSON.stringify(results, null, 2)}\n`);
+    recordJson();
     if (name !== names[names.length - 1]) await settle();
   }
 
@@ -336,6 +374,12 @@ async function main() {
     `  ${count('PASS')} passed  ${count('FLAKY')} flaky  ${count('SKIP')} skipped  ` +
       `${count('QUARANTINED-FAIL')} quarantined-failed  ${failed.length} failed`,
   );
+  for (const f of flakyFirst) {
+    const dir = artifactsRoot ? join(artifactsRoot, f.name, 'attempt-1') : '(no --artifacts)';
+    console.log(
+      `FLAKY (fails the run): ${f.name} — passed only on retry; first attempt ${f.firstStatus} (${f.firstSeconds}s). Artifacts: ${dir}`,
+    );
+  }
   console.log('─────────────────────────────────────────────────\n');
   if (failed.length && !ci) {
     console.log(

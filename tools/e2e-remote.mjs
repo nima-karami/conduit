@@ -1,7 +1,9 @@
 /**
- * `npm run e2e:remote -- [--affected | --full | <name>…] [--shards N] [--no-wait] [--no-verify]
+ * `npm run e2e:remote -- [--affected | --full | <name>…] [--repeat N] [--shards N] [--no-wait] [--no-verify]
  * [--out <dir>] [--timeout <min>]` — run e2e scenarios on GitHub-hosted Windows runners at the committed HEAD
  * and print run-smoke-style results. Spec: docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md §A, §3.
+ *
+ * `--repeat N` (integer 2–50) runs named scenarios N times; invalid with `--full`/`--affected`.
  *
  * Pushes HEAD to an ephemeral `ci/e2e/<sha7>-<rand>` ref and dispatches e2e.yml there; the run
  * deletes its own ref, so this never does (and Ctrl-C needs no handling). A run already in flight
@@ -14,7 +16,7 @@
  * Read-only gh calls (run list/view/download) retry transient GitHub failures (5xx, 429, network);
  * the ref push and the dispatch do not, so either failing stays fatal.
  *
- * Exit: 0 passed / flaky-passed / no e2e needed; 1 failed; 2 infra-error, cancelled, timed-out or a precondition;
+ * Exit: 0 passed / no e2e needed; 1 failed or flaky; 2 infra-error, cancelled, timed-out or a precondition;
  * 3 dispatched with --no-wait.
  */
 import { spawnSync } from 'node:child_process';
@@ -124,6 +126,7 @@ async function dispatch(o, sha, selKey) {
     shards: String(o.shards),
     nonce,
     verify: String(o.verify),
+    repeat: String(o.repeat ?? 1),
   };
   // Not retried: a 5xx can land after GitHub accepted the dispatch, and a repeat would start a
   // second run on the same ref.

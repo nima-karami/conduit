@@ -2,11 +2,13 @@ export interface ResultRow {
   name: string;
   status: string;
   seconds: number;
-  attempts: number;
+  attempts?: number;
+  attempt?: number;
   shard: number | null;
   artifact?: string;
   reason?: string;
   alsoFailingOnNightly?: boolean;
+  exit?: number | string | null;
 }
 export interface QuarantineCandidate {
   name: string;
@@ -33,9 +35,12 @@ export interface ResultJson {
   results: ResultRow[];
 }
 export function runStatus(
-  results: { status: string }[],
+  results: { status: string; attempt?: number }[],
   opts?: { verify?: string; prepare?: string },
 ): string;
+export function repeatRates(
+  results: { name: string; status: string; attempt?: number; shard?: number | null }[],
+): { name: string; passed: number; total: number; failures: string[] }[];
 export function infraRerunLine(
   results: { name: string; status: string }[],
   sha?: string,
@@ -44,7 +49,14 @@ export function mergeResults(
   plan: { shards: { index: number; names: string[] }[] },
   shardFiles: {
     shard: number;
-    results: { name: string; status: string; seconds: number; attempts?: number }[];
+    results: {
+      name: string;
+      status: string;
+      seconds: number;
+      attempts?: number;
+      attempt?: number;
+      exit?: number | string | null;
+    }[];
   }[],
   meta: {
     sha: string;
