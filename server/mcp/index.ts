@@ -88,6 +88,8 @@ export interface ServerMcp {
   launch: LaunchPort;
   /** For W4's runAddDir. */
   draft: DraftPort;
+  /** DomainDeps.closeWhenDone: a closeWhenDone program exited; see ConduitMcpHost.closeWhenDone. */
+  closeWhenDone(sessionId: string): Promise<void>;
   /** Startup ordering: see docs/specs/archive/2026-11-01-three-process-architecture.md F1.4.5-6. */
   start(): Promise<void>;
   resumeAdopted(terminals: readonly AdoptedTerminal[]): void;
@@ -282,6 +284,7 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
       },
     },
     draft: { noteHostInput: (sessionId, data) => h.noteHostInput(sessionId, data) },
+    closeWhenDone: (sessionId) => h.closeWhenDone(sessionId),
     start: () => h.start(),
     resumeAdopted,
     async stop() {

@@ -46,6 +46,8 @@ export interface DirectoryEntry {
   roots: string[];
   presence: Presence;
   messaging: 'connected' | 'unavailable';
+  /** Its definition has a messaging adapter, so the CLI can connect and read queued messages. */
+  connectable: boolean;
 }
 export interface ToolDeps {
   store: MessageStore;
@@ -269,17 +271,27 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
     }
 
     const directory = deps.directory();
-    const known = new Set(directory.map((e) => e.handle));
+    const byHandle = new Map(directory.map((e) => [e.handle, e]));
     const recipients: SendMessageOutput['recipients'] = [];
     for (const h of new Set(a.to)) {
+      const entry = byHandle.get(h);
       if (h === caller.handle)
         recipients.push({ handle: h, status: 'refused', reason: 'self_target' });
-      else if (h === HUMAN_HANDLE || known.has(h)) recipients.push({ handle: h, status: 'queued' });
-      else recipients.push({ handle: h, status: 'refused', reason: 'unknown_handle' });
+      else if (h === HUMAN_HANDLE) recipients.push({ handle: h, status: 'queued' });
+      else if (!entry) recipients.push({ handle: h, status: 'refused', reason: 'unknown_handle' });
+      // Nothing in it can ever read: the message would sit unread forever.
+      else if (entry.messaging === 'unavailable' && !entry.connectable)
+        recipients.push({ handle: h, status: 'refused', reason: 'not_messageable' });
+      else recipients.push({ handle: h, status: 'queued' });
     }
     const queued = recipients.filter((r) => r.status === 'queued').map((r) => r.handle);
     if (queued.length === 0) {
       const first = recipients[0];
+      if (first.reason === 'not_messageable')
+        return fail(
+          'not_messageable',
+          `${first.handle} is a terminal with no Conduit-connected agent; it can't read messages`,
+        );
       return fail(first.reason ?? 'unknown_handle', `no deliverable recipient (${first.handle})`);
     }
 

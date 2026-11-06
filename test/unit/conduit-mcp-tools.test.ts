@@ -57,6 +57,7 @@ const DIRECTORY: DirectoryEntry[] = [
     roots: ['/work/shared'],
     presence: 'idle',
     messaging: 'connected',
+    connectable: true,
   },
   {
     handle: 'codex-2',
@@ -69,6 +70,7 @@ const DIRECTORY: DirectoryEntry[] = [
     roots: [],
     presence: 'busy',
     messaging: 'connected',
+    connectable: true,
   },
 ];
 
@@ -222,6 +224,59 @@ describe('sendMessage', () => {
     expect(errCode(await h.tools.sendMessage(CLAUDE, { to: ['codex-9'], body: 'x' }))).toBe(
       'unknown_handle',
     );
+  });
+
+  describe('a recipient with no way to read', () => {
+    const TERMINAL: DirectoryEntry = {
+      handle: 'term-1',
+      sessionId: 's3',
+      openedBy: 's1',
+      label: 'Shell',
+      agent: 'term',
+      project: null,
+      home: '/work/a',
+      roots: [],
+      presence: 'idle',
+      messaging: 'unavailable',
+      connectable: false,
+    };
+    const CLI_NOT_YET_CONNECTED: DirectoryEntry = {
+      ...TERMINAL,
+      handle: 'claude-3',
+      sessionId: 's4',
+      agent: 'claude',
+      connectable: true,
+    };
+
+    it('a terminal with no connectable CLI → not_messageable, and nothing is stored', async () => {
+      const h = await harness({ directory: () => [...DIRECTORY, TERMINAL] });
+      const r = await h.tools.sendMessage(CLAUDE, { to: ['term-1'], body: 'x' });
+      expect(r).toMatchObject({
+        ok: false,
+        error: {
+          code: 'not_messageable',
+          message: "term-1 is a terminal with no Conduit-connected agent; it can't read messages",
+        },
+      });
+      expect(h.store.threads()).toEqual([]);
+    });
+
+    it('a CLI that can connect but is not connected yet is queued, as before', async () => {
+      const h = await harness({ directory: () => [...DIRECTORY, CLI_NOT_YET_CONNECTED] });
+      const out = okValue(await h.tools.sendMessage(CLAUDE, { to: ['claude-3'], body: 'x' }));
+      expect(out.recipients).toEqual([{ handle: 'claude-3', status: 'queued' }]);
+    });
+
+    it('in a mixed send the terminal is refused and the reader still gets it', async () => {
+      const h = await harness({ directory: () => [...DIRECTORY, TERMINAL] });
+      const out = okValue(
+        await h.tools.sendMessage(CLAUDE, { to: ['term-1', 'codex-2'], body: 'x' }),
+      );
+      expect(out.recipients).toEqual([
+        { handle: 'term-1', status: 'refused', reason: 'not_messageable' },
+        { handle: 'codex-2', status: 'queued' },
+      ]);
+    });
   });
 
   it('to has 11 → too_many; 6 attachments → too_many', async () => {
@@ -530,6 +585,7 @@ describe('frameBody peer relation', () => {
     roots: [],
     presence: 'idle',
     messaging: 'connected',
+    connectable: true,
   });
   const directory = (opts: { s1?: string | null; s2?: string | null } = {}): DirectoryEntry[] => [
     entry('claude-1', 's1', opts.s1 ?? null),

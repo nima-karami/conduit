@@ -548,6 +548,14 @@ describe('server domain: close_when_done (CON-152)', () => {
     expect(h.calls.filter((c) => c === `onSessionDeleted:${id}`)).toHaveLength(1);
   });
 
+  it('the exit goes to the close owner, which closes the session', async () => {
+    const h = harness();
+    const id = await openWith(h, true);
+    h.runtime.fire({ type: 'exit', sessionId: id, generation: 1, code: 0, reason: 'exited' });
+    await vi.waitFor(() => expect(h.calls).toContain(`closeWhenDone:${id}`));
+    await vi.waitFor(() => expect(h.domain.sessions.get(id)).toBeUndefined());
+  });
+
   it('without the flag the exited session stays', async () => {
     const h = harness();
     const id = await openWith(h, false);
@@ -571,6 +579,7 @@ describe('server domain: close_when_done (CON-152)', () => {
     await settled();
     expect(h.domain.sessions.get(killed)).toBeDefined();
     expect(h.domain.sessions.get(lost)).toBeDefined();
+    expect(h.calls.some((c) => c.startsWith('closeWhenDone:'))).toBe(false);
   });
 });
 

@@ -1439,29 +1439,41 @@ describe('createConduitMcpHost — notices', () => {
   });
 
   describe('unread banner on tool results (CON-153)', () => {
-    it('a busy recipient learns of queued messages in its next tool result, once', async () => {
+    const BANNER_TWO = '[conduit] 2 unread messages from fake-1. Call read_inbox.';
+
+    it('a recipient learns of unread messages in every tool result until read_inbox reads them', async () => {
       const h = harness();
       const { ca, cb } = await pair(h);
       await ca.call('send_message', { to: ['fake-2'], body: 'one' });
       await ca.call('send_message', { to: ['fake-2'], body: 'two' });
       const first = await cb.call('list_sessions');
       expect(first.content).toHaveLength(2);
-      expect(first.content[1].text).toBe(
-        '[conduit] 2 unread messages from fake-1. Call read_inbox.',
-      );
+      expect(first.content[1].text).toBe(BANNER_TWO);
       expect(first.body.sessions).toBeDefined();
+      expect((await cb.call('list_sessions')).content[1].text).toBe(BANNER_TWO);
+      await cb.call('read_inbox');
       expect((await cb.call('list_sessions')).content).toHaveLength(1);
     });
 
-    it('the banner is delivered in-band, so the terminal is not typed into for it', async () => {
+    it('the banner marks nothing, so a typed notice still goes in when the gate opens', async () => {
       const h = harness();
       const { ca, cb } = await pair(h);
-      // The first tick builds the recipient's notice state; a message noticed before it is re-armed (restart path).
       await h.host.tick();
       await ca.call('send_message', { to: ['fake-2'], body: 'one' });
       expect((await cb.call('list_sessions')).content).toHaveLength(2);
       await h.host.tick();
+      expect(writesTo(h, 's2')).toEqual([composeNotice(false), '\r']);
+    });
+
+    it('an urgent message to a busy recipient still raises urgent-waiting while the banner shows', async () => {
+      const h = harness();
+      const { ca, cb } = await pair(h);
+      h.busy.add('s2');
+      await ca.call('send_message', { to: ['fake-2'], body: 'now', priority: 'urgent' });
+      expect((await cb.call('list_sessions')).content).toHaveLength(2);
+      await h.host.tick();
       expect(writesTo(h, 's2')).toEqual([]);
+      expect(h.host.uiState().attention.map((a) => a.reason)).toEqual(['urgent-waiting']);
     });
 
     it('read_inbox itself carries no banner', async () => {
@@ -3779,6 +3791,35 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
     expect(resultOf(c.lines.find((line) => line.id === 1))).toEqual({ closed: 's2' });
     expect(h.closes).toEqual(['s2']);
     expect(h.toWindow.filter((entry) => entry.msg.type === 'mcp:ui')).toEqual([]);
+  });
+
+  it('closeWhenDone with a ready owner asks its window to close and closes on the answer', async () => {
+    const { h } = await twoSessions();
+    const closing = h.host.closeWhenDone('s2');
+    const ui = await lastUi(h);
+    expect(ui.action).toEqual({ kind: 'closeSession', target: 's2' });
+    expect(h.closes).toEqual([]);
+    await uiResult(h, ui.requestId, { kind: 'closeSession', ok: true }, 2);
+    await closing;
+    // The renderer removes the session on its own close; the domain is not called directly.
+    expect(h.closes).toEqual([]);
+  });
+
+  it('closeWhenDone keeps the exited session when its window finds unsaved changes', async () => {
+    const { h } = await twoSessions();
+    const closing = h.host.closeWhenDone('s2');
+    const ui = await lastUi(h);
+    await uiResult(h, ui.requestId, { kind: 'closeSession', ok: false, unsaved: ['a.ts'] }, 2);
+    await closing;
+    expect(h.closes).toEqual([]);
+  });
+
+  it('closeWhenDone without a ready owner closes through the domain and posts no UI', async () => {
+    const { h } = await twoSessions();
+    h.owners.set('s2', null);
+    await h.host.closeWhenDone('s2');
+    expect(h.closes).toEqual(['s2']);
+    expect(uiOf(h)).toEqual([]);
   });
 
   it('a terminal an agent opened stays listed after it exits, and its opener can close it (CON-149)', async () => {

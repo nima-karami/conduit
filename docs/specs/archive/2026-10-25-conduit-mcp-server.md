@@ -417,5 +417,5 @@ notice gate almost never opens and its messages waited for an idle window that d
 as they are. Additionally, every Conduit MCP tool result for a caller with un-noticed, non-`fyi` messages
 carries a second text item: `[conduit] N unread message(s) (M urgent) from <handles>. Call read_inbox.`
 It is built from counts and Conduit-assigned handles only, never message text. `read_inbox` carries none.
-Messages announced this way are marked noticed, as a typed notice marks them, so a busy→idle edge that
-finds one still unread re-notices it once (§2 re-notice).
+The line is computed fresh on each result from every unread non-`fyi` message until `read_inbox` reads it.
+It marks nothing: notice state, the §2 urgent escalation and the busy→idle re-notice are unchanged by it.

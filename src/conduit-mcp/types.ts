@@ -10,6 +10,7 @@ export type RecipientStatus = 'queued' | 'noticed' | 'read' | 'undelivered' | 'e
 export type ToolErrorCode =
   | 'not_in_session'
   | 'unknown_handle'
+  | 'not_messageable'
   | 'self_target'
   | 'too_large'
   | 'too_many'

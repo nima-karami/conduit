@@ -170,6 +170,8 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
   /** Input the host writes outside the PTY writer (the add-dir paste): it is a draft too. */
   noteHostInput(sessionId: string, data: string): void;
   onSessionDeleted(sessionId: string): Promise<void>;
+  /** A closeWhenDone session's program exited on its own; closes it through close_session's routing. */
+  closeWhenDone(sessionId: string): Promise<void>;
   /** Navigation start, renderer gone, or closed: that window's asks end `cancelled`. */
   onWindowReset(windowId: number): void;
   /** The session now belongs to another window: its asks end `cancelled`. */
@@ -200,6 +202,8 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
 }
 
 const TICK_MS = 500;
+/** closeWhenDone is not a CLI call: no connection owns its UI wait (see ConduitMcpHost.closeWhenDone). */
+const UNTRACKED_CONN = -1;
 const SUBMIT_CONFIRM_WAIT_MS = 2_000;
 const RETENTION_EVERY_MS = 6 * 60 * 60 * 1000;
 const BROADCAST_COALESCE_MS = 150;
@@ -513,6 +517,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       roots: [...s.roots],
       presence: presenceOf(s.id),
       messaging: registry.isLive(s.id) ? 'connected' : 'unavailable',
+      connectable: hasDefAdapter(s.id),
     }));
 
   const tools = createToolHandlers({
@@ -1109,7 +1114,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       });
       if (cancelled) return null;
       const built = toToolCallResult(result);
-      const banner = await unreadBannerFor(handle, name);
+      const banner = unreadBannerFor(handle, name);
       return banner === null
         ? built
         : { ...built, content: [...built.content, { type: 'text', text: banner }] };
@@ -1120,22 +1125,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   /**
    * A busy lead never gets a typed notice (the gate waits for idle), so the unread count rides
-   * every tool result it makes. Marked noticed here, so the typed path does not repeat it.
+   * every tool result it makes until read_inbox reads them. Marks nothing: see bannerCandidates.
    */
-  const unreadBannerFor = async (
-    handle: Handle | undefined,
-    tool: string,
-  ): Promise<string | null> => {
+  const unreadBannerFor = (handle: Handle | undefined, tool: string): string | null => {
     if (!handle || !notifier || tool === 'read_inbox') return null;
     if (!deps.domain.messagingOn() || !store.available()) return null;
-    const candidates = bannerCandidates(store.pending(handle), handle);
-    const text = composeUnreadBanner(candidates);
-    if (text === null) return null;
-    await notifier.noteDeliveredInBand(
-      handle,
-      candidates.map((m) => m.messageId),
-    );
-    return text;
+    return composeUnreadBanner(bannerCandidates(store.pending(handle)));
   };
 
   const runMessaging = async (caller: Caller, name: ToolName, args: unknown) => {
@@ -1731,6 +1726,32 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     noteHostInput(sessionId, data) {
       noteInput(sessionId, data);
+    },
+
+    /**
+     * closeWhenDone's exit: close_session's routed close with no caller. The in-flight entry has no
+     * request id, so no CLI cancel ends the UI wait; its own timeout does. Unsaved changes keep the
+     * session open, exited and listed.
+     */
+    async closeWhenDone(sessionId) {
+      const ctx: ControlCallContext = {
+        move: undefined,
+        reach: undefined,
+        ui: (windowId, routedSessionId, action) =>
+          flow.requestUi({
+            inflight: flow.begin({ connId: UNTRACKED_CONN, requestId: null }),
+            callerSessionId: sessionId,
+            routedSessionId,
+            windowId,
+            action,
+          }),
+      };
+      const r = await app.closeRouted(sessionId, undefined, ctx);
+      if (!r.ok)
+        deps.log.info('conduit-mcp', 'closeWhenDone kept open', {
+          sessionId,
+          code: r.error.code,
+        });
     },
 
     async onSessionDeleted(sessionId) {

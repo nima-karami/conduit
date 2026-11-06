@@ -187,6 +187,7 @@ export const MCP_STR = {
   refusal: {
     not_in_session: 'not in a session',
     unknown_handle: 'no session by that name',
+    not_messageable: 'a terminal with no agent to read it',
     self_target: 'can’t message itself',
     too_large: 'too large',
     too_many: 'too many recipients',

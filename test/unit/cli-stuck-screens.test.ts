@@ -99,13 +99,23 @@ describe('detectStuckScreen', () => {
   });
 
   it('flags a Claude usage limit (made-up row, no captured fixture)', () => {
-    expect(
-      detectStuckScreen('claude', rows('You have hit your session limit · resets 5pm')),
-    ).toEqual({ kind: 'usage-limit', reason: 'Claude usage limit reached' });
-    expect(detectStuckScreen('claude', rows('Limit reached · resets 3pm'))).toEqual({
+    expect(detectStuckScreen('claude', rows("You've hit your session limit · resets 5pm"))).toEqual(
+      { kind: 'usage-limit', reason: 'Claude usage limit reached' },
+    );
+    expect(detectStuckScreen('claude', rows('Claude usage limit reached · resets 3pm'))).toEqual({
       kind: 'usage-limit',
       reason: 'Claude usage limit reached',
     });
+  });
+
+  it('does not flag source code or log text that merely mentions a limit', () => {
+    expect(detectStuckScreen('codex', rows('const re = /You’ve hit your usage limit/'))).toBeNull();
+    expect(detectStuckScreen('codex', rows('Approaching rate limits in the docs'))).toBeNull();
+    expect(
+      detectStuckScreen('cursor', rows('Error: Unable to reach the model provider in logs')),
+    ).toBeNull();
+    expect(detectStuckScreen('claude', rows('INFO usage limit reached, resets at 5'))).toBeNull();
+    expect(detectStuckScreen('claude', rows('Limit reached · resets 3pm'))).toBeNull();
   });
 
   it('returns null for a normal working screen', () => {

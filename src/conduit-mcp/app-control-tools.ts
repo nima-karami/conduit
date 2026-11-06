@@ -28,6 +28,8 @@ import type { CloseFilesOutcome, McpReviewScope, McpReviewSource, McpUiResult } 
 interface CloseSessionOutput {
   closed: string;
 }
+/** The session that closed another: a live caller, never a null-sessionId human. */
+type CloseOpener = { handle: Caller['handle']; sessionId: string };
 interface FocusSessionOutput {
   focused: string;
 }
@@ -71,6 +73,12 @@ type Prepare<T> = (
   ctx: ControlCallContext,
 ) => Promise<Result<PreparedCall<T>>>;
 export interface AppControlHandlers {
+  /** close_session's routing, also used by closeWhenDone when a program exits on its own. */
+  closeRouted(
+    sessionId: string,
+    closedBy: CloseOpener | undefined,
+    ctx: ControlCallContext,
+  ): Promise<Result<CloseSessionOutput>>;
   prepareCloseSession: Prepare<CloseSessionOutput>;
   prepareFocusSession: Prepare<FocusSessionOutput>;
   prepareAttachFolder: Prepare<AttachFolderOutput>;
@@ -187,7 +195,32 @@ export function createAppControlHandlers(
       return { ok: true, value };
     };
 
+  /**
+   * The one close path for a session its program is done with: close_session's, and closeWhenDone's
+   * on a program's own exit. A ready owner window runs the renderer's close, which keeps the
+   * unsaved-changes guard; otherwise the domain closes it.
+   */
+  const closeRouted = async (
+    sessionId: string,
+    closedBy: CloseOpener | undefined,
+    ctx: ControlCallContext,
+  ): Promise<Result<CloseSessionOutput>> => {
+    const currentWindow = deps.ownerWindowOf(sessionId);
+    if (currentWindow === null || !deps.windowReady(currentWindow)) {
+      const result = await deps.closeSession(sessionId, closedBy ? { closedBy } : {});
+      if (!result.ok) return fail(result.code, result.message);
+      return { ok: true, value: { closed: sessionId } };
+    }
+    const r = await ctx.ui(currentWindow, sessionId, { kind: 'closeSession', target: sessionId });
+    if (!r.ok) return r;
+    const v = r.value;
+    if (v.kind !== 'closeSession') return wrongAnswer(v);
+    if (!v.ok) return fail('unsaved_changes', `unsaved changes in:\n${v.unsaved.join('\n')}`);
+    return { ok: true, value: { closed: sessionId } };
+  };
+
   return {
+    closeRouted,
     prepareCloseSession: (caller, raw, ctx) =>
       prepared('close_session', caller, async (who) => {
         const o = parseKeys(raw, ['session']);
@@ -204,28 +237,15 @@ export function createAppControlHandlers(
           exec: async (token) => {
             const again = recheckTarget('close_session', t.sessionId, who.sessionId, ctx.reach);
             if (again) return again;
-            const currentWindow = deps.ownerWindowOf(t.sessionId);
-            if (currentWindow === null || !deps.windowReady(currentWindow)) {
-              const result = await deps.closeSession(t.sessionId, {
-                closedBy: { handle: caller.handle, sessionId: who.sessionId },
-              });
-              if (!result.ok) return fail(result.code, result.message);
-              token.keep();
-              logged('close_session', caller, { target: t.sessionId });
-              return { ok: true, value: { closed: t.sessionId } };
-            }
-            const r = await ctx.ui(currentWindow, t.sessionId, {
-              kind: 'closeSession',
-              target: t.sessionId,
-            });
+            const r = await closeRouted(
+              t.sessionId,
+              { handle: caller.handle, sessionId: who.sessionId },
+              ctx,
+            );
             if (!r.ok) return r;
-            const v = r.value;
-            if (v.kind !== 'closeSession') return wrongAnswer(v);
-            if (!v.ok)
-              return fail('unsaved_changes', `unsaved changes in:\n${v.unsaved.join('\n')}`);
             token.keep();
             logged('close_session', caller, { target: t.sessionId });
-            return { ok: true, value: { closed: t.sessionId } };
+            return r;
           },
         };
       }),

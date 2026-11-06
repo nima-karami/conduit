@@ -260,6 +260,10 @@ export function harness(opts: HarnessOptions = {}) {
       },
       forget: () => {},
     },
+    closeWhenDone: async (id) => {
+      calls.push(`closeWhenDone:${id}`);
+      await domain.domain.closeSession(id, {});
+    },
     emit: <E extends ServerEvent>(type: E, data: ServerEvents[E]) => {
       events.push({ type, data });
     },

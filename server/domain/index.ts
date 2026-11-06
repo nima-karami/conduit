@@ -140,6 +140,11 @@ export interface DomainDeps {
   resolveCommand(command: string): string | undefined;
   /** W6's last known size of the session's terminal, kept after it exits (runtime.lastSizeOf). */
   lastSizeOf(sessionId: string): TermGeometry | undefined;
+  /**
+   * A closeWhenDone session's program exited on its own. The close routing owner (the MCP host)
+   * closes it the way close_session does, so an open window's unsaved-changes guard still runs.
+   */
+  closeWhenDone(sessionId: string): Promise<void>;
   log: DomainLog;
 }
 
@@ -724,7 +729,7 @@ export function createDomain(deps: DomainDeps): Domain {
         scopes.ended(e.sessionId);
         // Only a program that quit on its own: a kill from Conduit's own stop must not delete it.
         if (e.reason === 'exited' && mgr.get(e.sessionId)?.closeWhenDone) {
-          closeSession(e.sessionId).catch((err: unknown) =>
+          deps.closeWhenDone(e.sessionId).catch((err: unknown) =>
             log.warn('session', 'closeWhenDone close failed', {
               sessionId: e.sessionId,
               err: String(err),

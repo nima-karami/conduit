@@ -287,7 +287,7 @@ describe('in-band unread banner (CON-153)', () => {
     const h = harness();
     const a = h.add('urgent');
     const b = h.add('normal');
-    const text = composeUnreadBanner(bannerCandidates([a, b], H));
+    const text = composeUnreadBanner(bannerCandidates([a, b]));
     expect(text).toBe('[conduit] 2 unread messages (1 urgent) from claude-1. Call read_inbox.');
     expect(text).not.toContain('secret');
   });
@@ -295,7 +295,7 @@ describe('in-band unread banner (CON-153)', () => {
   it('omits the urgent part at zero and uses the singular for one message', () => {
     const h = harness();
     const b = h.add('normal');
-    expect(composeUnreadBanner(bannerCandidates([b], H))).toBe(
+    expect(composeUnreadBanner(bannerCandidates([b]))).toBe(
       '[conduit] 1 unread message from claude-1. Call read_inbox.',
     );
   });
@@ -303,33 +303,28 @@ describe('in-band unread banner (CON-153)', () => {
   it('lists at most five sender handles, then the rest as a count', () => {
     const h = harness();
     const ms = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((from) => ({ ...h.add('normal'), from }));
-    expect(composeUnreadBanner(bannerCandidates(ms, H))).toBe(
+    expect(composeUnreadBanner(bannerCandidates(ms))).toBe(
       '[conduit] 7 unread messages from a, b, c, d, e and 2 more. Call read_inbox.',
     );
   });
 
-  it('fyi and already-noticed messages are not announced; nothing left means no banner', () => {
+  it('fyi is not announced; an unread message stays announced after a notice noticed it', () => {
     const h = harness();
     const f = h.add('fyi');
     const n = h.add('normal', 'noticed', 1);
-    expect(bannerCandidates([f, n], H)).toEqual([]);
+    expect(bannerCandidates([f, n])).toEqual([n]);
     expect(composeUnreadBanner([])).toBeNull();
   });
 
-  it('a message delivered in-band is not typed when the gate opens; an undelivered one still is', async () => {
+  it('a banner does not stop the typed notice: an unread message is still typed when the gate opens', async () => {
     const h = harness();
     h.setGate(CLOSED);
     const a = h.add('normal');
     await h.notifier.tick();
-    await h.notifier.noteDeliveredInBand(H, [a.messageId]);
+    expect(composeUnreadBanner(bannerCandidates([a]))).not.toBeNull();
     h.setGate({ open: true });
     await h.notifier.tick();
-    expect(h.submits).toEqual([]);
-    expect(h.marked).toEqual([[a.messageId]]);
-
-    const b = h.add('normal');
-    await h.notifier.tick();
     expect(h.submits).toEqual([composeNotice(false)]);
-    expect(h.marked[1]).toContain(b.messageId);
+    expect(h.marked).toEqual([[a.messageId]]);
   });
 });

@@ -177,6 +177,7 @@ export function createServices(o: ServicesOptions) {
     detectClis: o.detectClis ?? (() => detectAgentClis(hostCliScanEnv())),
     resolveCommand: resolve,
     lastSizeOf: (id) => runtime.lastSizeOf(id),
+    closeWhenDone: (id) => m().closeWhenDone(id),
     log,
   });
 
