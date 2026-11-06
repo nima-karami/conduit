@@ -65,24 +65,17 @@ describe('grammar runner', () => {
 
 describe('grammar linearity', () => {
   for (const [name, grammar] of Object.entries(ALL)) {
-    // Ratio, not a wall-clock bound: load stretches both sizes, not the 20k/2k quotient.
-    it(`${name} tokenizes adversarial 20 000-char lines linearly from every state`, () => {
+    // A hang guard only: linearity is the 20k→80k ratio test below, which load can't move much.
+    it(`${name} tokenizes adversarial 20 000-char lines from every state without hanging`, () => {
       for (const state of grammarStates(grammar)) {
         const tokenizer = monarchTokenizer(grammar, state);
         for (const make of ADVERSARIAL) {
-          const short = make(2000);
           const line = make(20000);
-          const t2k = elapsed(() => rawTokens(tokenizer, [short, '']));
           const t20k = elapsed(() => rawTokens(tokenizer, [line, '']));
           expect(
             t20k,
             `${name}@${state} hang guard on ${JSON.stringify(line.slice(0, 6))}…`,
           ).toBeLessThan(2000);
-          // Floor the 2k time at the timer resolution so a near-zero sample can't divide by ~0.
-          expect(
-            t20k / Math.max(t2k, 0.05),
-            `${name}@${state} on ${JSON.stringify(line.slice(0, 6))}…`,
-          ).toBeLessThan(25);
         }
       }
     });
