@@ -11,10 +11,11 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CPP_GREET_CALL, clangdInstalled, writeClangdFixture } from './clangd-fixture.mjs';
+import { CPP_GREET_CALL, clangdProbe, writeClangdFixture } from './clangd-fixture.mjs';
 import { clearTransients, openDoc, placeCursor } from './goto-matrix.mjs';
 import { assert, openSession, runScenario } from './harness.mjs';
 import {
+  assertInstalled,
   breadcrumbWith,
   endsWith,
   hoverText,
@@ -30,7 +31,10 @@ const READY_CEILING_MS = 90_000;
 const GREET_FILE = /greet\.(hpp|cpp)$/i;
 
 runScenario('clangd-lsp', async ({ app, page, log }) => {
-  assert(clangdInstalled(), 'clangd-lsp e2e needs clangd: winget install LLVM.LLVM');
+  assertInstalled(
+    [['clangd', clangdProbe()]],
+    'clangd-lsp e2e needs clangd: winget install LLVM.LLVM',
+  );
   const dir = mkdtempSync(join(tmpdir(), 'conduit-cpp-'));
   const fx = writeClangdFixture(dir);
   const sid = await openSession(page, { path: dir });

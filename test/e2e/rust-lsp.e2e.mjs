@@ -16,11 +16,12 @@ import { join } from 'node:path';
 import { clearTransients, openDoc, placeCursor } from './goto-matrix.mjs';
 import { assert, openSession, runScenario } from './harness.mjs';
 import {
+  assertInstalled,
   breadcrumbWith,
   endsWith,
   hoverText,
   lsp,
-  serverInstalled,
+  probeServer,
   trustViaHost,
   waitDefinition,
   waitObserved,
@@ -33,8 +34,8 @@ const READY_CEILING_MS = 90_000;
 const NO_ROOT_TOAST = 'Rust navigation works for files inside an open project.';
 
 runScenario('rust-lsp', async ({ app, page, log }) => {
-  assert(
-    serverInstalled('rust-analyzer', ['--version']),
+  assertInstalled(
+    [['rust-analyzer', probeServer('rust-analyzer', ['--version'])]],
     'rust-lsp e2e needs rust-analyzer: rustup component add rust-analyzer',
   );
   const dir = mkdtempSync(join(tmpdir(), 'conduit-rs-'));

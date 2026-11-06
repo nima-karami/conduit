@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { atomicWriteFile, atomicWriteFileSync } from '../../src/atomic-write';
+import { type AsyncWriteFs, atomicWriteFile, atomicWriteFileSync } from '../../src/atomic-write';
 
 const trees: string[] = [];
 afterEach(() => {
@@ -102,6 +102,71 @@ describe('atomicWriteFile', () => {
     ).toThrow('promotion failed');
     expect(await Promise.all([old, newer])).toEqual([null, null]);
     expect(fs.readFileSync(file, 'utf8')).toBe('newer');
+  });
+
+  describe('promotion retry on Windows lock contention', () => {
+    /** A real fs whose renameSync fails with `codes[i]` on call i, then succeeds. Records whether
+     *  the temp file still existed at each attempt and every backoff the writer asked for. */
+    function lockedRename(codes: string[]) {
+      const attempts: boolean[] = [];
+      const delays: number[] = [];
+      let call = 0;
+      const io = {
+        writeFile: fs.writeFile,
+        unlink: fs.unlink,
+        renameSync: (from: fs.PathLike, to: fs.PathLike) => {
+          attempts.push(fs.existsSync(from));
+          const code = codes[call++];
+          if (code) throw Object.assign(new Error(`${code}: rename`), { code });
+          fs.renameSync(from, to);
+        },
+        delay: (ms: number, next: () => void) => {
+          delays.push(ms);
+          next();
+        },
+      };
+      return { io, attempts, delays };
+    }
+
+    const run = (file: string, data: string, io: AsyncWriteFs) =>
+      new Promise<NodeJS.ErrnoException | null>((resolve) =>
+        atomicWriteFile(file, data, resolve, io),
+      );
+
+    it('retries a rename that fails with EPERM once and then lands the snapshot', async () => {
+      const dir = tmp();
+      const file = join(dir, 'settings.json');
+      fs.writeFileSync(file, 'OLD');
+      const { io, attempts, delays } = lockedRename(['EPERM']);
+      expect(await run(file, 'NEW', io)).toBe(null);
+      expect(fs.readFileSync(file, 'utf8')).toBe('NEW');
+      expect(attempts).toEqual([true, true]);
+      expect(delays).toEqual([20]);
+      expect(fs.readdirSync(dir)).toEqual(['settings.json']);
+    });
+
+    it('does not retry a rename that fails with ENOENT', async () => {
+      const dir = tmp();
+      const file = join(dir, 'settings.json');
+      const { io, attempts, delays } = lockedRename(['ENOENT']);
+      const error = await run(file, 'NEW', io);
+      expect(error?.code).toBe('ENOENT');
+      expect(attempts).toHaveLength(1);
+      expect(delays).toEqual([]);
+      expect(fs.readdirSync(dir)).toEqual([]);
+    });
+
+    it('gives up after the backoff cap on a persistent EBUSY and removes the temp file', async () => {
+      const dir = tmp();
+      const file = join(dir, 'settings.json');
+      const { io, attempts, delays } = lockedRename(Array(10).fill('EBUSY'));
+      const error = await run(file, 'NEW', io);
+      expect(error?.code).toBe('EBUSY');
+      expect(delays).toEqual([20, 40, 80, 160, 320]);
+      expect(attempts).toEqual(Array(6).fill(true));
+      expect(fs.existsSync(file)).toBe(false);
+      expect(fs.readdirSync(dir)).toEqual([]);
+    });
   });
 });
 

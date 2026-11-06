@@ -12,7 +12,14 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { openDoc } from './goto-matrix.mjs';
 import { assert, closeApp, launchApp, openSession, runScenario, tapBridge } from './harness.mjs';
-import { liveServers, lsp, serverInstalled, sleep, trustViaHost } from './lsp-fixture.mjs';
+import {
+  assertInstalled,
+  liveServers,
+  lsp,
+  probeServer,
+  sleep,
+  trustViaHost,
+} from './lsp-fixture.mjs';
 import { writePythonFixture } from './python-fixture.mjs';
 import { writeRustFixture } from './rust-fixture.mjs';
 
@@ -46,9 +53,11 @@ async function hostHolds(page, path) {
 }
 
 runScenario('lsp-residency-launch', async ({ app, page, log }) => {
-  assert(
-    serverInstalled('where', ['basedpyright-langserver']) &&
-      serverInstalled('rust-analyzer', ['--version']),
+  assertInstalled(
+    [
+      ['basedpyright-langserver', probeServer('where', ['basedpyright-langserver'])],
+      ['rust-analyzer', probeServer('rust-analyzer', ['--version'])],
+    ],
     'lsp-residency-launch e2e needs basedpyright and rust-analyzer installed',
   );
   const dir = mkdtempSync(join(tmpdir(), 'conduit-residency-launch-'));

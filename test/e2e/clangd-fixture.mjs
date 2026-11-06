@@ -5,18 +5,23 @@
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { serverInstalled } from './lsp-fixture.mjs';
+import { probeServer } from './lsp-fixture.mjs';
 
 /** `greet(2)` in main.cpp, 0-based for `lsp:request`. */
 export const CPP_GREET_CALL = { line: 4, character: '    return '.length };
 
-/** The runner's LLVM is found through %ProgramFiles%, as the host finds it; PATH is the fallback. */
-export function clangdInstalled() {
+/** The runner's LLVM is found through %ProgramFiles%, as the host finds it; PATH is the fallback.
+ *  A failing fixed-path probe is reported over a PATH "not found", so a timeout is not hidden. */
+export function clangdProbe() {
   const fixed = join(process.env.ProgramFiles ?? 'C:\\Program Files', 'LLVM', 'bin', 'clangd.exe');
-  return (
-    (existsSync(fixed) && serverInstalled(fixed, ['--version'])) ||
-    serverInstalled('clangd', ['--version'])
-  );
+  const fixedProbe = existsSync(fixed) ? probeServer(fixed, ['--version']) : null;
+  if (fixedProbe?.ok) return fixedProbe;
+  const pathProbe = probeServer('clangd', ['--version']);
+  return pathProbe.ok ? pathProbe : (fixedProbe ?? pathProbe);
+}
+
+export function clangdInstalled() {
+  return clangdProbe().ok;
 }
 
 export function writeClangdFixture(dir) {

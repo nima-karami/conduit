@@ -14,11 +14,12 @@ import { join } from 'node:path';
 import { clearTransients, openDoc, placeCursor } from './goto-matrix.mjs';
 import { assert, openSession, runScenario } from './harness.mjs';
 import {
+  assertInstalled,
   breadcrumbWith,
   endsWith,
   hoverText,
   lsp,
-  serverInstalled,
+  probeServer,
   trustViaHost,
   waitDefinition,
   waitObserved,
@@ -60,8 +61,8 @@ async function f12Lands(page, file, token, suffix, marker, log) {
 
 runScenario('python-lsp', async ({ app, page, log }) => {
   // `where`, not a run: the language server itself waits on stdin rather than exiting.
-  assert(
-    serverInstalled('where', ['basedpyright-langserver']),
+  assertInstalled(
+    [['basedpyright-langserver', probeServer('where', ['basedpyright-langserver'])]],
     'python-lsp e2e needs basedpyright: pip install basedpyright',
   );
   const dir = mkdtempSync(join(tmpdir(), 'conduit-py-'));

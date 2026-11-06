@@ -309,7 +309,10 @@ runScenario('right-panel-toggles', async ({ app, page, log }) => {
   assert((await toggleClicks(page)) === 1, 'showRightView clicks an inactive toggle exactly once');
   await waitShown(page, 'changes', 'showRightView to another view');
   s = await waitSettings(app, (x) => x.rightPaneTab === 'changes');
-  assert(s?.rightPaneTab === 'changes', 'the helper is an explicit pick too');
+  assert(
+    s?.rightPaneTab === 'changes',
+    `the helper is an explicit pick too: settings.json rightPaneTab is ${JSON.stringify(s?.rightPaneTab)}`,
+  );
   log('showRightView: idempotent, waits for a mounting panel, one click to switch ✓');
 
   // ── 5. Imperative opens are transient ─────────────────────────────────────

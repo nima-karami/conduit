@@ -11,10 +11,10 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { clangdInstalled, writeClangdFixture } from './clangd-fixture.mjs';
+import { clangdProbe, writeClangdFixture } from './clangd-fixture.mjs';
 import { openDoc } from './goto-matrix.mjs';
 import { assert, openSession, runScenario } from './harness.mjs';
-import { lsp, recordTree, serverInstalled, waitServerState } from './lsp-fixture.mjs';
+import { assertInstalled, lsp, probeServer, recordTree, waitServerState } from './lsp-fixture.mjs';
 import { writePythonFixture } from './python-fixture.mjs';
 import { writeRustFixture } from './rust-fixture.mjs';
 
@@ -38,10 +38,12 @@ async function runPalette(page, query, title) {
 }
 
 runScenario('lsp-trust-multi', async ({ app, page, log }) => {
-  assert(
-    serverInstalled('where', ['basedpyright-langserver']) &&
-      serverInstalled('rust-analyzer', ['--version']) &&
-      clangdInstalled(),
+  assertInstalled(
+    [
+      ['basedpyright-langserver', probeServer('where', ['basedpyright-langserver'])],
+      ['rust-analyzer', probeServer('rust-analyzer', ['--version'])],
+      ['clangd', clangdProbe()],
+    ],
     'lsp-trust-multi e2e needs basedpyright, rust-analyzer and clangd installed',
   );
   const dir = mkdtempSync(join(tmpdir(), 'conduit-trust-multi-'));

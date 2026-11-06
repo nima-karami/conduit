@@ -220,11 +220,43 @@ export async function trustViaHost(page, path, languageId, log) {
   log(`trusted ${state.prompt.folder} through the host prompt`);
 }
 
-/** Whether `binary` (a name on PATH, or an absolute path) runs `args` cleanly. The host's own
- *  lookup is richer (lsp-registry); this only tells installed from not. */
-export function serverInstalled(binary, args) {
-  const r = spawnSync(binary, args, { stdio: 'ignore', timeout: 30_000, windowsHide: true });
-  return r.status === 0;
+/** A cold rustup proxy or clangd can outlast this on a loaded runner; the install step runs each
+ *  binary once first (.github/workflows/e2e.yml), so the probe does not pay that cold start. */
+const PROBE_TIMEOUT_MS = 30_000;
+
+/** Whether `binary` (a name on PATH, or an absolute path) runs `args` cleanly, and how it failed
+ *  if not. The host's own lookup is richer (lsp-registry); this only tells installed from not. */
+export function probeServer(binary, args) {
+  const t0 = Date.now();
+  const r = spawnSync(binary, args, {
+    stdio: 'ignore',
+    timeout: PROBE_TIMEOUT_MS,
+    windowsHide: true,
+  });
+  return {
+    ok: r.status === 0,
+    status: r.status,
+    signal: r.signal,
+    ms: Date.now() - t0,
+    error: r.error?.code ?? null,
+  };
+}
+
+export const serverInstalled = (binary, args) => probeServer(binary, args).ok;
+
+/** Fails naming each `[name, probe]` that did not run and why, so a precheck says which binary. */
+export function assertInstalled(probes, what) {
+  const failing = probes
+    .filter(([, p]) => !p.ok)
+    .map(([name, p]) => `${name}: ${describeProbe(p)}`);
+  assert(failing.length === 0, `${what}: ${failing.join('; ')}`);
+}
+
+function describeProbe(p) {
+  if (p.error === 'ETIMEDOUT') return `timed out after ${PROBE_TIMEOUT_MS} ms`;
+  if (p.error === 'ENOENT') return 'not found';
+  if (p.signal) return `killed by ${p.signal} after ${p.ms} ms`;
+  return `exited ${p.status} after ${p.ms} ms`;
 }
 
 // ── Residency (docs/plans/2026-10-08-language-coverage.plan.md Task C4.2) ──
