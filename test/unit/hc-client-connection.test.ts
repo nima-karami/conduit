@@ -163,7 +163,14 @@ describe('hc connection lifecycle', () => {
     gaps.forEach((gap, i) => {
       expect(gap).toBeGreaterThanOrEqual(10 * 2 ** i - 1);
     });
+    // A dial already in flight still got the unframed hello; call only once a framed one connected.
+    const connected = new Promise<void>((resolve) =>
+      client.onConnection((state) => {
+        if (state === 'connected') resolve();
+      }),
+    );
     fake.hello.framed = true;
+    await connected;
     await expect(client.call('server.status', {})).resolves.toMatchObject({ live: 1 });
   });
 
