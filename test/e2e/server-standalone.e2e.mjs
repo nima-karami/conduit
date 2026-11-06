@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { C2 } from './c2-peer.mjs';
 import { FAKE_AGENT, sleep, until } from './conduit-mcp-helpers.mjs';
-import { assert, finishScenario, makeLog, onPath, phase, REPO } from './harness.mjs';
+import { assert, finishScenario, makeLog, phase, REPO, resolveHcBinary } from './harness.mjs';
 import { assertOwnSession, hcEnv, stopHc, teardownNames } from './harness-server-teardown.mjs';
 
 // The integration lane's walking skeleton on real hc, with no Electron: the built supervisor runs
@@ -21,7 +21,7 @@ const requireFromHere = createRequire(import.meta.url);
 const log = makeLog('server-standalone');
 // Absolute, as the app passes it (runtime-layout.ts): the supervisor's terminal gets the PATH hc
 // rebuilds, not ours, so a bare `--hc hc` would not resolve there.
-const HC = process.env.CONDUIT_HC_BINARY || onPath('hc') || 'hc';
+const HC = resolveHcBinary();
 const HC_VERSION = '0.1.16';
 /** The app's own version: an older one may not restart the server (versionOrder, D26). */
 const APP_VERSION = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version;
@@ -126,7 +126,7 @@ async function run() {
     CONDUIT_USER_XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? '',
     CONDUIT_USER_XDG_CAPTURED: '1',
   };
-  const coreCwd = join(userData, 'runtime', 'hc', HC_VERSION);
+  const coreCwd = join(userData, 'runtime', 'conduit-hc', HC_VERSION);
   mkdirSync(coreCwd, { recursive: true });
   const hcOptions = { env, windowsHide: true, timeout: 20_000, cwd: coreCwd };
   const startSupervisor = () =>

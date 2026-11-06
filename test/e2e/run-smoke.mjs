@@ -126,7 +126,7 @@ async function sweepScenarioServers(profilesBefore) {
         env: {
           ...process.env,
           // The app ran the vendored core; teardown must stop that one, not a global hc on PATH.
-          ...(hcBinary ? { CONDUIT_HC_BINARY: hcBinary } : {}),
+          CONDUIT_HC_BINARY: hcBinary,
           E2E_SWEEP_PROFILE: join(root, profile),
           E2E_SWEEP_ROOT: root,
           E2E_SWEEP_NAME: profile,

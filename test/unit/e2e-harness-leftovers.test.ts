@@ -187,7 +187,7 @@ describe('teardownScenarioServer leftovers', () => {
       userDataDir: DIR,
       tmpdir: '/tmp',
       platform: 'win32',
-      env: {},
+      env: { CONDUIT_HC_BINARY: '/test/conduit-hc' },
       appVersion: '1.0.0',
       stopAll: async () => ({ outcome: 'no-server' }),
       exec: () => ({ status: 0 }),

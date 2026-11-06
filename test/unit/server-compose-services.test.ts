@@ -8,6 +8,7 @@ import { compose } from '../../server/compose';
 import { createServices, type Services, type ServicesOptions } from '../../server/services';
 import { type Peer, PipeTransport, type RpcAnswer } from '../../server/transport/pipe';
 import type { ServerEvent, ServerEvents, SessionView } from '../../src/contracts/server-protocol';
+import type { InstanceNames } from '../../src/contracts/session-identity';
 import { NodeHcClient } from '../../src/hc-client';
 import { FakeHc } from '../../src/hc-client/testing/fake-hc';
 import { instanceNames } from '../../src/instance-names';
@@ -39,8 +40,12 @@ async function harness(options: Partial<ServicesOptions> = {}, userDataOf?: stri
   await fake.listen();
   const hc = new NodeHcClient({ connect: fake.connect, reconnectDelayMs: 10, log: () => {} });
   const userData = userDataOf ?? fs.mkdtempSync(path.join(os.tmpdir(), 'compose-'));
-  const names = {
-    ...instanceNames(userData, process.platform === 'win32' ? 'win32' : 'posix', os.tmpdir()),
+  const names: InstanceNames = {
+    ...instanceNames(userData, process.platform === 'win32' ? 'win32' : 'posix', os.tmpdir(), {
+      home: '/home/conduit-test',
+      uid: 1000,
+      runtimeDir: '',
+    }),
     mcpEndpoint: testEndpoint(),
   };
   const sent: Sent[] = [];
@@ -73,7 +78,7 @@ async function harness(options: Partial<ServicesOptions> = {}, userDataOf?: stri
     await fake.close();
     fs.rmSync(userData, { recursive: true, force: true });
   });
-  return { fake, services, sent, health, startCore, userData };
+  return { fake, services, sent, health, startCore, userData, names };
 }
 
 const of = <E extends ServerEvent>(sent: Sent[], type: E) =>
@@ -90,6 +95,16 @@ async function answer(
 }
 
 describe('compose: startup order (F1.4)', () => {
+  it('keeps the server available to report an endpoint configuration failure', async () => {
+    const h = await harness();
+    h.names.hcEndpointError = 'Malformed hc socket configuration';
+    expect(await h.services.core.start()).toEqual({
+      state: 'unavailable',
+      reason: 'Malformed hc socket configuration',
+      logPath: path.join(h.userData, 'server.log'),
+    });
+    expect(h.startCore).not.toHaveBeenCalled();
+  });
   it('runs the packaged install pass once, persists its gate result, and reuses it after restart', async () => {
     const previousShims = [
       { execPath: '/install/Conduit.exe', shimPath: '/install/resources/shim.cjs' },

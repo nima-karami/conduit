@@ -1,9 +1,15 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { supervisorEnv } from '../../electron/hc-cli';
 import { serverChildEnv, serverProcessEnv } from '../../server/hc-cli';
+import { HC_PINNED_VERSION } from '../../src/contracts/hc';
 import { coreStartEnv } from '../../src/contracts/session-identity';
 import { resolveHcEndpoint } from '../../src/hc-client/endpoint';
 import { instanceNames } from '../../src/instance-names';
+
+const posixOptions = { home: '/home/conduit-test', uid: 1000, runtimeDir: '' };
 
 describe('instanceNames', () => {
   it('uses a case-folded Windows identity for both named pipes and hc names', () => {
@@ -22,8 +28,8 @@ describe('instanceNames', () => {
   });
 
   it('keeps the POSIX userData identity case-sensitive and uses profile sockets', () => {
-    const names = instanceNames('abc', 'posix', '/tmp');
-    expect(instanceNames('ABC', 'posix', '/tmp').instance).not.toBe(names.instance);
+    const names = instanceNames('abc', 'posix', '/tmp', posixOptions);
+    expect(instanceNames('ABC', 'posix', '/tmp', posixOptions).instance).not.toBe(names.instance);
 
     expect(names).toEqual({
       instance: 'ba7816bf8f01cfea',
@@ -39,7 +45,7 @@ describe('instanceNames', () => {
 
   it('moves an overlong UTF-8 POSIX server socket into tmpdir', () => {
     const userData = '\u00e9'.repeat(45);
-    const names = instanceNames(userData, 'posix', '/tmp');
+    const names = instanceNames(userData, 'posix', '/tmp', posixOptions);
 
     expect(names.serverEndpoint).toBe(`/tmp/conduit-server-${names.instance}.sock`);
   });
@@ -49,6 +55,31 @@ describe('hc socket budget', () => {
   const options = { home: '/Users/james', uid: 501, runtimeDir: '' };
   const userData = '/Users/james/Library/Application Support/conduit';
   const holder = (socket: string) => socket.replace(/\.sock$/, '.holder.xxxxxxxx.sock');
+
+  it('requires re-measuring the limits and holder layout when the pinned hc changes', () => {
+    expect(HC_PINNED_VERSION, 'Re-measure sockets/holders: macos-latest run 41914386091').toBe(
+      '0.1.16',
+    );
+  });
+
+  it('records a malformed config as an endpoint failure instead of aborting startup', () => {
+    const profile = mkdtempSync(join(tmpdir(), 'hc-invalid-config-'));
+    try {
+      const config = join(profile, 'hc', 'config', 'herdr-core');
+      mkdirSync(config, { recursive: true });
+      writeFileSync(join(config, 'config.toml'), 'socket = [broken');
+      const messages: string[] = [];
+      const names = instanceNames(profile, 'darwin', '/tmp', {
+        ...options,
+        log: (m) => messages.push(m),
+      });
+      expect(names.hcEndpointError).toMatch(/toml|parse|invalid|unexpected/i);
+      expect(messages.join('\n')).toContain(names.hcEndpointError);
+      expect(names.serverEndpoint).toBeTruthy();
+    } finally {
+      rmSync(profile, { recursive: true, force: true });
+    }
+  });
 
   it('shortens the Mac profile endpoint, including the longer holder socket', () => {
     const names = instanceNames(userData, 'darwin', '/tmp', options);
@@ -107,34 +138,44 @@ describe('hc socket budget', () => {
     expect(messages.join('\n')).toMatch(/temporary.*\/tmp\/conduit-hc-501/i);
   });
 
-  it('fails clearly if neither the durable nor temporary holder fits', () => {
-    expect(() =>
-      instanceNames(userData, 'darwin', `/${'t'.repeat(100)}`, {
-        ...options,
-        home: `/${'h'.repeat(100)}`,
-      }),
-    ).toThrow(/hc.*socket.*103.*bytes/i);
+  it('records a clear startup failure if neither holder fits', () => {
+    const names = instanceNames(userData, 'darwin', `/${'t'.repeat(100)}`, {
+      ...options,
+      home: `/${'h'.repeat(100)}`,
+      log: () => {},
+    });
+    expect(names.hcEndpointError).toMatch(/hc.*socket.*103.*bytes/i);
+  });
+
+  it('records a missing usable user id instead of aborting startup', () => {
+    const names = instanceNames(userData, 'darwin', '/tmp', {
+      ...options,
+      uid: -1,
+      home: `/${'h'.repeat(100)}`,
+      log: () => {},
+    });
+    expect(names.hcEndpointError).toMatch(/POSIX user id/);
   });
 
   it('never overrides Windows named pipes, even for long paths', () => {
     const names = instanceNames(`C:\\${'x'.repeat(200)}`, 'win32', 'TEMP', options);
     expect(names.hcSocket).toBeUndefined();
-    expect(coreStartEnv({ HC_SOCKET: '/foreign.sock' }, names, true).HC_SOCKET).toBeUndefined();
+    expect(coreStartEnv({ HC_SOCKET: '/foreign.sock' }, names).HC_SOCKET).toBeUndefined();
   });
 
   it('gives app, supervisor, server, restart and endpoint resolution the same socket', () => {
     const names = instanceNames(userData, 'darwin', '/tmp', options);
-    const app = coreStartEnv({ HC_SOCKET: '/foreign.sock' }, names, true);
+    const app = coreStartEnv({ HC_SOCKET: '/foreign.sock' }, names);
     expect(app.HC_SOCKET).toBeDefined();
     expect(app.HC_SOCKET).toBe(names.hcSocket);
     const supervisor = { ...app, ...supervisorEnv(app, names) };
     const server = serverProcessEnv(supervisor, names);
     const serverHc = serverChildEnv(server, names);
-    const restart = coreStartEnv(serverHc, names, true);
+    const restart = coreStartEnv(serverHc, names);
     for (const env of [app, serverHc, restart]) {
       expect(env.HC_SOCKET).toBe(app.HC_SOCKET);
       expect(resolveHcEndpoint({ env, platform: 'darwin', uid: 501 })).toBe(app.HC_SOCKET);
     }
-    expect(coreStartEnv({}, names, false).HC_SOCKET).toBe(app.HC_SOCKET);
+    expect(coreStartEnv({}, names).HC_SOCKET).toBe(app.HC_SOCKET);
   });
 });

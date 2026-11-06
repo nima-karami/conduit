@@ -15,7 +15,7 @@ const fresh = () => {
   userData = mkdtempSync(join(tmpdir(), 'runtime-layout-'));
   return userData;
 };
-const coreCwd = (u: string) => join(u, 'runtime', 'hc', HC_PINNED_VERSION);
+const coreCwd = (u: string) => join(u, 'runtime', 'conduit-hc', HC_PINNED_VERSION);
 
 describe('runtimeLayout', () => {
   it.each(['win32', 'darwin'] as const)(
@@ -55,12 +55,14 @@ describe('runtimeLayout', () => {
       expect(layout.nodeExe).toBe(
         join(u, 'runtime', '0.52.0', platform === 'win32' ? 'node.exe' : 'node'),
       );
-      expect(layout.hcExe).toBe(join(coreCwd(u), platform === 'win32' ? 'hc.exe' : 'hc'));
+      expect(layout.hcExe).toBe(
+        join(coreCwd(u), platform === 'win32' ? 'conduit-hc.exe' : 'conduit-hc'),
+      );
       expect(existsSync(layout.coreCwd)).toBe(true);
     },
   );
 
-  it('unpackaged uses the build output and the env overrides, else PATH', () => {
+  it('unpackaged uses the build output and explicit overrides, never a user hc on PATH', () => {
     const u = fresh();
     const appPath = join(u, 'repo');
     const env = { CONDUIT_NODE_BINARY: '/dev/node', CONDUIT_HC_BINARY: '/dev/hc' };
@@ -79,8 +81,18 @@ describe('runtimeLayout', () => {
       appVersion: '0.52.0',
       appPath,
       env: {},
+      exists: () => true,
     });
-    expect([bare.nodeExe, bare.hcExe]).toEqual(['node', 'hc']);
+    expect(bare.nodeExe).toBe('node');
+    expect(bare.hcExe).toBe(
+      join(
+        appPath,
+        'build',
+        'vendor',
+        'hc',
+        process.platform === 'win32' ? 'conduit-hc.exe' : 'conduit-hc',
+      ),
+    );
     expect(existsSync(bare.coreCwd)).toBe(true);
   });
 
@@ -94,7 +106,17 @@ describe('runtimeLayout', () => {
       appVersion: '0.52.0',
       appPath: join(u, 'repo'),
       platform,
-      exists: (file) => file === exe,
+      exists: (file) =>
+        file === exe ||
+        file ===
+          join(
+            u,
+            'repo',
+            'build',
+            'vendor',
+            'hc',
+            platform === 'win32' ? 'conduit-hc.exe' : 'conduit-hc',
+          ),
       env: { PATH: [join(u, 'missing'), bin].join(platform === 'win32' ? ';' : ':') },
     });
     expect(layout.nodeExe).toBe(exe);
@@ -103,26 +125,31 @@ describe('runtimeLayout', () => {
   it('unpackaged Windows prefers vendored hc over a different hc on PATH', () => {
     const u = fresh();
     const appPath = join(u, 'repo');
-    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'hc.exe');
+    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'conduit-hc.exe');
     const bin = join(u, 'bin');
     mkdirSync(bin);
     writeFileSync(join(bin, 'hc.exe'), '');
-    const layout = runtimeLayout({
+    const options = {
       packaged: false,
       userData: u,
       appVersion: '0.52.0',
       appPath,
       env: { Path: bin },
-      platform: 'win32',
-      exists: (file) => file === vendorExe,
-    });
+      platform: 'win32' as const,
+      exists: existsSync,
+    };
+    mkdirSync(join(vendorExe, '..'), { recursive: true });
+    writeFileSync(vendorExe, 'pinned engine');
+    const layout = runtimeLayout(options);
     expect(layout.hcExe).toBe(vendorExe);
+    rmSync(vendorExe);
+    expect(() => runtimeLayout(options)).toThrow(/run node build\/fetch-runtime\.mjs/);
   });
 
   it('an explicit hc override wins over the Windows vendor and PATH', () => {
     const u = fresh();
     const appPath = join(u, 'repo');
-    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'hc.exe');
+    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'conduit-hc.exe');
     const overrideExe = join(u, 'override', 'hc.exe');
     const bin = join(u, 'bin');
     mkdirSync(bin);
@@ -139,28 +166,29 @@ describe('runtimeLayout', () => {
     expect(layout.hcExe).toBe(overrideExe);
   });
 
-  it('unpackaged hc falls back to the first PATH executable when the Windows vendor is absent', () => {
+  it('a missing Windows vendor never selects the user hc executable on PATH', () => {
     const u = fresh();
     const bin = join(u, 'bin');
     mkdirSync(bin);
     const exe = join(bin, 'hc.exe');
     writeFileSync(exe, '');
-    const layout = runtimeLayout({
-      packaged: false,
-      userData: u,
-      appVersion: '0.52.0',
-      appPath: join(u, 'repo'),
-      env: { Path: [join(u, 'missing'), bin].join(';') },
-      platform: 'win32',
-      exists: existsSync,
-    });
-    expect(layout.hcExe).toBe(exe);
+    expect(() =>
+      runtimeLayout({
+        packaged: false,
+        userData: u,
+        appVersion: '0.52.0',
+        appPath: join(u, 'repo'),
+        env: { Path: [join(u, 'missing'), bin].join(';') },
+        platform: 'win32',
+        exists: existsSync,
+      }),
+    ).toThrow(/run node build\/fetch-runtime\.mjs/);
   });
 
-  it('unpackaged Linux ignores an existing vendored hc and uses PATH', () => {
+  it('unpackaged Linux also keeps hc separate from the user executable on PATH', () => {
     const u = fresh();
     const appPath = join(u, 'repo');
-    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'hc');
+    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'conduit-hc');
     const bin = '/bin';
     const exe = join(bin, 'hc');
     const layout = runtimeLayout({
@@ -172,13 +200,13 @@ describe('runtimeLayout', () => {
       platform: 'linux',
       exists: (file) => file === vendorExe || file === exe,
     });
-    expect(layout.hcExe).toBe(exe);
+    expect(layout.hcExe).toBe(vendorExe);
   });
 
   it('unpackaged macOS prefers its vendored hc over PATH', () => {
     const u = fresh();
     const appPath = join(u, 'repo');
-    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'hc');
+    const vendorExe = join(appPath, 'build', 'vendor', 'hc', 'conduit-hc');
     const pathExe = join('/bin', 'hc');
     const layout = runtimeLayout({
       packaged: false,

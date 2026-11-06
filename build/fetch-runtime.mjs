@@ -95,7 +95,12 @@ export async function ensurePinned(pin, deps) {
 
   const stamp = `${target}.sha256`;
   if ((await exists(target)) && (await exists(stamp))) {
-    if ((await readFile(stamp, 'utf8')).trim() === pin.sha256) return 'skipped';
+    // Archive hashes survive packaging layout changes (e.g. hc -> conduit-hc).
+    const renamedFiles = await Promise.all(
+      Object.values(pin.rename ?? {}).map((file) => exists(join(target, file))),
+    );
+    if ((await readFile(stamp, 'utf8')).trim() === pin.sha256 && renamedFiles.every(Boolean))
+      return 'skipped';
   }
   const archive = `${target}.${pin.archive}.tmp`;
   const staging = `${target}.tmp`;

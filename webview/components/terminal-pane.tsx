@@ -45,6 +45,7 @@ import {
   IconSearch,
   IconTerminal,
 } from '../icons';
+import { encodeKey, KittyKeyboardState, registerKittyKeyboardHandlers } from '../kitty-keyboard';
 import { isMiddleButton, terminalLinkMiddleAction } from '../middle-click';
 import { chooseClickAction, rankCandidates } from '../path-candidate-rank';
 import { probePathKind } from '../path-probe';
@@ -543,6 +544,7 @@ export function TerminalPane({
     let fit: FitAddon;
     let search: SearchAddon;
     let unregisterGpu: (() => void) | null = null;
+    let kittyParserDisposables: { dispose(): void }[] = [];
     // Assigned once the fit/facts helpers below exist; a font refresh only arrives after that.
     let refitAfterFonts = () => {};
     const reportGpuLoss = () => terminalGpu.reportLoss(term);
@@ -607,6 +609,19 @@ export function TerminalPane({
       });
       termRef.current = term;
       registerTerminalQuerySwallowHandlers(term);
+      const kittyState = new KittyKeyboardState();
+      kittyParserDisposables = registerKittyKeyboardHandlers(term, kittyState);
+      term.attachCustomKeyEventHandler((ev) => {
+        const alternate = term.buffer.active.type === 'alternate';
+        const flags = kittyState.currentFlags(alternate);
+        if (flags === 0) return true;
+        const encoded = encodeKey(ev, flags);
+        if (encoded === null) return true;
+        // xterm calls this for keydown, keypress and keyup: send once, and swallow the rest so the
+        // legacy bytes never follow.
+        if (ev.type === 'keydown') term.input(encoded, true);
+        return false;
+      });
       // Test observability (opt-in): when a harness has pre-created window.__terms,
       // expose the live terminal so e2e can assert on RENDERED buffer content — not
       // just the term:data byte stream. The scrollback-restore bug shipped precisely
@@ -1137,6 +1152,7 @@ export function TerminalPane({
       // initialized); dispose addons before the terminal that owns them.
       try {
         onData.dispose();
+        for (const d of kittyParserDisposables) d.dispose();
         term.element?.removeEventListener('mousedown', suppressLinkMiddleDown, true);
         term.element?.removeEventListener('webglcontextlost', reportGpuLoss, true);
       } catch {

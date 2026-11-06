@@ -47,7 +47,7 @@ describe('server packaged MCP wiring', () => {
       const binary = platform === 'win32' ? 'node.exe' : 'node';
       for (const [file, content] of [
         [`runtime/${binary}`, 'pinned-node'],
-        [`runtime/hc/${platform === 'win32' ? 'hc.exe' : 'hc'}`, 'pinned-hc'],
+        [`runtime/hc/${platform === 'win32' ? 'conduit-hc.exe' : 'conduit-hc'}`, 'pinned-hc'],
         ['runtime/server/supervise.js', 'supervise'],
         ['conduit-mcp/conduit-mcp-shim.cjs', 'shim'],
       ]) {

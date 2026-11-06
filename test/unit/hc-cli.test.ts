@@ -1,11 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import {
   type HcCliDeps,
   killSupervisor,
   startSupervisor,
   supervisorEnv,
 } from '../../electron/hc-cli';
-import { HC_XDG_ISOLATED_ENV, serverChildEnv, serverProcessEnv } from '../../server/hc-cli';
+import {
+  HC_XDG_ISOLATED_ENV,
+  hcBinaryOf,
+  hcClient,
+  serverChildEnv,
+  serverProcessEnv,
+} from '../../server/hc-cli';
 import {
   CORE_START_RUN_FLAGS,
   coreStartEnv,
@@ -54,7 +61,7 @@ function cli(
   const deps: HcCliDeps = {
     hcExe: '/rt/hc.exe',
     // As the app builds it: the parent's HC_* (a Conduit/Herdr pane) never reaches our hc.
-    env: coreStartEnv(APP_ENV, names, true),
+    env: coreStartEnv(APP_ENV, names),
     coreCwd: '/u/runtime/hc/0.1.16',
     execFile: async (_file, args, x) => {
       execCalls.push({ args, cwd: x.cwd });
@@ -88,6 +95,41 @@ const START = {
 };
 
 describe('hc-cli', () => {
+  it('logs a permanent endpoint error once across reconnect backoff attempts', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const log = vi.fn();
+    const client = hcClient({ ...names, hcEndpointError: 'unsafe endpoint directory' }, {}, log);
+    try {
+      for (const delay of [250, 500, 1000, 2000]) {
+        const failed = expect(client.call('terminal.list', {})).rejects.toMatchObject({
+          cause: { message: 'unsafe endpoint directory' },
+        });
+        await vi.advanceTimersByTimeAsync(delay);
+        await failed;
+      }
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('unsafe endpoint directory'));
+    } finally {
+      client.close();
+      vi.useRealTimers();
+    }
+  });
+  it('standalone and uninstall calls default to the copied Conduit runtime, not PATH', () => {
+    expect(hcBinaryOf(undefined, names, 'linux')).toBe(
+      join('/u/runtime', 'conduit-hc', '0.1.16', 'conduit-hc'),
+    );
+    expect(hcBinaryOf('/explicit/test-hc', names, 'linux')).toBe('/explicit/test-hc');
+  });
+  it('does not dial a default endpoint after socket resolution failed', async () => {
+    const client = hcClient({ ...names, hcEndpointError: 'invalid hc endpoint' }, {}, () => {});
+    try {
+      await expect(client.call('terminal.list', {})).rejects.toMatchObject({
+        cause: { message: 'invalid hc endpoint' },
+      });
+    } finally {
+      client.close();
+    }
+  });
   it('startSupervisor ensures the core, then terminal.run with the unique name, labels, no_parent and argv', async () => {
     const { deps, trace, runs, execCalls, closed } = cli();
     expect(await startSupervisor(deps, START)).toEqual({ ok: true });
@@ -130,7 +172,7 @@ describe('hc-cli', () => {
   it('the server gets the user XDG; its own hc env is isolated in our session', () => {
     // What the supervisor's pane sees: our env set over the core's, plus hc's own HC_*.
     const pane = {
-      ...supervisorEnv(coreStartEnv(APP_ENV, names, true), names),
+      ...supervisorEnv(coreStartEnv(APP_ENV, names), names),
       HC_TERMINAL_ID: 't3',
     };
     const server = serverProcessEnv(pane, names);
@@ -147,7 +189,7 @@ describe('hc-cli', () => {
   });
 
   it('a server under a `hc run` supervisor still never sees our hc dirs', () => {
-    const server = serverProcessEnv(coreStartEnv(APP_ENV, names, true), names);
+    const server = serverProcessEnv(coreStartEnv(APP_ENV, names), names);
     expect(hasOurDirs(server)).toBe(false);
     expect(server.XDG_CONFIG_HOME).toBe('/mine');
     expect(server.XDG_STATE_HOME).toBe('');

@@ -18,7 +18,7 @@
       "sha256": "3535f8db6258bae909a9f29ea15ada9133471a905adb90655838807ee2f49049",
       "dest": "hc",
       "archive": "zip",
-      "rename": { "herdr-core.exe": "hc.exe" }
+      "rename": { "herdr-core.exe": "conduit-hc.exe" }
     }
   },
   "darwin-arm64": {
@@ -37,7 +37,7 @@
       "sha256": "698d8f0c44f4e4b15fec174d52a39d57a014cfd71added44b53a0753b469d0fd",
       "dest": "hc",
       "archive": "tar.gz",
-      "rename": { "herdr-core": "hc" }
+      "rename": { "herdr-core": "conduit-hc" }
     }
   }
 }

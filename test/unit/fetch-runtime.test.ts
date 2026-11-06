@@ -88,6 +88,16 @@ describe('ensurePinned (file)', () => {
 });
 
 describe('ensurePinned (zip)', () => {
+  it('refreshes a matching archive cache when the executable rename changes', async () => {
+    const download = serving(zipBytes);
+    await ensurePinned(zipPin, { vendorDir, download, extractZip: fakeExtract });
+    const renamed = { ...zipPin, rename: { 'herdr-core.exe': 'conduit-hc.exe' } };
+    expect(await ensurePinned(renamed, { vendorDir, download, extractZip: fakeExtract })).toBe(
+      'fetched',
+    );
+    expect(readFileSync(join(vendorDir, 'hc', 'conduit-hc.exe'), 'utf8')).toBe('hc');
+    expect(existsSync(join(vendorDir, 'hc', 'hc.exe'))).toBe(false);
+  });
   it('fails on a hash mismatch before extracting and leaves nothing behind', async () => {
     fakeExtract.mockClear();
     await expect(
@@ -197,6 +207,9 @@ describe('build/runtime-pins.json', () => {
     for (const set of Object.values(pins)) {
       expect(set.node.version).toBe('24.18.0');
       expect(set.hc.version).toBe('0.1.16');
+      expect(Object.values(set.hc.rename)).toEqual([
+        set === pins['win32-x64'] ? 'conduit-hc.exe' : 'conduit-hc',
+      ]);
     }
     expect(pins['darwin-arm64'].node.sha256).toBe(
       'e1a97e14c99c803e96c7339403282ea05a499c32f8d83defe9ef5ec66f979ed1',

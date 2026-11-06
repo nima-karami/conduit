@@ -198,10 +198,8 @@ jobs:
       # first scenario's timeout.
       - run: node node_modules/electron/install.js
       - run: npm run build
-      # Agents run in the pinned herdr-core (ADR 0007); the app finds `hc` on PATH unpackaged.
+      # A global hc may have a different protocol version (ADR 0007).
       - run: node build/fetch-runtime.mjs
-      - shell: pwsh
-        run: Join-Path $env:GITHUB_WORKSPACE 'build\vendor\hc' >> $env:GITHUB_PATH
       # loadPlaywright (harness.mjs) looks in node_modules first. Playwright is deliberately not a
       # dependency, and the hosted npm cache is not where it looks for npx installs.
       - run: npm install --no-save --ignore-scripts playwright@${{ env.PLAYWRIGHT_VERSION }}

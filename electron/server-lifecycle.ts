@@ -224,6 +224,10 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
 
   const startRule = async (e: number): Promise<void> => {
     set({ state: 'connecting' });
+    if (d.names.hcEndpointError) {
+      unavailable('start-failed', d.names.hcEndpointError);
+      return;
+    }
     if (await d.markerExists()) {
       if (live(e)) unavailable('exhausted');
       return;
@@ -471,6 +475,7 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
     },
     async restartService() {
       const e = fresh();
+      if (d.names.hcEndpointError) return startRule(e);
       set({ state: 'connecting' });
       const killed = await killSupervisor(d.cli, d.names);
       if (!killed.ok) d.log('warn', 'hc kill of the supervisor failed', { reason: killed.reason });

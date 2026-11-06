@@ -3,10 +3,10 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { connect as netConnect } from 'node:net';
+import { resolveHcBinary } from './hc-binary.mjs';
 
-const { instanceNames, coreStartEnv } = createRequire(import.meta.url)(
-  '../../out/server/instance-names.js',
-);
+const require = createRequire(import.meta.url);
+const runtimeIdentity = () => require('../../out/server/instance-names.js');
 
 // Mirror STOP_ALL_*_TIMEOUT_MS and SERVER_PROTOCOL_GENERATION in src/contracts/server-protocol.ts
 // (pinned by the unit test).
@@ -18,7 +18,7 @@ const BACKSLASH = String.fromCharCode(92);
 const HC_CALL_TIMEOUT_MS = 20_000;
 
 export function teardownNames(userData, platform, tmpdir, options) {
-  return instanceNames(userData, platform, tmpdir, options);
+  return runtimeIdentity().instanceNames(userData, platform, tmpdir, options);
 }
 
 /**
@@ -36,7 +36,8 @@ export function assertOwnSession(hcSession, inheritedSession) {
 
 /** Every inherited HC_* dropped (hc would otherwise address the runner's core), then our session and the XDG dirs the app starts its core with. */
 export function hcEnv(inherited, names) {
-  return coreStartEnv(inherited, names, true);
+  if (names.hcEndpointError) throw new Error(names.hcEndpointError);
+  return runtimeIdentity().coreStartEnv(inherited, names);
 }
 
 export function hcCalls(supervisorName) {
@@ -263,8 +264,7 @@ const realExec = (bin, args, opts) =>
   spawnSync(bin, args, { ...opts, encoding: 'utf8', windowsHide: true });
 
 /**
- * Stop the server and hc session a scenario's profile owns. Only the session guard throws; the
- * scenario's own result must survive a teardown failure.
+ * An unowned session or missing pinned engine must fail before teardown can reach another install.
  * @param {{ userDataDir: string, log: (...a: any[]) => void, platform?: string, tmpdir: string,
  *   env?: Record<string, string | undefined>, exec?: Exec, stopAll?: typeof stopAllViaServer,
  *   appVersion?: string, listProcs?: () => ProcessRow[],
@@ -284,13 +284,14 @@ export async function teardownScenarioServer({
 }) {
   const names = teardownNames(userDataDir, platform, tmpdir);
   assertOwnSession(names.hcSession, env.HC_SESSION);
+  const bin = resolveHcBinary({ env, platform });
   try {
     const version =
       appVersion ??
       JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
     const r = await stopAll({ endpoint: names.serverEndpoint, appVersion: version });
     log(`teardown: server.stopAll ${r.outcome}${r.detail ? ` (${r.detail})` : ''}`);
-    stopHc({ exec, bin: env.CONDUIT_HC_BINARY || 'hc', names, inheritedEnv: env, log });
+    stopHc({ exec, bin, names, inheritedEnv: env, log });
     // An injected exec is a simulated world: the real process table says nothing about it.
     const list =
       listProcs ?? (exec === realExec ? () => listProfileProcs(userDataDir, names) : () => []);

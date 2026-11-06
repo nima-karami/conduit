@@ -13,18 +13,15 @@ export interface RuntimeLayout {
 }
 
 /**
- * The first `name` on the app's PATH, as an absolute path. A bare node would be resolved by hc,
- * whose spelling (`node.EXE`) the server then writes into every CLI's MCP entry; a bare hc is
- * resolved inside an hc terminal, whose PATH hc rebuilds rather than taking the app's.
+ * hc rebuilds PATH inside terminals; pin the app's node path for the CLI's MCP entries.
  */
-function onPath(
+function nodeOnPath(
   env: NodeJS.ProcessEnv,
-  name: 'node' | 'hc',
   platform: NodeJS.Platform,
   exists: (file: string) => boolean,
 ): string | undefined {
   const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH');
-  const exe = runtimeBinaryName(name, platform);
+  const exe = runtimeBinaryName('node', platform);
   return (key ? (env[key] ?? '') : '')
     .split(platform === 'win32' ? ';' : ':')
     .filter(Boolean)
@@ -33,8 +30,7 @@ function onPath(
 }
 
 /**
- * Packaged uses the copied runtime so installers can replace the install dir (D2). Unpackaged
- * prefers vendored hc on supported platforms so a newer global install doesn't cause `core replaced`.
+ * See D2/D24: a missing Conduit hc must never select the user's installed executable.
  */
 export function runtimeLayout(i: {
   packaged: boolean;
@@ -64,16 +60,15 @@ export function runtimeLayout(i: {
     };
   }
   const vendorHc = join(i.appPath, 'build', 'vendor', 'hc', hcBinary);
+  if (!i.env.CONDUIT_HC_BINARY && !exists(vendorHc)) {
+    throw new Error(
+      `Missing vendored conduit-hc at ${vendorHc}; run node build/fetch-runtime.mjs or set CONDUIT_HC_BINARY.`,
+    );
+  }
   return {
-    nodeExe: i.env.CONDUIT_NODE_BINARY ?? onPath(i.env, 'node', platform, exists) ?? 'node',
+    nodeExe: i.env.CONDUIT_NODE_BINARY ?? nodeOnPath(i.env, platform, exists) ?? 'node',
     superviseJs: join(i.appPath, 'out', 'server', 'supervise.js'),
-    hcExe:
-      i.env.CONDUIT_HC_BINARY ??
-      ((platform === 'win32' || platform === 'darwin') && exists(vendorHc)
-        ? vendorHc
-        : undefined) ??
-      onPath(i.env, 'hc', platform, exists) ??
-      'hc',
+    hcExe: i.env.CONDUIT_HC_BINARY || vendorHc,
     hcVersion,
     coreCwd,
   };
