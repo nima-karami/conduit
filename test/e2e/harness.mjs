@@ -298,7 +298,7 @@ function assertRunScopedProfile(args = []) {
  * below-normal priority first; on CI it traces the app for failure artifacts, and on the nightly
  * records coverage for `--affected`.
  */
-export async function launchElectron(launchOpts) {
+export async function launchElectron(launchOpts, { headless = false, onWindow } = {}) {
   assertRunScopedProfile(launchOpts.args);
   const local = process.env.GITHUB_ACTIONS !== 'true';
   let lockWaitMs = 0;
@@ -322,13 +322,17 @@ export async function launchElectron(launchOpts) {
   appProcess.set(app, app.process());
   pendingTeardown.set(app, launchOpts.args.find((a) => a.startsWith('--user-data-dir=')).slice(16));
   app.once('close', () => liveApps.delete(app));
+  if (onWindow) {
+    for (const window of app.windows()) onWindow(window);
+    app.on('window', onWindow);
+  }
   if (local) {
     lowerAppTree(app);
     app.on('window', () => lowerAppTree(app));
   }
   startCapture(app);
   startCoverage(app);
-  await settleColdOpen(app, await app.firstWindow());
+  if (!headless) await settleColdOpen(app, await app.firstWindow());
   return app;
 }
 

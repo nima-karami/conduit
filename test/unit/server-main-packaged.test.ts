@@ -38,6 +38,13 @@ async function start(args: string[], platform: NodeJS.Platform = 'win32') {
 }
 
 describe('server packaged MCP wiring', () => {
+  it('accepts a simulated version only in an unpackaged e2e server', async () => {
+    expect((await start(['--e2e', '--e2e-app-version', '9.8.7']))?.appVersion).toBe('9.8.7');
+    expect((await start(['--e2e-app-version', '9.8.7']))?.appVersion).not.toBe('9.8.7');
+    expect(
+      (await start(['--e2e', '--shim-dir', '/shim', '--e2e-app-version', '9.8.7']))?.appVersion,
+    ).not.toBe('9.8.7');
+  });
   it.each(['win32', 'darwin'] as const)(
     'the %s MCP executable is the Node file preparation copied',
     async (platform) => {

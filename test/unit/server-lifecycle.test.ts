@@ -551,6 +551,10 @@ describe('createServerLifecycle F9 and explicit actions', () => {
           () => h.runs() === expectedRuns && h.state() === 'connected',
           'orderly restart',
         );
+        expect(h.logs).toContainEqual({
+          message: 'orderly end: no restart budget spent',
+          data: undefined,
+        });
       }
       for (let crash = 0; crash < VANISHED_RESTART_BUDGET.attempts; crash++) {
         await h.killSupervisorTerminal();

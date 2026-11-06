@@ -2505,6 +2505,8 @@ app.whenReady().then(() => {
 
   async function startServer(): Promise<void> {
     const appVersion = aboutInfo.version;
+    const lifecycleVersion =
+      e2e && !app.isPackaged ? process.env.CONDUIT_E2E_APP_VERSION || appVersion : appVersion;
     // W9: a packaged app runs its server from copies outside the install dir (D2).
     const prepared = app.isPackaged
       ? await prepareRuntime({
@@ -2542,6 +2544,8 @@ app.whenReady().then(() => {
     }
     // E2e hooks reach the server as argv: hc may refresh the env on Windows (M10).
     const serverArgs = e2e ? ['--e2e'] : [];
+    if (e2e && !app.isPackaged && process.env.CONDUIT_E2E_APP_VERSION)
+      serverArgs.push('--e2e-app-version', lifecycleVersion);
     if (prepared)
       serverArgs.push(
         '--shim-dir',
@@ -2556,14 +2560,19 @@ app.whenReady().then(() => {
       names,
       layout,
       userData: userData(),
-      appVersion,
+      appVersion: lifecycleVersion,
       serverArgs,
       app: {
         exe: process.execPath,
         args: app.isPackaged ? [] : [app.getAppPath()],
         cwd: app.isPackaged ? path.dirname(process.execPath) : app.getAppPath(),
       },
-      client: () => new ServerClient({ endpoint: names.serverEndpoint, appVersion, log: appLog }),
+      client: () =>
+        new ServerClient({
+          endpoint: names.serverEndpoint,
+          appVersion: lifecycleVersion,
+          log: appLog,
+        }),
       hc,
       hcEvents,
       cli: {

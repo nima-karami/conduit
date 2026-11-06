@@ -370,6 +370,7 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
     }
     if (!live(e)) return;
     if (orderlyEnd) {
+      d.log('info', 'orderly end: no restart budget spent');
       orderlyEnd = false;
       await startRule(e);
       return;

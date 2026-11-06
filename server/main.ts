@@ -37,6 +37,10 @@ export async function runServer(
   close?(): Promise<void>;
 }> {
   const userData = requireUserData(args);
+  const serverVersion =
+    args.includes('--e2e') && !argValue(args, '--shim-dir')
+      ? argValue(args, '--e2e-app-version') || version
+      : version;
   const platform = process.platform === 'win32' ? 'win32' : 'posix';
   const names = instanceNames(userData, process.platform, tmpdir());
   const hcEnv = serverChildEnv(process.env, names);
@@ -83,6 +87,7 @@ export async function runServer(
       userData,
       names,
       logPath,
+      appVersion: serverVersion,
       e2e: args.includes('--e2e'),
       shimDir: argValue(args, '--shim-dir'),
       previousShims:
@@ -105,7 +110,7 @@ export async function runServer(
           connected: services.connected,
         }
       : {}),
-    version,
+    version: serverVersion,
     instance: names.instance,
     logPath,
     ...(supervisorTerminal
@@ -159,6 +164,7 @@ function createServerServices(o: {
   userData: string;
   names: InstanceNames;
   logPath: string;
+  appVersion: string;
   e2e: boolean;
   shimDir?: string;
   previousShims: readonly PreviousShim[];
@@ -186,7 +192,7 @@ function createServerServices(o: {
     names: o.names,
     platform: o.platform,
     e2e: o.e2e,
-    appVersion: version,
+    appVersion: o.appVersion,
     logPath: o.logPath,
     env: process.env,
     homeDir: homedir(),
