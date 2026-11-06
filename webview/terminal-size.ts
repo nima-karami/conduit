@@ -50,22 +50,39 @@ export type PtySizeReason = 'start' | 'resize';
 /**
  * Gate that reports a pane's size to hc only after the xterm actually has it. A FitAddon
  * proposeDimensions that was never applied, or a fallback-face fit the xterm will not keep, is
- * held. See CLAUDE.md: PTY size must equal the xterm's size.
+ * held. The hold always releases: selected face loaded, that load failing, `document.fonts.ready`
+ * with the face still unavailable, or a non-GPU path that never calls refreshFonts. See CLAUDE.md:
+ * PTY size must equal the xterm's size.
  */
 export function createPtySizeSync(opts: {
   term: TermGeometry;
   faceLoaded: () => boolean;
   report: (size: TermGeometry, reason: PtySizeReason) => void;
-}): { afterFit(): void; afterFontRefresh(): void } {
+  /** `document.fonts.ready` — if the face is still missing, the current (fallback) size is kept. */
+  fontsReady?: Promise<unknown>;
+  /** Rejects when the selected face's load fails. */
+  faceLoad?: Promise<unknown>;
+  /** False when fonts are handled without refreshFonts (no GPU atlas remasure). */
+  gpu?: boolean | (() => boolean);
+}): { afterFit(): void; afterFontRefresh(): void; dispose(): void } {
   let started = false;
   let sent: TermGeometry | null = null;
+  let fitted = false;
+  let alive = true;
+  let fallbackOk = opts.gpu === false;
   const current = (): TermGeometry => ({ cols: opts.term.cols, rows: opts.term.rows });
+  const gpuPath = (): boolean => {
+    const g = opts.gpu;
+    if (typeof g === 'function') return g();
+    return g !== false;
+  };
 
-  const emit = (allowFallback: boolean) => {
+  const emit = () => {
+    if (!alive || !fitted) return;
     const size = current();
     if (size.cols <= 0 || size.rows <= 0) return;
     if (!started) {
-      if (!allowFallback && !opts.faceLoaded()) return;
+      if (!fallbackOk && !opts.faceLoaded()) return;
       started = true;
       sent = size;
       opts.report(size, 'start');
@@ -76,8 +93,27 @@ export function createPtySizeSync(opts: {
     opts.report(size, 'resize');
   };
 
+  const releaseFallback = () => {
+    fallbackOk = true;
+    emit();
+  };
+
+  void opts.fontsReady?.then(releaseFallback, releaseFallback);
+  void opts.faceLoad?.then(undefined, releaseFallback);
+
   return {
-    afterFit: () => emit(false),
-    afterFontRefresh: () => emit(true),
+    afterFit: () => {
+      fitted = true;
+      if (!gpuPath()) fallbackOk = true;
+      emit();
+    },
+    afterFontRefresh: () => {
+      fitted = true;
+      fallbackOk = true;
+      emit();
+    },
+    dispose: () => {
+      alive = false;
+    },
   };
 }

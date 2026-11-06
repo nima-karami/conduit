@@ -292,7 +292,11 @@ export function TerminalPane({
   // The size the host's PTY was last given. Any fit that leaves the xterm at another size must
   // tell the host, or the PTY addresses rows the xterm doesn't have (cursor below the prompt).
   const sentSizeRef = useRef<TermGeometry | null>(null);
-  const ptySyncRef = useRef<{ afterFit(): void; afterFontRefresh(): void } | null>(null);
+  const ptySyncRef = useRef<{
+    afterFit(): void;
+    afterFontRefresh(): void;
+    dispose(): void;
+  } | null>(null);
   const visibleRef = useRef(visible);
   const searchRef = useRef<SearchAddon | null>(null);
   const { settings, update } = useSettings();
@@ -1074,14 +1078,30 @@ export function TerminalPane({
       return true;
     };
 
+    const fonts = typeof document === 'undefined' ? undefined : document.fonts;
+    let faceLoad: Promise<void> | undefined;
+    if (fonts && typeof fonts.addEventListener === 'function') {
+      try {
+        faceLoad = new Promise<void>((_, reject) => {
+          fonts.addEventListener('loadingerror', () => reject(new Error('font load')));
+        });
+      } catch {
+        faceLoad = undefined;
+      }
+    }
+    // status !== 'loading' means ready already settled; `.ready` has hung in Chromium while
+    // status was already 'loaded'. A pending `.ready` still waits out in-flight faces.
+    const fontsReady = !fonts
+      ? undefined
+      : fonts.status === 'loading'
+        ? fonts.ready
+        : Promise.resolve();
     const ptySize = createPtySizeSync({
       term,
-      faceLoaded: () =>
-        terminalFaceLoaded(
-          terminalFontFamily(),
-          termFontRef.current,
-          typeof document === 'undefined' ? undefined : document.fonts,
-        ),
+      faceLoaded: () => terminalFaceLoaded(terminalFontFamily(), termFontRef.current, fonts),
+      fontsReady,
+      faceLoad,
+      gpu: () => terminalGpu.hasAddon(term),
       report: (size, reason) => {
         if (reason === 'start') {
           started = true;
@@ -1203,6 +1223,8 @@ export function TerminalPane({
       if (factsFrame !== null) cancelAnimationFrame(factsFrame);
       factsAfterFitRef.current = () => {};
       disposeLinkCaches();
+      ptySyncRef.current?.dispose();
+      ptySyncRef.current = null;
       if (started) post({ type: 'term:dispose', sessionId });
       unregisterGpu?.();
       disposeTerminal(term, [fit, search]);
@@ -1216,7 +1238,6 @@ export function TerminalPane({
       termRef.current = null;
       fitRef.current = null;
       searchRef.current = null;
-      ptySyncRef.current = null;
     };
     // Keyed on sessionId ONLY: agentId/cwd/fontMono are read via refs (above) or
     // applied live by the re-theme/zoom effects below, so they never recreate the

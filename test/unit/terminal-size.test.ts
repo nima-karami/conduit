@@ -94,6 +94,79 @@ describe('createPtySizeSync', () => {
     sync.afterFit();
     expect(hc.resizes).toEqual(['46x29']);
   });
+
+  it('does not start on fonts.ready until a fit has been applied', async () => {
+    const term = fakeTerm(80, 24);
+    const hc = fakeHc();
+    const fontsReady = Promise.resolve();
+    const sync = createPtySizeSync({
+      term,
+      faceLoaded: () => false,
+      fontsReady,
+      report: (size) => hc.resize(size.cols, size.rows),
+    });
+    await fontsReady;
+    expect(hc.resizes).toEqual([]);
+    term.resize(27, 29);
+    sync.afterFit();
+    expect(hc.resizes).toEqual(['27x29']);
+  });
+
+  it('starts after fonts.ready with the current size when the face never loads', async () => {
+    const term = fakeTerm(27, 29);
+    const hc = fakeHc();
+    let resolveReady!: () => void;
+    const fontsReady = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+    const sync = createPtySizeSync({
+      term,
+      faceLoaded: () => false,
+      fontsReady,
+      report: (size) => hc.resize(size.cols, size.rows),
+    });
+    term.resize(27, 29);
+    sync.afterFit();
+    expect(hc.resizes).toEqual([]);
+    resolveReady();
+    await fontsReady;
+    expect(hc.resizes).toEqual(['27x29']);
+  });
+
+  it('starts when the face load fails', async () => {
+    const term = fakeTerm(27, 29);
+    const hc = fakeHc();
+    let rejectLoad!: (err: Error) => void;
+    const faceLoad = new Promise<void>((_, reject) => {
+      rejectLoad = reject;
+    });
+    const sync = createPtySizeSync({
+      term,
+      faceLoaded: () => false,
+      faceLoad,
+      report: (size) => hc.resize(size.cols, size.rows),
+    });
+    term.resize(27, 29);
+    sync.afterFit();
+    expect(hc.resizes).toEqual([]);
+    rejectLoad(new Error('font load failed'));
+    await faceLoad.catch(() => {});
+    expect(hc.resizes).toEqual(['27x29']);
+  });
+
+  it('starts on the first fit when there is no GPU path', () => {
+    const term = fakeTerm(27, 29);
+    const hc = fakeHc();
+    const sync = createPtySizeSync({
+      term,
+      faceLoaded: () => false,
+      gpu: false,
+      report: (size) => hc.resize(size.cols, size.rows),
+    });
+    term.resize(27, 29);
+    sync.afterFit();
+    expect(hc.resizes).toEqual(['27x29']);
+  });
 });
 
 describe('terminalFaceLoaded', () => {
