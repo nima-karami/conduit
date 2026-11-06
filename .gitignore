@@ -32,3 +32,4 @@ designs/
 *.stackdump
 .shots/
 build/vendor/
+native/tray/target/

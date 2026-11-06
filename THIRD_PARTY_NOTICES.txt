@@ -49,3 +49,21 @@ Authors.
 Source: https://github.com/google/fonts/tree/2fe1e8c6b137fb13041a7cfca6fdcd8a910ea4dc/ofl
 License: resources/licenses/fonts/figtree-OFL.txt, hanken-grotesk-OFL.txt, inter-OFL.txt,
 ibm-plex-sans-OFL.txt, chakra-petch-OFL.txt
+
+==== conduit-tray helper (conduit-tray.exe, Windows notification-area icon)
+
+Conduit background-service tray helper, built from native/tray/. MIT License (Conduit). The
+binary statically links the Rust crates named below (and their transitive runtime dependencies
+checked by test/unit/tray-notices.test.ts).
+
+License: resources/licenses/tray/MIT.txt, resources/licenses/tray/Apache-2.0.txt (crates marked
+MIT OR Apache-2.0 may be used under either license).
+
+itoa — MIT OR Apache-2.0. Copyright (c) David Tolnay. https://github.com/dtolnay/itoa
+memchr — Unlicense OR MIT. Copyright (c) Andrew Gallant. https://github.com/BurntSushi/memchr
+ryu — Apache-2.0 OR BSL-1.0 (Apache-2.0 used). Copyright (c) David Tolnay. https://github.com/dtolnay/ryu
+serde — MIT OR Apache-2.0. Copyright (c) David Tolnay. https://github.com/serde-rs/serde
+serde_json — MIT OR Apache-2.0. Copyright (c) David Tolnay. https://github.com/serde-rs/json
+windows-sys — MIT OR Apache-2.0. Copyright (c) Microsoft Corporation. https://github.com/microsoft/windows-rs
+windows-targets — MIT OR Apache-2.0. Copyright (c) Microsoft Corporation. https://github.com/microsoft/windows-rs
+windows_x86_64_msvc — MIT OR Apache-2.0. Copyright (c) Microsoft Corporation. https://github.com/microsoft/windows-rs

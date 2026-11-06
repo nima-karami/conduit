@@ -23,6 +23,11 @@ describe('quickSteps', () => {
     expect(quickSteps({ ...o, files: [] }).map((s) => s.tool)).toEqual(['tsc', 'tsc', 'vitest']);
   });
 
+  it('does not run tray:check without native/ changes', () => {
+    const steps = quickSteps({ ...o, files: ['package.json', 'tools/tray-check.mjs'] });
+    expect(steps.some((s) => s.name === 'tray:check')).toBe(false);
+  });
+
   it('keeps build info apart per checkout, which may share node_modules through a junction', () => {
     const info = (cwd: string) => quickSteps({ ...o, cwd })[1].args.at(-1);
     expect(info('G:/repo')).not.toBe(info('G:/worktree'));
