@@ -1,4 +1,5 @@
 import { createServer, connect as openSocket, type Server, type Socket } from 'node:net';
+import { type Duplex, duplexPair } from 'node:stream';
 import {
   type CloseReason,
   CONTROL_CHANNEL,
@@ -39,7 +40,9 @@ export class FakeRpcError extends Error {
 }
 
 type Connection = {
-  socket: Socket;
+  socket: Duplex;
+  /** The in-process peer from openClient(); destroying the server side does not close it. */
+  peer?: Duplex;
   decoder: FrameDecoder;
   lineBuffer: Buffer;
   framed: boolean;
@@ -99,9 +102,11 @@ export class FakeHc {
   private nextChannel = 1;
   private nextAddress = 2;
   private port: number | undefined;
+  private closed = false;
 
   async listen(): Promise<number> {
     if (this.server) throw new Error('FakeHc is already listening');
+    this.closed = false;
     // hc speaks over a pipe or a unix socket, which have no Nagle: over loopback TCP a small frame
     // can sit out a delayed ACK (~40 ms on Linux), longer than a test's polling budget.
     const server = createServer({ noDelay: true }, (socket) => this.accept(socket));
@@ -126,15 +131,27 @@ export class FakeHc {
     return openSocket({ host: '127.0.0.1', port: this.port, noDelay: true });
   };
 
+  /** In-process pair so a unit test never binds 127.0.0.1. After close() the next dial throws, like a downed core. */
+  openClient(): Duplex {
+    if (this.closed) throw new Error('FakeHc is closed');
+    const [client, server] = duplexPair();
+    this.accept(server, client);
+    return client;
+  }
+
   onCall(method: string, handler: CallHandler): void {
     this.handlers.set(method, handler);
   }
 
   disconnect(): void {
-    for (const connection of this.connections) connection.socket.destroy();
+    for (const connection of this.connections) {
+      connection.peer?.destroy();
+      connection.socket.destroy();
+    }
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     this.disconnect();
     const server = this.server;
     this.server = undefined;
@@ -210,9 +227,10 @@ export class FakeHc {
       if (connection.framed) this.writeFrame(connection, frame);
   }
 
-  private accept(socket: Socket): void {
+  private accept(socket: Duplex, peer?: Duplex): void {
     const connection: Connection = {
       socket,
+      peer,
       decoder: new FrameDecoder(),
       lineBuffer: Buffer.alloc(0),
       framed: false,
@@ -233,9 +251,13 @@ export class FakeHc {
     });
     socket.on('error', () => {
       socket.destroy();
+      peer?.destroy();
       this.connections.delete(connection);
     });
-    socket.on('close', () => this.connections.delete(connection));
+    socket.on('close', () => {
+      this.connections.delete(connection);
+      if (peer && !peer.destroyed) peer.destroy();
+    });
   }
 
   private receive(connection: Connection, bytes: Buffer): void {

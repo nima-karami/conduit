@@ -37,8 +37,11 @@ afterEach(async () => {
 
 async function harness(options: Partial<ServicesOptions> = {}, userDataOf?: string) {
   const fake = new FakeHc();
-  await fake.listen();
-  const hc = new NodeHcClient({ connect: fake.connect, reconnectDelayMs: 10, log: () => {} });
+  const hc = new NodeHcClient({
+    connect: () => fake.openClient(),
+    reconnectDelayMs: 10,
+    log: () => {},
+  });
   const userData = userDataOf ?? fs.mkdtempSync(path.join(os.tmpdir(), 'compose-'));
   const names: InstanceNames = {
     ...instanceNames(userData, process.platform === 'win32' ? 'win32' : 'posix', os.tmpdir(), {
@@ -71,6 +74,7 @@ async function harness(options: Partial<ServicesOptions> = {}, userDataOf?: stri
     detectShells: () => [SHELL],
     detectClis: () => [],
     resolveCommand: (c) => c,
+    host: { listen: false },
     ...options,
   });
   cleanups.push(async () => {
@@ -367,7 +371,8 @@ describe('compose: persist and stop reach every service', () => {
   });
 });
 
-describe('compose: per-peer events', () => {
+// Purpose is the real socket (emitTo isolation); unique endpoint, not a contended port.
+describe.sequential('compose: per-peer events', () => {
   function client(endpoint: string) {
     const lines: Array<{ method?: string; params?: { type: string } }> = [];
     const socket: Socket = allowPeerReset(createConnection(endpoint));

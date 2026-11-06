@@ -14,7 +14,7 @@ import { detectAgentClis, detectShells, hostCliScanEnv, resolveCommand } from '.
 import type { AgentDefinition } from '../src/types';
 import { createDomain, type DomainLog } from './domain';
 import type { ShellCore } from './lifecycle/shell';
-import { type AppEventSink, createMcp, type ServerMcp } from './mcp';
+import { type AppEventSink, createMcp, type McpServerDeps, type ServerMcp } from './mcp';
 import type { PreviousShim } from './mcp/install';
 import { createRuntimeServices } from './runtime';
 import { RpcFault, type RpcHandler, RpcProtocolFault } from './transport/pipe';
@@ -47,6 +47,8 @@ export interface ServicesOptions {
   detectShells?: () => AgentDefinition[];
   detectClis?: () => AgentDefinition[];
   resolveCommand?: (command: string) => string | undefined;
+  /** Forwarded to createMcp so a unit test can skip the real MCP bind. */
+  host?: McpServerDeps['host'];
 }
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -194,8 +196,15 @@ export function createServices(o: ServicesOptions) {
     platform: hostPlatform,
     e2e: o.e2e,
     // v0.51's e2e seam; the app's env reaches the server through its supervisor start.
-    ...(o.e2e && o.env.CONDUIT_E2E_DETECT_GRACE_MS
-      ? { host: { detectGraceMs: Number(o.env.CONDUIT_E2E_DETECT_GRACE_MS) } }
+    ...(o.host || (o.e2e && o.env.CONDUIT_E2E_DETECT_GRACE_MS)
+      ? {
+          host: {
+            ...o.host,
+            ...(o.e2e && o.env.CONDUIT_E2E_DETECT_GRACE_MS
+              ? { detectGraceMs: Number(o.env.CONDUIT_E2E_DETECT_GRACE_MS) }
+              : {}),
+          },
+        }
       : {}),
     log,
     install: {
