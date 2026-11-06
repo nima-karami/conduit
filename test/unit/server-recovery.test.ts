@@ -196,8 +196,9 @@ it.each(['finished', 'lost'])(
       }),
     );
     await h.restart();
+    // An agent that quit on its own while no server watched still reads exited; a vanished PTY stays stale.
     expect(h.services.core.snapshot().sessions.find((s) => s.id === id)).toMatchObject({
-      status: 'exited',
+      status: state === 'lost' ? 'stale' : 'exited',
       exitCode: state === 'lost' ? null : 23,
     });
     expect(h.services.mcp.tokens.rows()).toEqual({ state: 'loaded', rows: [] });

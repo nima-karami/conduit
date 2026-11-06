@@ -715,7 +715,11 @@ export function createDomain(deps: DomainDeps): Domain {
         log.info('pty', 'exit', { sessionId: e.sessionId, code: e.code, reason: e.reason });
         exitCodes.set(e.sessionId, e.code);
         setFacts(e.sessionId, { spawn: 'none' });
-        mgr.setStatus(e.sessionId, 'exited');
+        // A restored session stays stale (F1.4.5) unless its agent quit on its own: a leftover kill
+        // from Conduit's own stop, or a vanished PTY, must not read as "the agent exited" (CON-138).
+        if (mgr.get(e.sessionId)?.status === 'running' || e.reason === 'exited') {
+          mgr.setStatus(e.sessionId, 'exited');
+        }
         endEpisode(e.sessionId);
         scopes.ended(e.sessionId);
         return;

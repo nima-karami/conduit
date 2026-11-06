@@ -243,6 +243,45 @@ describe('server domain: persisted formats', () => {
     const b = harness({ userData: a.userData });
     expect(b.domain.snapshot().sessions.map((s) => [s.id, s.status])).toEqual([[id, 'stale']]);
   });
+
+  // D21: after restore the rest stay stale. stopAll's leftover token rows emit C1 exit
+  // (killed/lost) during the next server's reconcile; that must not read as "the agent quit".
+  it.each(['killed', 'lost'] as const)(
+    'a %s exit after restore stays stale (cold stop, not an agent quit)',
+    async (reason) => {
+      const a = harness();
+      const id = await a.create();
+      await a.call('sessions.start', { sessionId: id });
+      await a.domain.persist();
+      a.domain.dispose();
+
+      const b = harness({ userData: a.userData, reconciled: false });
+      expect(b.domain.snapshot().sessions.find((s) => s.id === id)?.status).toBe('stale');
+      b.runtime.fire({ type: 'exit', sessionId: id, generation: 1, code: 1, reason });
+      expect(b.domain.snapshot().sessions.find((s) => s.id === id)?.status).toBe('stale');
+    },
+  );
+
+  it('a running session reads exited on any exit, a kill included', async () => {
+    const a = harness();
+    const id = await a.create();
+    await a.call('sessions.start', { sessionId: id });
+    expect(a.domain.snapshot().sessions.find((s) => s.id === id)?.status).toBe('running');
+    a.runtime.fire({ type: 'exit', sessionId: id, generation: 1, code: 1, reason: 'killed' });
+    expect(a.domain.snapshot().sessions.find((s) => s.id === id)?.status).toBe('exited');
+  });
+
+  it('an agent that quit on its own while no server watched reads exited after restore', async () => {
+    const a = harness();
+    const id = await a.create();
+    await a.call('sessions.start', { sessionId: id });
+    await a.domain.persist();
+    a.domain.dispose();
+
+    const b = harness({ userData: a.userData, reconciled: false });
+    b.runtime.fire({ type: 'exit', sessionId: id, generation: 1, code: 0, reason: 'exited' });
+    expect(b.domain.snapshot().sessions.find((s) => s.id === id)?.status).toBe('exited');
+  });
 });
 
 describe('server domain: folder health', () => {
