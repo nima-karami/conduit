@@ -322,7 +322,10 @@ export const MCP_STR = {
         `Open a ${s.agent}${s.model === undefined ? '' : ` (model ${s.model})`} session in ${s.path}${s.message === undefined ? '' : `, with a first message (${s.message} chars)`}${s.focus ? '' : ', in the background'}`,
       open_terminal: (s) => `Run ${s.command} in ${s.path}${s.focus ? '' : ', in the background'}`,
       open_file: (s) => `Open ${s.path}${s.line === null ? '' : ` at line ${s.line}`}`,
-      close_session: (s) => `Close ${s.target}`,
+      close_session: (s) =>
+        'target' in s
+          ? `Close ${s.target}`
+          : `Close ${s.total} sessions: ${s.targets.join(', ')}${s.total > s.targets.length ? ` and ${s.total - s.targets.length} more` : ''}`,
       focus_session: (s) => `Switch your view to ${s.target}`,
       attach_folder: (s) => `Attach ${s.path} to ${s.target}`,
       close_files: (s) =>

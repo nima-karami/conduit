@@ -200,3 +200,30 @@ Settings rows for these tools live in the policy spec.
 ## 8. Open questions
 
 None blocking. The reviews (r1 on tools, r2 on policies) are logged in the run report.
+
+## 9. Amendment 2026-11-07: close_session takes a list (CON-158, MCP part)
+
+`close_session` takes exactly one of three forms. The host checks the combination; the schema
+stays flat (B5).
+
+- `session`: one handle or id. Unchanged, result `{ closed }`.
+- `sessions`: 1–30 handles or ids. Result `{ results: [{ session, closed: true } | { session,
+  closed: false, error: { code, message } }] }`, one entry per listed name, in order.
+- `children: true`: every session whose opener is the caller, excluding the caller. None means
+  `{ results: [] }` at once, with no approval card (an `off` policy still refuses).
+
+Rules for the list forms:
+
+- A session named more than once (by handle and by id, say) closes once and reports once.
+- One approval covers the call. The ask names up to eight handles, then the total.
+- Reach (A7, tool policy) applies per target. A target out of reach, or unknown, is an entry
+  error; the others still close.
+- Targets close one after another through `closeRouted`, so unsaved-changes prompts behave as
+  they do for a single close.
+- Rate: each target attempted costs one act token, in place of the call's own. A failed close
+  refunds its token, as a single close does. When the budget runs out mid-list, the remaining
+  entries report `rate_limited`.
+- An error thrown while closing one target becomes that entry's `open_failed`, so the closes
+  already made stay reported.
+
+The per-entry shape exists so a refusal never discards the closes already made.

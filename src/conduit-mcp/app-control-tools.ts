@@ -7,6 +7,8 @@ import { decodePatchBytes, MAX_PATCH_BYTES, parsePatch, patchOverSizeCap } from 
 import type { CommitNode } from '../protocol';
 import { normalizeUrl } from '../web-url';
 import {
+  type CallWho,
+  type CheckResult,
   type ControlCallContext,
   type ControlDeps,
   type ControlHandlers,
@@ -22,11 +24,23 @@ import {
 import { classifyRef, lookupCommit, repoRootOf } from './git-refs';
 import { isValidField, type Reach, windowNotReady } from './tool-policy';
 import type { Caller } from './tools';
-import type { Result } from './types';
+import type { Result, ToolErrorCode } from './types';
 import type { CloseFilesOutcome, McpReviewScope, McpReviewSource, McpUiResult } from './ui-types';
 
 interface CloseSessionOutput {
   closed: string;
+}
+/** One list-form entry: each target reports on its own, so one refusal never fails the call. */
+type CloseSessionEntry =
+  | { session: string; closed: true }
+  | { session: string; closed: false; error: { code: ToolErrorCode; message: string } };
+interface CloseSessionsOutput {
+  results: CloseSessionEntry[];
+}
+interface CloseEntry {
+  /** The handle when it resolves, else the name as given. */
+  name: string;
+  target: TargetSession | Fail;
 }
 /** The session that closed another: a live caller, never a null-sessionId human. */
 type CloseOpener = { handle: Caller['handle']; sessionId: string };
@@ -59,6 +73,9 @@ interface OpenUrlOutput {
 }
 export const MAX_CLOSE_PATHS = 50;
 export const MAX_URL_BYTES = 2048;
+export const MAX_CLOSE_SESSIONS = 30;
+/** The approval card names this many sessions, then the total. */
+const MAX_CLOSE_SUMMARY_NAMES = 8;
 const MAX_DIFF_TITLE_CHARS = 200;
 const PATCH_FILE_EXTENSIONS = ['.diff', '.patch'] as const;
 const isPatchExtension = (p: string): boolean =>
@@ -79,7 +96,7 @@ export interface AppControlHandlers {
     closedBy: CloseOpener | undefined,
     ctx: ControlCallContext,
   ): Promise<Result<CloseSessionOutput>>;
-  prepareCloseSession: Prepare<CloseSessionOutput>;
+  prepareCloseSession: Prepare<CloseSessionOutput | CloseSessionsOutput>;
   prepareFocusSession: Prepare<FocusSessionOutput>;
   prepareAttachFolder: Prepare<AttachFolderOutput>;
   prepareCloseFiles: Prepare<CloseFilesOutcome>;
@@ -91,6 +108,36 @@ export interface AppControlHandlers {
 
 const MAX_SESSION_CHARS = 128;
 const MAX_PATH_CHARS = 4096;
+const validSessionArg = (v: unknown): v is string =>
+  typeof v === 'string' && v.length > 0 && v.length <= MAX_SESSION_CHARS;
+
+const CLOSE_KEYS = ['session', 'sessions', 'children'] as const;
+type CloseForm =
+  | { form: 'session'; session: unknown }
+  | { form: 'sessions'; sessions: string[] }
+  | { form: 'children' };
+
+/** Exactly one form. The schema is flat (plan B5), so the host checks the combination. */
+function closeFormOf(raw: unknown): CloseForm | Fail {
+  const o = parseKeys(raw, CLOSE_KEYS);
+  if (isFail(o)) return o;
+  if (CLOSE_KEYS.filter((k) => o[k] !== undefined).length !== 1)
+    return fail('invalid_args', 'give exactly one of session, sessions or children');
+  if (o.children !== undefined)
+    return o.children === true
+      ? { form: 'children' }
+      : fail('invalid_args', 'children must be true');
+  if (o.sessions === undefined) return { form: 'session', session: o.session };
+  const { sessions } = o;
+  if (!Array.isArray(sessions) || sessions.length === 0 || sessions.length > MAX_CLOSE_SESSIONS)
+    return fail('invalid_args', `sessions must be 1–${MAX_CLOSE_SESSIONS} handles or ids`);
+  if (!sessions.every(validSessionArg))
+    return fail(
+      'invalid_args',
+      `each session must be a handle or id of 1–${MAX_SESSION_CHARS} chars`,
+    );
+  return { form: 'sessions', sessions };
+}
 const REVIEW_SCOPES: readonly McpReviewScope[] = ['all', 'staged', 'unstaged'];
 const SOURCE_KEYS = {
   working: ['kind', 'scope'],
@@ -110,7 +157,7 @@ export function createAppControlHandlers(
   prepared: ControlHandlers['prepared'],
 ): AppControlHandlers {
   const resolveTarget = (v: unknown): TargetSession | Fail => {
-    if (typeof v !== 'string' || v.length === 0 || v.length > MAX_SESSION_CHARS)
+    if (!validSessionArg(v))
       return fail('invalid_args', `session must be a handle or id of 1–${MAX_SESSION_CHARS} chars`);
     const all = deps.targets();
     const t = all.find((x) => x.handle === v) ?? all.find((x) => x.sessionId === v);
@@ -219,13 +266,108 @@ export function createAppControlHandlers(
     return { ok: true, value: { closed: sessionId } };
   };
 
+  const windowReadyOf = (sessionId: string): boolean => {
+    const w = deps.ownerWindowOf(sessionId);
+    return w !== null && deps.windowReady(w);
+  };
+
+  /** Reach and existence are checked at the entry's turn, not at prepare: earlier closes may move things. */
+  const closeEntry = async (
+    caller: Caller,
+    who: CallWho,
+    e: CloseEntry,
+    ctx: ControlCallContext,
+  ): Promise<CloseSessionEntry> => {
+    const refused = (f: Fail): CloseSessionEntry => ({
+      session: e.name,
+      closed: false,
+      error: { code: f.error.code, message: f.error.message },
+    });
+    if (isFail(e.target)) return refused(e.target);
+    const t = e.target;
+    const again = recheckTarget('close_session', t.sessionId, who.sessionId, ctx.reach);
+    if (again) return refused(again);
+    const charge = who.spend();
+    if (isFail(charge)) return refused(charge);
+    try {
+      const r = await closeRouted(
+        t.sessionId,
+        { handle: caller.handle, sessionId: who.sessionId },
+        ctx,
+      );
+      // A failed close refunds its token, as a single close does.
+      if (!r.ok) {
+        charge.refund();
+        return refused(r);
+      }
+      logged('close_session', caller, { target: t.sessionId });
+      return { session: e.name, closed: true };
+    } catch (err) {
+      charge.refund();
+      // Reported on this entry: a throw out of the call would hide the entries already closed.
+      const message = err instanceof Error ? err.message : String(err);
+      deps.info('control call failed', {
+        tool: 'close_session',
+        caller: caller.handle,
+        target: t.sessionId,
+        error: message,
+      });
+      return refused(fail('open_failed', message));
+    }
+  };
+
+  const closeMany = (
+    caller: Caller,
+    who: CallWho,
+    form: Exclude<CloseForm, { form: 'session' }>,
+    ctx: ControlCallContext,
+  ): CheckResult<CloseSessionsOutput> => {
+    const listed: CloseEntry[] =
+      form.form === 'children'
+        ? deps
+            .targets()
+            .filter((t) => t.openerSessionId === who.sessionId && t.sessionId !== who.sessionId)
+            .map((t) => ({ name: t.handle, target: t }))
+        : form.sessions.map((raw) => {
+            const t = resolveTarget(raw);
+            return { name: isFail(t) ? raw : t.handle, target: t };
+          });
+    // A session named twice (handle and id, say) closes once; unknown names have no session to match.
+    const seen = new Set<string>();
+    const entries = listed.filter((e) => {
+      if (isFail(e.target)) return true;
+      if (seen.has(e.target.sessionId)) return false;
+      seen.add(e.target.sessionId);
+      return true;
+    });
+    const routesUi = entries.some((e) => !isFail(e.target) && windowReadyOf(e.target.sessionId));
+    return {
+      summary: {
+        tool: 'close_session',
+        targets: entries.slice(0, MAX_CLOSE_SUMMARY_NAMES).map((e) => e.name),
+        total: entries.length,
+      },
+      ...(routesUi ? { routesUi: true as const } : {}),
+      // No targets: the answer is known now, so no card is worth asking for.
+      ...(entries.length === 0 ? { noAsk: true as const } : {}),
+      exec: async (token) => {
+        // The call's own token gives way to one per target attempted.
+        token.refund();
+        const results: CloseSessionEntry[] = [];
+        for (const e of entries) results.push(await closeEntry(caller, who, e, ctx));
+        return { ok: true, value: { results } };
+      },
+    };
+  };
+
   return {
     closeRouted,
     prepareCloseSession: (caller, raw, ctx) =>
-      prepared('close_session', caller, async (who) => {
-        const o = parseKeys(raw, ['session']);
-        if (isFail(o)) return o;
-        const t = resolveTarget(o.session);
+      prepared<CloseSessionOutput | CloseSessionsOutput>('close_session', caller, async (who) => {
+        const form = closeFormOf(raw);
+        if (isFail(form)) return form;
+        if (form.form !== 'session') return closeMany(caller, who, form, ctx);
+        const t = resolveTarget(form.session);
         if (isFail(t)) return t;
         const out = inReach('close_session', ctx.reach, who.sessionId, t);
         if (out) return out;

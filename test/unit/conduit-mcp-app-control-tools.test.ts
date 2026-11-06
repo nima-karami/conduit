@@ -536,6 +536,198 @@ describe('close_session', () => {
   });
 });
 
+describe('close_session list forms', () => {
+  const outcomes = (r: Result<unknown>) =>
+    r.ok
+      ? (
+          r.value as {
+            results: Array<{ session: string; closed: boolean; error?: { code: string } }>;
+          }
+        ).results.map((x) => [x.session, x.closed, x.error?.code ?? null])
+      : r.error.code;
+
+  it('sessions closes each in order and reports each entry', async () => {
+    const h = harness();
+    const app = build(h);
+    const { ctx, calls } = context({ reach: 'any' });
+    const r = await runIt(
+      app.prepareCloseSession(caller(), { sessions: ['codex-1', 'codex-2'] }, ctx),
+    );
+    expect(r).toStrictEqual({
+      ok: true,
+      value: {
+        results: [
+          { session: 'codex-1', closed: true },
+          { session: 'codex-2', closed: true },
+        ],
+      },
+    });
+    expect(calls.map((c) => c.routed)).toEqual(['same-1', 'other-1']);
+  });
+
+  it('an unknown entry does not stop the others', async () => {
+    const h = harness();
+    const app = build(h);
+    const { ctx, calls } = context({ reach: 'any' });
+    const r = await runIt(
+      app.prepareCloseSession(caller(), { sessions: ['nope', 'codex-1'] }, ctx),
+    );
+    expect(outcomes(r)).toEqual([
+      ['nope', false, 'unknown_session'],
+      ['codex-1', true, null],
+    ]);
+    expect(calls.map((c) => c.routed)).toEqual(['same-1']);
+  });
+
+  it('an out-of-reach entry is reported per entry, not as a call failure', async () => {
+    const h = harness();
+    const app = build(h);
+    const { ctx, calls } = context({ reach: 'self' });
+    const r = await runIt(
+      app.prepareCloseSession(caller(), { sessions: ['codex-1', 'claude-1'] }, ctx),
+    );
+    expect(outcomes(r)).toEqual([
+      ['codex-1', false, 'out_of_reach'],
+      ['claude-1', true, null],
+    ]);
+    expect(calls.map((c) => c.routed)).toEqual(['caller-1']);
+  });
+
+  it('children closes only the caller openees: never the caller or other helpers', async () => {
+    const h = harness();
+    const app = build(h);
+    const { ctx, calls } = context({ reach: 'any' });
+    const r = await runIt(app.prepareCloseSession(caller(), { children: true }, ctx));
+    expect(r).toStrictEqual({
+      ok: true,
+      value: { results: [{ session: 'claude-2', closed: true }] },
+    });
+    expect(calls.map((c) => c.routed)).toEqual(['opened-1']);
+  });
+
+  it('children with none → empty results, not an error', async () => {
+    const h = harness();
+    h.targets = h.targets.filter((t) => t.openerSessionId !== 'caller-1');
+    const app = build(h);
+    const { ctx, calls } = context({ reach: 'any' });
+    expect(await runIt(app.prepareCloseSession(caller(), { children: true }, ctx))).toStrictEqual({
+      ok: true,
+      value: { results: [] },
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it('exactly one of session, sessions, children; bad shapes → invalid_args', async () => {
+    const app = build(harness());
+    const { ctx } = context({ reach: 'any' });
+    const bad: unknown[] = [
+      {},
+      { session: 'codex-1', children: true },
+      { session: 'codex-1', sessions: ['codex-2'] },
+      { sessions: ['codex-1'], children: true },
+      { children: false },
+      { children: 'yes' },
+      { sessions: [] },
+      { sessions: 'codex-1' },
+      { sessions: ['codex-1', 7] },
+      { sessions: ['codex-1', ''] },
+      { sessions: Array.from({ length: 31 }, (_, i) => `s${i}`) },
+    ];
+    for (const a of bad)
+      expect([a, code(await app.prepareCloseSession(caller(), a, ctx))]).toEqual([
+        a,
+        'invalid_args',
+      ]);
+  });
+
+  it('the ask summary names the handles, eight at most, and the total', async () => {
+    const app = build(harness());
+    const { ctx } = context({ reach: 'any' });
+    const four = ok(
+      await app.prepareCloseSession(
+        caller(),
+        { sessions: ['codex-1', 'other-1', 'claude-2', 'claude-1'] },
+        ctx,
+      ),
+    );
+    expect(four.summary).toStrictEqual({
+      tool: 'close_session',
+      targets: ['codex-1', 'codex-2', 'claude-2', 'claude-1'],
+      total: 4,
+    });
+    const nine = Array.from({ length: 9 }, (_, i) => `s${i + 1}`);
+    const many = ok(await app.prepareCloseSession(caller(), { sessions: nine }, ctx));
+    expect(many.summary).toStrictEqual({
+      tool: 'close_session',
+      targets: nine.slice(0, 8),
+      total: 9,
+    });
+  });
+
+  it('rate budget running out mid-list → the rest report rate_limited', async () => {
+    const h = harness();
+    const app = build(h);
+    const { ctx, calls } = context({ reach: 'any' });
+    for (let i = 0; i < ACT_RATE_PER_CALLER - 2; i++)
+      ok(await runIt(app.prepareCloseSession(caller(), { session: 'codex-1' }, ctx)));
+    const r = await runIt(
+      app.prepareCloseSession(
+        caller(),
+        { sessions: ['codex-1', 'codex-2', 'claude-2', 'claude-1'] },
+        ctx,
+      ),
+    );
+    expect(outcomes(r)).toEqual([
+      ['codex-1', true, null],
+      ['codex-2', true, null],
+      ['claude-2', false, 'rate_limited'],
+      ['claude-1', false, 'rate_limited'],
+    ]);
+    expect(calls).toHaveLength(ACT_RATE_PER_CALLER);
+  });
+
+  it('a failed close refunds its token: the budget is whole after it', async () => {
+    const h = harness();
+    const app = build(h);
+    const { ctx } = context({
+      reach: 'any',
+      answer: () => ({
+        ok: true,
+        value: { kind: 'closeSession', ok: false, unsaved: ['/w/a.ts'] },
+      }),
+    });
+    const r = await runIt(app.prepareCloseSession(caller(), { sessions: ['codex-1'] }, ctx));
+    expect(outcomes(r)).toEqual([['codex-1', false, 'unsaved_changes']]);
+    await budgetIntact(app, 'act');
+  });
+
+  it('a session named twice, by handle and by id, closes once', async () => {
+    const h = harness();
+    const app = build(h);
+    const { ctx, calls } = context({ reach: 'any' });
+    const p = ok(
+      await app.prepareCloseSession(caller(), { sessions: ['codex-1', 'same-1', 'codex-1'] }, ctx),
+    );
+    expect(p.summary).toStrictEqual({ tool: 'close_session', targets: ['codex-1'], total: 1 });
+    expect(await p.run()).toStrictEqual({
+      ok: true,
+      value: { results: [{ session: 'codex-1', closed: true }] },
+    });
+    expect(calls.map((c) => c.routed)).toEqual(['same-1']);
+  });
+
+  it('children with none needs no approval card; with some it does', async () => {
+    const h = harness();
+    const app = build(h);
+    const { ctx } = context({ reach: 'any' });
+    expect(ok(await app.prepareCloseSession(caller(), { children: true }, ctx)).noAsk).toBe(false);
+    h.targets = h.targets.filter((t) => t.openerSessionId !== 'caller-1');
+    const none = ok(await app.prepareCloseSession(caller(), { children: true }, ctx));
+    expect(none.noAsk).toBe(true);
+    expect(await none.run()).toStrictEqual({ ok: true, value: { results: [] } });
+  });
+});
+
 describe('focus_session', () => {
   it('raises only when the target window differs from the caller window', async () => {
     const h = harness();

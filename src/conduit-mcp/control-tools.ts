@@ -110,6 +110,8 @@ export interface PreparedCall<T> {
   summary: AskSummary;
   /** Its run waits on a renderer (mcp:ui): the ask budget shrinks by UI_TIMEOUT_MS. */
   routesUi: boolean;
+  /** Nothing to act on, so an 'ask' policy runs it without a card (its 'off' still refuses). */
+  noAsk: boolean;
   /** Executes; refunds the rate token itself when the open fails (step 9). */
   run(): Promise<Result<T>>;
   /** Refunds the token for a refusal between prepare and run that isn't an ask outcome. Idempotent. */
@@ -142,7 +144,7 @@ export interface ControlHandlers {
   prepared<T>(
     tool: ControlTool,
     caller: Caller,
-    check: (who: { sessionId: string; home: string }) => Promise<CheckResult<T>>,
+    check: (who: CallWho) => Promise<CheckResult<T>>,
   ): Promise<Result<PreparedCall<T>>>;
 }
 
@@ -353,9 +355,16 @@ interface Token {
   refund(): void;
   keep(): void;
 }
-type CheckResult<T> =
+/** spend() takes one more token from the call's budget, for a list call's further targets. */
+export type CallWho = { sessionId: string; home: string; spend(): Token | Fail };
+export type CheckResult<T> =
   | Fail
-  | { summary: AskSummary; routesUi?: true; exec: (token: Token) => Promise<Result<T>> };
+  | {
+      summary: AskSummary;
+      routesUi?: true;
+      noAsk?: true;
+      exec: (token: Token) => Promise<Result<T>>;
+    };
 
 class Budget {
   private readonly global = new Window();
@@ -446,7 +455,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
   async function prepared<T>(
     tool: ControlTool,
     caller: Caller,
-    check: (who: { sessionId: string; home: string }) => Promise<CheckResult<T>>,
+    check: (who: CallWho) => Promise<CheckResult<T>>,
   ): Promise<Result<PreparedCall<T>>> {
     const token = reserve(tool, caller);
     if (isFail(token)) return token;
@@ -456,7 +465,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
       if (isFail(who)) return who;
       let c: CheckResult<T>;
       try {
-        c = await check(who);
+        c = await check({ ...who, spend: () => reserve(tool, caller) });
       } catch (e) {
         return failed(tool, caller, e);
       }
@@ -468,6 +477,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         value: {
           summary: c.summary,
           routesUi: c.routesUi === true,
+          noAsk: c.noAsk === true,
           async run() {
             try {
               return await exec(token);

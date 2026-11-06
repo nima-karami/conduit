@@ -1,5 +1,5 @@
 import { MAX_ARGS, MAX_COMMAND_BYTES, MAX_MODEL_CHARS } from '../session-command';
-import { MAX_CLOSE_PATHS, MAX_URL_BYTES } from './app-control-tools';
+import { MAX_CLOSE_PATHS, MAX_CLOSE_SESSIONS, MAX_URL_BYTES } from './app-control-tools';
 import { MAX_LABEL_CHARS, MAX_OPEN_FILE_PATHS, MAX_OPEN_MESSAGE_CHARS } from './control-tools';
 import { MAX_REF_CHARS } from './git-refs';
 import type { ToolSchema } from './json-rpc';
@@ -220,8 +220,15 @@ const APP_CONTROL_SCHEMAS: readonly ToolSchema[] = [
   {
     name: 'close_session',
     description:
-      'Close a Conduit session from list_sessions (handle or id), including your own. Refuses with unsaved_changes when it has unsaved files; nothing is closed then.',
-    inputSchema: { ...OBJECT, properties: { session: SESSION }, required: ['session'] },
+      'Close a Conduit session from list_sessions (handle or id), including your own. Refuses with unsaved_changes when it has unsaved files; nothing is closed then. Pass sessions (1–30 handles or ids) to close several, each reported on its own; children: true closes every session you opened.',
+    inputSchema: {
+      ...OBJECT,
+      properties: {
+        session: SESSION,
+        sessions: { type: 'array', items: SESSION, minItems: 1, maxItems: MAX_CLOSE_SESSIONS },
+        children: { type: 'boolean', description: 'true: every session you opened, not you.' },
+      },
+    },
   },
   {
     name: 'focus_session',

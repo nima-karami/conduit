@@ -35,6 +35,8 @@ export type AskSummary =
   | { tool: 'open_terminal'; path: string; command: string; focus: boolean }
   | { tool: 'open_file'; path: string; line: number | null }
   | { tool: 'close_session'; target: Handle }
+  /** Several sessions: the first names (at most 8) of `total`. */
+  | { tool: 'close_session'; targets: Handle[]; total: number }
   | { tool: 'focus_session'; target: Handle }
   | { tool: 'attach_folder'; path: string; target: Handle }
   | { tool: 'close_files'; count: number; all: boolean }

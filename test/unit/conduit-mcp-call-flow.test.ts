@@ -127,6 +127,7 @@ function setup() {
     const prepared: PreparedCall<string> = {
       summary: { tool: 'open_session', path: '/repo', agent: 'claude', focus: true },
       routesUi: o.routesUi ?? false,
+      noAsk: false,
       run: async () => {
         spies.run++;
         if (o.runGate) await o.runGate.hold();
@@ -246,6 +247,29 @@ describe('createCallFlow', () => {
     expect(t.flow.awaitingApproval()).toEqual([]);
     expect(t.state.awaitingChanged).toBe(2);
     expect(t.closed()).toEqual([]);
+  });
+
+  it('noAsk runs an ask-policy call without a card', async () => {
+    const t = setup();
+    const ran: string[] = [];
+    const c = t.call({
+      prepareResult: {
+        ok: true,
+        value: {
+          summary: { tool: 'open_session', path: '/repo', agent: 'claude', focus: true },
+          routesUi: false,
+          noAsk: true,
+          run: async () => {
+            ran.push('run');
+            return { ok: true, value: 'opened' };
+          },
+          release: () => {},
+        },
+      },
+    });
+    expect(await c.promise).toEqual({ ok: true, value: 'opened' });
+    expect(ran).toEqual(['run']);
+    expect(t.asks()).toEqual([]);
   });
 
   it('the ask times out after the caller kind’s limit', async () => {

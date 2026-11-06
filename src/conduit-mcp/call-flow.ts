@@ -426,7 +426,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         case 'on':
           return runNow(c, p);
         case 'ask':
-          return ask(c, p);
+          return p.noAsk ? runNow(c, p) : ask(c, p);
         case 'off':
           p.release();
           return { ok: false, error: toolDisabled(c.tool) };
