@@ -140,8 +140,16 @@ export async function openDoc(app, page, sessionId, absPath) {
     p,
     { timeout: 20000 },
   );
-  // The model exists; give React the tick it needs to make this doc the active tab.
-  await page.waitForTimeout(150);
+  await page.waitForFunction(
+    (want) =>
+      Array.from(document.querySelectorAll('.tabbar [role="tab"][aria-selected="true"]')).some(
+        (tab) =>
+          (tab.getAttribute('data-tabid') ?? '').replace(/\\/g, '/').toLowerCase() ===
+          `file:${want.toLowerCase()}`,
+      ),
+    p,
+    { timeout: 20000 },
+  );
 }
 
 /**
@@ -176,14 +184,34 @@ export async function openViaTree(page, rootPath, relParts) {
     // clicking it then would collapse it.
     if (level !== leaf && at.expanded) continue;
     await page.mouse.click(at.x, at.y);
-    await page.waitForTimeout(300);
+    if (level !== leaf) {
+      await page.waitForFunction(
+        (want) =>
+          Array.from(document.querySelectorAll('.filerow')).some(
+            (row) =>
+              (row.dataset.path ?? '').replace(/\\/g, '/').toLowerCase() === want.toLowerCase() &&
+              row.getAttribute('aria-expanded') === 'true',
+          ),
+        level,
+      );
+    }
   }
   const at = await findRow(page, leaf);
   if (!at) throw new Error(`openViaTree: leaf row ${leaf} never appeared`);
   // Double-click, i.e. PIN the tab. A single click opens a preview tab, which the next open
   // replaces in place — that alone would hide a duplicate-tab bug from row 42.
   await page.mouse.dblclick(at.x, at.y);
-  await page.waitForTimeout(400);
+  await page.waitForFunction(
+    (want) =>
+      Array.from(document.querySelectorAll('.tabbar [role="tab"]')).some(
+        (tab) =>
+          (tab.getAttribute('data-tabid') ?? '').replace(/\\/g, '/').toLowerCase() ===
+            `file:${want.toLowerCase()}` &&
+          tab.getAttribute('aria-selected') === 'true' &&
+          !tab.classList.contains('tab--preview'),
+      ),
+    leaf,
+  );
   return leaf;
 }
 
@@ -246,14 +274,23 @@ async function findRow(page, wantPath, passes = 3) {
  */
 export async function closeAllDocs(page) {
   for (let i = 0; i < 60; i++) {
-    const n = await page.evaluate(() => {
+    const id = await page.evaluate(() => {
       const btn = document.querySelector('.tabbar [role="tab"] .tab__close');
-      if (!btn) return 0;
+      if (!btn) return null;
+      const tab = btn.closest('[role="tab"]');
+      const id = tab.getAttribute('data-tabid');
       btn.click();
-      return 1;
+      return id;
     });
-    if (!n) break;
-    await page.waitForTimeout(120);
+    if (!id) break;
+    await page.waitForFunction(
+      (id) =>
+        !!document.querySelector('[role="alertdialog"]') ||
+        !Array.from(document.querySelectorAll('.tabbar [role="tab"]')).some(
+          (tab) => tab.getAttribute('data-tabid') === id,
+        ),
+      id,
+    );
     await page.evaluate(() => {
       const dlg = document.querySelector('[role="alertdialog"]');
       if (!dlg) return;
@@ -261,6 +298,13 @@ export async function closeAllDocs(page) {
       const discard = buttons.find((b) => /discard/i.test(b.textContent ?? ''));
       (discard ?? buttons[buttons.length - 1])?.click();
     });
+    await page.waitForFunction(
+      (id) =>
+        !Array.from(document.querySelectorAll('.tabbar [role="tab"]')).some(
+          (tab) => tab.getAttribute('data-tabid') === id,
+        ),
+      id,
+    );
   }
 }
 
@@ -360,8 +404,7 @@ export async function glyphAt(page, absPath, position) {
     },
     { path: p, pos: position },
   );
-  await page.waitForTimeout(100);
-  const at = await page.evaluate(
+  const painted = await page.waitForFunction(
     ({ path, pos }) => {
       const ed = window.monaco.editor
         .getEditors()
@@ -376,6 +419,7 @@ export async function glyphAt(page, absPath, position) {
         rendered += text[i] === '\t' ? tabSize - (rendered % tabSize) : 1;
       }
       const vp = ed.getScrolledVisiblePosition(pos);
+      if (!vp) return null;
       const top = ed.getDomNode().getBoundingClientRect().top + vp.top;
       const line = Array.from(ed.getDomNode().querySelectorAll('.view-lines .view-line')).find(
         (el) => Math.abs(el.getBoundingClientRect().top - top) < 2,
@@ -399,6 +443,7 @@ export async function glyphAt(page, absPath, position) {
     },
     { path: p, pos: position },
   );
+  const at = await painted.jsonValue();
   if (!at) {
     throw new Error(`glyphAt: ${absPath}:${position.lineNumber}:${position.column} is not painted`);
   }
@@ -444,7 +489,9 @@ export async function clearTransients(page) {
   await page.evaluate(() => {
     for (const b of document.querySelectorAll('.toast__close')) b.click();
   });
-  await page.waitForTimeout(80);
+  await page.waitForFunction(
+    () => !document.querySelector('.toast__msg, .monaco-editor .zone-widget'),
+  );
 }
 
 /**
