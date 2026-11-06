@@ -90,7 +90,7 @@ export function parseWaitArgs(raw: unknown): Result<WaitArgs> {
   };
 }
 
-export interface WaitEvaluation {
+interface WaitEvaluation {
   fired: WaitFired[];
   states: WaitState[];
   /** The readings whose turn_end fired: the host remembers their completions as reported. */
@@ -101,7 +101,7 @@ export interface WaitEvaluation {
  * `seenTurnEnd` is the completions count the caller has already been told about; only a rise above
  * it is a new turn end.
  */
-export function evaluateWait(
+function evaluateWait(
   until: readonly WaitCondition[],
   readings: readonly WaitReading[],
   seenTurnEnd: (r: WaitReading) => number,
