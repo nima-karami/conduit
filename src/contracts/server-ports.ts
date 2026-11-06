@@ -99,6 +99,8 @@ export interface DomainPort
   ): Promise<{ ok: true } | { ok: false; code: 'unknown_session'; message: string }>;
   /** effectiveDef(session, registry). */
   defOf(sessionId: string): AgentDefinition | undefined;
+  /** The registry's definition for an agent id; open_session's model check reads its adapter. */
+  agentDef(agentId: string): AgentDefinition | undefined;
   projectName(projectId: string | undefined): string | null;
   /** The CLI's user-scope install state, shown with a not-connected session. */
   installState(cli: AgentCli): UserInstallState;

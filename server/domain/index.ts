@@ -1040,6 +1040,7 @@ export function createDomain(deps: DomainDeps): Domain {
     command?: SessionCommand;
     openedBy?: SessionOpener;
     closeWhenDone?: boolean;
+    model?: string;
     cardId?: string;
     opener: { sessionId?: string; focus: boolean };
   }
@@ -1063,6 +1064,7 @@ export function createDomain(deps: DomainDeps): Domain {
         ...(i.command ? { command: i.command } : {}),
         ...(i.openedBy ? { openedBy: i.openedBy } : {}),
         ...(i.closeWhenDone ? { closeWhenDone: true } : {}),
+        ...(i.model !== undefined ? { model: i.model } : {}),
         id: c.id,
         ...(c.brief ? { brief: c.brief } : {}),
       }).id;
@@ -1141,6 +1143,7 @@ export function createDomain(deps: DomainDeps): Domain {
       ...(command ? { command } : {}),
       openedBy: req.openedBy,
       closeWhenDone: req.closeWhenDone,
+      ...(req.model !== undefined ? { model: req.model } : {}),
       opener: { sessionId: req.callerSessionId, focus: req.focus },
     });
     if ('error' in r) {
@@ -1530,6 +1533,7 @@ export function createDomain(deps: DomainDeps): Domain {
       const s = mgr.get(id);
       return s ? effectiveDef(s, registry) : undefined;
     },
+    agentDef: (id) => registry.get(id),
     projectName: (id) => (id ? (projectStore.list().find((p) => p.id === id)?.name ?? null) : null),
     installState: (cli) => deps.installState(cli),
     messagingOn: () => settings().conduitMcp,

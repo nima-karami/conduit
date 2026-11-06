@@ -35,6 +35,7 @@ export interface SessionCreateOpts {
   command?: SessionCommand;
   openedBy?: SessionOpener;
   closeWhenDone?: boolean;
+  model?: string;
 }
 
 function setMissing(s: Session, keys: ReadonlySet<string>) {
@@ -106,6 +107,7 @@ export class SessionManager {
         : {}),
       ...(opts.openedBy ? { openedBy: { ...opts.openedBy } } : {}),
       ...(opts.closeWhenDone ? { closeWhenDone: true } : {}),
+      ...(opts.model !== undefined ? { model: opts.model } : {}),
     };
     setMissing(session, new Set((opts.missingRoots ?? []).map(folderKey)));
     this.sessions.set(id, session);
@@ -153,6 +155,7 @@ export class SessionManager {
       projectId: src.projectId,
       // Tool policy, overrides and openedBy are deliberately not copied (control-tools spec §3.1).
       ...(src.command ? { command: src.command } : {}),
+      ...(src.model !== undefined ? { model: src.model } : {}),
       ...(opts.id !== undefined ? { id: opts.id } : {}),
       ...(opts.brief ? { brief: opts.brief } : {}),
     });

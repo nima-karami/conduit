@@ -1,5 +1,6 @@
 // Node-free: the renderer imports commandLabel for card labels and the tools dialog.
 import { type AgentRegistry, RESERVED_AGENT_ID_PREFIX } from './agent-registry';
+import { adapterFor, modelArgs } from './conduit-mcp/adapters';
 import { commandLeaf } from './launch-args';
 import type { AgentDefinition, Session, SessionCommand, SessionOpener } from './types';
 
@@ -31,15 +32,28 @@ export function commandDef(c: SessionCommand): AgentDefinition {
 
 /** The one launch seam (spec §3.3): commandDef for a command session, else registry.get(agentId). */
 export function effectiveDef(
-  s: Pick<Session, 'agentId' | 'command'>,
+  s: Pick<Session, 'agentId' | 'command' | 'model'>,
   registry: Pick<AgentRegistry, 'get'>,
 ): AgentDefinition | undefined {
   if (s.agentId === COMMAND_AGENT_ID) return s.command ? commandDef(s.command) : undefined;
-  return registry.get(s.agentId);
+  const def = registry.get(s.agentId);
+  if (!def || s.model === undefined) return def;
+  // An agent whose command no longer has a model flag launches without the model, not refused.
+  const flags = modelArgs(adapterFor(def, { e2e: false })?.id, s.model) ?? [];
+  return { ...def, args: [...def.args, ...flags] };
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
+
+export const MAX_MODEL_CHARS = 64;
+const MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
+
+/** A model name safe as one argv entry; a dash-led or spaced value could read as another flag. */
+export function coerceModel(v: unknown): string | undefined {
+  if (typeof v !== 'string' || v.length > MAX_MODEL_CHARS || !MODEL_SHAPE.test(v)) return undefined;
+  return v;
+}
 
 export function coerceSessionCommand(v: unknown): SessionCommand | undefined {
   if (!isRecord(v)) return undefined;

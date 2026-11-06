@@ -8,7 +8,7 @@ import {
 import { judgePersistedVersion } from './contracts/session-identity';
 import { folderKey } from './folder-key';
 import type { PersistedDoc } from './protocol';
-import { coerceOpenedBy, coerceSessionCommand } from './session-command';
+import { coerceModel, coerceOpenedBy, coerceSessionCommand } from './session-command';
 import type { Session } from './types';
 
 const VERSION = 1;
@@ -129,14 +129,18 @@ export function parseSessions(blob: string | undefined): SessionsParse {
     const mcpToolPolicy = sessionPolicyOf(s.mcpToolPolicy, legacyToolOverrides);
     const openedBy = coerceOpenedBy(s.openedBy);
     const command = coerceSessionCommand(s.command);
+    // A model that fails coercion is dropped: the session relaunches with its agent's default.
+    const model = coerceModel(s.model);
     delete s.mcpToolPolicy;
     delete s.openedBy;
     delete s.command;
+    delete s.model;
     sessions.push({
       ...s,
       ...(mcpToolPolicy ? { mcpToolPolicy } : {}),
       ...(openedBy ? { openedBy } : {}),
       ...(command ? { command } : {}),
+      ...(model ? { model } : {}),
       home,
       roots: coerceRoots(roots, home),
       ...(typeof projectId === 'string' ? { projectId } : {}),

@@ -23,7 +23,7 @@ export type AskAnswer = 'approve' | 'deny' | 'always';
 export type AskClosedOutcome = 'expired' | 'cancelled';
 /** Placeholder values for the card's per-tool summary template (MCP_STR.ask.summary). */
 export type AskSummary =
-  | { tool: 'open_session'; path: string; agent: string; focus: boolean }
+  | { tool: 'open_session'; path: string; agent: string; focus: boolean; model?: string }
   | { tool: 'open_terminal'; path: string; command: string; focus: boolean }
   | { tool: 'open_file'; path: string; line: number | null }
   | { tool: 'close_session'; target: Handle }

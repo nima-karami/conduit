@@ -512,3 +512,12 @@ describe('persistence — mcpToolPolicy (tool-policy spec §3.1)', () => {
     for (const x of list) expect('mcpToolPolicy' in x).toBe(false);
   });
 });
+
+describe('persistence — session model (CON-148)', () => {
+  it('keeps a valid model and drops one that is not a plain name', () => {
+    const [kept] = sessionsOf(v1([{ ...s, model: 'gpt-6.1-terra' }]));
+    expect(kept?.model).toBe('gpt-6.1-terra');
+    const [dropped] = sessionsOf(v1([{ ...s, model: '--x y' }]));
+    expect(dropped?.model).toBeUndefined();
+  });
+});

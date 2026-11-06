@@ -5,6 +5,7 @@ import {
   adapterFor,
   MCP_ADAPTERS,
   type McpAdapter,
+  modelArgs,
   notifiable,
 } from '../../src/conduit-mcp/adapters';
 import {
@@ -353,5 +354,15 @@ describe('brief support', () => {
     for (const id of ['codex', 'cursor', 'fake'] as const) {
       expect(adapter(id).brief).toEqual({ readAccess: 'none' });
     }
+  });
+});
+
+describe('modelArgs (CON-148)', () => {
+  it('maps each adapter to its CLI flag, and to null when the CLI takes no model here', () => {
+    expect(modelArgs('claude', 'opus')).toEqual(['--model', 'opus']);
+    expect(modelArgs('cursor', 'grok')).toEqual(['--model', 'grok']);
+    expect(modelArgs('codex', 'gpt-6.1-terra')).toEqual(['-m', 'gpt-6.1-terra']);
+    expect(modelArgs('fake', 'x')).toBeNull();
+    expect(modelArgs(undefined, 'x')).toBeNull();
   });
 });

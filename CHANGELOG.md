@@ -7,6 +7,7 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- `open_session` takes a `model` to pick the agent's model and a `message` to send the new session its first task.
 - `open_session` and `open_terminal` take `close_when_done`: the session closes once its program exits.
 - `open_file` takes a list of `paths` to open several files in one call.
 - `wait_sessions` lets an agent block until a session finishes a turn, exits, needs you, or messages it, so it doesn't have to poll.

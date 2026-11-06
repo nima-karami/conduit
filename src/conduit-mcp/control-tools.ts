@@ -3,9 +3,10 @@
 // registry, command resolution, session creation and git are deps, so tests run on POSIX fakes.
 
 import type { DomainOpenOutcome, DomainPort } from '../contracts/server-ports';
-import { coerceSessionCommand, commandLabel } from '../session-command';
+import { coerceModel, coerceSessionCommand, commandLabel } from '../session-command';
 import type { SessionOpResult } from '../session-ops';
 import type { SessionCommand, SessionOpener } from '../types';
+import { type McpAdapterId, modelArgs } from './adapters';
 import type { GitCall } from './git-refs';
 import {
   type MESSAGING_TOOL_NAMES,
@@ -14,8 +15,15 @@ import {
   TOOL_SPECS,
   type ToolName,
 } from './tool-policy';
-import type { Caller } from './tools';
-import { type Handle, type Result, type ToolError, type ToolErrorCode, toolError } from './types';
+import { type Caller, MAX_BODY_BYTES } from './tools';
+import {
+  type Handle,
+  type Result,
+  type SendMessageOutput,
+  type ToolError,
+  type ToolErrorCode,
+  toolError,
+} from './types';
 import type { AskSummary, McpUiAction, McpUiResult } from './ui-types';
 
 // spec 2026-10-30-conduit-mcp-tool-policy §3.3 "Rate"
@@ -23,6 +31,7 @@ export const ACT_RATE_PER_CALLER = 10;
 export const ACT_RATE_GLOBAL = 20;
 export const SHOW_RATE_PER_CALLER = 30;
 export const MAX_LABEL_CHARS = 80;
+export const MAX_OPEN_MESSAGE_CHARS = 16_000;
 const RATE_WINDOW_MS = 60_000;
 
 export interface OpenSessionOutput {
@@ -30,6 +39,8 @@ export interface OpenSessionOutput {
   handle: Handle | null;
   label: string;
   agent: string;
+  /** Present when open_session's message was stored (CON-148). */
+  message_id?: string;
 }
 export type OpenFileOutput = { opened: string; session_id: string } | { results: OpenFileResult[] };
 export type McpLaunch =
@@ -44,6 +55,8 @@ export interface McpOpenRequest {
   launch: McpLaunch;
   /** The session closes once its program exits; finished output is lost (CON-152). */
   closeWhenDone: boolean;
+  /** The CLI's model flag value; agents only (CON-148). */
+  model?: string;
 }
 export type McpOpenOutcome = DomainOpenOutcome;
 export interface McpFileRequest {
@@ -81,6 +94,12 @@ export interface ControlDeps {
   targets(): readonly TargetSession[];
   ownerWindowOf(sessionId: string): number | null;
   windowReady(windowId: number): boolean;
+  /** The adapter kind a registered agent launches through; undefined ⇒ no adapter. */
+  adapterOf(agentId: string): McpAdapterId | undefined;
+  /** Messaging is on and its store is up, so a message can be stored. */
+  messageReady(): boolean;
+  /** send_message's own storage, from the caller to a session's handle (CON-148). */
+  sendMessage(caller: Caller, args: unknown): Promise<Result<SendMessageOutput>>;
 }
 export interface TargetSession {
   sessionId: string;
@@ -187,6 +206,12 @@ interface OpenExtras {
   closeWhenDone: boolean;
 }
 
+/** What only open_session carries (CON-148). */
+interface SessionExtras {
+  model: string | undefined;
+  message: string | undefined;
+}
+
 function common(o: Record<string, unknown>, label: string | undefined): Common {
   return { path: o.path as string, label, focus: o.focus !== false };
 }
@@ -198,15 +223,52 @@ function parseCloseWhenDone(o: Record<string, unknown>): boolean | Fail {
   return o.close_when_done === true;
 }
 
-function parseSessionArgs(raw: unknown): (Common & OpenExtras & { agent: string }) | Fail {
-  const o = parseObject(raw, ['path', 'agent', 'label', 'focus', 'close_when_done']);
+/** A model name the CLI's flag takes as one argv entry (session-command coerceModel). */
+function parseModel(v: unknown): string | undefined | Fail {
+  if (v === undefined) return undefined;
+  return (
+    coerceModel(v) ??
+    fail(
+      'invalid_args',
+      'model must be 1–64 chars of letters, digits, . _ : / -, starting with a letter or digit',
+    )
+  );
+}
+
+/** The opener's first task: send_message's body limits, in characters and in bytes. */
+function parseMessage(v: unknown): string | undefined | Fail {
+  if (v === undefined) return undefined;
+  if (typeof v !== 'string' || v.length === 0 || Array.from(v).length > MAX_OPEN_MESSAGE_CHARS)
+    return fail('invalid_args', `message must be 1–${MAX_OPEN_MESSAGE_CHARS} chars`);
+  // Checked here, not by the send, so a too-large message never leaves a session open unmessaged.
+  if (new TextEncoder().encode(v).byteLength > MAX_BODY_BYTES)
+    return fail('invalid_args', 'message is over 32 KB');
+  return v;
+}
+
+function parseSessionArgs(
+  raw: unknown,
+): (Common & OpenExtras & SessionExtras & { agent: string }) | Fail {
+  const o = parseObject(raw, [
+    'path',
+    'agent',
+    'label',
+    'focus',
+    'close_when_done',
+    'model',
+    'message',
+  ]);
   if (isFail(o)) return o;
   if (typeof o.agent !== 'string') return fail('invalid_args', 'agent must be a string');
   const label = parseLabel(o.label);
   if (isFail(label)) return label;
   const closeWhenDone = parseCloseWhenDone(o);
   if (isFail(closeWhenDone)) return closeWhenDone;
-  return { ...common(o, label), agent: o.agent, closeWhenDone };
+  const model = parseModel(o.model);
+  if (isFail(model)) return model;
+  const message = parseMessage(o.message);
+  if (isFail(message)) return message;
+  return { ...common(o, label), agent: o.agent, closeWhenDone, model, message };
 }
 
 function parseTerminalArgs(
@@ -423,10 +485,27 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     }
   }
 
+  /** The opener's message to the session it just opened, stored as send_message stores it (CON-148). */
+  async function openMessage(
+    caller: Caller,
+    sessionId: string,
+    handle: Handle | null,
+    body: string,
+  ): Promise<Result<string>> {
+    if (handle === null)
+      return {
+        ok: false,
+        error: toolError('open_failed', 'opened, but it has no handle to message', sessionId),
+      };
+    const sent = await deps.sendMessage(caller, { to: [handle], body });
+    if (!sent.ok) return { ok: false, error: { ...sent.error, sessionId } };
+    return { ok: true, value: sent.value.message_id };
+  }
+
   function prepareOpen(
     tool: 'open_session' | 'open_terminal',
     caller: Caller,
-    a: Common & OpenExtras,
+    a: Common & OpenExtras & Partial<SessionExtras>,
     launch: McpLaunch,
     agent: string,
   ): Promise<Result<PreparedCall<OpenSessionOutput>>> {
@@ -441,12 +520,22 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
             'unknown_agent',
             `unknown agent "${launch.agentId}"; registered: ${ids.join(', ')}`,
           );
+        if (a.model !== undefined && modelArgs(deps.adapterOf(launch.agentId), a.model) === null)
+          return fail('invalid_args', "this agent doesn't take a model");
       } else if (deps.resolveCommand(launch.command.command) === undefined) {
         return fail('command_not_found', `command not found: ${launch.command.command}`);
       }
+      if (a.message !== undefined && !deps.messageReady())
+        return fail('invalid_args', 'message needs messaging on');
       const summary: AskSummary =
         launch.kind === 'agent'
-          ? { tool: 'open_session', path: abs, agent, focus: a.focus }
+          ? {
+              tool: 'open_session',
+              path: abs,
+              agent,
+              focus: a.focus,
+              ...(a.model !== undefined ? { model: a.model } : {}),
+            }
           : {
               tool: 'open_terminal',
               path: abs,
@@ -455,7 +544,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
             };
       return {
         summary,
-        exec: async (token) => {
+        exec: async (token): Promise<Result<OpenSessionOutput>> => {
           let outcome: McpOpenOutcome;
           try {
             outcome = await deps.openSession({
@@ -466,6 +555,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
               focus: a.focus,
               launch,
               closeWhenDone: a.closeWhenDone,
+              model: a.model,
             });
           } catch (e) {
             return failed(tool, caller, e, abs);
@@ -486,13 +576,22 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
             sessionId: outcome.sessionId,
             path: abs,
           });
+          const handle = deps.claimHandle(outcome.sessionId);
+          if (a.message === undefined)
+            return {
+              ok: true,
+              value: { session_id: outcome.sessionId, handle, label: outcome.label, agent },
+            };
+          const sent = await openMessage(caller, outcome.sessionId, handle, a.message);
+          if (!sent.ok) return sent;
           return {
             ok: true,
             value: {
               session_id: outcome.sessionId,
-              handle: deps.claimHandle(outcome.sessionId),
+              handle,
               label: outcome.label,
               agent,
+              message_id: sent.value,
             },
           };
         },

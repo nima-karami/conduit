@@ -474,3 +474,20 @@ None blocking. The human ruled on 2026-10-27:
   (default false); a non-boolean is `invalid_args`. It is persisted on the session as `closeWhenDone`.
   When the program exits with reason `exited`, the session closes through the same domain close as
   `close_session`. A `killed` or `lost` exit leaves it in place. Finished output is lost on close.
+
+## 16. Amendment 2026-11-07 (CON-148)
+
+- **`model` on `open_session` (CON-148).** Optional; 1–64 characters of letters, digits, `. _ : / -`,
+  starting with a letter or digit, else `invalid_args`. The flag comes from the agent's adapter kind
+  (`modelArgs`, `src/conduit-mcp/adapters.ts`): `claude` and `cursor` take `--model <m>`, `codex` takes
+  `-m <m>`. An agent with no adapter, or a kind with no mapping, is `invalid_args` "this agent doesn't
+  take a model". The approval summary shows it. It is persisted on the session as `model`, and
+  `effectiveDef` appends the flags to the agent's args, so a relaunch uses the same model. The flags sit
+  before any `--` the role brief adds. `open_terminal` takes no `model`.
+- **`message` on `open_session` (CON-148).** Optional; 1–16 000 characters and at most 32 KB of UTF-8,
+  the `send_message` body limit. It is stored once from the opener to the new session's handle, as
+  `send_message` stores it (normal priority, kind `inform`). It needs messaging on and the message store
+  up, else `invalid_args` "message needs messaging on" before anything opens. A store failure, or a
+  session with no handle, after the open returns the error with `session_id`; the session stays open.
+  The result gains `message_id` when a message was stored.
+- **Not mapped.** `opencode` has no MCP adapter kind, so it takes no `model` until one exists.

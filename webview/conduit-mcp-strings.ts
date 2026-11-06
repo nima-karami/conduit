@@ -319,7 +319,7 @@ export const MCP_STR = {
     title: (handle: string, tool: string) => `${handle} requests ${tool}`,
     summary: {
       open_session: (s) =>
-        `Open a ${s.agent} session in ${s.path}${s.focus ? '' : ', in the background'}`,
+        `Open a ${s.agent}${s.model === undefined ? '' : ` (model ${s.model})`} session in ${s.path}${s.focus ? '' : ', in the background'}`,
       open_terminal: (s) => `Run ${s.command} in ${s.path}${s.focus ? '' : ', in the background'}`,
       open_file: (s) => `Open ${s.path}${s.line === null ? '' : ` at line ${s.line}`}`,
       close_session: (s) => `Close ${s.target}`,

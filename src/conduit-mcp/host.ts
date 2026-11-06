@@ -964,6 +964,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       })),
     ownerWindowOf: (sessionId) => deps.ownerWindowOf(sessionId),
     windowReady: (windowId) => deps.windowReady(windowId),
+    adapterOf: (agentId) => {
+      const def = deps.domain.agentDef(agentId);
+      return def === undefined ? undefined : adapterFor(def, { e2e: deps.e2e })?.id;
+    },
+    messageReady: () => deps.domain.messagingOn() && store.available(),
+    sendMessage: (caller, args) => tools.sendMessage(caller, args),
   };
   const control = createControlHandlers(controlDeps);
   const app = createAppControlHandlers(controlDeps, control.prepared);
