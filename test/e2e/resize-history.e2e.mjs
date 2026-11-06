@@ -7,7 +7,9 @@
  * the viewport on a grow instead, so the repaint lands on those rows: shrinking to 12 rows and
  * back lost ~34 lines of a 40-line run on cmd.exe. Every check is collected and reported together.
  */
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import {
   assert,
   finishScenario,
@@ -54,7 +56,32 @@ const setContentHeight = (app, h) =>
     { w: WIDTH, h },
   );
 
-/** Resize until the pane holds `rows`, then let ConPTY's repaint for it land. */
+/** PTY output (including a ConPTY repaint) has been quiet for `quietMs`. */
+async function waitCapQuiet(page, id, quietMs = 400) {
+  await page.evaluate(
+    ({ s }) => {
+      window.__capQuiet = { n: (window.__capBy?.[s] ?? '').length, at: Date.now() };
+    },
+    { s: id },
+  );
+  await page.waitForFunction(
+    ({ s, q }) => {
+      const n = (window.__capBy?.[s] ?? '').length;
+      const st = window.__capQuiet;
+      if (!st) return false;
+      if (n !== st.n) {
+        st.n = n;
+        st.at = Date.now();
+        return false;
+      }
+      return Date.now() - st.at >= q;
+    },
+    { s: id, q: quietMs },
+    { timeout: 10000 },
+  );
+}
+
+/** Resize until the pane holds `rows`, then wait for ConPTY's repaint for it to go quiet. */
 async function resizeToRows(app, page, id, rows, pxPerRow) {
   const current = await rowsOf(page, id);
   const [, h] = await app.evaluate(({ BrowserWindow }) =>
@@ -66,7 +93,7 @@ async function resizeToRows(app, page, id, rows, pxPerRow) {
     { s: id, r: rows },
     { timeout: 10000 },
   );
-  await page.waitForTimeout(1500);
+  await waitCapQuiet(page, id);
   return rowsOf(page, id);
 }
 
@@ -95,7 +122,7 @@ try {
   });
   await tapBridge(page);
   await setContentHeight(app, TALL);
-  await page.waitForTimeout(500);
+  await page.waitForFunction((h) => window.innerHeight >= h - 120, TALL, { timeout: 10000 });
 
   const sid = await openSession(page, { path: REPO, agentId: 'shell:cmd' });
   assert(sid, 'No session after openRepo');
@@ -105,7 +132,9 @@ try {
     sid,
     { timeout: 30000 },
   );
-  await page.waitForTimeout(1000);
+  await page.waitForFunction((s) => (window.__capBy?.[s] ?? '').includes('>'), sid, {
+    timeout: 10000,
+  });
   const tallRows = await rowsOf(page, sid);
   const pxPerRow = await page.evaluate((s) => {
     const t = window.__terms[s];
@@ -125,7 +154,18 @@ try {
   await typeLine(page, sid, 'for /L %i in (1,1,40) do @echo RUN1-%i');
   await typeLine(page, sid, 'echo RUN1-END');
   await waitForOutput(page, sid, 'RUN1-END');
-  await page.waitForTimeout(800);
+  await page.waitForFunction(
+    (id) => {
+      const t = window.__terms?.[id];
+      if (!t) return false;
+      const b = t.buffer.active;
+      let text = '';
+      for (let i = 0; i < b.length; i++) text += b.getLine(i)?.translateToString(true) ?? '';
+      return text.includes('RUN1-40') && text.includes('RUN1-END');
+    },
+    sid,
+    { timeout: 10000 },
+  );
 
   for (const [round, run] of [
     [1, null],
@@ -135,7 +175,18 @@ try {
       await typeLine(page, sid, `for /L %i in (1,1,${RUN2.length}) do @echo ${run}-%i`);
       await typeLine(page, sid, `echo ${run}-END`);
       await waitForOutput(page, sid, `${run}-END`);
-      await page.waitForTimeout(800);
+      await page.waitForFunction(
+        (id) => {
+          const t = window.__terms?.[id];
+          if (!t) return false;
+          const b = t.buffer.active;
+          let text = '';
+          for (let i = 0; i < b.length; i++) text += b.getLine(i)?.translateToString(true) ?? '';
+          return text.includes('RUN2-16') && text.includes('RUN2-END');
+        },
+        sid,
+        { timeout: 10000 },
+      );
     }
     const short = await resizeToRows(app, page, sid, SHORT_ROWS, pxPerRow);
     const tall = await resizeToRows(app, page, sid, tallRows, pxPerRow);
@@ -155,7 +206,22 @@ try {
   );
 
   // ── Cold relaunch: the persisted history replays run by run at its recorded sizes ──
-  await page.waitForTimeout(1000);
+  const sbFile = join(userDataDir, `scrollback-${sid}.json`);
+  const persisted = await (async () => {
+    const started = Date.now();
+    for (;;) {
+      try {
+        if (existsSync(sbFile) && readFileSync(sbFile, 'utf8').includes('RUN2-END')) {
+          return Date.now() - started;
+        }
+      } catch {
+        // Mid-write.
+      }
+      if (Date.now() - started >= 10000) return null;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  })();
+  assert(persisted !== null, 'scrollback file must contain RUN2-END before quit');
   await shutdownApp(app, page);
   app = await launchElectron({
     executablePath: electronPath,
@@ -169,11 +235,11 @@ try {
   await page.waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), sid, {
     timeout: 20000,
   });
-  await page.waitForTimeout(1000);
   await page.evaluate(() => {
     window.__terms = {};
   });
   await revealSessionRow(page, sid);
+  await page.locator(`[data-sessionid="${sid}"]`).waitFor({ state: 'visible', timeout: 10000 });
   await page.click(`[data-sessionid="${sid}"]`);
   await page.evaluate((id) => window.agentDeck.post({ type: 'relaunch', id }), sid);
   await page.waitForFunction((s) => (window.__capBy?.[s] ?? '').includes('RUN2-END'), sid, {
@@ -182,7 +248,18 @@ try {
   await page.waitForFunction((s) => /Microsoft Windows/.test(window.__capBy?.[s] ?? ''), sid, {
     timeout: 30000,
   });
-  await page.waitForTimeout(1500);
+  await page.waitForFunction(
+    (id) => {
+      const t = window.__terms?.[id];
+      if (!t) return false;
+      const b = t.buffer.active;
+      let text = '';
+      for (let i = 0; i < b.length; i++) text += b.getLine(i)?.translateToString(true) ?? '';
+      return text.includes('RUN1-1') && text.includes('RUN2-16') && text.includes('RUN2-END');
+    },
+    sid,
+    { timeout: 15000 },
+  );
   const replayed = (await logicalLines(page, sid)) ?? [];
   const replayBad = notOnce(replayed);
   if (replayBad.length)

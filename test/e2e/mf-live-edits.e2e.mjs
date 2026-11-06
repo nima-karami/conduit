@@ -276,6 +276,24 @@ async function waitBannerGone(page, what) {
   assert(ok, `${what}: the banner should be gone`);
 }
 
+/** Bounded window for a negative: no extra launch, banner, paste, or prompt answer. */
+async function observeNothingFor(page, ms, check) {
+  await page.waitForTimeout(ms);
+  return check();
+}
+
+async function waitNotBusy(page, sid, what) {
+  const ok = await page
+    .waitForFunction(
+      (id) => (window.__sessions || []).find((s) => s.id === id)?.busy !== true,
+      sid,
+      { timeout: 10000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  assert(ok, `${what}: session should not be busy`);
+}
+
 // ── phases ──────────────────────────────────────────────────────────────────
 
 async function phaseAddAndRun({ page, sid }) {
@@ -287,9 +305,11 @@ async function phaseAddAndRun({ page, sid }) {
   assert((await launches(page, sid)).length === 1, 'E1: the folder add spawned nothing new');
 
   // QA F1: with the terminal focused, the click blurs it and the fake answers the focus report
-  // with output. The host must not read that as busy. Let the focus-in's own answer age out first.
+  // with output. The host must not read that as busy. Wait until that answer is no longer busy.
+  const capBeforeFocus = await raw(page, sid);
   await terminalInput(page).focus();
-  await page.waitForTimeout(1800);
+  await until(async () => (await raw(page, sid)).length > capBeforeFocus.length, 2000);
+  await waitNotBusy(page, sid, 'E4 focus-in');
   // A double click lands its second click on the now-disabled button: one paste, not two.
   await bannerButton(page, 'Run /add-dir').dblclick();
   const line = `/add-dir ${D}`;
@@ -298,9 +318,8 @@ async function phaseAddAndRun({ page, sid }) {
     `E4: the fake's draft is ${JSON.stringify(line)} (got ${JSON.stringify(await draftsSince(page, sid, from))})`,
   );
   await waitBannerText(page, `Press Enter in claude to add ${basename(D)}`, 2000, 'E4 pasted');
-  await page.waitForTimeout(1000);
   assert(
-    (await gotSince(page, sid, from)).length === 0,
+    await observeNothingFor(page, 1000, async () => (await gotSince(page, sid, from)).length === 0),
     `E4: nothing submitted by the host (got ${JSON.stringify(await gotSince(page, sid, from))})`,
   );
   assert(
@@ -330,11 +349,13 @@ async function phaseDialogs({ page, sid }) {
     await until(async () => records(await since(page, sid, from), 'CONFIRM').length > 0, 5000),
     "confirm: claude's add-directory confirm is open",
   );
-  await page.waitForTimeout(1000);
-  await waitBannerText(
-    page,
-    `Press Enter in claude to add ${basename(X)}`,
-    500,
+  assert(
+    await observeNothingFor(
+      page,
+      1000,
+      async () =>
+        (await bannerLines(page))?.first === `Press Enter in claude to add ${basename(X)}`,
+    ),
     "QA F3: a folder waiting on claude's confirm is not seen",
   );
 
@@ -383,7 +404,7 @@ async function phaseDialogs({ page, sid }) {
   );
   await addRoot(page, sid, Z);
   await waitBannerText(page, `claude can't see ${basename(Z)} yet`, 2000, 'ask');
-  await page.waitForTimeout(1600);
+  await waitNotBusy(page, sid, 'ask before paste');
   await bannerButton(page, 'Run /add-dir').click();
   assert(
     await until(
@@ -392,9 +413,12 @@ async function phaseDialogs({ page, sid }) {
     ),
     'ask: the paste was ignored',
   );
-  await page.waitForTimeout(1500);
   assert(
-    records(await since(page, sid, fromAsk), 'PROMPT-ANSWERED').length === 0,
+    await observeNothingFor(
+      page,
+      1500,
+      async () => records(await since(page, sid, fromAsk), 'PROMPT-ANSWERED').length === 0,
+    ),
     'ask: the prompt was not answered',
   );
   assert((await sessionOf(page, sid))?.status === 'running', 'ask: claude is still running');
@@ -530,9 +554,12 @@ async function phaseRestart({ page, sid }) {
   );
   assert(after.includes('— session relaunched —'), 'E7: the relaunch marker is shown');
   await waitBannerGone(page, 'E7');
-  await page.waitForTimeout(3000);
   assert(
-    (await launches(page, sid)).length === before.length + 1,
+    await observeNothingFor(
+      page,
+      3000,
+      async () => (await launches(page, sid)).length === before.length + 1,
+    ),
     'E7: still exactly one new launch',
   );
   assert((await sessionOf(page, sid))?.status === 'running', 'E7: still running 3 s later (R1)');
@@ -562,9 +589,14 @@ async function phaseDismiss({ page, sid }) {
 async function phaseShell({ page }) {
   const shellSid = await openSession(page, { path: S, agentId: 'shell:cmd' });
   await addRoot(page, shellSid, P);
-  await page.waitForTimeout(1500);
-  const n = await page.locator('.termhost:visible .scope-banner').count();
-  assert(n === 0, `E2: no banner on a shell (got ${n})`);
+  assert(
+    await observeNothingFor(
+      page,
+      1500,
+      async () => (await page.locator('.termhost:visible .scope-banner').count()) === 0,
+    ),
+    'E2: no banner on a shell',
+  );
   await request(
     page,
     { type: 'session:removeRoot', sessionId: shellSid, path: P, requestId: ++reqSeq },
@@ -613,8 +645,10 @@ async function phaseCantStart({ page, sid }) {
     `B1: row + centre say Can't start and name the command (row: ${JSON.stringify(await rowCantStart(page, nope))})`,
   );
   await page.locator('.session-stale button', { hasText: '↻ Relaunch' }).click();
-  await page.waitForTimeout(1500);
-  assert(await shows(), 'B1: after Relaunch refuses again, the reason is still shown');
+  assert(
+    await observeNothingFor(page, 1500, shows),
+    'B1: after Relaunch refuses again, the reason is still shown',
+  );
   await page.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), nope);
   await page
     .locator(`[data-agent-tree] .session[data-sessionid="${sid}"] [data-agent-action="select"]`)
@@ -696,8 +730,14 @@ async function phaseMissingHome({ app, page, sid, t0 }) {
     `E5: Use ${firstRoot} as home is offered`,
   );
   const launchesBefore = (await launches(page, sid)).length;
-  await page.waitForTimeout(3000);
-  assert((await launches(page, sid)).length === launchesBefore, 'E5: no fake launch');
+  assert(
+    await observeNothingFor(
+      page,
+      3000,
+      async () => (await launches(page, sid)).length === launchesBefore,
+    ),
+    'E5: no fake launch',
+  );
   assert((await sessionOf(page, sid))?.status !== 'running', 'E5: the session is not running');
   // The renderer's auto-relaunch skips a homeMissing session, so a startup term:start (and its
   // refusal) only happens when it outraces the first health check — measured absent. Ask for the
@@ -746,8 +786,14 @@ async function phaseMissingHome({ app, page, sid, t0 }) {
     cardState?.includes('Stopped'),
     `E6: the tree row says Stopped (got ${JSON.stringify(cardState)})`,
   );
-  await page.waitForTimeout(1000);
-  assert((await launches(page, sid)).length === launchesAfterStart, 'E6: still no launch');
+  assert(
+    await observeNothingFor(
+      page,
+      1000,
+      async () => (await launches(page, sid)).length === launchesAfterStart,
+    ),
+    'E6: still no launch',
+  );
   log('E6: home back → Session not running, no spawn ✓');
 }
 

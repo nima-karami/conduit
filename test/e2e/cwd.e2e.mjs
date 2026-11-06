@@ -44,39 +44,26 @@ try {
 
   await tapBridge(page);
 
-  // Try PowerShell first, then fall back to powershell (v5).
-  // The CWD injection only applies to shell:pwsh and shell:powershell agents.
-  const _agents = await page
-    .waitForFunction(
-      () => {
-        // Wait for state to arrive with agents list.
-        const sessions = window.__sessions;
-        return sessions; // just need agentDeck to have sent state
-      },
-      null,
-      { timeout: 10000 },
-    )
-    .then(() => null)
-    .catch(() => null);
+  /** Bounded window for a negative: cwd must not move (UNC refuse / trackCwd off). */
+  const observeNothingFor = async (ms, check) => {
+    await page.waitForTimeout(ms);
+    return check();
+  };
 
-  // Inspect available agents from the state message.
-  const _availableAgents = await page.evaluate(() => {
-    // The state message carries agents; capture from the subscribe buffer.
-    return window.__agentsList || [];
-  });
-
-  // Capture agents from state subscription.
+  // Capture agents and settings from state subscription.
   await page.evaluate(() => {
     window.__agentsList = [];
-    const unsub = window.agentDeck.subscribe((m) => {
-      if (m.type === 'state' && m.agents) {
-        window.__agentsList = m.agents.map((a) => a.id);
-      }
+    window.__settings = null;
+    window.agentDeck.subscribe((m) => {
+      if (m.type !== 'state') return;
+      if (m.agents) window.__agentsList = m.agents.map((a) => a.id);
+      if (m.settings) window.__settings = m.settings;
     });
     window.agentDeck.post({ type: 'ready' });
-    setTimeout(unsub, 3000);
   });
-  await page.waitForTimeout(1000);
+  await page.waitForFunction(() => (window.__agentsList || []).length > 0, null, {
+    timeout: 10000,
+  });
   const agentIds = await page.evaluate(() => window.__agentsList || []);
   log('available agents:', agentIds);
 
@@ -98,7 +85,7 @@ try {
       patch: { trackCwd: true },
     });
   });
-  await page.waitForTimeout(300);
+  await page.waitForFunction(() => window.__settings?.trackCwd === true, null, { timeout: 10000 });
 
   const sid = await openSession(page, {
     path: REPO.replace(/\\/g, '/'),
@@ -108,7 +95,11 @@ try {
 
   // Wait for the shell to emit its first prompt (initial cwd report).
   await page.waitForFunction(() => window.__cap.length > 0, null, { timeout: 20000 });
-  await page.waitForTimeout(1500); // let OSC 9;9 be parsed
+  await page.waitForFunction(
+    (id) => !!(window.__sessions || []).find((x) => x.id === id)?.cwd,
+    sid,
+    { timeout: 20000 },
+  );
 
   // cd into the subfolder.
   await page.evaluate(
@@ -127,7 +118,15 @@ try {
   await page.waitForFunction(() => window.__cap.includes('>') || window.__cap.includes('$'), null, {
     timeout: 15000,
   });
-  await page.waitForTimeout(1500); // let OSC 9;9 propagate to main process + state update
+  const expectedCwd = SUB_PATH.replace(/\\/g, '/');
+  await page.waitForFunction(
+    ({ id, want }) => {
+      const cwd = (window.__sessions || []).find((x) => x.id === id)?.cwd;
+      return !!cwd && cwd.replace(/\\/g, '/').toLowerCase() === want.toLowerCase();
+    },
+    { id: sid, want: expectedCwd },
+    { timeout: 15000 },
+  );
 
   const cwdAfterCd = await page.evaluate((id) => {
     const s = (window.__sessions || []).find((x) => x.id === id);
@@ -136,7 +135,6 @@ try {
   log('session.cwd after cd:', cwdAfterCd);
 
   // Normalize paths for comparison (the scanner returns forward-slash paths).
-  const expectedCwd = SUB_PATH.replace(/\\/g, '/');
   assert(
     cwdAfterCd &&
       (cwdAfterCd === expectedCwd || cwdAfterCd.toLowerCase() === expectedCwd.toLowerCase()),
@@ -185,16 +183,25 @@ try {
   const t0 = Date.now();
   await launched.app.evaluate(() => 1);
   const roundTrip = Date.now() - t0;
-  await page.waitForTimeout(3000);
-  const roundTripAfter = await (async () => {
-    const t = Date.now();
-    await launched.app.evaluate(() => 1);
-    return Date.now() - t;
-  })();
-  const cwdAfterUnc = await page.evaluate((id) => {
-    const s = (window.__sessions || []).find((x) => x.id === id);
-    return s ? s.cwd : null;
-  }, sid);
+  let roundTripAfter = 0;
+  let cwdAfterUnc = null;
+  assert(
+    await observeNothingFor(3000, async () => {
+      const t = Date.now();
+      await launched.app.evaluate(() => 1);
+      roundTripAfter = Date.now() - t;
+      cwdAfterUnc = await page.evaluate((id) => {
+        const s = (window.__sessions || []).find((x) => x.id === id);
+        return s ? s.cwd : null;
+      }, sid);
+      return (
+        !!cwdAfterUnc &&
+        cwdAfterUnc.toLowerCase() === expectedCwd.toLowerCase() &&
+        roundTripAfter < 500
+      );
+    }),
+    `a UNC cwd report must be refused without blocking main (cwd "${cwdAfterUnc}", ${roundTripAfter} ms)`,
+  );
   log(
     'session.cwd after UNC report:',
     cwdAfterUnc,
@@ -220,7 +227,7 @@ try {
       patch: { trackCwd: false },
     });
   });
-  await page.waitForTimeout(300);
+  await page.waitForFunction(() => window.__settings?.trackCwd === false, null, { timeout: 10000 });
 
   // Open a new session with trackCwd OFF.
   const sid2 = await openSession(page, {
@@ -230,7 +237,6 @@ try {
   log('opened second session:', sid2);
 
   await page.waitForFunction(() => window.__cap.length > 0, null, { timeout: 20000 });
-  await page.waitForTimeout(1500);
 
   // Record the current cwd (should be null or the repo root since trackCwd is off).
   const cwdBefore = await page.evaluate((id) => {
@@ -255,18 +261,20 @@ try {
   await page.waitForFunction(() => window.__cap.includes('>') || window.__cap.includes('$'), null, {
     timeout: 15000,
   });
-  await page.waitForTimeout(1500);
-
-  const cwdAfterCdOff = await page.evaluate((id) => {
-    const s = (window.__sessions || []).find((x) => x.id === id);
-    return s ? s.cwd : undefined;
-  }, sid2);
-  log('session2.cwd after cd (trackCwd off):', cwdAfterCdOff);
-
-  // With trackCwd off, cwd should remain null/undefined or equal to home (not updated).
   const expectedSub2 = sub2.replace(/\\/g, '/');
-  const cwdMoved = cwdAfterCdOff && cwdAfterCdOff.toLowerCase() === expectedSub2.toLowerCase();
-  assert(!cwdMoved, `cwd should NOT update when trackCwd is off, but got "${cwdAfterCdOff}"`);
+  let cwdAfterCdOff;
+  assert(
+    await observeNothingFor(1500, async () => {
+      cwdAfterCdOff = await page.evaluate((id) => {
+        const s = (window.__sessions || []).find((x) => x.id === id);
+        return s ? s.cwd : undefined;
+      }, sid2);
+      const cwdMoved = cwdAfterCdOff && cwdAfterCdOff.toLowerCase() === expectedSub2.toLowerCase();
+      return !cwdMoved;
+    }),
+    `cwd should NOT update when trackCwd is off, but got "${cwdAfterCdOff}"`,
+  );
+  log('session2.cwd after cd (trackCwd off):', cwdAfterCdOff);
   log('PASS: trackCwd off prevents cwd update ✓');
 
   await launched.cleanup();

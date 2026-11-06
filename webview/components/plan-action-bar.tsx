@@ -2,11 +2,13 @@ import type { JSX as ReactJSX } from 'react';
 import { useId } from 'react';
 import { handoffLabel } from '../../src/review-handoff';
 
+export type PlanSaveState = 'saved' | 'pending' | 'saving' | 'failed' | 'readonly';
+
 export interface PlanActionBarProps {
   pending: number;
   live: boolean;
   sendBlockedReason: string | null;
-  saveState: 'saved' | 'saving' | 'failed' | 'readonly';
+  saveState: PlanSaveState;
   source: boolean;
   nextCount: number;
   onSend: () => void;
@@ -15,12 +17,19 @@ export interface PlanActionBarProps {
   onRetrySave: () => void;
 }
 
-const SAVE_TEXT: Record<PlanActionBarProps['saveState'], string> = {
+const SAVE_TEXT: Record<PlanSaveState, string> = {
   saved: 'Saved',
+  pending: 'Saving…',
   saving: 'Saving…',
   failed: "Couldn't save",
   readonly: 'This file is read-only',
 };
+
+function savePhase(saveState: PlanSaveState): 'pending' | 'saving' | 'saved' | undefined {
+  return saveState === 'pending' || saveState === 'saving' || saveState === 'saved'
+    ? saveState
+    : undefined;
+}
 
 /** The plan document's bottom bar: save state, Next change, Source, Send/Copy (spec §8, §9). */
 export function PlanActionBar({
@@ -43,7 +52,9 @@ export function PlanActionBar({
 
   return (
     <div className="plan__actionbar" role="toolbar" aria-label="Plan actions">
-      <span className="plan__save">{SAVE_TEXT[saveState]}</span>
+      <span className="plan__save" data-plan-save={savePhase(saveState)}>
+        {SAVE_TEXT[saveState]}
+      </span>
       {saveState === 'failed' && (
         <button type="button" className="btn plan__retry" onClick={onRetrySave}>
           Retry
