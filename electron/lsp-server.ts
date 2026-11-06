@@ -71,6 +71,11 @@ export interface LspServerHandle {
   /** Any `$/progress` begin token still open. Picks timeouts/state only — never gates a send. */
   readonly loading: boolean;
   readonly busy: boolean;
+  readonly serverStatus?: {
+    health: 'ok' | 'warning' | 'error';
+    quiescent: boolean;
+    message?: string;
+  };
   onProgress(cb: (loading: boolean, title: string | undefined) => void): void;
   onExit(cb: (e: LspExit) => void): void;
   notify(method: string, params: unknown): void;
@@ -151,6 +156,8 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
 
   const openTokens = new Set<string | number>();
   let serverBusy = false;
+  let serverStatus: LspServerHandle['serverStatus'];
+  const progressTitles = new Map<string | number, string>();
   const progressCbs: ((loading: boolean, title: string | undefined) => void)[] = [];
   const exitCbs: ((e: LspExit) => void)[] = [];
   let exited = false;
@@ -196,15 +203,39 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
     '$/progress',
     (p: { token: string | number; value?: { kind?: string; title?: string } }) => {
       const kind = p?.value?.kind;
-      if (kind === 'begin') openTokens.add(p.token);
-      else if (kind === 'end') openTokens.delete(p.token);
+      if (kind === 'begin') {
+        openTokens.add(p.token);
+        progressTitles.set(p.token, p.value?.title ?? '');
+      } else if (kind === 'end') openTokens.delete(p.token);
       else return;
+      log.info(SCOPE, `${spec.binary} progress ${kind}`, {
+        root,
+        token: p.token,
+        title: p.value?.title ?? progressTitles.get(p.token),
+      });
+      if (kind === 'end') progressTitles.delete(p.token);
       for (const cb of progressCbs) cb(openTokens.size > 0, p.value?.title);
     },
   );
-  conn.onNotification('experimental/serverStatus', (p: { quiescent?: boolean }) => {
-    if (typeof p?.quiescent === 'boolean') serverBusy = !p.quiescent;
-  });
+  conn.onNotification(
+    'experimental/serverStatus',
+    (p: { quiescent?: boolean; health?: string; message?: string | null }) => {
+      if (typeof p?.quiescent === 'boolean') serverBusy = !p.quiescent;
+      if (
+        typeof p?.quiescent === 'boolean' &&
+        (p.health === 'ok' || p.health === 'warning' || p.health === 'error')
+      ) {
+        const next: NonNullable<LspServerHandle['serverStatus']> = {
+          health: p.health,
+          quiescent: p.quiescent,
+          ...(typeof p.message === 'string' ? { message: p.message } : {}),
+        };
+        if (JSON.stringify(next) !== JSON.stringify(serverStatus))
+          log.info(SCOPE, `${spec.binary} server status`, { root, ...next });
+        serverStatus = next;
+      }
+    },
+  );
   conn.onNotification('window/showMessage', (p: { message?: string }) =>
     log.info(SCOPE, `${spec.binary}: ${p?.message ?? ''}`),
   );
@@ -292,6 +323,9 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
     pid,
     initialized,
     exited: exitedP,
+    get serverStatus() {
+      return serverStatus;
+    },
     get busy() {
       return openTokens.size > 0 || serverBusy;
     },

@@ -197,6 +197,22 @@ describe('startLanguageServer', () => {
     await until(() => !h.handle.busy);
   });
 
+  it('exposes server health and message with quiescence', async () => {
+    const h = start();
+    await h.handle.initialized;
+    await h.peer.sendNotification('experimental/serverStatus', {
+      health: 'error',
+      quiescent: true,
+      message: 'Failed to load workspaces.',
+    });
+    await until(() => h.handle.serverStatus?.health === 'error');
+    expect(h.handle.serverStatus).toEqual({
+      health: 'error',
+      quiescent: true,
+      message: 'Failed to load workspaces.',
+    });
+  });
+
   it('advertises rust-analyzer server status notifications', async () => {
     const p = await start().initParams;
     expect(p.capabilities).toMatchObject({ experimental: { serverStatusNotification: true } });

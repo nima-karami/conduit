@@ -320,7 +320,20 @@ export class LspManager {
         return Promise.resolve({
           servers: [...this.servers.values()]
             .filter((r) => r.state !== 'stopped')
-            .map((r) => ({ ...this.statusOf(r), busy: r.handle?.busy ?? false })),
+            .map((r) => {
+              const status = r.handle?.serverStatus;
+              return {
+                ...this.statusOf(r),
+                busy: r.handle?.busy ?? false,
+                ...(status
+                  ? {
+                      health: status.health,
+                      quiescent: status.quiescent,
+                      ...(status.message === undefined ? {} : { statusMessage: status.message }),
+                    }
+                  : {}),
+              };
+            }),
           languages: this.deps.registry.map(languageInfo),
         });
       case 'lsp:restart':

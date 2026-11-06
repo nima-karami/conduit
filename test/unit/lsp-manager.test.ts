@@ -37,6 +37,7 @@ class FakeServer implements LspServerHandle {
   readonly initialized: Promise<void>;
   loading = false;
   busy = false;
+  serverStatus?: { health: 'ok' | 'warning' | 'error'; quiescent: boolean; message?: string };
   notifies: {
     method: string;
     params: { textDocument?: { uri?: string; version?: number; text?: string } } & Record<
@@ -1340,6 +1341,11 @@ describe('LspManager — replies, re-home and status', () => {
     await t.open('/w/m/main.go');
     await t.ready();
     (t.servers[0] as FakeServer).busy = true;
+    (t.servers[0] as FakeServer).serverStatus = {
+      health: 'error',
+      quiescent: true,
+      message: 'load failed',
+    };
     expect(await t.send(1, 'e1', { type: 'lsp:statusSnapshot' })).toEqual({
       servers: [
         {
@@ -1349,6 +1355,9 @@ describe('LspManager — replies, re-home and status', () => {
           state: 'ready',
           pid: t.servers[0]?.pid,
           busy: true,
+          health: 'error',
+          quiescent: true,
+          statusMessage: 'load failed',
         },
       ],
       languages: [

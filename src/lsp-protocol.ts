@@ -109,7 +109,15 @@ export interface LspCalls {
   'lsp:cancel': { req: { requestId: string }; res: { ok: boolean } };
   'lsp:statusSnapshot': {
     req: Record<never, never>;
-    res: { servers: (LspServerStatus & { busy: boolean })[]; languages: LspLanguageInfo[] };
+    res: {
+      servers: (LspServerStatus & {
+        busy: boolean;
+        health?: 'ok' | 'warning' | 'error';
+        quiescent?: boolean;
+        statusMessage?: string;
+      })[];
+      languages: LspLanguageInfo[];
+    };
   };
   'lsp:restart': { req: { languageId: string }; res: { ok: boolean } };
   'lsp:trustState': { req: Record<never, never>; res: LspTrustState };

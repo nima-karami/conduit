@@ -273,7 +273,7 @@ jobs:
       - if: contains(format(' {0} ', matrix.names), ' rust-lsp ') || contains(format(' {0} ', matrix.names), ' lsp-trust-multi ') || contains(format(' {0} ', matrix.names), ' lsp-residency ') || contains(format(' {0} ', matrix.names), ' lsp-residency-replay ') || contains(format(' {0} ', matrix.names), ' lsp-residency-launch ')
         shell: pwsh
         run: |
-          rustup toolchain install 1.98.1 --profile minimal --component rust-analyzer
+          rustup toolchain install 1.98.1 --profile minimal --component rust-analyzer --component rust-src
           rustup default 1.98.1
           rust-analyzer --version
           Join-Path $HOME '.cargo' 'bin' >> $env:GITHUB_PATH

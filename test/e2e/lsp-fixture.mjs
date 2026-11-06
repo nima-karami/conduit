@@ -150,6 +150,8 @@ export async function waitServerIdle(page, languageId, log, ms = 30_000, match =
     const mine = snap.servers.filter((s) => s.languageId === languageId && (!match || match(s)));
     const bad = mine.find((s) => s.state === 'absent' || s.state === 'crashed');
     assert(!bad, `${languageId} server went ${bad?.state}: ${JSON.stringify(bad)}`);
+    const failed = mine.find((s) => s.quiescent === true && s.health === 'error');
+    assert(!failed, `${languageId} workspace failed: ${JSON.stringify(failed)}`);
     const hit = mine.find((s) => s.state === 'ready' && !s.busy);
     if (hit) {
       if (idleKey !== hit.serverKey) {
