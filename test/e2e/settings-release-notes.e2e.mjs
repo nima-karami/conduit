@@ -12,6 +12,27 @@ const currentVersion = JSON.parse(
   readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
 ).version;
 
+/** Newest-first CHANGELOG sections; skips Unreleased. Used to pick the longest notes body without clicking every rail row. */
+function longestReleasedVersion(markdown) {
+  let best = { version: '', len: 0 };
+  for (const section of markdown
+    .replace(/\r\n?/g, '\n')
+    .split(/^## \[/m)
+    .slice(1)) {
+    const end = section.indexOf(']');
+    if (end < 0) continue;
+    const version = section.slice(0, end).trim();
+    if (!version || version.toLowerCase() === 'unreleased') continue;
+    const body = section.slice(section.indexOf('\n', end)).trim();
+    if (body.length > best.len) best = { version: version.replace(/^v/i, ''), len: body.length };
+  }
+  return best.version;
+}
+
+const longestNotesVersion = longestReleasedVersion(
+  readFileSync(new URL('../../CHANGELOG.md', import.meta.url), 'utf8'),
+);
+
 // A settings file with no lastSeenVersion is a legacy profile: the post-update toast offers the
 // installed version's notes, which is the What's-new entry point checked last.
 const userDataDir = profileDir('settings-release-notes');
@@ -102,14 +123,24 @@ runScenario(
     );
     log(`opened on v${currentVersion}`);
 
+    const paneFits = await page
+      .locator('.settings__pane')
+      .evaluate((el) => el.scrollHeight <= el.clientHeight);
+    assert(paneFits, 'the settings pane does not scroll');
+    const railScrolls = await page
+      .locator('.relnotes__rail')
+      .evaluate((el) => el.scrollHeight > el.clientHeight);
+    assert(railScrolls, 'the version rail scrolls');
+
     const options = page.locator('.relnotes__rail [role="option"]');
-    await page.keyboard.press('End');
-    const lastForScroll = (
-      await options.last().locator('.relnotes__vername').textContent()
-    )?.replace(/^v/, '');
-    if (lastForScroll) await waitShown(page, lastForScroll);
+    assert(longestNotesVersion, 'CHANGELOG has a released version with notes');
+    await options
+      .filter({ hasText: `v${longestNotesVersion}` })
+      .first()
+      .click();
+    await waitShown(page, longestNotesVersion);
     const scrollable = await body.evaluate((el) => el.scrollHeight > el.clientHeight);
-    assert(scrollable, 'the notes body scrolls independently of the rail');
+    assert(scrollable, 'the longest entry notes body scrolls independently of the rail');
     const subheadBefore = await page.locator('.about__subhead').boundingBox();
     await body.evaluate((el) => {
       el.scrollTop = el.scrollHeight;
@@ -173,10 +204,7 @@ runScenario(
     );
     await assertFocusLanded(page, 'About → Release notes reopen');
     await page.keyboard.press('Escape');
-    assert(
-      (await page.locator('.about__subtitle').count()) === 0,
-      'first Escape leaves the sub-page',
-    );
+    await page.locator('.about__subtitle').waitFor({ state: 'detached', timeout: 5000 });
     assert(
       await page.locator('.modal.settings').isVisible(),
       'Settings stays open after first Escape',

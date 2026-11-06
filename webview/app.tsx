@@ -61,7 +61,7 @@ import {
   pruneCorpus,
   quickOpenFileRows,
 } from '../src/quick-open-folders';
-import { quitConfirmCopy } from '../src/quit-guard';
+import { quitConfirmState } from '../src/quit-guard';
 import {
   historyRepoFor,
   orderRepos,
@@ -748,7 +748,6 @@ export function App() {
         askDirty: (req) => dirtyCloseRef.current.ask(req),
         askSessions: ({ reason, running, busy, onShown, signal }) =>
           new Promise<boolean | { proceed: boolean; stopAgents?: boolean }>((resolve) => {
-            const copy = quitConfirmCopy({ running, busy, reason });
             const key = nextModalKey();
             signal.addEventListener(
               'abort',
@@ -761,26 +760,7 @@ export function App() {
             slot.open({
               kind: 'confirm',
               key,
-              state: {
-                title: copy.title,
-                message: copy.body,
-                confirmLabel: copy.confirmLabel,
-                // F4: only a window close ends agents; a quit's destructive choice is the secondary.
-                danger: reason === 'windowClose' || reason === 'quitAndStop',
-                hideCancel: true,
-                showClose: true,
-                // The close button is the keyboard default so an accidental Enter never quits.
-                focusClose: true,
-                onShown,
-                onCancel: () => resolve(false),
-                onConfirm: () => resolve(true),
-                ...(reason === 'quit' || reason === 'update'
-                  ? {
-                      secondaryLabel: 'Quit and stop all agents',
-                      onSecondary: () => resolve({ proceed: true, stopAgents: true }),
-                    }
-                  : {}),
-              },
+              state: quitConfirmState({ running, busy, reason, onShown, resolve }),
             });
           }),
         focusDialog: focusOpenModal,

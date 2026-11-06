@@ -193,3 +193,41 @@ export function quitConfirmCopy({ running, busy, reason }: QuitConfirmCopyInput)
     reason === 'update' ? 'Relaunch & update' : reason === 'quitAndStop' ? 'Stop and quit' : 'Quit';
   return { title, body, confirmLabel };
 }
+
+export type QuitConfirmResolve = boolean | { proceed: boolean; stopAgents?: boolean };
+
+export interface QuitConfirmStateInput extends QuitConfirmCopyInput {
+  onShown?: () => void;
+  resolve: (value: QuitConfirmResolve) => void;
+}
+
+/** ConfirmDialog state for the running-session quit guard (see dirty-quit-guard plan). */
+export function quitConfirmState({
+  running,
+  busy,
+  reason,
+  resolve,
+  onShown,
+}: QuitConfirmStateInput) {
+  const copy = quitConfirmCopy({ running, busy, reason });
+  return {
+    title: copy.title,
+    message: copy.body,
+    confirmLabel: copy.confirmLabel,
+    // Only a window close ends agents; a quit's destructive choice is the secondary.
+    danger: reason === 'windowClose' || reason === 'quitAndStop',
+    hideCancel: true as const,
+    showClose: true as const,
+    // The close button is the keyboard default so an accidental Enter never quits.
+    focusClose: true as const,
+    onShown,
+    onCancel: () => resolve(false),
+    onConfirm: () => resolve(true),
+    ...(reason === 'quit' || reason === 'update'
+      ? {
+          secondaryLabel: 'Quit and stop all agents',
+          onSecondary: () => resolve({ proceed: true, stopAgents: true }),
+        }
+      : {}),
+  };
+}

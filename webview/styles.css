@@ -7701,11 +7701,10 @@ body.gh-resizing {
   padding: var(--density-settings-pane-pad);
   min-width: 0;
 }
-.settings__pane--relnotes {
+.settings__pane.settings__pane--relnotes {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  min-height: 0;
 }
 
 /* Settings → About → Release notes sub-page. The version rail and notes each scroll on their

@@ -170,6 +170,20 @@ describe('Settings About release notes', () => {
     expect(document.querySelector('[data-release-notes="failed"]')).toBeTruthy();
   });
 
+  it('does not move focus to the rail if focus left the sub-page while loading', async () => {
+    await mount({ tab: 'about' });
+    await act(async () => button('Release notes')?.click());
+    const general = [...document.querySelectorAll<HTMLElement>('.settings__navitem')].find(
+      (b) => b.textContent === 'General',
+    );
+    await act(async () => {
+      general?.focus();
+    });
+    await act(async () => changelog.resolve(CHANGELOG));
+    expect(document.activeElement).toBe(general);
+    expect(document.querySelector('[role="option"][aria-selected="true"]')).toBeTruthy();
+  });
+
   it('Back returns to About and focuses the Release notes button', async () => {
     await mount({ tab: 'about' });
     await handOffAndLoad(button('Release notes'));

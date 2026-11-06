@@ -1441,7 +1441,7 @@ function AboutReleaseNotes({
         </button>
         <span className="about__subtitle">{CHROME_STR.releaseNotes.tab}</span>
       </div>
-      <ReleaseNotesPage installedVersion={installedVersion} takeFocus />
+      <ReleaseNotesPage installedVersion={installedVersion} />
     </div>
   );
 }

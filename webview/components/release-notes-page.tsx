@@ -32,14 +32,7 @@ const KEY_STEP: Record<string, (index: number, last: number) => number> = {
   End: (_i, last) => last,
 };
 
-export function ReleaseNotesPage({
-  installedVersion,
-  takeFocus = false,
-}: {
-  installedVersion?: string;
-  /** Once entries arrive, the selected version claims focus (the opener unmounts). */
-  takeFocus?: boolean;
-}) {
+export function ReleaseNotesPage({ installedVersion }: { installedVersion?: string }) {
   const [load, setLoad] = useState<Load>({ state: 'loading' });
   const [selected, setSelected] = useState(0);
   const mounted = useRef(true);
@@ -92,7 +85,6 @@ export function ReleaseNotesPage({
         entries={entries}
         selected={selected}
         installedVersion={installedVersion}
-        takeFocus={takeFocus}
         onSelect={setSelected}
       />
       {entries[selected] && (
@@ -109,26 +101,25 @@ function VersionRail({
   entries,
   selected,
   installedVersion,
-  takeFocus,
   onSelect,
 }: {
   entries: ChangelogEntry[];
   selected: number;
   installedVersion?: string;
-  takeFocus: boolean;
   onSelect(index: number): void;
 }) {
   const railRef = useRef<HTMLDivElement>(null);
   const newestYear = entries[0]?.date?.slice(0, 4);
-  const takeFocusRef = useRef(takeFocus);
-  takeFocusRef.current = takeFocus;
 
   // Opening on the installed version must show it even when it sits far down the rail.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only the first list, not every move
   useLayoutEffect(() => {
     const option = railRef.current?.querySelector<HTMLElement>('[aria-selected="true"]');
     option?.scrollIntoView({ block: 'nearest' });
-    if (takeFocusRef.current) option?.focus();
+    // Claim focus from Back only; if the user moved focus during the load, leave it there.
+    const subPage = railRef.current?.closest('.about--relnotes');
+    const active = document.activeElement;
+    if (active && subPage?.contains(active)) option?.focus();
   }, [entries]);
 
   const onKeyDown = useCallback(

@@ -223,11 +223,13 @@ describe('ConfirmDialog', () => {
       onSecondary: vi.fn(),
     });
     const close = dialog.querySelector<HTMLButtonElement>('.iconbtn[aria-label="Close"]');
+    const primary = dialog.querySelector<HTMLButtonElement>('.btn--primary, .btn--danger');
     expect(document.activeElement).toBe(close);
+    expect(document.activeElement).not.toBe(primary);
     await act(async () => {
-      close?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      close?.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+      (document.activeElement as HTMLElement | null)?.click();
     });
+    expect(onCancel).toHaveBeenCalled();
     expect(state.onConfirm).not.toHaveBeenCalled();
   });
 
