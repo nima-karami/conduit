@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.56.2] — 2026-11-05
+
 ### Added
 - **Agents can show you any diff in Review.** A new `open_diff` tool takes a unified diff, inline
   or as a `.diff`/`.patch` file, from git, `git format-patch`, svn, hg or `diff -u`, and opens it
