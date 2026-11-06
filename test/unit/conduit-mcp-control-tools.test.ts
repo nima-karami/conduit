@@ -352,6 +352,27 @@ describe('createControlHandlers', () => {
     expect(h.opens[2].label).toBe('Build');
   });
 
+  it('close_when_done defaults to false and is passed through for both open tools (CON-152)', async () => {
+    const h = harness();
+    const c = whenOn(h.deps);
+    await c.openSession(caller(), sessionArgs());
+    await c.openSession(caller(), sessionArgs({ close_when_done: true }));
+    await c.openTerminal(caller(), { path: '/repo', command: 'node', close_when_done: true });
+    expect(h.opens.map((o) => o.closeWhenDone)).toEqual([false, true, true]);
+  });
+
+  it('close_when_done that is not a boolean → invalid_args, nothing opened (CON-152)', async () => {
+    const h = harness();
+    const c = whenOn(h.deps);
+    expect(code(await c.openSession(caller(), sessionArgs({ close_when_done: 'yes' })))).toBe(
+      'invalid_args',
+    );
+    expect(
+      code(await c.openTerminal(caller(), { path: '/repo', command: 'node', close_when_done: 1 })),
+    ).toBe('invalid_args');
+    expect(h.opens).toEqual([]);
+  });
+
   it('success returns {session_id, handle: claimHandle(id), label, agent}', async () => {
     const h = harness();
     const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ label: 'Worker' }));

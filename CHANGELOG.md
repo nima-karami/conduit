@@ -6,6 +6,12 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- `open_session` and `open_terminal` take `close_when_done`: the session closes once its program exits.
+
+### Changed
+- Terminals an agent opens get a handle and stay in `list_sessions` after they exit, so the agent can close them.
+
 ## [0.57.0] — 2026-11-06
 
 ### Added

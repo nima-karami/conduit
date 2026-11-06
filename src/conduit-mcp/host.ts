@@ -35,6 +35,7 @@ import { isCountedInput, nextDraftState, settleDraft, stripTerminalReplies } fro
 import {
   cliKindOfHandle,
   type HandleCounters,
+  handlePrefixForCommand,
   parseHandleCounters,
   serializeHandleCounters,
 } from './handles';
@@ -416,7 +417,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   };
   /**
    * A lazily named shell is listed only while a CLI is live in it or it has message history, so a
-   * health check (`claude mcp list`) doesn't enrol it for good (plan amendment B2).
+   * health check (`claude mcp list`) doesn't enrol it for good (plan amendment B2). A session an
+   * agent opened stays listed while it exists, so its opener can see and close it (CON-149).
    */
   const listedSessions = () => {
     let talked: Set<Handle> | undefined;
@@ -427,7 +429,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return deps.sessions.list().flatMap((s) => {
       const handle = s.mcpHandle;
       if (!handle) return [];
-      const listed = hasDefAdapter(s.id) || registry.isLive(s.id) || hasHistory(handle);
+      const listed =
+        hasDefAdapter(s.id) ||
+        registry.isLive(s.id) ||
+        hasHistory(handle) ||
+        s.openedBy !== undefined;
       return listed ? [{ session: s, handle }] : [];
     });
   };
@@ -878,10 +884,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       return { sessionId };
     },
     agentIds: () => deps.domain.agentIds(),
+    // Every MCP-opened session gets a handle so its opener can address it (CON-149). A command with
+    // no adapter takes its program's prefix; a CLI that connects later keeps this handle.
     claimHandle: (sessionId) => {
       const def = deps.domain.defOf(sessionId);
-      const adapter = def && adapterFor(def, { e2e: deps.e2e });
-      return adapter ? claimHandle(sessionId, adapter.id) : null;
+      if (!def) return null;
+      const adapter = adapterFor(def, { e2e: deps.e2e });
+      return claimHandle(sessionId, adapter ? adapter.id : handlePrefixForCommand(def.command));
     },
     now,
     info: (message, data) => deps.log.info('conduit-mcp', message, data),

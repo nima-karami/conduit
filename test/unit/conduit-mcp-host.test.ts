@@ -398,6 +398,7 @@ function harness(
           agentId: req.launch.kind === 'agent' ? req.launch.agentId : COMMAND_AGENT_ID,
           home: req.home,
           ...(req.launch.kind === 'command' ? { command: req.launch.command } : {}),
+          openedBy: req.openedBy,
         }),
       );
       return { ok: true as const, sessionId: id, label: `S ${id}` };
@@ -2300,6 +2301,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
         label: undefined,
         focus: false,
         launch: { kind: 'agent', agentId: 'e2e-fake-mcp' },
+        closeWhenDone: false,
       },
     ]);
     expect(h.sessions.get('n1')?.mcpHandle).toBe('fake-2');
@@ -2318,15 +2320,25 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     expect(fs.readFileSync(path.join(h.dir, 'handles.json'), 'utf8')).toBe(handles);
   });
 
-  it('open_terminal: a command with no adapter gets no handle', async () => {
+  it('open_terminal: a command with no adapter gets a term handle at create (CON-149)', async () => {
     const h = harness({ kinds: { '/w': 'dir' } });
     await h.host.start();
     const a = await launch(h, 's1');
     on(h, 's1', ['open_terminal']);
     const c = await client(h.ep, a.token);
     const r = await c.call('open_terminal', { path: '/w', command: 'node', args: ['-e', 'x'] });
-    expect(r.body).toMatchObject({ session_id: 'n1', handle: null, agent: 'node' });
-    expect(h.sessions.get('n1')?.mcpHandle).toBeUndefined();
+    expect(r.body).toMatchObject({ session_id: 'n1', handle: 'term-1', agent: 'node' });
+    expect(h.sessions.get('n1')?.mcpHandle).toBe('term-1');
+  });
+
+  it('open_terminal: a cursor-agent command gets a cursor handle (CON-149)', async () => {
+    const h = harness({ kinds: { '/w': 'dir' } });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    on(h, 's1', ['open_terminal']);
+    const c = await client(h.ep, a.token);
+    const r = await c.call('open_terminal', { path: '/w', command: 'cursor-agent' });
+    expect(r.body).toMatchObject({ session_id: 'n1', handle: 'cursor-1' });
   });
 
   it('open_terminal: a command whose leaf matches an adapter gets a handle at create and MCP wiring at launch', async () => {
@@ -3722,6 +3734,31 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
     expect(resultOf(c.lines.find((line) => line.id === 1))).toEqual({ closed: 's2' });
     expect(h.closes).toEqual(['s2']);
     expect(h.toWindow.filter((entry) => entry.msg.type === 'mcp:ui')).toEqual([]);
+  });
+
+  it('a terminal an agent opened stays listed after it exits, and its opener can close it (CON-149)', async () => {
+    const h = harness({ kinds: { '/w': 'dir' } });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    allow(h, 's1', {
+      open_terminal: { access: 'on' },
+      close_session: { access: 'on', reach: 'opened' },
+    });
+    const c = await rawClient(h.ep, a.token);
+    c.call(1, 'open_terminal', { path: '/w', command: 'node' });
+    expect(resultOf(await c.reply(1))).toMatchObject({ session_id: 'n1', handle: 'term-1' });
+    h.owners.set('n1', null);
+    h.exit('n1');
+    c.call(2, 'list_sessions');
+    const listed = resultOf(await c.reply(2)) as {
+      sessions: Array<{ handle: string; presence: string }>;
+    };
+    expect(listed.sessions).toContainEqual(
+      expect.objectContaining({ handle: 'term-1', presence: 'exited' }),
+    );
+    c.call(3, 'close_session', { session: 'term-1' });
+    expect(c.errorOf(await c.reply(3))).toBe('ok');
+    expect(h.closes).toEqual(['n1']);
   });
 
   it('self close: the reply is written before the drained connection closes', async () => {

@@ -96,6 +96,7 @@ const PATH = {
 } as const;
 const LABEL = { type: 'string', maxLength: MAX_LABEL_CHARS } as const;
 const FOCUS = { type: 'boolean', default: true } as const;
+const CLOSE_WHEN_DONE = { type: 'boolean', default: false } as const;
 
 // Spec 2026-10-27-conduit-mcp-control-tools §3.1; agent ids are an enum unless S0 finds a CLI that rejects it (A6).
 function controlSchemas(agentIds: readonly string[]): ToolSchema[] {
@@ -103,7 +104,7 @@ function controlSchemas(agentIds: readonly string[]): ToolSchema[] {
     {
       name: 'open_session',
       description:
-        "Open a new Conduit session running a registered agent in a folder (absolute, or relative to your session's home folder). focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.",
+        "Open a new Conduit session running a registered agent in a folder (absolute, or relative to your session's home folder). close_when_done:true closes the session once its program exits; finished output is lost. focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.",
       inputSchema: {
         ...OBJECT,
         properties: {
@@ -111,6 +112,7 @@ function controlSchemas(agentIds: readonly string[]): ToolSchema[] {
           agent: { type: 'string', enum: [...agentIds] },
           label: LABEL,
           focus: FOCUS,
+          close_when_done: CLOSE_WHEN_DONE,
         },
         required: ['path', 'agent'],
       },
@@ -118,7 +120,7 @@ function controlSchemas(agentIds: readonly string[]): ToolSchema[] {
     {
       name: 'open_terminal',
       description:
-        "Open a new Conduit terminal running a command in a folder (absolute, or relative to your session's home folder); argv, not a shell: use command 'pwsh' with args ['-c', …] for pipes. focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.",
+        "Open a new Conduit terminal running a command in a folder (absolute, or relative to your session's home folder); argv, not a shell: use command 'pwsh' with args ['-c', …] for pipes. close_when_done:true closes the session once its program exits; finished output is lost. focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.",
       inputSchema: {
         ...OBJECT,
         properties: {
@@ -127,6 +129,7 @@ function controlSchemas(agentIds: readonly string[]): ToolSchema[] {
           args: { type: 'array', items: { type: 'string' }, maxItems: MAX_ARGS },
           label: LABEL,
           focus: FOCUS,
+          close_when_done: CLOSE_WHEN_DONE,
         },
         required: ['path', 'command'],
       },

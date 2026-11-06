@@ -485,6 +485,7 @@ describe('server domain: sessions.create and MCP opens', () => {
       label: 'worker',
       focus: false,
       launch: { kind: 'agent', agentId: 'sh' },
+      closeWhenDone: false,
     });
     expect(outcome).toMatchObject({ ok: false, code: 'spawn_unconfirmed' });
     const sessionId = outcome.ok ? '' : 'sessionId' in outcome ? outcome.sessionId : '';
@@ -500,6 +501,7 @@ describe('server domain: sessions.create and MCP opens', () => {
       home: h.home,
       label: 'w',
       focus: true,
+      closeWhenDone: false,
     };
     const ok = await h.domain.domain.openSession({
       ...req,
@@ -516,6 +518,59 @@ describe('server domain: sessions.create and MCP opens', () => {
       await h.domain.domain.openSession({ ...req, launch: { kind: 'agent', agentId: 'sh' } }),
     ).toMatchObject({ ok: false, code: 'server_stopping' });
     expect(h.domain.sessions.list()).toHaveLength(count);
+  });
+});
+
+describe('server domain: close_when_done (CON-152)', () => {
+  // Lets a fired exit's async close finish; a macrotask runs after every queued microtask.
+  const settled = () => new Promise<void>((resolve) => setImmediate(resolve));
+  const openWith = async (h: ReturnType<typeof harness>, closeWhenDone: boolean) => {
+    const caller = await h.create();
+    const out = await h.domain.domain.openSession({
+      callerSessionId: caller,
+      openedBy: { handle: 'a1', sessionId: caller },
+      home: h.home,
+      label: 'job',
+      focus: false,
+      launch: { kind: 'agent', agentId: 'sh' },
+      closeWhenDone,
+    });
+    if (!out.ok || !('sessionId' in out)) throw new Error('open failed');
+    await start(h, out.sessionId);
+    return out.sessionId;
+  };
+
+  it('a program that exits closes its session once', async () => {
+    const h = harness();
+    const id = await openWith(h, true);
+    h.runtime.fire({ type: 'exit', sessionId: id, generation: 1, code: 0, reason: 'exited' });
+    await vi.waitFor(() => expect(h.domain.sessions.get(id)).toBeUndefined());
+    expect(h.calls.filter((c) => c === `onSessionDeleted:${id}`)).toHaveLength(1);
+  });
+
+  it('without the flag the exited session stays', async () => {
+    const h = harness();
+    const id = await openWith(h, false);
+    h.runtime.fire({ type: 'exit', sessionId: id, generation: 1, code: 0, reason: 'exited' });
+    await settled();
+    expect(h.domain.sessions.get(id)?.status).toBe('exited');
+  });
+
+  it('a kill or a lost PTY does not close it', async () => {
+    const h = harness();
+    const killed = await openWith(h, true);
+    h.runtime.fire({
+      type: 'exit',
+      sessionId: killed,
+      generation: 1,
+      code: null,
+      reason: 'killed',
+    });
+    const lost = await openWith(h, true);
+    h.runtime.fire({ type: 'exit', sessionId: lost, generation: 1, code: null, reason: 'lost' });
+    await settled();
+    expect(h.domain.sessions.get(killed)).toBeDefined();
+    expect(h.domain.sessions.get(lost)).toBeDefined();
   });
 });
 
