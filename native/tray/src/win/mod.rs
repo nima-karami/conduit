@@ -11,7 +11,7 @@ use crate::protocol::{
 use icon::TrayIconHost;
 use std::io::{BufWriter, Write};
 use std::ptr::{null, null_mut};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, Receiver, Sender};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::SystemInformation::GetTickCount64;
@@ -88,23 +88,8 @@ pub fn run() -> i32 {
         pid: std::process::id(),
     });
 
-    let mut message = MSG::default();
-    loop {
-        let result = unsafe { GetMessageW(&mut message, null_mut(), 0, 0) };
-        if result == -1 {
-            state.exit_code = EXIT_SHELL_UNAVAILABLE;
-            break;
-        }
-        if result == 0 {
-            break;
-        }
-        unsafe {
-            TranslateMessage(&message);
-            DispatchMessageW(&message);
-        }
-        while let Ok(event) = receiver.try_recv() {
-            state.handle(event);
-        }
+    if !pump_messages(&receiver, |event| state.handle(event)) {
+        state.exit_code = EXIT_SHELL_UNAVAILABLE;
     }
 
     unsafe {
@@ -113,6 +98,27 @@ pub fn run() -> i32 {
         UnregisterClassW(class_name.as_ptr(), instance);
     }
     state.exit_code
+}
+
+/// Returns false when `GetMessageW` failed; the caller decides the exit code.
+fn pump_messages(receiver: &Receiver<NativeEvent>, mut handle: impl FnMut(NativeEvent)) -> bool {
+    let mut message = MSG::default();
+    loop {
+        let result = unsafe { GetMessageW(&mut message, null_mut(), 0, 0) };
+        if result == -1 {
+            return false;
+        }
+        if result == 0 {
+            return true;
+        }
+        unsafe {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        while let Ok(event) = receiver.try_recv() {
+            handle(event);
+        }
+    }
 }
 
 struct State {
@@ -252,6 +258,15 @@ struct WindowContext {
     sender: Sender<NativeEvent>,
 }
 
+/// Shell callbacks arrive as sent messages that `GetMessageW` dispatches without returning,
+/// so an event queued from one waits for the next posted message. The wake is what makes
+/// the loop drain it now; see the `tray_callback_drains_without_other_traffic` test.
+unsafe fn enqueue(hwnd: HWND, sender: &Sender<NativeEvent>, event: NativeEvent) {
+    if sender.send(event).is_err() || PostMessageW(hwnd, WM_SUPERVISOR, 0, 0) == 0 {
+        PostQuitMessage(EXIT_SHELL_UNAVAILABLE);
+    }
+}
+
 unsafe extern "system" fn window_proc(
     hwnd: HWND,
     message: u32,
@@ -262,28 +277,22 @@ unsafe extern "system" fn window_proc(
     if !context.is_null() {
         let context = &*context;
         if message == context.taskbar_created {
-            if context.sender.send(NativeEvent::TaskbarCreated).is_err() {
-                PostQuitMessage(EXIT_SHELL_UNAVAILABLE);
-            }
+            enqueue(hwnd, &context.sender, NativeEvent::TaskbarCreated);
             return 0;
         }
         match message {
             WM_SUPERVISOR => return 0,
             WM_TRAY_CALLBACK => {
-                if context
-                    .sender
-                    .send(NativeEvent::Tray((lparam as u32) & 0xffff))
-                    .is_err()
-                {
-                    PostQuitMessage(EXIT_SHELL_UNAVAILABLE);
-                }
+                enqueue(
+                    hwnd,
+                    &context.sender,
+                    NativeEvent::Tray((lparam as u32) & 0xffff),
+                );
                 return 0;
             }
             WM_TIMER if wparam == RETRY_TIMER_ID => {
                 KillTimer(hwnd, RETRY_TIMER_ID);
-                if context.sender.send(NativeEvent::Retry).is_err() {
-                    PostQuitMessage(EXIT_SHELL_UNAVAILABLE);
-                }
+                enqueue(hwnd, &context.sender, NativeEvent::Retry);
                 return 0;
             }
             WM_DESTROY => {
@@ -327,4 +336,96 @@ fn now_ms() -> u64 {
 
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc::RecvTimeoutError;
+    use std::time::Duration;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        PostMessageW, SendMessageW, WM_CLOSE, WM_CONTEXTMENU,
+    };
+
+    fn pump_thread(hwnd_out: Sender<isize>, seen: Sender<u32>) {
+        let class_name = wide("ConduitTrayWakeTest");
+        let taskbar_created = unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) };
+        let instance = unsafe { GetModuleHandleW(null()) };
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(window_proc),
+            hInstance: instance,
+            lpszClassName: class_name.as_ptr(),
+            ..Default::default()
+        };
+        unsafe { RegisterClassW(&class) };
+        let hwnd = unsafe {
+            CreateWindowExW(
+                0,
+                class_name.as_ptr(),
+                class_name.as_ptr(),
+                WS_OVERLAPPED,
+                0,
+                0,
+                0,
+                0,
+                null_mut(),
+                null_mut(),
+                instance,
+                null(),
+            )
+        };
+        let (sender, receiver) = mpsc::channel();
+        let mut context = Box::new(WindowContext {
+            taskbar_created,
+            sender,
+        });
+        unsafe {
+            SetWindowLongPtrW(
+                hwnd,
+                GWLP_USERDATA,
+                (&mut *context as *mut WindowContext).cast::<()>() as isize,
+            );
+        }
+        hwnd_out
+            .send(hwnd as isize)
+            .expect("test waits for the window");
+        pump_messages(&receiver, |event| {
+            if let NativeEvent::Tray(code) = event {
+                seen.send(code).expect("test observes the drain");
+            }
+        });
+        unsafe {
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            UnregisterClassW(class_name.as_ptr(), instance);
+        }
+    }
+
+    #[test]
+    fn tray_callback_drains_without_other_traffic() {
+        let (hwnd_tx, hwnd_rx) = mpsc::channel();
+        let (seen_tx, seen_rx) = mpsc::channel();
+        let pump = std::thread::spawn(move || pump_thread(hwnd_tx, seen_tx));
+        let hwnd = hwnd_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("helper window created") as HWND;
+
+        // A cross-thread SendMessageW is delivered as a non-queued message, the same
+        // path Explorer uses for the notification-icon callback.
+        unsafe {
+            SendMessageW(hwnd, WM_TRAY_CALLBACK, 0, WM_CONTEXTMENU as isize);
+        }
+        let observed = seen_rx.recv_timeout(Duration::from_secs(1));
+        unsafe {
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        }
+        pump.join().expect("pump thread finishes");
+
+        match observed {
+            Ok(code) => assert_eq!(code, WM_CONTEXTMENU),
+            Err(RecvTimeoutError::Timeout) => {
+                panic!("tray callback stayed queued in the channel with no other message posted")
+            }
+            Err(RecvTimeoutError::Disconnected) => panic!("pump thread exited early"),
+        }
+    }
 }

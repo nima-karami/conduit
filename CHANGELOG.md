@@ -15,6 +15,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ### Fixed
 - An agent that stays busy learns of new messages on its next Conduit tool call, not only when it goes idle.
+- The notification-area icon is Conduit's app icon.
+- Clicking the notification-area icon works. Clicks used to wait until Conduit sent its next update.
 
 ## [0.57.0] — 2026-11-06
 
