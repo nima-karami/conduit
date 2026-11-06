@@ -36,6 +36,9 @@ class FakeServer implements LspServerHandle {
   readonly pid = FakeServer.nextPid++;
   readonly initialized: Promise<void>;
   loading = false;
+  get busy() {
+    return this.loading;
+  }
   notifies: {
     method: string;
     params: { textDocument?: { uri?: string; version?: number; text?: string } } & Record<
@@ -1346,6 +1349,7 @@ describe('LspManager — replies, re-home and status', () => {
           root: '/w/m',
           state: 'ready',
           pid: t.servers[0]?.pid,
+          busy: false,
         },
       ],
       languages: [

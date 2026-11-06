@@ -26,6 +26,7 @@ import {
   trigger,
 } from './goto-matrix.mjs';
 import { assert, closeApp, launchApp, openSession, runScenario } from './harness.mjs';
+import { waitServerIdle } from './lsp-fixture.mjs';
 
 const READY_CEILING_MS = 120_000;
 const INSTALL_CODE = 'go install golang.org/x/tools/gopls@latest';
@@ -188,7 +189,7 @@ async function waitFor(page, pred, ms) {
   let last = await observe(page);
   while (Date.now() < deadline) {
     if (pred(last)) return last;
-    await page.waitForTimeout(150);
+    await new Promise((r) => setTimeout(r, 150));
     last = await observe(page);
   }
   return last;
@@ -248,7 +249,16 @@ async function editorScenarios(app, page, sid, dir, log) {
   await clearTransients(page);
   await page.keyboard.press('Shift+F12');
   const peek = await waitFor(page, (o) => o.peek, 10_000);
-  await page.waitForTimeout(500);
+  await page.waitForFunction(
+    () => {
+      const files = [...document.querySelectorAll('.zone-widget .reference-file')].map(
+        (e) => e.textContent ?? '',
+      );
+      return files.some((f) => f.includes('helper.go')) && files.some((f) => f.includes('main.go'));
+    },
+    null,
+    { timeout: 10_000 },
+  );
   const refs = await page.evaluate(() => ({
     files: Array.from(document.querySelectorAll('.zone-widget .reference-file')).map((e) =>
       (e.textContent ?? '').trim(),
@@ -313,7 +323,14 @@ async function editorScenarios(app, page, sid, dir, log) {
       if (/helper\.go|util\.go/.test(b.textContent ?? '')) b.querySelector('.tab__close')?.click();
     }
   });
-  await page.waitForTimeout(300);
+  await page.waitForFunction(
+    () =>
+      ![...document.querySelectorAll('.tabbar [role="tab"]')].some((b) =>
+        /helper\.go|util\.go/.test(b.textContent ?? ''),
+      ),
+    null,
+    { timeout: 10_000 },
+  );
   writeFileSync(helper, 'package main\n\nfunc helper2() {}\n');
   await openDoc(app, page, sid, main);
   const original = await setBuffer(page, main, { from: 'helper()', to: 'helper2()' });
@@ -378,7 +395,7 @@ async function missingScenario(dir, log) {
     const t0 = Date.now();
     let snap = await lsp(page, { type: 'lsp:statusSnapshot' });
     while (!snap.servers.some((x) => x.state === 'absent') && Date.now() - t0 < 20_000) {
-      await page.waitForTimeout(250);
+      await new Promise((r) => setTimeout(r, 250));
       snap = await lsp(page, { type: 'lsp:statusSnapshot' });
     }
     log(`missing gopls → servers ${JSON.stringify(snap.servers)}`);
@@ -475,6 +492,7 @@ runScenario('go-lsp', async ({ app, page, log }) => {
   // Trust only launches for a shown doc; main.go is a raw, tab-less open here.
   await wakeGoDoc(page, main);
   const server = await waitReady(page, log);
+  await waitServerIdle(page, 'go', log, READY_CEILING_MS);
   const def = await lsp(page, {
     type: 'lsp:request',
     requestId: 'def-1',

@@ -179,6 +179,28 @@ describe('startLanguageServer', () => {
     await expect(h.handle.initialized).rejects.toMatchObject({ reason: 'server-error' });
   });
 
+  it('reports busy from progress and rust-analyzer status independently', async () => {
+    const h = start();
+    await h.handle.initialized;
+    expect(h.handle.busy).toBe(false);
+    await h.peer.sendNotification('$/progress', { token: 't', value: { kind: 'begin' } });
+    await until(() => h.handle.busy);
+    await h.peer.sendNotification('experimental/serverStatus', { quiescent: false });
+    await h.peer.sendNotification('$/progress', { token: 't', value: { kind: 'end' } });
+    await until(() => !h.handle.loading);
+    expect(h.handle.busy).toBe(true);
+    await h.peer.sendNotification('experimental/serverStatus', { quiescent: true });
+    await until(() => !h.handle.busy);
+    await h.peer.sendNotification('experimental/serverStatus', { quiescent: false });
+    await until(() => h.handle.busy);
+    await h.peer.sendNotification('experimental/serverStatus', { quiescent: true });
+    await until(() => !h.handle.busy);
+  });
+
+  it('advertises rust-analyzer server status notifications', async () => {
+    const p = await start().initParams;
+    expect(p.capabilities).toMatchObject({ experimental: { serverStatusNotification: true } });
+  });
   it('progress begin/end toggles loading', async () => {
     const h = start();
     await h.handle.initialized;

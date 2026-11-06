@@ -24,6 +24,7 @@ import {
   trustViaHost,
   waitDefinition,
   waitObserved,
+  waitServerIdle,
   waitServerState,
 } from './lsp-fixture.mjs';
 import { RS_GREET_CALL, writeRustFixture } from './rust-fixture.mjs';
@@ -45,6 +46,7 @@ runScenario('rust-lsp', async ({ app, page, log }) => {
   await openDoc(app, page, sid, fx.main);
   await openDoc(app, page, sid, fx.lib);
   await waitServerState(page, 'rust', 'ready', log, READY_CEILING_MS);
+  await waitServerIdle(page, 'rust', log, READY_CEILING_MS);
   const def = await waitDefinition(
     page,
     fx.main,

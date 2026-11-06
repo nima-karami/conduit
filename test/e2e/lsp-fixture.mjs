@@ -140,6 +140,39 @@ export async function waitServerState(page, languageId, state, log, ms = 30_000,
   );
 }
 
+export async function waitServerIdle(page, languageId, log, ms = 30_000, match = null) {
+  const t0 = Date.now();
+  let idleSince = null;
+  let idleKey = null;
+  let snap = null;
+  while (Date.now() - t0 < ms) {
+    snap = await lsp(page, { type: 'lsp:statusSnapshot' });
+    const mine = snap.servers.filter((s) => s.languageId === languageId && (!match || match(s)));
+    const bad = mine.find((s) => s.state === 'absent' || s.state === 'crashed');
+    assert(!bad, `${languageId} server went ${bad?.state}: ${JSON.stringify(bad)}`);
+    const hit = mine.find((s) => s.state === 'ready' && !s.busy);
+    if (hit) {
+      if (idleKey !== hit.serverKey) {
+        idleKey = hit.serverKey;
+        idleSince = Date.now();
+      }
+      if (Date.now() - idleSince >= 1_000) {
+        log(
+          `${languageId} idle in ${((Date.now() - t0) / 1000).toFixed(1)}s (pid ${hit.pid}, root ${hit.root})`,
+        );
+        return hit;
+      }
+    } else {
+      idleSince = null;
+      idleKey = null;
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  assert(
+    false,
+    `${languageId} never reached idle within ${ms / 1000}s: ${JSON.stringify(snap?.servers)}`,
+  );
+}
 /** Definition over the bridge until the server's project load answers it — `ready` means
  *  initialized, and the project may still be loading. */
 export async function waitDefinition(page, path, line, character, log, ms) {

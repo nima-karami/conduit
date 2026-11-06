@@ -318,7 +318,9 @@ export class LspManager {
       }
       case 'lsp:statusSnapshot':
         return Promise.resolve({
-          servers: this.statuses(),
+          servers: [...this.servers.values()]
+            .filter((r) => r.state !== 'stopped')
+            .map((r) => ({ ...this.statusOf(r), busy: r.handle?.busy ?? false })),
           languages: this.deps.registry.map(languageInfo),
         });
       case 'lsp:restart':
