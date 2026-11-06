@@ -96,6 +96,41 @@ const decorationCount = (suffix) => {
   };
 };
 
+const minimapHasHue = ({ rgb, tol }) => {
+  const el = document.querySelector('.minimap-decorations-layer');
+  const ctx = el?.getContext('2d');
+  if (!ctx) return false;
+  const img = ctx.getImageData(0, 0, el.width, el.height);
+  for (let i = 0; i < img.data.length; i += 4) {
+    if (img.data[i + 3] === 0) continue;
+    if (
+      Math.abs(img.data[i] - rgb[0]) <= tol &&
+      Math.abs(img.data[i + 1] - rgb[1]) <= tol &&
+      Math.abs(img.data[i + 2] - rgb[2]) <= tol
+    )
+      return true;
+  }
+  return false;
+};
+
+const rulerHasNewRightLane = ({ before, xAfter }) => {
+  const el = document.querySelector('.decorationsOverviewRuler');
+  const ctx = el?.getContext('2d');
+  if (!ctx) return false;
+  const { width, height } = el;
+  const img = ctx.getImageData(0, 0, width, height);
+  const known = new Set(before);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      if (img.data[i + 3] === 0) continue;
+      const k = `${img.data[i]},${img.data[i + 1]},${img.data[i + 2]},${img.data[i + 3]}`;
+      if (x > xAfter && !known.has(k)) return true;
+    }
+  }
+  return false;
+};
+
 runScenario('change-map-geometry', async ({ app, page, log }) => {
   const root = buildRepo();
   await openSession(page, { path: root.replace(/\\/g, '/') });
@@ -206,7 +241,7 @@ runScenario('change-map-geometry', async ({ app, page, log }) => {
       },
       { s: 'scattered.ts', l: line },
     );
-    await page.waitForTimeout(400);
+    await page.waitForFunction(minimapHasHue, { rgb: changeColor, tol: 2 }, { timeout: 10_000 });
     const mm = await page.evaluate(sampleCanvas, { selector: '.minimap-decorations-layer' });
     const hit = mm.groups.find(isChange);
     const cssW = hit ? hit.widthDevicePx * (mm.cssWidth / mm.deviceWidth) : 0;
@@ -234,11 +269,21 @@ runScenario('change-map-geometry', async ({ app, page, log }) => {
       .find((e) => e.getModel()?.uri.toString().endsWith(s));
     ed.setScrollTop(0);
   }, 'scattered.ts');
-  await page.waitForTimeout(300);
+  await page.waitForFunction(
+    (s) => {
+      const ed = window.monaco.editor
+        .getEditors()
+        .find((e) => e.getModel()?.uri.toString().endsWith(s));
+      return (ed?.getScrollTop() ?? -1) === 0;
+    },
+    'scattered.ts',
+    { timeout: 10_000 },
+  );
 
   // ── AC-T3.4: the error lane survives the wider change lane ─────────────────────────────────
   // The marker is injected rather than provoked from the TS service: this asserts LANE
   // OCCLUSION, and a real type error would make the fixture depend on the worker's timing.
+  const coloursBefore = new Set(ruler.groups.map((g) => g.color));
   await page.evaluate((s) => {
     const ed = window.monaco.editor
       .getEditors()
@@ -254,14 +299,39 @@ runScenario('change-map-geometry', async ({ app, page, log }) => {
       },
     ]);
   }, 'scattered.ts');
-  await page.waitForTimeout(600);
+  // setModelMarkers is sync; the overview-ruler canvas paints on a later frame.
+  // A 600 ms sleep sampled the pre-paint buffer (15/16 remote). `coloursBefore` is
+  // the group list, which drops the plate — include `ruler.background` or empty
+  // right-lane pixels look like a new colour and the wait returns before paint.
+  await page.waitForFunction(
+    (s) => {
+      const ed = window.monaco.editor
+        .getEditors()
+        .find((e) => e.getModel()?.uri.toString().endsWith(s));
+      const model = ed?.getModel();
+      if (!model) return false;
+      return model
+        .getAllDecorations()
+        .some(
+          (d) =>
+            d.options.overviewRuler &&
+            !(d.options.linesDecorationsClassName ?? '').includes('cdec'),
+        );
+    },
+    'scattered.ts',
+    { timeout: 10_000 },
+  );
+  await page.waitForFunction(
+    rulerHasNewRightLane,
+    { before: [...coloursBefore, ruler.background], xAfter: mark.xTo },
+    { timeout: 10_000 },
+  );
   const withError = await page.evaluate(sampleCanvas, { selector: '.decorationsOverviewRuler' });
   log(`ruler with an error marker: ${JSON.stringify(withError.groups)}`);
   // The negative control is the BEFORE sample from this same canvas: the error bar is whatever
   // colour appears in the right lane that was not there a moment ago. Matching a token hue
   // instead would be guessing — monaco paints its own `editorOverviewRuler.errorForeground`, not
   // the app's `--danger` — and "an extra group appeared" proves nothing without the before.
-  const coloursBefore = new Set(ruler.groups.map((g) => g.color));
   const errorGroups = withError.groups.filter(
     (g) => !coloursBefore.has(g.color) && g.xFrom > mark.xTo,
   );
