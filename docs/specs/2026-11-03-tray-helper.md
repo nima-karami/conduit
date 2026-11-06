@@ -155,7 +155,7 @@ export const TRAY_EXIT = { asked: 0, shellUnavailable: 10, protocol: 11 } as con
 
 **F8 shell.** A failed `NIM_ADD` retries every 2 s for 60 s, then the helper exits `shellUnavailable`. `TaskbarCreated` re-adds the icon. Win+B reaches it, including in overflow.
 
-**F9 service exit** (idle, stopAll, restart, uninstall, tray stop). After `supervise()` returns, `runCli` sends `exit`, closes stdin, waits up to 2 s and exits 0. On a hard kill, the job ends the helper; a ghost icon may linger until hovered (accepted).
+**F9 service exit** (idle, stopAll, restart, uninstall, tray stop). When `supervise()` is about to end, `runCli` sends `exit`, closes stdin, waits up to 2 s and exits 0. On an idle-core end the `exit` goes out **before** the core stop: the supervisor is then the last hc terminal and `hc server stop` waits on it, so sending `exit` after it never happens (found in S9, fixed 0460340f). On a hard kill, the job ends the helper; a ghost icon may linger until hovered (accepted).
 
 **F10 app update.** NSIS replaces only the install dir and never touches `runtime/`. On the new app's first launch, `server.restart` (appNewer, `server-lifecycle.ts:313-316`) ends the old server, supervisor and helper. The new supervisor swaps the binary (§4) and starts it at the **same path**, so the user's "show icon" choice survives (S0-T9). Agents survive.
 
