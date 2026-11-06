@@ -59,6 +59,7 @@ export function ReviewFileNav({
   onAction,
   onSectionReview,
   linesPendingRoots,
+  showReviewed = true,
 }: {
   blocks: readonly NavBlock[];
   activeKey: string | null;
@@ -71,6 +72,7 @@ export function ReviewFileNav({
   onSectionReview?: (scope: ReviewScope) => void;
   /** folderKey(root) of repos whose line counts have not been read yet. */
   linesPendingRoots?: ReadonlySet<string>;
+  showReviewed?: boolean;
 }) {
   const scrollerRef = useRef<HTMLElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -209,6 +211,7 @@ export function ReviewFileNav({
               }}
               onMeasure={i === firstFile ? setRowH : undefined}
               linesPending={linesPendingRoots?.has(folderKey(it.file.repoRoot)) ?? false}
+              showReviewed={showReviewed}
             />
           ),
         )}
@@ -230,6 +233,7 @@ function ReviewFileRow({
   onFocusRow,
   onMeasure,
   linesPending,
+  showReviewed,
 }: {
   change: ReviewFile;
   active: boolean;
@@ -243,6 +247,7 @@ function ReviewFileRow({
   /** Set on the first mounted row only — calibrates the window's uniform row height. */
   onMeasure?: (h: number) => void;
   linesPending: boolean;
+  showReviewed: boolean;
 }) {
   const parts = c.path.split('/');
   const name = parts.pop() ?? c.path;
@@ -268,15 +273,17 @@ function ReviewFileRow({
       data-root={folderKey(c.repoRoot)}
       onFocus={() => onFocusRow(reviewFileKey(c))}
     >
-      <input
-        type="checkbox"
-        className="review__check"
-        checked={reviewed}
-        disabled={!canMark}
-        title={canMark ? undefined : 'Loading diff…'}
-        aria-label={`Mark ${c.path} reviewed`}
-        onChange={() => onToggleReviewed(c)}
-      />
+      {showReviewed && (
+        <input
+          type="checkbox"
+          className="review__check"
+          checked={reviewed}
+          disabled={!canMark}
+          title={canMark ? undefined : 'Loading diff…'}
+          aria-label={`Mark ${c.path} reviewed`}
+          onChange={() => onToggleReviewed(c)}
+        />
+      )}
       <button
         type="button"
         className="review__navbtn"

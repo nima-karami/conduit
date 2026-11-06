@@ -114,6 +114,14 @@ describe('patchChangesFromFiles', () => {
     expect(c).toMatchObject({ path: 'new.txt', kind: 'R', added: 1, removed: 1, staged: false });
   });
 
+  it('disambiguates duplicate paths so both rows survive', () => {
+    const out = patchChangesFromFiles([
+      patchFile({ path: 'a.ts', counts: { added: 1, removed: 0 } }),
+      patchFile({ path: 'a.ts', counts: { added: 2, removed: 0 } }),
+    ]);
+    expect(out.map((c) => c.path)).toEqual(['a.ts', 'a.ts (2)']);
+  });
+
   it('maps copy and mode-only to M', () => {
     const [copy] = patchChangesFromFiles([
       patchFile({ path: 'copy.txt', changeKind: 'C', counts: { added: 5, removed: 0 } }),

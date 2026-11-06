@@ -325,7 +325,10 @@ export const MCP_STR = {
       close_files: (s) =>
         s.all ? 'Close all of its tabs' : s.count === 1 ? 'Close 1 tab' : `Close ${s.count} tabs`,
       open_review: (s) => `Open Review for ${s.what}`,
-      open_diff: (s) => `Show a diff: ${s.title}`,
+      open_diff: (s) =>
+        s.path && s.title !== s.path
+          ? `Show a diff: ${s.title} (${s.path})`
+          : `Show a diff: ${s.path ?? s.title}`,
       open_git_history: (s) =>
         s.ref === null ? 'Open the commit history' : `Open the commit history at ${s.ref}`,
       open_url: (s) => `Open ${s.url} in a Conduit tab`,

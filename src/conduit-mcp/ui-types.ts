@@ -32,7 +32,7 @@ export type AskSummary =
   | { tool: 'close_files'; count: number; all: boolean }
   /** 'working', a short sha, or 'base…head'. */
   | { tool: 'open_review'; what: string }
-  | { tool: 'open_diff'; title: string }
+  | { tool: 'open_diff'; title: string; path?: string }
   | { tool: 'open_git_history'; ref: string | null }
   | { tool: 'open_url'; url: string };
 
@@ -49,7 +49,7 @@ export type McpReviewSource =
 export type McpUiAction =
   | { kind: 'closeSession'; target: string }
   | { kind: 'closeFiles'; paths: string[] | 'all' }
-  | { kind: 'openReview'; source: McpReviewSource }
+  | { kind: 'openReview'; source: McpReviewSource; focus?: boolean }
   | { kind: 'openGitHistory'; repoRoot: string; commit: CommitNode | null }
   | { kind: 'openUrl'; url: string; focus: boolean };
 

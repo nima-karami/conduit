@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  decodePatchBytes,
   type ParsedPatchFile,
   parsePatch,
   patchFilesToFileDiffs,
@@ -472,5 +473,219 @@ index 111..222 100644
     expect(reason).toContain('unexpected line in hunk');
     expect(reason).not.toContain('secret-token-xyz');
     expect(reason.toLowerCase()).not.toContain('got:');
+  });
+
+  it("assigns unique seq across a file's hunks", () => {
+    const patch = `--- a/file.txt
++++ b/file.txt
+@@ -10,2 +10,2 @@
+ ten
+-eleven
++changed-eleven
+@@ -200,2 +200,2 @@
+ two-hundred
+-old
++new
+`;
+    const dtos = patchFilesToFileDiffs(okFiles(patch));
+    const seqs = dtos[0].hunks?.flatMap((h) => h.lines.map((l) => l.seq)) ?? [];
+    expect(seqs).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(new Set(seqs).size).toBe(seqs.length);
+    expect(dtos[0].hunks?.[1].lines[0]).toMatchObject({
+      text: 'two-hundred',
+      oldLine: 200,
+      seq: 3,
+    });
+  });
+
+  it('rejects git ---/+++ with no hunks unless the file is empty, renamed, mode-changed, or binary', () => {
+    expect(
+      failReason(`diff --git a/foo.txt b/foo.txt
+index 111..222 100644
+--- a/foo.txt
++++ b/foo.txt
+`),
+    ).toContain('no hunks');
+    expect(
+      failReason(`--- x
++++ y
+`),
+    ).toContain('no hunks');
+    expect(
+      failReason(`--- /dev/null
++++ /dev/null
+`),
+    ).toMatch(/no hunks|invalid/);
+    const emptyNew = okFiles(`diff --git a/empty.txt b/empty.txt
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/empty.txt
+`);
+    expect(emptyNew[0]).toMatchObject({ path: 'empty.txt', changeKind: 'A', hunks: [] });
+  });
+
+  it('rejects surplus hunk body lines after the declared counts', () => {
+    expect(
+      failReason(`--- a/file.txt
++++ b/file.txt
+@@ -1,1 +1,1 @@
+-one
++two
++three
+`),
+    ).toContain('hunk line count mismatch');
+    expect(
+      failReason(`--- a/file.txt
++++ b/file.txt
+@@ -1,1 +1,1 @@
+-one
++two
+ leftover
+`),
+    ).toContain('hunk line count mismatch');
+  });
+
+  it('strips a leading UTF-8 BOM', () => {
+    const files = okFiles('\uFEFF--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-a\n+b\n');
+    expect(files[0].path).toBe('file.txt');
+    expect(files[0].work).toBe('b\n');
+  });
+
+  it('keeps a lone CR inside a line', () => {
+    const files = okFiles('--- a/f\n+++ b/f\n@@ -1 +1 @@\n-a\rb\n+c\n');
+    expect(files[0].head).toBe('a\rb\n');
+    expect(files[0].work).toBe('c\n');
+  });
+
+  it('parses git diff --no-prefix and mnemonic prefixes from ---/+++ paths', () => {
+    const noPrefix = okFiles(`diff --git file.txt file.txt
+index 111..222 100644
+--- file.txt
++++ file.txt
+@@ -1,2 +1,2 @@
+ one
+-two
++three
+`);
+    expect(noPrefix[0].path).toBe('file.txt');
+    expect(noPrefix[0].work).toBe('one\nthree\n');
+    const nested = okFiles(`diff --git a/foo.txt a/foo.txt
+index 111..222 100644
+--- a/foo.txt
++++ a/foo.txt
+@@ -1 +1 @@
+-old
++new
+`);
+    expect(nested[0].path).toBe('a/foo.txt');
+    const mnemonic = okFiles(`diff --git i/file.txt w/file.txt
+--- i/file.txt
++++ w/file.txt
+@@ -1 +1 @@
+-a
++b
+`);
+    expect(mnemonic[0].path).toBe('file.txt');
+  });
+
+  it('does not treat a format-patch body line starting --- as a file unless +++ follows', () => {
+    const patch = `From 0123456789abcdef0123456789abcdef01234567 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] tweak
+
+--- a note in the commit message, not a file header
+still the body
+
+---
+ src/a.ts | 2 +-
+
+diff --git a/src/a.ts b/src/a.ts
+index 111..222 100644
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,3 +1,3 @@
+ one
+-two
++three
+ four
+-- 
+2.47.0
+`;
+    const files = okFiles(patch);
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe('src/a.ts');
+  });
+
+  it('decodes git C-quoted paths then rejects control chars and bidi overrides', () => {
+    const cafe = okFiles(`diff --git "a/caf\\303\\251.txt" "b/caf\\303\\251.txt"
+index 111..222 100644
+--- "a/caf\\303\\251.txt"
++++ "b/caf\\303\\251.txt"
+@@ -1 +1 @@
+-a
++b
+`);
+    expect(cafe[0].path).toBe('café.txt');
+    expect(
+      failReason(`--- "a/foo\\tbar.txt"
++++ "b/foo\\tbar.txt"
+@@ -1 +1 @@
+-a
++b
+`),
+    ).toBe('invalid path in diff header');
+    expect(
+      failReason(`--- "a/foo\\nbar.txt"
++++ "b/foo\\nbar.txt"
+@@ -1 +1 @@
+-a
++b
+`),
+    ).toBe('invalid path in diff header');
+    expect(
+      failReason(`--- "a/evil\\342\\200\\256txt"
++++ "b/evil\\342\\200\\256txt"
+@@ -1 +1 @@
+-a
++b
+`),
+    ).toBe('invalid path in diff header');
+  });
+
+  it('disambiguates duplicate paths so both diffs survive conversion', () => {
+    const patch = `--- a/a.ts
++++ b/a.ts
+@@ -1 +1 @@
+-old
++first
+--- a/a.ts
++++ b/a.ts
+@@ -1 +1 @@
+-old
++second
+`;
+    const files = okFiles(patch);
+    expect(files.map((f) => f.path)).toEqual(['a.ts', 'a.ts']);
+    const dtos = patchFilesToFileDiffs(files);
+    expect(dtos.map((d) => d.path)).toEqual(['a.ts', 'a.ts (2)']);
+    expect(dtos[0].work).toBe('first\n');
+    expect(dtos[1].work).toBe('second\n');
+  });
+});
+
+describe('decodePatchBytes', () => {
+  it('decodes UTF-16 LE and BE from a BOM', () => {
+    const text = '--- a/f\n+++ b/f\n@@ -1 +1 @@\n-a\n+b\n';
+    const le = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')]);
+    const beBody = Buffer.from(text, 'utf16le');
+    for (let i = 0; i + 1 < beBody.length; i += 2) {
+      const tmp = beBody[i];
+      beBody[i] = beBody[i + 1];
+      beBody[i + 1] = tmp;
+    }
+    const be = Buffer.concat([Buffer.from([0xfe, 0xff]), beBody]);
+    expect(decodePatchBytes(le)).toBe(text);
+    expect(decodePatchBytes(be)).toBe(text);
+    expect(parsePatch(decodePatchBytes(le)).ok).toBe(true);
   });
 });

@@ -551,8 +551,13 @@ export function ReviewView({
     rangeMode ? source.head : undefined,
     rangeMode ? source.repoRoot : undefined,
   );
+  const patchFiles = source?.kind === 'patch' ? source.files : null;
+  const patchDiffs = useMemo(
+    () => (patchFiles ? patchFilesToFileDiffs(patchFiles) : EMPTY_FILES),
+    [patchFiles],
+  );
   const preloadedFiles: FileDiffDTO[] = patchMode
-    ? patchFilesToFileDiffs(source.files)
+    ? patchDiffs
     : commitMode
       ? commit.files
       : rangeMode
@@ -2160,12 +2165,16 @@ export function ReviewView({
           onClick: () => setAllCollapsed(true),
         },
         { label: 'Expand all', hint: 'e', onClick: () => setAllCollapsed(false) },
-        {
-          label: 'Ignore whitespace',
-          icon: ignoreWhitespace ? <IconCheck size={13} /> : undefined,
-          checked: ignoreWhitespace,
-          onClick: () => update({ reviewIgnoreWhitespace: !ignoreWhitespace }),
-        },
+        ...(patchMode
+          ? []
+          : [
+              {
+                label: 'Ignore whitespace',
+                icon: ignoreWhitespace ? <IconCheck size={13} /> : undefined,
+                checked: ignoreWhitespace,
+                onClick: () => update({ reviewIgnoreWhitespace: !ignoreWhitespace }),
+              } satisfies MenuItem,
+            ]),
         {
           label: 'Keyboard shortcuts',
           hint: '?',
@@ -2175,7 +2184,7 @@ export function ReviewView({
       ];
       setMoreMenu({ ...placement, items });
     },
-    [compact, ignoreWhitespace, onSetSource, setAllCollapsed, source, update],
+    [compact, ignoreWhitespace, onSetSource, patchMode, setAllCollapsed, source, update],
   );
 
   const [barMenu, setBarMenu] = useState<MenuState | null>(null);
@@ -2253,7 +2262,7 @@ export function ReviewView({
           source={source}
           sessionId={sessionId}
           repoRoot={requestRoot}
-          locked={grouped || patchMode}
+          locked={grouped}
           onSetSource={onSetSource}
           onOpenCompare={onOpenCompare}
         />

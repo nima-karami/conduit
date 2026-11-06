@@ -65,6 +65,17 @@ export function patchOverSizeCap(text: string): boolean {
   return new TextEncoder().encode(text).length > MAX_PATCH_BYTES;
 }
 
+/** Decode patch bytes. A UTF-16 BOM (LE/BE) is honoured; everything else is UTF-8. */
+export function decodePatchBytes(bytes: Uint8Array): string {
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(bytes.subarray(2));
+  }
+  return new TextDecoder('utf-8').decode(bytes);
+}
+
 /**
  * Parse unified diff text. Returns `{ ok: false, reason }` for:
  *   - empty input
@@ -74,6 +85,7 @@ export function patchOverSizeCap(text: string): boolean {
  *   - stray non-diff text before the first file header
  */
 export function parsePatch(text: string): PatchParseResult {
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
   if (text === '') return { ok: false, reason: 'empty patch' };
   const lines = splitLines(text);
   const state = new ParserState(lines);
@@ -87,7 +99,7 @@ export function parsePatch(text: string): PatchParseResult {
       files.push(file.value);
       continue;
     }
-    if (cur.startsWith('--- ')) {
+    if (atFileHeader(state)) {
       const file = parseBareFile(state);
       if (!file.ok) return file;
       files.push(file.value);
@@ -107,22 +119,38 @@ export function parsePatch(text: string): PatchParseResult {
  * @@ -100 renders from line 100 and separate hunks stay separate.
  */
 export function patchFilesToFileDiffs(files: ParsedPatchFile[]): FileDiffDTO[] {
-  return files.map((f) => ({
-    path: f.path,
+  return files.map((f, i) => ({
+    path: disambiguatePatchPath(f.path, i, files),
     head: f.head,
     work: f.work,
     binary: f.binary,
     counts: f.binary || f.changeKind === 'T' ? undefined : f.counts,
-    hunks: f.binary || f.changeKind === 'T' ? undefined : f.hunks.map(hunkToReviewHunk),
+    hunks: f.binary || f.changeKind === 'T' ? undefined : fileHunksToReviewHunks(f.hunks),
   }));
 }
 
-function hunkToReviewHunk(h: PatchHunk): ReviewHunk {
+/** Second-and-later copies of the same path keep a unique card/diff-map key. */
+export function disambiguatePatchPath(
+  path: string,
+  index: number,
+  files: readonly { path: string }[],
+): string {
+  let earlier = 0;
+  for (let i = 0; i < index; i++) if (files[i]?.path === path) earlier++;
+  return earlier === 0 ? path : `${path} (${earlier + 1})`;
+}
+
+function fileHunksToReviewHunks(hunks: PatchHunk[]): ReviewHunk[] {
+  let seq = 0;
+  return hunks.map((h) => hunkToReviewHunk(h, () => seq++));
+}
+
+function hunkToReviewHunk(h: PatchHunk, nextSeq: () => number): ReviewHunk {
   const lines: ReviewHunk['lines'] = [];
   let oldLine = h.oldStart;
   let newLine = h.newStart;
-  let seq = 0;
   for (const l of h.lines) {
+    const seq = nextSeq();
     if (l.kind === 'context') {
       lines.push({ kind: 'context', text: l.text, oldLine, newLine, seq });
       oldLine++;
@@ -134,7 +162,6 @@ function hunkToReviewHunk(h: PatchHunk): ReviewHunk {
       lines.push({ kind: 'del', text: l.text, oldLine, newLine: null, seq });
       oldLine++;
     }
-    seq++;
   }
   return {
     startNewLine: h.newStart,
@@ -152,14 +179,20 @@ class ParserState {
   current(): string {
     return this.lines[this.i] ?? '';
   }
+  peek(): string {
+    return this.lines[this.i + 1] ?? '';
+  }
   advance(): void {
     this.i += 1;
   }
 }
 
+function atFileHeader(state: ParserState): boolean {
+  return state.current().startsWith('--- ') && state.peek().startsWith('+++ ');
+}
+
 function splitLines(text: string): string[] {
-  // LF-normalise while preserving empty trailing line when the text ends with a newline.
-  const normalised = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const normalised = text.replace(/\r\n/g, '\n');
   if (normalised === '') return [];
   const lines = normalised.split('\n');
   if (lines[lines.length - 1] === '') lines.pop();
@@ -170,8 +203,56 @@ function stripPrefix(line: string): string {
   return line.slice(1);
 }
 
-function unquote(s: string): string {
-  return s.replace(/\\(["\\])/g, '$1');
+const BIDI_OVERRIDES = /[\u202A-\u202E\u2066-\u2069]/;
+
+/** Git C-quoting: quoted token → bytes (octal, \\t, \\n, \\", \\) then UTF-8. Unquoted is as-is. */
+function unescapeGitPath(token: string): string | null {
+  if (!token.startsWith('"')) return token;
+  if (token.length < 2 || !token.endsWith('"')) return null;
+  const inner = token.slice(1, -1);
+  const bytes: number[] = [];
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch !== '\\') {
+      const cp = inner.charCodeAt(i);
+      if (cp > 127) bytes.push(...new TextEncoder().encode(inner[i]));
+      else bytes.push(cp);
+      continue;
+    }
+    i++;
+    if (i >= inner.length) return null;
+    const e = inner[i];
+    if (e === 't') bytes.push(0x09);
+    else if (e === 'n') bytes.push(0x0a);
+    else if (e === '"') bytes.push(0x22);
+    else if (e === '\\') bytes.push(0x5c);
+    else if (e >= '0' && e <= '7') {
+      let val = e.charCodeAt(0) - 48;
+      let n = 1;
+      while (n < 3 && i + 1 < inner.length) {
+        const d = inner[i + 1];
+        if (d < '0' || d > '7') break;
+        i++;
+        n++;
+        val = val * 8 + (d.charCodeAt(0) - 48);
+      }
+      bytes.push(val & 0xff);
+    } else return null;
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(bytes));
+  } catch {
+    return null;
+  }
+}
+
+function hasUnsafeChars(p: string): boolean {
+  for (const ch of p) {
+    const c = ch.codePointAt(0) ?? 0;
+    if (c < 0x20 || c === 0x7f) return true;
+    if (BIDI_OVERRIDES.test(ch)) return true;
+  }
+  return false;
 }
 
 /** Reject paths that could open files outside the patch's scope. */
@@ -179,7 +260,7 @@ function isSafePath(p: string): boolean {
   if (p === '/dev/null') return true;
   if (p.startsWith('/')) return false;
   if (/^[a-zA-Z]:/.test(p)) return false;
-  // Split on both slash directions; empty segments mean leading/trailing/consecutive separators.
+  if (hasUnsafeChars(p)) return false;
   const parts = p.split(/[\\/]/);
   if (parts.some((part) => part === '' || part === '..')) return false;
   return parts.length > 0;
@@ -188,10 +269,10 @@ function isSafePath(p: string): boolean {
 function parseGitFile(state: ParserState): ParseResult<ParsedPatchFile> {
   const diffLine = state.current();
   const paths = parseDiffGitLine(diffLine);
-  if (!paths) return { ok: false, reason: 'malformed diff --git header' };
-  const { oldPath, newPath } = paths;
-  if (!isSafePath(oldPath)) return { ok: false, reason: 'invalid path in diff header' };
-  if (!isSafePath(newPath)) return { ok: false, reason: 'invalid path in diff header' };
+  if (paths) {
+    if (!isSafePath(paths.oldPath)) return { ok: false, reason: 'invalid path in diff header' };
+    if (!isSafePath(paths.newPath)) return { ok: false, reason: 'invalid path in diff header' };
+  }
   let changeKind: PatchChangeKind = 'M';
   let mode: { old?: string; new: string } | undefined;
   let binary = false;
@@ -200,7 +281,7 @@ function parseGitFile(state: ParserState): ParseResult<ParsedPatchFile> {
 
   while (!state.done()) {
     const line = state.current();
-    if (line.startsWith('diff --git ') || line.startsWith('--- ')) break;
+    if (line.startsWith('diff --git ') || atFileHeader(state)) break;
 
     if (line.startsWith('index ')) {
       state.advance();
@@ -266,7 +347,9 @@ function parseGitFile(state: ParserState): ParseResult<ParsedPatchFile> {
 
   // No ---/+++ pair: empty new/deleted, rename/copy, mode-only, or binary. Anything else is an
   // incomplete git header, not a blank card.
-  if (!state.current().startsWith('--- ')) {
+  if (!atFileHeader(state)) {
+    if (!paths) return { ok: false, reason: 'malformed diff --git header' };
+    const { oldPath, newPath } = paths;
     if (binary) {
       return {
         ok: true,
@@ -333,17 +416,37 @@ function parseGitFile(state: ParserState): ParseResult<ParsedPatchFile> {
     return { ok: false, reason: 'git header has no hunks and no rename, mode, or binary change' };
   }
 
-  const header = parseFileHeaderPair(state);
+  const prefixes = paths?.prefixes ?? ['a/', 'b/'];
+  const header = parseFileHeaderPair(state, prefixes);
   if (!header.ok) return header;
+  const { old: headerOld, new: headerNew } = header.value;
+  if (headerOld === '/dev/null' && headerNew === '/dev/null') {
+    return { ok: false, reason: 'file header has no hunks' };
+  }
+  const oldPath = headerOld === '/dev/null' ? (paths?.oldPath ?? headerOld) : headerOld;
+  const newPath = headerNew === '/dev/null' ? (paths?.newPath ?? headerNew) : headerNew;
+  if (!isSafePath(oldPath) || !isSafePath(newPath)) {
+    return { ok: false, reason: 'invalid path in diff header' };
+  }
 
   const hunks = parseHunks(state);
   if (!hunks.ok) return hunks;
+  if (hunks.value.length === 0) {
+    const emptyOk =
+      binary ||
+      changeKind === 'A' ||
+      changeKind === 'D' ||
+      sawRenameOrCopy ||
+      !!(mode && changeKind === 'M');
+    if (!emptyOk) return { ok: false, reason: 'file header has no hunks' };
+  }
   const { head, work } = hunksToSides(hunks.value);
+  const path = headerNew === '/dev/null' ? oldPath : newPath;
 
   return {
     ok: true,
     value: {
-      path: newPath,
+      path,
       oldPath: changeKind === 'D' || changeKind === 'A' ? undefined : oldPath,
       head,
       work,
@@ -357,12 +460,12 @@ function parseGitFile(state: ParserState): ParseResult<ParsedPatchFile> {
 }
 
 function parseBareFile(state: ParserState): ParseResult<ParsedPatchFile> {
-  const header = parseFileHeaderPair(state);
+  const header = parseFileHeaderPair(state, ['a/', 'b/']);
   if (!header.ok) return header;
-  const oldPath = pathFromHeader(header.value.old);
-  const newPath = pathFromHeader(header.value.new);
-  if (oldPath === null || newPath === null) {
-    return { ok: false, reason: 'malformed ---/+++ file header' };
+  const oldPath = header.value.old;
+  const newPath = header.value.new;
+  if (oldPath === '/dev/null' && newPath === '/dev/null') {
+    return { ok: false, reason: 'file header has no hunks' };
   }
   if (!isSafePath(oldPath)) return { ok: false, reason: 'invalid path in diff header' };
   if (!isSafePath(newPath)) return { ok: false, reason: 'invalid path in diff header' };
@@ -371,6 +474,7 @@ function parseBareFile(state: ParserState): ParseResult<ParsedPatchFile> {
   const displayPath = newPath === '/dev/null' ? oldPath : newPath;
   const hunks = parseHunks(state);
   if (!hunks.ok) return hunks;
+  if (hunks.value.length === 0) return { ok: false, reason: 'file header has no hunks' };
   const { head, work } = hunksToSides(hunks.value);
   return {
     ok: true,
@@ -387,50 +491,102 @@ function parseBareFile(state: ParserState): ParseResult<ParsedPatchFile> {
   };
 }
 
-function parseDiffGitLine(line: string): { oldPath: string; newPath: string } | null {
-  const prefix = 'diff --git ';
-  const rest = line.slice(prefix.length);
-  // Unquoted: "a/<old> b/<new>"
-  const sepIdx = rest.indexOf(' b/');
-  if (sepIdx !== -1) {
-    const oldPart = rest.slice(0, sepIdx);
-    const newPart = rest.slice(sepIdx + 1);
-    if (oldPart.startsWith('a/') && newPart.startsWith('b/')) {
-      return { oldPath: oldPart.slice(2), newPath: newPart.slice(2) };
+const MNEMONIC_PREFIXES = ['i/', 'w/', 'c/'] as const;
+
+function takeGitToken(s: string, from: number): { token: string; next: number } | null {
+  if (from >= s.length) return null;
+  if (s[from] === '"') {
+    let i = from + 1;
+    while (i < s.length) {
+      if (s[i] === '\\') {
+        i += i + 1 < s.length ? 2 : 1;
+        continue;
+      }
+      if (s[i] === '"') return { token: s.slice(from, i + 1), next: i + 1 };
+      i++;
     }
+    return null;
   }
-  // Quoted paths: "a/<old>" "b/<new>"
-  const m = /^"a\/(.+)" "b\/(.+)"$/.exec(rest);
-  if (m) {
-    const [, oldQuoted, newQuoted] = m;
-    if (oldQuoted === undefined || newQuoted === undefined) return null;
-    return { oldPath: unquote(oldQuoted), newPath: unquote(newQuoted) };
-  }
-  return null;
+  const sp = s.indexOf(' ', from);
+  if (sp === -1) return { token: s.slice(from), next: s.length };
+  return { token: s.slice(from, sp), next: sp };
 }
 
-function parseFileHeaderPair(state: ParserState): ParseResult<{ old: string; new: string }> {
+function applyGitPrefixes(
+  oldP: string,
+  newP: string,
+): { oldPath: string; newPath: string; prefixes: readonly string[] } {
+  if (oldP.startsWith('a/') && newP.startsWith('b/')) {
+    return { oldPath: oldP.slice(2), newPath: newP.slice(2), prefixes: ['a/', 'b/'] };
+  }
+  const oldPre = MNEMONIC_PREFIXES.find((p) => oldP.startsWith(p));
+  const newPre = MNEMONIC_PREFIXES.find((p) => newP.startsWith(p));
+  if (oldPre && newPre) {
+    return {
+      oldPath: oldP.slice(oldPre.length),
+      newPath: newP.slice(newPre.length),
+      prefixes: MNEMONIC_PREFIXES,
+    };
+  }
+  return { oldPath: oldP, newPath: newP, prefixes: [] };
+}
+
+function parseDiffGitLine(
+  line: string,
+): { oldPath: string; newPath: string; prefixes: readonly string[] } | null {
+  const rest = line.slice('diff --git '.length);
+  const a = takeGitToken(rest, 0);
+  if (!a || a.token === '') return null;
+  if (rest[a.next] !== ' ') return null;
+  const b = takeGitToken(rest, a.next + 1);
+  if (!b || b.token === '' || b.next !== rest.length) return null;
+  const oldRaw = unescapeGitPath(a.token);
+  const newRaw = unescapeGitPath(b.token);
+  if (oldRaw === null || newRaw === null) return null;
+  return applyGitPrefixes(oldRaw, newRaw);
+}
+
+function parseFileHeaderPair(
+  state: ParserState,
+  prefixes: readonly string[],
+): ParseResult<{ old: string; new: string }> {
   const oldLine = state.current();
   if (!oldLine.startsWith('--- ')) return { ok: false, reason: 'expected --- header' };
   state.advance();
   const newLine = state.current();
   if (!newLine.startsWith('+++ ')) return { ok: false, reason: 'expected +++ header after ---' };
   state.advance();
-  return { ok: true, value: { old: oldLine, new: newLine } };
+  const oldPath = pathFromHeader(oldLine, prefixes);
+  const newPath = pathFromHeader(newLine, prefixes);
+  if (oldPath === null || newPath === null) {
+    return { ok: false, reason: 'malformed ---/+++ file header' };
+  }
+  return { ok: true, value: { old: oldPath, new: newPath } };
 }
 
-function pathFromHeader(line: string): string | null {
+function pathFromHeader(line: string, prefixes: readonly string[]): string | null {
   let afterMarker = line.slice(4);
-  // Strip optional timestamp tab.
   const tab = afterMarker.indexOf('\t');
   if (tab !== -1) afterMarker = afterMarker.slice(0, tab);
-  // Strip surrounding quotes.
-  if (afterMarker.length >= 2 && afterMarker.startsWith('"') && afterMarker.endsWith('"')) {
-    afterMarker = unquote(afterMarker.slice(1, -1));
+  const decoded = unescapeGitPath(afterMarker);
+  if (decoded === null) return null;
+  if (decoded === '/dev/null') return '/dev/null';
+  for (const pre of prefixes) {
+    if (decoded.startsWith(pre)) return decoded.slice(pre.length);
   }
-  if (afterMarker.startsWith('a/') || afterMarker.startsWith('b/')) return afterMarker.slice(2);
-  if (afterMarker === '/dev/null') return '/dev/null';
-  return afterMarker;
+  return decoded;
+}
+
+function isPatchTrailer(line: string): boolean {
+  return /^--\s*$/.test(line) || /^-- \d/.test(line);
+}
+
+function isSurplusHunkLine(line: string): boolean {
+  if (line.startsWith('+') || line.startsWith(' ')) return true;
+  if (!line.startsWith('-')) return false;
+  if (line.startsWith('--- ')) return false;
+  if (isPatchTrailer(line)) return false;
+  return true;
 }
 
 function parseHunks(state: ParserState): ParseResult<PatchHunk[]> {
@@ -490,6 +646,9 @@ function parseHunks(state: ParserState): ParseResult<PatchHunk[]> {
       if (lines.length === 0) return { ok: false, reason: 'stray \\ No newline marker' };
       lines[lines.length - 1].noNewline = true;
       state.advance();
+    }
+    if (!state.done() && isSurplusHunkLine(state.current())) {
+      return { ok: false, reason: 'hunk line count mismatch' };
     }
     hunks.push({
       oldStart: header.oldStart,

@@ -136,4 +136,74 @@ describe('Review patch source', () => {
       'empty file deleted',
     );
   });
+
+  it('gutter of row 1 of a -200 hunk shows old line 200', () => {
+    mount(patchSource(TWO_HUNKS));
+    const rows = [...host.querySelectorAll('.rcard[data-path="file.txt"] .rline')];
+    const row = rows.find((el) => el.textContent?.includes('two-hundred'));
+    expect(row).toBeTruthy();
+    const gutters = [...(row?.querySelectorAll('.rline__gutter') ?? [])].map((g) => g.textContent);
+    expect(gutters[0]).toBe('200');
+  });
+
+  it('search reveal of a hunk-2 unique string lands on that row, not hunk 1', () => {
+    const scrolled: string[] = [];
+    Element.prototype.scrollIntoView = function scrollIntoView() {
+      scrolled.push((this as HTMLElement).closest('.rline')?.textContent ?? '');
+    };
+    mount(patchSource(TWO_HUNKS));
+    const scroller = host.querySelector<HTMLElement>('.review__scroll');
+    expect(scroller).not.toBeNull();
+    act(() => {
+      scroller?.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true }));
+    });
+    const input = host.querySelector<HTMLInputElement>('.term-find__input');
+    expect(input).not.toBeNull();
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    act(() => {
+      setter?.call(input, 'two-hundred');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => {
+      input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    const seqs = [...host.querySelectorAll('.rcard[data-path="file.txt"] .rline')].map((el) =>
+      el.getAttribute('data-seq'),
+    );
+    expect(new Set(seqs).size).toBe(seqs.length);
+    expect(scrolled.some((t) => t.includes('two-hundred'))).toBe(true);
+    expect(scrolled.some((t) => t.includes('ten') && !t.includes('two-hundred'))).toBe(false);
+  });
+
+  it('shows both diffs when a patch touches the same path twice', () => {
+    const dup = `--- a/a.ts
++++ b/a.ts
+@@ -1 +1 @@
+-old
++first
+--- a/a.ts
++++ b/a.ts
+@@ -1 +1 @@
+-old
++second
+`;
+    mount(patchSource(dup));
+    expect(host.querySelector('.rcard[data-path="a.ts"]')).not.toBeNull();
+    expect(host.querySelector('.rcard[data-path="a.ts (2)"]')).not.toBeNull();
+  });
+
+  it('does not offer Ignore whitespace or LOCK_REASON for a patch source', () => {
+    mount(patchSource(TWO_HUNKS));
+    expect(host.textContent).not.toContain('All repos reviews the working tree');
+    const more = host.querySelector<HTMLButtonElement>('.review__more');
+    act(() => {
+      more?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(host.textContent).not.toContain('Ignore whitespace');
+    const src = host.querySelector<HTMLButtonElement>('button.review__source');
+    act(() => {
+      src?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(host.querySelector('[role="menu"]')).toBeNull();
+  });
 });

@@ -46,9 +46,6 @@ export type ReviewSource =
   | { kind: 'working'; scope?: ReviewScope; repoRoot?: string }
   | { kind: 'commit'; sha: string; subject?: string; repoRoot?: string }
   | { kind: 'range'; base: RefEndpoint; head: RefEndpoint; repoRoot?: string }
-  // A diff supplied by an agent via the `open_diff` MCP tool. `files` is the parsed patch;
-  // `title` overrides the tab label; `handle` is the agent handle for the default label.
-  // Not persisted (like the other reviewSource kinds).
   | { kind: 'patch'; files: ParsedPatchFile[]; title?: string; handle?: string };
 
 export interface OpenDoc {

@@ -736,16 +736,23 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
     now,
     info: (message, data) => deps.log.info('conduit-mcp', message, data),
-    readTextFile: async (absPath) => {
+    realPath: async (absPath) => {
       try {
-        return await fs.promises.readFile(absPath, 'utf8');
+        return await fs.promises.realpath(absPath);
       } catch {
         return null;
       }
     },
-    fileSize: async (absPath) => {
+    readBytes: async (absPath, max) => {
       try {
-        return (await fs.promises.stat(absPath)).size;
+        const fh = await fs.promises.open(absPath, 'r');
+        try {
+          const buf = Buffer.allocUnsafe(max);
+          const { bytesRead } = await fh.read(buf, 0, max, 0);
+          return buf.subarray(0, bytesRead);
+        } finally {
+          await fh.close();
+        }
       } catch {
         return null;
       }

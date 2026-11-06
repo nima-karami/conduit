@@ -3,7 +3,7 @@
 import { extname } from 'node:path';
 import { folderKey } from '../folder-key';
 import type { RefEndpoint } from '../git-range';
-import { MAX_PATCH_BYTES, parsePatch, patchOverSizeCap } from '../patch-parse';
+import { decodePatchBytes, MAX_PATCH_BYTES, parsePatch, patchOverSizeCap } from '../patch-parse';
 import type { CommitNode } from '../protocol';
 import { normalizeUrl } from '../web-url';
 import {
@@ -59,6 +59,8 @@ export const MAX_CLOSE_PATHS = 50;
 export const MAX_URL_BYTES = 2048;
 export const MAX_DIFF_TITLE_CHARS = 200;
 const PATCH_FILE_EXTENSIONS = ['.diff', '.patch'] as const;
+const isPatchExtension = (p: string): boolean =>
+  PATCH_FILE_EXTENSIONS.some((e) => e === extname(p).toLowerCase());
 const tooLong = (url: string): boolean => new TextEncoder().encode(url).length > MAX_URL_BYTES;
 const urlTooLong = (): Fail =>
   fail('invalid_args', `url must be a string of up to ${MAX_URL_BYTES} bytes`);
@@ -447,7 +449,7 @@ export function createAppControlHandlers(
             caller,
             who,
             ctx,
-            { kind: 'openReview', source },
+            { kind: 'openReview', source, focus: true },
             {
               opened: 'review' as const,
               source: out,
@@ -463,33 +465,45 @@ export function createAppControlHandlers(
         if ((o.patch === undefined) === (o.patch_file === undefined)) {
           return fail('invalid_args', 'pass exactly one of patch or patch_file');
         }
-        if (o.title !== undefined && (typeof o.title !== 'string' || o.title.length === 0)) {
-          return fail('invalid_args', 'title must be a non-empty string');
+        if (o.patch !== undefined && typeof o.patch !== 'string') {
+          return fail('invalid_input', 'patch must be a string');
+        }
+        if (o.patch_file !== undefined && typeof o.patch_file !== 'string') {
+          return fail('invalid_input', 'patch_file must be a string');
+        }
+        if (o.title !== undefined && typeof o.title !== 'string') {
+          return fail('invalid_input', 'title must be a string');
+        }
+        if (o.title !== undefined && o.title.length === 0) {
+          return fail('invalid_input', 'title must be a non-empty string');
         }
         if (o.title !== undefined && o.title.length > MAX_DIFF_TITLE_CHARS) {
-          return fail('invalid_args', `title must be ${MAX_DIFF_TITLE_CHARS} characters or fewer`);
+          return fail('invalid_input', `title must be ${MAX_DIFF_TITLE_CHARS} characters or fewer`);
+        }
+        if (o.focus !== undefined && typeof o.focus !== 'boolean') {
+          return fail('invalid_args', 'focus must be a boolean');
         }
         let patchText: string;
         let patchFilePath: string | undefined;
-        if (typeof o.patch === 'string') {
+        if (o.patch !== undefined) {
           patchText = o.patch;
         } else {
           const filePath = deps.resolvePath(who.home, o.patch_file as string);
-          patchFilePath = filePath;
-          const kind = await deps.kindOf(filePath);
-          if (kind !== 'file') return fail('path_missing', `no such file: ${filePath}`);
-          const ext = extname(filePath).toLowerCase();
-          if (!PATCH_FILE_EXTENSIONS.some((e) => e === ext)) {
+          if (!isPatchExtension(filePath)) {
             return fail('invalid_args', 'patch_file must have a .diff or .patch extension');
           }
-          const size = await deps.fileSize(filePath);
-          if (size === null) return fail('path_missing', `could not read: ${filePath}`);
-          if (size > MAX_PATCH_BYTES) {
+          const real = await deps.realPath(filePath);
+          if (real === null) return fail('path_missing', `no such file: ${filePath}`);
+          if (!isPatchExtension(real)) {
+            return fail('invalid_args', 'patch_file must have a .diff or .patch extension');
+          }
+          const bytes = await deps.readBytes(real, MAX_PATCH_BYTES + 1);
+          if (bytes === null) return fail('path_missing', `could not read: ${real}`);
+          if (bytes.length > MAX_PATCH_BYTES) {
             return fail('invalid_args', 'patch exceeds 5 MB size cap');
           }
-          const text = await deps.readTextFile(filePath);
-          if (text === null) return fail('path_missing', `could not read: ${filePath}`);
-          patchText = text;
+          patchFilePath = real;
+          patchText = decodePatchBytes(bytes);
         }
         if (patchOverSizeCap(patchText)) {
           return fail('invalid_args', 'patch exceeds 5 MB size cap');
@@ -497,20 +511,28 @@ export function createAppControlHandlers(
         const parsed = parsePatch(patchText);
         if (!parsed.ok) return fail('invalid_input', parsed.reason);
         const files = parsed.files;
-        const summaryTitle =
-          typeof o.title === 'string' ? o.title : (patchFilePath ?? files[0]?.path ?? 'diff');
         const title = typeof o.title === 'string' ? o.title : undefined;
+        const summaryTitle = title ?? files[0]?.path ?? 'diff';
         const w = routeWindow(who.sessionId);
         if (isFail(w)) return w;
+        const focus = ctx.move === 'no' ? false : o.focus !== false;
         return {
-          summary: { tool: 'open_diff', title: summaryTitle },
+          summary: {
+            tool: 'open_diff',
+            title: summaryTitle,
+            ...(patchFilePath !== undefined ? { path: patchFilePath } : {}),
+          },
           routesUi: true,
           exec: openExec(
             'open_diff',
             caller,
             who,
             ctx,
-            { kind: 'openReview', source: { kind: 'patch', files, title, handle: caller.handle } },
+            {
+              kind: 'openReview',
+              source: { kind: 'patch', files, title, handle: caller.handle },
+              focus,
+            },
             { opened: 'review' as const, source: { kind: 'patch' } },
           ),
         };

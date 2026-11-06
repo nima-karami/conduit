@@ -165,6 +165,10 @@ describe('ApprovalCard', () => {
         { tool: 'open_diff', title: '/home/main/changes.diff' },
         'Show a diff: /home/main/changes.diff',
       ],
+      [
+        { tool: 'open_diff', title: 'My diff', path: '/home/main/changes.diff' },
+        'Show a diff: My diff (/home/main/changes.diff)',
+      ],
       [{ tool: 'open_git_history', ref: null }, 'Open the commit history'],
       [{ tool: 'open_git_history', ref: 'main' }, 'Open the commit history at main'],
       [{ tool: 'open_url', url: 'http://x/' }, 'Open http://x/ in a Conduit tab'],

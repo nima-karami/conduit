@@ -31,6 +31,7 @@ import type { PreviewReason } from './preview-url';
 import type { QueueSummary } from './queue-summary';
 import type { RangePreset } from './range-preset';
 import type { RepoTag } from './repo-scan';
+import type { ReviewHunk } from './review-hunks';
 import type { ReviewMark, ReviewMarksRepo } from './review-marks';
 import type { ReviewNote, ReviewNotePatch } from './review-notes';
 import type { AppSettings } from './settings';
@@ -231,8 +232,6 @@ export interface FileContentDTO {
    *  (spec 2026-10-08-language-support §2.4), so the doc opens read-only. */
   readOnlyReason?: 'invalid-utf8' | 'mixed-eol';
 }
-
-import type { ReviewHunk } from './review-hunks';
 
 export interface FileDiffDTO {
   path: string;

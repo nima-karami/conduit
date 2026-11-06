@@ -24,7 +24,7 @@ export interface McpUiHandlers {
   dirtyPathsOf(sessionId: string): string[];
   kill(sessionId: string): void;
   closeFiles(sessionId: string, target: readonly string[] | 'all'): Promise<CloseFilesOutcome>;
-  openReview(sessionId: string, source: McpReviewSource): void;
+  openReview(sessionId: string, source: McpReviewSource, focus?: boolean): void;
   openGitHistory(sessionId: string, repoRoot: string, commit: CommitNode | null): void;
   openUrl(sessionId: string, url: string, focus: boolean): void;
 }
@@ -88,7 +88,7 @@ async function perform(
       answer({ kind: 'closeFiles', ...(await h.closeFiles(sessionId, action.paths)) });
       return;
     case 'openReview':
-      h.openReview(sessionId, action.source);
+      h.openReview(sessionId, action.source, action.focus !== false);
       break;
     case 'openGitHistory':
       h.openGitHistory(sessionId, action.repoRoot, action.commit);

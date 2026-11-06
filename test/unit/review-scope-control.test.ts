@@ -234,4 +234,17 @@ describe('Review scope control', () => {
     });
     expect(fromNone).toEqual([workingSource('unstaged')]);
   });
+
+  it('a patch source is not a repo picker and does not show LOCK_REASON', () => {
+    const el = mount({ kind: 'patch', files: [] }, () => {}, false);
+    const btn = trigger(el);
+    expect(btn?.getAttribute('aria-disabled')).toBe('true');
+    expect(btn?.getAttribute('title')).toBe(reviewSourceLabel({ kind: 'patch', files: [] }));
+    expect(btn?.getAttribute('aria-describedby')).toBeNull();
+    expect(el.textContent).not.toContain(LOCK_REASON);
+    act(() => {
+      btn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
 });

@@ -3315,13 +3315,18 @@ export function App() {
         forceClose: forceCloseDoc,
         closeDirtyUnprompted,
       }),
-    openReview: (id, source) =>
+    openReview: (id, source, focus = true) => {
+      if (!focus) {
+        openReviewIn(id, source);
+        return;
+      }
       landToolOpen(
         id,
         'Review',
         (d) => d.kind === 'review',
         (group) => openReviewIn(id, source, group),
-      ),
+      );
+    },
     openGitHistory: (id, root, commit) =>
       landToolOpen(
         id,

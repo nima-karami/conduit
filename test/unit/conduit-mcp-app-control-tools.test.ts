@@ -130,8 +130,8 @@ function harness(): Harness {
     },
     activateSession: (id, raise) => h.activations.push({ id, raise }),
     git,
-    readTextFile: async () => null,
-    fileSize: async () => 0,
+    realPath: async (p) => p,
+    readBytes: async () => null,
     targets: () => h.targets,
     ownerWindowOf: (id) => h.windows.get(id) ?? null,
     windowReady: (w) => !h.notReady.has(w),
@@ -722,11 +722,20 @@ describe('open_review', () => {
       head: { kind: 'working' },
     });
     expect(calls.map((x) => x.action)).toEqual([
-      { kind: 'openReview', source: { kind: 'working', scope: 'all', repoRoot: HOME } },
-      { kind: 'openReview', source: { kind: 'working', scope: 'staged', repoRoot: HOME } },
+      {
+        kind: 'openReview',
+        source: { kind: 'working', scope: 'all', repoRoot: HOME },
+        focus: true,
+      },
+      {
+        kind: 'openReview',
+        source: { kind: 'working', scope: 'staged', repoRoot: HOME },
+        focus: true,
+      },
       {
         kind: 'openReview',
         source: { kind: 'commit', sha: SHA, subject: 'c1 subject', repoRoot: HOME },
+        focus: true,
       },
       {
         kind: 'openReview',
@@ -736,6 +745,7 @@ describe('open_review', () => {
           head: { kind: 'branch', ref: 'feature' },
           repoRoot: HOME,
         },
+        focus: true,
       },
       {
         kind: 'openReview',
@@ -745,6 +755,7 @@ describe('open_review', () => {
           head: { kind: 'working' },
           repoRoot: HOME,
         },
+        focus: true,
       },
     ]);
   });
@@ -835,32 +846,104 @@ describe('open_diff', () => {
 
   it('reads patch_file from the home folder and validates the extension', async () => {
     const h = harness();
-    h.deps.readTextFile = async () => validPatch;
-    h.deps.kindOf = async () => 'file';
-    h.deps.fileSize = async () => validPatch.length;
+    const bytes = new TextEncoder().encode(validPatch);
+    h.deps.realPath = async (p) => p;
+    h.deps.readBytes = async () => bytes;
     const app = build(h);
     const { ctx, calls } = context();
     const p = ok(await app.prepareOpenDiff(caller(), { patch_file: 'changes.diff' }, ctx));
-    expect(p.summary).toEqual({ tool: 'open_diff', title: '/home/main/changes.diff' });
+    expect(p.summary).toEqual({
+      tool: 'open_diff',
+      title: 'a.txt',
+      path: '/home/main/changes.diff',
+    });
     expect(ok(await p.run())).toStrictEqual({ opened: 'review', source: { kind: 'patch' } });
     expect(calls).toHaveLength(1);
+    expect(calls[0].action).toMatchObject({ kind: 'openReview', focus: true });
   });
 
-  it('stats patch_file against the 5 MB cap before reading it', async () => {
+  it('ask summary includes the resolved patch_file path even when title is set', async () => {
     const h = harness();
-    let reads = 0;
-    h.deps.kindOf = async () => 'file';
-    h.deps.fileSize = async () => 5 * 1024 * 1024 + 1;
-    h.deps.readTextFile = async () => {
-      reads += 1;
-      return validPatch;
+    h.deps.realPath = async (p) => p;
+    h.deps.readBytes = async () => new TextEncoder().encode(validPatch);
+    const app = build(h);
+    const { ctx } = context();
+    const p = ok(
+      await app.prepareOpenDiff(caller(), { patch_file: 'changes.diff', title: 'My diff' }, ctx),
+    );
+    expect(p.summary).toEqual({
+      tool: 'open_diff',
+      title: 'My diff',
+      path: '/home/main/changes.diff',
+    });
+  });
+
+  it('reads at most cap+1 bytes and refuses over-cap without a prior stat', async () => {
+    const h = harness();
+    let maxAsked = 0;
+    h.deps.realPath = async (p) => p;
+    h.deps.readBytes = async (_p, max) => {
+      maxAsked = max;
+      return new Uint8Array(max);
     };
     const app = build(h);
     const { ctx } = context();
     const r = await app.prepareOpenDiff(caller(), { patch_file: 'huge.diff' }, ctx);
     expect(code(r)).toBe('invalid_args');
     expect(r.ok ? '' : r.error.message).toContain('5 MB');
+    expect(maxAsked).toBe(5 * 1024 * 1024 + 1);
+  });
+
+  it('rejects a non-patch extension without probing the filesystem', async () => {
+    const h = harness();
+    let probes = 0;
+    h.deps.realPath = async () => {
+      probes += 1;
+      return '/home/main/secret.txt';
+    };
+    h.deps.readBytes = async () => {
+      probes += 1;
+      return new Uint8Array();
+    };
+    h.deps.kindOf = async () => {
+      probes += 1;
+      return 'file';
+    };
+    const app = build(h);
+    const { ctx } = context();
+    expect(code(await app.prepareOpenDiff(caller(), { patch_file: 'secret.txt' }, ctx))).toBe(
+      'invalid_args',
+    );
+    expect(probes).toBe(0);
+  });
+
+  it('rejects a .diff that realpaths onto a non-patch extension', async () => {
+    const h = harness();
+    let reads = 0;
+    h.deps.realPath = async () => '/home/main/secret.txt';
+    h.deps.readBytes = async () => {
+      reads += 1;
+      return new TextEncoder().encode(validPatch);
+    };
+    const app = build(h);
+    const { ctx } = context();
+    expect(code(await app.prepareOpenDiff(caller(), { patch_file: 'changes.diff' }, ctx))).toBe(
+      'invalid_args',
+    );
     expect(reads).toBe(0);
+  });
+
+  it('decodes a UTF-16 LE BOM from patch_file', async () => {
+    const h = harness();
+    const body = Buffer.from(validPatch, 'utf16le');
+    h.deps.realPath = async (p) => p;
+    h.deps.readBytes = async () =>
+      Uint8Array.from(Buffer.concat([Buffer.from([0xff, 0xfe]), body]));
+    const app = build(h);
+    const { ctx } = context();
+    expect(code(await app.prepareOpenDiff(caller(), { patch_file: 'changes.diff' }, ctx))).toBe(
+      'ok',
+    );
   });
 
   it('requires exactly one of patch or patch_file', async () => {
@@ -889,8 +972,7 @@ describe('open_diff', () => {
 
   it('rejects a missing or unreadable patch_file', async () => {
     const h = harness();
-    h.deps.readTextFile = async () => null;
-    h.deps.kindOf = async () => 'missing';
+    h.deps.realPath = async () => null;
     const app = build(h);
     const { ctx } = context();
     expect(code(await app.prepareOpenDiff(caller(), { patch_file: 'gone.diff' }, ctx))).toBe(
@@ -900,8 +982,8 @@ describe('open_diff', () => {
 
   it('rejects a patch_file without a .diff or .patch extension', async () => {
     const h = harness();
-    h.deps.readTextFile = async () => validPatch;
-    h.deps.kindOf = async () => 'file';
+    h.deps.realPath = async (p) => p;
+    h.deps.readBytes = async () => new TextEncoder().encode(validPatch);
     const app = build(h);
     const { ctx } = context();
     expect(code(await app.prepareOpenDiff(caller(), { patch_file: 'changes.txt' }, ctx))).toBe(
@@ -909,14 +991,38 @@ describe('open_diff', () => {
     );
   });
 
-  it('rejects an empty or too-long title', async () => {
+  it('rejects an empty or too-long title as invalid_input', async () => {
     const app = build(harness());
     const { ctx } = context();
     expect(code(await app.prepareOpenDiff(caller(), { patch: validPatch, title: '' }, ctx))).toBe(
-      'invalid_args',
+      'invalid_input',
     );
     expect(
       code(await app.prepareOpenDiff(caller(), { patch: validPatch, title: 'x'.repeat(201) }, ctx)),
+    ).toBe('invalid_input');
+  });
+
+  it('rejects non-string patch, patch_file and title as invalid_input', async () => {
+    const app = build(harness());
+    const { ctx } = context();
+    expect(code(await app.prepareOpenDiff(caller(), { patch: 1 }, ctx))).toBe('invalid_input');
+    expect(code(await app.prepareOpenDiff(caller(), { patch_file: 1 }, ctx))).toBe('invalid_input');
+    expect(code(await app.prepareOpenDiff(caller(), { patch: validPatch, title: 1 }, ctx))).toBe(
+      'invalid_input',
+    );
+  });
+
+  it('defaults focus true, honours false, and rejects a non-boolean', async () => {
+    const app = build(harness());
+    const { ctx, calls } = context();
+    ok(await ok(await app.prepareOpenDiff(caller(), { patch: validPatch }, ctx)).run());
+    expect(calls[0].action).toMatchObject({ kind: 'openReview', focus: true });
+    ok(
+      await ok(await app.prepareOpenDiff(caller(), { patch: validPatch, focus: false }, ctx)).run(),
+    );
+    expect(calls[1].action).toMatchObject({ kind: 'openReview', focus: false });
+    expect(
+      code(await app.prepareOpenDiff(caller(), { patch: validPatch, focus: 'yes' }, ctx)),
     ).toBe('invalid_args');
   });
 });
