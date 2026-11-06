@@ -62,7 +62,8 @@ await runScenario(
       args: ['-e', SCRIPT],
     });
     assert(r.session_id, `open_terminal: ${JSON.stringify(r)}`);
-    assert(r.handle === null, `node has no MCP adapter, got handle ${r.handle}`);
+    // CON-149: a terminal an agent opened gets a handle even without an MCP adapter.
+    assert(/^term-\d+$/.test(r.handle ?? ''), `node terminal handle: ${r.handle}`);
     assert(r.agent === 'node' && r.label === 'node', `label/agent: ${JSON.stringify(r)}`);
     const sid = r.session_id;
     // The server spawns it at once, but its output reaches only a mounted pane (an observer link
@@ -81,6 +82,13 @@ await runScenario(
       await until(async () => (await statusOf(page, sid)) === 'exited', 15_000),
       `status after q: ${await statusOf(page, sid)}`,
     );
+    const listed = await callTool(page, main.sessionId, 'list_sessions', {});
+    const entry = (listed.sessions ?? []).find((s) => s.handle === r.handle);
+    assert(
+      entry?.presence === 'exited',
+      `exited terminal in list_sessions: ${JSON.stringify(listed)}`,
+    );
+    log('exited terminal stays listed ✓');
     await page.evaluate((id) => window.agentDeck.post({ type: 'relaunch', id }), sid);
     assert(
       await until(async () => (await markerPids(page, sid)).some((p) => p !== firstPid), 30_000),
